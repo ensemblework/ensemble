@@ -1,0 +1,20 @@
+# Files the Vercel CLI must never upload. The CLI does not read .gitignore,
+# and its defaults do not exclude .env.
+.env
+.env.*
+!.env.example
+.ensemble/
+private/
+*.pem
+*.key
+
+# Not needed to build apps/hub-web.
+apps/agent-runtime/.venv/
+**/__pycache__/
+**/target/
+apps/hub-web/.next/
+apps/hub-web/out/
+apps/desktop/src-tauri/resources/
+apps/desktop/src-tauri/gen/
+design/
+docs/

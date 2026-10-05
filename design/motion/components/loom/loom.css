@@ -1,0 +1,35 @@
+/* Loom: a delegated run in progress. Finished steps are woven cloth; a shuttle carries the
+   thread back and forth across the current step. Stop = the thread is cut and recoils. */
+.u-loom { --steps: 5; --done: 2; }
+.u-loom-track { position: relative; height: 10px; margin: 8px 5px 6px; }
+.u-loom-track::before { content: ""; position: absolute; left: 0; right: 0; top: 4.25px; height: 1.5px; border-radius: 2px; background: var(--line-strong); }
+.u-loom-fill { position: absolute; left: 0; top: 2px; height: 6px; border-radius: 3px; width: calc(var(--done) / var(--steps) * 100%);
+  background: repeating-linear-gradient(135deg, var(--accent) 0 3px, color-mix(in srgb, var(--accent) 45%, transparent) 3px 6px);
+  background-size: 8.5px 8.5px; animation: u-weave-move 1.2s linear infinite; transition: width .6s var(--ease-weave), background .3s; }
+@keyframes u-weave-move { to { background-position: 8.5px 0; } }
+.u-loom-shuttle { position: absolute; top: 1px; width: 12px; height: 8px; margin-left: -6px; border-radius: 4px; background: var(--accent-hi);
+  box-shadow: 0 0 0 3px var(--accent-soft), 0 0 12px color-mix(in srgb, var(--accent) 60%, transparent);
+  left: calc(var(--done) / var(--steps) * 100%); animation: u-shuttle 1.3s var(--ease-weave) infinite alternate; }
+.u-loom-shuttle::after { content: ""; position: absolute; left: 4px; top: 2.5px; width: 3px; height: 3px; border-radius: 50%; background: var(--u-you); }
+@keyframes u-shuttle { to { transform: translateX(calc((100cqw) / var(--steps))); } }
+.u-loom-track { container-type: inline-size; }
+.u-loom-steps { display: grid; grid-template-columns: repeat(var(--steps), 1fr); list-style: none; padding: 0; margin: 0; font-size: 11.5px; color: var(--faint); }
+.u-loom-steps li { position: relative; padding-top: 12px; }
+.u-loom-steps li::before { content: ""; position: absolute; left: 0; top: 0; width: 7px; height: 7px; border-radius: 50%; background: var(--line-strong); }
+.u-loom-steps li.done { color: var(--muted); } .u-loom-steps li.done::before { background: var(--accent); }
+.u-loom-steps li.now { color: var(--ink); } .u-loom-steps li.now::before { background: var(--accent-hi); box-shadow: 0 0 0 0 var(--accent); animation: u-ping 1.6s ease-out infinite; }
+@keyframes u-ping { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent); } 100% { box-shadow: 0 0 0 7px transparent; } }
+/* stop: the thread is cut at the shuttle, both ends recoil */
+.u-loom.is-cut .u-loom-fill { background: var(--danger); animation: u-recoil .5s var(--ease-snap) both; }
+.u-loom.is-cut .u-loom-shuttle { animation: u-drop .5s ease-in both; }
+.u-loom.is-cut .u-loom-track::before { background: linear-gradient(90deg, transparent calc(var(--done) / var(--steps) * 100% + 6px), var(--line) 0); }
+@keyframes u-recoil { 40% { transform: scaleX(.9); } 100% { transform: scaleX(.97); } }
+.u-loom-fill { transform-origin: left; }
+@keyframes u-drop { to { transform: translateY(10px) rotate(40deg); opacity: 0; } }
+.u-loom.is-done .u-loom-fill { width: 100%; background: var(--ok); animation: none; }
+.u-loom.is-done .u-loom-shuttle { opacity: 0; transition: opacity .3s; animation: none; }
+.u-frozen .u-loom-fill, .u-frozen .u-loom-shuttle, .u-frozen .u-loom-steps li::before { animation-play-state: paused; filter: grayscale(1); opacity: .7; }
+@media (prefers-reduced-motion: reduce) {
+  .u-loom-fill, .u-loom-shuttle, .u-loom-steps li.now::before { animation: none !important; }
+}
+[data-reduce-motion="true"] .u-loom-fill, [data-reduce-motion="true"] .u-loom-shuttle, [data-reduce-motion="true"] .u-loom-steps li.now::before { animation: none !important; }

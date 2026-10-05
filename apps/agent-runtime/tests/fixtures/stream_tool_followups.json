@@ -1,0 +1,526 @@
+{
+  "twoTools": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "role": "assistant",
+            "tool_calls": [
+              {
+                "extra_content": {
+                  "google": {
+                    "thought_signature": "EmAKXgFpFH0TtQlt9VNCDVrKeUxyQc0K+udKhZjOWjsbLn2iiPo5aPuEoT9+yw5xmljAeeMeUleoOimzJde/5A+He45sSZNkbGBpbA+gWoY848vtn00iVniKhUkL3pdEaD8="
+                  }
+                },
+                "function": {
+                  "arguments": "{}",
+                  "name": "hub_list_tasks"
+                },
+                "id": "call_1476450",
+                "type": "function"
+              }
+            ]
+          },
+          "index": 0
+        }
+      ],
+      "created": 1791060830,
+      "id": "XmvBauLJH-Kfz7IPweaa-AM",
+      "model": "gemini-3.5-flash-lite",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "role": "assistant",
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "{}",
+                  "name": "hub_list_projects"
+                },
+                "id": "call_1476453",
+                "type": "function"
+              }
+            ]
+          },
+          "index": 0
+        }
+      ],
+      "created": 1791060830,
+      "id": "XmvBauLJH-Kfz7IPweaa-AM",
+      "model": "gemini-3.5-flash-lite",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "role": "assistant"
+          },
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": 1791060830,
+      "id": "XmvBauLJH-Kfz7IPweaa-AM",
+      "model": "gemini-3.5-flash-lite",
+      "object": "chat.completion.chunk"
+    }
+  ],
+  "sameToolDiffArgs": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "role": "assistant",
+            "tool_calls": [
+              {
+                "extra_content": {
+                  "google": {
+                    "thought_signature": "EmAKXgFpFH0TNmiGp4ZT41HouJCMjtZ9oP6jdLHKbm0NcUpqXaRMs+yjWIxNAy2QW1lguT3bi6EEWovGTcVfm4Ip35nJnQtnLh3UZpYJDC7O5PcajO/SbvDFNa15RTconhA="
+                  }
+                },
+                "function": {
+                  "arguments": "{\"title\":\"Buy milk\"}",
+                  "name": "hub_create_task"
+                },
+                "id": "call_2608831",
+                "type": "function"
+              }
+            ]
+          },
+          "index": 0
+        }
+      ],
+      "created": 1791060831,
+      "id": "X2vBatmFEeqfz7IPoLWP6Qc",
+      "model": "gemini-3.5-flash-lite",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "role": "assistant",
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "{\"title\":\"Call mom\"}",
+                  "name": "hub_create_task"
+                },
+                "id": "call_2608832",
+                "type": "function"
+              }
+            ]
+          },
+          "index": 0
+        }
+      ],
+      "created": 1791060831,
+      "id": "X2vBatmFEeqfz7IPoLWP6Qc",
+      "model": "gemini-3.5-flash-lite",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "role": "assistant"
+          },
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": 1791060831,
+      "id": "X2vBatmFEeqfz7IPoLWP6Qc",
+      "model": "gemini-3.5-flash-lite",
+      "object": "chat.completion.chunk"
+    }
+  ],
+  "sameToolSameArgs": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "role": "assistant",
+            "tool_calls": [
+              {
+                "extra_content": {
+                  "google": {
+                    "thought_signature": "EmAKXgFpFH0T9h7qG+Fj7UZmGSJuunHjI2PxVkLeOt5A2XBraZqEWOS+Ct59m5MBJgbdMNQRKixImlcl556htaXgYUlmMLdOfvTUpIxvzSGgZkGRnidy/uCR0jJlC0F66mk="
+                  }
+                },
+                "function": {
+                  "arguments": "{\"title\":\"Untitled\"}",
+                  "name": "hub_create_task"
+                },
+                "id": "call_1313370",
+                "type": "function"
+              }
+            ]
+          },
+          "index": 0
+        }
+      ],
+      "created": 1791060837,
+      "id": "ZGvBao3rLcKgqtsPiI3dmQI",
+      "model": "gemini-3.5-flash-lite",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "role": "assistant",
+            "tool_calls": [
+              {
+                "function": {
+                  "arguments": "{\"title\":\"Untitled\"}",
+                  "name": "hub_create_task"
+                },
+                "id": "call_1313373",
+                "type": "function"
+              }
+            ]
+          },
+          "index": 0
+        }
+      ],
+      "created": 1791060837,
+      "id": "ZGvBao3rLcKgqtsPiI3dmQI",
+      "model": "gemini-3.5-flash-lite",
+      "object": "chat.completion.chunk"
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "role": "assistant"
+          },
+          "finish_reason": "stop",
+          "index": 0
+        }
+      ],
+      "created": 1791060837,
+      "id": "ZGvBao3rLcKgqtsPiI3dmQI",
+      "model": "gemini-3.5-flash-lite",
+      "object": "chat.completion.chunk"
+    }
+  ],
+  "sameIdResend": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                  "name": "hub_create_task",
+                  "arguments": "{\"title\":\"A\"}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                  "name": "hub_create_task",
+                  "arguments": "{\"title\":\"B\"}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "sameIdFragments": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                  "name": "hub_create_task",
+                  "arguments": "{\"ti"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "id": "call_1",
+                "function": {
+                  "name": "hub_create_task",
+                  "arguments": "tle\":"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "id": "call_1",
+                "function": {
+                  "name": "hub_create_task",
+                  "arguments": "\"Buy milk\"}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "emptyObjectThenFragments": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "id": "call_1",
+                "type": "function",
+                "function": {
+                  "name": "hub_create_task",
+                  "arguments": "{}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "id": "call_1",
+                "function": {
+                  "arguments": "{\"title\":"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "id": "call_1",
+                "function": {
+                  "arguments": "\"Milk\"}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "sameIndexDifferentIds": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "index": 0,
+                "id": "call_a",
+                "type": "function",
+                "function": {
+                  "name": "hub_list_tasks",
+                  "arguments": "{\"x\":"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "index": 0,
+                "id": "call_b",
+                "type": "function",
+                "function": {
+                  "name": "hub_list_projects",
+                  "arguments": "{\"y\":"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "index": 0,
+                "function": {
+                  "arguments": "1}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "mixedIndexAndId": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "index": 0,
+                "id": "call_a",
+                "type": "function",
+                "function": {
+                  "name": "hub_list_tasks",
+                  "arguments": ""
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "id": "call_b",
+                "type": "function",
+                "function": {
+                  "name": "hub_create_task",
+                  "arguments": "{\"title\":\"B\"}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "index": 1,
+                "id": "call_c",
+                "type": "function",
+                "function": {
+                  "name": "hub_list_projects",
+                  "arguments": "{}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "index": 0,
+                "function": {
+                  "arguments": "{\"status\":\"open\"}"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "blankFunctionCallId": [
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "id": "part_7",
+                "functionCall": {
+                  "id": "",
+                  "name": "hub_list_tasks",
+                  "args": {}
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "id": "part_other",
+                "functionCall": {
+                  "id": "call_real",
+                  "name": "hub_list_projects",
+                  "args": {
+                    "q": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

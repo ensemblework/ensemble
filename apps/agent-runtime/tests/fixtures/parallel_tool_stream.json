@@ -1,0 +1,267 @@
+{
+  "sameNameWithoutIndex": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "id": "call_a",
+                "type": "function",
+                "function": { "name": "hub_update_task", "arguments": "{\"id\":\"a\"}" }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "id": "call_b",
+                "type": "function",
+                "function": { "name": "hub_update_task", "arguments": "{\"id\":\"b\"}" }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "sameChunkWithoutIndex": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              {
+                "id": "call_a",
+                "type": "function",
+                "function": { "name": "hub_update_task", "arguments": "{\"id\":\"a\"}" }
+              },
+              {
+                "id": "call_b",
+                "type": "function",
+                "function": { "name": "hub_update_task", "arguments": "{\"id\":\"b\"}" }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "idFragments": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              { "id": "call_a", "type": "function", "function": { "name": "hub_update_task", "arguments": "{\"id\":" } }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              { "id": "call_b", "type": "function", "function": { "name": "hub_update_task", "arguments": "{\"id\":" } }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "choices": [
+        { "delta": { "tool_calls": [{ "id": "call_a", "function": { "arguments": "\"a\"}" } }] } }
+      ]
+    },
+    {
+      "choices": [
+        { "delta": { "tool_calls": [{ "id": "call_b", "function": { "arguments": "\"b\"}" } }] } }
+      ]
+    }
+  ],
+  "nameStartsNewCall": [
+    {
+      "choices": [
+        { "delta": { "tool_calls": [{ "function": { "name": "hub_update_task", "arguments": "{\"id\":" } }] } }
+      ]
+    },
+    { "choices": [{ "delta": { "tool_calls": [{ "function": { "arguments": "\"a\"}" } }] } }] },
+    {
+      "choices": [
+        { "delta": { "tool_calls": [{ "function": { "name": "hub_update_task", "arguments": "{\"id\":" } }] } }
+      ]
+    },
+    { "choices": [{ "delta": { "tool_calls": [{ "function": { "arguments": "\"b\"}" } }] } }] }
+  ],
+  "openaiIndexes": [
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              { "index": 0, "id": "call_a", "type": "function", "function": { "name": "hub_update_task", "arguments": "" } }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              { "index": 1, "id": "call_b", "type": "function", "function": { "name": "hub_update_task", "arguments": "" } }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "content": "Moving both.",
+            "tool_calls": [
+              { "index": 0, "function": { "arguments": "{\"id\":" } },
+              { "index": 1, "function": { "arguments": "{\"id\":" } }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "choices": [
+        {
+          "delta": {
+            "tool_calls": [
+              { "index": 0, "function": { "arguments": "\"a\"}" } },
+              { "index": 1, "function": { "arguments": "\"b\"}" } }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "geminiParts": [
+    {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              { "text": "Moving both." },
+              {
+                "functionCall": { "name": "hub_update_task", "args": { "id": "a" } },
+                "thoughtSignature": "sig-a"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "role": "model",
+            "parts": [
+              {
+                "functionCall": { "name": "hub_update_task", "args": { "id": "b" } },
+                "thoughtSignature": "sig-b"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "geminiPartsOneChunk": [
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": { "name": "hub_update_task", "args": { "id": "a" } },
+                "thoughtSignature": "sig-a"
+              },
+              {
+                "functionCall": { "name": "hub_update_task", "args": { "id": "b" } },
+                "thoughtSignature": "sig-b"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "geminiRepeatedPart": [
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": { "name": "hub_update_task", "args": { "id": "a" } },
+                "thoughtSignature": "sig-a"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": { "name": "hub_update_task", "args": { "id": "a" } },
+                "thoughtSignature": "sig-a"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "candidates": [
+        {
+          "content": {
+            "parts": [
+              {
+                "functionCall": { "name": "hub_update_task", "args": { "id": "b" } },
+                "thoughtSignature": "sig-b"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "anthropicBlocks": [
+    { "type": "content_block_delta", "index": 0, "delta": { "type": "text_delta", "text": "Moving both." } },
+    {
+      "type": "content_block_start",
+      "index": 1,
+      "content_block": { "type": "tool_use", "id": "toolu_a", "name": "hub_update_task", "input": {} }
+    },
+    { "type": "content_block_delta", "index": 1, "delta": { "type": "input_json_delta", "partial_json": "{\"id\":" } },
+    {
+      "type": "content_block_start",
+      "index": 2,
+      "content_block": { "type": "tool_use", "id": "toolu_b", "name": "hub_update_task", "input": {} }
+    },
+    { "type": "content_block_delta", "index": 2, "delta": { "type": "input_json_delta", "partial_json": "{\"id\":" } },
+    { "type": "content_block_delta", "index": 1, "delta": { "type": "input_json_delta", "partial_json": "\"a\"}" } },
+    { "type": "content_block_delta", "index": 2, "delta": { "type": "input_json_delta", "partial_json": "\"b\"}" } }
+  ]
+}

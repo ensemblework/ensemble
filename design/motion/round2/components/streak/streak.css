@@ -1,0 +1,24 @@
+/* 03 · Streak knot */
+.sk { position: absolute; inset: 0; padding: 22px 22px 0; text-align: center; }
+.sk-kicker { font: 500 11px var(--font-mono); color: var(--faint); text-transform: uppercase; letter-spacing: .08em; }
+.sk-count { display: flex; justify-content: center; align-items: baseline; gap: 10px; margin-top: 4px; }
+.sk-num { font: 500 44px/1 var(--font-serif); letter-spacing: -.02em; display: inline-flex; font-variant-numeric: tabular-nums; }
+.sk-roll { display: inline-flex; flex-direction: column; height: 1em; overflow: hidden; line-height: 1; }
+.sk-roll span { display: block; height: 1em; transition: transform .9s var(--spring-bouncy); }
+.sk.rolled .sk-roll span { transform: translateY(-100%); }
+.sk.rolled .sk-roll span:last-child { color: var(--accent-hi); }
+.sk-lbl { color: var(--muted); font-size: 15px; }
+.sk-svg { display: block; width: 100%; max-width: 400px; margin: 8px auto 0; overflow: visible; }
+.sk-thread { fill: none; stroke: var(--muted); stroke-width: 1.6; stroke-linecap: round; }
+.sk-bead { fill: var(--u-agent); }
+.sk-bead.future { fill: var(--bg); stroke: var(--line-strong); stroke-width: 1.5; }
+.sk-bead.today { fill: var(--v-hi2); }
+.sk-past-knot { fill: none; stroke: var(--v-hi); stroke-width: 1.4; opacity: .55; }
+.sk-knot { fill: none; stroke: var(--v-hi2); stroke-width: 2; opacity: 0; }
+.sk-day { font: 500 11px var(--font-mono); fill: var(--faint); text-anchor: middle; }
+.sk-day.now { fill: var(--accent-hi); font-weight: 700; }
+.sk-spark line { stroke: var(--v-hi2); stroke-width: 2; stroke-linecap: round; opacity: 0; }
+.sk.sparked .sk-spark line { animation: sk-spark .7s var(--ease) forwards; }
+@keyframes sk-spark { 0% { opacity: 1; stroke-dasharray: 0 30; stroke-dashoffset: 0; } 100% { opacity: 0; stroke-dasharray: 8 30; stroke-dashoffset: -16; } }
+.sk-sub { color: var(--muted); font-size: 12.5px; margin-top: 2px; opacity: 0; transform: translateY(6px); }
+.sk.rolled .sk-sub { opacity: 1; transform: none; transition: opacity .5s .2s, transform .8s .2s var(--spring-gentle); }

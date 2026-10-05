@@ -1,0 +1,23 @@
+/* Streaming reply: tokens "ink in" from violet to ink; a needle (bead + trailing thread) leads the text;
+   the reply rule on the left carries a bead down while streaming. Builds on the app's .ensemble-reply. */
+.u-reply { display: flex; gap: .75rem; }
+.u-reply-rule { width: 2px; flex: none; border-radius: 2px; background: var(--accent); position: relative; overflow: hidden; }
+.u-reply.is-streaming .u-reply-rule { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+.u-reply.is-streaming .u-reply-rule::after { content: ""; position: absolute; left: 0; right: 0; height: 40%;
+  background: linear-gradient(transparent, var(--accent-hi), transparent); animation: u-rule-bead 1.4s var(--ease-weave) infinite; }
+@keyframes u-rule-bead { from { transform: translateY(-100%); } to { transform: translateY(260%); } }
+.u-reply-body { font-size: 13.5px; line-height: 1.6; color: var(--ink); min-width: 0; }
+.u-tok { animation: u-ink-in .5s var(--ease) both; }
+@keyframes u-ink-in { from { color: var(--accent-hi); opacity: 0; filter: blur(3px); } 40% { opacity: 1; filter: blur(0); } }
+.u-needle { display: inline-block; position: relative; width: 16px; height: 1em; vertical-align: -0.12em; margin-left: 2px; }
+.u-needle::before { content: ""; position: absolute; left: 0; right: 5px; top: 55%; height: 1.5px; border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent)); }
+.u-needle::after { content: ""; position: absolute; right: 0; top: calc(55% - 3px); width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); animation: u-needle-bob .9s var(--ease-weave) infinite alternate; }
+@keyframes u-needle-bob { to { transform: translateY(-2.5px) scale(.85); } }
+.u-reply.is-done .u-needle { animation: u-fade-out .3s ease both; }
+@keyframes u-fade-out { to { opacity: 0; width: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .u-tok { animation: none; } .u-needle::after, .u-reply.is-streaming .u-reply-rule::after { animation: none; }
+}
+[data-reduce-motion="true"] .u-tok, [data-reduce-motion="true"] .u-needle::after, [data-reduce-motion="true"] .u-reply-rule::after { animation: none !important; }

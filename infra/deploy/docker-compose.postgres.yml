@@ -1,0 +1,29 @@
+# Postgres for one Ensemble on this VM. Redis is the apt redis-server, not this file.
+# Loopback only. Do not publish 5432 on 0.0.0.0.
+# User and password are ensemble / ensemble, same as infra/docker-compose.yml.
+# That is acceptable only because the port is on 127.0.0.1.
+# Create the volume once: docker volume create ensemble_pg
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: ensemble-postgres
+    environment:
+      POSTGRES_USER: ensemble
+      POSTGRES_PASSWORD: ensemble
+      POSTGRES_DB: ensemble
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - ensemble_pg:/var/lib/postgresql/data
+      - ../sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ensemble -d ensemble"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  ensemble_pg:
+    name: ensemble_pg
+    external: true

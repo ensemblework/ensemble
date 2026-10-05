@@ -1,0 +1,227 @@
+<div class="wrap">
+<header class="top">
+  <div>
+    <div class="row" style="gap:12px;margin-bottom:10px"><span data-u-glyph="idle" data-size="28"></span><span class="faint small" style="letter-spacing:.14em;text-transform:uppercase;font-weight:600">Ensemble · motion system</span></div>
+    <h1>Loaders &amp; working animations</h1>
+    <div class="sub">Built on two voices: <b style="color:var(--accent-hi)">violet is the agent</b>, <b>paper is you</b>. Everything here is plain CSS and SVG, plus a small glyph engine in vanilla JS. Every animation has a reduced-motion version. Try the toggle.</div>
+  </div>
+  <div class="ctrls">
+    <button class="btn" id="rm" aria-pressed="false">Reduce motion</button>
+    <button class="btn" id="tour">▶ Play tour</button>
+  </div>
+</header>
+<nav class="toc" id="toc"></nav>
+
+<!-- 01 signature -->
+<section class="sec" id="s-glyph" data-title="Signature: the Ensemble Glyph">
+  <div class="sec-h"><div class="num">01</div><div><h2>Signature: the Ensemble Glyph</h2>
+    <div class="where">Where: the assistant dock header, the Ask button's Mark, activity pill, splash, toasts, job rows (at 14–16 px).</div>
+    <div class="idea"><b>Idea:</b> the icon's two strands never stop being two strands. While the agent works they morph mark → <b>braid</b> (weaving, with crossings that travel) → <b>linked rings</b> → <b>spark</b> (spinning ✦, our answer to Claude's asterisk) → <b>merge</b> (one ring: in sync) → mark. States morph from wherever they are: wait, pause, done, error.</div></div>
+    <div class="ctrls" id="glyph-states"></div></div>
+  <div class="stage">
+    <div class="hero-tile"><span id="hero-glyph"></span></div>
+    <div class="col" style="gap:16px;flex:1;min-width:380px">
+      <div class="mock"><div class="cap">Inline status line (agent thinking)</div><div id="hero-status"></div></div>
+      <div class="mock"><div class="cap">Sizes (the engine thickens strokes at ≤20 px)</div>
+        <div class="row" style="gap:22px"><span data-u-glyph="working" data-size="14"></span><span data-u-glyph="working" data-size="16"></span><span data-u-glyph="working" data-size="20"></span><span data-u-glyph="working" data-size="32"></span><span data-u-glyph="working" data-size="48"></span>
+        <span class="faint small">Standalone SMIL asset (works as a plain &lt;img&gt;):</span><img id="smil-img" width="40" height="40" alt="Ensemble is working"></div></div>
+      <div class="mock"><div class="cap">Keyframes (shared data, 2 strands × 41 points)</div><div class="shape-strip" id="strip"></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- 02 splash -->
+<section class="sec" id="s-splash" data-title="App boot splash">
+  <div class="sec-h"><div class="num">02</div><div><h2>App boot splash</h2>
+    <div class="where">Where: first paint, before the <span class="mono">shell</span> query resolves. Also the native app's launch window on Mac, Windows and Linux.</div>
+    <div class="idea"><b>Idea:</b> the icon draws itself. The violet strand runs first with a bead leading it, then your strand follows it in. The wordmark rises and the status line takes over ("Tuning in…") until the shell is ready, then the splash lifts away.</div></div>
+    <div class="ctrls"><button class="btn" id="splash-replay">Replay</button></div></div>
+  <div class="stage"><div class="mock" style="width:100%;height:330px;display:grid;place-items:center;background:var(--bg)" id="splash-host"></div></div>
+</section>
+
+<!-- 03 route -->
+<section class="sec" id="s-route" data-title="Page loading & route transitions">
+  <div class="sec-h"><div class="num">03</div><div><h2>Page loading &amp; route transitions</h2>
+    <div class="where">Where: every rail click (Today, Board, Context…), task and project pages, peek panel open, <span class="mono">/login → /today</span>.</div>
+    <div class="idea"><b>Idea:</b> a <b>thread progress bar</b>: two strands braid across the top of <span class="mono">&lt;main&gt;</span> as the route loads, then pull straight and fade. The old page leaves in 140 ms. The new one enters as a thread draws under the title and the blocks rise in order.</div></div></div>
+  <div class="stage">
+    <div class="app" id="route-app">
+      <div class="side"><div class="brand"><span data-u-glyph="idle" data-size="16"></span>Ensemble</div>
+        <div class="nav" data-r="today"><i class="ic"></i>Today</div><div class="nav" data-r="board"><i class="ic"></i>Board</div>
+        <div class="nav" data-r="needs"><i class="ic"></i>Needs me<span class="badge u-badge-ping" style="border-radius:6px">2</span></div>
+        <div class="faint" style="font-size:10px;letter-spacing:.14em;text-transform:uppercase;font-weight:600;padding:14px 8px 4px">Workspace</div>
+        <div class="nav" data-r="runs"><i class="ic"></i>Runs</div><div class="nav" data-r="context"><i class="ic"></i>Context</div><div class="nav"><i class="ic"></i>Skills</div>
+      </div>
+      <div class="main"><div class="bar"><b id="route-title">Today</b><span class="faint">·</span><span class="faint small">Ask Ensemble</span></div>
+        <div class="content"><div class="u-progress is-idle" id="route-prog"><div class="u-progress-fill"></div><div class="u-progress-head"></div></div><div id="route-page"></div></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- 04 skeletons -->
+<section class="sec" id="s-skel" data-title="Skeletons">
+  <div class="sec-h"><div class="num">04</div><div><h2>Skeletons: Today, Board, Context graph, Runs</h2>
+    <div class="where">Where: replaces the flat <span class="mono">.skeleton</span> pulse on every page's first load and in the peek panel.</div>
+    <div class="idea"><b>Idea:</b> a <b>violet wash sweeps</b> through the blocks in a staggered diagonal wave, as if a thread is being pulled through the page. In the graph skeleton the edges draw in as threads and the nodes breathe in sequence around the hub.</div></div></div>
+  <div class="stage"><div class="grid4" id="skel-dark"></div></div>
+  <div class="stage lightbox" data-theme="light" style="border-top:1px solid var(--line)"><div class="grid4" id="skel-light"></div></div>
+</section>
+
+<!-- 05 agent -->
+<section class="sec" id="s-agent" data-title="Agent thinking, tools, streaming">
+  <div class="sec-h"><div class="num">05</div><div><h2>Agent thinking → running a tool → streaming a reply</h2>
+    <div class="where">Where: the assistant dock (⌘J), inline <span class="mono">@ensemble</span> answers in documents, comment replies.</div>
+    <div class="idea"><b>Idea:</b> while there's no real status, the <b>status line</b> rotates whimsical Ensemble verbs (each letter drops in, and a highlight sweeps through the word like a bow across strings). When the server sends a real <span class="mono">status</span> frame ("Reading Gmail…") it shows that instead, and only real statuses are announced to screen readers. Tool calls get <b>marching stitches</b>, which close into a seam when they finish. Streamed tokens <b>ink in</b> from violet behind a <b>needle</b>.</div></div></div>
+  <div class="stage">
+    <div class="dock"><div class="h"><span id="dock-glyph"></span><span style="flex:1">Assistant</span><span class="faint small">Medium · gemini</span></div>
+      <div class="b" id="dock-body"></div>
+      <div class="f"><div class="row" style="background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:13px"><span class="faint" style="flex:1">Ask, or tell me what to change. @ to mention…</span><span class="btn" style="padding:1px 8px" id="dock-send">Stop</span></div></div></div>
+    <div class="col" style="flex:1;min-width:300px">
+      <div class="mock"><div class="cap">Tool-call states</div><div class="col">
+        <div class="u-stitch tool" id="st-run"><svg class="seam"><rect/></svg><span class="u-duet" style="--s:12px"><i></i><i></i></span><span class="n">hub_list_tasks</span><span class="muted">Reading your board…</span></div>
+        <div class="u-stitch tool is-pending"><svg class="seam"><rect/></svg><span style="color:var(--warn)">◷</span><span class="n">hub_update_task</span><span class="muted" style="flex:1">Move "Reply to Priya" → Done</span><span class="btn-primary" style="padding:1px 8px;font-size:11.5px">Apply</span></div>
+        <div class="u-stitch tool is-done"><svg class="seam"><rect/></svg><span style="color:var(--ok)">✓</span><span class="n">hub_create_task</span><span class="muted">Created "Draft PR description"</span></div>
+        <div class="u-stitch tool is-failed"><svg class="seam"><rect/></svg><span style="color:var(--danger)">!</span><span class="n">gmail.search</span><span class="muted">Token expired</span></div>
+      </div></div>
+      <div class="mock"><div class="cap">Verb set (rotates every 2.6 s)</div><div class="small muted" id="verbs"></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- 06 terminal -->
+<section class="sec" id="s-term" data-title="Terminal & CLI glyph">
+  <div class="sec-h"><div class="num">06</div><div><h2>Terminal &amp; CLI glyph (monospace)</h2>
+    <div class="where">Where: the Code tab's guarded terminal, <span class="mono">ensemble-hook.mjs</span> while an editor waits on Needs me, server logs, future native TUIs.</div>
+    <div class="idea"><b>Idea:</b> the glyph's loop re-drawn in characters: <span class="mono" style="color:var(--accent-hi)">· ∘ ◡ ∪ ⋃ ≀ ⋈ ✢ ✣ ✳</span> and back. Dot, ring, U, braid, spark, the same character in text. It uses the same verbs.</div></div></div>
+  <div class="stage"><div class="term u-term">
+    <div><span class="p">~/ensemble</span> $ node scripts/ensemble-hook.mjs --target cursor</div>
+    <div id="tg1"></div>
+    <div style="margin-top:8px"><span class="p">~/ensemble</span> $ pnpm test --filter hub-api</div>
+    <div id="tg2"></div>
+  </div></div>
+</section>
+
+<!-- 07 runs -->
+<section class="sec" id="s-run" data-title="Agent run in progress">
+  <div class="sec-h"><div class="num">07</div><div><h2>Agent run in progress (Workspace, job card, task panel)</h2>
+    <div class="where">Where: <span class="mono">JobCard</span> and <span class="mono">TaskAgentPanel</span> (replacing <span class="mono">&lt;Spinner size={11}/&gt;</span>), the Runs timeline, and the Board card of a task the agent owns.</div>
+    <div class="idea"><b>Idea:</b> the <b>loom</b>. Finished steps are woven cloth, and a shuttle carries the thread back and forth across the current step. <b>Stop</b> cuts the thread: the shuttle drops and both ends recoil. Done = the whole seam turns green.</div></div>
+    <div class="ctrls"><button class="btn" id="run-stop">■ Stop</button></div></div>
+  <div class="stage">
+    <div class="mock" style="width:470px" id="job">
+      <div class="row" style="gap:8px"><span data-u-glyph="working" data-size="14"></span><b style="flex:1">Fix flaky retention job test</b><span class="tag t-blue" id="job-tag">Working</span></div>
+      <div class="u-loom" id="loom" style="--steps:5;--done:1;margin-top:10px">
+        <div class="u-loom-track"><i class="u-loom-fill"></i><span class="u-loom-shuttle"></span></div>
+        <ol class="u-loom-steps"><li>Prepare</li><li>Read code</li><li>Edit</li><li>Run tests</li><li>Review</li></ol></div>
+      <div class="row faint" style="margin-top:8px;justify-content:space-between;font-size:11px"><span class="mono" id="job-meta">gemini-3.5-flash · 4 turns · 7 tools · 0m 41s</span><span class="mono">apps/hub-api · fix/retention</span></div>
+    </div>
+    <div class="mock" style="width:380px;border-color:rgb(var(--accent-rgb)/.45);background:var(--accent-soft)">
+      <div class="cap">Runs timeline (steps as beads on a thread)</div>
+      <div class="col small" id="timeline"></div>
+    </div>
+  </div>
+</section>
+
+<!-- 08 needs me -->
+<section class="sec" id="s-needs" data-title="Needs me: waiting on you">
+  <div class="sec-h"><div class="num">08</div><div><h2>Needs me: waiting for approval</h2>
+    <div class="where">Where: the Needs me page, editor-hook decision cards (Cursor, Claude Code, VS Code), the sidebar badge, and a job card whose status is <span class="mono">waiting_approval</span>.</div>
+    <div class="idea"><b>Idea:</b> <b>it's your turn</b>. The agent's strand holds still and <i>your</i> strand breathes. A heartbeat runs down the card's left edge. A <b>timeout thread</b> drains toward the hook's 10-minute fallback (compressed to 14 s here). Approving <b>ties the knot</b>: a check is drawn and six sparks fly out, then the card gathers away.</div></div></div>
+  <div class="stage">
+    <div class="col" style="width:520px" id="needs-list"></div>
+    <div class="mock" style="width:300px"><div class="cap">Sidebar badge + glyph "wait"</div>
+      <div class="nav on" style="width:200px"><i class="ic"></i>Needs me<span class="badge u-badge-ping">2</span></div>
+      <div class="row" style="margin-top:14px"><span data-u-glyph="wait" data-size="32"></span><span class="muted small">Agent is waiting on you<br><span class="faint">Allow once · Allow for session · Always · Deny</span></span></div></div>
+  </div>
+</section>
+
+<!-- 09 sync -->
+<section class="sec" id="s-sync" data-title="Syncing connectors & Fetch now">
+  <div class="sec-h"><div class="num">09</div><div><h2>Syncing connectors &amp; Fetch now</h2>
+    <div class="where">Where: the top bar's <b>Fetch now</b>, the scheduled 09:00/16:00 fetches, Settings → Connections, the Connect page, and the sidebar "Connections" tile.</div>
+    <div class="idea"><b>Idea:</b> <b>inflow</b>. Each source (in its Engineer-Graph colour) sends beads along a thread into the mark, which swells slightly as it takes them in. The Fetch icon's two arrows become <b>two reels</b> turning at different speeds, so they line up every few turns. When it finishes they close into a ring and the count pops.</div></div></div>
+  <div class="stage">
+    <div class="mock">{{SVG:inflow/inflow.svg}}</div>
+    <div class="col" style="min-width:320px">
+      <div class="mock"><div class="cap">Top bar</div><button class="btn-ghost u-fetch" id="fetch" style="color:var(--ink)">{{SVG:fetch/fetch-icon.svg}}<span id="fetch-l">Fetch now</span></button></div>
+      <div class="mock"><div class="cap">Per source</div><div class="col" id="srcs"></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- 10 ask -->
+<section class="sec" id="s-ask" data-title="Ask bar">
+  <div class="sec-h"><div class="num">10</div><div><h2>Ask bar submit</h2>
+    <div class="where">Where: the top bar's "Ask Ensemble" pill (<span class="mono">AskBar</span>), the command palette's ask row, and quick capture.</div>
+    <div class="idea"><b>Idea:</b> two strands chase each other around the pill's rim (a conic border animated with <span class="mono">@property</span>) while Ensemble "looks through your data". The answer rises in, and each cited source cascades after it.</div></div></div>
+  <div class="stage"><div style="width:460px">
+    <div class="u-ask" id="ask" style="padding:6px 14px;font-size:13px;display:flex;gap:8px;align-items:center"><span id="ask-q" style="flex:1" class="faint">Ask Ensemble</span><span id="ask-s"></span></div>
+    <div id="ask-a" class="mock" style="margin-top:8px;display:none"></div>
+  </div></div>
+</section>
+
+<!-- 11 kill switch -->
+<section class="sec" id="s-kill" data-title="Kill switch, stop, error">
+  <div class="sec-h"><div class="num">11</div><div><h2>Kill switch · stop · error</h2>
+    <div class="where">Where: <span class="mono">ActivityControls</span> (Pause/Resume, Stop everything), the assistant's Stop, failed runs, and error toasts.</div>
+    <div class="idea"><b>Idea:</b> on <b>Pause</b> the glyph's two strands <b>straighten into pause bars</b>. The icon <i>becomes</i> the control. Everything that was moving freezes and greys out mid-stitch. Resume bends the strands back into the mark. On an error the strands fray and turn red.</div></div>
+    <div class="ctrls"><button class="btn" id="kill">❚❚ Pause (kill switch)</button></div></div>
+  <div class="stage" id="kill-stage">
+    <div class="mock" style="width:430px">
+      <div class="row" style="justify-content:space-between"><div class="row" style="gap:8px"><span id="kill-glyph"></span><b id="kill-label">Working · 2</b></div><span class="pause-banner">Paused. Nothing calls a model</span></div>
+      <div class="col" style="margin-top:12px" id="kill-rows">
+        <div class="u-stitch tool"><svg class="seam"><rect/></svg><span class="u-duet" style="--s:12px"><i></i><i></i></span><span class="n">assistant</span><span class="muted">Drafting reply to Priya</span></div>
+        <div class="card"><div class="row small"><b style="flex:1">Agent task: Update deliverables</b><span class="faint">1m 12s</span></div>
+          <div class="u-loom" style="--steps:4;--done:2"><div class="u-loom-track"><i class="u-loom-fill"></i><span class="u-loom-shuttle"></span></div></div></div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="u-toast"><span data-u-glyph="error" data-size="20"></span>Model request failed: 429 rate limited. <span class="btn" style="padding:0 8px;font-size:12px">Retry</span></div>
+      <div class="u-toast"><span data-u-glyph="success" data-size="20"></span>Fetched 5 sources · 3 proposed</div>
+      <div class="u-toast"><span data-u-glyph="pause" data-size="20"></span>Paused. 2 running tasks stopped.</div>
+    </div>
+  </div>
+</section>
+
+<!-- 12 small -->
+<section class="sec" id="s-small" data-title="Small moments">
+  <div class="sec-h"><div class="num">12</div><div><h2>Small moments: duet loader, autosave, reconnecting, handoff</h2>
+    <div class="where">Where: every <span class="mono">&lt;Spinner/&gt;</span> today (buttons, "What it did", settings tests), the document autosave and 409 conflicts, the "Reconnecting to Ensemble…" pill, and triage "Agent does it" / Assign to agent.</div>
+    <div class="idea"><b>Idea:</b> the <b>duet</b> is two dots circling a shared centre that meet in the middle, then part. The same 'in sync' beat, at 11 px. Autosave <b>sews three stitches</b>, then pulls them into a check. On reconnect a <b>tether</b> stretches and snaps back. On handoff, your dot rides the thread over to the agent and turns violet.</div></div></div>
+  <div class="stage">
+    <div class="mock col"><div class="cap">Duet</div><div class="row" style="gap:18px"><span class="u-duet" style="--s:11px"><i></i><i></i></span><span class="u-duet"><i></i><i></i></span><span class="u-duet" style="--s:20px"><i></i><i></i></span><span class="u-duet" style="--s:32px"><i></i><i></i></span></div>
+      <div class="row"><button class="btn"><span class="u-duet" style="--s:12px"><i></i><i></i></span>Testing connection…</button><button class="btn-primary"><span class="u-duet" style="--s:12px;--u-you:#14120f"><i></i><i></i></span>Assigning…</button></div></div>
+    <div class="mock col"><div class="cap">Autosave</div><span class="u-save" id="save"><span class="st"><i></i><i></i><i></i></span><svg class="ck" viewBox="0 0 14 14"><path pathLength="1" d="M2.5 7.5 5.5 10.5 11.5 3.5"/></svg><span id="save-l">Saving…</span></span></div>
+    <div class="mock col"><div class="cap">Reconnecting</div><div class="row" style="border:1px solid var(--line);border-radius:99px;padding:5px 12px;font-size:13px;background:var(--panel)"><span class="u-tether"><i></i><i></i></span>Reconnecting to Ensemble…</div>
+      <div class="row small faint"><span class="u-tether is-offline"><i></i><i></i></span>Offline</div></div>
+    <div class="mock col"><div class="cap">Owner handoff</div><div class="u-handoff" id="handoff"><span>You</span><span class="track"><i></i></span><span>Agent</span></div><div class="small faint" id="handoff-l">Triage: <span class="kbd">a</span> Agent does it</div></div>
+  </div>
+</section>
+
+<!-- 13 empty -->
+<section class="sec" id="s-empty" data-title="Empty states">
+  <div class="sec-h"><div class="num">13</div><div><h2>Empty states</h2>
+    <div class="where">Where: Needs me with nothing waiting, Runs with no runs, an empty Board column, and a new Context graph.</div>
+    <div class="idea"><b>Idea:</b> not a loader, and calm on purpose: a <b>loose thread</b> drifts, waiting to be picked up. The copy says what will appear here and how to get it.</div></div></div>
+  <div class="stage">
+    <div class="u-empty" style="width:470px">{{SVG:empty/loose-thread.svg}}<div><div style="color:var(--ink);font-weight:500">Nothing needs you</div>When an agent needs a decision, it lands here. Loose ends: none.</div></div>
+    <div class="u-empty" style="width:470px">{{SVG:empty/loose-thread.svg}}<div><div style="color:var(--ink);font-weight:500">No runs yet</div>Assign a task to the agent and its run shows up here.</div></div>
+  </div>
+</section>
+
+<!-- 14 light -->
+<section class="sec lightbox" id="s-light" data-theme="light" data-title="Light theme">
+  <div class="sec-h"><div class="num">14</div><div><h2>Light theme ("warm paper")</h2>
+    <div class="where">Every component reads <span class="mono">--u-agent</span> / <span class="mono">--u-you</span>. In light mode, "you" becomes ink.</div></div></div>
+  <div class="stage">
+    <div class="mock"><span data-u-glyph="working" data-size="64"></span></div>
+    <div class="mock col" style="min-width:330px"><div id="light-status"></div><div class="row"><span class="u-duet"><i></i><i></i></span><span class="small muted">Loading tasks…</span></div>
+      <div style="position:relative;height:10px"><div class="u-progress" style="--p:.62"><div class="u-progress-fill"></div><div class="u-progress-head"></div></div></div></div>
+    <div class="mock col" style="width:240px"><div class="u-skel line" style="--i:0;width:70%"></div><div class="u-skel" style="--i:1;height:40px"></div><div class="u-skel" style="--i:2;height:40px"></div></div>
+    <div class="mock col"><div class="u-stitch tool" style="width:280px"><svg class="seam"><rect/></svg><span class="u-duet" style="--s:12px"><i></i><i></i></span><span class="n">hub_list_tasks</span><span class="muted">Reading…</span></div>
+      <div class="row"><span class="u-handoff to-agent"><span>You</span><span class="track"><i></i></span><span>Agent</span></span></div></div>
+  </div>
+</section>
+<div class="small faint">Ensemble motion system · assets in <span class="mono">components/</span> · placement map in <span class="mono">PLAN.md</span></div>
+</div>
+<div class="tour-label"><span data-u-glyph="working" data-size="16"></span><span id="tour-l">Tour</span></div>

@@ -1,0 +1,13 @@
+{
+  "servers": {
+    "ensemble": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${workspaceFolder}/apps/context-bridge/dist/index.js"],
+      "env": {
+        "HUB_API_URL": "http://127.0.0.1:4000",
+        "ENSEMBLE_BRIDGE_TOKEN": "${env:ENSEMBLE_BRIDGE_TOKEN}"
+      }
+    }
+  }
+}

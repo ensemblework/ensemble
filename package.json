@@ -1,0 +1,39 @@
+{
+  "name": "ensemble",
+  "private": true,
+  "packageManager": "pnpm@12.6.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:api": "pnpm --filter @ensemble/hub-api dev",
+    "dev:web": "pnpm --filter @ensemble/hub-web dev",
+    "dev:agent": "bash scripts/agent-dev.sh",
+    "build": "pnpm -r run build",
+    "typecheck": "pnpm -r run typecheck",
+    "infra:up": "docker compose -f infra/docker-compose.yml up -d",
+    "infra:down": "docker compose -f infra/docker-compose.yml down",
+    "db:generate": "pnpm --filter @ensemble/hub-api prisma:generate",
+    "db:migrate": "pnpm --filter @ensemble/hub-api prisma:migrate",
+    "db:push": "pnpm --filter @ensemble/hub-api prisma:push",
+    "db:seed": "pnpm --filter @ensemble/hub-api exec tsx prisma/seed.ts",
+    "secrets:encrypt": "pnpm --filter @ensemble/hub-api exec tsx scripts/encrypt-plaintext-secrets.ts",
+    "seed:demo": "pnpm --filter @ensemble/hub-api exec tsx prisma/demo-branch.ts",
+    "doctor": "bash scripts/doctor.sh",
+    "bridge:build": "pnpm --filter @ensemble/context-bridge build",
+    "bridge:start": "pnpm --filter @ensemble/context-bridge start",
+    "bridge:http": "pnpm --filter @ensemble/context-bridge start:http",
+    "bridge:verify": "pnpm --filter @ensemble/hub-api test:bridge && pnpm --filter @ensemble/context-bridge verify",
+    "bridge:e2e": "pnpm --filter @ensemble/context-bridge exec tsx scripts/live-e2e.ts",
+    "desktop:dev": "pnpm --filter @ensemble/desktop dev",
+    "desktop:export": "node scripts/export-desktop-web.mjs",
+    "desktop:sidecar": "node scripts/assemble-desktop-sidecar.mjs",
+    "desktop:build": "pnpm --filter @ensemble/desktop bundle",
+    "desktop:dmg": "bash scripts/build-mac-dmg.sh",
+    "desktop:e2e": "pnpm desktop:export && pnpm --filter @ensemble/hub-api test:desktop-ui"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.63.0"
+  }
+}

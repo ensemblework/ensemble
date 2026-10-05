@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 64" width="160" height="64" aria-hidden="true">
+  <title>Empty state: a loose thread drifting, waiting to be picked up</title>
+  <style>
+    .t { fill: none; stroke: var(--accent, #7c6af7); stroke-width: 2; stroke-linecap: round; transform-origin: 12px 40px; animation: sway 5s cubic-bezier(.65,0,.35,1) infinite; }
+    .tail { fill: none; stroke: var(--accent, #7c6af7); stroke-opacity: .35; stroke-width: 2; stroke-linecap: round; stroke-dasharray: 2 6; animation: flow 3s linear infinite; }
+    .d { fill: var(--ink, #f3eee6); animation: bob 5s cubic-bezier(.65,0,.35,1) infinite; }
+    .a { fill: var(--accent, #7c6af7); }
+    @keyframes sway { 50% { transform: rotate(-6deg); } }
+    @keyframes bob { 50% { transform: translate(-3px, -9px); } }
+    @keyframes flow { to { stroke-dashoffset: -16; } }
+    @media (prefers-reduced-motion: reduce) { .t, .d, .tail { animation: none; } }
+  </style>
+  <circle class="a" cx="12" cy="40" r="4"/>
+  <path class="t" d="M12 40 C40 40 50 22 78 26 C100 29 108 44 128 40"/>
+  <path class="tail" d="M132 39 C140 37 146 34 152 30"/>
+  <circle class="d" cx="130" cy="40" r="4"/>
+</svg>

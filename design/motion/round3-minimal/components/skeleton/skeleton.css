@@ -1,0 +1,26 @@
+.sk { position: absolute; inset: 0; padding: 22px 24px; }
+.sk-l, .sk-real { position: absolute; inset: 22px 24px; transition: opacity var(--m-dur-ui) var(--m-ease-move); }
+.sk-real { opacity: 0; }
+.sk.done .sk-l { opacity: 0; } .sk.done .sk-real { opacity: 1; }
+.sk-row { display: flex; gap: 12px; align-items: center; height: 52px; }
+.sk-row > div { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+.sk .c { width: 22px; height: 22px; border-radius: 50%; background: color-mix(in srgb, var(--ink) 9%, transparent); flex: none; }
+.sk .b { height: 9px; border-radius: 5px; background: color-mix(in srgb, var(--ink) 9%, transparent); display: block; }
+.sk .b.s { width: 55%; }
+.sk:not(.dotf) .sk-l { animation: sk-breathe var(--m-dur-loop) var(--m-ease-loop) infinite; }
+@keyframes sk-breathe { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
+.sk.done:not(.dotf) .sk-l { animation: none; opacity: 0; }
+/* Dot: text becomes hairlines; one reader dot moves down the margin */
+.sk.dotf .c { width: 6px; height: 6px; margin: 0 8px; background: transparent; box-shadow: inset 0 0 0 1px var(--hair); }
+.sk.dotf .b { height: 1px; background: var(--hair); border-radius: 0; }
+.sk-reader { position: absolute; left: 8px; top: 23px; width: 6px; height: 6px; border-radius: 50%; background: var(--agent); z-index: 1;
+  animation: sk-read calc(var(--m-dur-loop) * 1.2) var(--m-ease-loop) infinite; }
+@keyframes sk-read { 0%, 12% { transform: translateY(0); } 33%, 45% { transform: translateY(52px); } 66%, 78% { transform: translateY(104px); } 100% { transform: translateY(0); } }
+.sk-real .rr { display: flex; gap: 12px; align-items: center; height: 52px; opacity: 0; transform: translateY(var(--m-amp)); transition: opacity var(--m-dur-ui) var(--m-ease-enter), transform var(--m-dur-move) var(--m-ease-move); }
+.sk.done .sk-real .rr { opacity: 1; transform: none; }
+.sk.done .sk-real .rr:nth-child(2) { transition-delay: 80ms; } .sk.done .sk-real .rr:nth-child(3) { transition-delay: 160ms; }
+.sk-real .av { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font: 600 10px var(--font-sans); background: var(--soft); color: var(--muted); flex: none; }
+.sk.dotf .sk-real .av { width: 6px; height: 6px; margin: 0 8px; font-size: 0; background: var(--you); opacity: .7; }
+.sk.dotf .sk-real .av.ag { background: var(--agent); opacity: 1; }
+.sk-real b { display: block; font-weight: 500; font-size: 13.5px; color: var(--ink); }
+.sk-real span { font-size: 12px; color: var(--faint); }

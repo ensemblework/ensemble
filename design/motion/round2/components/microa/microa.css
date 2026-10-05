@@ -1,0 +1,42 @@
+/* 10 · Thread button, twist toggle, tie checkbox */
+.ma { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(3, 1fr); }
+.ma-cell { position: relative; display: grid; grid-template-rows: auto 1fr auto; padding: 18px 14px; border-right: 1px solid var(--line); }
+.ma-cell:last-child { border-right: 0; }
+.ma-lbl { font: 500 10.5px var(--font-mono); color: var(--faint); text-transform: uppercase; letter-spacing: .08em; }
+.ma-cap { font-size: 11.5px; color: var(--faint); text-align: center; }
+.ma-demo { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; }
+.ma-demo.col { align-items: stretch; gap: 12px; padding: 0 4px; }
+/* thread button */
+.tb { position: relative; font: 600 13.5px var(--font-sans); color: #fff; background: var(--u-agent); border: 0; border-radius: 11px; padding: 10px 22px 14px; cursor: pointer;
+  box-shadow: 0 10px 24px -12px var(--u-agent), inset 0 1px 0 rgba(255,255,255,.18); transition: transform .5s var(--spring-snappy), filter .3s, box-shadow .3s; }
+.tb.hover { filter: brightness(1.08); box-shadow: 0 14px 28px -12px var(--u-agent), inset 0 1px 0 rgba(255,255,255,.2); }
+.tb.down { transform: scale(.955); transition-duration: .12s; }
+.tb.ghost { background: transparent; color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.tb.ghost.hover { background: var(--hover); }
+.tb-svg { position: absolute; left: 0; top: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.tb-thread { fill: none; stroke: rgba(255,255,255,.55); stroke-width: 1.3; stroke-linecap: round; }
+.tb.ghost .tb-thread { stroke: var(--u-agent); }
+.tb-bead { fill: #fff; opacity: 0; transition: opacity .25s; } .tb.ghost .tb-bead { fill: var(--v-hi2); }
+.tb.hover .tb-bead { opacity: 1; }
+/* twist toggle */
+.tw-row, .tc-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; cursor: pointer; }
+.tw { all: unset; position: relative; width: 46px; height: 26px; border-radius: 999px; background: color-mix(in srgb, var(--ink) 12%, transparent); cursor: pointer; flex: none; overflow: hidden;
+  transition: background .4s; }
+.tw-fill { position: absolute; inset: 0; border-radius: inherit; background: linear-gradient(90deg, var(--u-agent), var(--v-hi)); transform: scaleX(0); transform-origin: left; transition: transform .45s var(--ease-weave); }
+.tw[aria-checked="true"] .tw-fill { transform: scaleX(1); }
+.tw-knob { position: absolute; left: 3px; top: 3px; width: 20px; height: 20px; border-radius: 50%; background: var(--panel); box-shadow: 0 2px 6px rgba(0,0,0,.35);
+  transition: transform .8s var(--spring-soft); }
+[data-theme="light"] .tw-knob { background: #fff; }
+.tw[aria-checked="true"] .tw-knob { transform: translateX(20px) rotate(180deg); }
+.tw-knob b { position: absolute; top: 7.5px; width: 5px; height: 5px; border-radius: 50%; transition: background .4s, transform .5s var(--spring-bouncy); }
+.tw-knob b:first-child { left: 4px; background: var(--faint); } .tw-knob b:last-child { right: 4px; background: var(--faint); }
+.tw[aria-checked="true"] .tw-knob b:first-child { background: var(--u-you); }
+.tw[aria-checked="true"] .tw-knob b:last-child { background: var(--u-agent); }
+[data-theme="light"] .tw[aria-checked="true"] .tw-knob b:first-child { background: var(--ink); }
+.tw.flip .tw-knob b { transform: scale(1.35); }
+/* tie checkbox row reuses .tie-box from 01 */
+.tc-row { justify-content: flex-start; }
+.tc-row span { transition: color .4s; }
+.tc-row.on span { color: var(--faint); }
+@media (prefers-reduced-motion: reduce) { .tw-knob, .tw-fill, .tb { transition: none; } }
+[data-reduce-motion="true"] .tw-knob, [data-reduce-motion="true"] .tw-fill, [data-reduce-motion="true"] .tb { transition: none; }

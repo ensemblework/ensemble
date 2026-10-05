@@ -1,0 +1,61 @@
+/* board.drag → the app's existing board markup (components/board/board.tsx + task-card.tsx). Load after board-drag.css. */
+/* Map the app palette onto the slot hooks. The agent colour stays brand violet even when the user picks another accent.
+   Variables live on <html> so the portaled drag overlay (dnd-kit renders it on document.body) inherits them. */
+html {
+  --bdg-agent: #9d8fff; --bdg-agent-hi: #b4a9ff; --bdg-you: var(--ink); --bdg-ok: #a3c4ab; --bdg-err: #ffb4ae; --bdg-radius: 10px;
+  --bdg-card: var(--raise); --bdg-line: var(--line); --bdg-hair: var(--line-strong, var(--hair));
+  --bdg-shadow: 0 22px 44px -14px rgba(0,0,0,.6), 0 6px 14px -6px rgba(0,0,0,.4);
+}
+[data-theme="light"] {
+  --bdg-agent: #7c6af7; --bdg-agent-hi: #9d8fff;
+  --bdg-shadow: 0 22px 40px -16px rgba(28,25,21,.32), 0 6px 12px -6px rgba(28,25,21,.18);
+}
+[data-motion-theme="minimal-quiet"] { --bdg-shadow: 0 10px 22px -12px rgba(0,0,0,.55); }
+[data-motion-theme="minimal-dot"] { --bdg-shadow: 0 6px 14px -8px rgba(0,0,0,.5); }
+[data-theme="light"][data-motion-theme^="minimal"] { --bdg-shadow: 0 8px 18px -10px rgba(28,25,21,.24); }
+
+/* SortableCard wrapper while its card is in the overlay:
+   <div data-bdg-card data-id=… data-bdg-ph={isDragging || undefined}>
+   data-bdg-fly is set by the vanilla engine during an agent/remote move. React does not own it. */
+[data-bdg-card] { position: relative; touch-action: pan-y; -webkit-touch-callout: none; }
+[data-bdg-ph] > *,
+[data-bdg-fly] > * { opacity: 0; }
+[data-bdg-ph]::before,
+[data-bdg-fly]::before { content: ""; position: absolute; inset: 0; border-radius: 10px; pointer-events: none;
+  border: 1.5px dashed color-mix(in srgb, var(--bdg-agent) 62%, transparent); background: color-mix(in srgb, var(--bdg-agent) 8%, transparent); }
+[data-motion-theme="minimal-quiet"] [data-bdg-ph]::before,
+[data-motion-theme="minimal-quiet"] [data-bdg-fly]::before { border: 1px solid var(--bdg-hair); background: none; }
+[data-motion-theme="minimal-dot"] [data-bdg-ph]::before,
+[data-motion-theme="minimal-dot"] [data-bdg-fly]::before { inset: 50% auto auto 2px; width: 7px; height: 7px; margin-top: -3.5px; border: 0; border-radius: 50%; background: var(--bdg-agent); }
+[data-motion-theme="minimal-dot"] [data-bdg-ph],
+[data-motion-theme="minimal-dot"] [data-bdg-fly] { background: linear-gradient(var(--bdg-hair), var(--bdg-hair)) 16px 50% / calc(100% - 22px) 1px no-repeat; }
+
+/* Column drop zone: <div ref={setNodeRef} data-over={…}> replaces the bg-accent-soft class swap.
+   isOver from useDroppable is only the column box; the board also sets data-over from the card's sortable container. */
+[data-bdg-list] { position: relative; }
+[data-bdg-list]::after { content: ""; position: absolute; inset: 0; border-radius: 8px; pointer-events: none; opacity: 0; transition: opacity .18s;
+  background: color-mix(in srgb, var(--bdg-agent) 7%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bdg-agent) 45%, transparent); }
+[data-bdg-list][data-over]::after { opacity: 1; }
+[data-bdg-list][data-over="deny"]::after { background: color-mix(in srgb, var(--bdg-err) 7%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bdg-err) 45%, transparent); }
+[data-motion-theme="minimal-quiet"] [data-bdg-list]::after { background: none; box-shadow: inset 0 0 0 1px var(--bdg-hair); }
+[data-motion-theme="minimal-dot"] [data-bdg-list]::after { display: none; }
+/* Dot: one violet dot beside the column count, instead of a wash on the list. */
+[data-motion-theme="minimal-dot"] [data-column]:has([data-bdg-list][data-over="yes"]) .bdg-n::after,
+[data-motion-theme="minimal-dot"] [data-column]:has([data-bdg-list][data-over="deny"]) .bdg-n::after {
+  content: ""; display: inline-block; width: 6px; height: 6px; margin-left: 6px; border-radius: 50%;
+  background: var(--bdg-agent); vertical-align: 1px;
+}
+[data-motion-theme="minimal-dot"] [data-column]:has([data-bdg-list][data-over="deny"]) .bdg-n::after { background: var(--bdg-err); }
+
+/* Expressive hover: 1px lift on .board-card only, as translate. Quiet and Dot stay put.
+   Hover shadows stay on pseudo-elements and only change opacity. */
+@media (hover: hover) {
+  [data-motion-theme="expressive"] .board-card { transition: translate var(--m-dur-micro, 160ms) var(--m-ease-enter, ease); }
+  [data-motion-theme="expressive"] [data-motion-slot="board.drag"]:not(:has([data-bdg-ph])) .board-card:hover { translate: 0 -1px; }
+}
+
+/* overlay: dnd-kit positions .bdg-float (the ghost, portaled to body). The card body inside must not carry its own motion.
+   Do not put a transition on .bdg-float itself — dnd-kit writes its transform on every pointer move. */
+.bdg-float-tilt { will-change: rotate, scale, opacity; }
+.bdg-float .board-card { transition: none !important; transform: none !important; translate: none !important; scale: none !important; rotate: none !important; }
+[data-motion-theme="expressive"] .bdg-float .board-card { border-color: color-mix(in srgb, var(--bdg-agent) 55%, var(--line)); }

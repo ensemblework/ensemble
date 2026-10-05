@@ -1,0 +1,6 @@
+{
+  "id": "capture",
+  "key": "u",
+  "darwin": ["mod", "ctrl", "shift"],
+  "other": ["ctrl", "alt", "shift"]
+}

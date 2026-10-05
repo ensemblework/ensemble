@@ -1,0 +1,9 @@
+/* brand.morph: colours are fixed brand colours (never --accent). */
+.u-morph { display: inline-block; line-height: 0; vertical-align: middle; flex: none; --brand-agent-m: var(--brand-agent, #9d8fff); --brand-you-m: var(--brand-you, #f3eee6); }
+[data-theme="light"] .u-morph { --brand-agent-m: var(--brand-agent, #7c6af7); --brand-you-m: var(--brand-you, #1c1915); }
+.u-morph svg { display: block; overflow: visible; }
+.u-morph .u-mo { stroke: var(--brand-agent-m); stroke-linejoin: round; }
+.u-morph .u-mi { stroke: var(--brand-you-m); stroke-linejoin: round; }
+.u-morph .u-md { fill: var(--brand-agent-m); } .u-morph .u-md2 { fill: var(--brand-you-m); }
+/* loader use: hidden until the shared delay passes (JS keeps data-state="loop" but paints nothing before then) */
+.u-morph[data-loader]:not([data-running]) { visibility: hidden; }

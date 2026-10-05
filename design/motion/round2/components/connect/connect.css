@@ -1,0 +1,33 @@
+/* 05 · Connect a source */
+.cn { position: absolute; inset: 0; padding: 20px; text-align: center; }
+.cn-kicker { font: 500 11px var(--font-mono); color: var(--faint); text-transform: uppercase; letter-spacing: .08em; text-align: left; }
+.cn-row { display: flex; justify-content: space-between; margin: 44px 26px 0; position: relative; z-index: 2; }
+.cn-tile { position: relative; width: 76px; display: grid; justify-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.cn-tile svg { width: 64px; height: 64px; border-radius: 16px; display: block; box-shadow: var(--shadow-rest); }
+.cn-tile.gm svg { background: #fff; padding: 9px; }
+.cn-tile.gm path { fill: none; stroke-width: 5.5; stroke-linecap: round; stroke-linejoin: round; }
+.cn-tile.un svg { border-radius: 16px; }
+.cn-tile.pull svg { animation: cn-tug .6s var(--spring-pluck); }
+@keyframes cn-tug { 30% { transform: translateX(5px) scale(.97); } 100% { transform: none; } }
+.cn-tile.un.pull svg { animation-name: cn-tug2; } @keyframes cn-tug2 { 30% { transform: translateX(-5px) scale(.97); } 100% { transform: none; } }
+.cn-tile.glow svg { box-shadow: 0 0 0 3px color-mix(in srgb, var(--u-agent) 40%, transparent), 0 10px 30px -8px var(--u-agent); transition: box-shadow .5s; }
+.cn-badge { position: absolute; right: 0; top: -6px; width: 22px; height: 22px; border-radius: 50%; background: var(--ok); border: 3px solid var(--bg); transform: scale(0); }
+.cn-badge::after { content: ""; position: absolute; left: 5.5px; top: 2.5px; width: 4px; height: 8px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.cn.done .cn-badge { transform: scale(1); transition: transform .7s var(--spring-bouncy); }
+.cn-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; z-index: 1; }
+.cn-thread { fill: none; stroke: var(--v-hi); stroke-width: 2.2; stroke-linecap: round; }
+.cn-knot { fill: var(--bg); stroke: var(--v-hi2); stroke-width: 2; transform-box: fill-box; transform-origin: center; transform: scale(0); }
+.cn.knot .cn-knot { transform: scale(1); fill: var(--v-hi2); transition: transform .7s var(--spring-bouncy), fill .4s .3s; }
+.cn-flow circle { r: 3.2px; }
+.cn-status { margin-top: 64px; }
+.cn-s1 { font: 500 22px var(--font-serif); letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+.cn-s2 { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+.cn-btn { position: absolute; left: 50%; bottom: 24px; transform: translateX(-50%); font: 600 13px var(--font-sans); color: #fff; background: var(--u-agent);
+  border: 0; border-radius: 11px; padding: 10px 18px; min-width: 150px; cursor: pointer; transition: background .4s, transform .3s var(--spring-snappy), box-shadow .4s;
+  box-shadow: 0 10px 26px -12px var(--u-agent); }
+.cn-btn.press { transform: translateX(-50%) scale(.95); }
+.cn-btn.busy { background: color-mix(in srgb, var(--u-agent) 55%, var(--raised)); }
+.cn.done .cn-btn { background: color-mix(in srgb, var(--ok) 22%, var(--raised)); color: var(--ok); box-shadow: none; }
+.cn-bl { display: inline-block; }
+.cn-bl.swap { animation: cn-swap .45s var(--spring-soft); }
+@keyframes cn-swap { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }

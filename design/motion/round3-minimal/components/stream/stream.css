@@ -1,0 +1,11 @@
+.st { position: absolute; inset: 0; padding: 22px 24px; display: flex; flex-direction: column; gap: 12px; }
+.st-p { margin: 0; font-size: 14px; line-height: 1.6; color: var(--ink); min-height: 92px; }
+.st-p .w { opacity: 0; transition: opacity var(--m-dur-ui) var(--m-ease-enter); }
+.st-p .w.on { opacity: 1; }
+.st-p .cq { display: inline-block; width: 1px; height: 1.05em; background: var(--accent); vertical-align: -2px; margin-left: 2px; animation: m-breathe 1.2s var(--m-ease-loop) infinite; }
+.st-p .cd { display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--agent); margin-left: 4px; vertical-align: 1px; animation: m-breathe var(--m-dur-loop) var(--m-ease-loop) infinite; transition: opacity .4s; }
+.st-p .gone { opacity: 0 !important; animation: none; transition: opacity var(--m-dur-ui) var(--m-ease-exit); }
+.st-rule { transform: scaleX(0); transform-origin: left; transition: transform var(--m-dur-move) var(--m-ease-move); }
+.st-rule.on { transform: none; }
+.st-src { opacity: 0; transition: opacity var(--m-dur-ui) var(--m-ease-enter); display: flex; align-items: center; gap: 8px; }
+.st-src.on { opacity: 1; }

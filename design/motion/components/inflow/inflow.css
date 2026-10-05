@@ -1,0 +1,10 @@
+/* Per-source sync rows (Settings → Connections, Connect page, Fetch now results) */
+.u-src { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); }
+.u-src .u-src-line { position: relative; width: 42px; height: 2px; border-radius: 2px; background: var(--line-strong); overflow: hidden; }
+.u-src.is-syncing .u-src-line::after { content: ""; position: absolute; top: 0; width: 12px; height: 2px; border-radius: 2px;
+  background: var(--src, var(--accent)); animation: u-src-flow 1.1s var(--ease-weave) infinite; }
+@keyframes u-src-flow { from { left: -12px; } to { left: 42px; } }
+.u-src.is-done .u-src-line { background: var(--ok); transition: background .3s; }
+.u-src.is-error .u-src-line { background: repeating-linear-gradient(90deg, var(--danger) 0 4px, transparent 4px 7px); }
+@media (prefers-reduced-motion: reduce) { .u-src.is-syncing .u-src-line::after { animation: none; left: 15px; } }
+[data-reduce-motion="true"] .u-src.is-syncing .u-src-line::after { animation: none; left: 15px; }

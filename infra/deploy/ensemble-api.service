@@ -1,0 +1,54 @@
+[Unit]
+Description=Ensemble hub-api
+# The scheduler is a timer inside this process, so it follows the same unit.
+# Wants= rather than Requires=: a Redis restart must not stop the API.
+After=network-online.target redis-server.service
+Wants=network-online.target redis-server.service
+
+[Service]
+Type=simple
+User=ensemble
+Group=ensemble
+WorkingDirectory=/opt/ensemble/apps/hub-api
+EnvironmentFile=/etc/ensemble.env
+# ENSEMBLE_COMMIT, written by update.sh and setup.sh. /health reports it.
+EnvironmentFile=-/etc/ensemble.commit
+Environment=NODE_ENV=production
+Environment=TMPDIR=/tmp
+Environment=ENSEMBLE_WORKSPACE_ROOT=/var/lib/ensemble/workspace
+Environment=ENSEMBLE_MPLCONFIGDIR=/var/cache/ensemble/matplotlib
+Environment=ENSEMBLE_REMOTE_STATE_DIR=/var/lib/ensemble/remote
+ExecStart=/usr/bin/node /opt/ensemble/apps/hub-api/node_modules/tsx/dist/cli.mjs src/index.ts
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+LimitNOFILE=65535
+
+# Read-only code tree. Data lives in StateDirectory and CacheDirectory.
+# PrivateTmp gives the plot worker a private /tmp and does not change the host /tmp.
+# MemoryDenyWriteExecute is off: it breaks the Prisma query engine and Node's JIT.
+# A syscall filter is off: it is easy to break Prisma with one.
+# ProtectHome stays on. Matplotlib uses ENSEMBLE_MPLCONFIGDIR, not /home.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictNamespaces=true
+SystemCallArchitectures=native
+StateDirectory=ensemble
+CacheDirectory=ensemble
+# No env var moves these two. plots/store.ts writes /opt/ensemble/.ensemble/plots.
+# themes.ts writes the working directory's .theme-cache.
+ReadWritePaths=/opt/ensemble/.ensemble /opt/ensemble/apps/hub-api/.theme-cache
+ExecStartPre=+/usr/bin/install -d -o ensemble -g ensemble -m 0750 /opt/ensemble/.ensemble /opt/ensemble/apps/hub-api/.theme-cache
+
+[Install]
+WantedBy=multi-user.target

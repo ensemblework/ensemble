@@ -1,0 +1,32 @@
+{
+  "py-count-2": {
+    "runtime": "python-agent",
+    "text": "One, two, three, four, five, six, seven, eight, nine, ten, eleven, twelve, thirteen, fourteen, fifteen, sixteen, seventeen, eighteen, nineteen, twenty, twenty-one, twenty",
+    "finishReason": "content_filter: RECITATION",
+    "sse": "data: {\"choices\":[{\"delta\":{\"content\":\"One\",\"role\":\"assistant\"},\"index\":0}],\"created\":1791062524,\"id\":\"_HHBapPFF4jVz7IP5pK4GA\",\"model\":\"gemini-3.5-flash-lite\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\", two, three, four, five, six, seven, eight, nine, ten\",\"role\":\"assistant\"},\"index\":0}],\"created\":1791062524,\"id\":\"_HHBapPFF4jVz7IP5pK4GA\",\"model\":\"gemini-3.5-flash-lite\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\", eleven, twelve, thirteen, fourteen, fifteen, sixteen, seventeen, eighteen, nineteen, twenty, twenty-one, twenty\",\"role\":\"assistant\"},\"index\":0}],\"created\":1791062524,\"id\":\"_HHBapPFF4jVz7IP5pK4GA\",\"model\":\"gemini-3.5-flash-lite\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"delta\":{\"role\":\"assistant\"},\"finish_reason\":\"content_filter: RECITATION\",\"index\":0}],\"created\":1791062524,\"id\":\"_HHBapPFF4jVz7IP5pK4GA\",\"model\":\"gemini-3.5-flash-lite\",\"object\":\"chat.completion.chunk\"}\n\ndata: [DONE]\n"
+  },
+  "py-count-3": {
+    "runtime": "python-agent",
+    "text": "One, two, three, four, five, six, seven, eight, nine, ten, eleven, twelve, thirteen, fourteen, fifteen, sixteen, seventeen, eighteen, nineteen, twenty, twenty-one, twenty",
+    "finishReason": "content_filter: RECITATION",
+    "sse": "data: {\"choices\":[{\"delta\":{\"content\":\"One\",\"role\":\"assistant\"},\"index\":0}],\"created\":1791062530,\"id\":\"AnLBauiXHbXoz7IP9MODEA\",\"model\":\"gemini-3.5-flash-lite\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\", two, three, four, five, six, seven, eight, nine, ten\",\"role\":\"assistant\"},\"index\":0}],\"created\":1791062530,\"id\":\"AnLBauiXHbXoz7IP9MODEA\",\"model\":\"gemini-3.5-flash-lite\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\", eleven, twelve, thirteen, fourteen, fifteen, sixteen, seventeen, eighteen, nineteen, twenty, twenty-one, twenty\",\"role\":\"assistant\"},\"index\":0}],\"created\":1791062530,\"id\":\"AnLBauiXHbXoz7IP9MODEA\",\"model\":\"gemini-3.5-flash-lite\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"delta\":{\"role\":\"assistant\"},\"finish_reason\":\"content_filter: RECITATION\",\"index\":0}],\"created\":1791062531,\"id\":\"AnLBauiXHbXoz7IP9MODEA\",\"model\":\"gemini-3.5-flash-lite\",\"object\":\"chat.completion.chunk\"}\n\ndata: [DONE]\n"
+  },
+  "ts-count-1": {
+    "runtime": "inprocess-ts",
+    "text": "one, two, three, four, five, six, seven, eight, nine, ten, eleven, twelve, thirteen, fourteen, fifteen, sixteen, seventeen, eighteen, nineteen, twenty",
+    "finishReason": "content_filter: RECITATION",
+    "sse": "data: {\"choices\":[{\"delta\":{\"content\":\"one, two, three, four, five, six, seven\",\"role\":\"assistant\"},\"index\":0}],\"created\":1791062596,\"id\":\"Q3LBas3PEebQz7IPhJjXiAI\",\"model\":\"gemini-3.5-flash-lite\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\", eight, nine, ten, eleven, twelve, thirteen, fourteen, fifteen, sixteen, seventeen, eighteen, nineteen, twenty\",\"role\":\"assistant\"},\"index\":0}],\"created\":1791062596,\"id\":\"Q3LBas3PEebQz7IPhJjXiAI\",\"model\":\"gemini-3.5-flash-lite\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"delta\":{\"role\":\"assistant\"},\"finish_reason\":\"content_filter: RECITATION\",\"index\":0}],\"created\":1791062596,\"id\":\"Q3LBas3PEebQz7IPhJjXiAI\",\"model\":\"gemini-3.5-flash-lite\",\"object\":\"chat.completion.chunk\"}\n\ndata: [DONE]\n"
+  },
+  "ts-count-2": {
+    "runtime": "inprocess-ts",
+    "text": "one, two, three, four, five, six, seven, eight, nine, ten, eleven, twelve, thirteen, fourteen, fifteen, sixteen, seventeen, eighteen",
+    "finishReason": "content_filter: RECITATION",
+    "sse": "data: {\"choices\":[{\"delta\":{\"content\":\"one, two, three, four\",\"role\":\"assistant\"},\"index\":0}],\"created\":1791062602,\"id\":\"SXLBav-JOZ_pz7IP3YS7iQg\",\"model\":\"gemini-3.5-flash-lite\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\", five, six, seven, eight, nine, ten, eleven, twelve, thirteen, fourteen, fifteen, sixteen, seventeen, eighteen\",\"role\":\"assistant\"},\"index\":0}],\"created\":1791062602,\"id\":\"SXLBav-JOZ_pz7IP3YS7iQg\",\"model\":\"gemini-3.5-flash-lite\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"delta\":{\"role\":\"assistant\"},\"finish_reason\":\"content_filter: RECITATION\",\"index\":0}],\"created\":1791062602,\"id\":\"SXLBav-JOZ_pz7IP3YS7iQg\",\"model\":\"gemini-3.5-flash-lite\",\"object\":\"chat.completion.chunk\"}\n\ndata: [DONE]\n"
+  },
+  "ts-count-3": {
+    "runtime": "inprocess-ts",
+    "text": "one, two, three, four, five, six, seven, eight, nine, ten, eleven, twelve, thirteen, fourteen, fifteen, sixteen, seventeen, eighteen, nineteen, twenty, twenty-one, twenty",
+    "finishReason": "content_filter: RECITATION",
+    "sse": "data: {\"choices\":[{\"delta\":{\"content\":\"one\",\"role\":\"assistant\"},\"index\":0}],\"created\":1791062603,\"id\":\"SnLBaoTwOrfVz7IP24qvKQ\",\"model\":\"gemini-3.5-flash-lite\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\", two, three, four, five, six, seven, eight, nine, ten\",\"role\":\"assistant\"},\"index\":0}],\"created\":1791062603,\"id\":\"SnLBaoTwOrfVz7IP24qvKQ\",\"model\":\"gemini-3.5-flash-lite\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\", eleven, twelve, thirteen, fourteen, fifteen, sixteen, seventeen, eighteen, nineteen, twenty, twenty-one, twenty\",\"role\":\"assistant\"},\"index\":0}],\"created\":1791062603,\"id\":\"SnLBaoTwOrfVz7IP24qvKQ\",\"model\":\"gemini-3.5-flash-lite\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[{\"delta\":{\"role\":\"assistant\"},\"finish_reason\":\"content_filter: RECITATION\",\"index\":0}],\"created\":1791062603,\"id\":\"SnLBaoTwOrfVz7IP24qvKQ\",\"model\":\"gemini-3.5-flash-lite\",\"object\":\"chat.completion.chunk\"}\n\ndata: [DONE]\n"
+  }
+}

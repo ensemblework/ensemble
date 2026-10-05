@@ -1,0 +1,30 @@
+/* 08 · Context graph: bloom, knit, focus ripple */
+.gr { position: absolute; inset: 0; background: radial-gradient(60% 70% at 50% 50%, color-mix(in srgb, var(--u-agent) 7%, transparent), transparent 70%), var(--bg); }
+.gr-svg { width: 100%; height: 100%; display: block; }
+.gr-edge { fill: none; stroke: color-mix(in srgb, var(--ink) 30%, transparent); stroke-width: 1.4; stroke-dasharray: 3.5 3.5; transition: stroke-dasharray .5s var(--ease), opacity .4s, stroke .4s; }
+.gr-edge.tight { stroke-dasharray: 8 0; }
+.gr-edge.lit { stroke: var(--v-hi); opacity: 1; }
+.gr-needle { fill: var(--v-hi2); }
+.gr-node { cursor: pointer; transition: opacity .4s; }
+.gr-nb { transform: scale(0); transform-box: fill-box; transform-origin: center; }
+.gr-node.bloom .gr-nb { animation: gr-bloom .9s var(--spring-bouncy) forwards; }
+@keyframes gr-bloom { to { transform: scale(1); } }
+.gr-node .body { fill: color-mix(in srgb, var(--k) 24%, var(--bg)); stroke: var(--k); stroke-width: 1.6; transition: stroke-width .3s; }
+.gr-node .petal { fill: none; stroke: var(--k); stroke-width: 1.5; opacity: 0; transform-box: fill-box; transform-origin: center; }
+.gr-node.bloom .petal { animation: gr-petal .9s var(--ease) forwards; }
+@keyframes gr-petal { from { opacity: .8; transform: scale(1); } to { opacity: 0; transform: scale(2.4); } }
+.gr-node text { font: 500 10.5px var(--font-sans); fill: var(--muted); text-anchor: middle; opacity: 0; transition: opacity .5s .2s, fill .3s; }
+.gr-node.bloom text { opacity: 1; }
+.gr-node.hit .gr-nb { animation: gr-hit .6s var(--spring-bouncy); transform: scale(1); }
+@keyframes gr-hit { 0% { transform: scale(1.35); } 100% { transform: scale(1); } }
+.gr-node .sel { fill: none; stroke: var(--v-hi2); stroke-width: 2; opacity: 0; transform-box: fill-box; transform-origin: center; transform: scale(.7); transition: all .45s var(--spring-soft); }
+.gr-node.on .sel { opacity: 1; transform: none; }
+.gr-node.on text, .gr-node.nb1 text { fill: var(--ink); }
+.gr.focus .gr-node:not(.on):not(.nb1), .gr.focus .gr-edge:not(.lit) { opacity: .2; }
+.gr-ring { fill: none; stroke-width: 1.6; }
+.gr-u { fill: none; stroke-linecap: round; }
+.gr-legend { position: absolute; left: 14px; bottom: 10px; display: flex; gap: 10px; font: 500 10.5px var(--font-mono); color: var(--faint); }
+.gr-legend span::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--k); margin-right: 5px; }
+.gr-hint { position: absolute; right: 14px; bottom: 10px; font: 500 10.5px var(--font-mono); color: var(--faint); }
+.gr.reduced * { animation: none !important; transition: none !important; }
+.gr.reduced .gr-nb { transform: none; }

@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "shell-commands"
+description = "The local shell page may read the server URL and ask the app to open it."
+commands.allow = ["shell_state", "connect_to"]

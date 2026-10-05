@@ -1,0 +1,37 @@
+/* Ensemble motion system: tokens.
+   Colours mirror apps/hub-web/app/globals.css so every component themes with the app. */
+:root, [data-theme="dark"] {
+  --bg: #141210; --sidebar: #1b1815; --panel: #221e1a; --raised: #2b261f;
+  --hover: rgba(255,248,236,.05); --line: rgba(243,238,230,.08); --line-strong: rgba(243,238,230,.14);
+  --ink: #f3eee6; --muted: #b7ae9f; --faint: #8f877b;
+  --accent: #7c6af7; --accent-rgb: 124 106 247; --accent-hi: #b4a9ff; --accent-soft: rgba(124,106,247,.16);
+  --ok: #3cba86; --warn: #e0a04a; --danger: #e36b64;
+  --kind-people: #e7a08a; --kind-project: #7eb8c9; --kind-repo: #8fbf9f; --kind-task: #e0b15a; --kind-skill: #d4c07a;
+  /* the two voices */
+  --u-agent: var(--accent);
+  --u-you: var(--ink);
+  --skel-base: color-mix(in srgb, var(--ink) 7%, transparent);
+  --skel-sweep: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+[data-theme="light"] {
+  --bg: #f4f1ea; --sidebar: #ebe6dc; --panel: #fffcf7; --raised: #f7f3ec;
+  --hover: rgba(28,25,21,.045); --line: rgba(28,25,21,.08); --line-strong: rgba(28,25,21,.14);
+  --ink: #1c1915; --muted: #5a534c; --faint: #625b51;
+  --accent: #5346d6; --accent-rgb: 83 70 214; --accent-hi: #7c6af7; --accent-soft: rgba(83,70,214,.12);
+  --ok: #18724b; --warn: #9a6b12; --danger: #c2413b;
+  --skel-base: color-mix(in srgb, var(--ink) 7%, transparent);
+  --skel-sweep: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+:root {
+  /* Motion tokens. "weave" is the house curve: slow in, slow out, like two hands in step. */
+  --ease: cubic-bezier(.2,.8,.2,1);          /* existing app ease (enter) */
+  --ease-weave: cubic-bezier(.65,0,.35,1);    /* morphs, loops */
+  --ease-snap: cubic-bezier(.3,1.4,.5,1);     /* success pop */
+  --dur-fast: 120ms; --dur: 180ms; --dur-enter: 320ms;
+  --dur-breath: 2.4s;   /* idle breathing */
+  --dur-sweep: 1.6s;    /* skeleton sweep */
+  --dur-verb: 2.6s;     /* status verb rotation */
+}
+/* One switch for everything: OS setting OR the app's own Settings toggle. */
+@media (prefers-reduced-motion: reduce) { :root { --u-reduced: 1; } }
+[data-reduce-motion="true"] { --u-reduced: 1; }

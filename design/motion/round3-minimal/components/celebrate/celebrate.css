@@ -1,0 +1,19 @@
+.ce { position: absolute; inset: 0; padding: 22px; display: flex; flex-direction: column; justify-content: center; }
+.ce-row { display: flex; align-items: center; padding: 12px 14px; transition: opacity var(--m-dur-ui) var(--m-ease-exit), transform var(--m-dur-move) var(--m-ease-move); }
+.ce-row .m-mono { margin-left: auto; }
+.ce.gone .ce-row { opacity: 0; transform: translateY(calc(var(--m-amp) * -1)); }
+.ce-done { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; pointer-events: none; }
+.ce-done p { margin: 6px 0 0; font: italic 400 20px var(--font-serif); color: var(--ink); opacity: 0; transform: translateY(var(--m-amp)); transition: opacity var(--m-dur-move) var(--m-ease-enter), transform var(--m-dur-move) var(--m-ease-move); }
+.ce-st { opacity: 0; transition: opacity var(--m-dur-move) var(--m-ease-enter) 200ms; }
+.ce.on .ce-done p, .ce.on .ce-st { opacity: 1; transform: none; }
+.ce-mk { position: relative; width: 44px; height: 44px; display: grid; place-items: center; }
+.ce-mk .qu path { stroke: var(--ink); stroke-width: 1.5px; } .ce-mk .qu path.a { stroke: var(--accent); }
+.ce-ring { position: absolute; inset: -6px; border-radius: 50%; border: 1px solid var(--accent); opacity: 0; transform: scale(.6); }
+.ce.on .ce-ring { animation: ce-ring 1.6s var(--m-ease-move) forwards; }
+@keyframes ce-ring { 0% { opacity: 0; transform: scale(.6); } 25% { opacity: .35; } 100% { opacity: 0; transform: scale(1.5); } }
+.ce-dd { position: relative; width: 20px; height: 8px; }
+.ce-dd .dot { position: absolute; top: 1px; width: 7px; height: 7px; transition: transform var(--m-dur-move) var(--m-ease-move), opacity var(--m-dur-ui); }
+.ce-dd .dot:first-child { left: 1px; } .ce-dd .dot.ag { left: 12px; }
+.ce.on .ce-dd .dot:first-child { transform: translateX(5.5px); opacity: 0; } .ce.on .ce-dd .dot.ag { transform: translateX(-5.5px) scale(1.3); }
+.ce-mk .qu, .ce-dd { opacity: 0; transition: opacity var(--m-dur-ui) var(--m-ease-enter); }
+.ce.gone .ce-mk .qu, .ce.gone .ce-dd { opacity: 1; }

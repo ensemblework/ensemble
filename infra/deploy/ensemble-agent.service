@@ -1,0 +1,44 @@
+[Unit]
+Description=Ensemble agent-runtime
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ensemble
+Group=ensemble
+WorkingDirectory=/opt/ensemble/apps/agent-runtime
+EnvironmentFile=/etc/ensemble.env
+Environment=NODE_ENV=production
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=TMPDIR=/tmp
+Environment=ENSEMBLE_MPLCONFIGDIR=/var/cache/ensemble/matplotlib
+ExecStart=/opt/ensemble/apps/agent-runtime/.venv/bin/uvicorn ensemble_agent.main:app --host 127.0.0.1 --port 5055
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30
+
+# PrivateTmp is the plot worker's temp dir. ExecStartPre does not touch /tmp.
+# ProtectHome stays on. The matplotlib cache is CacheDirectory via ENSEMBLE_MPLCONFIGDIR.
+# .ensemble is writable only so a missing ENSEMBLE_SECRET_KEY can create secret.key.
+# The VM env file sets that key, so the file is not written in normal use.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectClock=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictNamespaces=true
+SystemCallArchitectures=native
+CacheDirectory=ensemble
+ReadWritePaths=/opt/ensemble/.ensemble
+ExecStartPre=+/usr/bin/install -d -o ensemble -g ensemble -m 0750 /opt/ensemble/.ensemble
+
+[Install]
+WantedBy=multi-user.target

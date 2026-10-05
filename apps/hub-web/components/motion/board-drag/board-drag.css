@@ -1,0 +1,126 @@
+/* board.drag · Ensemble motion slot (round 6). Reads the round-3 tokens (tokens.css + suite.css) and local --bdg-* hooks.
+   Every animated property is transform or opacity. Placeholder, hover and over-column looks live on pseudo-elements
+   whose opacity is what changes. Style = nearest [data-motion-theme]; reduce = [data-reduce-motion="true"] / OS. */
+.bdg {
+  --bdg-agent: #9d8fff; --bdg-agent-hi: #b4a9ff; --bdg-you: var(--you, #f3eee6); --bdg-ok: var(--ok, #a3c4ab); --bdg-err: var(--err, #d98c82);
+  --bdg-card: var(--raise, #211d19); --bdg-col: color-mix(in srgb, var(--ink, #f3eee6) 3%, transparent); --bdg-line: var(--line); --bdg-hair: var(--hair);
+  --bdg-radius: 12px; --bdg-gap: 8px;
+  --bdg-shadow: 0 22px 44px -14px rgba(0,0,0,.6), 0 6px 14px -6px rgba(0,0,0,.4);
+  --bdg-hover-shadow: 0 8px 18px -10px rgba(0,0,0,.6);
+  position: relative; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(220px, 1fr); gap: 12px; overflow-x: auto;
+}
+[data-theme="light"] .bdg {
+  --bdg-agent: #7c6af7; --bdg-agent-hi: #9d8fff;
+  --bdg-shadow: 0 22px 40px -16px rgba(28,25,21,.32), 0 6px 12px -6px rgba(28,25,21,.18);
+  --bdg-hover-shadow: 0 8px 18px -10px rgba(28,25,21,.25);
+}
+[data-motion-theme="minimal-quiet"] .bdg { --bdg-shadow: 0 10px 22px -12px rgba(0,0,0,.55); }
+[data-motion-theme="minimal-dot"] .bdg { --bdg-shadow: 0 6px 14px -8px rgba(0,0,0,.5); }
+[data-theme="light"][data-motion-theme="minimal-quiet"] .bdg, [data-theme="light"] [data-motion-theme="minimal-quiet"] .bdg { --bdg-shadow: 0 10px 22px -12px rgba(28,25,21,.25); }
+[data-theme="light"][data-motion-theme="minimal-dot"] .bdg, [data-theme="light"] [data-motion-theme="minimal-dot"] .bdg { --bdg-shadow: 0 6px 14px -8px rgba(28,25,21,.22); }
+
+/* ---------- columns ---------- */
+.bdg-col { isolation: isolate; position: relative; display: flex; flex-direction: column; min-height: 0; border-radius: 14px; background: var(--bdg-col); border: 1px solid var(--bdg-line); }
+.bdg-col::after { content: ""; position: absolute; inset: -1px; border-radius: 14px; pointer-events: none; opacity: 0; transition: opacity .18s; z-index: -1; }
+.bdg-col[data-over="yes"]::after { opacity: 1; }
+.bdg-col[data-over="deny"]::after { opacity: 1; }
+/* Expressive: violet wash + rim */
+.bdg-col::after { background: color-mix(in srgb, var(--bdg-agent) 7%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bdg-agent) 45%, transparent); }
+.bdg-col[data-over="deny"]::after { background: color-mix(in srgb, var(--bdg-err) 7%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bdg-err) 45%, transparent); }
+/* Quiet: hairline rim only */
+[data-motion-theme="minimal-quiet"] .bdg-col::after { background: none; box-shadow: inset 0 0 0 1px var(--bdg-hair); }
+[data-motion-theme="minimal-quiet"] .bdg-col[data-over="deny"]::after { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bdg-err) 50%, transparent); }
+/* Dot: nothing on the column, a dot by the header count instead */
+[data-motion-theme="minimal-dot"] .bdg-col::after { display: none; }
+.bdg-ch { position: relative; display: flex; align-items: center; gap: 8px; padding: 11px 12px 9px; font-weight: 600; font-size: 13px; }
+.bdg-n { margin-left: auto; font: 500 11px var(--font-mono); color: var(--faint); display: inline-block; }
+.bdg-ch::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--bdg-agent); opacity: 0; transform: scale(.4); transition: opacity .2s, transform .2s; display: none; }
+[data-motion-theme="minimal-dot"] .bdg-ch::after { display: block; }
+[data-motion-theme="minimal-dot"] .bdg-col[data-over="yes"] .bdg-ch::after { opacity: 1; transform: none; }
+[data-motion-theme="minimal-dot"] .bdg-col[data-over="deny"] .bdg-ch::after { opacity: 1; transform: none; background: var(--bdg-err); }
+.bdg-list { position: relative; display: flex; flex-direction: column; gap: var(--bdg-gap); padding: 2px 10px 10px; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+.bdg-foot { font-size: 12.5px; color: var(--faint); padding: 4px 6px; }
+
+/* ---------- cards ---------- */
+.bdg-card {
+  position: relative; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 2px 10px; padding: 10px 12px;
+  border-radius: var(--bdg-radius); background: var(--bdg-card); border: 1px solid var(--bdg-line); color: var(--ink);
+  cursor: grab; outline: none; flex: none;
+  touch-action: pan-y;                     /* vertical scroll keeps working until a long-press lifts the card */
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
+  transition: transform var(--m-dur-micro, 160ms) var(--m-ease-enter, ease), translate var(--m-dur-micro, 160ms) var(--m-ease-enter, ease);
+}
+[data-theme="light"] .bdg-card { background: #fff; }
+.bdg-card::after { content: ""; position: absolute; inset: -1px; border-radius: inherit; pointer-events: none; opacity: 0; transition: opacity .18s; box-shadow: var(--bdg-hover-shadow); }
+.bdg-card::before { content: ""; position: absolute; inset: -1px; border-radius: inherit; pointer-events: none; opacity: 0; }
+.bdg-t { font-size: 13px; font-weight: 600; line-height: 1.35; }
+.bdg-m { grid-column: 1; font: 500 10.5px var(--font-mono); color: var(--faint); display: flex; align-items: center; gap: 6px; }
+.bdg-card.is-done .bdg-t { color: var(--muted); }
+.bdg-grip { position: absolute; left: 3px; top: 50%; width: 6px; height: 14px; margin-top: -7px; opacity: 0; transition: opacity .18s;
+  background: radial-gradient(circle, var(--faint) 1px, transparent 1.4px) 0 0 / 3px 4.5px; }
+[data-motion-theme="minimal-dot"] .bdg-grip { width: 5px; height: 5px; margin-top: -2.5px; left: 4px; border-radius: 50%; background: var(--bdg-agent); }
+/* hover / grab affordance */
+@media (hover: hover) {
+  .bdg:not([data-dragging]) .bdg-card:hover .bdg-grip { opacity: 1; }
+  .bdg:not([data-dragging]) .bdg-card:hover::after { opacity: 1; }
+  /* 1px lift on the card only. translate, never transform, so it does not replace dnd-kit or popup centering. */
+  [data-motion-theme="expressive"] .bdg:not([data-dragging]) .bdg-card:hover, .bdg:not([data-dragging]) .bdg-card:hover:where(:not([data-motion-theme] *)) { translate: 0 -1px; }
+  [data-motion-theme="minimal-quiet"] .bdg-card::after { box-shadow: inset 0 0 0 1px var(--bdg-hair); }
+  [data-motion-theme="minimal-dot"] .bdg-card::after { display: none; }
+}
+.bdg-card[data-press] { transform: scale(var(--m-scale-press, .97)); }
+.bdg-card:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--bdg-agent); }
+
+/* ---------- placeholder (the card itself while it is lifted) ---------- */
+.bdg-card.is-ph { background: transparent; border-color: transparent; cursor: grabbing; }
+.bdg-card.is-ph > * { opacity: 0; }
+.bdg-card.is-ph::after { opacity: 0 !important; }
+.bdg-card.is-ph::before { opacity: 1; transition: opacity .16s; }
+.bdg-card.is-ph.is-landing::before { opacity: 0; }
+/* Expressive: a stitched violet gap */
+.bdg-card::before { border: 1.5px dashed color-mix(in srgb, var(--bdg-agent) 62%, transparent); background: color-mix(in srgb, var(--bdg-agent) 8%, transparent); }
+/* Quiet: hairline outline */
+[data-motion-theme="minimal-quiet"] .bdg-card::before { border: 1px solid var(--bdg-hair); background: none; }
+/* Dot: one violet dot marks where it lands, plus one faint line */
+[data-motion-theme="minimal-dot"] .bdg-card::before { inset: 50% auto auto 2px; width: 7px; height: 7px; margin-top: -3.5px; border: 0; border-radius: 50%; background: var(--bdg-agent); }
+[data-motion-theme="minimal-dot"] .bdg-card.is-ph { background: linear-gradient(var(--bdg-hair), var(--bdg-hair)) 16px 50% / calc(100% - 22px) 1px no-repeat; }
+
+/* ---------- overlay ---------- */
+.bdg-layer { position: fixed; inset: 0; pointer-events: none; z-index: 60; overflow: hidden; }
+.bdg-float { position: absolute; left: 0; top: 0; will-change: transform; }
+.bdg-float-tilt { position: relative; width: 100%; height: 100%; will-change: transform, opacity; }
+.bdg-float-shadow { position: absolute; inset: 0; border-radius: var(--bdg-radius); box-shadow: var(--bdg-shadow); opacity: 0; }
+.bdg-float .bdg-card { height: 100%; box-sizing: border-box; cursor: grabbing; transition: opacity .15s; }
+.bdg-float .bdg-card::after, .bdg-float .bdg-grip { opacity: 0; }
+[data-motion-theme="expressive"] .bdg-float .bdg-card, .bdg-float .bdg-card:where(:not([data-motion-theme] *)) { border-color: color-mix(in srgb, var(--bdg-agent) 55%, var(--bdg-line)); }
+[data-motion-theme="minimal-quiet"] .bdg-float .bdg-card { border-color: var(--bdg-hair); }
+.bdg-float[data-intent="cancel"] .bdg-card { opacity: .72; }
+.bdg-float[data-intent="deny"] .bdg-card { opacity: .8; }
+[data-motion-theme="expressive"] .bdg-float[data-intent="deny"] .bdg-card { border-color: color-mix(in srgb, var(--bdg-err) 70%, transparent); }
+.bdg-float .bdg-card.is-agent::after { opacity: 1; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bdg-agent) 70%, transparent); }
+
+/* Expressive extras: thread tether beads, crane rope + hook, sparks */
+.bdg-bead { position: absolute; left: 0; top: 0; width: 4px; height: 4px; border-radius: 50%; background: var(--bdg-agent-hi); opacity: 0; will-change: transform, opacity; }
+.bdg-rope { position: absolute; left: 0; top: 0; width: 2px; height: 1600px; border-radius: 1px; background: linear-gradient(transparent, var(--bdg-agent) 40%, var(--bdg-agent-hi)); transform-origin: 50% 100%; will-change: transform; }
+.bdg-hook { position: absolute; left: 0; top: 0; width: 10px; height: 10px; box-sizing: border-box; border-radius: 50%; border: 2px solid var(--bdg-agent-hi); background: var(--bdg-card); will-change: transform; }
+.bdg-spark { position: absolute; left: 0; top: 0; width: 4px; height: 4px; border-radius: 50%; background: var(--bdg-agent-hi); }
+/* Dot: the agent's violet dot */
+.bdg-adot { position: absolute; left: 0; top: 0; width: 8px; height: 8px; border-radius: 50%; background: var(--bdg-agent); will-change: transform, opacity; }
+
+/* ---------- owner marks ---------- */
+.bdg-own { grid-row: 1 / span 2; grid-column: 2; width: 20px; height: 20px; border-radius: 50%; display: inline-grid; place-items: center; position: relative; font: 700 9.5px var(--font-sans); }
+.bdg-own[data-owner="you"] { background: color-mix(in srgb, var(--bdg-you) 16%, transparent); color: var(--bdg-you); }
+.bdg-own[data-owner="ag"] { background: color-mix(in srgb, var(--bdg-agent) 16%, transparent); }
+.bdg-own[data-owner="ag"]::before, .bdg-own[data-owner="ag"]::after { content: ""; position: absolute; width: 5px; height: 5px; border-radius: 50%; top: 7.5px; }
+.bdg-own[data-owner="ag"]::before { left: 4px; background: var(--bdg-agent); }
+.bdg-own[data-owner="ag"]::after { right: 4px; background: var(--bdg-you); }
+.bdg-own[data-owner="ok"] { background: color-mix(in srgb, var(--bdg-ok) 20%, transparent); }
+.bdg-own[data-owner="ok"]::after { content: ""; position: absolute; left: 7px; top: 4px; width: 4px; height: 8px; border: solid var(--bdg-ok); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+
+/* ---------- misc ---------- */
+.bdg-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+html.bdg-grabbing, html.bdg-grabbing * { cursor: grabbing !important; }
+.bdg[data-dragging] { user-select: none; -webkit-user-select: none; }
+/* reduced motion: no CSS transitions at all (the JS swaps to crossfades) */
+@media (prefers-reduced-motion: reduce) { .bdg *, .bdg *::before, .bdg *::after { transition: none !important; } }
+[data-reduce-motion="true"] .bdg *, [data-reduce-motion="true"] .bdg *::before, [data-reduce-motion="true"] .bdg *::after { transition: none !important; }

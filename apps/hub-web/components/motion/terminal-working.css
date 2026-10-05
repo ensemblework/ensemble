@@ -1,0 +1,86 @@
+/* ── terminal.working ── ~14 px inline status mark for the Code tab. Two interchangeable renderings:
+   .tw-text (character frames, driven by terminal-working.js) and .tw-svg (pure CSS on data-state).
+   Both: data-motion-slot="terminal.working" data-state="working|idle|done|error"; style from nearest [data-motion-theme]. */
+@font-face { font-family: "Ensemble Frames"; src: url("/fonts/ensemble-frames.woff2") format("woff2"); font-display: block;
+  unicode-range: U+00B7, U+2218, U+2022, U+25CF, U+25E1, U+222A, U+22C3, U+2240, U+22C8, U+2722, U+2723, U+2733, U+2713, U+2715; }
+.tw { --tw-size: 14px;
+  --tw-font: var(--font-mono-face), "JetBrains Mono", "Ensemble Frames", ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  --tw-accent: var(--agent, var(--accent)); --tw-ink: var(--ink, #f3eee6); --tw-you: var(--you, #f3eee6); --tw-muted: var(--muted, #b7ae9f); --tw-faint: var(--faint, #8a8276);
+  --tw-ok: var(--ok, #6fcf97); --tw-err: var(--err, #f07a6a);
+  display: inline-block; vertical-align: -0.125em; line-height: 1; }
+/* text frames */
+.tw-text { font: 400 var(--tw-size)/1 var(--tw-font); width: 1ch; height: 1em; text-align: center; overflow: visible; white-space: pre;
+  font-variant-emoji: text; font-feature-settings: "calt" 0, "liga" 0; font-variant-ligatures: none; font-synthesis: none;
+  color: var(--tw-accent); transition: color var(--m-dur-micro, 160ms) linear; }
+.tw-text[data-tone="accent"] { color: var(--tw-accent); } .tw-text[data-tone="ink"] { color: var(--tw-ink); }
+.tw-text[data-tone="muted"] { color: var(--tw-muted); } .tw-text[data-tone="faint"] { color: var(--tw-faint); }
+.tw-text[data-tone="ok"] { color: var(--tw-ok); } .tw-text[data-tone="err"] { color: var(--tw-err); }
+[data-motion-theme="minimal-quiet"] .tw-text[data-tone="err"] { color: color-mix(in srgb, var(--tw-err) 72%, var(--tw-muted)); }
+[data-motion-theme="minimal-quiet"] .tw-text[data-tone="accent"] { color: var(--tw-muted); }
+
+/* SVG */
+.tw-svg { width: var(--tw-size); height: var(--tw-size); }
+.tw-svg svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.tw-svg path, .tw-svg circle { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.tw-svg .u, .tw-svg .ck, .tw-svg .dd, .tw-svg .run { transition: opacity var(--m-dur-ui, 320ms) var(--m-ease-enter, ease), transform var(--m-dur-ui, 320ms) var(--m-ease-move, ease); transform-box: view-box; transform-origin: 7px 7px; }
+.tw-svg .o { stroke: var(--tw-accent); stroke-width: 1.6; transform-box: fill-box; transition: transform var(--spring-snappy-dur, 483ms) var(--spring-snappy, ease), stroke var(--m-dur-micro, 160ms); }
+.tw-svg .oL { transform-origin: 0 0; } .tw-svg .oR { transform-origin: 100% 0; }
+.tw-svg .i { stroke: var(--tw-you); stroke-width: 1.3; transition: stroke var(--m-dur-micro, 160ms), opacity var(--m-dur-ui, 320ms); }
+.tw-svg .run { stroke: var(--tw-accent); stroke-width: 1.3; opacity: 0; }
+.tw-svg .ck { stroke: var(--tw-ok); stroke-width: 1.7; stroke-dasharray: 1; stroke-dashoffset: 0; opacity: 0; }
+.tw-svg .dd { opacity: 0; }
+.tw-svg .dd circle { stroke: none; transition: transform var(--m-dur-move, 720ms) var(--m-ease-move, ease), fill var(--m-dur-micro, 160ms), stroke var(--m-dur-micro, 160ms), opacity var(--m-dur-ui, 320ms); transform-box: view-box; }
+.tw-svg .dd .y { fill: var(--tw-you); opacity: .55; } .tw-svg .dd .a { fill: var(--tw-accent); }
+@keyframes tw-flow { to { stroke-dashoffset: -1; } }
+@keyframes tw-counter { to { stroke-dashoffset: 1; } }
+@keyframes tw-draw { from { stroke-dashoffset: 1; } }
+@keyframes tw-pop { from { transform: scale(.72); } }
+@keyframes tw-breathe { from { opacity: .3; } to { opacity: 1; } }
+@keyframes tw-run { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -.8; } }
+
+/* Expressive: two strands weave in counter-flow; done = pop + check; error = halves spring apart */
+.tw-svg[data-state="working"] .o { stroke-dasharray: .62 .38; animation: tw-flow 1.2s linear infinite; }
+.tw-svg[data-state="working"] .i { stroke-dasharray: .42 .58; animation: tw-counter 1.2s linear infinite; }
+.tw-svg[data-state="idle"] .u { opacity: .5; }
+.tw-svg[data-state="done"] .u { opacity: 0; transform: scale(.6); }
+.tw-svg[data-state="done"] .ck { opacity: 1; animation: tw-draw var(--m-dur-ui, 320ms) var(--m-ease-enter, ease-out) both, tw-pop var(--spring-snappy-dur, 483ms) var(--spring-snappy, ease-out) both; }
+.tw-svg[data-state="error"] .o { stroke: var(--tw-err); }
+.tw-svg[data-state="error"] .oL { transform: translateX(-.4px) rotate(9deg); } .tw-svg[data-state="error"] .oR { transform: translateX(.4px) rotate(-9deg); }
+.tw-svg[data-state="error"] .i { stroke: var(--tw-err); opacity: .5; }
+
+/* Minimal · Quiet: hairline mark, one short segment travels and returns; check without pop; halves part ~1 px */
+[data-motion-theme="minimal-quiet"] .tw-svg .o { stroke: var(--tw-muted); stroke-width: 1.15; }
+[data-motion-theme="minimal-quiet"] .tw-svg .i { stroke: var(--tw-faint); stroke-width: 1; }
+[data-motion-theme="minimal-quiet"] .tw-svg .ck { stroke: var(--tw-muted); stroke-width: 1.3; }
+[data-motion-theme="minimal-quiet"] .tw-svg[data-state="working"] .o, [data-motion-theme="minimal-quiet"] .tw-svg[data-state="working"] .i { stroke-dasharray: none; animation: none; opacity: .55; }
+[data-motion-theme="minimal-quiet"] .tw-svg[data-state="working"] .run { opacity: 1; stroke-dasharray: .2 .8; animation: tw-run 1.8s var(--m-ease-loop, ease-in-out) infinite alternate; }
+[data-motion-theme="minimal-quiet"] .tw-svg[data-state="done"] .ck { animation: tw-draw var(--m-dur-ui, 420ms) var(--m-ease-enter, ease) both; }
+[data-motion-theme="minimal-quiet"] .tw-svg[data-state="error"] .o { stroke: color-mix(in srgb, var(--tw-err) 72%, var(--tw-muted)); }
+[data-motion-theme="minimal-quiet"] .tw-svg[data-state="error"] .oL { transform: translateX(-.5px) rotate(4deg); } [data-motion-theme="minimal-quiet"] .tw-svg[data-state="error"] .oR { transform: translateX(.5px) rotate(-4deg); }
+[data-motion-theme="minimal-quiet"] .tw-svg[data-state="error"] .i { stroke: var(--tw-faint); opacity: .5; }
+
+/* Minimal · Dot: two dots. working = agent dot breathes; done = you meets agent (one dot); error = hollow red agent */
+[data-motion-theme="minimal-dot"] .tw-svg .u, [data-motion-theme="minimal-dot"] .tw-svg .ck, [data-motion-theme="minimal-dot"] .tw-svg .run { display: none; }
+[data-motion-theme="minimal-dot"] .tw-svg .dd { opacity: 1; }
+[data-motion-theme="minimal-dot"] .tw-svg[data-state="working"] .dd .a { animation: tw-breathe 1.4s var(--m-ease-loop, ease-in-out) infinite alternate; }
+[data-motion-theme="minimal-dot"] .tw-svg[data-state="idle"] .dd circle { opacity: .4; }
+[data-motion-theme="minimal-dot"] .tw-svg[data-state="done"] .dd .y { transform: translateX(2.5px); opacity: 0; }
+[data-motion-theme="minimal-dot"] .tw-svg[data-state="done"] .dd .a { transform: translateX(-2.5px); }
+[data-motion-theme="minimal-dot"] .tw-svg[data-state="error"] .dd .a { fill: none; stroke: var(--tw-err); stroke-width: 1.1; }
+[data-motion-theme="minimal-dot"] .tw-svg[data-state="error"] .dd .y { transform: translateX(-.8px); opacity: .4; }
+
+/* Reduce-motion overlay: still poses, no loops, no pop */
+@media (prefers-reduced-motion: reduce) { .tw-svg *, .tw-svg { animation: none !important; } .tw-svg[data-state="working"] .o, .tw-svg[data-state="working"] .i { stroke-dasharray: none !important; } .tw-svg .run { display: none; } }
+[data-reduce-motion="true"] .tw-svg, [data-reduce-motion="true"] .tw-svg * { animation: none !important; }
+[data-reduce-motion="true"] .tw-svg[data-state="working"] .o, [data-reduce-motion="true"] .tw-svg[data-state="working"] .i { stroke-dasharray: none !important; }
+[data-reduce-motion="true"] .tw-svg .run { display: none; }
+
+.tw {
+  --tw-accent: var(--accent);
+  --tw-ink: var(--ink);
+  --tw-you: var(--ink);
+  --tw-muted: var(--muted);
+  --tw-faint: var(--faint);
+  --tw-ok: var(--ok);
+  --tw-err: var(--danger);
+}

@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ensemble</title>
+    <meta name="theme-color" content="#141210" />
+    <link rel="stylesheet" href="morph.css" />
+    <link rel="stylesheet" href="app.css" />
+  </head>
+  <body class="ub">
+    <header class="ub-top">
+      <span class="ub-brand">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" aria-hidden="true">
+          <path class="o" d="M2 1H5V10A5 5 0 0 0 15 10V1H18V10A8 8 0 0 1 2 10Z" />
+          <path class="i" d="M6 1H8V10A2 2 0 0 0 12 10V1H14V10A4 4 0 0 1 6 10Z" />
+        </svg>
+        <span>Ensemble</span>
+      </span>
+    </header>
+    <main class="ub-main">
+      <div id="loading" class="ub-card" hidden>
+        <!-- data-delay is the brand.morph loader wait. ensemble-morph.js reads it; app.js does not repeat the number. -->
+        <span id="loader" class="u-morph" data-motion-slot="brand.morph" data-size="72" data-loader data-delay="180" data-state="idle" aria-hidden="true"></span>
+        <p id="loading-status" class="ub-p" role="status">Connecting…</p>
+      </div>
+      <div id="offline" class="ub-card" hidden>
+        <svg class="ub-art ub-art-still" viewBox="196 208 820 608" role="img" aria-label="Ensemble">
+          <path class="o" d="M316 300 V540 A196 196 0 0 0 708 540 V300" />
+          <path class="i" d="M426 300 V540 A86 86 0 0 0 598 540 V300" />
+        </svg>
+        <svg class="ub-art ub-art-motion" viewBox="196 208 820 608" role="img" aria-label="The Ensemble mark drawn in dots while waiting for the network">
+          <path class="ghost" d="M316 300 V540 A196 196 0 0 0 708 540 V300" />
+          <path class="ghost" d="M426 300 V540 A86 86 0 0 0 598 540 V300" />
+          <g class="dots">
+            <path class="o" d="M316 300 V540 A196 196 0 0 0 708 540 V300" />
+            <path class="i" d="M426 300 V540 A86 86 0 0 0 598 540 V300" />
+          </g>
+        </svg>
+        <p id="eyebrow" class="ub-code">offline</p>
+        <h1 id="heading" class="ub-h">You’re offline.</h1>
+        <p id="message" class="ub-p"></p>
+        <form id="server-form" class="ub-form">
+          <label for="url">Server URL</label>
+          <input id="url" name="url" type="url" inputmode="url" autocomplete="url" spellcheck="false" required placeholder="http://localhost:3000" />
+          <p id="source" class="ub-note"></p>
+          <p id="status" class="ub-status" role="status"></p>
+          <button id="connect" class="ub-btn pri" type="submit">Try again</button>
+        </form>
+      </div>
+    </main>
+    <footer class="ub-foot">Ensemble · A shared workspace for you and your agent.</footer>
+    <script src="ensemble-morph.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

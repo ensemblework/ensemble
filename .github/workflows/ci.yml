@@ -1,0 +1,165 @@
+name: ci
+
+# Every pull request and every push to main. deploy.yml waits for this
+# workflow to pass on main before it ships anything.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  checks:
+    name: Typecheck and unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.6.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Prisma's generated client is part of hub-api's types.
+      - run: pnpm db:generate
+
+      - run: pnpm typecheck
+
+      - name: Package tests
+        run: |
+          pnpm --filter @ensemble/shared-types test
+          pnpm --filter @ensemble/block-diagrams test
+          pnpm --filter @ensemble/ide-theme test
+
+      # The plots preview test renders the same figure with the agent runtime's matplotlib.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: apps/agent-runtime/pyproject.toml
+
+      - run: pip install -e apps/agent-runtime
+
+      - name: hub-web tests
+        run: PLOTS_PYTHON="$(command -v python)" pnpm --filter @ensemble/hub-web test
+
+  api:
+    name: hub-api tests (Postgres + Redis)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: ensemble
+          POSTGRES_PASSWORD: ensemble
+          POSTGRES_DB: ensemble
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ensemble -d ensemble"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      # A throwaway database that exists only for this job.
+      DATABASE_URL: postgresql://ensemble:ensemble@127.0.0.1:5432/ensemble
+      REDIS_URL: redis://127.0.0.1:6379
+      # Read-only access to this repo for the gh CLI. The repo-overview test reads
+      # Ensemble's own repo through GitHub, because Code refuses Ensemble's own folder.
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.6.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # The same extensions infra/docker-compose.yml loads on first start.
+      - run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f infra/sql/init.sql
+
+      - run: pnpm db:generate
+
+      - run: pnpm db:migrate
+
+      - run: pnpm --filter @ensemble/hub-api test
+
+      - name: Context Bridge (typecheck, MCP tests, build, smoke)
+        run: pnpm bridge:verify
+
+  python:
+    name: agent-runtime tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: apps/agent-runtime/pyproject.toml
+
+      - run: pip install -e apps/agent-runtime pytest
+
+      - working-directory: apps/agent-runtime
+        run: python -m pytest -q tests
+
+  build:
+    name: Production builds (Hub and landing)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.6.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Placeholder origins: this only proves the build works. The real values
+      # are set on the Vercel project and used by deploy.yml.
+      - name: Hub (apps/hub-web)
+        env:
+          NEXT_PUBLIC_HUB_API: https://api.example.com
+          NEXT_PUBLIC_SITE_URL: https://app.example.com
+        run: pnpm --filter @ensemble/hub-web build
+
+      - name: Landing page (apps/landing)
+        run: pnpm --filter @ensemble/landing build

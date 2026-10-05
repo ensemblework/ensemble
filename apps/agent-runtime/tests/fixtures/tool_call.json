@@ -1,0 +1,28 @@
+{
+  "id": "chatcmpl-tool",
+  "model": "mock-model",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "Listing open tasks.",
+        "tool_calls": [
+          {
+            "id": "call_tasks",
+            "type": "function",
+            "function": {
+              "name": "hub_list_tasks",
+              "arguments": "{\"status\":\"open\"}"
+            }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 20,
+    "completion_tokens": 10
+  }
+}

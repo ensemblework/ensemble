@@ -1,0 +1,166 @@
+name: deploy
+
+# Ships main to production after ci passes on it:
+#   1. moves the `production` branch to that commit (the VM follows it, see
+#      infra/deploy/autodeploy.sh),
+#   2. waits until the API reports that commit on /health and is ready,
+#   3. publishes the Hub and the landing page on Vercel.
+# Does nothing until the repository variable DEPLOY_ENABLED is "true".
+#
+# Repository secrets: ENSEMBLE_API_URL, VERCEL_TOKEN, VERCEL_ORG_ID,
+# VERCEL_PROJECT_ID_APP, VERCEL_PROJECT_ID_LANDING.
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: What to publish (main's latest commit)
+        type: choice
+        options: [all, api, app, landing]
+        default: all
+
+permissions:
+  contents: write
+
+# One deploy at a time. A newer run waits; it never cancels a deploy halfway.
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    name: Move production to this commit
+    if: >-
+      vars.DEPLOY_ENABLED == 'true' && (
+        (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+        (github.event_name == 'workflow_run' &&
+         github.event.workflow_run.conclusion == 'success' &&
+         github.event.workflow_run.event == 'push' &&
+         github.event.workflow_run.head_repository.full_name == github.repository)
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.plan.outputs.sha }}
+      target: ${{ steps.plan.outputs.target }}
+      current: ${{ steps.plan.outputs.current }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Plan
+        id: plan
+        env:
+          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          TARGET: ${{ inputs.target || 'all' }}
+        run: |
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "target=$TARGET" >> "$GITHUB_OUTPUT"
+          # CI runs can finish out of order. Only main's newest commit ships;
+          # an older one would roll the website back.
+          if [ "$(git rev-parse origin/main)" = "$SHA" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+            echo "Deploying $SHA ($TARGET)."
+          else
+            echo "current=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$SHA is no longer the tip of main. The newer commit's run deploys instead."
+          fi
+
+      - name: Fast-forward production
+        if: steps.plan.outputs.current == 'true' && contains(fromJSON('["all","api"]'), steps.plan.outputs.target)
+        env:
+          SHA: ${{ steps.plan.outputs.sha }}
+        # No --force: production only moves forward.
+        run: git push origin "$SHA:refs/heads/production"
+
+  api:
+    name: Wait for the API on the VM
+    needs: promote
+    if: needs.promote.outputs.current == 'true' && contains(fromJSON('["all","api"]'), needs.promote.outputs.target)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Wait until /health reports this commit, then /health/ready
+        env:
+          API_URL: ${{ secrets.ENSEMBLE_API_URL }}
+          SHA: ${{ needs.promote.outputs.sha }}
+        run: |
+          if [ -z "$API_URL" ]; then
+            echo "::error::Set the ENSEMBLE_API_URL repository secret."
+            exit 1
+          fi
+          # The VM checks every minute; install, migrate and restart take a few more.
+          deadline=$((SECONDS + 25 * 60))
+          until [ "$(curl -fsS --max-time 10 "$API_URL/health" 2>/dev/null | jq -r '.commit // empty' 2>/dev/null)" = "$SHA" ]; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error::The API did not report $SHA within 25 minutes. On the VM: sudo journalctl -u ensemble-autodeploy -n 200 --no-pager"
+              exit 1
+            fi
+            sleep 15
+          done
+          curl -fsS --max-time 15 -o /dev/null "$API_URL/health/ready"
+          echo "The API runs $SHA and is ready."
+
+  app:
+    name: Publish the Hub (Vercel)
+    needs: [promote, api]
+    if: >-
+      always() && needs.promote.result == 'success' && needs.promote.outputs.current == 'true' &&
+      contains(fromJSON('["all","app"]'), needs.promote.outputs.target) &&
+      (needs.api.result == 'success' || needs.api.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.promote.outputs.sha }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.6.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - uses: ./.github/actions/vercel-deploy
+        with:
+          token: ${{ secrets.VERCEL_TOKEN }}
+          org-id: ${{ secrets.VERCEL_ORG_ID }}
+          project-id: ${{ secrets.VERCEL_PROJECT_ID_APP }}
+
+  landing:
+    name: Publish the landing page (Vercel)
+    needs: promote
+    if: needs.promote.outputs.current == 'true' && contains(fromJSON('["all","landing"]'), needs.promote.outputs.target)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.promote.outputs.sha }}
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.6.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - uses: ./.github/actions/vercel-deploy
+        with:
+          token: ${{ secrets.VERCEL_TOKEN }}
+          org-id: ${{ secrets.VERCEL_ORG_ID }}
+          project-id: ${{ secrets.VERCEL_PROJECT_ID_LANDING }}

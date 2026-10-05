@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en" data-motion-theme="expressive"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>You’re offline · Ensemble</title><meta name="robots" content="noindex"><meta name="theme-color" content="#141210">
+<link rel="icon" href="/favicon.ico" sizes="48x48"><link rel="icon" href="/icon.svg" type="image/svg+xml">
+<style>/* brand-pages.css: Ensemble 404 / 500 / offline. Brand colours fixed; motion from the --m-* tokens (Expressive / Quiet / Dot). */
+:root, [data-theme="dark"] { --bg: #141210; --panel: #1a1714; --ink: #f3eee6; --muted: #b7ae9f; --faint: #8a8276; --line: rgba(243,238,230,.09); --hair: rgba(243,238,230,.24);
+  --brand-agent: #9d8fff; --brand-you: #f3eee6; --brand-word: #f3eee6; --btn-ink: #141210; color-scheme: dark; }
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) { --bg: #faf7f2; --panel: #f1ece4; --ink: #1c1915; --muted: #5d554a; --faint: #8b8276; --line: rgba(28,25,21,.09); --hair: rgba(28,25,21,.26);
+  --brand-agent: #7c6af7; --brand-you: #1c1915; --brand-word: #1c1915; --btn-ink: #faf7f2; color-scheme: light; } }
+[data-theme="light"] { --bg: #faf7f2; --panel: #f1ece4; --ink: #1c1915; --muted: #5d554a; --faint: #8b8276; --line: rgba(28,25,21,.09); --hair: rgba(28,25,21,.26);
+  --brand-agent: #7c6af7; --brand-you: #1c1915; --brand-word: #1c1915; --btn-ink: #faf7f2; color-scheme: light; }
+:root, [data-motion-theme="expressive"] { --m-ease-enter: cubic-bezier(.22,1,.36,1); --m-ease-move: cubic-bezier(.34,1.3,.64,1); --m-ease-exit: cubic-bezier(.4,0,1,1); --m-ease-loop: cubic-bezier(.65,0,.35,1); --m-dur-micro: 160ms; --m-dur-ui: 320ms; --m-dur-move: 870ms; --m-dur-loop: 4800ms; --m-amp: 12px; --m-scale-press: 0.96; --m-overshoot: 1; --m-stroke: 2.5px; --m-ornament: 1; --m-particles: 1; }
+[data-motion-theme="minimal-quiet"] { --m-ease-enter: cubic-bezier(.25,.1,.25,1); --m-ease-move: cubic-bezier(.33,0,.2,1); --m-ease-exit: cubic-bezier(.4,0,.6,1); --m-ease-loop: cubic-bezier(.45,0,.55,1); --m-dur-micro: 200ms; --m-dur-ui: 420ms; --m-dur-move: 640ms; --m-dur-loop: 3200ms; --m-amp: 4px; --m-scale-press: 0.985; --m-overshoot: 0; --m-stroke: 1.5px; --m-ornament: 0; --m-particles: 0; }
+[data-motion-theme="minimal-dot"] { --m-ease-enter: cubic-bezier(.25,.1,.25,1); --m-ease-move: cubic-bezier(.33,0,.2,1); --m-ease-exit: cubic-bezier(.4,0,.6,1); --m-ease-loop: cubic-bezier(.45,0,.55,1); --m-dur-micro: 200ms; --m-dur-ui: 480ms; --m-dur-move: 720ms; --m-dur-loop: 2800ms; --m-amp: 3px; --m-scale-press: 0.99; --m-overshoot: 0; --m-stroke: 1px; --m-ornament: 0; --m-particles: 0; }
+@media (prefers-reduced-motion: reduce) { :root, [data-motion-theme] { --m-ease-enter: linear; --m-ease-move: linear; --m-ease-exit: linear; --m-ease-loop: linear; --m-dur-micro: 0ms; --m-dur-ui: 150ms; --m-dur-move: 0ms; --m-dur-loop: 0ms; --m-amp: 0px; --m-scale-press: 1; --m-overshoot: 0; --m-ornament: 0; --m-particles: 0; } }
+[data-reduce-motion="true"], [data-reduce-motion="true"] [data-motion-theme] { --m-ease-enter: linear; --m-ease-move: linear; --m-ease-exit: linear; --m-ease-loop: linear; --m-dur-micro: 0ms; --m-dur-ui: 150ms; --m-dur-move: 0ms; --m-dur-loop: 0ms; --m-amp: 0px; --m-scale-press: 1; --m-overshoot: 0; --m-ornament: 0; --m-particles: 0; }
+
+.ub { min-height: 100dvh; margin: 0; background: var(--bg); color: var(--ink); font: 400 15px/1.5 Figtree, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  display: grid; grid-template-rows: auto 1fr auto; }
+.ub-top { display: flex; align-items: center; justify-content: space-between; padding: 18px 24px; }
+.ub-brand { display: inline-flex; align-items: center; gap: 10px; color: var(--brand-word); text-decoration: none; font-weight: 600; font-size: 14px; letter-spacing: -.01em; }
+.ub-brand svg { display: block; }
+.ub-brand .o { fill: var(--brand-agent); } .ub-brand .i { fill: var(--brand-you); }
+.ub-main { display: grid; place-items: center; padding: 24px; }
+.ub-card { max-width: 440px; text-align: center; }
+.ub-art { width: 226px; height: 168px; margin: 0 auto 28px; overflow: visible; display: block; }
+.ub-art path { fill: none; stroke-linecap: round; }
+.ub-art .o { stroke: var(--brand-agent); stroke-width: 84; } .ub-art .i { stroke: var(--brand-you); stroke-width: 64; }
+.ub-art .ghost { stroke: var(--hair); stroke-width: 10; stroke-dasharray: 1 26; }
+.ub-code { font: 500 12px/1 "JetBrains Mono", ui-monospace, monospace; letter-spacing: .14em; text-transform: uppercase; color: var(--faint); margin: 0 0 10px; }
+.ub-h { font: 400 34px/1.1 Fraunces, ui-serif, Georgia, serif; letter-spacing: -.01em; margin: 0; }
+.ub-p { color: var(--muted); margin: 12px auto 0; max-width: 36ch; }
+.ub-act { display: flex; gap: 10px; justify-content: center; margin-top: 26px; flex-wrap: wrap; }
+.ub-btn { appearance: none; border: 1px solid var(--line); background: var(--panel); color: var(--ink); font: 500 14px/1 inherit; font-family: inherit; padding: 10px 16px; border-radius: 10px; text-decoration: none; cursor: pointer;
+  transition: transform var(--m-dur-micro) var(--m-ease-enter), background var(--m-dur-micro) linear; }
+.ub-btn:active { transform: scale(var(--m-scale-press)); }
+.ub-btn.pri { background: var(--brand-agent); border-color: transparent; color: var(--btn-ink); }
+.ub-btn:focus-visible { outline: 2px solid var(--brand-agent); outline-offset: 2px; }
+.ub-foot { padding: 18px 24px; color: var(--faint); font-size: 12px; text-align: center; }
+/* motion: gentle, slow, token-driven. Expressive sways most, Quiet barely, Dot steps. */
+.ub-art .loose { transform-box: view-box; transform-origin: 512px 300px; animation: ub-sway calc(var(--m-dur-loop) * 1.2) var(--m-ease-loop) infinite alternate; }
+@keyframes ub-sway { from { transform: translate(300px, 44px) rotate(-8deg); } to { transform: translate(calc(300px + var(--m-amp) * 2), 30px) rotate(calc(-8deg - var(--m-amp) * .6)); } }
+.ub-art .part-l { animation: ub-part-l calc(var(--m-dur-loop) * .9) var(--m-ease-loop) infinite alternate; }
+.ub-art .part-r { animation: ub-part-r calc(var(--m-dur-loop) * .9) var(--m-ease-loop) infinite alternate; }
+@keyframes ub-part-l { from { transform: translateX(-6px); } to { transform: translateX(calc(-6px - var(--m-amp) * 1.6)); } }
+@keyframes ub-part-r { from { transform: translateX(6px); } to { transform: translateX(calc(6px + var(--m-amp) * 1.6)); } }
+.ub-art .dots .o { stroke-width: 44; } .ub-art .dots .i { stroke-width: 36; }
+.ub-art .dots path { stroke-dasharray: 0 118; animation: ub-flow calc(var(--m-dur-loop) * 1.4) linear infinite; }
+.ub-art .dots .i { stroke-dasharray: 0 96; animation-direction: reverse; }
+@keyframes ub-flow { to { stroke-dashoffset: -236; } }
+[data-motion-theme="minimal-dot"] .ub-art .loose { animation-timing-function: steps(6, jump-none); }
+[data-motion-theme="minimal-quiet"] .ub-art .o, [data-motion-theme="minimal-quiet"] .ub-art .i { stroke-opacity: .92; }
+@media (prefers-reduced-motion: reduce) { .ub-art * { animation: none !important; } .ub-art .loose { transform: translate(300px, 40px) rotate(-10deg); } }
+[data-reduce-motion="true"] .ub-art * { animation: none !important; } [data-reduce-motion="true"] .ub-art .loose { transform: translate(300px, 40px) rotate(-10deg); }
+</style></head>
+<body class="ub">
+<header class="ub-top"><a class="ub-brand" href="/today" aria-label="Ensemble home"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path class="o" d="M2 1H5V10A5 5 0 0 0 15 10V1H18V10A8 8 0 0 1 2 10Z"/><path class="i" d="M6 1H8V10A2 2 0 0 0 12 10V1H14V10A4 4 0 0 1 6 10Z"/></svg><span>Ensemble</span></a></header>
+<main class="ub-main"><div class="ub-card">
+  <svg class="ub-art" viewBox="196 208 820 608" role="img" aria-label="The Ensemble mark drawn in dots while waiting for the network"><path class="ghost" d="M316 300 V540 A196 196 0 0 0 708 540 V300"/><path class="ghost" d="M426 300 V540 A86 86 0 0 0 598 540 V300"/><g class="dots"><path class="o" d="M316 300 V540 A196 196 0 0 0 708 540 V300"/><path class="i" d="M426 300 V540 A86 86 0 0 0 598 540 V300"/></g></svg>
+  <p class="ub-code">offline</p><h1 class="ub-h">You’re offline.</h1><p class="ub-p">Ensemble will reconnect by itself as soon as the network is back. Anything you write now is kept on this device.</p>
+  <div class="ub-act"><button type="button" class="ub-btn pri" onclick="location.reload()">Try again</button></div>
+</div></main>
+<footer class="ub-foot">Ensemble · A shared workspace for you and your agent.</footer>
+<script>/* motion style + theme: the app stores motion and theme on ensemble.appearance; ?motion=&theme= for previews */
+(function(){var q=new URLSearchParams(location.search),d=document.documentElement,m=q.get('motion'),t=q.get('theme');
+try{var raw=JSON.parse(localStorage.getItem('ensemble.appearance')||'null');
+if(raw&&typeof raw==='object'){if(!m&&(raw.motion==='expressive'||raw.motion==='minimal-quiet'||raw.motion==='minimal-dot'))m=raw.motion;
+if(!t){if(raw.theme==='light'||raw.theme==='dark')t=raw.theme;else if(raw.theme==='system')t=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';}
+if(raw.reduceMotion||matchMedia('(prefers-reduced-motion: reduce)').matches)d.setAttribute('data-reduce-motion','true');}}catch(e){}
+if(m)d.setAttribute('data-motion-theme',m);if(t)d.setAttribute('data-theme',t);window.addEventListener('online',function(){location.reload()});})();</script>
+</body></html>

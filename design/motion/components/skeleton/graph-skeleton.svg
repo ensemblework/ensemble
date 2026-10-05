@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" class="u-graph-skel" viewBox="0 0 320 200" width="320" height="200" aria-hidden="true">
+  <path class="edge" pathLength="1" style="--i:0" d="M160 100 Q110 63 60 50"/>
+  <path class="edge" pathLength="1" style="--i:1" d="M160 100 Q115 113 70 150"/>
+  <path class="edge" pathLength="1" style="--i:2" d="M160 100 Q205 60 250 45"/>
+  <path class="edge" pathLength="1" style="--i:3" d="M160 100 Q215 108 270 140"/>
+  <path class="edge" pathLength="1" style="--i:4" d="M160 100 Q160 48 160 20"/>
+  <path class="edge" pathLength="1" style="--i:5" d="M160 100 Q162 128 165 180"/>
+  <path class="edge" pathLength="1" style="--i:6" d="M160 100 Q100 88 40 100"/>
+  <path class="edge" pathLength="1" style="--i:7" d="M160 100 Q225 83 290 90"/>
+  <path class="edge" pathLength="1" style="--i:8" d="M60 50 Q110 23 160 20"/>
+  <path class="edge" pathLength="1" style="--i:9" d="M250 45 Q270 56 290 90"/>
+  <path class="edge" pathLength="1" style="--i:10" d="M70 150 Q118 153 165 180"/>
+  <circle class="node hub" style="--i:0" cx="160" cy="100" r="14"/>
+  <circle class="node" style="--i:1" cx="60" cy="50" r="10"/>
+  <circle class="node" style="--i:2" cx="70" cy="150" r="8"/>
+  <circle class="node" style="--i:3" cx="250" cy="45" r="8"/>
+  <circle class="node" style="--i:4" cx="270" cy="140" r="10"/>
+  <circle class="node" style="--i:5" cx="160" cy="20" r="8"/>
+  <circle class="node" style="--i:6" cx="165" cy="180" r="8"/>
+  <circle class="node" style="--i:7" cx="40" cy="100" r="10"/>
+  <circle class="node" style="--i:8" cx="290" cy="90" r="8"/>
+</svg>

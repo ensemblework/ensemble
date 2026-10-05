@@ -1,0 +1,23 @@
+/* Agent status line: glyph + rotating Ensemble verbs + meta. The Claude-Code idea, in Ensemble's voice. */
+.u-status { display: inline-flex; align-items: center; gap: .55em; font-size: 13px; color: var(--muted); min-height: 20px; }
+.u-status-verb { position: relative; display: inline-flex; white-space: pre; color: var(--ink); font-weight: 500; }
+.u-status-verb .l { display: inline-block; animation: u-l-in .46s var(--ease) both, u-l-shimmer 2.2s linear infinite;
+  animation-delay: calc(var(--i) * 22ms), calc(var(--i) * 55ms); }
+.u-status-verb.out { position: absolute; left: 0; top: 0; }
+.u-status-verb.out .l { animation: u-l-out .26s ease-in both; animation-delay: calc(var(--i) * 12ms); }
+.u-status-slot { white-space: nowrap; clip-path: inset(-12px -2px -12px 0); }
+.u-status-meta { color: var(--faint); font-size: 12px; white-space: nowrap; }
+.u-status-meta kbd { font: 10.5px ui-monospace, Menlo, monospace; border: 1px solid var(--line-strong); border-radius: 5px; padding: 0 4px; color: var(--muted); }
+.u-status.is-real .u-status-verb { color: var(--ink); }
+.u-status.is-real .u-status-verb .l { animation: u-l-in .46s var(--ease) both; animation-delay: calc(var(--i) * 12ms); }
+@keyframes u-l-in { from { opacity: 0; transform: translateY(.5em) rotate(6deg); filter: blur(2px); } }
+@keyframes u-l-out { to { opacity: 0; transform: translateY(-.45em); filter: blur(2px); } }
+/* a highlight sweeps through the letters, left to right, like a bow across strings */
+@keyframes u-l-shimmer { 0%, 62%, 100% { color: var(--ink); } 18% { color: var(--accent-hi); } 32% { color: var(--muted); } }
+.u-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) {
+  .u-status-verb .l, .u-status-verb.out .l { animation: none !important; }
+  .u-status-verb.out { display: none; }
+}
+[data-reduce-motion="true"] .u-status-verb .l { animation: none !important; }
+[data-reduce-motion="true"] .u-status-verb.out { display: none; }

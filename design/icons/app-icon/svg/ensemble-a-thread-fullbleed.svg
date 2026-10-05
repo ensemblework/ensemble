@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="100 100 824 824">
+  <title>Ensemble app icon: concept A, Thread</title>
+  <desc>Two accent nodes (you and your agent) joined by one thread through a shared point. Evolves the existing in-app Mark.</desc>
+  <defs>
+    <linearGradient id="a-bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2b261f"/>
+      <stop offset="1" stop-color="#141210"/>
+    </linearGradient>
+    <radialGradient id="a-wash" cx="0.18" cy="0.05" r="0.9">
+      <stop offset="0" stop-color="#7c6af7" stop-opacity="0.34"/>
+      <stop offset="0.6" stop-color="#7c6af7" stop-opacity="0.04"/>
+      <stop offset="1" stop-color="#7c6af7" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="a-rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.16"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0.03"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.06"/>
+    </linearGradient>
+    <filter id="a-shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000" flood-opacity="0.32"/>
+    </filter>
+  </defs>
+  <defs>
+    <linearGradient id="a-thread" gradientUnits="userSpaceOnUse" x1="262" y1="672" x2="762" y2="352">
+      <stop offset="0" stop-color="#7c6af7"/>
+      <stop offset="1" stop-color="#b4a9ff"/>
+    </linearGradient>
+    <radialGradient id="a-glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#7c6af7" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#7c6af7" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+    <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#a-bg)"/>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#a-wash)"/>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="183.5" fill="none" stroke="url(#a-rim)" stroke-width="3"/>
+  <circle cx="512" cy="512" r="260" fill="url(#a-glow)"/>
+  <path d="M262 672 C432 672 392 512 512 512 C632 512 592 352 762 352" fill="none" stroke="url(#a-thread)" stroke-width="64" stroke-linecap="round"/>
+  <circle cx="262" cy="672" r="74" fill="#7c6af7"/>
+  <circle cx="762" cy="352" r="74" fill="#b4a9ff"/>
+  <circle cx="512" cy="512" r="62" fill="#141210"/>
+  <circle cx="512" cy="512" r="46" fill="#f3eee6"/>
+</svg>

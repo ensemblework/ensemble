@@ -1,0 +1,46 @@
+[package]
+name = "ensemble-desktop"
+version = "0.1.0"
+description = "Cross-platform shell that opens the hosted Ensemble site"
+edition = "2021"
+rust-version = "1.87"
+
+[lib]
+name = "ensemble_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-process = "2"
+tauri-plugin-updater = "2"
+url = "2"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+getrandom = "0.2"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# The native Edit menu's Copy, Paste and Select All items need libxdo on
+# Linux. Cargo merges this feature into the `tauri` dependency above for Linux
+# targets only, so macOS and Windows builds are unchanged.
+[target.'cfg(target_os = "linux")'.dependencies]
+tauri = { version = "2", features = ["linux-libxdo"] }
+# Edit → Cut on Linux runs WebKit's own Cut command on the focused webview and
+# labels its menu item through GTK (see `linux_edit` in src/desktop.rs). Both
+# crates are already in the tree through Tauri and wry; these are the same versions.
+gtk = "0.18"
+webkit2gtk = "2.0"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-single-instance = "2"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]

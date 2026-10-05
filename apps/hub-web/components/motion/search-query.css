@@ -1,0 +1,153 @@
+/* ── search.query ───────────────────────────────────────────────────────────────────────────────
+   Ask bar and ⌘K search. One markup contract for three styles; everything keys off
+     [data-motion-theme] (nearest ancestor)  ·  [data-state="typing|searching|results|empty"] on .sq[data-motion-slot="search.query"]
+   Pure CSS. No delay logic: the app's shared loader delay (180 ms before show, 300 ms minimum) decides
+   when data-state becomes "searching". Palette hooks fall back to the round-3 tokens.css names. */
+@property --sq-a { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+.sq[data-motion-slot="search.query"] {
+  --sq-h: 40px; --sq-radius: 12px;
+  --sq-bg: var(--raise, #211d19); --sq-ink: var(--ink, #f3eee6); --sq-muted: var(--muted, #b7ae9f); --sq-faint: var(--faint, #8a8276);
+  --sq-line: var(--line, rgba(243,238,230,.09)); --sq-hair: var(--hair, rgba(243,238,230,.24));
+  --sq-accent: var(--accent); --sq-agent: var(--agent, var(--accent)); --sq-you: var(--you, #f3eee6); --sq-soft: var(--accent-soft);
+  --sq-stagger: 40ms; --sq-in-dur: var(--m-dur-ui, 320ms); --sq-in-ease: var(--m-ease-enter, ease-out); --sq-rise: 6px;
+  position: relative; width: 100%; font: 400 14px/1.4 var(--font-sans, system-ui, sans-serif); color: var(--sq-ink);
+}
+.sq-field { position: relative; display: flex; align-items: center; gap: 10px; height: var(--sq-h); padding: 0 12px; border-radius: var(--sq-radius);
+  background: var(--sq-bg); border: 1px solid var(--sq-line); isolation: isolate;
+  transition: border-color var(--m-dur-micro, 160ms) ease, box-shadow var(--m-dur-ui, 320ms) ease; }
+.sq-ic { width: 16px; height: 16px; flex: none; color: var(--sq-faint); transition: color var(--m-dur-ui, 320ms) ease; }
+.sq-ic * { fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.sq-input { flex: 1; min-width: 0; height: auto; align-self: center; box-sizing: border-box; padding: 0; border: 0; outline: 0; background: none; color: var(--sq-ink); font: inherit; line-height: 20px; caret-color: var(--sq-accent); appearance: none; -webkit-appearance: none; box-shadow: none; }
+/* The field is the only focus edge. The global input:focus-visible outline would draw a second ring inside it. */
+.sq-input:focus,
+.sq-input:focus-visible { outline: none !important; outline-offset: 0 !important; box-shadow: none !important; border-radius: 0; }
+/* One focus edge, on the container, including keyboard focus inside the field. */
+.sq[data-motion-slot="search.query"]:focus-within:has(:focus-visible) .sq-field {
+  border-color: color-mix(in srgb, var(--sq-accent) 70%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--sq-accent) 16%, transparent);
+}
+.sq-input::placeholder { color: var(--sq-faint); }
+.sq-input::-webkit-search-cancel-button { display: none; }
+.sq-kbd { font: 500 11px var(--font-mono, ui-monospace, monospace); color: var(--sq-faint); border: 1px solid var(--sq-line); border-radius: 6px; padding: 2px 6px; transition: opacity var(--m-dur-ui, 320ms) ease; }
+.sq-input:not(:placeholder-shown) ~ .sq-kbd { opacity: 0; }
+.sq-trk { position: absolute; left: 12px; right: 12px; bottom: -1px; height: 3px; pointer-events: none; opacity: 0; }
+.sq-trk i { position: absolute; left: -2px; top: -1px; width: 4px; height: 4px; border-radius: 50%; background: var(--sq-agent); }
+.sq-pip { position: absolute; left: 22px; top: 9px; width: 5px; height: 5px; border-radius: 50%; background: var(--sq-agent); opacity: 0; transform: scale(.4); pointer-events: none;
+  transition: opacity var(--m-dur-ui, 320ms) ease, transform var(--m-dur-ui, 320ms) ease; }
+.sq-meta { min-height: 18px; margin: 8px 2px 4px; font: 500 11px var(--font-mono, ui-monospace, monospace); color: var(--sq-faint); }
+.sq-results { list-style: none; margin: 0; padding: 0; display: none; }
+.sq-item { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 8px 10px; border-radius: 9px; position: relative; color: var(--sq-ink); }
+.sq-item[aria-selected="true"] { background: var(--sq-soft); }
+.sq-item .k { font: 500 10.5px var(--font-mono, ui-monospace, monospace); color: var(--sq-faint); margin-left: auto; }
+.sq-item small { color: var(--sq-faint); font-size: 12px; }
+.sq-empty { display: none; flex-direction: column; align-items: center; text-align: center; gap: 4px; padding: 22px 12px 12px; }
+.sq-empty-mark { height: 28px; display: grid; place-items: center; margin-bottom: 6px; }
+.sq-empty-mark svg { overflow: visible; }
+.sq-empty-mark svg * { fill: none; stroke: var(--sq-hair); stroke-width: 1.5; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.sq-empty [data-copy="empty-title"] { margin: 0; font-weight: 550; font-size: 14px; color: var(--sq-ink); }
+.sq-empty [data-copy="empty-hint"] { margin: 0; font-size: 12.5px; color: var(--sq-muted); max-width: 42ch; }
+.sq-empty-actions { display: flex; gap: 8px; margin-top: 10px; }
+.sq-empty-actions > * { font: 500 12.5px var(--font-sans, system-ui, sans-serif); color: var(--sq-ink); background: none; border: 1px solid var(--sq-line); border-radius: 8px; padding: 6px 11px; cursor: pointer; }
+.sq-empty > * { opacity: 0; }
+.sq[data-motion-slot="search.query"][data-state="results"] .sq-results { display: block; }
+.sq[data-motion-slot="search.query"][data-state="empty"] .sq-empty { display: flex; }
+.sq[data-motion-slot="search.query"][data-state="empty"] .sq-empty > * { animation: sq-fade var(--m-dur-move, 640ms) var(--m-ease-enter, ease-out) both; }
+.sq[data-motion-slot="search.query"][data-state="empty"] .sq-empty > :nth-child(2) { animation-delay: 60ms; } .sq[data-motion-slot="search.query"][data-state="empty"] .sq-empty > :nth-child(3) { animation-delay: 120ms; } .sq[data-motion-slot="search.query"][data-state="empty"] .sq-empty > :nth-child(4) { animation-delay: 180ms; }
+.sq[data-motion-slot="search.query"][data-state="results"] .sq-item { animation: sq-in var(--sq-in-dur) var(--sq-in-ease) both; animation-delay: calc(min(var(--i, 0), 7) * var(--sq-stagger)); }
+@keyframes sq-in { from { opacity: 0; transform: translateY(var(--sq-rise)); } }
+@keyframes sq-fade { from { opacity: 0; } to { opacity: 1; } }
+/* focused-ish states share the field look */
+.sq[data-motion-slot="search.query"]:is([data-state="typing"], [data-state="results"], [data-state="empty"]) .sq-ic, .sq[data-motion-slot="search.query"]:focus-within .sq-ic { color: var(--sq-muted); }
+
+/* ── Expressive (default) ───────────────────────────── */
+.sq[data-motion-slot="search.query"] { --sq-in-dur: var(--spring-snappy-dur, 483ms); --sq-in-ease: var(--spring-snappy, cubic-bezier(.2,1.2,.4,1)); }
+.sq[data-motion-slot="search.query"]:is([data-state="typing"], [data-state="results"], [data-state="empty"]) .sq-field, .sq[data-motion-slot="search.query"]:focus-within .sq-field {
+  border-color: color-mix(in srgb, var(--sq-accent) 70%, transparent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--sq-accent) 16%, transparent); }
+.sq[data-motion-slot="search.query"][data-state="typing"] .sq-ic { color: var(--sq-accent); }
+.sq[data-motion-slot="search.query"][data-state="searching"] .sq-field { border-color: transparent; border-width: 2px;
+  background: linear-gradient(var(--sq-bg), var(--sq-bg)) padding-box,
+    conic-gradient(from var(--sq-a), transparent 0 6%, var(--sq-agent) 16% 38%, transparent 48% 58%, color-mix(in srgb, var(--sq-you) 85%, transparent) 68% 82%, transparent 92%) border-box;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--sq-accent) 28%, transparent); animation: sq-rim 1.6s linear infinite; }
+.sq[data-motion-slot="search.query"][data-state="searching"] .sq-ic { color: var(--sq-accent); }
+@keyframes sq-rim { to { --sq-a: 360deg; } }
+.sq[data-motion-slot="search.query"][data-state="results"] .sq-item[aria-selected="true"]::before { content: ""; position: absolute; left: 0; top: 10px; bottom: 10px; width: 2px; border-radius: 2px; background: var(--sq-agent);
+  animation: sq-bar var(--spring-snappy-dur, 483ms) var(--spring-snappy, ease-out) both; animation-delay: 120ms; }
+@keyframes sq-bar { from { transform: scaleY(0); } }
+.sq-empty-mark .thread { stroke: var(--sq-accent); transform-origin: 50% 0; transform-box: fill-box; }
+.sq[data-motion-slot="search.query"][data-state="empty"] .sq-empty-mark .thread { animation: sq-sway 4.8s var(--m-ease-loop, ease-in-out) infinite alternate; }
+@keyframes sq-sway { from { transform: rotate(-7deg); } to { transform: rotate(7deg); } }
+.sq-empty-mark .em-q, .sq-empty-mark .em-d { display: none; }
+
+/* ── Minimal · Quiet ────────────────────────────────── */
+[data-motion-theme="minimal-quiet"] .sq[data-motion-slot="search.query"] { --sq-in-dur: var(--m-dur-ui, 420ms); --sq-in-ease: var(--m-ease-move, cubic-bezier(.33,0,.2,1)); --sq-stagger: 35ms; --sq-rise: 4px; }
+[data-motion-theme="minimal-quiet"] .sq[data-motion-slot="search.query"]:is([data-state="typing"], [data-state="results"], [data-state="empty"]) .sq-field,
+[data-motion-theme="minimal-quiet"] .sq[data-motion-slot="search.query"]:focus-within .sq-field { border-color: var(--sq-accent); box-shadow: none; }
+[data-motion-theme="minimal-quiet"] .sq[data-motion-slot="search.query"][data-state="typing"] .sq-ic { color: var(--sq-muted); }
+[data-motion-theme="minimal-quiet"] .sq[data-motion-slot="search.query"][data-state="searching"] .sq-field { border-color: transparent; box-shadow: none;
+  background: linear-gradient(var(--sq-bg), var(--sq-bg)) padding-box,
+    conic-gradient(from var(--sq-a), var(--sq-hair) 0 40%, var(--sq-accent) 47%, var(--sq-hair) 54% 100%) border-box;
+  animation: sq-rim 2.8s linear infinite; }
+[data-motion-theme="minimal-quiet"] .sq[data-motion-slot="search.query"][data-state="searching"] .sq-ic { color: var(--sq-muted); }
+[data-motion-theme="minimal-quiet"] .sq[data-motion-slot="search.query"][data-state="results"] .sq-item[aria-selected="true"]::before { content: none; }
+[data-motion-theme="minimal-quiet"] .sq-empty-mark .em-x, [data-motion-theme="minimal-dot"] .sq-empty-mark .em-x { display: none; }
+[data-motion-theme="minimal-quiet"] .sq-empty-mark .em-q { display: inline; }
+[data-motion-theme="minimal-quiet"] .sq-empty-mark .em-q .a { stroke: var(--sq-accent); }
+
+/* ── Minimal · Dot ──────────────────────────────────── */
+[data-motion-theme="minimal-dot"] .sq[data-motion-slot="search.query"] { --sq-in-dur: 300ms; --sq-in-ease: var(--m-ease-enter, ease); --sq-stagger: 25ms; --sq-rise: 0px; }
+[data-motion-theme="minimal-dot"] .sq[data-motion-slot="search.query"]:is([data-state="typing"], [data-state="results"], [data-state="empty"]) .sq-field,
+[data-motion-theme="minimal-dot"] .sq[data-motion-slot="search.query"]:focus-within .sq-field { border-color: var(--sq-hair); box-shadow: none; }
+[data-motion-theme="minimal-dot"] .sq[data-motion-slot="search.query"]:is([data-state="typing"], [data-state="searching"]) .sq-pip, [data-motion-theme="minimal-dot"] .sq[data-motion-slot="search.query"]:focus-within .sq-pip { opacity: 1; transform: none; }
+[data-motion-theme="minimal-dot"] .sq[data-motion-slot="search.query"][data-state="searching"] .sq-pip { opacity: 0; }
+[data-motion-theme="minimal-dot"] .sq[data-motion-slot="search.query"][data-state="searching"] .sq-field { border-color: var(--sq-hair); box-shadow: none; background: var(--sq-bg); animation: none; }
+[data-motion-theme="minimal-dot"] .sq[data-motion-slot="search.query"][data-state="searching"] .sq-trk { opacity: 1; }
+[data-motion-theme="minimal-dot"] .sq[data-motion-slot="search.query"][data-state="searching"] .sq-trk i { animation: sq-trk 1.4s var(--m-ease-loop, ease-in-out) infinite alternate; }
+@keyframes sq-trk { from { left: -2px; } to { left: calc(100% - 2px); } }
+[data-motion-theme="minimal-dot"] .sq[data-motion-slot="search.query"][data-state="results"] .sq-item[aria-selected="true"]::before { content: ""; position: absolute; left: -1px; top: calc(50% - 2.5px); width: 5px; height: 5px; border-radius: 50%; background: var(--sq-agent); animation: none; }
+[data-motion-theme="minimal-dot"] .sq-item[aria-selected="true"] { background: none; }
+[data-motion-theme="minimal-dot"] .sq-empty-mark .em-d { display: inline; }
+[data-motion-theme="minimal-dot"] .sq-empty-mark .em-d circle { stroke: none; fill: var(--sq-hair); } [data-motion-theme="minimal-dot"] .sq-empty-mark .em-d circle.a { fill: var(--sq-agent); }
+
+/* ── Reduce-motion overlay (any style) ──────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .sq[data-motion-slot="search.query"] .sq-field, .sq[data-motion-slot="search.query"] .sq-trk i, .sq[data-motion-slot="search.query"] .sq-empty-mark .thread { animation: none !important; }
+  .sq[data-motion-slot="search.query"][data-state="searching"] .sq-field { background: var(--sq-bg) !important; border-color: var(--sq-accent) !important; }
+  .sq[data-motion-slot="search.query"][data-state="searching"] .sq-trk i { left: 0; }
+  .sq[data-motion-slot="search.query"] .sq-item, .sq[data-motion-slot="search.query"] .sq-empty > *, .sq[data-motion-slot="search.query"] .sq-item::before { animation: none !important; }
+  .sq[data-motion-slot="search.query"] .sq-empty > * { opacity: 1; }
+}
+[data-reduce-motion="true"] .sq[data-motion-slot="search.query"] .sq-field, [data-reduce-motion="true"] .sq[data-motion-slot="search.query"] .sq-trk i, [data-reduce-motion="true"] .sq[data-motion-slot="search.query"] .sq-empty-mark .thread { animation: none !important; }
+[data-reduce-motion="true"] .sq[data-motion-slot="search.query"][data-state="searching"] .sq-field { background: var(--sq-bg) !important; border-color: var(--sq-accent) !important; }
+[data-reduce-motion="true"] .sq[data-motion-slot="search.query"] .sq-item, [data-reduce-motion="true"] .sq[data-motion-slot="search.query"] .sq-empty > *, [data-reduce-motion="true"] .sq[data-motion-slot="search.query"] .sq-item::before { animation: none !important; }
+[data-reduce-motion="true"] .sq[data-motion-slot="search.query"] .sq-empty > * { opacity: 1; }
+
+/* Without @property the rim angle cannot animate. A static accent border stays readable. */
+@supports not (background: conic-gradient(from var(--sq-a), red, blue)) {
+  .sq[data-motion-slot="search.query"][data-state="searching"] .sq-field,
+  [data-motion-theme="minimal-quiet"] .sq[data-motion-slot="search.query"][data-state="searching"] .sq-field {
+    animation: none !important;
+    border-color: var(--sq-accent) !important;
+    border-width: 2px;
+    background: var(--sq-bg) !important;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--sq-accent) 28%, transparent);
+  }
+}
+
+/* App palette. The slot's own fallbacks are dark-only hexes.
+   The status line uses the UI face, same as the rest of the panel. */
+.sq[data-motion-slot="search.query"] .sq-meta {
+  font: 500 12.5px/1.4 var(--font-sans, system-ui, sans-serif);
+  color: var(--muted);
+}
+.sq[data-motion-slot="search.query"] {
+  --sq-bg: var(--panel);
+  --sq-ink: var(--ink);
+  --sq-muted: var(--muted);
+  --sq-faint: var(--faint);
+  --sq-line: var(--line);
+  --sq-hair: var(--line-strong);
+  --sq-accent: var(--accent);
+  --sq-agent: var(--accent);
+  --sq-you: var(--ink);
+  --sq-soft: var(--accent-soft);
+}

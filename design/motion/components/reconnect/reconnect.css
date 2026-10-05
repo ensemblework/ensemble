@@ -1,0 +1,16 @@
+/* Reconnecting pill (SSE dropped / "Reconnecting to Ensemble…"): two dots on a tether drift apart,
+   the tether goes dashed, then they snap back together. Offline = apart and dim. */
+.u-tether { position: relative; display: inline-block; width: 26px; height: 8px; vertical-align: middle; }
+.u-tether i { position: absolute; top: 1px; width: 6px; height: 6px; border-radius: 50%; }
+.u-tether i:nth-child(1) { left: 7px; background: var(--u-agent); animation: u-teth-a 2.2s var(--ease-weave) infinite; }
+.u-tether i:nth-child(2) { left: 13px; background: var(--u-you); animation: u-teth-b 2.2s var(--ease-weave) infinite; }
+.u-tether::before { content: ""; position: absolute; left: 4px; right: 4px; top: 3.25px; height: 1.5px;
+  background: repeating-linear-gradient(90deg, var(--faint) 0 2px, transparent 2px 4px); animation: u-teth-line 2.2s var(--ease-weave) infinite; transform-origin: center; }
+@keyframes u-teth-a { 0%, 100% { transform: translateX(0); } 45%, 60% { transform: translateX(-7px); } 70% { transform: translateX(1px); } }
+@keyframes u-teth-b { 0%, 100% { transform: translateX(0); } 45%, 60% { transform: translateX(7px); } 70% { transform: translateX(-1px); } }
+@keyframes u-teth-line { 0%, 100% { transform: scaleX(.2); opacity: 0; } 45%, 60% { transform: scaleX(1); opacity: 1; } 70% { opacity: 0; } }
+.u-tether.is-offline i { animation: none; opacity: .5; } .u-tether.is-offline i:nth-child(1) { transform: translateX(-7px); } .u-tether.is-offline i:nth-child(2) { transform: translateX(7px); }
+.u-tether.is-offline::before { animation: none; opacity: .6; }
+@media (prefers-reduced-motion: reduce) { .u-tether i, .u-tether::before { animation-name: u-dim; } }
+[data-reduce-motion="true"] .u-tether i, [data-reduce-motion="true"] .u-tether::before { animation-name: u-dim; }
+@keyframes u-dim { 50% { opacity: .35; } }

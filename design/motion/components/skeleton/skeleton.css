@@ -1,0 +1,26 @@
+/* Skeletons: warm blocks with a violet "wash" that sweeps through in a staggered diagonal wave
+   (each block delays by --i), so a page loads like a thread being pulled through it. */
+.u-skel { position: relative; overflow: hidden; border-radius: 8px; background: var(--skel-base); }
+.u-skel::after { content: ""; position: absolute; inset: 0; transform: translateX(-100%);
+  background: linear-gradient(100deg, transparent 20%, var(--skel-sweep) 50%, transparent 80%);
+  animation: u-sweep var(--dur-sweep) var(--ease-weave) infinite; animation-delay: calc(var(--i, 0) * 70ms); }
+@keyframes u-sweep { 0% { transform: translateX(-100%); } 60%, 100% { transform: translateX(100%); } }
+.u-skel.line { height: 10px; border-radius: 99px; }
+.u-skel.dot { border-radius: 50%; }
+/* Context graph skeleton: edges draw in as threads, nodes breathe in sequence */
+.u-graph-skel .edge { stroke: var(--line-strong); stroke-width: 1.5; fill: none; stroke-dasharray: 1; stroke-dashoffset: 1;
+  animation: u-edge 3.2s var(--ease-weave) infinite; animation-delay: calc(var(--i) * 140ms); }
+.u-graph-skel .node { fill: var(--skel-base); stroke: var(--line-strong); animation: u-node 3.2s var(--ease-weave) infinite; animation-delay: calc(var(--i) * 140ms);
+  transform-box: fill-box; transform-origin: center; }
+.u-graph-skel .node.hub { fill: color-mix(in srgb, var(--accent) 30%, transparent); stroke: var(--accent); }
+@keyframes u-edge { 0% { stroke-dashoffset: 1; } 35%, 75% { stroke-dashoffset: 0; opacity: 1; } 100% { stroke-dashoffset: 0; opacity: 0; } }
+@keyframes u-node { 0%, 100% { opacity: .35; transform: scale(.8); } 30%, 70% { opacity: 1; transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) {
+  .u-skel::after { animation: none; display: none; } .u-skel { animation: u-skel-fade 2s ease-in-out infinite; }
+  .u-graph-skel .edge { animation: none; stroke-dashoffset: 0; } .u-graph-skel .node { animation: none; }
+}
+[data-reduce-motion="true"] .u-skel::after { display: none; }
+[data-reduce-motion="true"] .u-skel { animation: u-skel-fade 2s ease-in-out infinite; }
+[data-reduce-motion="true"] .u-graph-skel .edge { animation: none; stroke-dashoffset: 0; }
+[data-reduce-motion="true"] .u-graph-skel .node { animation: none; }
+@keyframes u-skel-fade { 50% { opacity: .55; } }

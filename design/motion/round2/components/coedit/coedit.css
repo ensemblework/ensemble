@@ -1,0 +1,49 @@
+/* 07 · Co-editing threads */
+.ce { position: absolute; inset: 0; }
+.ce-bar { display: flex; align-items: center; justify-content: space-between; padding: 12px 18px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--faint); }
+.ce-pres { display: flex; align-items: center; gap: 4px; }
+.ce-pres i { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; font: 700 9.5px var(--font-sans); font-style: normal; position: relative; }
+.ce-pres i.you { background: var(--u-you); color: var(--bg); }
+.ce-pres i.ag { background: var(--u-agent); margin-left: -6px; box-shadow: 0 0 0 2px var(--bg); }
+.ce-pres i.ag::after { content: ""; position: absolute; inset: 6px; border-radius: 50%; border: 1.5px solid #fff; border-top-color: transparent; }
+.ce-pres em { font-style: normal; margin-left: 6px; }
+.ce-doc { padding: 18px 26px; font-size: 14.5px; line-height: 1.75; }
+.ce-doc h4 { margin: 0 0 6px; font: 500 23px var(--font-serif); letter-spacing: -.01em; }
+.ce-doc p { margin: 0 0 10px; color: color-mix(in srgb, var(--ink) 88%, transparent); }
+.ce-w { position: relative; display: inline-block; border-radius: 4px; white-space: nowrap;
+  background: linear-gradient(color-mix(in srgb, var(--u-you) 22%, transparent), color-mix(in srgb, var(--u-you) 22%, transparent)) no-repeat 0 0 / 0% 100%; }
+.ce-w.sel { background-size: 100% 100%; transition: background-size .55s var(--ease-weave); }
+.ce-w.acc { background-size: 100% 100%; background-image: linear-gradient(var(--accent-soft), var(--accent-soft)); transition: background-image .6s; }
+.ce-w .ch { display: inline-block; white-space: pre; }
+.ce-w .ch.out { transform: translateY(8px) rotate(6deg); opacity: 0; transition: transform .45s var(--ease), opacity .3s; }
+.ce-w .ch.in { animation: ce-in .8s var(--spring-soft) both; color: var(--accent-hi); }
+@keyframes ce-in { from { transform: translateY(-9px); opacity: 0; } to { transform: none; opacity: 1; } }
+.ce-w .stitch { position: absolute; left: 0; right: 0; bottom: 2px; height: 0; border-bottom: 2px dashed var(--u-agent); opacity: 0; }
+.ce-w.knit .stitch { opacity: 1; animation: ce-knit 1.6s var(--ease) forwards; }
+@keyframes ce-knit { 0% { border-bottom-style: dashed; opacity: 1; } 45% { border-bottom-style: dashed; } 46% { border-bottom-style: solid; } 100% { border-bottom-style: solid; opacity: 0; } }
+.ce-typed .c { animation: ce-ink .9s var(--ease) both; }
+@keyframes ce-ink { from { color: var(--v-hi2); text-shadow: 0 0 10px color-mix(in srgb, var(--u-agent) 70%, transparent); } to { color: inherit; text-shadow: none; } }
+.ce-mk { display: inline-block; width: 0; height: 1em; }
+.ce-svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+.ce-trail { fill: none; stroke-linecap: round; stroke-width: 2; }
+.ce-trail.you { stroke: var(--u-you); } .ce-trail.ag { stroke: var(--u-agent); }
+.ce-link { fill: none; stroke: var(--v-hi2); stroke-width: 1.6; stroke-dasharray: 3 4; opacity: 0; transition: opacity .35s; }
+.ce-cur { position: absolute; left: 0; top: 0; pointer-events: none; opacity: 0; transition: opacity .3s; will-change: transform; }
+.ce-cur.on { opacity: 1; }
+.ce-cur i { position: absolute; left: -1px; top: 0; width: 2px; height: 21px; border-radius: 2px; }
+.ce-cur span { position: absolute; left: -1px; bottom: 21px; white-space: nowrap; font: 650 10.5px var(--font-sans); padding: 2px 6px; border-radius: 6px 6px 6px 1px; transform-origin: 0 100%; transition: transform .5s var(--spring-bouncy), box-shadow .4s; }
+.ce-cur.you i, .ce-cur.you span { background: var(--u-you); color: var(--bg); }
+.ce-cur.ag i, .ce-cur.ag span { background: var(--u-agent); color: #fff; }
+.ce-cur.close span { transform: scale(1.1); box-shadow: 0 0 0 3px color-mix(in srgb, var(--u-agent) 30%, transparent); }
+.ce-cur.blink i { animation: ce-blink 1.1s steps(1) infinite; }
+@keyframes ce-blink { 50% { opacity: 0; } }
+.ce-sug { position: absolute; display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 10px; border-radius: 10px; background: var(--raised);
+  border: 1px solid color-mix(in srgb, var(--u-agent) 45%, var(--line)); font-size: 12px; box-shadow: var(--shadow-lift); opacity: 0; transform: translateY(6px) scale(.96); transform-origin: 20% 100%; pointer-events: none; white-space: nowrap; }
+.ce-sug.show { opacity: 1; transform: none; transition: transform .6s var(--spring-soft), opacity .25s; }
+.ce-sug.gone { opacity: 0; transform: scale(.94); transition: all .3s; }
+.ce-sug-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--u-agent); }
+.ce-acc { font: 600 11.5px var(--font-sans); color: #fff; background: var(--u-agent); border: 0; border-radius: 7px; padding: 4px 9px; transition: transform .2s var(--spring-snappy); }
+.ce-acc.press { transform: scale(.92); }
+.ce-ul { margin: 4px 0 0; padding-left: 18px; color: var(--muted); font-size: 13.5px; }
+.ce-ul b { color: var(--ink); font-weight: 600; }
+.ce-cur.below span { bottom: auto; top: 21px; border-radius: 1px 6px 6px 6px; transform-origin: 0 0; }

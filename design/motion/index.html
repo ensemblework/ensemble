@@ -1,0 +1,1283 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ensemble · motion system</title>
+<style>
+/* ── components/tokens.css ── */
+/* Ensemble motion system: tokens.
+   Colours mirror apps/hub-web/app/globals.css so every component themes with the app. */
+:root, [data-theme="dark"] {
+  --bg: #141210; --sidebar: #1b1815; --panel: #221e1a; --raised: #2b261f;
+  --hover: rgba(255,248,236,.05); --line: rgba(243,238,230,.08); --line-strong: rgba(243,238,230,.14);
+  --ink: #f3eee6; --muted: #b7ae9f; --faint: #8f877b;
+  --accent: #7c6af7; --accent-rgb: 124 106 247; --accent-hi: #b4a9ff; --accent-soft: rgba(124,106,247,.16);
+  --ok: #3cba86; --warn: #e0a04a; --danger: #e36b64;
+  --kind-people: #e7a08a; --kind-project: #7eb8c9; --kind-repo: #8fbf9f; --kind-task: #e0b15a; --kind-skill: #d4c07a;
+  /* the two voices */
+  --u-agent: var(--accent);
+  --u-you: var(--ink);
+  --skel-base: color-mix(in srgb, var(--ink) 7%, transparent);
+  --skel-sweep: color-mix(in srgb, var(--accent) 22%, transparent);
+}
+[data-theme="light"] {
+  --bg: #f4f1ea; --sidebar: #ebe6dc; --panel: #fffcf7; --raised: #f7f3ec;
+  --hover: rgba(28,25,21,.045); --line: rgba(28,25,21,.08); --line-strong: rgba(28,25,21,.14);
+  --ink: #1c1915; --muted: #5a534c; --faint: #625b51;
+  --accent: #5346d6; --accent-rgb: 83 70 214; --accent-hi: #7c6af7; --accent-soft: rgba(83,70,214,.12);
+  --ok: #18724b; --warn: #9a6b12; --danger: #c2413b;
+  --skel-base: color-mix(in srgb, var(--ink) 7%, transparent);
+  --skel-sweep: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+:root {
+  /* Motion tokens. "weave" is the house curve: slow in, slow out, like two hands in step. */
+  --ease: cubic-bezier(.2,.8,.2,1);          /* existing app ease (enter) */
+  --ease-weave: cubic-bezier(.65,0,.35,1);    /* morphs, loops */
+  --ease-snap: cubic-bezier(.3,1.4,.5,1);     /* success pop */
+  --dur-fast: 120ms; --dur: 180ms; --dur-enter: 320ms;
+  --dur-breath: 2.4s;   /* idle breathing */
+  --dur-sweep: 1.6s;    /* skeleton sweep */
+  --dur-verb: 2.6s;     /* status verb rotation */
+}
+/* One switch for everything: OS setting OR the app's own Settings toggle. */
+@media (prefers-reduced-motion: reduce) { :root { --u-reduced: 1; } }
+[data-reduce-motion="true"] { --u-reduced: 1; }
+
+/* ── components/approve/approve.css ── */
+/* Approve: "tie the knot". The label gives way, a check is drawn in one stroke,
+   and six sparks fly out (a nod to the working glyph's spark). */
+.u-approve { position: relative; overflow: visible; }
+.u-approve .lbl { transition: opacity .15s, transform .2s; }
+.u-approve .tick { position: absolute; left: 50%; top: 50%; width: 16px; height: 16px; margin: -8px; overflow: visible; }
+.u-approve .tick path { fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 1; }
+.u-approve .spark { position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px; border-radius: 50%; background: var(--accent-hi); opacity: 0; }
+.u-approve.is-done { background: var(--ok) !important; color: #0f1a14 !important; }
+.u-approve.is-done .lbl { opacity: 0; transform: scale(.8); }
+.u-approve.is-done .tick path { animation: u-tick .38s var(--ease-weave) .08s forwards; }
+.u-approve.is-done .spark { animation: u-spark .6s var(--ease) .2s both; }
+@keyframes u-tick { to { stroke-dashoffset: 0; } }
+@keyframes u-spark { 0% { opacity: 1; transform: rotate(var(--a)) translateY(0) scale(1); } 100% { opacity: 0; transform: rotate(var(--a)) translateY(-22px) scale(.4); } }
+.u-reject.is-done ~ * , .u-struck { text-decoration: line-through; text-decoration-color: var(--danger); }
+@media (prefers-reduced-motion: reduce) { .u-approve.is-done .tick path { animation: none; stroke-dashoffset: 0; } .u-approve.is-done .spark { animation: none; } }
+[data-reduce-motion="true"] .u-approve.is-done .tick path { animation: none; stroke-dashoffset: 0; }
+[data-reduce-motion="true"] .u-approve.is-done .spark { animation: none; }
+
+/* ── components/ask/ask.css ── */
+/* Ask bar submit: two strands (agent violet, you ink) chase each other around the pill's rim
+   while Ensemble looks through your data; answers and sources cascade in. */
+@property --u-angle { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+.u-ask { border: 1px solid var(--line-strong); border-radius: 999px; background: var(--raised); transition: border-color .2s; }
+.u-ask.is-asking { border-color: transparent;
+  background: linear-gradient(var(--raised), var(--raised)) padding-box,
+    conic-gradient(from var(--u-angle), transparent 0 8%, var(--u-agent) 22%, transparent 30% 55%, color-mix(in srgb, var(--u-you) 80%, transparent) 70%, transparent 78%) border-box;
+  animation: u-rim 1.8s linear infinite; }
+@keyframes u-rim { to { --u-angle: 360deg; } }
+.u-cascade > * { animation: u-rise .42s var(--ease) both; animation-delay: calc(var(--i, 0) * 70ms); }
+@keyframes u-rise { from { opacity: 0; transform: translateY(8px); } }
+@media (prefers-reduced-motion: reduce) { .u-ask.is-asking { animation: none; border-color: var(--accent); background: var(--raised); } .u-cascade > * { animation: u-fade .2s both; } }
+[data-reduce-motion="true"] .u-ask.is-asking { animation: none; border-color: var(--accent); background: var(--raised); }
+[data-reduce-motion="true"] .u-cascade > * { animation: u-fade .2s both; }
+@keyframes u-fade { from { opacity: 0; } }
+
+/* ── components/duet/duet.css ── */
+/* Duet: the small loader that replaces Loader2/Spinner. Two dots (agent + you) circle a shared
+   centre, meet in the middle ("in sync"), then part again. <span class="u-duet"><i></i><i></i></span> */
+.u-duet { --s: 14px; position: relative; display: inline-block; width: var(--s); height: var(--s); vertical-align: middle; flex: none;
+  animation: u-duet-turn 1.8s var(--ease-weave) infinite; }
+.u-duet i { position: absolute; left: 50%; top: 50%; width: calc(var(--s) * .36); height: calc(var(--s) * .36); margin: calc(var(--s) * -.18);
+  border-radius: 50%; background: var(--u-agent); animation: u-duet-a 1.8s var(--ease-weave) infinite; }
+.u-duet i + i { background: var(--u-you); animation-name: u-duet-b; mix-blend-mode: normal; }
+@keyframes u-duet-turn { to { transform: rotate(360deg); } }
+@keyframes u-duet-a { 0%, 30%, 70%, 100% { transform: translateX(calc(var(--s) * -.32)); } 50% { transform: translateX(0) scale(1.3); } }
+@keyframes u-duet-b { 0%, 30%, 70%, 100% { transform: translateX(calc(var(--s) * .32)); } 50% { transform: translateX(0) scale(.7); } }
+@media (prefers-reduced-motion: reduce) {
+  .u-duet { animation: none; } .u-duet i { animation: u-duet-fade 2.4s ease-in-out infinite; }
+  .u-duet i:first-child { transform: translateX(calc(var(--s) * -.32)); } .u-duet i + i { transform: translateX(calc(var(--s) * .32)); animation-delay: -1.2s; }
+}
+[data-reduce-motion="true"] .u-duet { animation: none; }
+[data-reduce-motion="true"] .u-duet i { animation: u-duet-fade 2.4s ease-in-out infinite; }
+[data-reduce-motion="true"] .u-duet i:first-child { transform: translateX(calc(var(--s) * -.32)); }
+[data-reduce-motion="true"] .u-duet i + i { transform: translateX(calc(var(--s) * .32)); animation-delay: -1.2s; }
+@keyframes u-duet-fade { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+
+/* ── components/empty/empty.css ── */
+/* Empty states: calm, not a loader. The loose thread drifts; the copy says what will appear here. */
+.u-empty { display: flex; align-items: center; gap: 16px; border: 1px dashed var(--line-strong); border-radius: 12px; padding: 14px 18px; color: var(--muted); font-size: 13px; }
+.u-empty svg { flex: none; }
+
+/* ── components/fetch/fetch.css ── */
+/* Fetch now: the refresh icon's two arrows become two strands that reel around at different
+   speeds, overlapping (in sync) every few turns; on done they close into a ring and a count pops. */
+.u-fetch svg { width: 15px; height: 15px; overflow: visible; }
+.u-fetch .a, .u-fetch .b { fill: none; stroke-linecap: round; stroke-width: 2; transform-origin: 8px 8px; transition: stroke-dasharray .4s var(--ease-weave); }
+.u-fetch .a { stroke: var(--u-agent); stroke-dasharray: 14 40; }
+.u-fetch .b { stroke: var(--u-you); stroke-dasharray: 9 40; stroke-dashoffset: -20; }
+.u-fetch.is-busy .a { animation: u-reel 1.05s linear infinite; }
+.u-fetch.is-busy .b { animation: u-reel 1.6s linear infinite; }
+@keyframes u-reel { to { transform: rotate(360deg); } }
+.u-fetch.is-done .a { stroke-dasharray: 40 0; stroke: var(--ok); }
+.u-fetch.is-done .b { stroke-dasharray: 0 40; }
+.u-count { display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 99px; font-size: 11px; font-weight: 600;
+  background: var(--accent-soft); color: var(--ink); animation: u-pop .45s var(--ease-snap) both; }
+@keyframes u-pop { from { transform: scale(.4); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .u-fetch.is-busy .a, .u-fetch.is-busy .b { animation: u-dim 1.6s ease-in-out infinite; } .u-count { animation: none; } }
+[data-reduce-motion="true"] .u-fetch.is-busy .a, [data-reduce-motion="true"] .u-fetch.is-busy .b { animation: u-dim 1.6s ease-in-out infinite; }
+@keyframes u-dim { 50% { opacity: .35; } }
+
+/* ── components/glyph/ensemble-glyph.css ── */
+/* Ensemble Glyph: two strands (agent + you) that morph between shapes. */
+.u-glyph { display: inline-block; flex: none; line-height: 0; vertical-align: middle; }
+.u-glyph svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.u-glyph .ug-agent { stroke: var(--u-agent); transition: stroke .4s var(--ease); }
+.u-glyph .ug-you   { stroke: var(--u-you);   transition: stroke .4s var(--ease), opacity .4s var(--ease); }
+.u-glyph.is-error .ug-agent, .u-glyph.is-error .ug-you { stroke: var(--danger); }
+.u-glyph.is-error .ug-you { opacity: .55; }
+.u-glyph.is-success .ug-agent { stroke: var(--ok); }
+.u-glyph.is-pause .ug-agent { stroke: var(--danger); }
+/* waiting on you: the agent holds still; your strand breathes (it's your turn) */
+.u-glyph.is-wait .ug-you { animation: ug-your-turn var(--dur-breath) var(--ease-weave) infinite; }
+@keyframes ug-your-turn { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+.u-glyph.is-idle svg { animation: ug-breathe 4s var(--ease-weave) infinite; transform-origin: 50% 50%; }
+@keyframes ug-breathe { 0%,100% { transform: scale(1); } 50% { transform: scale(.94); } }
+@media (prefers-reduced-motion: reduce) {
+  .u-glyph.is-idle svg { animation: none; }
+  .u-glyph.is-wait .ug-you { animation-duration: 4s; } /* opacity only, no movement */
+}
+[data-reduce-motion="true"] .u-glyph.is-idle svg { animation: none; }
+
+/* ── components/inflow/inflow.css ── */
+/* Per-source sync rows (Settings → Connections, Connect page, Fetch now results) */
+.u-src { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); }
+.u-src .u-src-line { position: relative; width: 42px; height: 2px; border-radius: 2px; background: var(--line-strong); overflow: hidden; }
+.u-src.is-syncing .u-src-line::after { content: ""; position: absolute; top: 0; width: 12px; height: 2px; border-radius: 2px;
+  background: var(--src, var(--accent)); animation: u-src-flow 1.1s var(--ease-weave) infinite; }
+@keyframes u-src-flow { from { left: -12px; } to { left: 42px; } }
+.u-src.is-done .u-src-line { background: var(--ok); transition: background .3s; }
+.u-src.is-error .u-src-line { background: repeating-linear-gradient(90deg, var(--danger) 0 4px, transparent 4px 7px); }
+@media (prefers-reduced-motion: reduce) { .u-src.is-syncing .u-src-line::after { animation: none; left: 15px; } }
+[data-reduce-motion="true"] .u-src.is-syncing .u-src-line::after { animation: none; left: 15px; }
+
+/* ── components/loom/loom.css ── */
+/* Loom: a delegated run in progress. Finished steps are woven cloth; a shuttle carries the
+   thread back and forth across the current step. Stop = the thread is cut and recoils. */
+.u-loom { --steps: 5; --done: 2; }
+.u-loom-track { position: relative; height: 10px; margin: 8px 5px 6px; }
+.u-loom-track::before { content: ""; position: absolute; left: 0; right: 0; top: 4.25px; height: 1.5px; border-radius: 2px; background: var(--line-strong); }
+.u-loom-fill { position: absolute; left: 0; top: 2px; height: 6px; border-radius: 3px; width: calc(var(--done) / var(--steps) * 100%);
+  background: repeating-linear-gradient(135deg, var(--accent) 0 3px, color-mix(in srgb, var(--accent) 45%, transparent) 3px 6px);
+  background-size: 8.5px 8.5px; animation: u-weave-move 1.2s linear infinite; transition: width .6s var(--ease-weave), background .3s; }
+@keyframes u-weave-move { to { background-position: 8.5px 0; } }
+.u-loom-shuttle { position: absolute; top: 1px; width: 12px; height: 8px; margin-left: -6px; border-radius: 4px; background: var(--accent-hi);
+  box-shadow: 0 0 0 3px var(--accent-soft), 0 0 12px color-mix(in srgb, var(--accent) 60%, transparent);
+  left: calc(var(--done) / var(--steps) * 100%); animation: u-shuttle 1.3s var(--ease-weave) infinite alternate; }
+.u-loom-shuttle::after { content: ""; position: absolute; left: 4px; top: 2.5px; width: 3px; height: 3px; border-radius: 50%; background: var(--u-you); }
+@keyframes u-shuttle { to { transform: translateX(calc((100cqw) / var(--steps))); } }
+.u-loom-track { container-type: inline-size; }
+.u-loom-steps { display: grid; grid-template-columns: repeat(var(--steps), 1fr); list-style: none; padding: 0; margin: 0; font-size: 11.5px; color: var(--faint); }
+.u-loom-steps li { position: relative; padding-top: 12px; }
+.u-loom-steps li::before { content: ""; position: absolute; left: 0; top: 0; width: 7px; height: 7px; border-radius: 50%; background: var(--line-strong); }
+.u-loom-steps li.done { color: var(--muted); } .u-loom-steps li.done::before { background: var(--accent); }
+.u-loom-steps li.now { color: var(--ink); } .u-loom-steps li.now::before { background: var(--accent-hi); box-shadow: 0 0 0 0 var(--accent); animation: u-ping 1.6s ease-out infinite; }
+@keyframes u-ping { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent); } 100% { box-shadow: 0 0 0 7px transparent; } }
+/* stop: the thread is cut at the shuttle, both ends recoil */
+.u-loom.is-cut .u-loom-fill { background: var(--danger); animation: u-recoil .5s var(--ease-snap) both; }
+.u-loom.is-cut .u-loom-shuttle { animation: u-drop .5s ease-in both; }
+.u-loom.is-cut .u-loom-track::before { background: linear-gradient(90deg, transparent calc(var(--done) / var(--steps) * 100% + 6px), var(--line) 0); }
+@keyframes u-recoil { 40% { transform: scaleX(.9); } 100% { transform: scaleX(.97); } }
+.u-loom-fill { transform-origin: left; }
+@keyframes u-drop { to { transform: translateY(10px) rotate(40deg); opacity: 0; } }
+.u-loom.is-done .u-loom-fill { width: 100%; background: var(--ok); animation: none; }
+.u-loom.is-done .u-loom-shuttle { opacity: 0; transition: opacity .3s; animation: none; }
+.u-frozen .u-loom-fill, .u-frozen .u-loom-shuttle, .u-frozen .u-loom-steps li::before { animation-play-state: paused; filter: grayscale(1); opacity: .7; }
+@media (prefers-reduced-motion: reduce) {
+  .u-loom-fill, .u-loom-shuttle, .u-loom-steps li.now::before { animation: none !important; }
+}
+[data-reduce-motion="true"] .u-loom-fill, [data-reduce-motion="true"] .u-loom-shuttle, [data-reduce-motion="true"] .u-loom-steps li.now::before { animation: none !important; }
+
+/* ── components/needs-me/needs-me.css ── */
+/* Needs me: the agent is waiting on you. Your strand (paper) carries a slow heartbeat along the
+   card's left edge; a timeout thread drains toward the editor-hook fallback (10 min in the app);
+   the sidebar badge sends out a soft ping ring. */
+.u-yourturn { position: relative; overflow: hidden; }
+.u-yourturn::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: linear-gradient(transparent, var(--u-you), transparent); background-size: 100% 200%;
+  animation: u-heartbeat 2.4s var(--ease-weave) infinite; }
+@keyframes u-heartbeat { 0% { background-position: 0 100%; opacity: .35; } 50% { opacity: 1; } 100% { background-position: 0 -100%; opacity: .35; } }
+.u-timeout { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--line); }
+.u-timeout::after { content: ""; position: absolute; inset: 0; transform-origin: left; background: var(--u-you); opacity: .7;
+  animation: u-drain var(--timeout, 600s) linear both; }
+@keyframes u-drain { 0% { transform: scaleX(1); } 80% { background: var(--u-you); } 100% { transform: scaleX(0); background: var(--warn); } }
+.u-badge-ping { position: relative; }
+.u-badge-ping::after { content: ""; position: absolute; inset: -2px; border-radius: inherit; box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent);
+  animation: u-badge 2.4s ease-out infinite; }
+@keyframes u-badge { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); } 60%, 100% { box-shadow: 0 0 0 7px transparent; } }
+/* decided: the card is tied off and gathers away */
+.u-collapse { display: grid; grid-template-rows: 1fr; transition: grid-template-rows .45s var(--ease-weave) .5s, opacity .35s ease .5s, transform .45s var(--ease-weave) .5s; }
+.u-collapse > * { overflow: hidden; min-height: 0; }
+.u-collapse.is-gone { grid-template-rows: 0fr; opacity: 0; transform: translateX(24px); }
+.u-collapse.is-gone.left { transform: translateX(-24px); }
+@media (prefers-reduced-motion: reduce) {
+  .u-yourturn::before { animation: none; background: var(--u-you); opacity: .6; }
+  .u-badge-ping::after { animation: none; }
+  .u-collapse { transition: opacity .2s ease .3s; } .u-collapse.is-gone { transform: none; }
+}
+[data-reduce-motion="true"] .u-yourturn::before { animation: none; background: var(--u-you); opacity: .6; }
+[data-reduce-motion="true"] .u-badge-ping::after { animation: none; }
+[data-reduce-motion="true"] .u-collapse.is-gone { transform: none; }
+
+/* ── components/page-enter/page-enter.css ── */
+/* Page enter: a thread draws under the page title (bead leading), then blocks rise in, staggered.
+   Use on route change after data is ready. Old page leaves with a 120ms fade. */
+.u-page-leave { animation: u-leave .14s ease-in both; }
+@keyframes u-leave { to { opacity: 0; transform: translateY(-3px); filter: blur(1.5px); } }
+.u-page-enter .u-rise { animation: u-rise .46s var(--ease) both; animation-delay: calc(120ms + var(--i, 0) * 55ms); }
+@keyframes u-rise { from { opacity: 0; transform: translateY(8px); } }
+.u-title-thread { position: relative; height: 2px; margin: 8px 0 14px; }
+.u-title-thread::before { content: ""; position: absolute; left: 0; top: 0; height: 1.5px; width: 100%; border-radius: 2px;
+  background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 10%, transparent) 70%, transparent);
+  transform-origin: left; }
+.u-title-thread::after { content: ""; position: absolute; top: -2.25px; left: 0; width: 6px; height: 6px; border-radius: 50%; background: var(--accent-hi); opacity: 0; }
+.u-page-enter .u-title-thread::before { animation: u-draw .6s var(--ease-weave) both; }
+.u-page-enter .u-title-thread::after { animation: u-bead 0.6s var(--ease-weave) both; }
+@keyframes u-draw { from { transform: scaleX(0); } }
+@keyframes u-bead { 0% { left: 0; opacity: 1; } 85% { opacity: 1; } 100% { left: 100%; opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .u-page-enter .u-rise { animation: u-fade .2s ease both; animation-delay: 0s; }
+  .u-page-leave { animation: u-fade-o .15s ease both; }
+  .u-page-enter .u-title-thread::before, .u-page-enter .u-title-thread::after { animation: none; }
+}
+[data-reduce-motion="true"] .u-page-enter .u-rise { animation: u-fade .2s ease both; animation-delay: 0s; }
+[data-reduce-motion="true"] .u-page-leave { animation: u-fade-o .15s ease both; }
+[data-reduce-motion="true"] .u-page-enter .u-title-thread::before, [data-reduce-motion="true"] .u-page-enter .u-title-thread::after { animation: none; }
+@keyframes u-fade { from { opacity: 0; } }
+@keyframes u-fade-o { to { opacity: 0; } }
+
+/* ── components/reconnect/reconnect.css ── */
+/* Reconnecting pill (SSE dropped / "Reconnecting to Ensemble…"): two dots on a tether drift apart,
+   the tether goes dashed, then they snap back together. Offline = apart and dim. */
+.u-tether { position: relative; display: inline-block; width: 26px; height: 8px; vertical-align: middle; }
+.u-tether i { position: absolute; top: 1px; width: 6px; height: 6px; border-radius: 50%; }
+.u-tether i:nth-child(1) { left: 7px; background: var(--u-agent); animation: u-teth-a 2.2s var(--ease-weave) infinite; }
+.u-tether i:nth-child(2) { left: 13px; background: var(--u-you); animation: u-teth-b 2.2s var(--ease-weave) infinite; }
+.u-tether::before { content: ""; position: absolute; left: 4px; right: 4px; top: 3.25px; height: 1.5px;
+  background: repeating-linear-gradient(90deg, var(--faint) 0 2px, transparent 2px 4px); animation: u-teth-line 2.2s var(--ease-weave) infinite; transform-origin: center; }
+@keyframes u-teth-a { 0%, 100% { transform: translateX(0); } 45%, 60% { transform: translateX(-7px); } 70% { transform: translateX(1px); } }
+@keyframes u-teth-b { 0%, 100% { transform: translateX(0); } 45%, 60% { transform: translateX(7px); } 70% { transform: translateX(-1px); } }
+@keyframes u-teth-line { 0%, 100% { transform: scaleX(.2); opacity: 0; } 45%, 60% { transform: scaleX(1); opacity: 1; } 70% { opacity: 0; } }
+.u-tether.is-offline i { animation: none; opacity: .5; } .u-tether.is-offline i:nth-child(1) { transform: translateX(-7px); } .u-tether.is-offline i:nth-child(2) { transform: translateX(7px); }
+.u-tether.is-offline::before { animation: none; opacity: .6; }
+@media (prefers-reduced-motion: reduce) { .u-tether i, .u-tether::before { animation-name: u-dim; } }
+[data-reduce-motion="true"] .u-tether i, [data-reduce-motion="true"] .u-tether::before { animation-name: u-dim; }
+@keyframes u-dim { 50% { opacity: .35; } }
+
+/* ── components/skeleton/skeleton.css ── */
+/* Skeletons: warm blocks with a violet "wash" that sweeps through in a staggered diagonal wave
+   (each block delays by --i), so a page loads like a thread being pulled through it. */
+.u-skel { position: relative; overflow: hidden; border-radius: 8px; background: var(--skel-base); }
+.u-skel::after { content: ""; position: absolute; inset: 0; transform: translateX(-100%);
+  background: linear-gradient(100deg, transparent 20%, var(--skel-sweep) 50%, transparent 80%);
+  animation: u-sweep var(--dur-sweep) var(--ease-weave) infinite; animation-delay: calc(var(--i, 0) * 70ms); }
+@keyframes u-sweep { 0% { transform: translateX(-100%); } 60%, 100% { transform: translateX(100%); } }
+.u-skel.line { height: 10px; border-radius: 99px; }
+.u-skel.dot { border-radius: 50%; }
+/* Context graph skeleton: edges draw in as threads, nodes breathe in sequence */
+.u-graph-skel .edge { stroke: var(--line-strong); stroke-width: 1.5; fill: none; stroke-dasharray: 1; stroke-dashoffset: 1;
+  animation: u-edge 3.2s var(--ease-weave) infinite; animation-delay: calc(var(--i) * 140ms); }
+.u-graph-skel .node { fill: var(--skel-base); stroke: var(--line-strong); animation: u-node 3.2s var(--ease-weave) infinite; animation-delay: calc(var(--i) * 140ms);
+  transform-box: fill-box; transform-origin: center; }
+.u-graph-skel .node.hub { fill: color-mix(in srgb, var(--accent) 30%, transparent); stroke: var(--accent); }
+@keyframes u-edge { 0% { stroke-dashoffset: 1; } 35%, 75% { stroke-dashoffset: 0; opacity: 1; } 100% { stroke-dashoffset: 0; opacity: 0; } }
+@keyframes u-node { 0%, 100% { opacity: .35; transform: scale(.8); } 30%, 70% { opacity: 1; transform: scale(1); } }
+@media (prefers-reduced-motion: reduce) {
+  .u-skel::after { animation: none; display: none; } .u-skel { animation: u-skel-fade 2s ease-in-out infinite; }
+  .u-graph-skel .edge { animation: none; stroke-dashoffset: 0; } .u-graph-skel .node { animation: none; }
+}
+[data-reduce-motion="true"] .u-skel::after { display: none; }
+[data-reduce-motion="true"] .u-skel { animation: u-skel-fade 2s ease-in-out infinite; }
+[data-reduce-motion="true"] .u-graph-skel .edge { animation: none; stroke-dashoffset: 0; }
+[data-reduce-motion="true"] .u-graph-skel .node { animation: none; }
+@keyframes u-skel-fade { 50% { opacity: .55; } }
+
+/* ── components/small/small.css ── */
+/* Small moments. */
+/* Autosave: three stitches sew in while saving, then pull into a check. */
+.u-save { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--faint); }
+.u-save .st { display: inline-flex; gap: 2px; width: 16px; }
+.u-save .st i { width: 4px; height: 1.6px; border-radius: 2px; background: var(--accent); opacity: .2; }
+.u-save.is-saving .st i { animation: u-stitch-in 1.1s var(--ease-weave) infinite; }
+.u-save.is-saving .st i:nth-child(2) { animation-delay: .15s; } .u-save.is-saving .st i:nth-child(3) { animation-delay: .3s; }
+@keyframes u-stitch-in { 0% { opacity: .2; transform: scaleX(.3); } 30%, 70% { opacity: 1; transform: none; } 100% { opacity: .2; } }
+.u-save .ck { display: none; width: 14px; height: 14px; }
+.u-save .ck path { fill: none; stroke: var(--ok); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 1; }
+.u-save.is-saved .st { display: none; } .u-save.is-saved .ck { display: inline-block; } .u-save.is-saved .ck path { animation: u-tick .35s var(--ease-weave) forwards; }
+.u-save.is-conflict { color: var(--warn); } .u-save.is-conflict .st i { opacity: 1; background: var(--warn); }
+@keyframes u-tick { to { stroke-dashoffset: 0; } }
+/* Owner handoff (triage "Agent does it" / Assign to agent): your dot travels the thread to the agent side. */
+.u-handoff { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); }
+.u-handoff .track { position: relative; width: 40px; height: 14px; }
+.u-handoff .track::before { content: ""; position: absolute; left: 3px; right: 3px; top: 6.25px; height: 1.5px; background: var(--line-strong); border-radius: 2px; }
+.u-handoff .track i { position: absolute; top: 3px; left: 0; width: 8px; height: 8px; border-radius: 50%; background: var(--u-you); transition: left .7s var(--ease-weave), background .3s .5s, box-shadow .3s .5s; }
+.u-handoff.to-agent .track i { left: 32px; background: var(--u-agent); box-shadow: 0 0 0 3px var(--accent-soft); animation: u-hop .7s var(--ease-weave); }
+@keyframes u-hop { 50% { transform: translateY(-5px); } }
+/* Toasts: the glyph speaks for the outcome */
+.u-toast { display: inline-flex; align-items: center; gap: 10px; padding: 8px 12px 8px 10px; border-radius: 10px; background: var(--raised);
+  border: 1px solid var(--line-strong); box-shadow: 0 18px 48px rgba(0,0,0,.38); font-size: 13px; color: var(--ink); animation: u-toast-in .42s var(--ease) both; }
+@keyframes u-toast-in { from { opacity: 0; transform: translateY(10px) scale(.97); } }
+@media (prefers-reduced-motion: reduce) {
+  .u-save.is-saving .st i { animation: none; opacity: 1; } .u-save.is-saved .ck path { animation: none; stroke-dashoffset: 0; }
+  .u-handoff .track i, .u-handoff.to-agent .track i { transition: none; animation: none; } .u-toast { animation: u-fade .2s both; }
+}
+[data-reduce-motion="true"] .u-save.is-saving .st i { animation: none; opacity: 1; }
+[data-reduce-motion="true"] .u-save.is-saved .ck path { animation: none; stroke-dashoffset: 0; }
+[data-reduce-motion="true"] .u-handoff .track i { transition: none; animation: none; }
+[data-reduce-motion="true"] .u-toast { animation: u-fade .2s both; }
+@keyframes u-fade { from { opacity: 0; } }
+
+/* ── components/splash/splash.css ── */
+/* App boot splash: the icon draws itself (splash.svg), the wordmark rises, then the status line
+   takes over with "Tuning in…" until the shell query resolves; on ready the splash lifts away. */
+.u-splash { display: grid; place-items: center; gap: 14px; text-align: center; }
+.u-splash .word { font: 600 22px/1 var(--font-app, Figtree, system-ui, sans-serif); letter-spacing: -.01em; color: var(--ink);
+  animation: u-word .6s var(--ease) 1.1s both; }
+.u-splash .u-status { animation: u-word .5s var(--ease) 1.4s both; }
+@keyframes u-word { from { opacity: 0; transform: translateY(6px); letter-spacing: .12em; } }
+.u-splash.is-ready { animation: u-lift .5s var(--ease-weave) forwards; }
+@keyframes u-lift { to { opacity: 0; transform: scale(1.04); filter: blur(4px); } }
+@media (prefers-reduced-motion: reduce) { .u-splash .word, .u-splash .u-status { animation: none; } .u-splash.is-ready { animation: u-fade-o .2s forwards; } }
+[data-reduce-motion="true"] .u-splash .word, [data-reduce-motion="true"] .u-splash .u-status { animation: none; }
+@keyframes u-fade-o { to { opacity: 0; } }
+
+/* ── components/status-line/status-line.css ── */
+/* Agent status line: glyph + rotating Ensemble verbs + meta. The Claude-Code idea, in Ensemble's voice. */
+.u-status { display: inline-flex; align-items: center; gap: .55em; font-size: 13px; color: var(--muted); min-height: 20px; }
+.u-status-verb { position: relative; display: inline-flex; white-space: pre; color: var(--ink); font-weight: 500; }
+.u-status-verb .l { display: inline-block; animation: u-l-in .46s var(--ease) both, u-l-shimmer 2.2s linear infinite;
+  animation-delay: calc(var(--i) * 22ms), calc(var(--i) * 55ms); }
+.u-status-verb.out { position: absolute; left: 0; top: 0; }
+.u-status-verb.out .l { animation: u-l-out .26s ease-in both; animation-delay: calc(var(--i) * 12ms); }
+.u-status-slot { white-space: nowrap; clip-path: inset(-12px -2px -12px 0); }
+.u-status-meta { color: var(--faint); font-size: 12px; white-space: nowrap; }
+.u-status-meta kbd { font: 10.5px ui-monospace, Menlo, monospace; border: 1px solid var(--line-strong); border-radius: 5px; padding: 0 4px; color: var(--muted); }
+.u-status.is-real .u-status-verb { color: var(--ink); }
+.u-status.is-real .u-status-verb .l { animation: u-l-in .46s var(--ease) both; animation-delay: calc(var(--i) * 12ms); }
+@keyframes u-l-in { from { opacity: 0; transform: translateY(.5em) rotate(6deg); filter: blur(2px); } }
+@keyframes u-l-out { to { opacity: 0; transform: translateY(-.45em); filter: blur(2px); } }
+/* a highlight sweeps through the letters, left to right, like a bow across strings */
+@keyframes u-l-shimmer { 0%, 62%, 100% { color: var(--ink); } 18% { color: var(--accent-hi); } 32% { color: var(--muted); } }
+.u-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) {
+  .u-status-verb .l, .u-status-verb.out .l { animation: none !important; }
+  .u-status-verb.out { display: none; }
+}
+[data-reduce-motion="true"] .u-status-verb .l { animation: none !important; }
+[data-reduce-motion="true"] .u-status-verb.out { display: none; }
+
+/* ── components/stitch/stitch.css ── */
+/* Stitch: a tool call / assistant action in flight. Marching stitches run around the tile
+   (the agent is sewing it in); done = stitches close into a solid seam; pending = amber, still. */
+.u-stitch { position: relative; border-radius: 8px; }
+.u-stitch > svg.seam { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.u-stitch > svg.seam rect { x: 0.75px; y: 0.75px; width: calc(100% - 1.5px); height: calc(100% - 1.5px); rx: 8px;
+  fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 5 5; stroke-linecap: round;
+  animation: u-march .8s linear infinite; transition: stroke .3s, stroke-dasharray .45s var(--ease-weave), opacity .6s ease .6s; }
+@keyframes u-march { to { stroke-dashoffset: -10; } }
+.u-stitch.is-pending > svg.seam rect { stroke: var(--warn); animation: u-pending-pulse 2.4s ease-in-out infinite; stroke-dasharray: 2 6; }
+@keyframes u-pending-pulse { 50% { opacity: .35; } }
+.u-stitch.is-done > svg.seam rect { stroke: var(--ok); stroke-dasharray: 10 0; animation: none; opacity: 0; }
+.u-stitch.is-failed > svg.seam rect { stroke: var(--danger); animation: none; stroke-dasharray: 3 7; }
+.u-frozen .u-stitch > svg.seam rect { animation-play-state: paused; stroke: var(--faint); }
+@media (prefers-reduced-motion: reduce) { .u-stitch > svg.seam rect { animation: none !important; } }
+[data-reduce-motion="true"] .u-stitch > svg.seam rect { animation: none !important; }
+
+/* ── components/stream/stream.css ── */
+/* Streaming reply: tokens "ink in" from violet to ink; a needle (bead + trailing thread) leads the text;
+   the reply rule on the left carries a bead down while streaming. Builds on the app's .ensemble-reply. */
+.u-reply { display: flex; gap: .75rem; }
+.u-reply-rule { width: 2px; flex: none; border-radius: 2px; background: var(--accent); position: relative; overflow: hidden; }
+.u-reply.is-streaming .u-reply-rule { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+.u-reply.is-streaming .u-reply-rule::after { content: ""; position: absolute; left: 0; right: 0; height: 40%;
+  background: linear-gradient(transparent, var(--accent-hi), transparent); animation: u-rule-bead 1.4s var(--ease-weave) infinite; }
+@keyframes u-rule-bead { from { transform: translateY(-100%); } to { transform: translateY(260%); } }
+.u-reply-body { font-size: 13.5px; line-height: 1.6; color: var(--ink); min-width: 0; }
+.u-tok { animation: u-ink-in .5s var(--ease) both; }
+@keyframes u-ink-in { from { color: var(--accent-hi); opacity: 0; filter: blur(3px); } 40% { opacity: 1; filter: blur(0); } }
+.u-needle { display: inline-block; position: relative; width: 16px; height: 1em; vertical-align: -0.12em; margin-left: 2px; }
+.u-needle::before { content: ""; position: absolute; left: 0; right: 5px; top: 55%; height: 1.5px; border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent)); }
+.u-needle::after { content: ""; position: absolute; right: 0; top: calc(55% - 3px); width: 7px; height: 7px; border-radius: 50%;
+  background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); animation: u-needle-bob .9s var(--ease-weave) infinite alternate; }
+@keyframes u-needle-bob { to { transform: translateY(-2.5px) scale(.85); } }
+.u-reply.is-done .u-needle { animation: u-fade-out .3s ease both; }
+@keyframes u-fade-out { to { opacity: 0; width: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .u-tok { animation: none; } .u-needle::after, .u-reply.is-streaming .u-reply-rule::after { animation: none; }
+}
+[data-reduce-motion="true"] .u-tok, [data-reduce-motion="true"] .u-needle::after, [data-reduce-motion="true"] .u-reply-rule::after { animation: none !important; }
+
+/* ── components/terminal-glyph/terminal-glyph.css ── */
+.u-term { font: 12.5px/1.6 "JetBrains Mono", ui-monospace, Menlo, Consolas, "DejaVu Sans Mono", monospace; color: #e6e6e6; }
+.u-term .tg { color: var(--accent-hi); display: inline-block; width: 1.2ch; text-align: center; }
+.u-term .tv { color: #e5c07b; } .u-term .tm { color: rgba(255,255,255,.4); }
+
+/* ── components/thread-progress/thread-progress.css ── */
+/* Thread progress: route/page loading at the top of <main>. Two strands (agent + you) braid as they
+   advance; on done they pull straight into one line and fade. Set --p (0..1) from JS. */
+.u-progress { position: absolute; left: 0; right: 0; top: 0; height: 8px; pointer-events: none; z-index: 5; }
+.u-progress-fill { position: absolute; left: 0; top: 0; bottom: 0; width: calc(var(--p, 0) * 100%);
+  transition: width .5s var(--ease), opacity .35s ease .25s; overflow: hidden; }
+.u-progress-fill::before, .u-progress-fill::after { content: ""; position: absolute; inset: 0; background-repeat: repeat-x; background-position: 0 0;
+  animation: u-braid-flow .9s linear infinite; transition: transform .35s var(--ease-weave); }
+.u-progress-fill::before { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20width%3D%2724%27%20height%3D%278%27%3E%3Cpath%20d%3D%27M0%204%20C6%201.4%206%201.4%2012%204%20S18%206.6%2024%204%27%20fill%3D%27none%27%20stroke%3D%27%237c6af7%27%20stroke-width%3D%271.6%27%20stroke-linecap%3D%27round%27/%3E%3C/svg%3E"); }
+.u-progress-fill::after  { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20width%3D%2724%27%20height%3D%278%27%3E%3Cpath%20d%3D%27M0%204%20C6%206.6%206%206.6%2012%204%20S18%201.4%2024%204%27%20fill%3D%27none%27%20stroke%3D%27%23f3eee6%27%20stroke-width%3D%271.6%27%20stroke-linecap%3D%27round%27/%3E%3C/svg%3E"); opacity: .75; animation-duration: 1.35s; }
+[data-theme="light"] .u-progress-fill::before { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20width%3D%2724%27%20height%3D%278%27%3E%3Cpath%20d%3D%27M0%204%20C6%201.4%206%201.4%2012%204%20S18%206.6%2024%204%27%20fill%3D%27none%27%20stroke%3D%27%235346d6%27%20stroke-width%3D%271.6%27%20stroke-linecap%3D%27round%27/%3E%3C/svg%3E"); }
+[data-theme="light"] .u-progress-fill::after  { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20width%3D%2724%27%20height%3D%278%27%3E%3Cpath%20d%3D%27M0%204%20C6%206.6%206%206.6%2012%204%20S18%201.4%2024%204%27%20fill%3D%27none%27%20stroke%3D%27%231c1915%27%20stroke-width%3D%271.6%27%20stroke-linecap%3D%27round%27/%3E%3C/svg%3E"); opacity: .55; }
+.u-progress-head { position: absolute; top: 1px; width: 6px; height: 6px; margin-left: -3px; border-radius: 50%; left: calc(var(--p, 0) * 100%);
+  background: var(--accent-hi); box-shadow: 0 0 10px 2px color-mix(in srgb, var(--accent) 70%, transparent); transition: left .5s var(--ease), opacity .3s; }
+@keyframes u-braid-flow { to { background-position: 24px 0; } }
+.u-progress.is-done .u-progress-fill::before, .u-progress.is-done .u-progress-fill::after { transform: scaleY(.12); }
+.u-progress.is-done .u-progress-fill { opacity: 0; }
+.u-progress.is-done .u-progress-head { opacity: 0; }
+.u-progress.is-idle { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .u-progress-fill::before, .u-progress-fill::after { animation: none; }
+  .u-progress-fill, .u-progress-head { transition-duration: .01s; }
+}
+[data-reduce-motion="true"] .u-progress-fill::before, [data-reduce-motion="true"] .u-progress-fill::after { animation: none; }
+
+/* ── demo/demo.css ── */
+/* Demo page chrome (not part of the motion system) */
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--ink); }
+body { font: 14px/1.45 Figtree, "Inter", system-ui, sans-serif; -webkit-font-smoothing: antialiased;
+  background-image: radial-gradient(880px 420px at 8% -12%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 62%); background-attachment: fixed; }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 36px 32px 80px; }
+header.top { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
+h1 { font: 500 34px/1.1 Fraunces, Georgia, serif; letter-spacing: -.02em; margin: 0; }
+.sub { color: var(--muted); margin-top: 8px; max-width: 720px; }
+.ctrls { display: flex; gap: 8px; flex-wrap: wrap; }
+.btn, .btn-primary, .btn-ghost { font: inherit; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; border-radius: 8px; padding: 4px 10px; font-size: 13px; cursor: pointer; }
+.btn { border: 1px solid var(--line); background: var(--raised); color: var(--ink); }
+.btn:hover { border-color: var(--line-strong); }
+.btn-primary { border: 0; background: var(--accent); color: #14120f; font-weight: 600; }
+[data-theme="light"] .btn-primary { color: #fff; }
+.btn-ghost { border: 1px solid transparent; background: none; color: var(--muted); }
+.btn[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.kbd { border: 1px solid var(--line); background: var(--raised); border-radius: 6px; padding: 0 4px; font: 10.5px ui-monospace, monospace; color: var(--muted); }
+.tag { display: inline-flex; align-items: center; border-radius: 6px; padding: 1px 6px; font-size: 11.5px; font-weight: 500; }
+.t-blue { background: rgba(47,134,232,.3); color: #a8cdfa; } .t-orange { background: rgba(217,120,30,.3); color: #ffc38a; }
+.t-green { background: rgba(60,160,100,.3); color: #9fe0b6; } .t-red { background: rgba(224,83,83,.28); color: #ffb4ae; } .t-gray { background: rgba(255,255,255,.1); color: #cfcecb; }
+.t-purple { background: rgba(140,90,210,.32); color: #d4bdf7; }
+[data-theme] { color: var(--ink); }
+.sec { margin: 0 0 22px; border: 1px solid var(--line); border-radius: 16px; background: color-mix(in srgb, var(--sidebar) 70%, transparent); overflow: hidden; scroll-margin-top: 20px; }
+.sec-h { display: grid; grid-template-columns: 44px 1fr auto; gap: 14px; padding: 16px 20px 12px; border-bottom: 1px solid var(--line); align-items: start; }
+.num { font: 600 12px ui-monospace, monospace; color: var(--accent-hi); padding-top: 4px; }
+.sec-h h2 { margin: 0; font-size: 17px; font-weight: 650; }
+.where { color: var(--muted); font-size: 12.5px; margin-top: 3px; }
+.idea { color: var(--faint); font-size: 12.5px; margin-top: 2px; }
+.idea b { color: var(--ink); font-weight: 600; }
+.stage { padding: 20px; display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start; }
+.mock { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px; position: relative; }
+.cap { font-size: 11px; font-weight: 600; letter-spacing: .12em; text-transform: uppercase; color: var(--faint); margin-bottom: 10px; }
+.row { display: flex; align-items: center; gap: 10px; }
+.col { display: flex; flex-direction: column; gap: 10px; }
+.muted { color: var(--muted); } .faint { color: var(--faint); } .small { font-size: 12px; }
+.mono { font-family: ui-monospace, Menlo, monospace; }
+/* app frame mock */
+.app { display: grid; grid-template-columns: 170px 1fr; width: 100%; height: 330px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--bg); }
+.app .side { background: var(--sidebar); border-right: 1px solid var(--line); padding: 12px 8px; font-size: 12.5px; }
+.app .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; padding: 2px 8px 12px; }
+.nav { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 8px; color: color-mix(in srgb, var(--ink) 80%, transparent); }
+.nav .ic { width: 8px; height: 8px; border-radius: 3px; background: var(--muted); opacity: .6; }
+.nav.on { background: var(--accent-soft); color: var(--ink); box-shadow: inset 2px 0 0 var(--accent); font-weight: 500; }
+.nav.on .ic { background: var(--accent); opacity: 1; }
+.nav .badge { margin-left: auto; background: var(--accent); color: #14120f; border-radius: 6px; font-size: 10.5px; font-weight: 700; padding: 0 5px; }
+.app .main { display: flex; flex-direction: column; min-width: 0; }
+.app .bar { height: 38px; border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 10px; padding: 0 12px; font-size: 12.5px; }
+.app .content { position: relative; flex: 1; padding: 16px 20px; overflow: hidden; }
+.pg-title { font: 500 22px/1.1 Fraunces, Georgia, serif; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; font-size: 12.5px; }
+.kdot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; width: 100%; }
+.grid4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; width: 100%; }
+.dock { width: 460px; height: 380px; display: flex; flex-direction: column; border-radius: 12px; background: var(--raised); border: 1px solid var(--line-strong); overflow: hidden; }
+.dock .h { height: 40px; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--line); font-weight: 600; font-size: 13.5px; }
+.dock .b { flex: 1; padding: 14px 16px; overflow: hidden; display: flex; flex-direction: column; gap: 12px; }
+.dock .f { border-top: 1px solid var(--line); padding: 10px; }
+.umsg { align-self: flex-end; max-width: 80%; background: var(--panel); border-radius: 10px; padding: 7px 10px; font-size: 13px; }
+.tool { border: 1px solid var(--line); border-radius: 8px; display: flex; align-items: center; gap: 8px; padding: 5px 9px; background: var(--panel); font-size: 12px; }
+.tool .n { font: 11px ui-monospace, monospace; color: var(--faint); }
+.term { background: #141414; border: 1px solid rgba(255,255,255,.1); border-radius: 10px; padding: 12px 14px; width: 720px; }
+.term .p { color: #7cc4ff; }
+.lightbox { background: #f4f1ea; }
+.shape-strip { display: flex; gap: 14px; flex-wrap: wrap; }
+.shape-strip .s { display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 11px; color: var(--faint); }
+.shape-strip .s .bx { width: 56px; height: 56px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); display: grid; place-items: center; }
+.hero-tile { width: 196px; height: 196px; border-radius: 44px; display: grid; place-items: center;
+  background: radial-gradient(120% 120% at 18% 5%, rgba(124,106,247,.3), transparent 60%), linear-gradient(#2b261f, #141210); border: 1px solid rgba(255,255,255,.07); }
+.pause-banner { font-size: 12.5px; padding: 6px 10px; border-radius: 8px; background: rgba(224,83,83,.18); color: #ffb4ae; display: none; }
+.is-paused .pause-banner { display: inline-flex; }
+.sources a { display: block; padding: 6px 8px; border-radius: 8px; font-size: 12.5px; background: var(--raised); margin-top: 6px; }
+.sources a small { display: block; color: var(--muted); }
+.toc { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 22px; }
+.toc a { font-size: 12px; color: var(--muted); text-decoration: none; border: 1px solid var(--line); border-radius: 99px; padding: 2px 9px; }
+.toc a:hover { color: var(--ink); border-color: var(--line-strong); }
+.tour-label { position: fixed; right: 18px; bottom: 16px; z-index: 50; background: var(--raised); border: 1px solid var(--line-strong); border-radius: 99px; padding: 6px 12px; font-size: 12.5px; display: none; align-items: center; gap: 8px; box-shadow: 0 18px 48px rgba(0,0,0,.38); }
+.touring .tour-label { display: inline-flex; }
+
+</style>
+</head>
+<body>
+<div class="wrap">
+<header class="top">
+  <div>
+    <div class="row" style="gap:12px;margin-bottom:10px"><span data-u-glyph="idle" data-size="28"></span><span class="faint small" style="letter-spacing:.14em;text-transform:uppercase;font-weight:600">Ensemble · motion system</span></div>
+    <h1>Loaders &amp; working animations</h1>
+    <div class="sub">Built on two voices: <b style="color:var(--accent-hi)">violet is the agent</b>, <b>paper is you</b>. Everything here is plain CSS and SVG, plus a small glyph engine in vanilla JS. Every animation has a reduced-motion version. Try the toggle.</div>
+  </div>
+  <div class="ctrls">
+    <button class="btn" id="rm" aria-pressed="false">Reduce motion</button>
+    <button class="btn" id="tour">▶ Play tour</button>
+  </div>
+</header>
+<nav class="toc" id="toc"></nav>
+
+<!-- 01 signature -->
+<section class="sec" id="s-glyph" data-title="Signature: the Ensemble Glyph">
+  <div class="sec-h"><div class="num">01</div><div><h2>Signature: the Ensemble Glyph</h2>
+    <div class="where">Where: the assistant dock header, the Ask button's Mark, activity pill, splash, toasts, job rows (at 14–16 px).</div>
+    <div class="idea"><b>Idea:</b> the icon's two strands never stop being two strands. While the agent works they morph mark → <b>braid</b> (weaving, with crossings that travel) → <b>linked rings</b> → <b>spark</b> (spinning ✦, our answer to Claude's asterisk) → <b>merge</b> (one ring: in sync) → mark. States morph from wherever they are: wait, pause, done, error.</div></div>
+    <div class="ctrls" id="glyph-states"></div></div>
+  <div class="stage">
+    <div class="hero-tile"><span id="hero-glyph"></span></div>
+    <div class="col" style="gap:16px;flex:1;min-width:380px">
+      <div class="mock"><div class="cap">Inline status line (agent thinking)</div><div id="hero-status"></div></div>
+      <div class="mock"><div class="cap">Sizes (the engine thickens strokes at ≤20 px)</div>
+        <div class="row" style="gap:22px"><span data-u-glyph="working" data-size="14"></span><span data-u-glyph="working" data-size="16"></span><span data-u-glyph="working" data-size="20"></span><span data-u-glyph="working" data-size="32"></span><span data-u-glyph="working" data-size="48"></span>
+        <span class="faint small">Standalone SMIL asset (works as a plain &lt;img&gt;):</span><img id="smil-img" width="40" height="40" alt="Ensemble is working"></div></div>
+      <div class="mock"><div class="cap">Keyframes (shared data, 2 strands × 41 points)</div><div class="shape-strip" id="strip"></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- 02 splash -->
+<section class="sec" id="s-splash" data-title="App boot splash">
+  <div class="sec-h"><div class="num">02</div><div><h2>App boot splash</h2>
+    <div class="where">Where: first paint, before the <span class="mono">shell</span> query resolves. Also the native app's launch window on Mac, Windows and Linux.</div>
+    <div class="idea"><b>Idea:</b> the icon draws itself. The violet strand runs first with a bead leading it, then your strand follows it in. The wordmark rises and the status line takes over ("Tuning in…") until the shell is ready, then the splash lifts away.</div></div>
+    <div class="ctrls"><button class="btn" id="splash-replay">Replay</button></div></div>
+  <div class="stage"><div class="mock" style="width:100%;height:330px;display:grid;place-items:center;background:var(--bg)" id="splash-host"></div></div>
+</section>
+
+<!-- 03 route -->
+<section class="sec" id="s-route" data-title="Page loading & route transitions">
+  <div class="sec-h"><div class="num">03</div><div><h2>Page loading &amp; route transitions</h2>
+    <div class="where">Where: every rail click (Today, Board, Context…), task and project pages, peek panel open, <span class="mono">/login → /today</span>.</div>
+    <div class="idea"><b>Idea:</b> a <b>thread progress bar</b>: two strands braid across the top of <span class="mono">&lt;main&gt;</span> as the route loads, then pull straight and fade. The old page leaves in 140 ms. The new one enters as a thread draws under the title and the blocks rise in order.</div></div></div>
+  <div class="stage">
+    <div class="app" id="route-app">
+      <div class="side"><div class="brand"><span data-u-glyph="idle" data-size="16"></span>Ensemble</div>
+        <div class="nav" data-r="today"><i class="ic"></i>Today</div><div class="nav" data-r="board"><i class="ic"></i>Board</div>
+        <div class="nav" data-r="needs"><i class="ic"></i>Needs me<span class="badge u-badge-ping" style="border-radius:6px">2</span></div>
+        <div class="faint" style="font-size:10px;letter-spacing:.14em;text-transform:uppercase;font-weight:600;padding:14px 8px 4px">Workspace</div>
+        <div class="nav" data-r="runs"><i class="ic"></i>Runs</div><div class="nav" data-r="context"><i class="ic"></i>Context</div><div class="nav"><i class="ic"></i>Skills</div>
+      </div>
+      <div class="main"><div class="bar"><b id="route-title">Today</b><span class="faint">·</span><span class="faint small">Ask Ensemble</span></div>
+        <div class="content"><div class="u-progress is-idle" id="route-prog"><div class="u-progress-fill"></div><div class="u-progress-head"></div></div><div id="route-page"></div></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- 04 skeletons -->
+<section class="sec" id="s-skel" data-title="Skeletons">
+  <div class="sec-h"><div class="num">04</div><div><h2>Skeletons: Today, Board, Context graph, Runs</h2>
+    <div class="where">Where: replaces the flat <span class="mono">.skeleton</span> pulse on every page's first load and in the peek panel.</div>
+    <div class="idea"><b>Idea:</b> a <b>violet wash sweeps</b> through the blocks in a staggered diagonal wave, as if a thread is being pulled through the page. In the graph skeleton the edges draw in as threads and the nodes breathe in sequence around the hub.</div></div></div>
+  <div class="stage"><div class="grid4" id="skel-dark"></div></div>
+  <div class="stage lightbox" data-theme="light" style="border-top:1px solid var(--line)"><div class="grid4" id="skel-light"></div></div>
+</section>
+
+<!-- 05 agent -->
+<section class="sec" id="s-agent" data-title="Agent thinking, tools, streaming">
+  <div class="sec-h"><div class="num">05</div><div><h2>Agent thinking → running a tool → streaming a reply</h2>
+    <div class="where">Where: the assistant dock (⌘J), inline <span class="mono">@ensemble</span> answers in documents, comment replies.</div>
+    <div class="idea"><b>Idea:</b> while there's no real status, the <b>status line</b> rotates whimsical Ensemble verbs (each letter drops in, and a highlight sweeps through the word like a bow across strings). When the server sends a real <span class="mono">status</span> frame ("Reading Gmail…") it shows that instead, and only real statuses are announced to screen readers. Tool calls get <b>marching stitches</b>, which close into a seam when they finish. Streamed tokens <b>ink in</b> from violet behind a <b>needle</b>.</div></div></div>
+  <div class="stage">
+    <div class="dock"><div class="h"><span id="dock-glyph"></span><span style="flex:1">Assistant</span><span class="faint small">Medium · gemini</span></div>
+      <div class="b" id="dock-body"></div>
+      <div class="f"><div class="row" style="background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-size:13px"><span class="faint" style="flex:1">Ask, or tell me what to change. @ to mention…</span><span class="btn" style="padding:1px 8px" id="dock-send">Stop</span></div></div></div>
+    <div class="col" style="flex:1;min-width:300px">
+      <div class="mock"><div class="cap">Tool-call states</div><div class="col">
+        <div class="u-stitch tool" id="st-run"><svg class="seam"><rect/></svg><span class="u-duet" style="--s:12px"><i></i><i></i></span><span class="n">hub_list_tasks</span><span class="muted">Reading your board…</span></div>
+        <div class="u-stitch tool is-pending"><svg class="seam"><rect/></svg><span style="color:var(--warn)">◷</span><span class="n">hub_update_task</span><span class="muted" style="flex:1">Move "Reply to Priya" → Done</span><span class="btn-primary" style="padding:1px 8px;font-size:11.5px">Apply</span></div>
+        <div class="u-stitch tool is-done"><svg class="seam"><rect/></svg><span style="color:var(--ok)">✓</span><span class="n">hub_create_task</span><span class="muted">Created "Draft PR description"</span></div>
+        <div class="u-stitch tool is-failed"><svg class="seam"><rect/></svg><span style="color:var(--danger)">!</span><span class="n">gmail.search</span><span class="muted">Token expired</span></div>
+      </div></div>
+      <div class="mock"><div class="cap">Verb set (rotates every 2.6 s)</div><div class="small muted" id="verbs"></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- 06 terminal -->
+<section class="sec" id="s-term" data-title="Terminal & CLI glyph">
+  <div class="sec-h"><div class="num">06</div><div><h2>Terminal &amp; CLI glyph (monospace)</h2>
+    <div class="where">Where: the Code tab's guarded terminal, <span class="mono">ensemble-hook.mjs</span> while an editor waits on Needs me, server logs, future native TUIs.</div>
+    <div class="idea"><b>Idea:</b> the glyph's loop re-drawn in characters: <span class="mono" style="color:var(--accent-hi)">· ∘ ◡ ∪ ⋃ ≀ ⋈ ✢ ✣ ✳</span> and back. Dot, ring, U, braid, spark, the same character in text. It uses the same verbs.</div></div></div>
+  <div class="stage"><div class="term u-term">
+    <div><span class="p">~/ensemble</span> $ node scripts/ensemble-hook.mjs --target cursor</div>
+    <div id="tg1"></div>
+    <div style="margin-top:8px"><span class="p">~/ensemble</span> $ pnpm test --filter hub-api</div>
+    <div id="tg2"></div>
+  </div></div>
+</section>
+
+<!-- 07 runs -->
+<section class="sec" id="s-run" data-title="Agent run in progress">
+  <div class="sec-h"><div class="num">07</div><div><h2>Agent run in progress (Workspace, job card, task panel)</h2>
+    <div class="where">Where: <span class="mono">JobCard</span> and <span class="mono">TaskAgentPanel</span> (replacing <span class="mono">&lt;Spinner size={11}/&gt;</span>), the Runs timeline, and the Board card of a task the agent owns.</div>
+    <div class="idea"><b>Idea:</b> the <b>loom</b>. Finished steps are woven cloth, and a shuttle carries the thread back and forth across the current step. <b>Stop</b> cuts the thread: the shuttle drops and both ends recoil. Done = the whole seam turns green.</div></div>
+    <div class="ctrls"><button class="btn" id="run-stop">■ Stop</button></div></div>
+  <div class="stage">
+    <div class="mock" style="width:470px" id="job">
+      <div class="row" style="gap:8px"><span data-u-glyph="working" data-size="14"></span><b style="flex:1">Fix flaky retention job test</b><span class="tag t-blue" id="job-tag">Working</span></div>
+      <div class="u-loom" id="loom" style="--steps:5;--done:1;margin-top:10px">
+        <div class="u-loom-track"><i class="u-loom-fill"></i><span class="u-loom-shuttle"></span></div>
+        <ol class="u-loom-steps"><li>Prepare</li><li>Read code</li><li>Edit</li><li>Run tests</li><li>Review</li></ol></div>
+      <div class="row faint" style="margin-top:8px;justify-content:space-between;font-size:11px"><span class="mono" id="job-meta">gemini-3.5-flash · 4 turns · 7 tools · 0m 41s</span><span class="mono">apps/hub-api · fix/retention</span></div>
+    </div>
+    <div class="mock" style="width:380px;border-color:rgb(var(--accent-rgb)/.45);background:var(--accent-soft)">
+      <div class="cap">Runs timeline (steps as beads on a thread)</div>
+      <div class="col small" id="timeline"></div>
+    </div>
+  </div>
+</section>
+
+<!-- 08 needs me -->
+<section class="sec" id="s-needs" data-title="Needs me: waiting on you">
+  <div class="sec-h"><div class="num">08</div><div><h2>Needs me: waiting for approval</h2>
+    <div class="where">Where: the Needs me page, editor-hook decision cards (Cursor, Claude Code, VS Code), the sidebar badge, and a job card whose status is <span class="mono">waiting_approval</span>.</div>
+    <div class="idea"><b>Idea:</b> <b>it's your turn</b>. The agent's strand holds still and <i>your</i> strand breathes. A heartbeat runs down the card's left edge. A <b>timeout thread</b> drains toward the hook's 10-minute fallback (compressed to 14 s here). Approving <b>ties the knot</b>: a check is drawn and six sparks fly out, then the card gathers away.</div></div></div>
+  <div class="stage">
+    <div class="col" style="width:520px" id="needs-list"></div>
+    <div class="mock" style="width:300px"><div class="cap">Sidebar badge + glyph "wait"</div>
+      <div class="nav on" style="width:200px"><i class="ic"></i>Needs me<span class="badge u-badge-ping">2</span></div>
+      <div class="row" style="margin-top:14px"><span data-u-glyph="wait" data-size="32"></span><span class="muted small">Agent is waiting on you<br><span class="faint">Allow once · Allow for session · Always · Deny</span></span></div></div>
+  </div>
+</section>
+
+<!-- 09 sync -->
+<section class="sec" id="s-sync" data-title="Syncing connectors & Fetch now">
+  <div class="sec-h"><div class="num">09</div><div><h2>Syncing connectors &amp; Fetch now</h2>
+    <div class="where">Where: the top bar's <b>Fetch now</b>, the scheduled 09:00/16:00 fetches, Settings → Connections, the Connect page, and the sidebar "Connections" tile.</div>
+    <div class="idea"><b>Idea:</b> <b>inflow</b>. Each source (in its Engineer-Graph colour) sends beads along a thread into the mark, which swells slightly as it takes them in. The Fetch icon's two arrows become <b>two reels</b> turning at different speeds, so they line up every few turns. When it finishes they close into a ring and the count pops.</div></div></div>
+  <div class="stage">
+    <div class="mock"><svg xmlns="http://www.w3.org/2000/svg" class="u-inflow" viewBox="0 0 360 224" width="360" height="224" role="img" aria-label="Syncing sources into Ensemble">
+  <title>Inflow: sources syncing into Ensemble</title>
+  <style>.u-inflow .edge{fill:none;stroke:var(--line-strong,rgba(243,238,230,.14));stroke-width:1.5}.u-inflow .lbl{font:500 12px Figtree,system-ui,sans-serif;fill:var(--muted,#b7ae9f)}@media (prefers-reduced-motion: reduce){.u-inflow .bead{display:none}.u-inflow .edge{stroke-dasharray:3 5}}</style>
+  <path id="e0" class="edge" d="M86 28 C190 28 200 112 278 112"/>
+  <circle cx="74" cy="28" r="7" fill="#e7a08a" opacity=".9"/><text class="lbl" x="62" y="32" text-anchor="end">Gmail</text>
+  <circle class="bead" r="3" fill="#e7a08a" opacity="0"><animateMotion dur="1.8s" begin="0.00s" repeatCount="indefinite" keyPoints="0;1" keyTimes="0;1" calcMode="spline" keySplines=".65 0 .35 1"><mpath href="#e0"/></animateMotion><animate attributeName="opacity" dur="1.8s" begin="0.00s" repeatCount="indefinite" values="0;1;1;0" keyTimes="0;.15;.8;1"/></circle>
+  <circle class="bead" r="3" fill="#e7a08a" opacity="0"><animateMotion dur="1.8s" begin="0.90s" repeatCount="indefinite" keyPoints="0;1" keyTimes="0;1" calcMode="spline" keySplines=".65 0 .35 1"><mpath href="#e0"/></animateMotion><animate attributeName="opacity" dur="1.8s" begin="0.90s" repeatCount="indefinite" values="0;1;1;0" keyTimes="0;.15;.8;1"/></circle>
+  <path id="e1" class="edge" d="M86 70 C190 70 200 112 278 112"/>
+  <circle cx="74" cy="70" r="7" fill="#7eb8c9" opacity=".9"/><text class="lbl" x="62" y="74" text-anchor="end">Calendar</text>
+  <circle class="bead" r="3" fill="#7eb8c9" opacity="0"><animateMotion dur="1.8s" begin="0.23s" repeatCount="indefinite" keyPoints="0;1" keyTimes="0;1" calcMode="spline" keySplines=".65 0 .35 1"><mpath href="#e1"/></animateMotion><animate attributeName="opacity" dur="1.8s" begin="0.23s" repeatCount="indefinite" values="0;1;1;0" keyTimes="0;.15;.8;1"/></circle>
+  <circle class="bead" r="3" fill="#7eb8c9" opacity="0"><animateMotion dur="1.8s" begin="1.13s" repeatCount="indefinite" keyPoints="0;1" keyTimes="0;1" calcMode="spline" keySplines=".65 0 .35 1"><mpath href="#e1"/></animateMotion><animate attributeName="opacity" dur="1.8s" begin="1.13s" repeatCount="indefinite" values="0;1;1;0" keyTimes="0;.15;.8;1"/></circle>
+  <path id="e2" class="edge" d="M86 112 C190 112 200 112 278 112"/>
+  <circle cx="74" cy="112" r="7" fill="#8fbf9f" opacity=".9"/><text class="lbl" x="62" y="116" text-anchor="end">GitHub</text>
+  <circle class="bead" r="3" fill="#8fbf9f" opacity="0"><animateMotion dur="1.8s" begin="0.46s" repeatCount="indefinite" keyPoints="0;1" keyTimes="0;1" calcMode="spline" keySplines=".65 0 .35 1"><mpath href="#e2"/></animateMotion><animate attributeName="opacity" dur="1.8s" begin="0.46s" repeatCount="indefinite" values="0;1;1;0" keyTimes="0;.15;.8;1"/></circle>
+  <circle class="bead" r="3" fill="#8fbf9f" opacity="0"><animateMotion dur="1.8s" begin="1.36s" repeatCount="indefinite" keyPoints="0;1" keyTimes="0;1" calcMode="spline" keySplines=".65 0 .35 1"><mpath href="#e2"/></animateMotion><animate attributeName="opacity" dur="1.8s" begin="1.36s" repeatCount="indefinite" values="0;1;1;0" keyTimes="0;.15;.8;1"/></circle>
+  <path id="e3" class="edge" d="M86 154 C190 154 200 112 278 112"/>
+  <circle cx="74" cy="154" r="7" fill="#d4c07a" opacity=".9"/><text class="lbl" x="62" y="158" text-anchor="end">Slack</text>
+  <circle class="bead" r="3" fill="#d4c07a" opacity="0"><animateMotion dur="1.8s" begin="0.69s" repeatCount="indefinite" keyPoints="0;1" keyTimes="0;1" calcMode="spline" keySplines=".65 0 .35 1"><mpath href="#e3"/></animateMotion><animate attributeName="opacity" dur="1.8s" begin="0.69s" repeatCount="indefinite" values="0;1;1;0" keyTimes="0;.15;.8;1"/></circle>
+  <circle class="bead" r="3" fill="#d4c07a" opacity="0"><animateMotion dur="1.8s" begin="1.59s" repeatCount="indefinite" keyPoints="0;1" keyTimes="0;1" calcMode="spline" keySplines=".65 0 .35 1"><mpath href="#e3"/></animateMotion><animate attributeName="opacity" dur="1.8s" begin="1.59s" repeatCount="indefinite" values="0;1;1;0" keyTimes="0;.15;.8;1"/></circle>
+  <path id="e4" class="edge" d="M86 196 C190 196 200 112 278 112"/>
+  <circle cx="74" cy="196" r="7" fill="#c9a4e0" opacity=".9"/><text class="lbl" x="62" y="200" text-anchor="end">Linear</text>
+  <circle class="bead" r="3" fill="#c9a4e0" opacity="0"><animateMotion dur="1.8s" begin="0.92s" repeatCount="indefinite" keyPoints="0;1" keyTimes="0;1" calcMode="spline" keySplines=".65 0 .35 1"><mpath href="#e4"/></animateMotion><animate attributeName="opacity" dur="1.8s" begin="0.92s" repeatCount="indefinite" values="0;1;1;0" keyTimes="0;.15;.8;1"/></circle>
+  <circle class="bead" r="3" fill="#c9a4e0" opacity="0"><animateMotion dur="1.8s" begin="1.82s" repeatCount="indefinite" keyPoints="0;1" keyTimes="0;1" calcMode="spline" keySplines=".65 0 .35 1"><mpath href="#e4"/></animateMotion><animate attributeName="opacity" dur="1.8s" begin="1.82s" repeatCount="indefinite" values="0;1;1;0" keyTimes="0;.15;.8;1"/></circle>
+  <circle cx="300" cy="112" r="24" fill="var(--panel,#221e1a)" stroke="var(--accent,#7c6af7)" stroke-opacity=".5"><animate attributeName="r" dur="0.9s" repeatCount="indefinite" values="24;26.5;24" calcMode="spline" keyTimes="0;.5;1" keySplines=".65 0 .35 1;.65 0 .35 1"/></circle>
+  <g transform="translate(288 100) scale(.5)" fill="none" stroke-linecap="round"><path d="M12 9V26A12 12 0 0 0 36 26V9" stroke="var(--accent,#7c6af7)" stroke-width="5"/><path d="M18.8 9V26A5.2 5.2 0 0 0 29.2 26V9" stroke="var(--ink,#f3eee6)" stroke-width="3.8"/></g>
+</svg>
+</div>
+    <div class="col" style="min-width:320px">
+      <div class="mock"><div class="cap">Top bar</div><button class="btn-ghost u-fetch" id="fetch" style="color:var(--ink)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><circle class="a" cx="8" cy="8" r="6" fill="none" stroke="#7c6af7" stroke-width="2" stroke-linecap="round" stroke-dasharray="14 40"/><circle class="b" cx="8" cy="8" r="6" fill="none" stroke="#f3eee6" stroke-width="2" stroke-linecap="round" stroke-dasharray="9 40" stroke-dashoffset="-20"/></svg>
+<span id="fetch-l">Fetch now</span></button></div>
+      <div class="mock"><div class="cap">Per source</div><div class="col" id="srcs"></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- 10 ask -->
+<section class="sec" id="s-ask" data-title="Ask bar">
+  <div class="sec-h"><div class="num">10</div><div><h2>Ask bar submit</h2>
+    <div class="where">Where: the top bar's "Ask Ensemble" pill (<span class="mono">AskBar</span>), the command palette's ask row, and quick capture.</div>
+    <div class="idea"><b>Idea:</b> two strands chase each other around the pill's rim (a conic border animated with <span class="mono">@property</span>) while Ensemble "looks through your data". The answer rises in, and each cited source cascades after it.</div></div></div>
+  <div class="stage"><div style="width:460px">
+    <div class="u-ask" id="ask" style="padding:6px 14px;font-size:13px;display:flex;gap:8px;align-items:center"><span id="ask-q" style="flex:1" class="faint">Ask Ensemble</span><span id="ask-s"></span></div>
+    <div id="ask-a" class="mock" style="margin-top:8px;display:none"></div>
+  </div></div>
+</section>
+
+<!-- 11 kill switch -->
+<section class="sec" id="s-kill" data-title="Kill switch, stop, error">
+  <div class="sec-h"><div class="num">11</div><div><h2>Kill switch · stop · error</h2>
+    <div class="where">Where: <span class="mono">ActivityControls</span> (Pause/Resume, Stop everything), the assistant's Stop, failed runs, and error toasts.</div>
+    <div class="idea"><b>Idea:</b> on <b>Pause</b> the glyph's two strands <b>straighten into pause bars</b>. The icon <i>becomes</i> the control. Everything that was moving freezes and greys out mid-stitch. Resume bends the strands back into the mark. On an error the strands fray and turn red.</div></div>
+    <div class="ctrls"><button class="btn" id="kill">❚❚ Pause (kill switch)</button></div></div>
+  <div class="stage" id="kill-stage">
+    <div class="mock" style="width:430px">
+      <div class="row" style="justify-content:space-between"><div class="row" style="gap:8px"><span id="kill-glyph"></span><b id="kill-label">Working · 2</b></div><span class="pause-banner">Paused. Nothing calls a model</span></div>
+      <div class="col" style="margin-top:12px" id="kill-rows">
+        <div class="u-stitch tool"><svg class="seam"><rect/></svg><span class="u-duet" style="--s:12px"><i></i><i></i></span><span class="n">assistant</span><span class="muted">Drafting reply to Priya</span></div>
+        <div class="card"><div class="row small"><b style="flex:1">Agent task: Update deliverables</b><span class="faint">1m 12s</span></div>
+          <div class="u-loom" style="--steps:4;--done:2"><div class="u-loom-track"><i class="u-loom-fill"></i><span class="u-loom-shuttle"></span></div></div></div>
+      </div>
+    </div>
+    <div class="col">
+      <div class="u-toast"><span data-u-glyph="error" data-size="20"></span>Model request failed: 429 rate limited. <span class="btn" style="padding:0 8px;font-size:12px">Retry</span></div>
+      <div class="u-toast"><span data-u-glyph="success" data-size="20"></span>Fetched 5 sources · 3 proposed</div>
+      <div class="u-toast"><span data-u-glyph="pause" data-size="20"></span>Paused. 2 running tasks stopped.</div>
+    </div>
+  </div>
+</section>
+
+<!-- 12 small -->
+<section class="sec" id="s-small" data-title="Small moments">
+  <div class="sec-h"><div class="num">12</div><div><h2>Small moments: duet loader, autosave, reconnecting, handoff</h2>
+    <div class="where">Where: every <span class="mono">&lt;Spinner/&gt;</span> today (buttons, "What it did", settings tests), the document autosave and 409 conflicts, the "Reconnecting to Ensemble…" pill, and triage "Agent does it" / Assign to agent.</div>
+    <div class="idea"><b>Idea:</b> the <b>duet</b> is two dots circling a shared centre that meet in the middle, then part. The same 'in sync' beat, at 11 px. Autosave <b>sews three stitches</b>, then pulls them into a check. On reconnect a <b>tether</b> stretches and snaps back. On handoff, your dot rides the thread over to the agent and turns violet.</div></div></div>
+  <div class="stage">
+    <div class="mock col"><div class="cap">Duet</div><div class="row" style="gap:18px"><span class="u-duet" style="--s:11px"><i></i><i></i></span><span class="u-duet"><i></i><i></i></span><span class="u-duet" style="--s:20px"><i></i><i></i></span><span class="u-duet" style="--s:32px"><i></i><i></i></span></div>
+      <div class="row"><button class="btn"><span class="u-duet" style="--s:12px"><i></i><i></i></span>Testing connection…</button><button class="btn-primary"><span class="u-duet" style="--s:12px;--u-you:#14120f"><i></i><i></i></span>Assigning…</button></div></div>
+    <div class="mock col"><div class="cap">Autosave</div><span class="u-save" id="save"><span class="st"><i></i><i></i><i></i></span><svg class="ck" viewBox="0 0 14 14"><path pathLength="1" d="M2.5 7.5 5.5 10.5 11.5 3.5"/></svg><span id="save-l">Saving…</span></span></div>
+    <div class="mock col"><div class="cap">Reconnecting</div><div class="row" style="border:1px solid var(--line);border-radius:99px;padding:5px 12px;font-size:13px;background:var(--panel)"><span class="u-tether"><i></i><i></i></span>Reconnecting to Ensemble…</div>
+      <div class="row small faint"><span class="u-tether is-offline"><i></i><i></i></span>Offline</div></div>
+    <div class="mock col"><div class="cap">Owner handoff</div><div class="u-handoff" id="handoff"><span>You</span><span class="track"><i></i></span><span>Agent</span></div><div class="small faint" id="handoff-l">Triage: <span class="kbd">a</span> Agent does it</div></div>
+  </div>
+</section>
+
+<!-- 13 empty -->
+<section class="sec" id="s-empty" data-title="Empty states">
+  <div class="sec-h"><div class="num">13</div><div><h2>Empty states</h2>
+    <div class="where">Where: Needs me with nothing waiting, Runs with no runs, an empty Board column, and a new Context graph.</div>
+    <div class="idea"><b>Idea:</b> not a loader, and calm on purpose: a <b>loose thread</b> drifts, waiting to be picked up. The copy says what will appear here and how to get it.</div></div></div>
+  <div class="stage">
+    <div class="u-empty" style="width:470px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 64" width="160" height="64" aria-hidden="true">
+  <title>Empty state: a loose thread drifting, waiting to be picked up</title>
+  <style>
+    .t { fill: none; stroke: var(--accent, #7c6af7); stroke-width: 2; stroke-linecap: round; transform-origin: 12px 40px; animation: sway 5s cubic-bezier(.65,0,.35,1) infinite; }
+    .tail { fill: none; stroke: var(--accent, #7c6af7); stroke-opacity: .35; stroke-width: 2; stroke-linecap: round; stroke-dasharray: 2 6; animation: flow 3s linear infinite; }
+    .d { fill: var(--ink, #f3eee6); animation: bob 5s cubic-bezier(.65,0,.35,1) infinite; }
+    .a { fill: var(--accent, #7c6af7); }
+    @keyframes sway { 50% { transform: rotate(-6deg); } }
+    @keyframes bob { 50% { transform: translate(-3px, -9px); } }
+    @keyframes flow { to { stroke-dashoffset: -16; } }
+    @media (prefers-reduced-motion: reduce) { .t, .d, .tail { animation: none; } }
+  </style>
+  <circle class="a" cx="12" cy="40" r="4"/>
+  <path class="t" d="M12 40 C40 40 50 22 78 26 C100 29 108 44 128 40"/>
+  <path class="tail" d="M132 39 C140 37 146 34 152 30"/>
+  <circle class="d" cx="130" cy="40" r="4"/>
+</svg>
+<div><div style="color:var(--ink);font-weight:500">Nothing needs you</div>When an agent needs a decision, it lands here. Loose ends: none.</div></div>
+    <div class="u-empty" style="width:470px"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 64" width="160" height="64" aria-hidden="true">
+  <title>Empty state: a loose thread drifting, waiting to be picked up</title>
+  <style>
+    .t { fill: none; stroke: var(--accent, #7c6af7); stroke-width: 2; stroke-linecap: round; transform-origin: 12px 40px; animation: sway 5s cubic-bezier(.65,0,.35,1) infinite; }
+    .tail { fill: none; stroke: var(--accent, #7c6af7); stroke-opacity: .35; stroke-width: 2; stroke-linecap: round; stroke-dasharray: 2 6; animation: flow 3s linear infinite; }
+    .d { fill: var(--ink, #f3eee6); animation: bob 5s cubic-bezier(.65,0,.35,1) infinite; }
+    .a { fill: var(--accent, #7c6af7); }
+    @keyframes sway { 50% { transform: rotate(-6deg); } }
+    @keyframes bob { 50% { transform: translate(-3px, -9px); } }
+    @keyframes flow { to { stroke-dashoffset: -16; } }
+    @media (prefers-reduced-motion: reduce) { .t, .d, .tail { animation: none; } }
+  </style>
+  <circle class="a" cx="12" cy="40" r="4"/>
+  <path class="t" d="M12 40 C40 40 50 22 78 26 C100 29 108 44 128 40"/>
+  <path class="tail" d="M132 39 C140 37 146 34 152 30"/>
+  <circle class="d" cx="130" cy="40" r="4"/>
+</svg>
+<div><div style="color:var(--ink);font-weight:500">No runs yet</div>Assign a task to the agent and its run shows up here.</div></div>
+  </div>
+</section>
+
+<!-- 14 light -->
+<section class="sec lightbox" id="s-light" data-theme="light" data-title="Light theme">
+  <div class="sec-h"><div class="num">14</div><div><h2>Light theme ("warm paper")</h2>
+    <div class="where">Every component reads <span class="mono">--u-agent</span> / <span class="mono">--u-you</span>. In light mode, "you" becomes ink.</div></div></div>
+  <div class="stage">
+    <div class="mock"><span data-u-glyph="working" data-size="64"></span></div>
+    <div class="mock col" style="min-width:330px"><div id="light-status"></div><div class="row"><span class="u-duet"><i></i><i></i></span><span class="small muted">Loading tasks…</span></div>
+      <div style="position:relative;height:10px"><div class="u-progress" style="--p:.62"><div class="u-progress-fill"></div><div class="u-progress-head"></div></div></div></div>
+    <div class="mock col" style="width:240px"><div class="u-skel line" style="--i:0;width:70%"></div><div class="u-skel" style="--i:1;height:40px"></div><div class="u-skel" style="--i:2;height:40px"></div></div>
+    <div class="mock col"><div class="u-stitch tool" style="width:280px"><svg class="seam"><rect/></svg><span class="u-duet" style="--s:12px"><i></i><i></i></span><span class="n">hub_list_tasks</span><span class="muted">Reading…</span></div>
+      <div class="row"><span class="u-handoff to-agent"><span>You</span><span class="track"><i></i></span><span>Agent</span></span></div></div>
+  </div>
+</section>
+<div class="small faint">Ensemble motion system · assets in <span class="mono">components/</span> · placement map in <span class="mono">PLAN.md</span></div>
+</div>
+<div class="tour-label"><span data-u-glyph="working" data-size="16"></span><span id="tour-l">Tour</span></div>
+
+<script>window.ENSEMBLE_GLYPH_SMIL="<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 48 48\" width=\"48\" height=\"48\" role=\"img\" aria-label=\"Ensemble is working\">\n  <title>Ensemble Glyph: working loop (U, braid, rings, spark, merge)</title>\n  <style>\n    .agent { stroke: var(--u-agent, #7c6af7); }\n    .you   { stroke: var(--u-you, #f3eee6); }\n  </style>\n  <g fill=\"none\" stroke-linecap=\"round\" stroke-linejoin=\"round\">\n    <path class=\"agent\" stroke-width=\"5\" d=\"M12.00 9.00C12.00 9.30 12.00 10.19 12.00 10.79C12.00 11.39 12.00 11.99 12.00 12.58C12.00 13.18 12.00 13.78 12.00 14.38C12.00 14.97 12.00 15.57 12.00 16.17C12.00 16.77 12.00 17.36 12.00 17.96C12.00 18.56 12.00 19.16 12.00 19.75C12.00 20.35 12.00 20.95 12.00 21.55C12.00 22.14 12.00 22.74 12.00 23.34C12.00 23.94 11.99 24.53 12.00 25.13C12.01 25.73 11.98 26.33 12.04 26.92C12.09 27.52 12.17 28.11 12.31 28.69C12.44 29.27 12.62 29.85 12.84 30.40C13.06 30.96 13.32 31.50 13.62 32.02C13.92 32.53 14.26 33.03 14.63 33.49C15.00 33.96 15.41 34.40 15.85 34.81C16.28 35.21 16.76 35.59 17.25 35.92C17.74 36.26 18.26 36.56 18.80 36.82C19.34 37.07 19.90 37.29 20.47 37.47C21.04 37.64 21.63 37.78 22.21 37.87C22.80 37.95 23.40 38.00 24.00 38.00C24.60 38.00 25.20 37.95 25.79 37.87C26.37 37.78 26.96 37.64 27.53 37.47C28.10 37.29 28.66 37.07 29.20 36.82C29.74 36.56 30.26 36.26 30.75 35.92C31.24 35.59 31.72 35.21 32.15 34.81C32.59 34.40 33.00 33.96 33.37 33.49C33.74 33.03 34.08 32.53 34.38 32.02C34.68 31.50 34.94 30.96 35.16 30.40C35.38 29.85 35.56 29.27 35.69 28.69C35.83 28.11 35.91 27.52 35.96 26.92C36.02 26.33 35.99 25.73 36.00 25.13C36.01 24.53 36.00 23.94 36.00 23.34C36.00 22.74 36.00 22.14 36.00 21.55C36.00 20.95 36.00 20.35 36.00 19.75C36.00 19.16 36.00 18.56 36.00 17.96C36.00 17.36 36.00 16.77 36.00 16.17C36.00 15.57 36.00 14.97 36.00 14.38C36.00 13.78 36.00 13.18 36.00 12.58C36.00 11.99 36.00 11.39 36.00 10.79C36.00 10.19 36.00 9.30 36.00 9.00\"><animate attributeName=\"d\" dur=\"7.2s\" repeatCount=\"indefinite\" calcMode=\"spline\" keyTimes=\"0.0;0.0486;0.1903;0.2389;0.3806;0.4292;0.5708;0.6194;0.7611;0.8097;0.9514;1.0\" keySplines=\"0 0 1 1;.65 0 .35 1;0 0 1 1;.65 0 .35 1;0 0 1 1;.65 0 .35 1;0 0 1 1;.65 0 .35 1;0 0 1 1;.65 0 .35 1;0 0 1 1\" values=\"M12.00 9.00C12.00 9.30 12.00 10.19 12.00 10.79C12.00 11.39 12.00 11.99 12.00 12.58C12.00 13.18 12.00 13.78 12.00 14.38C12.00 14.97 12.00 15.57 12.00 16.17C12.00 16.77 12.00 17.36 12.00 17.96C12.00 18.56 12.00 19.16 12.00 19.75C12.00 20.35 12.00 20.95 12.00 21.55C12.00 22.14 12.00 22.74 12.00 23.34C12.00 23.94 11.99 24.53 12.00 25.13C12.01 25.73 11.98 26.33 12.04 26.92C12.09 27.52 12.17 28.11 12.31 28.69C12.44 29.27 12.62 29.85 12.84 30.40C13.06 30.96 13.32 31.50 13.62 32.02C13.92 32.53 14.26 33.03 14.63 33.49C15.00 33.96 15.41 34.40 15.85 34.81C16.28 35.21 16.76 35.59 17.25 35.92C17.74 36.26 18.26 36.56 18.80 36.82C19.34 37.07 19.90 37.29 20.47 37.47C21.04 37.64 21.63 37.78 22.21 37.87C22.80 37.95 23.40 38.00 24.00 38.00C24.60 38.00 25.20 37.95 25.79 37.87C26.37 37.78 26.96 37.64 27.53 37.47C28.10 37.29 28.66 37.07 29.20 36.82C29.74 36.56 30.26 36.26 30.75 35.92C31.24 35.59 31.72 35.21 32.15 34.81C32.59 34.40 33.00 33.96 33.37 33.49C33.74 33.03 34.08 32.53 34.38 32.02C34.68 31.50 34.94 30.96 35.16 30.40C35.38 29.85 35.56 29.27 35.69 28.69C35.83 28.11 35.91 27.52 35.96 26.92C36.02 26.33 35.99 25.73 36.00 25.13C36.01 24.53 36.00 23.94 36.00 23.34C36.00 22.74 36.00 22.14 36.00 21.55C36.00 20.95 36.00 20.35 36.00 19.75C36.00 19.16 36.00 18.56 36.00 17.96C36.00 17.36 36.00 16.77 36.00 16.17C36.00 15.57 36.00 14.97 36.00 14.38C36.00 13.78 36.00 13.18 36.00 12.58C36.00 11.99 36.00 11.39 36.00 10.79C36.00 10.19 36.00 9.30 36.00 9.00;M12.00 9.00C12.00 9.30 12.00 10.19 12.00 10.79C12.00 11.39 12.00 11.99 12.00 12.58C12.00 13.18 12.00 13.78 12.00 14.38C12.00 14.97 12.00 15.57 12.00 16.17C12.00 16.77 12.00 17.36 12.00 17.96C12.00 18.56 12.00 19.16 12.00 19.75C12.00 20.35 12.00 20.95 12.00 21.55C12.00 22.14 12.00 22.74 12.00 23.34C12.00 23.94 11.99 24.53 12.00 25.13C12.01 25.73 11.98 26.33 12.04 26.92C12.09 27.52 12.17 28.11 12.31 28.69C12.44 29.27 12.62 29.85 12.84 30.40C13.06 30.96 13.32 31.50 13.62 32.02C13.92 32.53 14.26 33.03 14.63 33.49C15.00 33.96 15.41 34.40 15.85 34.81C16.28 35.21 16.76 35.59 17.25 35.92C17.74 36.26 18.26 36.56 18.80 36.82C19.34 37.07 19.90 37.29 20.47 37.47C21.04 37.64 21.63 37.78 22.21 37.87C22.80 37.95 23.40 38.00 24.00 38.00C24.60 38.00 25.20 37.95 25.79 37.87C26.37 37.78 26.96 37.64 27.53 37.47C28.10 37.29 28.66 37.07 29.20 36.82C29.74 36.56 30.26 36.26 30.75 35.92C31.24 35.59 31.72 35.21 32.15 34.81C32.59 34.40 33.00 33.96 33.37 33.49C33.74 33.03 34.08 32.53 34.38 32.02C34.68 31.50 34.94 30.96 35.16 30.40C35.38 29.85 35.56 29.27 35.69 28.69C35.83 28.11 35.91 27.52 35.96 26.92C36.02 26.33 35.99 25.73 36.00 25.13C36.01 24.53 36.00 23.94 36.00 23.34C36.00 22.74 36.00 22.14 36.00 21.55C36.00 20.95 36.00 20.35 36.00 19.75C36.00 19.16 36.00 18.56 36.00 17.96C36.00 17.36 36.00 16.77 36.00 16.17C36.00 15.57 36.00 14.97 36.00 14.38C36.00 13.78 36.00 13.18 36.00 12.58C36.00 11.99 36.00 11.39 36.00 10.79C36.00 10.19 36.00 9.30 36.00 9.00;M18.60 9.00C18.55 9.28 18.48 10.16 18.30 10.71C18.13 11.25 17.84 11.77 17.55 12.27C17.26 12.77 16.91 13.24 16.57 13.71C16.23 14.18 15.85 14.62 15.49 15.08C15.14 15.53 14.76 15.98 14.42 16.45C14.08 16.91 13.73 17.38 13.44 17.88C13.15 18.38 12.86 18.91 12.69 19.45C12.52 20.00 12.40 20.59 12.40 21.16C12.40 21.73 12.53 22.32 12.70 22.86C12.88 23.41 13.17 23.93 13.46 24.43C13.75 24.93 14.09 25.41 14.44 25.86C14.79 26.32 15.15 26.79 15.57 27.19C15.99 27.58 16.46 27.93 16.95 28.24C17.44 28.55 17.98 28.78 18.50 29.04C19.01 29.29 19.61 29.45 20.06 29.79C20.52 30.12 20.90 30.58 21.25 31.04C21.60 31.49 21.85 32.04 22.19 32.51C22.53 32.97 22.88 33.44 23.29 33.85C23.69 34.26 24.14 34.64 24.63 34.95C25.11 35.26 25.65 35.53 26.19 35.71C26.74 35.89 27.33 36.01 27.90 36.03C28.47 36.04 29.07 35.98 29.62 35.83C30.17 35.67 30.72 35.41 31.19 35.09C31.65 34.76 32.08 34.33 32.41 33.87C32.74 33.40 33.00 32.85 33.17 32.31C33.33 31.76 33.41 31.16 33.40 30.59C33.40 30.02 33.30 29.42 33.14 28.87C32.98 28.32 32.74 27.78 32.45 27.28C32.17 26.78 31.78 26.34 31.44 25.86C31.11 25.39 30.75 24.93 30.46 24.43C30.17 23.93 29.88 23.41 29.70 22.86C29.53 22.32 29.40 21.73 29.40 21.16C29.40 20.59 29.52 20.00 29.69 19.45C29.86 18.91 30.15 18.38 30.44 17.88C30.73 17.38 31.08 16.91 31.42 16.45C31.76 15.98 32.14 15.53 32.49 15.08C32.85 14.62 33.23 14.18 33.57 13.71C33.91 13.24 34.26 12.77 34.55 12.27C34.84 11.77 35.13 11.25 35.30 10.71C35.48 10.16 35.55 9.28 35.60 9.00;M18.60 9.00C18.55 9.28 18.48 10.16 18.30 10.71C18.13 11.25 17.84 11.77 17.55 12.27C17.26 12.77 16.91 13.24 16.57 13.71C16.23 14.18 15.85 14.62 15.49 15.08C15.14 15.53 14.76 15.98 14.42 16.45C14.08 16.91 13.73 17.38 13.44 17.88C13.15 18.38 12.86 18.91 12.69 19.45C12.52 20.00 12.40 20.59 12.40 21.16C12.40 21.73 12.53 22.32 12.70 22.86C12.88 23.41 13.17 23.93 13.46 24.43C13.75 24.93 14.09 25.41 14.44 25.86C14.79 26.32 15.15 26.79 15.57 27.19C15.99 27.58 16.46 27.93 16.95 28.24C17.44 28.55 17.98 28.78 18.50 29.04C19.01 29.29 19.61 29.45 20.06 29.79C20.52 30.12 20.90 30.58 21.25 31.04C21.60 31.49 21.85 32.04 22.19 32.51C22.53 32.97 22.88 33.44 23.29 33.85C23.69 34.26 24.14 34.64 24.63 34.95C25.11 35.26 25.65 35.53 26.19 35.71C26.74 35.89 27.33 36.01 27.90 36.03C28.47 36.04 29.07 35.98 29.62 35.83C30.17 35.67 30.72 35.41 31.19 35.09C31.65 34.76 32.08 34.33 32.41 33.87C32.74 33.40 33.00 32.85 33.17 32.31C33.33 31.76 33.41 31.16 33.40 30.59C33.40 30.02 33.30 29.42 33.14 28.87C32.98 28.32 32.74 27.78 32.45 27.28C32.17 26.78 31.78 26.34 31.44 25.86C31.11 25.39 30.75 24.93 30.46 24.43C30.17 23.93 29.88 23.41 29.70 22.86C29.53 22.32 29.40 21.73 29.40 21.16C29.40 20.59 29.52 20.00 29.69 19.45C29.86 18.91 30.15 18.38 30.44 17.88C30.73 17.38 31.08 16.91 31.42 16.45C31.76 15.98 32.14 15.53 32.49 15.08C32.85 14.62 33.23 14.18 33.57 13.71C33.91 13.24 34.26 12.77 34.55 12.27C34.84 11.77 35.13 11.25 35.30 10.71C35.48 10.16 35.55 9.28 35.60 9.00;M15.25 16.64C15.07 16.76 14.50 17.12 14.15 17.39C13.81 17.67 13.48 17.98 13.18 18.31C12.89 18.64 12.61 19.00 12.37 19.37C12.13 19.74 11.92 20.14 11.73 20.54C11.55 20.95 11.40 21.37 11.29 21.80C11.17 22.23 11.09 22.67 11.05 23.11C11.00 23.55 10.99 24.00 11.01 24.44C11.03 24.89 11.09 25.33 11.19 25.77C11.28 26.20 11.41 26.63 11.56 27.05C11.72 27.46 11.92 27.87 12.14 28.25C12.36 28.63 12.62 29.00 12.89 29.35C13.17 29.69 13.48 30.02 13.81 30.32C14.14 30.61 14.50 30.89 14.87 31.13C15.24 31.37 15.64 31.58 16.04 31.77C16.45 31.95 16.87 32.10 17.30 32.21C17.73 32.33 18.17 32.41 18.61 32.45C19.05 32.50 19.50 32.51 19.94 32.49C20.39 32.47 20.83 32.41 21.27 32.31C21.70 32.22 22.13 32.09 22.55 31.94C22.96 31.78 23.37 31.58 23.75 31.36C24.13 31.14 24.50 30.88 24.85 30.61C25.19 30.33 25.52 30.02 25.82 29.69C26.11 29.36 26.39 29.00 26.63 28.63C26.87 28.26 27.08 27.86 27.27 27.46C27.45 27.05 27.60 26.63 27.71 26.20C27.83 25.77 27.91 25.33 27.95 24.89C28.00 24.45 28.01 24.00 27.99 23.56C27.97 23.11 27.91 22.67 27.81 22.23C27.72 21.80 27.59 21.37 27.44 20.95C27.28 20.54 27.08 20.13 26.86 19.75C26.64 19.37 26.38 19.00 26.11 18.65C25.83 18.31 25.52 17.98 25.19 17.68C24.86 17.39 24.50 17.11 24.13 16.87C23.76 16.63 23.36 16.42 22.96 16.23C22.55 16.05 22.13 15.90 21.70 15.79C21.27 15.67 20.83 15.59 20.39 15.55C19.95 15.50 19.50 15.49 19.06 15.51C18.61 15.53 18.17 15.59 17.73 15.69C17.30 15.78 16.87 15.91 16.45 16.06C16.04 16.22 15.45 16.54 15.25 16.64;M15.25 16.64C15.07 16.76 14.50 17.12 14.15 17.39C13.81 17.67 13.48 17.98 13.18 18.31C12.89 18.64 12.61 19.00 12.37 19.37C12.13 19.74 11.92 20.14 11.73 20.54C11.55 20.95 11.40 21.37 11.29 21.80C11.17 22.23 11.09 22.67 11.05 23.11C11.00 23.55 10.99 24.00 11.01 24.44C11.03 24.89 11.09 25.33 11.19 25.77C11.28 26.20 11.41 26.63 11.56 27.05C11.72 27.46 11.92 27.87 12.14 28.25C12.36 28.63 12.62 29.00 12.89 29.35C13.17 29.69 13.48 30.02 13.81 30.32C14.14 30.61 14.50 30.89 14.87 31.13C15.24 31.37 15.64 31.58 16.04 31.77C16.45 31.95 16.87 32.10 17.30 32.21C17.73 32.33 18.17 32.41 18.61 32.45C19.05 32.50 19.50 32.51 19.94 32.49C20.39 32.47 20.83 32.41 21.27 32.31C21.70 32.22 22.13 32.09 22.55 31.94C22.96 31.78 23.37 31.58 23.75 31.36C24.13 31.14 24.50 30.88 24.85 30.61C25.19 30.33 25.52 30.02 25.82 29.69C26.11 29.36 26.39 29.00 26.63 28.63C26.87 28.26 27.08 27.86 27.27 27.46C27.45 27.05 27.60 26.63 27.71 26.20C27.83 25.77 27.91 25.33 27.95 24.89C28.00 24.45 28.01 24.00 27.99 23.56C27.97 23.11 27.91 22.67 27.81 22.23C27.72 21.80 27.59 21.37 27.44 20.95C27.28 20.54 27.08 20.13 26.86 19.75C26.64 19.37 26.38 19.00 26.11 18.65C25.83 18.31 25.52 17.98 25.19 17.68C24.86 17.39 24.50 17.11 24.13 16.87C23.76 16.63 23.36 16.42 22.96 16.23C22.55 16.05 22.13 15.90 21.70 15.79C21.27 15.67 20.83 15.59 20.39 15.55C19.95 15.50 19.50 15.49 19.06 15.51C18.61 15.53 18.17 15.59 17.73 15.69C17.30 15.78 16.87 15.91 16.45 16.06C16.04 16.22 15.45 16.54 15.25 16.64;M22.92 22.13C22.50 22.17 21.41 22.44 20.37 22.35C19.34 22.26 17.94 21.75 16.70 21.57C15.47 21.40 14.21 21.29 12.97 21.30C11.72 21.31 10.42 21.32 9.23 21.63C8.05 21.94 6.17 22.44 5.87 23.15C5.56 23.85 6.54 25.26 7.41 25.84C8.28 26.42 9.83 26.49 11.07 26.62C12.30 26.75 13.57 26.72 14.82 26.63C16.06 26.54 17.31 26.36 18.53 26.11C19.75 25.85 21.50 24.82 22.13 25.08C22.77 25.33 22.44 26.59 22.35 27.63C22.26 28.66 21.75 30.06 21.57 31.30C21.40 32.53 21.29 33.79 21.30 35.03C21.31 36.28 21.32 37.58 21.63 38.77C21.94 39.95 22.44 41.83 23.15 42.13C23.85 42.44 25.26 41.46 25.84 40.59C26.42 39.72 26.49 38.17 26.62 36.93C26.75 35.70 26.72 34.43 26.63 33.18C26.54 31.94 26.36 30.69 26.11 29.47C25.85 28.25 24.82 26.50 25.08 25.87C25.33 25.23 26.59 25.56 27.63 25.65C28.66 25.74 30.06 26.25 31.30 26.43C32.53 26.60 33.79 26.71 35.03 26.70C36.28 26.69 37.58 26.68 38.77 26.37C39.95 26.06 41.83 25.56 42.13 24.85C42.44 24.15 41.46 22.74 40.59 22.16C39.72 21.58 38.17 21.51 36.93 21.38C35.70 21.25 34.43 21.28 33.18 21.37C31.94 21.46 30.69 21.64 29.47 21.89C28.25 22.15 26.50 23.18 25.87 22.92C25.23 22.67 25.56 21.41 25.65 20.37C25.74 19.34 26.25 17.94 26.43 16.70C26.60 15.47 26.71 14.21 26.70 12.97C26.69 11.72 26.68 10.42 26.37 9.23C26.06 8.05 25.56 6.17 24.85 5.87C24.15 5.56 22.74 6.54 22.16 7.41C21.58 8.28 21.51 9.83 21.38 11.07C21.25 12.30 21.28 13.57 21.37 14.82C21.46 16.06 21.64 17.31 21.89 18.53C22.15 19.75 22.75 21.53 22.92 22.13;M22.92 22.13C22.50 22.17 21.41 22.44 20.37 22.35C19.34 22.26 17.94 21.75 16.70 21.57C15.47 21.40 14.21 21.29 12.97 21.30C11.72 21.31 10.42 21.32 9.23 21.63C8.05 21.94 6.17 22.44 5.87 23.15C5.56 23.85 6.54 25.26 7.41 25.84C8.28 26.42 9.83 26.49 11.07 26.62C12.30 26.75 13.57 26.72 14.82 26.63C16.06 26.54 17.31 26.36 18.53 26.11C19.75 25.85 21.50 24.82 22.13 25.08C22.77 25.33 22.44 26.59 22.35 27.63C22.26 28.66 21.75 30.06 21.57 31.30C21.40 32.53 21.29 33.79 21.30 35.03C21.31 36.28 21.32 37.58 21.63 38.77C21.94 39.95 22.44 41.83 23.15 42.13C23.85 42.44 25.26 41.46 25.84 40.59C26.42 39.72 26.49 38.17 26.62 36.93C26.75 35.70 26.72 34.43 26.63 33.18C26.54 31.94 26.36 30.69 26.11 29.47C25.85 28.25 24.82 26.50 25.08 25.87C25.33 25.23 26.59 25.56 27.63 25.65C28.66 25.74 30.06 26.25 31.30 26.43C32.53 26.60 33.79 26.71 35.03 26.70C36.28 26.69 37.58 26.68 38.77 26.37C39.95 26.06 41.83 25.56 42.13 24.85C42.44 24.15 41.46 22.74 40.59 22.16C39.72 21.58 38.17 21.51 36.93 21.38C35.70 21.25 34.43 21.28 33.18 21.37C31.94 21.46 30.69 21.64 29.47 21.89C28.25 22.15 26.50 23.18 25.87 22.92C25.23 22.67 25.56 21.41 25.65 20.37C25.74 19.34 26.25 17.94 26.43 16.70C26.60 15.47 26.71 14.21 26.70 12.97C26.69 11.72 26.68 10.42 26.37 9.23C26.06 8.05 25.56 6.17 24.85 5.87C24.15 5.56 22.74 6.54 22.16 7.41C21.58 8.28 21.51 9.83 21.38 11.07C21.25 12.30 21.28 13.57 21.37 14.82C21.46 16.06 21.64 17.31 21.89 18.53C22.15 19.75 22.75 21.53 22.92 22.13;M20.50 17.94C20.35 18.04 19.88 18.33 19.59 18.56C19.31 18.79 19.04 19.04 18.80 19.32C18.55 19.59 18.33 19.88 18.13 20.19C17.93 20.49 17.75 20.82 17.61 21.15C17.46 21.49 17.33 21.84 17.24 22.19C17.14 22.54 17.08 22.91 17.04 23.27C17.00 23.63 16.99 24.00 17.01 24.37C17.03 24.73 17.08 25.10 17.15 25.46C17.23 25.81 17.33 26.17 17.46 26.51C17.60 26.85 17.76 27.18 17.94 27.50C18.12 27.82 18.33 28.12 18.56 28.41C18.79 28.69 19.04 28.96 19.32 29.20C19.59 29.45 19.88 29.67 20.19 29.87C20.49 30.07 20.82 30.25 21.15 30.39C21.49 30.54 21.84 30.67 22.19 30.76C22.54 30.86 22.91 30.92 23.27 30.96C23.63 31.00 24.00 31.01 24.37 30.99C24.73 30.97 25.10 30.92 25.46 30.85C25.81 30.77 26.17 30.67 26.51 30.54C26.85 30.40 27.18 30.24 27.50 30.06C27.82 29.88 28.12 29.67 28.41 29.44C28.69 29.21 28.96 28.96 29.20 28.68C29.45 28.41 29.67 28.12 29.87 27.81C30.07 27.51 30.25 27.18 30.39 26.85C30.54 26.51 30.67 26.16 30.76 25.81C30.86 25.46 30.92 25.09 30.96 24.73C31.00 24.37 31.01 24.00 30.99 23.63C30.97 23.27 30.92 22.90 30.85 22.54C30.77 22.19 30.67 21.83 30.54 21.49C30.40 21.15 30.24 20.82 30.06 20.50C29.88 20.18 29.67 19.88 29.44 19.59C29.21 19.31 28.96 19.04 28.68 18.80C28.41 18.55 28.12 18.33 27.81 18.13C27.51 17.93 27.18 17.75 26.85 17.61C26.51 17.46 26.16 17.33 25.81 17.24C25.46 17.14 25.09 17.08 24.73 17.04C24.37 17.00 24.00 16.99 23.63 17.01C23.27 17.03 22.90 17.08 22.54 17.15C22.19 17.23 21.83 17.33 21.49 17.46C21.15 17.60 20.67 17.86 20.50 17.94;M20.50 17.94C20.35 18.04 19.88 18.33 19.59 18.56C19.31 18.79 19.04 19.04 18.80 19.32C18.55 19.59 18.33 19.88 18.13 20.19C17.93 20.49 17.75 20.82 17.61 21.15C17.46 21.49 17.33 21.84 17.24 22.19C17.14 22.54 17.08 22.91 17.04 23.27C17.00 23.63 16.99 24.00 17.01 24.37C17.03 24.73 17.08 25.10 17.15 25.46C17.23 25.81 17.33 26.17 17.46 26.51C17.60 26.85 17.76 27.18 17.94 27.50C18.12 27.82 18.33 28.12 18.56 28.41C18.79 28.69 19.04 28.96 19.32 29.20C19.59 29.45 19.88 29.67 20.19 29.87C20.49 30.07 20.82 30.25 21.15 30.39C21.49 30.54 21.84 30.67 22.19 30.76C22.54 30.86 22.91 30.92 23.27 30.96C23.63 31.00 24.00 31.01 24.37 30.99C24.73 30.97 25.10 30.92 25.46 30.85C25.81 30.77 26.17 30.67 26.51 30.54C26.85 30.40 27.18 30.24 27.50 30.06C27.82 29.88 28.12 29.67 28.41 29.44C28.69 29.21 28.96 28.96 29.20 28.68C29.45 28.41 29.67 28.12 29.87 27.81C30.07 27.51 30.25 27.18 30.39 26.85C30.54 26.51 30.67 26.16 30.76 25.81C30.86 25.46 30.92 25.09 30.96 24.73C31.00 24.37 31.01 24.00 30.99 23.63C30.97 23.27 30.92 22.90 30.85 22.54C30.77 22.19 30.67 21.83 30.54 21.49C30.40 21.15 30.24 20.82 30.06 20.50C29.88 20.18 29.67 19.88 29.44 19.59C29.21 19.31 28.96 19.04 28.68 18.80C28.41 18.55 28.12 18.33 27.81 18.13C27.51 17.93 27.18 17.75 26.85 17.61C26.51 17.46 26.16 17.33 25.81 17.24C25.46 17.14 25.09 17.08 24.73 17.04C24.37 17.00 24.00 16.99 23.63 17.01C23.27 17.03 22.90 17.08 22.54 17.15C22.19 17.23 21.83 17.33 21.49 17.46C21.15 17.60 20.67 17.86 20.50 17.94;M12.00 9.00C12.00 9.30 12.00 10.19 12.00 10.79C12.00 11.39 12.00 11.99 12.00 12.58C12.00 13.18 12.00 13.78 12.00 14.38C12.00 14.97 12.00 15.57 12.00 16.17C12.00 16.77 12.00 17.36 12.00 17.96C12.00 18.56 12.00 19.16 12.00 19.75C12.00 20.35 12.00 20.95 12.00 21.55C12.00 22.14 12.00 22.74 12.00 23.34C12.00 23.94 11.99 24.53 12.00 25.13C12.01 25.73 11.98 26.33 12.04 26.92C12.09 27.52 12.17 28.11 12.31 28.69C12.44 29.27 12.62 29.85 12.84 30.40C13.06 30.96 13.32 31.50 13.62 32.02C13.92 32.53 14.26 33.03 14.63 33.49C15.00 33.96 15.41 34.40 15.85 34.81C16.28 35.21 16.76 35.59 17.25 35.92C17.74 36.26 18.26 36.56 18.80 36.82C19.34 37.07 19.90 37.29 20.47 37.47C21.04 37.64 21.63 37.78 22.21 37.87C22.80 37.95 23.40 38.00 24.00 38.00C24.60 38.00 25.20 37.95 25.79 37.87C26.37 37.78 26.96 37.64 27.53 37.47C28.10 37.29 28.66 37.07 29.20 36.82C29.74 36.56 30.26 36.26 30.75 35.92C31.24 35.59 31.72 35.21 32.15 34.81C32.59 34.40 33.00 33.96 33.37 33.49C33.74 33.03 34.08 32.53 34.38 32.02C34.68 31.50 34.94 30.96 35.16 30.40C35.38 29.85 35.56 29.27 35.69 28.69C35.83 28.11 35.91 27.52 35.96 26.92C36.02 26.33 35.99 25.73 36.00 25.13C36.01 24.53 36.00 23.94 36.00 23.34C36.00 22.74 36.00 22.14 36.00 21.55C36.00 20.95 36.00 20.35 36.00 19.75C36.00 19.16 36.00 18.56 36.00 17.96C36.00 17.36 36.00 16.77 36.00 16.17C36.00 15.57 36.00 14.97 36.00 14.38C36.00 13.78 36.00 13.18 36.00 12.58C36.00 11.99 36.00 11.39 36.00 10.79C36.00 10.19 36.00 9.30 36.00 9.00;M12.00 9.00C12.00 9.30 12.00 10.19 12.00 10.79C12.00 11.39 12.00 11.99 12.00 12.58C12.00 13.18 12.00 13.78 12.00 14.38C12.00 14.97 12.00 15.57 12.00 16.17C12.00 16.77 12.00 17.36 12.00 17.96C12.00 18.56 12.00 19.16 12.00 19.75C12.00 20.35 12.00 20.95 12.00 21.55C12.00 22.14 12.00 22.74 12.00 23.34C12.00 23.94 11.99 24.53 12.00 25.13C12.01 25.73 11.98 26.33 12.04 26.92C12.09 27.52 12.17 28.11 12.31 28.69C12.44 29.27 12.62 29.85 12.84 30.40C13.06 30.96 13.32 31.50 13.62 32.02C13.92 32.53 14.26 33.03 14.63 33.49C15.00 33.96 15.41 34.40 15.85 34.81C16.28 35.21 16.76 35.59 17.25 35.92C17.74 36.26 18.26 36.56 18.80 36.82C19.34 37.07 19.90 37.29 20.47 37.47C21.04 37.64 21.63 37.78 22.21 37.87C22.80 37.95 23.40 38.00 24.00 38.00C24.60 38.00 25.20 37.95 25.79 37.87C26.37 37.78 26.96 37.64 27.53 37.47C28.10 37.29 28.66 37.07 29.20 36.82C29.74 36.56 30.26 36.26 30.75 35.92C31.24 35.59 31.72 35.21 32.15 34.81C32.59 34.40 33.00 33.96 33.37 33.49C33.74 33.03 34.08 32.53 34.38 32.02C34.68 31.50 34.94 30.96 35.16 30.40C35.38 29.85 35.56 29.27 35.69 28.69C35.83 28.11 35.91 27.52 35.96 26.92C36.02 26.33 35.99 25.73 36.00 25.13C36.01 24.53 36.00 23.94 36.00 23.34C36.00 22.74 36.00 22.14 36.00 21.55C36.00 20.95 36.00 20.35 36.00 19.75C36.00 19.16 36.00 18.56 36.00 17.96C36.00 17.36 36.00 16.77 36.00 16.17C36.00 15.57 36.00 14.97 36.00 14.38C36.00 13.78 36.00 13.18 36.00 12.58C36.00 11.99 36.00 11.39 36.00 10.79C36.00 10.19 36.00 9.30 36.00 9.00\"/></path>\n    <path class=\"you\" stroke-width=\"3.8\" d=\"M18.80 9.00C18.80 9.21 18.80 9.84 18.80 10.26C18.80 10.68 18.80 11.10 18.80 11.52C18.80 11.94 18.80 12.36 18.80 12.78C18.80 13.19 18.80 13.61 18.80 14.03C18.80 14.45 18.80 14.87 18.80 15.29C18.80 15.71 18.80 16.13 18.80 16.55C18.80 16.97 18.80 17.39 18.80 17.81C18.80 18.23 18.80 18.65 18.80 19.07C18.80 19.49 18.80 19.91 18.80 20.33C18.80 20.75 18.80 21.16 18.80 21.58C18.80 22.00 18.80 22.42 18.80 22.84C18.80 23.26 18.80 23.68 18.80 24.10C18.80 24.52 18.79 24.94 18.80 25.36C18.81 25.78 18.78 26.20 18.84 26.62C18.89 27.03 18.99 27.45 19.13 27.84C19.28 28.22 19.48 28.61 19.72 28.95C19.95 29.29 20.24 29.61 20.55 29.89C20.86 30.16 21.21 30.41 21.58 30.60C21.95 30.80 22.35 30.95 22.75 31.05C23.16 31.15 23.58 31.20 24.00 31.20C24.42 31.20 24.84 31.15 25.25 31.05C25.65 30.95 26.05 30.80 26.42 30.60C26.79 30.41 27.14 30.16 27.45 29.89C27.76 29.61 28.05 29.29 28.28 28.95C28.52 28.61 28.72 28.22 28.87 27.84C29.01 27.45 29.11 27.03 29.16 26.62C29.22 26.20 29.19 25.78 29.20 25.36C29.21 24.94 29.20 24.52 29.20 24.10C29.20 23.68 29.20 23.26 29.20 22.84C29.20 22.42 29.20 22.00 29.20 21.58C29.20 21.16 29.20 20.75 29.20 20.33C29.20 19.91 29.20 19.49 29.20 19.07C29.20 18.65 29.20 18.23 29.20 17.81C29.20 17.39 29.20 16.97 29.20 16.55C29.20 16.13 29.20 15.71 29.20 15.29C29.20 14.87 29.20 14.45 29.20 14.03C29.20 13.61 29.20 13.19 29.20 12.78C29.20 12.36 29.20 11.94 29.20 11.52C29.20 11.10 29.20 10.68 29.20 10.26C29.20 9.84 29.20 9.21 29.20 9.00\"><animate attributeName=\"d\" dur=\"7.2s\" repeatCount=\"indefinite\" calcMode=\"spline\" keyTimes=\"0.0;0.0486;0.1903;0.2389;0.3806;0.4292;0.5708;0.6194;0.7611;0.8097;0.9514;1.0\" keySplines=\"0 0 1 1;.65 0 .35 1;0 0 1 1;.65 0 .35 1;0 0 1 1;.65 0 .35 1;0 0 1 1;.65 0 .35 1;0 0 1 1;.65 0 .35 1;0 0 1 1\" values=\"M18.80 9.00C18.80 9.21 18.80 9.84 18.80 10.26C18.80 10.68 18.80 11.10 18.80 11.52C18.80 11.94 18.80 12.36 18.80 12.78C18.80 13.19 18.80 13.61 18.80 14.03C18.80 14.45 18.80 14.87 18.80 15.29C18.80 15.71 18.80 16.13 18.80 16.55C18.80 16.97 18.80 17.39 18.80 17.81C18.80 18.23 18.80 18.65 18.80 19.07C18.80 19.49 18.80 19.91 18.80 20.33C18.80 20.75 18.80 21.16 18.80 21.58C18.80 22.00 18.80 22.42 18.80 22.84C18.80 23.26 18.80 23.68 18.80 24.10C18.80 24.52 18.79 24.94 18.80 25.36C18.81 25.78 18.78 26.20 18.84 26.62C18.89 27.03 18.99 27.45 19.13 27.84C19.28 28.22 19.48 28.61 19.72 28.95C19.95 29.29 20.24 29.61 20.55 29.89C20.86 30.16 21.21 30.41 21.58 30.60C21.95 30.80 22.35 30.95 22.75 31.05C23.16 31.15 23.58 31.20 24.00 31.20C24.42 31.20 24.84 31.15 25.25 31.05C25.65 30.95 26.05 30.80 26.42 30.60C26.79 30.41 27.14 30.16 27.45 29.89C27.76 29.61 28.05 29.29 28.28 28.95C28.52 28.61 28.72 28.22 28.87 27.84C29.01 27.45 29.11 27.03 29.16 26.62C29.22 26.20 29.19 25.78 29.20 25.36C29.21 24.94 29.20 24.52 29.20 24.10C29.20 23.68 29.20 23.26 29.20 22.84C29.20 22.42 29.20 22.00 29.20 21.58C29.20 21.16 29.20 20.75 29.20 20.33C29.20 19.91 29.20 19.49 29.20 19.07C29.20 18.65 29.20 18.23 29.20 17.81C29.20 17.39 29.20 16.97 29.20 16.55C29.20 16.13 29.20 15.71 29.20 15.29C29.20 14.87 29.20 14.45 29.20 14.03C29.20 13.61 29.20 13.19 29.20 12.78C29.20 12.36 29.20 11.94 29.20 11.52C29.20 11.10 29.20 10.68 29.20 10.26C29.20 9.84 29.20 9.21 29.20 9.00;M18.80 9.00C18.80 9.21 18.80 9.84 18.80 10.26C18.80 10.68 18.80 11.10 18.80 11.52C18.80 11.94 18.80 12.36 18.80 12.78C18.80 13.19 18.80 13.61 18.80 14.03C18.80 14.45 18.80 14.87 18.80 15.29C18.80 15.71 18.80 16.13 18.80 16.55C18.80 16.97 18.80 17.39 18.80 17.81C18.80 18.23 18.80 18.65 18.80 19.07C18.80 19.49 18.80 19.91 18.80 20.33C18.80 20.75 18.80 21.16 18.80 21.58C18.80 22.00 18.80 22.42 18.80 22.84C18.80 23.26 18.80 23.68 18.80 24.10C18.80 24.52 18.79 24.94 18.80 25.36C18.81 25.78 18.78 26.20 18.84 26.62C18.89 27.03 18.99 27.45 19.13 27.84C19.28 28.22 19.48 28.61 19.72 28.95C19.95 29.29 20.24 29.61 20.55 29.89C20.86 30.16 21.21 30.41 21.58 30.60C21.95 30.80 22.35 30.95 22.75 31.05C23.16 31.15 23.58 31.20 24.00 31.20C24.42 31.20 24.84 31.15 25.25 31.05C25.65 30.95 26.05 30.80 26.42 30.60C26.79 30.41 27.14 30.16 27.45 29.89C27.76 29.61 28.05 29.29 28.28 28.95C28.52 28.61 28.72 28.22 28.87 27.84C29.01 27.45 29.11 27.03 29.16 26.62C29.22 26.20 29.19 25.78 29.20 25.36C29.21 24.94 29.20 24.52 29.20 24.10C29.20 23.68 29.20 23.26 29.20 22.84C29.20 22.42 29.20 22.00 29.20 21.58C29.20 21.16 29.20 20.75 29.20 20.33C29.20 19.91 29.20 19.49 29.20 19.07C29.20 18.65 29.20 18.23 29.20 17.81C29.20 17.39 29.20 16.97 29.20 16.55C29.20 16.13 29.20 15.71 29.20 15.29C29.20 14.87 29.20 14.45 29.20 14.03C29.20 13.61 29.20 13.19 29.20 12.78C29.20 12.36 29.20 11.94 29.20 11.52C29.20 11.10 29.20 10.68 29.20 10.26C29.20 9.84 29.20 9.21 29.20 9.00;M12.40 9.00C12.45 9.28 12.52 10.16 12.70 10.71C12.87 11.25 13.16 11.77 13.45 12.27C13.74 12.77 14.09 13.24 14.43 13.71C14.77 14.18 15.15 14.62 15.51 15.08C15.86 15.53 16.24 15.98 16.58 16.45C16.92 16.91 17.27 17.38 17.56 17.88C17.85 18.38 18.14 18.91 18.31 19.45C18.48 20.00 18.60 20.59 18.60 21.16C18.60 21.73 18.47 22.32 18.30 22.86C18.12 23.41 17.83 23.93 17.54 24.43C17.25 24.93 16.89 25.39 16.56 25.86C16.22 26.34 15.83 26.78 15.55 27.28C15.26 27.78 15.02 28.32 14.86 28.87C14.70 29.42 14.60 30.02 14.60 30.59C14.59 31.16 14.67 31.76 14.83 32.31C15.00 32.85 15.26 33.40 15.59 33.87C15.92 34.33 16.35 34.76 16.81 35.09C17.28 35.41 17.83 35.67 18.38 35.83C18.93 35.98 19.53 36.04 20.10 36.03C20.67 36.01 21.26 35.89 21.81 35.71C22.35 35.53 22.89 35.26 23.37 34.95C23.86 34.64 24.31 34.26 24.71 33.85C25.12 33.44 25.47 32.97 25.81 32.51C26.15 32.04 26.40 31.49 26.75 31.04C27.10 30.58 27.48 30.12 27.94 29.79C28.39 29.45 28.99 29.29 29.50 29.04C30.02 28.78 30.56 28.55 31.05 28.24C31.54 27.93 32.01 27.58 32.43 27.19C32.85 26.79 33.21 26.32 33.56 25.86C33.91 25.41 34.25 24.93 34.54 24.43C34.83 23.93 35.12 23.41 35.30 22.86C35.47 22.32 35.60 21.73 35.60 21.16C35.60 20.59 35.48 20.00 35.31 19.45C35.14 18.91 34.85 18.38 34.56 17.88C34.27 17.38 33.92 16.91 33.58 16.45C33.24 15.98 32.86 15.53 32.51 15.08C32.15 14.62 31.77 14.18 31.43 13.71C31.09 13.24 30.74 12.77 30.45 12.27C30.16 11.77 29.87 11.25 29.70 10.71C29.52 10.16 29.45 9.28 29.40 9.00;M12.40 9.00C12.45 9.28 12.52 10.16 12.70 10.71C12.87 11.25 13.16 11.77 13.45 12.27C13.74 12.77 14.09 13.24 14.43 13.71C14.77 14.18 15.15 14.62 15.51 15.08C15.86 15.53 16.24 15.98 16.58 16.45C16.92 16.91 17.27 17.38 17.56 17.88C17.85 18.38 18.14 18.91 18.31 19.45C18.48 20.00 18.60 20.59 18.60 21.16C18.60 21.73 18.47 22.32 18.30 22.86C18.12 23.41 17.83 23.93 17.54 24.43C17.25 24.93 16.89 25.39 16.56 25.86C16.22 26.34 15.83 26.78 15.55 27.28C15.26 27.78 15.02 28.32 14.86 28.87C14.70 29.42 14.60 30.02 14.60 30.59C14.59 31.16 14.67 31.76 14.83 32.31C15.00 32.85 15.26 33.40 15.59 33.87C15.92 34.33 16.35 34.76 16.81 35.09C17.28 35.41 17.83 35.67 18.38 35.83C18.93 35.98 19.53 36.04 20.10 36.03C20.67 36.01 21.26 35.89 21.81 35.71C22.35 35.53 22.89 35.26 23.37 34.95C23.86 34.64 24.31 34.26 24.71 33.85C25.12 33.44 25.47 32.97 25.81 32.51C26.15 32.04 26.40 31.49 26.75 31.04C27.10 30.58 27.48 30.12 27.94 29.79C28.39 29.45 28.99 29.29 29.50 29.04C30.02 28.78 30.56 28.55 31.05 28.24C31.54 27.93 32.01 27.58 32.43 27.19C32.85 26.79 33.21 26.32 33.56 25.86C33.91 25.41 34.25 24.93 34.54 24.43C34.83 23.93 35.12 23.41 35.30 22.86C35.47 22.32 35.60 21.73 35.60 21.16C35.60 20.59 35.48 20.00 35.31 19.45C35.14 18.91 34.85 18.38 34.56 17.88C34.27 17.38 33.92 16.91 33.58 16.45C33.24 15.98 32.86 15.53 32.51 15.08C32.15 14.62 31.77 14.18 31.43 13.71C31.09 13.24 30.74 12.77 30.45 12.27C30.16 11.77 29.87 11.25 29.70 10.71C29.52 10.16 29.45 9.28 29.40 9.00;M24.25 16.64C24.07 16.76 23.50 17.12 23.15 17.39C22.81 17.67 22.48 17.98 22.18 18.31C21.89 18.64 21.61 19.00 21.37 19.37C21.13 19.74 20.92 20.14 20.73 20.54C20.55 20.95 20.40 21.37 20.29 21.80C20.17 22.23 20.09 22.67 20.05 23.11C20.00 23.55 19.99 24.00 20.01 24.44C20.03 24.89 20.09 25.33 20.19 25.77C20.28 26.20 20.41 26.63 20.56 27.05C20.72 27.46 20.92 27.87 21.14 28.25C21.36 28.63 21.62 29.00 21.89 29.35C22.17 29.69 22.48 30.02 22.81 30.32C23.14 30.61 23.50 30.89 23.87 31.13C24.24 31.37 24.64 31.58 25.04 31.77C25.45 31.95 25.87 32.10 26.30 32.21C26.73 32.33 27.17 32.41 27.61 32.45C28.05 32.50 28.50 32.51 28.94 32.49C29.39 32.47 29.83 32.41 30.27 32.31C30.70 32.22 31.13 32.09 31.55 31.94C31.96 31.78 32.37 31.58 32.75 31.36C33.13 31.14 33.50 30.88 33.85 30.61C34.19 30.33 34.52 30.02 34.82 29.69C35.11 29.36 35.39 29.00 35.63 28.63C35.87 28.26 36.08 27.86 36.27 27.46C36.45 27.05 36.60 26.63 36.71 26.20C36.83 25.77 36.91 25.33 36.95 24.89C37.00 24.45 37.01 24.00 36.99 23.56C36.97 23.11 36.91 22.67 36.81 22.23C36.72 21.80 36.59 21.37 36.44 20.95C36.28 20.54 36.08 20.13 35.86 19.75C35.64 19.37 35.38 19.00 35.11 18.65C34.83 18.31 34.52 17.98 34.19 17.68C33.86 17.39 33.50 17.11 33.13 16.87C32.76 16.63 32.36 16.42 31.96 16.23C31.55 16.05 31.13 15.90 30.70 15.79C30.27 15.67 29.83 15.59 29.39 15.55C28.95 15.50 28.50 15.49 28.06 15.51C27.61 15.53 27.17 15.59 26.73 15.69C26.30 15.78 25.87 15.91 25.45 16.06C25.04 16.22 24.45 16.54 24.25 16.64;M24.25 16.64C24.07 16.76 23.50 17.12 23.15 17.39C22.81 17.67 22.48 17.98 22.18 18.31C21.89 18.64 21.61 19.00 21.37 19.37C21.13 19.74 20.92 20.14 20.73 20.54C20.55 20.95 20.40 21.37 20.29 21.80C20.17 22.23 20.09 22.67 20.05 23.11C20.00 23.55 19.99 24.00 20.01 24.44C20.03 24.89 20.09 25.33 20.19 25.77C20.28 26.20 20.41 26.63 20.56 27.05C20.72 27.46 20.92 27.87 21.14 28.25C21.36 28.63 21.62 29.00 21.89 29.35C22.17 29.69 22.48 30.02 22.81 30.32C23.14 30.61 23.50 30.89 23.87 31.13C24.24 31.37 24.64 31.58 25.04 31.77C25.45 31.95 25.87 32.10 26.30 32.21C26.73 32.33 27.17 32.41 27.61 32.45C28.05 32.50 28.50 32.51 28.94 32.49C29.39 32.47 29.83 32.41 30.27 32.31C30.70 32.22 31.13 32.09 31.55 31.94C31.96 31.78 32.37 31.58 32.75 31.36C33.13 31.14 33.50 30.88 33.85 30.61C34.19 30.33 34.52 30.02 34.82 29.69C35.11 29.36 35.39 29.00 35.63 28.63C35.87 28.26 36.08 27.86 36.27 27.46C36.45 27.05 36.60 26.63 36.71 26.20C36.83 25.77 36.91 25.33 36.95 24.89C37.00 24.45 37.01 24.00 36.99 23.56C36.97 23.11 36.91 22.67 36.81 22.23C36.72 21.80 36.59 21.37 36.44 20.95C36.28 20.54 36.08 20.13 35.86 19.75C35.64 19.37 35.38 19.00 35.11 18.65C34.83 18.31 34.52 17.98 34.19 17.68C33.86 17.39 33.50 17.11 33.13 16.87C32.76 16.63 32.36 16.42 31.96 16.23C31.55 16.05 31.13 15.90 30.70 15.79C30.27 15.67 29.83 15.59 29.39 15.55C28.95 15.50 28.50 15.49 28.06 15.51C27.61 15.53 27.17 15.59 26.73 15.69C26.30 15.78 25.87 15.91 25.45 16.06C25.04 16.22 24.45 16.54 24.25 16.64;M20.84 18.52C20.57 18.28 19.81 17.47 19.22 17.06C18.63 16.65 17.83 16.04 17.30 16.06C16.77 16.09 16.09 16.70 16.04 17.21C16.00 17.72 16.61 18.55 17.01 19.15C17.41 19.74 17.94 20.27 18.45 20.77C18.97 21.28 19.54 21.74 20.13 22.17C20.71 22.59 21.65 22.92 21.97 23.33C22.29 23.74 22.34 24.22 22.05 24.63C21.75 25.03 20.79 25.36 20.20 25.78C19.61 26.21 19.04 26.66 18.52 27.16C18.00 27.67 17.47 28.19 17.06 28.78C16.65 29.37 16.04 30.17 16.06 30.70C16.09 31.23 16.70 31.91 17.21 31.96C17.72 32.00 18.55 31.39 19.15 30.99C19.74 30.59 20.27 30.06 20.77 29.55C21.28 29.03 21.74 28.46 22.17 27.87C22.59 27.29 22.92 26.35 23.33 26.03C23.74 25.71 24.22 25.66 24.63 25.95C25.03 26.25 25.36 27.21 25.78 27.80C26.21 28.39 26.66 28.96 27.16 29.48C27.67 30.00 28.19 30.53 28.78 30.94C29.37 31.35 30.17 31.96 30.70 31.94C31.23 31.91 31.91 31.30 31.96 30.79C32.00 30.28 31.39 29.45 30.99 28.85C30.59 28.26 30.06 27.73 29.55 27.23C29.03 26.72 28.46 26.26 27.87 25.83C27.29 25.41 26.35 25.08 26.03 24.67C25.71 24.26 25.66 23.78 25.95 23.37C26.25 22.97 27.21 22.64 27.80 22.22C28.39 21.79 28.96 21.34 29.48 20.84C30.00 20.33 30.53 19.81 30.94 19.22C31.35 18.63 31.96 17.83 31.94 17.30C31.91 16.77 31.30 16.09 30.79 16.04C30.28 16.00 29.45 16.61 28.85 17.01C28.26 17.41 27.73 17.94 27.23 18.45C26.72 18.97 26.26 19.54 25.83 20.13C25.41 20.71 25.08 21.65 24.67 21.97C24.26 22.29 23.78 22.34 23.37 22.05C22.97 21.75 22.64 20.79 22.22 20.20C21.79 19.61 21.07 18.80 20.84 18.52;M20.84 18.52C20.57 18.28 19.81 17.47 19.22 17.06C18.63 16.65 17.83 16.04 17.30 16.06C16.77 16.09 16.09 16.70 16.04 17.21C16.00 17.72 16.61 18.55 17.01 19.15C17.41 19.74 17.94 20.27 18.45 20.77C18.97 21.28 19.54 21.74 20.13 22.17C20.71 22.59 21.65 22.92 21.97 23.33C22.29 23.74 22.34 24.22 22.05 24.63C21.75 25.03 20.79 25.36 20.20 25.78C19.61 26.21 19.04 26.66 18.52 27.16C18.00 27.67 17.47 28.19 17.06 28.78C16.65 29.37 16.04 30.17 16.06 30.70C16.09 31.23 16.70 31.91 17.21 31.96C17.72 32.00 18.55 31.39 19.15 30.99C19.74 30.59 20.27 30.06 20.77 29.55C21.28 29.03 21.74 28.46 22.17 27.87C22.59 27.29 22.92 26.35 23.33 26.03C23.74 25.71 24.22 25.66 24.63 25.95C25.03 26.25 25.36 27.21 25.78 27.80C26.21 28.39 26.66 28.96 27.16 29.48C27.67 30.00 28.19 30.53 28.78 30.94C29.37 31.35 30.17 31.96 30.70 31.94C31.23 31.91 31.91 31.30 31.96 30.79C32.00 30.28 31.39 29.45 30.99 28.85C30.59 28.26 30.06 27.73 29.55 27.23C29.03 26.72 28.46 26.26 27.87 25.83C27.29 25.41 26.35 25.08 26.03 24.67C25.71 24.26 25.66 23.78 25.95 23.37C26.25 22.97 27.21 22.64 27.80 22.22C28.39 21.79 28.96 21.34 29.48 20.84C30.00 20.33 30.53 19.81 30.94 19.22C31.35 18.63 31.96 17.83 31.94 17.30C31.91 16.77 31.30 16.09 30.79 16.04C30.28 16.00 29.45 16.61 28.85 17.01C28.26 17.41 27.73 17.94 27.23 18.45C26.72 18.97 26.26 19.54 25.83 20.13C25.41 20.71 25.08 21.65 24.67 21.97C24.26 22.29 23.78 22.34 23.37 22.05C22.97 21.75 22.64 20.79 22.22 20.20C21.79 19.61 21.07 18.80 20.84 18.52;M20.50 17.94C20.35 18.04 19.88 18.33 19.59 18.56C19.31 18.79 19.04 19.04 18.80 19.32C18.55 19.59 18.33 19.88 18.13 20.19C17.93 20.49 17.75 20.82 17.61 21.15C17.46 21.49 17.33 21.84 17.24 22.19C17.14 22.54 17.08 22.91 17.04 23.27C17.00 23.63 16.99 24.00 17.01 24.37C17.03 24.73 17.08 25.10 17.15 25.46C17.23 25.81 17.33 26.17 17.46 26.51C17.60 26.85 17.76 27.18 17.94 27.50C18.12 27.82 18.33 28.12 18.56 28.41C18.79 28.69 19.04 28.96 19.32 29.20C19.59 29.45 19.88 29.67 20.19 29.87C20.49 30.07 20.82 30.25 21.15 30.39C21.49 30.54 21.84 30.67 22.19 30.76C22.54 30.86 22.91 30.92 23.27 30.96C23.63 31.00 24.00 31.01 24.37 30.99C24.73 30.97 25.10 30.92 25.46 30.85C25.81 30.77 26.17 30.67 26.51 30.54C26.85 30.40 27.18 30.24 27.50 30.06C27.82 29.88 28.12 29.67 28.41 29.44C28.69 29.21 28.96 28.96 29.20 28.68C29.45 28.41 29.67 28.12 29.87 27.81C30.07 27.51 30.25 27.18 30.39 26.85C30.54 26.51 30.67 26.16 30.76 25.81C30.86 25.46 30.92 25.09 30.96 24.73C31.00 24.37 31.01 24.00 30.99 23.63C30.97 23.27 30.92 22.90 30.85 22.54C30.77 22.19 30.67 21.83 30.54 21.49C30.40 21.15 30.24 20.82 30.06 20.50C29.88 20.18 29.67 19.88 29.44 19.59C29.21 19.31 28.96 19.04 28.68 18.80C28.41 18.55 28.12 18.33 27.81 18.13C27.51 17.93 27.18 17.75 26.85 17.61C26.51 17.46 26.16 17.33 25.81 17.24C25.46 17.14 25.09 17.08 24.73 17.04C24.37 17.00 24.00 16.99 23.63 17.01C23.27 17.03 22.90 17.08 22.54 17.15C22.19 17.23 21.83 17.33 21.49 17.46C21.15 17.60 20.67 17.86 20.50 17.94;M20.50 17.94C20.35 18.04 19.88 18.33 19.59 18.56C19.31 18.79 19.04 19.04 18.80 19.32C18.55 19.59 18.33 19.88 18.13 20.19C17.93 20.49 17.75 20.82 17.61 21.15C17.46 21.49 17.33 21.84 17.24 22.19C17.14 22.54 17.08 22.91 17.04 23.27C17.00 23.63 16.99 24.00 17.01 24.37C17.03 24.73 17.08 25.10 17.15 25.46C17.23 25.81 17.33 26.17 17.46 26.51C17.60 26.85 17.76 27.18 17.94 27.50C18.12 27.82 18.33 28.12 18.56 28.41C18.79 28.69 19.04 28.96 19.32 29.20C19.59 29.45 19.88 29.67 20.19 29.87C20.49 30.07 20.82 30.25 21.15 30.39C21.49 30.54 21.84 30.67 22.19 30.76C22.54 30.86 22.91 30.92 23.27 30.96C23.63 31.00 24.00 31.01 24.37 30.99C24.73 30.97 25.10 30.92 25.46 30.85C25.81 30.77 26.17 30.67 26.51 30.54C26.85 30.40 27.18 30.24 27.50 30.06C27.82 29.88 28.12 29.67 28.41 29.44C28.69 29.21 28.96 28.96 29.20 28.68C29.45 28.41 29.67 28.12 29.87 27.81C30.07 27.51 30.25 27.18 30.39 26.85C30.54 26.51 30.67 26.16 30.76 25.81C30.86 25.46 30.92 25.09 30.96 24.73C31.00 24.37 31.01 24.00 30.99 23.63C30.97 23.27 30.92 22.90 30.85 22.54C30.77 22.19 30.67 21.83 30.54 21.49C30.40 21.15 30.24 20.82 30.06 20.50C29.88 20.18 29.67 19.88 29.44 19.59C29.21 19.31 28.96 19.04 28.68 18.80C28.41 18.55 28.12 18.33 27.81 18.13C27.51 17.93 27.18 17.75 26.85 17.61C26.51 17.46 26.16 17.33 25.81 17.24C25.46 17.14 25.09 17.08 24.73 17.04C24.37 17.00 24.00 16.99 23.63 17.01C23.27 17.03 22.90 17.08 22.54 17.15C22.19 17.23 21.83 17.33 21.49 17.46C21.15 17.60 20.67 17.86 20.50 17.94;M18.80 9.00C18.80 9.21 18.80 9.84 18.80 10.26C18.80 10.68 18.80 11.10 18.80 11.52C18.80 11.94 18.80 12.36 18.80 12.78C18.80 13.19 18.80 13.61 18.80 14.03C18.80 14.45 18.80 14.87 18.80 15.29C18.80 15.71 18.80 16.13 18.80 16.55C18.80 16.97 18.80 17.39 18.80 17.81C18.80 18.23 18.80 18.65 18.80 19.07C18.80 19.49 18.80 19.91 18.80 20.33C18.80 20.75 18.80 21.16 18.80 21.58C18.80 22.00 18.80 22.42 18.80 22.84C18.80 23.26 18.80 23.68 18.80 24.10C18.80 24.52 18.79 24.94 18.80 25.36C18.81 25.78 18.78 26.20 18.84 26.62C18.89 27.03 18.99 27.45 19.13 27.84C19.28 28.22 19.48 28.61 19.72 28.95C19.95 29.29 20.24 29.61 20.55 29.89C20.86 30.16 21.21 30.41 21.58 30.60C21.95 30.80 22.35 30.95 22.75 31.05C23.16 31.15 23.58 31.20 24.00 31.20C24.42 31.20 24.84 31.15 25.25 31.05C25.65 30.95 26.05 30.80 26.42 30.60C26.79 30.41 27.14 30.16 27.45 29.89C27.76 29.61 28.05 29.29 28.28 28.95C28.52 28.61 28.72 28.22 28.87 27.84C29.01 27.45 29.11 27.03 29.16 26.62C29.22 26.20 29.19 25.78 29.20 25.36C29.21 24.94 29.20 24.52 29.20 24.10C29.20 23.68 29.20 23.26 29.20 22.84C29.20 22.42 29.20 22.00 29.20 21.58C29.20 21.16 29.20 20.75 29.20 20.33C29.20 19.91 29.20 19.49 29.20 19.07C29.20 18.65 29.20 18.23 29.20 17.81C29.20 17.39 29.20 16.97 29.20 16.55C29.20 16.13 29.20 15.71 29.20 15.29C29.20 14.87 29.20 14.45 29.20 14.03C29.20 13.61 29.20 13.19 29.20 12.78C29.20 12.36 29.20 11.94 29.20 11.52C29.20 11.10 29.20 10.68 29.20 10.26C29.20 9.84 29.20 9.21 29.20 9.00;M18.80 9.00C18.80 9.21 18.80 9.84 18.80 10.26C18.80 10.68 18.80 11.10 18.80 11.52C18.80 11.94 18.80 12.36 18.80 12.78C18.80 13.19 18.80 13.61 18.80 14.03C18.80 14.45 18.80 14.87 18.80 15.29C18.80 15.71 18.80 16.13 18.80 16.55C18.80 16.97 18.80 17.39 18.80 17.81C18.80 18.23 18.80 18.65 18.80 19.07C18.80 19.49 18.80 19.91 18.80 20.33C18.80 20.75 18.80 21.16 18.80 21.58C18.80 22.00 18.80 22.42 18.80 22.84C18.80 23.26 18.80 23.68 18.80 24.10C18.80 24.52 18.79 24.94 18.80 25.36C18.81 25.78 18.78 26.20 18.84 26.62C18.89 27.03 18.99 27.45 19.13 27.84C19.28 28.22 19.48 28.61 19.72 28.95C19.95 29.29 20.24 29.61 20.55 29.89C20.86 30.16 21.21 30.41 21.58 30.60C21.95 30.80 22.35 30.95 22.75 31.05C23.16 31.15 23.58 31.20 24.00 31.20C24.42 31.20 24.84 31.15 25.25 31.05C25.65 30.95 26.05 30.80 26.42 30.60C26.79 30.41 27.14 30.16 27.45 29.89C27.76 29.61 28.05 29.29 28.28 28.95C28.52 28.61 28.72 28.22 28.87 27.84C29.01 27.45 29.11 27.03 29.16 26.62C29.22 26.20 29.19 25.78 29.20 25.36C29.21 24.94 29.20 24.52 29.20 24.10C29.20 23.68 29.20 23.26 29.20 22.84C29.20 22.42 29.20 22.00 29.20 21.58C29.20 21.16 29.20 20.75 29.20 20.33C29.20 19.91 29.20 19.49 29.20 19.07C29.20 18.65 29.20 18.23 29.20 17.81C29.20 17.39 29.20 16.97 29.20 16.55C29.20 16.13 29.20 15.71 29.20 15.29C29.20 14.87 29.20 14.45 29.20 14.03C29.20 13.61 29.20 13.19 29.20 12.78C29.20 12.36 29.20 11.94 29.20 11.52C29.20 11.10 29.20 10.68 29.20 10.26C29.20 9.84 29.20 9.21 29.20 9.00\"/></path>\n    <animateTransform attributeName=\"transform\" type=\"rotate\" dur=\"7.2s\" repeatCount=\"indefinite\"\n      keyTimes=\"0;0.4292;0.7611;0.7631;1\" values=\"0 24 24;0 24 24;90 24 24;0 24 24;0 24 24\"/>\n  </g>\n</svg>\n";window.ENSEMBLE_SPLASH_SVG="<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 240 240\" width=\"240\" height=\"240\" role=\"img\" aria-label=\"Ensemble is starting\">\n  <title>Ensemble boot splash: the two voices draw themselves into the mark, then breathe</title>\n  <style>\n    .agent { stroke: #7c6af7; stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw 1s cubic-bezier(.65,0,.35,1) .1s forwards; }\n    .you   { stroke: #f3eee6; stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw 1s cubic-bezier(.65,0,.35,1) .45s forwards; }\n    .tile  { opacity: 0; transform-origin: 120px 120px; animation: tile .6s cubic-bezier(.2,.8,.2,1) forwards; }\n    .mark  { transform-origin: 120px 120px; animation: breathe 2.4s cubic-bezier(.65,0,.35,1) 1.6s infinite; }\n    .bead  { opacity: 0; animation: bead 1s cubic-bezier(.65,0,.35,1) .1s forwards; offset-path: path(\"M76 64V132A44 44 0 0 0 164 132V64\"); }\n    @keyframes draw { to { stroke-dashoffset: 0; } }\n    @keyframes tile { from { opacity: 0; transform: scale(.92); } to { opacity: 1; transform: none; } }\n    @keyframes breathe { 50% { transform: scale(.965); } }\n    @keyframes bead { 0% { offset-distance: 0%; opacity: 1; } 90% { opacity: 1; } 100% { offset-distance: 100%; opacity: 0; } }\n    @media (prefers-reduced-motion: reduce) {\n      .agent, .you { animation: none; stroke-dashoffset: 0; } .tile { animation: none; opacity: 1; } .mark, .bead { animation: none; } .bead { display: none; }\n    }\n  </style>\n  <defs><linearGradient id=\"t\" x1=\"0\" y1=\"0\" x2=\"0\" y2=\"1\"><stop offset=\"0\" stop-color=\"#2b261f\"/><stop offset=\"1\" stop-color=\"#141210\"/></linearGradient>\n    <radialGradient id=\"w\" cx=\".18\" cy=\".05\" r=\".9\"><stop offset=\"0\" stop-color=\"#7c6af7\" stop-opacity=\".34\"/><stop offset=\"1\" stop-color=\"#7c6af7\" stop-opacity=\"0\"/></radialGradient></defs>\n  <g class=\"tile\"><rect x=\"20\" y=\"20\" width=\"200\" height=\"200\" rx=\"45\" fill=\"url(#t)\"/><rect x=\"20\" y=\"20\" width=\"200\" height=\"200\" rx=\"45\" fill=\"url(#w)\"/></g>\n  <g class=\"mark\" fill=\"none\" stroke-linecap=\"round\">\n    <path class=\"agent\" pathLength=\"1\" stroke-width=\"20\" d=\"M76 64V132A44 44 0 0 0 164 132V64\"/>\n    <path class=\"you\" pathLength=\"1\" stroke-width=\"15\" d=\"M100.8 64V132A19.2 19.2 0 0 0 139.2 132V64\"/>\n  </g>\n  <circle class=\"bead\" r=\"6\" fill=\"#b4a9ff\"/>\n</svg>\n";window.ENSEMBLE_GRAPH_SVG="<svg xmlns=\"http://www.w3.org/2000/svg\" class=\"u-graph-skel\" viewBox=\"0 0 320 200\" width=\"320\" height=\"200\" aria-hidden=\"true\">\n  <path class=\"edge\" pathLength=\"1\" style=\"--i:0\" d=\"M160 100 Q110 63 60 50\"/>\n  <path class=\"edge\" pathLength=\"1\" style=\"--i:1\" d=\"M160 100 Q115 113 70 150\"/>\n  <path class=\"edge\" pathLength=\"1\" style=\"--i:2\" d=\"M160 100 Q205 60 250 45\"/>\n  <path class=\"edge\" pathLength=\"1\" style=\"--i:3\" d=\"M160 100 Q215 108 270 140\"/>\n  <path class=\"edge\" pathLength=\"1\" style=\"--i:4\" d=\"M160 100 Q160 48 160 20\"/>\n  <path class=\"edge\" pathLength=\"1\" style=\"--i:5\" d=\"M160 100 Q162 128 165 180\"/>\n  <path class=\"edge\" pathLength=\"1\" style=\"--i:6\" d=\"M160 100 Q100 88 40 100\"/>\n  <path class=\"edge\" pathLength=\"1\" style=\"--i:7\" d=\"M160 100 Q225 83 290 90\"/>\n  <path class=\"edge\" pathLength=\"1\" style=\"--i:8\" d=\"M60 50 Q110 23 160 20\"/>\n  <path class=\"edge\" pathLength=\"1\" style=\"--i:9\" d=\"M250 45 Q270 56 290 90\"/>\n  <path class=\"edge\" pathLength=\"1\" style=\"--i:10\" d=\"M70 150 Q118 153 165 180\"/>\n  <circle class=\"node hub\" style=\"--i:0\" cx=\"160\" cy=\"100\" r=\"14\"/>\n  <circle class=\"node\" style=\"--i:1\" cx=\"60\" cy=\"50\" r=\"10\"/>\n  <circle class=\"node\" style=\"--i:2\" cx=\"70\" cy=\"150\" r=\"8\"/>\n  <circle class=\"node\" style=\"--i:3\" cx=\"250\" cy=\"45\" r=\"8\"/>\n  <circle class=\"node\" style=\"--i:4\" cx=\"270\" cy=\"140\" r=\"10\"/>\n  <circle class=\"node\" style=\"--i:5\" cx=\"160\" cy=\"20\" r=\"8\"/>\n  <circle class=\"node\" style=\"--i:6\" cx=\"165\" cy=\"180\" r=\"8\"/>\n  <circle class=\"node\" style=\"--i:7\" cx=\"40\" cy=\"100\" r=\"10\"/>\n  <circle class=\"node\" style=\"--i:8\" cx=\"290\" cy=\"90\" r=\"8\"/>\n</svg>\n";</script>
+<script>/* components/glyph/keyframes.js */
+window.ENSEMBLE_GLYPH_KF={"u":[[[12.0,9.0],[12.0,10.79],[12.0,12.58],[12.0,14.38],[12.0,16.17],[12.0,17.96],[12.0,19.75],[12.0,21.55],[12.0,23.34],[12.0,25.13],[12.04,26.92],[12.31,28.69],[12.84,30.4],[13.62,32.02],[14.63,33.49],[15.85,34.81],[17.25,35.92],[18.8,36.82],[20.47,37.47],[22.21,37.87],[24.0,38.0],[25.79,37.87],[27.53,37.47],[29.2,36.82],[30.75,35.92],[32.15,34.81],[33.37,33.49],[34.38,32.02],[35.16,30.4],[35.69,28.69],[35.96,26.92],[36.0,25.13],[36.0,23.34],[36.0,21.55],[36.0,19.75],[36.0,17.96],[36.0,16.17],[36.0,14.38],[36.0,12.58],[36.0,10.79],[36.0,9.0]],[[18.8,9.0],[18.8,10.26],[18.8,11.52],[18.8,12.78],[18.8,14.03],[18.8,15.29],[18.8,16.55],[18.8,17.81],[18.8,19.07],[18.8,20.33],[18.8,21.58],[18.8,22.84],[18.8,24.1],[18.8,25.36],[18.84,26.62],[19.13,27.84],[19.72,28.95],[20.55,29.89],[21.58,30.6],[22.75,31.05],[24.0,31.2],[25.25,31.05],[26.42,30.6],[27.45,29.89],[28.28,28.95],[28.87,27.84],[29.16,26.62],[29.2,25.36],[29.2,24.1],[29.2,22.84],[29.2,21.58],[29.2,20.33],[29.2,19.07],[29.2,17.81],[29.2,16.55],[29.2,15.29],[29.2,14.03],[29.2,12.78],[29.2,11.52],[29.2,10.26],[29.2,9.0]]],"braid":[[[18.6,9.0],[18.3,10.71],[17.55,12.27],[16.57,13.71],[15.49,15.08],[14.42,16.45],[13.44,17.88],[12.69,19.45],[12.4,21.16],[12.7,22.86],[13.46,24.43],[14.44,25.86],[15.57,27.19],[16.95,28.24],[18.5,29.04],[20.06,29.79],[21.25,31.04],[22.19,32.51],[23.29,33.85],[24.63,34.95],[26.19,35.71],[27.9,36.03],[29.62,35.83],[31.19,35.09],[32.41,33.87],[33.17,32.31],[33.4,30.59],[33.14,28.87],[32.45,27.28],[31.44,25.86],[30.46,24.43],[29.7,22.86],[29.4,21.16],[29.69,19.45],[30.44,17.88],[31.42,16.45],[32.49,15.08],[33.57,13.71],[34.55,12.27],[35.3,10.71],[35.6,9.0]],[[12.4,9.0],[12.7,10.71],[13.45,12.27],[14.43,13.71],[15.51,15.08],[16.58,16.45],[17.56,17.88],[18.31,19.45],[18.6,21.16],[18.3,22.86],[17.54,24.43],[16.56,25.86],[15.55,27.28],[14.86,28.87],[14.6,30.59],[14.83,32.31],[15.59,33.87],[16.81,35.09],[18.38,35.83],[20.1,36.03],[21.81,35.71],[23.37,34.95],[24.71,33.85],[25.81,32.51],[26.75,31.04],[27.94,29.79],[29.5,29.04],[31.05,28.24],[32.43,27.19],[33.56,25.86],[34.54,24.43],[35.3,22.86],[35.6,21.16],[35.31,19.45],[34.56,17.88],[33.58,16.45],[32.51,15.08],[31.43,13.71],[30.45,12.27],[29.7,10.71],[29.4,9.0]]],"rings":[[[15.25,16.64],[14.15,17.39],[13.18,18.31],[12.37,19.37],[11.73,20.54],[11.29,21.8],[11.05,23.11],[11.01,24.44],[11.19,25.77],[11.56,27.05],[12.14,28.25],[12.89,29.35],[13.81,30.32],[14.87,31.13],[16.04,31.77],[17.3,32.21],[18.61,32.45],[19.94,32.49],[21.27,32.31],[22.55,31.94],[23.75,31.36],[24.85,30.61],[25.82,29.69],[26.63,28.63],[27.27,27.46],[27.71,26.2],[27.95,24.89],[27.99,23.56],[27.81,22.23],[27.44,20.95],[26.86,19.75],[26.11,18.65],[25.19,17.68],[24.13,16.87],[22.96,16.23],[21.7,15.79],[20.39,15.55],[19.06,15.51],[17.73,15.69],[16.45,16.06],[15.25,16.64]],[[24.25,16.64],[23.15,17.39],[22.18,18.31],[21.37,19.37],[20.73,20.54],[20.29,21.8],[20.05,23.11],[20.01,24.44],[20.19,25.77],[20.56,27.05],[21.14,28.25],[21.89,29.35],[22.81,30.32],[23.87,31.13],[25.04,31.77],[26.3,32.21],[27.61,32.45],[28.94,32.49],[30.27,32.31],[31.55,31.94],[32.75,31.36],[33.85,30.61],[34.82,29.69],[35.63,28.63],[36.27,27.46],[36.71,26.2],[36.95,24.89],[36.99,23.56],[36.81,22.23],[36.44,20.95],[35.86,19.75],[35.11,18.65],[34.19,17.68],[33.13,16.87],[31.96,16.23],[30.7,15.79],[29.39,15.55],[28.06,15.51],[26.73,15.69],[25.45,16.06],[24.25,16.64]]],"spark":[[[22.92,22.13],[20.37,22.35],[16.7,21.57],[12.97,21.3],[9.23,21.63],[5.87,23.15],[7.41,25.84],[11.07,26.62],[14.82,26.63],[18.53,26.11],[22.13,25.08],[22.35,27.63],[21.57,31.3],[21.3,35.03],[21.63,38.77],[23.15,42.13],[25.84,40.59],[26.62,36.93],[26.63,33.18],[26.11,29.47],[25.08,25.87],[27.63,25.65],[31.3,26.43],[35.03,26.7],[38.77,26.37],[42.13,24.85],[40.59,22.16],[36.93,21.38],[33.18,21.37],[29.47,21.89],[25.87,22.92],[25.65,20.37],[26.43,16.7],[26.7,12.97],[26.37,9.23],[24.85,5.87],[22.16,7.41],[21.38,11.07],[21.37,14.82],[21.89,18.53],[22.92,22.13]],[[20.84,18.52],[19.22,17.06],[17.3,16.06],[16.04,17.21],[17.01,19.15],[18.45,20.77],[20.13,22.17],[21.97,23.33],[22.05,24.63],[20.2,25.78],[18.52,27.16],[17.06,28.78],[16.06,30.7],[17.21,31.96],[19.15,30.99],[20.77,29.55],[22.17,27.87],[23.33,26.03],[24.63,25.95],[25.78,27.8],[27.16,29.48],[28.78,30.94],[30.7,31.94],[31.96,30.79],[30.99,28.85],[29.55,27.23],[27.87,25.83],[26.03,24.67],[25.95,23.37],[27.8,22.22],[29.48,20.84],[30.94,19.22],[31.94,17.3],[30.79,16.04],[28.85,17.01],[27.23,18.45],[25.83,20.13],[24.67,21.97],[23.37,22.05],[22.22,20.2],[20.84,18.52]]],"merge":[[[20.5,17.94],[19.59,18.56],[18.8,19.32],[18.13,20.19],[17.61,21.15],[17.24,22.19],[17.04,23.27],[17.01,24.37],[17.15,25.46],[17.46,26.51],[17.94,27.5],[18.56,28.41],[19.32,29.2],[20.19,29.87],[21.15,30.39],[22.19,30.76],[23.27,30.96],[24.37,30.99],[25.46,30.85],[26.51,30.54],[27.5,30.06],[28.41,29.44],[29.2,28.68],[29.87,27.81],[30.39,26.85],[30.76,25.81],[30.96,24.73],[30.99,23.63],[30.85,22.54],[30.54,21.49],[30.06,20.5],[29.44,19.59],[28.68,18.8],[27.81,18.13],[26.85,17.61],[25.81,17.24],[24.73,17.04],[23.63,17.01],[22.54,17.15],[21.49,17.46],[20.5,17.94]],[[20.5,17.94],[19.59,18.56],[18.8,19.32],[18.13,20.19],[17.61,21.15],[17.24,22.19],[17.04,23.27],[17.01,24.37],[17.15,25.46],[17.46,26.51],[17.94,27.5],[18.56,28.41],[19.32,29.2],[20.19,29.87],[21.15,30.39],[22.19,30.76],[23.27,30.96],[24.37,30.99],[25.46,30.85],[26.51,30.54],[27.5,30.06],[28.41,29.44],[29.2,28.68],[29.87,27.81],[30.39,26.85],[30.76,25.81],[30.96,24.73],[30.99,23.63],[30.85,22.54],[30.54,21.49],[30.06,20.5],[29.44,19.59],[28.68,18.8],[27.81,18.13],[26.85,17.61],[25.81,17.24],[24.73,17.04],[23.63,17.01],[22.54,17.15],[21.49,17.46],[20.5,17.94]]],"pause":[[[18.0,12.5],[18.0,13.07],[18.0,13.65],[18.0,14.22],[18.0,14.8],[18.0,15.38],[18.0,15.95],[18.0,16.52],[18.0,17.1],[18.0,17.68],[18.0,18.25],[18.0,18.82],[18.0,19.4],[18.0,19.98],[18.0,20.55],[18.0,21.12],[18.0,21.7],[18.0,22.27],[18.0,22.85],[18.0,23.43],[18.0,24.0],[18.0,24.58],[18.0,25.15],[18.0,25.73],[18.0,26.3],[18.0,26.88],[18.0,27.45],[18.0,28.02],[18.0,28.6],[18.0,29.18],[18.0,29.75],[18.0,30.32],[18.0,30.9],[18.0,31.48],[18.0,32.05],[18.0,32.62],[18.0,33.2],[18.0,33.77],[18.0,34.35],[18.0,34.92],[18.0,35.5]],[[30.0,12.5],[30.0,13.07],[30.0,13.65],[30.0,14.22],[30.0,14.8],[30.0,15.38],[30.0,15.95],[30.0,16.52],[30.0,17.1],[30.0,17.68],[30.0,18.25],[30.0,18.82],[30.0,19.4],[30.0,19.98],[30.0,20.55],[30.0,21.12],[30.0,21.7],[30.0,22.27],[30.0,22.85],[30.0,23.43],[30.0,24.0],[30.0,24.58],[30.0,25.15],[30.0,25.73],[30.0,26.3],[30.0,26.88],[30.0,27.45],[30.0,28.02],[30.0,28.6],[30.0,29.18],[30.0,29.75],[30.0,30.32],[30.0,30.9],[30.0,31.48],[30.0,32.05],[30.0,32.62],[30.0,33.2],[30.0,33.77],[30.0,34.35],[30.0,34.92],[30.0,35.5]]],"check":[[[11.5,25.0],[12.15,25.65],[12.8,26.3],[13.45,26.95],[14.1,27.6],[14.75,28.25],[15.4,28.9],[16.05,29.55],[16.71,30.21],[17.36,30.86],[18.01,31.51],[18.66,32.16],[19.31,32.81],[19.96,33.46],[20.57,32.86],[21.19,32.17],[21.8,31.48],[22.41,30.8],[23.02,30.11],[23.64,29.42],[24.25,28.74],[24.86,28.05],[25.47,27.36],[26.09,26.68],[26.7,25.99],[27.31,25.3],[27.92,24.61],[28.54,23.93],[29.15,23.24],[29.76,22.55],[30.37,21.87],[30.99,21.18],[31.6,20.49],[32.21,19.81],[32.82,19.12],[33.44,18.43],[34.05,17.75],[34.66,17.06],[35.27,16.37],[35.89,15.69],[36.5,15.0]],[[15.0,8.41],[12.67,10.01],[10.62,11.96],[8.9,14.2],[7.56,16.68],[6.61,19.34],[6.1,22.12],[6.02,24.94],[6.39,27.74],[7.2,30.45],[8.41,33.0],[10.01,35.33],[11.96,37.38],[14.2,39.1],[16.68,40.44],[19.34,41.39],[22.12,41.9],[24.94,41.98],[27.74,41.61],[30.45,40.8],[33.0,39.59],[35.33,37.99],[37.38,36.04],[39.1,33.8],[40.44,31.32],[41.39,28.66],[41.9,25.88],[41.98,23.06],[41.61,20.26],[40.8,17.55],[39.59,15.0],[37.99,12.67],[36.04,10.62],[33.8,8.9],[31.32,7.56],[28.66,6.61],[25.88,6.1],[23.06,6.02],[20.26,6.39],[17.55,7.2],[15.0,8.41]]],"fray":[[[12.0,9.0],[12.01,9.71],[12.05,10.42],[12.11,11.13],[12.19,11.84],[12.29,12.55],[12.38,13.25],[12.48,13.96],[12.56,14.66],[12.64,15.37],[12.69,16.08],[12.72,16.79],[12.74,17.51],[12.73,18.22],[12.72,18.93],[12.7,19.64],[12.68,20.35],[12.68,21.07],[12.71,21.78],[12.77,22.49],[12.87,23.19],[13.02,23.89],[13.23,24.57],[13.48,25.23],[13.77,25.88],[14.1,26.51],[14.46,27.13],[14.85,27.73],[15.24,28.32],[15.64,28.91],[16.05,29.49],[16.45,30.08],[16.84,30.68],[17.21,31.28],[17.56,31.91],[17.87,32.55],[18.14,33.21],[18.35,33.89],[18.5,34.58],[18.59,35.29],[18.62,36.0]],[[36.0,9.0],[35.99,9.71],[35.95,10.42],[35.89,11.13],[35.81,11.84],[35.71,12.55],[35.62,13.25],[35.52,13.96],[35.44,14.66],[35.36,15.37],[35.31,16.08],[35.28,16.79],[35.26,17.51],[35.27,18.22],[35.28,18.93],[35.3,19.64],[35.32,20.35],[35.32,21.07],[35.29,21.78],[35.23,22.49],[35.13,23.19],[34.98,23.89],[34.77,24.57],[34.52,25.23],[34.23,25.88],[33.9,26.51],[33.54,27.13],[33.15,27.73],[32.76,28.32],[32.36,28.91],[31.95,29.49],[31.55,30.08],[31.16,30.68],[30.79,31.28],[30.44,31.91],[30.13,32.55],[29.86,33.21],[29.65,33.89],[29.5,34.58],[29.41,35.29],[29.38,36.0]]]};
+</script>
+<script>/* components/glyph/ensemble-glyph.js */
+/* Ensemble Glyph engine (~120 lines, no deps).
+   Two strands of N points; any shape morphs into any other, so state changes
+   (working -> wait -> pause -> success/error) are always continuous.
+   Keyframes: window.ENSEMBLE_GLYPH_KF (keyframes.json). */
+(function () {
+  const KF = window.ENSEMBLE_GLYPH_KF;
+  const reduced = () =>
+    matchMedia("(prefers-reduced-motion: reduce)").matches ||
+    document.documentElement.dataset.reduceMotion === "true";
+  const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2); // matches --ease-weave closely
+  const lerpS = (a, b, t) => a.map((p, i) => [p[0] + (b[i][0] - p[0]) * t, p[1] + (b[i][1] - p[1]) * t]);
+  const lerp = (A, B, t) => [lerpS(A[0], B[0], t), lerpS(A[1], B[1], t)]; // a shape = [agent strand, your strand]
+  function d(P) {
+    let s = `M${P[0][0].toFixed(2)} ${P[0][1].toFixed(2)}`;
+    for (let i = 0; i < P.length - 1; i++) {
+      const p0 = P[Math.max(0, i - 1)], p1 = P[i], p2 = P[i + 1], p3 = P[Math.min(P.length - 1, i + 2)];
+      s += `C${(p1[0] + (p2[0] - p0[0]) / 6).toFixed(2)} ${(p1[1] + (p2[1] - p0[1]) / 6).toFixed(2)} ` +
+           `${(p2[0] - (p3[0] - p1[0]) / 6).toFixed(2)} ${(p2[1] - (p3[1] - p1[1]) / 6).toFixed(2)} ` +
+           `${p2[0].toFixed(2)} ${p2[1].toFixed(2)}`;
+    }
+    return s;
+  }
+  // Braid phase: slide each strand's points along the mark so the crossings travel (the weave "moves").
+  function weave(shape, phase) {
+    const [a, b] = shape, n = a.length, amp = Math.sin(phase) * 0.9;
+    const shift = (S, k) => S.map((p, i) => {
+      const q = S[Math.min(n - 1, Math.max(0, i + 1))], r = S[Math.max(0, i - 1)];
+      return [p[0] + (q[0] - r[0]) * k, p[1] + (q[1] - r[1]) * k];
+    });
+    return [shift(a, amp), shift(b, -amp)];
+  }
+  // The working loop: [shape, moveMs, holdMs, holdFx]
+  const LOOP = [
+    ["u", 450, 380],
+    ["braid", 700, 1100, "weave"],
+    ["rings", 700, 420],
+    ["spark", 700, 700, "spin"],
+    ["merge", 650, 520, "pulse"],
+    ["u", 700, 380],
+  ];
+  // per-shape stroke scale [agent, you]: the spark is drawn finer, like a flare
+  const WIDTH = { spark: [0.55, 0.62], braid: [0.8, 0.85] };
+  const wOf = (name) => WIDTH[name] || [1, 1];
+  const STATE_SHAPE = { idle: "u", wait: "u", pause: "pause", success: "check", error: "fray" };
+
+  class Glyph {
+    constructor(el, opts = {}) {
+      this.el = el; this.size = opts.size || 48;
+      const small = this.size <= 20, sw = small ? 1.3 : 1;
+      el.classList.add("u-glyph");
+      el.style.width = el.style.height = this.size + "px";
+      el.innerHTML = `<svg viewBox="0 0 48 48" aria-hidden="true"><g class="ug-g" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <path class="ug-agent" stroke-width="${5 * sw}"/><path class="ug-you" stroke-width="${3.8 * sw}"/></g></svg>`;
+      this.g = el.querySelector(".ug-g");
+      [this.pa, this.pb] = el.querySelectorAll("path");
+      this.cur = KF.u.map((s) => s.map((p) => p.slice()));
+      this.sw = 5 * sw; this.sy = 3.8 * sw; this.curW = [1, 1];
+      this.render(this.cur, 0, 1);
+      this.set(opts.state || "working");
+    }
+    render(shape, rot, scale, youOpacity, w) {
+      this.cur = shape;
+      if (w) { this.curW = w; this.pa.setAttribute("stroke-width", (this.sw * w[0]).toFixed(2)); this.pb.setAttribute("stroke-width", (this.sy * w[1]).toFixed(2)); }
+      this.pa.setAttribute("d", d(shape[0]));
+      this.pb.setAttribute("d", d(shape[1]));
+      this.g.setAttribute("transform", `rotate(${rot || 0} 24 24) translate(24 24) scale(${scale || 1}) translate(-24 -24)`);
+      this.pb.style.opacity = youOpacity == null ? "" : youOpacity;
+    }
+    set(state) {
+      this.state = state;
+      this.el.className = "u-glyph is-" + state;
+      this.el.setAttribute("role", "img");
+      this.el.setAttribute("aria-label", { working: "Ensemble is working", wait: "Waiting for you", pause: "Paused", success: "Done", error: "Stopped", idle: "Ensemble" }[state] || "Ensemble");
+      cancelAnimationFrame(this.raf);
+      const from = this.cur;
+      if (state === "working") {
+        if (reduced()) return this.render(KF.u, 0, 1);
+        return this.loop(from);
+      }
+      const target = KF[STATE_SHAPE[state]];
+      if (reduced()) return this.render(target, 0, 1);
+      this.tween(from, target, state === "success" ? 520 : 600, (t) => {
+        // success: the ring (your strand) blooms outward then fades, like a knot pulled tight
+        if (state === "success") return [1, 0.6 + 0.4 * t, 1 - t * 0.85];
+        return [1, 1, null];
+      });
+    }
+    tween(from, to, ms, fx, done) {
+      const t0 = performance.now(); this.curW0 = this.curW;
+      const step = (now) => {
+        const t = Math.min(1, (now - t0) / ms), e = ease(t);
+        const [, scale, op] = fx ? fx(e) : [1, 1, null];
+        const w0 = this.curW0 || [1, 1];
+        this.render(lerp(from, to, e), 0, scale, op, [w0[0] + (1 - w0[0]) * e, w0[1] + (1 - w0[1]) * e]);
+        if (t < 1) this.raf = requestAnimationFrame(step); else done && done();
+      };
+      this.raf = requestAnimationFrame(step);
+    }
+    loop(from) {
+      // first ease from wherever we are into the mark, then run the loop forever
+      let i = 0, prev = from, prevW = this.curW, phaseStart = performance.now(), stage = "move";
+      const step = (now) => {
+        const [name, move, hold, fx] = LOOP[i];
+        const target = KF[name];
+        const el = now - phaseStart;
+        const mv = move;
+        if (stage === "move") {
+          const t = mv ? Math.min(1, el / mv) : 1;
+          const e = ease(t), w0 = prevW, w1 = wOf(name);
+          this.render(lerp(prev, target, e), 0, 1, null, [w0[0] + (w1[0] - w0[0]) * e, w0[1] + (w1[1] - w0[1]) * e]);
+          if (t >= 1) { stage = "hold"; phaseStart = now; }
+        } else {
+          const h = hold ? Math.min(1, el / hold) : 1;
+          let shape = target, rot = 0, scale = 1;
+          if (fx === "weave") shape = weave(target, ease(h) * Math.PI * 2);
+          if (fx === "spin") rot = ease(h) * 90;             // 4-fold star: 90deg looks seamless
+          if (fx === "pulse") scale = 1 + Math.sin(h * Math.PI) * 0.28;
+          this.render(shape, rot, scale);
+          if (h >= 1) {
+            prev = target; prevW = wOf(name); i = (i + 1) % LOOP.length; stage = "move"; phaseStart = now;
+            if (i === 0) i = 1; // index 0 only eases in from the previous state
+          }
+        }
+        this.raf = requestAnimationFrame(step);
+      };
+      this.raf = requestAnimationFrame(step);
+    }
+  }
+  window.EnsembleGlyph = {
+    mount: (el, opts) => (el.__glyph = new Glyph(el, opts)),
+    auto(root = document) {
+      root.querySelectorAll("[data-u-glyph]").forEach((el) => {
+        if (!el.__glyph) el.__glyph = new Glyph(el, { size: +el.dataset.size || 48, state: el.dataset.uGlyph || "working" });
+      });
+    },
+  };
+})();
+</script>
+<script>/* components/status-line/status-line.js */
+/* EnsembleStatus: rotates whimsical verbs while the agent thinks; shows the real
+   status (from SSE "status" frames) when there is one. Only real statuses are
+   announced to screen readers, so the whimsy never spams assistive tech. */
+(function () {
+  const VERBS = ["Harmonizing", "Weaving context", "Finding the thread", "Syncing up", "Tuning in", "Braiding", "Composing",
+    "Counterpointing", "Keeping time", "Stitching it together", "Cross-referencing", "Conducting", "Humming along",
+    "Falling in step", "Resolving the chord", "Listening in", "Threading the needle", "Rehearsing", "Riffing", "Warming up"];
+  const letters = (text) => [...text].map((c, i) => `<span class="l" style="--i:${i}">${c === " " ? "&nbsp;" : c}</span>`).join("");
+  const fmt = (s) => (s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`);
+  class Status {
+    constructor(el, o = {}) {
+      this.el = el; this.verbs = o.verbs || VERBS; this.i = Math.floor(Math.random() * this.verbs.length);
+      this.t0 = Date.now() - (o.elapsed || 0) * 1000; this.tokens = o.tokens || 0; this.hint = o.hint ?? "esc";
+      el.classList.add("u-status");
+      el.innerHTML = `<span class="g"></span><span class="u-status-slot" style="position:relative;display:inline-flex"></span>
+        <span class="u-status-meta"></span><span class="u-sr" aria-live="polite"></span>`;
+      this.glyph = window.EnsembleGlyph.mount(el.querySelector(".g"), { size: o.size || 16, state: "working" });
+      this.slot = el.querySelector(".u-status-slot"); this.meta = el.querySelector(".u-status-meta"); this.sr = el.querySelector(".u-sr");
+      this.show(this.verbs[this.i] + "…");
+      this.timer = setInterval(() => this.tick(), 1000);
+      this.rot = setInterval(() => { if (!this.real) { this.i = (this.i + 1) % this.verbs.length; this.show(this.verbs[this.i] + "…"); } }, o.interval || 2600);
+      this.tick();
+    }
+    show(text) {
+      const slot = this.slot, old = slot.querySelector(".u-status-verb:not(.out)");
+      const from = slot.getBoundingClientRect().width;
+      if (old) { old.classList.add("out"); setTimeout(() => old.remove(), 420); }
+      const v = document.createElement("span"); v.className = "u-status-verb"; v.innerHTML = letters(text);
+      slot.appendChild(v);
+      if (!old) return;
+      // glide the slot's width so the meta text never collides with the outgoing verb
+      const to = v.getBoundingClientRect().width;
+      slot.style.transition = "none"; slot.style.width = from + "px";
+      requestAnimationFrame(() => { slot.style.transition = "width .38s var(--ease-weave)"; slot.style.width = Math.max(to, 0) + "px"; });
+      clearTimeout(this.wt); this.wt = setTimeout(() => { slot.style.width = ""; slot.style.transition = ""; }, 460);
+    }
+    setReal(text) { this.real = text; this.el.classList.toggle("is-real", !!text); if (text) { this.show(text); this.sr.textContent = text; } }
+    addTokens(n) { this.tokens += n; }
+    tick() {
+      const s = Math.round((Date.now() - this.t0) / 1000);
+      const tk = this.tokens ? ` · ↓ ${this.tokens >= 1000 ? (this.tokens / 1000).toFixed(1) + "k" : this.tokens} tokens` : "";
+      this.meta.innerHTML = `(${fmt(s)}${tk}${this.hint ? ` · <kbd>${this.hint}</kbd> to stop` : ""})`;
+    }
+    destroy() { clearInterval(this.timer); clearInterval(this.rot); }
+  }
+  window.EnsembleStatus = { mount: (el, o) => (el.__status = new Status(el, o)), VERBS };
+})();
+</script>
+<script>/* components/stream/stream.js */
+/* EnsembleStream: append model deltas as .u-tok spans ahead of the needle. */
+window.EnsembleStream = {
+  start(reply) { reply.classList.add("is-streaming"); reply.classList.remove("is-done");
+    const body = reply.querySelector(".u-reply-body"); body.innerHTML = '<span class="u-needle" aria-hidden="true"></span>'; },
+  append(reply, text) { const n = reply.querySelector(".u-needle"); const s = document.createElement("span");
+    s.className = "u-tok"; s.textContent = text; n.before(s); },
+  done(reply) { reply.classList.remove("is-streaming"); reply.classList.add("is-done"); },
+};
+</script>
+<script>/* components/thread-progress/thread-progress.js */
+/* EnsembleProgress: trickles toward 90% while a route loads, then completes. */
+window.EnsembleProgress = {
+  start(el) { el.className = "u-progress"; el.style.setProperty("--p", 0); let p = 0.08;
+    requestAnimationFrame(() => el.style.setProperty("--p", p));
+    clearInterval(el.__t); el.__t = setInterval(() => { p += (0.9 - p) * 0.18; el.style.setProperty("--p", p.toFixed(3)); }, 260); },
+  done(el) { clearInterval(el.__t); el.style.setProperty("--p", 1); setTimeout(() => el.classList.add("is-done"), 420);
+    setTimeout(() => el.classList.add("is-idle"), 1100); },
+};
+</script>
+<script>/* components/terminal-glyph/terminal-glyph.js */
+/* Text-only glyph for monospace surfaces: the guarded terminal, the ensemble-hook CLI while it
+   waits for a decision, logs, and native TUIs. Frames trace the glyph's own loop:
+   dot -> ring -> mark -> braid -> spark -> and back, so it reads as the same character as the SVG glyph. */
+(function () {
+  const FRAMES = ["·", "∘", "◡", "∪", "⋃", "≀", "⋈", "✢", "✣", "✳", "✣", "✢", "⋈", "≀", "⋃", "∪", "◡", "∘"];
+  const VERBS = window.EnsembleStatus ? window.EnsembleStatus.VERBS : ["Harmonizing", "Weaving context", "Syncing up"];
+  const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches || document.documentElement.dataset.reduceMotion === "true";
+  window.EnsembleTermGlyph = {
+    FRAMES,
+    mount(el, o = {}) {
+      let f = 0, v = 0, t0 = Date.now();
+      const draw = () => {
+        const s = Math.round((Date.now() - t0) / 1000);
+        const g = reduced() ? "∪" : FRAMES[f % FRAMES.length];
+        const verb = o.text || VERBS[v % VERBS.length] + "…";
+        el.innerHTML = `<span class="tg">${g}</span> <span class="tv">${verb}</span> <span class="tm">(${s}s · ${o.hint || "esc to interrupt"})</span>`;
+      };
+      setInterval(() => { f++; draw(); }, 110);
+      if (!o.text) setInterval(() => { v++; }, 2600);
+      draw();
+    },
+  };
+})();
+</script>
+<script>/* demo/demo.js */
+/* Demo orchestration only. The motion system lives in components/. */
+(function () {
+  const $ = (s, r = document) => r.querySelector(s), $$ = (s, r = document) => [...r.querySelectorAll(s)];
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const G = window.EnsembleGlyph;
+  if (new URLSearchParams(location.search).has("reduced")) document.documentElement.dataset.reduceMotion = "true";
+  G.auto();
+
+  // TOC
+  $$(".sec").forEach((s) => { const a = document.createElement("a"); a.href = "#" + s.id; a.textContent = s.dataset.title; $("#toc").append(a); });
+
+  // 01 hero glyph + states
+  const hero = G.mount($("#hero-glyph"), { size: 128, state: "working" });
+  [["working", "Working"], ["wait", "Waiting on you"], ["pause", "Paused"], ["success", "Done"], ["error", "Error"], ["idle", "Idle"]].forEach(([s, l]) => {
+    const b = document.createElement("button"); b.className = "btn"; b.textContent = l; b.dataset.s = s;
+    b.onclick = () => { hero.set(s); $$("#glyph-states .btn").forEach((x) => x.setAttribute("aria-pressed", x === b)); };
+    if (s === "working") b.setAttribute("aria-pressed", "true");
+    $("#glyph-states").append(b);
+  });
+  EnsembleStatus.mount($("#hero-status"), { elapsed: 12, tokens: 1240 });
+  EnsembleStatus.mount($("#light-status"), { elapsed: 3 });
+  $("#smil-img").src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(window.ENSEMBLE_GLYPH_SMIL);
+  Object.keys(ENSEMBLE_GLYPH_KF).forEach((k) => {
+    const s = document.createElement("div"); s.className = "s"; s.innerHTML = `<div class="bx"><span></span></div>${k}`; $("#strip").append(s);
+    const g = G.mount(s.querySelector("span"), { size: 40, state: "idle" }); cancelAnimationFrame(g.raf);
+    g.el.className = "u-glyph"; g.render(ENSEMBLE_GLYPH_KF[k], 0, 1, null, { spark: [0.55, 0.62], braid: [0.8, 0.85] }[k] || [1, 1]);
+  });
+  $("#verbs").textContent = EnsembleStatus.VERBS.map((v) => v + "…").join("  ·  ");
+
+  // 02 splash
+  function splash() {
+    const host = $("#splash-host");
+    host.innerHTML = `<div class="u-splash"><div style="width:150px;height:150px">${window.ENSEMBLE_SPLASH_SVG.replace('width="240" height="240"', 'width="150" height="150"')}</div><div class="word">Ensemble</div><div class="st"></div></div>`;
+    const st = EnsembleStatus.mount(host.querySelector(".st"), { verbs: ["Tuning in", "Warming up", "Finding the thread"], hint: "" });
+    setTimeout(() => st.setReal("Connecting to hub-api…"), 2600);
+    setTimeout(() => { host.querySelector(".u-splash").classList.add("is-ready"); }, 3900);
+    setTimeout(() => { host.innerHTML = `<div class="faint small">Shell ready → Today</div>`; st.destroy(); }, 4400);
+  }
+  $("#splash-replay").onclick = splash; splash(); setInterval(splash, 5600);
+
+  // 03 route transitions
+  const PAGES = {
+    today: { t: "Today", skel: () => skelToday(), html: () => `<div class="u-rise pg-title" style="--i:0">Good morning, Shivani</div><div class="u-title-thread"></div>
+      ${["Reply to Priya about the retention window", "Review PR #42: context pack ranking", "Prep notes for the 16:00 sync"].map((t, i) => `<div class="u-rise card row" style="--i:${i + 1};margin-top:8px"><span class="kdot" style="background:var(--kind-task)"></span><span style="flex:1">${t}</span><span class="tag ${["t-orange", "t-blue", "t-gray"][i]}">${["Proposed", "In progress", "To do"][i]}</span></div>`).join("")}` },
+    board: { t: "Task board", skel: () => skelBoard(), html: () => `<div class="u-rise pg-title" style="--i:0">Board</div><div class="u-title-thread"></div><div class="row" style="align-items:flex-start;gap:10px">
+      ${["Proposed", "To do", "In progress", "Waiting for me"].map((c, i) => `<div class="u-rise" style="--i:${i + 1};flex:1"><div class="small faint" style="margin-bottom:6px">${c}</div>${Array.from({ length: 3 - (i % 2) }, (_, k) => `<div class="card" style="margin-bottom:6px;height:${34 + ((k + i) % 2) * 14}px"><span class="kdot" style="display:inline-block;background:var(--kind-task)"></span> Task ${i * 3 + k + 1}</div>`).join("")}</div>`).join("")}</div>` },
+    context: { t: "Context", skel: () => `<div class="u-skel line" style="width:30%;height:16px"></div><div style="margin-top:16px;display:grid;place-items:center">${window.ENSEMBLE_GRAPH_SVG}</div>`,
+      html: () => `<div class="u-rise pg-title" style="--i:0">Context</div><div class="u-title-thread"></div><div class="u-rise" style="--i:1;display:grid;place-items:center">${graphReal()}</div>` },
+    runs: { t: "Runs", skel: () => skelRuns(), html: () => `<div class="u-rise pg-title" style="--i:0">Runs</div><div class="u-title-thread"></div>${["Fix flaky retention job test", "Draft weekly recap", "Summarise design review"].map((t, i) => `<div class="u-rise card row" style="--i:${i + 1};margin-top:8px"><span class="tag ${["t-blue", "t-green", "t-green"][i]}">${["Working", "Done", "Done"][i]}</span><span style="flex:1">${t}</span><span class="faint small mono">${["41s", "2m 3s", "58s"][i]}</span></div>`).join("")}` },
+  };
+  function graphReal() {
+    const hub = [160, 100], n = [[60, 50, "people"], [70, 150, "repo"], [250, 45, "project"], [270, 140, "task"], [160, 20, "skill"], [165, 180, "people"], [40, 100, "project"], [290, 90, "repo"]];
+    return `<svg viewBox="0 0 320 200" width="320" height="200">${n.map(([x, y]) => `<path d="M160 100 Q${(160 + x) / 2} ${(100 + y) / 2 - 12} ${x} ${y}" stroke="var(--line-strong)" stroke-width="1.5" fill="none"/>`).join("")}
+      <circle cx="160" cy="100" r="14" fill="var(--accent)"/>${n.map(([x, y, k]) => `<circle cx="${x}" cy="${y}" r="8" fill="var(--kind-${k})"/>`).join("")}</svg>`;
+  }
+  const skl = (w, h, i, extra = "") => `<div class="u-skel" style="--i:${i};width:${w};height:${h}px;${extra}"></div>`;
+  function skelToday() { return skl("45%", 20, 0) + `<div style="height:14px"></div>` + [1, 2, 3].map((i) => skl("100%", 34, i, "margin-top:8px")).join(""); }
+  function skelBoard() { return skl("25%", 20, 0) + `<div class="row" style="align-items:flex-start;gap:10px;margin-top:16px">` + [0, 1, 2, 3].map((c) => `<div style="flex:1">${skl("50%", 9, c)}${[0, 1, 2].slice(0, 3 - (c % 2)).map((k) => skl("100%", 34 + ((k + c) % 2) * 14, c + k + 1, "margin-top:8px")).join("")}</div>`).join("") + `</div>`; }
+  function skelRuns() { return skl("20%", 20, 0) + [1, 2, 3].map((i) => `<div class="row" style="margin-top:10px">${skl("56px", 18, i)}${skl("100%", 18, i + 1)}</div>`).join(""); }
+  const order = ["today", "board", "context", "runs"]; let ri = 0;
+  async function go(name) {
+    const page = $("#route-page"), prog = $("#route-prog"), P = PAGES[name];
+    $$("#route-app .nav").forEach((n) => n.classList.toggle("on", n.dataset.r === name));
+    $("#route-title").textContent = P.t;
+    page.classList.remove("u-page-enter"); page.classList.add("u-page-leave");
+    EnsembleProgress.start(prog);
+    await wait(150);
+    page.classList.remove("u-page-leave"); page.innerHTML = P.skel();
+    await wait(1300);
+    EnsembleProgress.done(prog);
+    page.innerHTML = P.html(); page.classList.add("u-page-enter");
+  }
+  $$("#route-app .nav[data-r]").forEach((n) => (n.onclick = () => PAGES[n.dataset.r] && go(n.dataset.r)));
+  go("today"); setInterval(() => { ri = (ri + 1) % order.length; go(order[ri]); }, 3600);
+
+  // 04 skeleton gallery
+  function gallery(el) {
+    el.innerHTML = [
+      ["Today", skelToday()], ["Board", skelBoard()],
+      ["Context graph", `<div style="display:grid;place-items:center">${window.ENSEMBLE_GRAPH_SVG.replace('width="320" height="200"', 'width="100%" height="150"')}</div>`], ["Runs", skelRuns()],
+    ].map(([t, h]) => `<div class="mock" style="height:230px;overflow:hidden"><div class="cap">${t}</div>${h}</div>`).join("");
+  }
+  gallery($("#skel-dark")); gallery($("#skel-light"));
+
+  // 05 assistant dock loop
+  const dockGlyph = G.mount($("#dock-glyph"), { size: 16, state: "idle" });
+  const ANSWER = "Two things need you today. Priya is waiting on the retention window (she asked for 30 days, not 45). PR #42 is ready for review. I can take the recap draft and the deliverables update, and I've put both on the board as mine.";
+  async function dockLoop() {
+    const b = $("#dock-body");
+    for (;;) {
+      b.innerHTML = `<div class="umsg">What needs me today, and what can you take?</div><div class="st"></div>`;
+      dockGlyph.set("working"); $("#dock-send").textContent = "Stop";
+      const st = EnsembleStatus.mount(b.querySelector(".st"), { elapsed: 0 });
+      await wait(2800); st.setReal("Reading Gmail…"); await wait(1300);
+      const tool = document.createElement("div"); tool.className = "u-stitch tool";
+      tool.innerHTML = `<svg class="seam"><rect/></svg><span class="u-duet" style="--s:12px"><i></i><i></i></span><span class="n">hub_list_tasks</span><span class="muted">Reading your board…</span>`;
+      b.querySelector(".st").before(tool); st.setReal("Checking the board…"); await wait(1500);
+      tool.classList.add("is-done"); tool.querySelector(".u-duet").outerHTML = `<span style="color:var(--ok)">✓</span>`;
+      tool.querySelector(".muted").textContent = "Read 14 tasks"; st.setReal(null); await wait(900);
+      const r = document.createElement("div"); r.className = "u-reply"; r.innerHTML = `<div class="u-reply-rule"></div><div class="u-reply-body"></div>`;
+      b.querySelector(".st").before(r); EnsembleStream.start(r);
+      const words = ANSWER.split(/(?<= )/);
+      for (let i = 0; i < words.length; i += 2) { EnsembleStream.append(r, words.slice(i, i + 2).join("")); st.addTokens(9); await wait(85); }
+      EnsembleStream.done(r); st.destroy(); b.querySelector(".st").innerHTML = `<span class="faint small">gemini-3.5-flash-lite · 7.4s</span>`;
+      dockGlyph.set("success"); $("#dock-send").textContent = "↑"; await wait(1000); dockGlyph.set("idle"); await wait(2400);
+    }
+  }
+  dockLoop();
+
+  // 06 terminal
+  EnsembleTermGlyph.mount($("#tg1"), { text: "Waiting for your decision in Ensemble → Needs me…", hint: "falls back to Cursor in 9:41" });
+  EnsembleTermGlyph.mount($("#tg2"), { hint: "esc to interrupt" });
+
+  // 07 loom run
+  const loom = $("#loom"); let done = 1, t0 = Date.now();
+  const steps = $$("#loom li");
+  function paintSteps() { steps.forEach((li, i) => { li.className = i < done ? "done" : i === done ? "now" : ""; }); loom.style.setProperty("--done", done); }
+  function tl() { $("#timeline").innerHTML = ["Prepared folder · sandboxed", "Read 6 files", "Edited retention.test.ts", "$ pnpm test → running", "Review"].map((t, i) =>
+    `<div class="row" style="gap:8px;opacity:${i > done ? .45 : 1}"><span style="width:8px;height:8px;border-radius:50%;background:${i < done ? "var(--accent)" : i === done ? "var(--accent-hi)" : "var(--line-strong)"};${i === done ? "animation:u-ping 1.6s ease-out infinite" : ""}"></span><span class="${i === done ? "" : "muted"}">${t}</span>${i === done ? '<span class="u-duet" style="--s:11px;margin-left:auto"><i></i><i></i></span>' : ""}</div>`).join(""); }
+  paintSteps(); tl();
+  let runTimer = setInterval(() => { done++; if (done > 4) { loom.classList.add("is-done"); $("#job-tag").className = "tag t-green"; $("#job-tag").textContent = "Done"; clearInterval(runTimer); setTimeout(resetRun, 1800); } paintSteps(); tl(); }, 1700);
+  function resetRun() { loom.className = "u-loom"; done = 1; $("#job-tag").className = "tag t-blue"; $("#job-tag").textContent = "Working"; paintSteps(); tl();
+    clearInterval(runTimer); runTimer = setInterval(() => { done++; if (done > 4) { loom.classList.add("is-done"); $("#job-tag").className = "tag t-green"; $("#job-tag").textContent = "Done"; clearInterval(runTimer); setTimeout(resetRun, 1800); } paintSteps(); tl(); }, 1700); }
+  $("#run-stop").onclick = () => { clearInterval(runTimer); loom.classList.add("is-cut"); $("#job-tag").className = "tag t-gray"; $("#job-tag").textContent = "Stopped"; setTimeout(resetRun, 2200); };
+  window.__runStop = $("#run-stop").onclick;
+
+  // 08 needs me loop
+  async function needsLoop() {
+    for (;;) {
+      $("#needs-list").innerHTML = `<div class="u-collapse" id="dc"><div><div class="mock u-yourturn" style="padding:14px 16px 16px">
+        <div class="row" style="gap:10px"><span data-u-glyph="wait" data-size="22"></span><b style="flex:1">Cursor wants to run a command</b><span class="tag t-orange">Needs you</span></div>
+        <div class="mono small" style="margin:10px 0;padding:8px 10px;border-radius:8px;background:var(--raised)">pnpm --filter hub-api test -- retention</div>
+        <div class="row"><button class="btn-primary u-approve" id="ap"><span class="lbl">Allow once</span><svg class="tick" viewBox="0 0 16 16"><path pathLength="1" d="M3 8.5 6.5 12 13 4.5"/></svg>${[0, 60, 120, 180, 240, 300].map((a) => `<i class="spark" style="--a:${a}deg"></i>`).join("")}</button>
+          <button class="btn">Allow for session</button><button class="btn">Always</button><button class="btn-ghost">Deny</button><span class="faint small" style="margin-left:auto">falls back to Cursor in 10 min</span></div>
+        <div class="u-timeout" style="--timeout:14s"></div></div></div></div>
+        <div class="mock u-yourturn" style="opacity:.8"><div class="row" style="gap:10px"><span data-u-glyph="wait" data-size="22"></span><span style="flex:1">Send reply to Priya? <span class="faint">(preview ready)</span></span><span class="tag t-orange">Needs you</span></div></div>`;
+      G.auto($("#needs-list"));
+      await wait(4600);
+      $("#ap").classList.add("is-done"); $("#dc").classList.add("is-gone");
+      await wait(1900);
+    }
+  }
+  needsLoop();
+
+  // 09 sync
+  const SRC = [["Gmail", "var(--kind-people)"], ["Calendar", "var(--kind-project)"], ["GitHub", "var(--kind-repo)"], ["Slack", "var(--kind-skill)"], ["Linear", "var(--kind-deliverable, #c9a4e0)"]];
+  function srcRows(state) { $("#srcs").innerHTML = SRC.map(([n, c], i) => { const s = state(i); return `<div class="u-src is-${s}" style="--src:${c}"><span class="kdot" style="background:${c}"></span><span style="width:70px;color:var(--ink)">${n}</span><span class="u-src-line"></span><span>${{ syncing: "Syncing…", done: "Synced · just now", error: "Token expired · Reconnect" }[s]}</span></div>`; }).join(""); }
+  async function fetchLoop() {
+    const f = $("#fetch");
+    for (;;) {
+      f.className = "btn-ghost u-fetch is-busy"; $("#fetch-l").innerHTML = "Fetching…"; srcRows(() => "syncing");
+      for (let i = 0; i < 5; i++) { await wait(520); srcRows((k) => (k <= i ? (k === 4 ? "error" : "done") : "syncing")); }
+      f.className = "btn-ghost u-fetch is-done"; $("#fetch-l").innerHTML = `Fetch now<span class="u-count">+3 proposed</span>`;
+      await wait(2600);
+    }
+  }
+  fetchLoop();
+
+  // 10 ask
+  async function askLoop() {
+    const q = "Who is waiting on me?";
+    for (;;) {
+      $("#ask-a").style.display = "none"; $("#ask").className = "u-ask"; $("#ask-s").innerHTML = ""; $("#ask-q").className = "faint"; $("#ask-q").textContent = "Ask Ensemble";
+      await wait(700); $("#ask-q").className = "";
+      for (let i = 1; i <= q.length; i++) { $("#ask-q").textContent = q.slice(0, i); await wait(40); }
+      await wait(250); $("#ask").classList.add("is-asking");
+      EnsembleStatus.mount($("#ask-s"), { verbs: ["Looking through your data", "Cross-referencing", "Finding the thread"], hint: "" });
+      await wait(2400); $("#ask-s").__status.destroy(); $("#ask-s").innerHTML = ""; $("#ask").classList.remove("is-asking");
+      $("#ask-a").style.display = "block";
+      $("#ask-a").innerHTML = `<div class="u-cascade"><p style="margin:0 0 6px;font-size:13px;--i:0">Priya (retention window) and Arjun (PR #42 review). Both asked yesterday.</p>
+        <div class="sources"><a style="--i:1">Re: retention window<small>Gmail · Priya · "can we keep 30 days?"</small></a><a style="--i:2">PR #42: context pack ranking<small>GitHub · review requested</small></a></div></div>`;
+      $$("#ask-a .sources a").forEach((a) => (a.style.animation = `u-rise .42s var(--ease) ${a.style.getPropertyValue("--i") * 90}ms both`));
+      await wait(3200);
+    }
+  }
+  askLoop();
+
+  // 11 kill switch
+  const kg = G.mount($("#kill-glyph"), { size: 22, state: "working" });
+  let paused = false;
+  function kill() {
+    paused = !paused;
+    $("#kill-stage").classList.toggle("is-paused", paused);
+    $("#kill-rows").classList.toggle("u-frozen", paused);
+    kg.set(paused ? "pause" : "working");
+    $("#kill-label").textContent = paused ? "Paused" : "Working · 2";
+    $("#kill-label").style.color = paused ? "var(--danger)" : "";
+    $("#kill").textContent = paused ? "▶ Resume" : "❚❚ Pause (kill switch)";
+  }
+  $("#kill").onclick = kill; setInterval(kill, 3200);
+  // re-trigger the toasts' outcome morphs now and then
+  setInterval(() => $$("#s-kill .u-toast .u-glyph").forEach((el) => { const s = el.__glyph.state; el.__glyph.set("working"); setTimeout(() => el.__glyph.set(s), 1400); }), 4200);
+
+  // 12 small moments
+  const sv = $("#save");
+  setInterval(() => { sv.className = "u-save is-saving"; $("#save-l").textContent = "Saving…"; setTimeout(() => { sv.className = "u-save is-saved"; $("#save-l").textContent = "Saved"; }, 1700); }, 3400);
+  sv.className = "u-save is-saving";
+  const ho = $("#handoff"); setInterval(() => { ho.classList.toggle("to-agent"); $("#handoff-l").innerHTML = ho.classList.contains("to-agent") ? "Agent does it · assigned" : 'Triage: <span class="kbd">a</span> Agent does it'; }, 2200);
+
+  // reduced-motion toggle (mirrors the app's data-reduce-motion setting)
+  if (document.documentElement.dataset.reduceMotion === "true") $("#rm").setAttribute("aria-pressed", "true");
+  $("#rm").onclick = () => {
+    const on = document.documentElement.dataset.reduceMotion !== "true";
+    document.documentElement.dataset.reduceMotion = on; $("#rm").setAttribute("aria-pressed", on);
+    $$(".u-glyph").forEach((el) => el.__glyph && el.__glyph.set(el.__glyph.state));
+  };
+
+  // tour (used for the video): scroll section by section
+  async function tour() {
+    document.body.classList.add("touring");
+    const secs = $$(".sec");
+    $("#tour-l").textContent = "Ensemble · motion system"; window.scrollTo({ top: 0 }); await wait(1800);
+    for (const s of secs) {
+      $("#tour-l").textContent = s.querySelector(".num").textContent + " · " + s.dataset.title;
+      s.scrollIntoView({ behavior: "smooth", block: "start" });
+      if (s.id === "s-run") setTimeout(() => window.__runStop(), 1500);
+      await wait(+new URLSearchParams(location.search).get("dwell") || 2800);
+    }
+    document.body.classList.remove("touring");
+    window.__tourDone = true;
+  }
+  $("#tour").onclick = tour;
+  if (new URLSearchParams(location.search).has("tour")) setTimeout(tour, 600);
+})();
+</script>
+</body>
+</html>

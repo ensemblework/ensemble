@@ -1,0 +1,21 @@
+.ap { position: absolute; inset: 0; padding: 22px; display: flex; flex-direction: column; justify-content: center; }
+.ap-wrap { display: grid; grid-template-rows: 1fr; transition: grid-template-rows var(--m-dur-move) var(--m-ease-move), opacity var(--m-dur-ui) var(--m-ease-exit); }
+.ap-wrap > * { min-height: 0; overflow: hidden; }
+.ap.gone .ap-wrap { grid-template-rows: 0fr; opacity: 0; }
+.ap-card { padding: 16px 18px; display: flex; flex-direction: column; gap: 4px; }
+.ap-card b { font-weight: 550; font-size: 14px; } .ap-card > span { font-size: 12.5px; color: var(--faint); margin-bottom: 12px; }
+.ap button { font: 500 13px var(--font-sans); border-radius: 8px; padding: 7px 13px; border: 1px solid var(--line); background: none; color: var(--muted); cursor: pointer;
+  transition: transform var(--m-dur-micro) var(--m-ease-move), background var(--m-dur-micro), border-color var(--m-dur-ui); }
+.ap button:active, .ap button.press { transform: scale(var(--m-scale-press)); }
+.ap .ap-ok { color: var(--ink); background: var(--soft); border-color: var(--hair); display: inline-flex; align-items: center; gap: 7px; }
+.ap .ap-ok svg { width: 0; height: 14px; overflow: visible; transition: width var(--m-dur-ui) var(--m-ease-move); }
+.ap .ap-ok svg path { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 1; transition: stroke-dashoffset var(--m-dur-ui) var(--m-ease-move) 120ms; }
+.ap.ok .ap-ok svg { width: 14px; } .ap.ok .ap-ok svg path { stroke-dashoffset: 0; }
+.ap.ok .ap-ok { border-color: var(--accent); }
+.ap-after { opacity: 0; transition: opacity var(--m-dur-ui) var(--m-ease-enter) 200ms; margin-top: -4px; }
+.ap.gone .ap-after { opacity: 1; }
+.ap-after u { text-decoration-color: var(--hair); text-underline-offset: 3px; }
+.ap-dm { position: relative; width: 17px; height: 6px; }
+.ap-dm i { position: absolute; top: 0; width: 6px; height: 6px; border-radius: 50%; background: var(--you); transition: transform var(--m-dur-move) var(--m-ease-move), opacity var(--m-dur-ui); }
+.ap-dm i.you { left: 0; opacity: .55; } .ap-dm i.ag { left: 11px; background: var(--agent); }
+.ap.ok .ap-dm i.you { transform: translateX(11px); opacity: 0; }

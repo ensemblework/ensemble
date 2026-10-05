@@ -1,0 +1,35 @@
+/* 06 · Morning briefing: sunrise from the mark, cards unfold along a thread */
+.sr { position: absolute; inset: 0; display: grid; grid-template-columns: 44% 1fr; }
+.sr-sky { position: relative; overflow: hidden; }
+.sr-sky svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.sr-dawn { opacity: 0; }
+.sr-stars circle { fill: #f3eee6; opacity: .7; }
+.sr-rays line { stroke-width: 5; stroke-linecap: round; }
+.sr-rays { animation: sr-spin 60s linear infinite; }
+@keyframes sr-spin { to { transform: rotate(360deg); } }
+.sr-brief { padding: 30px 34px 20px 40px; position: relative; }
+.sr-date { font: 500 11px var(--font-mono); color: var(--faint); text-transform: uppercase; letter-spacing: .08em; opacity: 0; transition: opacity .6s; }
+.sr-h { margin: 6px 0 0; font: 500 34px/1.1 var(--font-serif); letter-spacing: -.02em; }
+.sr-h span { display: inline-block; opacity: 0; transform: translateY(14px); }
+.sr-sub { color: var(--muted); margin-top: 6px; opacity: 0; transform: translateY(8px); }
+.sr.greet .sr-date { opacity: 1; }
+.sr.greet .sr-h span { opacity: 1; transform: none; transition: transform .9s var(--spring-soft), opacity .5s; }
+.sr.greet .sr-h span:nth-child(2) { transition-delay: .08s; } .sr.greet .sr-h span:nth-child(3) { transition-delay: .16s; }
+.sr.greet .sr-sub { opacity: 1; transform: none; transition: all .8s .3s var(--spring-gentle); }
+.sr-list { position: relative; margin-top: 20px; padding-left: 26px; display: grid; gap: 8px; perspective: 900px; }
+.sr-thread { position: absolute; left: 6px; top: -6px; bottom: 16px; width: 1.5px; border-radius: 2px;
+  background: linear-gradient(var(--u-agent), color-mix(in srgb, var(--u-agent) 30%, transparent)); transform: scaleY(0); transform-origin: top; }
+.sr.list .sr-thread { transform: scaleY(1); transition: transform 1.2s var(--ease-weave); }
+.sr-card { position: relative; display: flex; gap: 12px; align-items: center; padding: 9px 12px; border-radius: 12px; background: var(--raised);
+  border: 1px solid var(--line); transform-origin: 50% 0; transform: rotateX(-96deg); opacity: 0; backface-visibility: hidden; box-shadow: var(--shadow-rest); }
+.sr-card.open { transform: none; opacity: 1; transition: transform .95s var(--spring-soft), opacity .25s; }
+.sr-bead { position: absolute; left: -25px; top: 17px; width: 9px; height: 9px; border-radius: 50%; background: var(--k); box-shadow: 0 0 0 3px var(--bg); transform: scale(0); }
+.sr-card.pin .sr-bead { transform: scale(1); transition: transform .6s var(--spring-bouncy); }
+.sr-ic { flex: none; width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; font: 700 13px var(--font-sans);
+  background: color-mix(in srgb, var(--k) 18%, transparent); color: var(--k); position: relative; }
+.sr-ic.cal { font: 600 10.5px var(--font-mono); }
+.sr-ic.ag::before, .sr-ic.ag::after { content: ""; position: absolute; top: 14px; width: 6px; height: 6px; border-radius: 50%; }
+.sr-ic.ag::before { left: 9px; background: var(--u-agent); } .sr-ic.ag::after { right: 9px; background: var(--u-you); }
+.sr-t { font-weight: 600; font-size: 13.5px; } .sr-d { color: var(--muted); font-size: 12px; }
+[data-theme="light"] .sr-card { background: var(--panel); }
+.sr.reduced * { transition: none !important; animation: none !important; }

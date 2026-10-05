@@ -1,0 +1,72 @@
+{
+  "gentle": {
+    "stiffness": 120,
+    "damping": 20,
+    "mass": 1,
+    "durationMs": 710,
+    "dampingRatio": 0.913,
+    "swiftUI": ".spring(response: 0.574, dampingFraction: 0.913)",
+    "reanimated": {
+      "stiffness": 120,
+      "damping": 20,
+      "mass": 1
+    },
+    "note": "settles softly, barely overshoots; entrances, cards unfolding"
+  },
+  "soft": {
+    "stiffness": 170,
+    "damping": 18,
+    "mass": 1,
+    "durationMs": 872,
+    "dampingRatio": 0.69,
+    "swiftUI": ".spring(response: 0.482, dampingFraction: 0.69)",
+    "reanimated": {
+      "stiffness": 170,
+      "damping": 18,
+      "mass": 1
+    },
+    "note": "one small overshoot; lifts, tabs, knobs"
+  },
+  "bouncy": {
+    "stiffness": 260,
+    "damping": 14,
+    "mass": 1,
+    "durationMs": 1068,
+    "dampingRatio": 0.434,
+    "swiftUI": ".spring(response: 0.39, dampingFraction: 0.434)",
+    "reanimated": {
+      "stiffness": 260,
+      "damping": 14,
+      "mass": 1
+    },
+    "note": "playful double bounce; celebrations, badges, beads landing"
+  },
+  "snappy": {
+    "stiffness": 420,
+    "damping": 30,
+    "mass": 1,
+    "durationMs": 483,
+    "dampingRatio": 0.732,
+    "swiftUI": ".spring(response: 0.307, dampingFraction: 0.732)",
+    "reanimated": {
+      "stiffness": 420,
+      "damping": 30,
+      "mass": 1
+    },
+    "note": "fast and firm; presses, toggles, micro-interactions"
+  },
+  "pluck": {
+    "stiffness": 300,
+    "damping": 7,
+    "mass": 1,
+    "durationMs": 2043,
+    "dampingRatio": 0.202,
+    "swiftUI": ".spring(response: 0.363, dampingFraction: 0.202)",
+    "reanimated": {
+      "stiffness": 300,
+      "damping": 7,
+      "mass": 1
+    },
+    "note": "string being plucked; threads that wobble then settle"
+  }
+}

@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="100 100 824 824">
+  <title>Ensemble app icon: concept C, Shared board</title>
+  <desc>A three-column task board: your card (paper) and the agent's card (violet) joined by one thread.</desc>
+  <defs>
+    <linearGradient id="c-bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2b261f"/>
+      <stop offset="1" stop-color="#141210"/>
+    </linearGradient>
+    <radialGradient id="c-wash" cx="0.18" cy="0.05" r="0.9">
+      <stop offset="0" stop-color="#7c6af7" stop-opacity="0.34"/>
+      <stop offset="0.6" stop-color="#7c6af7" stop-opacity="0.04"/>
+      <stop offset="1" stop-color="#7c6af7" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="c-rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.16"/>
+      <stop offset="0.5" stop-color="#ffffff" stop-opacity="0.03"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.06"/>
+    </linearGradient>
+    <filter id="c-shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000" flood-opacity="0.32"/>
+    </filter>
+  </defs>
+  <defs>
+    <linearGradient id="c-col" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.07"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.025"/>
+    </linearGradient>
+  </defs>
+    <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#c-bg)"/>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#c-wash)"/>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="183.5" fill="none" stroke="url(#c-rim)" stroke-width="3"/>
+  <rect x="236" y="250" width="168" height="524" rx="44" fill="url(#c-col)"/>
+  <rect x="428" y="250" width="168" height="524" rx="44" fill="url(#c-col)"/>
+  <rect x="620" y="250" width="168" height="524" rx="44" fill="url(#c-col)"/>
+  <rect x="260" y="282" width="120" height="96" rx="26" fill="#f3eee6" fill-opacity="0.22"/>
+  <rect x="260" y="398" width="120" height="150" rx="26" fill="#f3eee6"/>
+  <rect x="452" y="282" width="120" height="120" rx="26" fill="#f3eee6" fill-opacity="0.22"/>
+  <rect x="644" y="282" width="120" height="176" rx="26" fill="#7c6af7"/>
+  <rect x="644" y="478" width="120" height="96" rx="26" fill="#f3eee6" fill-opacity="0.22"/>
+  <path d="M320 548 C320 650 512 640 512 560 C512 470 704 520 704 458" fill="none" stroke="#b4a9ff" stroke-width="26" stroke-linecap="round"/>
+  <circle cx="512" cy="566" r="26" fill="#f3eee6"/>
+</svg>

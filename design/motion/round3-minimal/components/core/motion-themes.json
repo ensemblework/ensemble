@@ -1,0 +1,251 @@
+{
+  "version": 1,
+  "fallback": {
+    "minimal-dot": "minimal-quiet",
+    "minimal-quiet": "expressive"
+  },
+  "themes": {
+    "expressive": {
+      "label": "Expressive",
+      "source": "rounds 1-2",
+      "ease-enter": "cubic-bezier(.22,1,.36,1)",
+      "ease-move": "cubic-bezier(.34,1.3,.64,1)",
+      "ease-exit": "cubic-bezier(.4,0,1,1)",
+      "ease-loop": "cubic-bezier(.65,0,.35,1)",
+      "spring": "soft",
+      "dur-micro": 160,
+      "dur-ui": 320,
+      "dur-move": 870,
+      "dur-loop": 4800,
+      "amp": 12,
+      "scale-press": 0.96,
+      "overshoot": 1,
+      "stroke": 2.5,
+      "ornament": 1,
+      "particles": 1,
+      "color-mode": "duo",
+      "note": "Springs with overshoot, braids, sparks, confetti. The default."
+    },
+    "minimal-quiet": {
+      "label": "Minimal · Quiet",
+      "source": "round 3",
+      "ease-enter": "cubic-bezier(.25,.1,.25,1)",
+      "ease-move": "cubic-bezier(.33,0,.2,1)",
+      "ease-exit": "cubic-bezier(.4,0,.6,1)",
+      "ease-loop": "cubic-bezier(.45,0,.55,1)",
+      "spring": "none",
+      "dur-micro": 200,
+      "dur-ui": 420,
+      "dur-move": 640,
+      "dur-loop": 3200,
+      "amp": 4,
+      "scale-press": 0.985,
+      "overshoot": 0,
+      "stroke": 1.5,
+      "ornament": 0,
+      "particles": 0,
+      "color-mode": "mono+accent",
+      "note": "Hairline strokes, one violet accent, slow sine drift. Nothing overshoots."
+    },
+    "minimal-dot": {
+      "label": "Minimal · Dot",
+      "source": "round 3",
+      "ease-enter": "cubic-bezier(.25,.1,.25,1)",
+      "ease-move": "cubic-bezier(.33,0,.2,1)",
+      "ease-exit": "cubic-bezier(.4,0,.6,1)",
+      "ease-loop": "cubic-bezier(.45,0,.55,1)",
+      "spring": "none",
+      "dur-micro": 200,
+      "dur-ui": 480,
+      "dur-move": 720,
+      "dur-loop": 2800,
+      "amp": 3,
+      "scale-press": 0.99,
+      "overshoot": 0,
+      "stroke": 1,
+      "ornament": 0,
+      "particles": 0,
+      "color-mode": "mono+accent",
+      "note": "Only two dots (you + agent) and at most one line. States are told by fill, ring and position."
+    },
+    "reduced": {
+      "label": "Reduced (overlay)",
+      "source": "OS / app setting",
+      "ease-enter": "linear",
+      "ease-move": "linear",
+      "ease-exit": "linear",
+      "ease-loop": "linear",
+      "spring": "none",
+      "dur-micro": 0,
+      "dur-ui": 150,
+      "dur-move": 0,
+      "dur-loop": 0,
+      "amp": 0,
+      "scale-press": 1,
+      "overshoot": 0,
+      "stroke": 1.5,
+      "ornament": 0,
+      "particles": 0,
+      "color-mode": "inherit",
+      "note": "Not a style: an overlay on any style. Crossfades of 150 ms or less, loops become still poses."
+    }
+  },
+  "slots": {
+    "agent.thinking": {
+      "states": [
+        "thinking",
+        "status",
+        "idle"
+      ],
+      "expressive": "r1 Ensemble Glyph + status line"
+    },
+    "reply.stream": {
+      "states": [
+        "streaming",
+        "done"
+      ],
+      "expressive": "r1 Ink-in stream"
+    },
+    "page.progress": {
+      "states": [
+        "loading",
+        "done"
+      ],
+      "expressive": "r1 Thread progress + page enter"
+    },
+    "content.skeleton": {
+      "states": [
+        "loading",
+        "ready"
+      ],
+      "expressive": "r1 Violet sweep skeleton"
+    },
+    "tool.call": {
+      "states": [
+        "running",
+        "done",
+        "pending",
+        "failed"
+      ],
+      "expressive": "r1 Marching stitches"
+    },
+    "run.progress": {
+      "states": [
+        "queued",
+        "running",
+        "done"
+      ],
+      "expressive": "r1 Loom + bead timeline"
+    },
+    "needs.waiting": {
+      "states": [
+        "waiting",
+        "timeout"
+      ],
+      "expressive": "r1 Your turn heartbeat"
+    },
+    "action.approve": {
+      "states": [
+        "idle",
+        "pressed",
+        "approved"
+      ],
+      "expressive": "r1 Tie the knot + sparks"
+    },
+    "connector.sync": {
+      "states": [
+        "syncing",
+        "synced"
+      ],
+      "expressive": "r1 Inflow beads"
+    },
+    "fetch.refresh": {
+      "states": [
+        "fetching",
+        "done"
+      ],
+      "expressive": "r1 Two reels"
+    },
+    "state.error": {
+      "states": [
+        "error",
+        "retrying",
+        "ok"
+      ],
+      "expressive": "r1 Glyph fray + stitch tear"
+    },
+    "net.connection": {
+      "states": [
+        "offline",
+        "reconnecting",
+        "online"
+      ],
+      "expressive": "r2 Re-tie & reconnect"
+    },
+    "brand.splash": {
+      "states": [
+        "reveal",
+        "rest"
+      ],
+      "expressive": "r1 Splash / r2 Logo reveals"
+    },
+    "control.*": {
+      "states": [
+        "hover",
+        "press",
+        "on",
+        "off",
+        "focus"
+      ],
+      "expressive": "r2 Button · Toggle · Checkbox, Tabs · Bell · Focus rim"
+    },
+    "moment.celebrate": {
+      "states": [
+        "cleared",
+        "streak"
+      ],
+      "expressive": "r2 Strand confetti / Inbox zero tapestry"
+    },
+    "native.tray": {
+      "states": [
+        "idle",
+        "working",
+        "syncing",
+        "needs",
+        "paused",
+        "done",
+        "error",
+        "offline"
+      ],
+      "expressive": "r2 Menu-bar / tray states"
+    },
+    "brand.morph": {
+      "states": [
+        "idle",
+        "once",
+        "loop",
+        "settle"
+      ],
+      "expressive": "the Expressive ribbon morph (r2 00 Brand loop, SVG port): mark → ∞ → mark, two ribbons, even speed",
+      "quiet": "same as expressive: one brand morph in every style",
+      "dot": "same as expressive: one brand morph in every style",
+      "reduced": "still mark",
+      "uses": [
+        "logo click → once while the home route loads",
+        "agent.thinking / model working → loop (16/20/24 inline, 48–64 dock)",
+        "brand.splash + slow route loads past the 180 ms delay → loop"
+      ],
+      "source": "round5-brand/morph/ensemble-morph.js",
+      "timing": {
+        "once_s": 1.5,
+        "once_ramp_s": 0.3,
+        "loop_s": 2.7,
+        "loop_ramp_in_s": 0.35,
+        "settle_s": 0.38,
+        "settle_ease": "easeOutCubic",
+        "delay_ms": 180,
+        "pacing": "arc-length (constant mean path speed), no spring, no overshoot; ease only at the start and the final settle; no rings at any size"
+      }
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "@ensemble/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tauri shell for the local Ensemble desktop app",
+  "scripts": {
+    "dev": "tauri dev",
+    "bundle": "tauri build",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

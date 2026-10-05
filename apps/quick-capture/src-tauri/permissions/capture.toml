@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "capture-commands"
+description = "The capture window may save a token, send a reminder, and hide itself. Parsing stays in hub-api."
+commands.allow = ["capture_status", "save_token", "submit_capture", "hide_capture"]

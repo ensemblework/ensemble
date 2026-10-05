@@ -1,0 +1,33 @@
+/* Round 2 core: extends round-1 tokens.css (imported first by the build). */
+:root, [data-theme="dark"] {
+  --v-hi: #9d8fff; --v-hi2: #b4a9ff;              /* violet tints from the icon gradient */
+  --paper: #f3eee6; --warm: #e8b36a;              /* sunrise / warmth */
+  --tile-top: #2b261f; --tile-bot: #141210;
+  --shadow-lift: 0 18px 40px -12px rgba(0,0,0,.55), 0 4px 10px -4px rgba(0,0,0,.4);
+  --shadow-rest: 0 1px 0 rgba(255,255,255,.03) inset, 0 1px 2px rgba(0,0,0,.25);
+  --font-sans: "Figtree", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-serif: "Fraunces", ui-serif, Georgia, serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+[data-theme="light"] {
+  --v-hi: #6c5ce7; --v-hi2: #8f82f0; --warm: #c98a2e;
+  --tile-top: #fffcf7; --tile-bot: #efe9df;
+  --shadow-lift: 0 18px 40px -14px rgba(60,45,20,.28), 0 4px 10px -4px rgba(60,45,20,.16);
+  --shadow-rest: 0 1px 2px rgba(60,45,20,.08);
+}
+/* Scripted pointer used to demo interactions (hidden under reduced motion). */
+.u2-pointer { position: absolute; left: 0; top: 0; width: 22px; height: 22px; z-index: 50; pointer-events: none;
+  opacity: 0; transition: opacity .25s; will-change: transform; }
+.u2-pointer.on { opacity: 1; }
+.u2-pointer svg { width: 22px; height: 22px; filter: drop-shadow(0 2px 3px rgba(0,0,0,.45)); transition: transform .12s var(--spring-snappy); transform-origin: 4px 3px; }
+.u2-pointer.down svg { transform: scale(.86); }
+.u2-pointer .ring { position: absolute; left: -9px; top: -9px; width: 26px; height: 26px; border-radius: 50%;
+  border: 1.5px solid var(--v-hi); opacity: 0; transform: scale(.3); }
+.u2-pointer.click .ring { animation: u2-click .5s var(--ease) forwards; }
+@keyframes u2-click { 0% { opacity: .9; transform: scale(.3); } 100% { opacity: 0; transform: scale(1.35); } }
+/* Safety net: under reduced motion every stage jumps to its end state (pieces also branch in JS). */
+@media (prefers-reduced-motion: reduce) {
+  .stage *, .stage *::before, .stage *::after { animation-duration: .001ms !important; animation-delay: 0s !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; transition-delay: 0s !important; }
+}
+[data-reduce-motion="true"] .stage *, [data-reduce-motion="true"] .stage *::before, [data-reduce-motion="true"] .stage *::after {
+  animation-duration: .001ms !important; animation-delay: 0s !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; transition-delay: 0s !important; }

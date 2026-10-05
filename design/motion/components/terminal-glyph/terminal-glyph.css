@@ -1,0 +1,3 @@
+.u-term { font: 12.5px/1.6 "JetBrains Mono", ui-monospace, Menlo, Consolas, "DejaVu Sans Mono", monospace; color: #e6e6e6; }
+.u-term .tg { color: var(--accent-hi); display: inline-block; width: 1.2ch; text-align: center; }
+.u-term .tv { color: #e5c07b; } .u-term .tm { color: rgba(255,255,255,.4); }

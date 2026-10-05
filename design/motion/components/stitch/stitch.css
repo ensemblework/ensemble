@@ -1,0 +1,15 @@
+/* Stitch: a tool call / assistant action in flight. Marching stitches run around the tile
+   (the agent is sewing it in); done = stitches close into a solid seam; pending = amber, still. */
+.u-stitch { position: relative; border-radius: 8px; }
+.u-stitch > svg.seam { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.u-stitch > svg.seam rect { x: 0.75px; y: 0.75px; width: calc(100% - 1.5px); height: calc(100% - 1.5px); rx: 8px;
+  fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 5 5; stroke-linecap: round;
+  animation: u-march .8s linear infinite; transition: stroke .3s, stroke-dasharray .45s var(--ease-weave), opacity .6s ease .6s; }
+@keyframes u-march { to { stroke-dashoffset: -10; } }
+.u-stitch.is-pending > svg.seam rect { stroke: var(--warn); animation: u-pending-pulse 2.4s ease-in-out infinite; stroke-dasharray: 2 6; }
+@keyframes u-pending-pulse { 50% { opacity: .35; } }
+.u-stitch.is-done > svg.seam rect { stroke: var(--ok); stroke-dasharray: 10 0; animation: none; opacity: 0; }
+.u-stitch.is-failed > svg.seam rect { stroke: var(--danger); animation: none; stroke-dasharray: 3 7; }
+.u-frozen .u-stitch > svg.seam rect { animation-play-state: paused; stroke: var(--faint); }
+@media (prefers-reduced-motion: reduce) { .u-stitch > svg.seam rect { animation: none !important; } }
+[data-reduce-motion="true"] .u-stitch > svg.seam rect { animation: none !important; }

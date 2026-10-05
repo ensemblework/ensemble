@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Ensemble Postgres dump at 02:30 Asia/Kolkata
+
+[Timer]
+OnCalendar=*-*-* 02:30:00 Asia/Kolkata
+Persistent=true
+RandomizedDelaySec=15min
+Unit=ensemble-pg-backup.service
+
+[Install]
+WantedBy=timers.target

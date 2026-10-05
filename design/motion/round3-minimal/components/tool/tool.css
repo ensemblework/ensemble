@@ -1,0 +1,28 @@
+.tc { position: absolute; inset: 0; padding: 20px 22px; display: flex; flex-direction: column; justify-content: center; }
+.tc-row { display: grid; grid-template-columns: 18px 1fr auto; gap: 10px; align-items: center; height: 38px; border-bottom: 1px solid var(--line);
+  opacity: 0; transform: translateY(var(--m-amp)); transition: opacity var(--m-dur-ui) var(--m-ease-enter), transform var(--m-dur-move) var(--m-ease-move); }
+.tc-row:last-child { border-bottom: 0; }
+.tc-row.on { opacity: 1; transform: none; }
+.tc-row .l { font-size: 13px; color: var(--ink); } .tc-row .l small { color: var(--faint); font-size: 12px; margin-left: 6px; }
+.tc-row .m { font: 500 11px var(--font-mono); color: var(--faint); transition: color var(--m-dur-ui); }
+.tc-row[data-s="pending"] .m { color: var(--accent-ink); } .tc-row[data-s="failed"] .m { color: var(--err); }
+.tc-ic { width: 16px; height: 16px; position: relative; }
+.tc-ic svg { position: absolute; inset: 0; overflow: visible; }
+.tc-ic svg * { fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.tc-ic > * { opacity: 0; transition: opacity var(--m-dur-ui) var(--m-ease-move); }
+.tc-row[data-s="running"] .i-run, .tc-row[data-s="done"] .i-done, .tc-row[data-s="pending"] .i-pend, .tc-row[data-s="failed"] .i-fail { opacity: 1; }
+.i-run circle { stroke: var(--line); } .i-run path { stroke: var(--accent); }
+.i-run { animation: tc-spin 1.8s var(--m-ease-loop) infinite; transform-origin: 50% 50%; }
+@keyframes tc-spin { to { transform: rotate(360deg); } }
+.i-done path { stroke: var(--muted); stroke-dasharray: 1; stroke-dashoffset: 1; transition: stroke-dashoffset var(--m-dur-ui) var(--m-ease-move); }
+.tc-row[data-s="done"] .i-done path { stroke-dashoffset: 0; }
+.i-pend circle { stroke: var(--accent); }
+.i-fail circle { stroke: var(--err); opacity: .6; } .i-fail path { stroke: var(--err); }
+/* Dot flavour */
+.tc.dotf .tc-ic > i { position: absolute; left: 5px; top: 5px; width: 6px; height: 6px; border-radius: 50%; }
+.tc.dotf .i-run { background: var(--agent); animation: m-breathe-s 1.6s var(--m-ease-loop) infinite; transform-origin: 50% 50%; }
+.tc.dotf .i-done { background: var(--you); opacity: 0; }
+.tc.dotf .tc-row[data-s="done"] .i-done { opacity: .55; }
+.tc.dotf .i-pend { box-shadow: inset 0 0 0 1px var(--agent); animation: m-breathe var(--m-dur-loop) var(--m-ease-loop) infinite; }
+.tc.dotf .tc-row:not([data-s="pending"]) .i-pend { animation: none; opacity: 0; }
+.tc.dotf .i-fail { background: var(--err); }

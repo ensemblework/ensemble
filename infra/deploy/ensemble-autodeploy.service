@@ -1,0 +1,11 @@
+[Unit]
+Description=Ensemble autodeploy (follow the deploy branch)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Root, because update.sh installs units and restarts services. git runs as ensemble.
+ExecStart=/bin/bash /opt/ensemble/infra/deploy/autodeploy.sh /etc/ensemble.env
+# pnpm install, migrations, and the agent's pip install fit well inside this.
+TimeoutStartSec=30min

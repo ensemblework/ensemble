@@ -1,0 +1,52 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Ensemble",
+  "version": "0.1.0",
+  "identifier": "com.ensemblework.desktop",
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [],
+    "security": {
+      "csp": "default-src 'self' ensemble: http://ensemble.localhost https://ensemble.localhost tauri: http://tauri.localhost; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*; img-src 'self' data: blob: http://127.0.0.1:*; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self' 'unsafe-inline' 'unsafe-eval'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "createUpdaterArtifacts": false,
+    "resources": {
+      "resources/sidecar/": "sidecar/",
+      "../../hub-web/out/": "web/"
+    },
+    "category": "Productivity",
+    "shortDescription": "Ensemble desktop",
+    "longDescription": "Ensemble, running on this computer with a local database.",
+    "linux": {
+      "deb": {
+        "depends": ["libxdo3"]
+      },
+      "rpm": {
+        "depends": ["libxdo"]
+      }
+    },
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.png",
+      "icons/icon.ico",
+      "icons/icon.icns"
+    ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc2NTFGMTVCQzFDNzgyRTMKUldUamdzZkJXL0ZSZHBScWliYmRTd1ovVFpjdFhDbUZHMDdzWnlOdEg0L3p5OGJTTjVPMW9kTC8K",
+      "endpoints": [
+        "https://github.com/ensemblework/ensemble/releases/latest/download/latest.json"
+      ]
+    }
+  }
+}

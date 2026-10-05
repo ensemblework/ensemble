@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 400" width="640" height="400">
+  <title>Branch desk</title>
+  <rect width="640" height="400" fill="#16181e"/>
+  <clipPath id="c0"><rect x="16.0" y="16.0" width="300.0" height="242.7" rx="10"/></clipPath>
+  <rect x="16.0" y="16.0" width="300.0" height="242.7" rx="10" fill="#23262f"/>
+  <text x="28.0" y="137.3" fill="#f2efe8" font-family="ui-sans-serif, system-ui, sans-serif" font-size="34.0" font-weight="600" dominant-baseline="middle" clip-path="url(#c0)"><title>Focus</title><tspan x="28.0" dy="0.0">Focus</tspan></text>
+  <clipPath id="c1"><rect x="324.0" y="16.0" width="300.0" height="117.3" rx="10"/></clipPath>
+  <rect x="324.0" y="16.0" width="300.0" height="117.3" rx="10" fill="#23262f"/>
+  <text x="336.0" y="74.7" fill="#f2efe8" font-family="ui-sans-serif, system-ui, sans-serif" font-size="34.0" font-weight="600" dominant-baseline="middle" clip-path="url(#c1)"><title>Proposals</title><tspan x="336.0" dy="0.0">Proposals</tspan></text>
+  <clipPath id="c2"><rect x="324.0" y="141.3" width="300.0" height="117.3" rx="10"/></clipPath>
+  <rect x="324.0" y="141.3" width="300.0" height="117.3" rx="10" fill="#23262f"/>
+  <text x="336.0" y="200.0" fill="#f2efe8" font-family="ui-sans-serif, system-ui, sans-serif" font-size="34.0" font-weight="600" dominant-baseline="middle" clip-path="url(#c2)"><title>Calendar</title><tspan x="336.0" dy="0.0">Calendar</tspan></text>
+  <clipPath id="c3"><rect x="16.0" y="266.7" width="146.0" height="117.3" rx="10"/></clipPath>
+  <rect x="16.0" y="266.7" width="146.0" height="117.3" rx="10" fill="#23262f"/>
+  <text x="28.0" y="325.3" fill="#f2efe8" font-family="ui-sans-serif, system-ui, sans-serif" font-size="27.2" font-weight="600" dominant-baseline="middle" clip-path="url(#c3)"><title>Needs me</title><tspan x="28.0" dy="0.0">Needs me</tspan></text>
+  <clipPath id="c4"><rect x="170.0" y="266.7" width="300.0" height="117.3" rx="10"/></clipPath>
+  <rect x="170.0" y="266.7" width="300.0" height="117.3" rx="10" fill="#23262f"/>
+  <text x="182.0" y="325.3" fill="#f2efe8" font-family="ui-sans-serif, system-ui, sans-serif" font-size="34.0" font-weight="600" dominant-baseline="middle" clip-path="url(#c4)"><title>Repos</title><tspan x="182.0" dy="0.0">Repos</tspan></text>
+</svg>

@@ -1,0 +1,18 @@
+.nw { position: absolute; inset: 0; padding: 18px 22px; display: flex; flex-direction: column; gap: 14px; justify-content: center; }
+.nw-side { font-size: 13px; color: var(--muted); }
+.nw-badge { font: 600 11px var(--font-mono); color: var(--ink); background: var(--accent-soft); border-radius: 999px; padding: 1px 7px; opacity: 0; transform: translateY(2px);
+  transition: opacity var(--m-dur-ui) var(--m-ease-enter), transform var(--m-dur-ui) var(--m-ease-move); }
+.nw.on .nw-badge { opacity: 1; transform: none; }
+.nw-card { position: relative; overflow: hidden; padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 12px;
+  opacity: 0; transform: translateY(var(--m-amp)); transition: opacity var(--m-dur-ui) var(--m-ease-enter), transform var(--m-dur-move) var(--m-ease-move); }
+.nw.on .nw-card { opacity: 1; transform: none; }
+.nw-card b { display: block; font-weight: 550; font-size: 13.5px; } .nw-card span { font-size: 12px; color: var(--faint); }
+.nw-card .m-row { align-items: flex-start; gap: 12px; }
+.nw-u { margin-top: 2px; } .nw-u .you { stroke: var(--accent); animation: m-breathe var(--m-dur-loop) var(--m-ease-loop) infinite; }
+.nw-dm { margin-top: 6px; } .nw-dm .you { animation: m-breathe-s var(--m-dur-loop) var(--m-ease-loop) infinite; }
+.nw-act { align-items: center !important; padding-left: 30px; }
+.nw-act button { font: 500 12px var(--font-sans); color: var(--ink); background: var(--soft); border: 1px solid var(--line); border-radius: 7px; padding: 5px 11px; }
+.nw-act button.g { background: none; border-color: transparent; color: var(--muted); }
+.nw-cd { margin-left: auto; }
+.nw-time { position: absolute; left: 0; right: 0; bottom: 0; height: 1px; background: var(--line); }
+.nw-time i { position: absolute; inset: 0; background: var(--accent); opacity: .7; transform-origin: left; }

@@ -1,0 +1,32 @@
+/* 11 · Tabs thread, bell strand ring, focus rim */
+.mb { position: absolute; inset: 0; display: grid; grid-template-rows: 112px 1fr; }
+.mb-tabs-cell { padding: 18px 18px 0; border-bottom: 1px solid var(--line); }
+.mb-tabs { position: relative; display: flex; gap: 4px; margin-top: 14px; padding-bottom: 10px; }
+.mb-tabs button { all: unset; cursor: pointer; font: 550 13px var(--font-sans); color: var(--muted); padding: 7px 12px; border-radius: 8px; transition: color .3s, background .3s; }
+.mb-tabs button:hover { background: var(--hover); }
+.mb-tabs button.on { color: var(--ink); }
+.mb-ul { position: absolute; left: 0; top: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.mb-ul path { fill: none; stroke: var(--u-agent); stroke-width: 2; stroke-linecap: round; }
+.mb-ul .a { fill: var(--u-agent); } .mb-ul .b { fill: var(--u-you); }
+.mb-row { display: grid; grid-template-columns: 1fr 1.6fr; }
+.mb .ma-cell { grid-template-rows: auto 1fr; }
+/* bell */
+.bl { all: unset; position: relative; width: 48px; height: 48px; display: grid; place-items: center; cursor: pointer; border-radius: 50%; }
+.bl-bell { width: 24px; height: 24px; fill: none; stroke: var(--ink); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transform-origin: 50% 8%; overflow: visible; }
+.bl-ring { position: absolute; inset: 0; width: 48px; height: 48px; overflow: visible; transform: rotate(-90deg); }
+.bl-ring circle { fill: none; stroke-width: 2; stroke-linecap: round; opacity: 0; }
+.bl-ring .r1 { stroke: var(--u-agent); } .bl-ring .r2 { stroke: var(--u-you); }
+.bl-badge { position: absolute; right: 4px; top: 4px; min-width: 17px; height: 17px; padding: 0 4px; border-radius: 999px; background: var(--u-agent); color: #fff; font: 700 10px/17px var(--font-sans);
+  text-align: center; box-shadow: 0 0 0 2.5px var(--bg); transform: translateY(-14px) scale(.3); opacity: 0; }
+.bl.has .bl-badge { transform: none; opacity: 1; transition: transform .8s var(--spring-bouncy), opacity .2s; }
+/* focus rim */
+.fr { position: relative; width: 100%; max-width: 330px; }
+.fr-in { width: 100%; box-sizing: border-box; font: 500 13.5px var(--font-sans); color: var(--ink); background: var(--raised); border: 1px solid var(--line-strong); border-radius: 12px;
+  padding: 12px 50px 12px 14px; outline: none; transition: box-shadow .5s var(--ease), border-color .3s; }
+.fr-in::placeholder { color: var(--faint); }
+.fr.focus .fr-in { border-color: transparent; box-shadow: 0 0 0 4px color-mix(in srgb, var(--u-agent) 18%, transparent), 0 10px 30px -14px var(--u-agent); }
+.fr-svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.fr-svg path { fill: none; stroke-width: 1.7; stroke-linecap: round; }
+.fr-svg .t { stroke: var(--u-agent); } .fr-svg .b { stroke: var(--v-hi2); }
+.fr-meet { fill: var(--v-hi2); opacity: 0; transform-box: fill-box; transform-origin: center; }
+.fr kbd { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); font: 500 10.5px var(--font-mono); color: var(--faint); border: 1px solid var(--line-strong); border-radius: 5px; padding: 1px 5px; }

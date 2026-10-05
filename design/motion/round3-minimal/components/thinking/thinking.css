@@ -1,0 +1,10 @@
+.th { position: absolute; inset: 0; padding: 22px 22px; display: flex; flex-direction: column; gap: 10px; justify-content: center; }
+.th-dock { padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.th-txt { font-size: 14px; color: var(--ink); }
+.th-meta { padding-left: 32px; }
+.th .dm.th-mk { width: 22px; justify-content: center; }
+.th .seg { stroke: var(--accent); stroke-dasharray: .14 2; stroke-dashoffset: .02; animation: th-run var(--m-dur-loop) var(--m-ease-loop) infinite alternate; }
+.th .seg.s2 { opacity: .55; }
+@keyframes th-run { from { stroke-dashoffset: .02; } to { stroke-dashoffset: -.88; } }
+.th-job { font-size: 13px; color: var(--muted); padding: 10px 14px; border: 1px solid var(--line); border-radius: 10px; }
+.th-job .m-mono { margin-left: auto; }

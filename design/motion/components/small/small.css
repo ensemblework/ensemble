@@ -1,0 +1,33 @@
+/* Small moments. */
+/* Autosave: three stitches sew in while saving, then pull into a check. */
+.u-save { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--faint); }
+.u-save .st { display: inline-flex; gap: 2px; width: 16px; }
+.u-save .st i { width: 4px; height: 1.6px; border-radius: 2px; background: var(--accent); opacity: .2; }
+.u-save.is-saving .st i { animation: u-stitch-in 1.1s var(--ease-weave) infinite; }
+.u-save.is-saving .st i:nth-child(2) { animation-delay: .15s; } .u-save.is-saving .st i:nth-child(3) { animation-delay: .3s; }
+@keyframes u-stitch-in { 0% { opacity: .2; transform: scaleX(.3); } 30%, 70% { opacity: 1; transform: none; } 100% { opacity: .2; } }
+.u-save .ck { display: none; width: 14px; height: 14px; }
+.u-save .ck path { fill: none; stroke: var(--ok); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 1; }
+.u-save.is-saved .st { display: none; } .u-save.is-saved .ck { display: inline-block; } .u-save.is-saved .ck path { animation: u-tick .35s var(--ease-weave) forwards; }
+.u-save.is-conflict { color: var(--warn); } .u-save.is-conflict .st i { opacity: 1; background: var(--warn); }
+@keyframes u-tick { to { stroke-dashoffset: 0; } }
+/* Owner handoff (triage "Agent does it" / Assign to agent): your dot travels the thread to the agent side. */
+.u-handoff { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); }
+.u-handoff .track { position: relative; width: 40px; height: 14px; }
+.u-handoff .track::before { content: ""; position: absolute; left: 3px; right: 3px; top: 6.25px; height: 1.5px; background: var(--line-strong); border-radius: 2px; }
+.u-handoff .track i { position: absolute; top: 3px; left: 0; width: 8px; height: 8px; border-radius: 50%; background: var(--u-you); transition: left .7s var(--ease-weave), background .3s .5s, box-shadow .3s .5s; }
+.u-handoff.to-agent .track i { left: 32px; background: var(--u-agent); box-shadow: 0 0 0 3px var(--accent-soft); animation: u-hop .7s var(--ease-weave); }
+@keyframes u-hop { 50% { transform: translateY(-5px); } }
+/* Toasts: the glyph speaks for the outcome */
+.u-toast { display: inline-flex; align-items: center; gap: 10px; padding: 8px 12px 8px 10px; border-radius: 10px; background: var(--raised);
+  border: 1px solid var(--line-strong); box-shadow: 0 18px 48px rgba(0,0,0,.38); font-size: 13px; color: var(--ink); animation: u-toast-in .42s var(--ease) both; }
+@keyframes u-toast-in { from { opacity: 0; transform: translateY(10px) scale(.97); } }
+@media (prefers-reduced-motion: reduce) {
+  .u-save.is-saving .st i { animation: none; opacity: 1; } .u-save.is-saved .ck path { animation: none; stroke-dashoffset: 0; }
+  .u-handoff .track i, .u-handoff.to-agent .track i { transition: none; animation: none; } .u-toast { animation: u-fade .2s both; }
+}
+[data-reduce-motion="true"] .u-save.is-saving .st i { animation: none; opacity: 1; }
+[data-reduce-motion="true"] .u-save.is-saved .ck path { animation: none; stroke-dashoffset: 0; }
+[data-reduce-motion="true"] .u-handoff .track i { transition: none; animation: none; }
+[data-reduce-motion="true"] .u-toast { animation: u-fade .2s both; }
+@keyframes u-fade { from { opacity: 0; } }

@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en" data-motion-theme="expressive">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ensemble motion · round 4 slots</title>
+<link rel="stylesheet" href="core/tokens.css"><link rel="stylesheet" href="core/suite.css"><link rel="stylesheet" href="core/springs.css">
+<link rel="stylesheet" href="search-query/search-query.css"><link rel="stylesheet" href="terminal-working/terminal-working.css">
+<link rel="stylesheet" href="gallery/gallery.css">
+</head>
+<body>
+<div class="top">
+  <div><h1>Round 4 · three slots</h1>
+  <p>search.query, terminal.working and the tray PNG set. Each card has its own style, state and light/dark switches. The bar on the right sets every card at once. Same SUITE.md contract as round 3: <code>data-motion-theme</code>, <code>--m-*</code> tokens and the reduce overlay. There's no delay logic; the app's loader delay decides when state changes.</p></div>
+  <div class="ctl" id="global" style="--panel:#211d19;--raise:#2b2621;--line:rgba(243,238,230,.12);--muted:#b7ae9f;--ink:#f3eee6;--faint:#8a8276">
+    <span class="lbl">all</span><button data-g="expressive">Expressive</button><button data-g="minimal-quiet">Quiet</button><button data-g="minimal-dot">Dot</button>
+    <button data-g="dark">Dark</button><button data-g="light">Light</button><button data-g="reduce" aria-pressed="false">Reduce motion</button></div>
+</div>
+<main class="grid">
+
+<section class="card" id="card-search" data-theme="dark" data-motion-theme="expressive">
+  <header><h2>search.query <small>Ask bar + ⌘K · input 40 px</small></h2><div class="ctl" data-ctl="style"><span class="lbl">style</span><button data-v="expressive" aria-pressed="true">Expressive</button><button data-v="minimal-quiet">Quiet</button><button data-v="minimal-dot">Dot</button></div><div class="ctl" data-ctl="state"><span class="lbl">state</span><button data-v="typing" aria-pressed="true">typing</button><button data-v="searching" aria-pressed="false">searching</button><button data-v="results" aria-pressed="false">results</button><button data-v="empty" aria-pressed="false">empty</button></div><div class="ctl" data-ctl="theme"><button data-v="dark" aria-pressed="true">Dark</button><button data-v="light">Light</button></div><span class="spacer"></span><button class="replay" data-play>Play sequence</button><button class="replay" data-replay>Replay</button></header>
+  <div class="stage two">
+    <div class="pane"><p class="cap">Ask bar (pill)</p><div class="sq ask" data-motion-slot="search.query" data-state="typing">
+  <label class="sq-field">
+    <svg class="sq-ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.4 10.4L13.5 13.5"/></svg>
+    <input class="sq-input" type="search" placeholder="Ask Ensemble anything…" aria-label="Ask Ensemble or search" autocomplete="off">
+    <span class="sq-pip" aria-hidden="true"></span>
+    <span class="sq-trk" aria-hidden="true"><i></i></span>
+    <kbd class="sq-kbd">⌘K</kbd>
+  </label>
+  <div class="sq-meta" aria-live="polite"><span data-copy="status"></span></div>
+  <ul class="sq-results" role="listbox" aria-label="Results"></ul>
+  <div class="sq-empty" role="status">
+    <span class="sq-empty-mark" aria-hidden="true"><svg width="40" height="28" viewBox="0 0 40 28">
+      <g class="em-x"><path d="M14 4V14A6 6 0 0 0 26 14V4"/><path class="thread" d="M18 4V12C18 16 21 17 22 21C22.6 23.5 21.6 25.5 20.5 26.5"/></g>
+      <g class="em-q"><path d="M14 4V14A6 6 0 0 0 26 14V4"/><path class="a" d="M18 4V14A2 2 0 0 0 22 14V4"/></g>
+      <g class="em-d"><circle cx="14" cy="14" r="2.6"/><circle class="a" cx="26" cy="14" r="2.6"/></g></svg></span>
+    <p data-copy="empty-title">No matches for “quarterly OKRs”</p>
+    <p data-copy="empty-hint">Try fewer words, or ask Ensemble to look across Gmail, Slack and your docs.</p>
+    <div class="sq-empty-actions" data-copy="empty-actions"><button type="button">Search all sources</button><button type="button">Ask Ensemble</button></div>
+  </div>
+</div>
+      <p class="note">States: <code>typing</code> shows focus only, never a loader. <code>searching</code> is the rim. <code>results</code> cascades in. <code>empty</code> fills the copy hooks <code>data-copy="empty-title|empty-hint|empty-actions|status"</code>.</p></div>
+    <div class="pane"><p class="cap">⌘K palette</p><div class="palette"><div class="sq cmdk" data-motion-slot="search.query" data-state="typing">
+  <label class="sq-field">
+    <svg class="sq-ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.4 10.4L13.5 13.5"/></svg>
+    <input class="sq-input" type="search" placeholder="Search people, threads, docs…" aria-label="Ask Ensemble or search" autocomplete="off">
+    <span class="sq-pip" aria-hidden="true"></span>
+    <span class="sq-trk" aria-hidden="true"><i></i></span>
+    <kbd class="sq-kbd">⌘K</kbd>
+  </label>
+  <div class="sq-meta" aria-live="polite"><span data-copy="status"></span></div>
+  <ul class="sq-results" role="listbox" aria-label="Results"></ul>
+  <div class="sq-empty" role="status">
+    <span class="sq-empty-mark" aria-hidden="true"><svg width="40" height="28" viewBox="0 0 40 28">
+      <g class="em-x"><path d="M14 4V14A6 6 0 0 0 26 14V4"/><path class="thread" d="M18 4V12C18 16 21 17 22 21C22.6 23.5 21.6 25.5 20.5 26.5"/></g>
+      <g class="em-q"><path d="M14 4V14A6 6 0 0 0 26 14V4"/><path class="a" d="M18 4V14A2 2 0 0 0 22 14V4"/></g>
+      <g class="em-d"><circle cx="14" cy="14" r="2.6"/><circle class="a" cx="26" cy="14" r="2.6"/></g></svg></span>
+    <p data-copy="empty-title">No matches for “quarterly OKRs”</p>
+    <p data-copy="empty-hint">Try fewer words, or ask Ensemble to look across Gmail, Slack and your docs.</p>
+    <div class="sq-empty-actions" data-copy="empty-actions"><button type="button">Search all sources</button><button type="button">Ask Ensemble</button></div>
+  </div>
+</div></div></div>
+  </div>
+</section>
+
+<section class="card" id="card-term" data-theme="dark" data-motion-theme="expressive">
+  <header><h2>terminal.working <small>Code tab · 14 px inline</small></h2><div class="ctl" data-ctl="style"><span class="lbl">style</span><button data-v="expressive" aria-pressed="true">Expressive</button><button data-v="minimal-quiet">Quiet</button><button data-v="minimal-dot">Dot</button></div><div class="ctl" data-ctl="state"><span class="lbl">state</span><button data-v="working" aria-pressed="true">working</button><button data-v="idle" aria-pressed="false">idle</button><button data-v="done" aria-pressed="false">done</button><button data-v="error" aria-pressed="false">error</button></div><div class="ctl" data-ctl="set"><span class="lbl">frames</span><button data-v="glyph" aria-pressed="true">glyph</button><button data-v="safe">safe</button><button data-v="ascii">ascii</button></div><div class="ctl" data-ctl="theme"><button data-v="dark" aria-pressed="true">Dark</button><button data-v="light">Light</button></div><span class="spacer"></span><button class="replay" data-replay>Replay</button></header>
+  <div class="stage">
+    <div class="two">
+      <div class="pane"><p class="cap">In context · text frames (left) · SVG (right)</p>
+        <div class="term">
+          <div class="row"><span class="dim">$</span> ensemble run tests --watch</div>
+          <div class="row"><span class="tw tw-text" data-motion-slot="terminal.working" data-state="working" aria-hidden="true"></span><span data-label>Running tests…</span><span class="dim">12s · esc to interrupt</span></div>
+          <div class="row"><span class="tw tw-svg" data-motion-slot="terminal.working" data-state="working" aria-hidden="true"><svg viewBox="0 0 14 14">
+  <g class="u"><path class="o oL" pathLength="1" d="M3 2.5V7.5A4 4 0 0 0 7 11.5"/><path class="o oR" pathLength="1" d="M7 11.5A4 4 0 0 0 11 7.5V2.5"/>
+    <path class="i" pathLength="1" d="M5.5 2.5V7.5A1.5 1.5 0 0 0 8.5 7.5V2.5"/></g>
+  <path class="run" pathLength="1" d="M3 2.5V7.5A4 4 0 0 0 11 7.5V2.5"/>
+  <path class="ck" pathLength="1" d="M3.3 7.4L5.9 10L10.7 4.4"/>
+  <g class="dd"><circle class="y" cx="4.5" cy="7" r="1.7"/><circle class="a" cx="9.5" cy="7" r="1.7"/></g>
+</svg></span><span data-label>Running tests…</span><span class="dim">12s · esc to interrupt</span></div>
+        </div>
+        <p class="note fontcheck" id="fontcheck">checking fonts…</p></div>
+      <div class="pane"><p class="cap">4× magnified</p>
+        <div class="mag">
+          <div class="cell"><div class="x4"><span class="tw tw-text" data-motion-slot="terminal.working" data-state="working" aria-hidden="true"></span></div><span class="k">text</span></div>
+          <div class="cell"><div class="x4"><span class="tw tw-svg" data-motion-slot="terminal.working" data-state="working" aria-hidden="true"><svg viewBox="0 0 14 14">
+  <g class="u"><path class="o oL" pathLength="1" d="M3 2.5V7.5A4 4 0 0 0 7 11.5"/><path class="o oR" pathLength="1" d="M7 11.5A4 4 0 0 0 11 7.5V2.5"/>
+    <path class="i" pathLength="1" d="M5.5 2.5V7.5A1.5 1.5 0 0 0 8.5 7.5V2.5"/></g>
+  <path class="run" pathLength="1" d="M3 2.5V7.5A4 4 0 0 0 11 7.5V2.5"/>
+  <path class="ck" pathLength="1" d="M3.3 7.4L5.9 10L10.7 4.4"/>
+  <g class="dd"><circle class="y" cx="4.5" cy="7" r="1.7"/><circle class="a" cx="9.5" cy="7" r="1.7"/></g>
+</svg></span></div><span class="k">svg</span></div>
+          <div class="cell"><div class="x4" style="transform:scale(2)"><span class="tw tw-text" data-motion-slot="terminal.working" data-state="working" aria-hidden="true"></span></div><span class="k">text 2×</span></div>
+          <div class="cell"><div class="x4" style="transform:scale(2)"><span class="tw tw-svg" data-motion-slot="terminal.working" data-state="working" aria-hidden="true"><svg viewBox="0 0 14 14">
+  <g class="u"><path class="o oL" pathLength="1" d="M3 2.5V7.5A4 4 0 0 0 7 11.5"/><path class="o oR" pathLength="1" d="M7 11.5A4 4 0 0 0 11 7.5V2.5"/>
+    <path class="i" pathLength="1" d="M5.5 2.5V7.5A1.5 1.5 0 0 0 8.5 7.5V2.5"/></g>
+  <path class="run" pathLength="1" d="M3 2.5V7.5A4 4 0 0 0 11 7.5V2.5"/>
+  <path class="ck" pathLength="1" d="M3.3 7.4L5.9 10L10.7 4.4"/>
+  <g class="dd"><circle class="y" cx="4.5" cy="7" r="1.7"/><circle class="a" cx="9.5" cy="7" r="1.7"/></g>
+</svg></span></div><span class="k">svg 2×</span></div>
+        </div></div>
+    </div>
+    <div class="pane"><p class="cap">Frames for this style / state / set (from terminal-frames.json)</p><div class="strip" id="strip"></div>
+      <p class="note">Stack: <code>"JetBrains Mono", "Ensemble Frames", ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace</code>. Ensemble Frames is a 2 KB woff2 covering only the frame glyphs JetBrains Mono lacks (◡ ∪ ⋃ ≀ ⋈ ✢ ✣ ✳ ✓), at JetBrains Mono's 0.6 em advance, so frames never change width. <code>safe</code> needs only JetBrains Mono; <code>ascii</code> works anywhere.</p></div>
+  </div>
+</section>
+
+<section class="card" id="card-tray" data-theme="dark" data-motion-theme="expressive">
+  <header><h2>tray <small>single-colour PNG set + state SVGs</small></h2><div class="ctl" data-ctl="style"><span class="lbl">style</span><button data-v="expressive" aria-pressed="true">Expressive</button><button data-v="minimal-quiet">Quiet</button><button data-v="minimal-dot">Dot</button></div><div class="ctl" data-ctl="state"><span class="lbl">state</span><button data-v="idle" aria-pressed="true">idle</button><button data-v="working" aria-pressed="false">working</button><button data-v="syncing" aria-pressed="false">syncing</button><button data-v="needs" aria-pressed="false">needs</button><button data-v="done" aria-pressed="false">done</button><button data-v="error" aria-pressed="false">error</button><button data-v="paused" aria-pressed="false">paused</button><button data-v="offline" aria-pressed="false">offline</button></div><div class="ctl" data-ctl="theme"><button data-v="dark" aria-pressed="true">Dark</button><button data-v="light">Light</button></div></header>
+  <div class="stage">
+    <div class="two">
+      <div class="pane"><p class="cap">In place (static PNG = the idle mark)</p><div class="bars" id="bars"></div></div>
+      <div class="pane"><p class="cap">State SVGs for this style (rounds 2 / 3, in tray/states/)</p><div class="states" id="states"></div>
+        <p class="note">The PNGs are the static, hand-hinted mark. Animated or extra states use the SVGs: render them to PNG frames at runtime, or keep them for menus and the About window.</p></div>
+    </div>
+    <div class="pane"><p class="cap">PNG set · 100 %</p><div class="pngs" id="pngs"></div></div>
+  </div>
+</section>
+</main>
+<script src="terminal-working/terminal-working.js"></script>
+<script src="gallery/gallery.js"></script>
+</body></html>

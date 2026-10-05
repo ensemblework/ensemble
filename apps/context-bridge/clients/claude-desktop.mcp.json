@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "ensemble": {
+      "command": "node",
+      "args": ["/ABSOLUTE/PATH/TO/ensemble/apps/context-bridge/dist/index.js"],
+      "env": {
+        "HUB_API_URL": "http://127.0.0.1:4000",
+        "ENSEMBLE_BRIDGE_TOKEN": "ens_PASTE_TOKEN"
+      }
+    }
+  }
+}

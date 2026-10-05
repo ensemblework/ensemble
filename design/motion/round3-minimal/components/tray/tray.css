@@ -1,0 +1,22 @@
+.tr { position: absolute; inset: 0; padding: 16px 20px; display: flex; flex-direction: column; gap: 16px; }
+.tr-bar { height: 28px; border-radius: 8px; background: var(--soft); border: 1px solid var(--line); display: flex; align-items: center; padding: 0 12px; font-size: 12.5px; color: var(--muted); }
+.tr-app { font-weight: 500; } .tr-r { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.tr-live { display: grid; color: var(--ink); } .tr-lab { min-width: 64px; }
+.tr-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; flex: 1; }
+.tr-c { border: 1px solid var(--line); border-radius: 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; font-size: 11.5px; color: var(--faint); transition: border-color var(--m-dur-ui), background var(--m-dur-ui); }
+.tr-c.on { border-color: var(--hair); background: var(--soft); color: var(--ink); }
+.tr-big { color: var(--ink); display: grid; } .tr-sm { display: flex; gap: 8px; align-items: center; color: var(--ink); }
+.mt { overflow: visible; }
+.mt .ac { stroke: var(--accent); } .mt .acf { fill: var(--accent); } .mt .yf { fill: currentColor; } .mt .er { stroke: var(--err); }
+.mt-quiet .tw { stroke-dasharray: .28 2; animation: mt-w 2.4s var(--m-ease-loop) infinite alternate; }
+@keyframes mt-w { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -.72; } }
+.mt-quiet .ts { stroke-dasharray: .1 .08; animation: mt-s 1.4s linear infinite; }
+@keyframes mt-s { to { stroke-dashoffset: -.18; } }
+.mt .tb { animation: m-breathe 2.2s var(--m-ease-loop) infinite; } .mt .tb.d2 { animation-delay: -1.1s; }
+.tr { container-type: inline-size; }
+.tr-bar { white-space: nowrap; overflow: hidden; }
+@container (max-width: 460px) { .tr-app, .tr-clk { display: none; } .tr-r { margin: 0 auto; } .tr-grid { gap: 6px; } .tr-big svg { width: 34px; height: 34px; } }
+/* round 5: the mark stays the logo in every state; syncing runs dashes along the agent strand */
+.mt-quiet .ts2 { animation: mt-s2 1.4s linear infinite; } @keyframes mt-s2 { to { stroke-dashoffset: -3.6; } }
+@media (prefers-reduced-motion: reduce) { .mt .ts2 { animation: none; } }
+[data-reduce-motion="true"] .mt .ts2 { animation: none; }

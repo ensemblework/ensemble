@@ -1,0 +1,17 @@
+.sy { position: absolute; inset: 0; padding: 16px 20px 18px; display: flex; flex-direction: column; }
+.sy-svg { flex: 1; width: 100%; min-height: 0; }
+.sy-lines path { fill: none; stroke: var(--hair); stroke-width: 1; vector-effect: non-scaling-stroke; opacity: .6; transition: opacity var(--m-dur-ui); }
+.sy.done .sy-lines path { opacity: .25; }
+.sy-beads circle { fill: var(--accent); opacity: 0; }
+.sy-svg .qu path { fill: none; stroke: var(--hair); stroke-width: 1.5; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.sy-svg .qu path.a { stroke: var(--accent); }
+.sy-txt text { font: 500 13px var(--font-sans); fill: var(--ink); }
+.sy-txt text.n { font: 500 11px var(--font-mono); fill: var(--faint); }
+.sy-st { text-align: center; }
+.sy-list { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+.sy-r { display: grid; grid-template-columns: 1fr auto 14px; gap: 12px; align-items: center; height: 40px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.sy-r:last-child { border-bottom: 0; }
+.sy-r b { font: 500 11px var(--font-mono); color: var(--faint); }
+.sy-r .dot { background: var(--agent); animation: m-breathe-s 1.8s var(--m-ease-loop) infinite; justify-self: end; transition: background var(--m-dur-ui), opacity var(--m-dur-ui); }
+.sy-r.done .dot { animation: none; background: var(--you); opacity: .45; }
+.sy-r:nth-child(2) .dot { animation-delay: -.45s; } .sy-r:nth-child(3) .dot { animation-delay: -.9s; } .sy-r:nth-child(4) .dot { animation-delay: -1.35s; }

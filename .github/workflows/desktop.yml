@@ -1,0 +1,127 @@
+name: desktop
+
+on:
+  pull_request:
+  workflow_dispatch:
+  push:
+    branches:
+      - desktop
+
+# Installers are unsigned unless TAURI_SIGNING_PRIVATE_KEY is set.
+# There is no Apple, Windows, or Linux code-signing certificate in this workflow.
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macos
+            os: macos-latest
+            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
+            args: --target universal-apple-darwin --bundles app,dmg
+          - name: windows
+            os: windows-latest
+            rust_targets: x86_64-pc-windows-msvc
+            args: --bundles msi,nsis
+          - name: linux
+            os: ubuntu-22.04
+            rust_targets: x86_64-unknown-linux-gnu
+            args: --bundles deb,appimage
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.6.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
+
+      - name: Install Linux system libraries
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - name: Install the workspace
+        run: pnpm install --frozen-lockfile
+
+      - name: Export the desktop UI
+        run: node scripts/export-desktop-web.mjs
+
+      - name: Assemble the local API sidecar
+        run: node scripts/assemble-desktop-sidecar.mjs
+
+      - name: Updater signing
+        id: signing
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "config=--config src-tauri/tauri.signing.json" >> "$GITHUB_OUTPUT"
+          else
+            echo "config=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build bundles
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: apps/desktop
+          tauriScript: pnpm tauri
+          args: ${{ matrix.args }} ${{ steps.signing.outputs.config }}
+
+      - name: Upload bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: ensemble-desktop-${{ matrix.name }}
+          if-no-files-found: error
+          path: |
+            apps/desktop/src-tauri/target/**/bundle/deb/*.deb
+            apps/desktop/src-tauri/target/**/bundle/appimage/*.AppImage
+            apps/desktop/src-tauri/target/**/bundle/msi/*.msi
+            apps/desktop/src-tauri/target/**/bundle/nsis/*.exe
+            apps/desktop/src-tauri/target/**/bundle/dmg/*.dmg
+            apps/desktop/src-tauri/target/**/bundle/macos/*.app
+
+  # Escape and trust tests. The Seatbelt cases skip everywhere except macOS.
+  # No Postgres: these files do not open a database.
+  seatbelt:
+    name: macOS sandbox escapes
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.6.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install the workspace
+        run: pnpm install --frozen-lockfile
+
+      - name: Escape, trust, planted, and git-gate tests
+        working-directory: apps/hub-api
+        env:
+          DATABASE_URL: postgresql://localhost/ensemble_unused
+        run: pnpm exec tsx --test src/workspace/sandbox/escape.test.ts src/workspace/trust.test.ts src/workspace/planted.test.ts src/workspace/git-gate.test.ts

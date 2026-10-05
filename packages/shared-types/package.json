@@ -1,0 +1,32 @@
+{
+  "name": "@ensemble/shared-types",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./modules": "./src/modules.ts",
+    "./features": "./src/features.ts",
+    "./widgets": "./src/widgets.ts",
+    "./templates": "./src/templates/catalog.ts",
+    "./manifest": "./src/templates/manifest.ts",
+    "./marketplace": "./src/marketplace/catalog.ts",
+    "./marketplace-manifest": "./src/marketplace/manifest.ts",
+    "./cookie-site": "./src/cookie-site.ts",
+    "./desktop-discovery": "./src/desktop-discovery.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test src/shortcuts.test.ts src/plots.test.ts src/plots-pack.test.ts src/plots-pool.test.ts src/plots-sample.test.ts src/cookie-site.test.ts src/desktop-discovery.test.ts"
+  },
+  "dependencies": {
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.4",
+    "tsx": "^4.20.6",
+    "typescript": "^5.8.2"
+  }
+}

@@ -1,0 +1,26 @@
+[Unit]
+Description=Dump Ensemble Postgres and keep 7 days
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=ensemble
+Group=ensemble
+EnvironmentFile=/etc/ensemble.env
+ExecStart=/opt/ensemble/infra/deploy/pg-backup.sh
+Nice=10
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+SystemCallArchitectures=native
+ReadWritePaths=/var/backups/ensemble
+ExecStartPre=+/usr/bin/install -d -o ensemble -g ensemble -m 0700 /var/backups/ensemble

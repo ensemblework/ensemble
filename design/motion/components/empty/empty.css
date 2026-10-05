@@ -1,0 +1,3 @@
+/* Empty states: calm, not a loader. The loose thread drifts; the copy says what will appear here. */
+.u-empty { display: flex; align-items: center; gap: 16px; border: 1px dashed var(--line-strong); border-radius: 12px; padding: 14px 18px; color: var(--muted); font-size: 13px; }
+.u-empty svg { flex: none; }

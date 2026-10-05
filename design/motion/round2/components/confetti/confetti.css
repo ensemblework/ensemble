@@ -1,0 +1,40 @@
+/* 01 · Strand confetti (task completed) */
+.cf { position: absolute; inset: 0; padding: 22px 22px 0; }
+.cf-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.cf-kicker { font: 500 11px var(--font-mono); color: var(--faint); text-transform: uppercase; letter-spacing: .08em; }
+.cf-h { font: 500 20px var(--font-serif); letter-spacing: -.01em; }
+.cf-beads { width: 132px; height: 20px; overflow: visible; }
+.cf-bline { stroke: var(--line-strong); stroke-width: 1.5; }
+.cf-beads circle { fill: var(--bg); stroke: var(--line-strong); stroke-width: 1.5; transform-box: fill-box; transform-origin: center; }
+.cf-beads circle.on { fill: var(--u-agent); stroke: var(--u-agent); }
+.cf-beads circle.pop { animation: cf-bead .9s var(--spring-bouncy) both; }
+@keyframes cf-bead { 0% { transform: scale(.2); fill: var(--u-agent); stroke: var(--u-agent); } 100% { transform: scale(1); fill: var(--u-agent); stroke: var(--u-agent); } }
+.cf-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.cf-list li { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 12px; background: var(--raised);
+  border: 1px solid var(--line); transition: background .4s, opacity .4s; }
+.cf-list li .t { position: relative; flex: 1; font-size: 13.5px; transition: color .5s var(--ease); }
+.cf-list li .t::after { content: ""; position: absolute; left: -2px; right: -2px; top: 52%; height: 1.5px; border-radius: 2px;
+  background: var(--faint); transform: scaleX(0); transform-origin: left; }
+.cf-list li.done .t { color: var(--faint); }
+.cf-list li.done .t::after { transform: scaleX(1); }
+.cf-list li.striking .t::after { background: var(--u-agent); transition: transform .7s var(--spring-gentle), background .6s .7s; transform: scaleX(1); }
+.cf-list li.striking.settled .t::after { background: var(--faint); }
+.own { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font: 650 10px var(--font-sans); }
+.own.you { background: color-mix(in srgb, var(--u-you) 14%, transparent); color: var(--u-you); }
+.own.ag { background: var(--accent-soft); position: relative; }
+.own.ag::before, .own.ag::after { content: ""; position: absolute; width: 5px; height: 5px; border-radius: 50%; top: 8.5px; }
+.own.ag::before { left: 5px; background: var(--u-agent); } .own.ag::after { right: 5px; background: var(--u-you); }
+.tie-box { all: unset; cursor: pointer; width: 20px; height: 20px; display: block; flex: none; }
+.tie-box svg { width: 20px; height: 20px; overflow: visible; display: block; }
+.tie-box rect { fill: transparent; stroke: var(--line-strong); stroke-width: 1.6; transition: fill .35s var(--ease), stroke .35s; }
+.tie-box path { fill: none; stroke: #fff; stroke-width: 2.1; stroke-linecap: round; stroke-linejoin: round; }
+.tie-box.on rect { fill: var(--u-agent); stroke: var(--u-agent); }
+.tie-box.pressing svg { transform: scale(.86); transition: transform .12s var(--spring-snappy); }
+.tie-box svg { transition: transform .5s var(--spring-bouncy); }
+.cf-toast { position: absolute; left: 50%; bottom: 18px; transform: translate(-50%, 24px); opacity: 0; display: flex; align-items: center; gap: 8px;
+  background: var(--raised); border: 1px solid var(--line-strong); padding: 8px 14px 8px 10px; border-radius: 999px; font-size: 12.5px; white-space: nowrap;
+  box-shadow: var(--shadow-lift); }
+.cf-toast.show { opacity: 1; transform: translate(-50%, 0); transition: transform .8s var(--spring-soft), opacity .3s; }
+.cf-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok) 22%, transparent); }
+@media (prefers-reduced-motion: reduce) { .cf-list li.striking .t::after, .cf-toast.show, .cf-beads circle.pop { transition: none; animation: none; } }
+[data-reduce-motion="true"] .cf-list li.striking .t::after, [data-reduce-motion="true"] .cf-toast.show, [data-reduce-motion="true"] .cf-beads circle.pop { transition: none; animation: none; }

@@ -1,0 +1,23 @@
+Two voices, the Ensemble app icon.
+
+Canonical art (do not draw a new mark):
+  design/icons/app-icon/svg/ensemble-b-two-voices.svg
+  design/icons/app-icon/svg/ensemble-b-two-voices-fullbleed.svg
+
+Copies of those SVGs live next to this file in source/.
+The PNGs, icon.ico, and icon.icns in this folder are the recommended
+full-bleed set from design/icons/app-icon/png/recommended/:
+
+  ensemble-fullbleed-32.png    -> 32x32.png
+  ensemble-fullbleed-128.png   -> 128x128.png
+  ensemble-fullbleed-256.png   -> 128x128@2x.png
+  ensemble-fullbleed-1024.png  -> icon.png
+  ensemble.ico                 -> icon.ico
+  ensemble.icns                -> icon.icns
+
+Replace those files in place when a new export arrives. Paths in
+tauri.conf.json stay the same. Do not copy tray-accent.png or
+tray-template.png; this app has no tray.
+
+The local page mark is the inline Two-voices U in ui/index.html.
+The loading mark is ui/ensemble-morph.js and ui/morph.css (brand.morph).

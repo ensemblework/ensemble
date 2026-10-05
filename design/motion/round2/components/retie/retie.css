@@ -1,0 +1,44 @@
+/* 14 · Re-tie & reconnect */
+.rt { position: absolute; inset: 0; display: grid; grid-template-columns: 1.45fr 1fr; }
+.rt-l { display: grid; place-items: center; padding: 16px; border-right: 1px solid var(--line); }
+.rt-card { width: 100%; max-width: 340px; padding: 16px; border-radius: 16px; background: var(--raised); border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--line)); transition: border-color .6s; }
+.rt.fixed .rt-card { border-color: color-mix(in srgb, var(--ok) 35%, var(--line)); }
+.rt-head { display: flex; gap: 12px; align-items: center; }
+.rt-ic { width: 30px; height: 30px; border-radius: 9px; background: color-mix(in srgb, var(--danger) 18%, transparent); position: relative; transition: background .6s; flex: none; }
+.rt-ic::before { content: "!"; position: absolute; inset: 0; display: grid; place-items: center; font: 800 14px var(--font-sans); color: var(--danger); transition: opacity .3s; }
+.rt.fixed .rt-ic { background: color-mix(in srgb, var(--ok) 18%, transparent); }
+.rt.fixed .rt-ic::before { opacity: 0; }
+.rt-ic::after { content: ""; position: absolute; left: 11px; top: 7px; width: 5px; height: 10px; border: solid var(--ok); border-width: 0 2px 2px 0; transform: rotate(45deg) scale(0); }
+.rt.fixed .rt-ic::after { transform: rotate(45deg) scale(1); transition: transform .6s var(--spring-bouncy); }
+.rt-t, .rt-s { display: grid; } .rt-t > span, .rt-s > span { grid-area: 1 / 1; transition: opacity .35s, transform .6s var(--spring-soft); }
+.rt-t { font-weight: 650; font-size: 14px; } .rt-s { font-size: 12px; color: var(--muted); }
+.rt .b { opacity: 0; transform: translateY(6px); }
+.rt.fixed .a { opacity: 0; transform: translateY(-6px); } .rt.fixed .b { opacity: 1; transform: none; }
+.rt-svg { display: block; width: 100%; margin: 10px 0; overflow: visible; }
+.rt-th { fill: none; stroke: var(--danger); stroke-width: 2.4; stroke-linecap: round; transition: stroke .5s; }
+.rt-fib line { stroke: var(--danger); stroke-width: 1.3; stroke-linecap: round; transition: stroke .5s; }
+.rt.tying .rt-th, .rt.tying .rt-fib line { stroke: var(--v-hi); }
+.rt.fixed .rt-th { stroke: var(--ok); }
+.rt-knot { fill: none; stroke: var(--v-hi2); stroke-width: 2.2; opacity: 0; }
+.rt.fixed .rt-knot { stroke: var(--ok); fill: var(--ok); transition: stroke .5s, fill .5s; }
+.rt-btn { font: 600 12.5px var(--font-sans); color: var(--ink); background: var(--hover); border: 1px solid var(--line-strong); border-radius: 9px; padding: 7px 14px; transition: transform .3s var(--spring-snappy), background .4s, color .4s; }
+.rt-btn.press { transform: scale(.94); }
+.rt.fixed .rt-btn { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }
+.rt-r { padding: 18px 16px; display: grid; grid-template-rows: auto 1fr; }
+.rt-net { display: grid; place-content: center; justify-items: center; gap: 14px; }
+.rt-mark { width: 150px; overflow: visible; }
+.rt-curve { fill: none; stroke: var(--faint); stroke-width: 3; stroke-linecap: round; stroke-dasharray: 2 7; opacity: .55; transition: stroke-dasharray .9s var(--ease-weave), opacity .5s, stroke .5s; }
+.rt-net.re .rt-curve { animation: rt-march .6s linear infinite; opacity: .8; }
+@keyframes rt-march { to { stroke-dashoffset: -9; } }
+.rt-net.on .rt-curve { stroke: url(#rt-g); stroke-dasharray: 120 0; opacity: 1; animation: none; }
+.rt-d { fill: var(--faint); transition: fill .5s; transform-box: fill-box; transform-origin: center; }
+.rt-d.m { transform: scale(0); }
+.rt-net.on .rt-d.a { fill: var(--u-you); } .rt-net.on .rt-d.b { fill: var(--u-agent); }
+.rt-net.on .rt-d.m { fill: var(--v-hi2); transform: none; transition: transform .8s var(--spring-bouncy), fill .3s; }
+.rt-net.on .rt-d.a, .rt-net.on .rt-d.b { animation: rt-ping .7s var(--spring-bouncy); }
+@keyframes rt-ping { 0% { transform: scale(1.5); } 100% { transform: none; } }
+.rt-pill { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); padding: 5px 11px; border-radius: 999px; background: color-mix(in srgb, var(--ink) 6%, transparent); transition: background .4s, color .4s; }
+.rt-pill i { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); transition: background .4s; }
+.rt-pill span { display: inline-block; }
+.rt-pill span.swap { animation: cn-swap .45s var(--spring-soft); }
+.rt-net.on .rt-pill { background: color-mix(in srgb, var(--ok) 14%, transparent); color: var(--ok); } .rt-net.on .rt-pill i { background: var(--ok); }

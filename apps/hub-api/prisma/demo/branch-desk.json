@@ -1,0 +1,231 @@
+{
+  "desk": "branch",
+  "account": {
+    "email": "mira@fieldnote.dev",
+    "name": "Mira Chen",
+    "password": "fieldnote-relay",
+    "role": "engineer",
+    "signupTemplate": "branch-desk",
+    "marketTemplate": "mkt.branch-desk"
+  },
+  "timezone": "America/Los_Angeles",
+  "company": "Fieldnote",
+  "product": "Relay",
+  "people": [
+    { "upn": "jonah@fieldnote.dev", "name": "Jonah Adeyemi", "email": "jonah@fieldnote.dev", "role": "Cofounder, product", "team": "Fieldnote", "weight": 0.95, "hours": 3, "capacity": 32 },
+    { "upn": "leila@fieldnote.dev", "name": "Leila Ortiz", "email": "leila@fieldnote.dev", "role": "Product design", "team": "Fieldnote", "weight": 0.7, "hours": 8, "capacity": 28 },
+    { "upn": "samir@fieldnote.dev", "name": "Samir Shah", "email": "samir@fieldnote.dev", "role": "Backend", "team": "Relay", "weight": 0.85, "hours": 2, "capacity": 36 },
+    { "upn": "priya.raman@northwind.example", "name": "Priya Raman", "email": "priya.raman@northwind.example", "role": "Design partner, Northwind", "team": "Northwind logistics", "weight": 0.6, "hours": 20, "capacity": 8 }
+  ],
+  "repos": [
+    {
+      "fullName": "fieldnote/relay",
+      "url": "https://github.com/fieldnote/relay",
+      "description": "Webhook delivery for Fieldnote. Signs each attempt, retries with a budget, and records the outcome the partner can replay.",
+      "languages": ["TypeScript"],
+      "role": "owner",
+      "branch": "main"
+    },
+    {
+      "fullName": "fieldnote/console",
+      "url": "https://github.com/fieldnote/console",
+      "description": "The partner console. Shows delivery attempts, signatures, and the replay button Northwind asked for.",
+      "languages": ["TypeScript"],
+      "role": "maintainer",
+      "branch": "main"
+    },
+    {
+      "fullName": "fieldnote/sdk",
+      "url": "https://github.com/fieldnote/sdk",
+      "description": "The package partners import. Retries must send the original event id and the signature from the first attempt.",
+      "languages": ["TypeScript"],
+      "role": "owner",
+      "branch": "main"
+    },
+    {
+      "fullName": "fieldnote/infra",
+      "url": "https://github.com/fieldnote/infra",
+      "description": "Alerts and the dead-letter queue. Pages Jonah when a delivery exhausts its retry budget overnight.",
+      "languages": ["TypeScript"],
+      "role": "maintainer",
+      "branch": "main"
+    }
+  ],
+  "projects": [
+    {
+      "key": "relay",
+      "name": "Relay delivery",
+      "summary": "Get signed webhook retries into production before the Northwind replay drill on Friday.",
+      "people": ["jonah@fieldnote.dev", "samir@fieldnote.dev", "priya.raman@northwind.example"],
+      "roles": ["product", "backend", "partner"],
+      "repos": ["fieldnote/relay"]
+    },
+    {
+      "key": "console",
+      "name": "Partner console",
+      "summary": "The page Priya uses to see a failed delivery and ask Relay to send it again.",
+      "people": ["leila@fieldnote.dev", "jonah@fieldnote.dev"],
+      "roles": ["design", "product"],
+      "repos": ["fieldnote/console", "fieldnote/relay"]
+    },
+    {
+      "key": "sdk",
+      "name": "Relay SDK",
+      "summary": "The helper Northwind imports. A retry has to reuse the event id from the first attempt.",
+      "people": ["samir@fieldnote.dev"],
+      "roles": ["backend"],
+      "repos": ["fieldnote/sdk"]
+    },
+    {
+      "key": "infra",
+      "name": "Relay infra",
+      "summary": "The alert that fires when a delivery spends its whole retry budget.",
+      "people": ["jonah@fieldnote.dev"],
+      "roles": ["product"],
+      "repos": ["fieldnote/infra"]
+    }
+  ],
+  "deliverables": [
+    { "ref": "demo:del-signed", "project": "relay", "title": "Signed retries on production", "status": "upcoming", "dueOffsetDays": 3, "notes": "Every attempt carries the timestamped signature. A replay uses the same event id." },
+    { "ref": "demo:del-drill", "project": "console", "title": "Northwind replay drill", "status": "upcoming", "dueOffsetDays": 5, "notes": "Priya runs three failed deliveries from last Tuesday and confirms the partner endpoint accepts the replay." },
+    { "ref": "demo:del-budget", "project": "relay", "title": "Retry budget note", "status": "completed", "completedOffsetDays": -1, "notes": "Eight attempts, exponential backoff, cap at 15 minutes. Documented for Jonah." }
+  ],
+  "tasks": [
+    { "ref": "demo:review-sign", "title": "Review the attempt signature change", "description": "Samir moved signing into the worker so a replay cannot mint a new signature. The diff is on ensemble/attempt-signature in fieldnote/relay.", "status": "waiting_approval", "owner": "me", "priority": "p0", "type": "review", "project": "relay", "repo": "fieldnote/relay", "dueOffsetDays": 0 },
+    { "ref": "demo:review-sdk", "title": "Review the SDK retry helper", "description": "The helper must forward the original event id. Samir's branch is ensemble/retry-helper in fieldnote/sdk.", "status": "waiting_approval", "owner": "me", "priority": "p0", "type": "review", "project": "sdk", "repo": "fieldnote/sdk", "dueOffsetDays": 1 },
+    { "ref": "demo:review-console", "title": "Review the replay empty state", "description": "Leila's copy is in. Confirm the button still sends the original event id before it merges.", "status": "waiting_approval", "owner": "me", "priority": "p1", "type": "review", "project": "console", "repo": "fieldnote/console", "dueOffsetDays": 1 },
+    { "ref": "demo:review-infra", "title": "Review the dead-letter alert", "description": "Jonah wants one page when the overnight budget is spent, not a chart. The route is in fieldnote/infra.", "status": "waiting_approval", "owner": "me", "priority": "p1", "type": "review", "project": "infra", "repo": "fieldnote/infra", "dueOffsetDays": 2 },
+    { "ref": "demo:wip-replay", "title": "Wire the console replay button to the same event id", "description": "Leila's empty state is in. The button must call Relay with the original event id, not a fresh one.", "status": "in_progress", "owner": "me", "priority": "p0", "type": "task", "project": "console", "repo": "fieldnote/console", "dueOffsetDays": 2 },
+    { "ref": "demo:blocked-clock", "title": "Northwind clock skew on the signature window", "description": "Their edge rejects attempts when the timestamp is more than 30 seconds off. We need their NTP note before widening the window.", "status": "blocked", "owner": "me", "priority": "p1", "type": "task", "project": "relay", "repo": "fieldnote/relay", "dueOffsetDays": -1 },
+    { "ref": "demo:todo-dashboard", "title": "Add the failed-attempt count to the morning page", "description": "Jonah wants the count of deliveries that exhausted the budget overnight, not a chart.", "status": "todo", "owner": "agent", "priority": "p1", "type": "task", "project": "console", "dueOffsetDays": 4 },
+    { "ref": "demo:proposed-idem", "title": "Store the idempotency key beside the event id", "description": "Proposed after the partner sync. Do not start until the signature review is in.", "status": "proposed", "owner": "unassigned", "priority": "p2", "type": "task", "project": "relay", "dueOffsetDays": 8 },
+    { "ref": "demo:done-budget", "title": "Write the retry budget for Jonah", "description": "Eight attempts, backoff capped at 15 minutes, dead letters after the last one.", "status": "done", "owner": "me", "priority": "p1", "type": "task", "project": "relay", "completedOffsetDays": 0 },
+    { "ref": "demo:done-fixture", "title": "Check the Northwind fixture against the new signer", "description": "The fixture from last Thursday still verifies. Priya can replay it.", "status": "done", "owner": "agent", "priority": "p2", "type": "task", "project": "relay", "completedOffsetDays": 0 },
+    { "ref": "demo:trash-rename", "title": "Rename attempt id to event id in the public payload", "description": "Pulled back. Northwind already stores attempt id. Leave the public field alone.", "status": "dropped", "owner": "me", "priority": "p2", "type": "task", "project": "relay", "deleted": true }
+  ],
+  "skills": [
+    {
+      "slug": "relay-incident-note",
+      "name": "Relay incident note",
+      "description": "How Mira writes a delivery incident so Jonah and Priya can both read it.",
+      "body": "Lead with the event id, the partner, and whether the attempt was signed. Say how many tries ran and where the last one stopped. Do not invent a root cause. If the signature window is the suspect, say the timestamps and who still owes the NTP note. Close with the one next check, not a list of maybes."
+    },
+    {
+      "slug": "webhook-signature-review",
+      "name": "Webhook signature review",
+      "description": "What to look for before accepting a change to Relay's signer.",
+      "body": "A replay must reuse the original signature. Reject a diff that signs again inside the retry loop. The timestamp in the signature is the first attempt, not the latest one. Tests should cover a failed partner response and a clock that is 20 seconds ahead."
+    },
+    {
+      "slug": "partner-status",
+      "name": "Partner status update",
+      "description": "Short note to a design partner when a delivery change is ready to try.",
+      "body": "Name the event they can replay, the window they should expect, and what will look different in the console. Skip internal branch names. Offer a time the same day if something fails verification."
+    }
+  ],
+  "meetings": [
+    {
+      "title": "Northwind replay drill prep",
+      "occurredOffsetDays": 0,
+      "people": ["priya.raman@northwind.example", "jonah@fieldnote.dev"],
+      "project": "relay",
+      "prompt": "What did we agree with Priya about Friday?",
+      "answer": "The public field stays named attempt id. Priya will replay three failures from last Tuesday. The signature window stays at 30 seconds until she sends the NTP note.",
+      "notes": "Priya walked through a failed delivery from the Oakland warehouse route.\nWe decided to keep the public field named attempt id.\nWe agreed the signature window stays at 30 seconds until the NTP note arrives.\nJonah asked for the overnight exhausted count on the morning page, not a chart."
+    },
+    {
+      "title": "Relay signing review",
+      "occurredOffsetDays": -1,
+      "people": ["samir@fieldnote.dev", "leila@fieldnote.dev"],
+      "project": "relay",
+      "prompt": "Where did Samir put the signature?",
+      "answer": "Signing happens once, when the event is accepted. The worker only attaches that signature. We agreed the console replay button sends the original event id.",
+      "notes": "Samir showed the worker diff. The retry loop no longer calls sign().\nWe agreed the console replay button sends the original event id.\nLeila's empty state copy is 'This delivery never reached Northwind.'\nMira still has to review the branch before it can ship."
+    }
+  ],
+  "sessions": [
+    {
+      "title": "Northwind replay drill prep",
+      "startedHoursAgo": 5,
+      "notes": "Priya walked through a failed delivery from the Oakland warehouse route.\nWe decided to keep the public field named attempt id.\nWe agreed the signature window stays at 30 seconds until the NTP note arrives.",
+      "recap": "Friday's drill replays three real failures from last Tuesday. The public field stays as it is, and the signature window waits on the NTP note."
+    },
+    {
+      "title": "Relay signing review",
+      "startedHoursAgo": 26,
+      "notes": "Samir showed the worker diff.\nWe agreed the console replay button sends the original event id.\nWe agreed signing happens once, on the first attempt.",
+      "recap": "The worker forwards the stored signature. A replay does not mint a new one."
+    }
+  ],
+  "notifications": [
+    { "title": "Signature review is waiting", "body": "The attempt-signature branch is ready in fieldnote/relay. Samir asked you to look before tomorrow's standup.", "urgent": true, "hoursAgo": 2 },
+    { "title": "Priya sent the Tuesday failures", "body": "Three event ids are in the Northwind thread. They are the ones for Friday's replay drill.", "urgent": false, "hoursAgo": 6, "read": true },
+    { "title": "Retry budget note is with Jonah", "body": "He has the eight-attempt cap. No reply yet.", "urgent": false, "hoursAgo": 20, "read": true }
+  ],
+  "deploys": [
+    { "name": "relay 0.9.4", "env": "prod", "hoursAgo": 30 },
+    { "name": "console 0.4.2", "env": "prod", "hoursAgo": 50 },
+    { "name": "relay 0.9.5-rc.1", "env": "staging", "hoursAgo": 4 }
+  ],
+  "tests": [
+    { "name": "relay signer", "build": "0.9.5-rc.1", "status": "pass" },
+    { "name": "relay retry budget", "build": "0.9.5-rc.1", "status": "pass" },
+    { "name": "console replay button", "build": "main", "status": "fail" }
+  ],
+  "metrics": [
+    { "title": "Draft the retry budget note", "purpose": "Hub chat", "model": "gemini-2.5-flash", "provider": "google", "tokensIn": 820, "tokensOut": 260, "hoursAgo": 20 },
+    { "title": "Explain the signature window", "purpose": "Hub chat", "model": "gemini-2.5-flash", "provider": "google", "tokensIn": 640, "tokensOut": 180, "hoursAgo": 6 },
+    { "title": "Review attempt signature", "purpose": "Delegated tasks", "model": "gemini-2.5-pro", "provider": "google", "tokensIn": 4100, "tokensOut": 900, "hoursAgo": 3 }
+  ],
+  "diagram": {
+    "title": "Relay delivery path",
+    "source": "title Relay delivery path\ndirection right\n\nnode ingress \"Public ingress\" shape rectangle\nnode sign \"Sign once\" shape rectangle\nnode queue \"Delivery queue\" shape rectangle\nnode worker \"Retry worker\" shape rectangle\nnode partner \"Northwind endpoint\" shape rectangle\nnode dead \"Dead letter\" shape rectangle\n\nedge ingress > sign : accept event\nedge sign > queue : store signature\nedge queue > worker\nedge worker > partner : signed attempt\nedge worker > dead : budget spent\n"
+  },
+  "checkouts": [
+    {
+      "folder": "fieldnote/relay",
+      "branch": "ensemble/attempt-signature",
+      "title": "Review the attempt signature change",
+      "taskRef": "demo:review-sign",
+      "complete": false,
+      "files": {
+        "package.json": "{\n  \"name\": \"@fieldnote/relay\",\n  \"private\": true,\n  \"type\": \"module\"\n}\n",
+        "src/sign.ts": "export function signAttempt(secret: string, eventId: string, body: string, at: Date) {\n  return `${eventId}.${at.toISOString()}.${secret.length}:${body.length}`;\n}\n",
+        "src/worker.ts": "import { signAttempt } from \"./sign.js\";\n\nexport async function deliver(secret: string, eventId: string, body: string) {\n  const signature = signAttempt(secret, eventId, body, new Date());\n  return { eventId, signature, tries: 1 };\n}\n"
+      },
+      "edits": {
+        "src/worker.ts": "export async function deliver(secret: string, eventId: string, body: string, signature: string) {\n  // Replay must send the signature from the first attempt.\n  return { eventId, signature, tries: 1 };\n}\n"
+      }
+    },
+    {
+      "folder": "fieldnote/console",
+      "branch": "ensemble/replay-copy",
+      "title": "Tighten the replay empty state",
+      "taskRef": "demo:done-fixture",
+      "complete": true,
+      "files": {
+        "src/empty.ts": "export const emptyCopy = \"Nothing to show.\";\n"
+      },
+      "edits": {
+        "src/empty.ts": "export const emptyCopy = \"This delivery never reached Northwind.\";\n"
+      }
+    }
+  ],
+  "approval": {
+    "title": "Open a pull request for the attempt signature",
+    "kind": "open_pr",
+    "taskRef": "demo:review-sign"
+  },
+  "decision": {
+    "title": "Run the signer tests in fieldnote/relay",
+    "tool": "Shell",
+    "command": "npm test -- src/sign.test.ts"
+  },
+  "chat": {
+    "title": "Relay · retry budget",
+    "messages": [
+      { "role": "user", "content": "Write the retry budget Jonah can forward to Priya. Eight tries, cap the wait at 15 minutes.", "hoursAgo": 21 },
+      { "role": "assistant", "content": "Relay tries a delivery eight times. The wait grows each time and never exceeds 15 minutes. After the eighth miss the event goes to the dead letter list, still under the original attempt id, and the console can replay it.", "model": "gemini-2.5-flash", "hoursAgo": 21 }
+    ]
+  }
+}

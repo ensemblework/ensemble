@@ -1,0 +1,550 @@
+/* Motion suite tokens. Values match design/motion/round3-minimal/components/core/motion-themes.json.
+   Components read --m-* only. Switching suites is data-motion-theme on <html>. */
+
+:root,
+[data-motion-theme="expressive"] {
+  --m-ease-enter: cubic-bezier(0.22, 1, 0.36, 1);
+  --m-ease-move: cubic-bezier(0.34, 1.3, 0.64, 1);
+  --m-ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --m-ease-loop: cubic-bezier(0.65, 0, 0.35, 1);
+  --m-spring: soft;
+  --m-dur-micro: 160ms;
+  --m-dur-ui: 320ms;
+  --m-dur-move: 870ms;
+  --m-dur-loop: 4800ms;
+  --m-amp: 12px;
+  --m-scale-press: 0.96;
+  --m-overshoot: 1;
+  --m-stroke: 2.5px;
+  --m-ornament: 1;
+  --m-particles: 1;
+  --m-color-mode: duo;
+}
+
+[data-motion-theme="minimal-quiet"] {
+  --m-ease-enter: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --m-ease-move: cubic-bezier(0.33, 0, 0.2, 1);
+  --m-ease-exit: cubic-bezier(0.4, 0, 0.6, 1);
+  --m-ease-loop: cubic-bezier(0.45, 0, 0.55, 1);
+  --m-spring: none;
+  --m-dur-micro: 200ms;
+  --m-dur-ui: 420ms;
+  --m-dur-move: 640ms;
+  --m-dur-loop: 3200ms;
+  --m-amp: 4px;
+  --m-scale-press: 0.985;
+  --m-overshoot: 0;
+  --m-stroke: 1.5px;
+  --m-ornament: 0;
+  --m-particles: 0;
+  --m-color-mode: mono;
+}
+
+[data-motion-theme="minimal-dot"] {
+  --m-ease-enter: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --m-ease-move: cubic-bezier(0.33, 0, 0.2, 1);
+  --m-ease-exit: cubic-bezier(0.4, 0, 0.6, 1);
+  --m-ease-loop: cubic-bezier(0.45, 0, 0.55, 1);
+  --m-spring: none;
+  --m-dur-micro: 200ms;
+  --m-dur-ui: 480ms;
+  --m-dur-move: 720ms;
+  --m-dur-loop: 2800ms;
+  --m-amp: 3px;
+  --m-scale-press: 0.99;
+  --m-overshoot: 0;
+  --m-stroke: 1px;
+  --m-ornament: 0;
+  --m-particles: 0;
+  --m-color-mode: mono;
+}
+
+[data-reduce-motion="true"] {
+  --m-ease-enter: linear;
+  --m-ease-move: linear;
+  --m-ease-exit: linear;
+  --m-ease-loop: linear;
+  --m-spring: none;
+  --m-dur-micro: 0ms;
+  --m-dur-ui: 150ms;
+  --m-dur-move: 0ms;
+  --m-dur-loop: 0ms;
+  --m-amp: 0px;
+  --m-scale-press: 1;
+  --m-overshoot: 0;
+  --m-stroke: 1.5px;
+  --m-ornament: 0;
+  --m-particles: 0;
+  --m-color-mode: inherit;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-reduce-motion="false"]) {
+    --m-ease-enter: linear;
+    --m-ease-move: linear;
+    --m-ease-exit: linear;
+    --m-ease-loop: linear;
+    --m-spring: none;
+    --m-dur-micro: 0ms;
+    --m-dur-ui: 150ms;
+    --m-dur-move: 0ms;
+    --m-dur-loop: 0ms;
+    --m-amp: 0px;
+    --m-scale-press: 1;
+    --m-overshoot: 0;
+    --m-ornament: 0;
+    --m-particles: 0;
+  }
+}
+
+/* Loops stop under the overlay. Entrances may still crossfade within --m-dur-ui. */
+[data-reduce-motion="true"] .m-loop,
+[data-reduce-motion="true"] .skeleton::after,
+[data-reduce-motion="true"] .desk .sk::after,
+[data-reduce-motion="true"] .m-progress i,
+[data-reduce-motion="true"] .m-fetch[data-state="fetching"] .a,
+[data-reduce-motion="true"] .m-fetch[data-state="fetching"] .b,
+[data-reduce-motion="true"] .m-fetch[data-state="syncing"] .a,
+[data-reduce-motion="true"] .m-fetch[data-state="syncing"] .b,
+[data-reduce-motion="true"] .m-ask[data-state="searching"],
+[data-reduce-motion="true"] .m-tool[data-state="running"],
+[data-reduce-motion="true"] .m-graph .edge,
+[data-reduce-motion="true"] .pulse-dot,
+[data-reduce-motion="true"] .shimmer,
+[data-reduce-motion="true"] .m-celebrate-bits span,
+[data-reduce-motion="true"] .m-ce-ring,
+[data-reduce-motion="true"] .m-ce-u path {
+  animation: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .m-loop,
+  .skeleton::after,
+  .desk .sk::after,
+  .m-progress i,
+  .m-ask[data-state="searching"],
+  .m-tool[data-state="running"] { animation: none !important; }
+}
+
+.btn:active,
+.btn-primary:active,
+.btn-ghost:active,
+.icon-btn:active,
+.desk .btn:active,
+.desk .btn-p:active {
+  transform: scale(var(--m-scale-press));
+}
+
+/* ── page progress ─────────────────────────────────────────────────────── */
+.m-progress {
+  position: fixed;
+  z-index: 70;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  pointer-events: none;
+  overflow: hidden;
+}
+.m-progress i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 46%;
+  border-radius: 99px;
+}
+.m-progress i.a {
+  background: var(--accent);
+  animation: m-braid var(--m-dur-move) var(--m-ease-loop) infinite;
+}
+.m-progress i.b {
+  background: var(--ink);
+  opacity: 0.55;
+  animation: m-braid var(--m-dur-loop) var(--m-ease-loop) infinite;
+  animation-delay: calc(var(--m-dur-micro) * -1);
+}
+[data-motion-theme="minimal-dot"] .m-progress i.b,
+[data-motion-theme="minimal-quiet"] .m-progress i.b { opacity: 0; }
+[data-motion-theme="minimal-dot"] .m-progress { height: 2px; }
+[data-motion-theme="minimal-dot"] .m-progress i.a {
+  width: 8px;
+  height: 8px;
+  top: -3px;
+  border-radius: 50%;
+  animation-name: m-dot-run;
+}
+@keyframes m-braid {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(280%); }
+}
+@keyframes m-dot-run {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(calc(100vw - 8px)); }
+}
+
+/* ── skeleton sweep. Hidden until the delay has passed. ───────────────── */
+.skeleton,
+.desk .sk {
+  position: relative;
+  overflow: hidden;
+  border-radius: 8px;
+  background: transparent;
+}
+.skeleton:not([data-visible="0"]),
+.desk .sk:not([data-visible="0"]) {
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+}
+.skeleton:not([data-visible="0"])::after,
+.desk .sk:not([data-visible="0"])::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(100deg, transparent 20%, color-mix(in srgb, var(--accent) calc(14% + var(--m-ornament) * 12%), transparent) 50%, transparent 80%);
+  animation: m-sweep var(--m-dur-loop) var(--m-ease-loop) infinite;
+  animation-delay: calc(var(--i, 0) * var(--m-dur-micro) / 4);
+}
+.skeleton[data-visible="0"],
+.desk .sk[data-visible="0"] { background: transparent; }
+.skeleton[data-visible="0"]::after,
+.desk .sk[data-visible="0"]::after { display: none; }
+[data-motion-theme="minimal-quiet"] .skeleton:not([data-visible="0"])::after,
+[data-motion-theme="minimal-quiet"] .desk .sk:not([data-visible="0"])::after,
+[data-motion-theme="minimal-dot"] .skeleton:not([data-visible="0"])::after,
+[data-motion-theme="minimal-dot"] .desk .sk:not([data-visible="0"])::after {
+  background: none;
+  animation-name: m-breathe;
+}
+[data-motion-theme="minimal-dot"] .skeleton:not([data-visible="0"]),
+[data-motion-theme="minimal-dot"] .desk .sk:not([data-visible="0"]) {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 18%, transparent);
+}
+@keyframes m-sweep {
+  0% { transform: translateX(-100%); }
+  60%, 100% { transform: translateX(100%); }
+}
+@keyframes m-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+/* ── tile entrance. Only when the page opts in after a real wait. ─────── */
+@keyframes m-rise {
+  from { transform: translateY(var(--m-amp)); }
+  to { transform: none; }
+}
+.m-enter > * {
+  animation: m-rise var(--m-dur-ui) var(--m-ease-enter);
+  animation-delay: calc(var(--i, 0) * var(--m-dur-micro) / 4);
+}
+html[data-motion-enter="1"] .page-head h1 {
+  background-image: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 10%, transparent) 70%, transparent);
+  background-repeat: no-repeat;
+  background-size: 100% 2px;
+  background-position: 0 100%;
+  animation: m-draw var(--m-dur-move) var(--m-ease-loop);
+}
+@keyframes m-draw { from { background-size: 0 2px; } }
+
+/* ── duet spinner ──────────────────────────────────────────────────────── */
+.m-duet {
+  --s: 14px;
+  position: relative;
+  display: inline-block;
+  width: var(--s);
+  height: var(--s);
+  vertical-align: middle;
+  flex: none;
+}
+.m-duet i {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: calc(var(--s) * 0.36);
+  height: calc(var(--s) * 0.36);
+  margin: calc(var(--s) * -0.18);
+  border-radius: 50%;
+  background: var(--accent);
+}
+.m-duet i + i { background: var(--ink); }
+.m-duet.m-loop i { animation: m-duet-a var(--m-dur-loop) var(--m-ease-loop) infinite; }
+.m-duet.m-loop i + i { animation-name: m-duet-b; }
+[data-motion-theme="minimal-quiet"] .m-duet i + i { opacity: 0.45; }
+[data-motion-theme="minimal-dot"] .m-duet { animation: m-duet-turn var(--m-dur-loop) linear infinite; }
+@keyframes m-duet-a {
+  0%, 100% { transform: translateX(calc(var(--s) * -0.32)); }
+  50% { transform: translateX(0); }
+}
+@keyframes m-duet-b {
+  0%, 100% { transform: translateX(calc(var(--s) * 0.32)); }
+  50% { transform: translateX(0); }
+}
+@keyframes m-duet-turn { to { transform: rotate(360deg); } }
+
+/* ── thinking ──────────────────────────────────────────────────────────── */
+.m-think { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.m-think-art { display: inline-flex; width: 22px; height: 22px; flex: none; align-items: center; justify-content: center; }
+.m-quiet { display: block; }
+.m-dots { display: none; gap: 3px; }
+.m-dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--ink); opacity: 0.7; }
+.m-dots i.ag { background: var(--accent); opacity: 1; }
+[data-motion-theme="minimal-dot"] .m-quiet { display: none; }
+[data-motion-theme="minimal-dot"] .m-dots { display: inline-flex; }
+[data-motion-theme="expressive"] .m-think-art:has(.u-glyph) .m-quiet { display: none; }
+.m-quiet .seg {
+  stroke: var(--accent);
+  stroke-dasharray: 0.14 2;
+  stroke-dashoffset: 0.02;
+  fill: none;
+  stroke-width: var(--m-stroke);
+  stroke-linecap: round;
+}
+.m-quiet .seg.m-loop { animation: m-dash var(--m-dur-loop) var(--m-ease-loop) infinite alternate; }
+.m-dots i.ag.m-loop { animation: m-breathe var(--m-dur-loop) var(--m-ease-loop) infinite; }
+@keyframes m-dash { to { stroke-dashoffset: -0.88; } }
+.m-think-text { font-size: 13px; color: var(--muted); }
+.u-glyph { display: inline-block; line-height: 0; }
+.u-glyph svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.u-glyph .ug-agent { stroke: var(--accent); }
+.u-glyph .ug-you { stroke: var(--ink); }
+.u-glyph.is-error .ug-agent, .u-glyph.is-error .ug-you { stroke: var(--danger); }
+.u-glyph.is-success .ug-agent { stroke: var(--ok); }
+.u-glyph.is-pause .ug-agent { stroke: var(--danger); }
+
+/* ── stream ────────────────────────────────────────────────────────────── */
+.m-stream[data-state="streaming"] { box-shadow: inset var(--m-stroke) 0 0 var(--accent); }
+.m-stream[data-state="streaming"]::after {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 1em;
+  margin-left: 3px;
+  border-radius: 99px;
+  vertical-align: text-bottom;
+  background: var(--accent);
+  opacity: calc(0.45 + var(--m-ornament) * 0.55);
+}
+[data-motion-theme="minimal-dot"] .m-stream[data-state="streaming"] { box-shadow: none; }
+[data-motion-theme="minimal-dot"] .m-stream[data-state="streaming"]::after {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+
+/* ── tool / run / needs / approve / error ──────────────────────────────── */
+.m-tool { border-radius: 8px; box-shadow: inset 0 0 0 var(--m-stroke) color-mix(in srgb, var(--accent) 55%, transparent); }
+.m-tool[data-state="running"] { animation: m-seam var(--m-dur-loop) var(--m-ease-loop) infinite; }
+.m-tool[data-state="done"] { box-shadow: inset 0 0 0 var(--m-stroke) color-mix(in srgb, var(--ok) 70%, transparent); animation: m-bloom var(--m-dur-ui) var(--m-ease-move); }
+.m-tool[data-state="pending"] { box-shadow: inset 0 0 0 var(--m-stroke) var(--warn); }
+.m-tool[data-state="failed"] { box-shadow: inset 0 0 0 var(--m-stroke) var(--danger); }
+@keyframes m-seam { 50% { box-shadow: inset 0 0 0 var(--m-stroke) var(--accent); } }
+@keyframes m-bloom {
+  from { box-shadow: inset 0 0 0 var(--m-stroke) var(--ok), 0 0 0 0 color-mix(in srgb, var(--ok) calc(var(--m-particles) * 40%), transparent); }
+  to { box-shadow: inset 0 0 0 var(--m-stroke) color-mix(in srgb, var(--ok) 70%, transparent), 0 0 0 calc(var(--m-amp) * var(--m-particles)) transparent; }
+}
+.m-run { display: inline-flex; align-items: center; gap: 6px; }
+.m-run-bar { height: 3px; flex: 1; border-radius: 99px; background: var(--line-strong); overflow: hidden; min-width: 48px; }
+.m-run-bar i { display: block; height: 100%; width: 40%; background: var(--accent); }
+.m-run[data-state="running"] .m-run-bar i { animation: m-braid var(--m-dur-move) var(--m-ease-loop) infinite; }
+.m-run[data-state="done"] .m-run-bar i { width: 100%; animation: none; background: var(--ok); }
+.m-run[data-state="queued"] .m-run-bar i { width: 12%; opacity: 0.5; }
+[data-motion-slot="needs.waiting"][data-state="waiting"] { box-shadow: inset var(--m-stroke) 0 0 var(--warn); }
+[data-motion-slot="action.approve"][data-state="pressed"] { transform: scale(var(--m-scale-press)); }
+[data-motion-slot="action.approve"][data-state="approved"] { box-shadow: 0 0 0 calc(var(--m-amp) * var(--m-particles)) color-mix(in srgb, var(--ok) 35%, transparent); }
+[data-motion-slot="state.error"] { box-shadow: inset var(--m-stroke) 0 0 var(--danger); }
+[data-motion-slot="net.connection"][data-state="offline"],
+[data-motion-slot="net.connection"][data-state="reconnecting"] { box-shadow: inset 0 -2px 0 var(--warn); }
+
+/* ── fetch / sync ──────────────────────────────────────────────────────── */
+.m-fetch { display: inline-flex; }
+.m-fetch svg { overflow: visible; }
+.m-fetch .a, .m-fetch .b { fill: none; stroke-linecap: round; stroke-width: 2; transform-origin: 8px 8px; }
+.m-fetch .a { stroke: var(--accent); }
+.m-fetch .b { stroke: var(--ink); opacity: 0.8; }
+.m-fetch[data-state="fetching"] .a,
+.m-fetch[data-state="syncing"] .a { animation: m-reel var(--m-dur-move) linear infinite; }
+.m-fetch[data-state="fetching"] .b,
+.m-fetch[data-state="syncing"] .b { animation: m-reel calc(var(--m-dur-move) * 1.5) linear infinite; }
+[data-motion-theme="minimal-dot"] .m-fetch .b { opacity: 0; }
+@keyframes m-reel { to { transform: rotate(360deg); } }
+
+/* ── ask / search rim. Chase only while ornament is on. ───────────────── */
+.m-ask[data-state="searching"] {
+  border-color: transparent;
+  background:
+    linear-gradient(var(--panel), var(--panel)) padding-box,
+    conic-gradient(from var(--m-angle, 0deg), transparent 0 8%, var(--accent) 22%, transparent 30% 55%, color-mix(in srgb, var(--ink) 80%, transparent) 70%, transparent 78%) border-box;
+  animation: m-rim var(--m-dur-loop) linear infinite;
+}
+[data-motion-theme="minimal-quiet"] .m-ask[data-state="searching"],
+[data-motion-theme="minimal-dot"] .m-ask[data-state="searching"],
+[data-reduce-motion="true"] .m-ask[data-state="searching"] {
+  animation: none;
+  border-color: var(--accent);
+  background: var(--panel);
+}
+@property --m-angle { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+@keyframes m-rim { to { --m-angle: 360deg; } }
+
+/* ── toast, empty, splash, tray ────────────────────────────────────────── */
+.m-toast { animation: m-toast-in var(--m-dur-ui) var(--m-ease-enter); position: relative; }
+.m-toast .m-drain {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 0;
+  height: 2px;
+  transform-origin: left;
+  background: var(--accent);
+  opacity: calc(0.35 + var(--m-ornament) * 0.4);
+  animation: m-drain linear var(--m-ease-exit) forwards;
+}
+@keyframes m-toast-in { from { transform: translateY(var(--m-amp)); opacity: 0; } }
+@keyframes m-drain { to { transform: scaleX(0); } }
+.m-loose { transform-origin: 12px 4px; }
+.m-loose.m-loop { animation: m-sway var(--m-dur-loop) var(--m-ease-loop) infinite; }
+@keyframes m-sway { 50% { transform: rotate(calc(var(--m-overshoot) * 8deg)); } }
+.m-splash {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+  pointer-events: none;
+}
+.m-splash-tile {
+  width: 72px;
+  height: 72px;
+  border-radius: 16px;
+  display: grid;
+  place-items: center;
+  background: #141210;
+  --brand-agent: #9d8fff;
+  --brand-you: #f3eee6;
+}
+.m-route-mark {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  z-index: 5;
+}
+.m-tray { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); display: inline-block; flex: none; }
+.m-tray[data-state="working"],
+.m-tray[data-state="syncing"] { background: var(--accent); }
+.m-tray[data-state="needs"] { background: var(--warn); }
+.m-tray[data-state="paused"],
+.m-tray[data-state="error"] { background: var(--danger); }
+.m-tray[data-state="offline"] { background: var(--faint); }
+.m-tray[data-state="working"].m-loop,
+.m-tray[data-state="syncing"].m-loop,
+.m-tray[data-state="needs"].m-loop { animation: m-breathe var(--m-dur-loop) var(--m-ease-loop) infinite; }
+
+/* graph skeleton shares the stage box */
+.m-graph { width: 100%; }
+.m-graph .edge { fill: none; stroke: var(--line-strong); stroke-width: 1.5; }
+.m-graph .node { fill: color-mix(in srgb, var(--ink) 8%, transparent); }
+.m-graph .hub { fill: color-mix(in srgb, var(--accent) 30%, transparent); stroke: var(--accent); }
+.m-graph[data-visible="0"] svg { opacity: 0; }
+.m-graph[data-visible="1"] .edge { stroke-dasharray: 1; animation: m-edge var(--m-dur-loop) var(--m-ease-loop) infinite; }
+@keyframes m-edge { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+
+/* moment.celebrate — particles (expressive) or one quiet mark. Reduced motion is the still pose. */
+.m-celebrate {
+  position: fixed;
+  left: 50%;
+  bottom: 72px;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transform: translateX(-50%);
+  pointer-events: none;
+  color: var(--ink);
+}
+.m-celebrate p {
+  margin: 0;
+  font-style: italic;
+  font-size: 18px;
+  animation: m-ce-in var(--m-dur-move) var(--m-ease-enter) both;
+}
+@keyframes m-ce-in {
+  from { opacity: 0; transform: translateY(var(--m-amp)); }
+  to { opacity: 1; transform: none; }
+}
+.m-celebrate-bits { display: none; position: relative; width: calc(var(--m-amp) * 8); height: calc(var(--m-amp) * 5); }
+[data-motion-theme="expressive"] .m-celebrate-bits { display: block; }
+.m-celebrate-bits span {
+  position: absolute;
+  left: 40%;
+  top: 55%;
+  width: calc(var(--m-amp) * 1.5);
+  height: calc(var(--m-amp) * 0.8);
+  color: var(--accent);
+  animation: m-strand var(--m-dur-move) var(--m-ease-exit) both;
+}
+.m-celebrate-bits span:nth-child(2) { color: var(--ink); --dx: calc(var(--m-amp) * 3.2); --dy: calc(var(--m-amp) * -3.4); --rot: 24deg; }
+.m-celebrate-bits span:nth-child(1) { --dx: calc(var(--m-amp) * -3.4); --dy: calc(var(--m-amp) * -2.6); --rot: -18deg; }
+.m-celebrate-bits span:nth-child(3) { --dx: calc(var(--m-amp) * -1.2); --dy: calc(var(--m-amp) * -4.2); --rot: -8deg; }
+.m-celebrate-bits span:nth-child(4) { color: var(--ink); --dx: calc(var(--m-amp) * 1.6); --dy: calc(var(--m-amp) * -3.8); --rot: 16deg; }
+.m-celebrate-bits span:nth-child(5) { --dx: calc(var(--m-amp) * -2.8); --dy: calc(var(--m-amp) * -1.2); --rot: -28deg; }
+.m-celebrate-bits span:nth-child(6) { color: var(--ink); --dx: calc(var(--m-amp) * 2.8); --dy: calc(var(--m-amp) * -1.6); --rot: 12deg; }
+@keyframes m-strand {
+  from { opacity: 1; transform: translate(-50%, 0) rotate(0deg); }
+  to { opacity: 0; transform: translate(var(--dx, 0), var(--dy, calc(var(--m-amp) * -3))) rotate(var(--rot, 0deg)); }
+}
+.m-celebrate-quiet { display: none; position: relative; width: 44px; height: 44px; place-items: center; }
+.m-ce-u, .m-ce-dots { display: none; }
+.m-ce-u { position: relative; width: 28px; height: 32px; }
+.m-ce-u svg { display: block; width: 28px; height: 32px; overflow: visible; }
+.m-ce-u path { fill: none; stroke: var(--brand-agent, #9d8fff); stroke-width: var(--m-stroke); stroke-linecap: round; stroke-dasharray: 1; stroke-dashoffset: 0; }
+.m-ce-u path.a { stroke: var(--brand-you, #f3eee6); }
+.m-ce-ring {
+  position: absolute;
+  inset: -8px;
+  border-radius: 50%;
+  border: 1px solid var(--accent);
+  opacity: 0;
+}
+.m-ce-dots { position: relative; width: 22px; height: 10px; }
+.m-ce-dots .dot {
+  position: absolute;
+  top: 1px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ink);
+  transition: transform var(--m-dur-move) var(--m-ease-move), opacity var(--m-dur-ui) var(--m-ease-enter);
+}
+.m-ce-dots .dot:first-child { left: 0; }
+.m-ce-dots .dot.ag { left: 12px; background: var(--accent); }
+.m-celebrate.on .m-ce-dots .dot:first-child { transform: translateX(5.5px); opacity: 0; }
+.m-celebrate.on .m-ce-dots .dot.ag { transform: translateX(-5.5px) scale(1.15); }
+[data-motion-theme="minimal-quiet"] .m-celebrate-quiet,
+[data-motion-theme="minimal-dot"] .m-celebrate-quiet { display: grid; }
+[data-motion-theme="minimal-quiet"] .m-ce-u { display: block; }
+[data-motion-theme="minimal-quiet"] .m-ce-u path { animation: m-draw var(--m-dur-move) var(--m-ease-move) both; }
+[data-motion-theme="minimal-quiet"] .m-celebrate.on .m-ce-ring { animation: m-ce-ring var(--m-dur-move) var(--m-ease-move) forwards; }
+[data-motion-theme="minimal-dot"] .m-ce-dots { display: block; }
+@keyframes m-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes m-ce-ring {
+  0% { opacity: 0; transform: scale(0.6); }
+  30% { opacity: 0.35; }
+  100% { opacity: 0; transform: scale(1.6); }
+}
+[data-reduce-motion="true"] .m-celebrate-bits { display: none; }
+[data-reduce-motion="true"] .m-celebrate-quiet { display: grid; }
+[data-reduce-motion="true"] .m-ce-u { display: block; }
+[data-reduce-motion="true"] .m-ce-dots { display: none; }
+[data-reduce-motion="true"] .m-ce-u path { stroke-dashoffset: 0; }
+[data-reduce-motion="true"] .m-celebrate p { animation: none; opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-reduce-motion="false"]) .m-celebrate-bits { display: none; }
+  html:not([data-reduce-motion="false"]) .m-celebrate-quiet,
+  html:not([data-reduce-motion="false"]) .m-ce-u { display: grid; }
+  html:not([data-reduce-motion="false"]) .m-ce-u path,
+  html:not([data-reduce-motion="false"]) .m-ce-ring,
+  html:not([data-reduce-motion="false"]) .m-celebrate p { animation: none; }
+  html:not([data-reduce-motion="false"]) .m-celebrate p { opacity: 1; transform: none; }
+}

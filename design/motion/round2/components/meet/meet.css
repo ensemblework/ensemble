@@ -1,0 +1,27 @@
+/* 04 · First meeting (onboarding) */
+.mt { position: absolute; inset: 0; background: radial-gradient(120% 90% at 50% 110%, color-mix(in srgb, var(--u-agent) 16%, transparent), transparent 60%), var(--bg); }
+.mt-svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.mt-mark { transition: transform 1.1s var(--spring-gentle); }
+.mt.shift .mt-mark { transform: translateX(-360px); }
+.mt-tile { opacity: 0; transform: scale(.86); transform-origin: 512px 512px; }
+.mt.tile .mt-tile { opacity: 1; transform: none; transition: transform 1s var(--spring-soft), opacity .5s; }
+.mt-arm { fill: none; stroke-linecap: round; }
+.mt-arm.o { stroke: url(#mt-o); } .mt-arm.i { stroke: var(--u-you); }
+.mt-dot.v { fill: var(--v-hi2); filter: drop-shadow(0 0 18px #7c6af7); } .mt-dot.p { fill: var(--u-you); filter: drop-shadow(0 0 14px rgba(243,238,230,.5)); }
+.mt-trails path { fill: none; stroke-linecap: round; }
+.mt-lbl { font: 500 30px var(--font-mono); text-anchor: middle; fill: var(--muted); letter-spacing: .02em; }
+.mt-flash { fill: none; stroke: var(--v-hi2); stroke-width: 4; opacity: 0; transform-origin: 512px 681px; }
+.mt.met .mt-flash { animation: mt-flash .9s var(--ease) forwards; }
+@keyframes mt-flash { from { opacity: .9; transform: scale(.3); } to { opacity: 0; transform: scale(3.2); } }
+.mt-word { position: absolute; left: 57%; top: 50%; transform: translateY(-50%); pointer-events: none; }
+.mt-name { font: 500 76px/1 var(--font-serif); letter-spacing: -.03em; display: flex; font-variation-settings: "opsz" 120; }
+.mt-name span { display: inline-block; opacity: 0; transform: translateY(.35em); }
+.mt.word .mt-name span { opacity: 1; transform: none; transition: transform .9s var(--spring-soft), opacity .4s; }
+.mt.word .mt-name span:nth-child(2) { transition-delay: .05s; } .mt.word .mt-name span:nth-child(3) { transition-delay: .1s; }
+.mt.word .mt-name span:nth-child(4) { transition-delay: .15s; } .mt.word .mt-name span:nth-child(5) { transition-delay: .2s; } .mt.word .mt-name span:nth-child(6) { transition-delay: .25s; } .mt.word .mt-name span:nth-child(7) { transition-delay: .3s; } .mt.word .mt-name span:nth-child(8) { transition-delay: .35s; }
+.mt-tag { margin-top: 12px; color: var(--muted); font-size: 16px; opacity: 0; transform: translateY(8px); }
+.mt.word .mt-tag { opacity: 1; transform: none; transition: all .8s .45s var(--spring-gentle); }
+.mt-cta { margin-top: 18px; font: 600 13px var(--font-sans); color: #fff; background: var(--u-agent); border: 0; border-radius: 10px; padding: 9px 16px;
+  opacity: 0; transform: translateY(8px) scale(.96); box-shadow: 0 8px 24px -8px var(--u-agent); }
+.mt.word .mt-cta { opacity: 1; transform: none; transition: all .8s .7s var(--spring-soft); }
+.mt.reduced * { transition: none !important; animation: none !important; }

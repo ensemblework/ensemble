@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Quick capture</title>
+    <link rel="stylesheet" href="app.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <img src="ensemble-lockup-16-dark.svg" width="90" height="16" alt="Ensemble" />
+        <h1>Quick capture</h1>
+        <span id="chord" class="kbd"></span>
+      </header>
+      <p id="lead">Type a reminder. A name and a day become a person and a due date.</p>
+      <form id="token-form" hidden>
+        <label for="api">Hub address</label>
+        <input id="api" name="api" autocomplete="off" spellcheck="false" value="http://127.0.0.1:4000" />
+        <label for="token">Personal token</label>
+        <input id="token" name="token" autocomplete="off" spellcheck="false" placeholder="ens_…" />
+        <div class="row">
+          <button type="submit">Save token</button>
+        </div>
+      </form>
+      <form id="capture-form" hidden>
+        <textarea id="text" rows="4" placeholder="Remind Priya about the contract Friday"></textarea>
+        <div class="row">
+          <button type="button" id="cancel">Cancel</button>
+          <button type="submit">Save task</button>
+        </div>
+      </form>
+      <p id="status" role="status"></p>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>

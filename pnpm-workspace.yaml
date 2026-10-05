@@ -1,0 +1,19 @@
+packages:
+  - apps/hub-api
+  - apps/hub-web
+  - apps/landing
+  - apps/agent-runtime
+  - apps/context-bridge
+  - apps/desktop
+  - packages/*
+
+allowBuilds:
+  prisma: true
+  "@prisma/client": true
+  "@prisma/engines": true
+  esbuild: true
+  sharp: true
+  core-js: false
+
+minimumReleaseAgeExclude:
+  - '@modelcontextprotocol/sdk@1.31.0'

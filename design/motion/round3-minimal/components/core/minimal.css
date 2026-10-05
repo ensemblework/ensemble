@@ -1,0 +1,42 @@
+/* Minimal primitives shared by every slot. Everything reads the --m-* suite tokens (suite.css). */
+.qu { display: block; overflow: visible; }
+.qu path { fill: none; stroke: var(--hair); stroke-width: var(--m-stroke); stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.qu path.a, .qu .seg { stroke: var(--accent); }
+.dm { display: inline-flex; gap: 5px; align-items: center; vertical-align: middle; }
+.dm i, .dot { display: block; width: 6px; height: 6px; border-radius: 50%; background: var(--you); flex: none; }
+.dm i.ag, .dot.ag { background: var(--agent); }
+.dot.ring { background: transparent; box-shadow: inset 0 0 0 1px var(--hair); }
+.hl { height: 1px; background: var(--hair); }
+.m-mono { font: 500 11px/1.4 var(--font-mono); color: var(--faint); letter-spacing: .01em; }
+.m-cap { font: 500 10px/1 var(--font-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--faint); }
+.m-swap { display: inline-block; transition: opacity var(--m-dur-ui) var(--m-ease-move), transform var(--m-dur-ui) var(--m-ease-move); }
+.m-swap.out { opacity: 0; transform: translateY(calc(var(--m-amp) * -.5)); }
+.m-swap.in0 { opacity: 0; transform: translateY(calc(var(--m-amp) * .5)); transition: none; }
+.m-row { display: flex; align-items: center; gap: 10px; }
+.m-card { background: var(--raise); border: 1px solid var(--line); border-radius: 12px; }
+@keyframes m-breathe { 0%, 100% { opacity: .38; } 50% { opacity: 1; } }
+@keyframes m-breathe-s { 0%, 100% { transform: scale(.82); opacity: .5; } 50% { transform: scale(1); opacity: 1; } }
+@keyframes m-blink { 0%, 45% { opacity: 1; } 55%, 100% { opacity: 0; } }
+.breathe { animation: m-breathe var(--m-dur-loop) var(--m-ease-loop) infinite; }
+.breathe-s { animation: m-breathe-s var(--m-dur-loop) var(--m-ease-loop) infinite; }
+/* scripted demo pointer (gallery only) */
+.u2-pointer { position: absolute; left: 0; top: 0; width: 20px; height: 20px; z-index: 50; pointer-events: none; opacity: 0; transition: opacity .3s; will-change: transform; }
+.u2-pointer.on { opacity: 1; }
+.u2-pointer svg { width: 20px; height: 20px; filter: drop-shadow(0 1px 2px rgba(0,0,0,.35)); transition: transform .16s var(--m-ease-move); transform-origin: 4px 3px; }
+.u2-pointer.down svg { transform: scale(.9); }
+.u2-pointer .ring { position: absolute; left: -8px; top: -8px; width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--hair); opacity: 0; }
+.u2-pointer.click .ring { animation: m-click .6s var(--m-ease-move) forwards; }
+@keyframes m-click { 0% { opacity: .8; transform: scale(.4); } 100% { opacity: 0; transform: scale(1.1); } }
+/* shared checkbox (controls + celebrate) */
+.ct-cb { display: inline-flex; gap: 9px; align-items: center; font-size: 13px; color: var(--ink); cursor: pointer; }
+.ct-cb button { width: 16px; height: 16px; border-radius: 4px; border: 1px solid var(--hair); background: none; padding: 0; display: grid; place-items: center; transition: border-color var(--m-dur-ui); }
+.ct-cb svg { width: 16px; height: 16px; overflow: visible; }
+.ct-cb svg path { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 1; transition: stroke-dashoffset var(--m-dur-ui) var(--m-ease-move); }
+.ct-cb button[aria-checked="true"] { border-color: var(--accent); }
+.ct-cb button[aria-checked="true"] svg path { stroke-dashoffset: 0; }
+.ct-cb button[aria-checked="true"] + span { color: var(--faint); }
+.ct-cb span { transition: color var(--m-dur-ui); }
+.dotf .ct-cb button { border-radius: 50%; }
+.dotf .ct-cb b { width: 6px; height: 6px; border-radius: 50%; background: var(--agent); transform: scale(0); transition: transform var(--m-dur-ui) var(--m-ease-move); }
+.dotf .ct-cb button[aria-checked="true"] { border-color: var(--hair); }
+.dotf .ct-cb button[aria-checked="true"] b { transform: scale(1); }

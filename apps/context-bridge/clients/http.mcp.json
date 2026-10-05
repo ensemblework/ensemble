@@ -1,0 +1,17 @@
+{
+  "note": "Start the bridge first with `pnpm bridge:http`. It listens on 127.0.0.1:4010 and keeps the Hub token in that process.",
+  "vscode": {
+    "servers": {
+      "ensemble": {
+        "type": "http",
+        "url": "http://127.0.0.1:4010/mcp"
+      }
+    }
+  },
+  "mcpServers": {
+    "ensemble": {
+      "type": "http",
+      "url": "http://127.0.0.1:4010/mcp"
+    }
+  }
+}

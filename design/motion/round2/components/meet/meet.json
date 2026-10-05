@@ -1,0 +1,9 @@
+{
+  "about": "First meeting. Spiral for 2.9 s: q = easeInOutSine(t/2.9); theta = PI - (PI/2 + 2PI)*q; r = 55 + 1150*(1-q)^2.4; centre (512,681). Agent at theta, you at theta+PI. They meet at (512,736) and (512,626), then the four half-arms draw (1.25 s, easeInOutCubic) while stroke width grows 26→84 / 22→64.",
+  "arms": {
+    "agentLeft": "M512 736 A196 196 0 0 1 316 540 V300",
+    "agentRight": "M512 736 A196 196 0 0 0 708 540 V300",
+    "youLeft": "M512 626 A86 86 0 0 1 426 540 V300",
+    "youRight": "M512 626 A86 86 0 0 0 598 540 V300"
+  }
+}

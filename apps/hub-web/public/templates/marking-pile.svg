@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 400" width="640" height="400">
+  <title>Marking pile</title>
+  <rect width="640" height="400" fill="#16181e"/>
+  <clipPath id="c0"><rect x="16.0" y="16.0" width="300.0" height="368.0" rx="10"/></clipPath>
+  <rect x="16.0" y="16.0" width="300.0" height="368.0" rx="10" fill="#23262f"/>
+  <text x="28.0" y="200.0" fill="#f2efe8" font-family="ui-sans-serif, system-ui, sans-serif" font-size="34.0" font-weight="600" dominant-baseline="middle" clip-path="url(#c0)"><title>Focus</title><tspan x="28.0" dy="0.0">Focus</tspan></text>
+  <clipPath id="c1"><rect x="324.0" y="16.0" width="300.0" height="180.0" rx="10"/></clipPath>
+  <rect x="324.0" y="16.0" width="300.0" height="180.0" rx="10" fill="#23262f"/>
+  <text x="336.0" y="106.0" fill="#f2efe8" font-family="ui-sans-serif, system-ui, sans-serif" font-size="34.0" font-weight="600" dominant-baseline="middle" clip-path="url(#c1)"><title>Reminders</title><tspan x="336.0" dy="0.0">Reminders</tspan></text>
+  <clipPath id="c2"><rect x="324.0" y="204.0" width="300.0" height="180.0" rx="10"/></clipPath>
+  <rect x="324.0" y="204.0" width="300.0" height="180.0" rx="10" fill="#23262f"/>
+  <text x="336.0" y="294.0" fill="#f2efe8" font-family="ui-sans-serif, system-ui, sans-serif" font-size="34.0" font-weight="600" dominant-baseline="middle" clip-path="url(#c2)"><title>Deliverables</title><tspan x="336.0" dy="0.0">Deliverables</tspan></text>
+</svg>

@@ -1,0 +1,3 @@
+JetBrains Mono (jetbrains-mono.woff2) is a subset of JetBrains Mono, Copyright 2020 The JetBrains Mono Project Authors,
+licensed under the SIL Open Font License 1.1: https://openfontlicense.org / https://github.com/JetBrains/JetBrainsMono/blob/master/OFL.txt
+Figtree and Fraunces are also OFL 1.1 (same copies as rounds 1-3). Gallery use only; the app ships its own fonts.

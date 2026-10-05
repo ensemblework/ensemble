@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" width="240" height="240" role="img" aria-label="Ensemble is starting">
+  <title>Ensemble boot splash: the two voices draw themselves into the U, then breathe</title>
+  <style>
+    .agent { stroke: #7c6af7; stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw 1s cubic-bezier(.65,0,.35,1) .1s forwards; }
+    .you   { stroke: #f3eee6; stroke-dasharray: 1; stroke-dashoffset: 1; animation: draw 1s cubic-bezier(.65,0,.35,1) .45s forwards; }
+    .tile  { opacity: 0; transform-origin: 120px 120px; animation: tile .6s cubic-bezier(.2,.8,.2,1) forwards; }
+    .mark  { transform-origin: 120px 120px; animation: breathe 2.4s cubic-bezier(.65,0,.35,1) 1.6s infinite; }
+    .bead  { opacity: 0; animation: bead 1s cubic-bezier(.65,0,.35,1) .1s forwards; offset-path: path("M76 64V132A44 44 0 0 0 164 132V64"); }
+    @keyframes draw { to { stroke-dashoffset: 0; } }
+    @keyframes tile { from { opacity: 0; transform: scale(.92); } to { opacity: 1; transform: none; } }
+    @keyframes breathe { 50% { transform: scale(.965); } }
+    @keyframes bead { 0% { offset-distance: 0%; opacity: 1; } 90% { opacity: 1; } 100% { offset-distance: 100%; opacity: 0; } }
+    @media (prefers-reduced-motion: reduce) {
+      .agent, .you { animation: none; stroke-dashoffset: 0; } .tile { animation: none; opacity: 1; } .mark, .bead { animation: none; } .bead { display: none; }
+    }
+  </style>
+  <defs><linearGradient id="t" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2b261f"/><stop offset="1" stop-color="#141210"/></linearGradient>
+    <radialGradient id="w" cx=".18" cy=".05" r=".9"><stop offset="0" stop-color="#7c6af7" stop-opacity=".34"/><stop offset="1" stop-color="#7c6af7" stop-opacity="0"/></radialGradient></defs>
+  <g class="tile"><rect x="20" y="20" width="200" height="200" rx="45" fill="url(#t)"/><rect x="20" y="20" width="200" height="200" rx="45" fill="url(#w)"/></g>
+  <g class="mark" fill="none" stroke-linecap="round">
+    <path class="agent" pathLength="1" stroke-width="20" d="M76 64V132A44 44 0 0 0 164 132V64"/>
+    <path class="you" pathLength="1" stroke-width="15" d="M100.8 64V132A19.2 19.2 0 0 0 139.2 132V64"/>
+  </g>
+  <circle class="bead" r="6" fill="#b4a9ff"/>
+</svg>

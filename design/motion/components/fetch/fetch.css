@@ -1,0 +1,17 @@
+/* Fetch now: the refresh icon's two arrows become two strands that reel around at different
+   speeds, overlapping (in sync) every few turns; on done they close into a ring and a count pops. */
+.u-fetch svg { width: 15px; height: 15px; overflow: visible; }
+.u-fetch .a, .u-fetch .b { fill: none; stroke-linecap: round; stroke-width: 2; transform-origin: 8px 8px; transition: stroke-dasharray .4s var(--ease-weave); }
+.u-fetch .a { stroke: var(--u-agent); stroke-dasharray: 14 40; }
+.u-fetch .b { stroke: var(--u-you); stroke-dasharray: 9 40; stroke-dashoffset: -20; }
+.u-fetch.is-busy .a { animation: u-reel 1.05s linear infinite; }
+.u-fetch.is-busy .b { animation: u-reel 1.6s linear infinite; }
+@keyframes u-reel { to { transform: rotate(360deg); } }
+.u-fetch.is-done .a { stroke-dasharray: 40 0; stroke: var(--ok); }
+.u-fetch.is-done .b { stroke-dasharray: 0 40; }
+.u-count { display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 99px; font-size: 11px; font-weight: 600;
+  background: var(--accent-soft); color: var(--ink); animation: u-pop .45s var(--ease-snap) both; }
+@keyframes u-pop { from { transform: scale(.4); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .u-fetch.is-busy .a, .u-fetch.is-busy .b { animation: u-dim 1.6s ease-in-out infinite; } .u-count { animation: none; } }
+[data-reduce-motion="true"] .u-fetch.is-busy .a, [data-reduce-motion="true"] .u-fetch.is-busy .b { animation: u-dim 1.6s ease-in-out infinite; }
+@keyframes u-dim { 50% { opacity: .35; } }

@@ -1,0 +1,17 @@
+.fe { position: absolute; inset: 0; padding: 18px 22px; display: flex; flex-direction: column; gap: 12px; }
+.fe-top b { font: 500 18px var(--font-serif); }
+.fe-btn { margin-left: auto; font: 500 12.5px var(--font-sans); color: var(--ink); background: var(--soft); border: 1px solid var(--line); border-radius: 8px; padding: 6px 11px 6px 9px; display: inline-flex; gap: 8px; align-items: center; }
+.fe-ic { width: 16px; height: 16px; overflow: visible; }
+.fe-ic path { fill: none; stroke-width: 1.5; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.fe-ic .o path { stroke: var(--muted); } .fe-ic .i path { stroke: var(--accent); }
+.fe-ic g { transform-origin: 10px 10px; }
+.fe-dd { position: relative; width: 16px; height: 16px; }
+.fe-dd .dot { position: absolute; top: 5px; width: 5px; height: 5px; } .fe-dd .dot:first-child { left: 1.5px; opacity: .7; } .fe-dd .dot.ag { left: 9.5px; }
+.fe-dd { transform-origin: 8px 8px; }
+.fe-list { display: flex; flex-direction: column; }
+.fe-r { display: flex; gap: 10px; align-items: center; height: 36px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+.fe-r b { font-weight: 500; color: var(--ink); } .fe-r .m-mono { margin-left: auto; }
+.fe-r.new { opacity: 0; transform: translateY(calc(var(--m-amp) * -1)); transition: opacity var(--m-dur-ui) var(--m-ease-enter), transform var(--m-dur-move) var(--m-ease-move); }
+.fe-r.new.on { opacity: 1; transform: none; }
+.fe-r .nd { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); flex: none; }
+.fe-r:not(.new) .nd { background: transparent; }

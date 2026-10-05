@@ -1,0 +1,24 @@
+<!-- search.query: markup contract. The app sets data-state; the theme comes from the nearest [data-motion-theme]. -->
+<div class="sq" data-motion-slot="search.query" data-state="typing">
+  <label class="sq-field">
+    <svg class="sq-ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.4 10.4L13.5 13.5"/></svg>
+    <input class="sq-input" type="search" placeholder="Ask Ensemble or search…" aria-label="Ask Ensemble or search" autocomplete="off">
+    <span class="sq-pip" aria-hidden="true"></span>
+    <span class="sq-trk" aria-hidden="true"><i></i></span>
+    <kbd class="sq-kbd">⌘K</kbd>
+  </label>
+  <div class="sq-meta" aria-live="polite"><span data-copy="status"></span></div>
+  <ul class="sq-results" role="listbox" aria-label="Results">
+    <li class="sq-item" role="option" aria-selected="true" style="--i:0">…</li>
+    <!-- one .sq-item per result, style="--i:N" (N = index; the cascade caps at 7) -->
+  </ul>
+  <div class="sq-empty" role="status">
+    <span class="sq-empty-mark" aria-hidden="true"><svg width="40" height="28" viewBox="0 0 40 28">
+      <g class="em-x"><path d="M14 4V14A6 6 0 0 0 26 14V4"/><path class="thread" d="M18 4V12C18 16 21 17 22 21C22.6 23.5 21.6 25.5 20.5 26.5"/></g>
+      <g class="em-q"><path d="M14 4V14A6 6 0 0 0 26 14V4"/><path class="a" d="M18 4V14A2 2 0 0 0 22 14V4"/></g>
+      <g class="em-d"><circle cx="14" cy="14" r="2.6"/><circle class="a" cx="26" cy="14" r="2.6"/></g></svg></span>
+    <p data-copy="empty-title">No matches for “quarterly OKRs”</p>
+    <p data-copy="empty-hint">Try fewer words, or ask Ensemble to look across Gmail, Slack and your docs.</p>
+    <div class="sq-empty-actions" data-copy="empty-actions"><button type="button">Search all sources</button><button type="button">Ask Ensemble</button></div>
+  </div>
+</div>

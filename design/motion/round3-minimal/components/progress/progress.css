@@ -1,0 +1,14 @@
+.pp { position: absolute; inset: 0; padding: 20px; display: grid; }
+.pp-app { display: grid; grid-template-columns: 84px 1fr; overflow: hidden; }
+.pp-side { border-right: 1px solid var(--line); padding: 14px 10px; display: flex; flex-direction: column; gap: 4px; }
+.pp-side b { font-weight: 500; font-size: 12px; color: var(--faint); padding: 4px 8px; border-radius: 6px; transition: color var(--m-dur-ui), background var(--m-dur-ui); }
+.pp-side b.on { color: var(--ink); background: var(--soft); }
+.pp-main { position: relative; padding: 16px 18px; }
+.pp-bar { position: absolute; left: 0; right: 0; top: 0; height: 1.5px; background: var(--accent); transform-origin: left; transform: scaleX(0); }
+.pp-dot { position: absolute; left: 6px; top: 5px; width: 5px; height: 5px; border-radius: 50%; background: var(--agent); opacity: 0; }
+.pp-c > * { opacity: 0; transform: translateY(var(--m-amp)); transition: opacity var(--m-dur-ui) var(--m-ease-enter), transform var(--m-dur-move) var(--m-ease-move); }
+.pp-c.on > * { opacity: 1; transform: none; }
+.pp-c.on > :nth-child(2) { transition-delay: 70ms; } .pp-c.on > :nth-child(3) { transition-delay: 140ms; } .pp-c.on > :nth-child(4) { transition-delay: 210ms; }
+.pp-c h4 { margin: 0 0 12px; font: 500 18px var(--font-serif); color: var(--ink); }
+.pp-r { height: 34px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 8px; background: var(--soft); }
+.pp-r.s { width: 64%; }

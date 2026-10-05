@@ -1,0 +1,17 @@
+/* Approve: "tie the knot". The label gives way, a check is drawn in one stroke,
+   and six sparks fly out (a nod to the working glyph's spark). */
+.u-approve { position: relative; overflow: visible; }
+.u-approve .lbl { transition: opacity .15s, transform .2s; }
+.u-approve .tick { position: absolute; left: 50%; top: 50%; width: 16px; height: 16px; margin: -8px; overflow: visible; }
+.u-approve .tick path { fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 1; }
+.u-approve .spark { position: absolute; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px; border-radius: 50%; background: var(--accent-hi); opacity: 0; }
+.u-approve.is-done { background: var(--ok) !important; color: #0f1a14 !important; }
+.u-approve.is-done .lbl { opacity: 0; transform: scale(.8); }
+.u-approve.is-done .tick path { animation: u-tick .38s var(--ease-weave) .08s forwards; }
+.u-approve.is-done .spark { animation: u-spark .6s var(--ease) .2s both; }
+@keyframes u-tick { to { stroke-dashoffset: 0; } }
+@keyframes u-spark { 0% { opacity: 1; transform: rotate(var(--a)) translateY(0) scale(1); } 100% { opacity: 0; transform: rotate(var(--a)) translateY(-22px) scale(.4); } }
+.u-reject.is-done ~ * , .u-struck { text-decoration: line-through; text-decoration-color: var(--danger); }
+@media (prefers-reduced-motion: reduce) { .u-approve.is-done .tick path { animation: none; stroke-dashoffset: 0; } .u-approve.is-done .spark { animation: none; } }
+[data-reduce-motion="true"] .u-approve.is-done .tick path { animation: none; stroke-dashoffset: 0; }
+[data-reduce-motion="true"] .u-approve.is-done .spark { animation: none; }

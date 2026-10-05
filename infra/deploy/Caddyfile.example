@@ -1,0 +1,63 @@
+# Always-on VM. This host is only the API: api.<domain>.
+# The website stays on Vercel. hub-api listens on 127.0.0.1:4000
+# (HUB_API_PORT in apps/hub-api/src/config.ts). Do not publish that port.
+#
+# Caddy only reverse-proxies. Do not add Access-Control-* headers.
+# hub-api sets those itself, including on hijacked SSE and streaming
+# routes. A second copy from Caddy breaks credentialed requests.
+#
+# For reading only. setup.sh installs infra/deploy/Caddyfile and puts the host
+# from HUB_API_PUBLIC_URL in place of api.ensemblework.com. A hostname as the site
+# address turns on automatic HTTPS. Caddy obtains a certificate and redirects
+# HTTP to HTTPS. It listens on 80 and 443.
+
+api.example.com {
+	# Browser live stream, and the device stream (remote tasks).
+	# Exact paths, so /api/events/ticket stays a normal short request.
+	@streams path /api/events /api/devices/self/events
+
+	handle @streams {
+		# Nothing on these routes is compressed or buffered.
+		# Do not add an encode directive here. flush_interval -1
+		# sends each write from hub-api straight to the client.
+		# hub-api hijacks the socket, so its own compress plugin
+		# does not wrap these frames either.
+		reverse_proxy 127.0.0.1:4000 {
+			flush_interval -1
+			# A stream left open for a day is closed. The client
+			# reconnects. Closing the stream does not drop the task.
+			stream_timeout 24h
+			# A browser may send Accept-Encoding: gzip. Drop it.
+			# compression off only stops Caddy from adding that header.
+			header_up -Accept-Encoding
+			# Pass the public host through. reverse_proxy already sets
+			# X-Forwarded-Proto. Do not add CORS.
+			header_up Host {http.request.host}
+			transport http {
+				# Do not ask hub-api for a gzip body.
+				compression off
+				# Response headers come back at once. The body stays open.
+				# hub-api writes a ping about every 25s. 120s is the gap
+				# allowed between reads, not the life of the stream.
+				response_header_timeout 30s
+				read_timeout 120s
+			}
+		}
+	}
+
+	handle {
+		# Every other request on this host, including a model call
+		# and the hijacked assistant, comment, and ensemble streams.
+		# flush_interval -1 so those bodies are not buffered either.
+		# Allow about 120 seconds for hub-api to answer.
+		reverse_proxy 127.0.0.1:4000 {
+			flush_interval -1
+			header_up Host {http.request.host}
+			transport http {
+				response_header_timeout 120s
+				read_timeout 120s
+				write_timeout 120s
+			}
+		}
+	}
+}

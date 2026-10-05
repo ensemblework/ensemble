@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "shell",
+  "description": "Local offline page only. The hosted Ensemble origin is not listed, so the site cannot call commands or use shell, filesystem, or opener APIs. The bundled page may open the system folder picker; it returns a path the person chose, and hub-api still validates it.",
+  "windows": ["main"],
+  "permissions": ["shell-commands", "dialog:allow-open"]
+}

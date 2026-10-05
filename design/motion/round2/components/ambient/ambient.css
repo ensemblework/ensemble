@@ -1,0 +1,34 @@
+/* 13 · Ambient breathing logo + theme morph */
+.am { position: absolute; inset: 0; display: grid; grid-template-columns: 150px 1fr; background: var(--bg); color: var(--ink); }
+.am.no-tr, .am.no-tr * { transition: none !important; }
+.am-side { background: var(--sidebar); border-right: 1px solid var(--line); padding: 16px 12px; display: flex; flex-direction: column; gap: 14px; transition: background .4s; }
+.am-brand { display: flex; align-items: center; gap: 9px; font-size: 14px; }
+.am-logo { width: 26px; height: 28px; overflow: visible; }
+.am-logo path { fill: none; stroke-linecap: round; }
+.am-o path { stroke: var(--u-agent); stroke-width: 84; } .am-i path { stroke: var(--u-you); stroke-width: 64; }
+.am-o, .am-i { transform-origin: 512px 520px; transform-box: view-box; }
+.am-o { animation: am-in 6s var(--ease-weave) infinite; } .am-i { animation: am-out 6s var(--ease-weave) infinite; }
+@keyframes am-in { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05) translateY(-6px); } }
+@keyframes am-out { 0%, 100% { transform: scale(1); } 50% { transform: scale(.94) translateY(8px); } }
+.am-bead { fill: #fff; }
+.am-side nav { display: grid; gap: 2px; }
+.am-side nav span { font-size: 12.5px; color: var(--muted); padding: 6px 8px; border-radius: 7px; }
+.am-side nav span.on { background: var(--hover); color: var(--ink); }
+.am-status { margin-top: auto; display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--faint); }
+.am-status i { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); animation: am-dot 6s var(--ease-weave) infinite; }
+@keyframes am-dot { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 35%, transparent); } 50% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--ok) 0%, transparent); } }
+.am-main { display: grid; place-content: center; justify-items: center; gap: 14px; }
+.am-toggle { all: unset; cursor: pointer; width: 84px; height: 84px; border-radius: 26px; display: grid; place-items: center; background: var(--raised); border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow-lift); transition: transform .5s var(--spring-snappy), background .4s; }
+.am-toggle:active, .am-toggle.press { transform: scale(.92); }
+.am-toggle svg { width: 44px; height: 44px; overflow: visible; }
+.am-body { fill: none; stroke: var(--ink); stroke-width: 1.7; stroke-linejoin: round; }
+.am-rays line { stroke: var(--u-agent); stroke-width: 1.8; stroke-linecap: round; }
+.am-rays { transform-origin: 12px 12px; }
+.am-stars path { fill: var(--v-hi2); transform-box: fill-box; transform-origin: center; }
+.am-cap { text-align: center; } .am-cap b { display: block; font: 500 18px var(--font-serif); } .am-cap span { font-size: 11.5px; color: var(--faint); }
+.am-wash { position: absolute; inset: 0; pointer-events: none; opacity: 0; }
+.am-wash.go { opacity: 1; transition: clip-path .75s var(--ease-weave); }
+@media (prefers-reduced-motion: reduce) { .am-o, .am-i, .am-status i { animation: none; } .am-bead { display: none; } }
+[data-reduce-motion="true"] .am-o, [data-reduce-motion="true"] .am-i, [data-reduce-motion="true"] .am-status i { animation: none; }
+[data-reduce-motion="true"] .am-bead { display: none; }

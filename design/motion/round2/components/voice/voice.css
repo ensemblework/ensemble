@@ -1,0 +1,26 @@
+/* 12 · Voice: two waves lock into phase */
+.vo { position: absolute; inset: 0; background: radial-gradient(70% 60% at 50% 48%, color-mix(in srgb, var(--u-agent) calc(var(--lock, 0) * 18%), transparent), transparent 70%), var(--bg); }
+.vo-top { display: flex; align-items: center; gap: 12px; padding: 16px 18px; }
+.vo-mic { width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent-hi); position: relative; }
+.vo-mic::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; border: 1.5px solid var(--u-agent); opacity: calc(var(--amp, 0) * 1.2); transform: scale(calc(1 + var(--amp, 0) * .35)); }
+.vo-mic svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.vo-chips { position: relative; display: flex; gap: 2px; padding: 3px; border-radius: 999px; background: color-mix(in srgb, var(--ink) 5%, transparent); }
+.vo-chips span { position: relative; z-index: 1; font: 550 12px var(--font-sans); color: var(--faint); padding: 5px 11px; border-radius: 999px; transition: color .35s; }
+.vo-chips span.on { color: var(--ink); }
+.vo-pill { position: absolute; top: 3px; bottom: 3px; left: 0; width: 10px; border-radius: 999px; background: var(--raised); border: 1px solid var(--line-strong);
+  transition: transform .7s var(--spring-soft), width .7s var(--spring-soft), background .4s; }
+.vo-pill.ensemble { background: color-mix(in srgb, var(--u-agent) 30%, var(--raised)); border-color: color-mix(in srgb, var(--u-agent) 60%, transparent); }
+.vo-svg { position: absolute; left: 0; right: 0; top: 70px; height: 190px; width: 100%; overflow: visible; }
+.vo-svg path { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.vo-you { stroke: var(--u-you); stroke-width: 2.4; opacity: .9; }
+.vo-ag { stroke: var(--u-agent); stroke-width: 2.6; }
+.vo-glow { stroke: var(--v-hi); stroke-width: 10; filter: url(#vo-blur); opacity: 0; }
+.vo-lines { position: absolute; left: 0; right: 0; bottom: 38px; text-align: center; font: 500 17px var(--font-serif); letter-spacing: -.005em; min-height: 26px; }
+.vo-l { min-height: 24px; }
+.vo-l span { display: inline-block; opacity: 0; transform: translateY(6px); filter: blur(3px); animation: vo-w .5s var(--ease) forwards; margin: 0 .14em; }
+@keyframes vo-w { to { opacity: 1; transform: none; filter: none; } }
+.vo-l.you { color: var(--ink); } .vo-l.ag { color: var(--accent-hi); font-style: italic; }
+.vo-l.fade { opacity: .35; transition: opacity .6s; }
+.vo-legend { position: absolute; right: 16px; bottom: 12px; display: flex; gap: 12px; font: 500 10.5px var(--font-mono); color: var(--faint); }
+.vo-legend span::before { content: ""; display: inline-block; width: 14px; height: 2px; border-radius: 2px; vertical-align: middle; margin-right: 6px; }
+.vo-legend .you::before { background: var(--u-you); } .vo-legend .ag::before { background: var(--u-agent); }

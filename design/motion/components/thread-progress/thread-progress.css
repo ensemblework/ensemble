@@ -1,0 +1,23 @@
+/* Thread progress: route/page loading at the top of <main>. Two strands (agent + you) braid as they
+   advance; on done they pull straight into one line and fade. Set --p (0..1) from JS. */
+.u-progress { position: absolute; left: 0; right: 0; top: 0; height: 8px; pointer-events: none; z-index: 5; }
+.u-progress-fill { position: absolute; left: 0; top: 0; bottom: 0; width: calc(var(--p, 0) * 100%);
+  transition: width .5s var(--ease), opacity .35s ease .25s; overflow: hidden; }
+.u-progress-fill::before, .u-progress-fill::after { content: ""; position: absolute; inset: 0; background-repeat: repeat-x; background-position: 0 0;
+  animation: u-braid-flow .9s linear infinite; transition: transform .35s var(--ease-weave); }
+.u-progress-fill::before { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20width%3D%2724%27%20height%3D%278%27%3E%3Cpath%20d%3D%27M0%204%20C6%201.4%206%201.4%2012%204%20S18%206.6%2024%204%27%20fill%3D%27none%27%20stroke%3D%27%237c6af7%27%20stroke-width%3D%271.6%27%20stroke-linecap%3D%27round%27/%3E%3C/svg%3E"); }
+.u-progress-fill::after  { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20width%3D%2724%27%20height%3D%278%27%3E%3Cpath%20d%3D%27M0%204%20C6%206.6%206%206.6%2012%204%20S18%201.4%2024%204%27%20fill%3D%27none%27%20stroke%3D%27%23f3eee6%27%20stroke-width%3D%271.6%27%20stroke-linecap%3D%27round%27/%3E%3C/svg%3E"); opacity: .75; animation-duration: 1.35s; }
+[data-theme="light"] .u-progress-fill::before { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20width%3D%2724%27%20height%3D%278%27%3E%3Cpath%20d%3D%27M0%204%20C6%201.4%206%201.4%2012%204%20S18%206.6%2024%204%27%20fill%3D%27none%27%20stroke%3D%27%235346d6%27%20stroke-width%3D%271.6%27%20stroke-linecap%3D%27round%27/%3E%3C/svg%3E"); }
+[data-theme="light"] .u-progress-fill::after  { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20width%3D%2724%27%20height%3D%278%27%3E%3Cpath%20d%3D%27M0%204%20C6%206.6%206%206.6%2012%204%20S18%201.4%2024%204%27%20fill%3D%27none%27%20stroke%3D%27%231c1915%27%20stroke-width%3D%271.6%27%20stroke-linecap%3D%27round%27/%3E%3C/svg%3E"); opacity: .55; }
+.u-progress-head { position: absolute; top: 1px; width: 6px; height: 6px; margin-left: -3px; border-radius: 50%; left: calc(var(--p, 0) * 100%);
+  background: var(--accent-hi); box-shadow: 0 0 10px 2px color-mix(in srgb, var(--accent) 70%, transparent); transition: left .5s var(--ease), opacity .3s; }
+@keyframes u-braid-flow { to { background-position: 24px 0; } }
+.u-progress.is-done .u-progress-fill::before, .u-progress.is-done .u-progress-fill::after { transform: scaleY(.12); }
+.u-progress.is-done .u-progress-fill { opacity: 0; }
+.u-progress.is-done .u-progress-head { opacity: 0; }
+.u-progress.is-idle { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .u-progress-fill::before, .u-progress-fill::after { animation: none; }
+  .u-progress-fill, .u-progress-head { transition-duration: .01s; }
+}
+[data-reduce-motion="true"] .u-progress-fill::before, [data-reduce-motion="true"] .u-progress-fill::after { animation: none; }

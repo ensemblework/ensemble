@@ -1,0 +1,38 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: ensemble-postgres
+    environment:
+      POSTGRES_USER: ensemble
+      POSTGRES_PASSWORD: ensemble
+      POSTGRES_DB: ensemble
+    # Loopback only. "5432:5432" would publish on 0.0.0.0 and [::].
+    # IPv4 only. Colima and Docker Desktop on Mac reject a [::1] publish,
+    # and that failure drops the 127.0.0.1 mapping with it. Clients use
+    # 127.0.0.1 in DATABASE_URL so a localhost → ::1 lookup cannot miss this.
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - ensemble_pg:/var/lib/postgresql/data
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ensemble -d ensemble"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: ensemble-redis
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  ensemble_pg:
+    name: ensemble_pg
+    external: true

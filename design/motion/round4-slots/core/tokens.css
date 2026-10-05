@@ -1,0 +1,18 @@
+/* Round 3 palette + type (same brand constants as rounds 1-2). Cards switch with data-theme. */
+:root, [data-theme="dark"] {
+  --bg: #141210; --panel: #1a1714; --raise: #211d19; --ink: #f3eee6; --muted: #b7ae9f; --faint: #8a8276;
+  --line: rgba(243,238,230,.09); --hair: rgba(243,238,230,.24); --soft: rgba(243,238,230,.05); --hover: rgba(243,238,230,.07);
+  --accent: #9d8fff; --accent-ink: #b4a9ff; --accent-soft: rgba(157,143,255,.16); --agent: #7c6af7; --you: #f3eee6;
+  --warn: #d6b07a; --err: #d98c82; --ok: #a3c4ab;
+  --font-sans: "Figtree", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-serif: "Fraunces", ui-serif, Georgia, serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  color-scheme: dark;
+}
+[data-theme="light"] {
+  --bg: #faf7f2; --panel: #f1ece4; --raise: #ffffff; --ink: #1c1915; --muted: #5d554a; --faint: #8b8276;
+  --line: rgba(28,25,21,.09); --hair: rgba(28,25,21,.26); --soft: rgba(28,25,21,.045); --hover: rgba(28,25,21,.06);
+  --accent: #7c6af7; --accent-ink: #5b4ad6; --accent-soft: rgba(124,106,247,.13); --agent: #7c6af7; --you: #1c1915;
+  --warn: #a87a32; --err: #b5564b; --ok: #4f8a60;
+  color-scheme: light;
+}

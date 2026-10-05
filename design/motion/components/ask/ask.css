@@ -1,0 +1,15 @@
+/* Ask bar submit: two strands (agent violet, you ink) chase each other around the pill's rim
+   while Ensemble looks through your data; answers and sources cascade in. */
+@property --u-angle { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+.u-ask { border: 1px solid var(--line-strong); border-radius: 999px; background: var(--raised); transition: border-color .2s; }
+.u-ask.is-asking { border-color: transparent;
+  background: linear-gradient(var(--raised), var(--raised)) padding-box,
+    conic-gradient(from var(--u-angle), transparent 0 8%, var(--u-agent) 22%, transparent 30% 55%, color-mix(in srgb, var(--u-you) 80%, transparent) 70%, transparent 78%) border-box;
+  animation: u-rim 1.8s linear infinite; }
+@keyframes u-rim { to { --u-angle: 360deg; } }
+.u-cascade > * { animation: u-rise .42s var(--ease) both; animation-delay: calc(var(--i, 0) * 70ms); }
+@keyframes u-rise { from { opacity: 0; transform: translateY(8px); } }
+@media (prefers-reduced-motion: reduce) { .u-ask.is-asking { animation: none; border-color: var(--accent); background: var(--raised); } .u-cascade > * { animation: u-fade .2s both; } }
+[data-reduce-motion="true"] .u-ask.is-asking { animation: none; border-color: var(--accent); background: var(--raised); }
+[data-reduce-motion="true"] .u-cascade > * { animation: u-fade .2s both; }
+@keyframes u-fade { from { opacity: 0; } }

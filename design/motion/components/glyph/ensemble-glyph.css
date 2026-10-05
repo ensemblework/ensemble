@@ -1,0 +1,19 @@
+/* Ensemble Glyph: two strands (agent + you) that morph between shapes. */
+.u-glyph { display: inline-block; flex: none; line-height: 0; vertical-align: middle; }
+.u-glyph svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.u-glyph .ug-agent { stroke: var(--u-agent); transition: stroke .4s var(--ease); }
+.u-glyph .ug-you   { stroke: var(--u-you);   transition: stroke .4s var(--ease), opacity .4s var(--ease); }
+.u-glyph.is-error .ug-agent, .u-glyph.is-error .ug-you { stroke: var(--danger); }
+.u-glyph.is-error .ug-you { opacity: .55; }
+.u-glyph.is-success .ug-agent { stroke: var(--ok); }
+.u-glyph.is-pause .ug-agent { stroke: var(--danger); }
+/* waiting on you: the agent holds still; your strand breathes (it's your turn) */
+.u-glyph.is-wait .ug-you { animation: ug-your-turn var(--dur-breath) var(--ease-weave) infinite; }
+@keyframes ug-your-turn { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+.u-glyph.is-idle svg { animation: ug-breathe 4s var(--ease-weave) infinite; transform-origin: 50% 50%; }
+@keyframes ug-breathe { 0%,100% { transform: scale(1); } 50% { transform: scale(.94); } }
+@media (prefers-reduced-motion: reduce) {
+  .u-glyph.is-idle svg { animation: none; }
+  .u-glyph.is-wait .ug-you { animation-duration: 4s; } /* opacity only, no movement */
+}
+[data-reduce-motion="true"] .u-glyph.is-idle svg { animation: none; }

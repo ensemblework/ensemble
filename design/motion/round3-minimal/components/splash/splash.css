@@ -1,0 +1,11 @@
+/* Round 5: both minimal splashes land on THE logo, the Two-voices mark at brand weights (agent violet outer, you inner). */
+.sp { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; }
+.sp-u { display: block; overflow: visible; }
+.sp-u path { fill: none; stroke-linecap: round; }
+.sp-u .o { stroke: var(--agent); stroke-width: 84; } .sp-u .i { stroke: var(--you); stroke-width: 64; }
+[data-theme="dark"] .sp-u .o, .sp-u .o { stroke: var(--accent); }
+.sp-dot { fill: var(--you); opacity: 0; } .sp-dot.ag { fill: var(--accent); }
+.sp-w { font: 500 26px var(--font-sans); letter-spacing: -.015em; color: var(--ink); opacity: 0; transform: translateY(var(--m-amp)); transition: opacity var(--m-dur-move) var(--m-ease-enter), transform var(--m-dur-move) var(--m-ease-move); }
+.sp-s { opacity: 0; transition: opacity var(--m-dur-move) var(--m-ease-enter) 240ms; }
+.sp.on .sp-w, .sp.on .sp-s { opacity: 1; transform: none; }
+.sp.dotf .sp-w { margin-top: 2px; }

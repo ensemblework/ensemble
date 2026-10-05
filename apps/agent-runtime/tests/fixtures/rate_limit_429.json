@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": 429,
+    "message": "Too many requests per minute. Please retry shortly.",
+    "status": "RESOURCE_EXHAUSTED"
+  }
+}

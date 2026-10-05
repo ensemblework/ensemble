@@ -1,0 +1,56 @@
+/* 02 · Inbox-zero tapestry */
+.tp { position: absolute; inset: 0; padding: 18px 20px; --cell: 13px; }
+.tp-head { display: flex; align-items: center; gap: 10px; }
+.tp-title { font-weight: 650; }
+.tp-badge { min-width: 22px; height: 20px; padding: 0 6px; border-radius: 999px; background: var(--warn); color: #1b1408; display: grid; place-items: center;
+  font: 700 11px var(--font-sans); transition: background .4s; }
+.tp-badge b.pop { animation: tp-pop .7s var(--spring-bouncy); display: inline-block; }
+.tp-badge.zero { background: var(--ok); color: #fff; }
+@keyframes tp-pop { from { transform: scale(.3) translateY(-6px); opacity: 0; } to { transform: none; opacity: 1; } }
+.tp-cards { margin-top: 14px; display: grid; gap: 8px; }
+.tp-card { position: relative; padding: 11px 36px 11px 12px; border-radius: 12px; background: var(--raised); border: 1px solid var(--line);
+  border-left: 3px solid var(--c); font-size: 13px; transform-origin: 50% 50%; }
+.tp-card code { font: 500 11.5px var(--font-mono); color: var(--accent-hi); }
+.tp-src { display: block; font: 500 10.5px var(--font-mono); color: var(--faint); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 2px; }
+.tp-ok { position: absolute; right: 12px; top: 50%; width: 18px; height: 18px; margin-top: -9px; border-radius: 50%; background: var(--ok); transform: scale(0); }
+.tp-ok::after { content: ""; position: absolute; left: 6px; top: 3.5px; width: 4px; height: 8px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.tp-card.ok .tp-ok { transform: scale(1); transition: transform .6s var(--spring-bouncy); }
+/* fold into a thread: the card flattens to a line in its own colour, then slides away */
+.tp-card.fold { animation: tp-fold .75s var(--ease-weave) forwards; }
+@keyframes tp-fold {
+  0% { transform: none; }
+  45% { transform: scaleY(.07) scaleX(.96); background: var(--c); border-color: transparent; color: transparent; }
+  100% { transform: translateY(60px) scaleY(.05) scaleX(.2); background: var(--c); color: transparent; opacity: 0; }
+}
+.tp-card.fold * { opacity: 0; transition: opacity .15s; }
+.tp-loom { position: absolute; left: 50%; top: 58px; width: calc(15 * var(--cell) + 24px); margin-left: calc(-7.5 * var(--cell) - 12px); opacity: 0; }
+.tp.weave .tp-loom { opacity: 1; }
+.tp-rod { position: relative; height: 4px; border-radius: 3px; background: var(--muted); transform: scaleX(0); }
+.tp-rod i { position: absolute; top: -2px; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); } .tp-rod i:first-child { left: -4px; } .tp-rod i:last-child { right: -4px; }
+.tp.weave .tp-rod { transform: scaleX(1); transition: transform .6s var(--spring-gentle); }
+.tp-sway { position: relative; margin: 2px 12px 0; transform-origin: 50% -4px; }
+.tp.hung .tp-sway { animation: tp-sway 5.5s var(--ease-weave) infinite; }
+@keyframes tp-sway { 0%, 100% { transform: rotate(-.9deg); } 50% { transform: rotate(.9deg); } }
+.tp-warps { position: absolute; inset: 0 0 -16px; display: grid; grid-template-columns: repeat(15, 1fr); }
+.tp-warps i { justify-self: center; width: 1px; background: var(--line-strong); transform: scaleY(0); transform-origin: top; }
+.tp.weave .tp-warps i { transform: scaleY(1); transition: transform .5s var(--spring-gentle) var(--d); }
+.tp-grid { position: relative; display: grid; grid-template-columns: repeat(15, var(--cell)); grid-auto-rows: var(--cell); padding-top: 3px; }
+.tp-grid b { position: relative; }
+.tp-grid b::before { content: ""; position: absolute; border-radius: 3px; background: var(--k); opacity: 0; }
+.tp-grid b.w::before { left: 0; right: 0; top: 18%; bottom: 18%; transform-origin: var(--o) 50%; }
+.tp-grid b.p::before { top: 0; bottom: 0; left: 18%; right: 18%; transform-origin: 50% 0; }
+.tp.weave .tp-grid b::before { animation: tp-cell .55s var(--spring-soft) var(--d) both; }
+.tp.weave .tp-grid b.p::before { animation-name: tp-cellp; }
+@keyframes tp-cell { from { transform: scaleX(0); opacity: 1; } to { transform: scaleX(1); opacity: 1; } }
+@keyframes tp-cellp { from { transform: scaleY(0); opacity: 1; } to { transform: scaleY(1); opacity: 1; } }
+.tp-fringe { display: grid; grid-template-columns: repeat(15, var(--cell)); height: 14px; }
+.tp-fringe i { justify-self: center; width: 1.5px; height: 12px; border-radius: 2px; background: var(--muted); transform-origin: top; opacity: 0; }
+.tp.hung .tp-fringe i { opacity: .8; transition: opacity .4s; animation: tp-fr 2.6s var(--ease-weave) var(--d) infinite; }
+@keyframes tp-fr { 0%, 100% { transform: rotate(7deg); } 50% { transform: rotate(-7deg); } }
+.tp-shuttle { position: absolute; left: 0; top: 0; width: 7px; height: 7px; margin: -3.5px; border-radius: 50%; background: var(--v-hi2);
+  box-shadow: 0 0 10px 2px color-mix(in srgb, var(--u-agent) 60%, transparent); opacity: 0; transition: opacity .2s; }
+.tp-cap { position: absolute; left: 0; right: 0; bottom: 26px; text-align: center; opacity: 0; transform: translateY(10px); }
+.tp.hung .tp-cap { opacity: 1; transform: none; transition: transform .8s var(--spring-gentle), opacity .5s; }
+.tp-cap-h { font: italic 500 22px var(--font-serif); letter-spacing: -.01em; }
+.tp-cap-s { color: var(--muted); font-size: 12.5px; }
+.tp.reduced * { animation: none !important; transition: none !important; }

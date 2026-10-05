@@ -1,0 +1,39 @@
+<div class="sr">
+  <div class="sr-sky">
+    <svg viewBox="0 0 600 420" preserveAspectRatio="xMidYMax slice" aria-hidden="true">
+      <defs>
+        <linearGradient id="sr-night" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#0f0d14"/><stop offset="1" stop-color="#1c1726"/></linearGradient>
+        <linearGradient id="sr-dawn" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#231c3d"/><stop offset=".55" stop-color="#5a3f78"/><stop offset=".82" stop-color="#c2789a"/><stop offset="1" stop-color="#f0b77a"/></linearGradient>
+        <radialGradient id="sr-sun" cx=".42" cy=".38"><stop offset="0" stop-color="#fff6e6"/><stop offset=".55" stop-color="#ffd9a0"/><stop offset="1" stop-color="#f3a765"/></radialGradient>
+        <radialGradient id="sr-halo"><stop offset="0" stop-color="#ffd9a0" stop-opacity=".55"/><stop offset=".5" stop-color="#e8a0a0" stop-opacity=".16"/><stop offset="1" stop-color="#e8a0a0" stop-opacity="0"/></radialGradient>
+        <linearGradient id="sr-ground" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#141210" stop-opacity="0"/><stop offset="1" stop-color="#141210" stop-opacity=".9"/></linearGradient>
+        <linearGradient id="sr-o" gradientUnits="userSpaceOnUse" x1="0" y1="300" x2="0" y2="736"><stop offset="0" stop-color="#b4a9ff"/><stop offset="1" stop-color="#7c6af7"/></linearGradient>
+      </defs>
+      <rect width="600" height="420" fill="url(#sr-night)"/>
+      <rect class="sr-dawn" width="600" height="420" fill="url(#sr-dawn)"/>
+      <g class="sr-stars"><circle cx="80" cy="60" r="1.4"/><circle cx="170" cy="120" r="1"/><circle cx="470" cy="70" r="1.6"/><circle cx="530" cy="150" r="1"/><circle cx="360" cy="40" r="1.1"/><circle cx="250" cy="80" r="1.3"/><circle cx="60" cy="190" r="1"/><circle cx="560" cy="250" r="1.2"/></g>
+      <g class="sr-sunwrap">
+        <circle class="sr-halo" r="150" fill="url(#sr-halo)"/>
+        <g class="sr-rays"></g>
+        <circle class="sr-sun" r="44" fill="url(#sr-sun)"/>
+      </g>
+      <rect y="300" width="600" height="120" fill="url(#sr-ground)"/>
+      <g class="sr-u" transform="translate(300 408) scale(.3) translate(-512 -780)">
+        <path d="M316 300 V540 A196 196 0 0 0 708 540 V300" fill="none" stroke="url(#sr-o)" stroke-width="84" stroke-linecap="round"/>
+        <path d="M426 300 V540 A86 86 0 0 0 598 540 V300" fill="none" stroke="#f3eee6" stroke-width="64" stroke-linecap="round"/>
+      </g>
+    </svg>
+  </div>
+  <div class="sr-brief">
+    <div class="sr-date">Wednesday · 30 September</div>
+    <h4 class="sr-h"><span>Good</span> <span>morning,</span> <span>Shivani.</span></h4>
+    <div class="sr-sub">Here's your day, woven together.</div>
+    <div class="sr-list">
+      <i class="sr-thread"></i>
+      <div class="sr-card" style="--k:var(--warn)"><b class="sr-bead"></b><div class="sr-ic">3</div><div><div class="sr-t">3 things need you</div><div class="sr-d">Priya's reply · PR #42 merge · a Cursor run</div></div></div>
+      <div class="sr-card" style="--k:var(--u-agent)"><b class="sr-bead"></b><div class="sr-ic ag"></div><div><div class="sr-t">Overnight, Ensemble drafted 2 replies</div><div class="sr-d">and closed 4 stale tasks. Review in Needs me.</div></div></div>
+      <div class="sr-card" style="--k:var(--u-you)"><b class="sr-bead"></b><div class="sr-ic cal">10:30</div><div><div class="sr-t">Standup with Akash</div><div class="sr-d">then Design review at 11:30 · 2 prep notes ready</div></div></div>
+      <div class="sr-card" style="--k:var(--ok)"><b class="sr-bead"></b><div class="sr-ic ok">13</div><div><div class="sr-t">13-day streak</div><div class="sr-d">Clear Needs me today to keep it going.</div></div></div>
+    </div>
+  </div>
+</div>

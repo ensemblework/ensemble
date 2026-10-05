@@ -1,0 +1,18 @@
+{
+  "agent.thinking":   {"states": ["thinking", "status", "idle"], "expressive": "r1 Ensemble Glyph + status line"},
+  "reply.stream":     {"states": ["streaming", "done"], "expressive": "r1 Ink-in stream"},
+  "page.progress":    {"states": ["loading", "done"], "expressive": "r1 Thread progress + page enter"},
+  "content.skeleton": {"states": ["loading", "ready"], "expressive": "r1 Violet sweep skeleton"},
+  "tool.call":        {"states": ["running", "done", "pending", "failed"], "expressive": "r1 Marching stitches"},
+  "run.progress":     {"states": ["queued", "running", "done"], "expressive": "r1 Loom + bead timeline"},
+  "needs.waiting":    {"states": ["waiting", "timeout"], "expressive": "r1 Your turn heartbeat"},
+  "action.approve":   {"states": ["idle", "pressed", "approved"], "expressive": "r1 Tie the knot + sparks"},
+  "connector.sync":   {"states": ["syncing", "synced"], "expressive": "r1 Inflow beads"},
+  "fetch.refresh":    {"states": ["fetching", "done"], "expressive": "r1 Two reels"},
+  "state.error":      {"states": ["error", "retrying", "ok"], "expressive": "r1 Glyph fray + stitch tear"},
+  "net.connection":   {"states": ["offline", "reconnecting", "online"], "expressive": "r2 Re-tie & reconnect"},
+  "brand.splash":     {"states": ["reveal", "rest"], "expressive": "r1 Splash / r2 Logo reveals"},
+  "control.*":        {"states": ["hover", "press", "on", "off", "focus"], "expressive": "r2 Button · Toggle · Checkbox, Tabs · Bell · Focus rim"},
+  "moment.celebrate": {"states": ["cleared", "streak"], "expressive": "r2 Strand confetti / Inbox zero tapestry"},
+  "native.tray":      {"states": ["idle", "working", "syncing", "needs", "paused", "done", "error", "offline"], "expressive": "r2 Menu-bar / tray states"}
+}

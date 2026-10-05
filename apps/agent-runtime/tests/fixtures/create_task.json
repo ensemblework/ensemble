@@ -1,0 +1,25 @@
+{
+  "id": "chatcmpl-create",
+  "model": "mock-model",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "I can add that task. Nothing has changed yet — press Apply.",
+        "tool_calls": [
+          {
+            "id": "call_create",
+            "type": "function",
+            "function": {
+              "name": "hub_create_tasks",
+              "arguments": "{\"tasks\":[{\"title\":\"File the response\",\"priority\":\"p0\"}]}"
+            }
+          }
+        ]
+      },
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": { "prompt_tokens": 12, "completion_tokens": 20 }
+}
