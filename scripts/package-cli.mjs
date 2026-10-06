@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, copyFileSync, cpSync, createReadStream, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { run as spawnCommand } from "./desktop-spawn.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const supportedTargets = new Set(["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64", "windows-x64"]);
@@ -129,11 +130,11 @@ function hostTarget() {
   return `${platform}-${arch}`;
 }
 
+// desktop-spawn resolves Windows `.cmd` shims such as pnpm.cmd, which a plain spawnSync cannot start.
 function run(command, args, options = {}) {
   console.error(`$ ${[command, ...args].join(" ")}`);
-  const result = spawnSync(command, args, { stdio: "inherit", ...options });
-  if (result.error) throw new Error(`Could not start ${command}: ${result.error.message}`);
-  if (result.status !== 0) throw new Error(`${command} exited with status ${result.status ?? "unknown"}.`);
+  const status = spawnCommand(command, args, options);
+  if (status !== 0) throw new Error(`${command} exited with status ${status}.`);
 }
 
 function copyNodeOnly(dest) {
