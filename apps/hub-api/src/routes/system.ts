@@ -12,6 +12,7 @@ import { sseHub } from "../lib/sse.js";
 import { encrypt } from "../lib/secrets.js";
 import { listActivities } from "../lib/activity.js";
 import { GITHUB_GIT_PROVIDER } from "../lib/git-auth.js";
+import { HostedAccessError, requireVerifiedUser } from "../lib/hosted-access.js";
 
 const MODEL_CATALOG_TTL_MS = 15_000;
 const MODEL_CATALOG_MAX = 32;
@@ -154,6 +155,7 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
   // ── models & prompts ────────────────────────────────────────────────────
 
   app.get("/api/models", async (request) => {
+    await requireVerifiedUser(request.userId);
     const cached = readModelCatalog(request.userId);
     if (cached) return cached;
     const settings = await loadSettings(prisma, request.userId);
@@ -181,6 +183,7 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
       writeModelCatalog(request.userId, payload);
       return payload;
     } catch (error) {
+      if (error instanceof HostedAccessError) throw error;
       const payload = {
         providers: [],
         runtime: false,

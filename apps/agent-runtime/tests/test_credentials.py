@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import pytest
 
 from ensemble_agent import credentials
 
@@ -33,7 +34,8 @@ def test_connect_error_is_logged_without_the_url(monkeypatch, caplog) -> None:
     monkeypatch.setattr(credentials, "_open", boom)
     credentials._cred_cache.clear()
     with caplog.at_level(logging.WARNING, logger="ensemble.credentials"):
-        assert credentials.stored_map("user-connect") == {}
+        with pytest.raises(RuntimeError):
+            credentials.stored_map("user-connect")
     assert "connection_limit" not in seen["dsn"]
     text = caplog.text
     assert "saved model keys were not loaded" in text

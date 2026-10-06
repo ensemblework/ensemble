@@ -4,6 +4,7 @@ packages:
   - apps/landing
   - apps/agent-runtime
   - apps/context-bridge
+  - apps/cli
   - apps/desktop
   - packages/*
 

@@ -14,6 +14,10 @@ v0 of the hosted app is Postgres, Next.js, and the API. The person also has the 
 
 The hosted side carries the assignment, the progress, the approvals, and the result. It does not carry keys, credentials, or file contents. If the Mac is offline, the task waits. It does not run on the server instead.
 
+Public hosted accounts must verify email before assigning device work. Host execution/operator restrictions do not grant operators access to another user's device and do not block verified users from their own device. Assignments are subject to per-user hosted job quotas.
+
+**The CLI is a second runner.** `ensemble` ([26](26_CLI.md)) starts the same sidecar without the desktop window. `ensemble login` approves the computer from the `/link` page; when "Run tasks" is approved, the server returns a one-time pairing code and the CLI pairs through the local `POST /api/remote/pair`, exactly as the desktop app does. The device shows its version as `cli-<version>`. Folders shared with `ensemble folders add` are the labels the assign dialog offers. The runner, logout and unpair behave as below.
+
 The local UI and the hosted site are two front doors to one on-device runner. Remote assignment is a new way to reach that runner, so the Mac treats the server as untrusted input.
 
 Desktop step 1 is on `main` (PR #32): Tauri, a static export, one Node sidecar on PGlite, and the discovery file. The sandbox broker, the trust rules, and the Git gate in docs 23 and 24 are designed and not built.
@@ -149,11 +153,11 @@ ensemble-app. Checked against `main` on 2 Oct 2026. Paths are relative to the re
 
 - Migration: `apps/hub-api/prisma/migrations/20260929150000_api_token_scope/migration.sql` adds `api_tokens.scope TEXT DEFAULT 'full'`.
 - Model: `ApiToken` (schema line 1492). Stored as a sha256 hash with a `prefix`, plus `lastUsedAt` and `revokedAt`.
-- Auth: `identify()` in `apps/hub-api/src/lib/auth.ts` accepts `Bearer ens_…`, then the `onRequest` hook in `apps/hub-api/src/index.ts` applies `readOnlyTokenRejected()` from `apps/hub-api/src/bridge/auth.ts`.
-- Two scopes today. `full` acts as the user on every route. `bridge` can only `GET` `/api/bridge`. Any other string is treated as `full` (`auth.ts` line 127).
-- `POST /api/connect/token` refuses token-authenticated callers, so a leaked bridge key cannot mint another. **`POST /api/tokens` has no such check**, so a `full` token can mint more `full` tokens. That fix is a must-fix above, and it is ensemble-app's next PR.
+- Auth: `identify()` in `apps/hub-api/src/lib/auth.ts` accepts `Bearer ens_…`, then the `onRequest` hook in `apps/hub-api/src/app.ts` applies token-scope/module gates from `apps/hub-api/src/bridge/auth.ts`.
+- Three scopes today: `full` acts as the user subject to interactive/hosted gates; `bridge` only reads `/api/bridge`; `device` only calls `/api/devices/self/*`. Unknown scopes fail closed.
+- Both `POST /api/connect/token` and `POST /api/tokens` require a browser session, so token-authenticated callers cannot mint additional keys.
 - `ENSEMBLE_DESKTOP_TOKEN` (`via: "desktop"`) is a per-launch secret for the local sidecar from PR #32, pinned to `ENSEMBLE_DEV_USER_ID`. It is not a hosted device token.
-- The hash, prefix, `lastUsedAt`, and revoke columns are reused as they are. Neither current scope fits: `full` is too broad, and `bridge` is read-only. The new scope is `device`, allowed only on `/api/devices/self/*`. No `Device` model exists.
+- The hash, prefix, `lastUsedAt`, and revoke columns are reused. `Device` exists in the Prisma schema and device routes enforce owner/revocation checks.
 
 **Claim pattern**
 
@@ -213,7 +217,7 @@ model Device {
   - `cancelled` already exists and stays. Whether to rename the old values is open question 1.
 - **Lease.** Reuse `leaseOwner` (the device id, not a pid) and `leaseUntil`. Add `leaseToken String?` (random, returned by claim, required on progress, ask, and complete), `claimedAt`, `lastProgressAt`, and `attempt Int @default(0)`. The heartbeat extends `leaseUntil` for the running ids this device still holds. A write with the wrong token, or a lease that has expired, does not update the row.
 - **Log chunks.** `WorkspaceLogChunk { id, jobId, seqFrom, seqTo, text, bytes, createdAt }`, index `[jobId, seqFrom]`, cascade from `WorkspaceJob`. The Mac batches every ~2 s or 64 KB. The server allows 64 KB per chunk and 2 MB per job, then stores one "log truncated" marker. Text passes through `redactText()`. `runRetention` deletes chunks older than 30 days. Nothing prunes `WorkspaceEvent` today; it stays cascade-only, and it stays the place for milestones (`prepared`, `tool`, `needs_me`).
-- **Tokens.** `ApiToken.scope = "device"` needs no column change. Add `deviceTokenRejected(scope, method, path)` beside `readOnlyTokenRejected`, and call it from the same hook in `index.ts`. A device token may only call `/api/devices/self/*`.
+- **Tokens.** `ApiToken.scope = "device"` is checked by `deviceTokenRejected(scope, method, path)` beside `readOnlyTokenRejected`, called from the hook in `app.ts`. A device token may only call `/api/devices/self/*`.
 
 `ApiToken` gains `devices Device[]`. Folder labels live in `Device.capabilities`, not in a second table. The label is what the person already added on the Mac. A secret path is not a label.
 
@@ -227,6 +231,7 @@ Plain request/response, plus one stream. Each handler is stateless. The stream i
 | `POST /api/devices/register` | pairing code | Body: `{code, name, platform, appVersion, capabilities}`. Creates the `Device` and its `device`-scoped token, and returns the token once. |
 | `GET /api/devices` | session | Lists devices. `online` means `lastSeenAt` within 90 s. |
 | `DELETE /api/devices/:id` | session | Sets `revokedAt` and revokes the token. Claimed or running jobs become `interrupted`. Queued jobs become `failed` with "Device removed". |
+| `DELETE /api/devices/self` | device | Revokes this device and its token (same effect as `DELETE /api/devices/:id`). The local `POST /api/remote/unpair` calls it best effort before deleting the local token, so `ensemble logout` and desktop unpair remove the computer from the account. |
 | `POST /api/devices/self/heartbeat` | device | Every 30 s. Body: `{runningJobIds, appVersion, capabilities}`. Updates `lastSeenAt`, extends leases on the listed jobs this device holds only while `leaseUntil` is still in the future, and returns `{cancel: jobIds}` from `cancelRequestedAt`. |
 | `POST /api/devices/self/claim` | device | Compare-and-set, same shape as `worker.ts` `claim()`: `updateMany` where `{id, deviceId, status: "queued"}` to `claimed`, `leaseUntil = now + 120s`, and a new `leaseToken`. Returns the job spec, or 204 when there is nothing to claim. |
 | `POST /api/devices/self/jobs/:id/progress` | device + leaseToken | `{status?, progress, events[], logs: {seqFrom, seqTo, text}}`. A duplicate `seqFrom` is ignored. Extends the lease. |

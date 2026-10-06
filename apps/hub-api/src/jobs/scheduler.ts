@@ -9,6 +9,7 @@ import type { FastifyInstance } from "fastify";
 import { fetchAll } from "../connectors/sync.js";
 import { expireStale } from "../lib/decisions.js";
 import { loadSettings } from "../lib/settings.js";
+import { HostedAccessError, requireVerifiedUser } from "../lib/hosted-access.js";
 import { retentionDue } from "../lib/clock.js";
 import { evaluateWatchers } from "../ensemble/watchers.js";
 import { deliverMorningBrief, ensureStaleNotice } from "../cowork/service.js";
@@ -44,6 +45,13 @@ async function tick(app: FastifyInstance): Promise<void> {
   const rows = await app.prisma.preference.findMany({ where: { key: "hub.settings", deletedAt: null }, select: { userId: true } });
   const users = rows.length ? rows : await app.prisma.user.findMany({ select: { id: true } }).then((list) => list.map((user) => ({ userId: user.id })));
   for (const { userId } of users) {
+    try {
+      await requireVerifiedUser(userId);
+    } catch (error) {
+      if (!(error instanceof HostedAccessError)) throw error;
+      app.log.info({ userId, reason: error.message }, "scheduler skipped unverified account");
+      continue;
+    }
     const settings = await loadSettings(app.prisma, userId);
     const now = localClock(settings.timezone);
     void dispatchDueReminders(app, userId).catch((error: unknown) => app.log.error({ err: error }, "reminder dispatch failed"));

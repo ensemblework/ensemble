@@ -2,6 +2,8 @@
 
 Plots is Ensemble's one-stop 2D chart tab. It is for someone who already knows what a figure should do: an analyst, a data scientist, or an ML researcher. The defaults follow publication practice. Decoration that makes a value harder to read is left out.
 
+Hosted arbitrary Python plot execution requires a verified operator (`lib/hosted-access.ts`, `runtime/plot-run.ts`, Python `plots/sandbox.py`). Public users are not allowed to run Python on the shared server. Dataset imports are account-scoped and subject to hosted storage limits. Desktop/local execution retains its existing behavior.
+
 `docs/CACHING.md` is not in this repository. Caching below follows `docs/UI_PERF_DESIGN.md`: measure first, keep any cache small, and invalidate it when the bytes change.
 
 The desk already reserves plot *slots* behind the `desk.plots` preference (`docs/design/desk/SPEC.md` §8). Those slots stay lightweight static tiles. The product is a module, `plots`, default **off**, with the same Enable landing as Code and Block diagrams.

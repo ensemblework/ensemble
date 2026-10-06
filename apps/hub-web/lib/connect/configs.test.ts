@@ -2,178 +2,184 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { APP_IDS } from "./catalog";
 import {
-  claudeCodeCommand,
-  claudeDesktopConfig,
-  clineConfig,
-  codexCommand,
-  codexToml,
-  continueYaml,
-  copilotCliConfig,
-  cursorConfig,
-  cursorInstallUrl,
-  envCommand,
-  httpClineConfig,
-  httpMcpConfig,
-  httpVsCodeConfig,
-  jetbrainsConfig,
-  connectHubUrl,
+  EDITORS,
+  HOSTED_MCP_FALLBACK_URL,
+  INSTALL_CHANNELS,
   TOKEN_PLACEHOLDER,
+  connectHubUrl,
+  cursorInstallUrl,
+  hostedMcpUrl,
+  hostedSnippet,
+  localCliSnippet,
+  setupOneLiner,
   utf8Base64,
-  vscodeCliCommand,
   vscodeInstallUrl,
-  vscodeUserConfig,
-  windsurfConfig,
-  zedSnippet,
   type ConnectFacts,
+  type ConnectOs,
+  type ConnectSnippet,
 } from "./configs";
 import { stepsFor, troubleFor } from "./guides";
 
 const SECRET = "ens_test_key_not_a_real_secret_value";
+const OS: ConnectOs[] = ["mac", "windows", "linux"];
 
 const facts: ConnectFacts = {
   repoRoot: "/work/ensemble",
   bridgeScript: "/work/ensemble/apps/context-bridge/dist/index.js",
   node: "/usr/bin/node",
   hubApiUrl: "http://127.0.0.1:4000",
+  publicApiUrl: "https://api.example.com",
   httpUrl: "http://127.0.0.1:4010/mcp",
   token: SECRET,
 };
 
-const bare: ConnectFacts = { ...facts, token: null };
+function parseJson(snippet: ConnectSnippet): unknown {
+  assert.equal(snippet.format, "json");
+  return JSON.parse(snippet.text);
+}
 
-describe("connect configs match the bridge samples", () => {
-  it("fills VS Code user settings with servers, stdio, and an env key reference", () => {
-    const parsed = JSON.parse(vscodeUserConfig(facts)) as {
-      servers: { ensemble: { type: string; command: string; args: string[]; env: Record<string, string> } };
-    };
-    assert.equal(parsed.servers.ensemble.type, "stdio");
-    assert.equal(parsed.servers.ensemble.command, "node");
-    assert.deepEqual(parsed.servers.ensemble.args, [facts.bridgeScript]);
-    assert.equal(parsed.servers.ensemble.env.HUB_API_URL, facts.hubApiUrl);
-    assert.equal(parsed.servers.ensemble.env.ENSEMBLE_BRIDGE_TOKEN, "${env:ENSEMBLE_BRIDGE_TOKEN}");
-    assert.equal(vscodeUserConfig(facts).includes(SECRET), false);
-  });
+function assertToml(text: string) {
+  assert.match(text, /^\[mcp_servers\.ensemble\]/m);
+  for (const line of text.split("\n").filter(Boolean)) {
+    if (line.startsWith("[")) continue;
+    assert.match(line, /^[a-z_]+ = (".*"|\[.*\])$/);
+  }
+}
 
-  it("builds the official VS Code install link without the key", () => {
-    const url = vscodeInstallUrl(facts);
-    assert.ok(url.startsWith("vscode:mcp/install?"));
-    const payload = JSON.parse(decodeURIComponent(url.slice("vscode:mcp/install?".length))) as {
-      name: string;
-      command: string;
-      args: string[];
-      env: Record<string, string>;
-    };
-    assert.equal(payload.name, "ensemble");
-    assert.equal(payload.command, "node");
-    assert.deepEqual(payload.args, [facts.bridgeScript]);
-    assert.equal(payload.env.ENSEMBLE_BRIDGE_TOKEN, "${env:ENSEMBLE_BRIDGE_TOKEN}");
-    assert.equal(url.includes(SECRET), false);
-    assert.ok(vscodeInstallUrl(facts, true).startsWith("vscode-insiders:mcp/install?"));
-    assert.match(vscodeCliCommand(facts, "mac"), /^code --add-mcp /);
-  });
+function assertSnippetSyntax(snippet: ConnectSnippet) {
+  if (snippet.format === "json") JSON.parse(snippet.text);
+  if (snippet.format === "toml") assertToml(snippet.text);
+  if (snippet.format === "yaml") assert.match(snippet.text, /mcpServers:/);
+}
 
-  it("builds the official Cursor install link from the server object", () => {
-    const url = cursorInstallUrl(facts);
-    const parsed = new URL(url);
-    assert.equal(parsed.protocol, "cursor:");
-    assert.equal(parsed.hostname, "anysphere.cursor-deeplink");
-    assert.equal(parsed.pathname, "/mcp/install");
-    assert.equal(parsed.searchParams.get("name"), "ensemble");
-    const config = JSON.parse(Buffer.from(parsed.searchParams.get("config")!, "base64").toString("utf8")) as {
-      command: string;
-      args: string[];
-      env: Record<string, string>;
-    };
-    assert.equal(config.command, "node");
-    assert.deepEqual(config.args, [facts.bridgeScript]);
-    assert.equal(config.env.ENSEMBLE_BRIDGE_TOKEN, "${env:ENSEMBLE_BRIDGE_TOKEN}");
-    assert.equal(url.includes(SECRET), false);
-    assert.equal(utf8Base64("hi"), Buffer.from("hi").toString("base64"));
-    const file = JSON.parse(cursorConfig(facts)) as { mcpServers: { ensemble: { args: string[] } } };
-    assert.deepEqual(file.mcpServers.ensemble.args, [facts.bridgeScript]);
-  });
+function serverObject(value: unknown): Record<string, unknown> {
+  const root = value as Record<string, unknown>;
+  if ("servers" in root) return ((root.servers as Record<string, unknown>).ensemble ?? {}) as Record<string, unknown>;
+  if ("mcpServers" in root) return ((root.mcpServers as Record<string, unknown>).ensemble ?? {}) as Record<string, unknown>;
+  if ("context_servers" in root) return ((root.context_servers as Record<string, unknown>).ensemble ?? {}) as Record<string, unknown>;
+  if ("mcp" in root) return ((root.mcp as Record<string, unknown>).ensemble ?? {}) as Record<string, unknown>;
+  return root;
+}
 
-  it("puts the real key in clients that store a literal token", () => {
-    for (const text of [
-      copilotCliConfig(facts),
-      claudeDesktopConfig(facts),
-      windsurfConfig(facts),
-      zedSnippet(facts),
-      jetbrainsConfig(facts),
-      clineConfig(facts),
-      continueYaml(facts),
-      codexToml(facts),
-      claudeCodeCommand(facts, "linux"),
-      codexCommand(facts, "mac"),
-    ]) {
-      assert.equal(text.includes(SECRET), true, text.slice(0, 80));
-      assert.equal(text.includes(facts.bridgeScript) || text.includes(facts.bridgeScript.replace(/\\/g, "\\\\")), true);
+describe("CLI install commands", () => {
+  it("uses the contracted install commands and coming-soon flags", () => {
+    assert.equal(INSTALL_CHANNELS.mac[0]?.commands[0], "brew install ensemblework/tap/ensemble");
+    assert.ok(INSTALL_CHANNELS.mac.some((row) => row.commands.includes("curl -fsSL https://ensemblework.com/install.sh | sh")));
+    assert.ok(INSTALL_CHANNELS.windows.some((row) => row.commands.includes("irm https://ensemblework.com/install.ps1 | iex")));
+    assert.ok(INSTALL_CHANNELS.windows.some((row) => row.commands.includes("scoop bucket add ensemblework https://github.com/ensemblework/scoop-bucket")));
+    const winget = INSTALL_CHANNELS.windows.find((row) => row.id === "winget");
+    assert.equal(winget?.commands[0], "winget install EnsembleWork.EnsembleCLI");
+    assert.equal(winget?.status, "coming-soon");
+    assert.ok(INSTALL_CHANNELS.linux.some((row) => row.commands.includes("sudo apt install ./ensemble-cli_*_amd64.deb")));
+    assert.ok(INSTALL_CHANNELS.linux.some((row) => row.commands.includes("sudo dnf install ./ensemble-cli-*.x86_64.rpm")));
+    assert.equal(INSTALL_CHANNELS.linux.find((row) => row.id === "aur")?.status, "coming-soon");
+    for (const os of OS) {
+      const npm = INSTALL_CHANNELS[os].find((row) => row.id === "npm");
+      assert.equal(npm?.status, "coming-soon");
+      assert.deepEqual(npm?.commands, ["npm install -g ensemblework", "npx -y ensemblework mcp"]);
     }
-    const copilot = JSON.parse(copilotCliConfig(facts)) as { mcpServers: { ensemble: { type: string; tools: string[] } } };
-    assert.equal(copilot.mcpServers.ensemble.type, "local");
-    assert.deepEqual(copilot.mcpServers.ensemble.tools, ["*"]);
-    const cline = JSON.parse(clineConfig(facts)) as { mcpServers: { ensemble: { type?: string; command: string } } };
-    assert.equal(cline.mcpServers.ensemble.type, undefined);
-    assert.equal(cline.mcpServers.ensemble.command, "node");
-    const zed = JSON.parse(zedSnippet(facts)) as { context_servers: { ensemble: { command: string; args: string[] } } };
-    assert.equal(zed.context_servers.ensemble.command, "node");
-    assert.deepEqual(zed.context_servers.ensemble.args, [facts.bridgeScript]);
-    assert.match(codexToml(facts), /\[mcp_servers\.ensemble\]/);
-    assert.match(codexToml(facts), /\[mcp_servers\.ensemble\.env\]/);
-    assert.match(claudeCodeCommand(facts, "linux"), /claude mcp add --transport stdio/);
-    assert.match(codexCommand(facts, "linux"), /^codex mcp add ensemble --env /);
-  });
-
-  it("uses the placeholder until a key exists, and switches shell syntax by OS", () => {
-    assert.equal(claudeDesktopConfig(bare).includes(TOKEN_PLACEHOLDER), true);
-    assert.equal(envCommand(facts, "mac"), `export ENSEMBLE_BRIDGE_TOKEN="${SECRET}"`);
-    assert.equal(envCommand(facts, "windows"), `$env:ENSEMBLE_BRIDGE_TOKEN = "${SECRET}"`);
-    assert.match(claudeCodeCommand(facts, "windows"), /^claude mcp add --transport stdio --env /);
-    assert.doesNotMatch(claudeCodeCommand(facts, "windows"), /\\$/m);
-  });
-
-  it("describes the shared HTTP endpoint the way each family expects", () => {
-    const vscode = JSON.parse(httpVsCodeConfig(facts)) as { servers: { ensemble: { type: string; url: string } } };
-    assert.equal(vscode.servers.ensemble.type, "http");
-    assert.equal(vscode.servers.ensemble.url, facts.httpUrl);
-    const others = JSON.parse(httpMcpConfig(facts)) as { mcpServers: { ensemble: { type: string; url: string } } };
-    assert.equal(others.mcpServers.ensemble.type, "http");
-    assert.equal(others.mcpServers.ensemble.url, facts.httpUrl);
-    const cline = JSON.parse(httpClineConfig(facts)) as { mcpServers: { ensemble: { type: string } } };
-    assert.equal(cline.mcpServers.ensemble.type, "streamableHttp");
   });
 });
 
-describe("connect hub url", () => {
-  it("uses the public URL for hosted users and the loopback address otherwise", () => {
-    assert.equal(
-      connectHubUrl({ hubApiUrl: "http://127.0.0.1:4000", publicApiUrl: "https://hub.example" }),
-      "https://hub.example",
-    );
-    assert.equal(
-      connectHubUrl({ hubApiUrl: "http://127.0.0.1:4000", publicApiUrl: "https://hub.example/" }),
-      "https://hub.example",
-    );
-    assert.equal(
-      connectHubUrl({ hubApiUrl: "http://127.0.0.1:4000", publicApiUrl: "http://localhost:4000" }),
-      "http://127.0.0.1:4000",
-    );
-    assert.equal(
-      connectHubUrl({ hubApiUrl: "http://127.0.0.1:4000", publicApiUrl: "http://127.0.0.1:4000" }),
-      "http://127.0.0.1:4000",
-    );
-    assert.equal(connectHubUrl({ hubApiUrl: "http://127.0.0.1:4000", publicApiUrl: "" }), "http://127.0.0.1:4000");
-    assert.equal(connectHubUrl({}), "http://127.0.0.1:4000");
+describe("connect URL helpers", () => {
+  it("uses public API URLs for hosted MCP and loopback for local bridge setup", () => {
+    assert.equal(connectHubUrl({ hubApiUrl: "http://127.0.0.1:4000", publicApiUrl: "https://hub.example/" }), "https://hub.example");
+    assert.equal(connectHubUrl({ hubApiUrl: "http://127.0.0.1:4000", publicApiUrl: "http://localhost:4000" }), "http://127.0.0.1:4000");
+    assert.equal(hostedMcpUrl({ publicApiUrl: "https://api.example.com/" }), "https://api.example.com/mcp");
+    assert.equal(hostedMcpUrl({ origin: "https://app.ensemblework.com" }), "https://api.ensemblework.com/mcp");
+    assert.equal(hostedMcpUrl({}), HOSTED_MCP_FALLBACK_URL);
+  });
+});
+
+describe("editor snippets", () => {
+  it("has one setup id and one-liner for every catalog entry", () => {
+    for (const id of APP_IDS) {
+      assert.equal(EDITORS[id].id, id);
+      assert.match(setupOneLiner(id), new RegExp(`ensemble mcp setup ${EDITORS[id].setupId}`));
+    }
+  });
+
+  it("generates a valid CLI-local snippet for every editor and OS", () => {
+    for (const id of APP_IDS) {
+      for (const os of OS) {
+        const snippet = localCliSnippet(id, os);
+        assertSnippetSyntax(snippet);
+        if (snippet.format === "json") {
+          const server = serverObject(parseJson(snippet));
+          if (id === "opencode") assert.deepEqual(server.command, ["ensemble", "mcp"]);
+          else {
+            if (id === "claude-desktop") assert.notEqual(server.command, "ensemble");
+            else assert.equal(server.command, "ensemble");
+            assert.deepEqual(server.args, ["mcp"]);
+          }
+          if (id === "copilot-cli") assert.deepEqual(server.tools, ["*"]);
+          if (id === "cline") assert.equal(server.disabled, false);
+        }
+        if (snippet.format === "toml") {
+          assert.match(snippet.text, /command = "ensemble"/);
+          assert.match(snippet.text, /args = \["mcp"\]/);
+        }
+        if (snippet.format === "shell") assert.match(snippet.text, /ensemble mcp/);
+      }
+    }
+  });
+
+  it("generates a valid hosted snippet for every editor and OS", () => {
+    for (const id of APP_IDS) {
+      for (const os of OS) {
+        const snippet = hostedSnippet(id, facts, os, "https://app.ensemblework.com");
+        assertSnippetSyntax(snippet);
+        if (!EDITORS[id].supportsHosted) {
+          assert.match(snippet.text, /not supported|CLI local server/i);
+          continue;
+        }
+        assert.match(`${snippet.text}\n${snippet.note ?? ""}`, /https:\/\/api\.example\.com\/mcp/);
+        if (snippet.format === "json") {
+          const parsed = parseJson(snippet);
+          {
+            const server = serverObject(parsed);
+            assert.equal((server.headers as Record<string, string>).Authorization, `Bearer ${SECRET}`);
+            if (id === "cline") assert.equal(server.type, "streamableHttp");
+            if (id === "copilot-cli") assert.deepEqual(server.tools, ["*"]);
+          }
+        }
+        if (snippet.format === "toml") {
+          assert.match(snippet.text, /bearer_token_env_var = "ENSEMBLE_TOKEN"/);
+          assert.match(snippet.note ?? "", new RegExp(SECRET));
+        }
+        if (snippet.format === "yaml") assert.match(snippet.text, new RegExp(SECRET));
+      }
+    }
+  });
+
+  it("uses placeholders until a hosted key exists", () => {
+    const bare = { ...facts, token: null };
+    const cursor = hostedSnippet("cursor", bare, "mac");
+    assert.match(cursor.text, /Bearer KEY/);
+    const local = localCliSnippet("vscode", "linux");
+    assert.equal(local.text.includes(TOKEN_PLACEHOLDER), false);
+  });
+});
+
+describe("developer source helpers", () => {
+  it("keeps official install links keyless", () => {
+    const vsCode = vscodeInstallUrl(facts);
+    assert.ok(vsCode.startsWith("vscode:mcp/install?"));
+    assert.equal(vsCode.includes(SECRET), false);
+    assert.ok(vscodeInstallUrl(facts, true).startsWith("vscode-insiders:mcp/install?"));
+    const cursor = cursorInstallUrl(facts);
+    const parsed = new URL(cursor);
+    assert.equal(parsed.protocol, "cursor:");
+    assert.equal(utf8Base64("hi"), Buffer.from("hi").toString("base64"));
   });
 });
 
 describe("guides", () => {
-  it("gives every app a key step, a test, and plain-language troubleshooting", () => {
+  it("gives every app a key step, a test, and troubleshooting", () => {
     for (const id of APP_IDS) {
       const ready = stepsFor(id, true);
       assert.equal(ready[0]?.kind, "key");
       assert.equal(ready.at(-1)?.kind, "test");
-      assert.equal(ready.some((step) => step.kind === "build"), false);
       const fresh = stepsFor(id, false);
       assert.equal(fresh[1]?.kind, "build");
       assert.ok(troubleFor(id).length >= 3);
@@ -182,7 +188,5 @@ describe("guides", () => {
         assert.ok(step.body.length > 40);
       }
     }
-    assert.equal(stepsFor("http", true).at(-1)?.requiresHttp, true);
-    assert.equal(stepsFor("vscode", true).at(-1)?.requiresHttp, undefined);
   });
 });

@@ -8,7 +8,7 @@ import type { FastifyInstance } from "fastify";
 import { env } from "../config.js";
 import { appendLedger } from "../lib/ledger.js";
 import { resolveWorkFolder } from "../workspace/guard.js";
-import { checkApiBase, registerDevice, RemoteError } from "./client.js";
+import { checkApiBase, hostedClient, registerDevice, RemoteError } from "./client.js";
 import { parseRegistered } from "./contract.js";
 import { deviceCapabilities, devicePlatform, REMOTE_NOTICE, remotePresence, stopRemoteWork, wakeRemote } from "./loop.js";
 import { dropDeviceToken, loadSettings, readDeviceToken, saveDeviceToken, saveSettings, updateSettings, type SharedFolder } from "./store.js";
@@ -122,6 +122,16 @@ export async function remoteRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/remote/unpair", async (request, reply) => {
     if (!loopback(request.ip)) return reply.code(403).send({ error: "Unpair can only be done on this Mac." });
     await stopRemoteWork(app, "This Mac was unpaired. Remote tasks were turned off.", "cancelled");
+    const settings = loadSettings();
+    const token = await readDeviceToken();
+    const baseValue = process.env.ENSEMBLE_REMOTE_API?.trim() || settings.apiBase;
+    if (token && baseValue) {
+      try {
+        await hostedClient(checkApiBase(baseValue), token).unpairSelf();
+      } catch (error) {
+        request.log.warn({ err: error }, "could not revoke hosted device during local unpair");
+      }
+    }
     await dropDeviceToken();
     updateSettings({ enabled: false, pairedAt: null, deviceId: null, disconnected: null, unreachable: null });
     wakeRemote();

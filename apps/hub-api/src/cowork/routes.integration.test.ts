@@ -303,7 +303,7 @@ test("cowork edge cases: dates, ownership, nudges, meetings, recap bounds", asyn
     const brief = await app.inject({ method: "POST", url: "/api/brief/deliver" });
     const noteId = brief.json().notification.id as string;
     const stolen = await otherApp.inject({ method: "POST", url: `/api/notifications/${noteId}/read` });
-    assert.equal(stolen.json().updated, 0);
+    assert.equal(stolen.statusCode, 404);
     const marked = await app.inject({ method: "POST", url: "/api/notifications/read" });
     assert.ok(marked.json().updated >= 1);
 

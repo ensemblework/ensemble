@@ -4,6 +4,7 @@ import { hasModule, MODULE_DENIED } from "@ensemble/shared-types";
 import { env } from "../config.js";
 import { appendLedger } from "../lib/ledger.js";
 import { prisma } from "../lib/prisma.js";
+import { assertOwned } from "../services/records.js";
 
 function assertInternal(request: FastifyRequest): void {
   const token = request.headers["x-ensemble-internal"];
@@ -26,6 +27,11 @@ export async function internalRoutes(app: FastifyInstance): Promise<void> {
         payload: z.unknown().optional(),
       })
       .parse(request.body);
+    if (body.taskId) await assertOwned(prisma, request.userId, "task", body.taskId);
+    if (body.runId) {
+      const run = await prisma.run.findFirst({ where: { id: body.runId, userId: request.userId, deletedAt: null }, select: { id: true } });
+      if (!run) return reply.code(404).send({ error: "Run not found." });
+    }
     await appendLedger({
       userId: request.userId,
       actor: body.actor,
@@ -43,9 +49,9 @@ export async function internalRoutes(app: FastifyInstance): Promise<void> {
     const { id } = request.params as { id: string };
     const body = z
       .object({
-        index: z.number().int().optional(),
+        index: z.number().int().min(0).optional(),
         title: z.string().optional(),
-        status: z.string().optional(),
+        status: z.enum(["pending", "running", "done", "failed", "needs_approval", "skipped"]).optional(),
         output: z.string().optional(),
         error: z.string().optional(),
         toolCalls: z.unknown().optional(),
@@ -55,7 +61,7 @@ export async function internalRoutes(app: FastifyInstance): Promise<void> {
         credits: z.number().optional(),
       })
       .parse(request.body ?? {});
-    const run = await prisma.run.findFirst({ where: { id, userId: request.userId } });
+    const run = await prisma.run.findFirst({ where: { id, userId: request.userId, deletedAt: null } });
     if (!run) return reply.code(404).send({ error: "Run not found." });
     const index = body.index ?? run.cursor;
     const step = await prisma.runStep.upsert({

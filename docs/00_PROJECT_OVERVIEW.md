@@ -6,7 +6,7 @@
 >
 > **One-liner:** A persistent, context-rich home page where a software engineer and their personal agent share the same picture of the work — todos, deliverables, meetings, code, people — so the agent can do work autonomously, and help without being told the context every time.
 >
-> **What this is:** an **open-source, localhost-first** digital coworker. It started as a Microsoft Hackweek 2026 demo and is now built for anyone to run with their own accounts and model keys.
+> **What this is:** a **source-available, localhost-first** digital coworker (licensed [FSL-1.1-MIT](../LICENSE.md): free to use, including at work, but not to offer as a competing product; each release becomes MIT after two years). It started as a Microsoft Hackweek 2026 demo and is now built for anyone to run with their own accounts and model keys.
 
 ---
 
@@ -14,8 +14,9 @@
 
 These rules override any Microsoft-only, Dev-Box, or hackathon detail that still appears in the module docs.
 
-1. **Open source.** The module docs are implementation guidelines, not a description of a private demo.
+1. **Source available.** The code is public under [FSL-1.1-MIT](../LICENSE.md). The module docs are implementation guidelines, not a description of a private demo.
 2. **Localhost first.** Local development comes first. The VM deploy scripts are in `infra/deploy/`; the desktop app is in [DESKTOP.md](DESKTOP.md).
+   The hosted Hub also accepts public per-user accounts; it is not an invite-only personal instance. Public users bring their own keys, and host execution/credentials are restricted to verified operators. See [02 §16](02_MODULE_INTERACTION_HUB_UI.md#16-accounts-and-public-signup).
 3. **Connectors are pluggable, not Microsoft-shaped.** First wave: **Gmail + Outlook** (mail), **GitHub** (code — **no Azure DevOps**), **Teams** (messages / task context), plus calendar from the mail provider. Later: Notion, Linear, and office suites (Word / PPTX / Excel and Google Docs / Slides / Sheets). What is connected today is in [18](18_WHAT_IS_REAL.md#connectors-read-only).
 4. **No M365 Copilot.** The hackathon used a paste/browser path because Teams/transcripts were blocked in that tenant. Ensemble connects sources directly.
 5. **Many model providers.** GitHub Copilot remains one option. Also **Cursor, Gemini, Claude, OpenAI** (and later anything that speaks the same chat/tools contract). Complexity still picks a `{provider, model, effort?}` profile — the engineer is not locked to one vendor.
@@ -144,6 +145,10 @@ The annotated tree lives in [`17_REPOSITORY_STRUCTURE.md`](17_REPOSITORY_STRUCTU
 ---
 
 ## 7. Core domain model (shared across modules)
+
+Accounts are `User` rows scoped by `userId`, not organizations. `User.emailVerifiedAt` gates hosted agent/connector/model use. `Session` stores hashed browser-cookie tokens; `AuthIdentity` stores unique provider/subject login mappings (distinct from connector `AuthToken`), `EmailToken` stores hashed single-use verification/reset tokens, and `AuthFlow` stores short-lived PKCE/nonce state for browser-bound social login. Schema: `apps/hub-api/prisma/schema.prisma`.
+
+The SQL migration `20261006010000_account_data_lifetime` adds cascading account-lifetime foreign keys to legacy `user_id` tables. They are `NOT VALID` so old placeholder/orphan data is preserved, but new writes require a live account. This stops in-flight work from recreating rows after account erasure; it is not row-level security. Dev bypass creates a real local placeholder account before handling requests.
 
 ```ts
 // packages/shared-types/src/domain.ts (abridged — keep, then generalize source kinds)

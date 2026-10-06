@@ -1,4 +1,7 @@
 import { crossOriginCookieProblem } from "@ensemble/shared-types/cookie-site";
+import { isHosted } from "./hosted-access.js";
+import { hostedLimits } from "./hosted-limits.js";
+import { signupMode } from "./signup.js";
 
 /**
  * Production boot checks shared by hub-api. agent-runtime keeps the same
@@ -78,6 +81,24 @@ export function productionProblems(env: NodeJS.ProcessEnv, surface: ProductionSu
     problems.push(`${name} is on. Turn it off before starting in production.`);
   }
   if (surface === "hub") {
+    if (isHosted(env)) {
+      try {
+        hostedLimits(env);
+      } catch (error) {
+        problems.push(error instanceof Error ? error.message : "Hosted quota settings are invalid.");
+      }
+    }
+    if (isHosted(env)) {
+      let openSignup = true;
+      try {
+        openSignup = signupMode({ mode: env.ENSEMBLE_SIGNUP_MODE, allowlist: env.ENSEMBLE_SIGNUP_ALLOWLIST }) === "open";
+      } catch (error) {
+        problems.push(error instanceof Error ? error.message : "Hosted signup policy is invalid.");
+      }
+      if (openSignup && env.ENSEMBLE_SERVER_RUNNER !== "off") {
+        problems.push("Hosted open signup requires ENSEMBLE_SERVER_RUNNER=off. Server execution cannot be exposed to public signup.");
+      }
+    }
     if (truthyFlag(env.ENSEMBLE_DEV_TOOLS)) {
       problems.push("ENSEMBLE_DEV_TOOLS is on. The desk switcher and developer routes stay off in production. Unset it before starting.");
     }

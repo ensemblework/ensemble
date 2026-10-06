@@ -8,6 +8,7 @@ import { catalog, clearCatalogCache, completeText, completeWithTools, listModels
 import { parseTable, runPlot } from "./plots-python.js";
 import { groundedSearch } from "./search.js";
 import type { Json } from "./payload.js";
+import { HostedAccessError } from "../lib/hosted-access.js";
 
 export class DispatchError extends Error {
   constructor(
@@ -21,6 +22,7 @@ export class DispatchError extends Error {
 
 export function toDispatchError(error: unknown): DispatchError {
   if (error instanceof DispatchError) return error;
+  if (error instanceof HostedAccessError) return new DispatchError(error.message, error.statusCode);
   if (error instanceof CallError) return new DispatchError(error.message, error.statusCode);
   if (error instanceof ProviderError) return new DispatchError(error.message, statusForProvider(error.status));
   if (error instanceof DecryptError) return new DispatchError(error.message, 409);
@@ -62,7 +64,7 @@ async function route(method: string, pathname: string, query: URLSearchParams, b
   }
   if (method === "POST" && pathname === "/api/search") return search(body);
   if (method === "POST" && pathname === "/api/plots/parse") {
-    return parseTable(String(body.filename ?? "table"), String(body.contentBase64 ?? ""), String(body.sheet ?? ""));
+    return parseTable(String(body.filename ?? "table"), String(body.contentBase64 ?? ""), String(body.sheet ?? ""), typeof body.userId === "string" ? body.userId : null);
   }
   if (method === "POST" && pathname === "/api/plots/run") {
     const code = String(body.code ?? "");
@@ -70,7 +72,7 @@ async function route(method: string, pathname: string, query: URLSearchParams, b
     const datasets = Array.isArray(body.datasets) ? (body.datasets as Array<Record<string, unknown>>) : [];
     const format = typeof body.format === "string" && body.format ? body.format : "all";
     const dpi = typeof body.dpi === "number" && Number.isFinite(body.dpi) ? body.dpi : 200;
-    return runPlot(code, datasets, format, dpi);
+    return runPlot(code, datasets, format, dpi, typeof body.userId === "string" ? body.userId : null);
   }
   throw new CallError("That runtime route is not available.", 404);
 }

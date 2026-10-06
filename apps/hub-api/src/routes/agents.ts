@@ -10,6 +10,7 @@ import { isPaused, listActivities, requestCancel } from "../lib/activity.js";
 import { git } from "../lib/git.js";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings } from "../lib/settings.js";
+import { requireHostAccess } from "../lib/hosted-access.js";
 import { declareModule } from "../lib/module-gate.js";
 import { deviceOnline, serverRunnerEnabled } from "../devices/constants.js";
 import { jobOrigin } from "../remote/origin.js";
@@ -79,6 +80,9 @@ function card(job: JobRow, position?: number) {
 
 export async function agentRoutes(app: FastifyInstance): Promise<void> {
   declareModule(app, "workspace");
+  app.addHook("preHandler", async (request) => {
+    if (request.url.split("?")[0]?.startsWith("/api/workspace")) await requireHostAccess(request.userId, "Host workspace filesystem");
+  });
   const { prisma } = app;
 
   app.post("/api/agent/assign", async (request, reply) => {

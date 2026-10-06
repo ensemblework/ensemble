@@ -1,6 +1,6 @@
 # Ensemble docs
 
-Design and operating docs for Ensemble, the open-source, localhost-first digital coworker.
+Design and operating docs for Ensemble, the source-available, localhost-first digital coworker ([FSL-1.1-MIT](../LICENSE.md)).
 
 **Start at [`00`](00_PROJECT_OVERVIEW.md)** for the product direction, then [`18`](18_WHAT_IS_REAL.md) for what the code actually does today. Module docs (`02`–`07`, `13`) mix design intent with as-built notes. When a module doc and `18` disagree, `18` and the code win.
 
@@ -44,6 +44,7 @@ Keeping these files current is part of every change. See [`AGENTS.md`](../AGENTS
 | 23 | [Local-first desktop design](23_LOCAL_DESKTOP_DESIGN.md) | Local-only Tauri app: install, architecture, permissions, build order |
 | 24 | [Desktop sandboxing](24_DESKTOP_SANDBOXING.md) | OS-native sandboxes, trusted folders, unattended mode, stacked tasks |
 | 25 | [Remote tasks on your computer](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md) | Hosted assign, run on the person's Mac: device claim, lease, approvals |
+| 26 | [Ensemble CLI](26_CLI.md) | `ensemble`: install channels, runner, `ensemble mcp`, hosted `/mcp`, editor setup, releases |
 | — | [Desktop app](DESKTOP.md) | How to run and build `apps/desktop` |
 | — | [Mac checklist](desktop/MAC_CHECKLIST.md) | Hand test for the unsigned `.dmg` |
 | — | [UI and performance](UI_PERF_DESIGN.md) | Measured baseline and the perf design |

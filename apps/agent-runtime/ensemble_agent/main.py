@@ -11,6 +11,7 @@ from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from ensemble_agent import credentials
+from ensemble_agent.hosted_access import HostedAccessError, HostedAccessUnavailable, require_host_access, require_verified_user
 from ensemble_agent.config import get_settings
 from ensemble_agent.production import format_production_problems, production_problems
 from ensemble_agent.redact import install_secret_redaction
@@ -63,6 +64,14 @@ async def _lifespan(_app: FastAPI):
 
 app = FastAPI(title="ensemble-agent-runtime", lifespan=_lifespan)
 
+@app.exception_handler(HostedAccessError)
+async def hosted_access_failure(_request, exc: HostedAccessError) -> JSONResponse:
+    return JSONResponse({"detail": str(exc)}, status_code=403)
+
+@app.exception_handler(HostedAccessUnavailable)
+async def hosted_access_unavailable(_request, exc: HostedAccessUnavailable) -> JSONResponse:
+    return JSONResponse({"detail": str(exc)}, status_code=503)
+
 
 def _guard(token: str | None) -> None:
     if token != get_settings().internal_token:
@@ -71,6 +80,10 @@ def _guard(token: str | None) -> None:
 
 def http_error_for(exc: Exception) -> HTTPException:
     """Map a model failure onto a JSON-serializable HTTPException."""
+    if isinstance(exc, HostedAccessError):
+        return HTTPException(status_code=403, detail=str(exc))
+    if isinstance(exc, HostedAccessUnavailable):
+        return HTTPException(status_code=503, detail=str(exc))
     if isinstance(exc, ModelUnreachable):
         return HTTPException(status_code=503, detail=exc.to_dict())
     if isinstance(exc, ConnectionDropped):
@@ -117,6 +130,7 @@ async def chat_tools(body: dict, x_ensemble_internal: str | None = Header(defaul
 async def chat_tools_stream(body: dict, x_ensemble_internal: str | None = Header(default=None)) -> StreamingResponse:
     """Text deltas, then one turn event. Failures before any byte are an error event."""
     _guard(x_ensemble_internal)
+    require_verified_user(body.get("userId"))
     return StreamingResponse(
         stream_with_tools(body),
         media_type="text/event-stream",
@@ -128,6 +142,7 @@ async def chat_tools_stream(body: dict, x_ensemble_internal: str | None = Header
 async def search(body: dict, x_ensemble_internal: str | None = Header(default=None)) -> dict:
     """Provider-native grounding. An empty list means the Hub should use its fallback search."""
     _guard(x_ensemble_internal)
+    require_verified_user(body.get("userId"))
     try:
         results = await grounded_search(
             body.get("userId"),
@@ -166,6 +181,9 @@ def list_credentials(userId: str, x_ensemble_internal: str | None = Header(defau
 @app.put("/api/credentials")
 async def put_credential(body: dict, x_ensemble_internal: str | None = Header(default=None)) -> dict:
     _guard(x_ensemble_internal)
+    require_verified_user(body.get("userId"))
+    if body.get("baseUrl"):
+        require_host_access(body.get("userId"), "Custom model proxies")
     provider = str(body.get("provider") or "")
     secret = str(body.get("apiKey") or "").strip()
     if provider not in credentials.PROVIDERS or provider == "ollama":
@@ -173,7 +191,7 @@ async def put_credential(body: dict, x_ensemble_internal: str | None = Header(de
     if not secret:
         raise HTTPException(status_code=400, detail="Paste a key first.")
     try:
-        found = await list_models(provider, None, secret=secret)
+        found = await list_models(provider, body.get("userId"), secret=secret)
     except httpx.HTTPStatusError as exc:
         status = exc.response.status_code if exc.response is not None else 0
         body_text = ""
@@ -207,6 +225,7 @@ def delete_credential(provider: str, userId: str, x_ensemble_internal: str | Non
 def plots_parse(body: dict, x_ensemble_internal: str | None = Header(default=None)) -> dict:
     """Read a spreadsheet or columnar file. Pickle is refused. No network."""
     _guard(x_ensemble_internal)
+    require_host_access(body.get("userId"), "Python table parsing")
     import base64
 
     from ensemble_agent.plots.parse_table import parse_table
@@ -234,6 +253,7 @@ def plots_run(body: dict, x_ensemble_internal: str | None = Header(default=None)
     begins, and the result follows. Time spent queued is not the run clock.
     """
     _guard(x_ensemble_internal)
+    require_host_access(body.get("userId"), "Python plots")
     import json
     import queue
     import threading
@@ -256,7 +276,7 @@ def plots_run(body: dict, x_ensemble_internal: str | None = Header(default=None)
 
     def work() -> None:
         try:
-            events.put({"result": run_plot(code, datasets, fmt=fmt, dpi=int(dpi) if isinstance(dpi, (int, float)) else None, on_started=on_started)})
+            events.put({"result": run_plot(code, datasets, fmt=fmt, dpi=int(dpi) if isinstance(dpi, (int, float)) else None, on_started=on_started, user_id=body.get("userId"))})
         except Exception as exc:
             events.put({"error": str(exc)})
 

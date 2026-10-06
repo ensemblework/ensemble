@@ -38,6 +38,7 @@ Where a change usually needs a doc update:
 | Quick capture (`apps/quick-capture`) | [`docs/20_QUICK_CAPTURE.md`](docs/20_QUICK_CAPTURE.md) |
 | Desktop app (`apps/desktop`, `src/desktop`, `scripts/*desktop*`, `scripts/build-mac-dmg.sh`) | [`docs/DESKTOP.md`](docs/DESKTOP.md), [`docs/desktop/MAC_CHECKLIST.md`](docs/desktop/MAC_CHECKLIST.md), [`docs/23`](docs/23_LOCAL_DESKTOP_DESIGN.md) |
 | Remote tasks and devices (`src/remote`, `src/devices`) | [`docs/25`](docs/25_REMOTE_TASKS_ON_YOUR_COMPUTER.md) |
+| The CLI, its installers and releases (`apps/cli`, `scripts/package-cli.mjs`, `packaging/`, `apps/landing/public/install.*`, `.github/workflows/cli-release.yml`, `routes/cli-auth.ts`, `routes/mcp.ts`) | [`docs/26`](docs/26_CLI.md), the download guide in `apps/landing/lib/download.ts`, and the Connect guides in `apps/hub-web/lib/connect/` |
 | Hosting, production config (`infra/deploy`, `lib/production.ts`) | The comments in `infra/deploy/` and `ensemble.env.example`. Deployment runbooks live in the git-ignored `private/` folder, never in `docs/` |
 | Caches, perf budgets | [`docs/CACHING.md`](docs/CACHING.md), [`docs/UI_PERF_DESIGN.md`](docs/UI_PERF_DESIGN.md) |
 | Seeds and demo data (`prisma/seed.ts`, `prisma/demo-branch.ts`) | [`docs/DEMO_DATA.md`](docs/DEMO_DATA.md), [`docs/03` §11](docs/03_MODULE_CONTEXT_ENGINE.md#11-seed-data-opt-in-only) |
@@ -61,11 +62,13 @@ New docs go in `docs/` and get a row in [`docs/README.md`](docs/README.md). Desi
 | `apps/landing` | Static landing page for ensemblework.com |
 | `apps/hub-api` | Fastify + Prisma API, scheduler, workspace queue, assistant |
 | `apps/agent-runtime` | Python FastAPI service that holds model keys and calls providers (port 5055) |
-| `apps/context-bridge` | Read-only MCP server for editors |
+| `apps/context-bridge` | Read-only MCP server for editors (hub-api also serves it at `/mcp`) |
+| `apps/cli` | The `ensemble` CLI (npm name `ensemblework`): runner + `ensemble mcp` |
 | `apps/desktop` | Tauri desktop app (local sidecar + PGlite) |
 | `apps/quick-capture` | Tauri tray app with a global shortcut |
 | `apps/skill-forge` | Skill Forge package (stub) |
 | `packages/*` | `shared-types` (Zod), `block-diagrams`, `ide-theme`, `prompts` |
+| `packaging/` | CLI release metadata: Homebrew, Scoop, winget, nfpm, AUR |
 | `infra/` | Local docker-compose (Postgres + Redis) and `deploy/` for a VM |
 | `docs/` | Design and operating docs; start at `docs/README.md` |
 
@@ -86,12 +89,16 @@ Checks to run for the area you changed:
 ```bash
 pnpm typecheck                                  # every TS package
 pnpm --filter @ensemble/hub-api test
+pnpm --filter @ensemble/hub-api test:public        # in-memory API auth/isolation/signup/safety suites
+pnpm --filter @ensemble/hub-api route:inventory:check
 pnpm --filter @ensemble/hub-web test
 pnpm --filter @ensemble/landing build             # landing page (static export to apps/landing/out)
 pnpm --filter @ensemble/shared-types test
 pnpm --filter @ensemble/block-diagrams test
 pnpm --filter @ensemble/ide-theme test
 pnpm bridge:verify                              # context bridge
+pnpm --filter ensemblework test                 # CLI (builds dist/ensemble.mjs first)
+node --test packaging/render.test.mjs           # CLI release metadata
 cd apps/agent-runtime && .venv/bin/python -m pytest tests   # install pytest into .venv first
 ```
 

@@ -161,7 +161,7 @@ Before/after tiles + charts (see [module 07](07_MODULE_GOVERNANCE_AUDIT_METRICS.
 
 ## 6. API contract (hub-api → UI, abridged)
 
-> Abridged. The routes themselves are in `apps/hub-api/src/routes/` (one module per area), registered from `apps/hub-api/src/index.ts`.
+> Abridged. The routes themselves are in `apps/hub-api/src/routes/` (one module per area). The reusable API factory registers them; `apps/hub-api/src/index.ts` manages listening and background services.
 
 ### Core
 
@@ -243,6 +243,20 @@ Source: `apps/hub-api/src/routes/assistant.ts`.
 |---|---|---|
 | GET | `/api/undo` | → `{ undo[], redo[] }` |
 | POST | `/api/undo` • `/api/redo` | → `{ ok, message, invalidate[], state }` |
+
+### CLI login and hosted MCP ([docs/26](26_CLI.md))
+
+| Method | Path | Body → Response |
+|---|---|---|
+| POST | `/api/cli/auth/start` | public. `{ clientName, platform, version, scopes: ("mcp"\|"runner")[] }` → `{ deviceCode, userCode, verificationUri, verificationUriComplete, expiresIn: 600, interval: 5 }` |
+| GET | `/api/cli/auth/request?code=` | browser session. → `{ clientName, platform, version, scopes, createdAt, expiresAt, status, requestedFrom, sameNetwork }`; `requestedFrom` is the address that called `/start` (cleared once the request is decided, used or expired) and `sameNetwork` compares it with the browser's; 404 when unknown, expired or used |
+| POST | `/api/cli/auth/approve` | browser session. `{ userCode, scopes, decision: "approve"\|"deny" }` → `{ ok, scopes }`; `runner` needs a verified email on the hosted site (403 `EMAIL_UNVERIFIED`) |
+| POST | `/api/cli/auth/token` | public. `{ deviceCode }` → once `{ token, tokenId, scopes, account, apiBase, appUrl, pairingCode?, pairingExpiresAt? }`, else 400 `authorization_pending` \| `slow_down` \| `access_denied` \| `expired_token` |
+| POST | `/api/cli/logout` | bearer `ens_` key (bridge or full). Revokes that key → 204 |
+| POST | `/mcp` | bearer `ens_` key (bridge or full). Stateless Streamable HTTP MCP: the Context Bridge tools. `GET`/`DELETE` → 405 |
+| DELETE | `/api/devices/self` | device key. Revokes this device ([docs/25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#43-endpoints)) |
+
+Rate limits: `/api/cli/auth/start` 10 per 10 minutes per address (`ENSEMBLE_RATE_CLI_START_*`), `/token` 120 per minute (`ENSEMBLE_RATE_CLI_TOKEN_*`), `/request` and `/approve` together 30 per 10 minutes per user (`ENSEMBLE_RATE_CLI_APPROVE_*`), `/mcp` 240 per minute per user (`ENSEMBLE_RATE_MCP_*`).
 
 ### Internal, called by agent-runtime (service-to-service)
 
@@ -585,3 +599,38 @@ The **Failed jobs** section is a real retry interface, not a decorative error li
 - **Workspace previews** enforce clipping above Fluent's atomic text styles, and cards cannot shrink beneath their content. Long repository names wrap within the card, including at enlarged text sizes and in completed/attention lists.
 - **Model presets** use compact model/thinking/context rows. Tier guidance, transport limitations, refresh metadata and rate explanations are available through keyboard-focusable information icons; discovery failures/stale state remain visible. Retention's label and selector share a row on desktop and stack on narrow screens.
 - **Deleted items** uses the same Settings tile width and offers *Restore all* with confirmation. Bulk restore is user-scoped, transactional, audited and not limited by the visible page; linked source mirrors return too. It leaves private reminders, task progress and agent execution unchanged.
+
+## 16. Accounts and public signup
+
+`routes/auth.ts` and `routes/auth-oauth.ts` retain custom scrypt passwords and hashed-cookie sessions. Registration defaults to open, including after the first account. `ENSEMBLE_SIGNUP_MODE=closed` stops new registrations but not existing logins; `allowlist` uses `ENSEMBLE_SIGNUP_ALLOWLIST` and denies an empty list. Local development can claim the placeholder user; hosted production never gives placeholder data to the first public registrant.
+
+Login supports email/password, Google, GitHub and Microsoft. Provider buttons are shown only when both corresponding `AUTH_<PROVIDER>_CLIENT_ID/SECRET` settings exist. Login OAuth clients/scopes are separate from connector OAuth. OAuth uses PKCE, nonce validation, signed browser-flow cookies, expiring single-use database state, and JWKS validation of Google/Microsoft identity tokens. It stores identity mappings, not provider access tokens.
+
+Verified Google and primary GitHub emails can verify a new account. Automatic email linking requires both the provider email and the existing account email to be verified; otherwise sign in through the existing method and explicitly link in Account. Microsoft email/username claims are not trusted as ownership proof: Microsoft-created accounts require Ensemble email verification. A provider without an email can be linked to an already signed-in account.
+
+Hosted email signup needs `EMAIL_PROVIDER=resend`, `EMAIL_API_KEY`, `EMAIL_FROM` and both Turnstile keys. An unverified account can save notes/tasks/context; agents, models and connectors are gated. `/forgot`, `/reset`, `/verify` are public pages. Email tokens are hashed, single-use and sent in URL fragments: verification lasts 24 hours, reset 30 minutes; requesting new mail invalidates the previous token of the same kind. Verification also requires a browser session for that same account; another browser must sign in and reopen the email link. Reset and password changes invalidate old sessions; recovering an unverified address removes pending social identities to prevent account pre-hijacking.
+
+| Method | Path | Body / behavior |
+|---|---|---|
+| GET | `/api/auth/status` | Signup mode, configured providers, email availability, public Turnstile key; no secrets |
+| POST | `/api/auth/signup` | `{ email, password, name?, turnstileToken? }`; creates session and sends verification |
+| POST | `/api/auth/login` • `/api/auth/logout` | `{ email, password }` • ends session |
+| GET / PATCH | `/api/auth/me` | Identity/appearance/modules • `{ name?, password?, current? }`; sensitive password changes require browser authentication |
+| GET | `/api/auth/oauth/:provider/start` | Redirects to login provider; `?link=1` requires an existing browser session |
+| GET | `/api/auth/oauth/:provider/callback` | Consumes browser-bound state and returns to a fixed Hub-origin page |
+| POST | `/api/auth/verify-email` | `{ token }`; consumes valid verification token |
+| POST | `/api/auth/resend-verification` | Browser session required |
+| POST | `/api/auth/forgot` | `{ email }`; generic response, whether an account exists or not |
+| POST | `/api/auth/reset` | `{ token, password }`; single use, ends all sessions |
+| GET / DELETE | `/api/auth/identities` • `/api/auth/identities/:provider` | List login methods • `{ current? }`; cannot remove the last method |
+| GET | `/api/auth/export` | Browser-only JSON attachment of user-scoped records, excluding credentials |
+| DELETE | `/api/auth/account` | `{ confirmation: "DELETE", current? }`; recent/password-confirmed browser session, no active agent jobs; removes account data and revokes devices |
+
+Settings → Account supports linked methods, adding/changing passwords, JSON export and deletion. Sensitive method removal/deletion uses a recent session (10 minutes) or current-password confirmation. Deletion leaves local user files alone; provider copies and infrastructure backup retention are separate. The landing site includes `/privacy`, `/terms`, and direct registration links.
+
+## 17. Linking a computer, and connecting editors
+
+- **`/link`** (`app/link/page.tsx`, `components/cli-link.tsx`): approves or denies an `ensemble login`. It is a standalone signed-in page; signed-out visitors go to `/login?next=/link?code=…` and come back, and the onboarding redirect skips it so a new account does not lose the code. It shows the computer name, platform, CLI version and requested access ("Read your Ensemble context in editors" and "Run tasks you assign to this computer") with a warning to approve only a code you just started. An unverified hosted account can approve editor access only.
+- **Connect your apps** (`/connect`, `components/connect/*`, `lib/connect/{catalog,configs,guides}.ts`): each editor guide offers three methods: Ensemble CLI (recommended; install command per OS, `ensemble login`, `ensemble mcp setup <editor>`, the config it writes), Hosted URL (no install; a read-only key from this page and the `${publicApiUrl}/mcp` snippet), and From source (the earlier developer flow; only this method shows the local bridge status). Editors: VS Code, Cursor, Windsurf, Claude Code, Claude Desktop, Codex & ChatGPT, Gemini CLI, GitHub Copilot CLI, Zed, Visual Studio, JetBrains, Cline, Continue, opencode; macOS, Windows and Linux paths.
+- **Settings → Devices** (`components/settings/devices.tsx`): "Add a computer with the Ensemble CLI" (install per OS, `ensemble login`, `ensemble folders add`, `ensemble runner install`) above the pairing code, which stays for the desktop app. The assign dialog's empty state points there.
+

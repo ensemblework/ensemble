@@ -50,9 +50,21 @@ export function readCookie(request: FastifyRequest, name: string): string | null
   if (!header) return null;
   for (const part of header.split(";")) {
     const [key, ...rest] = part.trim().split("=");
-    if (key === name) return decodeURIComponent(rest.join("="));
+    if (key === name) {
+      try {
+        return decodeURIComponent(rest.join("="));
+      } catch {
+        return null;
+      }
+    }
   }
   return null;
+}
+
+export function appendCookie(reply: FastifyReply, header: string): void {
+  const current = reply.getHeader("Set-Cookie");
+  const cookies = typeof current === "string" ? [current] : Array.isArray(current) ? current : [];
+  reply.header("Set-Cookie", [...cookies, header]);
 }
 
 function cookieSecure(request: FastifyRequest): boolean {
@@ -78,7 +90,7 @@ export async function startSession(reply: FastifyReply, userId: string, request:
       modules: user?.moduleSet ?? FULL_MODULE_SET,
     },
   });
-  reply.header("Set-Cookie", sessionCookieHeader(SESSION_COOKIE, token, SESSION_DAYS * 86_400, cookieSecure(request), sessionCookieDomain()));
+  appendCookie(reply, sessionCookieHeader(SESSION_COOKIE, token, SESSION_DAYS * 86_400, cookieSecure(request), sessionCookieDomain()));
 }
 
 function sessionCookieDomain(): string | null {
@@ -88,7 +100,7 @@ function sessionCookieDomain(): string | null {
 export async function endSession(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   const token = readCookie(request, SESSION_COOKIE);
   if (token) await prisma.session.deleteMany({ where: { id: sha256(token) } });
-  reply.header("Set-Cookie", sessionCookieHeader(SESSION_COOKIE, "", 0, cookieSecure(request), sessionCookieDomain()));
+  appendCookie(reply, sessionCookieHeader(SESSION_COOKIE, "", 0, cookieSecure(request), sessionCookieDomain()));
 }
 
 export function newApiToken(): { token: string; hash: string; prefix: string } {

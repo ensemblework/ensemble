@@ -1,6 +1,6 @@
 # 17 · Repository structure
 
-What lives where in this repo. For *what* to build, start with [`00_PROJECT_OVERVIEW.md`](00_PROJECT_OVERVIEW.md). For what runs today, see [`18_WHAT_IS_REAL.md`](18_WHAT_IS_REAL.md). Checked against `main` on 5 Oct 2026.
+What lives where in this repo. For *what* to build, start with [`00_PROJECT_OVERVIEW.md`](00_PROJECT_OVERVIEW.md). For what runs today, see [`18_WHAT_IS_REAL.md`](18_WHAT_IS_REAL.md). Checked against `main` on 5 Oct 2026; the CLI entries on 6 Oct 2026.
 
 ---
 
@@ -13,7 +13,8 @@ ensemble/
 │   ├── landing/           Static landing page for ensemblework.com (Next.js export, no API calls)
 │   ├── hub-api/           Fastify + Prisma API, scheduler, workspace queue, assistant
 │   ├── agent-runtime/     Python FastAPI service that holds model keys (port 5055)
-│   ├── context-bridge/    Read-only MCP server for editors (stdio + loopback HTTP)
+│   ├── context-bridge/    Read-only MCP server for editors (stdio + loopback HTTP); hub-api serves it at /mcp
+│   ├── cli/               The `ensemble` CLI (npm name ensemblework): runner + MCP, docs/26
 │   ├── desktop/           Tauri 2 desktop app (static export + local hub-api sidecar)
 │   ├── quick-capture/     Tauri tray app with a global capture shortcut
 │   └── skill-forge/       Skill Forge Python package (stub, docs/04)
@@ -26,7 +27,8 @@ ensemble/
 │   ├── docker-compose.yml Local Postgres 16 + pgvector and Redis 7, loopback only
 │   ├── sql/init.sql       Extensions (vector, pg_trgm, uuid-ossp)
 │   └── deploy/            Ubuntu VM setup: Caddy, systemd units, backups, pull-based autodeploy
-├── scripts/               Dev, desktop build, measurement and hook scripts (§3)
+├── scripts/               Dev, desktop build, CLI packaging, measurement and hook scripts (§3)
+├── packaging/             CLI release metadata renderer: Homebrew, Scoop, winget, nfpm, AUR (docs/26 §7)
 ├── docs/                  Design and operating docs (start at docs/README.md)
 ├── design/                Icon and motion design sources (not shipped code)
 ├── .github/               CI and deploy workflows, Copilot agent, agent skills, desktop build workflow
@@ -95,9 +97,13 @@ apps/agent-runtime/ensemble_agent/
 └── audit/                    Ledger writer
 apps/agent-runtime/tests/     pytest suite
 
-apps/landing/                 app/ (one page, Open Graph image, robots, sitemap), components/ (live board,
-                              wave motif, icons), lib/site.ts (URLs and the repoPublic switch)
-apps/context-bridge/          src/ (MCP server), clients/ (editor config samples), test/, scripts/
+apps/landing/                 app/ (home, /download, /privacy, /terms, Open Graph image, robots, sitemap),
+                              components/ (live board, wave motif, icons, install tabs), lib/ (site URLs,
+                              download.ts install and editor data), public/ (install.sh, install.ps1),
+                              vercel.json (text/plain headers for the install scripts)
+apps/context-bridge/          src/ (MCP server; exports ./server, ./hub, ./config), clients/ (editor config samples), test/, scripts/
+apps/cli/                     src/ (commands, device login, sidecar control, editor writers, services), scripts/build.mjs
+                              (esbuild bundle → dist/ensemble.mjs), bin/ensemble (POSIX launcher), launcher/ (Go, Windows)
 apps/desktop/                 src-tauri/ (Rust shell: sidecar, site, menu, diagnostics), ui/ (offline page)
 apps/quick-capture/           src-tauri/ + ui/ (not a pnpm workspace package; built with cargo)
 apps/skill-forge/             pyproject.toml + ensemble_forge/__init__.py; miners are not built
@@ -114,7 +120,9 @@ apps/skill-forge/             pyproject.toml + ensemble_forge/__init__.py; miner
 | `doctor.sh` | `pnpm run doctor`: checks Node, pnpm, Python, Docker and `.env` |
 | `ensemble-hook.mjs` | Routes Cursor / Claude Code / Copilot permission prompts to Needs me |
 | `export-desktop-web.mjs` | `pnpm desktop:export`: static export of hub-web for the desktop app |
-| `assemble-desktop-sidecar.mjs` | `pnpm desktop:sidecar`: packs Node and hub-api into the Tauri resources |
+| `assemble-desktop-sidecar.mjs` | `pnpm desktop:sidecar`: packs Node and hub-api into the Tauri resources (`--dest` packs elsewhere, used by the CLI) |
+| `package-cli.mjs` | `pnpm cli:package --target <t>`: builds the CLI archive for this host (docs/26) |
+| `smoke-cli-package.mjs` | Smoke test of an extracted CLI archive: version, MCP handshake, sidecar `/health` |
 | `build-mac-dmg.sh` | `pnpm desktop:dmg`: unsigned macOS disk image |
 | `desktop-discovery.mjs`, `desktop-spawn.mjs` | Shared helpers for finding the desktop API and spawning processes on every OS |
 | `check-icons.mjs` | Validates the `.ico` / `.icns` app icons |
@@ -132,11 +140,12 @@ apps/skill-forge/             pyproject.toml + ensemble_forge/__init__.py; miner
 | REST/SSE endpoint, persistence, connector, scheduled job, or assistant tool | `apps/hub-api/` |
 | Model provider, planner, plot export | `apps/agent-runtime/` (and `apps/hub-api/src/runtime/` for the desktop in-process path) |
 | Shared API / domain shape | `packages/shared-types/` |
-| Editor access to Ensemble context | `apps/context-bridge/` and `apps/hub-api/src/bridge/` |
+| Editor access to Ensemble context | `apps/context-bridge/`, `apps/hub-api/src/bridge/`, `apps/hub-api/src/routes/mcp.ts` (hosted `/mcp`) |
+| The `ensemble` CLI, its installers and releases | `apps/cli/`, `scripts/package-cli.mjs`, `packaging/`, `apps/landing/public/`, `.github/workflows/cli-release.yml` |
 | Database schema change | a new migration in `apps/hub-api/prisma/` |
 | Desktop shell | `apps/desktop/` |
 | Local infrastructure or VM deploy | `infra/` |
-| CI checks, production deploys | `.github/workflows/` (`ci.yml`, `deploy.yml`, `desktop.yml`) |
+| CI checks, production deploys, CLI releases | `.github/workflows/` (`ci.yml`, `deploy.yml`, `desktop.yml`, `cli-release.yml`) |
 | Product behaviour documentation | `docs/` — in the same change, see [AGENTS.md](../AGENTS.md) |
 
 Folders such as `node_modules/`, `.next/`, `dist/`, `.venv/`, `__pycache__/`, `*.egg-info/`, `.turbo/`, `target/`, test caches, `docs/screenshots/` and `.ensemble/` are outputs or local state. They are git-ignored and should not become homes for source code.

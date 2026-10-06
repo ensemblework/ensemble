@@ -7,6 +7,7 @@
  * Tokens never go in the remote URL and never go in an error string.
  */
 import { execFile } from "node:child_process";
+import { requireHostAccess } from "../lib/hosted-access.js";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -142,6 +143,7 @@ async function readMeta(path: string): Promise<{ fetchedAt: number; head: string
  * A fresh cache hit does not talk to the network.
  */
 export async function ensureMirror(request: MirrorRequest): Promise<MirrorHit> {
+  await requireHostAccess(request.userId, "Repository cloning");
   const remote = cleanRemote(request.remote, request.fullName);
   const rootParent = join(request.cacheRoot ?? (await cacheDir()), "repo-mirrors", safeSegment(request.userId), safeSegment(request.fullName));
   const checkout = join(rootParent, "checkout");

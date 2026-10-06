@@ -6,10 +6,9 @@ import { prisma } from "./prisma.js";
 const LOCAL_EMAIL = "local@ensemble.desktop";
 
 /** One local account so the bundled UI opens signed in. The password is random and not stored. */
-export async function ensureDesktopUser(): Promise<string> {
-  const id = env.ENSEMBLE_DEV_USER_ID;
-  const existing = await prisma.user.findUnique({ where: { id } });
-  if (existing?.passwordHash) {
+export async function ensureDesktopUser(id = env.ENSEMBLE_DEV_USER_ID): Promise<string> {
+  const existing = await prisma.user.findUnique({ where: { id }, include: { authIdentities: { select: { id: true } } } });
+  if (existing && (existing.passwordHash || existing.authIdentities.length)) {
     if (!existing.onboardingCompletedAt) {
       await prisma.user.update({ where: { id }, data: { onboardingCompletedAt: new Date() } });
     }

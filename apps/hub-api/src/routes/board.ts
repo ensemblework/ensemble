@@ -6,7 +6,7 @@ import { appendLedger } from "../lib/ledger.js";
 import { sseHub } from "../lib/sse.js";
 import { lastUndoId, recordUndoInTransaction } from "../lib/undo.js";
 import { loadSettings } from "../lib/settings.js";
-import { createReminder, softDelete } from "../services/records.js";
+import { assertOwned, createReminder, softDelete } from "../services/records.js";
 
 const MoveBody = z.object({
   status: TaskStatus,
@@ -14,6 +14,7 @@ const MoveBody = z.object({
   beforeId: z.string().uuid().nullish(),
   afterId: z.string().uuid().nullish(),
 });
+const DateInput = z.string().refine((value) => !Number.isNaN(new Date(value).getTime()), "Use a valid date.");
 
 export async function boardRoutes(app: FastifyInstance): Promise<void> {
   const { prisma } = app;
@@ -31,9 +32,10 @@ export async function boardRoutes(app: FastifyInstance): Promise<void> {
     if (!existing) return reply.code(404).send({ error: "Task not found." });
 
     const [before, after] = await Promise.all([
-      body.beforeId ? prisma.task.findFirst({ where: { id: body.beforeId, userId }, select: { boardOrder: true } }) : null,
-      body.afterId ? prisma.task.findFirst({ where: { id: body.afterId, userId }, select: { boardOrder: true } }) : null,
+      body.beforeId ? prisma.task.findFirst({ where: { id: body.beforeId, userId, deletedAt: null }, select: { boardOrder: true } }) : null,
+      body.afterId ? prisma.task.findFirst({ where: { id: body.afterId, userId, deletedAt: null }, select: { boardOrder: true } }) : null,
     ]);
+    if ((body.beforeId && !before) || (body.afterId && !after)) return reply.code(404).send({ error: "Neighbour task not found." });
     let boardOrder: number;
     if (before && after) boardOrder = (before.boardOrder + after.boardOrder) / 2;
     else if (before) boardOrder = before.boardOrder + 1;
@@ -108,6 +110,7 @@ export async function boardRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/tasks/:id/transitions", async (request) => {
     const { id } = request.params as { id: string };
+    await assertOwned(prisma, request.userId, "task", id);
     const transitions = await prisma.taskTransition.findMany({
       where: { taskId: id, userId: request.userId },
       orderBy: { at: "desc" },
@@ -118,6 +121,7 @@ export async function boardRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/tasks/:id/runs", async (request) => {
     const { id } = request.params as { id: string };
+    await assertOwned(prisma, request.userId, "task", id);
     if (!hasModule(request.modules, "runs")) return { runs: [] };
     const runs = await prisma.run.findMany({
       where: { taskId: id, userId: request.userId, deletedAt: null },
@@ -146,8 +150,9 @@ export async function boardRoutes(app: FastifyInstance): Promise<void> {
 
   app.post("/api/deliverables", async (request, reply) => {
     const body = z
-      .object({ title: z.string().min(1), projectId: z.string().uuid(), due: z.string().nullish() })
+      .object({ title: z.string().min(1), projectId: z.string().uuid(), due: DateInput.nullish() })
       .parse(request.body);
+    await assertOwned(prisma, request.userId, "project", body.projectId);
     const deliverable = await prisma.deliverable.create({
       data: {
         userId: request.userId,
@@ -167,7 +172,7 @@ export async function boardRoutes(app: FastifyInstance): Promise<void> {
       .object({
         title: z.string().min(1).optional(),
         status: z.enum(["upcoming", "completed"]).optional(),
-        due: z.string().nullish(),
+        due: DateInput.nullish(),
         notes: z.string().optional(),
       })
       .parse(request.body);
@@ -232,14 +237,18 @@ export async function boardRoutes(app: FastifyInstance): Promise<void> {
 
   app.post("/api/reminders/:id/dismiss", async (request, reply) => {
     const { id } = request.params as { id: string };
-    await prisma.reminder.updateMany({ where: { id, userId: request.userId }, data: { dismissedAt: new Date() } });
+    const result = await prisma.reminder.updateMany({ where: { id, userId: request.userId, deletedAt: null }, data: { dismissedAt: new Date() } });
+    if (!result.count) return reply.code(404).send({ error: "Reminder not found." });
     return reply.code(204).send();
   });
 
   // ── calendar ────────────────────────────────────────────────────────────
 
   app.get("/api/calendar", async (request) => {
-    const query = z.object({ from: z.string(), to: z.string() }).parse(request.query);
+    const query = z.object({
+      from: DateInput,
+      to: DateInput,
+    }).refine((value) => new Date(value.from) < new Date(value.to), { message: "from must be before to." }).parse(request.query);
     const events = await prisma.artifact.findMany({
       where: {
         userId: request.userId,

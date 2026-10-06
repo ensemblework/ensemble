@@ -98,7 +98,7 @@ export function toolsFor(allowedWriteAreas: readonly AssistantToolArea[], module
 
 function parameters(tool: AnyHubTool): Record<string, unknown> {
   const schema = zodToJsonSchema(tool.input, {
-    target: "openApi3",
+    target: "jsonSchema7",
     $refStrategy: "none",
   }) as Record<string, unknown>;
   delete schema.$schema;

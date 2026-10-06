@@ -17,7 +17,7 @@ const MARKS: Record<AppId, ReactNode> = {
       <path fill="#fff" fillOpacity=".92" d="M18.4 8.2 10.2 16l8.2 7.8V8.2Z" />
     </>
   ),
-  copilot: (
+  "copilot-cli": (
     <>
       <rect width="32" height="32" rx="8" fill="#24292f" />
       <path fill="#fff" d="M16 7.2a5.2 5.2 0 0 0-1.6 10.1v1.4H12v2h2.4V23h2.2v-2.3H19v-2h-2.4v-1.5A5.2 5.2 0 0 0 16 7.2Zm0 2.2a3 3 0 1 1 0 6 3 3 0 0 1 0-6Z" />
@@ -48,6 +48,12 @@ const MARKS: Record<AppId, ReactNode> = {
       <path fill="#fff" d="M16 6.2 19.2 13 26.4 14l-5.2 4.6 1.6 6.6L16 21.8 9.2 25.2l1.6-6.6L5.6 14 12.8 13 16 6.2Z" />
     </>
   ),
+  gemini: (
+    <>
+      <rect width="32" height="32" rx="8" fill="#1a73e8" />
+      <path fill="#fff" d="M16 5.5 18.2 13.8 26.5 16 18.2 18.2 16 26.5 13.8 18.2 5.5 16 13.8 13.8 16 5.5Z" />
+    </>
+  ),
   windsurf: (
     <>
       <rect width="32" height="32" rx="8" fill="#0b6e6a" />
@@ -59,6 +65,12 @@ const MARKS: Record<AppId, ReactNode> = {
     <>
       <rect width="32" height="32" rx="8" fill="#1c1c1c" />
       <path fill="#f5d90a" d="M8.5 8h12.2L14 16.2h8.8L11.2 24H8.5l8.2-7.8H8.5V8Z" />
+    </>
+  ),
+  "visual-studio": (
+    <>
+      <rect width="32" height="32" rx="8" fill="#68217a" />
+      <path fill="#fff" d="M23.8 7.5v17l-7.1-2.8-6.1 4.3-4.4-3.2 6.6-6.8-6.6-6.8L10.6 6l6.1 4.3 7.1-2.8Zm-7.5 5.3-4.1-2.9-3 2.2 4 3.9-4 3.9 3 2.2 4.1-2.9V12.8Z" />
     </>
   ),
   jetbrains: (
@@ -80,12 +92,10 @@ const MARKS: Record<AppId, ReactNode> = {
       <path fill="#fff" d="M16.2 11.2 19 16l-2.8 4.8h-2.3L16.6 16l-2.7-4.8h2.3Z" />
     </>
   ),
-  http: (
+  opencode: (
     <>
-      <rect width="32" height="32" rx="8" fill="rgb(var(--accent-rgb))" />
-      <circle cx="10" cy="16" r="2.2" fill="#fff" />
-      <circle cx="22" cy="16" r="2.2" fill="#fff" />
-      <path stroke="#fff" strokeWidth="1.8" d="M12.2 16h7.6" />
+      <rect width="32" height="32" rx="8" fill="#111827" />
+      <path fill="none" stroke="#fff" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 11 6 16l4 5M22 11l4 5-4 5M18.5 8.5l-5 15" />
     </>
   ),
 };

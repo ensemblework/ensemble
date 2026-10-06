@@ -6,6 +6,7 @@
 import { tmpdir } from "node:os";
 import type { FastifyInstance } from "fastify";
 import { env } from "../config.js";
+import { requireHostAccess } from "../lib/hosted-access.js";
 import { appendLedger } from "../lib/ledger.js";
 import { createTask } from "../services/tasks.js";
 import { createJob } from "../workspace/assign.js";
@@ -18,9 +19,10 @@ import { loadHeld, loadSettings, type HeldJob } from "./store.js";
 
 const PRIVATE = /Authentication|could not read Username|Permission denied|Repository not found|terminal prompts disabled|Invalid username or password/i;
 
-export async function repoVisibility(url: string): Promise<"public" | "private" | "unreachable"> {
+export async function repoVisibility(url: string, userId = env.ENSEMBLE_DEV_USER_ID): Promise<"public" | "private" | "unreachable"> {
+  await requireHostAccess(userId, "Host repository probe");
   try {
-    const result = await runTrustedGit({ cwd: tmpdir(), args: ["ls-remote", "--heads", url], timeoutMs: 20_000 });
+    const result = await runTrustedGit({ userId, cwd: tmpdir(), args: ["ls-remote", "--heads", url], timeoutMs: 20_000 });
     if (result.exitCode === 0) return "public";
     if (PRIVATE.test(result.output)) return "private";
     return "unreachable";
@@ -30,6 +32,7 @@ export async function repoVisibility(url: string): Promise<"public" | "private" 
 }
 
 export async function acceptClaimed(app: FastifyInstance, client: HostedClient, spec: JobSpec): Promise<HeldJob> {
+  await requireHostAccess(env.ENSEMBLE_DEV_USER_ID, "Host remote task execution");
   const held: HeldJob = {
     hostedId: spec.id,
     leaseToken: spec.leaseToken,

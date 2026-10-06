@@ -10,7 +10,9 @@ import {
   type PlotConfig,
 } from "@ensemble/shared-types";
 import { runtime } from "../lib/runtime.js";
-import { readOriginal, readTable, removeDatasetFiles, writeTable, type StoredTable } from "./store.js";
+import { readOriginal, readTable, removeDatasetFiles, storedTableBytes, writeTable, type StoredTable } from "./store.js";
+import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
+import { checkDatasetBytes, withHostedUserLock } from "../lib/hosted-limits.js";
 import { fetchPublicTable } from "./ssrf.js";
 
 const TEXT = new Set(["csv", "tsv", "txt", "json", "jsonl", "paste"]);
@@ -42,7 +44,7 @@ type Parsed = {
   sheet: string;
 };
 
-async function parseBytes(filename: string, bytes: Uint8Array, sheet?: string): Promise<Parsed> {
+async function parseBytes(userId: string, filename: string, bytes: Uint8Array, sheet?: string): Promise<Parsed> {
   const format = formatFromName(filename);
   if (format === "pickle") throw Object.assign(new Error(PICKLE_REJECTION), { statusCode: 400 });
   if (bytes.byteLength > MAX_UPLOAD_BYTES) throw Object.assign(new Error("That file is larger than 32 MB."), { statusCode: 400 });
@@ -52,6 +54,7 @@ async function parseBytes(filename: string, bytes: Uint8Array, sheet?: string): 
     return { columns: parsed.columns, rows: parsed.rows, warnings: parsed.warnings, sheets: [], sheet: "" };
   }
   if (!BINARY.has(format)) throw Object.assign(new Error("That file type is not supported."), { statusCode: 400 });
+  await requireHostAccess(userId, "Python table parsing");
   const result = await runtime<{
     columns: PlotColumn[];
     rows: Array<Array<string | number | null>>;
@@ -61,7 +64,7 @@ async function parseBytes(filename: string, bytes: Uint8Array, sheet?: string): 
   }>("/api/plots/parse", {
     method: "POST",
     timeoutMs: 60_000,
-    json: { filename, contentBase64: Buffer.from(bytes).toString("base64"), sheet: sheet ?? "" },
+    json: { userId, filename, contentBase64: Buffer.from(bytes).toString("base64"), sheet: sheet ?? "" },
   });
   return {
     columns: result.columns,
@@ -87,6 +90,7 @@ export async function ingestDataset(
     delimiter?: string;
   },
 ): Promise<{ id: string; name: string; columns: PlotColumn[]; rowCount: number; warnings: string[]; sheets: string[]; sheet: string; format: string }> {
+  await requireVerifiedUser(userId);
   let bytes: Uint8Array | undefined;
   let filename = input.filename || "pasted.csv";
   let warnings: string[] = [];
@@ -112,7 +116,7 @@ export async function ingestDataset(
   } else if (!bytes) {
     throw Object.assign(new Error("Add a file, a paste, or a link."), { statusCode: 400 });
   } else {
-    const parsed = await parseBytes(filename, bytes, input.sheet);
+    const parsed = await parseBytes(userId, filename, bytes, input.sheet);
     table = { columns: parsed.columns, rows: parsed.rows };
     warnings = parsed.warnings;
     sheets = parsed.sheets;
@@ -120,21 +124,30 @@ export async function ingestDataset(
   }
   if (!table.columns.length) throw Object.assign(new Error(warnings[0] || "Nothing to plot in that file."), { statusCode: 400 });
   const name = (input.name || filename.replace(/\.[^.]+$/, "") || "Dataset").slice(0, 200);
-  const row = await prisma.plotDataset.create({
-    data: {
-      userId,
-      name,
-      format,
-      columns: table.columns as unknown as Prisma.InputJsonValue,
-      rowCount: table.rows.length,
-      byteSize: bytes?.byteLength ?? Buffer.byteLength(JSON.stringify(table.rows)),
-      contentHash: "pending",
-      sheet,
-      sheets,
-    },
+  const byteSize = storedTableBytes(table, bytes);
+  let createdId: string | undefined;
+  const row = await withHostedUserLock(prisma, userId, async (tx) => {
+    await checkDatasetBytes(tx, userId, byteSize);
+    const created = await tx.plotDataset.create({
+      data: {
+        userId,
+        name,
+        format,
+        columns: table.columns as Prisma.InputJsonValue,
+        rowCount: table.rows.length,
+        byteSize,
+        contentHash: "pending",
+        sheet,
+        sheets,
+      },
+    });
+    createdId = created.id;
+    const hash = writeTable(userId, created.id, table, bytes);
+    return tx.plotDataset.update({ where: { id: created.id }, data: { contentHash: hash } });
+  }).catch((error: unknown) => {
+    if (createdId) removeDatasetFiles(userId, createdId);
+    throw error;
   });
-  const hash = writeTable(userId, row.id, table, bytes);
-  await prisma.plotDataset.update({ where: { id: row.id }, data: { contentHash: hash } });
   return { id: row.id, name, columns: table.columns, rowCount: table.rows.length, warnings, sheets, sheet, format };
 }
 
@@ -165,17 +178,38 @@ export async function reparseSheet(prisma: PrismaClient, userId: string, dataset
   const row = await ownedDataset(prisma, userId, datasetId);
   const original = readOriginal(userId, datasetId);
   if (!original) throw Object.assign(new Error("The original file is not kept for this dataset, so the sheet cannot be changed."), { statusCode: 400 });
-  const parsed = await parseBytes(`${row.name}.${row.format}`, original, sheet);
-  const hash = writeTable(userId, row.id, { columns: parsed.columns, rows: parsed.rows }, original);
-  await prisma.plotDataset.update({
-    where: { id: row.id },
-    data: { columns: parsed.columns as unknown as Prisma.InputJsonValue, rowCount: parsed.rows.length, contentHash: hash, sheet: parsed.sheet || sheet, sheets: parsed.sheets },
+  const parsed = await parseBytes(userId, `${row.name}.${row.format}`, original, sheet);
+  const table = { columns: parsed.columns, rows: parsed.rows };
+  const byteSize = storedTableBytes(table, original);
+  await withHostedUserLock(prisma, userId, async (tx) => {
+    await checkDatasetBytes(tx, userId, byteSize, row.id);
+    const hash = writeTable(userId, row.id, table, original);
+    await tx.plotDataset.update({
+      where: { id: row.id },
+      data: { columns: parsed.columns as Prisma.InputJsonValue, rowCount: parsed.rows.length, byteSize, contentHash: hash, sheet: parsed.sheet || sheet, sheets: parsed.sheets },
+    });
   });
   return { columns: parsed.columns, rowCount: parsed.rows.length, sheet: parsed.sheet || sheet, warnings: parsed.warnings };
 }
 
 export async function deleteDataset(prisma: PrismaClient, userId: string, id: string) {
   await ownedDataset(prisma, userId, id);
-  await prisma.plotDataset.update({ where: { id }, data: { deletedAt: new Date() } });
-  removeDatasetFiles(userId, id);
+  await withHostedUserLock(prisma, userId, async (tx) => {
+    removeDatasetFiles(userId, id);
+    await tx.plotDataset.update({ where: { id }, data: { deletedAt: new Date(), byteSize: 0 } });
+  }, false);
+}
+
+export async function updateDatasetColumns(prisma: PrismaClient, userId: string, id: string, columns: PlotColumn[], name?: string) {
+  await requireVerifiedUser(userId);
+  const loaded = await loadOwnedTable(prisma, userId, id);
+  if (columns.length !== loaded.table.columns.length) throw Object.assign(new Error("Column list does not match this dataset."), { statusCode: 400 });
+  const table = { columns, rows: loaded.table.rows };
+  const original = readOriginal(userId, id);
+  const byteSize = storedTableBytes(table, original ?? undefined);
+  await withHostedUserLock(prisma, userId, async (tx) => {
+    await checkDatasetBytes(tx, userId, byteSize, id);
+    const hash = writeTable(userId, id, table);
+    await tx.plotDataset.update({ where: { id }, data: { columns: columns as Prisma.InputJsonValue, byteSize, contentHash: hash, ...(name ? { name } : {}) } });
+  });
 }

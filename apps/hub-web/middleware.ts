@@ -5,7 +5,7 @@ import { isAppRoute } from "@/lib/app-routes";
 import { resolveHubApi } from "./lib/hub-origin";
 import { sessionCookieDelete } from "./lib/session-cookie";
 
-const PUBLIC = new Set(["/login", "/signup"]);
+const PUBLIC = new Set(["/login", "/signup", "/forgot", "/reset", "/verify"]);
 const API = resolveHubApi({
   NEXT_PUBLIC_HUB_API: process.env.NEXT_PUBLIC_HUB_API,
   NODE_ENV: process.env.NODE_ENV,
@@ -131,7 +131,8 @@ export async function middleware(request: NextRequest) {
         appearance?: { accent?: string; accentCustom?: string | null; accentAt?: number };
       };
       devTools = body.devTools === true;
-      if (body.onboardingComplete === false && pathname !== "/start") {
+      // A CLI login approval must not be lost to onboarding; the code expires in minutes.
+      if (body.onboardingComplete === false && pathname !== "/start" && pathname !== "/link") {
         const start = request.nextUrl.clone();
         start.pathname = "/start";
         start.search = "";

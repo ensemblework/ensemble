@@ -1399,6 +1399,7 @@ model User {
   email                   String         @unique
   name                    String         @default("")
   passwordHash            String?        @map("password_hash")
+  emailVerifiedAt         DateTime?      @map("email_verified_at")
   createdAt               DateTime       @default(now()) @map("created_at")
   lastLoginAt             DateTime?      @map("last_login_at")
   /// student | teacher | lawyer | engineer | vibe. Not an ActAs value.
@@ -1417,6 +1418,10 @@ model User {
   /// Layouts from before the first marketplace apply. Default restores these.
   layoutBaseline          Json?          @map("layout_baseline")
   sessions                Session[]
+  authIdentities          AuthIdentity[]
+  emailTokens             EmailToken[]
+  authFlows               AuthFlow[]
+  cliAuthRequests         CliAuthRequest[]
   apiTokens               ApiToken[]
   devicePairings          DevicePairing[]
   diagrams                BlockDiagram[]
@@ -1427,6 +1432,77 @@ model User {
   templateApplications    TemplateApplication[]
 
   @@map("users")
+}
+
+model AuthIdentity {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  provider  String
+  subject   String
+  email     String?
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, subject])
+  @@unique([userId, provider])
+  @@map("auth_identities")
+}
+
+/// Verification and password-reset secrets are stored only as SHA-256 hashes.
+model EmailToken {
+  id        String   @id
+  userId    String   @map("user_id")
+  kind      String
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, kind])
+  @@index([expiresAt])
+  @@map("email_tokens")
+}
+
+/// Short-lived, single-use OAuth state, bound to the initiating browser.
+model AuthFlow {
+  id           String   @id
+  provider     String
+  codeVerifier String   @map("code_verifier")
+  nonce        String
+  userId       String?  @map("user_id")
+  sessionId    String?  @map("session_id")
+  expiresAt    DateTime @map("expires_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  user         User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+  @@map("auth_flows")
+}
+
+/// RFC 8628-style login requests for the CLI. Device and user codes are stored hashed.
+model CliAuthRequest {
+  id              String    @id @default(uuid())
+  deviceCodeHash  String    @unique @map("device_code_hash")
+  userCodeHash    String    @unique @map("user_code_hash")
+  clientName      String    @map("client_name")
+  platform        String
+  version         String
+  requestIp       String?   @map("request_ip")
+  requestedScopes String[]  @default([]) @map("requested_scopes")
+  approvedScopes  String[]  @default([]) @map("approved_scopes")
+  status          String    @default("pending")
+  userId          String?   @map("user_id")
+  tokenId         String?   @map("token_id")
+  pairingId       String?   @map("pairing_id")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  expiresAt       DateTime  @map("expires_at")
+  lastPolledAt    DateTime? @map("last_polled_at")
+  decidedAt       DateTime? @map("decided_at")
+  consumedAt      DateTime? @map("consumed_at")
+  user            User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+  @@index([userId, createdAt])
+  @@map("cli_auth_requests")
 }
 
 /// A person's block diagram. `document` is the versioned JSON model (maps keyed by id).

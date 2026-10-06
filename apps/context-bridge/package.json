@@ -23,5 +23,11 @@
     "@types/node": "^22.18.6",
     "tsx": "^4.20.6",
     "typescript": "^5.8.2"
+  },
+  "exports": {
+    "./server": "./src/server.ts",
+    "./hub": "./src/hub.ts",
+    "./config": "./src/config.ts",
+    "./package.json": "./package.json"
   }
 }

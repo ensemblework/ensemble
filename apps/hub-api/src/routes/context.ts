@@ -16,8 +16,30 @@ import { arrange, CARD_CAP, emptyOrder, ORDER_KEY, OrderError, readOrder, saniti
 import { hidesSignupStarters } from "../marketplace/starters.js";
 import { peopleCards } from "../context/people-view.js";
 import { enrichDocument } from "../context/enrich-documents.js";
+import { assertOwned } from "../services/records.js";
+import { createCappedDocument } from "../lib/hosted-limits.js";
 
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
+const HOSTED_PREFERENCE_PREFIX = "hosted.";
+
+function assertEditablePreference(key: string): void {
+  if (key.startsWith(HOSTED_PREFERENCE_PREFIX)) {
+    throw Object.assign(new Error("Hosted usage is managed by Ensemble, not as an editable preference."), { statusCode: 403 });
+  }
+}
+
+const DocumentTags = z.object({
+  projectIds: z.array(z.string()).default([]),
+  personIds: z.array(z.string()).default([]),
+  repoIds: z.array(z.string()).default([]),
+  taskIds: z.array(z.string()).default([]),
+});
+
+async function assertDocumentTags(db: FastifyInstance["prisma"], userId: string, tags: z.infer<typeof DocumentTags>): Promise<void> {
+  for (const [key, kind] of [["projectIds", "project"], ["personIds", "person"], ["repoIds", "repo"], ["taskIds", "task"]] as const) {
+    for (const id of tags[key]) await assertOwned(db, userId, kind, id);
+  }
+}
 
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/).slice(0, 2);
@@ -219,6 +241,8 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
     if (!found) return reply.code(404).send({ error: "Project not found." });
     const { personIds, repoIds, ...data } = body;
     await prisma.$transaction(async (tx) => {
+      for (const personId of personIds ?? []) await assertOwned(tx, request.userId, "person", personId);
+      for (const repoId of repoIds ?? []) await assertOwned(tx, request.userId, "repo", repoId);
       await tx.project.update({
         where: { id },
         data: { ...data, completedAt: data.status === "done" ? new Date() : data.status === "active" ? null : undefined },
@@ -304,10 +328,11 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
-  app.patch("/api/repos/:id", async (request) => {
+  app.patch("/api/repos/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = z.object({ tracked: z.boolean().optional(), description: z.string().nullish() }).parse(request.body);
-    await prisma.repo.updateMany({ where: { id, userId: request.userId }, data: body });
+    const result = await prisma.repo.updateMany({ where: { id, userId: request.userId, deletedAt: null }, data: body });
+    if (!result.count) return reply.code(404).send({ error: "Repo not found." });
     return { ok: true };
   });
 
@@ -315,7 +340,11 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/preferences", async (request) => {
     const preferences = await prisma.preference.findMany({
-      where: { userId: request.userId, deletedAt: null, NOT: { key: { startsWith: "hub." } } },
+      where: {
+        userId: request.userId,
+        deletedAt: null,
+        NOT: [{ key: { startsWith: "hub." } }, { key: { startsWith: HOSTED_PREFERENCE_PREFIX } }],
+      },
       orderBy: { key: "asc" },
     });
     return { preferences };
@@ -323,6 +352,7 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
 
   app.put("/api/preferences/:key", async (request, reply) => {
     const { key } = request.params as { key: string };
+    assertEditablePreference(key);
     // Settings save through PATCH /api/settings, which checks what they hold (Code folders, for one).
     if (key === "hub.settings") return reply.code(400).send({ error: "Settings are saved from the Settings page, not as a preference." });
     const body = z.object({ value: z.unknown() }).parse(request.body);
@@ -336,6 +366,7 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
 
   app.delete("/api/preferences/:key", async (request, reply) => {
     const { key } = request.params as { key: string };
+    assertEditablePreference(key);
     await prisma.preference.updateMany({ where: { userId: request.userId, key }, data: { deletedAt: new Date() } });
     return reply.code(204).send();
   });
@@ -682,16 +713,10 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
           mediaType: z.string().default("application/octet-stream"),
           dataBase64: z.string(),
           summarize: z.boolean().default(true),
-          tags: z
-            .object({
-              projectIds: z.array(z.string()).default([]),
-              personIds: z.array(z.string()).default([]),
-              repoIds: z.array(z.string()).default([]),
-              taskIds: z.array(z.string()).default([]),
-            })
-            .default({}),
+          tags: DocumentTags.default({}),
         })
         .parse(request.body);
+      await assertDocumentTags(prisma, request.userId, body.tags);
       const original = Buffer.from(body.dataBase64, "base64");
       if (original.byteLength > MAX_UPLOAD_BYTES) {
         return reply.code(413).send({ error: "Files are limited to 20 MiB." });
@@ -699,7 +724,7 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
       const format = (body.filename.split(".").pop() ?? "").toLowerCase();
       const isText = TEXT_FORMATS.has(format) || body.mediaType.startsWith("text/");
       const text = isText ? original.toString("utf8") : "";
-      const document = await prisma.document.create({
+      const document = await createCappedDocument(prisma, request.userId, {
         data: {
           userId: request.userId,
           filename: body.filename,
@@ -764,18 +789,14 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
     return reply.send(Buffer.from(document.original));
   });
 
-  app.patch("/api/documents/:id/tags", async (request) => {
+  app.patch("/api/documents/:id/tags", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const body = z
-      .object({
-        projectIds: z.array(z.string()).default([]),
-        personIds: z.array(z.string()).default([]),
-        repoIds: z.array(z.string()).default([]),
-        taskIds: z.array(z.string()).default([]),
-      })
-      .parse(request.body);
+    const body = DocumentTags.parse(request.body);
+    const found = await prisma.document.findFirst({ where: { id, userId: request.userId, deletedAt: null }, select: { id: true } });
+    if (!found) return reply.code(404).send({ error: "Document not found." });
+    await assertDocumentTags(prisma, request.userId, body);
     await prisma.document.updateMany({
-      where: { id, userId: request.userId },
+      where: { id, userId: request.userId, deletedAt: null },
       data: { ...body, manualTags: body },
     });
     return { ok: true };
@@ -783,7 +804,8 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
 
   app.delete("/api/documents/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    await prisma.document.updateMany({ where: { id, userId: request.userId }, data: { deletedAt: new Date() } });
+    const result = await prisma.document.updateMany({ where: { id, userId: request.userId, deletedAt: null }, data: { deletedAt: new Date() } });
+    if (!result.count) return reply.code(404).send({ error: "Document not found." });
     return reply.code(204).send();
   });
 

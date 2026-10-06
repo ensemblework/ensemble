@@ -9,15 +9,18 @@ export type StepKind =
   | "vscode-install"
   | "copilot"
   | "cursor-install"
+  | "gemini"
   | "claude-code"
   | "claude-desktop"
   | "codex"
   | "codex-app"
   | "windsurf"
   | "zed"
+  | "visual-studio"
   | "jetbrains"
   | "cline"
   | "continue"
+  | "opencode"
   | "http-start"
   | "http-config"
   | "enable"
@@ -96,7 +99,7 @@ const STEPS: Record<AppId, GuideStep[]> = {
     ),
     TEST,
   ],
-  copilot: [
+  "copilot-cli": [
     KEY,
     {
       kind: "copilot",
@@ -201,6 +204,18 @@ const STEPS: Record<AppId, GuideStep[]> = {
     ),
     TEST,
   ],
+  gemini: [
+    KEY,
+    {
+      kind: "gemini",
+      title: "Paste Ensemble into Gemini CLI",
+      body: "Open ~/.gemini/settings.json (on Windows, %USERPROFILE%\\.gemini\\settings.json) and add the ensemble server under mcpServers. If other servers are already there, merge the ensemble entry instead of replacing the file.",
+      scene: "paste",
+      hotspot: "settings.json",
+      os: true,
+    },
+    TEST,
+  ],
   zed: [
     KEY,
     {
@@ -215,6 +230,18 @@ const STEPS: Record<AppId, GuideStep[]> = {
       "Stay on Settings → AI → MCP Servers. Next to ensemble, the dot turns green and the tooltip says the server is active. Then go back to the Agent Panel and ask a question.",
       "Server is active",
     ),
+    TEST,
+  ],
+  "visual-studio": [
+    KEY,
+    {
+      kind: "visual-studio",
+      title: "Paste Ensemble into Visual Studio",
+      body: "Visual Studio 2022 17.14 and newer reads MCP servers from %USERPROFILE%\\.mcp.json. Add the ensemble block under servers, then restart Visual Studio so AI features can load it.",
+      scene: "paste",
+      hotspot: ".mcp.json",
+      os: true,
+    },
     TEST,
   ],
   jetbrains: [
@@ -266,30 +293,19 @@ const STEPS: Record<AppId, GuideStep[]> = {
     ),
     TEST,
   ],
-  http: [
+  opencode: [
     KEY,
     {
-      kind: "http-start",
-      title: "Start the shared connection",
-      body: "Leave this command running. It listens only on this computer, at the address below. Your key stays inside that program. The app you connect does not need the key.",
-      scene: "terminal",
-      hotspot: "pnpm bridge:http",
+      kind: "opencode",
+      title: "Paste Ensemble into opencode",
+      body: "Open ~/.config/opencode/opencode.json and add the ensemble entry under mcp. If the file already has other MCP servers, merge this entry instead of replacing the whole file.",
+      scene: "paste",
+      hotspot: "opencode.json",
       os: true,
     },
-    {
-      kind: "http-config",
-      title: "Point your app at the address",
-      body: "VS Code uses the first block (the word servers). Cursor, Claude, Windsurf, and most others use the second block (the word mcpServers). Cline needs the third block, because it otherwise assumes an older connection style. Paste the one that matches your app, then restart the app.",
-      scene: "paste",
-      hotspot: factsUrl(),
-    },
-    HTTP_TEST,
+    TEST,
   ],
 };
-
-function factsUrl(): string {
-  return "http://127.0.0.1:4010/mcp";
-}
 
 export function stepsFor(app: AppId, built: boolean): GuideStep[] {
   const steps = STEPS[app];
@@ -324,10 +340,28 @@ const EXTRA: Partial<Record<AppId, Trouble[]>> = {
       fix: "VS Code has to be installed. You can also run the terminal command on that step (code --add-mcp). On Windows, sandboxing for local programs is not available; that does not block Ensemble.",
     },
   ],
-  copilot: [
+  "copilot-cli": [
     {
       problem: "Copilot CLI does not list Ensemble.",
       fix: "The file is ~/.copilot/mcp-config.json, not the VS Code file. The top-level word is mcpServers. In a session, /mcp shows what actually loaded. The key has to be inside that file’s env block.",
+    },
+  ],
+  gemini: [
+    {
+      problem: "Gemini CLI does not read the server.",
+      fix: "The file is ~/.gemini/settings.json and the top-level key is mcpServers. Restart Gemini CLI after saving it.",
+    },
+  ],
+  "visual-studio": [
+    {
+      problem: "Visual Studio does not list Ensemble.",
+      fix: "Use Visual Studio 2022 17.14 or newer. The file is %USERPROFILE%\\.mcp.json and the top-level key is servers.",
+    },
+  ],
+  opencode: [
+    {
+      problem: "opencode starts but no tools appear.",
+      fix: "The local source block goes under mcp. Restart opencode after saving ~/.config/opencode/opencode.json.",
     },
   ],
   cursor: [
@@ -382,12 +416,6 @@ const EXTRA: Partial<Record<AppId, Trouble[]>> = {
     {
       problem: "Continue ignores the file.",
       fix: "The folder name is .continue/mcpServers, with an s. The file needs name, version, and schema at the top when it is YAML. Switch to agent mode. Chat and edit modes do not call these tools.",
-    },
-  ],
-  http: [
-    {
-      problem: "The test says the shared connection is off.",
-      fix: "The start command has to keep running in a window. Closing the window stops it. The address is http://127.0.0.1:4010/mcp and it is only reachable from this computer.",
     },
   ],
 };

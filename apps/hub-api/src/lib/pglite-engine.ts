@@ -61,7 +61,8 @@ export function listMigrationFiles(dir: string): MigrationFile[] {
 }
 
 export async function openPglite(dataDir?: string): Promise<PGlite> {
-  const db = new PGlite(dataDir, {
+  const db = new PGlite({
+    dataDir,
     extensions: { pg_trgm, uuid_ossp, vector },
   });
   await db.waitReady;
@@ -153,9 +154,26 @@ export async function openDesktopDatabase(dataDir: string, dir = migrationsDir()
     await applyMigration(db, file);
     applied.push(file.name);
   }
+  activateDatabase(db);
+  return { dir: dataDir, applied, backup };
+}
+
+export async function openMemoryDatabase(dir = migrationsDir()): Promise<void> {
+  if (active) throw new Error("A PGlite database is already open in this process.");
+  const db = await openPglite();
+  try {
+    await appliedMigrationNames(db);
+    for (const file of listMigrationFiles(dir)) await applyMigration(db, file);
+  } catch (error) {
+    await db.close();
+    throw error;
+  }
+  activateDatabase(db);
+}
+
+function activateDatabase(db: PGlite): void {
   active = db;
   setDesktopAdapter(new PrismaPGlite(db) as never);
-  return { dir: dataDir, applied, backup };
 }
 
 export async function closeDesktopDatabase(): Promise<void> {

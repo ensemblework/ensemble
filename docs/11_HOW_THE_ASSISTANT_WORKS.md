@@ -280,6 +280,10 @@ DONE
 
 ## 5. Why two processes
 
+Hosted credential resolution is per user. Both TypeScript `runtime/credentials.ts` (the in-process path) and Python `ensemble_agent/credentials.py` restrict server env/CLI fallback to verified exact `ENSEMBLE_OPERATOR_EMAILS` accounts. Other hosted users must supply their own credential; no caller/user ID means no fallback. Dev/desktop retain local credentials. Verification is checked before hosted model work, including background enrichment and scheduler work.
+
+Tool parameters in `assistant/registry.ts` use JSON Schema draft 7, not OpenAPI 3 schemas. In particular, exclusive numeric bounds are numbers (`exclusiveMinimum: 0`), not OpenAPI booleans plus a separate minimum. Checked against a bounded live Gemini diagnostic on 6 Oct 2026: plain completion worked, but the old assistant tool catalog was rejected at `config.xTickStep.exclusiveMinimum`. `registry-schema.test.ts` checks the complete chat/Responses catalog and preserves that numeric constraint. The corrected catalog still needs a post-deploy live assistant smoke check; no extra quota is spent by its automated regression.
+
 The model credential lives in **agent-runtime** (Python). The tools live in **hub-api** (TypeScript). That split is not arbitrary — it follows the rule the rest of Ensemble already uses: **divide on credentials, not on convenience**.
 
 | | hub-api | agent-runtime |

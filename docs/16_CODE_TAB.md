@@ -2,6 +2,8 @@
 
 The **Code** item in the sidebar lists every run that changed files. Opening one gives an IDE-like review of exactly what the agent changed, hunk by hunk, and the tools to finish the job without leaving Ensemble: accept or reject a change, edit anything yourself right there, look at the whole file, commit, push, open a pull request, or use a small terminal for git.
 
+**Hosted public accounts:** host folders, repository filesystem operations and shell execution are operator-only (`lib/hosted-access.ts`). `ENSEMBLE_TERMINAL=off` overrides user settings; hosted production defaults to off even for operators. Notes/context and assigning to a user's paired device remain separate. Desktop/local Code behavior is unchanged.
+
 ---
 
 ## 1. Using it

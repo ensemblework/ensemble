@@ -4,6 +4,7 @@
  * job was cloned from (not a remote the agent could have edited).
  */
 import type { PrismaClient, WorkspaceJob } from "@prisma/client";
+import { requireHostAccess } from "../lib/hosted-access.js";
 import { githubCloneAuth } from "../lib/git-auth.js";
 import { GIT_GATE_PUSH, jobOrigin } from "../remote/origin.js";
 import { loadSettings as loadRemoteSettings } from "../remote/store.js";
@@ -57,6 +58,7 @@ export async function pushRunBranch(input: {
   branch: string;
   timeoutMs?: number;
 }): Promise<TrustedGitResult & { remote: string }> {
+  await requireHostAccess(input.userId, "Repository publishing");
   const { job, branch } = input;
   const refused = pushRefused(branch, job.id, Boolean(job.continueFromJobId));
   if (refused) throw new GuardError(refused);
@@ -70,6 +72,7 @@ export async function pushRunBranch(input: {
       ? await githubCloneAuth(input.prisma, input.userId, remote)
       : { config: [] as string[], env: {} as Record<string, string> };
   const result = await runTrustedGit({
+    userId: input.userId,
     cwd: input.root,
     args: fastForwardPushArgs(branch, remote),
     credentialEnv: auth.env,

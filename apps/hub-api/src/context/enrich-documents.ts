@@ -6,6 +6,7 @@
 import { Prisma } from "@prisma/client";
 import type { FastifyInstance } from "fastify";
 import { complete } from "../lib/runtime.js";
+import { HostedAccessError, isHosted, requireVerifiedUser } from "../lib/hosted-access.js";
 import { loadSettings } from "../lib/settings.js";
 import { sseHub } from "../lib/sse.js";
 import { enrichOne, type SummaryOutcome, type SummaryRow, type SummaryStore } from "./summarize.js";
@@ -13,6 +14,15 @@ import { enrichOne, type SummaryOutcome, type SummaryRow, type SummaryStore } fr
 const STALE_MS = 120_000;
 
 export async function enrichDocument(app: FastifyInstance, id: string): Promise<SummaryOutcome | null> {
+  const document = await app.prisma.document.findUnique({ where: { id }, select: { userId: true } });
+  if (!document) return null;
+  try {
+    await requireVerifiedUser(document.userId);
+  } catch (error) {
+    if (!(error instanceof HostedAccessError)) throw error;
+    app.log.info({ userId: document.userId, reason: error.message }, "summary skipped unverified account");
+    return null;
+  }
   const outcome = await enrichOne(prismaStore(app), id, (prompt) => ask(app, id, prompt));
   if (outcome) {
     const row = await app.prisma.document.findUnique({ where: { id }, select: { userId: true } });
@@ -38,15 +48,26 @@ export async function drainDocumentEnrichment(app: FastifyInstance): Promise<voi
     });
     sseHub.publish(row.userId, { event: "documents", data: { id: row.id } });
   }
-  const queued = await app.prisma.document.findMany({
+  const queued = await queuedEnrichmentDocuments(app);
+  for (const row of queued) {
+    await enrichDocument(app, row.id);
+  }
+}
+
+export async function queuedEnrichmentDocuments(app: FastifyInstance): Promise<Array<{ id: string }>> {
+  if (isHosted()) {
+    return app.prisma.$queryRaw<Array<{ id: string }>>`
+      SELECT d.id FROM context_documents d
+      JOIN users u ON u.id = d.user_id
+      WHERE d.deleted_at IS NULL AND d.enrichment_status = 'queued' AND u.email_verified_at IS NOT NULL
+      ORDER BY d.created_at ASC LIMIT 4`;
+  }
+  return app.prisma.document.findMany({
     where: { deletedAt: null, enrichmentStatus: "queued" },
     select: { id: true },
     orderBy: { createdAt: "asc" },
     take: 4,
   });
-  for (const row of queued) {
-    await enrichDocument(app, row.id);
-  }
 }
 
 export function startDocumentEnrichment(app: FastifyInstance): () => void {

@@ -119,7 +119,7 @@ export async function skillRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/skills/:id/restore", async (request, reply) => {
     const { id } = request.params as { id: string };
     const { version } = z.object({ version: z.number().int() }).parse(request.body);
-    const target = await prisma.skillVersion.findFirst({ where: { skillId: id, version, skill: { userId: request.userId } } });
+    const target = await prisma.skillVersion.findFirst({ where: { skillId: id, version, skill: { userId: request.userId, deletedAt: null } } });
     if (!target) return reply.code(404).send({ error: "Version not found." });
     const skill = await prisma.skill.findFirstOrThrow({ where: { id } });
     const next = await prisma.skill.update({ where: { id }, data: { body: target.body, version: skill.version + 1 } });
@@ -159,7 +159,8 @@ export async function skillRoutes(app: FastifyInstance): Promise<void> {
 
   app.delete("/api/skills/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    await prisma.skill.updateMany({ where: { id, userId: request.userId }, data: { deletedAt: new Date() } });
+    const result = await prisma.skill.updateMany({ where: { id, userId: request.userId, deletedAt: null }, data: { deletedAt: new Date() } });
+    if (!result.count) return reply.code(404).send({ error: "Skill not found." });
     return reply.code(204).send();
   });
 }

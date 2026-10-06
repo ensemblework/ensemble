@@ -82,6 +82,13 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
           .optional(),
       })
       .parse(request.body);
+    if (body.conversationId) {
+      const owned = await app.prisma.assistantConversation.findFirst({
+        where: { id: body.conversationId, userId: request.userId },
+        select: { id: true },
+      });
+      if (!owned) return reply.code(404).send({ error: "Conversation not found." });
+    }
     const batch =
       body.calls && body.calls.length > 0
         ? body.calls

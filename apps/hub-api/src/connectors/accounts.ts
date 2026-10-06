@@ -9,6 +9,8 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { prisma } from "../lib/prisma.js";
 import { decrypt, encrypt } from "../lib/secrets.js";
+import { canUseHostCredentials, isHosted, requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
+import { assertWithinLimit, hostedLimits, withHostedUserLock } from "../lib/hosted-limits.js";
 
 const run = promisify(execFile);
 
@@ -31,6 +33,7 @@ export async function saveAccount(
   provider: AccountProvider,
   data: { accessToken: string; refreshToken?: string | null; expiresAt?: Date; scopes?: string[]; account?: string | null },
 ): Promise<void> {
+  await requireVerifiedUser(userId);
   const row = {
     accessToken: encrypt(data.accessToken),
     refreshToken: data.refreshToken ? encrypt(data.refreshToken) : null,
@@ -38,14 +41,19 @@ export async function saveAccount(
     scopes: data.scopes ?? [],
     account: data.account ?? null,
   };
-  await prisma.authToken.upsert({
-    where: { userId_provider: { userId, provider } },
-    create: { userId, provider, ...row },
-    update: {
-      ...row,
-      // Google only returns a refresh token on the first consent; keep the old one.
-      refreshToken: row.refreshToken ?? undefined,
-    },
+  await withHostedUserLock(prisma, userId, async (tx) => {
+    if (isHosted() && !(await tx.authToken.findUnique({ where: { userId_provider: { userId, provider } } }))) {
+      assertWithinLimit(await tx.authToken.count({ where: { userId } }), 1, hostedLimits().connectors, "connector accounts");
+    }
+    await tx.authToken.upsert({
+      where: { userId_provider: { userId, provider } },
+      create: { userId, provider, ...row },
+      update: {
+        ...row,
+        // Google only returns a refresh token on the first consent; keep the old one.
+        refreshToken: row.refreshToken ?? undefined,
+      },
+    });
   });
 }
 
@@ -125,7 +133,7 @@ export async function getAccount(
       };
     }
   }
-  if (!allowFallback) return null;
+  if (!allowFallback || !(await canUseHostCredentials(userId))) return null;
   for (const name of ENV_FALLBACK[provider] ?? []) {
     const value = process.env[name]?.trim();
     if (value) return { provider, accessToken: value, refreshToken: null, expiresAt: NEVER, scopes: [], account: null, source: "env" };
@@ -164,6 +172,7 @@ export async function oauthApp(provider: string): Promise<OAuthApp | null> {
 }
 
 export async function saveOAuthApp(provider: string, clientId: string, clientSecret: string, userId: string): Promise<void> {
+  await requireHostAccess(userId, "Connector OAuth app administration");
   await prisma.connectorApp.upsert({
     where: { provider },
     create: { provider, clientId, clientSecret: encrypt(clientSecret), updatedBy: userId },

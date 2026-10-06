@@ -11,12 +11,26 @@ import { sseHub } from "../lib/sse.js";
 import { streamCorsHeaders } from "../lib/cors-origin.js";
 import { hubCorsPolicy } from "../lib/hub-cors.js";
 import { truncateText } from "../lib/text.js";
+import { assertOwned } from "../services/records.js";
 
 const Body = z.object({
   type: z.literal("doc").optional(),
   content: z.array(z.unknown()).optional(),
   text: z.string().optional(),
 });
+
+async function assertCommentPage(prisma: FastifyInstance["prisma"], userId: string, kind: string, id: string): Promise<void> {
+  if (kind === "task" || kind === "project" || kind === "deliverable") {
+    await assertOwned(prisma, userId, kind, id);
+    return;
+  }
+  if (kind === "page") {
+    const page = await prisma.taskPage.findFirst({ where: { id, userId, taskId: null }, select: { id: true } });
+    if (!page) throw Object.assign(new Error("Page not found."), { statusCode: 404 });
+    return;
+  }
+  throw Object.assign(new Error("Unsupported comment page kind."), { statusCode: 400 });
+}
 
 async function pageText(prisma: FastifyInstance["prisma"], userId: string, kind: string, id: string): Promise<string> {
   if (kind === "task") {
@@ -58,6 +72,7 @@ function textOf(body: { text?: string; content?: unknown[] }): string {
 export async function commentRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/pages/:kind/:id/comments", async (request) => {
     const { kind, id } = request.params as { kind: string; id: string };
+    await assertCommentPage(app.prisma, request.userId, kind, id);
     const rows = await app.prisma.pageDiscussion.findMany({
       where: { userId: request.userId, pageKind: kind, pageId: id, deletedAt: null },
       orderBy: { createdAt: "asc" },
@@ -76,6 +91,7 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
         anchor: z.record(z.unknown()).optional(),
       })
       .parse(request.body);
+    await assertCommentPage(app.prisma, request.userId, kind, id);
     const row = await app.prisma.pageDiscussion.create({
       data: {
         userId: request.userId,
@@ -85,6 +101,7 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
         sourceId: id,
         taskId: kind === "task" ? id : null,
         projectId: kind === "project" ? id : null,
+        deliverableId: kind === "deliverable" ? id : null,
         kind: "comment",
         authorKind: "human",
         markId: body.markId,
@@ -144,8 +161,11 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
         actAs: ActAs.optional(),
       })
       .parse(request.body);
+    await assertCommentPage(app.prisma, request.userId, kind, id);
     if (body.parentId) {
-      const parent = await app.prisma.pageDiscussion.findFirst({ where: { id: body.parentId, userId: request.userId } });
+      const parent = await app.prisma.pageDiscussion.findFirst({
+        where: { id: body.parentId, userId: request.userId, pageKind: kind, pageId: id, deletedAt: null },
+      });
       if (!parent) return reply.code(404).send({ error: "Comment not found." });
       if (parent.authorKind === "human" && parent.kind === "comment") {
         // allowed: ensemble replies to a human comment
@@ -172,6 +192,7 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
         sourceId: id,
         taskId: kind === "task" ? id : null,
         projectId: kind === "project" ? id : null,
+        deliverableId: kind === "deliverable" ? id : null,
         kind: "ensemble",
         authorKind: "ensemble",
         parentId: body.parentId,

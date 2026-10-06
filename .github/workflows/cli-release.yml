@@ -1,0 +1,414 @@
+name: cli-release
+
+on:
+  push:
+    tags:
+      - "cli-v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "CLI version to release. Defaults to apps/cli/package.json."
+        required: false
+        type: string
+      dry_run:
+        description: "Build and render assets without creating releases or publishing."
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: 22
+  PNPM_VERSION: 12.6.0
+
+jobs:
+  resolve:
+    name: Resolve CLI version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      dry_run: ${{ steps.version.outputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - id: version
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version || '' }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run || false }}
+        run: |
+          set -euo pipefail
+          package_version="$(node -p "require('./apps/cli/package.json').version")"
+          dry_run="$INPUT_DRY_RUN"
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            tag_version="${REF_NAME#cli-v}"
+            if [[ "$tag_version" != "$package_version" ]]; then
+              echo "Tag $REF_NAME does not match apps/cli/package.json version $package_version" >&2
+              exit 1
+            fi
+            dry_run=false
+          elif [[ -n "$INPUT_VERSION" && "$INPUT_VERSION" != "$package_version" ]]; then
+            echo "workflow_dispatch version $INPUT_VERSION does not match apps/cli/package.json version $package_version" >&2
+            exit 1
+          fi
+          echo "version=$package_version" >> "$GITHUB_OUTPUT"
+          echo "dry_run=$dry_run" >> "$GITHUB_OUTPUT"
+
+  secret-flags:
+    name: Detect optional publishing secrets
+    runs-on: ubuntu-latest
+    outputs:
+      homebrew: ${{ steps.flags.outputs.homebrew }}
+      scoop: ${{ steps.flags.outputs.scoop }}
+      winget: ${{ steps.flags.outputs.winget }}
+      npm: ${{ steps.flags.outputs.npm }}
+    steps:
+      - id: flags
+        shell: bash
+        env:
+          HOMEBREW_TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+          SCOOP_BUCKET_DEPLOY_KEY: ${{ secrets.SCOOP_BUCKET_DEPLOY_KEY }}
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          flag() {
+            local name="$1"
+            local value="$2"
+            local output="$3"
+            if [[ -n "$value" ]]; then
+              echo "$output=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "$output=false" >> "$GITHUB_OUTPUT"
+              echo "::notice::$name is not set; the related publishing job will be skipped."
+            fi
+          }
+          flag HOMEBREW_TAP_DEPLOY_KEY "$HOMEBREW_TAP_DEPLOY_KEY" homebrew
+          flag SCOOP_BUCKET_DEPLOY_KEY "$SCOOP_BUCKET_DEPLOY_KEY" scoop
+          flag WINGET_TOKEN "$WINGET_TOKEN" winget
+          flag NPM_TOKEN "$NPM_TOKEN" npm
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: resolve
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: darwin-arm64
+          - os: macos-15-intel
+            target: darwin-x64
+          - os: ubuntu-22.04
+            target: linux-x64
+          - os: ubuntu-22.04-arm
+            target: linux-arm64
+          - os: windows-2022
+            target: windows-x64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - uses: actions/setup-go@v5
+        if: matrix.target == 'windows-x64'
+        with:
+          go-version: "1.23.x"
+
+      - name: Install the workspace
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm db:generate
+
+      - name: Package CLI
+        run: node scripts/package-cli.mjs --target ${{ matrix.target }} --out dist/cli
+
+      - name: Smoke packaged CLI
+        if: matrix.target != 'windows-x64'
+        shell: bash
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          smoke_dir="$PWD/.cli-package-smoke"
+          rm -rf "$smoke_dir"
+          mkdir -p "$smoke_dir"
+          tar -xzf "dist/cli/ensemble-cli-$VERSION-$TARGET.tar.gz" -C "$smoke_dir"
+          node scripts/smoke-cli-package.mjs "$smoke_dir/ensemble"
+
+      # Git Bash's GNU tar cannot read zip files, so Windows unpacks with PowerShell.
+      - name: Smoke packaged CLI (Windows)
+        if: matrix.target == 'windows-x64'
+        shell: pwsh
+        env:
+          VERSION: ${{ needs.resolve.outputs.version }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $smoke = Join-Path $PWD ".cli-package-smoke"
+          if (Test-Path $smoke) { Remove-Item -Recurse -Force $smoke }
+          Expand-Archive -Path "dist/cli/ensemble-cli-$env:VERSION-$env:TARGET.zip" -DestinationPath $smoke
+          node scripts/smoke-cli-package.mjs (Join-Path $smoke "ensemble")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ensemble-cli-${{ matrix.target }}
+          if-no-files-found: error
+          path: dist/cli/ensemble-cli-${{ needs.resolve.outputs.version }}-${{ matrix.target }}.*
+
+  release:
+    name: Assemble release assets
+    needs:
+      - resolve
+      - build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.resolve.outputs.version }}
+      DRY_RUN: ${{ needs.resolve.outputs.dry_run }}
+      GH_TOKEN: ${{ github.token }}
+      NFPM_VERSION: 2.43.1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install the workspace
+        run: pnpm install --frozen-lockfile
+
+      - name: Build CLI for npm pack
+        run: pnpm --filter ensemblework build
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ensemble-cli-*
+          path: dist/downloaded-cli
+          merge-multiple: true
+
+      - name: Gather archives and npm tarball
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/cli-release
+          find dist/downloaded-cli -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec cp {} dist/cli-release/ \;
+          npm_pack_output="$(npm pack apps/cli --pack-destination dist/cli-release --silent)"
+          npm_pack_file="$(basename "$npm_pack_output")"
+          mv "dist/cli-release/$npm_pack_file" "dist/cli-release/ensemble-cli-$VERSION.tgz"
+          (cd dist/cli-release && shasum -a 256 ensemble-cli-* > SHA256SUMS.txt)
+
+      - name: Render packaging metadata
+        run: node packaging/render.mjs --version "$VERSION" --assets dist/cli-release --out dist/packaging
+
+      - name: Install nfpm
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSLO "https://github.com/goreleaser/nfpm/releases/download/v$NFPM_VERSION/nfpm_${NFPM_VERSION}_checksums.txt"
+          curl -fsSLO "https://github.com/goreleaser/nfpm/releases/download/v$NFPM_VERSION/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz"
+          grep " nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz$" "nfpm_${NFPM_VERSION}_checksums.txt" | sha256sum -c -
+          tar -xzf "nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz" nfpm
+          sudo install -m 0755 nfpm /usr/local/bin/nfpm
+
+      - name: Build deb and rpm packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist/nfpm/amd64 dist/nfpm/arm64
+          tar -xzf "dist/cli-release/ensemble-cli-$VERSION-linux-x64.tar.gz" -C dist/nfpm/amd64
+          cp dist/packaging/nfpm-amd64.yaml dist/nfpm/amd64/nfpm.yaml
+          (cd dist/nfpm/amd64 && nfpm pkg --packager deb --config nfpm.yaml --target "../../cli-release/ensemble-cli_${VERSION}_amd64.deb")
+          (cd dist/nfpm/amd64 && nfpm pkg --packager rpm --config nfpm.yaml --target "../../cli-release/ensemble-cli-${VERSION}-1.x86_64.rpm")
+          tar -xzf "dist/cli-release/ensemble-cli-$VERSION-linux-arm64.tar.gz" -C dist/nfpm/arm64
+          cp dist/packaging/nfpm-arm64.yaml dist/nfpm/arm64/nfpm.yaml
+          (cd dist/nfpm/arm64 && nfpm pkg --packager deb --config nfpm.yaml --target "../../cli-release/ensemble-cli_${VERSION}_arm64.deb")
+          (cd dist/nfpm/arm64 && nfpm pkg --packager rpm --config nfpm.yaml --target "../../cli-release/ensemble-cli-${VERSION}-1.aarch64.rpm")
+          (cd dist/cli-release && shasum -a 256 ensemble-cli-* > SHA256SUMS.txt)
+
+      - name: Re-render packaging metadata with final checksums
+        run: node packaging/render.mjs --version "$VERSION" --assets dist/cli-release --out dist/packaging
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-release-assets
+          if-no-files-found: error
+          path: dist/cli-release/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-packaging
+          if-no-files-found: error
+          include-hidden-files: true
+          path: dist/packaging/**
+
+      - name: Create GitHub release
+        if: env.DRY_RUN != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t assets < <(find dist/cli-release dist/packaging -type f | sort)
+          gh release create "cli-v$VERSION" \
+            --title "Ensemble CLI $VERSION" \
+            --notes "Free Ensemble CLI release $VERSION. Install with https://ensemblework.com/install.sh or https://ensemblework.com/install.ps1." \
+            --latest=false \
+            "${assets[@]}"
+
+      - name: Dry-run release notice
+        if: env.DRY_RUN == 'true'
+        run: 'echo "::notice::Dry run: built assets, packages, and metadata but did not create a GitHub release."'
+
+  homebrew:
+    name: Publish Homebrew formula
+    needs:
+      - resolve
+      - secret-flags
+      - release
+    if: needs.resolve.outputs.dry_run != 'true' && needs.secret-flags.outputs.homebrew == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: cli-packaging
+          path: dist/packaging
+
+      - name: Push formula
+        shell: bash
+        env:
+          DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          eval "$(ssh-agent -s)"
+          ssh-add - <<< "$DEPLOY_KEY"
+          git clone git@github.com:ensemblework/homebrew-tap.git tap
+          mkdir -p tap/Formula
+          cp dist/packaging/ensemble.rb tap/Formula/ensemble.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/ensemble.rb
+          if git diff --cached --quiet; then
+            echo "::notice::Homebrew formula already up to date."
+          else
+            git commit -m "ensemble $VERSION"
+            git push origin HEAD:main
+          fi
+
+  scoop:
+    name: Publish Scoop manifest
+    needs:
+      - resolve
+      - secret-flags
+      - release
+    if: needs.resolve.outputs.dry_run != 'true' && needs.secret-flags.outputs.scoop == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: cli-packaging
+          path: dist/packaging
+
+      - name: Push manifest
+        shell: bash
+        env:
+          DEPLOY_KEY: ${{ secrets.SCOOP_BUCKET_DEPLOY_KEY }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+          eval "$(ssh-agent -s)"
+          ssh-add - <<< "$DEPLOY_KEY"
+          git clone git@github.com:ensemblework/scoop-bucket.git bucket-repo
+          mkdir -p bucket-repo/bucket
+          cp dist/packaging/ensemble.json bucket-repo/bucket/ensemble.json
+          cd bucket-repo
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bucket/ensemble.json
+          if git diff --cached --quiet; then
+            echo "::notice::Scoop manifest already up to date."
+          else
+            git commit -m "ensemble $VERSION"
+            git push origin HEAD:main
+          fi
+
+  winget:
+    name: Submit winget update
+    needs:
+      - resolve
+      - secret-flags
+      - release
+    if: needs.resolve.outputs.dry_run != 'true' && needs.secret-flags.outputs.winget == 'true'
+    runs-on: windows-2022
+    steps:
+      - name: Submit with wingetcreate
+        shell: pwsh
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $url = "https://github.com/ensemblework/ensemble/releases/download/cli-v$env:VERSION/ensemble-cli-$env:VERSION-windows-x64.zip"
+          Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/microsoft/winget-create/releases/latest/download/wingetcreate.exe" -OutFile "wingetcreate.exe"
+          .\wingetcreate.exe update EnsembleWork.EnsembleCLI --version $env:VERSION --urls $url --submit --token $env:WINGET_TOKEN
+
+  npm:
+    name: Publish npm package
+    needs:
+      - resolve
+      - secret-flags
+      - release
+    if: needs.resolve.outputs.dry_run != 'true' && needs.secret-flags.outputs.npm == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: "https://registry.npmjs.org"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: cli-release-assets
+          path: dist/cli-release
+
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: npm publish "dist/cli-release/ensemble-cli-$VERSION.tgz" --provenance --access public

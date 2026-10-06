@@ -4,7 +4,17 @@ Read-only MCP server so a coding agent can read Ensemble (tasks, projects, repos
 
 The server is `apps/context-bridge`. It speaks MCP and calls `hub-api` over HTTP. It does not open Postgres. There are no tools that create, update, delete, or send anything.
 
-`docs/13_MODULE_CONTEXT_BRIDGE.md` is the original design. This page is what this tree actually runs. Where the design names modules that were not rebuilt (`retrieval.ts`, `context/pack.ts`, embeddings), the bridge reads the tables that exist and says so in `ensemble_gaps`.
+`docs/13_MODULE_CONTEXT_BRIDGE.md` is the original design. This page is what this tree actually runs.
+
+## Three ways to reach it
+
+| Way | Who it is for | How |
+|---|---|---|
+| **Ensemble CLI** | Anyone using the hosted site, on any OS | Install the CLI, `ensemble login`, then `ensemble mcp setup`. Editors run `ensemble mcp` (stdio), which calls `https://api.ensemblework.com/api/bridge/*` with the CLI's read-only key. [26](26_CLI.md) |
+| **Hosted URL** | Editors that accept a URL; nothing to install | `POST https://api.ensemblework.com/mcp` with `Authorization: Bearer ens_…` (a key from Connect your apps). Served by hub-api (`src/routes/mcp.ts`), stateless Streamable HTTP. [26 §5](26_CLI.md#5-mcp-local-cli-or-hosted-url) |
+| **From source** | Developers running this repository | `pnpm bridge:build`, then the editor launches `node apps/context-bridge/dist/index.js` (below) |
+
+All three use `buildServer` in `apps/context-bridge/src/server.ts` (exported as `@ensemble/context-bridge/server`, with `./hub` and `./config`), so the tool list is the same. The hosted endpoint passes a git detector that returns no repository, so `ensemble_brief` needs `repo` and `branch` there; the CLI and the source build read them from the editor's folder. Where the design names modules that were not rebuilt (`retrieval.ts`, `context/pack.ts`, embeddings), the bridge reads the tables that exist and says so in `ensemble_gaps`.
 
 ## Run it
 
@@ -78,14 +88,15 @@ Reported by `ensemble_gaps` instead of being invented:
 
 ## Transports
 
-- **stdio** (default). No port. Editors launch `node apps/context-bridge/dist/index.js`.
+- **stdio** (default). No port. Editors launch `node apps/context-bridge/dist/index.js`, or `ensemble mcp` with the CLI.
+- **Hosted Streamable HTTP** at `https://api.ensemblework.com/mcp` (hub-api). Bearer `ens_` key required (bridge or full scope); cookies, device keys and missing keys are refused; `GET`/`DELETE` return 405.
 - **Streamable HTTP** on `127.0.0.1` only (`--http`, port `4010`, `CONTEXT_BRIDGE_PORT` to change it). `CONTEXT_BRIDGE_HOST` must be `127.0.0.1`, `localhost`, or `::1`. Endpoint: `http://127.0.0.1:4010/mcp`. Optional `CONTEXT_BRIDGE_HTTP_TOKEN` requires `Authorization: Bearer` on that endpoint. The Hub token stays in the bridge process.
 
 `hub-api` listens on `HUB_API_HOST` (default `127.0.0.1`, not `0.0.0.0`). Postgres and Redis from `infra/docker-compose.yml` are the same idea: host ports `5432` and `6379` are bound to `127.0.0.1` and `::1`, not every interface. `localhost` in `DATABASE_URL` and `REDIS_URL` still reaches them.
 
 ## Client setup
 
-Prefer **Connect your apps** in the Hub. It uses the commands and files on this page, with your key and paths filled in.
+Prefer **Connect your apps** in the Hub, or `ensemble mcp setup` from the CLI. Connect your apps has a CLI, a hosted URL and a from-source guide for VS Code, Cursor, Windsurf, Claude Code, Claude Desktop, Codex, Gemini CLI, GitHub Copilot CLI, Zed, Visual Studio, JetBrains, Cline, Continue and opencode on macOS, Windows and Linux (`apps/hub-web/lib/connect/configs.ts`). The samples below are the from-source configuration.
 
 Build first (`pnpm bridge:build`). Replace `ens_PASTE_TOKEN` and absolute paths. Do not commit a real token. Project files that are already in the repo use `${env:ENSEMBLE_BRIDGE_TOKEN}` or `${ENSEMBLE_BRIDGE_TOKEN}` so the token stays in the environment. `${input:…}` is avoided because it drops the server from VS Code's Agent Host. One-click install links (`vscode:mcp/install` and `cursor://anysphere.cursor-deeplink/mcp/install`) also keep the key in the environment and do not put it in the URL.
 

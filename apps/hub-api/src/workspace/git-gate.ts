@@ -9,6 +9,7 @@
  */
 import { spawn } from "node:child_process";
 import { hostExecutable } from "./policy.js";
+import { requireHostAccess } from "../lib/hosted-access.js";
 import { redactSecrets } from "./sandbox/scrub.js";
 
 export function runBranchName(jobId: string, slugSource: string): string {
@@ -48,6 +49,7 @@ export function fastForwardPushArgs(branch: string, remote: string): string[] {
 }
 
 export interface TrustedGitOptions {
+  userId?: string;
   cwd: string;
   /** Arguments after the git binary. Hardening config is added in front. */
   args: string[];
@@ -67,6 +69,7 @@ export interface TrustedGitResult {
  * environment would be stripped there, and it must not be visible to the agent.
  */
 export async function runTrustedGit(options: TrustedGitOptions): Promise<TrustedGitResult> {
+  await requireHostAccess(options.userId, "Host git commands");
   const bin = await hostExecutable("git");
   const args = [
     "-c",

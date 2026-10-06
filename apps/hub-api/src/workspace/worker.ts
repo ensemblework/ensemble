@@ -11,6 +11,7 @@ import type { WorkspaceJob } from "@prisma/client";
 import { activityIds, isPaused, requestCancel, setPaused } from "../lib/activity.js";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings } from "../lib/settings.js";
+import { HostedAccessError, requireHostAccess } from "../lib/hosted-access.js";
 import { sseHub } from "../lib/sse.js";
 import { publishDevice } from "../devices/publish.js";
 import { executeJob } from "./agent.js";
@@ -131,6 +132,18 @@ export async function tickServerQueue(bound?: FastifyInstance): Promise<boolean>
     ).filter((job) => job.deviceId == null);
     const users = [...new Set(queued.map((job) => job.userId))];
     for (const userId of users) {
+      try {
+        await requireHostAccess(userId, "Background host workspace execution");
+      } catch (error) {
+        if (!(error instanceof HostedAccessError)) throw error;
+        await app.prisma.workspaceJob.updateMany({
+          where: { userId, status: "queued", deviceId: null },
+          data: { status: "failed", finishedAt: new Date(), error: error.message },
+        });
+        app.log.warn({ userId, reason: error.message }, "hosted access denied for queued jobs");
+        sseHub.publish(userId, { event: "workspace", data: { action: "access-denied" } });
+        continue;
+      }
       if (await isPaused(app.redis, userId)) continue;
       const settings = await loadSettings(app.prisma, userId);
       const busy = await app.prisma.workspaceJob.findMany({

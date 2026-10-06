@@ -12,6 +12,7 @@ import { homedir } from "node:os";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { Settings } from "@ensemble/shared-types";
 import { blockedReason, expandHome, GuardError, resolveWorkFolder, within } from "../workspace/guard.js";
+import { requireHostAccess } from "./hosted-access.js";
 
 /** Only `$executeRawUnsafe` is needed, so the hosted client and the desktop PGlite client both fit. */
 type RawExecutor = { $executeRawUnsafe(query: string): Promise<number> };
@@ -76,7 +77,8 @@ export function dotUnderHome(path: string, homeDir = home()): string | null {
  * `..` segments, dotfiles and dot-folders in the home folder, and a path
  * under home that only gets somewhere else through a link.
  */
-export async function resolveCodeFolder(input: string): Promise<string> {
+export async function resolveCodeFolder(input: string, userId?: string): Promise<string> {
+  await requireHostAccess(userId, "Code filesystem");
   const typed = typeof input === "string" ? input.trim() : "";
   if (!typed) throw new GuardError("Give the full path, starting with / or ~.");
   if (hasParentSegment(typed)) throw new GuardError("Write the folder's path without “..”.");
@@ -101,7 +103,8 @@ export async function resolveCodeFolder(input: string): Promise<string> {
  * path must pass blockedReason and must not be a dotfile or dot-folder in the
  * home folder. Anything gone, relative or blocked is skipped.
  */
-export async function usableCodeRoots(settings: Pick<Settings, "code">): Promise<string[]> {
+export async function usableCodeRoots(settings: Pick<Settings, "code">, userId?: string): Promise<string[]> {
+  await requireHostAccess(userId, "Code filesystem");
   const homeReal = await realpath(home()).catch(() => home());
   const out: string[] = [];
   for (const saved of settings.code.roots) {
@@ -119,7 +122,7 @@ export async function usableCodeRoots(settings: Pick<Settings, "code">): Promise
  * every folder it adds has to pass resolveCodeFolder. Added folders are
  * stored as their real path.
  */
-export async function checkCodeRootsPatch(current: Pick<Settings, "code">, patch: unknown): Promise<unknown> {
+export async function checkCodeRootsPatch(current: Pick<Settings, "code">, patch: unknown, userId?: string): Promise<unknown> {
   if (!patch || typeof patch !== "object" || Array.isArray(patch)) return patch;
   const code = (patch as { code?: unknown }).code;
   if (!code || typeof code !== "object" || Array.isArray(code)) return patch;
@@ -131,7 +134,7 @@ export async function checkCodeRootsPatch(current: Pick<Settings, "code">, patch
   const kept = new Set(current.code.roots);
   const next: string[] = [];
   for (const root of roots as string[]) {
-    next.push(kept.has(root) ? root : await resolveCodeFolder(root));
+    next.push(kept.has(root) ? root : await resolveCodeFolder(root, userId));
   }
   return { ...(patch as object), code: { ...(code as object), roots: [...new Set(next)] } };
 }

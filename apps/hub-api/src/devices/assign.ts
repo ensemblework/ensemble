@@ -2,6 +2,7 @@ import type { PrismaClient } from "@prisma/client";
 import { GuardError } from "../workspace/guard.js";
 import { trustFolder } from "./constants.js";
 import { folderLabels } from "./labels.js";
+import { requireVerifiedUser } from "../lib/hosted-access.js";
 
 const GITHUB = /^(https:\/\/|git@)[\w.@:/~-]+$/;
 const SLUG = /^[\w.-]+\/[\w.-]+$/;
@@ -25,6 +26,7 @@ export async function deviceAssignment(
   continueFrom: string | null;
   resourceKeys: string[];
 }> {
+  await requireVerifiedUser(userId);
   const device = await prisma.device.findFirst({ where: { id: input.deviceId, userId, revokedAt: null } });
   if (!device) throw new GuardError("That computer is not paired.");
 

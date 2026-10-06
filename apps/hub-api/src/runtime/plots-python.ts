@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { CallError } from "./errors.js";
 import { PlotWorkerUnavailable, resetPlotWorker, submitPlot, type PlotWorkerJob, type PlotWorkerResult } from "./plot-worker.js";
 import { currentPython, spawnPython, type SpawnPythonResult } from "./python-spawn.js";
+import { requireHostAccess } from "../lib/hosted-access.js";
 
 export { matplotlibCacheDir } from "./plot-worker.js";
 
@@ -79,7 +80,9 @@ export async function runPlot(
   datasets: Array<Record<string, unknown>>,
   format = "all",
   dpi = 200,
+  userId?: string | null,
 ): Promise<Record<string, unknown>> {
+  await requireHostAccess(userId, "Python plots");
   const timeoutMs = plotTimeoutMs();
   const job: PlotRunnerJob = { code, datasets, format, dpi, timeout: timeoutMs / 1000, timeoutMs };
   if (runnerForTests) return present(await runnerForTests(job), timeoutMs);
@@ -128,7 +131,8 @@ function parseTableSource(): string {
   return readFileSync(existsSync(live) ? live : bundled, "utf8");
 }
 
-export async function parseTable(filename: string, contentBase64: string, sheet: string): Promise<Record<string, unknown>> {
+export async function parseTable(filename: string, contentBase64: string, sheet: string, userId?: string | null): Promise<Record<string, unknown>> {
+  await requireHostAccess(userId, "Python table parsing");
   let data: Buffer;
   try {
     data = Buffer.from(contentBase64, "base64");

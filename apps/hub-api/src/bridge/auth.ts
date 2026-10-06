@@ -68,5 +68,7 @@ export function readOnlyTokenRejected(scope: string | undefined, method: string,
   const clean = (path.split("?")[0] ?? path).replace(/\/+$/, "") || "/";
   const read = method === "GET" || method === "HEAD" || method === "OPTIONS";
   if (read && (clean === "/api/bridge" || clean.startsWith("/api/bridge/"))) return null;
+  if (clean === "/mcp" && (method === "POST" || method === "GET" || method === "DELETE")) return null;
+  if (clean === "/api/cli/logout" && method === "POST") return null;
   return "This key is read-only. It can only look at Ensemble.";
 }

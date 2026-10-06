@@ -2,6 +2,8 @@
 
 Updated 2026-09-27. Corrections on 2 Oct and 5 Oct 2026 come from reading the code, not from a new live run, except where a line says it was run. Read this before trusting a button. "Real" here means the code talks to the actual service and was exercised against it; where a live test was not possible, the entry says so.
 
+**Checked 6 Oct 2026:** public signup/OAuth/recovery and hosted safety passed automated HTTP/PGlite tests; Hub and landing production builds passed. Live Gemini plain completion worked, but the deployed assistant's old catalog was rejected for a boolean `exclusiveMinimum`; the draft-7 catalog fix is in code and has a complete-catalog regression. Post-deploy consent/email/assistant checks still require configured provider accounts. The route inventory covers all endpoints for generic gates but currently records 155 explicit resource-contract gaps; this is not a complete API audit. The wider local Python plot worker could not be started, so rendering was not re-verified.
+
 ## Changes after review (2 Oct 2026)
 
 The old placeholder said Assign to agent records a job and nothing runs it. That was wrong. `apps/hub-api/src/workspace/worker.ts` claims queued jobs, and `workspace/agent.ts` runs them. The queue is started from `index.ts`. Model turns still go to agent-runtime. See **Code on this computer**. The rest of this page was not re-tested on that date.
@@ -18,7 +20,7 @@ pnpm dev
 
 `pnpm dev` now starts the model runtime too. `scripts/agent-dev.sh` creates `apps/agent-runtime/.venv` on first run with any Python ≥ 3.11 it can find (the macOS system Python 3.9 is too old).
 
-Open http://localhost:3000. You are sent to **/login**. Create an account: the **first account claims every row that already exists** (the seed data, your tasks), then lands on **/welcome**.
+Open http://localhost:3000. You are sent to **/login**. In development, the first account claims localhost placeholder data and lands on **/start**. Hosted public registration never claims placeholder data.
 
 `ENSEMBLE_DEV_AUTH_BYPASS=true` still gives the old no-login mode for scripts.
 
@@ -26,6 +28,8 @@ Open http://localhost:3000. You are sent to **/login**. Create an account: the *
 
 ### Accounts and sign-in
 - Sign-up, sign-in, sign-out, change name and password (Settings → Account). Passwords are scrypt-hashed; sessions are an httpOnly cookie whose SHA-256 is the only thing stored.
+- Public signup remains open after the first account. `ENSEMBLE_SIGNUP_MODE` provides `open`, `allowlist` and `closed`. Google/GitHub/Microsoft identity login, email verification/reset, linked login methods, account export and deletion are implemented in `routes/auth.ts` and `routes/auth-oauth.ts`; see [02 §16](02_MODULE_INTERACTION_HUB_UI.md#16-accounts-and-public-signup). Provider buttons require separate configured `AUTH_*` clients; email requires Resend and Turnstile. Microsoft email ownership is verified by Ensemble, not assumed from an email/username claim. Existing private password accounts are grandfathered as verified by the migration.
+- Landing `/privacy` and `/terms` are starter policy pages, not a claim of legal review. Registration links no longer describe an invitation requirement; GitHub links are enabled for the now-public repository.
 - Every API route requires a session, a personal token (`Authorization: Bearer ens_…`), or the internal token agent-runtime uses. CORS only answers the Hub's own origin.
 - The live event stream uses a one-use ticket, because it connects to `127.0.0.1` and the cookie belongs to `localhost`.
 
@@ -34,7 +38,7 @@ Open http://localhost:3000. You are sent to **/login**. Create an account: the *
 - **Google Gemini**: live. Tested with `gemini-3.5-flash-lite` for chat with tool calls, plain completions, and JSON triage. It is the default on every tier because it is the cheapest; `gemini-2.5-flash-lite` is no longer offered to new keys. The request goes to Google's OpenAI-compatible endpoint with the key as a bearer token.
 - **Cursor**: the key is validated and its models listed live (`api.cursor.com/v0/models`). Cursor runs agents, not a chat endpoint, so choosing it for the chat gives a clear error. It is meant for delegated runs (the next step).
 - **OpenAI, OpenRouter, Ollama, Anthropic (native Messages API with tools), GitHub Copilot (token exchange)**: the adapters are written. They were not called live, because no keys for them were available.
-- **Settings → Models**: paste a key per provider. It is checked against the provider before it is saved, then stored encrypted per account. A key you paste wins over the server's `.env` key. The model catalog is fetched live from each provider. There is a **Test** button per tier.
+- **Settings → Models**: paste a key per provider. It is checked against the provider before it is saved, then stored encrypted per account. A key you paste wins over the server's `.env` key. Hosted public accounts cannot borrow server env/CLI credentials or host Ollama; only verified exact `ENSEMBLE_OPERATOR_EMAILS` accounts can. Dev and desktop retain local fallback behavior. The model catalog is fetched live from each provider. There is a **Test** button per tier.
 - The chat assistant uses the tier's provider. Verified: "add a todo…" produced a real `hub_create_tasks` call through Gemini, held for your approval because the write policy is "preview".
 
 ### Connectors (read-only)
@@ -118,10 +122,19 @@ Checked on 5 Oct 2026 with the hub-api, hub-web and agent-runtime suites on a fr
 
 On this Mac, 15 agent-runtime plot-sandbox tests (17 after #89) fail with "The plot runtime is not available." on `main` as well. That is the Python 3.13 venv here, not these merges. Not checked on Linux for this page.
 
+## Ensemble CLI and hosted MCP (6 Oct 2026)
+
+Checked on 6 Oct 2026 on macOS (Apple Silicon) against a local hub-api and Hub with an isolated database ([26 §9](26_CLI.md#9-verified)).
+
+- **`ensemble` CLI** (`apps/cli`): device login through `/link`, pairing this computer, sharing folders, the runner (a code task assigned from the hosted API finished on the Mac with the `mock` model), `ensemble mcp`, editor setup, status/doctor, logout (key revoked, device removed). Not run here: Windows and Linux archives (CI builds and smoke-tests them), `runner install` against real service managers, real editors other than an MCP SDK client.
+- **Hosted MCP** at `POST /mcp` (`apps/hub-api/src/routes/mcp.ts`): same 17 tools as the local bridge, bearer `ens_` key only.
+- **Installers**: Homebrew tap, Scoop bucket, `install.sh`, `install.ps1`, `.deb`/`.rpm` come from `.github/workflows/cli-release.yml`. winget, npm and AUR files are produced but not published ([26 §1](26_CLI.md#1-install)).
+- **Guides**: `ensemblework.com/download`, Connect your apps (CLI, hosted URL, from source per editor and OS), Settings → Devices.
+
 ## Still a placeholder
 
 - **Autonomy and Orchestration settings** are stored. The running queue uses `maxConcurrentJobs`, and a job uses its minute, turn and tool limits, the sandbox-network default, and `runWithoutAsking` (above). `defaultDelivery` only pre-selects the choice in the Assign dialog; the runner does not read it. Check the unattended rules in [doc 24](24_DESKTOP_SANDBOXING.md) against `workspace/trust.ts` before relying on them.
-- **Context Bridge** (read-only MCP for editors) is built. Setup, tools, and the entities this schema does not have are in [CONTEXT_BRIDGE.md](CONTEXT_BRIDGE.md). It reads hub-api over HTTP. It does not write.
+- **Context Bridge** (read-only MCP for editors) is built, locally (`ensemble mcp` or from source) and hosted at `/mcp`. Setup, tools, and the entities this schema does not have are in [CONTEXT_BRIDGE.md](CONTEXT_BRIDGE.md). It reads hub-api over HTTP. It does not write.
 - **Skill mining**, **embeddings / semantic retrieval**, and **Metrics baselines**: unchanged.
 - **Outlook, Outlook calendar, Teams**: deliberately later.
 - **Sending** anything (mail replies, PR comments): drafts and approval cards exist, but no connector has write scope yet.

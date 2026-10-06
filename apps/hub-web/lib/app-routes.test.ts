@@ -55,6 +55,14 @@ test("a signed-out unknown URL is the standalone 404, and a real page still asks
   assert.match(today.headers.get("location") ?? "", /\/login\?next=%2Ftoday$/);
 });
 
+test("recovery and verification pages work without a browser session", async () => {
+  for (const path of ["/forgot", "/reset", "/verify"]) {
+    const response = await middleware(new NextRequest(`http://localhost:3000${path}`));
+    assert.equal(response.headers.get("location"), null, path);
+    assert.equal(response.headers.get("x-middleware-next"), "1", path);
+  }
+});
+
 test("a signed-in data request for an unknown URL stays in the app", async () => {
   const response = await middleware(
     new NextRequest("http://localhost:3000/no-such-page", {

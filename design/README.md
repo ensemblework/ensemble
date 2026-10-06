@@ -4,6 +4,7 @@ Design work for Ensemble: the app icon and the motion system. Nothing here is ap
 
 ```
 design/
+  brand/                 product mark: the resting icon, the morphing loader, and a gallery (index.html)
   icons/                 app icon explorations and the chosen icon (B "Two voices"), UI icons, sheets and source
   motion/                motion system
     index.html           round 1: loaders and working animations (Ensemble Glyph, status line, streaming, tools, loom…)
@@ -21,6 +22,7 @@ design/
 ## Viewing the galleries
 Open any `index.html` directly in a browser (double-click it, or use `open design/motion/round2/index.html` on macOS). No server and no install are needed. Each gallery is a single self-contained file with its fonts, CSS and JS inlined, so it works offline.
 
+- Product mark: `design/brand/index.html` (resting icon and the morphing loader; Fraunces and Figtree load from Google Fonts, with Georgia and system-ui as fallbacks)
 - Round 1: `design/motion/index.html`
 - Round 2: `design/motion/round2/index.html` (add `?light` or `?reduced` to the URL to preview light mode or reduced motion)
 - Round 3: `design/motion/round3-minimal/index.html` (its style switcher embeds rounds 1 and 2 from `round3-minimal/compare/`)

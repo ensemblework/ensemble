@@ -17,6 +17,7 @@ import { appendLive } from "./live-log.js";
 import { pushRunBranch, remotePushRefused, remotePushSkipsPrompt } from "./publish.js";
 import { fetchUrl, searchPapers, webSearch } from "./research.js";
 import { runCommand } from "./runner.js";
+import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
 import { commandGate, type AccessMode, type SandboxStrength } from "./trust.js";
 export interface JobContext {
   prisma: PrismaClient;
@@ -316,6 +317,10 @@ async function listDir(root: string, path: string, depth: number): Promise<strin
 }
 
 export async function runTool(ctx: JobContext, name: string, raw: Record<string, unknown>): Promise<{ ok: boolean; result: unknown; summary: string }> {
+  await requireVerifiedUser(ctx.userId);
+  if (["list_dir", "read_file", "write_file", "edit_file", "apply_patch", "run_command", "git"].includes(name)) {
+    await requireHostAccess(ctx.userId, "Workspace filesystem and commands");
+  }
   const s = (key: string) => (typeof raw[key] === "string" ? (raw[key] as string) : "");
   const n = (key: string, fallback: number) => (typeof raw[key] === "number" ? (raw[key] as number) : fallback);
   try {
@@ -417,6 +422,7 @@ export async function runTool(ctx: JobContext, name: string, raw: Record<string,
 
 async function currentBranch(ctx: JobContext): Promise<string> {
   const result = await runCommand({
+    userId: ctx.userId,
     argv: ["git", ...gitHardening(false), "rev-parse", "--abbrev-ref", "HEAD"],
     cwd: ctx.root,
     root: ctx.root,
@@ -485,6 +491,7 @@ async function command(ctx: JobContext, line: string, cwdInput: string, timeoutS
       const remote = argv.find((arg) => /github\.com|gitlab\.com/i.test(arg)) || ctx.job.repoUrl || "https://github.com/";
       const auth = await githubCloneAuth(ctx.prisma, ctx.userId, remote);
       const ran = await runTrustedGit({
+        userId: ctx.userId,
         cwd: await jailPath(ctx.root, cwdInput, true),
         args: argv.slice(1),
         credentialEnv: auth.env,
@@ -503,6 +510,7 @@ async function command(ctx: JobContext, line: string, cwdInput: string, timeoutS
   await ctx.progress(`Running: ${line.slice(0, 100)}`);
   const review = ctx.accessMode === "review";
   const result = await runCommand({
+    userId: ctx.userId,
     onChunk: (text) => appendLive(ctx.job.id, text),
     argv: full,
     cwd,

@@ -2,6 +2,8 @@
 
 **Purpose:** Execute delegated repository work using Ensemble's connected context. Workspace is the **agent's workboard**, not a second chat. The engineer's board and task/deliverable pages are the assignment and review surfaces. Surface-assist cards inside Teams and Outlook were removed; [section B](#b-surface-assist--designed-built-then-deleted) records why.
 
+Hosted production permits public accounts, but host checkout/filesystem/tool execution is restricted to verified operators (`lib/hosted-access.ts`). Open signup requires `ENSEMBLE_SERVER_RUNNER=off`; ordinary verified users can assign to their own paired device without acquiring server execution privileges. Local and desktop execution keep the existing controls below.
+
 | Choice | Meaning |
 |---|---|
 | **Docker sandbox (default)** | Commands see only the assigned checkout mounted from the Windows workspace. |

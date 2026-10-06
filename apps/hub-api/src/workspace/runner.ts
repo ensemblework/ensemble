@@ -14,10 +14,12 @@ import { desktopDataDir } from "@ensemble/shared-types/desktop-discovery";
 import { cacheDir, childEnv, sandboxAvailable, ENSEMBLE_SOURCE, GuardError, within } from "./guard.js";
 import { hostExecutable } from "./policy.js";
 import { capabilities, startSandboxed } from "./sandbox/spawn.js";
+import { requireHostAccess, requireHostTerminal } from "../lib/hosted-access.js";
 
 export const OUTPUT_LIMIT = 60_000;
 
 export interface RunOptions {
+  userId?: string;
   argv: string[];
   cwd: string;
   /** Writes are confined to this folder when sandboxed. */
@@ -95,6 +97,8 @@ export function killGroup(group: string): number {
 }
 
 export async function runCommand(options: RunOptions): Promise<RunResult> {
+  if (options.who === "human" && options.userId) await requireHostTerminal(options.userId);
+  await requireHostAccess(options.userId, "Host commands");
   if (options.sandboxed && !sandboxAvailable) {
     throw new GuardError(`${capabilities().reason} Choose “This machine” to run without the sandbox.`);
   }

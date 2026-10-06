@@ -11,6 +11,7 @@ import { promisify } from "node:util";
 import type { PrismaClient } from "@prisma/client";
 import { decrypt } from "./secrets.js";
 import { cacheDir } from "../workspace/guard.js";
+import { canUseHostCredentials, requireHostAccess } from "./hosted-access.js";
 
 const exec = promisify(execFile);
 export const GITHUB_GIT_PROVIDER = "github_git";
@@ -55,6 +56,7 @@ export async function githubCloneAuth(
   userId: string,
   remote: string,
 ): Promise<{ config: string[]; env: Record<string, string>; missing: boolean }> {
+  await requireHostAccess(userId, "Repository cloning and host git credentials");
   if (!/github\.com/i.test(remote)) return { config: [], env: {}, missing: false };
   const token = await githubToken(prisma, userId);
   if (token) {
@@ -65,7 +67,7 @@ export async function githubCloneAuth(
       missing: false,
     };
   }
-  if (await ghReady()) {
+  if (await canUseHostCredentials(userId) && await ghReady()) {
     return {
       config: ["-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential"],
       env: { GIT_TERMINAL_PROMPT: "0" },

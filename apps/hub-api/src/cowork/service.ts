@@ -107,6 +107,9 @@ export async function listNotifications(db: Db, userId: string) {
 
 export async function markNotificationRead(db: Db, userId: string, id: string) {
   const result = await db.notification.updateMany({ where: { id, userId, readAt: null }, data: { readAt: new Date() } });
+  if (!result.count && !(await db.notification.findFirst({ where: { id, userId }, select: { id: true } }))) {
+    throw fail(404, "Notification not found.");
+  }
   return { updated: result.count };
 }
 

@@ -117,6 +117,38 @@ jobs:
       - name: Context Bridge (typecheck, MCP tests, build, smoke)
         run: pnpm bridge:verify
 
+  cli:
+    name: CLI tests and package smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.6.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm --filter ensemblework typecheck
+
+      - run: pnpm --filter ensemblework test
+
+      - run: pnpm --filter ensemblework build
+
+      - name: Package smoke
+        shell: bash
+        run: |
+          node scripts/package-cli.mjs --target linux-x64 --out dist/cli-smoke --skip-sidecar
+          mkdir -p /tmp/ensemble-cli-smoke
+          tar -xzf dist/cli-smoke/ensemble-cli-*-linux-x64.tar.gz -C /tmp/ensemble-cli-smoke
+          node scripts/smoke-cli-package.mjs /tmp/ensemble-cli-smoke/ensemble --skip-mcp --skip-sidecar-health
+
   python:
     name: agent-runtime tests
     runs-on: ubuntu-latest

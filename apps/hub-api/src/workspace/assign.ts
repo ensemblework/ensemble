@@ -10,6 +10,8 @@ import { deviceAssignment } from "../devices/assign.js";
 import { serverRunnerEnabled } from "../devices/constants.js";
 import { publishBrowserDevice, publishDevice } from "../devices/publish.js";
 import { appendLedger } from "../lib/ledger.js";
+import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
+import { createCappedJob } from "../lib/hosted-limits.js";
 import { loadSettings } from "../lib/settings.js";
 import { sseHub } from "../lib/sse.js";
 import { GuardError, resolveWorkFolder, sandboxAvailable, within, workspaceRoot } from "./guard.js";
@@ -85,7 +87,7 @@ async function createDeviceJob(
     repoUrl: body.repoUrl,
     continueFromJobId: body.continueFromJobId,
   });
-  const job = await prisma.workspaceJob.create({
+  const job = await createCappedJob(prisma, userId, {
     data: {
       userId,
       taskId: task.id,
@@ -153,6 +155,7 @@ async function createDeviceJob(
 }
 
 export async function createJob(prisma: PrismaClient, userId: string, body: AssignInput, options: CreateJobOptions = {}): Promise<{ jobId: string } | null> {
+  await requireVerifiedUser(userId);
   const task = await prisma.task.findFirst({ where: { id: body.taskId, userId, deletedAt: null } });
   if (!task) return null;
   const settings = await loadSettings(prisma, userId);
@@ -160,6 +163,7 @@ export async function createJob(prisma: PrismaClient, userId: string, body: Assi
   const provider = body.model ? body.provider ?? tier.provider : tier.provider;
   const model = body.model || tier.model;
   if (body.deviceId) return createDeviceJob(prisma, userId, task, body, provider, model, tier.effort, settings.orchestration, options);
+  await requireHostAccess(userId, "Host workspace execution");
 
   if (provider === "cursor") throw new GuardError("Cursor cannot run tasks on this computer. Pick a chat model for the agent.");
   if (body.kind === "code" && !serverRunnerEnabled()) throw new GuardError("This Ensemble runs code on your computer. Pick a paired computer.");
@@ -232,7 +236,7 @@ export async function createJob(prisma: PrismaClient, userId: string, body: Assi
     if (rejection) throw rejection;
   }
 
-  const job = await prisma.workspaceJob.create({
+  const job = await createCappedJob(prisma, userId, {
     data: {
       userId,
       taskId: task.id,

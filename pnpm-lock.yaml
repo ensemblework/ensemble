@@ -172,6 +172,36 @@ importers:
 
   apps/agent-runtime: {}
 
+  apps/cli:
+    devDependencies:
+      '@ensemble/context-bridge':
+        specifier: workspace:*
+        version: link:../context-bridge
+      '@ensemble/shared-types':
+        specifier: workspace:*
+        version: link:../../packages/shared-types
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.31.0
+        version: 1.31.0(zod@3.25.76)
+      '@types/node':
+        specifier: ^22.18.6
+        version: 22.20.4
+      esbuild:
+        specifier: ^0.28.2
+        version: 0.28.2
+      jsonc-parser:
+        specifier: ^3.3.1
+        version: 3.3.1
+      tsx:
+        specifier: ^4.20.6
+        version: 4.23.15
+      typescript:
+        specifier: ^5.8.2
+        version: 5.9.3
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+
   apps/context-bridge:
     dependencies:
       '@ensemble/shared-types':
@@ -211,6 +241,9 @@ importers:
       '@ensemble/block-diagrams':
         specifier: workspace:*
         version: link:../../packages/block-diagrams
+      '@ensemble/context-bridge':
+        specifier: workspace:*
+        version: link:../context-bridge
       '@ensemble/ide-theme':
         specifier: workspace:*
         version: link:../../packages/ide-theme
@@ -223,6 +256,9 @@ importers:
       '@fastify/cors':
         specifier: ^11.0.1
         version: 11.3.0
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.31.0
+        version: 1.31.0(zod@3.25.76)
       '@prisma/client':
         specifier: ^6.16.2
         version: 6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
@@ -241,6 +277,9 @@ importers:
       ioredis:
         specifier: ^5.8.0
         version: 5.11.1
+      jose:
+        specifier: ^6.1.0
+        version: 6.2.12
       pglite-prisma-adapter:
         specifier: 0.6.1
         version: 0.6.1(@electric-sql/pglite@0.5.8)(@prisma/client@6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3))
@@ -2218,6 +2257,9 @@ packages:
 
   json-schema-typed@8.0.2:
     resolution: {integrity: sha512-fQhoXdcvc3V28x7C7BMs4P5+kNlgUURe2jmUT1T//oBRMDrqy1QPelJimwZGo7Hg9VPV3EQV5Bnq4hbFy2vetA==}
+
+  jsonc-parser@3.3.1:
+    resolution: {integrity: sha512-HUgH65KyejrUFPvHFPbqOY0rsFip3Bo5wb4ngvdi1EpCYWUQDC5V+Y7mZws+DLkr4M//zQJoanu1SP+87Dv1oQ==}
 
   jspdf@4.2.1:
     resolution: {integrity: sha512-YyAXyvnmjTbR4bHQRLzex3CuINCDlQnBqoSYyjJwTP2x9jDLuKDzy7aKUl0hgx3uhcl7xzg32agn5vlie6HIlQ==}
@@ -4786,6 +4828,8 @@ snapshots:
   json-schema-traverse@1.0.0: {}
 
   json-schema-typed@8.0.2: {}
+
+  jsonc-parser@3.3.1: {}
 
   jspdf@4.2.1:
     dependencies:

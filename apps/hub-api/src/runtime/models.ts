@@ -6,6 +6,7 @@
  * the schema has an embedding column, but nothing in this tree requests vectors.
  */
 import { ModelUnreachableError } from "../lib/model-reach.js";
+import { HostedAccessError, canUseHostCredentials, requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
 import { CONNECTION_DROPPED_NOTICE, normalizeTransportError } from "../lib/stream-drop.js";
 import { truncateText } from "../lib/text.js";
 import { ModelAuthError, ProviderError, parseProviderError } from "./errors.js";
@@ -65,8 +66,9 @@ async function vendorFetch(url: string, init: RequestInit, timeoutMs: number, si
   return fetchImpl(url, { ...init, signal: combineSignals(signal, timeoutMs) });
 }
 
-async function copilotSession(githubToken: string, signal?: AbortSignal): Promise<{ token: string; base: string }> {
-  const cached = copilotCache.get(githubToken);
+async function copilotSession(githubToken: string, signal?: AbortSignal, allowHostConfig = false): Promise<{ token: string; base: string }> {
+  const key = `${allowHostConfig ? "host" : "byok"}:${githubToken}`;
+  const cached = copilotCache.get(key);
   if (cached && cached.expiresAt > Date.now() / 1000 + 60) return { token: cached.token, base: cached.base };
   const response = await vendorFetch(
     "https://api.github.com/copilot_internal/v2/token",
@@ -80,9 +82,9 @@ async function copilotSession(githubToken: string, signal?: AbortSignal): Promis
     throw new ModelAuthError(`GitHub did not issue a Copilot token (${response.status}). Is Copilot enabled on this account?`);
   }
   const body = (await response.json()) as { token?: string; endpoints?: { api?: string }; expires_at?: number };
-  const base = (body.endpoints?.api || process.env.COPILOT_API_BASE || "https://api.githubcopilot.com").replace(/\/$/, "");
+  const base = (body.endpoints?.api || (allowHostConfig ? process.env.COPILOT_API_BASE : null) || "https://api.githubcopilot.com").replace(/\/$/, "");
   if (!body.token) throw new ModelAuthError("GitHub did not issue a Copilot token. Is Copilot enabled on this account?");
-  copilotCache.set(githubToken, { token: body.token, base, expiresAt: Number(body.expires_at ?? Date.now() / 1000 + 600) });
+  copilotCache.set(key, { token: body.token, base, expiresAt: Number(body.expires_at ?? Date.now() / 1000 + 600) });
   return { token: body.token, base };
 }
 
@@ -92,9 +94,11 @@ export async function endpoint(
   ollamaUrl: string | null | undefined,
   signal?: AbortSignal,
 ): Promise<{ base: string; headers: Record<string, string>; source: string }> {
+  await requireVerifiedUser(userId);
   if (provider === "mock") return { base: "mock://local", headers: {}, source: "you" };
   const cred = await resolveCredential(userId, provider);
   if (provider === "ollama") {
+    await requireHostAccess(userId, "Host Ollama and custom model proxies");
     const base = (cred.baseUrl || ollamaUrl || process.env.OLLAMA_URL || "http://127.0.0.1:11434").replace(/\/$/, "");
     return { base: `${base}/v1`, headers: {}, source: "local" };
   }
@@ -102,7 +106,7 @@ export async function endpoint(
     throw new ModelAuthError(`No key for ${provider}. Paste one in Settings → Models, or pick a provider that has a key.`);
   }
   if (provider === "copilot") {
-    const session = await copilotSession(cred.secret, signal);
+    const session = await copilotSession(cred.secret, signal, await canUseHostCredentials(userId));
     return {
       base: session.base,
       headers: {
@@ -115,6 +119,7 @@ export async function endpoint(
   }
   if (!BASES[provider]) throw new ModelAuthError(`${provider} is not a chat provider.`);
   const base = (cred.baseUrl || BASES[provider]).replace(/\/$/, "");
+  if (cred.baseUrl) await requireHostAccess(userId, "Custom model proxies");
   const headers: Record<string, string> = { Authorization: `Bearer ${cred.secret}` };
   if (provider === "openrouter") headers["X-Title"] = "Ensemble";
   return { base, headers, source: cred.source };
@@ -390,6 +395,7 @@ function toolsOf(body: Json): Json[] | null {
 }
 
 export async function completeWithTools(body: Json, options: CallOptions = {}): Promise<Json> {
+  await requireVerifiedUser(stringOrNull(body.userId));
   const model = String(body.model || inferProviderModel("coder"));
   const provider = String(body.provider || inferProvider(model));
   if (provider === "mock") return mockTurn(body, model);
@@ -417,6 +423,7 @@ function inferProviderModel(role: string): string {
 }
 
 export async function completeText(body: Json, options: CallOptions = {}): Promise<Json> {
+  await requireVerifiedUser(stringOrNull(body.userId));
   const model = String(body.model || CHEAPEST.google);
   const provider = String(body.provider || inferProvider(model));
   const messages: Json[] = [];
@@ -462,6 +469,7 @@ export async function completeText(body: Json, options: CallOptions = {}): Promi
 }
 
 function publicFailure(error: unknown): Json {
+  if (error instanceof HostedAccessError) return { message: error.message, kind: "auth", status: 403 };
   if (error instanceof ModelUnreachableError) return error.toJSON();
   if (error instanceof Error && error.name === "ConnectionDropped") {
     return { message: CONNECTION_DROPPED_NOTICE, kind: "other", status: 503 };
@@ -560,6 +568,8 @@ export async function listModels(
   secret?: string | null,
   signal?: AbortSignal,
 ): Promise<string[]> {
+  await requireVerifiedUser(userId);
+  if (provider === "ollama") await requireHostAccess(userId, "Host Ollama and custom model proxies");
   const key = cacheKey(provider, userId, secret, ollamaUrl);
   const cached = catalogCache.get(key);
   if (cached && cached.expires > Date.now() / 1000) return cached.models;
@@ -608,7 +618,7 @@ export async function listModels(
     const data = (await response.json()) as { models?: Array<{ name?: string }> };
     models = (data.models ?? []).map((row) => String(row.name ?? "")).filter(Boolean);
   } else if (provider === "copilot") {
-    const session = await copilotSession(apiKey, signal);
+    const session = await copilotSession(apiKey, signal, await canUseHostCredentials(userId));
     const response = await vendorFetch(
       `${session.base}/models`,
       { headers: { Authorization: `Bearer ${session.token}`, "Editor-Version": "Ensemble/0.1", "Copilot-Integration-Id": "vscode-chat" } },

@@ -659,9 +659,10 @@ export type ModelCatalog = {
 export type ModelKey = { provider: string; source: "you" | "env" | "none"; hint: string | null; updatedAt: string | null };
 
 export type Me = {
-  user: { id: string; email: string; name: string };
-  via: "session" | "token" | "internal" | "bypass";
+  user: { id: string; email: string; name: string; emailVerified?: boolean; hasPassword?: boolean };
+  via: "session" | "token" | "internal" | "bypass" | "desktop";
   modules?: string | null;
+  verificationRequired?: boolean;
 };
 
 export type ApiTokenRecord = {
@@ -686,6 +687,22 @@ export type ConnectBridge = {
   state: "connected" | "running" | "not_running";
   tokens: Array<{ id: string; name: string; prefix: string; lastUsedAt: string | null; createdAt: string }>;
 };
+
+export type CliAuthScope = "mcp" | "runner";
+
+export type CliAuthRequest = {
+  clientName: string;
+  platform: string;
+  version: string;
+  scopes: CliAuthScope[];
+  createdAt: string;
+  expiresAt: string;
+  status: string;
+  requestedFrom?: string | null;
+  sameNetwork?: boolean | null;
+};
+
+export type CliAuthDecision = "approve" | "deny";
 
 export type ConnectorApp = {
   provider: "google" | "github";
@@ -752,6 +769,7 @@ export const api = bindClient({
       canUndo: boolean;
       canRedo: boolean;
       onboardingComplete: boolean;
+      verificationRequired?: boolean;
       highlights: string[];
       modules?: string | null;
       labels?: Record<string, string>;
@@ -813,19 +831,36 @@ export const api = bindClient({
     ),
 
   // account
-  authStatus: () => get<{ hasAccounts: boolean; bypass: boolean; signup: "open" | "closed" | "allowlist" }>("/api/auth/status"),
+  authStatus: () => get<{
+    hasAccounts: boolean; bypass: boolean; signup: "open" | "closed" | "allowlist";
+    providers: Array<"google" | "github" | "microsoft">; emailConfigured: boolean; turnstileSiteKey: string | null;
+  }>("/api/auth/status"),
   me: () => get<Me>("/api/auth/me"),
-  signup: (data: { email: string; password: string; name: string }) =>
-    post<{ user: Me["user"]; firstAccount: boolean }>("/api/auth/signup", data),
+  signup: (data: { email: string; password: string; name: string; turnstileToken?: string }) =>
+    post<{ user: Me["user"]; firstAccount: boolean; verificationSent: boolean; verificationRequired: boolean }>("/api/auth/signup", data),
   login: (data: { email: string; password: string }) => post<{ user: Me["user"] }>("/api/auth/login", data),
   logout: () => post<void>("/api/auth/logout"),
   updateMe: (data: { name?: string; password?: string; current?: string }) => patch<{ user: Me["user"] }>("/api/auth/me", data),
+  verifyEmail: (token: string) => post<{ verified: boolean }>("/api/auth/verify-email", { token }),
+  resendVerification: () => post<{ sent: boolean }>("/api/auth/resend-verification"),
+  forgotPassword: (email: string) => post<{ message: string }>("/api/auth/forgot", { email }),
+  resetPassword: (token: string, password: string) => post<{ reset: boolean }>("/api/auth/reset", { token, password }),
+  identities: () => get<{
+    identities: Array<{ provider: "google" | "github" | "microsoft"; email: string | null; createdAt: string }>;
+    providers: Array<"google" | "github" | "microsoft">;
+  }>("/api/auth/identities"),
+  unlinkIdentity: (provider: string, current?: string) => request<void>(`/api/auth/identities/${encodeURIComponent(provider)}`, { method: "DELETE", json: { current } }),
+  exportAccount: () => get<Record<string, unknown>>("/api/auth/export"),
+  deleteAccount: (current?: string) => request<void>("/api/auth/account", { method: "DELETE", json: { confirmation: "DELETE", current } }),
   eventsTicket: () => post<{ ticket: string }>("/api/events/ticket"),
   tokens: () => get<{ tokens: ApiTokenRecord[] }>("/api/tokens"),
   createToken: (name: string) => post<{ id: string; token: string }>("/api/tokens", { name }),
   revokeToken: (id: string) => del<void>(`/api/tokens/${id}`),
   connectBridge: () => get<ConnectBridge>("/api/connect/bridge"),
   createBridgeToken: (name?: string) => post<{ id: string; token: string; prefix: string }>("/api/connect/token", name ? { name } : {}),
+  cliAuthRequest: (code: string) => get<CliAuthRequest>(`/api/cli/auth/request${qs({ code })}`),
+  approveCliAuth: (body: { userCode: string; scopes: CliAuthScope[]; decision: CliAuthDecision }) =>
+    post<{ ok: true; scopes: CliAuthScope[] }>("/api/cli/auth/approve", body),
 
   // editor decisions (Needs me router)
   decisions: (status: "pending" | "recent" = "pending") =>

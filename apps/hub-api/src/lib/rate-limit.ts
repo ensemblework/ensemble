@@ -1,6 +1,6 @@
 import type { FastifyRequest } from "fastify";
 
-export type RateBucket = "login" | "signup" | "model" | "token" | "device";
+export type RateBucket = "login" | "signup" | "email" | "model" | "token" | "device" | "cliStart" | "cliToken" | "cliApprove" | "mcp";
 
 export type RateLimitConfig = Record<RateBucket, { limit: number; windowMs: number; error: string }>;
 
@@ -54,6 +54,11 @@ export function rateLimitConfig(env: NodeJS.ProcessEnv = process.env): RateLimit
       windowMs: intEnv(env, "ENSEMBLE_RATE_SIGNUP_WINDOW_SEC", 3600) * 1000,
       error: "Too many accounts were created from here. Wait a moment and try again.",
     },
+    email: {
+      limit: intEnv(env, "ENSEMBLE_RATE_EMAIL_LIMIT", 5),
+      windowMs: intEnv(env, "ENSEMBLE_RATE_EMAIL_WINDOW_SEC", 3600) * 1000,
+      error: "Too many account emails were requested. Wait before trying again.",
+    },
     model: {
       limit: intEnv(env, "ENSEMBLE_RATE_MODEL_LIMIT", 120),
       windowMs: intEnv(env, "ENSEMBLE_RATE_MODEL_WINDOW_SEC", 60) * 1000,
@@ -68,6 +73,26 @@ export function rateLimitConfig(env: NodeJS.ProcessEnv = process.env): RateLimit
       limit: intEnv(env, "ENSEMBLE_RATE_DEVICE_LIMIT", 120),
       windowMs: intEnv(env, "ENSEMBLE_RATE_DEVICE_WINDOW_SEC", 60) * 1000,
       error: "Too many updates from this computer. Wait a moment and try again.",
+    },
+    cliStart: {
+      limit: intEnv(env, "ENSEMBLE_RATE_CLI_START_LIMIT", 10),
+      windowMs: intEnv(env, "ENSEMBLE_RATE_CLI_START_WINDOW_SEC", 600) * 1000,
+      error: "Too many CLI login requests. Wait a moment and try again.",
+    },
+    cliToken: {
+      limit: intEnv(env, "ENSEMBLE_RATE_CLI_TOKEN_LIMIT", 120),
+      windowMs: intEnv(env, "ENSEMBLE_RATE_CLI_TOKEN_WINDOW_SEC", 60) * 1000,
+      error: "Too many CLI login polls. Wait a moment and try again.",
+    },
+    cliApprove: {
+      limit: intEnv(env, "ENSEMBLE_RATE_CLI_APPROVE_LIMIT", 30),
+      windowMs: intEnv(env, "ENSEMBLE_RATE_CLI_APPROVE_WINDOW_SEC", 600) * 1000,
+      error: "Too many CLI login codes were checked. Wait a few minutes and try again.",
+    },
+    mcp: {
+      limit: intEnv(env, "ENSEMBLE_RATE_MCP_LIMIT", 240),
+      windowMs: intEnv(env, "ENSEMBLE_RATE_MCP_WINDOW_SEC", 60) * 1000,
+      error: "Too many MCP requests. Wait a moment and try again.",
     },
   };
 }
@@ -90,8 +115,15 @@ export function isDeviceWrite(path: string): boolean {
 }
 
 export function classifyRateLimit(method: string, path: string): RateBucket | null {
-  if (method === "POST" && path === "/api/auth/login") return "login";
+  if (method === "POST" && (path === "/api/auth/login" || path === "/api/auth/reset" || path === "/api/auth/verify-email")) return "login";
+  if (method === "GET" && /^\/api\/auth\/oauth\/[^/]+\/start$/.test(path)) return "login";
+  if (method === "GET" && /^\/api\/auth\/oauth\/[^/]+\/callback$/.test(path)) return "signup";
   if (method === "POST" && path === "/api/auth/signup") return "signup";
+  if (method === "POST" && (path === "/api/auth/forgot" || path === "/api/auth/resend-verification")) return "email";
+  if (method === "POST" && path === "/api/cli/auth/start") return "cliStart";
+  if (method === "POST" && path === "/api/cli/auth/token") return "cliToken";
+  if ((method === "GET" && path === "/api/cli/auth/request") || (method === "POST" && path === "/api/cli/auth/approve")) return "cliApprove";
+  if (method === "POST" && path === "/mcp") return "mcp";
   if (method === "POST" && (path === "/api/assistant/turn" || path === "/api/models/test")) return "model";
   if (method === "GET" && path === "/api/models") return "model";
   if (method === "PUT" && /^\/api\/model-keys\/[^/]+$/.test(path)) return "model";
@@ -100,7 +132,7 @@ export function classifyRateLimit(method: string, path: string): RateBucket | nu
   return null;
 }
 
-function clientAddress(request: FastifyRequest): string {
+export function clientAddress(request: FastifyRequest): string {
   const forwarded = request.headers["x-forwarded-for"];
   const raw = Array.isArray(forwarded) ? forwarded[0] : forwarded;
   const ip = raw?.split(",")[0]?.trim();
@@ -109,6 +141,7 @@ function clientAddress(request: FastifyRequest): string {
 
 export function rateLimitKey(bucket: RateBucket, request: FastifyRequest): string {
   if (bucket === "device" && request.tokenId) return `device:${request.tokenId}`;
+  if ((bucket === "mcp" || bucket === "cliApprove") && request.userId) return `${bucket}:user:${request.userId}`;
   if ((bucket === "model" || bucket === "token" || bucket === "device") && request.userId) return `${bucket}:user:${request.userId}`;
   return `${bucket}:ip:${clientAddress(request)}`;
 }

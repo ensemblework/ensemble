@@ -2,11 +2,19 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { INVITE_ONLY, signupMode, signupPermitted } from "./signup.js";
 
-test("production closes signup after the first account when the allowlist is unset", () => {
+test("production stays open after the first account unless explicitly closed", () => {
   assert.equal(signupMode({ production: true, allowlist: undefined, hasAccounts: false }), "open");
-  assert.equal(signupMode({ production: true, allowlist: "  ", hasAccounts: true }), "closed");
-  assert.equal(signupPermitted({ email: "ada@example.com", production: true, allowlist: undefined, hasAccounts: true }), false);
+  assert.equal(signupMode({ production: true, allowlist: "  ", hasAccounts: true }), "open");
+  assert.equal(signupPermitted({ email: "ada@example.com", production: true, allowlist: undefined, hasAccounts: true }), true);
   assert.equal(signupPermitted({ email: "ada@example.com", production: true, allowlist: undefined, hasAccounts: false }), true);
+});
+
+test("explicit modes provide a kill switch and an empty allowlist fails closed", () => {
+  assert.equal(signupMode({ mode: "closed", allowlist: "*@example.com" }), "closed");
+  assert.equal(signupPermitted({ email: "ada@example.com", mode: "closed", allowlist: undefined }), false);
+  assert.equal(signupPermitted({ email: "ada@example.com", mode: "allowlist", allowlist: undefined }), false);
+  assert.equal(signupPermitted({ email: "ada@example.com", mode: "open", allowlist: "other@example.com" }), true);
+  assert.throws(() => signupMode({ mode: "oops", allowlist: undefined }), /ENSEMBLE_SIGNUP_MODE/);
 });
 
 test("dev stays open when the allowlist is unset", () => {

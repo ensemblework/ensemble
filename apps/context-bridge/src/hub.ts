@@ -37,7 +37,13 @@ export function createHubClient(config: BridgeConfig = loadBridgeConfig()): HubC
         });
       } catch {
         // Connection refused, DNS, or timeout. An empty brief would look like "no context".
-        throw new HubError("Ensemble is not running. Start it with `pnpm dev`.", "down");
+        const local = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/.test(config.hubUrl);
+        throw new HubError(
+          local
+            ? "Ensemble is not running. Start it with `pnpm dev`."
+            : `Ensemble could not be reached at ${config.hubUrl}. Check your connection, or run \`ensemble doctor\`.`,
+          "down",
+        );
       }
       if (!response.ok) {
         let message = response.statusText;

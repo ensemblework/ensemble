@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { env } from "../config.js";
+import { requireHostAccess } from "../lib/hosted-access.js";
 import {
   allowedRepo,
   changedFiles,
@@ -66,13 +67,14 @@ const QueryFlag = z.preprocess((value) => value === true || value === "true" || 
 
 export async function codeRoutes(app: FastifyInstance): Promise<void> {
   declareModule(app, "code");
+  app.addHook("preHandler", async (request) => requireHostAccess(request.userId, "Code filesystem"));
   const { prisma } = app;
 
   /** The workspace, the folders Code can use (settings.code.roots, never the terminal's), and agent run checkouts. */
   async function roots(userId: string): Promise<string[]> {
     const settings = await loadSettings(prisma, userId);
     const jobs = await prisma.workspaceJob.findMany({ where: { userId }, select: { repoPath: true }, distinct: ["repoPath"] });
-    return [expandHome(env.ENSEMBLE_WORKSPACE_ROOT), ...(await usableCodeRoots(settings)), ...jobs.map((job) => job.repoPath)];
+    return [expandHome(env.ENSEMBLE_WORKSPACE_ROOT), ...(await usableCodeRoots(settings, userId)), ...jobs.map((job) => job.repoPath)];
   }
 
   async function resolveSource(request: FastifyRequest, input: unknown) {
@@ -106,7 +108,7 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
    */
   app.post("/api/code/folders/resolve", async (request) => {
     const { path } = z.object({ path: z.string().min(1).max(4096) }).parse(request.body);
-    return { path: await resolveCodeFolder(path) };
+    return { path: await resolveCodeFolder(path, request.userId) };
   });
 
   app.get("/api/code/reviews", async (request) => {
@@ -256,7 +258,7 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
     if (!review) throw new GitError("Review not found.", 404);
     const repo = await allowedRepo(review.repoPath, await roots(userId));
     const trusted = async (args: string[]) => {
-      const result = await runTrustedGit({ cwd: repo, args });
+      const result = await runTrustedGit({ userId, cwd: repo, args });
       if (result.exitCode !== 0) throw new GitError(`git ${args[0]} failed: ${result.output.trim().slice(-400)}`, 409);
       return result.output.trim();
     };
@@ -277,7 +279,7 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
     let commit: string | null = null;
     if (runBranch && !review.job.externalRoot && paths.length) {
       await trusted(["add", "-A", "--", ...paths]);
-      const staged = await runTrustedGit({ cwd: repo, args: ["diff", "--cached", "--quiet"] });
+      const staged = await runTrustedGit({ userId: request.userId, cwd: repo, args: ["diff", "--cached", "--quiet"] });
       if (staged.exitCode === 1) {
         const settings = await loadSettings(prisma, request.userId);
         const identity = settings.terminal.commitAuthor.match(/^(.+?)\s*<(.+)>$/) ?? [null, "Ensemble Agent", "agent@ensemble.local"];
@@ -310,7 +312,7 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
     const keptCommits = Boolean(review.initialHead && head && head !== review.initialHead && !runBranch);
     if (runBranch && review.initialHead && head !== review.initialHead) await trusted(["reset", "--quiet", "--mixed", review.initialHead]);
     for (const path of paths) {
-      const existed = (await runTrustedGit({ cwd: repo, args: ["cat-file", "-e", `${review.startTree}:${path}`] })).exitCode === 0;
+      const existed = (await runTrustedGit({ userId: request.userId, cwd: repo, args: ["cat-file", "-e", `${review.startTree}:${path}`] })).exitCode === 0;
       if (existed) await trusted(["restore", `--source=${review.startTree}`, "--worktree", "--", path]);
       else await rm(join(repo, path), { force: true });
     }

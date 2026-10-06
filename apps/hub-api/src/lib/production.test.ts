@@ -6,7 +6,28 @@ const good = {
   NODE_ENV: "production",
   ENSEMBLE_INTERNAL_TOKEN: "a".repeat(32),
   HUB_WEB_ORIGIN: "https://hub.example",
+  ENSEMBLE_SERVER_RUNNER: "off",
 };
+
+test("hosted open signup cannot enable the server runner, including the default", () => {
+  for (const mode of [undefined, "open", "unknown"]) {
+    for (const runner of [undefined, "on"]) {
+      assert.match(productionProblems({ ...good, ENSEMBLE_SIGNUP_MODE: mode, ENSEMBLE_SERVER_RUNNER: runner }).join("\n"), /ENSEMBLE_SERVER_RUNNER=off/);
+    }
+  }
+  for (const mode of ["closed", "allowlist"]) {
+    assert.deepEqual(productionProblems({ ...good, ENSEMBLE_SIGNUP_MODE: mode, ENSEMBLE_SERVER_RUNNER: "on" }), []);
+  }
+  assert.deepEqual(productionProblems({ ...good, ENSEMBLE_SIGNUP_ALLOWLIST: "operator@example.test", ENSEMBLE_SERVER_RUNNER: "on" }), []);
+  assert.match(productionProblems({ ...good, ENSEMBLE_SIGNUP_MODE: "open", ENSEMBLE_SIGNUP_ALLOWLIST: "operator@example.test", ENSEMBLE_SERVER_RUNNER: "on" }).join("\n"), /ENSEMBLE_SERVER_RUNNER=off/);
+  assert.match(productionProblems({ ...good, ENSEMBLE_SIGNUP_MODE: "unknown" }).join("\n"), /ENSEMBLE_SIGNUP_MODE must be/);
+  assert.deepEqual(productionProblems({ ...good, ENSEMBLE_DESKTOP: "1", ENSEMBLE_SERVER_RUNNER: "on" }), []);
+});
+
+test("hosted startup refuses invalid quota configuration", () => {
+  assert.match(productionProblems({ ...good, ENSEMBLE_MAX_JOBS_PER_DAY: "NaN" }).join("\n"), /ENSEMBLE_MAX_JOBS_PER_DAY/);
+  assert.match(productionProblems({ ...good, ENSEMBLE_MAX_DOCUMENT_BYTES: "0" }).join("\n"), /ENSEMBLE_MAX_DOCUMENT_BYTES/);
+});
 
 test("dev does not refuse a default token or auth bypass", () => {
   assert.deepEqual(

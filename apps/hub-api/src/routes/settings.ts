@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { z } from "zod";
 import { loadSettings, saveSettings } from "../lib/settings.js";
 import { checkCodeRootsPatch } from "../lib/code-folders.js";
 import { setOwnModule } from "../lib/own-modules.js";
@@ -19,8 +20,9 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
 
   app.patch("/api/settings", async (request) => {
     // Code folders added through a plain settings save get the same checks as POST /api/code/folders.
+    const body = z.record(z.unknown()).parse(request.body);
     const current = await loadSettings(app.prisma, request.userId);
-    const patch = await checkCodeRootsPatch(current, request.body);
+    const patch = await checkCodeRootsPatch(current, body, request.userId);
     const settings = await saveSettings(app.prisma, request.userId, patch);
     return { settings };
   });

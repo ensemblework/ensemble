@@ -6,6 +6,7 @@
  * limit, so a queued export is not reported as a missing runtime.
  */
 import { env } from "../config.js";
+import { requireHostAccess } from "../lib/hosted-access.js";
 import { RuntimeError } from "../lib/runtime.js";
 import { errorFromRuntimeBody } from "./errors.js";
 import { PLOT_EXPORTS_BUSY } from "./plots-python.js";
@@ -29,6 +30,7 @@ export async function fetchHostedPlotRun(
   limits: PlotRunLimits = DEFAULT_LIMITS,
   runtimeUrl = env.AGENT_RUNTIME_URL,
 ): Promise<Record<string, unknown>> {
+  await requireHostAccess(json && typeof json === "object" && "userId" in json && typeof json.userId === "string" ? json.userId : null, "Python plots");
   // Headers come back as soon as the agent accepts. The queue budget covers
   // that wait. The body reader starts the run budget at the started line.
   const controller = new AbortController();

@@ -26,7 +26,7 @@ test("the limiter allows a burst and then asks the caller to wait", () => {
   assert.equal(limiter.take("off", 0, 10_000), null);
 });
 
-test("login, signup, model, and token routes are classified", () => {
+test("login, signup, model, token, CLI and MCP routes are classified", () => {
   assert.equal(classifyRateLimit("POST", "/api/auth/login"), "login");
   assert.equal(classifyRateLimit("POST", "/api/auth/signup"), "signup");
   assert.equal(classifyRateLimit("POST", "/api/assistant/turn"), "model");
@@ -40,6 +40,11 @@ test("login, signup, model, and token routes are classified", () => {
   assert.equal(classifyRateLimit("POST", "/api/devices/register"), "token");
   assert.equal(classifyRateLimit("POST", "/api/devices/self/heartbeat"), "device");
   assert.equal(classifyRateLimit("POST", "/api/devices/self/jobs/job-1/progress"), "device");
+  assert.equal(classifyRateLimit("POST", "/api/cli/auth/start"), "cliStart");
+  assert.equal(classifyRateLimit("POST", "/api/cli/auth/token"), "cliToken");
+  assert.equal(classifyRateLimit("GET", "/api/cli/auth/request"), "cliApprove");
+  assert.equal(classifyRateLimit("POST", "/api/cli/auth/approve"), "cliApprove");
+  assert.equal(classifyRateLimit("POST", "/mcp"), "mcp");
   assert.equal(classifyRateLimit("POST", "/api/devices/self/claim"), null);
   assert.equal(classifyRateLimit("POST", "/api/devices/pair"), null);
   assert.equal(classifyRateLimit("GET", "/api/tokens"), null);
@@ -53,19 +58,35 @@ test("model and token limits follow the user and auth limits follow the address"
   assert.equal(rateLimitKey("model", request({ userId: "user-1" })), "model:user:user-1");
   assert.equal(rateLimitKey("token", request({ userId: "user-1" })), "token:user:user-1");
   assert.equal(rateLimitKey("token", request({})), "token:ip:203.0.113.4");
+  assert.equal(rateLimitKey("cliApprove", request({ userId: "user-1" })), "cliApprove:user:user-1");
   assert.equal(rateLimitKey("device", request({ tokenId: "tok-1", userId: "user-1" })), "device:tok-1");
   assert.equal(rateLimitKey("device", request({ userId: "user-1" })), "device:user:user-1");
+  assert.equal(rateLimitKey("mcp", request({ userId: "user-1" })), "mcp:user:user-1");
+  assert.equal(rateLimitKey("cliStart", request({})), "cliStart:ip:203.0.113.4");
+  assert.equal(rateLimitKey("cliToken", request({})), "cliToken:ip:203.0.113.4");
   assert.equal(rateLimitKey("login", request({ forwarded: "198.51.100.8, 127.0.0.1" })), "login:ip:198.51.100.8");
 });
 
 test("env overrides the default windows", () => {
-  const config = rateLimitConfig({ ENSEMBLE_RATE_LOGIN_LIMIT: "3", ENSEMBLE_RATE_LOGIN_WINDOW_SEC: "60", ENSEMBLE_RATE_MODEL_LIMIT: "0" });
+  const config = rateLimitConfig({
+    ENSEMBLE_RATE_LOGIN_LIMIT: "3",
+    ENSEMBLE_RATE_LOGIN_WINDOW_SEC: "60",
+    ENSEMBLE_RATE_MODEL_LIMIT: "0",
+    ENSEMBLE_RATE_MCP_LIMIT: "7",
+    ENSEMBLE_RATE_MCP_WINDOW_SEC: "11",
+  });
   assert.equal(config.login.limit, 3);
   assert.equal(config.login.windowMs, 60_000);
   assert.equal(config.model.limit, 0);
   assert.equal(config.signup.limit, 60);
   assert.equal(config.token.limit, 20);
   assert.equal(config.token.windowMs, 900_000);
+  assert.equal(config.cliStart.limit, 10);
+  assert.equal(config.cliStart.windowMs, 600_000);
+  assert.equal(config.cliToken.limit, 120);
+  assert.equal(config.cliToken.windowMs, 60_000);
+  assert.equal(config.mcp.limit, 7);
+  assert.equal(config.mcp.windowMs, 11_000);
 });
 
 test("token minting uses its own limit", () => {

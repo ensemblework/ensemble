@@ -134,7 +134,7 @@ The database file lives in the OS app-data folder. The sandbox cannot read or wr
 - A random API port needs Google's **"Desktop app"** client type, which allows any loopback port. The web client in doc 18, pinned to `http://localhost:4000/api/connectors/google/callback`, does not fit.
 - GitHub uses the **device flow**, so the binary does not contain a client secret.
 
-**Discovery file.** A random port breaks clients that assume `127.0.0.1:4000`. `apps/context-bridge/src/config.ts` defaults to `http://127.0.0.1:4000`, and `scripts/ensemble-hook.mjs` defaults to the same URL. The core writes a discovery file, port and token, mode `0600`, in the app-data folder. context-bridge and the hook read it. The sandbox is denied that file.
+**Discovery file.** A random port breaks clients that assume `127.0.0.1:4000`. `apps/context-bridge/src/config.ts` defaults to `http://127.0.0.1:4000`, and `scripts/ensemble-hook.mjs` defaults to the same URL. The core writes a discovery file, port, token and process id, mode `0600`, in the app-data folder. context-bridge and the hook read it. The sandbox is denied that file.
 
 **Updates.** Ship the updater from the first install.
 

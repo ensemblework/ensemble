@@ -8,6 +8,7 @@ import { redactText } from "../lib/redact.js";
 import { sseHub } from "../lib/sse.js";
 import { LIVE_DEVICE_STATUSES } from "./constants.js";
 import { expireDeviceDecisions } from "./settle.js";
+import { requireVerifiedUser } from "../lib/hosted-access.js";
 
 export type DeviceOutcome = "succeeded" | "failed" | "cancelled" | "blocked";
 
@@ -33,6 +34,7 @@ export async function finishDeviceJob(
   job: WorkspaceJob & { task: { id: string; title: string; status: string; owner: string } },
   input: { outcome: DeviceOutcome; summary: string; results: DeviceResult[] },
 ): Promise<boolean> {
+  await requireVerifiedUser(job.userId);
   const summary = redactText(input.summary).slice(0, 4000);
   const outcome = input.outcome;
   const jobStatus = outcome;

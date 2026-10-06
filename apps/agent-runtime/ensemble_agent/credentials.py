@@ -17,6 +17,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from ensemble_agent.config import get_settings
 from ensemble_agent.vault import decrypt, encrypt, hint
+from ensemble_agent.hosted_access import can_use_host_credentials, require_host_access, require_verified_user
 
 Provider = Literal["openai", "anthropic", "google", "mistral", "kimi", "qwen", "copilot", "cursor", "openrouter", "ollama"]
 PROVIDERS: tuple[Provider, ...] = (
@@ -161,14 +162,11 @@ def stored_map(user_id: str) -> dict[str, tuple[str, str | None]]:
         return cached[1]
     found: dict[str, tuple[str, str | None]] = {}
     broken: set[str] = set()
-    try:
-        with _connect() as conn:
-            rows = conn.execute(
-                "select provider, secret, base_url from model_credentials where user_id = %s",
-                (user_id,),
-            ).fetchall()
-    except Exception:
-        return {}
+    with _connect() as conn:
+        rows = conn.execute(
+            "select provider, secret, base_url from model_credentials where user_id = %s",
+            (user_id,),
+        ).fetchall()
     for provider, secret, base_url in rows:
         try:
             found[str(provider)] = (decrypt(secret), base_url)
@@ -188,14 +186,11 @@ def _broken(user_id: str) -> set[str]:
 
 
 def _stored(user_id: str, provider: str) -> tuple[str, str | None] | None:
-    try:
-        with _connect() as conn:
-            row = conn.execute(
-                "select secret, base_url from model_credentials where user_id = %s and provider = %s",
-                (user_id, provider),
-            ).fetchone()
-    except Exception:
-        return None
+    with _connect() as conn:
+        row = conn.execute(
+            "select secret, base_url from model_credentials where user_id = %s and provider = %s",
+            (user_id, provider),
+        ).fetchone()
     if not row:
         return None
     try:
@@ -225,6 +220,7 @@ def _gh_token() -> str | None:
 
 
 def resolve(user_id: str | None, provider: str) -> Credential:
+    require_verified_user(user_id)
     if provider == "mock":
         return Credential(provider, "mock", "you")
     if user_id:
@@ -232,7 +228,11 @@ def resolve(user_id: str | None, provider: str) -> Credential:
             raise DecryptError(DECRYPT_MESSAGE)
         stored = stored_map(user_id).get(provider)
         if stored:
+            if stored[1]:
+                require_host_access(user_id, "Custom model proxies")
             return Credential(provider, stored[0], "you", stored[1])
+    if not can_use_host_credentials(user_id):
+        return Credential(provider, "", "none")
     for name in ENV_KEYS.get(provider, ()):
         value = os.environ.get(name, "").strip()
         if value:
@@ -245,6 +245,8 @@ def resolve(user_id: str | None, provider: str) -> Credential:
 
 
 def save(user_id: str, provider: str, secret: str, base_url: str | None = None) -> None:
+    if base_url:
+        require_host_access(user_id, "Custom model proxies")
     _cred_cache.pop(user_id, None)
     with _connect() as conn:
         conn.execute(
@@ -265,19 +267,17 @@ def remove(user_id: str, provider: str) -> None:
 
 def listing(user_id: str) -> list[dict[str, object]]:
     rows: dict[str, tuple[str, object]] = {}
-    try:
-        with _connect() as conn:
-            for provider, key_hint, updated in conn.execute(
-                "select provider, hint, updated_at from model_credentials where user_id = %s", (user_id,)
-            ).fetchall():
-                rows[provider] = (key_hint, updated)
-    except Exception:
-        pass
+    with _connect() as conn:
+        for provider, key_hint, updated in conn.execute(
+            "select provider, hint, updated_at from model_credentials where user_id = %s", (user_id,)
+        ).fetchall():
+            rows[provider] = (key_hint, updated)
+    allow_host_keys = can_use_host_credentials(user_id)
     out: list[dict[str, object]] = []
     for provider in PROVIDERS:
         if provider in rows:
             out.append({"provider": provider, "source": "you", "hint": rows[provider][0], "updatedAt": str(rows[provider][1])})
             continue
-        env = next((name for name in ENV_KEYS.get(provider, ()) if os.environ.get(name, "").strip()), None)
+        env = next((name for name in ENV_KEYS.get(provider, ()) if allow_host_keys and os.environ.get(name, "").strip()), None)
         out.append({"provider": provider, "source": "env" if env else "none", "hint": env, "updatedAt": None})
     return out

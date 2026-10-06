@@ -4,12 +4,12 @@
  */
 import { spawnSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmdirSync, rmSync, unlinkSync } from "node:fs";
-import { basename, dirname, join, normalize, sep } from "node:path";
+import { basename, dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { run } from "./desktop-spawn.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const dest = join(root, "apps/desktop/src-tauri/resources/sidecar");
+const dest = parseArgs(process.argv.slice(2));
 const appDir = join(dest, "app");
 
 rmSync(dest, { recursive: true, force: true });
@@ -48,6 +48,31 @@ if (imported !== 0) {
 }
 
 console.log(`sidecar assembled at ${dest}`);
+
+function parseArgs(args) {
+  const defaultDest = join(root, "apps/desktop/src-tauri/resources/sidecar");
+  let output = defaultDest;
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+    if (arg === "--dest") {
+      const value = args[i + 1];
+      if (!value) {
+        console.error("--dest requires a directory.");
+        process.exit(1);
+      }
+      output = resolve(root, value);
+      i += 1;
+      continue;
+    }
+    if (arg.startsWith("--dest=")) {
+      output = resolve(root, arg.slice("--dest=".length));
+      continue;
+    }
+    console.error(`Unknown option for assemble-desktop-sidecar.mjs: ${arg}`);
+    process.exit(1);
+  }
+  return output;
+}
 
 function bundleNodeLibraries(nodeSrc, nodeDest) {
   if (process.platform === "darwin") {
@@ -285,7 +310,7 @@ function readPnpmStore(pnpmDir) {
     const owned = [];
     const siblings = [];
     const extras = [];
-    collectStoreEntries(nm, idDir, owned, siblings, extras);
+    collectStoreEntries(nm, realpathSync(idDir), owned, siblings, extras);
     const resolved = new Map();
     for (const sibling of siblings) {
       const meta = JSON.parse(readFileSync(join(realpathSync(sibling.path), "package.json"), "utf8"));

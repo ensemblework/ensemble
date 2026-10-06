@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
+import { requireHostAccess } from "../lib/hosted-access.js";
 import { getAccount } from "../connectors/accounts.js";
 import { env } from "../config.js";
 import { allowedRepo, discoverRepos, git } from "../lib/git.js";
@@ -27,12 +28,13 @@ async function originSlug(root: string): Promise<string | null> {
 }
 
 export async function allowedRoots(prisma: PrismaClient, userId: string): Promise<string[]> {
+  await requireHostAccess(userId, "Local repository access");
   const settings = await loadSettings(prisma, userId);
   const [jobs, reviews] = await Promise.all([
     prisma.workspaceJob.findMany({ where: { userId }, select: { repoPath: true }, distinct: ["repoPath"] }),
     prisma.codeReview.findMany({ where: { userId }, select: { repoPath: true }, distinct: ["repoPath"] }),
   ]);
-  return [expandHome(env.ENSEMBLE_WORKSPACE_ROOT), ...(await usableCodeRoots(settings)), ...jobs.map((job) => job.repoPath), ...reviews.map((review) => review.repoPath)].filter(
+  return [expandHome(env.ENSEMBLE_WORKSPACE_ROOT), ...(await usableCodeRoots(settings, userId)), ...jobs.map((job) => job.repoPath), ...reviews.map((review) => review.repoPath)].filter(
     (path): path is string => Boolean(path),
   );
 }
@@ -78,6 +80,7 @@ export interface ResolvedRepo {
 
 /** Local checkout when one is allowed. Otherwise a cached shallow mirror. GitHub is the last resort. */
 export async function resolveRepo(prisma: PrismaClient, userId: string, repoId: string): Promise<ResolvedRepo> {
+  await requireHostAccess(userId, "Repository filesystem");
   const row = await prisma.repo.findFirst({ where: { id: repoId, userId, deletedAt: null }, select: { fullName: true, url: true } });
   if (!row) throw new RepoReadError("That repo is not on your account.", 404);
   try {
@@ -93,6 +96,7 @@ export async function resolveRepo(prisma: PrismaClient, userId: string, repoId: 
 }
 
 export async function overviewFor(prisma: PrismaClient, userId: string, repoId: string): Promise<{ fullName: string; via: string; cached: boolean } & RepoOverview> {
+  await requireHostAccess(userId, "Repository filesystem");
   const row = await prisma.repo.findFirst({ where: { id: repoId, userId, deletedAt: null }, select: { fullName: true, url: true } });
   if (!row) throw new RepoReadError("That repo is not on your account.", 404);
   try {

@@ -7,8 +7,11 @@ import { useParams } from "next/navigation";
 import { useDesktopParam } from "@/lib/desktop-param";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import { appById, isAppId } from "@/lib/connect/catalog";
+import { appById } from "@/lib/connect/catalog";
 import {
+  EDITORS,
+  INSTALL_CHANNELS,
+  METHOD_LABELS,
   buildCommand,
   claudeCodeCommand,
   connectHubUrl,
@@ -31,8 +34,15 @@ import {
   httpMcpConfig,
   httpStartCommand,
   httpVsCodeConfig,
+  hostedMcpUrl,
+  hostedSnippet,
+  localCliSnippet,
   jetbrainsConfig,
   osFromPlatform,
+  pretty,
+  primaryInstallCommand,
+  setupOneLiner,
+  tokenValue,
   vscodeCliCommand,
   vscodeInstallUrl,
   vscodeUserConfig,
@@ -40,6 +50,7 @@ import {
   windsurfPath,
   zedSnippet,
   type ConnectFacts,
+  type ConnectMethod,
   type ConnectOs,
 } from "@/lib/connect/configs";
 import { stepsFor, troubleFor, type GuideStep } from "@/lib/connect/guides";
@@ -62,10 +73,11 @@ const PLACEHOLDER: ConnectFacts = {
 export default function Guide() {
   const params = useParams<{ app: string }>();
   const id = useDesktopParam(params.app);
-  const app = isAppId(id) ? appById(id) : undefined;
+  const app = appById(id);
   const bridge = useQuery({ queryKey: ["connect-bridge"], queryFn: api.connectBridge, refetchInterval: 20_000, staleTime: 10_000 });
   const token = useBridgeToken();
   const [osPick, setOsPick] = useState<ConnectOs | null>(null);
+  const [method, setMethod] = useState<ConnectMethod>("cli");
   const os = osPick ?? (bridge.data ? osFromPlatform(bridge.data.platform) : "linux");
   const facts: ConnectFacts = bridge.data
     ? {
@@ -73,6 +85,7 @@ export default function Guide() {
         bridgeScript: bridge.data.bridgeScript,
         node: bridge.data.node,
         hubApiUrl: connectHubUrl({ hubApiUrl: bridge.data.hubApiUrl, publicApiUrl: bridge.data.publicApiUrl }),
+        publicApiUrl: bridge.data.publicApiUrl,
         httpUrl: bridge.data.httpUrl,
         token,
       }
@@ -91,6 +104,7 @@ export default function Guide() {
   useEffect(() => {
     setIndex(0);
     setTested(false);
+    setMethod("cli");
   }, [id]);
 
   if (!app || !step) {
@@ -120,9 +134,32 @@ export default function Guide() {
             <p className="text-[13.5px] text-muted">{app.get}</p>
           </div>
         </div>
-        <StatusPill state={bridge.isLoading ? "loading" : (bridge.data?.state ?? "not_running")} />
+        {method === "source" ? <StatusPill state={bridge.isLoading ? "loading" : (bridge.data?.state ?? "not_running")} /> : null}
       </div>
 
+      <div className="mb-6 grid gap-2 md:grid-cols-3" role="tablist" aria-label="Connection method">
+        {(["cli", "hosted", "source"] as const).map((item) => (
+          <button
+            key={item}
+            type="button"
+            role="tab"
+            aria-selected={method === item}
+            className={cx(
+              "rounded-xl border p-3 text-left transition-colors",
+              method === item ? "border-accent bg-[var(--accent-soft)]" : "border-line bg-panel hover:border-line-strong",
+            )}
+            onClick={() => setMethod(item)}
+          >
+            <span className="block text-[13.5px] font-semibold">{METHOD_LABELS[item].title}</span>
+            <span className="mt-1 block text-[12.5px] leading-5 text-muted">{METHOD_LABELS[item].description}</span>
+          </button>
+        ))}
+      </div>
+
+      {method !== "source" ? (
+        <MethodGuide app={app} method={method} os={os} onOsChange={setOsPick} facts={facts} tokens={bridge.data?.tokens ?? []} />
+      ) : (
+      <>
       <div className="mb-5" aria-label="Progress">
         <ol className="flex gap-1.5">
           {steps.map((item, itemIndex) => (
@@ -189,6 +226,102 @@ export default function Guide() {
       </div>
 
       <TroubleList appId={app.id} />
+      </>
+      )}
+    </div>
+  );
+}
+
+function MethodGuide({
+  app,
+  method,
+  os,
+  onOsChange,
+  facts,
+  tokens,
+}: {
+  app: NonNullable<ReturnType<typeof appById>>;
+  method: Exclude<ConnectMethod, "source">;
+  os: ConnectOs;
+  onOsChange: (os: ConnectOs) => void;
+  facts: ConnectFacts;
+  tokens: Array<{ id: string; name: string; prefix: string; lastUsedAt: string | null; createdAt: string }>;
+}) {
+  const origin = typeof window === "undefined" ? undefined : window.location.origin;
+  const editor = EDITORS[app.id];
+  const snippet = method === "cli" ? localCliSnippet(app.id, os) : hostedSnippet(app.id, facts, os, origin);
+  const hostedUrl = hostedMcpUrl({ publicApiUrl: facts.publicApiUrl, origin });
+  const headerText = `Authorization: ${["Bearer", facts.token ?? "KEY"].join(" ")}`;
+  return (
+    <div className="connect-rise grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+      <section className="tile rounded-xl bg-panel p-4 md:p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-[18px] font-semibold tracking-tight">{METHOD_LABELS[method].title}</h2>
+            <p className="mt-1 text-[13.5px] leading-5 text-muted">{METHOD_LABELS[method].description}</p>
+          </div>
+          <OsTabs value={os} onChange={onOsChange} />
+        </div>
+
+        {method === "cli" ? (
+          <div className="mt-5 space-y-4">
+            <div>
+              <h3 className="text-[13px] font-semibold">1. Install the CLI</h3>
+              <CopyBlock label={INSTALL_CHANNELS[os][0]?.label ?? "Install command"} text={primaryInstallCommand(os)} />
+              <details className="mt-2 text-[13px] text-muted">
+                <summary className="cursor-pointer font-medium text-ink">Other install channels</summary>
+                <div className="mt-2 grid gap-2">
+                  {INSTALL_CHANNELS[os].slice(1).map((channel) => (
+                    <CopyBlock
+                      key={channel.id}
+                      label={`${channel.label}${channel.status === "coming-soon" ? " · coming soon" : ""}`}
+                      text={channel.commands.join("\n")}
+                    />
+                  ))}
+                </div>
+              </details>
+            </div>
+            <div>
+              <h3 className="text-[13px] font-semibold">2. Sign in and configure Ensemble</h3>
+              <CopyBlock
+                label="Run after install"
+                text={["ensemble login", "ensemble folders add ~/code/my-repo", "ensemble keys set google", "ensemble runner install"].join("\n")}
+              />
+              <p className="mt-2 text-[12.5px] leading-5 text-faint">Use `ensemble runner start` instead of `ensemble runner install` if you do not want it to start at login.</p>
+            </div>
+            <div>
+              <h3 className="text-[13px] font-semibold">3. Add {app.name}</h3>
+              <CopyBlock label={editor.printOnly ? "Print setup snippet" : "One-line setup"} text={editor.printOnly ? `${setupOneLiner(app.id)} --print` : setupOneLiner(app.id)} />
+            </div>
+          </div>
+        ) : (
+          <div className="mt-5 space-y-4">
+            <BridgeKey tokens={tokens} compact />
+            <div className="rounded-lg border border-line bg-bg/60 px-3 py-2 text-[13px] leading-5 text-muted">
+              Hosted URL: <span className="font-mono text-ink">{hostedUrl}</span>
+              <br />
+              Header: <span className="font-mono text-ink">{headerText}</span>
+            </div>
+          </div>
+        )}
+
+        <div className="mt-5 space-y-2">
+          <h3 className="text-[13px] font-semibold">{method === "cli" ? "Config written by the CLI" : "Hosted config"}</h3>
+          {snippet.path ? <p className="text-[12.5px] text-faint">File: {snippet.path}</p> : null}
+          {snippet.note ? <p className="text-[12.5px] leading-5 text-muted">{snippet.note}</p> : null}
+          <CopyBlock label={snippet.label} text={snippet.text} />
+        </div>
+      </section>
+
+      <aside className="tile rounded-xl bg-panel p-4">
+        <h2 className="text-[15px] font-semibold">What this allows</h2>
+        <ul className="mt-3 space-y-2 text-[13px] leading-5 text-muted">
+          <li>• MCP access is read-only: editors can read your Ensemble context but cannot change it.</li>
+          <li>• Hosted MCP uses <span className="font-mono">https://api.ensemblework.com/mcp</span> with an <span className="font-mono">ens_</span> bridge key.</li>
+          <li>• CLI runner tasks only run in folders you add with <span className="font-mono">ensemble folders add</span>.</li>
+          <li>• Check setup with <span className="font-mono">ensemble status</span> and <span className="font-mono">ensemble doctor</span>.</li>
+        </ul>
+      </aside>
     </div>
   );
 }
@@ -295,7 +428,40 @@ function StepAction({
       </div>
     );
   }
+  if (step.kind === "gemini") {
+    return (
+      <CopyBlock
+        label="Copy Gemini settings"
+        text={pretty({
+          mcpServers: {
+            ensemble: {
+              command: "node",
+              args: [facts.bridgeScript],
+              env: { HUB_API_URL: facts.hubApiUrl, ENSEMBLE_BRIDGE_TOKEN: tokenValue(facts) },
+            },
+          },
+        })}
+      />
+    );
+  }
   if (step.kind === "zed") return <CopyBlock label="Copy Zed settings" text={zedSnippet(facts)} />;
+  if (step.kind === "visual-studio") {
+    return (
+      <CopyBlock
+        label="Copy Visual Studio settings"
+        text={pretty({
+          servers: {
+            ensemble: {
+              type: "stdio",
+              command: "node",
+              args: [facts.bridgeScript],
+              env: { HUB_API_URL: facts.hubApiUrl, ENSEMBLE_BRIDGE_TOKEN: tokenValue(facts) },
+            },
+          },
+        })}
+      />
+    );
+  }
   if (step.kind === "jetbrains") return <CopyBlock label="Copy JetBrains JSON" text={jetbrainsConfig(facts)} />;
   if (step.kind === "cline") {
     return (
@@ -306,6 +472,23 @@ function StepAction({
     );
   }
   if (step.kind === "continue") return <CopyBlock label="Copy ensemble.yaml" text={continueYaml(facts)} />;
+  if (step.kind === "opencode") {
+    return (
+      <CopyBlock
+        label="Copy opencode settings"
+        text={pretty({
+          mcp: {
+            ensemble: {
+              type: "local",
+              command: ["node", facts.bridgeScript],
+              enabled: true,
+              env: { HUB_API_URL: facts.hubApiUrl, ENSEMBLE_BRIDGE_TOKEN: tokenValue(facts) },
+            },
+          },
+        })}
+      />
+    );
+  }
   if (step.kind === "http-start") {
     return (
       <div className="space-y-3">

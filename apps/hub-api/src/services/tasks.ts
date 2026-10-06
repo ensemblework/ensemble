@@ -115,11 +115,15 @@ async function nextBoardOrder(db: Db, userId: string): Promise<number> {
   return (last?.boardOrder ?? 0) + 1;
 }
 
-async function assertLinked(tx: Tx, userId: string, draft: { deliverableId?: string | null; repoId?: string | null; people?: string[] }): Promise<void> {
+async function assertLinked(tx: Tx, userId: string, draft: { deliverableId?: string | null; repoId?: string | null; people?: string[]; skillIds?: string[] }): Promise<void> {
   if (draft.deliverableId) await assertOwned(tx, userId, "deliverable", draft.deliverableId);
   if (draft.repoId) await assertOwned(tx, userId, "repo", draft.repoId);
   for (const person of draft.people ?? []) {
     if (UUID_RE.test(person)) await assertOwned(tx, userId, "person", person);
+  }
+  for (const id of draft.skillIds ?? []) {
+    const skill = await tx.skill.findFirst({ where: { id, userId, deletedAt: null }, select: { id: true } });
+    if (!skill) throw Object.assign(new Error("That skill was not found."), { statusCode: 404 });
   }
 }
 

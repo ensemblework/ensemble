@@ -15,10 +15,16 @@ import { prisma } from "./prisma.js";
 import { errorFromRuntimeBody } from "../runtime/errors.js";
 import { truncateText } from "./text.js";
 import { RuntimeError } from "./runtime-error.js";
+import { requireHostAccess, requireVerifiedUser } from "./hosted-access.js";
 
 export { RuntimeError };
 
 export async function runtime<T>(path: string, init: RequestInit & { json?: unknown; timeoutMs?: number } = {}): Promise<T> {
+  const url = new URL(path, "http://runtime.local");
+  const body = init.json && typeof init.json === "object" && "userId" in init.json ? init.json : null;
+  const userId = body && typeof body.userId === "string" ? body.userId : url.searchParams.get("userId");
+  if (["/api/complete", "/api/chat/tools", "/api/chat/tools/stream", "/api/search", "/api/models"].includes(url.pathname)) await requireVerifiedUser(userId);
+  if (["/api/plots/run", "/api/plots/parse"].includes(url.pathname)) await requireHostAccess(userId, "Hosted Python");
   const { json, timeoutMs = 120_000, ...rest } = init;
   if (useInProcessRuntime()) {
     try {

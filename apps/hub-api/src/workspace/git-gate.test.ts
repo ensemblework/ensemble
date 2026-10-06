@@ -39,7 +39,7 @@ test("the app push really runs, lands on the run branch, and a non-fast-forward 
     const branch = runBranchName(job, "push test");
     const first = await runTrustedGit({ cwd: work, args: fastForwardPushArgs(branch, remote) });
     assert.equal(first.exitCode, 0, first.output);
-    assert.equal(sh(remote, "for-each-ref", "--format=%(refname)").trim(), `refs/heads/${branch}`);
+    assert.equal(sh(dir, "--git-dir", remote, "for-each-ref", "--format=%(refname)").trim(), `refs/heads/${branch}`);
 
     await writeFile(join(work, "a.txt"), "rewritten\n");
     sh(work, "commit", "--quiet", "--amend", "-am", "rewritten");

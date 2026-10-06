@@ -5,6 +5,8 @@
 import type { FastifyInstance } from "fastify";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings } from "../lib/settings.js";
+import { requireVerifiedUser } from "../lib/hosted-access.js";
+import { checkConnectorLimit } from "../lib/hosted-limits.js";
 import { sseHub } from "../lib/sse.js";
 import { connectionState, getConnector, listConnectors } from "./base.js";
 import { createProposals, triage } from "./triage.js";
@@ -30,11 +32,13 @@ export function syncConnector(app: FastifyInstance, userId: string, id: string):
 }
 
 async function run(app: FastifyInstance, userId: string, id: string): Promise<SyncOutcome> {
+  await requireVerifiedUser(userId);
   const { prisma } = app;
   const connector = getConnector(id);
   if (!connector) return { id, ok: false, message: "Unknown connector." };
   if (!connector.sync) return { id, ok: true, message: connector.connect === "builtin" ? "Nothing to fetch." : connector.setupHint };
   const settings = await loadSettings(prisma, userId);
+  checkConnectorLimit(settings.connections);
   const state = await connectionState(userId, connector);
   const record = async (data: { ok: boolean; message: string; items?: number; cursor?: string | null }) =>
     prisma.syncState.upsert({
@@ -81,8 +85,10 @@ async function run(app: FastifyInstance, userId: string, id: string): Promise<Sy
 }
 
 export async function fetchAll(app: FastifyInstance, userId: string, reason: "button" | "schedule"): Promise<{ results: SyncOutcome[]; message?: string }> {
+  await requireVerifiedUser(userId);
   const settings = await loadSettings(app.prisma, userId);
   const enabled = listConnectors().filter((connector) => connector.sync && settings.connections[connector.id]?.enabled);
+  checkConnectorLimit(settings.connections);
   const results: SyncOutcome[] = [];
   // Mail first, so calendar and GitHub proposals land under the asks from people.
   for (const connector of enabled) results.push(await syncConnector(app, userId, connector.id));

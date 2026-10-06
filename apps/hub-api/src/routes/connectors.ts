@@ -6,6 +6,7 @@
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import { env } from "../config.js";
+import { HostedAccessError, isHosted, isOperatorUser, requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
 import { oauthApp, removeAccount, saveAccount, saveOAuthApp, type AccountProvider } from "../connectors/accounts.js";
 import { listConnectors } from "../connectors/base.js";
 import { beginOAuth, finishOAuth, OAUTH_PROVIDERS, redirectUri } from "../connectors/oauth.js";
@@ -86,12 +87,13 @@ export async function connectorRoutes(app: FastifyInstance): Promise<void> {
         };
       }),
     );
-    return { apps, canEdit: request.userId === env.ENSEMBLE_DEV_USER_ID };
+    return { apps, canEdit: isHosted() ? await isOperatorUser(request.userId) : request.userId === env.ENSEMBLE_DEV_USER_ID };
   });
 
   app.put("/api/connectors/apps/:provider", async (request, reply) => {
     const provider = z.enum(["google", "github"]).parse((request.params as { provider: string }).provider);
-    if (request.userId !== env.ENSEMBLE_DEV_USER_ID) {
+    if (isHosted()) await requireHostAccess(request.userId, "Connector OAuth app administration");
+    else if (request.userId !== env.ENSEMBLE_DEV_USER_ID) {
       return reply.code(403).send({ error: "Only the person who runs this Ensemble can set up sign-in apps." });
     }
     const body = z.object({ clientId: z.string().trim().min(8), clientSecret: z.string().trim().min(8) }).parse(request.body);
@@ -126,11 +128,13 @@ export async function connectorRoutes(app: FastifyInstance): Promise<void> {
       await appendLedger({ userId: done.userId, actor: "me", action: "connector.connect", payload: { provider, account: done.account } });
       return back(done.returnTo, { connected: provider });
     } catch (error) {
+      if (error instanceof HostedAccessError) throw error;
       return back("/settings#connections", { connectError: error instanceof Error ? error.message : String(error) });
     }
   });
 
   app.post("/api/connectors/:provider/token", async (request, reply) => {
+    await requireVerifiedUser(request.userId);
     const provider = z.enum(["github", "slack", "linear"]).parse((request.params as { provider: string }).provider);
     const body = z.object({ token: z.string().trim().min(10) }).parse(request.body);
     let account: string;

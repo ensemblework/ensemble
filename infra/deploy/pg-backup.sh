@@ -89,5 +89,5 @@ PY
 
 # -mtime +6 deletes a dump once it is more than 6 days old, so seven daily dumps remain.
 # -mtime +7 would keep an eighth day.
-find "$dest" -type f -name 'ensemble-*.dump' -mtime +6 -delete
+find "$dest" -maxdepth 1 -type f -name 'ensemble-*.dump' -mtime +6 -delete
 echo "pg_dump wrote a dump under /var/backups/ensemble and kept seven daily dumps."

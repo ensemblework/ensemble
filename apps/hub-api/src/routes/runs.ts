@@ -25,7 +25,7 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
   // ── runs ────────────────────────────────────────────────────────────────
 
   app.get("/api/runs", async (request) => {
-    const { take } = z.object({ take: z.coerce.number().default(20) }).parse(request.query);
+    const { take } = z.object({ take: z.coerce.number().int().min(0).default(20) }).parse(request.query);
     const runs = await prisma.run.findMany({
       where: { userId: request.userId, deletedAt: null },
       orderBy: { startedAt: "desc" },
@@ -63,7 +63,7 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/runs/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
     const run = await prisma.run.findFirst({
-      where: { id, userId: request.userId },
+      where: { id, userId: request.userId, deletedAt: null },
       include: {
         task: { select: { id: true, title: true } },
         steps: { orderBy: { index: "asc" } },
@@ -76,7 +76,8 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
 
   app.delete("/api/runs/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    await prisma.run.updateMany({ where: { id, userId: request.userId }, data: { deletedAt: new Date() } });
+    const result = await prisma.run.updateMany({ where: { id, userId: request.userId, deletedAt: null }, data: { deletedAt: new Date() } });
+    if (!result.count) return reply.code(404).send({ error: "Run not found." });
     return reply.code(204).send();
   });
 

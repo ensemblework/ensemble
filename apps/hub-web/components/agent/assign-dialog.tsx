@@ -334,7 +334,7 @@ export function AssignDialog({
                 <span className="shrink-0 text-[12px] text-muted">{device.online ? "Online" : device.lastSeenAt ? `last seen ${new Date(device.lastSeenAt).toLocaleString()}` : "Not seen yet"}</span>
               </button>
             ))}
-            {!serverRunner && !(computers.data?.devices.length) ? <div className="text-[12.5px] text-muted">Pair a computer in Settings → Devices. Code tasks run there.</div> : null}
+            {!serverRunner && !(computers.data?.devices.length) ? <div className="text-[12.5px] text-muted">Add a computer with the Ensemble CLI in Settings → Devices, or pair the desktop app. Code tasks run there.</div> : null}
           </div>
         </div>
 

@@ -14,6 +14,7 @@ import { z } from "zod";
 
 export const ROUTES = {
   register: "/api/devices/register",
+  self: "/api/devices/self",
   heartbeat: "/api/devices/self/heartbeat",
   claim: "/api/devices/self/claim",
   progress: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/progress`,

@@ -3,13 +3,14 @@
  * client codes against. A device token reaches only `/api/devices/self/*`,
  * and only the device that token belongs to.
  */
-import { randomBytes, randomInt } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Device, Prisma } from "@prisma/client";
 import { requireBrowserSession } from "../bridge/auth.js";
 import { isPaused } from "../lib/activity.js";
 import { newApiToken, sha256 } from "../lib/auth.js";
+import { requireVerifiedUser } from "../lib/hosted-access.js";
 import { publicDecision, waitFor } from "../lib/decisions.js";
 import { appendLedger } from "../lib/ledger.js";
 import { redactText } from "../lib/redact.js";
@@ -23,16 +24,14 @@ import {
   LOG_TRUNCATED_SEQ,
   MAX_CHUNK_BYTES,
   MAX_JOB_LOG_BYTES,
-  PAIRING_MS,
   deviceOnline,
   serverRunnerEnabled,
 } from "./constants.js";
 import { finishDeviceJob, type DeviceResult } from "./finish.js";
 import { folderLabels, rejectPathLabels, runBranchPushEnabled } from "./labels.js";
+import { createDevicePairing } from "./pairing.js";
 import { publishBrowserDevice, publishDevice } from "./publish.js";
 import { revokePairedDevice } from "./revoke.js";
-
-const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 const Register = z.object({
   code: z.string().trim().min(8).max(8),
@@ -96,12 +95,6 @@ const Complete = z.object({
   results: z.array(Result).max(20).default([]),
 });
 
-function pairingCode(): string {
-  let code = "";
-  for (let i = 0; i < 8; i += 1) code += ALPHABET[randomInt(ALPHABET.length)];
-  return code;
-}
-
 function deviceJson(device: Device, now = Date.now()) {
   return {
     id: device.id,
@@ -128,6 +121,7 @@ async function ownDevice(app: FastifyInstance, request: FastifyRequest, reply: F
     await reply.code(401).send({ error: "This computer is no longer paired." });
     return null;
   }
+  await requireVerifiedUser(device.userId);
   return device;
 }
 
@@ -200,9 +194,8 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
 
   app.post("/api/devices/pair", async (request, reply) => {
     requireBrowserSession(request);
-    const code = pairingCode();
-    const expiresAt = new Date(Date.now() + PAIRING_MS);
-    await prisma.devicePairing.create({ data: { userId: request.userId, codeHash: sha256(code), expiresAt } });
+    await requireVerifiedUser(request.userId);
+    const { code, expiresAt } = await createDevicePairing(prisma, request.userId);
     return reply.code(201).send({ code, expiresAt: expiresAt.toISOString() });
   });
 
@@ -212,6 +205,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     if (pathError) return reply.code(400).send({ error: pathError });
     const pairing = await prisma.devicePairing.findUnique({ where: { codeHash: sha256(body.code.trim().toUpperCase()) } });
     if (!pairing || pairing.usedAt || pairing.expiresAt <= new Date()) return reply.code(401).send({ error: "That pairing code is not valid." });
+    await requireVerifiedUser(pairing.userId);
     const won = await prisma.devicePairing.updateMany({
       where: { id: pairing.id, usedAt: null, expiresAt: { gt: new Date() } },
       data: { usedAt: new Date() },
@@ -249,6 +243,13 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     const { id } = request.params as { id: string };
     const device = await prisma.device.findFirst({ where: { id, userId: request.userId, revokedAt: null } });
     if (!device) return reply.code(404).send({ error: "Computer not found." });
+    await revokePairedDevice(prisma, request.userId, device);
+    return reply.code(204).send();
+  });
+
+  app.delete("/api/devices/self", async (request, reply) => {
+    const device = await ownDevice(app, request, reply);
+    if (!device) return;
     await revokePairedDevice(prisma, request.userId, device);
     return reply.code(204).send();
   });

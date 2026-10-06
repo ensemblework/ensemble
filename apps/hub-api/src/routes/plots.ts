@@ -4,12 +4,12 @@ import { z } from "zod";
 import { buildSeries, defaultPlotConfig, emptyWorkspace, isWorkspace, lttb, plotConfigSchema, plottedRows, workspaceBoilerplate, workspaceSchema } from "@ensemble/shared-types";
 import { declareModule } from "../lib/module-gate.js";
 import { runtime } from "../lib/runtime.js";
+import { requireHostAccess } from "../lib/hosted-access.js";
 import { datasetErrorReply, plotExportErrorReply, plotRenderFailure } from "../runtime/plot-failure.js";
 import { fetchHostedPlotRun, PLOT_QUEUE_LIMIT_MS, PLOT_RUN_LIMIT_MS } from "../runtime/plot-run.js";
 import { useInProcessRuntime } from "../runtime/mode.js";
 import { matplotlibSource } from "@ensemble/shared-types";
-import { configOf, deleteDataset, ingestDataset, loadOwnedTable, ownedPlot, reparseSheet } from "../plots/service.js";
-import { writeTable } from "../plots/store.js";
+import { configOf, deleteDataset, ingestDataset, loadOwnedTable, ownedPlot, reparseSheet, updateDatasetColumns } from "../plots/service.js";
 
 const limit = { bodyLimit: 34 * 1024 * 1024 };
 
@@ -158,13 +158,7 @@ export async function plotRoutes(app: FastifyInstance): Promise<void> {
   app.patch("/api/plots/datasets/:id", async (request, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const body = z.object({ columns: z.array(z.object({ name: z.string(), type: z.enum(["number", "date", "category", "text"]) })).min(1).max(64), name: z.string().max(200).optional() }).parse(request.body ?? {});
-    const loaded = await loadOwnedTable(db, request.userId, id);
-    if (body.columns.length !== loaded.table.columns.length) return reply.code(400).send({ error: "Column list does not match this dataset." });
-    const hash = writeTable(request.userId, id, { columns: body.columns, rows: loaded.table.rows });
-    await db.plotDataset.update({
-      where: { id },
-      data: { columns: body.columns as unknown as Prisma.InputJsonValue, contentHash: hash, ...(body.name ? { name: body.name } : {}) },
-    });
+    await updateDatasetColumns(db, request.userId, id, body.columns, body.name);
     return { columns: body.columns };
   });
 
@@ -285,6 +279,7 @@ export async function plotRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.post("/api/plots/:id/render", { ...limit }, async (request, reply) => {
+    await requireHostAccess(request.userId, "Python plots");
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const body = z.object({
       format: z.enum(["png", "svg", "pdf", "eps"]).default("pdf"),
@@ -313,7 +308,7 @@ export async function plotRoutes(app: FastifyInstance): Promise<void> {
       ? workspaceBoilerplate(datasets.map((dataset) => dataset.name))
       : matplotlibSource({ datasetName: datasets[0]!.name, columns: datasets[0]!.columns.map((name) => ({ name, type: "number" as const })), config: configOf(plot.config), accent: body.accent })));
     try {
-      const json = { code, datasets, format: body.format, dpi: body.dpi };
+      const json = { userId: request.userId, code, datasets, format: body.format, dpi: body.dpi };
       // In process, the worker client starts its clock on `started`. The abort
       // here only covers the whole wait, so it has to include the queue.
       const result = (useInProcessRuntime()

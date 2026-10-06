@@ -1,6 +1,8 @@
 import { DEFAULT_SETTINGS, Settings, type Settings as SettingsType } from "@ensemble/shared-types";
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 import { env } from "../config.js";
+import { isHosted } from "./hosted-access.js";
+import { checkConnectorLimit, withHostedUserLock } from "./hosted-limits.js";
 
 const KEY = "hub.settings";
 
@@ -18,7 +20,7 @@ export function deepMerge(base: Plain, patch: Plain): Plain {
   return out;
 }
 
-export async function loadSettings(prisma: PrismaClient, userId: string): Promise<SettingsType> {
+export async function loadSettings(prisma: PrismaClient | Prisma.TransactionClient, userId: string): Promise<SettingsType> {
   const row = await prisma.preference.findFirst({ where: { userId, key: KEY, deletedAt: null } });
   const parsed = Settings.safeParse(row?.value ?? {});
   const base = parsed.success ? parsed.data : DEFAULT_SETTINGS;
@@ -27,12 +29,17 @@ export async function loadSettings(prisma: PrismaClient, userId: string): Promis
 }
 
 export async function saveSettings(prisma: PrismaClient, userId: string, patch: unknown): Promise<SettingsType> {
-  const current = await loadSettings(prisma, userId);
-  const next = Settings.parse(deepMerge(current as unknown as Plain, isPlain(patch) ? patch : {}));
-  await prisma.preference.upsert({
-    where: { userId_key: { userId, key: KEY } },
-    create: { userId, key: KEY, value: next, source: "me" },
-    update: { value: next, source: "me", deletedAt: null },
-  });
-  return next;
+  const write = async (db: PrismaClient | Prisma.TransactionClient) => {
+    const current = await loadSettings(db, userId);
+    const next = Settings.parse(deepMerge(current as unknown as Plain, isPlain(patch) ? patch : {}));
+    checkConnectorLimit(next.connections);
+    await db.preference.upsert({
+      where: { userId_key: { userId, key: KEY } },
+      create: { userId, key: KEY, value: next, source: "me" },
+      update: { value: next, source: "me", deletedAt: null },
+    });
+    return next;
+  };
+  if (isHosted()) return withHostedUserLock(prisma, userId, write, isPlain(patch) && "connections" in patch);
+  return write(prisma);
 }

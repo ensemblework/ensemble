@@ -19,6 +19,10 @@
 
 **First wave** (see [00](00_PROJECT_OVERVIEW.md#direction)). What is connected today is in [18](18_WHAT_IS_REAL.md#connectors-read-only): Gmail, Google Calendar, GitHub, Slack and Linear (`apps/hub-api/src/connectors/`).
 
+Hosted public accounts must verify email before connector/model work. Login OAuth is identity-only and separate from ingestion clients. Shared Google/GitHub connector OAuth and host credential fallbacks are operator-only beta surfaces; public users' own supported connector tokens do not grant host credentials. The scheduler and enrichment worker skip unverified users. Local and desktop behavior is unchanged.
+
+Uploaded document originals have a separate hosted per-user cap, `ENSEMBLE_MAX_DOCUMENT_BYTES` (100 MiB by default). `createCappedDocument` in `lib/hosted-limits.ts` admits under the user-row transaction lock; exact-threshold concurrent tests ensure an excess upload leaves no original/artifact. Soft-deleted originals count until physically purged. This upload cap does not prevent unverified accounts from storing their own notes/documents; model enrichment still requires verification.
+
 | Connector | Source / API | Wave | Data pulled |
 |---|---|---|---|
 | `gmail` | Gmail API (history/delta) | P0 | subject, from/to/cc, body, thread, labels |

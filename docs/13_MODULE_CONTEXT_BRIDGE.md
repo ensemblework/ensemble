@@ -233,9 +233,11 @@ Mitigations, in order of how much they actually help:
 
 ---
 
-## 8. Remote, later
+## 8. Remote, built
 
-Everything above assumes the Hub and the editor are on one machine, which is true today. If that changes:
+The remote case below is now built: hub-api serves the same server at `POST /mcp` (Streamable HTTP, stateless), and the `ensemble` CLI runs it locally against the hosted API (`ensemble mcp`). Auth is a bridge-scoped `ens_` key, not the dev-bypass identity. As-built details: [CONTEXT_BRIDGE.md](CONTEXT_BRIDGE.md#three-ways-to-reach-it) and [26](26_CLI.md). The VS Code `${input:…}` rule below still holds: hosted configs keep the read-only key in the user profile `mcp.json`.
+
+The original notes:
 
 - Switch the bridge to `"type": "http"` with a `url`. Both clients support Streamable HTTP; SSE exists but is deprecated in the MCP spec.
 - Auth: both support a `headers` map, so `Authorization: Bearer …`. VS Code additionally supports OAuth.

@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Iterator, Literal
 
 import httpx
+from ensemble_agent.hosted_access import HostedAccessError, HostedAccessUnavailable, can_use_host_credentials, require_host_access, require_verified_user
 
 from ensemble_agent import credentials
 from ensemble_agent.provider_error import ProviderError, parse_provider_error
@@ -152,8 +153,9 @@ def spec_for(role: ModelRole, model: str | None = None) -> dict[str, Any]:
 _copilot_cache: dict[str, tuple[str, str, float]] = {}
 
 
-async def _copilot_session(github_token: str) -> tuple[str, str]:
-    cached = _copilot_cache.get(github_token)
+async def _copilot_session(github_token: str, *, allow_host_config: bool = False) -> tuple[str, str]:
+    cache_key = f"{'host' if allow_host_config else 'byok'}:{github_token}"
+    cached = _copilot_cache.get(cache_key)
     if cached and cached[2] > time.time() + 60:
         return cached[0], cached[1]
     async with httpx.AsyncClient(timeout=20) as client:
@@ -164,8 +166,8 @@ async def _copilot_session(github_token: str) -> tuple[str, str]:
     if not response.is_success:
         raise ModelAuthError(f"GitHub did not issue a Copilot token ({response.status_code}). Is Copilot enabled on this account?")
     body = response.json()
-    base = (body.get("endpoints") or {}).get("api") or os.environ.get("COPILOT_API_BASE", "https://api.githubcopilot.com")
-    _copilot_cache[github_token] = (body["token"], base.rstrip("/"), float(body.get("expires_at") or time.time() + 600))
+    base = (body.get("endpoints") or {}).get("api") or (os.environ.get("COPILOT_API_BASE") if allow_host_config else None) or "https://api.githubcopilot.com"
+    _copilot_cache[cache_key] = (body["token"], base.rstrip("/"), float(body.get("expires_at") or time.time() + 600))
     return body["token"], base.rstrip("/")
 
 
@@ -175,6 +177,7 @@ async def _endpoint(provider: str, user_id: str | None, ollama_url: str | None) 
         return "mock://local", {}, "you"
     cred = _resolve(user_id, provider)
     if provider == "ollama":
+        require_host_access(user_id, "Host Ollama and custom model proxies")
         base = (cred.base_url or ollama_url or os.environ.get("OLLAMA_URL") or "http://127.0.0.1:11434").rstrip("/")
         return f"{base}/v1", {}, "local"
     if not cred.secret:
@@ -182,7 +185,7 @@ async def _endpoint(provider: str, user_id: str | None, ollama_url: str | None) 
             f"No key for {provider}. Paste one in Settings → Models, or pick a provider that has a key."
         )
     if provider == "copilot":
-        token, base = await _copilot_session(cred.secret)
+        token, base = await _copilot_session(cred.secret, allow_host_config=can_use_host_credentials(user_id))
         return base, {
             "Authorization": f"Bearer {token}",
             "Editor-Version": "Ensemble/0.1",
@@ -1501,6 +1504,7 @@ async def _openai_turn(
 
 async def complete_with_tools(body: dict[str, Any]) -> dict[str, Any]:
     """One assistant turn. Agent-runtime owns the credential; hub-api owns the tools."""
+    await asyncio.to_thread(require_verified_user, body.get("userId"))
     model = str(body.get("model") or spec_for("coder")["model"])
     provider = str(body.get("provider") or infer_provider(model))
     if provider == "mock":
@@ -1713,6 +1717,7 @@ def _recover_model_json(text: str, shape: str | None) -> Any:
 
 async def complete_text(body: dict[str, Any]) -> dict[str, Any]:
     """A single completion without tools. `json: true` parses one JSON object or array."""
+    await asyncio.to_thread(require_verified_user, body.get("userId"))
     model = str(body.get("model") or CHEAPEST["google"])
     provider = str(body.get("provider") or infer_provider(model))
     messages: list[dict[str, Any]] = []
@@ -1786,6 +1791,8 @@ async def complete_json(
 
 
 def _public_failure(exc: Exception) -> dict[str, Any]:
+    if isinstance(exc, (HostedAccessError, HostedAccessUnavailable)):
+        return {"message": str(exc), "kind": "auth", "status": exc.status_code}
     if isinstance(exc, ModelUnreachable):
         return exc.to_dict()
     if isinstance(exc, ConnectionDropped):
@@ -1881,6 +1888,7 @@ async def _yield_openai_frames(
 async def stream_with_tools(body: dict[str, Any]):
     """SSE frames: delta text, then the same object complete_with_tools returns."""
     try:
+        await asyncio.to_thread(require_verified_user, body.get("userId"))
         async for frame in _chat_frames(body):
             yield frame
     except ProviderError as exc:
@@ -1920,6 +1928,9 @@ async def list_models(
     secret: str | None = None,
     base_url: str | None = None,
 ) -> list[str]:
+    await asyncio.to_thread(require_verified_user, user_id)
+    if provider == "ollama" or base_url:
+        await asyncio.to_thread(require_host_access, user_id, "Host Ollama and custom model proxies")
     cache_key = (provider, user_id or "", (secret or "")[-6:])
     cached = _catalog_cache.get(cache_key)
     if cached and cached[0] > time.time():
@@ -1970,7 +1981,7 @@ async def list_models(
             response.raise_for_status()
             models = [row["name"] for row in response.json().get("models", [])]
         elif provider == "copilot":
-            token, base = await _copilot_session(key)
+            token, base = await _copilot_session(key, allow_host_config=await asyncio.to_thread(can_use_host_credentials, user_id))
             response = await client.get(
                 f"{base}/models",
                 headers={"Authorization": f"Bearer {token}", "Editor-Version": "Ensemble/0.1", "Copilot-Integration-Id": "vscode-chat"},
@@ -1984,6 +1995,7 @@ async def list_models(
 
 
 async def catalog(user_id: str | None, ollama_url: str | None) -> list[dict[str, Any]]:
+    await asyncio.to_thread(require_verified_user, user_id)
     key = (user_id or "", ollama_url or "")
     cached = _catalog_results.get(key)
     if cached and cached[0] > time.time():

@@ -36,6 +36,7 @@ export function checkApiBase(value: string): string {
 }
 
 export interface HostedClient {
+  unpairSelf(): Promise<void>;
   heartbeat(body: { runningJobIds: string[]; appVersion: string; capabilities: unknown }): Promise<{ cancel: string[] }>;
   claim(): Promise<{ status: number; body: unknown }>;
   progress(jobId: string, leaseToken: string, body: { status?: string; progress: string; events: unknown[]; logs?: { seqFrom: number; seqTo: number; text: string } }): Promise<void>;
@@ -97,6 +98,10 @@ export function deviceRemovedEvent(event: string): boolean {
 export function hostedClient(base: string, token: string): HostedClient {
   const call = (method: string, path: string, json?: unknown, signal?: AbortSignal) => send(base, token, method, path, json, signal);
   return {
+    async unpairSelf() {
+      const res = await call("DELETE", ROUTES.self);
+      if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "Unpair was refused."));
+    },
     async heartbeat(body) {
       const res = await call("POST", ROUTES.heartbeat, body);
       if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "The heartbeat was refused."));

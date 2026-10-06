@@ -6,6 +6,7 @@
  */
 import { randomBytes } from "node:crypto";
 import { env } from "../config.js";
+import { requireHostAccess } from "../lib/hosted-access.js";
 import { getAccount, oauthApp, saveAccount, type AccountProvider } from "./accounts.js";
 
 interface ProviderSpec {
@@ -58,6 +59,7 @@ export const redirectUri = (provider: string): string => `${publicApiUrl()}/api/
 const pending = new Map<string, { userId: string; provider: AccountProvider; returnTo: string; expires: number }>();
 
 export async function beginOAuth(userId: string, provider: AccountProvider, returnTo: string): Promise<string> {
+  await requireHostAccess(userId, "Connector OAuth (operator beta)");
   const spec = SPECS[provider];
   if (!spec) throw Object.assign(new Error(`${provider} does not use a browser sign-in.`), { statusCode: 400 });
   const app = await oauthApp(provider);
@@ -96,6 +98,7 @@ export async function finishOAuth(provider: string, code: string, state: string)
   if (!entry || entry.provider !== provider || entry.expires < Date.now()) {
     throw new Error("This sign-in link expired. Press Connect again.");
   }
+  await requireHostAccess(entry.userId, "Connector OAuth (operator beta)");
   const spec = SPECS[entry.provider]!;
   const app = (await oauthApp(entry.provider))!;
   const response = await fetch(spec.token, {
@@ -133,6 +136,7 @@ export async function finishOAuth(provider: string, code: string, state: string)
 
 /** A usable Google access token, refreshed when it is within a minute of expiring. */
 export async function googleAccessToken(userId: string): Promise<{ token: string; account: string | null } | null> {
+  await requireHostAccess(userId, "Google connector OAuth (operator beta)");
   const account = await getAccount(userId, "google", false);
   if (!account) return null;
   if (account.expiresAt.getTime() > Date.now() + 60_000) return { token: account.accessToken, account: account.account };

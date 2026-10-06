@@ -5,6 +5,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { APPS } from "@/lib/connect/catalog";
+import { METHOD_LABELS } from "@/lib/connect/configs";
 import { AUDIENCES, type AudienceId } from "@/lib/connect/prompts";
 import { useToast } from "../toast";
 import { PageHeader, cx } from "../ui";
@@ -39,9 +40,11 @@ export function ConnectPage({ embedded = false }: { embedded?: boolean }) {
         description="Let the apps you already use look at your Ensemble — tasks, people, meetings, and today’s plan. They can read. They cannot change anything."
       />
       )}
-      <div className="mb-6 -mt-3">
-        <StatusPill state={state} />
-      </div>
+      {state === "connected" || state === "running" ? (
+        <div className="mb-6 -mt-3">
+          <StatusPill state={state} />
+        </div>
+      ) : null}
 
       {bridge.isError ? (
         <p className="mb-4 rounded-lg border border-warn/40 bg-panel px-3 py-2 text-[13px] text-muted">{(bridge.error as Error).message}</p>
@@ -60,6 +63,14 @@ export function ConnectPage({ embedded = false }: { embedded?: boolean }) {
       </section>
 
       <h2 className="mb-3 mt-8 text-[13px] font-semibold uppercase tracking-[0.14em] text-faint">Choose an app</h2>
+      <section className="mb-5 grid gap-2 md:grid-cols-3" aria-label="Connection methods">
+        {(["cli", "hosted", "source"] as const).map((method) => (
+          <div key={method} className="tile rounded-xl bg-panel p-3">
+            <h3 className="text-[13.5px] font-semibold">{METHOD_LABELS[method].title}</h3>
+            <p className="mt-1 text-[12.5px] leading-5 text-muted">{METHOD_LABELS[method].description}</p>
+          </div>
+        ))}
+      </section>
       <ul className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {APPS.map((app, index) => (
           <li key={app.id} className="connect-rise" style={{ animationDelay: `${index * 40}ms` }}>

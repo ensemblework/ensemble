@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Ensemble — the mark</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600&family=Fraunces:ital,opsz,wght@0,9..144,500;1,9..144,460&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #141210;
+    --raised: #1e1a16;
+    --paper: #f4f1ea;
+    --ink: #f3eee6;
+    --ink-dim: #a89c8e;
+    --line: rgba(243, 238, 230, 0.14);
+    --agent: #7c6af7;
+    --you: #f3eee6;
+    --agent-on-paper: #5346d6;
+    --you-on-paper: #1c1915;
+    --display: "Fraunces", "Iowan Old Style", Palatino, Georgia, serif;
+    --sans: "Figtree", ui-sans-serif, system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--ink); }
+  body {
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 28px 28px 80px; }
+  header.top {
+    display: flex; align-items: center; justify-content: space-between;
+    padding-bottom: 28px;
+    border-bottom: 1px solid var(--line);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; letter-spacing: -0.02em; }
+  .brand span { font-family: var(--display); font-weight: 500; font-size: 20px; }
+  .meta { color: var(--ink-dim); font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase; }
+  .hero {
+    display: grid;
+    grid-template-columns: 1.15fr 0.85fr;
+    gap: 48px;
+    align-items: end;
+    padding: 56px 0 28px;
+  }
+  .eyebrow {
+    margin: 0 0 14px;
+    color: var(--agent);
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  h1 {
+    margin: 0;
+    font-family: var(--display);
+    font-weight: 500;
+    font-size: 64px;
+    line-height: 0.95;
+    letter-spacing: -0.03em;
+  }
+  h1 em { font-style: italic; font-weight: 460; color: var(--agent); }
+  .lede {
+    max-width: 46ch;
+    margin: 22px 0 0;
+    color: var(--ink-dim);
+    font-size: 18px;
+  }
+  .stage {
+    background: var(--raised);
+    border-radius: 28px;
+    padding: 28px 28px 22px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .stage svg.hero-mark { width: 220px; height: 220px; }
+  .phase {
+    margin: 8px 0 0;
+    font-family: var(--display);
+    font-style: italic;
+    font-size: 22px;
+    min-height: 1.3em;
+  }
+  .phase-note { margin: 0; color: var(--ink-dim); font-size: 13px; text-align: center; min-height: 2.6em; }
+  input[type="range"] {
+    width: 100%;
+    margin-top: 8px;
+    accent-color: var(--agent);
+  }
+  .controls { display: flex; justify-content: space-between; width: 100%; color: var(--ink-dim); font-size: 12px; }
+  button.link {
+    background: none; border: 0; color: var(--ink-dim); font: inherit; font-size: 12px;
+    cursor: pointer; padding: 0;
+  }
+  button.link:hover { color: var(--ink); }
+  section { padding-top: 18px; }
+  h2 {
+    margin: 36px 0 8px;
+    font-family: var(--display);
+    font-weight: 500;
+    font-size: 28px;
+    letter-spacing: -0.02em;
+  }
+  .sub { margin: 0 0 22px; color: var(--ink-dim); max-width: 62ch; }
+  .frames {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+  }
+  .frame {
+    background: var(--raised);
+    border-radius: 20px;
+    padding: 22px 18px 18px;
+  }
+  .frame svg { width: 100%; height: auto; display: block; }
+  .frame h3 { margin: 12px 0 4px; font-size: 15px; font-weight: 600; }
+  .frame p { margin: 0; color: var(--ink-dim); font-size: 14px; }
+  .sizes {
+    display: flex;
+    align-items: end;
+    gap: 28px;
+    flex-wrap: wrap;
+    padding: 8px 0 12px;
+  }
+  .spec { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .spec figcaption { color: var(--ink-dim); font-size: 12px; }
+  .tile {
+    background: #100e0c;
+    border-radius: 22%;
+    display: grid;
+    place-items: center;
+  }
+  .tile.light { background: var(--paper); }
+  .use {
+    display: grid;
+    grid-template-columns: 1.1fr 0.9fr;
+    gap: 16px;
+  }
+  .splash, .btn-card {
+    border-radius: 20px;
+    padding: 36px 28px;
+  }
+  .splash {
+    background: var(--paper);
+    color: var(--you-on-paper);
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    min-height: 220px;
+    justify-content: flex-end;
+  }
+  .splash strong {
+    font-family: var(--display);
+    font-weight: 500;
+    font-size: 32px;
+    letter-spacing: -0.03em;
+    margin-top: 14px;
+  }
+  .splash span { color: #6f675c; }
+  .btn-card {
+    background: var(--raised);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .go {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--agent);
+    color: #14120f;
+    border: 0;
+    border-radius: 999px;
+    padding: 12px 18px 12px 14px;
+    font: inherit;
+    font-weight: 600;
+  }
+  .legend {
+    display: flex; gap: 22px; margin-top: 28px; color: var(--ink-dim); font-size: 14px;
+  }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; vertical-align: -1px; }
+  .swatch.agent { background: var(--agent); }
+  .swatch.you { background: var(--you); }
+  footer.note {
+    margin-top: 48px;
+    padding-top: 18px;
+    border-top: 1px solid var(--line);
+    color: var(--ink-dim);
+    font-size: 13px;
+  }
+  @media (max-width: 800px) {
+    h1 { font-size: 44px; }
+    .hero, .use, .frames { grid-template-columns: 1fr; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .live-only { display: none; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <span id="nav-mark"></span>
+      <span>Ensemble</span>
+    </div>
+    <div class="meta">ensemblework.com</div>
+  </header>
+
+  <section class="hero">
+    <div>
+      <p class="eyebrow">Product mark</p>
+      <h1>Two voices,<br><em>one key.</em></h1>
+        <p class="lede">
+        The outer stroke is the agent. The inner stroke is the professional.
+        The loader starts as one line, then opens into the brace. The work sits in the cradle they make.
+      </p>
+      <p class="legend">
+        <span><i class="swatch agent"></i>Agent</span>
+        <span><i class="swatch you"></i>Professional</span>
+      </p>
+    </div>
+    <div class="stage">
+      <svg class="hero-mark" id="hero" viewBox="0 0 32 32" role="img" aria-label="Ensemble loading">
+        <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+          <path id="hero-agent" stroke="#7c6af7" stroke-width="3.4"/>
+          <path id="hero-you" stroke="#f3eee6" stroke-width="2.35"/>
+        </g>
+      </svg>
+      <div class="phase" id="phase">Same key</div>
+      <p class="phase-note" id="phase-note">The mark, held.</p>
+      <input id="scrub" type="range" min="0" max="1000" value="0" aria-label="Scrub the loading morph" />
+      <div class="controls">
+        <span>One line</span>
+        <button class="link" id="play" type="button">Pause</button>
+        <span>Same key</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>How the load moves</h2>
+    <p class="sub">One drawing, three poses. The spinner is the logo before it has assembled, then the logo itself. It holds on the mark long enough to be read, then releases.</p>
+    <div class="frames">
+      <article class="frame">
+        <svg viewBox="0 0 32 32" id="still-apart" aria-hidden="true"></svg>
+        <h3>1 · One line</h3>
+        <p>Agent and professional occupy the same stroke. The work has no shape yet.</p>
+      </article>
+      <article class="frame">
+        <svg viewBox="0 0 32 32" id="still-reach" aria-hidden="true"></svg>
+        <h3>2 · Opening</h3>
+        <p>The agent makes a brace. The professional stays inside it.</p>
+      </article>
+      <article class="frame">
+        <svg viewBox="0 0 32 32" id="still-mark" aria-hidden="true"></svg>
+        <h3>3 · Same key</h3>
+        <p>One contour, two voices. This is the icon at rest.</p>
+      </article>
+    </div>
+  </section>
+
+  <section>
+    <h2>The icon</h2>
+    <p class="sub">Same strokes from the favicon up to the app tile. On paper, the professional stroke turns to ink and the agent deepens so it stays readable.</p>
+    <div class="sizes" id="sizes"></div>
+  </section>
+
+  <section>
+    <h2>In the product</h2>
+    <p class="sub">The morph is the wait. A splash, and the button that opens a workspace.</p>
+    <div class="use">
+      <div class="splash">
+        <svg id="splash-mark" width="72" height="72" viewBox="0 0 32 32" aria-hidden="true"></svg>
+        <strong>Gathering the board</strong>
+        <span>Mail, calendar, and the repo — read before you sit down.</span>
+      </div>
+      <div class="btn-card">
+        <button class="go" type="button">
+          <svg id="btn-mark" width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"></svg>
+          Opening your workspace
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <footer class="note">
+    Proposal only. The app still uses the filled double-U in <code>apps/hub-web/app/icon.svg</code> and the landing mark.
+    Files next to this page: <code>ensemble-mark.svg</code> (the icon), <code>ensemble-icon.svg</code> (app tile), <code>ensemble-loader.svg</code> (the morph).
+    Drag the slider to hold a frame. Reduced motion shows the resting mark and does not loop.
+  </footer>
+</div>
+<script>
+(function () {
+  var N = 56;
+  var AGENT_W = 3.4;
+  var YOU_W = 2.35;
+
+  // [xLeft, xRight, yTop, yJoin] — a U sampled by arc length.
+  // yJoin is where the stems meet the bowl; radius is half the width.
+  var POSE = {
+    apart: { agent: [14.7, 17.3, 8.2, 21.2], you: [15.3, 16.7, 9.4, 20.2] },
+    reach: { agent: [8.8, 23.2, 5.8, 16.4], you: [12.4, 19.6, 6.6, 16.4] },
+    mark:  { agent: [6, 26, 4.6, 16], you: [12, 20, 4.6, 16] }
+  };
+
+  function sampleU(xL, xR, yTop, yJoin, n) {
+    var r = Math.max(0, (xR - xL) / 2);
+    var cx = (xL + xR) / 2;
+    var stem = Math.max(0.001, yJoin - yTop);
+    var arc = Math.PI * r;
+    var total = stem + arc + stem;
+    var pts = [];
+    for (var i = 0; i < n; i++) {
+      var dist = (total * i) / (n - 1);
+      if (dist <= stem) pts.push([xL, yTop + dist]);
+      else if (dist <= stem + arc) {
+        var theta = Math.PI + (dist - stem) / r;
+        pts.push([cx + r * Math.cos(theta), yJoin - r * Math.sin(theta)]);
+      } else pts.push([xR, yJoin - (dist - stem - arc)]);
+    }
+    return pts;
+  }
+
+  function shape(name) {
+    var p = POSE[name];
+    return [sampleU.apply(null, p.agent.concat(N)), sampleU.apply(null, p.you.concat(N))];
+  }
+
+  function toPath(P) {
+    var s = "M" + P[0][0].toFixed(2) + " " + P[0][1].toFixed(2);
+    for (var i = 0; i < P.length - 1; i++) {
+      var p0 = P[Math.max(0, i - 1)], p1 = P[i], p2 = P[i + 1], p3 = P[Math.min(P.length - 1, i + 2)];
+      s += "C" + (p1[0] + (p2[0] - p0[0]) / 6).toFixed(2) + " " + (p1[1] + (p2[1] - p0[1]) / 6).toFixed(2) +
+           " " + (p2[0] - (p3[0] - p1[0]) / 6).toFixed(2) + " " + (p2[1] - (p3[1] - p1[1]) / 6).toFixed(2) +
+           " " + p2[0].toFixed(2) + " " + p2[1].toFixed(2);
+    }
+    return s;
+  }
+
+  function lerp(a, b, t) {
+    var out = [[], []];
+    for (var s = 0; s < 2; s++) {
+      for (var i = 0; i < a[s].length; i++) {
+        out[s].push([
+          a[s][i][0] + (b[s][i][0] - a[s][i][0]) * t,
+          a[s][i][1] + (b[s][i][1] - a[s][i][1]) * t
+        ]);
+      }
+    }
+    return out;
+  }
+
+  function easeInOut(t) {
+    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+  }
+  function easeIn(t) { return t * t * t; }
+  function easeLock(t) {
+    var c = 1.05;
+    return 1 + (c + 1) * Math.pow(t - 1, 3) + c * Math.pow(t - 1, 2);
+  }
+
+  var SH = { apart: shape("apart"), reach: shape("reach"), mark: shape("mark") };
+
+  // [from, to, start, end, ease]
+  var SEGS = [
+    ["apart", "apart", 0.00, 0.10, easeInOut],
+    ["apart", "reach", 0.10, 0.32, easeInOut],
+    ["reach", "reach", 0.32, 0.40, easeInOut],
+    ["reach", "mark",  0.40, 0.62, easeLock],
+    ["mark",  "mark",  0.62, 0.86, easeInOut],
+    ["mark",  "apart", 0.86, 1.00, easeIn]
+  ];
+
+  var COPY = {
+    apart: ["One line", "Same stroke. The work has no shape yet."],
+    reach: ["Opening", "The agent makes room. The professional stays in it."],
+    mark:  ["Same key", "The icon. Two voices, one brace."]
+  };
+
+  function at(t) {
+    t = ((t % 1) + 1) % 1;
+    for (var i = 0; i < SEGS.length; i++) {
+      var seg = SEGS[i];
+      if (t <= seg[3] || i === SEGS.length - 1) {
+        var span = seg[3] - seg[2];
+        var u = span === 0 ? 1 : Math.min(1, Math.max(0, (t - seg[2]) / span));
+        var e = seg[4](u);
+        var name = seg[0] === seg[1] ? seg[0] : (e < 0.35 ? seg[0] : seg[1]);
+        return { shape: lerp(SH[seg[0]], SH[seg[1]], e), name: name, t: t };
+      }
+    }
+  }
+
+  function paint(svg, drawn, colors) {
+    var ns = "http://www.w3.org/2000/svg";
+    var g = svg.querySelector("g");
+    if (!g) {
+      g = document.createElementNS(ns, "g");
+      g.setAttribute("fill", "none");
+      g.setAttribute("stroke-linecap", "round");
+      g.setAttribute("stroke-linejoin", "round");
+      var a = document.createElementNS(ns, "path");
+      var y = document.createElementNS(ns, "path");
+      g.appendChild(a); g.appendChild(y); svg.appendChild(g);
+    }
+    var paths = g.querySelectorAll("path");
+    paths[0].setAttribute("d", toPath(drawn[0]));
+    paths[1].setAttribute("d", toPath(drawn[1]));
+    paths[0].setAttribute("stroke", colors.agent);
+    paths[1].setAttribute("stroke", colors.you);
+    paths[0].setAttribute("stroke-width", AGENT_W);
+    paths[1].setAttribute("stroke-width", YOU_W);
+  }
+
+  var DARK = { agent: "#7c6af7", you: "#f3eee6" };
+  var LIGHT = { agent: "#5346d6", you: "#1c1915" };
+
+  paint(document.getElementById("still-apart"), SH.apart, DARK);
+  paint(document.getElementById("still-reach"), SH.reach, DARK);
+  paint(document.getElementById("still-mark"), SH.mark, DARK);
+
+  var nav = document.getElementById("nav-mark");
+  nav.innerHTML = '<svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"></svg>';
+  paint(nav.querySelector("svg"), SH.mark, DARK);
+
+  var sizes = document.getElementById("sizes");
+  var specs = [
+    [16, "16 favicon", DARK, false],
+    [24, "24 nav", DARK, false],
+    [32, "32", DARK, false],
+    [48, "48", DARK, false],
+    [96, "App tile", DARK, true],
+    [96, "On paper", LIGHT, true]
+  ];
+  specs.forEach(function (spec) {
+    var fig = document.createElement("figure");
+    fig.className = "spec";
+    var holder = document.createElement("div");
+    if (spec[3]) {
+      holder.className = "tile" + (spec[2] === LIGHT ? " light" : "");
+      holder.style.width = spec[0] + "px";
+      holder.style.height = spec[0] + "px";
+    }
+    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    var px = spec[3] ? Math.round(spec[0] * 0.62) : spec[0];
+    svg.setAttribute("width", px);
+    svg.setAttribute("height", px);
+    svg.setAttribute("viewBox", "0 0 32 32");
+    paint(svg, SH.mark, spec[2]);
+    holder.appendChild(svg);
+    if (!spec[3]) fig.appendChild(holder.firstChild);
+    else fig.appendChild(holder);
+    var cap = document.createElement("figcaption");
+    cap.textContent = spec[1];
+    fig.appendChild(cap);
+    sizes.appendChild(fig);
+  });
+
+  var loops = ["splash-mark", "btn-mark"].map(function (id) {
+    var el = document.getElementById(id);
+    var colors = id === "splash-mark" ? LIGHT : { agent: "#14120f", you: "#f4f1ea" };
+    return { el: el, colors: colors };
+  });
+
+  var heroA = document.getElementById("hero-agent");
+  var heroY = document.getElementById("hero-you");
+  var phaseEl = document.getElementById("phase");
+  var noteEl = document.getElementById("phase-note");
+  var scrub = document.getElementById("scrub");
+  var playBtn = document.getElementById("play");
+  var reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var playing = !reduced;
+  var t0 = performance.now();
+  var hold = 0.8;
+  var DUR = 3400;
+
+  function frame(t) {
+    var f = reduced ? { shape: SH.mark, name: "mark" } : at(t);
+    heroA.setAttribute("d", toPath(f.shape[0]));
+    heroY.setAttribute("d", toPath(f.shape[1]));
+    var copy = COPY[f.name];
+    phaseEl.textContent = copy[0];
+    noteEl.textContent = copy[1];
+    loops.forEach(function (loop) {
+      paint(loop.el, reduced ? SH.mark : f.shape, loop.colors);
+    });
+  }
+
+  function tick(now) {
+    if (playing) {
+      var t = ((now - t0) % DUR) / DUR;
+      hold = t;
+      scrub.value = String(Math.round(t * 1000));
+      frame(t);
+    }
+    requestAnimationFrame(tick);
+  }
+
+  scrub.addEventListener("input", function () {
+    playing = false;
+    playBtn.textContent = "Play";
+    hold = Number(scrub.value) / 1000;
+    frame(hold);
+  });
+  playBtn.addEventListener("click", function () {
+    if (reduced) return;
+    playing = !playing;
+    playBtn.textContent = playing ? "Pause" : "Play";
+    if (playing) t0 = performance.now() - hold * DUR;
+  });
+  if (reduced) {
+    playBtn.textContent = "Reduced motion";
+    frame(0.8);
+  }
+  requestAnimationFrame(tick);
+
+  window.__ensembleAt = at;
+})();
+</script>
+</body>
+</html>

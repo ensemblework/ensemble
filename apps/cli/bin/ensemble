@@ -1,0 +1,46 @@
+#!/bin/sh
+set -eu
+
+die() {
+  printf '%s\n' "$*" >&2
+  exit 1
+}
+
+absolute_path() {
+  case "$1" in
+    /*) printf '%s\n' "$1" ;;
+    */*)
+      _dir=$(dirname "$1") || exit 1
+      _base=$(basename "$1") || exit 1
+      (cd "$_dir" 2>/dev/null && printf '%s/%s\n' "$(pwd -P)" "$_base") || exit 1
+      ;;
+    *)
+      _found=$(command -v "$1" 2>/dev/null || true)
+      [ -n "$_found" ] || die "Could not locate $1 on PATH."
+      absolute_path "$_found"
+      ;;
+  esac
+}
+
+resolve_real_path() {
+  _target=$1
+  while [ -L "$_target" ]; do
+    _link=$(readlink "$_target") || exit 1
+    case "$_link" in
+      /*) _target=$_link ;;
+      *) _target=$(dirname "$_target")/$_link ;;
+    esac
+  done
+  _dir=$(dirname "$_target") || exit 1
+  _base=$(basename "$_target") || exit 1
+  (cd "$_dir" 2>/dev/null && printf '%s/%s\n' "$(pwd -P)" "$_base") || exit 1
+}
+
+invoked=$(absolute_path "$0")
+real=$(resolve_real_path "$invoked")
+dir=${real%/*}
+
+export ENSEMBLE_LAUNCHER=$invoked
+export ENSEMBLE_SIDECAR_DIR=$dir/../sidecar
+
+exec "$dir/../sidecar/node" "$dir/../lib/ensemble.mjs" "$@"

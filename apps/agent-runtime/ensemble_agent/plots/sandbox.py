@@ -18,6 +18,7 @@ import threading
 import uuid
 from collections.abc import Callable
 from pathlib import Path
+from ensemble_agent.hosted_access import require_host_access
 
 # Through the spawn choke point (a Node start per worker), after the font cache exists.
 TIMEOUT_S = 25
@@ -471,7 +472,9 @@ def run_plot(
     fmt: str = "all",
     dpi: int | None = None,
     on_started: Callable[[], None] | None = None,
+    user_id: str | None = None,
 ) -> dict:
+    require_host_access(user_id, "Python plots")
     global _warm
     warm_timeout = WARM_TIMEOUT_S if plot_mode() == "hosted" else TIMEOUT_S
     timeout = warm_timeout if _warm else COLD_TIMEOUT_S

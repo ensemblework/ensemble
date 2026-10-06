@@ -9,20 +9,25 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../../..");
-const KEY_FILE = resolve(REPO_ROOT, ".ensemble/secret.key");
+export const DEFAULT_KEY_FILE = resolve(REPO_ROOT, ".ensemble/secret.key");
 
 let cached: Buffer | null = null;
+
+function keyFile(): string {
+  return process.env.ENSEMBLE_SECRET_KEY_FILE?.trim() || DEFAULT_KEY_FILE;
+}
 
 function key(): Buffer {
   if (cached) return cached;
   let raw = process.env.ENSEMBLE_SECRET_KEY?.trim() ?? "";
   if (!raw) {
-    if (existsSync(KEY_FILE)) {
-      raw = readFileSync(KEY_FILE, "utf8").trim();
+    const file = keyFile();
+    if (existsSync(file)) {
+      raw = readFileSync(file, "utf8").trim();
     } else {
-      mkdirSync(dirname(KEY_FILE), { recursive: true });
+      mkdirSync(dirname(file), { recursive: true });
       raw = randomBytes(32).toString("base64");
-      writeFileSync(KEY_FILE, `${raw}\n`, { mode: 0o600, flag: "wx" });
+      writeFileSync(file, `${raw}\n`, { mode: 0o600, flag: "wx" });
     }
   }
   const buffer = Buffer.from(raw, "base64");

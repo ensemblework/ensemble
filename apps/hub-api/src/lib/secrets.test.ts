@@ -34,3 +34,29 @@ test("decrypt rejects plaintext and unprefixed values", () => {
     return true;
   });
 });
+
+test("ENSEMBLE_SECRET_KEY_FILE keeps the generated key outside the install folder", async () => {
+  const { mkdtempSync, readFileSync, rmSync, statSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const dir = mkdtempSync(join(tmpdir(), "ensemble-key-"));
+  const previous = { key: process.env.ENSEMBLE_SECRET_KEY, file: process.env.ENSEMBLE_SECRET_KEY_FILE };
+  try {
+    delete process.env.ENSEMBLE_SECRET_KEY;
+    process.env.ENSEMBLE_SECRET_KEY_FILE = join(dir, "data", "secret.key");
+    resetSecretKeyCacheForTests();
+    const sealed = encrypt("device-token");
+    const file = process.env.ENSEMBLE_SECRET_KEY_FILE;
+    assert.equal(Buffer.from(readFileSync(file, "utf8").trim(), "base64").length, 32);
+    if (process.platform !== "win32") assert.equal(statSync(file).mode & 0o777, 0o600);
+    resetSecretKeyCacheForTests();
+    assert.equal(decrypt(sealed), "device-token");
+  } finally {
+    if (previous.key === undefined) delete process.env.ENSEMBLE_SECRET_KEY;
+    else process.env.ENSEMBLE_SECRET_KEY = previous.key;
+    if (previous.file === undefined) delete process.env.ENSEMBLE_SECRET_KEY_FILE;
+    else process.env.ENSEMBLE_SECRET_KEY_FILE = previous.file;
+    resetSecretKeyCacheForTests();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

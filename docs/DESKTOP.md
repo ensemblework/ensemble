@@ -45,6 +45,8 @@ The Ensemble menu exports a diagnostics file (versions and log tails, with the l
 
 Migrations run on launch. An existing database is copied into `backups/` first. A database written by a newer build is refused.
 
+The key that encrypts saved model keys and the device token lives beside the data folder (`secret.key` next to `pglite/`), set by `src/desktop/main.ts` through `ENSEMBLE_SECRET_KEY_FILE`. A key left by an older build at `<app>/.ensemble/secret.key` is copied there once. The install folder is never written, so a read-only or replaced install keeps its saved keys. The `ensemble` CLI runs this same sidecar without the window ([26](26_CLI.md)); `scripts/assemble-desktop-sidecar.mjs --dest <dir>` packs it for the CLI.
+
 `ENSEMBLE_SITE_URL` still opens a hosted origin instead of the local bundle. The packaged default does not.
 
 ## Motion style

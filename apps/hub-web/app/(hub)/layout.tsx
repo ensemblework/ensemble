@@ -2,6 +2,7 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { usePathname } from "next/navigation";
+import { VerificationBanner } from "@/components/verification-banner";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { AssistantDock } from "@/components/assistant/assistant-dock";
 import { EnsembleHotkey } from "@/components/ensemble/hotkey";
@@ -90,6 +91,7 @@ function Frame({ children }: { children: React.ReactNode }) {
             }}
           />
           <SeasonBanner />
+          <VerificationBanner />
           <main className="relative min-h-0 flex-1 overflow-y-auto">
             <FeatureGate>{children}</FeatureGate>
           </main>
@@ -161,7 +163,12 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   });
   useEffect(() => {
     if (!shell.data) return;
-    client.setQueryData(["me"], { user: shell.data.user, via: shell.data.via });
+    client.setQueryData(["me"], {
+      user: shell.data.user,
+      via: shell.data.via,
+      modules: shell.data.modules,
+      verificationRequired: shell.data.verificationRequired,
+    });
   }, [client, shell.data]);
   const pathname = usePathname();
   const unauthorized = shell.error instanceof ApiError && shell.error.status === 401;

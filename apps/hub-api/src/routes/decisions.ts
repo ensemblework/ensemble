@@ -149,6 +149,8 @@ export async function decisionRoutes(app: FastifyInstance): Promise<void> {
   /** The hook gave up (its own timeout, or the editor cancelled the tool call). */
   app.post("/api/decisions/:id/cancel", async (request, reply) => {
     const { id } = request.params as { id: string };
+    const found = await prisma.agentDecision.findFirst({ where: { id, userId: request.userId }, select: { id: true } });
+    if (!found) return reply.code(404).send({ error: "Decision not found." });
     await prisma.agentDecision.updateMany({ where: { id, userId: request.userId, status: "pending" }, data: { status: "expired" } });
     sseHub.publish(request.userId, { event: "decision", data: { id, status: "expired" } });
     return reply.code(204).send();
@@ -188,7 +190,8 @@ export async function decisionRoutes(app: FastifyInstance): Promise<void> {
 
   app.delete("/api/decision-rules/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
-    await prisma.decisionRule.deleteMany({ where: { id, userId: request.userId } });
+    const result = await prisma.decisionRule.deleteMany({ where: { id, userId: request.userId } });
+    if (!result.count) return reply.code(404).send({ error: "Rule not found." });
     return reply.code(204).send();
   });
 }

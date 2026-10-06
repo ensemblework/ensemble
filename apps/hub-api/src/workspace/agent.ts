@@ -28,6 +28,7 @@ import { isOwnRunBranch, runBranchName, runTrustedGit } from "./git-gate.js";
 import { flagPlanted } from "./planted.js";
 import { gitHardening, GuardError, resolveWorkFolder, sandboxAvailable, within, workspaceRoot } from "./guard.js";
 import { capabilities } from "./sandbox/spawn.js";
+import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
 import { runCommand } from "./runner.js";
 import { interruptionMessage } from "./lifecycle.js";
 import { appendLive, dropLive } from "./live-log.js";
@@ -49,11 +50,12 @@ function outcomeTone(kind: string) {
 }
 
 async function gitIn(
-  ctx: Pick<JobContext, "root" | "sandboxed" | "signal" | "job">,
+  ctx: Pick<JobContext, "userId" | "root" | "sandboxed" | "signal" | "job">,
   args: string[],
   options: { network?: boolean; credentials?: boolean; env?: Record<string, string>; config?: string[]; timeoutMs?: number } = {},
 ) {
   return runCommand({
+    userId: ctx.userId,
     argv: ["git", ...gitHardening(false), ...(options.config ?? []), ...args],
     cwd: ctx.root,
     root: ctx.root,
@@ -71,7 +73,7 @@ async function gitIn(
 }
 
 /** The folder as a git tree, through a throwaway index so the real staging area is untouched. */
-async function snapshot(ctx: Pick<JobContext, "root" | "sandboxed" | "signal" | "job">): Promise<string | null> {
+async function snapshot(ctx: Pick<JobContext, "userId" | "root" | "sandboxed" | "signal" | "job">): Promise<string | null> {
   const index = join(tmpdir(), `ensemble-index-${randomUUID()}`);
   try {
     await gitIn(ctx, ["read-tree", "HEAD"], { env: { GIT_INDEX_FILE: index } });
@@ -215,6 +217,7 @@ async function prepareFolder(app: FastifyInstance, ctx: JobContext): Promise<{ r
         ? await githubCloneAuth(ctx.prisma, ctx.userId, source)
         : { config: [] as string[], env: {} as Record<string, string>, missing: false };
     const cloned = await runTrustedGit({
+      userId: ctx.userId,
       cwd: root,
       args: ["clone", "--quiet", "--template=", source, "."],
       credentialEnv: local ? undefined : auth.env,
@@ -271,7 +274,7 @@ async function prepareBranch(ctx: JobContext): Promise<string> {
       job.branchMode === "existing" && job.branch && isOwnRunBranch(job.branch, job.id)
         ? job.branch
         : runBranchName(job.id, job.branchMode === "new" && job.branch ? job.branch : ctx.taskTitle);
-    const made = await runTrustedGit({ cwd: ctx.root, args: ["checkout", "-B", branch] });
+    const made = await runTrustedGit({ userId: ctx.userId, cwd: ctx.root, args: ["checkout", "-B", branch] });
     if (made.exitCode !== 0) throw new GuardError(`Could not create branch ${branch}: ${made.output.trim().slice(-300)}`);
     return branch;
   }
@@ -282,7 +285,7 @@ async function prepareBranch(ctx: JobContext): Promise<string> {
     let switched = await gitIn(ctx, ["switch", job.branch]);
     if (switched.exitCode !== 0 && ctx.network && job.useCredentials) {
       const auth = await githubCloneAuth(ctx.prisma, ctx.userId, job.repoUrl || "https://github.com/");
-      await runTrustedGit({ cwd: ctx.root, args: ["fetch", "--quiet", "origin", job.branch], credentialEnv: auth.env, credentialConfig: auth.config });
+      await runTrustedGit({ userId: ctx.userId, cwd: ctx.root, args: ["fetch", "--quiet", "origin", job.branch], credentialEnv: auth.env, credentialConfig: auth.config });
       switched = await gitIn(ctx, ["switch", job.branch]);
     } else if (switched.exitCode !== 0 && ctx.network) {
       await gitIn(ctx, ["fetch", "--quiet", "origin", job.branch], { network: true });
@@ -298,6 +301,9 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
   const { prisma, redis } = app;
   const job = await prisma.workspaceJob.findUniqueOrThrow({ where: { id: jobId }, include: { task: true } });
   const userId = job.userId;
+  if (job.deviceId) throw new Error("Device jobs must execute on the assigned computer.");
+  await requireVerifiedUser(userId);
+  await requireHostAccess(userId, "Host workspace execution");
   const settings = await loadSettings(prisma, userId);
   const user = await prisma.user.findUnique({ where: { id: userId }, select: { name: true } });
   const started = Date.now();

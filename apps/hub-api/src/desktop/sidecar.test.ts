@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import http from "node:http";
 import { tmpdir } from "node:os";
@@ -140,8 +139,15 @@ test("the sidecar starts, writes a private discovery file, and stops", { timeout
 
     // The other two hijacked streams: @ensemble on a page, and Ensemble on a surface.
     const authed = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+    const taskReply = await fetch(`http://127.0.0.1:${body.port}/api/tasks`, {
+      method: "POST",
+      headers: authed,
+      body: JSON.stringify({ title: "Sidecar comment stream" }),
+    });
+    assert.equal(taskReply.status, 201);
+    const { task } = (await taskReply.json()) as { task: { id: string } };
     const hijacked = [
-      { path: `/api/pages/note/${randomUUID()}/ensemble`, payload: JSON.stringify({ prompt: "hi" }) },
+      { path: `/api/pages/task/${task.id}/ensemble`, payload: JSON.stringify({ prompt: "hi" }) },
       { path: "/api/ensemble/invoke", payload: JSON.stringify({ surface: "board", prompt: "hi" }) },
     ];
     for (const { path, payload } of hijacked) {

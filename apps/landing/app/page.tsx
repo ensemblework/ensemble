@@ -47,7 +47,7 @@ const TRUST = [
   { title: "Localhost first", body: "Run the whole thing on your machine, or as a desktop app with no Docker at all." },
   { title: "Least privilege", body: "Connectors read. Writes are separate actions with a preview and a policy." },
   { title: "Human in the loop", body: "Pause the agent, reject a draft, undo its writes. Control points are part of the design, not a setting." },
-  { title: "Open source", body: "Read every prompt in Settings. Read every line of the code that runs them." },
+  { title: "Source available", body: "Read every prompt in Settings. Read every line of the code that runs them, on GitHub." },
 ];
 
 const TARGETS = [
@@ -78,6 +78,7 @@ export default function Home() {
           <a href="#why">Why</a>
           <a href="#day">A day</a>
           <a href="#features">Features</a>
+          <a href="/download">Download</a>
           <a href="#trust">Trust</a>
           <GitHubLink />
         </nav>
@@ -90,7 +91,7 @@ export default function Home() {
         <section className="hero">
           <div className="glow" aria-hidden="true" />
           <div className="hero-copy">
-            <p className="eyebrow reveal">Open source · localhost first · your keys</p>
+            <p className="eyebrow reveal">Source available · localhost first · your keys</p>
             <h1 className="reveal" style={{ animationDelay: "80ms" }}>
               <span className="line">You and your agent,</span>
               <em className="line">in the same key.</em>
@@ -100,12 +101,12 @@ export default function Home() {
               code and people. So it can do real work without being told the context every single time.
             </p>
             <div className="ctas reveal" style={{ animationDelay: "240ms" }}>
-              <a className="btn" href={site.appUrl}>
-                Open Ensemble
+              <a className="btn" href={site.signupUrl}>
+                Get started
                 <span aria-hidden="true">→</span>
               </a>
-              <a className="btn btn-ghost" href="#day">
-                See a day with it
+              <a className="btn btn-ghost" href="/download">
+                Download the CLI
               </a>
             </div>
           </div>
@@ -265,10 +266,10 @@ export default function Home() {
           <h2>
             Bring your agent <em>into the room.</em>
           </h2>
-          <p className="section-lede">Sign in with an invite, bring a model key, and connect your first source in a few minutes.</p>
+          <p className="section-lede">Create an account, save your notes and context, and bring your own model key when you are ready to use an agent.</p>
           <div className="ctas center">
-            <a className="btn" href={site.appUrl}>
-              Open Ensemble <span aria-hidden="true">→</span>
+            <a className="btn" href={site.signupUrl}>
+              Get started <span aria-hidden="true">→</span>
             </a>
             <GitHubLink className="btn btn-ghost" />
           </div>
@@ -280,6 +281,9 @@ export default function Home() {
         <span className="faint">An engineer and their agent, stronger together.</span>
         <span className="footer-links">
           <a href={site.appUrl}>App</a>
+          <a href="/download">Download</a>
+          <a href="/privacy">Privacy</a>
+          <a href="/terms">Terms</a>
           <GitHubLink />
         </span>
       </footer>

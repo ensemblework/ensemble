@@ -7,9 +7,9 @@
  * modules read the environment once, at import.
  */
 import { randomBytes } from "node:crypto";
-import { mkdirSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 // Loopback http cookies must stay non-Secure, and the production boot checks
 // refuse a non-https web origin. The desktop process is not that deployment.
@@ -30,6 +30,18 @@ process.env.REDIS_URL ??= "memory://desktop";
 
 const dataDir = process.env.ENSEMBLE_DATA_DIR?.trim() || join(homedir(), ".local", "share", "com.ensemblework.desktop", "pglite");
 mkdirSync(dataDir, { recursive: true });
+
+// The encryption key must live with the data, not in the install folder: that
+// folder is read-only for system packages and replaced on every upgrade.
+if (!process.env.ENSEMBLE_SECRET_KEY?.trim() && !process.env.ENSEMBLE_SECRET_KEY_FILE?.trim()) {
+  const keyFile = join(dirname(dataDir), "secret.key");
+  const { DEFAULT_KEY_FILE } = await import("../lib/secrets.js");
+  if (!existsSync(keyFile) && existsSync(DEFAULT_KEY_FILE)) {
+    copyFileSync(DEFAULT_KEY_FILE, keyFile);
+    chmodSync(keyFile, 0o600);
+  }
+  process.env.ENSEMBLE_SECRET_KEY_FILE = keyFile;
+}
 
 const { openDesktopDatabase } = await import("../lib/pglite-engine.js");
 const opened = await openDesktopDatabase(dataDir);

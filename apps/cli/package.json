@@ -1,0 +1,41 @@
+{
+  "name": "ensemblework",
+  "version": "0.1.0",
+  "description": "Ensemble CLI: run tasks assigned from ensemblework.com on your computer, and connect your editor to Ensemble over MCP.",
+  "license": "FSL-1.1-MIT",
+  "homepage": "https://ensemblework.com/download",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ensemblework/ensemble.git",
+    "directory": "apps/cli"
+  },
+  "bugs": "https://github.com/ensemblework/ensemble/issues",
+  "type": "module",
+  "bin": {
+    "ensemble": "dist/ensemble.mjs"
+  },
+  "files": [
+    "dist/ensemble.mjs",
+    "README.md",
+    "LICENSE.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node scripts/build.mjs && node --import tsx --test \"src/**/*.test.ts\""
+  },
+  "devDependencies": {
+    "@ensemble/context-bridge": "workspace:*",
+    "@ensemble/shared-types": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.31.0",
+    "@types/node": "^22.18.6",
+    "esbuild": "^0.28.2",
+    "jsonc-parser": "^3.3.1",
+    "tsx": "^4.20.6",
+    "typescript": "^5.8.2",
+    "zod": "^3.25.76"
+  }
+}

@@ -11,6 +11,8 @@
     "dev:web": "pnpm --filter @ensemble/hub-web dev",
     "dev:agent": "bash scripts/agent-dev.sh",
     "build": "pnpm -r run build",
+    "cli:build": "pnpm --filter ensemblework build",
+    "cli:package": "node scripts/package-cli.mjs",
     "typecheck": "pnpm -r run typecheck",
     "infra:up": "docker compose -f infra/docker-compose.yml up -d",
     "infra:down": "docker compose -f infra/docker-compose.yml down",

@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { prisma } from "../lib/prisma.js";
 import { decrypt, encrypt } from "../lib/secrets.js";
 import { DecryptError } from "./errors.js";
+import { canUseHostCredentials, requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -105,12 +106,7 @@ export function setCredentialResolverForTests(
 }
 
 async function stored(userId: string, provider: string): Promise<[string, string | null] | null> {
-  let row: Stored | null;
-  try {
-    row = await storeImpl.read(userId, provider);
-  } catch {
-    return null;
-  }
+  const row = await storeImpl.read(userId, provider);
   if (!row) return null;
   try {
     return [decrypt(row.secret), row.baseUrl];
@@ -130,12 +126,17 @@ async function ghToken(): Promise<string | null> {
 }
 
 export async function resolveCredential(userId: string | null | undefined, provider: string): Promise<Credential> {
+  await requireVerifiedUser(userId);
   if (resolveOverride) return resolveOverride(userId, provider);
   if (provider === "mock") return { provider, secret: "mock", source: "you", baseUrl: null };
   if (userId) {
     const found = await stored(userId, provider);
-    if (found) return { provider, secret: found[0], source: "you", baseUrl: found[1] };
+    if (found) {
+      if (found[1]) await requireHostAccess(userId, "Custom model proxies");
+      return { provider, secret: found[0], source: "you", baseUrl: found[1] };
+    }
   }
+  if (!(await canUseHostCredentials(userId))) return { provider, secret: "", source: "none", baseUrl: null };
   for (const name of ENV_KEYS[provider] ?? []) {
     const value = (process.env[name] ?? "").trim();
     if (value) return { provider, secret: value, source: "env", baseUrl: null };
@@ -148,6 +149,7 @@ export async function resolveCredential(userId: string | null | undefined, provi
 }
 
 export async function saveCredential(userId: string, provider: string, secret: string, baseUrl?: string | null): Promise<void> {
+  if (baseUrl) await requireHostAccess(userId, "Custom model proxies");
   await storeImpl.upsert(userId, provider, encrypt(secret), hint(secret), baseUrl ?? null);
 }
 
@@ -157,11 +159,8 @@ export async function removeCredential(userId: string, provider: string): Promis
 
 export async function listCredentials(userId: string): Promise<Array<Record<string, unknown>>> {
   const rows = new Map<string, Listed>();
-  try {
-    for (const row of await storeImpl.list(userId)) rows.set(row.provider, row);
-  } catch {
-    // A database miss lists env keys only, the same as the Python runtime.
-  }
+  for (const row of await storeImpl.list(userId)) rows.set(row.provider, row);
+  const allowHostKeys = await canUseHostCredentials(userId);
   const out: Array<Record<string, unknown>> = [];
   for (const provider of PROVIDERS) {
     const row = rows.get(provider);
@@ -169,7 +168,7 @@ export async function listCredentials(userId: string): Promise<Array<Record<stri
       out.push({ provider, source: "you", hint: row.hint, updatedAt: row.updatedAt.toISOString() });
       continue;
     }
-    const env = (ENV_KEYS[provider] ?? []).find((name) => (process.env[name] ?? "").trim());
+    const env = allowHostKeys ? (ENV_KEYS[provider] ?? []).find((name) => (process.env[name] ?? "").trim()) : undefined;
     out.push({ provider, source: env ? "env" : "none", hint: env ?? null, updatedAt: null });
   }
   return out;

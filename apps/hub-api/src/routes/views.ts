@@ -12,6 +12,7 @@ import { templateByMarketId } from "@ensemble/shared-types/marketplace";
 import { envDevTools } from "../lib/dev-tools.js";
 import { loadSettings } from "../lib/settings.js";
 import { serializeTask } from "./tasks.js";
+import { isHosted } from "../lib/hosted-access.js";
 
 async function countOrZero(query: Promise<number>): Promise<number> {
   try {
@@ -35,7 +36,7 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
       countOrZero(prisma.undoEntry.count({ where: { userId, undoneAt: null } })),
       countOrZero(prisma.undoEntry.count({ where: { userId, undoneAt: { not: null } } })),
     ]);
-    if (!user?.passwordHash && request.authVia !== "bypass") return reply.code(401).send({ error: "Sign in." });
+    if (!user && request.authVia !== "bypass") return reply.code(401).send({ error: "Sign in." });
     const flags = await Promise.all(
       listConnectors().map(async (connector) => {
         const status = await connectionState(userId, connector);
@@ -50,10 +51,11 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
       }),
     );
     return {
-      user: user?.passwordHash
-        ? { id: user.id, email: user.email, name: user.name }
-        : { id: userId, email: "", name: "Local (no account)" },
+      user: user
+        ? { id: user.id, email: user.email, name: user.name, emailVerified: Boolean(user.emailVerifiedAt), hasPassword: Boolean(user.passwordHash) }
+        : { id: userId, email: "", name: "Local (no account)", emailVerified: true, hasPassword: false },
       via: request.authVia,
+      verificationRequired: isHosted() && !user?.emailVerifiedAt,
       approvals,
       decisions,
       attention: flags.filter(Boolean).length,

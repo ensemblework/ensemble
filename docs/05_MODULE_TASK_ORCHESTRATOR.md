@@ -4,6 +4,8 @@
 
 **Run only one agent-runtime instance**; two consumers on the same queue leave jobs stuck.
 
+For hosted public accounts, email verification is required before scheduled model/connector/agent work. Public users do not receive the operator's environment or CLI credentials. Host filesystem execution is operator-only; verified users can still queue work to their own paired device. Keep `ENSEMBLE_SERVER_RUNNER=off` for open hosted signup; production startup refuses an unrestricted runner.
+
 ---
 
 ## 1. Architecture
