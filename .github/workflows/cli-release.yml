@@ -220,7 +220,7 @@ jobs:
           set -euo pipefail
           mkdir -p dist/cli-release
           find dist/downloaded-cli -type f \( -name '*.tar.gz' -o -name '*.zip' \) -exec cp {} dist/cli-release/ \;
-          npm_pack_output="$(npm pack apps/cli --pack-destination dist/cli-release --silent)"
+          npm_pack_output="$(npm pack ./apps/cli --pack-destination dist/cli-release --silent)"
           npm_pack_file="$(basename "$npm_pack_output")"
           mv "dist/cli-release/$npm_pack_file" "dist/cli-release/ensemble-cli-$VERSION.tgz"
           (cd dist/cli-release && shasum -a 256 ensemble-cli-* > SHA256SUMS.txt)
@@ -411,4 +411,4 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ needs.resolve.outputs.version }}
-        run: npm publish "dist/cli-release/ensemble-cli-$VERSION.tgz" --provenance --access public
+        run: npm publish "./dist/cli-release/ensemble-cli-$VERSION.tgz" --provenance --access public
