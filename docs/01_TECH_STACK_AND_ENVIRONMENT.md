@@ -263,6 +263,8 @@ Read from the workflow files and exercised in containers on 5 Oct 2026 (the VM h
 
 Some `hub-web` tests can keep the process open after their assertions because of query-cache timers. Work-folder fixtures use canonical paths from `apps/hub-api/src/test/temporary.ts` (`/private/tmp` on Mac), so intended `/private/var` restrictions do not abort the scenarios. Device revocation's cross-process regression needs real Redis and reports an explicit skip for `memory://`. Plot-worker regressions run locally on Mac as well as in Linux CI.
 
+Python-only Linux CI does not install Node workspace dependencies. The Mac launcher argv contract mocks executable/loader availability without launching anything; real Mac execution tests still use the installed Node/tsx sandbox choke point. Missing Mac launcher dependencies have a separate explicit failure regression.
+
 **`.github/workflows/deploy.yml`** runs after `ci` succeeds on a push to `main`, or by hand (Actions → deploy → Run workflow, with `all`, `api`, `app` or `landing`). It does nothing until the repository variable `DEPLOY_ENABLED` is `true`.
 
 1. **Promote.** If the commit is still the tip of `main` (CI runs can finish out of order), it fast-forwards the `production` branch to it. No force push: `production` only moves forward.

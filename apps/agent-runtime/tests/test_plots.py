@@ -254,10 +254,28 @@ def test_hosted_uses_the_warm_worker_and_macos_uses_the_spawn_choke_point(monkey
     hosted = sandbox.worker_launch_args("hosted")
     assert hosted[-1].endswith("worker.py")
     assert not any(part.endswith("cli.ts") for part in hosted)
-    seatbelt = sandbox.seatbelt_worker_argv("python3", "/tmp/worker.py", "/tmp/plots", ["/usr"], ["/cache"])
+    import shutil
+
+    is_file = Path.is_file
+    with monkeypatch.context() as launcher:
+        launcher.setattr(shutil, "which", lambda _name: "/test/node")
+        launcher.setattr(Path, "is_file", lambda path: path.name == "loader.mjs" or is_file(path))
+        seatbelt = sandbox.seatbelt_worker_argv("python3", "/tmp/worker.py", "/tmp/plots", ["/usr"], ["/cache"])
+    assert seatbelt[0] == "/test/node"
+    assert seatbelt[1] == "--import"
     assert "--worker" in seatbelt
     assert any(part.endswith("workspace/sandbox/cli.ts") for part in seatbelt)
     assert "sys.addaudithook" in sandbox._worker_file().read_text()
+
+
+def test_mac_plot_launcher_reports_missing_node_dependencies(monkeypatch):
+    import shutil
+
+    from ensemble_agent.plots import sandbox
+
+    monkeypatch.setattr(shutil, "which", lambda _name: None)
+    with pytest.raises(sandbox.PlotRuntimeUnavailable, match="Node.js and tsx"):
+        sandbox.seatbelt_worker_argv("python3", "/tmp/worker.py", "/tmp/plots", [], [])
 
 
 def _figure(token: str, y: int) -> str:
