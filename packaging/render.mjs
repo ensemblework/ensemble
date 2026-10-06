@@ -191,7 +191,7 @@ PackageName: Ensemble CLI
 License: FSL-1.1-MIT
 LicenseUrl: https://github.com/ensemblework/ensemble/blob/main/LICENSE.md
 ShortDescription: Ensemble CLI
-Description: ${PACKAGE.description}
+Description: ${yamlString(PACKAGE.description)}
 Moniker: ensemble
 ManifestType: defaultLocale
 ManifestVersion: 1.6.0
@@ -206,7 +206,7 @@ version: ${version}
 section: utils
 priority: optional
 maintainer: EnsembleWork
-description: ${PACKAGE.description}
+description: ${yamlString(PACKAGE.description)}
 homepage: ${PACKAGE.homepage}
 license: FSL-1.1-MIT
 recommends:
@@ -263,6 +263,11 @@ function renderSrcinfo({ version, assets, urlFor, sha }) {
 
 pkgname = ensemble-cli-bin
 `;
+}
+
+/** A double-quoted YAML scalar; JSON string syntax is valid YAML and survives ": " and "#". */
+function yamlString(value) {
+  return JSON.stringify(value);
 }
 
 function rubyString(value) {

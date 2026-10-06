@@ -189,7 +189,7 @@ jobs:
       VERSION: ${{ needs.resolve.outputs.version }}
       DRY_RUN: ${{ needs.resolve.outputs.dry_run }}
       GH_TOKEN: ${{ github.token }}
-      NFPM_VERSION: 2.43.1
+      NFPM_VERSION: 2.47.0
     steps:
       - uses: actions/checkout@v4
 
@@ -232,9 +232,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl -fsSLO "https://github.com/goreleaser/nfpm/releases/download/v$NFPM_VERSION/nfpm_${NFPM_VERSION}_checksums.txt"
+          curl -fsSLO "https://github.com/goreleaser/nfpm/releases/download/v$NFPM_VERSION/checksums.txt"
           curl -fsSLO "https://github.com/goreleaser/nfpm/releases/download/v$NFPM_VERSION/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz"
-          grep " nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz$" "nfpm_${NFPM_VERSION}_checksums.txt" | sha256sum -c -
+          grep " nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz$" checksums.txt | sha256sum -c -
           tar -xzf "nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz" nfpm
           sudo install -m 0755 nfpm /usr/local/bin/nfpm
 
