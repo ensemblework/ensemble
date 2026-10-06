@@ -34,14 +34,19 @@ export function checkConnectorLimit(connections: Record<string, { enabled: boole
 }
 
 export async function withHostedUserLock<T>(
-  db: PrismaClient,
+  db: PrismaClient | Prisma.TransactionClient,
   userId: string,
   work: (tx: Prisma.TransactionClient) => Promise<T>,
   verify = true,
 ): Promise<T> {
   if (!isHosted()) return work(db);
   if (verify) await requireVerifiedUser(userId);
-  return db.$transaction(async (tx) => {
+  // A transaction client cannot open another transaction; lock and work inside the caller's.
+  if (!("$transaction" in db) || typeof db.$transaction !== "function") {
+    await lockUserTransaction(db, userId);
+    return work(db);
+  }
+  return (db as PrismaClient).$transaction(async (tx) => {
     await lockUserTransaction(tx, userId);
     return work(tx);
   }, { isolationLevel: "ReadCommitted" });

@@ -272,7 +272,7 @@ export async function applyOnboarding(prisma: PrismaClient, userId: string, temp
     await tx.session.updateMany({ where: { userId }, data: { modules } });
     const patch: Record<string, unknown> = { assistant: { actAs: market?.actAs ?? template.actAs } };
     if (market?.accent) patch.appearance = { accent: market.accent };
-    await saveSettings(tx as unknown as PrismaClient, userId, patch);
+    await saveSettings(tx, userId, patch);
   });
   return template;
 }

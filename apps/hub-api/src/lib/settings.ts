@@ -28,7 +28,7 @@ export async function loadSettings(prisma: PrismaClient | Prisma.TransactionClie
   return base;
 }
 
-export async function saveSettings(prisma: PrismaClient, userId: string, patch: unknown): Promise<SettingsType> {
+export async function saveSettings(prisma: PrismaClient | Prisma.TransactionClient, userId: string, patch: unknown): Promise<SettingsType> {
   const write = async (db: PrismaClient | Prisma.TransactionClient) => {
     const current = await loadSettings(db, userId);
     const next = Settings.parse(deepMerge(current as unknown as Plain, isPlain(patch) ? patch : {}));

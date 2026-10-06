@@ -29,3 +29,28 @@ test("dataset storage counts compressed tables plus every original byte", () => 
   assert.ok(compressed > 0);
   assert.equal(storedTableBytes(table, new Uint8Array(17)), compressed + 17);
 });
+
+test("the hosted user lock reuses an open transaction instead of nesting one", async () => {
+  const { withHostedUserLock } = await import("./hosted-limits.js");
+  const previous = process.env.NODE_ENV;
+  process.env.NODE_ENV = "production";
+  try {
+    const locks: string[] = [];
+    const tx = { $queryRaw: async () => { locks.push("tx"); return [{ id: "user-1" }]; } };
+    const result = await withHostedUserLock(tx as never, "user-1", async (inner) => (inner === (tx as never) ? "same" : "other"), false);
+    assert.equal(result, "same");
+    assert.deepEqual(locks, ["tx"]);
+    const opened: unknown[] = [];
+    const client = {
+      $transaction: async (fn: (inner: unknown) => Promise<unknown>) => {
+        const inner = { $queryRaw: async () => [{ id: "user-1" }] };
+        opened.push(inner);
+        return fn(inner);
+      },
+    };
+    assert.equal(await withHostedUserLock(client as never, "user-1", async (inner) => (inner === opened[0] ? "opened" : "wrong"), false), "opened");
+  } finally {
+    if (previous === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previous;
+  }
+});
