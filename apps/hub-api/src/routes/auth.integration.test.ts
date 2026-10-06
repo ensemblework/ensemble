@@ -8,12 +8,13 @@ import { authRouteCoverage } from "../test/route-coverage.js";
 
 let harness: HttpHarness;
 let profile: LoginProfile;
-const mails: Array<{ to: string; text: string }> = [];
+const mails: Array<{ to: string; subject: string; text: string }> = [];
 const createdIds: string[] = [];
 const originalEnv = { ...process.env };
 const originalFetch = globalThis.fetch;
 const observed = new Map<string, { happy: boolean; rejected: boolean }>();
 const password = "test-password-only-123";
+const VERIFY_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const address = () => `auth-${randomUUID()}@example.test`;
 
 function cookie(response: LightMyRequestResponse, name = "ensemble_session"): string {
@@ -32,6 +33,19 @@ function mailToken(to: string): string {
   const token = new URLSearchParams(new URL(link).hash.slice(1)).get("token");
   assert.ok(token);
   return token;
+}
+
+function mailCode(to: string): string {
+  const message = mails.filter((mail) => mail.to === to).at(-1);
+  assert.ok(message);
+  const code = message.subject.match(/^Your Ensemble code: ([A-Z2-9]{4})$/)?.[1];
+  assert.ok(code, message.subject);
+  assert.match(code, new RegExp(`^[${VERIFY_ALPHABET}]{4}$`));
+  assert.match(message.text, new RegExp(`\\b${code}\\b`));
+  assert.match(message.text, /expires in 30 minutes/i);
+  assert.match(message.text, /http:\/\/hub\.example\.test\/verify/);
+  assert.doesNotMatch(message.text, /token=/);
+  return code;
 }
 
 async function signup(email = address()) {
@@ -135,31 +149,74 @@ test("hosted signup stays open and never gives the first registrant placeholder 
   }
 });
 
-test("verification requires the matching browser account, is hashed, expires and is single use", async () => {
+test("verification code requires a browser session, is hashed, expires and is reusable after success only as already verified", async () => {
   const user = await signup();
-  const token = mailToken(user.email);
+  const code = mailCode(user.email);
   const { sha256 } = await import("../lib/auth.js");
-  assert.ok(await harness.prisma.emailToken.findUnique({ where: { id: sha256(token) } }));
-  assert.equal(await harness.prisma.emailToken.findUnique({ where: { id: token } }), null);
+  assert.ok(await harness.prisma.emailToken.findUnique({ where: { id: sha256(`verify:${user.id}:${code}`) } }));
+  assert.equal(await harness.prisma.emailToken.findUnique({ where: { id: code } }), null);
   const stranger = await harness.asUser();
-  const verify = (headers: { cookie?: string } = {}) => harness.app.inject({ method: "POST", url: "/api/auth/verify-email", headers, payload: { token } });
-  assert.equal((await verify()).statusCode, 401);
-  assert.equal((await verify({ cookie: stranger.cookie })).statusCode, 401);
+  const verify = (headers: { cookie?: string } = {}, value = code) => harness.app.inject({ method: "POST", url: "/api/auth/verify-email", headers, payload: { code: value } });
+  const anonymous = await verify();
+  assert.equal(anonymous.statusCode, 401);
+  assert.equal(anonymous.json().error, "Sign in to the account you are verifying, then enter the code.");
+  assert.equal((await verify({ cookie: stranger.cookie })).statusCode, 400);
+  assert.equal((await verify({ cookie: user.cookie }, `${code.slice(0, 2)}-${code.slice(2).toLowerCase()}`)).statusCode, 200);
   assert.equal((await verify({ cookie: user.cookie })).statusCode, 200);
-  assert.equal((await verify({ cookie: user.cookie })).statusCode, 400);
   assert.ok((await harness.prisma.user.findUniqueOrThrow({ where: { id: user.id } })).emailVerifiedAt);
   const expired = await signup();
-  const expiredToken = mailToken(expired.email);
+  const expiredCode = mailCode(expired.email);
   await harness.prisma.emailToken.updateMany({ where: { userId: expired.id }, data: { expiresAt: new Date(0) } });
-  assert.equal((await harness.app.inject({ method: "POST", url: "/api/auth/verify-email", headers: { cookie: expired.cookie }, payload: { token: expiredToken } })).statusCode, 400);
+  const expiredResponse = await harness.app.inject({ method: "POST", url: "/api/auth/verify-email", headers: { cookie: expired.cookie }, payload: { code: expiredCode } });
+  assert.equal(expiredResponse.statusCode, 400);
+  assert.equal(expiredResponse.json().error, "There is no active code. Send a new one.");
 });
 
-test("resend invalidates the old verification link and scoped tokens cannot request mail", async () => {
+test("wrong verification codes count down and lock after five attempts", async () => {
   const user = await signup();
-  const oldToken = mailToken(user.email);
+  const code = mailCode(user.email);
+  const wrong = code === "AAAA" ? "BBBB" : "AAAA";
+  for (const remaining of [4, 3, 2, 1]) {
+    const response = await harness.app.inject({ method: "POST", url: "/api/auth/verify-email", headers: { cookie: user.cookie }, payload: { code: wrong } });
+    assert.equal(response.statusCode, 400, response.body);
+    assert.equal(response.json().error, `That code is not right. ${remaining} tries left.`);
+  }
+  const row = await harness.prisma.emailToken.findFirstOrThrow({ where: { userId: user.id, kind: "verify" } });
+  assert.equal(row.attempts, 4);
+  const locked = await harness.app.inject({ method: "POST", url: "/api/auth/verify-email", headers: { cookie: user.cookie }, payload: { code: wrong } });
+  assert.equal(locked.statusCode, 400);
+  assert.equal(locked.json().error, "Too many wrong codes. Send a new code.");
+  assert.equal(await harness.prisma.emailToken.count({ where: { userId: user.id, kind: "verify" } }), 0);
+  const afterLock = await harness.app.inject({ method: "POST", url: "/api/auth/verify-email", headers: { cookie: user.cookie }, payload: { code } });
+  assert.equal(afterLock.statusCode, 400);
+  assert.equal(afterLock.json().error, "There is no active code. Send a new one.");
+});
+
+test("parallel wrong verification codes cannot get more than five tries", async () => {
+  const user = await signup();
+  const code = mailCode(user.email);
+  const wrong = code === "AAAA" ? "BBBB" : "AAAA";
+  const burst = await Promise.all(
+    Array.from({ length: 8 }, () =>
+      harness.app.inject({ method: "POST", url: "/api/auth/verify-email", headers: { cookie: user.cookie }, payload: { code: wrong } }),
+    ),
+  );
+  assert.ok(burst.every((response) => response.statusCode === 400 || response.statusCode === 429), burst.map((r) => r.statusCode).join(","));
+  const remaining = await harness.prisma.emailToken.findFirst({ where: { userId: user.id, kind: "verify" } });
+  assert.ok(!remaining || remaining.attempts >= 5, `attempts ${remaining?.attempts}`);
+  const right = await harness.app.inject({ method: "POST", url: "/api/auth/verify-email", headers: { cookie: user.cookie }, payload: { code } });
+  assert.notEqual(right.statusCode, 200);
+  assert.equal((await harness.prisma.user.findUniqueOrThrow({ where: { id: user.id } })).emailVerifiedAt, null);
+});
+
+test("resend invalidates the old verification code and scoped tokens cannot request mail", async () => {
+  const user = await signup();
+  const oldCode = mailCode(user.email);
   assert.equal((await harness.app.inject({ method: "POST", url: "/api/auth/resend-verification", headers: { cookie: user.cookie } })).statusCode, 200);
-  assert.notEqual(mailToken(user.email), oldToken);
-  assert.equal((await harness.app.inject({ method: "POST", url: "/api/auth/verify-email", headers: { cookie: user.cookie }, payload: { token: oldToken } })).statusCode, 400);
+  const newCode = mailCode(user.email);
+  assert.notEqual(newCode, oldCode);
+  assert.equal((await harness.app.inject({ method: "POST", url: "/api/auth/verify-email", headers: { cookie: user.cookie }, payload: { code: oldCode } })).statusCode, 400);
+  assert.equal((await harness.app.inject({ method: "POST", url: "/api/auth/verify-email", headers: { cookie: user.cookie }, payload: { code: newCode } })).statusCode, 200);
   const account = await harness.asUser();
   const full = await harness.asToken(account, "full");
   assert.equal((await full.inject({ method: "POST", url: "/api/auth/resend-verification" })).statusCode, 403);
@@ -193,6 +250,54 @@ test("account validation, signup kill switches and password changes have explici
   const newCookie = cookie(changed);
   assert.equal((await harness.app.inject({ method: "POST", url: "/api/auth/logout", headers: { cookie: newCookie } })).statusCode, 204);
   assert.equal((await harness.app.inject({ method: "GET", url: "/api/auth/me", headers: { cookie: newCookie } })).statusCode, 401);
+});
+
+test("profile saves optional fields, sets profile completion in me and keeps the first completion timestamp", async () => {
+  const user = await harness.asUser("mira.chen@fieldnote.example");
+  let me = await user.inject({ method: "GET", url: "/api/auth/me" });
+  assert.equal(me.statusCode, 200, me.body);
+  assert.equal(me.json().profileComplete, false);
+  const missing = await user.inject({ method: "PUT", url: "/api/auth/profile", payload: { profession: "Software engineer" } });
+  assert.equal(missing.statusCode, 400);
+  const long = await user.inject({ method: "PUT", url: "/api/auth/profile", payload: { name: "Mira Chen", profession: "x".repeat(81) } });
+  assert.equal(long.statusCode, 400);
+  const saved = await user.inject({
+    method: "PUT",
+    url: "/api/auth/profile",
+    payload: {
+      name: "  Mira Chen  ",
+      gender: "Woman",
+      profession: "Software engineer",
+      organization: "Fieldnote",
+      heardFrom: "A friend",
+    },
+  });
+  assert.equal(saved.statusCode, 200, saved.body);
+  assert.equal(saved.json().user.name, "Mira Chen");
+  assert.deepEqual(saved.json().profile, {
+    gender: "Woman",
+    profession: "Software engineer",
+    organization: "Fieldnote",
+    heardFrom: "A friend",
+  });
+  const after = await harness.prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+  assert.ok(after.profileCompletedAt);
+  assert.equal(after.name, "Mira Chen");
+  me = await user.inject({ method: "GET", url: "/api/auth/me" });
+  assert.equal(me.json().profileComplete, true);
+  assert.deepEqual(me.json().user.profile, saved.json().profile);
+  const firstCompletedAt = after.profileCompletedAt?.getTime();
+  const updated = await user.inject({
+    method: "PUT",
+    url: "/api/auth/profile",
+    payload: { name: "Mira C.", gender: "", profession: "", organization: null, heardFrom: "" },
+  });
+  assert.equal(updated.statusCode, 200, updated.body);
+  assert.deepEqual(updated.json().profile, { gender: null, profession: null, organization: null, heardFrom: null });
+  const final = await harness.prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+  assert.equal(final.profileCompletedAt?.getTime(), firstCompletedAt);
+  const full = await harness.asToken(user, "full");
+  assert.equal((await full.inject({ method: "PUT", url: "/api/auth/profile", payload: { name: "Mira" } })).statusCode, 403);
 });
 
 test("password recovery is single-use, revokes sessions and removes unverified pre-hijacked identities", async () => {
@@ -235,6 +340,22 @@ test("OAuth state is browser-bound and single-use; passwordless sessions work in
   assert.equal(await harness.prisma.authIdentity.count({ where: { userId: me.json().user.id } }), 1);
 });
 
+test("new OAuth users with unverified provider email receive a code and land on verify", async () => {
+  profile = { subject: randomUUID(), email: address(), name: "Mira", verified: false };
+  const flow = await oauth("github");
+  const response = await harness.app.inject({ method: "GET", url: flow.callback, headers: flow.headers });
+  assert.equal(response.statusCode, 302);
+  const location = new URL(String(response.headers.location));
+  assert.equal(location.pathname, "/verify");
+  assert.equal(location.searchParams.get("next"), "/start");
+  const session = cookie(response);
+  const me = await harness.app.inject({ method: "GET", url: "/api/auth/me", headers: { cookie: session } });
+  assert.equal(me.statusCode, 200, me.body);
+  assert.equal(me.json().user.emailVerified, false);
+  assert.match(mailCode(profile.email!), new RegExp(`^[${VERIFY_ALPHABET}]{4}$`));
+  createdIds.push(me.json().user.id);
+});
+
 test("unverified provider emails cannot auto-link existing accounts; verified identities link safely", async () => {
   const owner = await harness.asUser();
   await harness.prisma.user.update({ where: { id: owner.id }, data: { emailVerifiedAt: new Date() } });
@@ -274,6 +395,10 @@ test("explicit provider linking accepts an absent email, requires fresh login an
 test("exports isolate users and omit secrets; erasure revokes tokens and blocks late model/ledger writes", async () => {
   const owner = await harness.asUser();
   const other = await harness.asUser();
+  await harness.prisma.user.update({
+    where: { id: owner.id },
+    data: { name: "Mira Chen", profession: "Software engineer", organization: "Fieldnote", heardFrom: "Mira Chen at Fieldnote" },
+  });
   await harness.prisma.task.create({ data: { userId: owner.id, title: "Owned export note" } });
   await harness.prisma.task.create({ data: { userId: other.id, title: "Other private task" } });
   await harness.prisma.preference.create({ data: { userId: owner.id, key: "test.secret", value: { token: "must-not-export", visible: "safe" } } });
@@ -288,6 +413,8 @@ test("exports isolate users and omit secrets; erasure revokes tokens and blocks 
   const exported = await owner.inject({ method: "GET", url: "/api/auth/export" });
   assert.equal(exported.statusCode, 200, exported.body);
   assert.match(exported.body, /Owned export note/);
+  assert.match(exported.body, /Fieldnote/);
+  assert.match(exported.body, /heardFrom/);
   assert.doesNotMatch(exported.body, /Other private task|must-not-export|token_hash|password_hash/);
   assert.equal((await key.inject({ method: "GET", url: "/api/auth/export" })).statusCode, 403);
   assert.equal((await owner.inject({ method: "DELETE", url: "/api/auth/account", payload: { confirmation: "not DELETE" } })).statusCode, 400);

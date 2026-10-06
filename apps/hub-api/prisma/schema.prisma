@@ -1407,6 +1407,11 @@ model User {
   onboardingTemplateId    String?        @map("onboarding_template_id")
   /// Null until the role wizard finishes. Existing accounts are stamped by migration.
   onboardingCompletedAt   DateTime?      @map("onboarding_completed_at")
+  gender                  String?
+  profession              String?
+  organization            String?
+  heardFrom               String?        @map("heard_from")
+  profileCompletedAt      DateTime?      @map("profile_completed_at")
   /// Optional modules that are on. Sorted ids. Empty means none of them.
   moduleSet               String         @default("code,diagrams,metrics,runs,skills,workspace") @map("module_set")
   /// Tester accounts may open the marketplace and switch desks. Everyone else keeps the signup role.
@@ -1455,6 +1460,7 @@ model EmailToken {
   kind      String
   expiresAt DateTime @map("expires_at")
   createdAt DateTime @default(now()) @map("created_at")
+  attempts  Int      @default(0)
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, kind])

@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { LogOut } from "lucide-react";
 import { useEffect, useState } from "react";
 import { DESK_IDS, DESKS, MARKET_ID } from "@/components/desk/desks";
+import { ProfileForm } from "@/components/profile-form";
 import { useToast } from "@/components/toast";
 import { api, HUB_API } from "@/lib/api";
 import { clearBrowserTabSession } from "@/lib/tab-session";
@@ -45,10 +46,18 @@ export function AccountSection() {
     },
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
-  const [name, setName] = useState<string | null>(null);
   const [current, setCurrent] = useState("");
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
+  const profileSave = useMutation({
+    mutationFn: api.updateProfile,
+    onSuccess: async () => {
+      toast("Profile saved.", { tone: "ok" });
+      await client.invalidateQueries({ queryKey: ["me"] });
+      await client.invalidateQueries({ queryKey: ["shell"] });
+    },
+    onError: (error) => toast((error as Error).message, { tone: "error" }),
+  });
   const save = useMutation({
     mutationFn: (data: { name?: string; password?: string; current?: string }) => api.updateMe(data),
     onSuccess: async () => {
@@ -162,16 +171,19 @@ export function AccountSection() {
         </div>
       ) : null}
       {local ? null : (
-        <div className="grid grid-cols-2 gap-3">
-          <label className="text-[13px] font-medium">
-            Name
-            <input
-              value={name ?? me.data.user.name}
-              onChange={(event) => setName(event.target.value)}
-              onBlur={() => name !== null && name !== me.data!.user.name && save.mutate({ name })}
-              className="field mt-1.5 w-full"
-            />
-          </label>
+        <div className="space-y-5">
+          <div className="rounded-xl border border-line p-3">
+            <h3 className="text-[13px] font-medium">Profile</h3>
+            <p className="mt-1 text-[12px] text-muted">These details personalize setup. Only your name is required.</p>
+            <div className="mt-3">
+              <ProfileForm
+                initial={{ name: me.data.user.name, profile: me.data.user.profile }}
+                submitLabel="Save profile"
+                pending={profileSave.isPending}
+                onSubmit={(values) => profileSave.mutate(values)}
+              />
+            </div>
+          </div>
           <div className="text-[13px] font-medium">
             {me.data.user.hasPassword === false ? "Add a password" : "Change password"}
             <div className="mt-1.5 flex gap-2">

@@ -15,6 +15,11 @@ function LoginStrand() {
   return <EnsembleMark size={140} className="login-strand pointer-events-none absolute" />;
 }
 
+export function authRedirectTarget(mode: "login" | "signup", result: { verificationSent?: boolean; user?: unknown }, next: string | null): string {
+  if (mode === "signup") return result.verificationSent ? "/verify?next=/start" : "/start";
+  return safeLoginNext(next) ?? "/today";
+}
+
 export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const status = useQuery({ queryKey: ["auth-status"], queryFn: api.authStatus });
   const [email, setEmail] = useState("");
@@ -31,9 +36,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
     onSuccess: (result) => {
       clearBrowserTabSession();
       const next = new URLSearchParams(window.location.search).get("next");
-      const safe = safeLoginNext(next);
-      window.location.href = mode === "signup" ? "/start" : safe ?? "/today";
-      void result;
+      window.location.href = authRedirectTarget(mode, result, next);
     },
     onError: () => setResetChallenge((value) => value + 1),
   });

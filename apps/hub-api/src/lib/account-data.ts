@@ -23,7 +23,18 @@ export async function exportAccountData(prisma: PrismaClient, userId: string) {
   return prisma.$transaction(async (tx) => {
     const user = await tx.user.findUniqueOrThrow({
       where: { id: userId },
-      select: { id: true, email: true, name: true, createdAt: true, emailVerifiedAt: true },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        createdAt: true,
+        emailVerifiedAt: true,
+        gender: true,
+        profession: true,
+        organization: true,
+        heardFrom: true,
+        profileCompletedAt: true,
+      },
     });
     const tables: Record<string, Prisma.JsonValue[]> = {};
     for (const model of scopedModels) {

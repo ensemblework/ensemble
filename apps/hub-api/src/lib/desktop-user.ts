@@ -9,11 +9,19 @@ const LOCAL_EMAIL = "local@ensemble.desktop";
 export async function ensureDesktopUser(id = env.ENSEMBLE_DEV_USER_ID): Promise<string> {
   const existing = await prisma.user.findUnique({ where: { id }, include: { authIdentities: { select: { id: true } } } });
   if (existing && (existing.passwordHash || existing.authIdentities.length)) {
-    if (!existing.onboardingCompletedAt) {
-      await prisma.user.update({ where: { id }, data: { onboardingCompletedAt: new Date() } });
+    if (!existing.onboardingCompletedAt || !existing.profileCompletedAt) {
+      const now = new Date();
+      await prisma.user.update({
+        where: { id },
+        data: {
+          onboardingCompletedAt: existing.onboardingCompletedAt ?? now,
+          profileCompletedAt: existing.profileCompletedAt ?? now,
+        },
+      });
     }
     return id;
   }
+  const now = new Date();
   const passwordHash = await hashPassword(randomBytes(32).toString("base64url"));
   await prisma.user.upsert({
     where: { id },
@@ -22,12 +30,14 @@ export async function ensureDesktopUser(id = env.ENSEMBLE_DEV_USER_ID): Promise<
       email: LOCAL_EMAIL,
       name: "Local",
       passwordHash,
-      onboardingCompletedAt: new Date(),
+      onboardingCompletedAt: now,
+      profileCompletedAt: now,
       onboardingRole: "engineer",
     },
     update: {
       passwordHash,
-      onboardingCompletedAt: existing?.onboardingCompletedAt ?? new Date(),
+      onboardingCompletedAt: existing?.onboardingCompletedAt ?? now,
+      profileCompletedAt: existing?.profileCompletedAt ?? now,
     },
   });
   return id;

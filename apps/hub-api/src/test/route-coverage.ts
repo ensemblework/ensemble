@@ -8,6 +8,7 @@ export const authRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> 
   "POST /api/auth/logout": ["happy-path"],
   "GET /api/auth/me": ["happy-path"],
   "PATCH /api/auth/me": ["happy-path", "invalid-input"],
+  "PUT /api/auth/profile": ["happy-path", "invalid-input"],
   "POST /api/auth/verify-email": ["happy-path", "isolation", "invalid-input"],
   "POST /api/auth/resend-verification": ["happy-path"],
   "POST /api/auth/forgot": ["happy-path", "invalid-input"],

@@ -606,31 +606,36 @@ The **Failed jobs** section is a real retry interface, not a decorative error li
 
 Login supports email/password, Google, GitHub and Microsoft. Provider buttons are shown only when both corresponding `AUTH_<PROVIDER>_CLIENT_ID/SECRET` settings exist. Login OAuth clients/scopes are separate from connector OAuth. OAuth uses PKCE, nonce validation, signed browser-flow cookies, expiring single-use database state, and JWKS validation of Google/Microsoft identity tokens. It stores identity mappings, not provider access tokens.
 
-Verified Google and primary GitHub emails can verify a new account. Automatic email linking requires both the provider email and the existing account email to be verified; otherwise sign in through the existing method and explicitly link in Account. Microsoft email/username claims are not trusted as ownership proof: Microsoft-created accounts require Ensemble email verification. A provider without an email can be linked to an already signed-in account.
+Verified Google and primary GitHub emails can verify a new account. Automatic email linking requires both the provider email and the existing account email to be verified; otherwise sign in through the existing method and explicitly link in Account. Microsoft email/username claims are not trusted as ownership proof: Microsoft-created accounts receive an Ensemble email code. A provider without an email can be linked to an already signed-in account.
 
-Hosted email signup needs `EMAIL_PROVIDER=resend`, `EMAIL_API_KEY`, `EMAIL_FROM` and both Turnstile keys. An unverified account can save notes/tasks/context; agents, models and connectors are gated. `/forgot`, `/reset`, `/verify` are public pages. Email tokens are hashed, single-use and sent in URL fragments: verification lasts 24 hours, reset 30 minutes; requesting new mail invalidates the previous token of the same kind. Verification also requires a browser session for that same account; another browser must sign in and reopen the email link. Reset and password changes invalidate old sessions; recovering an unverified address removes pending social identities to prevent account pre-hijacking.
+Hosted email signup needs `EMAIL_PROVIDER=resend`, `EMAIL_API_KEY`, `EMAIL_FROM` and both Turnstile keys. An unverified account can save notes/tasks/context; agents, models and connectors are gated. `/forgot`, `/reset`, `/verify` are public pages. Verification mail sends a 4-character code for `/verify`; the `email_tokens` row stores only `sha256("verify:" + userId + ":" + code)`, expires after 30 minutes, counts wrong attempts, and a new code invalidates the previous one. Verification requires a signed-in browser session for that same account. Reset mail still uses a single-use URL-fragment token that lasts 30 minutes. Reset and password changes invalidate old sessions; recovering an unverified address removes pending social identities to prevent account pre-hijacking.
 
 | Method | Path | Body / behavior |
 |---|---|---|
 | GET | `/api/auth/status` | Signup mode, configured providers, email availability, public Turnstile key; no secrets |
 | POST | `/api/auth/signup` | `{ email, password, name?, turnstileToken? }`; creates session and sends verification |
 | POST | `/api/auth/login` • `/api/auth/logout` | `{ email, password }` • ends session |
-| GET / PATCH | `/api/auth/me` | Identity/appearance/modules • `{ name?, password?, current? }`; sensitive password changes require browser authentication |
+| GET | `/api/auth/me` | Identity/appearance/modules plus `user.profile`, `verificationRequired`, `onboardingComplete`, and `profileComplete` |
+| PATCH | `/api/auth/me` | `{ name?, password?, current? }`; sensitive password changes require browser authentication |
+| PUT | `/api/auth/profile` | Browser session. `{ name, gender?, profession?, organization?, heardFrom? }`; trims optional empty values to `null`, sets `profileCompletedAt`, returns `{ user, profile }` |
 | GET | `/api/auth/oauth/:provider/start` | Redirects to login provider; `?link=1` requires an existing browser session |
 | GET | `/api/auth/oauth/:provider/callback` | Consumes browser-bound state and returns to a fixed Hub-origin page |
-| POST | `/api/auth/verify-email` | `{ token }`; consumes valid verification token |
-| POST | `/api/auth/resend-verification` | Browser session required |
+| POST | `/api/auth/verify-email` | Browser session. `{ code }`; normalizes spaces/dashes/case, locks after five wrong tries, consumes the active verification code |
+| POST | `/api/auth/resend-verification` | Browser session; sends a fresh code and returns `{ sent }` |
 | POST | `/api/auth/forgot` | `{ email }`; generic response, whether an account exists or not |
 | POST | `/api/auth/reset` | `{ token, password }`; single use, ends all sessions |
 | GET / DELETE | `/api/auth/identities` • `/api/auth/identities/:provider` | List login methods • `{ current? }`; cannot remove the last method |
 | GET | `/api/auth/export` | Browser-only JSON attachment of user-scoped records, excluding credentials |
 | DELETE | `/api/auth/account` | `{ confirmation: "DELETE", current? }`; recent/password-confirmed browser session, no active agent jobs; removes account data and revokes devices |
 
-Settings → Account supports linked methods, adding/changing passwords, JSON export and deletion. Sensitive method removal/deletion uses a recent session (10 minutes) or current-password confirmation. Deletion leaves local user files alone; provider copies and infrastructure backup retention are separate. The landing site includes `/privacy`, `/terms`, and direct registration links.
+`/verify` (`app/verify/page.tsx`, `components/account-recovery.tsx`) is now a code entry page. It shows the signed-in email, posts `{ code }`, offers **Send a new code**, and asks signed-out people to sign in at `/login?next=/verify`. Successful verification follows a safe relative `next` query, then `/start` if onboarding is incomplete, otherwise `/today`.
+
+`/start` (`app/(hub)/start/page.tsx`) first shows the **About you** profile step while `/api/auth/me.profileComplete` is false. It collects required full name plus optional gender, profession, organization, and referral source, then continues to the existing role and template picker.
+
+Settings → Account supports profile editing, linked methods, adding/changing passwords, JSON export and deletion. Sensitive method removal/deletion uses a recent session (10 minutes) or current-password confirmation. Deletion leaves local user files alone; provider copies and infrastructure backup retention are separate. The landing site includes `/privacy`, `/terms`, and direct registration links.
 
 ## 17. Linking a computer, and connecting editors
 
 - **`/link`** (`app/link/page.tsx`, `components/cli-link.tsx`): approves or denies an `ensemble login`. It is a standalone signed-in page; signed-out visitors go to `/login?next=/link?code=…` and come back, and the onboarding redirect skips it so a new account does not lose the code. It shows the computer name, platform, CLI version and requested access ("Read your Ensemble context in editors" and "Run tasks you assign to this computer") with a warning to approve only a code you just started. An unverified hosted account can approve editor access only.
 - **Connect your apps** (`/connect`, `components/connect/*`, `lib/connect/{catalog,configs,guides}.ts`): each editor guide offers three methods: Ensemble CLI (recommended; install command per OS, `ensemble login`, `ensemble mcp setup <editor>`, the config it writes), Hosted URL (no install; a read-only key from this page and the `${publicApiUrl}/mcp` snippet), and From source (the earlier developer flow; only this method shows the local bridge status). Editors: VS Code, Cursor, Windsurf, Claude Code, Claude Desktop, Codex & ChatGPT, Gemini CLI, GitHub Copilot CLI, Zed, Visual Studio, JetBrains, Cline, Continue, opencode; macOS, Windows and Linux paths.
 - **Settings → Devices** (`components/settings/devices.tsx`): "Add a computer with the Ensemble CLI" (install per OS, `ensemble login`, `ensemble folders add`, `ensemble runner install`) above the pairing code, which stays for the desktop app. The assign dialog's empty state points there.
-

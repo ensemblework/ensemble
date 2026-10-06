@@ -6,7 +6,7 @@ import { envDevTools } from "../lib/dev-tools.js";
 import { requireBrowserSession } from "../bridge/auth.js";
 import { endSession, hashPassword, newApiToken, readCookie, SESSION_COOKIE, sha256, startSession, verifyPassword } from "../lib/auth.js";
 import { currentSignupPolicy, INVITE_ONLY, signupMode, signupPermitted } from "../lib/signup.js";
-import { emailConfigured, requireEmailConfigured, sendAccountEmail } from "../lib/auth-email.js";
+import { emailConfigured, requireEmailConfigured, sendAccountEmail, verifyCodeTokenId } from "../lib/auth-email.js";
 import { LoginProvider, loginProviderConfigured } from "../lib/auth-oauth.js";
 import { turnstileSiteKey, verifyTurnstile } from "../lib/turnstile.js";
 import { deleteAccountData, exportAccountData } from "../lib/account-data.js";
@@ -18,13 +18,51 @@ const Credentials = z.object({
   email: z.string().trim().toLowerCase().email("Enter a valid email address."),
   password: z.string().min(8, "Use at least 8 characters.").max(256, "Use at most 256 characters."),
 });
+const VerifyCode = z.object({ code: z.string().min(1).max(16) });
+const OptionalProfileText = (max: number) => z.preprocess((value) => (value === null ? undefined : value), z.string().trim().max(max).optional());
+const Profile = z.object({
+  name: z.string().trim().min(1, "Enter your name.").max(80),
+  gender: OptionalProfileText(40),
+  profession: OptionalProfileText(80),
+  organization: OptionalProfileText(80),
+  heardFrom: OptionalProfileText(120),
+});
+
+function optionalText(value: string | null | undefined): string | null {
+  return value && value.length > 0 ? value : null;
+}
+
+function normalizeVerifyCode(code: string): string {
+  return code.toUpperCase().replace(/[\s-]+/g, "");
+}
 
 export async function authRoutes(app: FastifyInstance): Promise<void> {
   const { prisma } = app;
 
   const realAccounts = () => prisma.user.count({ where: { OR: [{ passwordHash: { not: null } }, { authIdentities: { some: {} } }] } });
-  const userView = (user: { id: string; email: string; name: string; emailVerifiedAt: Date | null; passwordHash: string | null }) => ({
-    id: user.id, email: user.email, name: user.name, emailVerified: Boolean(user.emailVerifiedAt), hasPassword: Boolean(user.passwordHash),
+  const profileView = (user: { gender: string | null; profession: string | null; organization: string | null; heardFrom: string | null }) => ({
+    gender: user.gender,
+    profession: user.profession,
+    organization: user.organization,
+    heardFrom: user.heardFrom,
+  });
+  const userView = (user: {
+    id: string;
+    email: string;
+    name: string;
+    emailVerifiedAt: Date | null;
+    passwordHash: string | null;
+    gender: string | null;
+    profession: string | null;
+    organization: string | null;
+    heardFrom: string | null;
+  }) => ({
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    emailVerified: Boolean(user.emailVerifiedAt),
+    hasPassword: Boolean(user.passwordHash),
+    profile: profileView(user),
   });
   const Token = z.object({ token: z.string().min(20).max(200) });
   const sensitiveSession = async (request: import("fastify").FastifyRequest, current?: string) => {
@@ -129,9 +167,10 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     return {
       user: user && request.authVia !== "bypass" && request.authVia !== "desktop"
         ? userView(user)
-        : { id: request.userId, email: "", name: "Local (no account)", emailVerified: true, hasPassword: false },
+        : { id: request.userId, email: "", name: "Local (no account)", emailVerified: true, hasPassword: false, profile: { gender: null, profession: null, organization: null, heardFrom: null } },
       via: request.authVia,
       verificationRequired: process.env.NODE_ENV === "production" && process.env.ENSEMBLE_DESKTOP !== "1" && !user?.emailVerifiedAt,
+      profileComplete: request.authVia === "bypass" || process.env.ENSEMBLE_DESKTOP === "1" || Boolean(user?.profileCompletedAt),
       appearance: {
         accent: settings.appearance.accent,
         accentCustom: settings.appearance.accentCustom,
@@ -167,18 +206,61 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     return { user: userView(updated) };
   });
 
-  app.post("/api/auth/verify-email", async (request) => {
-    const { token } = Token.parse(request.body);
-    await prisma.$transaction(async (tx) => {
-      const row = await tx.emailToken.findFirst({ where: { id: sha256(token), kind: "verify", expiresAt: { gt: new Date() } } });
-      if (!row) throw Object.assign(new Error("This verification link is invalid or expired. Request a new email."), { statusCode: 400 });
-      if (request.authVia !== "session" || request.userId !== row.userId) {
-        throw Object.assign(new Error("Sign in to the account that requested this email, then reopen the verification link."), { statusCode: 401 });
-      }
-      await tx.user.update({ where: { id: row.userId }, data: { emailVerifiedAt: new Date() } });
-      const consumed = await tx.emailToken.deleteMany({ where: { id: row.id } });
-      if (consumed.count !== 1) throw Object.assign(new Error("This verification link has already been used."), { statusCode: 400 });
+  app.put("/api/auth/profile", async (request) => {
+    requireBrowserSession(request);
+    const body = Profile.parse(request.body);
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: request.userId } });
+    const updated = await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        name: body.name,
+        gender: optionalText(body.gender),
+        profession: optionalText(body.profession),
+        organization: optionalText(body.organization),
+        heardFrom: optionalText(body.heardFrom),
+        profileCompletedAt: user.profileCompletedAt ?? new Date(),
+      },
     });
+    await appendLedger({ userId: updated.id, actor: "me", action: "auth.profile" });
+    return { user: userView(updated), profile: profileView(updated) };
+  });
+
+  app.post("/api/auth/verify-email", async (request) => {
+    const { code: rawCode } = VerifyCode.parse(request.body);
+    if (request.authVia !== "session") {
+      throw Object.assign(new Error("Sign in to the account you are verifying, then enter the code."), { statusCode: 401 });
+    }
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: request.userId } });
+    if (user.emailVerifiedAt) return { verified: true };
+    const code = normalizeVerifyCode(rawCode);
+    const row = await prisma.emailToken.findFirst({
+      where: { userId: user.id, kind: "verify", expiresAt: { gt: new Date() } },
+      orderBy: { createdAt: "desc" },
+    });
+    if (!row) throw Object.assign(new Error("There is no active code. Send a new one."), { statusCode: 400 });
+    // Reserve the attempt before comparing, so parallel requests cannot try more than five codes.
+    const reserved = await prisma.emailToken.updateMany({
+      where: { id: row.id, attempts: { lt: 5 } },
+      data: { attempts: { increment: 1 } },
+    });
+    if (reserved.count !== 1) {
+      await prisma.emailToken.deleteMany({ where: { id: row.id, userId: user.id, kind: "verify" } });
+      throw Object.assign(new Error("Too many wrong codes. Send a new code."), { statusCode: 400 });
+    }
+    if (row.id !== verifyCodeTokenId(user.id, code)) {
+      const current = await prisma.emailToken.findUnique({ where: { id: row.id }, select: { attempts: true } });
+      const used = current?.attempts ?? 5;
+      if (used >= 5) {
+        await prisma.emailToken.deleteMany({ where: { id: row.id, userId: user.id, kind: "verify" } });
+        throw Object.assign(new Error("Too many wrong codes. Send a new code."), { statusCode: 400 });
+      }
+      throw Object.assign(new Error(`That code is not right. ${5 - used} tries left.`), { statusCode: 400 });
+    }
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({ where: { id: user.id }, data: { emailVerifiedAt: new Date() } });
+      await tx.emailToken.deleteMany({ where: { userId: user.id, kind: "verify" } });
+    });
+    await appendLedger({ userId: user.id, actor: "me", action: "auth.verify" });
     return { verified: true };
   });
 

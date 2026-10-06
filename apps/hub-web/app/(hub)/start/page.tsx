@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { api } from "@/lib/api";
 import { useToast } from "@/components/toast";
+import { ProfileForm } from "@/components/profile-form";
 
 const ROLES = [
   ["student", "Student", "Assignments, exams, and the people on the work."],
@@ -19,6 +20,7 @@ export default function StartPage() {
   const toast = useToast();
   const client = useQueryClient();
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 15_000 });
+  const me = useQuery({ queryKey: ["me"], queryFn: api.me, staleTime: 30_000 });
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings, staleTime: 60_000 });
   const [role, setRole] = useState<string | null>(null);
   const [templateId, setTemplateId] = useState<string | null>(null);
@@ -37,6 +39,34 @@ export default function StartPage() {
     },
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
+  const profile = useMutation({
+    mutationFn: api.updateProfile,
+    onSuccess: async () => {
+      await client.invalidateQueries({ queryKey: ["me"] });
+      await client.invalidateQueries({ queryKey: ["shell"] });
+    },
+    onError: (error) => toast((error as Error).message, { tone: "error" }),
+  });
+
+  if (me.data?.profileComplete === false) {
+    return (
+      <div className="mx-auto max-w-[640px] px-4 pb-24 pt-16">
+        <p className="page-kicker mb-2">About you</p>
+        <h1 className="display text-[32px] leading-none">Tell Ensemble what to call you</h1>
+        <p className="mt-3 max-w-[46ch] text-[14px] leading-6 text-muted">
+          These fields are optional except your name. They help personalize labels and can be changed later in Settings.
+        </p>
+        <div className="tile mt-6 rounded-2xl p-4">
+          <ProfileForm
+            initial={{ name: me.data.user.name, profile: me.data.user.profile }}
+            submitLabel="Continue"
+            pending={profile.isPending}
+            onSubmit={(values) => profile.mutate(values)}
+          />
+        </div>
+      </div>
+    );
+  }
 
   if (shell.data?.onboardingComplete) {
     return (

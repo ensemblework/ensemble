@@ -133,12 +133,16 @@ export async function authOAuthRoutes(app: FastifyInstance, options: { exchange?
         await tx.authIdentity.create({ data: { userId: account.id, provider, subject: profile.subject, email: profile.email } });
         return account;
       });
-      if (created && !user.emailVerifiedAt && emailConfigured()) await sendAccountEmail(prisma, user, "verify");
+      let verificationSent = false;
+      if (created && !user.emailVerifiedAt && emailConfigured()) {
+        await sendAccountEmail(prisma, user, "verify");
+        verificationSent = true;
+      }
       await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
       if (!flow.userId) await startSession(reply, user.id, request);
       await appendLedger({ userId: user.id, actor: "me", action: flow.userId ? "auth.link" : "auth.oauth", payload: { provider } });
-      destination.pathname = flow.userId ? "/settings" : user.onboardingCompletedAt ? "/today" : "/start";
-      destination.search = flow.userId ? "?linked=1" : "";
+      destination.pathname = flow.userId ? "/settings" : verificationSent ? "/verify" : user.onboardingCompletedAt ? "/today" : "/start";
+      destination.search = flow.userId ? "?linked=1" : verificationSent ? "?next=/start" : "";
       return reply.redirect(destination.toString());
     } catch (error) {
       const status = error instanceof Error && "statusCode" in error && typeof error.statusCode === "number" ? error.statusCode : 500;

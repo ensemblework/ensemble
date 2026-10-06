@@ -4,7 +4,7 @@ import test from "node:test";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { AuthForm } from "./auth-form.js";
+import { AuthForm, authRedirectTarget } from "./auth-form.js";
 import { HUB_API } from "@/lib/api";
 
 (globalThis as { React?: typeof React }).React = React;
@@ -16,6 +16,13 @@ test("open registration offers configured social logins without connector scopes
   client.setQueryData(["auth-status"], {
     hasAccounts: true, signup: "open", bypass: false,
     providers: ["google", "github", "microsoft"], emailConfigured: true, turnstileSiteKey: null,
+  });
+
+  test("signup with verification mail goes to the code page before onboarding", () => {
+    assert.equal(authRedirectTarget("signup", { verificationSent: true }, null), "/verify?next=/start");
+    assert.equal(authRedirectTarget("signup", { verificationSent: false }, null), "/start");
+    assert.equal(authRedirectTarget("login", {}, "/context"), "/context");
+    assert.equal(authRedirectTarget("login", {}, "https://evil.example"), "/today");
   });
   const realFetch = globalThis.fetch;
   globalThis.fetch = async () => new Response(JSON.stringify(client.getQueryData(["auth-status"])), { headers: { "Content-Type": "application/json" } });

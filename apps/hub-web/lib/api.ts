@@ -658,11 +658,23 @@ export type ModelCatalog = {
 
 export type ModelKey = { provider: string; source: "you" | "env" | "none"; hint: string | null; updatedAt: string | null };
 
+export type Profile = { gender: string | null; profession: string | null; organization: string | null; heardFrom: string | null };
+
+export type ProfileInput = {
+  name: string;
+  gender?: string | null;
+  profession?: string | null;
+  organization?: string | null;
+  heardFrom?: string | null;
+};
+
 export type Me = {
-  user: { id: string; email: string; name: string; emailVerified?: boolean; hasPassword?: boolean };
+  user: { id: string; email: string; name: string; emailVerified?: boolean; hasPassword?: boolean; profile: Profile };
   via: "session" | "token" | "internal" | "bypass" | "desktop";
   modules?: string | null;
   verificationRequired?: boolean;
+  onboardingComplete?: boolean;
+  profileComplete?: boolean;
 };
 
 export type ApiTokenRecord = {
@@ -841,7 +853,8 @@ export const api = bindClient({
   login: (data: { email: string; password: string }) => post<{ user: Me["user"] }>("/api/auth/login", data),
   logout: () => post<void>("/api/auth/logout"),
   updateMe: (data: { name?: string; password?: string; current?: string }) => patch<{ user: Me["user"] }>("/api/auth/me", data),
-  verifyEmail: (token: string) => post<{ verified: boolean }>("/api/auth/verify-email", { token }),
+  updateProfile: (data: ProfileInput) => put<{ user: Me["user"]; profile: Profile }>("/api/auth/profile", data),
+  verifyEmail: (code: string) => post<{ verified: boolean }>("/api/auth/verify-email", { code }),
   resendVerification: () => post<{ sent: boolean }>("/api/auth/resend-verification"),
   forgotPassword: (email: string) => post<{ message: string }>("/api/auth/forgot", { email }),
   resetPassword: (token: string, password: string) => post<{ reset: boolean }>("/api/auth/reset", { token, password }),
