@@ -58,7 +58,7 @@ test("standalone pages migration keeps linked rows and allows a page with no tas
   if (!(await canCreate())) return t.skip("Cannot create Postgres databases from DATABASE_URL");
   const folders = readdirSync(migrationsDir).filter((name) => /^\d/.test(name)).sort();
   const mine = folders.indexOf(migration);
-  assert.ok(mine === folders.length - 1, "standalone pages migration must sort last");
+  assert.ok(mine >= 0, "standalone pages migration folder is missing");
 
   const stamp = Date.now().toString(36);
   const existing = `ensemble_pages_existing_${stamp}`;
@@ -112,6 +112,10 @@ test("standalone pages migration keeps linked rows and allows a page with no tas
     assert.equal(marker, "t");
     const keptNotes = await psql(existingUrl, `SELECT task_id || '|' || notes_snapshot FROM task_pages WHERE id = 'legacy-page'`);
     assert.equal(keptNotes, "legacy-task|legacy violet ink");
+    // Later migrations bring the database up to the schema the Prisma client below expects.
+    for (const folder of folders.slice(mine + 1)) {
+      await exec("psql", [existingUrl, "-v", "ON_ERROR_STOP=1", "-f", path.join(migrationsDir, folder, "migration.sql")]);
+    }
     const indexedAt = await psql(existingUrl, `SELECT updated_at FROM task_pages WHERE id = 'legacy-page'`);
     const client = new PrismaClient({ datasources: { db: { url: existingUrl } } });
     try {

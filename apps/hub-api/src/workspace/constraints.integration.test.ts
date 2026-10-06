@@ -65,8 +65,20 @@ function prisma(url: string, args: string[]) {
   });
 }
 
+/**
+ * 20261006010000_account_data_lifetime adds `<table>_account_lifetime_fkey`
+ * cascades to legacy user_id columns in SQL only, so Prisma would drop them.
+ * Those statements are the one difference allowed; anything else is drift.
+ */
+const ACCOUNT_LIFETIME_DROP = /^ALTER TABLE "[a-z0-9_]+" DROP CONSTRAINT "[a-z0-9_]+_account_lifetime_fkey";$/;
+
 async function assertNoDrift(url: string) {
-  await prisma(url, ["migrate", "diff", "--from-url", url, "--to-schema-datamodel", "prisma/schema.prisma", "--exit-code"]);
+  const { stdout: diff } = await prisma(url, ["migrate", "diff", "--from-url", url, "--to-schema-datamodel", "prisma/schema.prisma", "--script"]);
+  const unexpected = diff
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("--") && !ACCOUNT_LIFETIME_DROP.test(line));
+  assert.deepEqual(unexpected, [], `Prisma drift:\n${diff}`);
   const { stdout } = await prisma(url, ["migrate", "status"]);
   assert.match(stdout, /Database schema is up to date/);
 }
