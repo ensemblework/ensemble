@@ -4,8 +4,8 @@
  * Gemini's HTTP API is stubbed. Nothing here starts Python, Docker, or the hosted runtime.
  */
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { writeFileSync } from "node:fs";
+import { makeTestDirectory } from "../test/temporary.js";
 import { join } from "node:path";
 import test from "node:test";
 import { randomBytes } from "node:crypto";
@@ -36,7 +36,7 @@ test("an in-process agent turn completes a task and a tool call with only a Gemi
   resetBuckets();
   setRuntimeSleepForTests(async () => undefined);
 
-  const folder = mkdtempSync(join(tmpdir(), "ensemble-inprocess-agent-"));
+  const folder = makeTestDirectory("ensemble-inprocess-agent-");
   writeFileSync(join(folder, "notes.txt"), "hello from the work folder\n");
   const rows = new Map<string, { secret: string; baseUrl: string | null; hint: string; updatedAt: Date }>();
   const store: CredentialStore = {

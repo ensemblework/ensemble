@@ -6,7 +6,7 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Settings } from "@ensemble/shared-types";
 import { TERMINAL_DESKTOP_BODY, TERMINAL_DESKTOP_TITLE } from "../code/terminal-desktop-note.js";
-import { TerminalSection } from "./sections.js";
+import { AutonomySection, OrchestrationSection, QuietHoursSection, TerminalSection } from "./sections.js";
 
 // sections.tsx and ui.tsx are compiled with the classic JSX runtime under tsx, so they need React in scope here.
 (globalThis as { React?: typeof React }).React = React;
@@ -19,6 +19,28 @@ type DesktopWindow = Window & {
 const STATUS = { enabled: true, unlocked: false, expiresAt: null, passkeys: [], roots: ["/work"], home: "/work" };
 // Each list has a folder the other does not, so a section showing the wrong list is caught.
 const SETTINGS = Settings.parse({ terminal: { roots: ["/srv/terminal-only"] }, code: { roots: ["/srv/code-only"] } });
+
+test("agent limits and quiet-hour fields have contextual accessible labels", async () => {
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  try {
+    await act(async () => root.render(<>
+      <AutonomySection settings={SETTINGS} patch={() => {}} />
+      <OrchestrationSection settings={SETTINGS} patch={() => {}} />
+      <QuietHoursSection settings={SETTINGS} patch={() => {}} />
+    </>));
+    for (const input of host.querySelectorAll("input,select")) {
+      assert.ok(input.getAttribute("aria-label") || input.getAttribute("aria-labelledby"), input.outerHTML);
+    }
+    for (const name of ["Daily high-risk write limit", "Tasks that run at once", "Quiet hours start", "Quiet hours end"]) {
+      assert.ok(host.querySelector(`[aria-label="${name}"]`), name);
+    }
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+  }
+});
 
 type Patch = Record<string, unknown>;
 type View = { host: HTMLDivElement; calls: string[]; patches: Patch[]; done: () => Promise<void> };

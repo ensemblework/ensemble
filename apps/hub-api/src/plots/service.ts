@@ -4,6 +4,8 @@ import {
   MAX_UPLOAD_BYTES,
   PICKLE_REJECTION,
   defaultPlotConfig,
+  columnSchema,
+  parseDate,
   parseTableText,
   plotConfigSchema,
   type PlotColumn,
@@ -17,6 +19,29 @@ import { fetchPublicTable } from "./ssrf.js";
 
 const TEXT = new Set(["csv", "tsv", "txt", "json", "jsonl", "paste"]);
 const BINARY = new Set(["xlsx", "xls", "xlsm", "ods", "numbers", "parquet", "feather"]);
+
+function validateExplicitTable(table: StoredTable): void {
+  const bad = (message: string): never => { throw Object.assign(new Error(message), { statusCode: 400 }); };
+  if (!table.columns.length || table.columns.length > 64) bad("An explicit table needs between 1 and 64 columns.");
+  const names = new Set<string>();
+  for (const column of table.columns) {
+    if (!columnSchema.safeParse(column).success || !column.name.trim()) bad("Every column needs a non-empty name and a supported type.");
+    if (names.has(column.name)) bad(`Column "${column.name}" is duplicated.`);
+    names.add(column.name);
+  }
+  for (const [index, row] of table.rows.entries()) {
+    if (row.length !== table.columns.length) bad(`Row ${index + 1} has ${row.length} values; expected ${table.columns.length}.`);
+    for (const [columnIndex, column] of table.columns.entries()) {
+      const value = row[columnIndex];
+      if (value === null) continue;
+      if (typeof value === "number" && !Number.isFinite(value)) bad(`Row ${index + 1}, column "${column.name}" must be finite.`);
+      if (column.type === "number" && typeof value !== "number") bad(`Row ${index + 1}, column "${column.name}" must contain a JSON number or null.`);
+      if (column.type === "date" && (typeof value === "number" ? !Number.isFinite(new Date(value).getTime()) : typeof value !== "string" || parseDate(value) === null)) {
+        bad(`Row ${index + 1}, column "${column.name}" must contain an ISO/year-first date, timestamp, or null.`);
+      }
+    }
+  }
+}
 
 export function formatFromName(name: string): string {
   const lower = name.toLowerCase();
@@ -110,6 +135,7 @@ export async function ingestDataset(
   let sheet = input.sheet ?? "";
   let format = formatFromName(filename);
   if (input.columns && input.rows && !bytes) {
+    validateExplicitTable({ columns: input.columns, rows: input.rows });
     table = { columns: input.columns, rows: input.rows.slice(0, MAX_STORED_ROWS) };
     format = "table";
     if (input.rows.length > MAX_STORED_ROWS) warnings.push(`Kept the first ${MAX_STORED_ROWS.toLocaleString()} rows.`);

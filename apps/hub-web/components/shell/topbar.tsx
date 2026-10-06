@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Menu, Moon, PanelRight, PanelRightDashed, Redo2, Sun, Undo2 } from "lucide-react";
+import { Menu, Moon, MoreHorizontal, PanelRight, PanelRightDashed, Redo2, Sun, Undo2 } from "lucide-react";
 import { FetchGlyph } from "@/components/motion/slot";
 import { usePathname } from "next/navigation";
 import { useEffect } from "react";
@@ -11,7 +11,7 @@ import { useModKey } from "@/lib/platform";
 import { APPEARANCE_KEY, DEFAULT_APPEARANCE, publishAppearance, usePersistentState } from "@/lib/prefs";
 import { useLive } from "../live";
 import { useToast } from "../toast";
-import { cx } from "../ui";
+import { MenuItem, Popover, cx } from "../ui";
 import { ActivityControls } from "./activity-panel";
 import { AskBar } from "./ask-bar";
 import { NotificationBell } from "./notification-bell";
@@ -117,6 +117,12 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
 
   const dark = appearance.theme !== "light";
   const mod = useModKey();
+  const toggleMode = () => {
+    const next = mode === "side" ? "page" : "side";
+    setMode(next);
+    toast(next === "side" ? "Tasks will open in a side peek." : "Tasks will open as a full page.");
+  };
+  const toggleTheme = () => publishAppearance({ ...appearance, theme: dark ? "light" : "dark" });
 
   return (
     <header className="flex h-11 shrink-0 items-center gap-2 border-b border-line px-3">
@@ -126,7 +132,7 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
       <div className="hidden min-w-0 shrink truncate text-[13.5px] font-medium sm:block sm:max-w-[140px]">{title}</div>
       <AskBar />
       <NotificationBell />
-      <div className="flex items-center rounded-lg border border-line">
+      <div className="hidden items-center rounded-lg border border-line lg:flex">
         <button type="button" className="icon-btn disabled:pointer-events-none disabled:opacity-30" title={`Undo (${mod === "⌘" ? "⌘Z" : "Ctrl+Z"})`} onClick={() => undo.mutate()} disabled={!canUndo}>
           <Undo2 size={15} />
         </button>
@@ -136,7 +142,7 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
       </div>
       <button
         type="button"
-        className="btn-ghost text-ink"
+        className="btn-ghost hidden text-ink lg:inline-flex"
         onClick={() => fetchNow.mutate()}
         disabled={fetchNow.isPending}
         title="Read every switched-on source now"
@@ -148,26 +154,41 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
       <ActivityControls connected={connected} />
       <button
         type="button"
-        className="icon-btn"
+        className="icon-btn hidden lg:inline-flex"
         aria-label={mode === "side" ? "Tasks open in a side peek. Switch to a full page." : "Tasks open as a full page. Switch to a side peek."}
         aria-pressed={mode === "side"}
         title={mode === "side" ? "Tasks open in a side peek. Click for a full page." : "Tasks open as a full page. Click for a side peek."}
-        onClick={() => {
-          const next = mode === "side" ? "page" : "side";
-          setMode(next);
-          toast(next === "side" ? "Tasks will open in a side peek." : "Tasks will open as a full page.");
-        }}
+        onClick={toggleMode}
       >
         {mode === "side" ? <PanelRight size={15} /> : <PanelRightDashed size={15} />}
       </button>
       <button
         type="button"
-        className="icon-btn"
+        className="icon-btn hidden lg:inline-flex"
         title={dark ? "Switch to light" : "Switch to dark"}
-        onClick={() => publishAppearance({ ...appearance, theme: dark ? "light" : "dark" })}
+        onClick={toggleTheme}
       >
         {dark ? <Sun size={15} /> : <Moon size={15} />}
       </button>
+      <Popover
+        align="right"
+        className="lg:hidden"
+        trigger={(open, toggle) => (
+          <button type="button" className="icon-btn" aria-label="More actions" aria-expanded={open} onClick={toggle}>
+            <MoreHorizontal size={16} />
+          </button>
+        )}
+      >
+        {(close) => (
+          <>
+            <MenuItem disabled={!canUndo || undo.isPending} onClick={() => { undo.mutate(); close(); }}><Undo2 size={14} /> Undo</MenuItem>
+            <MenuItem disabled={!canRedo || redo.isPending} onClick={() => { redo.mutate(); close(); }}><Redo2 size={14} /> Redo</MenuItem>
+            <MenuItem disabled={fetchNow.isPending} onClick={() => { fetchNow.mutate(); close(); }}><FetchGlyph active={fetchNow.isPending} size={14} /> Fetch now</MenuItem>
+            <MenuItem onClick={() => { toggleMode(); close(); }}><PanelRight size={14} /> {mode === "side" ? "Open tasks as full pages" : "Open tasks in a side peek"}</MenuItem>
+            <MenuItem onClick={() => { toggleTheme(); close(); }}>{dark ? <Sun size={14} /> : <Moon size={14} />} {dark ? "Switch to light" : "Switch to dark"}</MenuItem>
+          </>
+        )}
+      </Popover>
     </header>
   );
 }

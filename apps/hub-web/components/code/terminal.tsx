@@ -8,7 +8,7 @@ import { Fingerprint, Lock, Maximize2, Minimize2, TerminalSquare, X } from "luci
 import { useCallback, useEffect, useRef, useState } from "react";
 import { API, api } from "@/lib/api";
 import { TerminalMark, TerminalSvg } from "@/components/motion/terminal-mark";
-import { Spinner, cx } from "../ui";
+import { QueryError, Spinner, cx } from "../ui";
 import { currentTerminalAccess } from "./terminal-address";
 import { TerminalDesktopNote, useDesktopShell } from "./terminal-desktop-note";
 
@@ -255,6 +255,10 @@ export function Terminal({ initialCwd, onClose }: { initialCwd?: string; onClose
 
       {desktop ? (
         <TerminalDesktopNote />
+      ) : status.error ? (
+        <QueryError error={status.error} retry={() => void status.refetch()}>
+          <a href="/settings#devices" className="text-accent underline">Set up a paired computer</a>
+        </QueryError>
       ) : status.isLoading || !data ? (
         <div className="flex items-center gap-2 p-4 text-[13px] text-muted">
           <TerminalSvg state="working" />

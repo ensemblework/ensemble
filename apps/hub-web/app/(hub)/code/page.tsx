@@ -5,8 +5,8 @@ import { FolderGit2, TerminalSquare } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Terminal } from "@/components/code/terminal";
-import { Empty, PageHeader, SkeletonRows, Tag } from "@/components/ui";
-import { api, type ReviewSummary } from "@/lib/api";
+import { Empty, PageHeader, QueryError, SkeletonRows, Tag } from "@/components/ui";
+import { ApiError, api, type ReviewSummary } from "@/lib/api";
 import { dateTime } from "@/lib/format";
 
 function ReviewRow({ review }: { review: ReviewSummary }) {
@@ -77,7 +77,11 @@ export default function CodePage() {
           Show expired (older than {reviews.data?.ttlDays ?? 14} days)
         </label>
       </div>
-      {reviews.isLoading ? (
+      {reviews.error ? (
+        <QueryError error={reviews.error} retry={() => void reviews.refetch()}>
+          {reviews.error instanceof ApiError && reviews.error.status === 403 ? <Link href="/settings#devices" className="text-accent underline">Set up a paired computer</Link> : null}
+        </QueryError>
+      ) : reviews.isLoading ? (
         <SkeletonRows count={3} />
       ) : (reviews.data?.reviews ?? []).length === 0 ? (
         <Empty>No agent changes waiting. Repository jobs from the Workspace land here when they finish.</Empty>
@@ -93,7 +97,11 @@ export default function CodePage() {
         </Link>
         . Open one to review your own uncommitted changes, stage hunks and push.
       </p>
-      {repos.isLoading ? (
+      {repos.error ? (
+        <QueryError error={repos.error} retry={() => void repos.refetch()}>
+          {repos.error instanceof ApiError && repos.error.status === 403 ? <Link href="/settings#devices" className="text-accent underline">Set up a paired computer</Link> : null}
+        </QueryError>
+      ) : repos.isLoading ? (
         <SkeletonRows count={3} />
       ) : (repos.data?.repos ?? []).length === 0 ? (
         <Empty>No git checkouts found under {repos.data?.roots.join(", ") || "the workspace root"}.</Empty>

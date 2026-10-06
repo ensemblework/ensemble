@@ -10,6 +10,7 @@ import { recordUndoInTransaction, redoLast, undoLast, withUndoGroup, UndoConflic
 import { saveTaskPage } from "../pages/store.js";
 import { softDelete } from "../services/records.js";
 import { createTask, updateTask } from "../services/tasks.js";
+import { appendLedger } from "./ledger.js";
 
 async function databaseReady(): Promise<boolean> {
   try {
@@ -37,6 +38,30 @@ async function cleanup(userId: string) {
   await prisma.task.deleteMany({ where: { userId } });
   await prisma.user.delete({ where: { id: userId } }).catch(() => undefined);
 }
+
+test("concurrent task creates and ledger appends keep one ordered per-user stack and chain", async (t) => {
+  if (!(await databaseReady())) return t.skip("Postgres is not reachable");
+  const owner = await user("concurrent");
+  try {
+    const tasks = await Promise.all(Array.from({ length: 20 }, (_, index) => add(owner.id, `Concurrent ${index}`)));
+    assert.equal(new Set(tasks.map((task) => task.id)).size, 20);
+    const entries = await prisma.undoEntry.findMany({ where: { userId: owner.id }, orderBy: { seq: "asc" } });
+    assert.equal(entries.length, 5);
+    assert.deepEqual(entries.map((entry) => entry.seq), [16n, 17n, 18n, 19n, 20n]);
+    await Promise.all(tasks.map((task) => appendLedger({ userId: owner.id, actor: "me", action: "task.create", taskId: task.id })));
+    const ledger = await prisma.auditLedger.findMany({ where: { userId: owner.id }, orderBy: { ts: "asc" } });
+    assert.equal(ledger.length, 20);
+    assert.equal(ledger[0]?.prevHash, null);
+    for (let index = 1; index < ledger.length; index++) {
+      assert.equal(ledger[index]!.prevHash, ledger[index - 1]!.hash);
+      assert.ok(ledger[index]!.ts > ledger[index - 1]!.ts);
+    }
+    await undoLast(prisma, owner.id);
+    assert.equal(await prisma.task.count({ where: { userId: owner.id, deletedAt: null } }), 19);
+  } finally {
+    await cleanup(owner.id);
+  }
+});
 
 test("create undo moves the row to Trash and redo restores it", async (t) => {
   if (!(await databaseReady())) return t.skip("Postgres is not reachable");

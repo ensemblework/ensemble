@@ -106,7 +106,7 @@ The authoritative copy is `.env.example` in the repo root; every variable there 
 | Workspace and logs | `ENSEMBLE_WORKSPACE_ROOT`, `ENSEMBLE_WORKSPACE_IMAGE`, `ENSEMBLE_LOG_LEVEL`, `ENSEMBLE_LOG_TO_FILE`, `ENSEMBLE_LOG_RETENTION_DAYS`, `ENSEMBLE_FEATURES` |
 | Models | `ENSEMBLE_LLM_PROVIDER`, `GOOGLE_API_KEY` / `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `CURSOR_API_KEY`, `COPILOT_API_KEY`, `GITHUB_TOKEN`, `ENSEMBLE_MODEL_*`, `ENSEMBLE_EMBEDDING_MODEL` |
 | Connectors | `GOOGLE_CLIENT_ID/SECRET`, `MICROSOFT_TENANT_ID/CLIENT_ID/CLIENT_SECRET`, `GITHUB_ORG`, `GITHUB_APP_*`, `GITHUB_CLIENT_ID/SECRET`, `SLACK_USER_TOKEN`, `LINEAR_API_KEY` |
-| Limits and health | `ENSEMBLE_PLOT_CONCURRENCY`, `ENSEMBLE_RATE_*` (including `ENSEMBLE_RATE_CLI_START_*`, `ENSEMBLE_RATE_CLI_TOKEN_*`, `ENSEMBLE_RATE_CLI_APPROVE_*` and `ENSEMBLE_RATE_MCP_*`), `ENSEMBLE_HEALTH_*` |
+| Limits and health | `ENSEMBLE_PLOT_CONCURRENCY`, `ENSEMBLE_PLOT_MEMORY_MIB` (64-2048, default 2048; Linux address space / Mac sampled resident memory), `ENSEMBLE_RATE_*` (including `ENSEMBLE_RATE_CLI_START_*`, `ENSEMBLE_RATE_CLI_TOKEN_*`, `ENSEMBLE_RATE_CLI_APPROVE_*` and `ENSEMBLE_RATE_MCP_*`), `ENSEMBLE_HEALTH_*` |
 | Sidecar (desktop app and CLI runner) | `ENSEMBLE_DATA_DIR`, `ENSEMBLE_SECRET_KEY_FILE` (defaults to `secret.key` beside the data folder), `ENSEMBLE_REMOTE_STATE_DIR`, `ENSEMBLE_DISCOVERY_FILE`, `ENSEMBLE_REMOTE_LOOP=off` and `ENSEMBLE_AGENT_QUEUE=off` (an admin-only sidecar that never claims hosted work), `ENSEMBLE_SCHEDULER=off` |
 | Hosted account quotas | `ENSEMBLE_MAX_CONNECTORS` (5), `ENSEMBLE_MAX_JOBS_PER_DAY` (50, UTC), `ENSEMBLE_MAX_DATASET_BYTES` / `ENSEMBLE_MAX_DOCUMENT_BYTES` (104857600 each); positive integers |
 
@@ -261,7 +261,7 @@ Read from the workflow files and exercised in containers on 5 Oct 2026 (the VM h
 | agent-runtime tests | Python 3.12, `pip install -e apps/agent-runtime pytest`, `pytest tests` |
 | Production builds | `next build` for `apps/hub-web` (with placeholder `example.com` origins) and `apps/landing` |
 
-The `hub-web` suite takes about five minutes because something keeps its process open after the last test. On macOS several `hub-api` and plot-worker tests fail because `/tmp` and `/var` are symlinks into `/private`, so a local run is not the reference; CI on Linux is.
+Some `hub-web` tests can keep the process open after their assertions because of query-cache timers. Work-folder fixtures use canonical paths from `apps/hub-api/src/test/temporary.ts` (`/private/tmp` on Mac), so intended `/private/var` restrictions do not abort the scenarios. Device revocation's cross-process regression needs real Redis and reports an explicit skip for `memory://`. Plot-worker regressions run locally on Mac as well as in Linux CI.
 
 **`.github/workflows/deploy.yml`** runs after `ci` succeeds on a push to `main`, or by hand (Actions → deploy → Run workflow, with `all`, `api`, `app` or `landing`). It does nothing until the repository variable `DEPLOY_ENABLED` is `true`.
 
@@ -286,6 +286,8 @@ pnpm --filter @ensemble/hub-api route:inventory:check
 ```
 
 `src/app.ts` exposes the production HTTP factory without listeners, schedulers, queues, or process signal handlers. `src/test/http.ts` creates real browser sessions and scoped API tokens against migrated **in-memory PGlite**; no Docker or model key is needed. It refuses to silently skip missing critical infrastructure. Optional `ENSEMBLE_TEST_DATABASE_URL` must identify a migrated dedicated PostgreSQL database whose name includes `test`, never an ordinary development or production database.
+
+The PostgreSQL cleanup path checks whether an account-erasure test has already removed its fixture before deleting it again. This is fixture cleanup, not a change to real account-deletion error handling. Diagram parsing retains a 250 ms CPU-time budget rather than measuring preemption by unrelated parallel processes.
 
 The public suite is included in the normal hub-api `test`: route-driven anonymous/bridge/device/module gates, account signup/recovery/OAuth, resource ownership/relationship isolation, hosted execution and concurrent quotas, uploaded-file erasure, and provider-compatible tool schemas. OAuth/JWKS/email/Turnstile/model interactions are mocked or locally signed fixtures; they spend no live model quota. The web `test` includes signup/recovery DOM tests; Python `test_http_routes.py` uses FastAPI TestClient for token, payload and provider-response contracts.
 

@@ -34,7 +34,7 @@ PLOT_EXPORTS_BUSY = "Plot exports are busy. Try again."
 
 _WORKER_ENV_KEEP = (
     "PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TMPDIR", "TEMP", "TMP", "SYSTEMROOT",
-    "PYTHONPATH", "PYTHONHOME", "PYTHONNOUSERSITE",
+    "PYTHONPATH", "PYTHONHOME", "PYTHONNOUSERSITE", "ENSEMBLE_PLOT_MEMORY_MIB",
 )
 
 
@@ -171,20 +171,21 @@ def plot_concurrency() -> int:
     return min(32, max(1, value))
 
 
-def _tsx() -> Path:
-    repo = _repo_root()
-    candidates = [
-        repo / "node_modules" / ".bin" / "tsx",
-        repo / "apps" / "hub-api" / "node_modules" / ".bin" / "tsx",
-    ]
-    return next((path for path in candidates if path.is_file()), candidates[0])
-
-
 def seatbelt_worker_argv(python: str, worker: str, root: str, read_only: list[str], read_write: list[str]) -> list[str]:
     """Argv that starts the warm worker under the macOS spawn choke point."""
     repo = _repo_root()
     cli = repo / "apps" / "hub-api" / "src" / "workspace" / "sandbox" / "cli.ts"
-    command = [str(_tsx()), str(cli), "--worker", "--root", root, "--python", python, "--script", worker]
+    import shutil
+
+    node = shutil.which("node")
+    loaders = [
+        repo / "node_modules" / "tsx" / "dist" / "loader.mjs",
+        repo / "apps" / "hub-api" / "node_modules" / "tsx" / "dist" / "loader.mjs",
+    ]
+    loader = next((path for path in loaders if path.is_file()), None)
+    if not node or loader is None:
+        raise PlotRuntimeUnavailable("Node.js and tsx are required to start the Mac plot sandbox.")
+    command = [node, "--import", str(loader), str(cli), "--worker", "--root", root, "--python", python, "--script", worker]
     for path in read_only:
         command.extend(["--read-only", path])
     for path in read_write:

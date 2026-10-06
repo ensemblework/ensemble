@@ -187,8 +187,8 @@ export function AccountSection() {
           <div className="text-[13px] font-medium">
             {me.data.user.hasPassword === false ? "Add a password" : "Change password"}
             <div className="mt-1.5 flex gap-2">
-              {me.data.user.hasPassword !== false ? <input type="password" autoComplete="current-password" value={current} onChange={(event) => setCurrent(event.target.value)} placeholder="Current" className="field w-full" /> : null}
-              <input type="password" autoComplete="new-password" maxLength={256} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="New (8+)" className="field w-full" />
+              {me.data.user.hasPassword !== false ? <input aria-label="Current password" type="password" autoComplete="current-password" value={current} onChange={(event) => setCurrent(event.target.value)} placeholder="Current" className="field w-full" /> : null}
+              <input aria-label="New password" type="password" autoComplete="new-password" maxLength={256} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="New (8+)" className="field w-full" />
               <button type="button" className="btn" disabled={save.isPending || password.length < 8 || (me.data.user.hasPassword !== false && !current)} onClick={() => save.mutate({ password, current: current || undefined })}>
                 Save
               </button>

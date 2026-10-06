@@ -10,6 +10,34 @@ export type ParsedTable = {
 
 const DELIMITERS = [",", "\t", "|", ";", " "] as const;
 
+function tableRecords(text: string, delimiter?: string): string[] {
+  const records: string[] = [];
+  let start = 0;
+  let quoted = false;
+  let fieldStart = true;
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index]!;
+    if (quoted) {
+      if (char === '"') {
+        if (text[index + 1] === '"') index++;
+        else quoted = false;
+      }
+    } else if (char === '"' && fieldStart) {
+      quoted = true;
+      fieldStart = false;
+    } else if (char === "\r" || char === "\n") {
+      records.push(text.slice(start, index));
+      if (char === "\r" && text[index + 1] === "\n") index++;
+      start = index + 1;
+      fieldStart = true;
+    } else {
+      fieldStart = delimiter ? char === delimiter : DELIMITERS.some((candidate) => candidate === char);
+    }
+  }
+  if (start < text.length) records.push(text.slice(start));
+  return records;
+}
+
 function splitLine(line: string, delimiter: string): string[] {
   if (delimiter === " ") {
     return line.trim().split(/\s+/).filter((cell) => cell.length > 0);
@@ -52,9 +80,7 @@ function scoreDelimiter(sample: string[], delimiter: string): number {
 }
 
 export function sniffDelimiter(text: string): string {
-  const sample = text
-    .replace(/^\uFEFF/, "")
-    .split(/\r?\n/)
+  const sample = tableRecords(text.replace(/^\uFEFF/, ""))
     .map((line) => line.trim())
     .filter((line) => line && !line.startsWith("#"))
     .slice(0, 20);
@@ -149,13 +175,11 @@ function uniqueNames(header: string[], width: number): string[] {
 export function parseDelimited(text: string, delimiter?: string): ParsedTable {
   const warnings: string[] = [];
   const chosen = delimiter && DELIMITERS.includes(delimiter as (typeof DELIMITERS)[number]) ? delimiter : sniffDelimiter(text);
-  const lines = text
-    .replace(/^\uFEFF/, "")
-    .split(/\r?\n/)
+  const lines = tableRecords(text.replace(/^\uFEFF/, ""), chosen)
     .filter((line) => line.trim().length > 0 && !line.trim().startsWith("#"));
   if (!lines.length) return { columns: [], rows: [], delimiter: chosen, truncated: 0, warnings: ["That file has no rows."] };
   const matrix = lines.map((line) => splitLine(line, chosen));
-  const width = Math.max(...matrix.map((row) => row.length));
+  const width = matrix.reduce((max, row) => Math.max(max, row.length), 0);
   const first = matrix[0] ?? [];
   const headerIsText = first.some((cell) => cell && looksNumber(cell, false) === null && parseDate(cell) === null);
   const header = headerIsText ? first : uniqueNames([], width);
@@ -259,4 +283,12 @@ export function parseTableText(text: string, format: "csv" | "tsv" | "txt" | "js
   if (format === "json" || format === "jsonl") return parseJsonTable(text);
   const forced = format === "tsv" ? "\t" : format === "csv" ? "," : delimiter;
   return parseDelimited(text, forced);
+}
+
+export function tableToCsv(columns: readonly string[], rows: ReadonlyArray<ReadonlyArray<string | number | null>>): string {
+  const cell = (value: string | number | null): string => {
+    const text = value === null ? "" : String(value);
+    return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  };
+  return [columns.map(cell).join(","), ...rows.map((row) => row.map(cell).join(","))].join("\r\n");
 }

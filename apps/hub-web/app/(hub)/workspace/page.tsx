@@ -8,8 +8,8 @@ import { AssignDialog } from "@/components/agent/assign-dialog";
 import { JobCard } from "@/components/agent/job-card";
 import { useToast } from "@/components/toast";
 import { Held } from "@/components/motion/held";
-import { PageHeader, SkeletonRows, cx } from "@/components/ui";
-import { api, type AgentJob } from "@/lib/api";
+import { PageHeader, QueryError, SkeletonRows, cx } from "@/components/ui";
+import { ApiError, api, type AgentJob } from "@/lib/api";
 
 function Lane({ title, hint, items, empty, wide }: { title: string; hint?: string; items: AgentJob[]; empty: string; wide?: boolean }) {
   return (
@@ -27,7 +27,10 @@ function Lane({ title, hint, items, empty, wide }: { title: string; hint?: strin
 export default function WorkspacePage() {
   const client = useQueryClient();
   const toast = useToast();
-  const board = useQuery({ queryKey: ["workspace"], queryFn: api.workspace, refetchInterval: 5000 });
+  const board = useQuery({
+    queryKey: ["workspace"], queryFn: api.workspace,
+    refetchInterval: (query) => query.state.error instanceof ApiError && query.state.error.status === 403 ? false : 5000,
+  });
   const [assigning, setAssigning] = useState(false);
   const data = board.data;
   const toggle = useMutation({
@@ -36,6 +39,7 @@ export default function WorkspacePage() {
       toast(data?.paused ? "Resumed. Queued work starts again." : "Paused. Everything running was stopped.");
       void client.invalidateQueries();
     },
+    onError: (error) => toast(error.message, { tone: "error" }),
   });
   return (
     <div className="mx-auto max-w-[1240px] px-10 pb-24 pt-8">
@@ -66,7 +70,11 @@ export default function WorkspacePage() {
           The agent is paused. Nothing new starts and no model is called until you resume. Queued tasks keep their place.
         </div>
       ) : null}
-      <Held pending={board.isLoading || !data} fallback={<SkeletonRows count={4} />}>
+      {board.error ? (
+        <QueryError error={board.error} retry={() => void board.refetch()}>
+          {board.error instanceof ApiError && board.error.status === 403 ? <Link href="/settings#devices" className="text-accent underline">Set up a paired computer</Link> : null}
+        </QueryError>
+      ) : <Held pending={board.isLoading || !data} fallback={<SkeletonRows count={4} />}>
         {data ? (
         <>
           <div className="grid grid-cols-3 gap-6">
@@ -80,7 +88,7 @@ export default function WorkspacePage() {
           </div>
         </>
         ) : null}
-      </Held>
+      </Held>}
       <AssignDialog open={assigning} onClose={() => setAssigning(false)} />
     </div>
   );

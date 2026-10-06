@@ -122,6 +122,10 @@ The two failure directions are deliberately opposite:
 
 The ledger has one writer: hub-api (`apps/hub-api/src/lib/ledger.ts`). agent-runtime does not hash or insert rows itself; `ensemble_agent/audit/ledger.py` posts each entry to `POST /api/internal/ledger`, so the chain is computed in one place and timestamp formats cannot drift between two languages.
 
+An append now locks the account row inside its transaction before selecting the predecessor and inserting the next hash. Timestamps advance monotonically by at least one millisecond, including same-clock-tick appends, so timestamp ordering follows the chain. This prevents new concurrent forks; it does not rewrite existing historical rows.
+
+The undo stack uses the same per-account transaction lock before allocating `(user_id, seq)` and trimming the bounded stack (`lib/undo.ts`, `lib/user-lock.ts`). `FOR NO KEY UPDATE` serializes these writes without deadlocking foreign-key inserts that already hold `KEY SHARE`. Separate accounts do not share a global lock.
+
 ### Tracing
 
 Not implemented yet. The plan: one span per job, with its W3C trace id recorded on every ledger row the job writes, exported only when a collector is configured. Outside a span the trace id stays empty rather than invented — a fabricated id in the ledger would look like a link to a trace that does not exist.

@@ -486,8 +486,17 @@ def test_killing_the_worker_stops_its_child():
 
 def _child_pids(parent: int) -> list[int]:
     import os
+    import subprocess
+    import sys
 
     found = []
+    if sys.platform == "darwin":
+        result = subprocess.run(["/bin/ps", "-axo", "pid=,ppid="], capture_output=True, text=True, check=True)
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if len(parts) == 2 and int(parts[1]) == parent:
+                found.append(int(parts[0]))
+        return found
     for name in os.listdir("/proc"):
         if not name.isdigit():
             continue
@@ -502,6 +511,13 @@ def _child_pids(parent: int) -> list[int]:
 
 
 def _running(pid: int) -> bool:
+    import subprocess
+    import sys
+
+    if sys.platform == "darwin":
+        result = subprocess.run(["/bin/ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, check=False)
+        state = result.stdout.strip()
+        return result.returncode == 0 and bool(state) and not state.startswith(("Z", "X"))
     try:
         text = open(f"/proc/{pid}/status").read()
     except OSError:
@@ -518,7 +534,10 @@ def test_stale_plot_directories_are_swept(tmp_path):
     import sys
     import time
 
-    from ensemble_agent.plots.worker import _sweep_stale_plots
+    from ensemble_agent.plots.worker import _plot_dirs_in_use, _sweep_stale_plots
+
+    if sys.platform == "win32":
+        pytest.skip("Working-directory inspection is implemented for Linux and macOS.")
 
     stale = tmp_path / "ensemble-plot-stale"
     fresh = tmp_path / "ensemble-plot-fresh"
@@ -531,11 +550,7 @@ def test_stale_plot_directories_are_swept(tmp_path):
     proc = subprocess.Popen([sys.executable, "-c", "import os, sys, time; os.chdir(sys.argv[1]); time.sleep(30)", str(held)])
     try:
         for _ in range(50):
-            try:
-                cwd = os.path.realpath(f"/proc/{proc.pid}/cwd")
-            except OSError:
-                cwd = ""
-            if cwd == os.path.realpath(held):
+            if os.path.realpath(held) in (_plot_dirs_in_use() or set()):
                 break
             time.sleep(0.05)
         _sweep_stale_plots(tmp_path, max_age=180)
@@ -560,15 +575,43 @@ def test_infinite_loop_hits_the_cpu_limit():
     assert "CPU" in (result.get("error") or "")
 
 
-def test_large_allocation_is_refused():
+def test_large_allocation_is_refused(monkeypatch):
     import sys
 
     if sys.platform == "win32":
         return
-    result = run_plot("x = bytearray(3 * 1024 * 1024 * 1024)\nprint('allocated', len(x))\n", [])
+    from ensemble_agent.plots.sandbox import reset_plot_worker
+
+    code = "x = bytearray(3 * 1024 * 1024 * 1024)\nprint('allocated', len(x))\n"
+    if sys.platform == "darwin":
+        monkeypatch.setenv("ENSEMBLE_PLOT_MEMORY_MIB", "512")
+        reset_plot_worker()
+        code = "import time\nx = bytearray(768 * 1024 * 1024)\ntime.sleep(1)\nprint('allocated', len(x))\n"
+    try:
+        result = run_plot(code, [])
+    finally:
+        reset_plot_worker()
     blob = (result.get("error") or "") + (result.get("stderr") or "")
     assert "MemoryError" in blob
     assert "allocated" not in (result.get("stdout") or "")
+
+
+def test_parent_memory_budget_stops_a_child_and_reports_a_memory_error(monkeypatch, tmp_path):
+    from ensemble_agent.plots import worker
+
+    monkeypatch.setattr(worker.sys, "platform", "darwin")
+    monkeypatch.setattr(worker, "memory_limit_bytes", lambda: 64 * 1024 * 1024)
+    monkeypatch.setattr(worker, "_resident_bytes", lambda _pid: 128 * 1024 * 1024)
+    killed = []
+    monkeypatch.setattr(worker, "_kill_group", killed.append)
+    server = object.__new__(worker._Server)
+    server.children = {123: {"timed_out": False, "deadline": float("inf")}}
+    server._deadlines()
+    assert killed == [123]
+    assert server.children[123]["memory_exceeded"]
+    result = worker._payload(tmp_path, -9, False, 9, False, "png", memory_exceeded=True)
+    assert "MemoryError" in result["error"]
+    assert "CPU" not in result["error"]
 
 
 def test_write_over_32mb_fails():

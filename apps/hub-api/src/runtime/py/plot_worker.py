@@ -10,7 +10,8 @@ plot in a fresh interpreter. A forked child that dies from a fork-safety crash
 is retried once in that fresh interpreter. A user error, a timeout, or a limit
 hit is not retried.
 
-Limits, set in the child only: 8s CPU, 2GB address space, 32MB file size.
+Child limits: 8s CPU and 32MB files. Linux also limits address space; macOS
+uses a parent-sampled resident-memory budget, not an instantaneous hard cap.
 """
 
 from __future__ import annotations
@@ -38,6 +39,45 @@ MAX_OUTPUT = 16_000
 CPU_SECONDS = 8
 ADDRESS_BYTES = 2 * 1024 * 1024 * 1024
 FILE_BYTES = 32 * 1024 * 1024
+
+
+def memory_limit_bytes() -> int:
+    mib = int(os.environ.get("ENSEMBLE_PLOT_MEMORY_MIB") or "2048")
+    if not 64 <= mib <= 2048:
+        raise ValueError("ENSEMBLE_PLOT_MEMORY_MIB must be an integer from 64 to 2048.")
+    return mib * 1024 * 1024
+
+
+_darwin_usage = None
+
+
+def _resident_bytes(pid: int) -> int | None:
+    import ctypes
+    import errno
+
+    global _darwin_usage
+    if _darwin_usage is None:
+        class Usage(ctypes.Structure):
+            _fields_ = [("uuid", ctypes.c_uint8 * 16)] + [
+                (name, ctypes.c_uint64) for name in (
+                    "user_time", "system_time", "idle_wakeups", "interrupt_wakeups",
+                    "pageins", "wired_size", "resident_size", "footprint", "start", "exit",
+                )
+            ]
+
+        library = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        query = library.proc_pid_rusage
+        query.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p]
+        query.restype = ctypes.c_int
+        _darwin_usage = (query, Usage)
+    query, record_type = _darwin_usage
+    usage = record_type()
+    if query(pid, 0, ctypes.byref(usage)) != 0:
+        code = ctypes.get_errno()
+        if code == errno.ESRCH:
+            return None
+        raise OSError(code, "Could not inspect the plot child's resident memory.")
+    return usage.resident_size
 
 HELPER = '''
 import json, os, sys
@@ -243,10 +283,9 @@ def _set_limits() -> None:
 
     resource.setrlimit(resource.RLIMIT_CPU, (CPU_SECONDS, CPU_SECONDS))
     resource.setrlimit(resource.RLIMIT_FSIZE, (FILE_BYTES, FILE_BYTES))
-    try:
-        resource.setrlimit(resource.RLIMIT_AS, (ADDRESS_BYTES, ADDRESS_BYTES))
-    except (ValueError, OSError):
-        pass
+    if sys.platform != "darwin":
+        limit = memory_limit_bytes()
+        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
 
 
 def _execute_user(root: Path) -> None:
@@ -408,12 +447,27 @@ def _lock_alarm() -> None:
         signal.setitimer = setitimer  # type: ignore[method-assign]
 
 
-def _plot_dirs_in_use() -> set[str]:
+def _plot_dirs_in_use() -> set[str] | None:
     """Plot directories a live process still has as its working directory."""
     used: set[str] = set()
     proc = Path("/proc")
     if not proc.is_dir():
-        return used
+        if sys.platform != "darwin":
+            return None
+        import subprocess
+
+        try:
+            result = subprocess.run(
+                ["/usr/sbin/lsof", "-a", "-u", str(os.getuid()), "-d", "cwd", "-Fn"],
+                capture_output=True, text=True, timeout=5, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            print("Plot cleanup skipped: process directories could not be inspected.", file=sys.stderr)
+            return None
+        if result.returncode != 0:
+            print("Plot cleanup skipped: process directory inspection failed.", file=sys.stderr)
+            return None
+        return {os.path.realpath(line[1:]) for line in result.stdout.splitlines() if line.startswith("n")}
     for entry in proc.iterdir():
         if not entry.name.isdigit():
             continue
@@ -432,6 +486,8 @@ def _sweep_stale_plots(directory: Path | None = None, max_age: float = 180) -> N
     root = directory or Path(tempfile.gettempdir())
     now = time.time()
     in_use = _plot_dirs_in_use()
+    if in_use is None:
+        return
     try:
         entries = list(root.glob("ensemble-plot-*"))
     except OSError:
@@ -483,7 +539,7 @@ def _cold_env(root: Path, fmt: str, dpi: int, timeout: float) -> dict[str, str]:
         "PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TMPDIR", "TEMP", "TMP", "SYSTEMROOT",
         "MPLCONFIGDIR", "PYTHONPATH", "PYTHONHOME", "PYTHONNOUSERSITE",
         "OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS",
-        "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS", "ENSEMBLE_OS_SANDBOX",
+        "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS", "ENSEMBLE_OS_SANDBOX", "ENSEMBLE_PLOT_MEMORY_MIB",
     )
     env = {key: os.environ[key] for key in keep if os.environ.get(key)}
     env.update({
@@ -499,7 +555,7 @@ def _cold_env(root: Path, fmt: str, dpi: int, timeout: float) -> dict[str, str]:
     return env
 
 
-def _run_cold(root: Path, fmt: str, dpi: int, timeout: float) -> tuple[int, bool, int | None]:
+def _run_cold(root: Path, fmt: str, dpi: int, timeout: float) -> tuple[int, bool, int | None, bool]:
     """Fresh interpreter. Used on Windows and when a fork crashes before the plot."""
     import subprocess
 
@@ -514,19 +570,33 @@ def _run_cold(root: Path, fmt: str, dpi: int, timeout: float) -> tuple[int, bool
             stderr=stderr,
             start_new_session=True,
         )
+        deadline = time.monotonic() + timeout
+        memory_exceeded = False
         try:
-            # The parent's wait is the deadline. The child's alarm is only a backstop.
-            code = proc.wait(timeout=timeout)
-        except subprocess.TimeoutExpired:
+            while proc.poll() is None:
+                if sys.platform == "darwin":
+                    resident = _resident_bytes(proc.pid)
+                    if resident is not None and resident > memory_limit_bytes():
+                        memory_exceeded = True
+                        _kill_group(proc.pid)
+                        break
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    _kill_group(proc.pid)
+                    proc.wait(timeout=2)
+                    return -1, True, None, False
+                try:
+                    proc.wait(timeout=min(0.05, remaining) if sys.platform == "darwin" else remaining)
+                except subprocess.TimeoutExpired:
+                    continue
+            code = proc.wait(timeout=2)
+        except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired):
             _kill_group(proc.pid)
-            try:
-                proc.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                pass
-            return -1, True, None
+            proc.wait(timeout=2)
+            raise
     if code < 0:
-        return code, False, -code
-    return code, False, None
+        return code, False, -code, memory_exceeded
+    return code, False, None, memory_exceeded
 
 
 def _read_text(path: Path) -> str:
@@ -558,7 +628,7 @@ def _summary(stderr: str) -> str:
     return lines[-1][:500] if lines else ""
 
 
-def _payload(root: Path, returncode: int, timed_out: bool, sig: int | None, fallback: bool, fmt: str) -> dict:
+def _payload(root: Path, returncode: int, timed_out: bool, sig: int | None, fallback: bool, fmt: str, memory_exceeded: bool = False) -> dict:
     stdout = _read_text(root / "_stdout.txt")
     stderr = _read_text(root / "_stderr.txt")
     out = root / "out"
@@ -576,6 +646,9 @@ def _payload(root: Path, returncode: int, timed_out: bool, sig: int | None, fall
         "eps": _b64(out / "figure.eps"),
         "line": _line(stderr),
     }
+    if memory_exceeded:
+        payload["error"] = f"MemoryError: The script exceeded its {memory_limit_bytes() // (1024 * 1024)} MiB memory budget."
+        return payload
     if timed_out:
         return payload
     wanted = payload.get(fmt) if fmt in {"png", "svg", "pdf", "eps"} else payload.get("pdf")
@@ -768,6 +841,12 @@ class _Server:
         """
         now = time.monotonic()
         for pid, state in self.children.items():
+            if sys.platform == "darwin" and not state["timed_out"] and not state.get("memory_exceeded"):
+                resident = _resident_bytes(pid)
+                if resident is not None and resident > memory_limit_bytes():
+                    state["memory_exceeded"] = True
+                    _kill_group(pid)
+                    continue
             if not state["timed_out"] and now >= state["deadline"]:
                 state["timed_out"] = True
                 _kill_group(pid)
@@ -801,14 +880,15 @@ class _Server:
     def _on_child(self, state: dict, status: int) -> None:
         root: Path = state["root"]
         timed_out = bool(state["timed_out"])
+        memory_exceeded = bool(state.get("memory_exceeded"))
         fallback = False
         if _fork_fault(status, timed_out):
-            code, cold_timeout, sig = _run_cold(root, state["fmt"], state["dpi"], state["timeout"])
+            code, cold_timeout, sig, memory_exceeded = _run_cold(root, state["fmt"], state["dpi"], state["timeout"])
             returncode, timed_out = code, cold_timeout
             fallback = True
         else:
             returncode, sig = _finish_status(status, timed_out)
-        self._send(state["id"], root, returncode, timed_out, sig, fallback, state["fmt"])
+        self._send(state["id"], root, returncode, timed_out, sig, fallback, state["fmt"], memory_exceeded)
 
     def _cold_job(self, job: dict) -> None:
         job_id = str(job.get("id") or "")
@@ -825,8 +905,8 @@ class _Server:
         except (TypeError, ValueError):
             timeout = 20
         _reply({"id": job_id, "started": True})
-        code, timed_out, sig = _run_cold(root, fmt, dpi, timeout)
-        self._send(job_id, root, code if not timed_out else -1, timed_out, sig, False, fmt)
+        code, timed_out, sig, memory_exceeded = _run_cold(root, fmt, dpi, timeout)
+        self._send(job_id, root, code if not timed_out else -1, timed_out, sig, False, fmt, memory_exceeded)
 
     def _cancel_job(self, job_id: str) -> None:
         """Stop one export. The warm parent and every other child keep running."""
@@ -842,9 +922,9 @@ class _Server:
                 _kill_group(pid)
                 return
 
-    def _send(self, job_id: str, root: Path, returncode: int, timed_out: bool, sig: int | None, fallback: bool, fmt: str) -> None:
+    def _send(self, job_id: str, root: Path, returncode: int, timed_out: bool, sig: int | None, fallback: bool, fmt: str, memory_exceeded: bool = False) -> None:
         try:
-            body = _payload(root, returncode, timed_out, sig, fallback, fmt)
+            body = _payload(root, returncode, timed_out, sig, fallback, fmt, memory_exceeded)
         except Exception:
             body = {
                 "returncode": 1,

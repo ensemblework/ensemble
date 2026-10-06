@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import React, { StrictMode, act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { Dialog } from "./ui.js";
+import { Dialog, QueryError } from "./ui.js";
+import { CreateTaskDialog } from "./board/create-task-dialog.js";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 function typeInto(input: HTMLInputElement) {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
@@ -38,6 +40,66 @@ async function unmount(mounted: { root: Root; host: HTMLDivElement }) {
   });
   mounted.host.remove();
 }
+
+test("query failures expose their message and a working retry action", async () => {
+  let retried = 0;
+  const mounted = await render(<QueryError error={new Error("Access denied")} retry={() => { retried++; }} />);
+  try {
+    assert.match(mounted.host.querySelector('[role="alert"]')?.textContent ?? "", /Access denied/);
+    await act(async () => mounted.host.querySelector<HTMLButtonElement>("button")!.click());
+    assert.equal(retried, 1);
+  } finally {
+    await unmount(mounted);
+  }
+});
+
+test("task creation retains input on failure and guards repeated submission", async () => {
+  const client = new QueryClient({ defaultOptions: { mutations: { gcTime: 0 } } });
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  let created = 0;
+  let closed = 0;
+  globalThis.fetch = async (_url, init) => {
+    calls++;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const data = JSON.parse(String(init?.body));
+    return new Response(JSON.stringify(calls === 1 ? { error: "Save failed" } : { task: { id: "new-task", ...data } }), { status: calls === 1 ? 500 : 201, headers: { "Content-Type": "application/json" } });
+  };
+  const mounted = await render(
+    <QueryClientProvider client={client}>
+      <CreateTaskDialog onCreated={() => { created++; }} onClose={() => { closed++; }} />
+    </QueryClientProvider>,
+  );
+  try {
+    const dialog = document.querySelector('[role="dialog"]');
+    assert.ok(dialog);
+    const input = dialog.querySelector<HTMLInputElement>("input")!;
+    await typeInto(input)("Write the report");
+    const form = dialog.querySelector("form")!;
+    await act(async () => {
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    assert.equal(calls, 1);
+    assert.equal(input.value, "Write the report");
+    assert.match(dialog.querySelector('[role="alert"]')?.textContent ?? "", /Save failed/);
+    assert.equal(closed, 0);
+    await act(async () => {
+      form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+    assert.equal(calls, 2);
+    assert.equal(created, 1);
+    assert.equal(closed, 1);
+  } finally {
+    await unmount(mounted);
+    client.clear();
+    globalThis.fetch = originalFetch;
+  }
+});
 
 test("a model key dialog keeps focus while a full key is typed", async () => {
   function Harness() {

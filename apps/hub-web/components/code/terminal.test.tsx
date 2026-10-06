@@ -15,15 +15,15 @@ type DesktopWindow = Window & { __ENSEMBLE_DESKTOP__?: { apiBase?: string } };
 
 const STATUS = { enabled: true, unlocked: false, expiresAt: null, passkeys: [], roots: ["/work"], home: "/work" };
 
-async function mount(): Promise<{ host: HTMLDivElement; calls: string[]; done: () => Promise<void> }> {
+async function mount(statusCode = 200): Promise<{ host: HTMLDivElement; calls: string[]; done: () => Promise<void> }> {
   const calls: string[] = [];
   const realFetch = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     calls.push(url);
-    return new Response(JSON.stringify(STATUS), { status: 200, headers: { "Content-Type": "application/json" } });
+    return new Response(JSON.stringify(statusCode === 200 ? STATUS : { error: "The host terminal is disabled." }), { status: statusCode, headers: { "Content-Type": "application/json" } });
   }) as typeof fetch;
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { gcTime: 0 } } });
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
@@ -40,6 +40,7 @@ async function mount(): Promise<{ host: HTMLDivElement; calls: string[]; done: (
       await new Promise((resolve) => setTimeout(resolve, 10));
     });
   }
+
   return {
     host,
     calls,
@@ -51,6 +52,17 @@ async function mount(): Promise<{ host: HTMLDivElement; calls: string[]; done: (
     },
   };
 }
+
+test("a denied terminal status settles into an explicit error with recovery guidance", async () => {
+  const view = await mount(403);
+  try {
+    assert.match(view.host.querySelector('[role="alert"]')?.textContent ?? "", /host terminal is disabled/);
+    assert.equal(view.host.textContent?.includes("Opening the terminal"), false);
+    assert.ok(view.host.querySelector('a[href="/settings#devices"]'));
+  } finally {
+    await view.done();
+  }
+});
 
 test("inside the desktop app the terminal explains why it is not available, instead of the Touch ID set-up", async () => {
   (window as DesktopWindow).__ENSEMBLE_DESKTOP__ = { apiBase: "http://127.0.0.1:1" };

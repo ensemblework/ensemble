@@ -94,15 +94,16 @@ test("a line with no arrow can be connected in one step", () => {
   assert.equal(again.model.edges.e1?.to.node, "next");
 });
 
-test("a few hundred lines still parse quickly", () => {
+test("a few hundred lines parse within 250ms of CPU time", () => {
   const lines = ["title Checkout", "direction down"];
   for (let index = 0; index < 500; index += 1) {
     lines.push(`node n${index} "Step ${index}" shape rectangle`);
     if (index > 0) lines.push(`edge n${index - 1} > n${index}`);
   }
-  const started = Date.now();
+  const started = process.cpuUsage();
   const parsed = parseDiagram(lines.join("\n"));
-  assert.ok(Date.now() - started < 250);
+  const used = process.cpuUsage(started);
+  assert.ok((used.user + used.system) / 1000 < 250);
   assert.equal(parsed.diagnostics.length, 0);
   assert.equal(Object.keys(parsed.model.nodes).length, 500);
 });

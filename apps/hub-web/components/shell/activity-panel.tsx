@@ -137,10 +137,11 @@ export function ActivityControls({ connected = true }: { connected?: boolean }) 
         onClick={() => setOpen(!open)}
         className={cx("flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] hover:bg-hover", paused ? "text-danger" : "text-muted")}
         title={connected ? "Live updates. What the AI is doing right now." : "Reconnecting to the Hub…"}
+        aria-label={connected ? `Activity: ${label}` : "Reconnecting to the Hub"}
       >
         <TrayDot state={!connected ? "offline" : paused ? "paused" : busy ? "working" : waiting.length ? "needs" : "idle"} />
-        <span className="whitespace-nowrap">{label}</span>
-        {!paused && queued.length ? <span className="rounded bg-raised px-1 text-[11px] text-muted">+{queued.length}</span> : null}
+        <span className="hidden whitespace-nowrap lg:inline">{label}</span>
+        {!paused && queued.length ? <span className="hidden rounded bg-raised px-1 text-[11px] text-muted lg:inline">+{queued.length}</span> : null}
       </button>
       <button
         type="button"
@@ -152,7 +153,7 @@ export function ActivityControls({ connected = true }: { connected?: boolean }) 
         {kill.isPending ? <Spinner size={13} /> : paused ? <Play size={14} /> : <Pause size={14} />}
       </button>
       {open ? (
-        <div className="pop-in absolute right-0 top-full z-50 mt-1 w-[380px] rounded-lg bg-raised p-1.5 shadow-pop">
+        <div className="pop-in fixed inset-x-3 top-12 z-50 rounded-lg bg-raised p-1.5 shadow-pop lg:absolute lg:inset-x-auto lg:right-0 lg:top-full lg:mt-1 lg:w-[380px]">
           <div className="flex items-center justify-between px-2 pb-1 pt-0.5">
             <span className="text-[13px] font-semibold">{paused ? "Paused — nothing calls a model" : busy ? "Running now" : "Nothing running"}</span>
             <Link href="/workspace" onClick={() => setOpen(false)} className="text-[12px] text-accent hover:underline">

@@ -4,6 +4,10 @@ export function turnstileSiteKey(): string | null {
   return process.env.TURNSTILE_SITE_KEY?.trim() || null;
 }
 
+export function turnstileConfigured(): boolean {
+  return Boolean(turnstileSiteKey() && process.env.TURNSTILE_SECRET_KEY?.trim());
+}
+
 export async function verifyTurnstile(token: string | undefined, remoteIp: string): Promise<void> {
   const secret = process.env.TURNSTILE_SECRET_KEY?.trim();
   if (!secret) {

@@ -18,12 +18,6 @@ test("open registration offers configured social logins without connector scopes
     providers: ["google", "github", "microsoft"], emailConfigured: true, turnstileSiteKey: null,
   });
 
-  test("signup with verification mail goes to the code page before onboarding", () => {
-    assert.equal(authRedirectTarget("signup", { verificationSent: true }, null), "/verify?next=/start");
-    assert.equal(authRedirectTarget("signup", { verificationSent: false }, null), "/start");
-    assert.equal(authRedirectTarget("login", {}, "/context"), "/context");
-    assert.equal(authRedirectTarget("login", {}, "https://evil.example"), "/today");
-  });
   const realFetch = globalThis.fetch;
   globalThis.fetch = async () => new Response(JSON.stringify(client.getQueryData(["auth-status"])), { headers: { "Content-Type": "application/json" } });
   const host = document.createElement("div");
@@ -46,4 +40,39 @@ test("open registration offers configured social logins without connector scopes
     globalThis.fetch = realFetch;
     setTestUrl("http://localhost/");
   }
+});
+
+test("unconfigured hosted signup hides the unusable email form but keeps available providers", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const providers of [[], ["google"]]) {
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { gcTime: 0 } } });
+      const status = { hasAccounts: true, signup: "open", bypass: false, providers, emailConfigured: false, emailSignupAvailable: false, turnstileSiteKey: null };
+      client.setQueryData(["auth-status"], status);
+      globalThis.fetch = async () => new Response(JSON.stringify(status), { headers: { "Content-Type": "application/json" } });
+      const host = document.createElement("div");
+      document.body.appendChild(host);
+      const root = createRoot(host);
+      try {
+        await act(async () => root.render(<QueryClientProvider client={client}><AuthForm mode="signup" /></QueryClientProvider>));
+        assert.equal(host.querySelector("input[type=email]"), null);
+        assert.equal(host.querySelector("button[type=submit]"), null);
+        assert.match(host.querySelector('[role="alert"]')?.textContent ?? "", providers.length ? /configured providers/ : /not available/);
+        assert.equal(host.querySelectorAll(`a[href^="${HUB_API}/api/auth/oauth/"]`).length, providers.length);
+      } finally {
+        await act(async () => root.unmount());
+        host.remove();
+        client.clear();
+      }
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("signup with verification mail goes to the code page before onboarding", () => {
+  assert.equal(authRedirectTarget("signup", { verificationSent: true }, null), "/verify?next=/start");
+  assert.equal(authRedirectTarget("signup", { verificationSent: false }, null), "/start");
+  assert.equal(authRedirectTarget("login", {}, "/context"), "/context");
+  assert.equal(authRedirectTarget("login", {}, "https://evil.example"), "/today");
 });

@@ -151,6 +151,18 @@ export function Empty({ children, title }: { children: React.ReactNode; title?: 
   );
 }
 
+export function QueryError({ error, retry, children }: { error: Error; retry: () => void; children?: React.ReactNode }) {
+  return (
+    <div role="alert" className="my-3 rounded-lg border border-line bg-panel p-4 text-[13px]">
+      <p className="text-ink">{error.message}</p>
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <button type="button" className="btn" onClick={retry}>Try again</button>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export function Skeleton({
   className,
   active = true,
@@ -386,18 +398,21 @@ export function MenuItem({
   onClick,
   active,
   hint,
+  disabled,
 }: {
   children: React.ReactNode;
   onClick: () => void;
   active?: boolean;
   hint?: React.ReactNode;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={disabled}
       className={cx(
-        "row-tile flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-[13px]",
+        "row-tile flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-[13px] disabled:opacity-30",
         active && "bg-hover",
       )}
     >

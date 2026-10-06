@@ -108,7 +108,7 @@ export const TaskDto = z.object({
 export type TaskDto = z.infer<typeof TaskDto>;
 
 export const CreateTask = z.object({
-  title: z.string().min(1),
+  title: z.string().trim().min(1, "Enter a task title."),
   description: z.string().optional(),
   notes: z.string().optional(),
   owner: TaskOwner.optional(),

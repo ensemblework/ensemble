@@ -19,6 +19,8 @@ text  →  parse  →  model (JSON)  →  layout  →  render
 
 `parseDiagram(text)` also accepts a Mermaid `flowchart` or `graph`. The editor then rewrites it as Ensemble text.
 
+`src/diagnostics.test.ts` checks a 500-node input against a 250 ms CPU-time budget. Parallel-process preemption is not counted as parser work; browser/UI responsiveness is a separate measurement.
+
 ## One diagram
 
 ```udl

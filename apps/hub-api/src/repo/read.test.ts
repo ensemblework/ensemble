@@ -4,8 +4,8 @@
  */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { makeTestDirectory } from "../test/temporary.js";
 import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
@@ -68,8 +68,8 @@ test("remote slugs keep owner/name and drop userinfo", () => {
 });
 
 test("reads stay inside the folder and skip secrets, links, ignored paths, and build dirs", async () => {
-  const root = await mkdtemp(join(tmpdir(), "ensemble-repo-read-"));
-  const outside = await mkdtemp(join(tmpdir(), "ensemble-repo-out-"));
+  const root = makeTestDirectory("ensemble-repo-read-");
+  const outside = makeTestDirectory("ensemble-repo-out-");
   try {
     await exec("git", ["init"], { cwd: root });
     await writeFile(join(root, ".gitignore"), "hidden/\n");

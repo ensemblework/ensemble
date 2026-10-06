@@ -2,7 +2,9 @@
 
 Updated 2026-09-27. Corrections on 2 Oct and 5 Oct 2026 come from reading the code, not from a new live run, except where a line says it was run. Read this before trusting a button. "Real" here means the code talks to the actual service and was exercised against it; where a live test was not possible, the entry says so.
 
-**Checked 6 Oct 2026:** public signup/OAuth/recovery and hosted safety passed automated HTTP/PGlite tests; Hub and landing production builds passed. Live Gemini plain completion worked, but the deployed assistant's old catalog was rejected for a boolean `exclusiveMinimum`; the draft-7 catalog fix is in code and has a complete-catalog regression. Post-deploy consent/email/assistant checks still require configured provider accounts. The route inventory covers all endpoints for generic gates but currently records 155 explicit resource-contract gaps; this is not a complete API audit. The wider local Python plot worker could not be started, so rendering was not re-verified.
+**Initial checks on 6 Oct 2026:** public signup/OAuth/recovery and hosted safety passed automated HTTP/PGlite tests; Hub and landing production builds passed. Live Gemini plain completion worked, but the deployed assistant's old catalog was rejected for a boolean `exclusiveMinimum`; the draft-7 catalog fix is in code and has a complete-catalog regression. Post-deploy consent/email/assistant checks still require configured provider accounts. The route inventory covers generic gates but is not a complete resource-contract audit.
+
+**Local QA fixes checked 6 Oct 2026:** concurrent task/undo and ledger writes are serialized per account; blank titles are rejected; quoted/multiline CSV exports round-trip. Mac plot startup, process cleanup, resource budgets, and warm rendering passed the Python regressions after fixing Seatbelt path access and the launcher. The Mac memory budget is parent-sampled, not a hard address-space cap. Signup readiness, explicit Code/Workspace/Terminal errors, named Settings controls, responsive header overflow, and a guarded shared task-creation form are implemented with regressions. These checks use isolated local data and mocked identity/model providers, not a claim of newly deployed behavior.
 
 ## Changes after review (2 Oct 2026)
 
@@ -120,7 +122,7 @@ Checked on 5 Oct 2026 with the hub-api, hub-web and agent-runtime suites on a fr
 - **Triage due times** are read in your time zone. A `due_time` wins; an ISO time with `Z` or an offset keeps that instant; no time means 17:00 (`apps/hub-api/src/connectors/triage.ts`). When the model's JSON cannot be read, triage logs a warning and the rule-based fallback runs.
 - **Hosted plot exports**: a queued export waits at most 110 s before the busy reply, under Vercel's 120 s proxy cut, and the plot child's process group is killed at its time limit ([20](20_PLOTS_DESIGN.md)).
 
-On this Mac, 15 agent-runtime plot-sandbox tests (17 after #89) fail with "The plot runtime is not available." on `main` as well. That is the Python 3.13 venv here, not these merges. Not checked on Linux for this page.
+The earlier Mac “plot runtime is not available” failures also reproduced on Python 3.12. The local QA fix addresses interpreter/worker path grants and direct-launch lifecycle, rather than attributing them to Python version alone. Python 3.12 plot regressions now pass on this checkout; native Windows/Linux installer UX was not rechecked.
 
 ## Ensemble CLI and hosted MCP (6 Oct 2026)
 

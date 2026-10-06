@@ -74,11 +74,13 @@ async function oauth(provider: "google" | "github" | "microsoft", browserCookie?
 
 before(async () => {
   process.env.NODE_ENV = "test";
+  process.env.ENSEMBLE_DEV_USER_ID = `auth-placeholder-${randomUUID()}`;
   process.env.HUB_WEB_ORIGIN = "http://hub.example.test";
   process.env.HUB_API_PUBLIC_URL = "http://api.example.test";
   delete process.env.ENSEMBLE_COOKIE_DOMAIN;
   process.env.ENSEMBLE_SIGNUP_MODE = "open";
   process.env.TURNSTILE_SECRET_KEY = "fake-test-secret";
+  process.env.TURNSTILE_SITE_KEY = "fake-test-site-key";
   for (const provider of ["GOOGLE", "GITHUB", "MICROSOFT"]) {
     process.env[`AUTH_${provider}_CLIENT_ID`] = "test-client";
     process.env[`AUTH_${provider}_CLIENT_SECRET`] = "test-client-secret";
@@ -135,6 +137,7 @@ test("hosted signup stays open and never gives the first registrant placeholder 
     assert.equal(first.emailVerified, false);
     const status = await harness.app.inject({ method: "GET", url: "/api/auth/status" });
     assert.equal(status.json().signup, "open");
+    assert.equal(status.json().emailSignupAvailable, true);
     assert.deepEqual(status.json().providers, ["google", "github", "microsoft"]);
     assert.doesNotMatch(status.body, /test-client-secret/);
     const task = await harness.app.inject({ method: "GET", url: `/api/tasks/${privateTask.id}`, headers: { cookie: first.cookie } });
@@ -146,6 +149,25 @@ test("hosted signup stays open and never gives the first registrant placeholder 
     process.env.NODE_ENV = "test";
     const { deleteAccountData } = await import("../lib/account-data.js");
     await deleteAccountData(harness.prisma, placeholder.id);
+  }
+});
+
+test("signup availability reports hosted configuration gaps without closing local signup", async () => {
+  const secret = process.env.TURNSTILE_SECRET_KEY;
+  const siteKey = process.env.TURNSTILE_SITE_KEY;
+  try {
+    process.env.NODE_ENV = "production";
+    delete process.env.TURNSTILE_SECRET_KEY;
+    assert.equal((await harness.app.inject({ url: "/api/auth/status" })).json().emailSignupAvailable, false);
+    process.env.TURNSTILE_SECRET_KEY = secret;
+    delete process.env.TURNSTILE_SITE_KEY;
+    assert.equal((await harness.app.inject({ url: "/api/auth/status" })).json().emailSignupAvailable, false);
+    process.env.NODE_ENV = "test";
+    assert.equal((await harness.app.inject({ url: "/api/auth/status" })).json().emailSignupAvailable, true);
+  } finally {
+    process.env.NODE_ENV = "test";
+    process.env.TURNSTILE_SECRET_KEY = secret;
+    process.env.TURNSTILE_SITE_KEY = siteKey;
   }
 });
 

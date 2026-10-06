@@ -8,7 +8,7 @@
 import { spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { desktopDataDir } from "@ensemble/shared-types/desktop-discovery";
 import { stopProcessGroup } from "../lib/process-group.js";
@@ -134,7 +134,7 @@ export function plotConcurrency(): number {
 
 /** Allow-list. Forked plots inherit it, so tokens and API keys stay out. */
 export function plotWorkerEnv(): NodeJS.ProcessEnv {
-  const keep = ["PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TMPDIR", "TEMP", "TMP", "SYSTEMROOT", "PYTHONPATH", "PYTHONHOME", "PYTHONNOUSERSITE"];
+  const keep = ["PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TMPDIR", "TEMP", "TMP", "SYSTEMROOT", "PYTHONPATH", "PYTHONHOME", "PYTHONNOUSERSITE", "ENSEMBLE_PLOT_MEMORY_MIB"];
   const env: NodeJS.ProcessEnv = {};
   for (const key of keep) {
     if (process.env[key]) env[key] = process.env[key];
@@ -347,7 +347,7 @@ function startProcess(python: string): ChildProcess | "missing" {
           runId: "plot-worker",
           cwd: root,
           readWrite: [root, cache],
-          readOnly: pythonReadPaths(python),
+          readOnly: [...pythonReadPaths(python), dirname(script)],
           deny: ["/etc/passwd", "/private/etc/passwd"],
           network: "none",
           env,
@@ -383,14 +383,17 @@ async function ensureWorker(python: string): Promise<PlotWorker> {
       if (proc === "missing") throw new PlotWorkerUnavailable();
       const next = new PlotWorker(proc, python, cap);
       let ready: PlotWorkerResult;
+      let startupTimer: ReturnType<typeof setTimeout> | undefined;
       try {
         ready = await Promise.race([
           next.ready(),
-          new Promise<PlotWorkerResult>((_, reject) => setTimeout(() => reject(new PlotWorkerUnavailable()), 45_000)),
+          new Promise<PlotWorkerResult>((_, reject) => { startupTimer = setTimeout(() => reject(new PlotWorkerUnavailable()), 45_000); }),
         ]);
       } catch (error) {
         next.kill();
         throw error instanceof PlotWorkerUnavailable ? error : new PlotWorkerUnavailable();
+      } finally {
+        if (startupTimer) clearTimeout(startupTimer);
       }
       if (ready.missing || ready.ready === false) {
         next.kill();
@@ -405,7 +408,7 @@ async function ensureWorker(python: string): Promise<PlotWorker> {
   return starting;
 }
 
-export async function submitPlot(python: string, job: PlotWorkerJob): Promise<PlotWorkerResult> {
+export async function submitPlot(python: string, job: PlotWorkerJob, onStarted?: () => void): Promise<PlotWorkerResult> {
   const current = await ensureWorker(python);
   const aheadLimits = current.pendingTimeouts();
   const { id, result, started } = current.submit(job);
@@ -430,6 +433,7 @@ export async function submitPlot(python: string, job: PlotWorkerJob): Promise<Pl
     void result.catch(() => undefined);
     throw new Error("plot worker did not start that export");
   }
+  onStarted?.();
   let runTimer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([

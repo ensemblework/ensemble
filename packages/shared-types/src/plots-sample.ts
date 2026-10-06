@@ -1,4 +1,5 @@
 import { columnRef } from "./plots-pool.js";
+import { tableToCsv } from "./plots-parse.js";
 import { tileSchema, type WorkspaceTile } from "./plots-workspace.js";
 
 export type SampleKey = "runs" | "ablation" | "scaling" | "confusion" | "scores";
@@ -19,8 +20,7 @@ function rng(seed: number) {
 }
 
 function csv(header: string[], rows: Array<Array<string | number>>): string {
-  const body = rows.map((row) => row.join(",")).join("\n");
-  return `${header.join(",")}\n${body}\n`;
+  return `${tableToCsv(header, rows)}\r\n`;
 }
 
 /** Three seeds, fifty steps, train and eval. Loss decays; accuracy rises; seeds disagree enough to shade. */

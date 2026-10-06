@@ -8,7 +8,8 @@ import { endSession, hashPassword, newApiToken, readCookie, SESSION_COOKIE, sha2
 import { currentSignupPolicy, INVITE_ONLY, signupMode, signupPermitted } from "../lib/signup.js";
 import { emailConfigured, requireEmailConfigured, sendAccountEmail, verifyCodeTokenId } from "../lib/auth-email.js";
 import { LoginProvider, loginProviderConfigured } from "../lib/auth-oauth.js";
-import { turnstileSiteKey, verifyTurnstile } from "../lib/turnstile.js";
+import { turnstileConfigured, turnstileSiteKey, verifyTurnstile } from "../lib/turnstile.js";
+import { isHosted } from "../lib/hosted-access.js";
 import { deleteAccountData, exportAccountData } from "../lib/account-data.js";
 import { revokePairedDevice } from "../devices/revoke.js";
 import { appendLedger } from "../lib/ledger.js";
@@ -88,6 +89,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       signup: signupMode(currentSignupPolicy()),
       providers: LoginProvider.options.filter(loginProviderConfigured),
       emailConfigured: emailConfigured(),
+      emailSignupAvailable: !isHosted() || (emailConfigured() && turnstileConfigured()),
       turnstileSiteKey: turnstileSiteKey(),
     };
   });

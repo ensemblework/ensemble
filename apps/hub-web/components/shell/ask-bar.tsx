@@ -97,7 +97,7 @@ export function AskBar() {
 
   return (
     <SearchQuery
-      className="relative min-w-[140px] max-w-[360px] flex-1"
+      className="relative min-w-0 max-w-[360px] flex-1 sm:min-w-[140px]"
       pill
       overlay
       inputRef={input}

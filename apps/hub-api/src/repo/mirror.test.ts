@@ -4,8 +4,8 @@
  */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
+import { makeTestDirectory } from "../test/temporary.js";
 import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
@@ -15,7 +15,7 @@ import { RepoReadError } from "./read.js";
 const exec = promisify(execFile);
 
 async function tinyRemote(): Promise<{ remote: string; dir: string; commit: (name: string) => Promise<void> }> {
-  const dir = await mkdtemp(join(tmpdir(), "ensemble-mirror-src-"));
+  const dir = makeTestDirectory("ensemble-mirror-src-");
   await exec("git", ["init", "-b", "main"], { cwd: dir });
   await exec("git", ["config", "user.email", "mirror@ensemble.test"], { cwd: dir });
   await exec("git", ["config", "user.name", "Mirror"], { cwd: dir });
@@ -38,7 +38,7 @@ test("cleanRemote strips userinfo", () => {
 
 test("a mirror is cloned once, reused, and refreshed after the TTL", async () => {
   const source = await tinyRemote();
-  const cacheRoot = await mkdtemp(join(tmpdir(), "ensemble-mirror-cache-"));
+  const cacheRoot = makeTestDirectory("ensemble-mirror-cache-");
   const calls: string[] = [];
   const run: GitRunner = async (args, options) => {
     calls.push(args[0] === "-c" ? args[2] ?? "" : args[0] ?? "");
@@ -94,7 +94,7 @@ test("a mirror is cloned once, reused, and refreshed after the TTL", async () =>
 });
 
 test("a timeout and a private repo without credentials fail closed", async () => {
-  const cacheRoot = await mkdtemp(join(tmpdir(), "ensemble-mirror-fail-"));
+  const cacheRoot = makeTestDirectory("ensemble-mirror-fail-");
   try {
     await assert.rejects(
       () =>
@@ -136,7 +136,7 @@ test("a timeout and a private repo without credentials fail closed", async () =>
 
 test("a mirror over the size cap is deleted", async () => {
   const source = await tinyRemote();
-  const cacheRoot = await mkdtemp(join(tmpdir(), "ensemble-mirror-cap-"));
+  const cacheRoot = makeTestDirectory("ensemble-mirror-cap-");
   try {
     await assert.rejects(
       () =>

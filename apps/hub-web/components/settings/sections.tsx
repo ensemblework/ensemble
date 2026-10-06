@@ -27,7 +27,7 @@ export function AutonomySection({ settings, patch }: Props) {
   const set = (value: Partial<Settings["orchestration"]>) => patch({ orchestration: value });
   return (
     <SectionCard title="Autonomy" description="The default for newly delegated tasks. You can still choose per task when you delegate.">
-      <select value={settings.autonomy} onChange={(event) => patch({ autonomy: event.target.value })} className="field w-full">
+      <select aria-label="Autonomy level" value={settings.autonomy} onChange={(event) => patch({ autonomy: event.target.value })} className="field w-full">
         <option value="assist">Assist — every external write needs your approval</option>
         <option value="supervised">Supervised — reversible writes proceed; sends need you</option>
         <option value="autonomous">Autonomous — writes proceed; everything still audited</option>
@@ -38,6 +38,7 @@ export function AutonomySection({ settings, patch }: Props) {
       <div className="mt-2 divide-y divide-[var(--line)]">
         <SettingRow title="Daily high-risk write limit" description="Beyond this, unattended sends fall back to asking you — the runaway brake.">
           <input
+            aria-label="Daily high-risk write limit"
             type="number"
             min={0}
             max={500}
@@ -71,6 +72,7 @@ export function OrchestrationSection({ settings, patch }: Props) {
   const set = (value: Partial<Settings["orchestration"]>) => patch({ orchestration: value });
   const number = (key: "maxConcurrentJobs" | "maxTurns" | "maxMinutes", min: number, max: number) => (
     <input
+      aria-label={{ maxConcurrentJobs: "Tasks that run at once", maxTurns: "Model turns per task", maxMinutes: "Minutes per task" }[key]}
       type="number"
       min={min}
       max={max}
@@ -301,6 +303,7 @@ export function FetchSection({ settings, patch }: Props) {
             <span key={index} className="flex items-center gap-1">
               <input
                 type="time"
+                aria-label={`Fetch time ${index + 1}`}
                 value={time}
                 onChange={(event) => patch({ fetch: { times: fetch.times.map((value, i) => (i === index ? event.target.value : value)) } })}
                 className="field [color-scheme:dark]"
@@ -320,7 +323,7 @@ export function FetchSection({ settings, patch }: Props) {
         </div>
       </SettingRow>
       <SettingRow title="Look back" description="How far back the first fetch after a gap reads.">
-        <select value={fetch.lookbackDays} onChange={(event) => patch({ fetch: { lookbackDays: Number(event.target.value) } })} className="field">
+        <select aria-label="Fetch look-back days" value={fetch.lookbackDays} onChange={(event) => patch({ fetch: { lookbackDays: Number(event.target.value) } })} className="field">
           {[1, 2, 3, 7, 14, 30].map((days) => (
             <option key={days} value={days}>
               {days} day{days === 1 ? "" : "s"}
@@ -342,9 +345,9 @@ export function QuietHoursSection({ settings, patch }: Props) {
       <div className="flex items-center gap-4 text-[13px]">
         <Toggle label="Quiet hours" checked={settings.quietHours.enabled} onChange={(enabled) => patch({ quietHours: { enabled } })} />
         <span className="text-muted">From</span>
-        <input type="time" value={settings.quietHours.from} onChange={(event) => patch({ quietHours: { from: event.target.value } })} className="field [color-scheme:dark]" />
+        <input type="time" aria-label="Quiet hours start" value={settings.quietHours.from} onChange={(event) => patch({ quietHours: { from: event.target.value } })} className="field [color-scheme:dark]" />
         <span className="text-muted">until</span>
-        <input type="time" value={settings.quietHours.until} onChange={(event) => patch({ quietHours: { until: event.target.value } })} className="field [color-scheme:dark]" />
+        <input type="time" aria-label="Quiet hours end" value={settings.quietHours.until} onChange={(event) => patch({ quietHours: { until: event.target.value } })} className="field [color-scheme:dark]" />
       </div>
     </SectionCard>
   );
@@ -556,7 +559,7 @@ export function TerminalSection({ settings, patch }: Props) {
             ))}
           </div>
           <div className="mt-2 flex gap-2">
-            <input value={folder} onChange={(event) => setFolder(event.target.value)} placeholder="/Users/you/another-folder" className="field flex-1 font-mono text-[12.5px]" />
+            <input aria-label="Terminal folder" value={folder} onChange={(event) => setFolder(event.target.value)} placeholder="/Users/you/another-folder" className="field flex-1 font-mono text-[12.5px]" />
             <button type="button" className="btn" disabled={!folder.trim()} onClick={() => void addFolder()}>
               Allow folder
             </button>
@@ -592,10 +595,10 @@ export function TerminalSection({ settings, patch }: Props) {
       ) : null}
       <div className="mt-3 divide-y divide-[var(--line)]">
         <SettingRow title="Branch prefix for agent work">
-          <input value={terminal.branchPrefix} onChange={(event) => patch({ terminal: { branchPrefix: event.target.value } })} className="field w-40 font-mono text-[12.5px]" />
+          <input aria-label="Branch prefix" value={terminal.branchPrefix} onChange={(event) => patch({ terminal: { branchPrefix: event.target.value } })} className="field w-40 font-mono text-[12.5px]" />
         </SettingRow>
         <SettingRow title="Commit author" description="“Name <email>”. Empty uses your git config.">
-          <input value={terminal.commitAuthor} onChange={(event) => patch({ terminal: { commitAuthor: event.target.value } })} placeholder="Ada Lovelace <ada@example.com>" className="field w-64" />
+          <input aria-label="Commit author" value={terminal.commitAuthor} onChange={(event) => patch({ terminal: { commitAuthor: event.target.value } })} placeholder="Ada Lovelace <ada@example.com>" className="field w-64" />
         </SettingRow>
         <SettingRow title="Sign commits" description="Passes -S to git commit. Requires a signing key in your git config.">
           <Toggle label="Sign commits" checked={terminal.signCommits} onChange={(signCommits) => patch({ terminal: { signCommits } })} />
@@ -820,14 +823,14 @@ export function DeleteDataSection({ settings }: { settings: Settings }) {
       title="Delete my data"
       description="Removes ingested mail, chats, meetings and the context graph. The audit ledger records that you deleted, and nothing about what was deleted — removing the evidence of a deletion would defeat the point of an audit trail."
     >
-      <select value={scope} onChange={(event) => setScope(event.target.value as "context" | "everything")} className="field w-full">
+      <select aria-label="Data deletion scope" value={scope} onChange={(event) => setScope(event.target.value as "context" | "everything")} className="field w-full">
         <option value="context">Context only</option>
         <option value="everything">Everything (tasks, projects, skills, chats too)</option>
       </select>
       <div className="mt-3 text-[12.5px] text-muted">
         Type <span className="font-mono text-ink">{settings.email}</span> to confirm. This cannot be undone.
       </div>
-      <input value={confirm} onChange={(event) => setConfirm(event.target.value)} className="field mt-1.5 w-full" />
+      <input aria-label="Confirm data deletion with your email" value={confirm} onChange={(event) => setConfirm(event.target.value)} className="field mt-1.5 w-full" />
       <button
         type="button"
         className="btn mt-3 border-danger/60 text-[#ffb4ae]"

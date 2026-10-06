@@ -5,8 +5,8 @@
  * after the lease expires while the app is quit.
  */
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, rmSync } from "node:fs";
+import { makeTestDirectory } from "../test/temporary.js";
 import { join } from "node:path";
 import test from "node:test";
 import { bootSidecar, git, makeSourceRepo, prepareAccount, sleep, startStubRuntime, type Sidecar } from "../desktop/e2e-harness.js";
@@ -79,7 +79,7 @@ const spec = (title: string, extra: Record<string, unknown> = {}) => ({
 });
 
 test("remote tasks: pair, run, refuse a server overreach, disconnect, and do not re-run after quit", { timeout: 600_000 }, async (t) => {
-  const root = mkdtempSync(join(tmpdir(), "ensemble-remote-flow-"));
+  const root = makeTestDirectory("ensemble-remote-flow-");
   const stub = await startStubRuntime();
   const host = await startFakeHost({ leaseMs: 8_000, sweepMs: 300 });
   const source = makeSourceRepo(root);
@@ -251,7 +251,7 @@ test("remote tasks: pair, run, refuse a server overreach, disconnect, and do not
 });
 
 test("a claim with networkAccess still runs on this Mac's network setting", { timeout: 180_000 }, async (t) => {
-  const root = mkdtempSync(join(tmpdir(), "ensemble-remote-net-"));
+  const root = makeTestDirectory("ensemble-remote-net-");
   const stub = await startStubRuntime();
   const host = await startFakeHost();
   const source = makeSourceRepo(root);
@@ -297,7 +297,7 @@ test("a claim with networkAccess still runs on this Mac's network setting", { ti
 });
 
 test("a closed event stream that 401s on reconnect, a 403, or a device.revoked frame stops remote work", { timeout: 180_000 }, async (t) => {
-  const root = mkdtempSync(join(tmpdir(), "ensemble-remote-revoke-"));
+  const root = makeTestDirectory("ensemble-remote-revoke-");
   const stub = await startStubRuntime();
   const host = await startFakeHost({ leaseMs: 120_000, sweepMs: 5_000 });
   const source = makeSourceRepo(root);

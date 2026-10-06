@@ -100,6 +100,7 @@ Run `pnpm run doctor`. It checks Node 22, pnpm, Python 3.11+, Docker, and `.env`
 - **`P1001: Can't reach database server at 127.0.0.1:5432`.** Postgres is not running. `pnpm db:migrate` and `pnpm db:seed` start the Docker database when Docker is running. Open Docker Desktop, then run the command again. If it still cannot start the container: `docker volume create ensemble_pg`, then `pnpm infra:up`.
 - **`Failed to proxy http://127.0.0.1:4000/... ECONNREFUSED`.** The website is up and the API is not. Scroll up for lines prefixed `apps/hub-api`. Postgres and Redis have to be reachable at `127.0.0.1` (not `localhost`, which is often `::1` on a Mac) before `pnpm dev`. `curl -s http://127.0.0.1:4000/health` should print `{"ok":true,"service":"hub-api"}`.
 - **The website loads and chat does nothing.** The agent is down, or no model key is set. Confirm port 5055 with the health curl above. Put a Gemini key in `.env` as `GOOGLE_API_KEY` (or paste it under Settings → Models). A key in Settings wins over `.env`.
+- **Plot resource budgets.** `ENSEMBLE_PLOT_CONCURRENCY` limits simultaneous exports. `ENSEMBLE_PLOT_MEMORY_MIB` is a per-child budget from 64 to 2048 MiB (default 2048): Linux uses an address-space rlimit; macOS uses parent-sampled resident memory, not an instantaneous hard ceiling. Low budgets must leave room for the scientific stack. See [Plots](docs/20_PLOTS_DESIGN.md).
 
 Context Bridge (read-only MCP) is separate from the agent and is not started by `pnpm dev`. See [docs/CONTEXT_BRIDGE.md](docs/CONTEXT_BRIDGE.md).
 
