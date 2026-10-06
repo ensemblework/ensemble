@@ -67,6 +67,14 @@ test("node under the home directory is readable without opening the rest of home
   );
 });
 
+test("named grants allow ancestor metadata without opening ancestor contents", () => {
+  const text = profile();
+  assert.match(text, /\(allow file-read-metadata.*\(literal "\/Users\/person"\)/);
+  assert.match(text, /\(literal "\/Users\/person\/ensemble-workspace"\)/);
+  assert.doesNotMatch(text, /\(allow file-read\* \(subpath "\/Users\/person"\)/);
+  assert.ok(text.indexOf("(allow file-read-metadata") < text.indexOf(';; More specific'));
+});
+
 test("scrub drops git tokens and askpass from an agent environment", () => {
   const env = scrubAgentEnv(
     {

@@ -4,6 +4,8 @@
 
 Hosted production permits public accounts, but host checkout/filesystem/tool execution is restricted to verified operators (`lib/hosted-access.ts`). Open signup requires `ENSEMBLE_SERVER_RUNNER=off`; ordinary verified users can assign to their own paired device without acquiring server execution privileges. Local and desktop execution keep the existing controls below.
 
+`app/(hub)/workspace/page.tsx` shows query failures explicitly, with Retry and paired-computer guidance rather than an indefinitely pending queue. A 403 stops automatic queue polling; it does not silently pause or resume jobs. Repository overview's GitHub fallback uses a unique, canonical temporary directory (`src/repo/mirror.ts`), so Mac symlink aliases cannot trip the repository path jail.
+
 | Choice | Meaning |
 |---|---|
 | **Docker sandbox (default)** | Commands see only the assigned checkout mounted from the Windows workspace. |

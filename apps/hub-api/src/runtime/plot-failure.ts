@@ -26,8 +26,8 @@ export type PlotFailureBody = { error: string; retry?: boolean };
 export const HOSTED_PLOT_RUNTIME_DOWN = "The plot runtime is not available. Start the agent runtime, then try again.";
 
 /** A finished plot body that carries an error. Busy is a 503, not a bad figure. */
-export function plotExportErrorReply(error: string): { statusCode: number; error: string; retry?: boolean } {
-  if (error === PLOT_EXPORTS_BUSY) return { statusCode: 503, error: PLOT_EXPORTS_BUSY, retry: true };
+export function plotExportErrorReply(error: string, retry?: boolean): { statusCode: number; error: string; retry?: boolean } {
+  if (retry === true || error === PLOT_EXPORTS_BUSY || error === PLOT_RUNTIME_UNAVAILABLE) return { statusCode: 503, error, retry: true };
   return { statusCode: 400, error };
 }
 

@@ -63,6 +63,29 @@ test("plots and datasets stay on the owner's account", async (t) => {
       url: "/api/plots/datasets",
       payload: { name: "sales", filename: "sales.csv", text: "month,revenue,cost\nJan,12000,8000\nFeb,15000,9000\n" },
     });
+
+    test("explicit tables reject malformed rows and declared types without storing files or records", async (t) => {
+      if (!(await databaseReady())) return t.skip("Postgres is not reachable");
+      const owner = await user("typed-table");
+      const app = await appFor(owner.id);
+      try {
+        for (const payload of [
+          { columns: [{ name: "x", type: "number" }, { name: "y", type: "number" }], rows: [[1], [2, 3, 4]] },
+          { columns: [{ name: "x", type: "number" }], rows: [["not-a-number"]] },
+          { columns: [{ name: "x", type: "date" }], rows: [["not-a-date"]] },
+          { columns: [{ name: "x", type: "number" }, { name: "x", type: "number" }], rows: [[1, 2]] },
+          { columns: [{ name: "   ", type: "number" }], rows: [[1]] },
+        ]) {
+          const result = await app.inject({ method: "POST", url: "/api/plots/datasets", payload });
+          assert.equal(result.statusCode, 400, result.body);
+          assert.ok(result.json().error);
+        }
+        assert.equal(await prisma.plotDataset.count({ where: { userId: owner.id } }), 0);
+      } finally {
+        await app.close();
+        await prisma.user.delete({ where: { id: owner.id } });
+      }
+    });
     assert.equal(created.statusCode, 201, created.body);
     const dataset = created.json().dataset as { id: string; rowCount: number; columns: Array<{ name: string; type: string }> };
     assert.equal(dataset.rowCount, 2);

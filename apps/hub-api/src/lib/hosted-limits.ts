@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { isHosted, requireVerifiedUser } from "./hosted-access.js";
+import { lockUserTransaction } from "./user-lock.js";
 
 export class HostedLimitError extends Error {
   readonly statusCode = 429;
@@ -41,8 +42,7 @@ export async function withHostedUserLock<T>(
   if (!isHosted()) return work(db);
   if (verify) await requireVerifiedUser(userId);
   return db.$transaction(async (tx) => {
-    const rows = await tx.$queryRaw<Array<{ id: string }>>`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`;
-    if (rows.length !== 1) throw new Error("The account no longer exists.");
+    await lockUserTransaction(tx, userId);
     return work(tx);
   }, { isolationLevel: "ReadCommitted" });
 }

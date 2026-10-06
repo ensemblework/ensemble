@@ -4,7 +4,7 @@ Plots is Ensemble's one-stop 2D chart tab. It is for someone who already knows w
 
 Hosted arbitrary Python plot execution requires a verified operator (`lib/hosted-access.ts`, `runtime/plot-run.ts`, Python `plots/sandbox.py`). Public users are not allowed to run Python on the shared server. Dataset imports are account-scoped and subject to hosted storage limits. Desktop/local execution retains its existing behavior.
 
-`docs/CACHING.md` is not in this repository. Caching below follows `docs/UI_PERF_DESIGN.md`: measure first, keep any cache small, and invalidate it when the bytes change.
+Caching below follows [CACHING.md](CACHING.md) and [UI_PERF_DESIGN.md](UI_PERF_DESIGN.md): measure first, keep any cache small, and invalidate it when the bytes change.
 
 The desk already reserves plot *slots* behind the `desk.plots` preference (`docs/design/desk/SPEC.md` §8). Those slots stay lightweight static tiles. The product is a module, `plots`, default **off**, with the same Enable landing as Code and Block diagrams.
 
@@ -61,6 +61,10 @@ A dataset is an account object: id, name, column list, row count, content hash. 
 | Google Sheets, Google Drive, OneDrive, SharePoint | hub-api fetches, then the parser for the bytes | Public or export links only |
 
 The browser parses text so a CSV preview appears before an upload finishes. The server parses the same text on the way in, so a client cannot skip type checks by posting a lie as "already parsed" without us also accepting an explicit table (the agent tools post a table). Binary formats need the runtime. If the runtime is down, the UI says so and still accepts CSV, TSV, TXT, JSON, JSONL, and paste.
+
+`POST /api/plots/:id/export.csv` uses `tableToCsv` in `packages/shared-types/src/plots-parse.ts`, shared with sample tables. Headers and string cells containing commas, quotes, or CR/LF are CSV-escaped, not JSON-escaped; the parser preserves quoted multiline records. Export/re-import regressions check the actual column names and values.
+
+Explicit `{ columns, rows }` table imports are strict: 1-64 uniquely named columns, rectangular rows, finite JSON numbers for numeric columns, and ISO/year-first dates or valid numeric timestamps for date columns; `null` remains a missing value. Malformed explicit tables return 400 before creating records/files (`src/plots/service.ts`). Text-file parsing and user-selected column overrides retain their existing behavior.
 
 ### Pickle
 
@@ -161,14 +165,18 @@ save(fig)           # or plt.show()
 The sandbox is a short-lived child of the agent-runtime:
 
 - Working directory is a fresh temp dir, deleted after the run.
-- Environment is scrubbed (no proxy, no cloud credentials, `MPLCONFIGDIR` inside the temp dir).
-- CPU, address-space, and file-size rlimits on macOS and Linux. Windows has no `resource` module; the same process still has the wall-clock timeout, the import wall, and the audit hook.
-- Wall clock about 12 seconds. Output capped. At the limit the child's whole process group is killed, so a figure that forked does not outlive it.
+- Environment is scrubbed (no proxy or cloud credentials). `MPLCONFIGDIR` is a per-user cache so warm workers can reuse fonts.
+- CPU and file-size rlimits apply on macOS and Linux. `ENSEMBLE_PLOT_MEMORY_MIB` sets a 64-2048 MiB per-child budget (default 2048). Linux applies an address-space rlimit. macOS does not enforce that rlimit: the parent samples resident memory with native `libproc` and kills an oversized child's process group. This is a sampled budget, **not an instantaneous hard ceiling**. Low budgets must accommodate scientific imports. Windows still has no equivalent memory rlimit here.
+- Wall-clock budgets are 45 seconds cold, 25 seconds warm in the Python Mac sandbox and 20 seconds warm on the hosted path; the in-process sidecar uses its own `plots-python.ts` budgets. Output is capped. At the limit the child's whole process group is killed.
 - Exports run `ENSEMBLE_PLOT_CONCURRENCY` at a time (default 2, 1 on the 4 GB VM). An export waiting behind others gives up after at most 110 seconds (`PLOT_QUEUE_WAIT_CAP_S`) with a busy reply, which stays under Vercel's 120 second proxy cut. The wait starts counting each export ahead at its own limit.
 - Import hook rejects `socket`, `subprocess`, `ctypes`, `multiprocessing`, `pickle`, `http`, `urllib`, and similar. Allowed scientific stack: numpy, pandas, matplotlib, seaborn, scipy, and what those import from the runtime environment.
 - After the stack is imported, `socket` connect and `os.system` / `subprocess` are replaced with functions that raise, and a Python audit hook refuses `open` outside the temp dir, the interpreter prefix, and font directories.
 - Tracebacks are returned as text and refer to `user_script.py` line numbers.
 - No network calls are made by the runtime on the user's behalf during a plot run.
+
+On Mac, the Python runtime launches the Node/tsx loader directly into the shared Seatbelt choke point, not through a second CLI wrapper. The profile grants only metadata for ancestors needed by interpreter `realpath`, plus read-only interpreter/worker files; it does not open ancestor contents, sibling files, credentials, or extra writes. Startup/queue failures remain 503 with retry information, distinct from invalid figure code.
+
+Stale-directory cleanup keeps directories still used as process working folders. When process inspection is unavailable, it emits a warning and leaves old folders alone rather than risk deleting active work.
 
 This is a process sandbox, not a VM. It is the same idea as the Code tab's guarded terminal: allow the job, refuse the rest. It does not depend on Docker, so it runs on a developer Mac, a Windows PC, and Linux.
 

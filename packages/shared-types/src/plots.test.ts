@@ -2,8 +2,19 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { buildSeries, lttb, orderPoints, valueAxisBounds } from "./plots-frame.js";
 import { matplotlibPanels, matplotlibSource, boilerplate } from "./plots-matplotlib.js";
-import { decodeTableText, parseTableText } from "./plots-parse.js";
+import { decodeTableText, parseTableText, tableToCsv } from "./plots-parse.js";
 import { defaultPlotConfig, figureInches, gridStroke, paintedGrid, seriesColor } from "./plots.js";
+
+test("CSV export preserves quoted headers and cells through a parse round trip", () => {
+  const columns = ["label", "revenue, USD"];
+  const rows = [['He said "hello"', 10], ["a,b", 20], ["Line\nbreak", 30], ["\u4f60\u597d", null]];
+  const csv = tableToCsv(columns, rows);
+  assert.match(csv, /^label,"revenue, USD"\r\n/);
+  assert.match(csv, /"He said ""hello""",10/);
+  const parsed = parseTableText(csv, "csv");
+  assert.deepEqual(parsed.columns.map((column) => column.name), columns);
+  assert.deepEqual(parsed.rows, rows);
+});
 
 test("csv, tsv, pipe text, json, and european decimals parse with types", () => {
   const csv = parseTableText("month,revenue,when\nJan,\"12,000\",2024-01-01\nFeb,15000,2024-02-01\n", "csv");

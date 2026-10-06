@@ -22,13 +22,18 @@
 
 **Left rail (Fluent Nav):** Today • Board • Needs Me *(n)* • Runs • Context • Skills • Workspace • Code • Metrics • ⚙ Settings (autonomy level, connectors, quiet hours, terminal and commits, Deleted items).
 
-Three surfaces are deliberately **not** in the rail, because they are reached from the thing they belong to rather than browsed:
+Two surfaces are deliberately **not** in the rail, because they are reached from the thing they belong to rather than browsed:
 
 - `/tasks/<id>`, `/projects/<id>` — document pages, opened from the board, a mention, or a search result. §13.
 - `/runs/<id>` — one run's timeline, opened from Runs or from a task.
-- `/prompts` — the exact system prompt every surface sends, linked from Settings ("Open prompts"). A rail entry would suggest it is somewhere you *work*; it is somewhere you go to *check what the model was actually told*.
+
+Prompt transparency is the expandable **Prompts** section at `/settings#prompts` ("Open prompts"), backed by `GET /api/prompts`. There is no standalone `/prompts` page.
 
 **Global header:** compact page title, fetch/pause controls and a theme toggle. Collapse the sidebar to icons at any desktop width; the choice is saved. On Board, *Task board* is the heading in this bar, not a second large heading inside the work area.
+
+Below the `lg` breakpoint, Undo/Redo, Fetch, task-view mode, and theme move into **More actions** (`components/shell/topbar.tsx`). Search, notifications, activity, and the kill switch remain directly reachable. The activity popover stays inside the narrow viewport.
+
+Code, Workspace, and Terminal distinguish a denied/failed request from an empty result or loading state. `components/ui.tsx` supplies a shared error message and Retry action; hosted access failures also link to paired-computer setup without granting host privileges. Settings' password, run-limit, fetch-time, and quiet-hour fields have explicit accessible names.
 
 **Right side panel (collapsible, contextual):** *Ask about this* chat bound to the selected task/run — every message automatically includes the task's context-pack id; the engineer sees a chip list of what context is attached (e.g. `Ranker design review transcript`, `PR #412`, `skill: pr-description.service-x`).
 
@@ -56,8 +61,8 @@ Focus and triage flow together without reserving a tall empty grid cell after tr
 
 **Current Hub controls:**
 
-- **New task** in the page header and **Add task** in *To do* open the same form. A title is required; description, priority and a local date/time are optional. Saving calls `POST /api/tasks` and creates a persistent, manually sourced task owned by *Me* in *To do*. Nothing is delegated implicitly.
-- **Ctrl+Enter** submits the form. Repeated submission is guarded, failures retain the form contents, and a successful creation clears any filters that would hide the new card.
+- **New task** in the page header and each column opens `components/board/create-task-dialog.tsx`, without creating a row just by opening it. A title is required; description, priority, and a browser-local date/time are optional. Saving calls `POST /api/tasks`; the header defaults to *Me / To do*. Column creation uses that column, with Proposed unassigned and human Waiting work blocked. Nothing is delegated implicitly.
+- **Ctrl+Enter** (or Cmd+Enter) submits the form. Repeated submission is guarded synchronously as well as by the disabled button; failures retain input, Cancel creates nothing, and success clears filters hiding the new card. Task titles are trimmed and whitespace-only titles are rejected in shared schemas and the task service.
 - **Search** title/description, **filter** by owner and priority, and **Load more tasks** when another page exists. Board and Workspace share the same paginated query cache.
 - **Drag** with the dedicated handle, leaving the title available for opening. Reordering and cross-column moves persist `boardOrder` in Postgres, using **before/after task anchors** so filters do not overwrite hidden work. Pointer and keyboard sorting are supported. Agent-owned work can be reordered; changing its progress requires an explicit *Take over* first.
 - **A new task joins its priority band.** The board's order belongs to the engineer, and nothing re-sorts it — the only question is where a task that did not exist a moment ago should be inserted. It goes **above the first task that matters less than it**, and to the bottom when nothing does: p0 above the first p1 or p2, p1 above the first p2, p2 at the end.
@@ -430,7 +435,7 @@ Task pages are **documents**, not a second chat or a large edit form. This super
 
 ### Creation and properties
 
-**New page** in a board column opens an inline title, priority, complexity and owner row. **Enter** adds it in that column; failure keeps the draft and submitting twice does not create two tasks. Complexity remains inferred unless the engineer chooses a tier. Choosing *Agent* at creation records **ownership only, not permission to start executing**. Open the saved page and choose **Run with agent** to confirm the existing execution, model, review and delivery options.
+**New task** in a board column opens the shared creation dialog described in §3.2. Complexity remains inferred. Owner, complexity, repository, and other document properties can be changed on the saved task page. Assigning ownership alone never authorizes execution; **Run with agent** confirms the execution, model, review, and delivery choices.
 
 The title and description look like editable text. Properties are quiet values with a chooser only when clicked. Owner and execution controls are at the top; repository, deliverable and explicit skills remain available under related properties. Existing resize, full-width, full-page, lifecycle, focus, source, question and run-history controls are retained.
 
@@ -612,7 +617,7 @@ Hosted email signup needs `EMAIL_PROVIDER=resend`, `EMAIL_API_KEY`, `EMAIL_FROM`
 
 | Method | Path | Body / behavior |
 |---|---|---|
-| GET | `/api/auth/status` | Signup mode, configured providers, email availability, public Turnstile key; no secrets |
+| GET | `/api/auth/status` | Signup mode, configured providers, `emailConfigured`, `emailSignupAvailable`, public Turnstile key; no secrets |
 | POST | `/api/auth/signup` | `{ email, password, name?, turnstileToken? }`; creates session and sends verification |
 | POST | `/api/auth/login` • `/api/auth/logout` | `{ email, password }` • ends session |
 | GET | `/api/auth/me` | Identity/appearance/modules plus `user.profile`, `verificationRequired`, `onboardingComplete`, and `profileComplete` |
@@ -633,6 +638,8 @@ Hosted email signup needs `EMAIL_PROVIDER=resend`, `EMAIL_API_KEY`, `EMAIL_FROM`
 `/start` (`app/(hub)/start/page.tsx`) first shows the **About you** profile step while `/api/auth/me.profileComplete` is false. It collects required full name plus optional gender, profession, organization, and referral source, then continues to the existing role and template picker.
 
 Settings → Account supports profile editing, linked methods, adding/changing passwords, JSON export and deletion. Sensitive method removal/deletion uses a recent session (10 minutes) or current-password confirmation. Deletion leaves local user files alone; provider copies and infrastructure backup retention are separate. The landing site includes `/privacy`, `/terms`, and direct registration links.
+
+`emailSignupAvailable` describes method readiness, independently of open/allowlist/closed policy. Hosted email signup requires configured delivery and both Turnstile keys; development and desktop retain no-mail signup. `components/auth-form.tsx` hides an unusable email form, keeps configured social providers, and shows an upfront unavailable message when none can be offered. Existing password logins remain available. Provider configuration and real verification mail still need operator setup; the UI does not bypass those guards.
 
 ## 17. Linking a computer, and connecting editors
 

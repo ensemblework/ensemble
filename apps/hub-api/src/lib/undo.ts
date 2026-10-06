@@ -14,6 +14,7 @@ import { Prisma, type Actor, type PrismaClient } from "@prisma/client";
 import { Settings } from "@ensemble/shared-types";
 import { appendLedger } from "./ledger.js";
 import { sseHub } from "./sse.js";
+import { lockUserTransaction } from "./user-lock.js";
 
 export type UndoModel =
   | "task"
@@ -212,6 +213,7 @@ async function writeEntry(
   db: Prisma.TransactionClient,
   input: { userId: string; label: string; kind: UndoKind; actor?: Actor; subject: string; href?: string; source?: string; patches: UndoPatch[] },
 ): Promise<string> {
+  await lockUserTransaction(db, input.userId);
   await db.undoEntry.deleteMany({ where: { userId: input.userId, undoneAt: { not: null } } });
   const last = await db.undoEntry.findFirst({ where: { userId: input.userId }, orderBy: { seq: "desc" }, select: { seq: true } });
   const seq = (last?.seq ?? 0n) + 1n;
@@ -271,6 +273,7 @@ export async function recordUndoInTransaction(
 
 /** Several writes inside one transaction become one stack entry. */
 export async function withUndoGroup<T>(db: Prisma.TransactionClient, meta: { userId: string; actor?: Actor; subject: string; href?: string }, fn: () => Promise<T>): Promise<{ result: T; undoEntryId: string | null }> {
+  await lockUserTransaction(db, meta.userId);
   const group: Group = { patches: [], labels: [] };
   const result = await groups.run(group, fn);
   if (!group.patches.length) return { result, undoEntryId: null };

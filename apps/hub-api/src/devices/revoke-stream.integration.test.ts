@@ -106,6 +106,7 @@ async function readUntil(reader: ReadableStreamDefaultReader<Uint8Array>, text: 
 }
 
 test("revoking a device ends every open event stream", async (t) => {
+  if (env.REDIS_URL.startsWith("memory://")) return t.skip("This cross-process pub/sub test requires a real REDIS_URL.");
   if (!(await databaseReady())) return t.skip("Postgres is not reachable");
   const bus = await startDeviceRevokeBus();
   assert.equal(bus, true, "Redis pub/sub has to be up so other hub-api processes hear device.revoked");

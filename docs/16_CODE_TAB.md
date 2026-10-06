@@ -4,6 +4,8 @@ The **Code** item in the sidebar lists every run that changed files. Opening one
 
 **Hosted public accounts:** host folders, repository filesystem operations and shell execution are operator-only (`lib/hosted-access.ts`). `ENSEMBLE_TERMINAL=off` overrides user settings; hosted production defaults to off even for operators. Notes/context and assigning to a user's paired device remain separate. Desktop/local Code behavior is unchanged.
 
+Failed review/repository queries display the actual error and Retry; they never claim that no work exists. A denied terminal-status request settles into an error instead of “Opening the terminal…”. Hosted guidance points to a paired computer for local execution/review, not a way to obtain host privileges (`app/(hub)/code/page.tsx`, `components/code/terminal.tsx`).
+
 ---
 
 ## 1. Using it

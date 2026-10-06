@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { Prisma } from "@prisma/client";
 import { z } from "zod";
-import { buildSeries, defaultPlotConfig, emptyWorkspace, isWorkspace, lttb, plotConfigSchema, plottedRows, workspaceBoilerplate, workspaceSchema } from "@ensemble/shared-types";
+import { buildSeries, defaultPlotConfig, emptyWorkspace, isWorkspace, lttb, plotConfigSchema, plottedRows, tableToCsv, workspaceBoilerplate, workspaceSchema } from "@ensemble/shared-types";
 import { declareModule } from "../lib/module-gate.js";
 import { runtime } from "../lib/runtime.js";
 import { requireHostAccess } from "../lib/hosted-access.js";
@@ -259,9 +259,7 @@ export async function plotRoutes(app: FastifyInstance): Promise<void> {
     if (!plot.datasetId) return reply.code(400).send({ error: "This plot has no dataset." });
     const loaded = await loadOwnedTable(db, request.userId, plot.datasetId);
     const plotted = plottedRows(buildSeries(loaded.table, configOf(plot.config)));
-    const lines = [plotted.columns.join(",")];
-    for (const row of plotted.rows) lines.push(row.map((cell) => (cell === null ? "" : JSON.stringify(cell))).join(","));
-    return { csv: lines.join("\n"), filename: `${plot.title.replace(/[^\w.-]+/g, "_") || "plot"}.csv` };
+    return { csv: tableToCsv(plotted.columns, plotted.rows), filename: `${plot.title.replace(/[^\w.-]+/g, "_") || "plot"}.csv` };
   });
 
   app.post("/api/plots/:id/matplotlib", async (request, reply) => {
@@ -322,9 +320,10 @@ export async function plotRoutes(app: FastifyInstance): Promise<void> {
         stderr: string;
         error?: string;
         line?: number;
+        retry?: boolean;
       };
       if (result.error) {
-        const failure = plotExportErrorReply(result.error);
+        const failure = plotExportErrorReply(result.error, result.retry);
         if (failure.statusCode === 503) return reply.code(503).send({ error: failure.error, retry: true });
         return reply.code(400).send({ error: result.error, line: result.line, stderr: result.stderr, stdout: result.stdout });
       }

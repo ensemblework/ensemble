@@ -448,23 +448,29 @@ test("a queue wait past the cap is the busy 503 at or before the cap", async () 
   const python = process.env.PATH?.split(":").map((entry) => join(entry, "python3")).find((candidate) => existsSync(candidate));
   assert.ok(python);
   const previousCap = process.env.ENSEMBLE_PLOT_CONCURRENCY;
+  const previousPython = process.env.ENSEMBLE_PYTHON;
+  process.env.ENSEMBLE_PYTHON = python;
   process.env.ENSEMBLE_PLOT_CONCURRENCY = "1";
   setPlotWorkerPathForTests(script);
   setPlotQueueSlackForTests(0.05);
   setPlotQueueWaitCapForTests(0.35);
   resetPlotWorker();
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-  const ahead = (timeout: number) => submitPlot(python, { code: "SLEEP 1", datasets: [], format: "png", dpi: 100, timeout });
+  const ahead = (timeout: number, started?: () => void) => submitPlot(python, { code: "SLEEP 1", datasets: [], format: "png", dpi: 100, timeout }, started);
   let first: Promise<unknown> = Promise.resolve();
   let second: Promise<unknown> = Promise.resolve();
   try {
-    // Each export ahead is 0.2s, so the one behind both is past the 0.35s cap.
+    // Two 0.3s exports keep the third queued past its own 0.35s cap,
+    // including the time between submissions. Startup is not part of this wait.
     // Those two still fit under the cap themselves and are allowed to run.
     // These may reject while the test awaits something else; settle them in finally.
-    first = ahead(0.2);
+    let markStarted!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { markStarted = resolve; });
+    first = ahead(0.3, markStarted);
     first.catch(() => {});
+    await Promise.race([firstStarted, first.then(() => { throw new Error("The first export finished before its start was observed."); })]);
     await sleep(40);
-    second = ahead(0.2);
+    second = ahead(0.3);
     second.catch(() => {});
     await sleep(40);
     const started = Date.now();
@@ -478,10 +484,12 @@ test("a queue wait past the cap is the busy 503 at or before the cap", async () 
       },
     );
     const elapsed = Date.now() - started;
-    // 0.2 + 0.2 would be the old wait. The waiter stops at the 0.35s cap.
+    // The waiter stops at its cap instead of waiting for both exports ahead.
     assert.ok(elapsed < 1_000, `waited ${elapsed}ms`);
   } finally {
     await Promise.allSettled([first, second]);
+    if (previousPython === undefined) delete process.env.ENSEMBLE_PYTHON;
+    else process.env.ENSEMBLE_PYTHON = previousPython;
     setPlotQueueWaitCapForTests(null);
     setPlotQueueSlackForTests(null);
     setPlotWorkerPathForTests(null);
@@ -572,6 +580,8 @@ test("giving up before an export starts is the busy 503, not a figure error", as
       },
     );
     assert.deepEqual(plotExportErrorReply(PLOT_EXPORTS_BUSY), { statusCode: 503, error: PLOT_EXPORTS_BUSY, retry: true });
+    assert.deepEqual(plotExportErrorReply(PLOT_RUNTIME_UNAVAILABLE), { statusCode: 503, error: PLOT_RUNTIME_UNAVAILABLE, retry: true });
+    assert.deepEqual(plotExportErrorReply("Worker stopped", true), { statusCode: 503, error: "Worker stopped", retry: true });
     assert.deepEqual(plotExportErrorReply("The script finished without a figure."), { statusCode: 400, error: "The script finished without a figure." });
     assert.equal(PLOTS_NEED_PYTHON, "Plots need Python 3 with matplotlib on this computer. Install it, then try again.");
   } finally {

@@ -27,6 +27,7 @@ import { AskEnsemble } from "../ensemble/ask-button";
 import { CardBody, SortableCard, type BoardCardMotion } from "./task-card";
 import { BoardStrip } from "../widgets/board-strip";
 import type { LayoutPayload } from "@/lib/server-layout";
+import { CreateTaskDialog } from "./create-task-dialog";
 
 type ColumnId = "proposed" | "todo" | "in_progress" | "waiting" | "done";
 
@@ -79,14 +80,12 @@ function Column({
   over?: "yes" | "deny";
   motion: BoardCardMotion;
   onOpen: (id: string) => void;
-  onCreate: (title: string) => void;
+  onCreate: () => void;
   moreHref?: string;
   picked: string[];
   onToggleSelect: (id: string) => void;
 }) {
   const { setNodeRef } = useDroppable({ id });
-  const [adding, setAdding] = useState(false);
-  const [title, setTitle] = useState("");
   return (
     <div className="relative w-[272px] shrink-0 self-start" data-column={id} aria-label={STATUS[pill].label}>
     <div className="board-column flex flex-col rounded-[14px] bg-panel/70 p-2">
@@ -98,7 +97,7 @@ function Column({
         </div>
         <div className="flex items-center gap-1">
           <AskEnsemble surface="board" anchorKey={`board:column:${id}`} label={`Ask Ensemble about ${STATUS[pill].label}`} entityIds={ids} selection={STATUS[pill].label} />
-          <button type="button" className="icon-btn h-6 w-6" title="New task in this column" onClick={() => setAdding(true)}>
+          <button type="button" className="icon-btn h-6 w-6" title="New task in this column" onClick={onCreate}>
             <Plus size={14} />
           </button>
         </div>
@@ -123,40 +122,14 @@ function Column({
             ) : null;
           })}
         </SortableContext>
-        {adding ? (
-          <input
-            autoFocus
-            value={title}
-            onChange={(event) => setTitle(event.target.value)}
-            onBlur={() => {
-              if (title.trim()) onCreate(title.trim());
-              setTitle("");
-              setAdding(false);
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && title.trim()) {
-                onCreate(title.trim());
-                setTitle("");
-              }
-              if (event.key === "Escape") {
-                setTitle("");
-                setAdding(false);
-              }
-            }}
-            placeholder="Type a name, press Enter"
-            aria-label="New task title"
-            className="field text-[13.5px]"
-          />
-        ) : (
           <button
             type="button"
-            onClick={() => setAdding(true)}
+            onClick={onCreate}
             className="row-tile flex items-center gap-1.5 rounded-md px-2 py-1 text-left text-[13px] text-muted"
           >
             <Plus size={13} />
             New task
           </button>
-        )}
         {moreHref ? (
           <Link href={moreHref} className="px-2 py-1 text-[12px] text-accent hover:underline">
             All completed
@@ -198,6 +171,7 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
   const [dragId, setDragId] = useState<string | null>(null);
   const [picked, setPicked] = useState<string[]>([]);
   const [layoutEdit, setLayoutEdit] = useState(false);
+  const [creating, setCreating] = useState<TaskStatus | null>(null);
   const togglePick = (id: string) => setPicked((current) => (current.includes(id) ? current.filter((row) => row !== id) : [...current, id]));
   const origin = useRef<ColumnId | null>(null);
 
@@ -309,12 +283,14 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
     },
   });
 
-  const create = useMutation({
-    mutationFn: (input: { title: string; status: TaskStatus }) =>
-      api.createTask({ title: input.title, status: input.status, owner: input.status === "proposed" ? "unassigned" : "me" }),
-    onSuccess: () => client.invalidateQueries({ queryKey: ["tasks"] }),
-    onError: (error) => toast((error as Error).message, { tone: "error" }),
-  });
+  const created = (task: TaskRecord) => {
+    client.setQueryData<{ tasks: TaskRecord[] }>(["tasks"], (current) => ({ tasks: [...(current?.tasks ?? []), task] }));
+    setSearch("");
+    setOwner("all");
+    setPriority("all");
+    void client.invalidateQueries({ queryKey: ["tasks"] });
+    void client.invalidateQueries({ queryKey: ["shell"] });
+  };
 
   const columnFromOver = (over: DragOverEvent["over"]): ColumnId | null => {
     if (!over) return null;
@@ -433,7 +409,7 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
           <button type="button" className="btn" onClick={() => setLayoutEdit(true)}>
             Edit layout
           </button>
-          <button type="button" className="btn-primary" onClick={() => create.mutate({ title: "Untitled", status: "todo" })}>
+          <button type="button" className="btn-primary" onClick={() => setCreating("todo")}>
             <Plus size={14} />
             New task
           </button>
@@ -490,7 +466,7 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
                   over={overColumn === column.id && origin.current !== column.id ? "yes" : undefined}
                   motion={motion.sortable}
                   onOpen={peek.open}
-                  onCreate={(title) => create.mutate({ title, status: column.drop })}
+                  onCreate={() => setCreating(column.id === "waiting" ? "blocked" : column.drop)}
                   moreHref={column.id === "done" ? "/settings#completed" : undefined}
                   picked={picked}
                   onToggleSelect={togglePick}
@@ -510,6 +486,7 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
           </BoardDragOverlay>
         </DndContext>
       </Held>
+      {creating ? <CreateTaskDialog status={creating} onCreated={created} onClose={() => setCreating(null)} /> : null}
     </div>
   );
 }

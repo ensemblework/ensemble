@@ -8,7 +8,7 @@
  */
 import { execFile } from "node:child_process";
 import { requireHostAccess } from "../lib/hosted-access.js";
-import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -286,8 +286,9 @@ export async function overviewViaGitHub(options: {
     return 9;
   };
   const wanted = files.filter((path) => rank(path) < 9).sort((a, b) => rank(a) - rank(b) || a.localeCompare(b)).slice(0, 24);
-  const dir = join(tmpdir(), "ensemble-github-scratch", safeSegment(options.fullName), String(Date.now()));
-  await mkdir(dir, { recursive: true });
+  const scratch = join(tmpdir(), "ensemble-github-scratch", safeSegment(options.fullName));
+  await mkdir(scratch, { recursive: true });
+  const dir = await realpath(await mkdtemp(join(scratch, "read-")));
   try {
     const { writeFile: write } = await import("node:fs/promises");
     for (const path of files.slice(0, 200)) {

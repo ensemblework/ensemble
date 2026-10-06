@@ -10,6 +10,7 @@
  * The plot process is not the app's git.
  */
 import { homedir } from "node:os";
+import { dirname } from "node:path";
 import { desktopDataDir } from "@ensemble/shared-types/desktop-discovery";
 import { capabilities, startSandboxed } from "./spawn.js";
 
@@ -55,7 +56,7 @@ const { child } = startSandboxed(
     runId: worker ? "plot-worker" : "plot",
     cwd: root,
     readWrite: [root, ...repeated("--read-write")],
-    readOnly: repeated("--read-only"),
+    readOnly: [...repeated("--read-only"), dirname(script)],
     deny: ["/etc/passwd", "/private/etc/passwd"],
     network: "none",
     env,

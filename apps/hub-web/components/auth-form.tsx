@@ -43,6 +43,8 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const first = status.data?.bypass && !status.data.hasAccounts;
   const signup = status.data?.signup;
   const closed = signupPanel(mode, signup) === "closed";
+  const emailAvailable = mode === "login" || status.data?.emailSignupAvailable !== false;
+  const unavailable = !closed && !emailAvailable && !status.data?.providers.length;
   const inviteNote = showInviteNote(signup);
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg px-4">
@@ -64,14 +66,14 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
         className="w-full p-6 sm:p-8"
         onSubmit={(event) => {
           event.preventDefault();
-          submit.mutate();
+          if (emailAvailable && !submit.isPending) submit.mutate();
         }}
       >
         <div className="mb-5 md:hidden">
           <EnsembleLogo size={20} />
         </div>
         <h1 className="text-[22px] font-semibold tracking-tight">
-          {closed ? "Invite only" : mode === "signup" ? "Create your account" : "Sign in"}
+          {closed ? "Invite only" : unavailable ? "Signup unavailable" : mode === "signup" ? "Create your account" : "Sign in"}
         </h1>
         <p className="mt-1 text-[13px] text-muted">
           {closed
@@ -83,6 +85,13 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
               : "Welcome back."}
         </p>
         {inviteNote && !closed ? <p className="mt-2 text-[13px] text-muted">{INVITE_ONLY}</p> : null}
+        {!closed && !emailAvailable ? (
+          <p role="alert" className="mt-3 text-[13px] text-muted">
+            {unavailable
+              ? "New accounts are not available on this instance yet. Contact the operator. Existing accounts can still sign in."
+              : "Email signup is not available on this instance yet. Use one of the configured providers below."}
+          </p>
+        ) : null}
         {providerError ? <p role="alert" className="mt-3 text-[13px] text-[#ffb4ae]">{providerError}</p> : null}
         {!closed && status.data?.providers.length ? (
           <div className="mt-5 space-y-2">
@@ -91,10 +100,10 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
                 Continue with {provider === "github" ? "GitHub" : provider === "google" ? "Google" : "Microsoft"}
               </a>
             ))}
-            <p className="py-2 text-center text-[12px] text-muted">or continue with email</p>
+            {emailAvailable ? <p className="py-2 text-center text-[12px] text-muted">or continue with email</p> : null}
           </div>
         ) : null}
-        {closed ? null : <div className="mt-5 space-y-3">
+        {closed || !emailAvailable ? null : <div className="mt-5 space-y-3">
           {mode === "signup" ? (
             <label className="block text-[13px] font-medium">
               Name
@@ -119,12 +128,12 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
             />
           </label>
         </div>}
-        {mode === "signup" && !closed && status.data?.turnstileSiteKey ? (
+        {mode === "signup" && !closed && emailAvailable && status.data?.turnstileSiteKey ? (
           <AuthTurnstile siteKey={status.data.turnstileSiteKey} onToken={setTurnstileToken} resetKey={resetChallenge} />
         ) : null}
         {submit.error ? <div className="mt-3 text-[12.5px] text-[#ffb4ae]">{(submit.error as Error).message}</div> : null}
         {status.error ? <p role="alert" className="mt-3 text-[13px] text-muted">{status.error.message}</p> : null}
-        {closed ? null : (
+        {closed || !emailAvailable ? null : (
         <button type="submit" className="btn-primary mt-5 w-full justify-center py-1.5" disabled={submit.isPending || status.isPending || status.isError || (mode === "signup" && Boolean(status.data?.turnstileSiteKey) && !turnstileToken)}>
           {submit.isPending ? <Spinner size={12} /> : null} {mode === "signup" ? "Create account" : "Sign in"}
         </button>

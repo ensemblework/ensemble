@@ -6,11 +6,11 @@
  * here talks to a real model or the network.
  */
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { bootSidecar, git, makeSourceRepo, prepareAccount, sleep, startStubRuntime, type Sidecar } from "./e2e-harness.js";
+import { makeTestDirectory } from "../test/temporary.js";
 
 async function until<T>(what: string, probe: () => Promise<T | undefined | null | false>, timeoutMs = 60_000): Promise<T> {
   const started = Date.now();
@@ -61,7 +61,7 @@ const pendingFor = (side: Sidecar, jobId: string) =>
   });
 
 test("assign → Needs me → answer → review → accept → push, plus cancel, outside paths, unattended trust and restart", { timeout: 600_000 }, async (t) => {
-  const root = mkdtempSync(join(tmpdir(), "ensemble-agent-flow-"));
+  const root = makeTestDirectory("ensemble-agent-flow-");
   mkdirSync(join(root, "workspace"), { recursive: true });
   const stub = await startStubRuntime();
   const source = makeSourceRepo(root);

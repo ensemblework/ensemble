@@ -127,6 +127,8 @@ Read on `main` after PR #30. `docs/18_WHAT_IS_REAL.md` used to say Assign to age
 
 **Untrusted:** every command the agent runs, every repo it clones, and the plot script.
 
+Named read/write/toolchain grants also allow **metadata only** for their ancestor directories (`workspace/sandbox/seatbelt.ts`), needed for interpreter `realpath`. Ancestor contents and sibling files remain denied, and hard-denied credentials/app data still override grants. Plot workers explicitly grant read-only access to their own helper-script directory.
+
 **Not in the base:** the webview. It talks to the sidecar with a per-launch token. It cannot spawn.
 
 ---

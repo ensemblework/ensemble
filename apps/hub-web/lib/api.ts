@@ -845,7 +845,7 @@ export const api = bindClient({
   // account
   authStatus: () => get<{
     hasAccounts: boolean; bypass: boolean; signup: "open" | "closed" | "allowlist";
-    providers: Array<"google" | "github" | "microsoft">; emailConfigured: boolean; turnstileSiteKey: string | null;
+    providers: Array<"google" | "github" | "microsoft">; emailConfigured: boolean; emailSignupAvailable?: boolean; turnstileSiteKey: string | null;
   }>("/api/auth/status"),
   me: () => get<Me>("/api/auth/me"),
   signup: (data: { email: string; password: string; name: string; turnstileToken?: string }) =>

@@ -95,7 +95,11 @@ export async function createHttpHarness(options: BuildAppOptions = {}) {
         await app.close();
         if (testDatabase) {
           const { deleteAccountData } = await import("../lib/account-data.js");
-          for (const userId of users) await deleteAccountData(prisma, userId);
+          for (const userId of users) {
+            if (await prisma.user.findUnique({ where: { id: userId }, select: { id: true } })) {
+              await deleteAccountData(prisma, userId);
+            }
+          }
         }
         await prisma.$disconnect();
         await closeDatabase();

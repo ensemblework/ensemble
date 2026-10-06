@@ -159,6 +159,14 @@ export function compileSeatbeltProfile(policy: SeatbeltPolicy): string {
     ...TOOLCHAIN_HOME_READS.map((name) => join(policy.home, name)),
     ...(policy.toolchainReads ?? []),
   ];
+  const ancestors = new Set<string>();
+  for (const grant of reads) {
+    let parent = dirname(grant);
+    while (parent !== dirname(parent)) {
+      ancestors.add(parent);
+      parent = dirname(parent);
+    }
+  }
   const network =
     policy.network === "none"
       ? "(deny network*)"
@@ -175,6 +183,8 @@ export function compileSeatbeltProfile(policy: SeatbeltPolicy): string {
     `(deny file-read* (subpath ${quote(policy.home)}))`,
     ";; Re-allow the workspace, explicit grants, and toolchain subfolders.",
     `(allow file-read* ${reads.map((path) => `(subpath ${quote(path)})`).join(" ")})`,
+    // realpath needs ancestor metadata, not directory contents or sibling files.
+    `(allow file-read-metadata ${[...ancestors].map((path) => `(literal ${quote(path)})`).join(" ")})`,
     ";; More specific than the allows above: secrets, app data, Ensemble, askpass.",
     `(deny file-read* file-write* ${hardDeny.map((path) => `(subpath ${quote(path)})`).join(" ")})`,
     ";; The Never tier. Children of python, node, make, npm, and sh inherit this.",

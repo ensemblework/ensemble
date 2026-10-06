@@ -8,6 +8,7 @@ import { parseDue } from "../lib/clock.js";
 import { assertTransition } from "../lib/state-machine.js";
 import { recordUndoInTransaction } from "../lib/undo.js";
 import { assertOwned } from "./records.js";
+import { CreateTask } from "@ensemble/shared-types";
 
 type Tx = Prisma.TransactionClient;
 type Db = PrismaClient | Tx;
@@ -128,13 +129,14 @@ async function assertLinked(tx: Tx, userId: string, draft: { deliverableId?: str
 }
 
 export async function createTask(tx: Tx, userId: string, draft: TaskDraft, actor: Actor): Promise<Task> {
+  const title = CreateTask.shape.title.parse(draft.title);
   const projectId = await resolveProjectId(tx, userId, draft.projectId, draft.projectName);
   await assertLinked(tx, userId, draft);
   const status = draft.status ?? "proposed";
   const created = await tx.task.create({
     data: {
       userId,
-      title: draft.title,
+      title,
       description: draft.description ?? "",
       notes: draft.notes ?? "",
       owner: draft.owner ?? "unassigned",
@@ -212,7 +214,7 @@ export async function updateTask(tx: Tx, userId: string, id: string, patch: Task
   const updated = await tx.task.update({
     where: { id },
     data: {
-      title: patch.title,
+      title: patch.title === undefined ? undefined : CreateTask.shape.title.parse(patch.title),
       description: patch.description,
       notes: patch.notes,
       owner: patch.owner,
