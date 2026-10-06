@@ -128,7 +128,7 @@ Checked on 6 Oct 2026 on macOS (Apple Silicon) against a local hub-api and Hub w
 
 - **`ensemble` CLI** (`apps/cli`): device login through `/link`, pairing this computer, sharing folders, the runner (a code task assigned from the hosted API finished on the Mac with the `mock` model), `ensemble mcp`, editor setup, status/doctor, logout (key revoked, device removed). Not run here: Windows and Linux archives (CI builds and smoke-tests them), `runner install` against real service managers, real editors other than an MCP SDK client.
 - **Hosted MCP** at `POST /mcp` (`apps/hub-api/src/routes/mcp.ts`): same 17 tools as the local bridge, bearer `ens_` key only.
-- **Installers**: Homebrew tap, Scoop bucket, `install.sh`, `install.ps1`, `.deb`/`.rpm` come from `.github/workflows/cli-release.yml`. winget, npm and AUR files are produced but not published ([26 §1](26_CLI.md#1-install)).
+- **Installers**: Homebrew tap (`ensemblework/homebrew-tap`), Scoop bucket (`ensemblework/scoop-bucket`), `install.sh`, `install.ps1`, `.deb`/`.rpm` come from `.github/workflows/cli-release.yml`; `cli-v0.1.0` is published (6 Oct 2026). winget, npm and AUR files are produced but not published ([26 §1](26_CLI.md#1-install)).
 - **Guides**: `ensemblework.com/download`, Connect your apps (CLI, hosted URL, from source per editor and OS), Settings → Devices.
 
 ## Still a placeholder
