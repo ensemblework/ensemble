@@ -26,6 +26,7 @@ if (deploy !== 0) process.exit(deploy);
 // copy of each package and nest only the versions that would collide.
 console.log("materializing sidecar node_modules");
 materializeNodeModules(appDir);
+copyGeneratedPrismaClient(appDir);
 
 const nodeName = process.platform === "win32" ? "node.exe" : "node";
 const nodeSrc = realpathSync(process.execPath);
@@ -39,8 +40,14 @@ bundleNodeLibraries(nodeSrc, nodeDest);
 
 const imported = run(
   nodeDest,
-  ["--import", "tsx", "-e", "await import('fastify'); await import('@prisma/client'); await import('@electric-sql/pglite'); console.log('sidecar-import-ok')"],
-  { cwd: appDir, encoding: "utf8", stdio: "pipe" },
+  [
+    "--import",
+    "tsx",
+    "-e",
+    // Constructing the client fails on the "did not initialize yet" stub; importing it does not.
+    "await import('fastify'); const { PrismaClient } = await import('@prisma/client'); new PrismaClient(); await import('@electric-sql/pglite'); console.log('sidecar-import-ok')",
+  ],
+  { cwd: appDir, encoding: "utf8", stdio: "pipe", env: { ...process.env, DATABASE_URL: process.env.DATABASE_URL || "postgresql://sidecar:check@127.0.0.1:1/check" } },
 );
 if (imported !== 0) {
   console.error("The bundled sidecar cannot import tsx.");
@@ -221,6 +228,24 @@ function runTool(command, args) {
     console.error(`${command} failed while packing the sidecar node.`);
     process.exit(result.status ?? 1);
   }
+}
+
+/**
+ * `pnpm deploy` can install @prisma/client from the store without the client
+ * generated above; on Windows it does, and the sidecar gets the "did not
+ * initialize yet" stub. Copy the generated client from the workspace instead.
+ */
+function copyGeneratedPrismaClient(appDir) {
+  const workspaceClient = realpathSync(join(root, "apps", "hub-api", "node_modules", "@prisma", "client"));
+  const generated = join(dirname(dirname(workspaceClient)), ".prisma", "client");
+  if (!existsSync(join(generated, "schema.prisma"))) {
+    console.error(`No generated Prisma client at ${generated}. Run pnpm db:generate first.`);
+    process.exit(1);
+  }
+  const target = join(appDir, "node_modules", ".prisma", "client");
+  rmSync(target, { recursive: true, force: true });
+  mkdirSync(dirname(target), { recursive: true });
+  cpSync(generated, target, { recursive: true, dereference: true });
 }
 
 function materializeNodeModules(appDir) {
