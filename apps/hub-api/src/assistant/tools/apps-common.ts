@@ -17,7 +17,13 @@ export type AppProvider = AppToolMeta["provider"];
 export const SUITE_LABEL: Record<AppProvider, string> = {
   google: "Google Workspace",
   microsoft: "Microsoft 365",
+  zoom: "Zoom",
+  docusign: "Docusign",
+  atlassian: "Jira",
 };
+
+/** Accounts (oauth_tokens.provider) that have built-in assistant tools, in the order the prompt names them. */
+export const APP_PROVIDERS = Object.keys(SUITE_LABEL) as AppProvider[];
 
 type TokenResolver = (userId: string, provider: AppProvider, label: string) => Promise<ProviderToken>;
 
@@ -51,7 +57,8 @@ export function missingAccess(meta: AppToolMeta, missing: readonly string[]): Co
 /** A usable token for this tool, or a ConnectorNotConnectedError the person can act on. */
 export async function appAccess(ctx: ToolContext, meta: AppToolMeta): Promise<ProviderToken> {
   const token = await resolveToken(ctx.userId, meta.provider, SUITE_LABEL[meta.provider]);
-  const missing = missingScopes(meta.provider, token.scopes, meta.scopes);
+  // A pasted Jira API token has no OAuth scopes; it acts with the person's own Jira permissions.
+  const missing = token.extra?.auth === "basic" ? [] : missingScopes(meta.provider, token.scopes, meta.scopes);
   if (missing.length) throw missingAccess(meta, missing);
   return token;
 }
@@ -85,6 +92,10 @@ export interface AppFetchInit {
   expect?: "json" | "text" | "bytes" | "none";
   /** Added to a 404 message, e.g. which files the app can see. */
   notFound?: string;
+  /** A full Authorization header value, for credentials that are not a bearer token (Jira's Basic email:token). */
+  authorization?: string;
+  /** A vendor-specific reading of an error response. Return an error to throw it, or nothing for the usual handling. */
+  onError?: (status: number, body: unknown) => Error | null | undefined;
 }
 
 const REQUEST_TIMEOUT_MS = 25_000;
@@ -94,7 +105,18 @@ function vendorMessage(body: unknown): { message: string; scope: boolean } {
   if (!body || typeof body !== "object") return { message: "", scope: false };
   const error = (body as { error?: unknown }).error;
   if (typeof error === "string") return { message: String((body as { error_description?: unknown }).error_description ?? error), scope: false };
-  if (!error || typeof error !== "object") return { message: "", scope: false };
+  if (!error || typeof error !== "object") {
+    // Zoom and Docusign: { code | errorCode, message }. Jira: { errorMessages: [], errors: { field: message } }.
+    const flat = body as { message?: unknown; errorMessages?: unknown; errors?: unknown };
+    const jira = [
+      ...(Array.isArray(flat.errorMessages) ? flat.errorMessages.filter((line): line is string => typeof line === "string") : []),
+      ...(flat.errors && typeof flat.errors === "object" && !Array.isArray(flat.errors)
+        ? Object.values(flat.errors as Record<string, unknown>).filter((line): line is string => typeof line === "string")
+        : []),
+    ];
+    const message = typeof flat.message === "string" ? flat.message : jira.join(" ");
+    return { message, scope: /does not contain scopes|insufficient scope/i.test(message) };
+  }
   const record = error as { message?: unknown; status?: unknown; code?: unknown; details?: Array<{ reason?: unknown }>; errors?: Array<{ reason?: unknown }> };
   const message = typeof record.message === "string" ? record.message : "";
   const reasons = [...(record.details ?? []), ...(record.errors ?? [])].map((detail) => String(detail?.reason ?? ""));
@@ -107,6 +129,7 @@ function vendorMessage(body: unknown): { message: string; scope: boolean } {
 /** fetch with a timeout and errors a person can read. */
 export async function appFetch<T = unknown>(ctx: ToolContext, meta: AppToolMeta, token: string, url: string, init: AppFetchInit = {}): Promise<T> {
   const headers: Record<string, string> = { Authorization: `Bearer ${token}`, ...init.headers };
+  if (init.authorization) headers.Authorization = init.authorization;
   let body: RequestInit["body"];
   if (init.body instanceof Uint8Array || typeof init.body === "string") {
     body = init.body as RequestInit["body"];
@@ -134,6 +157,8 @@ export async function appFetch<T = unknown>(ctx: ToolContext, meta: AppToolMeta,
     } catch {
       parsed = null;
     }
+    const special = init.onError?.(response.status, parsed);
+    if (special) throw special;
     const { message, scope } = vendorMessage(parsed);
     if (response.status === 401) {
       throw new ConnectorNotConnectedError(
@@ -141,7 +166,7 @@ export async function appFetch<T = unknown>(ctx: ToolContext, meta: AppToolMeta,
         `${SUITE_LABEL[meta.provider]} sign-in has expired or was revoked. Reconnect it in Settings → Connections.`,
       );
     }
-    if (response.status === 403 && scope) throw missingAccess(meta, meta.scopes.map((any) => any[0]!));
+    if ((response.status === 403 || response.status === 400) && scope) throw missingAccess(meta, meta.scopes.map((any) => any[0]!));
     // A vendor that echoes the request must not put the token in front of the model.
     const said = message ? `: ${truncateText(message.split(token).join("[token]").replace(/\s+/g, " "), 240)}` : "";
     if (response.status === 404) throw new AppRequestError(`${meta.label} could not find that item${init.notFound ? ` (${init.notFound})` : ""}${said}.`, 404);

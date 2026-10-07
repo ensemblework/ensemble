@@ -80,13 +80,14 @@ Any verified person can connect on the hosted site; only saving the instance OAu
 | Task labels | Built: `labels` on task create/update/list, chips on board cards, a chip editor on the task page, `#label` board search |
 | Tested | 7 Oct 2026: CSV, Trello JSON and Notion zip end to end over HTTP on PGlite (preview, import, re-import, undo, isolation); Notion, Linear, Jira and Todoist importers and a cancelled Linear token import against mocked `fetch`. **No importer has been run against a live vendor account.** Asana, ClickUp, monday.com, GitHub and Trello over the API are built from their current docs without a mocked test of their own |
 
-### Assistant can act in Google and Microsoft apps
+### Assistant can act in Google and Microsoft apps, and read Zoom, Docusign and Jira
 
 | What | State |
 |---|---|
 | Read Gmail, Outlook mail, Teams chats, Google and Outlook calendars, Drive and OneDrive files (Docs as Markdown, Sheets as CSV, Word/Excel/PowerPoint as text; PDFs as details only) | Built (`apps/hub-api/src/assistant/tools/google/`, `tools/microsoft/`). Offered only for a connected suite and the products switched on. |
 | Create and change calendar events with invites (Google Meet or Teams link optional); create and edit Google Docs, Sheets and Slides and Word, Excel and PowerPoint files (new Office files go to OneDrive/Ensemble) | Built. **Every change waits for Apply**, whatever the write policy says, is not offered while the assistant setting `assistant.connectedAppWrites` is off, and is recorded in the audit ledger as `apps.<tool>` with its link. No undo. |
-| Tested | 7 Oct 2026 with mocked Google and Graph responses and the Apply path against a local Postgres. **Not run against a live Google or Microsoft account.** The host's Google Cloud project needs the Gmail, Calendar, Drive, Docs, Sheets and Slides APIs enabled. Details in [11 §8.2](11_HOW_THE_ASSISTANT_WORKS.md#82-connected-apps-google-workspace-and-microsoft-365). |
+| Read Zoom meetings, cloud recordings, transcripts and AI Companion summaries; Docusign envelopes and who still has to sign; Jira issues by JQL with descriptions and comments | Built, read only (`apps/hub-api/src/assistant/tools/zoom.ts`, `docusign.ts`, `jira.ts`). Offered whenever that account is connected. Jira works with OAuth or a pasted API token. Zoom recordings, transcripts and summaries need a paid Zoom plan, and summaries need `meeting:read:summary` on the host's Zoom app. Tested 7 Oct 2026 with mocked vendor responses only. |
+| Tested | 7 Oct 2026 with mocked Google and Graph responses and the Apply path against a local Postgres. **Not run against a live Google or Microsoft account.** The host's Google Cloud project needs the Gmail, Calendar, Drive, Docs, Sheets and Slides APIs enabled. Details in [11 §8.2](11_HOW_THE_ASSISTANT_WORKS.md#82-connected-apps). |
 
 ### Needs me: a real router for other agents' permission prompts
 - A hook in **Cursor** (shell commands and MCP calls), **Claude Code** (every permission prompt), or **VS Code Copilot agent** (tool calls that change things) holds the tool call open and posts it to Ensemble. The card appears on Needs me live. **Allow once**, **Allow for this session**, **Always allow**, or **Deny** (with a reason) goes back to that exact call, in each tool's own output format.

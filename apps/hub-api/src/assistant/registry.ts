@@ -25,6 +25,9 @@ import { repoReadTools } from "./tools/repos.js";
 import { plotTools } from "./tools/plots.js";
 import { googleWorkspaceTools } from "./tools/google-workspace.js";
 import { microsoft365Tools } from "./tools/microsoft-365.js";
+import { zoomTools } from "./tools/zoom.js";
+import { docusignTools } from "./tools/docusign.js";
+import { jiraTools } from "./tools/jira.js";
 
 const ALL: readonly AnyHubTool[] = [
   ...taskTools,
@@ -48,7 +51,7 @@ export const TOOLS: ReadonlyMap<string, AnyHubTool> = new Map(ALL.map((tool) => 
  * apps.ts offers them per person, by connection and product, and Apply finds
  * them through apps.resolveTool.
  */
-export const APP_TOOL_LIST: readonly AnyHubTool[] = [...googleWorkspaceTools, ...microsoft365Tools];
+export const APP_TOOL_LIST: readonly AnyHubTool[] = [...googleWorkspaceTools, ...microsoft365Tools, ...zoomTools, ...docusignTools, ...jiraTools];
 
 /** Names, for tests that assert the catalog has not silently shrunk. */
 export const TOOL_NAMES: readonly string[] = ALL.map((tool) => tool.name);

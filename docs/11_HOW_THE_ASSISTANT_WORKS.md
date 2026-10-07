@@ -10,7 +10,7 @@ Written to be read start to finish. Design notes live in [02 §10–11](02_MODUL
 
 **The assistant never touches your UI.** It calls named functions on your own API, those functions write rows to the same Postgres your pages read, and the pages update because the data changed — not because anything simulated a click.
 
-**Connected apps work the same way.** When Google Workspace or Microsoft 365 is connected, a turn also gets typed tools for those apps (area `apps`): read Gmail, Outlook, Teams, calendars and files, create calendar events that email invites, and create or edit Google Docs, Sheets and Slides or Word, Excel and PowerPoint files. Every change in a connected app waits for **Apply**, whatever the write policy says ([§8.2](#82-connected-apps-google-workspace-and-microsoft-365)).
+**Connected apps work the same way.** When Google Workspace or Microsoft 365 is connected, a turn also gets typed tools for those apps (area `apps`): read Gmail, Outlook, Teams, calendars and files, create calendar events that email invites, and create or edit Google Docs, Sheets and Slides or Word, Excel and PowerPoint files. A connected Zoom, Docusign or Jira account adds read-only tools for meetings and transcripts, envelopes, and issues. Every change in a connected app waits for **Apply**, whatever the write policy says ([§8.2](#82-connected-apps)).
 
 The same tool loop also serves selected-text comments and inline `@ensemble` questions on tasks and standalone pages. These use the configured assistant default tier. Enter is the explicit send action; opening a saved answer never invokes a model. The live document and **typed entity mention IDs** travel with inline requests, including uploaded dataset IDs. The page's title/body are supplied directly (up to 24,000 characters), while the account's remaining context is available through user-scoped retrieval tools.
 
@@ -87,6 +87,7 @@ This is why there was no code change to the webapp: the operations already exist
 | `apps/hub-api/src/assistant/tools/` | ~1,500 | Hub tools by area: `tasks`, `projects`, `context`, `graph`, `repos`, `skills`, `reminders`, `fetch`, `watchers`, `diagrams`, `diagram-context`, `plots` |
 | `apps/hub-api/src/assistant/tools/google-workspace.ts`, `tools/google/` | ~1,270 | Gmail, Google Calendar, Drive, Docs, Sheets, Slides |
 | `apps/hub-api/src/assistant/tools/microsoft-365.ts`, `tools/microsoft/` | ~720 | Outlook mail and calendar, Teams, OneDrive, Word, Excel, PowerPoint (Microsoft Graph v1.0) |
+| `apps/hub-api/src/assistant/tools/zoom.ts`, `docusign.ts`, `jira.ts` | ~690 | read only: Zoom meetings, recordings, transcripts and AI summaries; Docusign envelopes; Jira issues |
 | `apps/hub-api/src/assistant/tools/apps-common.ts` | 338 | tokens and scopes, vendor HTTP with readable errors, dates and preview wording |
 | `apps/hub-api/src/lib/office/` | ~980 | Markdown → HTML and .docx, rows ↔ .xlsx, slides → .pptx, text out of Office files |
 | `apps/hub-api/src/routes/assistant.ts` | 313 | HTTP: SSE streaming, conversations, Apply, Stop |
@@ -99,7 +100,7 @@ This is why there was no code change to the webapp: the operations already exist
 | `packages/shared-types/src/assistant.ts` | 267 | every shape that crosses the wire |
 | `packages/shared-types/src/undo.ts` | — | the undo/redo contract |
 
-**51 Hub tools** (24 read, 27 write) in the static catalog, grouped by the data they touch, plus **30 connected-app tools** (15 read, 15 write) offered per person ([§8.2](#82-connected-apps-google-workspace-and-microsoft-365)).
+**51 Hub tools** (24 read, 27 write) in the static catalog, grouped by the data they touch, plus **38 connected-app tools** (23 read, 15 write) offered per person ([§8.2](#82-connected-apps)).
 
 Roughly **2,000 lines of tools and 600 of orchestration**. The tools are the bulk, and that is the right shape: the interesting part is *what the agent may do*, not the loop that lets it.
 
@@ -358,7 +359,7 @@ redo → "Redone — added todo ENSEMBLE VERIFY"   task: back, project link, pri
 redo → 409 "Nothing to redo."
 ```
 
-**What is deliberately absent:** anything that left the building. A sent mail, an opened PR, a calendar invite, a Google Doc. Those are gated by approval precisely because they cannot be taken back, and a button that appears to undo them but does not would be worse than no button. A connected-app write applied from the chat has no undo entry; it is recorded in the audit ledger as `apps.<tool>` with its link ([§8.2](#82-connected-apps-google-workspace-and-microsoft-365)).
+**What is deliberately absent:** anything that left the building. A sent mail, an opened PR, a calendar invite, a Google Doc. Those are gated by approval precisely because they cannot be taken back, and a button that appears to undo them but does not would be worse than no button. A connected-app write applied from the chat has no undo entry; it is recorded in the audit ledger as `apps.<tool>` with its link ([§8.2](#82-connected-apps)).
 
 ---
 
@@ -401,11 +402,11 @@ The final allowed model request is reserved for **synthesis with tools disabled*
 
 Reminder tools can create, edit, snooze, dismiss or delete the same private rows shown in Today. Their write area remains configurable, with the same preview/Needs me gates as other Hub changes. They are deliberately **absent from shared retrieval, graph construction, fetch extraction and the Context Bridge**. Notification timing, quiet hours and Windows opt-in are in [02 §14](02_MODULE_INTERACTION_HUB_UI.md#14-private-reminders).
 
-### 8.2 Connected apps (Google Workspace and Microsoft 365)
+### 8.2 Connected apps
 
 Read from the code and checked with mocked Google and Graph responses on 7 Oct 2026 (`src/assistant/tools/google-workspace.test.ts`, `microsoft-365.test.ts`, `apps.test.ts`, and `apply.integration.test.ts` against a local Postgres). Not run against a live Google or Microsoft account.
 
-**Who gets which tools.** `toolsForTurn` (`apps/hub-api/src/assistant/apps.ts`) adds a person's app tools to the Hub catalog for each turn. A tool is offered when its suite is connected (an `oauth_tokens` row for `google` or `microsoft`) and one of its products is switched on in `settings.connectorProducts` (defaults from `connectors/products.ts`). Reads are always offered then. Writes are offered only while **`assistant.connectedAppWrites`** is on; `apps` is not one of `allowedWriteAreas`. At most `MAX_APP_TOOLS` (64) app tools are offered per turn, built-in suites first, so the Hub and app tools together stay under the 128 functions OpenAI accepts. A product that is on but whose permission was never granted is still offered; the call then says what to do (below).
+**Who gets which tools.** `toolsForTurn` (`apps/hub-api/src/assistant/apps.ts`) adds a person's app tools to the Hub catalog for each turn. A tool is offered when its suite is connected (an `oauth_tokens` row for `google` or `microsoft`) and one of its products is switched on in `settings.connectorProducts` (defaults from `connectors/products.ts`). Zoom, Docusign and Jira (`zoom`, `docusign`, `atlassian` rows) have no products: their read tools are offered whenever the account is connected. Reads are always offered then. Writes are offered only while **`assistant.connectedAppWrites`** is on; `apps` is not one of `allowedWriteAreas`. At most `MAX_APP_TOOLS` (64) app tools are offered per turn, built-in suites first, so the Hub and app tools together stay under the 128 functions OpenAI accepts. A product that is on but whose permission was never granted is still offered; the call then says what to do (below).
 
 | Tool | Reads or writes | Product | Scope it needs |
 |---|---|---|---|
@@ -423,8 +424,16 @@ Read from the code and checked with mocked Google and Graph responses on 7 Oct 2
 | `teams_list_chats`, `teams_read_chat` | read | Teams | `Chat.Read` |
 | `onedrive_search`, `onedrive_read_file`, `excel_read_range` | read | OneDrive or Office files | `Files.Read` |
 | `word_create`, `word_update`, `excel_create`, `excel_update_range`, `powerpoint_create` | write | Office files | `Files.ReadWrite` |
+| `zoom_list_meetings` | read | Zoom | `meeting:read:list_meetings` (or classic `meeting:read`) |
+| `zoom_get_meeting_summary` | read | Zoom | `meeting:read:summary` (or classic `meeting_summary:read`) |
+| `zoom_list_recordings` | read | Zoom | `cloud_recording:read:list_user_recordings` (or classic `recording:read`) |
+| `zoom_get_transcript` | read | Zoom | `cloud_recording:read:meeting_transcript` (or classic `recording:read`) |
+| `docusign_list_envelopes`, `docusign_get_envelope` | read | Docusign | `signature` |
+| `jira_search`, `jira_get_issue` | read | Jira | `read:jira-work` with OAuth; none with a pasted API token |
 
-**Tokens.** Every call gets its token from `requireProviderToken` in `connectors/tokens.ts` (through `appToken` in `tools/apps-common.ts`), which refreshes it and throws `ConnectorNotConnectedError` (409) when the suite is not connected. A missing scope throws the same error: *"Google Calendar is connected without the access this needs. Turn it on in Settings → Connections and approve the new permission."* Graph scopes match with or without the `https://graph.microsoft.com/` prefix and in any case. A vendor 401 asks the person to reconnect; a 403 for scopes is the same 409; other vendor errors are `AppRequestError` (424, message shown; not 502, which the Hub client reads as "server unreachable") with the vendor's own sentence, never a token.
+**Zoom, Docusign and Jira** (`tools/zoom.ts`, `docusign.ts`, `jira.ts`; read only). Zoom calls `https://api.zoom.us/v2` as the person (`users/me`): upcoming or previous meetings, cloud recordings for up to a month at a time (Zoom's limit; a longer range is shortened and says so), the AI Companion summary (`/meetings/{id}/meeting_summary`, Markdown from `summary_content`), and the transcript (`/meetings/{id}/transcript`, then its `download_url`, which must be on `zoom.us` because the token is sent with it; the VTT becomes `[mm:ss] Speaker: words` lines). Recordings, transcripts and summaries need a paid Zoom plan on the host's account; Zoom's code 200 refusal is shown as that. Docusign uses the account's own `baseUri` and `accountId` from connect (only `*.docusign.net` / `*.docusign.com` hosts) with `/restapi/v2.1/accounts/{accountId}/envelopes`, and works out who an envelope is waiting on from recipients that are sent or opened but not done. Jira uses `https://api.atlassian.com/ex/jira/{cloudId}` with the OAuth token, or `https://{site}` with Basic `email:token` for a pasted token (only `*.atlassian.net` / `*.jira.com` sites); search posts JQL to `/rest/api/3/search/jql` with `nextPageToken`, and an issue's description and last five comments come back as Markdown through `adfToMarkdown` (`src/imports/markdown.ts`).
+
+**Tokens.** Every call gets its token from `requireProviderToken` in `connectors/tokens.ts` (through `appToken` in `tools/apps-common.ts`), which refreshes it and throws `ConnectorNotConnectedError` (409) when the suite is not connected. A missing scope throws the same error: *"Google Calendar is connected without the access this needs. Turn it on in Settings → Connections and approve the new permission."* Graph scopes match with or without the `https://graph.microsoft.com/` prefix and in any case. A pasted Jira API token has no OAuth scopes and is not checked for them. A vendor 401 asks the person to reconnect; a 403 for scopes is the same 409; other vendor errors are `AppRequestError` (424, message shown; not 502, which the Hub client reads as "server unreachable") with the vendor's own sentence, never a token.
 
 **The Apply rule.** Every `apps` write is held as `awaiting_approval`, even when `writePolicy` is `immediate` (`holdsAssistantWrite` in `agent.ts`). Before the card is shown, `ensureAppAccess` checks the connection, the product and the scope, so a missing permission is reported now rather than after Apply. The preview says exactly what will happen, for example *"Create event “Design review” Wed 14 Oct 15:00–15:30 IST in Mira's calendar (mira@fieldnote.example) and email invites to sam@fieldnote.example."* Previews make no vendor writes; a few read the target first (an event's title, a document's title, a workbook's first sheet).
 
@@ -512,7 +521,7 @@ Three rules learned the hard way:
 - **Conversation history is flattened.** Prior tool calls are replayed as a short note — *"You did: …"* — not as real tool messages, because a tool result with no matching request in the window is rejected by both APIs. Detail from three turns ago is summarised, not exact.
 - **Plans vary between runs.** The orchestrator is a model. The same request can take 3 tools or 7.
 - **Credits are an estimate.** The Copilot API reports tokens and never credits; every figure comes from the multiplier table in `models.ts` / `models.py`.
-- **Connected-app tools are tested against mocked vendors only.** With the default `drive.file` access, Drive tools see only files Ensemble created or the person picked; Search all of Drive (`drive.readonly`) is a restricted scope a public server must have verified by Google. The Graph workbook API (`excel_read_range`, `excel_update_range`) is documented for OneDrive for work or school; personal OneDrive may refuse it. `word_update` rewrites the whole document from Markdown, so formatting Markdown cannot express is lost. Teams meetings need a work or school account. Sending mail is not a tool.
+- **Connected-app tools are tested against mocked vendors only.** With the default `drive.file` access, Drive tools see only files Ensemble created or the person picked; Search all of Drive (`drive.readonly`) is a restricted scope a public server must have verified by Google. The Graph workbook API (`excel_read_range`, `excel_update_range`) is documented for OneDrive for work or school; personal OneDrive may refuse it. `word_update` rewrites the whole document from Markdown, so formatting Markdown cannot express is lost. Teams meetings need a work or school account. Sending mail is not a tool. Zoom summaries need the `meeting:read:summary` scope on the host's Zoom app, which Connect does not list yet (`ZOOM_SCOPES` in `connectors/oauth.ts`); Zoom takes scopes from the app's own configuration.
 - **`needs-me` surfaces the same record as `preview`.** Held writes live on the assistant message, not as `Approval` rows — those require a `Run`, which requires a `Task`, and creating a synthetic task to hold a pending change would pollute the board it is trying to change.
 
 ---

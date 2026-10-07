@@ -32,7 +32,7 @@ export interface ToolResult {
 
 /** Set on tools that act in a connected app. Gating reads it; tools without it are Hub tools. */
 export interface AppToolMeta {
-  provider: "google" | "microsoft";
+  provider: "google" | "microsoft" | "zoom" | "docusign" | "atlassian";
   /** Connector store suite, e.g. google_workspace. */
   suite: string;
   /** Products (settings.connectorProducts) that offer this tool. Any one switched on is enough. */

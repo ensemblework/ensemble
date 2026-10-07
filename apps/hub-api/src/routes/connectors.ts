@@ -98,7 +98,7 @@ const APP_HELP: Partial<Record<AccountProvider, { console: string; steps: string
     console: "https://marketplace.zoom.us/develop/create",
     steps: [
       "Zoom App Marketplace → Develop → Build App → General App, user-managed.",
-      "Redirect URL and allow list: the redirect URI below. Scopes: user:read:user, meeting:read:list_meetings, cloud_recording:read:list_user_recordings, cloud_recording:read:meeting_transcript.",
+      "Redirect URL and allow list: the redirect URI below. Scopes: user:read:user, meeting:read:list_meetings, cloud_recording:read:list_user_recordings, cloud_recording:read:meeting_transcript, meeting:read:summary.",
       "Paste the client ID and secret here. Other Zoom accounts can connect after the app passes Marketplace review.",
     ],
   },

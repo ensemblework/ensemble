@@ -309,7 +309,7 @@ Source: `apps/hub-api/src/routes/assistant.ts`.
 | GET | `/api/assistant/conversations/:id/messages` | → `{ conversation, messages }` |
 | POST | `/api/assistant/turn` | `{ message, conversationId?, model?, tier?, reasoningEffort?, page?, mentions?, referenceContext? }` → streams the turn (SSE). The first frame is `status { conversationId }`, sent before the model call, so Stop works on a new chat. A quota miss is an `error` frame with `code: model_quota_exceeded` (429, `model`, `resetsAt`); an unreachable model host is `code: model_unreachable` (503). Neither is saved as the reply ([docs/11 §9](11_HOW_THE_ASSISTANT_WORKS.md#9-failure-modes-and-what-catches-them)) |
 | POST | `/api/assistant/conversations/:id/stop` | Cancels the running turn → `204` |
-| POST | `/api/assistant/apply` | `{ name, input }` or `{ calls[] }` → applies writes the write policy held as a preview (connected-app writes always). Returns `replies[]`: the saved assistant messages, rewritten so they no longer say nothing has changed. When a batch only partly lands: 200 with `partial: true` and `failed[]`; calls already saved as applied are never run again ([11 §8.2](11_HOW_THE_ASSISTANT_WORKS.md#82-connected-apps-google-workspace-and-microsoft-365)) |
+| POST | `/api/assistant/apply` | `{ name, input }` or `{ calls[] }` → applies writes the write policy held as a preview (connected-app writes always). Returns `replies[]`: the saved assistant messages, rewritten so they no longer say nothing has changed. When a batch only partly lands: 200 with `partial: true` and `failed[]`; calls already saved as applied are never run again ([11 §8.2](11_HOW_THE_ASSISTANT_WORKS.md#82-connected-apps)) |
 
 ### Imports ([docs/27](27_IMPORTS.md))
 

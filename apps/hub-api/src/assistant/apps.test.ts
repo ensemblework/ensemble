@@ -138,10 +138,15 @@ test("the prompt describes the situation, the person and the connected apps inst
   const tools = [...APP_TOOL_LIST.filter((tool) => tool.app?.provider === "google")];
   const apps = appsPrompt(tools, [GOOGLE], settings());
   assert.match(apps, /Google Workspace is connected as mira@fieldnote.example: Gmail, Google Calendar, Google Drive, Google Docs, Google Sheets, Google Slides\./);
-  assert.match(apps, /Not connected: Microsoft 365\./);
+  assert.match(apps, /Not connected: Microsoft 365, Zoom, Docusign and Jira\./);
   assert.match(apps, /always waits for Apply/);
   assert.match(appsPrompt(tools.filter((tool) => !tool.isWrite), [GOOGLE], settings({ connectedAppWrites: false })), /switched off/);
-  assert.match(appsPrompt([], [], settings()), /Not connected: Google Workspace and Microsoft 365/);
+  assert.match(appsPrompt([], [], settings()), /Not connected: Google Workspace, Microsoft 365, Zoom, Docusign and Jira\./);
+  const zoomGrant: AppGrant = { provider: "zoom", account: "mira@fieldnote.example", scopes: [] };
+  assert.match(
+    appsPrompt(APP_TOOL_LIST.filter((tool) => tool.app?.provider === "zoom"), [zoomGrant], settings()),
+    /- Zoom is connected as mira@fieldnote\.example: meetings, cloud recordings, transcripts and AI Companion summaries \(read only\)\./,
+  );
 
   const state = { proposed: 0, todo: [], inProgress: 0, needsMe: 0, projects: [], people: [], repos: [], skills: [], user: { firstName: "Mira", onboardingRole: "lawyer" } };
   const prompt = buildSystemPrompt(state, undefined, undefined, {

@@ -93,6 +93,7 @@ export const ZOOM_SCOPES = [
   "meeting:read:list_meetings",
   "cloud_recording:read:list_user_recordings",
   "cloud_recording:read:meeting_transcript",
+  "meeting:read:summary",
 ] as const;
 
 /** Every scope Ensemble may ask Google for. Kept for callers that list them; Connect asks only for the products that are on. */

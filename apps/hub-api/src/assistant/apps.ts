@@ -3,7 +3,8 @@
  *
  * The Hub catalog in registry.ts is the same for everyone. App tools are not:
  * a turn is offered Google tools only when Google is connected and that
- * product is switched on, and the same for Microsoft. Other per-person sources
+ * product is switched on, and the same for Microsoft. Zoom, Docusign and Jira
+ * (read-only tools) are offered whenever they are connected. Other per-person sources
  * (remote MCP servers) plug in with registerAppToolSource / registerToolResolver
  * so a turn and Apply resolve the same names.
  *
@@ -17,7 +18,7 @@ import type { PrismaClient } from "@prisma/client";
 import { productState, suiteById } from "../connectors/products.js";
 import { ConnectorNotConnectedError } from "../connectors/tokens.js";
 import { APP_TOOL_LIST, getTool, toolsFor } from "./registry.js";
-import { appAccess, SUITE_LABEL } from "./tools/apps-common.js";
+import { APP_PROVIDERS, appAccess, SUITE_LABEL } from "./tools/apps-common.js";
 import type { AnyHubTool, AppToolMeta, ToolContext } from "./types.js";
 import { isMcpToolName, mcpToolsForUser, resolveMcpTool } from "./mcp-tools.js";
 
@@ -68,7 +69,7 @@ export interface AppGrant {
 /** Which suites this person connected. Reads the non-secret columns only. */
 export async function loadAppGrants(ctx: { prisma: PrismaClient; userId: string }): Promise<AppGrant[]> {
   const rows = await ctx.prisma.authToken.findMany({
-    where: { userId: ctx.userId, provider: { in: ["google", "microsoft"] } },
+    where: { userId: ctx.userId, provider: { in: APP_PROVIDERS } },
     select: { provider: true, account: true, scopes: true },
   });
   return rows ?? [];
@@ -162,17 +163,29 @@ export async function ensureAppAccess(ctx: ToolContext, tool: AnyHubTool, grants
 
 const PRODUCT_ORDER = ["Gmail", "Google Calendar", "Google Drive", "Google Docs", "Google Sheets", "Google Slides", "Outlook mail", "Outlook calendar", "Microsoft Teams", "OneDrive", "Word", "Excel", "PowerPoint"];
 
+/** What the read-only connections offer, for the prompt; they have no products to list. */
+const READS: Partial<Record<(typeof APP_PROVIDERS)[number], string>> = {
+  zoom: "meetings, cloud recordings, transcripts and AI Companion summaries (read only)",
+  docusign: "envelopes and who still has to sign (read only)",
+  atlassian: "issues by JQL, with descriptions and comments (read only)",
+};
+
 /** The prompt paragraph about connected apps. Empty when the turn has no app tools and nothing is connected. */
 export function appsPrompt(tools: readonly AnyHubTool[], grants: readonly AppGrant[], settings: Settings): string {
   const apps = tools.filter((tool) => tool.area === "apps");
   const lines: string[] = [];
-  for (const provider of ["google", "microsoft"] as const) {
+  for (const provider of APP_PROVIDERS) {
     const grant = grants.find((row) => row.provider === provider);
     if (!grant) continue;
+    const who = grant.account ? ` as ${grant.account}` : "";
+    const reads = READS[provider];
+    if (reads) {
+      lines.push(`- ${SUITE_LABEL[provider]} is connected${who}: ${reads}.`);
+      continue;
+    }
     const labels = [...new Set(apps.filter((tool) => tool.app?.provider === provider).map((tool) => tool.app!.label))].sort(
       (a, b) => PRODUCT_ORDER.indexOf(a) - PRODUCT_ORDER.indexOf(b),
     );
-    const who = grant.account ? ` as ${grant.account}` : "";
     lines.push(
       labels.length
         ? `- ${SUITE_LABEL[provider]} is connected${who}: ${labels.join(", ")}.`
@@ -181,9 +194,10 @@ export function appsPrompt(tools: readonly AnyHubTool[], grants: readonly AppGra
   }
   const others = apps.filter((tool) => !tool.app).length;
   if (others) lines.push(`- ${others} more connected-app tools are available (names start with mcp_).`);
-  const missing = (["google", "microsoft"] as const).filter((provider) => !grants.some((row) => row.provider === provider));
+  const missing = APP_PROVIDERS.filter((provider) => !grants.some((row) => row.provider === provider)).map((provider) => SUITE_LABEL[provider]);
   if (missing.length) {
-    lines.push(`- Not connected: ${missing.map((provider) => SUITE_LABEL[provider]).join(" and ")}. If they ask for one of those apps, say it can be connected in Settings → Connections.`);
+    const names = missing.length > 1 ? `${missing.slice(0, -1).join(", ")} and ${missing.at(-1)}` : missing[0];
+    lines.push(`- Not connected: ${names}. If they ask for one of those apps, say it can be connected in Settings → Connections.`);
   }
   if (!apps.length && !grants.length) return lines.length ? ["Connected apps:", ...lines].join("\n") : "";
   const rules = settings.assistant.connectedAppWrites
