@@ -142,3 +142,29 @@ test("CLI link explains expired codes", async () => {
     globalThis.fetch = realFetch;
   }
 });
+
+test("CLI link reads the code from the address when no code is passed", async () => {
+  setTestUrl("http://localhost/link?code=QRST-VWXZ");
+  const realFetch = globalThis.fetch;
+  const urls: string[] = [];
+  globalThis.fetch = async (input) => {
+    urls.push(String(input));
+    return json(request);
+  };
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  try {
+    await act(async () => {
+      root.render(<CliLink />);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    assert.ok(urls.includes("/api/cli/auth/request?code=QRST-VWXZ"), urls.join(", "));
+    assert.match(host.textContent ?? "", /Ensemble CLI on Mira MacBook/);
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+    globalThis.fetch = realFetch;
+    setTestUrl("http://localhost/");
+  }
+});
