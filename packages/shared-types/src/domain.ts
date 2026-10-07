@@ -15,7 +15,7 @@ import {
 } from "./enums.js";
 
 export const PageMention = z.object({
-  kind: z.enum(["people", "project", "repo", "task", "deliverable", "skill", "diagram", "plot", "date"]),
+  kind: z.enum(["people", "project", "repo", "task", "deliverable", "skill", "diagram", "plot", "dataset", "date"]),
   id: z.string(),
   label: z.string(),
 });

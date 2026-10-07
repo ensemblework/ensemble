@@ -66,7 +66,6 @@ export function ReposTab() {
         <div className="space-y-1.5">
           {list.map((repo) => (
             <div key={repo.id} className="tile lift flex items-center gap-3 rounded-xl bg-panel px-3 py-2.5 text-[13px]">
-              <span className="kind-dot" style={{ ["--kind" as string]: "var(--kind-repo)" }} />
               <GitBranch size={15} className="text-muted" />
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
@@ -127,7 +126,7 @@ export function PreferencesTab() {
   return (
     <div>
       <p className="mb-4 max-w-2xl text-[13px] text-muted">
-        What the agent has learned about how you work — and anything you tell it directly. Declared preferences always win over inferred ones.
+        What the agent has learned about how you work, and anything you tell it directly. Declared preferences always win over inferred ones.
       </p>
       <form
         className="tile mb-4 flex items-center gap-2 rounded-md bg-panel p-2"

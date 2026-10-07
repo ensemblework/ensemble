@@ -34,6 +34,10 @@ async function ownedDiagram(ctx: ToolContext, id: string) {
 
 async function assertLinkTarget(ctx: ToolContext, kind: (typeof LINK_KINDS)[number], id: string) {
   const db = ctx.tx ?? ctx.prisma;
+  if (kind === "page") {
+    const page = await db.taskPage.findFirst({ where: { id, userId: ctx.userId, taskId: null }, select: { id: true } });
+    if (page) return;
+  }
   if (kind === "task" || kind === "page") {
     const row = await db.task.findFirst({ where: { id, userId: ctx.userId, deletedAt: null }, select: { id: true } });
     if (!row) throw Object.assign(new Error("That task is not on your account."), { statusCode: 404 });
@@ -118,7 +122,7 @@ export const diagramTools = [
     name: "hub_create_diagram",
     area: "context",
     description:
-      "Create a block diagram from Ensemble diagram text. Call hub_validate_diagram first and only send text with ok true. links attach it to a task, deliverable, project, repo, or page (a page id is a task id). Use ids you already read. Do not invent blocks that those records did not name. A write waits for Apply.",
+      "Create a block diagram from Ensemble diagram text. Call hub_validate_diagram first and only send text with ok true. links attach it to a task, deliverable, project, repo, or standalone page. Use ids you already read. For diagrams of workspace records, use only their facts. For a conceptual diagram the person explicitly requested, explain that concept. A write normally waits for Apply; inline page requests can authorize creation immediately.",
     input: z.object({
       title: z.string().min(1).max(200),
       text: z.string().min(1).max(200_000),

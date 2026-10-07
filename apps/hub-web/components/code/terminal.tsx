@@ -283,7 +283,7 @@ export function Terminal({ initialCwd, onClose }: { initialCwd?: string; onClose
           ) : (
             <>
               <div className="term-dim max-w-md text-[13px]">
-                Set up Touch ID once. After that only your fingerprint opens this terminal — no agent, script or API token can. Confirm your Ensemble password to start.
+                Set up Touch ID once. After that only your fingerprint opens this terminal, no agent, script or API token can. Confirm your Ensemble password to start.
               </div>
               <div className="flex gap-2">
                 <input

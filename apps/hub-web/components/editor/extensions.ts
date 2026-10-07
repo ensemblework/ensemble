@@ -17,20 +17,19 @@ import Suggestion from "@tiptap/suggestion";
 import type { PageDocument, PageMention, PageNode } from "@ensemble/shared-types";
 import { isoDate } from "@/lib/format";
 import {
-  MENTION_GROUPS,
   applyBlock,
   dateMention,
   matchCommands,
   mentionHref,
-  mentionQuery,
   type BlockCommandId,
 } from "./editor-commands";
 import { AgentBlock } from "./agent-block";
 import { CommentMark } from "./comment-mark";
 import { EnsembleReply } from "./ensemble-node";
 import { menuRenderer, type MenuItem } from "./suggestion-menu";
-
-export type EntitySource = () => Array<{ kind: string; id: string; label: string; detail: string }>;
+import { mentionItems, type EntitySource } from "./mention-items";
+export type { EntitySource } from "./mention-items";
+export const ENTITY_MENTION_KEY = new PluginKey<{ active: boolean; query: string }>("entityMention");
 
 const SlashCommand = Extension.create({
   name: "slashCommand",
@@ -83,22 +82,6 @@ function dateItems(search: string): MenuItem[] {
   return items;
 }
 
-const NEW_DIAGRAM: MenuItem = {
-  type: "create",
-  kind: "diagram",
-  id: "new-diagram",
-  label: "New diagram",
-  detail: "Start a blank diagram and mention it here",
-};
-
-const NEW_PLOT: MenuItem = {
-  type: "create",
-  kind: "plot",
-  id: "new-plot",
-  label: "New plot",
-  detail: "Start a blank plot and mention it here",
-};
-
 export function diagramMentionIds(doc: PageDocument): string[] {
   const ids: string[] = [];
   const walk = (node: PageNode) => {
@@ -107,30 +90,6 @@ export function diagramMentionIds(doc: PageDocument): string[] {
   };
   doc.content?.forEach(walk);
   return [...new Set(ids)];
-}
-
-function mentionItems(query: string, entities: EntitySource, diagramsOn: () => boolean | null, plotsOn: () => boolean | null): MenuItem[] {
-  const diagrams = diagramsOn() === true;
-  const plots = plotsOn() === true;
-  const mentionGroups = MENTION_GROUPS.filter((group) => (group.kind !== "diagram" || diagrams) && (group.kind !== "plot" || plots));
-  if (!query) return [...mentionGroups.map((group) => ({ type: "group" as const, ...group })), ...(diagrams ? [NEW_DIAGRAM] : []), ...(plots ? [NEW_PLOT] : [])];
-  const scoped = mentionQuery(query);
-  if (scoped?.kind === "date") return dateItems(scoped.search);
-  const needle = (scoped?.search ?? query).toLowerCase();
-  const matches = entities()
-    .filter((entity) => (!scoped || entity.kind === scoped.kind) && entity.label.toLowerCase().includes(needle))
-    .slice(0, scoped ? 40 : 10)
-    .map((entity) => ({ type: "entity" as const, ...entity }));
-  if (scoped) return matches;
-  const groups = mentionGroups.filter((group) => group.label.toLowerCase().includes(needle)).map((group) => ({
-    type: "group" as const,
-    ...group,
-  }));
-  const create = [
-    ...(diagrams && !scoped && ("new diagram".includes(needle) || needle.includes("diagram") || needle === "new") ? [NEW_DIAGRAM] : []),
-    ...(plots && !scoped && ("new plot".includes(needle) || needle.includes("plot") || needle === "new") ? [NEW_PLOT] : []),
-  ];
-  return [...matches, ...groups, ...create];
 }
 
 const EntityMention = Mention.extend<MentionOptions & { diagramsOn: () => boolean | null; plotsOn: () => boolean | null }>({
@@ -168,7 +127,7 @@ const EntityMention = Mention.extend<MentionOptions & { diagramsOn: () => boolea
     return `@${node.attrs.label ?? ""}`;
   },
   addNodeView() {
-    return ({ node }) => {
+    return ({ node, editor, getPos }) => {
       const kind = String(node.attrs.kind ?? "");
       if (kind !== "diagram" && kind !== "plot") {
         const dom = document.createElement("a");
@@ -186,7 +145,10 @@ const EntityMention = Mention.extend<MentionOptions & { diagramsOn: () => boolea
           mountPlotOff(dom, String(node.attrs.label ?? ""));
           return { dom };
         }
-        const stop = mountPlotCard(dom, String(node.attrs.id ?? ""), String(node.attrs.label ?? ""));
+        const stop = mountPlotCard(dom, String(node.attrs.id ?? ""), String(node.attrs.label ?? ""), editor.isEditable ? () => {
+          const pos = getPos();
+          if (typeof pos === "number") editor.chain().focus().deleteRange({ from: pos, to: pos + node.nodeSize }).run();
+        } : undefined);
         return { dom, destroy: stop };
       }
       if (this.options.diagramsOn() === false) {
@@ -225,9 +187,18 @@ export function editorExtensions(entities: EntitySource, placeholder: string, di
       plotsOn,
       suggestion: {
         char: "@",
-        items: ({ query }) => mentionItems(query, entities, diagramsOn, plotsOn),
+        pluginKey: ENTITY_MENTION_KEY,
+        allowSpaces: true,
+        items: ({ query }) => {
+          const scoped = query.match(/^date:(.*)$/i);
+          return scoped ? dateItems(scoped[1]!) : mentionItems(query, entities, diagramsOn, plotsOn);
+        },
         command: ({ editor, range, props }) => {
           const item = props as unknown as MenuItem;
+          if (item.type === "action") {
+            editor.chain().focus().insertContentAt(range, "@ensemble ").run();
+            return;
+          }
           if (item.type === "create") {
             const insert = (id: string, label: string, kind: string) => {
               editor
@@ -239,16 +210,12 @@ export function editorExtensions(entities: EntitySource, placeholder: string, di
                 ])
                 .run();
             };
-            if (item.kind === "plot") {
-              void api.createPlot().then(({ plot }) => insert(plot.id, plot.title, "plot"));
-            } else {
-              void api.createDiagram().then(({ diagram }) => insert(diagram.id, diagram.title, "diagram"));
-            }
+            void api.createDiagram().then(({ diagram }) => insert(diagram.id, diagram.title, "diagram"));
             return;
           }
           if (item.type === "group") {
             if (item.label === "Type a date") return;
-            editor.chain().focus().insertContentAt(range, `@${item.kind}:`).run();
+            editor.chain().focus().insertContentAt(range, `@${item.prefix ?? `${item.kind}:`}`).run();
             return;
           }
           if (item.type === "entity") {

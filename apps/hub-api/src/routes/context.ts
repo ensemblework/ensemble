@@ -7,6 +7,7 @@
  */
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { plotMentionEntities } from "../plots/mentions.js";
 import type { FastifyInstance } from "fastify";
 import { hasModule } from "@ensemble/shared-types";
 import { appendLedger } from "../lib/ledger.js";
@@ -813,7 +814,7 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/entities", async (request) => {
     const userId = request.userId;
-    const [people, projects, repos, tasks, deliverables, skills, diagrams, plots] = await Promise.all([
+    const [people, projects, repos, tasks, deliverables, skills, diagrams, plots, datasets] = await Promise.all([
       prisma.person.findMany({ where: { userId, deletedAt: null }, select: { id: true, name: true, email: true }, take: 300 }),
       prisma.project.findMany({ where: { userId, deletedAt: null }, select: { id: true, name: true }, take: 200 }),
       prisma.repo.findMany({ where: { userId, deletedAt: null }, select: { id: true, fullName: true }, take: 200 }),
@@ -831,7 +832,10 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
         ? prisma.blockDiagram.findMany({ where: { userId, deletedAt: null }, select: { id: true, title: true }, orderBy: { updatedAt: "desc" }, take: 100 })
         : Promise.resolve([]),
       hasModule(request.modules, "plots")
-        ? prisma.plot.findMany({ where: { userId, deletedAt: null }, select: { id: true, title: true }, orderBy: { updatedAt: "desc" }, take: 100 })
+        ? prisma.plot.findMany({ where: { userId, deletedAt: null }, select: { id: true, title: true, config: true }, orderBy: { updatedAt: "desc" }, take: 100 })
+        : Promise.resolve([]),
+      hasModule(request.modules, "plots")
+        ? prisma.plotDataset.findMany({ where: { userId, deletedAt: null }, select: { id: true, name: true, format: true }, orderBy: { updatedAt: "desc" }, take: 100 })
         : Promise.resolve([]),
     ]);
     return {
@@ -843,7 +847,7 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
         ...deliverables.map((row) => ({ kind: "deliverable", id: row.id, label: row.title, detail: "" })),
         ...skills.map((row) => ({ kind: "skill", id: row.id, label: row.name, detail: "" })),
         ...diagrams.map((row) => ({ kind: "diagram", id: row.id, label: row.title, detail: "" })),
-        ...plots.map((row) => ({ kind: "plot", id: row.id, label: row.title, detail: "" })),
+        ...plotMentionEntities(plots, datasets),
       ],
     };
   });

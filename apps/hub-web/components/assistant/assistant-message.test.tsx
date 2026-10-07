@@ -74,7 +74,10 @@ test("Apply updates the open reply before the reload, and the reload stays updat
   }) as typeof fetch;
 
   const client = new QueryClient({
-    defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false, gcTime: 0 } },
+    defaultOptions: {
+      queries: { retry: false, refetchOnWindowFocus: false, gcTime: 0 },
+      mutations: { gcTime: 0 },
+    },
   });
   const host = document.createElement("div");
   document.body.appendChild(host);

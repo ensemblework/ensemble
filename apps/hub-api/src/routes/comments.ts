@@ -3,8 +3,10 @@
  * Humans cannot reply to a comment. The only nested row is Ensemble.
  */
 import { z } from "zod";
+import type { Prisma } from "@prisma/client";
 import type { FastifyInstance } from "fastify";
-import { ActAs, PageMention, personaBlock } from "@ensemble/shared-types";
+import { ActAs, PageDocument, PageMention, documentMentions, personaBlock } from "@ensemble/shared-types";
+import { pageText as documentText } from "../pages/markdown.js";
 import { runAssistantTurn } from "../assistant/agent.js";
 import { loadSettings } from "../lib/settings.js";
 import { sseHub } from "../lib/sse.js";
@@ -19,7 +21,7 @@ const Body = z.object({
   text: z.string().optional(),
 });
 
-async function assertCommentPage(prisma: FastifyInstance["prisma"], userId: string, kind: string, id: string): Promise<void> {
+async function assertCommentPage(prisma: Prisma.TransactionClient, userId: string, kind: string, id: string): Promise<void> {
   if (kind === "task" || kind === "project" || kind === "deliverable") {
     await assertOwned(prisma, userId, kind, id);
     return;
@@ -32,26 +34,57 @@ async function assertCommentPage(prisma: FastifyInstance["prisma"], userId: stri
   throw Object.assign(new Error("Unsupported comment page kind."), { statusCode: 400 });
 }
 
-async function pageText(prisma: FastifyInstance["prisma"], userId: string, kind: string, id: string): Promise<string> {
+async function withCommentPage<T>(
+  prisma: FastifyInstance["prisma"],
+  userId: string,
+  kind: string,
+  id: string,
+  write: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  return prisma.$transaction(async (tx) => {
+    if (kind === "page") {
+      await tx.$queryRaw`SELECT id FROM task_pages WHERE id = ${id} AND user_id = ${userId} AND task_id IS NULL FOR UPDATE`;
+    } else if (kind === "task") {
+      await tx.$queryRaw`SELECT id FROM tasks WHERE id = ${id} AND user_id = ${userId} AND deleted_at IS NULL FOR UPDATE`;
+    }
+    await assertCommentPage(tx, userId, kind, id);
+    return write(tx);
+  });
+}
+
+export async function commentPageText(prisma: FastifyInstance["prisma"], userId: string, kind: string, id: string, live?: PageDocument): Promise<string> {
+  const text = (content: unknown, notes: string) => {
+    const doc = live ?? (content ? PageDocument.parse(content) : null);
+    const references = doc ? documentMentions(doc).slice(0, 40).map((mention) => `${mention.kind}:${mention.id} (${mention.label.slice(0, 200)})`).join("\n") : "";
+    return [references ? `Page references:\n${references}` : "", documentText(doc, notes)].filter(Boolean).join("\n\n");
+  };
+  if (kind === "page") {
+    const page = await prisma.taskPage.findFirst({ where: { id, userId, taskId: null }, select: { title: true, content: true, notesSnapshot: true } });
+    return page ? [page.title, text(page.content, page.notesSnapshot)].join("\n\n").slice(0, 24_000) : "";
+  }
   if (kind === "task") {
     const [task, page] = await Promise.all([
       prisma.task.findFirst({ where: { id, userId, deletedAt: null }, select: { title: true, description: true, notes: true } }),
       prisma.taskPage.findFirst({ where: { taskId: id, userId }, select: { content: true } }),
     ]);
-    return [task?.title, task?.description, task?.notes, textOf((page?.content ?? {}) as { text?: string; content?: unknown[] })]
+    return [task?.title, task?.description, text(page?.content, task?.notes ?? "")]
       .filter((part) => part && part.trim())
       .join("\n")
-      .slice(0, 6000);
+      .slice(0, 24_000);
   }
   if (kind === "project") {
     const project = await prisma.project.findFirst({
       where: { id, userId, deletedAt: null },
       select: { name: true, summary: true, content: true },
     });
-    return [project?.name, project?.summary, textOf((project?.content ?? {}) as { text?: string; content?: unknown[] })]
+    return [project?.name, project?.summary, live ? documentText(live, "") : textOf((project?.content ?? {}) as { text?: string; content?: unknown[] })]
       .filter((part) => part && part.trim())
       .join("\n")
-      .slice(0, 6000);
+      .slice(0, 24_000);
+  }
+  if (kind === "deliverable") {
+    const deliverable = await prisma.deliverable.findFirst({ where: { id, userId, deletedAt: null }, select: { title: true, notes: true } });
+    return deliverable ? [deliverable.title, live ? documentText(live, "") : deliverable.notes].join("\n\n").slice(0, 24_000) : "";
   }
   return "";
 }
@@ -92,7 +125,7 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
       })
       .parse(request.body);
     await assertCommentPage(app.prisma, request.userId, kind, id);
-    const row = await app.prisma.pageDiscussion.create({
+    const row = await withCommentPage(app.prisma, request.userId, kind, id, (tx) => tx.pageDiscussion.create({
       data: {
         userId: request.userId,
         pageKind: kind,
@@ -110,7 +143,7 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
         body: body.body as never,
         mentions: (body.mentions ?? []) as never,
       },
-    });
+    }));
     return reply.code(201).send({ comment: row });
   });
 
@@ -151,9 +184,14 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
 
   app.post("/api/pages/:kind/:id/ensemble", async (request, reply) => {
     const { kind, id } = request.params as { kind: string; id: string };
+    const abort = new AbortController();
+    reply.raw.on("close", () => { if (!reply.raw.writableEnded) abort.abort(); });
+    if (reply.raw.destroyed) abort.abort();
     const body = z
       .object({
-        prompt: z.string().min(1),
+        prompt: z.string().min(1).max(4000),
+        content: PageDocument.optional(),
+        mentions: z.array(PageMention).max(40).optional(),
         parentId: z.string().uuid().optional(),
         markId: z.string().optional(),
         quote: z.string().optional(),
@@ -183,7 +221,7 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
     const conversation = await app.prisma.assistantConversation.create({
       data: { userId: request.userId, title: truncateText(body.prompt, 60) || "Comment" },
     });
-    const row = await app.prisma.pageDiscussion.create({
+    const row = await withCommentPage(app.prisma, request.userId, kind, id, (tx) => tx.pageDiscussion.create({
       data: {
         userId: request.userId,
         pageKind: kind,
@@ -205,7 +243,7 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
         tier: tierName,
         conversationId: conversation.id,
       },
-    });
+    }));
 
     reply.hijack();
     const raw = reply.raw;
@@ -219,8 +257,7 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
     const send = (event: string, data: unknown) => {
       if (!raw.writableEnded) raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
-    const abort = new AbortController();
-    request.raw.on("close", () => abort.abort());
+    send("status", { text: "Thinking…", id: row.id, conversationId: conversation.id });
     let text = "";
     let lastFlush = 0;
     try {
@@ -235,14 +272,16 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
         model: tier.model,
         provider: tier.provider,
         reasoningEffort: tier.effort !== "default" ? tier.effort : undefined,
-        preamble: personaBlock(body.actAs ?? settings.assistant.actAs),
+        preamble: `${personaBlock(body.actAs ?? settings.assistant.actAs)}\nThis is an inline page request. For a requested diagram or plot, create the artifact using the appropriate tool; the page attaches it below your answer. New diagrams and plots are authorized immediately, but other writes still follow the configured approval policy. For plots, read the mentioned dataset's actual columns with hub_get_dataset; never invent data.`,
+        inlineArtifacts: true,
+        mentions: [...new Map([...(body.mentions ?? []), ...(body.content ? documentMentions(body.content) : [])].map((mention) => [JSON.stringify([mention.kind, mention.id]), mention])).values()].slice(0, 40),
         referenceContext: [
-          await pageText(app.prisma, request.userId, kind, id),
+          await commentPageText(app.prisma, request.userId, kind, id, body.content),
           body.quote ? `Selected text:\n${body.quote}` : "",
         ]
           .filter(Boolean)
           .join("\n\n")
-          .slice(0, 8000) || undefined,
+          .slice(0, 28_000) || undefined,
         signal: abort.signal,
         emit(frame) {
           if (frame.type === "delta") {

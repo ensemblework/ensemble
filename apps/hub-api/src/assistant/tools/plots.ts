@@ -1,10 +1,44 @@
 import { z } from "zod";
-import { plotConfigSchema } from "@ensemble/shared-types";
+import { isWorkspace, plotConfigSchema, workspaceSchema } from "@ensemble/shared-types";
 import { defineTool, inTransaction, toolOk } from "../types.js";
-import { configOf, ingestDataset, ownedPlot } from "../../plots/service.js";
+import { configOf, ingestDataset, loadOwnedTable, ownedPlot } from "../../plots/service.js";
 import type { Prisma } from "@prisma/client";
 
 export const plotTools = [
+  defineTool({
+    name: "hub_get_plot",
+    area: "context",
+    description: "Read a saved chart or plot space, including its configuration and dataset IDs. For a tile mention, pass the space UUID before / as plotId and the decoded tile ID after / as tileId. Read source tables with hub_get_dataset.",
+    input: z.object({ plotId: z.string().uuid(), tileId: z.string().min(1).max(40).optional() }),
+    isWrite: false,
+    risk: "low",
+    async run(ctx, input) {
+      const row = await ownedPlot(ctx.prisma, ctx.userId, input.plotId);
+      if (isWorkspace(row.config)) {
+        const config = workspaceSchema.parse(row.config);
+        if (input.tileId) {
+          const tile = config.tiles.find((tile) => tile.id === input.tileId);
+          if (!tile) throw Object.assign(new Error("That tile is not in this plot space."), { statusCode: 404 });
+          config.tiles = [tile];
+        }
+        return toolOk(`Plot space “${row.title}”.`, { id: row.id, title: row.title, datasetIds: config.datasetIds, config });
+      }
+      if (input.tileId) throw Object.assign(new Error("This saved plot is not a plot space."), { statusCode: 400 });
+      return toolOk(`Plot “${row.title}”.`, { id: row.id, title: row.title, datasetId: row.datasetId, config: configOf(row.config) });
+    },
+  }),
+  defineTool({
+    name: "hub_get_dataset",
+    area: "context",
+    description: "Read an uploaded table's columns, row count, and up to 40 preview rows. Use the dataset id from a page mention or hub_list_datasets before plotting. Plot creation uses the full stored table.",
+    input: z.object({ datasetId: z.string().uuid() }),
+    isWrite: false,
+    risk: "low",
+    async run(ctx, input) {
+      const loaded = await loadOwnedTable(ctx.prisma, ctx.userId, input.datasetId);
+      return toolOk("Dataset columns and preview.", { id: input.datasetId, columns: loaded.table.columns, rowCount: loaded.table.rows.length, rows: loaded.table.rows.slice(0, 40) });
+    },
+  }),
   defineTool({
     name: "hub_list_plots",
     area: "context",

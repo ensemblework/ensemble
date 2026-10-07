@@ -351,7 +351,7 @@ export function ThemePicker({
         <ul className="mt-2 space-y-1">
           {catalog.map((item) => (
             <li key={item.id}>
-              <span className="text-ink">{item.label}</span> — {item.attribution}
+              <span className="text-ink">{item.label}</span> - {item.attribution}
             </li>
           ))}
         </ul>

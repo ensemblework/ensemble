@@ -5,7 +5,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type PageComment } from "@/lib/api";
 import { MarkdownText } from "../markdown-text";
-import { ensembleSlice } from "./ensemble-prompt";
+import { ensembleNodeRequest } from "./ensemble-prompt";
+import type { PageDocument } from "@ensemble/shared-types";
+import { ENTITY_MENTION_KEY } from "../editor/extensions";
+import { retargetEnsembleReply } from "./ensemble-artifacts";
+import { useToast } from "../toast";
 import { streamEnsemble } from "./ensemble-view";
 
 function clampBox(top: number, left: number, width: number, height: number) {
@@ -31,6 +35,7 @@ export function CommentLayer({
   pageId: string;
 }) {
   const client = useQueryClient();
+  const toast = useToast();
   const comments = useQuery({ queryKey: ["comments", pageKind, pageId], queryFn: () => api.comments(pageKind, pageId) });
   const [selection, setSelection] = useState<{ text: string; top: number; left: number } | null>(null);
   const [draft, setDraft] = useState("");
@@ -137,10 +142,12 @@ export function CommentLayer({
   useEffect(() => {
     if (!editor) return;
     const onKey = (_view: unknown, event: KeyboardEvent) => {
-      if (event.key !== "Enter" || event.shiftKey) return false;
+      if (event.key !== "Enter" || event.shiftKey || event.isComposing || !editor.isEditable) return false;
       const { $from } = editor.state.selection;
-      const block = $from.parent.textContent;
-      const slice = ensembleSlice(block, $from.parentOffset);
+      if ($from.parent.type.name === "codeBlock") return false;
+      const suggestion = ENTITY_MENTION_KEY.getState(editor.state);
+      if (suggestion?.active && !suggestion.query.toLowerCase().startsWith("ensemble")) return false;
+      const slice = ensembleNodeRequest($from.parent, $from.parentOffset);
       if (!slice) return false;
       event.preventDefault();
       event.stopPropagation();
@@ -163,16 +170,10 @@ export function CommentLayer({
         pageId,
         prompt,
         threadId,
+        content: editor.getJSON() as PageDocument,
+        mentions: slice.mentions,
         onServerId: (id) => {
-          editor.commands.command(({ tr }) => {
-            let found = false;
-            tr.doc.descendants((node, pos) => {
-              if (found || node.type.name !== "ensembleReply" || node.attrs.threadId !== threadId) return;
-              tr.setNodeMarkup(pos, undefined, { ...node.attrs, threadId: id });
-              found = true;
-            });
-            return found;
-          });
+          retargetEnsembleReply(editor, threadId, id);
           void client.invalidateQueries({ queryKey: ["comments", pageKind, pageId] });
         },
       });
@@ -213,6 +214,7 @@ export function CommentLayer({
       setSelection(null);
       await client.invalidateQueries({ queryKey: ["comments", pageKind, pageId] });
     },
+    onError: (error: Error) => toast(error.message, { tone: "error" }),
   });
 
   const roots = (comments.data?.comments ?? []).filter((row) => !row.parentId && row.kind !== "ensemble");
@@ -285,7 +287,7 @@ export function CommentLayer({
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             aria-label="Comment"
-            placeholder="Comment. People can't reply — @ensemble can."
+            placeholder="Comment. People can't reply, @ensemble can."
             className="field min-h-16 w-full"
           />
           <div className="mt-2 flex gap-2">

@@ -34,6 +34,7 @@ export const EnsembleReply = Node.create({
       prompt: { default: "" },
       pageKind: { default: "task" },
       pageId: { default: "" },
+      attachedCalls: { default: [] },
     };
   },
   parseHTML() {

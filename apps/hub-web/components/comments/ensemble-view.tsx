@@ -1,19 +1,23 @@
 "use client";
 
 import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Copy, RotateCcw, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ThinkingStatus } from "@/components/motion/slot";
 import { Mark } from "../mark";
 import { MarkdownText } from "../markdown-text";
-import { api } from "@/lib/api";
+import { api, type AssistantToolCallRecord } from "@/lib/api";
 import { API } from "@/lib/api";
 import { isSilentCancellation } from "@/lib/fetch-cancel";
 import { readSse } from "@/lib/sse";
-import { publishEnsemble, readEnsemble, subscribeEnsemble, type EnsembleLive } from "./ensemble-bus";
+import { beginPageEnsemble, publishEnsemble, readEnsemble, subscribeEnsemble, type EnsembleLive } from "./ensemble-bus";
+import type { PageDocument, PageMention } from "@ensemble/shared-types";
+import { attachEnsembleArtifacts, retargetEnsembleReply } from "./ensemble-artifacts";
+import { useToast } from "../toast";
 
 export function EnsembleView({ node, deleteNode, editor }: NodeViewProps) {
+  const client = useQueryClient();
   const threadId = String(node.attrs.threadId ?? "");
   const pageKind = String(node.attrs.pageKind ?? "task");
   const pageId = String(node.attrs.pageId ?? "");
@@ -36,11 +40,26 @@ export function EnsembleView({ node, deleteNode, editor }: NodeViewProps) {
   const streaming = live?.status === "streaming";
   const model = live?.model || saved?.model || "";
   const tier = live?.tier || saved?.tier || "";
+  const calls = live?.toolCalls ?? saved?.toolCalls ?? [];
+  const conversationId = live?.conversationId ?? saved?.conversationId ?? undefined;
+  const callKey = JSON.stringify(calls);
+
+  useEffect(() => {
+    attachEnsembleArtifacts(editor, threadId, calls);
+    // Calls are the stream's snapshot. Selection and document edits must not replay an attachment.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor, threadId, callKey]);
 
   const retry = () => {
     const prompt = String(node.attrs.prompt ?? "");
     if (!prompt || !pageId) return;
-    void streamEnsemble({ pageKind, pageId, prompt, threadId });
+    void streamEnsemble({
+      pageKind, pageId, prompt, threadId, content: editor.getJSON() as PageDocument,
+      onServerId: (id) => {
+        retargetEnsembleReply(editor, threadId, id);
+        void client.invalidateQueries({ queryKey: ["comments", pageKind, pageId] });
+      },
+    });
   };
 
   return (
@@ -64,11 +83,14 @@ export function EnsembleView({ node, deleteNode, editor }: NodeViewProps) {
                 <MarkdownText text={text || "…"} />
               </div>
             )}
-            {live?.error ? (
+            {live?.error || saved?.error ? (
               <div className="text-[12.5px] text-danger" data-motion-slot="state.error" data-state="error">
-                {live.error}
+                {live?.error || saved?.error}
               </div>
             ) : null}
+            {calls.filter((call) => call.isWrite && !(call.state === "ok" && ["hub_create_plot", "hub_create_diagram"].includes(call.name))).map((call) => (
+              <InlineToolCall key={call.id} call={call} conversationId={conversationId} threadId={threadId} />
+            ))}
             <div className="flex flex-wrap gap-1">
               {streaming ? (
                 <button type="button" className="btn" onClick={() => abortEnsemble(threadId)}>
@@ -113,6 +135,27 @@ export function EnsembleView({ node, deleteNode, editor }: NodeViewProps) {
   );
 }
 
+function InlineToolCall({ call, conversationId, threadId }: { call: AssistantToolCallRecord; conversationId?: string; threadId: string }) {
+  const client = useQueryClient();
+  const toast = useToast();
+  const apply = useMutation({
+    mutationFn: () => api.applyAssistant({ name: call.name, input: call.input, callId: call.id, conversationId }),
+    onSuccess: (result) => {
+      const current = readEnsemble(threadId);
+      if (current) publishEnsemble(threadId, { ...current, toolCalls: current.toolCalls?.map((item) => item.id === call.id ? { ...item, state: "ok", summary: result.summary, href: result.href ?? undefined } : item) });
+      void client.invalidateQueries();
+      toast(result.summary, { tone: "ok" });
+    },
+    onError: (error: Error) => toast(error.message, { tone: "error" }),
+  });
+  return (
+    <div className="flex items-center gap-2 rounded-md border border-line px-2 py-1 text-[12px]">
+      <span className={call.state === "failed" ? "text-danger" : "text-muted"}>{call.error || call.summary || call.name}</span>
+      {call.state === "awaiting_approval" ? <button type="button" className="btn ml-auto" disabled={apply.isPending} onClick={() => apply.mutate()}>Apply</button> : call.state === "ok" ? <span className="ml-auto text-muted">Done</span> : null}
+    </div>
+  );
+}
+
 const controllers = new Map<string, AbortController>();
 
 export function abortEnsemble(id: string): void {
@@ -126,9 +169,13 @@ export async function streamEnsemble(input: {
   threadId: string;
   parentId?: string;
   quote?: string;
+  content?: PageDocument;
+  mentions?: PageMention[];
   onServerId?: (id: string) => void;
 }): Promise<void> {
   const controller = new AbortController();
+  const releasePage = beginPageEnsemble(input.pageKind, input.pageId);
+  let serverId = input.threadId;
   controllers.set(input.threadId, controller);
   publishEnsemble(input.threadId, { text: "", status: "streaming" });
   try {
@@ -136,7 +183,7 @@ export async function streamEnsemble(input: {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-      body: JSON.stringify({ prompt: input.prompt, parentId: input.parentId, quote: input.quote }),
+      body: JSON.stringify({ prompt: input.prompt, parentId: input.parentId, quote: input.quote, content: input.content, mentions: input.mentions }),
       signal: controller.signal,
     });
     if (!response.ok) {
@@ -146,33 +193,69 @@ export async function streamEnsemble(input: {
     let text = "";
     let model = "";
     let tier = "";
+    let conversationId: string | undefined;
+    let error: string | undefined;
+    let note: string | undefined;
+    let calls: AssistantToolCallRecord[] = [];
+    let complete = false;
+    const publish = (status: EnsembleLive["status"]) => {
+      const next = { text, status, note, error, model, tier, toolCalls: calls, conversationId };
+      publishEnsemble(input.threadId, next);
+      if (serverId !== input.threadId) publishEnsemble(serverId, next);
+    };
+    const acceptId = (id?: string) => {
+      if (!id || id === serverId) return;
+      serverId = id;
+      controllers.set(serverId, controller);
+      publish("streaming");
+      input.onServerId?.(serverId);
+    };
     await readSse(response, (event, data) => {
-      const frame = data as { text?: string; message?: string; model?: string; tier?: string; content?: string };
+      const frame = data as { text?: string; message?: string; model?: string; tier?: string; content?: string; id?: string; call?: AssistantToolCallRecord; toolCalls?: AssistantToolCallRecord[]; conversationId?: string };
+      if (frame.conversationId) conversationId = frame.conversationId;
       if (event === "status" && frame.text) {
-        publishEnsemble(input.threadId, { text, status: "streaming", note: frame.text, model, tier });
+        note = frame.text;
+        acceptId(frame.id);
+        publish("streaming");
       }
       if (event === "delta" && frame.text) {
         text += frame.text;
-        publishEnsemble(input.threadId, { text, status: "streaming", model, tier });
+        publish("streaming");
       }
-      if (event === "error") publishEnsemble(input.threadId, { text, status: "error", error: frame.message, model, tier });
+      if ((event === "tool" || event === "pending") && frame.call) {
+        calls = [...calls.filter((call) => call.id !== frame.call!.id), frame.call];
+        publish("streaming");
+      }
+      if (event === "error") {
+        error = frame.message || "Ensemble could not answer.";
+        publish("error");
+      }
       if (event === "done") {
+        complete = true;
         text = frame.content || text;
         model = frame.model || model;
         tier = frame.tier || tier;
-        const serverId = (data as { id?: string }).id;
-        if (serverId && serverId !== input.threadId) input.onServerId?.(serverId);
+        calls = frame.toolCalls ?? calls;
+        acceptId(frame.id);
       }
     });
-    publishEnsemble(input.threadId, { text, status: "open", model, tier });
+    if (!complete) throw new Error("Ensemble's response ended before it finished. Retry to continue.");
+    publish(error ? "error" : "open");
   } catch (error) {
-    if (isSilentCancellation(error, controller.signal)) {
-      const current = readEnsemble(input.threadId);
-      publishEnsemble(input.threadId, { text: current?.text ?? "", status: "open", error: "Stopped." });
-    } else {
-      publishEnsemble(input.threadId, { text: "", status: "error", error: (error as Error).message });
-    }
+    const current = readEnsemble(input.threadId);
+    const stopped = isSilentCancellation(error, controller.signal);
+    const next: EnsembleLive = {
+      ...current,
+      text: current?.text ?? "",
+      status: stopped ? "open" : "error",
+      error: stopped ? "Stopped." : current?.error || (error instanceof Error ? error.message : "Ensemble could not answer."),
+    };
+    publishEnsemble(input.threadId, next);
+    if (serverId !== input.threadId) publishEnsemble(serverId, next);
   } finally {
-    controllers.delete(input.threadId);
+    releasePage();
+    for (const id of [input.threadId, serverId]) {
+      if (controllers.get(id) === controller) controllers.delete(id);
+    }
   }
 }

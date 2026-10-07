@@ -155,7 +155,7 @@ export function ActivityControls({ connected = true }: { connected?: boolean }) 
       {open ? (
         <div className="pop-in fixed inset-x-3 top-12 z-50 rounded-lg bg-raised p-1.5 shadow-pop lg:absolute lg:inset-x-auto lg:right-0 lg:top-full lg:mt-1 lg:w-[380px]">
           <div className="flex items-center justify-between px-2 pb-1 pt-0.5">
-            <span className="text-[13px] font-semibold">{paused ? "Paused — nothing calls a model" : busy ? "Running now" : "Nothing running"}</span>
+            <span className="text-[13px] font-semibold">{paused ? "Paused, nothing calls a model" : busy ? "Running now" : "Nothing running"}</span>
             <Link href="/workspace" onClick={() => setOpen(false)} className="text-[12px] text-accent hover:underline">
               Workspace
             </Link>

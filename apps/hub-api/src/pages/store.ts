@@ -5,10 +5,13 @@ import {
   PageDocument,
   PageMention,
   SaveTaskPage,
+  documentMentions,
+  type PageNode,
   restoreMentionLinks,
   type TaskPageContent,
 } from "@ensemble/shared-types";
-import { pageSearchText } from "./markdown.js";
+import { markdownToNodes, pageSearchText } from "./markdown.js";
+import { createTask } from "../services/tasks.js";
 
 export class TaskPageError extends Error {
   constructor(
@@ -78,21 +81,7 @@ export async function getTaskPage(prisma: PrismaClient, userId: string, taskId: 
 }
 
 function collectMentions(doc: PageDocument): Array<{ kind: string; entityId: string; label: string }> {
-  const found: Array<{ kind: string; entityId: string; label: string }> = [];
-  const walk = (nodes: typeof doc.content) => {
-    for (const node of nodes) {
-      if (node.type === "mention" && node.attrs) {
-        found.push({
-          kind: String(node.attrs.kind ?? "people"),
-          entityId: String(node.attrs.id ?? ""),
-          label: String(node.attrs.label ?? ""),
-        });
-      }
-      if (node.content) walk(node.content);
-    }
-  };
-  walk(doc.content);
-  return found.filter((m) => m.entityId);
+  return documentMentions(doc).map((mention) => ({ kind: mention.kind, entityId: mention.id, label: mention.label }));
 }
 
 export async function saveTaskPage(
@@ -291,6 +280,84 @@ export async function deleteStandalonePage(prisma: PrismaClient, userId: string,
   const page = await prisma.taskPage.findFirst({ where: { id, userId, taskId: null }, select: { id: true } });
   if (!page) throw new TaskPageError("PAGE_NOT_FOUND", "Page not found.", 404);
   await prisma.taskPage.delete({ where: { id: page.id } });
+}
+
+function retargetReplies(content: PageDocument, kind: "page" | "task", id: string): PageDocument {
+  const walk = (node: PageNode): PageNode => ({
+    ...node,
+    ...(node.type === "ensembleReply" ? { attrs: { ...node.attrs, pageKind: kind, pageId: id } } : {}),
+    ...(node.content ? { content: node.content.map(walk) } : {}),
+  });
+  return { ...content, content: content.content.map(walk) };
+}
+
+export async function convertPage(
+  prisma: PrismaClient,
+  userId: string,
+  kind: "page" | "task",
+  id: string,
+  revision: number,
+): Promise<{ kind: "page" | "task"; id: string; pageId: string }> {
+  return prisma.$transaction(async (db) => {
+    const task = kind === "task" ? await taskForPage(db, userId, id, true) : null;
+    const page = task ? await readPage(db, userId, id) : await ownedStandalone(db, userId, id, true);
+    if (!task && !page) throw new TaskPageError("PAGE_NOT_FOUND", "Page not found.", 404);
+    if ((page?.revision ?? 0) !== revision) {
+      throw new TaskPageError("REVISION_CONFLICT", "This page changed in another tab. Save or reload before converting.", 409);
+    }
+    const streaming = await db.pageDiscussion.count({
+      where: { userId, pageKind: kind, pageId: id, status: "streaming", deletedAt: null },
+    });
+    if (streaming) throw new TaskPageError("PAGE_BUSY", "Wait for Ensemble to finish before converting this page.", 409);
+    if (task) {
+      const [runs, jobs] = await Promise.all([
+        db.run.count({ where: { userId, taskId: id, endedAt: null, deletedAt: null } }),
+        db.workspaceJob.count({ where: { userId, taskId: id, status: { in: ["queued", "running", "stopping", "claimed", "waiting_approval", "blocked"] } } }),
+      ]);
+      if (runs || jobs) throw new TaskPageError("TASK_BUSY", "Finish or cancel this task's agent work before converting it.", 409);
+    }
+    const title = task?.title ?? page!.title;
+    const notes = task?.notes ?? page!.notesSnapshot;
+    const content = page?.content ? PageDocument.parse(page.content) : { type: "doc" as const, content: markdownToNodes(notes) };
+    let targetId: string;
+    const targetKind = task ? "page" as const : "task" as const;
+    if (task) {
+      const saved = page ?? await db.taskPage.create({
+        data: { userId, taskId: id, title, content: content as Prisma.InputJsonValue, notesSnapshot: notes },
+        include: { mentions: true },
+      });
+      targetId = saved.id;
+      await db.taskPage.update({
+        where: { id: saved.id },
+        data: {
+          taskId: null, title, revision: saved.revision + 1, notesSnapshot: notes,
+          content: retargetReplies(content, "page", targetId) as Prisma.InputJsonValue,
+          searchText: pageSearchText(title, content, notes),
+        },
+      });
+      await db.task.update({ where: { id }, data: { deletedAt: new Date() } });
+    } else {
+      // Undoing a task creation deletes its linked page. Conversion must never journal that destructive inverse.
+      const created = await createTask(db, userId, { title: title || "Untitled", notes, status: "todo" }, "me", false);
+      targetId = created.id;
+      await db.taskPage.update({
+        where: { id: page!.id },
+        data: {
+          taskId: targetId, revision: page!.revision + 1,
+          content: retargetReplies(content, "task", targetId) as Prisma.InputJsonValue,
+        },
+      });
+    }
+    await db.pageDiscussion.updateMany({
+      where: { userId, pageKind: kind, pageId: id },
+      data: { pageKind: targetKind, pageId: targetId, sourceKind: targetKind, sourceId: targetId, taskId: targetKind === "task" ? targetId : null },
+    });
+    await db.diagramLink.updateMany({
+      where: { userId, targetKind: kind, targetId: id },
+      data: { targetKind, targetId },
+    });
+    return { kind: targetKind, id: targetId, pageId: page?.id ?? targetId };
+  });
 }
 
 export { EMPTY_PAGE };

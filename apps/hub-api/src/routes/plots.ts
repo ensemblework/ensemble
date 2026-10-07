@@ -35,7 +35,7 @@ function presentPlot(row: {
     title: row.title,
     datasetId: row.datasetId,
     datasetName: row.dataset?.name ?? null,
-    config: configOf(row.config),
+    config: isWorkspace(row.config) ? workspaceSchema.parse(row.config) : configOf(row.config),
     code: row.code,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -46,13 +46,25 @@ export async function plotRoutes(app: FastifyInstance): Promise<void> {
   declareModule(app, "plots");
   const db = app.prisma;
 
-  const workspaceRow = async (userId: string) => {
+  const workspaceRow = async (userId: string, id?: string) => {
+    if (id) {
+      const row = await ownedPlot(db, userId, id);
+      if (!isWorkspace(row.config)) throw Object.assign(new Error("Plot space not found."), { statusCode: 404 });
+      return row;
+    }
     const rows = await db.plot.findMany({ where: { userId, deletedAt: null }, orderBy: { updatedAt: "desc" } });
     return rows.find((row) => isWorkspace(row.config)) ?? null;
   };
 
+  const checkWorkspaceDatasets = async (userId: string, config: ReturnType<typeof workspaceSchema.parse>) => {
+    const ids = [...new Set(config.datasetIds)];
+    const count = await db.plotDataset.count({ where: { id: { in: ids }, userId, deletedAt: null } });
+    if (count !== ids.length) throw Object.assign(new Error("A dataset in this plot space is not on your account."), { statusCode: 404 });
+  };
+
   app.get("/api/plots/workspace", async (request) => {
-    const existing = await workspaceRow(request.userId);
+    const { id } = z.object({ id: z.string().uuid().optional() }).parse(request.query);
+    const existing = await workspaceRow(request.userId, id);
     if (existing) {
       const config = workspaceSchema.safeParse(existing.config);
       return { workspace: { id: existing.id, title: existing.title, config: config.success ? config.data : emptyWorkspace(), code: existing.code, updatedAt: existing.updatedAt.toISOString() } };
@@ -64,8 +76,9 @@ export async function plotRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.put("/api/plots/workspace", async (request, reply) => {
-    const body = z.object({ config: workspaceSchema, code: z.string().max(100_000).optional(), title: z.string().max(200).optional() }).parse(request.body ?? {});
-    const existing = await workspaceRow(request.userId);
+    const body = z.object({ id: z.string().uuid().optional(), config: workspaceSchema, code: z.string().max(100_000).optional(), title: z.string().max(200).optional() }).parse(request.body ?? {});
+    await checkWorkspaceDatasets(request.userId, body.config);
+    const existing = await workspaceRow(request.userId, body.id);
     const data = {
       config: body.config as unknown as Prisma.InputJsonValue,
       ...(body.code !== undefined ? { code: body.code } : {}),
@@ -88,12 +101,15 @@ export async function plotRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.post("/api/plots", async (request, reply) => {
-    const body = z.object({ title: z.string().max(200).optional(), datasetId: z.string().uuid().optional(), config: plotConfigSchema.partial().optional() }).parse(request.body ?? {});
+    const body = z.object({ title: z.string().max(200).optional(), datasetId: z.string().uuid().optional(), config: z.unknown().optional() }).parse(request.body ?? {});
     if (body.datasetId) {
       const dataset = await db.plotDataset.findFirst({ where: { id: body.datasetId, userId: request.userId, deletedAt: null } });
       if (!dataset) return reply.code(404).send({ error: "That dataset is not on your account." });
     }
-    const config = plotConfigSchema.parse({ ...defaultPlotConfig(), ...body.config });
+    const config = isWorkspace(body.config)
+      ? workspaceSchema.parse(body.config)
+      : plotConfigSchema.parse({ ...defaultPlotConfig(), ...plotConfigSchema.partial().parse(body.config ?? {}) });
+    if (isWorkspace(config)) await checkWorkspaceDatasets(request.userId, config);
     const row = await db.plot.create({
       data: { userId: request.userId, title: body.title?.trim() || "Untitled plot", datasetId: body.datasetId, config: config as unknown as Prisma.InputJsonValue },
       include: { dataset: { select: { id: true, name: true } } },
@@ -216,7 +232,9 @@ export async function plotRoutes(app: FastifyInstance): Promise<void> {
       const dataset = await db.plotDataset.findFirst({ where: { id: body.datasetId, userId: request.userId, deletedAt: null } });
       if (!dataset) return reply.code(404).send({ error: "That dataset is not on your account." });
     }
-    const config = body.config === undefined ? undefined : (plotConfigSchema.parse(body.config) as unknown as Prisma.InputJsonValue);
+    const parsed = body.config === undefined ? undefined : (isWorkspace(body.config) ? workspaceSchema.parse(body.config) : plotConfigSchema.parse(body.config));
+    if (parsed && isWorkspace(parsed)) await checkWorkspaceDatasets(request.userId, parsed);
+    const config = parsed as Prisma.InputJsonValue | undefined;
     const row = await db.plot.update({
       where: { id: current.id },
       data: {

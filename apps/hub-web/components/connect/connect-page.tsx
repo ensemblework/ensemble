@@ -37,7 +37,7 @@ export function ConnectPage({ embedded = false }: { embedded?: boolean }) {
       ) : (
       <PageHeader
         title="Connect your apps"
-        description="Let the apps you already use look at your Ensemble — tasks, people, meetings, and today’s plan. They can read. They cannot change anything."
+        description="Let the apps you already use look at your Ensemble, tasks, people, meetings, and today’s plan. They can read. They cannot change anything."
       />
       )}
       {state === "connected" || state === "running" ? (

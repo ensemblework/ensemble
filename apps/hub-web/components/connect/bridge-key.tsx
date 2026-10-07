@@ -22,7 +22,7 @@ export function BridgeKey({
     mutationFn: () => api.createBridgeToken(`Read-only · ${new Date().toLocaleDateString()}`),
     onSuccess: (result) => {
       saveBridgeToken(result.token);
-      toast("Key created. Copy it now — Ensemble will not show it again.", { tone: "ok" });
+      toast("Key created. Copy it now, Ensemble will not show it again.", { tone: "ok" });
       void client.invalidateQueries({ queryKey: ["connect-bridge"] });
       void client.invalidateQueries({ queryKey: ["tokens"] });
     },
@@ -48,7 +48,7 @@ export function BridgeKey({
       </p>
       <div className="mt-3">
         {fresh ? (
-          <CopyBlock text={fresh} label="Your key — copy it now" />
+          <CopyBlock text={fresh} label="Your key, copy it now" />
         ) : (
           <button type="button" className="btn-primary" onClick={() => create.mutate()} disabled={create.isPending}>
             <KeyRound size={14} /> {create.isPending ? "Creating…" : "Create a read-only key"}

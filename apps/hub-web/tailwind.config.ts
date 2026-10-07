@@ -38,8 +38,10 @@ export default {
         tile: "var(--elev-tile)",
       },
       borderRadius: {
-        lg: "10px",
-        xl: "14px",
+        lg: "6px",
+        xl: "8px",
+        "2xl": "10px",
+        "3xl": "12px",
         tile: "var(--radius-tile)",
         inner: "var(--radius-inner)",
       },

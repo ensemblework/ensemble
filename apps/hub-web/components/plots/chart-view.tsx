@@ -1,4 +1,6 @@
 "use client";
+/** @jsxRuntime automatic */
+/** @jsxImportSource react */
 
 import { useEffect, useRef, useState } from "react";
 import { prepareSeries, type Frame, type PlotConfig } from "@ensemble/shared-types";

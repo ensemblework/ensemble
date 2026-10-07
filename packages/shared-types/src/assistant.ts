@@ -52,10 +52,10 @@ export const AssistantStreamFrame = z.discriminatedUnion("type", [
 ]);
 export type AssistantStreamFrame = z.infer<typeof AssistantStreamFrame>;
 
-export const EntityMentionKind = z.enum(["people", "project", "repo", "task", "deliverable", "skill", "diagram", "plot"]);
+export const EntityMentionKind = z.enum(["people", "project", "repo", "task", "deliverable", "skill", "diagram", "plot", "dataset"]);
 export type EntityMentionKind = z.infer<typeof EntityMentionKind>;
 
-export const MentionKind = z.enum(["people", "project", "repo", "task", "deliverable", "skill", "diagram", "plot", "date"]);
+export const MentionKind = z.enum(["people", "project", "repo", "task", "deliverable", "skill", "diagram", "plot", "dataset", "date"]);
 export type MentionKind = z.infer<typeof MentionKind>;
 
 export const AssistantWritePolicy = z.enum(["immediate", "preview", "needs-me"]);

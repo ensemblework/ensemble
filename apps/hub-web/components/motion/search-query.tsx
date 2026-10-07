@@ -133,7 +133,7 @@ export function SearchQuery({
       className={cx("sq", className)}
       data-motion-slot="search.query"
       data-state={phase === "idle" ? undefined : phase}
-      style={pill ? { ["--sq-radius" as string]: "999px", ["--sq-h" as string]: "32px" } : undefined}
+      style={pill ? { ["--sq-radius" as string]: "6px", ["--sq-h" as string]: "32px" } : undefined}
     >
       <form role="search" className="shrink-0" onSubmit={submit}>
         <label ref={anchor} className="sq-field">

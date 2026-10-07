@@ -192,6 +192,26 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
         replies.push({ id: message.id, content, toolCalls: next });
         if (!body.calls) break;
       }
+      const discussions = await app.prisma.pageDiscussion.findMany({
+        where: { userId: request.userId, conversationId: body.conversationId, authorKind: "ensemble", deletedAt: null },
+      });
+      for (const discussion of discussions) {
+        const calls = Array.isArray(discussion.toolCalls) ? discussion.toolCalls as Array<Record<string, unknown>> : [];
+        let changed = false;
+        const next = calls.map((call) => {
+          const piece = applied.get(typeof call.id === "string" ? call.id : "");
+          if (!piece || call.state !== "awaiting_approval") return call;
+          changed = true;
+          return { ...call, state: "ok", summary: piece.summary, undoEntryId, ...(piece.href ? { href: piece.href } : {}) };
+        });
+        if (!changed) continue;
+        const savedBody = discussion.body && typeof discussion.body === "object" && !Array.isArray(discussion.body) ? discussion.body : {};
+        const text = typeof savedBody.text === "string" ? savedBody.text : "";
+        await app.prisma.pageDiscussion.update({
+          where: { id: discussion.id },
+          data: { toolCalls: next as never, body: { ...savedBody, text: replyAfterApply(text, next as ReplyCall[]) } },
+        });
+      }
     }
     sseHub.publish(request.userId, {
       event: "assistant.acted",

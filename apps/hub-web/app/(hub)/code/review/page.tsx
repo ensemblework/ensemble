@@ -365,7 +365,7 @@ export default function ReviewPage() {
             <ul className="mt-1 space-y-0.5 text-muted">
               {data.planted.map((hit) => (
                 <li key={`${hit.kind}:${hit.path}`}>
-                  <span className="font-mono text-ink">{hit.path}</span> — {hit.reason}
+                  <span className="font-mono text-ink">{hit.path}</span> - {hit.reason}
                 </li>
               ))}
             </ul>
@@ -450,7 +450,7 @@ export default function ReviewPage() {
         {terminal ? <Terminal initialCwd={data.repo} onClose={() => setTerminal(false)} /> : null}
 
         <div className="flex h-6 shrink-0 items-center gap-4 overflow-x-auto whitespace-nowrap border-t border-line bg-sidebar px-3 text-[11.5px] text-muted">
-          <span>{filePath ? languageFor(filePath) : "—"}</span>
+          <span>{filePath ? languageFor(filePath) : "-"}</span>
           {mode === "file" ? <span>Ln {cursor.line}, Col {cursor.column}</span> : null}
           <span>LF</span>
           <span>UTF-8</span>

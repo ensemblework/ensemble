@@ -249,7 +249,7 @@ hub-api logs JSON lines with `pino` to the console at `ENSEMBLE_LOG_LEVEL` (defa
 
 ## 8. CI and deploys
 
-Read from the workflow files and exercised in containers on 5 Oct 2026 (the VM half of the deploy against a local git remote). `ci.yml` ran on GitHub the same day; `deploy.yml` has not yet run against a live VM or Vercel.
+Checked 7 Oct 2026 against the workflow files, successful GitHub `ci`/`deploy` runs, and public API health/readiness. The pipeline is enabled and has deployed the API on the VM and the Hub/landing page on Vercel. Server addresses, access instructions, and release history remain in the git-ignored `private/` runbooks.
 
 **`.github/workflows/ci.yml`** runs on every pull request and every push to `main`, as five parallel jobs:
 

@@ -26,7 +26,7 @@ const PURPOSE_COLORS: Record<string, string> = {
 };
 
 function money(value: number | null): string {
-  if (value == null) return "—";
+  if (value == null) return "-";
   if (value === 0) return "$0";
   if (value < 0.01) return `$${value.toFixed(4)}`;
   return `$${value.toFixed(2)}`;
@@ -194,7 +194,7 @@ export default function MetricsPage() {
                   <div key={`${call.at}-${index}`} className="row-tile flex items-center gap-3 rounded border-b border-b-line px-2 py-1.5 text-[12.5px]">
                     <span className="min-w-0 flex-1 truncate font-medium">{call.title}</span>
                     <span className="text-muted">
-                      {call.provider} · {call.model} · in {call.tokensIn ?? "—"} · out {call.tokensOut ?? "—"} · {dateTime(call.at)}
+                      {call.provider} · {call.model} · in {call.tokensIn ?? "-"} · out {call.tokensOut ?? "-"} · {dateTime(call.at)}
                     </span>
                     <span className="w-16 text-right text-muted">{money(call.estimatedUsd)}</span>
                   </div>

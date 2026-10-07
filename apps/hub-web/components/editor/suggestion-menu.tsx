@@ -8,7 +8,8 @@ import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "re
 
 export type MenuItem =
   | { type: "block"; id: string; label: string; detail: string; symbol: string }
-  | { type: "group"; kind: string; label: string; detail: string }
+  | { type: "group"; kind: string; label: string; detail: string; prefix?: string }
+  | { type: "action"; kind: "ensemble"; id: string; label: string; detail: string }
   | { type: "entity"; kind: string; id: string; label: string; detail: string }
   | { type: "create"; kind: string; id: string; label: string; detail: string };
 
@@ -25,6 +26,9 @@ const KIND_ICON: Record<string, typeof User> = {
   skill: Wand2,
   diagram: Waypoints,
   plot: ChartSpline,
+  "plot-space": ChartSpline,
+  dataset: ChartSpline,
+  ensemble: Wand2,
   date: Calendar,
 };
 
@@ -72,7 +76,7 @@ export const SuggestionMenu = forwardRef<MenuHandle, Props>(function SuggestionM
             const Icon = item.type === "block" ? null : KIND_ICON[item.kind] ?? AtSign;
             return (
               <button
-                key={`${item.type}-${"id" in item ? item.id : item.kind}`}
+                key={`${item.type}-${"id" in item ? item.id : item.prefix ?? item.kind}`}
                 type="button"
                 data-index={index}
                 data-active={index === selected}
@@ -127,6 +131,9 @@ export function menuRenderer(title: string) {
       element.style.top = `${next.top}px`;
       element.style.maxHeight = `${Math.min(next.maxHeight, 360)}px`;
     };
+    const visibility = (props: SuggestionProps<MenuItem>) => {
+      if (renderer) (renderer.element as HTMLElement).hidden = title === "Mentions" && /^ensemble(?:\s|:)/i.test(props.query);
+    };
     const destroy = () => {
       renderer?.element.remove();
       renderer?.destroy();
@@ -136,10 +143,12 @@ export function menuRenderer(title: string) {
       onStart(props: SuggestionProps<MenuItem>) {
         renderer = new ReactRenderer(SuggestionMenu, { props: { ...props, title }, editor: props.editor });
         document.body.appendChild(renderer.element);
+        visibility(props);
         requestAnimationFrame(() => place(props));
       },
       onUpdate(props: SuggestionProps<MenuItem>) {
         renderer?.updateProps({ ...props, title });
+        visibility(props);
         requestAnimationFrame(() => place(props));
       },
       onKeyDown(props: SuggestionKeyDownProps) {

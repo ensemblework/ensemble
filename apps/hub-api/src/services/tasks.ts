@@ -128,7 +128,7 @@ async function assertLinked(tx: Tx, userId: string, draft: { deliverableId?: str
   }
 }
 
-export async function createTask(tx: Tx, userId: string, draft: TaskDraft, actor: Actor): Promise<Task> {
+export async function createTask(tx: Tx, userId: string, draft: TaskDraft, actor: Actor, journal = true): Promise<Task> {
   const title = CreateTask.shape.title.parse(draft.title);
   const projectId = await resolveProjectId(tx, userId, draft.projectId, draft.projectName);
   await assertLinked(tx, userId, draft);
@@ -180,7 +180,7 @@ export async function createTask(tx: Tx, userId: string, draft: TaskDraft, actor
       reason: "created",
     },
   });
-  await recordUndoInTransaction(tx, {
+  if (journal) await recordUndoInTransaction(tx, {
     userId,
     label: `Added “${created.title}”`,
     kind: "create",

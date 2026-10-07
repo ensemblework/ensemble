@@ -1,6 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { getTool } from "../registry.js";
+import { holdsAssistantWrite } from "../agent.js";
+
+test("inline page requests authorize only new diagrams and plots, not other writes", () => {
+  for (const policy of ["preview", "needs-me"] as const) {
+    for (const artifact of ["hub_create_diagram", "hub_create_plot"]) {
+      assert.equal(holdsAssistantWrite(policy, artifact, true), false);
+      assert.equal(holdsAssistantWrite(policy, artifact, false), true);
+    }
+    for (const other of ["hub_update_diagram", "hub_update_plot", "hub_import_dataset", "hub_create_tasks", "hub_create_project"]) {
+      assert.equal(holdsAssistantWrite(policy, other, true), true);
+    }
+  }
+  assert.equal(holdsAssistantWrite("immediate", "hub_create_tasks"), false);
+  assert.equal(getTool("hub_get_dataset")?.isWrite, false);
+  assert.equal(getTool("hub_get_plot")?.isWrite, false);
+});
 
 test("reminder tool rejects non-ISO dates", () => {
   const tool = getTool("hub_create_reminder");

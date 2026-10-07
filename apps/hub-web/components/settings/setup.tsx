@@ -55,7 +55,7 @@ export function ModelKeysCard({ compact = false }: { compact?: boolean }) {
   const save = useMutation({
     mutationFn: () => api.saveModelKey(editing!, value),
     onSuccess: (result) => {
-      toast(`Key works — ${result.models} models available.`, { tone: "ok" });
+      toast(`Key works, ${result.models} models available.`, { tone: "ok" });
       setEditing(null);
       setValue("");
       void client.invalidateQueries({ queryKey: ["model-keys"] });
@@ -706,7 +706,7 @@ export function EditorsSection() {
   return (
     <SectionCard
       title="Editors & agents"
-      info="A hook in the editor holds the tool call open and asks Ensemble. Your answer on Needs me goes back to that exact call. If Ensemble is closed or nobody answers in 10 minutes, the editor shows its own prompt — the hook never allows by itself."
+      info="A hook in the editor holds the tool call open and asks Ensemble. Your answer on Needs me goes back to that exact call. If Ensemble is closed or nobody answers in 10 minutes, the editor shows its own prompt, the hook never allows by itself."
       description="Route “Allow this command?” prompts from Cursor, Claude Code and VS Code Copilot to Needs me, so you can answer from one place."
     >
       <p className="mb-3 text-[13px] leading-5 text-muted">

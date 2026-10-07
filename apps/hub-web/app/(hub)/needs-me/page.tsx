@@ -107,7 +107,7 @@ function ApprovalCard({ approval }: { approval: ApprovalRecord }) {
       <input
         value={reason}
         onChange={(event) => setReason(event.target.value)}
-        placeholder="Why? (optional — helps the skill learn)"
+        placeholder="Why? (optional, helps the skill learn)"
         className="field mt-2 w-full"
       />
       <div className="mt-3 flex items-center gap-2">
@@ -143,7 +143,7 @@ export default function NeedsMePage() {
     <div className="page-read mx-auto max-w-[760px] px-6 pb-24 pt-8">
       <PageHeader
         title="Needs me"
-        description="Anything that leaves the building — mail, pull requests, chat posts — and every “Allow this?” from agents in your editors waits here. What you approve is exactly what happens."
+        description="Review outgoing mail, pull requests, chat posts, and permission requests from your agents. What you approve is exactly what happens."
         actions={<AskEnsemble surface="needs_me" anchorKey="needs_me" label="Ask Ensemble about needs me" />}
       />
       <EditorDecisions />
