@@ -1,10 +1,15 @@
 import { z } from "zod";
 import { AutonomyLevel } from "./enums.js";
 
-export const AssistantToolArea = z.enum(["tasks", "projects", "context", "skills", "reminders", "runs"]);
+export const AssistantToolArea = z.enum(["tasks", "projects", "context", "skills", "reminders", "runs", "apps"]);
 export type AssistantToolArea = z.infer<typeof AssistantToolArea>;
 
-export const ASSISTANT_WRITE_AREAS: readonly AssistantToolArea[] = AssistantToolArea.options;
+/**
+ * Areas inside Ensemble the assistant may change. "apps" (connected apps such as
+ * Google Calendar or a remote MCP server) is not listed here: it has its own
+ * switch, assistant.connectedAppWrites, and every app write waits for Apply.
+ */
+export const ASSISTANT_WRITE_AREAS: readonly AssistantToolArea[] = AssistantToolArea.options.filter((area) => area !== "apps");
 
 export const AssistantToolInfo = z.object({
   name: z.string(),
@@ -72,6 +77,8 @@ export const AssistantSettings = z.object({
   defaultTier: z.enum(["easy", "medium", "high", "max"]).default("medium"),
   /** Tone and suggested actions only. Never permissions or tools. */
   actAs: ActAs.default("general"),
+  /** Lets the assistant propose changes in connected apps (calendar events, documents, MCP tools). Each one still waits for Apply. */
+  connectedAppWrites: z.boolean().default(true),
 });
 export type AssistantSettings = z.infer<typeof AssistantSettings>;
 
@@ -194,7 +201,8 @@ export const ConnectionSettings = z.object({
 export type ConnectionSettings = z.infer<typeof ConnectionSettings>;
 
 export const FetchSettings = z.object({
-  scheduled: z.boolean().default(true),
+  /** Scheduled fetching is paused product-wide until routines replace it; Sync now still works. */
+  scheduled: z.boolean().default(false),
   times: z.array(z.string().regex(/^\d{2}:\d{2}$/)).default(["09:00", "16:00"]),
   proposeTodos: z.boolean().default(true),
   lookbackDays: z.number().int().min(1).max(30).default(3),

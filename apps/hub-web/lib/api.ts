@@ -53,7 +53,7 @@ function unreachable(status: number, text: string): boolean {
   return trimmed === "Internal Server Error" || /ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|socket hang up/i.test(trimmed);
 }
 
-async function request<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
+export async function request<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
   const { json, signal: explicit, ...rest } = init ?? {};
   const external = explicit ?? currentExternalSignal();
   const tracked = trackRequest(external, path);
@@ -93,11 +93,11 @@ async function request<T>(path: string, init?: RequestInit & { json?: unknown })
   return response.json() as Promise<T>;
 }
 
-const get = <T>(path: string) => request<T>(path);
-const post = <T>(path: string, json?: unknown) => request<T>(path, { method: "POST", json: json ?? {} });
-const patch = <T>(path: string, json: unknown) => request<T>(path, { method: "PATCH", json });
-const put = <T>(path: string, json: unknown) => request<T>(path, { method: "PUT", json });
-const del = <T>(path: string) => request<T>(path, { method: "DELETE" });
+export const get = <T>(path: string) => request<T>(path);
+export const post = <T>(path: string, json?: unknown) => request<T>(path, { method: "POST", json: json ?? {} });
+export const patch = <T>(path: string, json: unknown) => request<T>(path, { method: "PATCH", json });
+export const put = <T>(path: string, json: unknown) => request<T>(path, { method: "PUT", json });
+export const del = <T>(path: string) => request<T>(path, { method: "DELETE" });
 
 const qs = (params: Record<string, string | number | boolean | undefined | null>) => {
   const search = new URLSearchParams();

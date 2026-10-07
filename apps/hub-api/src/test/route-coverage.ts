@@ -176,4 +176,21 @@ export const resourceRouteCoverage: Readonly<Record<string, readonly RouteCheck[
   "POST /api/ensemble/invoke": ["hosted-verification"],
 };
 
-export const routeCoverage = { ...resourceRouteCoverage, ...authRouteCoverage, ...cliAuthRouteCoverage, ...mcpRouteCoverage };
+/** Connector store, provider OAuth and workspace connections. Owned by src/routes/connectors.ts. */
+export const connectorRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {};
+
+/** Remote MCP connections. Owned by src/routes/mcp-connections.ts. */
+export const mcpConnectionRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {};
+
+/** Imports from other apps. Owned by src/routes/imports.ts. */
+export const importRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {};
+
+export const routeCoverage = {
+  ...resourceRouteCoverage,
+  ...authRouteCoverage,
+  ...cliAuthRouteCoverage,
+  ...mcpRouteCoverage,
+  ...connectorRouteCoverage,
+  ...mcpConnectionRouteCoverage,
+  ...importRouteCoverage,
+};
