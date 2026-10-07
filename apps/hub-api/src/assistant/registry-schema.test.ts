@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { chatToolSpecs, responsesToolSpecs, TOOLS } from "./registry.js";
+import { APP_TOOL_LIST, chatToolSpecs, responsesToolSpecs, TOOLS } from "./registry.js";
 
 function numericBounds(value: unknown, path: string): void {
   if (Array.isArray(value)) {
@@ -17,7 +17,8 @@ function numericBounds(value: unknown, path: string): void {
 }
 
 test("all chat and Responses tool schemas use provider-compatible JSON Schema bounds", () => {
-  const tools = [...TOOLS.values()];
+  const tools = [...TOOLS.values(), ...APP_TOOL_LIST];
+  assert.equal(new Set(tools.map((tool) => tool.name)).size, tools.length, "tool names are unique across Hub and app tools");
   for (const spec of [...chatToolSpecs(tools), ...responsesToolSpecs(tools)]) numericBounds(spec, "tool");
   const plot = chatToolSpecs(tools).find((spec) => {
     const fn = spec.function;

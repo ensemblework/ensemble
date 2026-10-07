@@ -176,4 +176,61 @@ export const resourceRouteCoverage: Readonly<Record<string, readonly RouteCheck[
   "POST /api/ensemble/invoke": ["hosted-verification"],
 };
 
-export const routeCoverage = { ...resourceRouteCoverage, ...authRouteCoverage, ...cliAuthRouteCoverage, ...mcpRouteCoverage };
+/** Connector store, provider OAuth and workspace connections. Owned by src/routes/connectors.ts. */
+export const connectorRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
+  "GET /api/connectors/catalog": ["happy-path", "isolation"],
+  "GET /api/connectors/apps": ["happy-path"],
+  "PUT /api/connectors/apps/:provider": ["invalid-input", "hosted-verification"],
+  "GET /api/connectors/google/picker": ["happy-path", "invalid-input"],
+  "GET /api/connectors/:provider/start": ["happy-path", "invalid-input", "hosted-verification"],
+  "GET /api/connectors/:provider/callback": ["happy-path", "isolation", "invalid-input", "hosted-verification"],
+  "PUT /api/connectors/:id/products": ["happy-path", "isolation", "unknown-id", "invalid-input"],
+  "POST /api/connectors/:provider/token": ["happy-path", "invalid-input", "hosted-verification"],
+  "DELETE /api/connectors/:provider": ["happy-path", "isolation", "invalid-input"],
+};
+
+/** Remote MCP connections. Owned by src/routes/mcp-connections.ts. */
+export const mcpConnectionRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
+  "GET /api/mcp-connections": ["happy-path", "isolation", "hosted-verification"],
+  "POST /api/mcp-connections": ["happy-path", "invalid-input", "hosted-verification"],
+  "GET /api/mcp-connections/callback": ["happy-path", "invalid-input"],
+  "POST /api/mcp-connections/:id/refresh-tools": ["happy-path", "isolation", "unknown-id"],
+  "PATCH /api/mcp-connections/:id": ["happy-path", "isolation", "unknown-id", "invalid-input"],
+  "DELETE /api/mcp-connections/:id": ["happy-path", "isolation", "unknown-id"],
+  "GET /api/mcp-client-metadata.json": ["happy-path"],
+};
+
+/** Imports from other apps. Owned by src/routes/imports.ts. */
+export const importRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
+  "GET /api/imports/sources": ["happy-path"],
+  "POST /api/imports/preview": ["happy-path", "isolation", "invalid-input", "hosted-verification"],
+  "POST /api/imports": ["happy-path", "isolation", "invalid-input", "hosted-verification"],
+  "GET /api/imports": ["happy-path", "isolation"],
+  "GET /api/imports/:id": ["happy-path", "isolation", "unknown-id"],
+  "POST /api/imports/:id/cancel": ["happy-path", "isolation", "unknown-id"],
+  "POST /api/imports/:id/undo": ["happy-path", "isolation", "unknown-id", "invalid-input"],
+};
+
+/** People identities, project links and imported meeting notes. Owned by routes/people-identity.ts, project-links.ts, meeting-notes.ts. */
+export const connectedDataRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
+  "GET /api/people/identity-suggestions": ["happy-path", "isolation"],
+  "POST /api/people/identity-suggestions/dismiss": ["happy-path", "isolation", "invalid-input"],
+  "POST /api/people/:id/merge": ["happy-path", "isolation", "unknown-id", "invalid-input"],
+  "GET /api/project-links": ["happy-path", "isolation"],
+  "POST /api/project-links": ["happy-path", "invalid-input", "relation-isolation"],
+  "DELETE /api/project-links/:id": ["happy-path", "isolation", "unknown-id"],
+  "GET /api/project-links/containers": ["happy-path", "isolation", "invalid-input"],
+  "GET /api/meetings/imported": ["happy-path", "isolation"],
+  "GET /api/meetings/notes/:id": ["happy-path", "isolation", "unknown-id"],
+};
+
+export const routeCoverage = {
+  ...resourceRouteCoverage,
+  ...authRouteCoverage,
+  ...cliAuthRouteCoverage,
+  ...mcpRouteCoverage,
+  ...connectorRouteCoverage,
+  ...mcpConnectionRouteCoverage,
+  ...importRouteCoverage,
+  ...connectedDataRouteCoverage,
+};

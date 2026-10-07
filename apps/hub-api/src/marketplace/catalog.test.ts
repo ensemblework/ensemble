@@ -77,8 +77,8 @@ test("zod rejects a bad template, a 13th tile, a huge config, and a wild measure
 test("new act-as values stay tone, and highlights stay at four", () => {
   for (const actAs of ["researcher", "manager", "aspirant", "maker"] as const) {
     const block = personaBlock(actAs);
-    assert.match(block, new RegExp(`Act as: ${actAs}`));
-    assert.match(block, /does not change permissions/);
+    assert.doesNotMatch(block, /Act as/);
+    assert.doesNotMatch(block, /permission|tool/i);
     assert.doesNotMatch(block, /allowedWriteAreas|tool registry/i);
     assert.equal(quickActions(actAs, "today").length <= 4, true);
   }

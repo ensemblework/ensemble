@@ -176,8 +176,8 @@ test("every signup template maps to a desk", () => {
 
 test("highlights stay suggestions and do not grant tools", () => {
   for (const actAs of ["general", "student", "engineer", "teacher", "lawyer"] as const) {
-    assert.match(personaBlock(actAs), /does not change permissions/);
-    assert.doesNotMatch(personaBlock(actAs), /allowedWriteAreas|tool registry/i);
+    assert.doesNotMatch(personaBlock(actAs), /Act as/);
+    assert.doesNotMatch(personaBlock(actAs), /allowedWriteAreas|tool registry|permission/i);
   }
   const lines = quickActions("engineer", "today", ["One", "Two", "Three", "Four", "Five"]);
   assert.equal(lines.length, 4);

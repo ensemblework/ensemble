@@ -17,7 +17,12 @@ export function AccountSection() {
     const error = query.get("error");
     if (error) toast(error, { tone: "error" });
     if (query.get("linked")) toast("Login method linked.", { tone: "ok" });
-    if (error || query.get("linked")) window.history.replaceState(null, "", window.location.pathname);
+    if (error || query.get("linked")) {
+      query.delete("error");
+      query.delete("linked");
+      const rest = query.toString();
+      window.history.replaceState(null, "", `${window.location.pathname}${rest ? `?${rest}` : ""}${window.location.hash}`);
+    }
   }, [toast]);
   const client = useQueryClient();
   const me = useQuery({ queryKey: ["me"], queryFn: api.me });

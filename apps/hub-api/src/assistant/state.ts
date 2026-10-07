@@ -4,7 +4,7 @@ import { workWeekLine } from "../lib/clock.js";
 import { truncateText } from "../lib/text.js";
 
 export async function buildHubState(prisma: PrismaClient, userId: string, modules?: string | null) {
-  const [proposed, todo, inProgress, needsMe, projects, people, repos, skills] = await Promise.all([
+  const [proposed, todo, inProgress, needsMe, projects, people, repos, skills, account] = await Promise.all([
     prisma.task.count({ where: { userId, deletedAt: null, status: "proposed" } }),
     prisma.task.findMany({
       where: { userId, deletedAt: null, status: { in: ["todo", "in_progress"] } },
@@ -35,8 +35,13 @@ export async function buildHubState(prisma: PrismaClient, userId: string, module
           take: 12,
         })
       : Promise.resolve([]),
+    prisma.user.findUnique({ where: { id: userId }, select: { name: true, onboardingRole: true } }),
   ]);
-  return { proposed, todo, inProgress, needsMe, projects, people, repos, skills };
+  const user = {
+    firstName: (account?.name ?? "").trim().split(/\s+/)[0] ?? "",
+    onboardingRole: account?.onboardingRole ?? null,
+  };
+  return { proposed, todo, inProgress, needsMe, projects, people, repos, skills, user };
 }
 
 /** Offered when the diagrams module is on. The repo half needs the code module too. */
@@ -45,30 +50,34 @@ const DIAGRAM_RULE =
 const DIAGRAM_RULE_NO_REPOS =
   "- Diagrams: when the person asks for a diagram, follow the block-diagram skill appended to this prompt. Call hub_diagram_context for a task, project, or deliverable. Reading a repository is not part of this template, so draw a repo only from what the person tells you. Refine with hub_edit_diagram. Call hub_validate_diagram, then hub_create_diagram or hub_edit_diagram. Do not invent blocks. A diagram write waits for Apply.";
 
-const ASSISTANT_RULES = `You are Ensemble, the person's working assistant inside their Hub. Tools are for acting on the user's workspace. Answer plain questions and text requests (writing, counting, explaining, maths) directly in text.
+/**
+ * The opening of the system prompt. It describes where the conversation is and
+ * what the tools reach, rather than giving the model a role to play.
+ */
+function assistantRules(firstName?: string): string {
+  const name = firstName?.trim();
+  const who = name || "the person";
+  return `This conversation is inside Ensemble, where ${who} keeps their tasks, pages, projects, people and the apps they connected. You can read and change that workspace with the tools that come with this message. Answer plain questions and text requests (writing, counting, explaining, maths) directly in text.
 
-How you work:
-- If the user asked you to act on their workspace and a tool can do it, call the tool in this turn. Do not say you will do it later.
-- Use ids from the snapshot and from the open page. Never invent a person, project, repo, skill or task id.
+Working here:
+- When ${who} asks for something in the workspace and a tool can do it, call the tool in this turn. Do not say you will do it later.
+- Use ids from the lists below and from the open page. Never invent a person, project, repo, skill or task id.
 - Match names with a list tool before you write.
 - To update or complete a task, call hub_list_tasks with query set to its exact title, then hub_update_task with that id and matchTitle set to the same current title. The write is refused when they differ. Never reuse an id from a different task.
-- A created task has no id until the user presses Apply. The tool result of that Apply includes the id. Until then, do not update it.
+- A created task has no id until Apply is pressed. The result of that Apply includes the id. Until then, do not update it.
 - If more than one item could match, or the request names none clearly, ask which one and call no write. End the question with a line "Choices:" and then a markdown list of the real titles.
-- If the user asked for an action and no tool supports it, say so in one sentence. Never use another tool as a substitute.
-- A write is held until the person presses Apply. Speak as a proposal: "I've proposed a project page — press Apply to create it". You can also say "Ready to apply: …". Never say you have created or drafted it before Apply. Never say you created, set, linked, or marked something done while it is waiting. Do not call that write again.
+- If they asked for an action and no tool supports it, say so in one sentence. Never use another tool as a substitute.
+- A change held for Apply has not happened yet. Word it as a proposal: "I've proposed a project page — press Apply to create it", or "Ready to apply: …". Never say you created or drafted it before Apply. Never say you created, set, linked, or marked something done while it is waiting. Do not call that write again.
 - Priority: p0 is High, p1 is Normal, p2 is Low.
-- Dates you send to tools are YYYY-MM-DD. Times are HH:MM. Resolve "tomorrow" and "Friday" from today's date below.
+- Dates you send to tools are YYYY-MM-DD and times are HH:MM. Work out "tomorrow" and "Friday" from today's date below.
 - In task titles and text, use absolute dates (for example "before the Oct 6 release", not "before the release tomorrow").
 - When you use web search, cite the links it returned. If it returned nothing, say you could not verify it. Never invent a citation or a source.
 - Keep replies short.
-- Enabled skills below are standing instructions. Follow a skill when the request matches it.
-${DIAGRAM_RULE}
+- Enabled skills below are ${name ? `${name}'s` : "their"} standing instructions. Follow a skill when the request matches it.
+${DIAGRAM_RULE}`;
+}
 
-Who you are helping (pick the relevant stance, do not announce it):
-- A developer: summarise the open page and the linked repo, point at related skills, draft subtasks as proposed todos.
-- A student: split an assignment into tasks with owners and deadlines. Ask who the teammates are if they are not in People.
-- A teacher: turn notes into a lesson plan or rubric, and offer reminders for due dates.
-- A lawyer: summarise the document, list obligations and deadlines as deliverables, cite sources, and flag uncertainty. Never invent a citation.`;
+const ASSISTANT_RULES = assistantRules();
 
 export interface OpenPage {
   path: string;
@@ -94,18 +103,35 @@ export interface OpenPage {
   };
 }
 
+/** The snapshot buildHubState returns; `user` may be absent for callers that build one by hand. */
+export type HubState = Omit<Awaited<ReturnType<typeof buildHubState>>, "user"> & {
+  user?: Awaited<ReturnType<typeof buildHubState>>["user"];
+};
+
 export function buildSystemPrompt(
-  state: Awaited<ReturnType<typeof buildHubState>>,
+  state: HubState,
   page?: OpenPage,
   extra?: string,
-  options: { diagrams?: boolean; repos?: boolean; plots?: boolean; today?: string; weekday?: string; timezone?: string } = {},
+  options: {
+    diagrams?: boolean;
+    repos?: boolean;
+    plots?: boolean;
+    today?: string;
+    weekday?: string;
+    timezone?: string;
+    /** A few sentences about the person (personaBlock). Tone only. */
+    persona?: string;
+    /** The connected-apps paragraph (apps.appsPrompt). */
+    apps?: string;
+  } = {},
 ) {
+  const opening = assistantRules(state.user?.firstName);
   const rules =
     options.diagrams === false
-      ? ASSISTANT_RULES.replace(`\n${DIAGRAM_RULE}`, "")
+      ? opening.replace(`\n${DIAGRAM_RULE}`, "")
       : options.repos === false
-        ? ASSISTANT_RULES.replace(DIAGRAM_RULE, DIAGRAM_RULE_NO_REPOS)
-        : ASSISTANT_RULES;
+        ? opening.replace(DIAGRAM_RULE, DIAGRAM_RULE_NO_REPOS)
+        : opening;
   const skills = state.skills.length
     ? state.skills.map((skill) => {
         const body = truncateText(skill.body.trim(), 1200);
@@ -120,7 +146,9 @@ export function buildSystemPrompt(
       : "";
   const lines = [
     rules,
+    options.persona ?? "",
     calendar,
+    "What is in the workspace right now:",
     page ? `They are looking at ${page.label ?? page.path}${page.taskId ? ` (task ${page.taskId})` : ""}.` : "",
     open
       ? [
@@ -151,6 +179,7 @@ export function buildSystemPrompt(
     "",
     "Enabled skills:",
     ...skills,
+    ...(options.apps ? ["", options.apps] : []),
     ...(options.plots ? ["", "Plots: when the person asks for a chart, call hub_list_datasets or hub_import_dataset, then hub_create_plot or hub_update_plot. Use column names from the dataset. A plot write waits for Apply. Do not invent a file path."] : []),
     ...(extra ? ["", extra] : []),
   ];

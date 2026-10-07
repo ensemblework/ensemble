@@ -8,7 +8,7 @@ import { parseDue } from "../lib/clock.js";
 import { assertTransition } from "../lib/state-machine.js";
 import { recordUndoInTransaction } from "../lib/undo.js";
 import { assertOwned } from "./records.js";
-import { CreateTask } from "@ensemble/shared-types";
+import { CreateTask, TaskLabels } from "@ensemble/shared-types";
 
 type Tx = Prisma.TransactionClient;
 type Db = PrismaClient | Tx;
@@ -25,6 +25,7 @@ export interface TaskDraft {
   projectId?: string | null;
   projectName?: string | null;
   people?: string[];
+  labels?: string[];
   sourceKind?: Task["sourceKind"];
   todayFocus?: string;
   skillIds?: string[];
@@ -146,6 +147,7 @@ export async function createTask(tx: Tx, userId: string, draft: TaskDraft, actor
       due: parseDue(draft.due) ?? null,
       projectId: projectId ?? null,
       people: draft.people ?? [],
+      labels: draft.labels === undefined ? [] : TaskLabels.parse(draft.labels),
       sourceKind: draft.sourceKind ?? "manual",
       sourceRef: draft.sourceRef ?? (actor === "agent" ? "assistant" : ""),
       todayFocus: draft.todayFocus ?? "auto",
@@ -225,6 +227,7 @@ export async function updateTask(tx: Tx, userId: string, id: string, patch: Task
       due: parseDue(patch.due),
       projectId,
       people: patch.people,
+      labels: patch.labels === undefined ? undefined : TaskLabels.parse(patch.labels),
       todayFocus: patch.todayFocus,
       boardOrder: patch.boardOrder,
       repoId: patch.repoId,

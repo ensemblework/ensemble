@@ -38,6 +38,13 @@ type TriageItem = StoredArtifact & { personId?: string | null };
 const SOURCE_KIND: Record<string, Proposal["sourceKind"]> = { email: "email", chat_msg: "slack", channel_msg: "slack" };
 const DEFAULT_DUE_TIME = "17:00";
 
+/** Mail and chat from Microsoft carry metadata.source; Gmail and Slack predate it. */
+function sourcePrefix(item: TriageItem): string {
+  const source = item.input.metadata?.source;
+  if (item.input.kind === "email") return source === "outlook" ? "outlook" : "gmail";
+  return source === "teams" ? "teams" : "slack";
+}
+
 /** Clock time from HH:MM or HH:MM:SS. Anything else is not a time. */
 function clockTime(value: string | null | undefined): string | null {
   if (!value) return null;
@@ -88,6 +95,10 @@ export async function createProposals(userId: string, proposals: Proposal[], via
   let order = await nextOrder(userId);
   for (const proposal of proposals) {
     if (await exists(userId, proposal.sourceRef)) continue;
+    const projectId =
+      proposal.projectId !== undefined
+        ? proposal.projectId
+        : ((await prisma.artifact.findFirst({ where: { id: proposal.artifactId, userId }, select: { projectId: true } }))?.projectId ?? null);
     const task = await prisma.task.create({
       data: {
         userId,
@@ -103,13 +114,17 @@ export async function createProposals(userId: string, proposals: Proposal[], via
         due: proposal.due ?? null,
         people: proposal.people ?? [],
         repoId: proposal.repoId ?? null,
+        projectId,
+        meetingNoteId: proposal.meetingNoteId ?? null,
         rationale: proposal.rationale,
         createdBy: "agent",
         confidence: via === "model" ? 0.75 : 0.6,
         boardOrder: order++,
       },
     });
-    await prisma.artifact.update({ where: { id: proposal.artifactId }, data: { taskId: task.id } }).catch(() => undefined);
+    if (proposal.linkArtifact !== false) {
+      await prisma.artifact.update({ where: { id: proposal.artifactId }, data: { taskId: task.id } }).catch(() => undefined);
+    }
     await prisma.taskTransition.create({
       data: { userId, taskId: task.id, toStatus: "proposed", toOwner: "unassigned", actor: "agent", reason: `fetch:${via}` },
     });
@@ -188,8 +203,8 @@ export async function triage(userId: string, settings: Settings, items: TriageIt
     const item = byId.get(row.id)!;
     const thread = item.input.threadId ?? item.input.externalId;
     return {
-      sourceRef: `${item.input.kind === "email" ? "gmail" : "slack"}:thread:${thread}`,
-      sourceKind: SOURCE_KIND[item.input.kind] ?? "other",
+      sourceRef: `${sourcePrefix(item)}:thread:${thread}`,
+      sourceKind: item.input.metadata?.source === "teams" ? "teams" : (SOURCE_KIND[item.input.kind] ?? "other"),
       title: row.title,
       description: item.input.text.slice(0, 2000),
       sourceUrl: item.input.url ?? null,

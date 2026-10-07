@@ -17,9 +17,9 @@
 
 ## 2. Connectors
 
-**First wave** (see [00](00_PROJECT_OVERVIEW.md#direction)). What is connected today is in [18](18_WHAT_IS_REAL.md#connectors-read-only): Gmail, Google Calendar, GitHub, Slack and Linear (`apps/hub-api/src/connectors/`).
+**First wave** (see [00](00_PROJECT_OVERVIEW.md#direction)). What is connected today is in [18](18_WHAT_IS_REAL.md#connectors-read-only): sync from Gmail, Google Calendar, Outlook mail, Outlook calendar, Teams chats, GitHub, Slack and Linear (`apps/hub-api/src/connectors/`), meeting notes from Fireflies, Fathom, Granola, tl;dv, Krisp, Jamie and Otter (§2.3), and accounts for Notion, Atlassian (Jira), Trello, Asana, Todoist, ClickUp, monday.com, Zoom and Docusign that imports and assistant tools use through `tokens.ts`.
 
-Hosted public accounts must verify email before connector/model work. Login OAuth is identity-only and separate from ingestion clients. Shared Google/GitHub connector OAuth and host credential fallbacks are operator-only beta surfaces; public users' own supported connector tokens do not grant host credentials. The scheduler and enrichment worker skip unverified users. Local and desktop behavior is unchanged.
+Hosted public accounts must verify email before connecting, syncing or using a connector token (`requireVerifiedUser`). Any verified person can connect their own accounts through the instance's OAuth apps or a pasted token. Only two things stay operator-only: saving an instance OAuth app (`PUT /api/connectors/apps/:provider`) and the host credential fallbacks (`GITHUB_TOKEN`, `SLACK_USER_TOKEN`/`SLACK_BOT_TOKEN`, `LINEAR_API_KEY`, `gh auth token`; `canUseHostCredentials`). Login OAuth is identity-only: signing in never stores a connector token, although connectors may borrow the same OAuth client (§2.1). The scheduler and enrichment worker skip unverified users. Local and desktop behavior is unchanged.
 
 Uploaded document originals have a separate hosted per-user cap, `ENSEMBLE_MAX_DOCUMENT_BYTES` (100 MiB by default). `createCappedDocument` in `lib/hosted-limits.ts` admits under the user-row transaction lock; exact-threshold concurrent tests ensure an excess upload leaves no original/artifact. Soft-deleted originals count until physically purged. This upload cap does not prevent unverified accounts from storing their own notes/documents; model enrichment still requires verification.
 
@@ -36,24 +36,139 @@ Uploaded document originals have a separate hosted per-user cap, `ENSEMBLE_MAX_D
 
 **Out of scope:** Azure DevOps, M365 Copilot paste, fabricated seed tenants.
 
-Microsoft-only table (reference for a future Outlook/Teams adapter):
+Microsoft 365 as built (`apps/hub-api/src/connectors/microsoft.ts`, Graph v1.0, `$select`ed fields, `@odata.nextLink` paging that never leaves `graph.microsoft.com`):
 
-| Connector | Source / API | Cadence | Data pulled |
+| Source id | Graph call | Data pulled |
+|---|---|---|
+| `outlook` | `/me/mailFolders/inbox/messages` and `/sentitems/messages`, filtered by date since the last sync (or `fetch.lookbackDays`), up to 100 per folder, text bodies via `Prefer: outlook.body-content-type="text"` | subject, from/to/cc, body with quoted history removed, conversationId, webLink. Drafts and Focused Inbox "Other" are skipped. Mail from others goes to triage like Gmail. |
+| `outlook_calendar` | `/me/calendarView` from a week ago to three weeks out, times in UTC | subject, attendees, organizer, all-day, location, Teams join link. Cancelled and declined events are skipped; events gone from the window are soft-deleted. |
+| `teams` | `/me/chats` (newest first, members expanded, up to 40 one-to-one and group chats) and `/me/chats/{id}/messages` changed since the last sync | chat messages as `chat_msg` artifacts. Messages from others in one-to-one chats, and messages that @mention you in group chats, go to triage; todos are titled "Answer … on Teams". Channel posts and meeting chats are not read. Work or school accounts only. |
+
+> **Cadence:** scheduled fetching is paused product-wide until routines replace it. `startScheduler` skips the fetch slots unless `ENSEMBLE_SCHEDULED_FETCH=on`, whatever `settings.fetch.scheduled` says (default `false`). *Fetch now* (`POST /api/fetch`) and per-source *Sync* (`POST /api/connections/:id/sync`) work as before. See [05 §2](05_MODULE_TASK_ORCHESTRATOR.md#2-scheduled-work-two-fetches-a-day).
+
+### 2.1 Connector store, OAuth apps, products and tokens
+
+The store lists every app in `CONNECTOR_CATALOG` (`packages/shared-types/src/connectors.ts`). `GET /api/connectors/catalog` (`src/connectors/catalog.ts`) adds each person's state: `connected` and `account` from their own `oauth_tokens` row, `appReady` (the operator set up what the entry needs, or it can connect by token, MCP or file), `oauthReady`, `products` (saved toggles over the catalog defaults), `needsConsent` (products that are on but not granted yet), `sources` (`settings.connections` plus `sync_state` last sync and error), and `mcp` (status, tool count and last error from `mcp_connections`).
+
+**OAuth apps.** `oauthApp` in `src/connectors/accounts.ts` picks, in order: the connector's own `<PROVIDER>_CLIENT_ID`/`_SECRET`, an app the operator saved in Settings → Connections (`connector_apps`, encrypted), and for Google, Microsoft and GitHub the sign-in app (`AUTH_GOOGLE_*`, `AUTH_MICROSOFT_*`, `AUTH_GITHUB_*`). The redirect URI is `${HUB_API_PUBLIC_URL}/api/connectors/<provider>/callback`; a borrowed sign-in app needs that URI added (a GitHub OAuth App allows one callback, so set it to `${HUB_API_PUBLIC_URL}/api` to cover both sign-in and connector callbacks). Flows in `src/connectors/oauth.ts` use a 10-minute in-memory state (one API process) and PKCE S256 for Google, Microsoft, GitHub, Linear, Zoom and Docusign. On hosted servers each flow is bound to the browser that pressed Connect (RFC 6749 §10.12): `/start` sets an HttpOnly, SameSite=Lax `ensemble_connect_<provider>` cookie (on `ENSEMBLE_COOKIE_DOMAIN` like the session), and the callback exchanges the code only when that cookie matches and the browser's Ensemble session is the account that started. Anything else redirects back with an error and saves nothing. Desktop and local runs skip this check; the system browser there has no Ensemble session.
+
+| Provider | Authorize / token | Scopes asked | Saved with the token |
 |---|---|---|---|
-| `mail` | Graph `/me/messages` delta; `/me/mailFolders` | two fetches / day + button | subject, from/to/cc, body (HTML→text), conversationId, importance, flags, attachments meta |
-| `teams-chat` | Graph `/me/chats` + `/chats/{id}/messages` (delta) | same | 1:1 & group chat messages, mentions, reactions |
-| `teams-channel` | Graph `/teams/{id}/channels/{id}/messages` (delta) | same | channel posts + replies |
-| `calendar` | Graph `/me/calendarView` | twice-daily or calendar-only sync | events, attendees, all-day/cancelled, response status, joinUrl |
-| `github` | GitHub REST: PRs, reviews, commits, issues | same fetch cycle | my PRs, review comments, CI, commit history |
-| `workspace` | Local FS + git | On demand | branch, diff, TODOs, failing tests |
+| `google` | accounts.google.com, `access_type=offline`, `include_granted_scopes=true` | `openid email profile` plus the products that are on (below) | email |
+| `microsoft` | login.microsoftonline.com/`common` v2.0 | `openid email profile offline_access User.Read` plus products | mail or UPN, Graph user id |
+| `github` | github.com OAuth App | `repo read:user read:org` | login |
+| `linear` | linear.app / api.linear.app | `read` | email, `auth: bearer` |
+| `notion` | api.notion.com, `owner=user`, JSON exchange with HTTP Basic | none | workspace name, `workspaceId`, `botId` |
+| `atlassian` | auth.atlassian.com, `audience=api.atlassian.com`, `prompt=consent` | `read:jira-work read:jira-user offline_access` | `cloudId`, `site`, `siteName` from accessible-resources, `auth: bearer` |
+| `slack` | slack.com/oauth/v2, `user_scope` | `channels:history groups:history im:history mpim:history users:read users:read.email` (user token from `authed_user`) | `user @ team` |
+| `zoom` | zoom.us, HTTP Basic exchange; scopes come from the app | `user:read:user meeting:read:list_meetings cloud_recording:read:list_user_recordings cloud_recording:read:meeting_transcript meeting:read:summary` | email |
+| `docusign` | account-d.docusign.com (`DOCUSIGN_ENV=demo`, default) or account.docusign.com | `signature` | email, default account `accountId`, `baseUri` |
 
-> **Cadence:** polling was replaced by two fetches a day plus a *Fetch now* button — see [05 §2](05_MODULE_TASK_ORCHESTRATOR.md#2-scheduled-work-two-fetches-a-day).
+**Products.** Google Workspace and Microsoft 365 are suites (`src/connectors/products.ts`). Connect asks only for the base scopes and the scopes of the products that are on: `GET /api/connectors/:provider/start?products=a,b` takes an explicit list, otherwise the saved toggles in `settings.connectorProducts`. `PUT /api/connectors/:id/products` saves toggles; switching a product off applies at once (its sync sources switch off), and switching on a product whose scopes the stored token lacks returns `{ reconnect: true, url }` so the person approves only the new access. The toggle is saved when the callback comes back with that scope granted (Google lets people untick a permission on its consent screen).
+
+| Suite product | Scopes | Feeds |
+|---|---|---|
+| `gmail` | `gmail.readonly` (restricted) | `gmail` |
+| `calendar` | `calendar.events` (sensitive; read, create and update events with invites), `calendar.calendarlist.readonly` | `google_calendar` |
+| `drive_docs` (on by default) | `drive.file` (non-sensitive; files the person picks or Ensemble creates; Docs, Sheets, Slides) | Google Picker, assistant tools |
+| `drive_search` (off by default) | `drive.readonly` (restricted: public servers need Google verification) | assistant tools |
+| `outlook_mail` | `Mail.Read` | `outlook` |
+| `outlook_calendar` | `Calendars.ReadWrite` | `outlook_calendar` |
+| `teams` (off by default) | `Chat.Read` (work or school accounts) | `teams` |
+| `onedrive` | `Files.Read` | assistant tools |
+| `office` | `Files.ReadWrite` (Word, Excel, PowerPoint; covers OneDrive read) | assistant tools |
+
+Google Calendar sync reads the calendars shown in Google Calendar (`calendarList`, up to 10) when the list scope is granted, otherwise `primary`. Tokens granted the older `calendar.readonly` keep working.
+
+**Tokens for code.** Tools, importers and syncs get tokens only through `src/connectors/tokens.ts`: `providerAccessToken` refreshes tokens within a minute of expiry (Google, Microsoft, Atlassian, Zoom, Docusign, and Linear or Slack when they issue refresh tokens), saves rotated refresh tokens, and returns `extra` with the saved details (Atlassian `site`/`cloudId`/`auth`, Trello `key`, Docusign `accountId`/`baseUri`). Scope checks (`hasScopes`, `requireProviderToken`) ignore case and Graph's `https://graph.microsoft.com/` prefix, and accept broader grants (`Files.ReadWrite` covers `Files.Read`).
+
+**Pasted tokens.** `POST /api/connectors/:provider/token` checks the token once before storing it (`src/connectors/token-providers.ts`):
+
+| Provider | Body | Check |
+|---|---|---|
+| `github` | `{ token }` | `GET api.github.com/user` |
+| `slack` | `{ token }` (user token) | `auth.test` |
+| `linear` | `{ token }` (personal API key) | GraphQL `viewer` |
+| `notion` | `{ token }` (internal integration secret) | `GET /v1/users/me`, `Notion-Version: 2025-09-03` |
+| `atlassian` | `{ email, token, site }` | `GET https://<site>/rest/api/3/myself` with Basic auth; only `*.atlassian.net` and `*.jira.com` sites. Stored as `email:token` with `{ site, auth: "basic" }`. |
+| `trello` | `{ key, token }` | `GET /1/members/me`; the key is saved in `meta` |
+| `asana` | `{ token }` | `GET /api/1.0/users/me` |
+| `todoist` | `{ token }` | `GET https://api.todoist.com/api/v1/user` |
+| `clickup` | `{ token }` | `GET /api/v2/user` |
+| `monday` | `{ token }` | GraphQL `{ me { name } }` |
+| `fireflies`, `fathom`, `granola`, `tldv`, `krisp`, `jamie`, `otter` | `{ token }` (personal API key) | the vendor's own check in `src/connectors/meetings/<vendor>.ts` (§2.3) |
+
+**Disconnect.** `DELETE /api/connectors/:provider` revokes at the provider for OAuth grants where an endpoint exists (Google, GitHub, Linear, Slack, Zoom; pasted tokens are left alone), deletes the token, and switches that provider's sources off. With `?deleteData=1` it also deletes the artifacts those sources stored and their `sync_state`, and for meeting-notes sources their meeting notes (`src/connectors/forget.ts`); todos already created from them stay. Checked with mocked provider responses on 7 Oct 2026 (`src/routes/connectors.integration.test.ts`); not yet run against the live providers.
 
 **Connector rules:**
 
 - Each connector implements `fetch_delta(cursor) -> (artifacts[], cursor)`, is **idempotent**, respects provider throttling (429 + `Retry-After`), and writes `context.sync_state`.
 - Bodies are stored **redacted-on-write** for known secret patterns (tokens, connection strings).
 - Connector attachments store only metadata + links, not attachment bytes. Documents explicitly uploaded by the engineer are a separate, private, bounded store with downloadable originals (see §13).
+
+### 2.2 Remote MCP connectors
+
+Catalog entries with an `mcp` URL in `packages/shared-types/src/connectors.ts` (49 marked ready on 7 Oct 2026: work tools such as Notion, Linear, Atlassian, Todoist, ClickUp, monday.com and Airtable; meeting recorders such as Granola, Fireflies, Fathom and Otter; and Canva, Miro, Calendly, Cal.com, Pipedrive, Attio, PostHog, Mixpanel, QuickBooks, Greenhouse and others) and any remote MCP URL a person pastes connect to the vendor's own hosted MCP server. The operator registers nothing per vendor: Ensemble introduces itself to each vendor's authorization server. The assistant then gets that server's tools.
+
+Code: `apps/hub-api/src/connectors/mcp/` (`manager.ts` connect/callback/calls, `provider.ts` the SDK `OAuthClientProvider` backed by the row, `url-guard.ts`, `store.ts`, `schema.ts`, `config.ts`), routes in `src/routes/mcp-connections.ts` ([02 §6](02_MODULE_INTERACTION_HUB_UI.md#6-api-contract-hub-api--ui-abridged)), assistant tools in `src/assistant/mcp-tools.ts`. It uses the `@modelcontextprotocol/sdk` client (`auth()`, `StreamableHTTPClientTransport`, and `SSEClientTransport` when a server answers 404 or 405 to Streamable HTTP). One row per person and server in `mcp_connections`; the OAuth client, cached discovery and tokens are encrypted with `lib/secrets.ts`, and tokens are never returned or logged.
+
+**Connecting** (`POST /api/mcp-connections`, `{ serverId }` or `{ url, name? }`):
+
+1. Ensemble sends `initialize` with no credentials. If the server answers, it is connected with no sign-in and its tools are listed (Hugging Face does this; its public tools work without an account).
+2. On a 401 it reads Protected Resource Metadata (RFC 9728) from the `WWW-Authenticate: Bearer resource_metadata=…` header or `/.well-known/oauth-protected-resource`, then the authorization server's metadata (RFC 8414 or OpenID discovery).
+3. The authorization server must list `S256` in `code_challenge_methods_supported`. Otherwise Ensemble stops (`MCP_PKCE_UNSUPPORTED`). With no OAuth metadata at all it answers `MCP_TOKEN_REQUIRED`.
+4. The client, in this order: a client the person registered with the vendor (`clientId`, optional `clientSecret`); a Client ID Metadata Document when the server sets `client_id_metadata_document_supported` and `HUB_API_PUBLIC_URL` is https (the `client_id` is `${HUB_API_PUBLIC_URL}/api/mcp-client-metadata.json`, served publicly by hub-api); otherwise Dynamic Client Registration (RFC 7591). Ensemble registers as a public client (`token_endpoint_auth_method: none`, `client_name` "Ensemble", redirect `${HUB_API_PUBLIC_URL}/api/mcp-connections/callback`). An authorization server that lists no `none` method gets a confidential registration, and its client secret is stored encrypted. If none of these exist (no DCR, no CIMD) the answer is `MCP_TOKEN_REQUIRED` and the person can paste a token instead.
+5. The authorize URL carries a PKCE S256 challenge, `resource` (RFC 8707, the server's resource from its metadata), a scope only when the server names one (`WWW-Authenticate` scope or `scopes_supported`), and a 32-byte state stored on the row for 10 minutes. The route returns `{ id, status: "pending", authorizeUrl }`.
+6. `GET /api/mcp-connections/callback` is public (listed in `lib/auth-public.ts`); the single-use state ties it to the connection. On hosted the browser must also have an Ensemble session (`SameSite=Lax`, so it arrives with the vendor's redirect) for the person who started the connection. Otherwise nothing is exchanged or saved, the state is spent, and the person sees "Sign in to Ensemble in this browser" or "started from a different Ensemble account". This stops someone sending their own sign-in link to another person to collect that person's tokens. Local and desktop skip the session check. The callback exchanges the code with the verifier and `resource`, lists tools (all pages, up to 200), caches them, and redirects to `${HUB_WEB_ORIGIN}${returnTo}` with `mcp=connected` or `mcp=error&mcpError=<message>`. A refusal at the vendor (for example Atlassian's domain allowlist) is shown in the vendor's own words and saved as `lastError`.
+
+**Tokens instead of sign-in.** `{ url, name, token }` or `{ serverId, token }` sends the token as `Authorization: Bearer`. Ensemble lists the server's tools with it first, so a refused token is a 400 (`MCP_TOKEN_REFUSED`) and nothing is saved. Use this for GitHub's MCP server (`https://api.githubcopilot.com/mcp/`, no dynamic registration; paste a personal access token), Hugging Face or Zapier keys, and private servers.
+
+**What the person sees.** Connect opens the vendor's approval page; afterwards Settings shows the server as connected with its tools, each of which can be switched off (`PATCH /api/mcp-connections/:id { disabledTools }`). A whole server can be switched off and on (`status`). `POST /api/mcp-connections/:id/refresh-tools` lists tools again. `DELETE` revokes the tokens at the vendor when its metadata has a `revocation_endpoint`, then deletes the row. Ledger actions: `mcp.connect`, `mcp.enable`, `mcp.disable`, `mcp.disconnect`.
+
+**In the assistant.** `mcpToolsForUser` turns the cached tools of connected servers (minus switched-off tools) into Hub tools in the `apps` area. Names are `mcp_<server>_<tool>`, at most 64 characters of `[a-zA-Z0-9_-]`: `<server>` is the catalog id, or the pasted server's name plus a short hash; a tool name that had to be changed or shortened gets a hash suffix, so names stay unique and stable between a proposal and Apply (`resolveMcpTool`). A tool marked `readOnlyHint: true` is a read; everything else is a write (`destructiveHint: true` is high risk), so it waits for Apply. The description starts with the server's name. The input passes the server's own JSON Schema through to the model (cleaned in `schema.ts`: object at the top, no OpenAPI-only keywords, cut down past 12,000 characters). Each server offers at most 40 tools and all servers together 80; the first tool of a trimmed server lists what was hidden. Every call opens a short-lived client, refreshes the access token a minute before it expires and once more on a 401, and times out after 60 seconds. Results are cut to 4,500 characters of text, and `structuredContent` is kept only up to 1,200 characters. When a refresh is refused the connection turns to `error` with "Reconnect <name> …" and its tools leave the assistant until the person connects again.
+
+**Limits and safety.**
+
+- Hosted: verified accounts only (`requireVerifiedUser`). Pasted URLs must be https, and their host must resolve only to public addresses. Private, loopback, link-local, carrier-grade NAT, cloud metadata and the matching IPv6 ranges are refused (`isBlockedAddress` from `plots/ssrf.ts` plus IPv6-mapped forms). The check runs on every request and every redirect hop, including the authorization server, token and revocation endpoints. `Authorization` is dropped when a redirect leaves the origin. On hosted every request goes through `pinnedFetch` (`url-guard.ts`): node `http`/`https` agents whose `lookup` resolves the host, refuses the connection if any address is private, and hands the socket only the checked addresses. A host that changes its DNS answer after the first check still cannot reach a private address. TLS SNI, certificate checks and `Host` use the URL's hostname. Local and desktop: https anywhere, plain http only to `localhost`, through the normal `fetch`.
+- Per person: 30 connections, 20 connect attempts and 30 tool refreshes per 10 minutes. Per address: 60 callbacks per 10 minutes. These are in-process counters, like the other API rate limits.
+- Desktop and localhost have no https public URL, so they always use dynamic registration, never CIMD.
+
+**Vendor notes.** Discovery ran against every catalog URL on 7 Oct 2026 without signing in. Connect ran as far as the authorize URL for Notion, Linear, monday.com, Miro and Canva (CIMD). Token exchange, refresh and tool calls have only been checked against the in-process mock server in `src/routes/mcp-connections.integration.test.ts`.
+
+| Server | What happens |
+|---|---|
+| Notion, Linear, Atlassian, Todoist, Airtable, Granola, Canva, Sentry, Hugging Face | Offer CIMD; hosted (https) uses it, desktop uses DCR |
+| ClickUp, monday.com, Miro, Webflow, Stripe, Supabase, Zapier | DCR. monday.com, Miro and Supabase take only confidential clients, so they get a stored client secret |
+| Atlassian (Rovo) | A site admin may need to allow Ensemble's domain (`api.ensemblework.com` on the hosted service) for the Rovo MCP server; the refusal is shown as it comes back |
+| Asana (`mcp.asana.com/v2`) | No DCR and no CIMD: Connect answers `MCP_TOKEN_REQUIRED`. Use a client the person registered in Asana's developer console (`clientId`/`clientSecret`) |
+| Hugging Face | Connects without a sign-in (public tools only). Paste a Hugging Face token for account tools |
+| Figma, Dropbox, Vercel | Listed as coming soon: their MCP servers accept only clients they approved |
+
+### 2.3 Meeting-notes sources
+
+Meeting tools with a personal API key sync into Meeting notes (`apps/hub-api/src/connectors/meetings/`). Each is a token connector (group `notes`) in `src/connectors/base.ts`, a `ConnectorId` in `packages/shared-types/src/assistant.ts`, and a `CONNECTOR_CATALOG` entry in category `meetings`. Scheduled fetching stays paused; *Sync now* (`POST /api/fetch`) and `POST /api/connections/:id/sync` run them. Each sync reads at most 20 meetings changed since the last sync (or `fetch.lookbackDays`).
+
+| Source id | API (checked against the vendor docs on 7 Oct 2026) | Key and plan |
+|---|---|---|
+| `fireflies` | GraphQL `api.fireflies.ai/graphql`: `transcripts(fromDate)` with sentences, attendees, `summary.overview` and `summary.action_items` | Integrations → Fireflies API. The free plan's API allowance is small. |
+| `fathom` | `GET api.fathom.ai/external/v1/meetings?created_after&include_transcript&include_summary&include_action_items`, `X-Api-Key` | Settings → API Access; the free plan has a key |
+| `granola` | `GET public-api.granola.ai/v1/notes?updated_after`, then `/v1/notes/{id}?include=transcript` (a 413 keeps the summary only) | Settings → Connectors → API keys; Business plan. Granola's MCP server is separate (§2.2). |
+| `tldv` | `GET pasta.tldv.io/v1alpha1/meetings?from`, `/meetings/{id}/transcript`, `/meetings/{id}/notes`, `x-api-key` | The meeting organiser needs Pro or Business |
+| `krisp` | `GET meeting-api.krisp.ai/v1/meetings?from`, `/meetings/{id}?fields=…,transcript,notes` (409 while processing is skipped) | Integrations → API (`krsp_u_…`); Core or Advanced |
+| `jamie` | `GET beta-api.meetjamie.ai/v1/me/meetings.list` and `meetings.get` (`input={"json":…}`), `x-api-key` | Personal key (`jk_…`); Pro, Team or Enterprise |
+| `otter` | `GET api.otter.ai/v1/conversations`, `/conversations/{id}?include=action_items,transcript,outline` | Integrations → Developer; Enterprise workspaces only |
+
+Read AI (OAuth only, no personal keys), Avoma, Gong, Grain, Fellow, Supernormal, MeetGeek, Bluedot and Tactiq are MCP-only catalog entries, and so are the MCP sides of Fireflies, Fathom, Krisp, Jamie and Otter. Loom is listed as coming soon: it has no public transcript API.
+
+Every vendor maps its response into one `MeetingRecord` (`meetings/types.ts`); `meetings/ingest.ts` then does the same for all of them:
+
+1. **Transcript** → `Artifact(kind transcript, externalId "<vendor>:<id>")`: speaker lines with timestamps, trimmed to 18,000 characters with a note to open the rest in the vendor; metadata keeps the vendor id, end time, duration, summary and action items. Secrets are redacted as for every artifact.
+2. **People**: attendees and speakers with an address go through `upsertPerson` (§4.7) and become the note's `personIds`. A speaker with only a name is linked to an existing person of exactly that full name, never created.
+3. **Calendar match** (`meetings/match.ts`): the vendor's calendar event id wins when it names a stored event (Google event id, or the Graph id behind `outlook:<id>`). Otherwise an event within 12 hours must fit in time (at least half of the shorter of the two overlaps, or it starts within 10 minutes) and is scored `0.5·time + 0.3·shared attendees (not counting me) + 0.2·title words`. The best event also needs a shared attendee, a title overlap of 0.3, or to be the only close fit. If the runner-up is within 0.1 the meeting stays unmatched (ambiguous). Notes from the last 14 days that are still unmatched are tried again on the next sync, once the calendar has caught up.
+4. **Meeting note**: one `MeetingNote` per `(user, external_source, external_id)` with `source = "connector"`, the vendor summary as `answer`, `event_artifact_id`, `transcript_artifact_id`, and `extraction = { via, summary, decisions, actionItems, waitingOn, eventMatch }`. Decisions come from the vendor where it has them, plus bullets under a "Decisions"/"Agreed" heading of the summary. A note the person deleted stays deleted.
+5. **Action items**: an item is mine when its assignee's address is one of mine (the account email, `settings.email`, connected-account emails, the vendor account), or, with no address, when the name is my full name or my first name alone. Fireflies' grouped text and Markdown "Action items"/"Next steps" sections are parsed for owners (`**Name**` groups, `Name:` prefixes). My open items become proposed todos (`sourceKind meeting`, `meeting_note_id`, excerpt, the vendor's link to that moment or the meeting, else the calendar event), keyed `meeting:<vendor>:<id>:<hash>` so a re-sync, or a todo the person dismissed, never proposes the same item again. Everyone else's open items are kept on the note as `waitingOn`.
+
+Disconnect with *delete what was read* removes the transcripts and the meeting notes from that source; todos stay. Checked with mocked vendor responses on 7 Oct 2026 (`src/connectors/meetings/meetings.test.ts`, `src/routes/connected-data.integration.test.ts`); not yet run against live vendor accounts.
 
 ---
 
@@ -159,6 +274,22 @@ Every card in the Context explorer has a delete button, and it has **no confirma
 | Preference inference | `context/graph.ts` → `inferPreferences` |
 
 A suppression is a **statement about what the engineer wants**, not a tombstone on a row. The row is not gone the moment you press delete: since soft delete landed, deleting sets `deleted_at`, the row leaves every ordinary query, and it is restorable from *Settings → Deleted items* for the configured 15, 30, 45 or 60 days (default 30) before durable daily cleanup removes eligible rows (`lib/retention.ts`, [docs/07 §1.1](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#11-completed-and-deleted-data-retention)). The suppression is the other half and is **unconditional** — it stops the next fetch from recreating what you removed, whether or not the row itself has been purged yet. `DELETE /api/context/suppressions/:id` forgets the deletion if they ever want the node back. Both the deletion and the suppression are written to the audit ledger.
+
+### 4.7 One person across sources (identities)
+
+`person_identities` (`PersonIdentity`) holds every address and handle a person is known by: `kind` (`email`, `slack`, `github`, `linear`, `jira`, `teams`, `zoom`, `phone`, `name`), a normalised lowercase `value`, the `source` that saw it first, and `verified`; `(user, kind, value)` is unique. The migration `20261007140000_identities_links_meetings` backfilled emails from `people.email`/`upn` and handles from `slack:`/`teams:` upns.
+
+`upsertPerson` in `src/connectors/ingest.ts` (all mail, calendar, chat, GitHub, Linear and meeting syncs) resolves a person by email first, then handles (`src/people/identity.ts`); names never resolve on their own. It records every identity it saw with the person: Gmail/Outlook addresses, Slack and Teams user ids with their emails, GitHub logins of PR and issue authors, Linear issue creators (email and user id), calendar attendees and meeting speakers. **It never merges two existing people.** When an identity of one person shows up next to another person's address, the identity stays where it is and `suggested_person_id` records the other person.
+
+`GET /api/people/identity-suggestions` lists probable pairs, computed on read: seen together at ingest, the same full name, or a handle that equals another person's email local part. `POST /api/people/identity-suggestions/dismiss` stores the pair as a `person-merge` suppression so it does not come back. `POST /api/people/:id/merge { otherId }` keeps `:id` and, in one transaction, moves identities (including the other's legacy upn and email), task `people` (ids, and the other's name on older rows), `meeting_notes.person_ids`, `meeting_sessions.person_ids`, document person tags, project membership, artifact `actor_id` and attendance marks, then deletes the other person. Both are written to the ledger.
+
+### 4.8 Project links
+
+`project_links` (`ProjectLink`) maps a source container to a project once: `(user, source, container_id) → project`, with `container_name` and `created_by` (`me` or `import`). Containers are Slack channel ids, GitHub `owner/repo` (lowercase), Linear project and team ids, Jira project ids, Notion database ids, Trello board ids and the other importers' project ids (`src/projects/links.ts`).
+
+- **At ingest** a connector passes `containers` to `upsertArtifact` (Slack channels, GitHub repos, Linear project then team). They are stored as `metadata.containers`, and the first container with a link sets `artifacts.project_id`. `createProposals` gives each proposed todo its artifact's project unless the proposal names one.
+- **Imports** (`src/imports/apply.ts` → `ensureProject`) use an existing link to a live project before making a new one, and remember the container of every project they create or reuse. The migration linked projects earlier imports had created (CSV excepted).
+- **Routes**: `GET /api/project-links?projectId=`, `POST /api/project-links { projectId, source, containerId, containerName? }` (also moves items that already arrived from that container and have no project, and their proposed todos), `DELETE /api/project-links/:id`, and `GET /api/project-links/containers?source=` (containers seen in synced artifacts, imported projects and existing links, with counts and the linked project). The project page shows them as *Linked sources* (`apps/hub-web/components/project/linked-sources.tsx`).
 
 ---
 

@@ -7,6 +7,7 @@
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { decrypt, encrypt } from "../lib/secrets.js";
 import { canUseHostCredentials, isHosted, requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
@@ -14,7 +15,34 @@ import { assertWithinLimit, hostedLimits, withHostedUserLock } from "../lib/host
 
 const run = promisify(execFile);
 
-export type AccountProvider = "google" | "github" | "slack" | "linear" | "microsoft";
+export const ACCOUNT_PROVIDERS = [
+  "google",
+  "github",
+  "slack",
+  "linear",
+  "microsoft",
+  "notion",
+  "atlassian",
+  "zoom",
+  "docusign",
+  "trello",
+  "asana",
+  "todoist",
+  "clickup",
+  "monday",
+  // Meeting-notes sources: pasted personal API keys (connectors/meetings).
+  "fireflies",
+  "fathom",
+  "granola",
+  "tldv",
+  "krisp",
+  "jamie",
+  "otter",
+] as const;
+
+export type AccountProvider = (typeof ACCOUNT_PROVIDERS)[number];
+
+export const isAccountProvider = (value: string): value is AccountProvider => (ACCOUNT_PROVIDERS as readonly string[]).includes(value);
 
 export interface Account {
   provider: AccountProvider;
@@ -23,6 +51,8 @@ export interface Account {
   expiresAt: Date;
   scopes: string[];
   account: string | null;
+  /** Non-secret connection details saved at connect time (AuthToken.meta). */
+  meta: Record<string, unknown>;
   source: "you" | "env" | "cli";
 }
 
@@ -31,7 +61,15 @@ const NEVER = new Date("2100-01-01T00:00:00Z");
 export async function saveAccount(
   userId: string,
   provider: AccountProvider,
-  data: { accessToken: string; refreshToken?: string | null; expiresAt?: Date; scopes?: string[]; account?: string | null },
+  data: {
+    accessToken: string;
+    refreshToken?: string | null;
+    expiresAt?: Date;
+    scopes?: string[];
+    account?: string | null;
+    /** Replaces the stored details when given; left alone when omitted (token refresh). */
+    meta?: Record<string, unknown>;
+  },
 ): Promise<void> {
   await requireVerifiedUser(userId);
   const row = {
@@ -41,17 +79,19 @@ export async function saveAccount(
     scopes: data.scopes ?? [],
     account: data.account ?? null,
   };
+  const meta = data.meta as Prisma.InputJsonValue | undefined;
   await withHostedUserLock(prisma, userId, async (tx) => {
     if (isHosted() && !(await tx.authToken.findUnique({ where: { userId_provider: { userId, provider } } }))) {
       assertWithinLimit(await tx.authToken.count({ where: { userId } }), 1, hostedLimits().connectors, "connector accounts");
     }
     await tx.authToken.upsert({
       where: { userId_provider: { userId, provider } },
-      create: { userId, provider, ...row },
+      create: { userId, provider, ...row, meta: meta ?? {} },
       update: {
         ...row,
         // Google only returns a refresh token on the first consent; keep the old one.
         refreshToken: row.refreshToken ?? undefined,
+        ...(meta !== undefined ? { meta } : {}),
       },
     });
   });
@@ -112,6 +152,9 @@ const ENV_FALLBACK: Partial<Record<AccountProvider, string[]>> = {
   linear: ["LINEAR_API_KEY"],
 };
 
+const metaOf = (value: Prisma.JsonValue | undefined): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+
 export async function getAccount(
   userId: string,
   provider: AccountProvider,
@@ -129,6 +172,7 @@ export async function getAccount(
         expiresAt: row.expiresAt,
         scopes: row.scopes,
         account: row.account,
+        meta: metaOf(row.meta),
         source: "you",
       };
     }
@@ -136,11 +180,11 @@ export async function getAccount(
   if (!allowFallback || !(await canUseHostCredentials(userId))) return null;
   for (const name of ENV_FALLBACK[provider] ?? []) {
     const value = process.env[name]?.trim();
-    if (value) return { provider, accessToken: value, refreshToken: null, expiresAt: NEVER, scopes: [], account: null, source: "env" };
+    if (value) return { provider, accessToken: value, refreshToken: null, expiresAt: NEVER, scopes: [], account: null, meta: {}, source: "env" };
   }
   if (provider === "github" && allowCli) {
     const token = await ghToken();
-    if (token) return { provider, accessToken: token, refreshToken: null, expiresAt: NEVER, scopes: [], account: null, source: "cli" };
+    if (token) return { provider, accessToken: token, refreshToken: null, expiresAt: NEVER, scopes: [], account: null, meta: {}, source: "cli" };
   }
   return null;
 }
@@ -150,25 +194,38 @@ export async function getAccount(
 export interface OAuthApp {
   clientId: string;
   clientSecret: string;
-  source: "env" | "settings";
+  /** env: the connector's own env vars. settings: saved in Settings → Connections. signin: borrowed from the sign-in app (AUTH_*). */
+  source: "env" | "settings" | "signin";
 }
 
-const APP_ENV: Record<string, [string, string]> = {
-  google: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
-  github: ["GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"],
+/** The connector's own app env vars, then (after any app saved in Settings) the sign-in app of the same provider. */
+const APP_ENV: Record<string, { own: [string, string]; signin?: [string, string] }> = {
+  google: { own: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"], signin: ["AUTH_GOOGLE_CLIENT_ID", "AUTH_GOOGLE_CLIENT_SECRET"] },
+  microsoft: { own: ["MICROSOFT_CLIENT_ID", "MICROSOFT_CLIENT_SECRET"], signin: ["AUTH_MICROSOFT_CLIENT_ID", "AUTH_MICROSOFT_CLIENT_SECRET"] },
+  github: { own: ["GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"], signin: ["AUTH_GITHUB_CLIENT_ID", "AUTH_GITHUB_CLIENT_SECRET"] },
+  linear: { own: ["LINEAR_CLIENT_ID", "LINEAR_CLIENT_SECRET"] },
+  notion: { own: ["NOTION_CLIENT_ID", "NOTION_CLIENT_SECRET"] },
+  atlassian: { own: ["ATLASSIAN_CLIENT_ID", "ATLASSIAN_CLIENT_SECRET"] },
+  slack: { own: ["SLACK_CLIENT_ID", "SLACK_CLIENT_SECRET"] },
+  zoom: { own: ["ZOOM_CLIENT_ID", "ZOOM_CLIENT_SECRET"] },
+  docusign: { own: ["DOCUSIGN_CLIENT_ID", "DOCUSIGN_CLIENT_SECRET"] },
 };
+
+function envPair(names: [string, string] | undefined): { clientId: string; clientSecret: string } | null {
+  if (!names) return null;
+  const [clientId, clientSecret] = names.map((name) => process.env[name]?.trim() ?? "");
+  return clientId && clientSecret ? { clientId, clientSecret } : null;
+}
 
 export async function oauthApp(provider: string): Promise<OAuthApp | null> {
   const names = APP_ENV[provider];
-  if (names) {
-    const [id, secret] = names.map((name) => process.env[name]?.trim() ?? "");
-    if (id && secret) return { clientId: id, clientSecret: secret, source: "env" };
-  }
+  const own = envPair(names?.own);
+  if (own) return { ...own, source: "env" };
   const row = await prisma.connectorApp.findUnique({ where: { provider } });
-  if (!row) return null;
-  const clientSecret = readSecret(row.clientSecret);
-  if (!clientSecret) return null;
-  return { clientId: row.clientId, clientSecret, source: "settings" };
+  const clientSecret = row ? readSecret(row.clientSecret) : null;
+  if (row && clientSecret) return { clientId: row.clientId, clientSecret, source: "settings" };
+  const signin = envPair(names?.signin);
+  return signin ? { ...signin, source: "signin" } : null;
 }
 
 export async function saveOAuthApp(provider: string, clientId: string, clientSecret: string, userId: string): Promise<void> {

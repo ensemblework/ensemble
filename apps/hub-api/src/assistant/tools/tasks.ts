@@ -23,6 +23,7 @@ const TaskDraftInput = z
     projectId: z.string().uuid().optional(),
     projectName: z.string().min(1).optional().describe("Resolved when the write is applied, so a project created earlier in the turn can be used."),
     people: z.array(z.string()).optional(),
+    labels: z.array(z.string().max(40)).max(20).optional().describe("Tags such as client, area or type."),
     todayFocus: z.enum(["auto", "keep", "hidden"]).optional(),
     skillIds: z.array(z.string()).optional(),
     taskId: z.string().optional(),
@@ -39,6 +40,7 @@ export const taskTools = [
       status: TaskStatus.optional(),
       owner: z.enum(["me", "agent", "unassigned"]).optional(),
       query: z.string().min(1).max(200).optional(),
+      label: z.string().min(1).max(40).optional().describe("Only tasks with this tag."),
       limit: z.number().int().min(1).max(100).default(50),
       offset: z.number().int().min(0).max(500).default(0),
     }),
@@ -50,6 +52,7 @@ export const taskTools = [
         deletedAt: null,
         ...(input.status ? { status: input.status } : {}),
         ...(input.owner ? { owner: input.owner } : {}),
+        ...(input.label ? { labels: { has: input.label } } : {}),
         ...(input.query
           ? {
               OR: [
@@ -66,7 +69,7 @@ export const taskTools = [
           orderBy: [{ updatedAt: "desc" }, { boardOrder: "asc" }],
           skip: input.offset,
           take: input.limit,
-          select: { id: true, title: true, status: true, owner: true, priority: true, due: true, projectId: true },
+          select: { id: true, title: true, status: true, owner: true, priority: true, due: true, projectId: true, labels: true },
         }),
         ctx.prisma.task.count({ where }),
       ]);
@@ -106,6 +109,7 @@ export const taskTools = [
         if (task.due) bits.push(`due ${String(task.due).slice(0, 10)}`);
         if (task.priority) bits.push(labelPriority(task.priority));
         if (task.projectName) bits.push(`in ${task.projectName}`);
+        if (task.labels?.length) bits.push(`tagged ${task.labels.join(", ")}`);
         if (task.owner === "me") bits.push("assigned to you");
         return `- ${bits.join(", ")}`;
       });
@@ -154,6 +158,7 @@ export const taskTools = [
         projectId: z.string().uuid().nullable().optional(),
         projectName: z.string().min(1).optional(),
         people: z.array(z.string()).optional(),
+        labels: z.array(z.string().max(40)).max(20).optional().describe("Replaces the task's tags."),
         repoId: z.string().uuid().nullable().optional(),
         deliverableId: z.string().uuid().nullable().optional(),
         skillIds: z.array(z.string()).optional(),

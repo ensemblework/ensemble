@@ -20,14 +20,14 @@
 
 ## 2. Information architecture & navigation
 
-**Left rail (Fluent Nav):** Today • Board • Needs Me *(n)* • Runs • Context • Skills • Workspace • Code • Metrics • ⚙ Settings (autonomy level, connectors, quiet hours, terminal and commits, Deleted items).
+**Left rail (Fluent Nav):** Today • Board • Needs Me *(n)* • Runs • Context • Skills • Workspace • Code • Metrics • ⚙ Settings (tabs: Account, Assistant, Connections, Notifications, Data; see [§3.9](#39-settings)).
 
 Two surfaces are deliberately **not** in the rail, because they are reached from the thing they belong to rather than browsed:
 
 - `/tasks/<id>`, `/projects/<id>` — document pages, opened from the board, a mention, or a search result. §13.
 - `/runs/<id>` — one run's timeline, opened from Runs or from a task.
 
-Prompt transparency is the expandable **Prompts** section at `/settings#prompts` ("Open prompts"), backed by `GET /api/prompts`. There is no standalone `/prompts` page.
+Prompt transparency is the expandable **Prompts** section at `/settings?tab=assistant#prompts` ("Open prompts"), backed by `GET /api/prompts`. There is no standalone `/prompts` page.
 
 **Global header:** compact page title, fetch/pause controls and a theme toggle. Collapse the sidebar to icons at any desktop width; the choice is saved. On Board, *Task board* is the heading in this bar, not a second large heading inside the work area.
 
@@ -63,7 +63,7 @@ Focus and triage flow together without reserving a tall empty grid cell after tr
 
 - **New task** in the page header or a column immediately calls `POST /api/tasks` with the title `Untitled` and opens the document editor (`components/board/board.tsx`). There is no creation dialog. The title is selected for editing; owner, priority, due date, and other properties can be set on the page. Header creation uses *To do*, column creation uses that column, and human Waiting work is blocked. The owner starts unassigned; creation never delegates execution.
 - Repeated creation is guarded synchronously and by the pending state. Errors are shown as toasts, and success clears filters hiding the new card. **Add page** converts an existing sidebar note into a task and opens it on the board. Task titles remain trimmed and whitespace-only titles are rejected.
-- **Search** title/description, **filter** by owner and priority, and **Load more tasks** when another page exists. Board and Workspace share the same paginated query cache.
+- **Search** title/description and labels (`#label` matches labels only; `/board?q=%23label` opens the board filtered), **filter** by owner and priority, and **Load more tasks** when another page exists. Board and Workspace share the same paginated query cache.
 - **Drag** with the dedicated handle, leaving the title available for opening. Reordering and cross-column moves persist `boardOrder` in Postgres, using **before/after task anchors** so filters do not overwrite hidden work. Pointer and keyboard sorting are supported. Agent-owned work can be reordered; changing its progress requires an explicit *Take over* first.
 - **A new task joins its priority band.** The board's order belongs to the engineer, and nothing re-sorts it — the only question is where a task that did not exist a moment ago should be inserted. It goes **above the first task that matters less than it**, and to the bottom when nothing does: p0 above the first p1 or p2, p1 above the first p2, p2 at the end.
 
@@ -73,11 +73,11 @@ Focus and triage flow together without reserving a tall empty grid cell after tr
 - A human task dropped into *Waiting* is **blocked**, not a fabricated approval. The detail drawer also offers *Start work*, *Mark done* and *Reopen task*, so everyday state changes do not require dragging. Moves are optimistic and roll back visibly on an API failure.
 - A `?task=<id>` link loads the task independently of the current filters or pagination. Drawers open after hydration so an initially open Fluent portal cannot mismatch the server HTML.
 
-**Cards** show title, priority, owner and due date. An agent card shows only its current working/review step when the task is actually in that state. Details, help, delegation and takeover live in the task page rather than a button strip on every card.
+**Cards** show title, priority, owner, due date and up to three label chips (`components/task/labels.tsx`). An agent card shows only its current working/review step when the task is actually in that state. Details, help, delegation and takeover live in the task page rather than a button strip on every card.
 
 **Task detail drawer (right):** description, provenance, people, related artifacts (auto-linked), plan, runs, comments (chat with the agent scoped to this task), history.
 
-**Current task page:** drag its left edge to resize, use full-width mode, or open `/tasks/<id>`. Width/sidebar preferences are local; task data is in Postgres. Title, description, notes, priority, date, project, people, repo, deliverable and explicit skills are editable. Changes **autosave after a short typing pause**; **Ctrl+S** flushes immediately. Failed/conflicting saves retain the draft rather than overwriting another tab. Notes retain Markdown whitespace. Peeks with unsaved changes require confirmation before leaving. The board API omits note bodies; opening a page loads them on demand.
+**Current task page:** drag its left edge to resize, use full-width mode, or open `/tasks/<id>`. Width/sidebar preferences are local; task data is in Postgres. Title, description, notes, priority, date, labels (chips; Enter or a comma adds one, Backspace removes the last), project, people, repo, deliverable and explicit skills are editable. Changes **autosave after a short typing pause**; **Ctrl+S** flushes immediately. Failed/conflicting saves retain the draft rather than overwriting another tab. Notes retain Markdown whitespace. Peeks with unsaved changes require confirmation before leaving. The board API omits note bodies; opening a page loads them on demand.
 
 ### 3.3 Needs Me (Approval Queue)
 
@@ -138,6 +138,50 @@ Every run that changed files, then an IDE-style review of one: unified diff with
 
 Before/after tiles + charts (see [module 07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#6-before--after-measurement-the-headline-for-judges)): triage time, drafts accepted, context re-typing avoided, agent actions by type, approvals turnaround.
 
+### 3.9 Settings
+
+`app/(hub)/settings/page.tsx` is one page with five tabs (`components/settings/settings-tabs.tsx`): a vertical list on wide screens and a scrolling row on narrow ones. Arrow keys, Home and End move between tabs, and each tab is a real link. The tab lives in the address (`/settings?tab=connections`); switching tabs pushes a history entry, so Back returns to the previous tab. Old one-page anchors still land: `/settings#models`, `#connections`, `#devices`, `#fetch`, `#retention` and the rest are mapped to their tab in `components/settings/url-state.ts` (`SECTION_TAB`) and scrolled into view. Only the open tab's code loads (`next/dynamic`).
+
+| Tab | Sections (anchor) |
+|---|---|
+| Account | Account and profile (`#account`), Email & time zone (`#you`), Appearance (`#appearance`), Features (`#features`), Remote tasks on this Mac (`#this-mac`, desktop app only) |
+| Assistant | The assistant (`#assistant`): *Your field*, write policy, default preset, *What it may change*; Models (`#models`); Watching for you (`#watchers`, only while a watcher is active); Autonomy, Orchestration, Quiet hours, Prompts |
+| Connections | Connections (`#connections`), Recent imports (`#imports`, once there is one), Fetching (`#fetch`), Editors & agents (`#editors`, `#connect`), Devices (`#devices`) |
+| Notifications | Morning brief (`#brief`), Quiet nudges (`#nudges`), Desktop reminders (`#reminders`), Quick capture (`#capture`) |
+| Data | Data retention (`#retention`), Completed (`#completed`), Trash (`#trash`), Terminal and commits (`#terminal`), Failed jobs, Deleted items, Delete my data (`#danger`) |
+
+Big or rarely used controls open in dialogs (`components/settings/modal.tsx`: Escape and a backdrop click close only the top dialog, Tab stays inside it, focus returns to the button that opened it). Dialogs are in the address too, so a link opens them:
+
+- **Model providers & keys** (`?tab=assistant&dialog=keys`, or `#keys`): API keys per provider with inline add/replace/remove, a Test button per tier, the Ollama URL and the GitHub token for private clones. The Models card itself keeps only "Which model each tier uses" and a one-line summary of which providers have keys (`components/settings/models.tsx`).
+- **What the assistant may change** (`?tab=assistant&dialog=changes`, or `#changes`): the six areas inside Ensemble, plus the *Connected apps* switch (`assistant.connectedAppWrites`): the assistant may propose changes in Google, Microsoft and other connected apps, and each one waits for Apply. The card shows a summary such as "Everything inside Ensemble · Connected apps ask first" (`components/settings/assistant.tsx`).
+
+*Your field* (`assistant.actAs`) offers every `ActAs` value, with "Match my sign-up role" for `general`. It shapes the assistant's tone and suggestions only, never what Ensemble can read or change. *Watching for you* lists the conditions the assistant watches after "tell me when …", with Cancel; it is hidden when none are active.
+
+**Fetching** (`components/settings/fetching.tsx`) shows that scheduled fetching is paused product-wide, with **Sync now**, the look-back days and the *Propose todos from what was read* switch. There is no schedule editor while routines are being built.
+
+**Editors & agents** links to `/connect` (*Connect an editor*) instead of embedding the app picker; the permission-prompt hooks, personal token and standing answers sit behind a disclosure that opens by itself for `#editors`.
+
+#### Connector store
+
+Settings → Connections lists the featured catalog entries (`featured: true` in `CONNECTOR_CATALOG`, shown in the order Google Workspace, Microsoft 365, Notion, Linear, GitHub) with their status ("Connected as …", "Not connected", "Not set up on this server") and one action, plus **Browse connectors**, **Import from other apps** (opens `components/imports/import-dialog.tsx`) and **Add custom connector (MCP URL)** (`components/connectors/featured.tsx`).
+
+**Browse connectors** opens the store (`components/connectors/store-dialog.tsx`), a dialog of up to 1000 px by 80 % of the window. The search box has focus when it opens, filters as you type (every word must match the name, vendor, tagline, products or what it reads), and `/` focuses it again; Escape in a non-empty search clears it first. The sidebar (chips on narrow screens) lists All, Connected, each `CONNECTOR_CATEGORIES` entry that has apps, and Import. Each card shows the logo, name, tagline and status; "soon" entries sort last.
+
+A card opens the connector's detail inside the same dialog (`components/connectors/connector-detail.tsx`), with a Back button. The address holds the view (`?tab=connections&store=<category>` and `&connector=<id>`; `connector=custom` is the custom form, `connector=mcp:<id>` a custom server), and OAuth and MCP sign-ins return to `/settings?tab=connections&connector=<id>`, so the detail reopens after the redirect and the page toasts `?connected=` / `?connectError=`. The detail shows:
+
+- what it reads and what it can change ("Each change waits for your Apply"), notes, and the vendor's docs link;
+- before connecting, every way in, in catalog order: **Sign in with …** (`GET /api/connectors/:provider/start?products=…&returnTo=…`; suites first ask which products to switch on, and Google uses Google's sign-in button), **Paste a token** (an inline form with a *Where to get it* link: Notion's secret, Atlassian email + API token + site, Trello key + token, one token elsewhere; `POST /api/connectors/:provider/token`), **Connect tools** (`POST /api/mcp-connections {serverId, returnTo}`, then the vendor's approval page; when the server answers `MCP_TOKEN_REQUIRED`, `MCP_PKCE_UNSUPPORTED` or `MCP_TOKEN_REFUSED`, a token field appears in place and the same call is retried with `token`), and **Import** for file-only entries;
+- "Not set up on this server yet" when browser sign-in is the only way in and the operator has not registered the provider's app (`state.appReady` false); operators also get the existing *Set up once* dialog there;
+- when connected: the account, per-product switches for suites (`PUT /api/connectors/:id/products`; a product that needs new consent shows *Continue to Google/Microsoft* instead of redirecting by surprise, and products waiting for consent show *Approve access*), each sync source with its last sync and **Sync now**, the Slack channel list, and **Disconnect** with an inline confirm that can also delete what Ensemble read (`DELETE /api/connectors/:provider?deleteData=1`);
+- for MCP: status, the server's tools with a switch each (`PATCH /api/mcp-connections/:id {disabledTools}`), *Refresh tools* and *Remove*;
+- **Import from …** when the entry has `import`, opening the import dialog on that source.
+
+The custom connector form (`components/connectors/custom-connector.tsx`) takes a name and an https URL and asks how the server signs in: on its own page (default), a personal access token, or an OAuth client ID and optional secret. `MCP_URL_REFUSED` is shown under the URL field, and a server that needs a token switches the form to the token field. Recent imports (`components/imports/recent-imports.tsx`) appear under Connections once there is one.
+
+Client calls for the store and MCP routes are in `lib/api-connectors.ts` (the MCP connect call keeps hub-api's error `code`); the catalog comes from `GET /api/connectors/catalog`.
+
+**Logos and trademarks.** `components/connectors/brand-logo.tsx` draws logos from the `simple-icons` package (CC0), imported one icon at a time so only those paths are bundled. Brands simple-icons does not carry (every Microsoft product, Slack and AWS, which asked to be removed, and most meeting recorders) get a plain tile with the name's initials, in the brand colour where we know it; we do not draw imitations of those marks. A simple-icons mark with the same name as a different company (its "Fathom" is Fathom Analytics) is not used for the other one. The store footer and this doc carry the notice: *Product names, logos and brands are property of their respective owners and are used only to identify the services you can connect. Ensemble is not affiliated with or endorsed by them.*
+
 ---
 
 ## 4. Interaction patterns (details worth getting right)
@@ -174,7 +218,7 @@ Before/after tiles + charts (see [module 07](07_MODULE_GOVERNANCE_AUDIT_METRICS.
 |---|---|---|
 | GET | `/api/briefing/today` | → `{ proposedTodos[], day[], deliverables[], changes[], meetingsRecap[], connectors[] }` |
 | GET | `/api/tasks?owner=&status=&project=` | → `Task[]` |
-| POST | `/api/tasks` | `{ title, description?, priority?, owner?, due?, projectId?, repoId? }` → `Task` (201) |
+| POST | `/api/tasks` | `{ title, description?, priority?, owner?, due?, projectId?, repoId?, labels? }` → `Task` (201). Labels are trimmed and de-duplicated; at most 20 of 40 characters |
 | POST | `/api/tasks/:id/move` | `{ status, beforeId? \| afterId? }` → `Task` |
 | GET | `/api/calendar/week?offset=0` | → `{ days[5], today, timeZone, events[], connector }` |
 | POST | `/api/calendar/sync` | `{ offset? }` → calendar-only sync |
@@ -184,7 +228,7 @@ Before/after tiles + charts (see [module 07](07_MODULE_GOVERNANCE_AUDIT_METRICS.
 | POST | `/api/tasks/:id/assign` | `{ owner: 'me' \| 'agent', autonomy, note }` |
 | POST | `/api/tasks/:id/delegate` | `{ autonomy, note?, due? }` |
 | POST | `/api/tasks/:id/takeover` | |
-| PATCH | `/api/tasks/:id` | `{ status?, owner?, priority?, notes?, projectId?, people?, repoId?, deliverableId?, skillIds?, todayFocus?, expectedUpdatedAt?, … }` |
+| PATCH | `/api/tasks/:id` | `{ status?, owner?, priority?, notes?, projectId?, people?, labels?, repoId?, deliverableId?, skillIds?, todayFocus?, expectedUpdatedAt?, … }` |
 | GET / POST | `/api/pages` | → `{ pages[] }`, standalone notes newest first • `POST` → `201 { page }` (§13) |
 | GET / PATCH / PUT / DELETE | `/api/pages/:id` | → the note • `{ title }` • `{ revision, content, notes?, annotations? }`, `409` on a stale revision • `204` |
 | POST | `/api/pages/:kind/:id/convert` | `{ revision }`; `kind` is `page` or `task`. Converts to the other type and returns `{ kind, id, pageId }`. Ownership, revision, and active-agent checks apply. |
@@ -198,7 +242,29 @@ Before/after tiles + charts (see [module 07](07_MODULE_GOVERNANCE_AUDIT_METRICS.
 | GET | `/api/runs` • `/api/runs/:id` • `/api/runs/:id/export` | |
 | GET | `/api/context/people\|projects\|repos\|preferences` | → graph nodes with evidence |
 | POST | `/api/context/corrections` | `{ nodeId, nodeKind, field, value, note }` |
-| GET / POST | `/api/connectors` • `/api/connectors/sync` | |
+| GET | `/api/connectors/catalog` | → `{ entries[] }`: every `CONNECTOR_CATALOG` entry plus `state` `{ connected, account, appReady, oauthReady, products, needsConsent[], sources{ id: { enabled, lastSyncAt, lastError } }, mcp? }` for the signed-in person ([03 §2.1](03_MODULE_CONTEXT_ENGINE.md#21-connector-store-oauth-apps-products-and-tokens)) |
+| GET | `/api/connectors/:provider/start?products=a,b&returnTo=` | → `{ url }` for the provider's consent screen. Asks for base scopes plus the listed products (or the saved toggles). 409 when the host has not set up that provider's app. Verified accounts only on hosted. |
+| GET | `/api/connectors/:provider/callback` | Public OAuth redirect target; stores the token and redirects to `returnTo` with `connected=<provider>` or `connectError=<message>` |
+| PUT | `/api/connectors/:id/products` | `{ products: Record<string, boolean>, returnTo? }` → the entry `state`, or `{ reconnect: true, url, needs[], state }` when a product needs access the stored token lacks |
+| POST | `/api/connectors/:provider/token` | `{ token, email?, site?, key? }` → `{ ok, account }`. Checks the pasted token with the provider first (github, slack, linear, notion, atlassian, trello, asana, todoist, clickup, monday, and the meeting-notes sources fireflies, fathom, granola, tldv, krisp, jamie, otter; [03 §2.3](03_MODULE_CONTEXT_ENGINE.md#23-meeting-notes-sources)). |
+| DELETE | `/api/connectors/:provider?deleteData=1` | → `{ ok, revoked, deleted }`. Revokes where possible, removes the token, switches its sources off; `deleteData` also deletes the artifacts they stored. |
+| GET | `/api/connectors/google/picker` | → `{ apiKey, appId, accessToken, origin }` for Google Picker; `accessToken` is null until `drive.file` is granted. 409 without `GOOGLE_PICKER_API_KEY` / `GOOGLE_PROJECT_NUMBER`. |
+| GET / PUT | `/api/connectors/apps` • `/api/connectors/apps/:provider` | Instance OAuth apps with redirect URIs and setup steps; saving is operator-only on hosted |
+| GET | `/api/mcp-connections` | → `{ connections[] }`: `{ id, serverId, name, url, status (pending\|connected\|error\|disabled), auth (oauth\|bearer\|none), toolCount, tools[{ name, title, description, readOnly }], disabledTools, lastError, toolsSyncedAt, createdAt, updatedAt }`. Never returns tokens ([03 §2.2](03_MODULE_CONTEXT_ENGINE.md#22-remote-mcp-connectors)). |
+| POST | `/api/mcp-connections` | `{ serverId }` (a catalog entry with `mcp`) or `{ url, name? }`, plus optional `token` (sent as `Authorization: Bearer`), `clientId`/`clientSecret` (a client the person registered with the vendor) and `returnTo` (a relative Hub path) → `{ id, status, authorizeUrl? }`. `authorizeUrl` means open the vendor's approval page. 400 with `code` `MCP_URL_REFUSED`, `MCP_TOKEN_REQUIRED` (paste a token instead), `MCP_PKCE_UNSUPPORTED` or `MCP_TOKEN_REFUSED`. |
+| GET | `/api/mcp-connections/callback?code&state` | Public OAuth redirect target. Single-use state, 10 minutes. On hosted the browser's session must belong to the person who started the connection, or nothing is saved. Redirects to `${HUB_WEB_ORIGIN}${returnTo}` with `mcp=connected\|error`, `server=<serverId>` and, on error, `mcpError=<message>` |
+| POST | `/api/mcp-connections/:id/refresh-tools` | → `{ connection }` after listing the server's tools again |
+| PATCH | `/api/mcp-connections/:id` | `{ disabledTools?: string[], status?: "disabled"\|"connected" }` → `{ connection }` |
+| DELETE | `/api/mcp-connections/:id` | → 204. Revokes the tokens at the vendor when it offers revocation, then deletes the connection |
+| GET | `/api/mcp-client-metadata.json` | Public. Ensemble's OAuth Client ID Metadata Document; its URL is the `client_id` on https deployments |
+| GET / POST | `/api/connections` • `/api/connections/:id/sync` • `/api/fetch` | Sync sources and their status; Sync one source; Fetch now (all enabled sources). Scheduled fetching is paused ([03 §2](03_MODULE_CONTEXT_ENGINE.md#2-connectors)). |
+| GET | `/api/people/identity-suggestions` | → `{ suggestions[] }`: `{ key, people[2]{ id, name, email, identities[] }, reason (seen-together\|same-name\|handle-matches-email), question, evidence }`. Computed on read; ingest never merges ([03 §4.7](03_MODULE_CONTEXT_ENGINE.md#47-one-person-across-sources-identities)) |
+| POST | `/api/people/identity-suggestions/dismiss` | `{ personId, otherId }` → `{ ok }`; the pair is not suggested again |
+| POST | `/api/people/:id/merge` | `{ otherId }` → `{ person, moved }`. Keeps `:id`; moves identities, task people, meeting people, document tags, project membership, artifact authors and attendance, then deletes `otherId` |
+| GET / POST | `/api/project-links?projectId=` • `/api/project-links` | → `{ links[] }` • `{ projectId, source, containerId, containerName? }` → `201 { link, applied{ artifacts, tasks } }` (200 when the container moves to another project). Items already in from that container without a project join it ([03 §4.8](03_MODULE_CONTEXT_ENGINE.md#48-project-links)) |
+| DELETE | `/api/project-links/:id` | → 204 |
+| GET | `/api/project-links/containers?source=` | → `{ containers[] }`: `{ source, id, name, count, lastSeenAt, projectId, projectName }` from synced artifacts, imported projects and links |
+| GET | `/api/meetings/imported` • `/api/meetings/notes/:id` | → `{ notes[] }` (newest 50 from meeting-notes connectors) • `{ note }`: `{ title, sourceLabel, occurredAt, summary, decisions[], actionItems[], waitingOn[], transcriptUrl, event, project, people[], tasks[] }` |
 | GET / PUT / POST | `/api/skills` • `/api/skills/:id` • `PUT /api/skills/:id` • `POST /api/skills/:id/regenerate` | |
 | GET / POST | `/api/agent/state` • `POST /api/agent/pause` • `POST /api/agent/resume` | |
 | POST | `/api/day/replan` | |
@@ -243,7 +309,19 @@ Source: `apps/hub-api/src/routes/assistant.ts`.
 | GET | `/api/assistant/conversations/:id/messages` | → `{ conversation, messages }` |
 | POST | `/api/assistant/turn` | `{ message, conversationId?, model?, tier?, reasoningEffort?, page?, mentions?, referenceContext? }` → streams the turn (SSE). The first frame is `status { conversationId }`, sent before the model call, so Stop works on a new chat. A quota miss is an `error` frame with `code: model_quota_exceeded` (429, `model`, `resetsAt`); an unreachable model host is `code: model_unreachable` (503). Neither is saved as the reply ([docs/11 §9](11_HOW_THE_ASSISTANT_WORKS.md#9-failure-modes-and-what-catches-them)) |
 | POST | `/api/assistant/conversations/:id/stop` | Cancels the running turn → `204` |
-| POST | `/api/assistant/apply` | `{ name, input }` or `{ calls[] }` → applies writes the write policy held as a preview. Returns `replies[]`: the saved assistant messages, rewritten so they no longer say nothing has changed |
+| POST | `/api/assistant/apply` | `{ name, input }` or `{ calls[] }` → applies writes the write policy held as a preview (connected-app writes always). Returns `replies[]`: the saved assistant messages, rewritten so they no longer say nothing has changed. When a batch only partly lands: 200 with `partial: true` and `failed[]`; calls already saved as applied are never run again ([11 §8.2](11_HOW_THE_ASSISTANT_WORKS.md#82-connected-apps)) |
+
+### Imports ([docs/27](27_IMPORTS.md))
+
+| Method | Path | Body → Response |
+|---|---|---|
+| GET | `/api/imports/sources` | → `{ sources[] }`: each app, whether it is connected, token help, file formats and export steps |
+| POST | `/api/imports/preview` | JSON `{ source, credentials?, containers?, options? }` or `{ previewId, containers?, columns?, options? }`; multipart `source` + `file` (50 MB) → `{ previewId, containers[], mapping: { tables[], statuses[] }, samples[], summary }`. One preview per person, 30 minutes in memory; the upload is kept as bytes and read again at import start |
+| POST | `/api/imports` | `{ previewId, containers[], statusMap?, importAs?, columns?, options? }` → `202 { job }`; one running import per person |
+| GET | `/api/imports` • `/api/imports/:id` | → `{ jobs[] }` (newest 20) • `{ job }` with status, counts, progress, links, `canUndo` |
+| POST | `/api/imports/:id/cancel` • `/api/imports/:id/undo` | → `{ job }`. Undo removes only what that import created |
+
+All import routes need a verified email on the hosted site. Per person: 60 previews per 10 minutes, 30 starts and 30 undos per hour.
 
 ### Undo / redo (§11)
 
@@ -333,7 +411,7 @@ These measurements and file names come from an earlier prototype. They describe 
 | Run trace | ✓ | Every tool call shows `server.tool`, risk, inputs and outputs. Writes display *authorised by <approval title> (<decision>)*; un-approved writes show *waiting for approval — not executed*. |
 | Help me, zero typing | 4 items cited | Context pack built on panel open and shown as removable chips. Falls back to a grounded, citing summary when no model credential is present, so the behaviour is demonstrable before Copilot auth. |
 
-**Data sources:** Settings → Connections lists **ready connectors only**. Today that is Gmail, Google Calendar, GitHub, Slack and Linear; Outlook and Teams are marked "coming later" ([18](18_WHAT_IS_REAL.md#connectors-read-only)). The sidebar counts actual ready sources. Sample data is opt-in ([docs/03 §11](03_MODULE_CONTEXT_ENGINE.md#11-seed-data-opt-in-only)). **No ADO.**
+**Data sources:** Settings → Connections shows five featured connectors (Google Workspace, Microsoft 365, Notion, Linear, GitHub); every other app, including Slack, Jira and the remote MCP servers, is in **Browse connectors** ([§3.9](#39-settings), [18](18_WHAT_IS_REAL.md#connectors-read-only)). Entries the catalog marks `soon` say "Coming soon" and cannot be connected. The sidebar counts actual ready sources. Sample data is opt-in ([docs/03 §11](03_MODULE_CONTEXT_ENGINE.md#11-seed-data-opt-in-only)). **No ADO.**
 
 ---
 
@@ -557,7 +635,7 @@ Readability (`apps/hub-web/lib/graph-readability.ts`): each node's collision zon
 
 ### Model presets and capability discovery
 
-*Settings → Models* defines Low, Medium, High and Max profiles, including the model and any thinking/context options actually advertised and supported by the active transport. The Copilot catalogue is cached for seven days and has an explicit refresh action. The floating assistant selects a preset and shows its configured model; custom per-run overrides are confined to assignment. Inline `@ensemble` uses Low. Saved overrides propagate to the runtime request, not just the UI label. **Unsupported combinations fail before inference.**
+*Settings → Assistant → Models* ("Which model each tier uses") defines Low, Medium, High and Max profiles, including the model and any thinking/context options actually advertised and supported by the active transport. The Copilot catalogue is cached for seven days and has an explicit refresh action. The floating assistant selects a preset and shows its configured model; custom per-run overrides are confined to assignment. Inline `@ensemble` uses Low. Saved overrides propagate to the runtime request, not just the UI label. **Unsupported combinations fail before inference.**
 
 The current Copilot discovery response exposes reasoning choices on both transports, and no selectable context tiers at all. The UI therefore offers a thinking level wherever the provider advertises one, and offers **no context-size control**: it reports the model's single context window as read-only information and nothing more. Showing a permanently disabled dropdown was the earlier behaviour, and a control that can never move reads as a bug rather than a limit. Model availability and capabilities may change after refresh. Unknown billing rates remain unknown; the app does not invent a per-request charge for newly discovered models.
 

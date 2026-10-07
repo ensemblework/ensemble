@@ -3,7 +3,7 @@
  * named in the connector scope (Settings → Connections). Mentions of you in
  * those channels go to triage; everything else is context.
  */
-import { getAccount } from "./accounts.js";
+import { syncAccount } from "./tokens.js";
 import { upsertArtifact, upsertPerson } from "./ingest.js";
 import { ConnectorError, type SyncContext, type SyncResult } from "./types.js";
 
@@ -38,7 +38,7 @@ interface SlackMessage {
 }
 
 export async function syncSlack(ctx: SyncContext): Promise<SyncResult> {
-  const account = await getAccount(ctx.userId, "slack");
+  const account = await syncAccount(ctx.userId, "slack");
   if (!account) throw new ConnectorError("Slack is not connected. Paste a Slack token in Settings → Connections.", true);
   const token = account.accessToken;
   const auth = await slack<{ ok: boolean; user_id: string; user: string; team: string; url: string }>(token, "auth.test", {});
@@ -109,6 +109,7 @@ export async function syncSlack(ctx: SyncContext): Promise<SyncResult> {
         actorId: personId,
         participants: [{ name: author.name, email: author.email, handle: message.user ?? null }],
         metadata: { channel: conversation.id, channelName: label, mentionsMe, direct: Boolean(conversation.is_im) },
+        containers: conversation.is_im || conversation.is_mpim ? [] : [{ source: "slack", id: conversation.id, name: label }],
       });
       result.items += 1;
       result.stored.push(stored);

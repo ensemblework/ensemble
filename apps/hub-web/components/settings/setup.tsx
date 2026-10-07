@@ -1,16 +1,15 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Copy, ExternalLink, KeyRound, Plug, RefreshCw, Trash2, Zap } from "lucide-react";
+import { Check, ChevronDown, Copy, ExternalLink, KeyRound, Plug, RefreshCw, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import type { ModelProvider, Settings } from "@ensemble/shared-types";
-import { api, type Complexity, type Connection, type ConnectorApp } from "@/lib/api";
-import { dateTime, plural, relative } from "@/lib/format";
+import { api, type Connection, type ConnectorApp } from "@/lib/api";
+import { plural, relative } from "@/lib/format";
 import { FetchGlyph } from "@/components/motion/slot";
-import { useQuotaMarks } from "@/lib/model-quota";
 import { useToast } from "../toast";
-import { Dialog, InfoTip, SectionCard, SettingRow, Spinner, Tag, Toggle, cx } from "../ui";
+import { Dialog, SectionCard, SettingRow, Spinner, Tag, Toggle, cx } from "../ui";
 
 export type Patch = (patch: Record<string, unknown>) => void;
 type Props = { settings: Settings; patch: Patch };
@@ -34,7 +33,7 @@ function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) 
 
 // ── model keys ─────────────────────────────────────────────────────────────
 
-const KEY_PROVIDERS: Array<{ id: ModelProvider; label: string; where: string; url: string; note?: string }> = [
+export const KEY_PROVIDERS: Array<{ id: ModelProvider; label: string; where: string; url: string; note?: string }> = [
   { id: "google", label: "Google Gemini", where: "Google AI Studio → Get API key", url: "https://aistudio.google.com/apikey", note: "Cheapest to start. Has a free tier." },
   { id: "openai", label: "OpenAI", where: "platform.openai.com → API keys", url: "https://platform.openai.com/api-keys" },
   { id: "anthropic", label: "Claude", where: "console.anthropic.com → API keys", url: "https://console.anthropic.com/settings/keys" },
@@ -52,12 +51,15 @@ export function ModelKeysCard({ compact = false }: { compact?: boolean }) {
   const keys = useQuery({ queryKey: ["model-keys"], queryFn: api.modelKeys, retry: false });
   const [editing, setEditing] = useState<ModelProvider | null>(null);
   const [value, setValue] = useState("");
+  const close = () => {
+    setEditing(null);
+    setValue("");
+  };
   const save = useMutation({
-    mutationFn: () => api.saveModelKey(editing!, value),
+    mutationFn: () => api.saveModelKey(editing!, value.trim()),
     onSuccess: (result) => {
       toast(`Key works, ${result.models} models available.`, { tone: "ok" });
-      setEditing(null);
-      setValue("");
+      close();
       void client.invalidateQueries({ queryKey: ["model-keys"] });
       void client.invalidateQueries({ queryKey: ["models"] });
     },
@@ -69,6 +71,7 @@ export function ModelKeysCard({ compact = false }: { compact?: boolean }) {
       void client.invalidateQueries({ queryKey: ["model-keys"] });
       void client.invalidateQueries({ queryKey: ["models"] });
     },
+    onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
   if (keys.error) {
     return <div className="rounded-md border border-warn/50 bg-panel px-3 py-2 text-[12.5px] text-muted">{(keys.error as Error).message}</div>;
@@ -78,84 +81,87 @@ export function ModelKeysCard({ compact = false }: { compact?: boolean }) {
     <div className="divide-y divide-[var(--line)]">
       {rows.map((provider) => {
         const key = keys.data?.credentials.find((row) => row.provider === provider.id);
+        const open = editing === provider.id;
         return (
-          <div key={provider.id} className="flex items-center justify-between gap-4 py-2.5">
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 text-[13.5px] font-medium">
-                {provider.label}
-                {key?.source === "you" ? <Tag tone="green">your key {key.hint}</Tag> : key?.source === "env" ? <Tag tone="blue">from server ({key.hint})</Tag> : <Tag tone="gray">no key</Tag>}
+          <div key={provider.id} className="py-2.5" data-provider={provider.id}>
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2 text-[13.5px] font-medium">
+                  {provider.label}
+                  {key?.source === "you" ? <Tag tone="green">your key {key.hint}</Tag> : key?.source === "env" ? <Tag tone="blue">from server ({key.hint})</Tag> : <Tag tone="gray">no key</Tag>}
+                </div>
+                <div className="text-[12px] text-muted">
+                  {provider.note ? `${provider.note} ` : ""}
+                  <a href={provider.url} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+                    {provider.where} ↗
+                  </a>
+                </div>
               </div>
-              <div className="text-[12px] text-muted">
-                {provider.note ? `${provider.note} ` : ""}
-                <a href={provider.url} target="_blank" rel="noreferrer" className="text-accent hover:underline">
-                  {provider.where} ↗
-                </a>
-              </div>
+              {open ? null : (
+                <div className="flex shrink-0 items-center gap-1.5">
+                  {key?.source === "you" ? (
+                    <button type="button" className="btn-ghost py-0.5 text-[12px]" onClick={() => remove.mutate(provider.id)} disabled={remove.isPending}>
+                      <Trash2 size={11} /> Remove
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="btn py-0.5 text-[12px]"
+                    aria-expanded={false}
+                    onClick={() => {
+                      setEditing(provider.id);
+                      setValue("");
+                    }}
+                  >
+                    <KeyRound size={11} /> {key?.source === "you" ? "Replace" : "Add key"}
+                  </button>
+                </div>
+              )}
             </div>
-            <div className="flex shrink-0 items-center gap-1.5">
-              {key?.source === "you" ? (
-                <button type="button" className="btn-ghost py-0.5 text-[12px]" onClick={() => remove.mutate(provider.id)}>
-                  <Trash2 size={11} /> Remove
+            {open ? (
+              <form
+                className="mt-2 flex flex-wrap items-center gap-2"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (value.trim() && !save.isPending) save.mutate();
+                }}
+              >
+                <input
+                  autoFocus
+                  type="password"
+                  value={value}
+                  onChange={(event) => setValue(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      event.stopPropagation();
+                      event.nativeEvent.stopImmediatePropagation();
+                      close();
+                    }
+                  }}
+                  aria-label={`${provider.label} API key`}
+                  placeholder="Paste the key"
+                  autoComplete="off"
+                  className="field min-w-0 flex-1 font-mono"
+                />
+                <button type="button" className="btn-ghost" onClick={close}>
+                  Cancel
                 </button>
-              ) : null}
-              <button type="button" className="btn py-0.5 text-[12px]" onClick={() => setEditing(provider.id)}>
-                <KeyRound size={11} /> {key?.source === "you" ? "Replace" : "Add key"}
-              </button>
-            </div>
+                <button type="submit" className="btn-primary" disabled={!value.trim() || save.isPending}>
+                  {save.isPending ? <Spinner size={12} /> : null} Check and save
+                </button>
+                <p className="w-full text-[12px] text-muted">Ensemble checks the key with {provider.label}, then stores it encrypted. It is never shown again.</p>
+              </form>
+            ) : null}
           </div>
         );
       })}
-      <Dialog open={editing !== null} onClose={() => setEditing(null)} title={`Add a ${KEY_PROVIDERS.find((row) => row.id === editing)?.label ?? ""} key`}>
-        <div className="space-y-3 p-4 text-[13px]">
-          <p className="text-muted">
-            Paste it here. Ensemble checks it, then stores it encrypted on this computer. It is not written into a project file, and it is not shown again.
-          </p>
-          <input
-            autoFocus
-            type="password"
-            value={value}
-            onChange={(event) => setValue(event.target.value)}
-            placeholder="Paste the key"
-            className="field w-full font-mono"
-            onKeyDown={(event) => event.key === "Enter" && value.trim() && save.mutate()}
-          />
-          <div className="flex justify-end gap-2">
-            <button type="button" className="btn-ghost" onClick={() => setEditing(null)}>
-              Cancel
-            </button>
-            <button type="button" className="btn-primary" disabled={!value.trim() || save.isPending} onClick={() => save.mutate()}>
-              {save.isPending ? <Spinner size={12} /> : null} Check and save
-            </button>
-          </div>
-        </div>
-      </Dialog>
     </div>
   );
 }
 
-// ── models by complexity ───────────────────────────────────────────────────
+// ── other keys ─────────────────────────────────────────────────────────────
 
-const TIERS: Array<{ id: Complexity; label: string; hint: string }> = [
-  { id: "easy", label: "Low model", hint: "Replies, triage, small edits. Also the default for the chat and for fetch triage." },
-  { id: "medium", label: "Medium model", hint: "Most delegated tasks." },
-  { id: "high", label: "High model", hint: "Refactors, investigations, multi-file changes." },
-  { id: "max", label: "Max model", hint: "Architecture, migrations and skill mining. Slowest, best." },
-];
-
-const PROVIDERS: Array<{ id: ModelProvider; label: string }> = [
-  { id: "google", label: "Gemini" },
-  { id: "openai", label: "OpenAI" },
-  { id: "anthropic", label: "Claude" },
-  { id: "mistral", label: "Mistral" },
-  { id: "kimi", label: "Kimi" },
-  { id: "qwen", label: "Qwen" },
-  { id: "openrouter", label: "OpenRouter" },
-  { id: "copilot", label: "GitHub Copilot" },
-  { id: "cursor", label: "Cursor (assign to agent)" },
-  { id: "ollama", label: "Ollama (local)" },
-];
-
-function GitHubGitCard() {
+export function GitHubGitCard() {
   const toast = useToast();
   const client = useQueryClient();
   const current = useQuery({ queryKey: ["github-git"], queryFn: api.githubGit });
@@ -192,121 +198,9 @@ function GitHubGitCard() {
   );
 }
 
-export function ModelsSection({ settings, patch }: Props) {
-  const client = useQueryClient();
-  const toast = useToast();
-  const quotas = useQuotaMarks();
-  const catalog = useQuery({ queryKey: ["models"], queryFn: api.models });
-  const test = useMutation({
-    mutationFn: (tier: Complexity) => api.testModel(tier),
-    onSuccess: (result) => toast(`${result.model} answered “${result.text}” in ${result.ms} ms (${result.tokensIn ?? "?"} in / ${result.tokensOut ?? "?"} out tokens).`, { tone: "ok" }),
-    onError: (error) => toast((error as Error).message, { tone: "error" }),
-  });
-  const available = (catalog.data?.providers ?? []).reduce((sum, row) => sum + (row.available ? row.models.length : 0), 0);
-  return (
-    <SectionCard
-      title="Models"
-      info="Keys are held by the model runtime, never by the web app. A task's complexity picks the model; a provider without a key is skipped with a clear error, never swapped for another vendor."
-      actions={
-        <button type="button" className="btn" onClick={() => void client.invalidateQueries({ queryKey: ["models"] })}>
-          <FetchGlyph active={catalog.isFetching} size={12} /> Refresh
-        </button>
-      }
-      description={
-        catalog.data
-          ? catalog.data.runtime
-            ? `${available} models available from your keys · Updated ${dateTime(catalog.data.updatedAt)}`
-            : `The model runtime is not running: ${catalog.data.error ?? ""}`
-          : "Checking providers…"
-      }
-    >
-      <h3 className="mb-1 text-[13px] font-semibold">API keys</h3>
-      <ModelKeysCard />
-      <GitHubGitCard />
-      <h3 className="mb-2 mt-5 text-[13px] font-semibold">Which model each tier uses</h3>
-      <div className="space-y-4">
-        {TIERS.map((tier) => {
-          const value = settings.models[tier.id];
-          const provider = catalog.data?.providers.find((row) => row.provider === value.provider);
-          return (
-            <div key={tier.id}>
-              <div className="flex items-center gap-1.5 text-[13px] font-medium">
-                {tier.label} <InfoTip text={tier.hint} />
-                {provider && !provider.available ? <Tag tone="orange">no key for {value.provider}</Tag> : null}
-                {provider && !provider.chat ? <Tag tone="orange">Cursor cannot run the chat</Tag> : null}
-                {provider?.available && provider.models.length && !provider.models.includes(value.model) ? <Tag tone="orange">model not offered to your key</Tag> : null}
-                <button type="button" className="btn-ghost ml-auto py-0 text-[12px]" disabled={test.isPending} onClick={() => test.mutate(tier.id)}>
-                  <Zap size={11} /> Test
-                </button>
-              </div>
-              <div className="mt-1.5 grid grid-cols-[170px_minmax(0,1fr)_200px] gap-2">
-                <select
-                  value={value.provider}
-                  onChange={(event) => {
-                    const next = catalog.data?.providers.find((row) => row.provider === event.target.value);
-                    patch({ models: { [tier.id]: { provider: event.target.value, ...(next?.cheapest ? { model: next.cheapest } : {}) } } });
-                  }}
-                  className="field"
-                  aria-label={`${tier.label} provider`}
-                >
-                  {PROVIDERS.map((row) => (
-                    <option key={row.id} value={row.id}>
-                      {row.label}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  list={`models-${tier.id}`}
-                  key={`${tier.id}-${value.model}`}
-                  defaultValue={value.model}
-                  aria-label={`${tier.label} model`}
-                  onBlur={(event) => {
-                    if (event.target.value.trim() && event.target.value !== value.model) {
-                      patch({ models: { [tier.id]: { model: event.target.value.trim() } } });
-                    }
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") event.currentTarget.blur();
-                  }}
-                  className="field"
-                />
-                <datalist id={`models-${tier.id}`}>
-                  {(provider?.models ?? []).map((model) => (
-                    <option key={model} value={model} />
-                  ))}
-                </datalist>
-                <select aria-label={`${tier.label} thinking`} value={value.effort} onChange={(event) => patch({ models: { [tier.id]: { effort: event.target.value } } })} className="field">
-                  <option value="default">Thinking: provider default</option>
-                  <option value="minimal">Thinking: minimal</option>
-                  <option value="low">Thinking: low</option>
-                  <option value="medium">Thinking: medium</option>
-                  <option value="high">Thinking: high</option>
-                </select>
-              </div>
-              {(() => {
-                const mark = quotas.get(value.model);
-                if (mark && Date.parse(mark.resetsAt) > Date.now()) {
-                  return <p className="mt-1 text-[12px] text-warn">{mark.message}</p>;
-                }
-                return provider?.notes?.[value.model] && provider.notes[value.model]?.available === false ? (
-                  <p className="mt-1 text-[12px] text-warn">{provider.notes[value.model]?.reason || "This key cannot use that model."}</p>
-                ) : null;
-              })()}
-            </div>
-          );
-        })}
-        <label className="block text-[13px] font-medium">
-          Ollama URL
-          <input value={settings.models.ollamaUrl} onChange={(event) => patch({ models: { ollamaUrl: event.target.value } })} className="field mt-1.5 w-full" />
-        </label>
-      </div>
-    </SectionCard>
-  );
-}
-
 // ── connections ────────────────────────────────────────────────────────────
 
-function AppSetup({ app, canEdit }: { app: ConnectorApp; canEdit: boolean }) {
+export function AppSetup({ app, canEdit }: { app: ConnectorApp; canEdit: boolean }) {
   const client = useQueryClient();
   const toast = useToast();
   const [open, setOpen] = useState(false);
@@ -319,10 +213,11 @@ function AppSetup({ app, canEdit }: { app: ConnectorApp; canEdit: boolean }) {
       setOpen(false);
       void client.invalidateQueries({ queryKey: ["connector-apps"] });
       void client.invalidateQueries({ queryKey: ["connections"] });
+      void client.invalidateQueries({ queryKey: ["connector-catalog"] });
     },
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
-  const name = app.provider === "google" ? "Google" : "GitHub";
+  const name = (app as ConnectorApp & { label?: string }).label ?? (app.provider === "google" ? "Google" : "GitHub");
   return (
     <>
       <button type="button" className="btn py-0.5 text-[12px]" onClick={() => setOpen(true)} disabled={!canEdit}>
@@ -381,7 +276,7 @@ function GoogleMark() {
   );
 }
 
-function SignInWithGoogle({ pending, onClick }: { pending: boolean; onClick: () => void }) {
+export function SignInWithGoogle({ pending, onClick }: { pending: boolean; onClick: () => void }) {
   return (
     <button
       type="button"
@@ -520,7 +415,7 @@ function TokenConnect({ row }: { row: Connection }) {
   );
 }
 
-export function ConnectionsPanel({ settings, patch, returnTo = "/settings#connections" }: Props & { returnTo?: string }) {
+export function ConnectionsPanel({ settings, patch, returnTo = "/settings?tab=connections" }: Props & { returnTo?: string }) {
   const client = useQueryClient();
   const toast = useToast();
   const connections = useQuery({ queryKey: ["connections"], queryFn: api.connections });
@@ -646,36 +541,6 @@ export function ConnectionsPanel({ settings, patch, returnTo = "/settings#connec
   );
 }
 
-export function ConnectionsSection(props: Props) {
-  const client = useQueryClient();
-  const toast = useToast();
-  const syncAll = useMutation({
-    mutationFn: api.fetchNow,
-    onSuccess: (result) => {
-      const failed = result.results.filter((row) => !row.ok);
-      toast(result.message ?? (failed.length ? `${plural(failed.length, "source")} failed: ${failed[0]!.message}` : "Every switched-on source synced."), {
-        tone: failed.length ? "error" : "ok",
-      });
-      void client.invalidateQueries();
-    },
-  });
-  return (
-    <div id="connections" className="scroll-mt-6">
-      <SectionCard
-        title="Sources"
-        description="Sign in with Google for Gmail and Calendar. Switching a source off stops new reads immediately. What was already read stays until you delete it below."
-        actions={
-          <button type="button" className="btn" onClick={() => syncAll.mutate()} disabled={syncAll.isPending}>
-            <FetchGlyph active={syncAll.isPending} slot="connector.sync" size={12} /> Sync now
-          </button>
-        }
-      >
-        <ConnectionsPanel {...props} />
-      </SectionCard>
-    </div>
-  );
-}
-
 // ── editors & agents (decision router) ─────────────────────────────────────
 
 const TARGETS = [
@@ -691,6 +556,7 @@ export function EditorsSection() {
   const tokens = useQuery({ queryKey: ["tokens"], queryFn: api.tokens });
   const rules = useQuery({ queryKey: ["decision-rules"], queryFn: api.decisionRules });
   const [fresh, setFresh] = useState<string | null>(null);
+  const [routing, setRouting] = useState(() => typeof window !== "undefined" && window.location.hash === "#editors");
   const create = useMutation({
     mutationFn: () => api.createToken(`Editors · ${new Date().toLocaleDateString()}`),
     onSuccess: (result) => {
@@ -707,15 +573,34 @@ export function EditorsSection() {
     <SectionCard
       title="Editors & agents"
       info="A hook in the editor holds the tool call open and asks Ensemble. Your answer on Needs me goes back to that exact call. If Ensemble is closed or nobody answers in 10 minutes, the editor shows its own prompt, the hook never allows by itself."
-      description="Route “Allow this command?” prompts from Cursor, Claude Code and VS Code Copilot to Needs me, so you can answer from one place."
+      description="Let Cursor, Claude Code, VS Code and other AI apps read your Ensemble, and answer their “Allow this command?” prompts from Needs me."
     >
-      <p className="mb-3 text-[13px] leading-5 text-muted">
-        Want an app to read your tasks and notes?{" "}
-        <Link href="/settings#connect" className="font-medium text-accent hover:underline">
-          Apps
-        </Link>{" "}
-        walks you through it and creates a read-only key.
-      </p>
+      <SettingRow title="Connect an editor or AI app" description="A step-by-step guide for each app. It creates a read-only key: the app can read your tasks and notes, never change them.">
+        <Link href="/connect" className="btn-primary">
+          <Plug size={12} /> Connect an editor
+        </Link>
+      </SettingRow>
+      <div className="mt-1 border-t border-line pt-3">
+        <button
+          type="button"
+          className="flex w-full items-center justify-between gap-3 text-left"
+          aria-expanded={routing}
+          aria-controls="editor-permission-routing"
+          onClick={() => setRouting((value) => !value)}
+        >
+          <span>
+            <span className="block text-[13.5px] font-medium">Answer permission prompts from Needs me</span>
+            <span className="block text-[12.5px] text-muted">
+              {(rules.data?.rules ?? []).length || (tokens.data?.tokens ?? []).some((token) => token.scope !== "device" && token.scope !== "bridge")
+                ? `Set up${(rules.data?.rules ?? []).length ? ` · ${plural((rules.data?.rules ?? []).length, "standing answer")}` : ""}`
+                : "Install a small hook in Cursor, Claude Code or VS Code Copilot."}
+            </span>
+          </span>
+          <ChevronDown size={14} className={cx("shrink-0 text-muted transition-transform", routing && "rotate-180")} aria-hidden />
+        </button>
+      </div>
+      {routing ? (
+      <div id="editor-permission-routing" className="mt-2">
       <SettingRow title="Personal token" description="Hooks use this to reach your Ensemble. Shown once; revoke it here any time.">
         <button type="button" className="btn" onClick={() => create.mutate()} disabled={create.isPending}>
           Create token
@@ -767,6 +652,8 @@ export function EditorsSection() {
           </div>
         ))
       )}
+      </div>
+      ) : null}
     </SectionCard>
   );
 }

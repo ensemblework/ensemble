@@ -145,7 +145,7 @@ export function heuristicTodo(item: HeuristicSource): ModelTodo | null {
   const sentence = item.input.text.split(/(?<=[.?!])\s+/).find((line) => ASKS.test(line)) ?? item.input.text.slice(0, 160);
   return {
     id: item.id,
-    title: item.input.kind === "email" ? `Reply to ${who}: ${item.input.title}` : `Answer ${who} on Slack`,
+    title: item.input.kind === "email" ? `Reply to ${who}: ${item.input.title}` : `Answer ${who} on ${meta.source === "teams" ? "Teams" : "Slack"}`,
     priority: /asap|eod|end of day|urgent|today/i.test(item.input.text) ? "p0" : "p1",
     owner: "me",
     rationale: `${who} asked something directly.`,

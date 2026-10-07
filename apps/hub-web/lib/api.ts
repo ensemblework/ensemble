@@ -4,6 +4,7 @@ import type { LayoutDocument } from "@ensemble/shared-types/widgets";
 
 import { bindClient, currentExternalSignal, isRequestCancelled, RequestCancelledError, trackRequest, isPageUnloading } from "./fetch-cancel";
 import { resolveHubApi } from "./hub-origin";
+import type { ApplyFailure } from "./assistant-apply";
 
 /** Direct hub-api origin. SSE uses this so the stream is not buffered by the Next rewrite. */
 export const HUB_API = resolveHubApi({
@@ -53,7 +54,7 @@ function unreachable(status: number, text: string): boolean {
   return trimmed === "Internal Server Error" || /ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|socket hang up/i.test(trimmed);
 }
 
-async function request<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
+export async function request<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
   const { json, signal: explicit, ...rest } = init ?? {};
   const external = explicit ?? currentExternalSignal();
   const tracked = trackRequest(external, path);
@@ -93,11 +94,11 @@ async function request<T>(path: string, init?: RequestInit & { json?: unknown })
   return response.json() as Promise<T>;
 }
 
-const get = <T>(path: string) => request<T>(path);
-const post = <T>(path: string, json?: unknown) => request<T>(path, { method: "POST", json: json ?? {} });
-const patch = <T>(path: string, json: unknown) => request<T>(path, { method: "PATCH", json });
-const put = <T>(path: string, json: unknown) => request<T>(path, { method: "PUT", json });
-const del = <T>(path: string) => request<T>(path, { method: "DELETE" });
+export const get = <T>(path: string) => request<T>(path);
+export const post = <T>(path: string, json?: unknown) => request<T>(path, { method: "POST", json: json ?? {} });
+export const patch = <T>(path: string, json: unknown) => request<T>(path, { method: "PATCH", json });
+export const put = <T>(path: string, json: unknown) => request<T>(path, { method: "PUT", json });
+export const del = <T>(path: string) => request<T>(path, { method: "DELETE" });
 
 const qs = (params: Record<string, string | number | boolean | undefined | null>) => {
   const search = new URLSearchParams();
@@ -135,6 +136,10 @@ export type TaskRecord = {
   repoId: string | null;
   deliverableId: string | null;
   people: string[];
+  /** Free-form tags; imports bring labels, tags and multi-selects here. */
+  labels?: string[];
+  /** Set on action items a meeting-notes connector proposed. */
+  meetingNoteId?: string | null;
   skillIds: string[];
   snoozedUntil: string | null;
   rationale: string | null;
@@ -1096,6 +1101,9 @@ export const api = bindClient({
       undoEntryId?: string | null;
       already?: boolean;
       replies?: Array<{ id: string; content: string; toolCalls: AssistantToolCallRecord[] }>;
+      /** Some of a batch landed and some did not; `failed` names the rest. Landed calls are never re-run. */
+      partial?: boolean;
+      failed?: ApplyFailure[];
     }>("/api/assistant/apply", data),
   stopAssistant: (id: string) => post<void>(`/api/assistant/conversations/${id}/stop`),
   ensembleReplies: (surface: string, anchorKey: string) =>

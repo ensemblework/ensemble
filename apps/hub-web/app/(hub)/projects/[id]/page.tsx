@@ -7,6 +7,7 @@ import { use } from "react";
 import { isBakedParam, useDesktopParam } from "@/lib/desktop-param";
 import { usePeek } from "@/components/shell/peek";
 import { DiagramCard } from "@/components/diagrams/diagram-card";
+import { LinkedSources } from "@/components/project/linked-sources";
 import { useModuleOn } from "@/lib/use-module";
 import { MakeDiagramButton, deliverableDiagramPrompt, projectDiagramPrompt } from "@/components/diagrams/make-diagram";
 import { Empty, InlineEdit, MenuItem, Popover, PriorityTag, Spinner, StatusPill, Tag } from "@/components/ui";
@@ -119,6 +120,7 @@ export default function ProjectPage({ params }: { params: Promise<{ id: string }
             <Tag tone={data.status === "active" ? "blue" : "green"}>{data.status}</Tag>
           </button>
         </div>
+        <LinkedSources projectId={id} projectName={data.name} />
       </div>
 
       <DiagramList projectId={id} deliverableIds={data.deliverables.map((row) => row.id)} />

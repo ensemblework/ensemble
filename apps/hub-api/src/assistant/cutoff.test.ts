@@ -53,7 +53,7 @@ test("state.ts no longer contains the forced-refusal rule", () => {
   assert.equal(source.includes(FORCED_REFUSAL), false);
   assert.equal(source.includes("You act by calling tools."), false);
   assert.match(source, /Answer plain questions and text requests \(writing, counting, explaining, maths\) directly in text\./);
-  assert.match(source, /If the user asked for an action and no tool supports it, say so in one sentence\./);
+  assert.match(source, /If they asked for an action and no tool supports it, say so in one sentence\./);
   assert.equal(ASSISTANT_INSTRUCTIONS.includes(FORCED_REFUSAL), false);
   const empty = {
     proposed: 0,

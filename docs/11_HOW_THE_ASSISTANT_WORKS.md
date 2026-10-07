@@ -10,6 +10,8 @@ Written to be read start to finish. Design notes live in [02 §10–11](02_MODUL
 
 **The assistant never touches your UI.** It calls named functions on your own API, those functions write rows to the same Postgres your pages read, and the pages update because the data changed — not because anything simulated a click.
 
+**Connected apps work the same way.** When Google Workspace or Microsoft 365 is connected, a turn also gets typed tools for those apps (area `apps`): read Gmail, Outlook, Teams, calendars and files, create calendar events that email invites, and create or edit Google Docs, Sheets and Slides or Word, Excel and PowerPoint files. A connected Zoom, Docusign or Jira account adds read-only tools for meetings and transcripts, envelopes, and issues. Every change in a connected app waits for **Apply**, whatever the write policy says ([§8.2](#82-connected-apps)).
+
 The same tool loop also serves selected-text comments and inline `@ensemble` questions on tasks and standalone pages. These use the configured assistant default tier. Enter is the explicit send action; opening a saved answer never invokes a model. The live document and **typed entity mention IDs** travel with inline requests, including uploaded dataset IDs. The page's title/body are supplied directly (up to 24,000 characters), while the account's remaining context is available through user-scoped retrieval tools.
 
 Inline page requests authorize **new diagrams and plots** immediately through `hub_create_diagram` and `hub_create_plot`; `holdsAssistantWrite` in `apps/hub-api/src/assistant/agent.ts` keeps every other write under the normal approval policy. Module and allowed-write-area checks are unchanged. `hub_get_dataset` reads real column names and up to 40 preview rows before plotting; the created plot uses the full stored dataset. Successful artifact tool calls carry saved-resource links, and `components/comments/ensemble-artifacts.ts` inserts persistent document mentions below the reply once per call. Removing an embed does not delete its saved resource or cause a later stream update to reinsert it. Stream errors remain errors even when followed by a completion frame.
@@ -73,13 +75,21 @@ This is why there was no code change to the webapp: the operations already exist
 | `apps/hub-web/components/assistant/assistant-dock.tsx` | 623 | the floating panel: bubble, transcript, composer |
 | `apps/hub-web/components/shell/topbar.tsx` | — | the undo / redo buttons in the app bar |
 | `apps/hub-web/components/comments/` | ~700 | text comments and `@ensemble` replies on a page |
-| `apps/hub-api/src/assistant/types.ts` | 79 | what a tool *is* — the contract every tool obeys |
-| `apps/hub-api/src/assistant/registry.ts` | 133 | the catalog + Zod → JSON Schema for the model |
-| `apps/hub-api/src/assistant/state.ts` | 216 | the system prompt and the live Hub snapshot |
-| `apps/hub-api/src/assistant/agent.ts` | 645 | the loop: ask → tool calls → run → feed back |
+| `apps/hub-api/src/assistant/types.ts` | 98 | what a tool *is* — the contract every tool obeys |
+| `apps/hub-api/src/assistant/registry.ts` | 143 | the Hub catalog + Zod → JSON Schema for the model |
+| `apps/hub-api/src/assistant/apps.ts` | 192 | which connected-app tools a turn gets, the `apps` write switch, the Apply resolver hooks |
+| `apps/hub-api/src/assistant/apply.ts` | 123 | Apply: Hub writes in one transaction, then connected-app writes outside it, each ledgered |
+| `apps/hub-api/src/assistant/state.ts` | 268 | the system prompt and the live Hub snapshot |
+| `packages/shared-types/src/personas.ts` | — | the sentences about the person (`personaBlock`, `personaFor`) |
+| `apps/hub-api/src/assistant/agent.ts` | 730 | the loop: ask → tool calls → run → feed back |
 | `apps/hub-api/src/assistant/cutoff.ts` | 91 | detects a reply cut off by the provider |
 | `apps/hub-api/src/assistant/diagram-skill.ts` | 39 | loads the block-diagram skill for diagram turns |
-| `apps/hub-api/src/assistant/tools/` | ~1,500 | tools by area: `tasks`, `projects`, `context`, `graph`, `repos`, `skills`, `reminders`, `fetch`, `watchers`, `diagrams`, `diagram-context`, `plots` |
+| `apps/hub-api/src/assistant/tools/` | ~1,500 | Hub tools by area: `tasks`, `projects`, `context`, `graph`, `repos`, `skills`, `reminders`, `fetch`, `watchers`, `diagrams`, `diagram-context`, `plots` |
+| `apps/hub-api/src/assistant/tools/google-workspace.ts`, `tools/google/` | ~1,270 | Gmail, Google Calendar, Drive, Docs, Sheets, Slides |
+| `apps/hub-api/src/assistant/tools/microsoft-365.ts`, `tools/microsoft/` | ~720 | Outlook mail and calendar, Teams, OneDrive, Word, Excel, PowerPoint (Microsoft Graph v1.0) |
+| `apps/hub-api/src/assistant/tools/zoom.ts`, `docusign.ts`, `jira.ts` | ~690 | read only: Zoom meetings, recordings, transcripts and AI summaries; Docusign envelopes; Jira issues |
+| `apps/hub-api/src/assistant/tools/apps-common.ts` | 338 | tokens and scopes, vendor HTTP with readable errors, dates and preview wording |
+| `apps/hub-api/src/lib/office/` | ~980 | Markdown → HTML and .docx, rows ↔ .xlsx, slides → .pptx, text out of Office files |
 | `apps/hub-api/src/routes/assistant.ts` | 313 | HTTP: SSE streaming, conversations, Apply, Stop |
 | `apps/hub-api/src/routes/comments.ts` | 255 | HTTP: comments and inline `@ensemble` turns on a page |
 | `apps/hub-api/src/routes/misc.ts` | — | `GET /api/undo`, `POST /api/undo`, `POST /api/redo` |
@@ -90,7 +100,7 @@ This is why there was no code change to the webapp: the operations already exist
 | `packages/shared-types/src/assistant.ts` | 267 | every shape that crosses the wire |
 | `packages/shared-types/src/undo.ts` | — | the undo/redo contract |
 
-**38 registered tools** (20 read, 18 write), grouped by the data they touch.
+**51 Hub tools** (24 read, 27 write) in the static catalog, grouped by the data they touch, plus **38 connected-app tools** (23 read, 15 write) offered per person ([§8.2](#82-connected-apps)).
 
 Roughly **2,000 lines of tools and 600 of orchestration**. The tools are the bulk, and that is the right shape: the interesting part is *what the agent may do*, not the loop that lets it.
 
@@ -140,7 +150,7 @@ This becomes an **index, not a corpus** — names and ids, not bodies:
 
 The model now knows MOSAIC and Shachee exist and how to address them. It does **not** yet know anything *about* them — that costs a tool call, which is the point. Putting the whole board in the prompt would spend tokens on every turn to answer questions that are almost always about one row.
 
-**Two — the rules.** Judgement, not a tool list (the provider enforces the tool list separately). The full text is `ASSISTANT_RULES` in `apps/hub-api/src/assistant/state.ts`. The load-bearing ones:
+**Two — the rules.** Judgement, not a tool list (the provider enforces the tool list separately). The prompt opens by describing the situation, not by giving the model a role: *"This conversation is inside Ensemble, where Mira keeps their tasks, pages, projects, people and the apps they connected. You can read and change that workspace with the tools that come with this message."* The first name comes from the account (`buildHubState` also reads it and the onboarding role). The full text is `assistantRules()` in `apps/hub-api/src/assistant/state.ts`; `ASSISTANT_INSTRUCTIONS` is the same text with "the person" for the name. The load-bearing rules:
 
 1. **Act in this turn.** If a tool can do what was asked, call it now. Do not write *"I'll read your calendar"*.
 2. **Never invent an entity.** Use ids from the snapshot and the open page. Match names with a list tool before writing.
@@ -148,7 +158,9 @@ The model now knows MOSAIC and Shachee exist and how to address them. It does **
 4. **No substitute tools.** If no tool supports the action, say so in one sentence.
 5. **Speak as a proposal.** A held write is *"Ready to apply: …"* until the person presses Apply. Never claim it is done.
 
-**Three — the tool catalog**, filtered by your settings, in the shape the provider wants.
+After the rules come a few sentences about the person from `personaBlock` (`packages/shared-types/src/personas.ts`), for example *"Mira works as a lawyer; they usually want a clause summarised, two drafts compared, …"*. The persona is Settings → Act as; while Act as is General, `personaFor` uses the onboarding role instead (student, teacher, lawyer, engineer, `vibe` → engineer, manager, researcher). It changes tone and emphasis only. Tools and permissions are decided in code, so the text no longer carries a disclaimer about them. The main chat gets it in the system prompt; a caller that passes `actAs` gets the same, and an older caller that still puts `personaBlock` in `preamble` without `actAs` is left as it was. Last, a **Connected apps** paragraph (`appsPrompt` in `apps.ts`) names what is connected and switched on, what is not connected, and the Apply rule for those apps.
+
+**Three — the tool list for this turn**: the Hub catalog filtered by your settings, plus this person's connected-app tools (`toolsForTurn` in `apps.ts`), in the shape the provider wants.
 
 ### 4.3 The catalog becomes a contract
 
@@ -203,12 +215,12 @@ This is **function calling** — a first-class provider feature. The model is no
 `runOne()` in `agent.ts`:
 
 ```ts
-const tool = getTool(requested.name);                    // 1. lookup, not eval
+const tool = offered.get(requested.name);                // 1. lookup in this turn's tools, not eval
 if (!tool) { /* "There is no tool called X." */ }
 
 const input = tool.input.parse(JSON.parse(requested.arguments));  // 2. validate
 
-if (tool.isWrite && writePolicy !== "immediate") {
+if (tool.isWrite && (tool.area === "apps" || writePolicy !== "immediate")) {
   emit({ type: "pending", call, preview: await tool.preview(…) });
   return;                                               // 3. gate — nothing is written
 }
@@ -218,7 +230,7 @@ const result = await tool.run(ctx, input);              // 4. execute
 
 Four things worth naming:
 
-1. **Dispatch is a map lookup.** `getTool("__proto__")` returns `undefined`. A tool absent from the catalog cannot be called however convincingly the model asks — there is no path from a string to arbitrary behaviour.
+1. **Dispatch is a map lookup** in the tools this turn offered (`offered` is built from `toolsForTurn`). `offered.get("__proto__")` returns `undefined`. A tool the turn did not offer — a Google tool when Google is not connected, an app write when app writes are off — cannot be called however convincingly the model asks; there is no path from a string to arbitrary behaviour.
 2. **Validation is the same schema the model was shown.** A bad argument comes back as a message the model can act on, and the turn continues.
 3. **The gate is here, not in the model's head.** Whether a write happens is decided by your setting, on the server, after the model has spoken.
 4. **`run` is ordinary application code.** No magic:
@@ -347,7 +359,7 @@ redo → "Redone — added todo ENSEMBLE VERIFY"   task: back, project link, pri
 redo → 409 "Nothing to redo."
 ```
 
-**What is deliberately absent:** anything that left the building. A sent mail, an opened PR. Those are gated by approval precisely because they cannot be taken back, and a button that appears to undo them but does not would be worse than no button.
+**What is deliberately absent:** anything that left the building. A sent mail, an opened PR, a calendar invite, a Google Doc. Those are gated by approval precisely because they cannot be taken back, and a button that appears to undo them but does not would be worse than no button. A connected-app write applied from the chat has no undo entry; it is recorded in the audit ledger as `apps.<tool>` with its link ([§8.2](#82-connected-apps)).
 
 ---
 
@@ -358,9 +370,10 @@ A write passes through **five gates** before it lands:
 | Gate | Where | What it stops |
 |---|---|---|
 | The catalog | `registry.ts` | Anything not on the list. Dispatch is a map lookup. |
-| Area filter | `toolsFor(allowedWriteAreas)` | Writes to areas you switched off — the tool is never even shown, so the model does not waste turns trying. |
+| Area filter | `toolsFor(allowedWriteAreas)` | Writes to areas you switched off — the tool is never even shown, so the model does not waste turns trying. `apps` is not one of these areas. |
+| Connected-app gate | `apps.ts`, `agent.ts`, `apply.ts` | App tools for suites or products that are not connected or switched on; app writes while `assistant.connectedAppWrites` is off (not offered, refused on Apply); any app write running before Apply. |
 | Zod parse | `tool.input.parse` | Malformed arguments, bad enums, missing fields. |
-| Write policy | `agent.ts` | `preview` and `needs-me` hold the call; nothing is written until you press Apply. |
+| Write policy | `agent.ts` | `preview` and `needs-me` hold the call; nothing is written until you press Apply. Writes to connected apps are held under every policy. |
 | Referential checks | each tool's `run` | Ids that do not exist. A foreign-key error naming `tasks_deliverable_id_fkey` tells the model nothing it can act on and tells you less. |
 
 And the ones that are **not negotiable:** tools that reach *outside* the Hub — starting an agent run that could send mail or open a PR — keep their existing risk-based gates from `ensemble_agent/tools/catalog.py` **whatever the write policy says**. A setting that could be turned up until the agent mails your manager unattended is not a setting, it is a trap.
@@ -375,6 +388,8 @@ And the ones that are **not negotiable:** tools that reach *outside* the Hub —
 
 Merging them would force the safer half to carry the stricter half's ceremony.
 
+Connected-app tools (area `apps`) are the outside-world tools that do live in `assistant/registry.ts`, because each one is a single typed call the person can read in full before it happens. They carry the stricter rule themselves: every write is held for Apply whatever the write policy says, and is ledgered when applied.
+
 ---
 
 ## 8. Meeting notes are ordinary context
@@ -386,6 +401,51 @@ Floating and inline turns use the engineer's configured model profile (Copilot, 
 The final allowed model request is reserved for **synthesis with tools disabled**. A turn that cannot produce a final answer fails explicitly; a list of tool receipts is never substituted for the requested summary. Saved answers are historical results: improving the implementation does not silently rewrite one.
 
 Reminder tools can create, edit, snooze, dismiss or delete the same private rows shown in Today. Their write area remains configurable, with the same preview/Needs me gates as other Hub changes. They are deliberately **absent from shared retrieval, graph construction, fetch extraction and the Context Bridge**. Notification timing, quiet hours and Windows opt-in are in [02 §14](02_MODULE_INTERACTION_HUB_UI.md#14-private-reminders).
+
+### 8.2 Connected apps
+
+Read from the code and checked with mocked Google and Graph responses on 7 Oct 2026 (`src/assistant/tools/google-workspace.test.ts`, `microsoft-365.test.ts`, `apps.test.ts`, and `apply.integration.test.ts` against a local Postgres). Not run against a live Google or Microsoft account.
+
+**Who gets which tools.** `toolsForTurn` (`apps/hub-api/src/assistant/apps.ts`) adds a person's app tools to the Hub catalog for each turn. A tool is offered when its suite is connected (an `oauth_tokens` row for `google` or `microsoft`) and one of its products is switched on in `settings.connectorProducts` (defaults from `connectors/products.ts`). Zoom, Docusign and Jira (`zoom`, `docusign`, `atlassian` rows) have no products: their read tools are offered whenever the account is connected. Reads are always offered then. Writes are offered only while **`assistant.connectedAppWrites`** is on; `apps` is not one of `allowedWriteAreas`. At most `MAX_APP_TOOLS` (64) app tools are offered per turn, built-in suites first, so the Hub and app tools together stay under the 128 functions OpenAI accepts. A product that is on but whose permission was never granted is still offered; the call then says what to do (below).
+
+| Tool | Reads or writes | Product | Scope it needs |
+|---|---|---|---|
+| `gmail_search`, `gmail_read` | read | Gmail | `gmail.readonly` |
+| `calendar_list_events` | read | Calendar | `calendar.events` (or `calendar.readonly`) |
+| `calendar_create_event`, `calendar_update_event` | write | Calendar | `calendar.events` |
+| `drive_list_files`, `drive_read_file` | read | Docs, Sheets & Slides or Search all of Drive | `drive.file` or `drive.readonly` |
+| `docs_create`, `docs_append`, `docs_replace_text` | write | Docs, Sheets & Slides | `drive.file` |
+| `sheets_create`, `sheets_update_range`, `sheets_append_rows` | write | Docs, Sheets & Slides | `drive.file` |
+| `sheets_read`, `slides_read` | read | Docs, Sheets & Slides or Search all of Drive | `drive.file` or `drive.readonly` |
+| `slides_create` | write | Docs, Sheets & Slides | `drive.file` |
+| `outlook_search_mail`, `outlook_read_message` | read | Outlook mail | `Mail.Read` |
+| `outlook_calendar_list_events` | read | Outlook calendar | `Calendars.Read` or `Calendars.ReadWrite` |
+| `outlook_calendar_create_event` | write | Outlook calendar | `Calendars.ReadWrite` |
+| `teams_list_chats`, `teams_read_chat` | read | Teams | `Chat.Read` |
+| `onedrive_search`, `onedrive_read_file`, `excel_read_range` | read | OneDrive or Office files | `Files.Read` |
+| `word_create`, `word_update`, `excel_create`, `excel_update_range`, `powerpoint_create` | write | Office files | `Files.ReadWrite` |
+| `zoom_list_meetings` | read | Zoom | `meeting:read:list_meetings` (or classic `meeting:read`) |
+| `zoom_get_meeting_summary` | read | Zoom | `meeting:read:summary` (or classic `meeting_summary:read`) |
+| `zoom_list_recordings` | read | Zoom | `cloud_recording:read:list_user_recordings` (or classic `recording:read`) |
+| `zoom_get_transcript` | read | Zoom | `cloud_recording:read:meeting_transcript` (or classic `recording:read`) |
+| `docusign_list_envelopes`, `docusign_get_envelope` | read | Docusign | `signature` |
+| `jira_search`, `jira_get_issue` | read | Jira | `read:jira-work` with OAuth; none with a pasted API token |
+
+**Zoom, Docusign and Jira** (`tools/zoom.ts`, `docusign.ts`, `jira.ts`; read only). Zoom calls `https://api.zoom.us/v2` as the person (`users/me`): upcoming or previous meetings, cloud recordings for up to a month at a time (Zoom's limit; a longer range is shortened and says so), the AI Companion summary (`/meetings/{id}/meeting_summary`, Markdown from `summary_content`), and the transcript (`/meetings/{id}/transcript`, then its `download_url`, which must be on `zoom.us` because the token is sent with it; the VTT becomes `[mm:ss] Speaker: words` lines). Recordings, transcripts and summaries need a paid Zoom plan on the host's account; Zoom's code 200 refusal is shown as that. Docusign uses the account's own `baseUri` and `accountId` from connect (only `*.docusign.net` / `*.docusign.com` hosts) with `/restapi/v2.1/accounts/{accountId}/envelopes`, and works out who an envelope is waiting on from recipients that are sent or opened but not done. Jira uses `https://api.atlassian.com/ex/jira/{cloudId}` with the OAuth token, or `https://{site}` with Basic `email:token` for a pasted token (only `*.atlassian.net` / `*.jira.com` sites); search posts JQL to `/rest/api/3/search/jql` with `nextPageToken`, and an issue's description and last five comments come back as Markdown through `adfToMarkdown` (`src/imports/markdown.ts`).
+
+**Tokens.** Every call gets its token from `requireProviderToken` in `connectors/tokens.ts` (through `appToken` in `tools/apps-common.ts`), which refreshes it and throws `ConnectorNotConnectedError` (409) when the suite is not connected. A missing scope throws the same error: *"Google Calendar is connected without the access this needs. Turn it on in Settings → Connections and approve the new permission."* Graph scopes match with or without the `https://graph.microsoft.com/` prefix and in any case. A pasted Jira API token has no OAuth scopes and is not checked for them. A vendor 401 asks the person to reconnect; a 403 for scopes is the same 409; other vendor errors are `AppRequestError` (424, message shown; not 502, which the Hub client reads as "server unreachable") with the vendor's own sentence, never a token.
+
+**The Apply rule.** Every `apps` write is held as `awaiting_approval`, even when `writePolicy` is `immediate` (`holdsAssistantWrite` in `agent.ts`). Before the card is shown, `ensureAppAccess` checks the connection, the product and the scope, so a missing permission is reported now rather than after Apply. The preview says exactly what will happen, for example *"Create event “Design review” Wed 14 Oct 15:00–15:30 IST in Mira's calendar (mira@fieldnote.example) and email invites to sam@fieldnote.example."* Previews make no vendor writes; a few read the target first (an event's title, a document's title, a workbook's first sheet).
+
+On Apply, `applyHeldCalls` (`apps/hub-api/src/assistant/apply.ts`) runs the Hub writes of the batch in one transaction and undo entry as before, then each app write after that transaction commits, outside any database transaction, so a slow vendor never holds row locks. Each applied app write is recorded with `appendLedger` as `apps.<tool>` (payload: tool, provider, summary, link, ids; never the document body or a token), and its result carries the link (`href`). A product switched off after the proposal is refused at Apply before anything is sent.
+
+**A batch that partly lands.** App writes run in order and stop at the first failure. If nothing has landed, Apply fails as a whole, its locks are released and it can be pressed again. Once something has landed, `applyHeldCalls` returns one outcome per call instead of throwing, and `POST /api/assistant/apply` answers 200 with `partial: true` and `failed: [{ callId, name, error, attempted }]` (`attempted: false` for calls never sent). The route records landed calls as `ok` (with `undoEntryId` only on Hub writes) and the rest as `failed` with the error, adds a *Not applied: …* line to the saved reply, writes the `assistant.apply` ledger row with `partial` and `failed`, and releases only the failed calls' locks. A call already saved as `ok` on the conversation is never run again, by any later Apply, even after its 120-second lock expires. The dock's *Apply all* toast says what landed and what did not (`applyNotice` in `apps/hub-web/lib/assistant-apply.ts`); the rows show each call's state. Checked 7 Oct 2026 with `src/assistant/apply.integration.test.ts` (local Postgres, mocked Google) and `components/assistant/assistant-message.test.tsx`.
+
+`resolveTool` in `apps.ts` finds a held tool by name for Apply: the Hub catalog, then the built-in app tools, then any resolver registered with `registerToolResolver`. Per-person sources such as remote MCP servers plug in with `registerAppToolSource`; a tool with its own `jsonSchema` is sent to the model with that schema instead of a Zod conversion.
+
+**Documents.** `docs_create` uploads HTML made from the model's Markdown to Drive with the target type `application/vnd.google-apps.document`, so headings, nested lists, bold, links and tables become real Doc formatting. `docs_append` inserts at the end with Docs `batchUpdate` (headings, bullets, bold, italic, links and code font; a table becomes rows of text). `sheets_create` writes the rows with `USER_ENTERED`, so a string starting with `=` is a formula, then bolds and freezes the header. `slides_create` fills the cover slide, adds one `TITLE_AND_BODY` slide per item with bullets, then the speaker notes. On Microsoft, `word_create`, `excel_create` and `powerpoint_create` build the file on the server (`lib/office/`: `docx`, `exceljs`, `pptxgenjs`, all MIT) and upload it to **OneDrive/Ensemble/** (renamed on a clash). `word_update` replaces the whole document and says so; `excel_update_range` uses the Graph workbook API on an existing workbook. Reading uses Drive exports (Docs as Markdown, Sheets as CSV, Slides as text), and `.docx`, `.xlsx` and `.pptx` are unzipped with `fflate` and read as text on the server. PDFs return their details and link only.
+
+Mail, chat and file text comes back marked as information, not instructions, and long bodies are read in 5,000-character windows (`offset`, `nextOffset`).
 
 ---
 
@@ -443,6 +503,8 @@ export const taskTools = [ /* … */, archiveTask ];
 // that is the whole wiring
 ```
 
+A tool that acts in a connected app is written the same way, with `area: "apps"` and `app: { provider, suite, products, scopes, label }` (see `tools/google/meta.ts`). It gets its token from `appToken(ctx, meta)` and calls the vendor through `appFetch` in `tools/apps-common.ts`. Add it to the suite's list (`googleWorkspaceTools`, `microsoft365Tools`): `apps.ts` offers it per person, `toolsFor()` never does, and if it writes it waits for Apply.
+
 Three rules learned the hard way:
 
 1. **Write the description for the model, not a docs page.** It is the only instruction it gets about when to reach for this. The test suite enforces a **40 character floor** because a one-word description is how a model calls the wrong tool confidently.
@@ -459,6 +521,7 @@ Three rules learned the hard way:
 - **Conversation history is flattened.** Prior tool calls are replayed as a short note — *"You did: …"* — not as real tool messages, because a tool result with no matching request in the window is rejected by both APIs. Detail from three turns ago is summarised, not exact.
 - **Plans vary between runs.** The orchestrator is a model. The same request can take 3 tools or 7.
 - **Credits are an estimate.** The Copilot API reports tokens and never credits; every figure comes from the multiplier table in `models.ts` / `models.py`.
+- **Connected-app tools are tested against mocked vendors only.** With the default `drive.file` access, Drive tools see only files Ensemble created or the person picked; Search all of Drive (`drive.readonly`) is a restricted scope a public server must have verified by Google. The Graph workbook API (`excel_read_range`, `excel_update_range`) is documented for OneDrive for work or school; personal OneDrive may refuse it. `word_update` rewrites the whole document from Markdown, so formatting Markdown cannot express is lost. Teams meetings need a work or school account. Sending mail is not a tool. Zoom summaries need the `meeting:read:summary` scope on the host's Zoom app, which Connect does not list yet (`ZOOM_SCOPES` in `connectors/oauth.ts`); Zoom takes scopes from the app's own configuration.
 - **`needs-me` surfaces the same record as `preview`.** Held writes live on the assistant message, not as `Approval` rows — those require a `Run`, which requires a `Task`, and creating a synthetic task to hold a pending change would pollute the board it is trying to change.
 
 ---

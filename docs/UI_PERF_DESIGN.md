@@ -275,7 +275,7 @@ Lighthouse on signed-in `/today` (simulated slow 4G, 4× CPU), after the sidebar
 
 The previous mobile run on this follow-up was score 67, CLS 0.268, LCP 4.2 s.
 
-A missing model runtime or a missing model key is `503` with the runtime's message (`No key for …` when the runtime is up). The assistant panel shows that text, keeps the draft, and links to Settings → Models. Light-mode priority, status, and Live updates pills measure between 7.3:1 and 8.1:1. Dark stays the default theme.
+A missing model runtime or a missing model key is `503` with the runtime's message (`No key for …` when the runtime is up). The assistant panel shows that text, keeps the draft, and links to Settings → Models (`/settings#models`, which opens the Assistant tab). Light-mode priority, status, and Live updates pills measure between 7.3:1 and 8.1:1. Dark stays the default theme.
 
 ## 6. Round 2 — the constellation
 

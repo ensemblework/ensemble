@@ -23,6 +23,11 @@ import { diagramTools } from "./tools/diagrams.js";
 import { diagramContextTools } from "./tools/diagram-context.js";
 import { repoReadTools } from "./tools/repos.js";
 import { plotTools } from "./tools/plots.js";
+import { googleWorkspaceTools } from "./tools/google-workspace.js";
+import { microsoft365Tools } from "./tools/microsoft-365.js";
+import { zoomTools } from "./tools/zoom.js";
+import { docusignTools } from "./tools/docusign.js";
+import { jiraTools } from "./tools/jira.js";
 
 const ALL: readonly AnyHubTool[] = [
   ...taskTools,
@@ -41,6 +46,13 @@ const ALL: readonly AnyHubTool[] = [
 
 export const TOOLS: ReadonlyMap<string, AnyHubTool> = new Map(ALL.map((tool) => [tool.name, tool]));
 
+/**
+ * Tools that act in connected apps (area "apps"). Not in TOOLS or toolsFor():
+ * apps.ts offers them per person, by connection and product, and Apply finds
+ * them through apps.resolveTool.
+ */
+export const APP_TOOL_LIST: readonly AnyHubTool[] = [...googleWorkspaceTools, ...microsoft365Tools, ...zoomTools, ...docusignTools, ...jiraTools];
+
 /** Names, for tests that assert the catalog has not silently shrunk. */
 export const TOOL_NAMES: readonly string[] = ALL.map((tool) => tool.name);
 
@@ -57,7 +69,7 @@ export const toolInfo = (tool: AnyHubTool): AssistantToolInfo => ({
   undoable: tool.undoable ?? false,
 });
 
-export const catalog = (): AssistantToolInfo[] => ALL.map(toolInfo);
+export const catalog = (): AssistantToolInfo[] => [...ALL, ...APP_TOOL_LIST].map(toolInfo);
 
 /**
  * The tools this engineer's settings allow, for this turn.
@@ -97,6 +109,7 @@ export function toolsFor(allowedWriteAreas: readonly AssistantToolArea[], module
 }
 
 function parameters(tool: AnyHubTool): Record<string, unknown> {
+  if (tool.jsonSchema && typeof tool.jsonSchema === "object") return structuredClone(tool.jsonSchema);
   const schema = zodToJsonSchema(tool.input, {
     target: "jsonSchema7",
     $refStrategy: "none",

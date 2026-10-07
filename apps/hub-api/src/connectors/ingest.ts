@@ -4,6 +4,8 @@
  */
 import type { ArtifactKind, Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
+import { cleanIdentities, parseHandle, recordIdentities, resolvePerson, type IdentityInput } from "../people/identity.js";
+import { projectForContainers, type Container } from "../projects/links.js";
 
 const SECRET_PATTERNS: RegExp[] = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -51,15 +53,27 @@ export interface ArtifactInput {
   authoredByMe?: boolean;
   repoId?: string | null;
   actorId?: string | null;
+  /**
+   * Where it lives at the source (Slack channel, GitHub repo, Linear project then team), most specific first.
+   * Stored as metadata.containers; a project link on any of them sets the artifact's project.
+   */
+  containers?: Container[];
 }
 
 export interface StoredArtifact {
   id: string;
   created: boolean;
   input: ArtifactInput;
+  /** Set when a project link matched one of the input's containers. */
+  projectId?: string | null;
 }
 
 export async function upsertArtifact(userId: string, input: ArtifactInput): Promise<StoredArtifact> {
+  const containers = (input.containers ?? [])
+    .filter((row) => row.source && row.id)
+    .map((row) => ({ source: row.source, id: row.id, name: row.name ?? null }));
+  const projectId = await projectForContainers(userId, containers);
+  const metadata = containers.length ? { ...(input.metadata ?? {}), containers } : (input.metadata ?? {});
   const data = {
     url: input.url ?? null,
     ts: input.ts,
@@ -67,21 +81,23 @@ export async function upsertArtifact(userId: string, input: ArtifactInput): Prom
     text: redact(input.text).slice(0, 20_000),
     threadId: input.threadId ?? null,
     participants: (input.participants ?? []) as Prisma.InputJsonValue,
-    metadata: (input.metadata ?? {}) as Prisma.InputJsonValue,
+    metadata: metadata as Prisma.InputJsonValue,
     authoredByMe: input.authoredByMe ?? false,
     repoId: input.repoId ?? null,
     actorId: input.actorId ?? null,
+    // No link leaves an existing project alone; links only ever add one.
+    ...(projectId ? { projectId } : {}),
   };
   const existing = await prisma.artifact.findUnique({
     where: { userId_kind_externalId: { userId, kind: input.kind, externalId: input.externalId } },
-    select: { id: true },
+    select: { id: true, projectId: true },
   });
   if (existing) {
     await prisma.artifact.update({ where: { id: existing.id }, data: { ...data, deletedAt: null } });
-    return { id: existing.id, created: false, input };
+    return { id: existing.id, created: false, input, projectId: projectId ?? existing.projectId };
   }
   const row = await prisma.artifact.create({ data: { userId, kind: input.kind, externalId: input.externalId, ...data } });
-  return { id: row.id, created: true, input };
+  return { id: row.id, created: true, input, projectId };
 }
 
 const suppressedCache = new Map<string, Set<string>>();
@@ -107,31 +123,67 @@ async function suppressed(userId: string, kind: string): Promise<Set<string>> {
   return set;
 }
 
-const AUTOMATED = /(no-?reply|notifications?|mailer-daemon|bounce|donotreply|calendar-notification|@github\.com$)/i;
+const AUTOMATED = /(no-?reply|notifications?|mailer-daemon|bounce|donotreply|calendar-notification|@github\.com$|\[bot\]$)/i;
 
-/** Upserts a person the engineer interacts with. Skips suppressed, automated and self addresses. */
-export async function upsertPerson(
-  userId: string,
-  input: { email?: string | null; name?: string | null; handle?: string | null; at: Date; evidence: string },
-  self: Array<string | null | undefined>,
-): Promise<string | null> {
-  const upn = (input.email ?? input.handle ?? "").trim().toLowerCase();
+export interface PersonInput {
+  email?: string | null;
+  name?: string | null;
+  /** "slack:U123", "teams:<id>", "github:login", or a bare address. */
+  handle?: string | null;
+  /** More addresses and handles seen with this person. */
+  identities?: IdentityInput[];
+  at: Date;
+  evidence: string;
+}
+
+/**
+ * Upserts a person the engineer interacts with, found by any identity (email
+ * first, then handles), and records every identity seen with them. Skips
+ * suppressed, automated and self addresses. Never merges two existing people:
+ * an identity that belongs to someone else becomes a merge suggestion.
+ */
+export async function upsertPerson(userId: string, input: PersonInput, self: Array<string | null | undefined>): Promise<string | null> {
+  const identities = cleanIdentities([
+    input.email ? { kind: "email", value: input.email } : null,
+    parseHandle(input.handle),
+    ...(input.identities ?? []),
+  ]);
+  const handle = parseHandle(input.handle);
+  const upn = (input.email ?? input.handle ?? "").trim().toLowerCase() || (identities[0] ? `${identities[0].kind}:${identities[0].value}` : "");
   if (!upn || AUTOMATED.test(upn)) return null;
-  if (self.some((value) => value && value.toLowerCase() === upn)) return null;
-  if ((await suppressed(userId, "person")).has(upn)) return null;
-  const name = (input.name ?? "").replace(/^"|"$/g, "").trim() || upn.split("@")[0]!;
-  const existing = await prisma.person.findUnique({ where: { userId_upn: { userId, upn } } });
+  const selfSet = new Set(self.filter((value): value is string => Boolean(value)).map((value) => value.toLowerCase()));
+  if (selfSet.has(upn) || identities.some((row) => row.kind === "email" && selfSet.has(row.value))) return null;
+  const blocked = await suppressed(userId, "person");
+  if (blocked.has(upn) || identities.some((row) => blocked.has(row.value) || blocked.has(`${row.kind}:${row.value}`))) return null;
+  const source = input.evidence.split(":")[0] || "ingest";
+  const fallbackName = identities.find((row) => row.kind === "email")?.value.split("@")[0] ?? handle?.value ?? upn.split("@")[0]!;
+  const name = (input.name ?? "").replace(/^"|"$/g, "").trim() || fallbackName;
+
+  // Names alone never find a person here: two people can share one, and an address is better evidence.
+  const resolved = await resolvePerson(
+    userId,
+    identities.filter((row) => row.kind !== "name"),
+  );
+  if (resolved?.deleted) return null;
+  const existing = resolved
+    ? await prisma.person.findUnique({ where: { id: resolved.personId } })
+    : await prisma.person.findUnique({ where: { userId_upn: { userId, upn } } });
   if (existing) {
     if (existing.deletedAt) return null;
     const newer = !existing.lastInteraction || existing.lastInteraction < input.at;
+    const email = identities.find((row) => row.kind === "email")?.value;
     await prisma.person.update({
       where: { id: existing.id },
       data: {
         lastInteraction: newer ? input.at : undefined,
         relationshipWeight: Math.min(1, existing.relationshipWeight + 0.02),
         evidence: existing.evidence.includes(input.evidence) ? undefined : [...existing.evidence.slice(-19), input.evidence],
+        ...(!existing.email && email && resolved?.via.kind === "email" ? { email } : {}),
+        // A person first seen only by handle gets a real name once a source has one.
+        ...(input.name?.trim() && handle && existing.name === handle.value ? { name } : {}),
       },
     });
+    await recordIdentities(userId, existing.id, identities, source);
     return existing.id;
   }
   const row = await prisma.person.create({
@@ -139,13 +191,14 @@ export async function upsertPerson(
       userId,
       upn,
       name,
-      email: input.email ?? null,
+      email: input.email?.trim().toLowerCase() || null,
       lastInteraction: input.at,
       relationshipWeight: 0.1,
       evidence: [input.evidence],
       confidence: 0.6,
     },
   });
+  await recordIdentities(userId, row.id, identities, source);
   return row.id;
 }
 

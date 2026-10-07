@@ -58,7 +58,7 @@ apps/hub-web/
 │                             marketplace, meetings, recap, metrics, settings, trash,
 │                             completed, connect, welcome, start, …
 ├── components/               Grouped by surface: assistant, board, code, comments, connect,
-│                             context, desk, diagrams, editor (TipTap), motion, needs-me,
+│                             context, desk, diagrams, editor (TipTap), imports, motion, needs-me,
 │                             plots, settings, shell, today, widgets; ui.tsx is the kit
 ├── lib/                      API client, SSE, auth helpers, plots, connect configs
 └── e2e/                      Playwright scripts (run by hand)
@@ -68,6 +68,7 @@ apps/hub-api/src/
 ├── assistant/                Hub Action Layer: tool loop, registry, tools/ (docs/11)
 ├── bridge/                   Context Bridge resolution and briefs (docs/13)
 ├── connectors/               Gmail/Calendar, GitHub, Slack, Linear; ingest, triage, sync
+├── imports/                  Importers from other apps, CSV/zip readers, writer, jobs (docs/27)
 ├── context/                  Context board order and people views
 ├── cowork/                   Morning brief, quick capture, nudges, weekly recap
 ├── jobs/                     In-process scheduler, retention, claim locks

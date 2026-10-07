@@ -22,8 +22,9 @@ function platformName(value: string): string {
   return value || "Unknown platform";
 }
 
-export function CliLink({ initialCode = "" }: { initialCode?: string }) {
-  const [code, setCode] = useState(cleanCode(initialCode));
+/** Without `initialCode` the code comes from `?code=` in the address, read in the browser so the page can be exported statically for the desktop app. */
+export function CliLink({ initialCode }: { initialCode?: string }) {
+  const [code, setCode] = useState(cleanCode(initialCode ?? ""));
   const [loadedCode, setLoadedCode] = useState("");
   const [request, setRequest] = useState<CliAuthRequest | null>(null);
   const [loading, setLoading] = useState(false);
@@ -82,7 +83,10 @@ export function CliLink({ initialCode = "" }: { initialCode?: string }) {
   }
 
   useEffect(() => {
-    if (initialCode) void load(initialCode);
+    const start = initialCode ?? new URLSearchParams(window.location.search).get("code") ?? "";
+    if (!start) return;
+    setCode(cleanCode(start));
+    void load(start);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialCode]);
 

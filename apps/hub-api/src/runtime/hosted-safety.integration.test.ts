@@ -33,10 +33,15 @@ test("hosted gates preserve core data and paired execution, with durable transac
   process.env.ENSEMBLE_TERMINAL = "on";
 
   await t.test("nonoperator host routes return 403 while notes remain usable unverified", async () => {
-    for (const url of ["/api/code/repos", "/api/workspace", "/api/workspace/branches?path=/tmp", "/api/terminal/status", "/api/connectors/google/start"]) {
+    for (const url of ["/api/code/repos", "/api/workspace", "/api/workspace/branches?path=/tmp", "/api/terminal/status"]) {
       const response = await member.inject({ method: "GET", url });
       assert.equal(response.statusCode, 403, `${url}: ${response.body}`);
     }
+    // Connecting your own Google account is open to verified members, never to unverified ones.
+    const ownConnector = await member.inject({ method: "GET", url: "/api/connectors/google/start" });
+    assert.notEqual(ownConnector.statusCode, 403, ownConnector.body);
+    const unverifiedConnector = await unverified.inject({ method: "GET", url: "/api/connectors/google/start" });
+    assert.equal(unverifiedConnector.statusCode, 403, unverifiedConnector.body);
     const task = await unverified.inject({ method: "POST", url: "/api/tasks", payload: { title: "Core note still works" } });
     assert.equal(task.statusCode, 201, task.body);
     const catalog = await unverified.inject({ method: "GET", url: "/api/models" });

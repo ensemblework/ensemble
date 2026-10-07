@@ -7,6 +7,7 @@ import { api, type TaskRecord } from "@/lib/api";
 import { warmTask } from "@/lib/warm";
 import { OWNER_LABEL, dueLabel, plural } from "@/lib/format";
 import { PriorityTag, cx } from "../ui";
+import { LabelChips } from "../task/labels";
 
 function OwnerMark({ owner }: { owner: string }) {
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 60_000 });
@@ -48,6 +49,7 @@ export function CardBody({ task }: { task: TaskRecord }) {
         <OwnerMark owner={task.owner} />
         {task.people.length ? <span>{plural(task.people.length, "person", "people")}</span> : null}
         {due ? <span className={due.overdue ? "text-[#ffb4ae]" : undefined}>{due.text}</span> : null}
+        <LabelChips labels={task.labels} />
       </div>
       <GripVertical
         size={14}

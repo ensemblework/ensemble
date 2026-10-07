@@ -6,13 +6,15 @@ import {
   type AssistantStreamFrame,
 } from "@ensemble/shared-types";
 import { withPastScheduleWarning } from "../assistant/schedule.js";
-import { toolAllowedFor, catalog, getTool } from "../assistant/registry.js";
+import { toolAllowedFor, catalog } from "../assistant/registry.js";
+import { resolveTool, writeRefusal } from "../assistant/apps.js";
+import { applyHeldCalls, isOutsideWrite, type AppliedBatch } from "../assistant/apply.js";
+import type { AnyHubTool } from "../assistant/types.js";
 import { appendLedger } from "../lib/ledger.js";
 import { abortAssistantTurn, runAssistantTurn, type AssistantTurnResult } from "../assistant/agent.js";
 import { loadSettings } from "../lib/settings.js";
 import { requestCancel } from "../lib/activity.js";
 import { sseHub } from "../lib/sse.js";
-import { withUndoGroup } from "../lib/undo.js";
 import { replyAfterApply, type ReplyCall } from "../assistant/reply.js";
 import { friendlyModelError, parseRuntimeBody } from "../lib/model-error.js";
 import { ModelQuotaError } from "../lib/model-quota.js";
@@ -99,70 +101,85 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
     const settings = await loadSettings(app.prisma, request.userId);
     const planned: Array<{
       call: { name: string; input: Record<string, unknown>; callId?: string };
-      tool: NonNullable<ReturnType<typeof getTool>>;
+      tool: AnyHubTool;
       input: unknown;
     }> = [];
     for (const call of batch) {
-      const tool = getTool(call.name);
+      const tool = await resolveTool({ prisma: app.prisma, userId: request.userId }, call.name);
       if (!tool || !tool.isWrite || !toolAllowedFor(tool, request.modules)) return reply.code(404).send({ error: `There is no write tool called ${call.name}.` });
-      if (!settings.assistant.allowedWriteAreas.includes(tool.area)) {
-        return reply.code(403).send({ error: `Writes to ${tool.area} are disabled in your assistant settings.` });
-      }
+      const refusal = writeRefusal(tool, settings);
+      if (refusal) return reply.code(403).send({ error: refusal });
       planned.push({ call, tool, input: tool.input.parse(call.input) });
     }
+    // A call this conversation already applied never runs again: not on a resend, and not after its lock expires.
+    const stored = body.conversationId ? await storedCalls(app, request.userId, body.conversationId) : new Map<string, Record<string, unknown>>();
+    const done = planned.filter((item) => item.call.callId && stored.get(item.call.callId)?.state === "ok");
+    const pending = planned.filter((item) => !done.includes(item));
+    if (!pending.length) {
+      const prior = done.map((item) => stored.get(item.call.callId!)!);
+      const first = (key: string) => (prior.find((call) => typeof call[key] === "string")?.[key] as string | undefined) ?? null;
+      return {
+        summary: prior.map((call) => String(call.summary ?? "")).filter(Boolean).join(" ") || "Already applied.",
+        href: first("href"),
+        undoEntryId: first("undoEntryId"),
+        already: true,
+      };
+    }
+    const locks: Array<{ callId: string; key: string }> = [];
+    const release = async (keys: string[]) => {
+      if (keys.length) await app.redis.del(...keys);
+    };
     if (body.conversationId) {
-      for (const item of planned) {
+      for (const item of pending) {
         if (!item.call.callId) continue;
-        const locked = await app.redis.set(`ensemble:apply:${request.userId}:${body.conversationId}:${item.call.callId}`, "1", "EX", 120, "NX");
+        const key = `ensemble:apply:${request.userId}:${body.conversationId}:${item.call.callId}`;
+        const locked = await app.redis.set(key, "1", "EX", 120, "NX");
         if (locked !== "OK") {
-          const existing = await app.prisma.assistantMessage.findFirst({
-            where: { conversationId: body.conversationId, userId: request.userId, role: "assistant" },
-            orderBy: { createdAt: "desc" },
-          });
-          const calls = Array.isArray(existing?.toolCalls) ? (existing.toolCalls as Array<Record<string, unknown>>) : [];
-          const prior = calls.find((call) => call.id === item.call.callId && call.state === "ok");
-          if (prior && planned.length === 1) {
-            return { summary: String(prior.summary ?? "Already applied."), href: (prior.href as string) ?? null, undoEntryId: (prior.undoEntryId as string) ?? null, already: true };
-          }
+          await release(locks.map((lock) => lock.key));
           return reply.code(409).send({ error: "That change is already being applied." });
         }
+        locks.push({ callId: item.call.callId, key });
       }
     }
-    const { result, undoEntryId } = await app.prisma.$transaction((tx) =>
-      withUndoGroup(tx, { userId: request.userId, actor: "agent", subject: planned[0]!.tool.name }, async () => {
-        const results = [];
-        for (const item of planned) {
-          results.push(
-            await item.tool.run(
-              {
-                app,
-                prisma: app.prisma,
-                tx,
-                userId: request.userId,
-                actor: "agent",
-                conversationId: body.conversationId,
-                settings,
-                modules: request.modules,
-              },
-              item.input,
-            ),
-          );
-        }
-        return results;
-      }),
-    );
-    const decorated = result.map((row, index) => ({
-      ...row,
-      summary: withPastScheduleWarning(row.summary, planned[index]!.input, settings.timezone),
-    }));
-    const summary = decorated.map((row) => row.summary).filter(Boolean).join(" ");
-    const href = result.find((row) => row.href)?.href ?? null;
-    await appendLedger({
-      userId: request.userId,
-      actor: "agent",
-      action: "assistant.apply",
-      payload: { tool: planned.map((item) => item.tool.name).join(","), summary, undoEntryId },
+    // Hub writes share one transaction and undo entry; connected-app writes run after it, outside any transaction.
+    let batchResult: AppliedBatch;
+    try {
+      batchResult = await applyHeldCalls(
+        app,
+        { app, prisma: app.prisma, userId: request.userId, actor: "agent", conversationId: body.conversationId, settings, modules: request.modules },
+        pending,
+      );
+    } catch (error) {
+      // Nothing ran, so the same Apply can be pressed again straight away.
+      await release(locks.map((lock) => lock.key));
+      throw error;
+    }
+    const { outcomes, undoEntryId, partial } = batchResult;
+    const pieces: AppliedPiece[] = outcomes.map((outcome, index) => {
+      const item = pending[index]!;
+      if (!outcome.ok) return { state: "failed", error: outcome.error, attempted: outcome.attempted };
+      return {
+        state: "ok",
+        summary: withPastScheduleWarning(outcome.result.summary, item.input, settings.timezone),
+        href: outcome.result.href ?? null,
+        // An outside write cannot be undone; only Hub writes share the batch's undo entry.
+        undoEntryId: isOutsideWrite(item.tool) ? null : undoEntryId,
+        invalidate: outcome.result.invalidate ?? [],
+      };
     });
+    const landed = pieces.filter((piece): piece is Extract<AppliedPiece, { state: "ok" }> => piece.state === "ok");
+    const failed = pending.flatMap((item, index) => {
+      const piece = pieces[index]!;
+      return piece.state === "failed" ? [{ callId: item.call.callId ?? null, name: item.tool.name, error: piece.error, attempted: piece.attempted }] : [];
+    });
+    const summary = landed.map((piece) => piece.summary).filter(Boolean).join(" ");
+    const href = landed.find((piece) => piece.href)?.href ?? null;
+    const notApplied = failed.map((row) => ({ name: row.name, state: "failed", error: row.error, isWrite: true }));
+    const mark = (call: Record<string, unknown>, piece: AppliedPiece): Record<string, unknown> =>
+      piece.state === "ok"
+        ? { ...call, state: "ok", summary: piece.summary, undoEntryId: piece.undoEntryId, ...(piece.href ? { href: piece.href } : {}) }
+        : { ...call, state: "failed", error: piece.error, summary: piece.error };
+    // Recorded before anything else, so a later failure cannot leave a landed call looking unapplied.
     const replies: Array<{ id: string; content: string; toolCalls: unknown }> = [];
     if (body.conversationId) {
       const messages = await app.prisma.assistantMessage.findMany({
@@ -170,21 +187,25 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
         orderBy: { createdAt: "desc" },
         take: 12,
       });
-      const applied = new Map(planned.map((item, index) => [item.call.callId ?? "", decorated[index]!]));
+      const applied = new Map(pending.map((item, index) => [item.call.callId ?? "", pieces[index]!]));
       for (const message of messages) {
         const calls = Array.isArray(message.toolCalls) ? (message.toolCalls as Array<Record<string, unknown>>) : [];
         let changed = false;
+        const failedHere: typeof notApplied = [];
         const next = calls.map((call) => {
           const id = typeof call.id === "string" ? call.id : "";
           const piece = applied.get(id);
           const named = !body.calls && call.state === "awaiting_approval" && call.name === body.name && (!body.callId || call.id === body.callId);
-          if (call.state !== "awaiting_approval" || (!piece && !named)) return call;
+          // A call that failed on an earlier Apply can be applied again by id.
+          const open = call.state === "awaiting_approval" || (piece !== undefined && call.state === "failed");
+          if (!open || (!piece && !named)) return call;
           changed = true;
-          const chosen = piece ?? decorated[0];
-          return { ...call, state: "ok", summary: chosen?.summary ?? summary, undoEntryId, ...(chosen?.href ? { href: chosen.href } : {}) };
+          const chosen = piece ?? pieces[0]!;
+          if (chosen.state === "failed") failedHere.push({ name: String(call.name ?? ""), state: "failed", error: chosen.error, isWrite: true });
+          return mark(call, chosen);
         });
         if (!changed) continue;
-        const content = replyAfterApply(message.content, next as ReplyCall[]);
+        const content = replyAfterApply(message.content, next as ReplyCall[], failedHere);
         await app.prisma.assistantMessage.update({
           where: { id: message.id },
           data: { toolCalls: next as never, content },
@@ -198,26 +219,46 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
       for (const discussion of discussions) {
         const calls = Array.isArray(discussion.toolCalls) ? discussion.toolCalls as Array<Record<string, unknown>> : [];
         let changed = false;
+        const failedHere: typeof notApplied = [];
         const next = calls.map((call) => {
           const piece = applied.get(typeof call.id === "string" ? call.id : "");
-          if (!piece || call.state !== "awaiting_approval") return call;
+          if (!piece || (call.state !== "awaiting_approval" && call.state !== "failed")) return call;
           changed = true;
-          return { ...call, state: "ok", summary: piece.summary, undoEntryId, ...(piece.href ? { href: piece.href } : {}) };
+          if (piece.state === "failed") failedHere.push({ name: String(call.name ?? ""), state: "failed", error: piece.error, isWrite: true });
+          return mark(call, piece);
         });
         if (!changed) continue;
         const savedBody = discussion.body && typeof discussion.body === "object" && !Array.isArray(discussion.body) ? discussion.body : {};
         const text = typeof savedBody.text === "string" ? savedBody.text : "";
         await app.prisma.pageDiscussion.update({
           where: { id: discussion.id },
-          data: { toolCalls: next as never, body: { ...savedBody, text: replyAfterApply(text, next as ReplyCall[]) } },
+          data: { toolCalls: next as never, body: { ...savedBody, text: replyAfterApply(text, next as ReplyCall[], failedHere) } },
         });
       }
     }
+    // Failed and unsent calls may be applied again; landed ones keep their lock and are now recorded as ok.
+    await release(locks.filter((lock) => failed.some((row) => row.callId === lock.callId)).map((lock) => lock.key));
+    try {
+      await appendLedger({
+        userId: request.userId,
+        actor: "agent",
+        action: "assistant.apply",
+        payload: {
+          tool: pending.filter((_item, index) => pieces[index]!.state === "ok").map((item) => item.tool.name).join(","),
+          summary,
+          undoEntryId,
+          ...(partial ? { partial: true, failed: failed.map((row) => ({ tool: row.name, error: row.error, attempted: row.attempted })) } : {}),
+        },
+      });
+    } catch (error) {
+      // The changes already happened and are recorded on the reply; failing now would invite a second Apply.
+      request.log.error({ err: error }, "Could not ledger an assistant Apply");
+    }
     sseHub.publish(request.userId, {
       event: "assistant.acted",
-      data: { tool: planned[0]!.tool.name, keys: result.flatMap((row) => row.invalidate ?? []) },
+      data: { tool: pending[0]!.tool.name, keys: landed.flatMap((piece) => piece.invalidate) },
     });
-    return { summary, href, undoEntryId, replies };
+    return { summary, href, undoEntryId, replies, ...(partial ? { partial: true, failed } : {}) };
   });
 
   app.post("/api/assistant/conversations/:id/stop", async (request, reply) => {
@@ -421,4 +462,33 @@ async function saveAssistantReply(
 
 function envDefaultModel(): string {
   return process.env.ENSEMBLE_MODEL_CODER ?? process.env.ENSEMBLE_MODEL_PLANNER ?? "gemini-3.5-flash-lite";
+}
+
+type AppliedPiece =
+  | { state: "ok"; summary: string; href: string | null; undoEntryId: string | null; invalidate: string[] }
+  | { state: "failed"; error: string; attempted: boolean };
+
+/** Tool calls saved on this conversation's replies and page answers, by call id; an "ok" copy wins. */
+async function storedCalls(app: FastifyInstance, userId: string, conversationId: string): Promise<Map<string, Record<string, unknown>>> {
+  const [messages, discussions] = await Promise.all([
+    app.prisma.assistantMessage.findMany({
+      where: { conversationId, userId, role: "assistant" },
+      orderBy: { createdAt: "desc" },
+      take: 12,
+      select: { toolCalls: true },
+    }),
+    app.prisma.pageDiscussion.findMany({
+      where: { userId, conversationId, authorKind: "ensemble", deletedAt: null },
+      select: { toolCalls: true },
+    }),
+  ]);
+  const byId = new Map<string, Record<string, unknown>>();
+  for (const row of [...messages, ...discussions]) {
+    const calls = Array.isArray(row.toolCalls) ? (row.toolCalls as Array<Record<string, unknown>>) : [];
+    for (const call of calls) {
+      if (!call || typeof call.id !== "string") continue;
+      if (!byId.has(call.id) || call.state === "ok") byId.set(call.id, call);
+    }
+  }
+  return byId;
 }

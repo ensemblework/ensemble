@@ -97,6 +97,7 @@ export const TaskDto = z.object({
   repoId: z.string().nullable(),
   deliverableId: z.string().nullable(),
   people: z.array(z.string()),
+  labels: z.array(z.string()),
   taskType: z.string().nullable(),
   snoozedUntil: z.string().nullable(),
   blockedQuestion: z.unknown().nullable(),
@@ -106,6 +107,27 @@ export const TaskDto = z.object({
   updatedAt: z.string(),
 });
 export type TaskDto = z.infer<typeof TaskDto>;
+
+export const MAX_TASK_LABELS = 20;
+export const MAX_TASK_LABEL_LENGTH = 40;
+
+/** Free-form tags. Trimmed, blank ones dropped, de-duplicated without regard to case. */
+export const TaskLabels = z
+  .array(z.string().max(200))
+  .max(100)
+  .transform((values) => {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const value of values) {
+      const label = value.replace(/\s+/g, " ").trim();
+      if (!label || seen.has(label.toLowerCase())) continue;
+      seen.add(label.toLowerCase());
+      out.push(label);
+    }
+    return out;
+  })
+  .refine((labels) => labels.length <= MAX_TASK_LABELS, `A task can have up to ${MAX_TASK_LABELS} labels.`)
+  .refine((labels) => labels.every((label) => label.length <= MAX_TASK_LABEL_LENGTH), `Labels can be up to ${MAX_TASK_LABEL_LENGTH} characters.`);
 
 export const CreateTask = z.object({
   title: z.string().trim().min(1, "Enter a task title."),
@@ -118,6 +140,7 @@ export const CreateTask = z.object({
   due: z.string().datetime().nullable().optional(),
   projectId: z.string().nullable().optional(),
   people: z.array(z.string()).optional(),
+  labels: TaskLabels.optional(),
   sourceKind: TaskSource.optional(),
   todayFocus: z.enum(["auto", "keep", "hidden"]).optional(),
   taskType: z

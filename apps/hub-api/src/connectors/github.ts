@@ -4,7 +4,7 @@
  * nothing here needs a model to decide that a review request asks for a review.
  */
 import { getAccount } from "./accounts.js";
-import { upsertArtifact, upsertRepo } from "./ingest.js";
+import { upsertArtifact, upsertPerson, upsertRepo } from "./ingest.js";
 import { ConnectorError, readJson, type Proposal, type SyncContext, type SyncResult } from "./types.js";
 
 interface SearchItem {
@@ -55,6 +55,10 @@ export async function syncGitHub(ctx: SyncContext): Promise<SyncResult> {
       if (!repoIds.has(fullName)) repoIds.set(fullName, await upsertRepo(ctx.userId, { fullName }));
       const repoId = repoIds.get(fullName) ?? null;
       const isPr = Boolean(item.pull_request);
+      const author = item.user?.login && item.user.login !== me.login ? item.user.login : null;
+      const actorId = author
+        ? await upsertPerson(ctx.userId, { handle: `github:${author}`, name: author, at: new Date(item.updated_at), evidence: `github:${fullName}#${item.number}` }, [])
+        : null;
       const stored = await upsertArtifact(ctx.userId, {
         kind: isPr ? "pr" : "issue",
         externalId: `${fullName}#${item.number}`,
@@ -63,6 +67,7 @@ export async function syncGitHub(ctx: SyncContext): Promise<SyncResult> {
         title: item.title,
         text: item.body ?? "",
         repoId,
+        actorId,
         authoredByMe: item.user?.login === me.login,
         participants: item.user ? [{ handle: item.user.login }] : [],
         metadata: {
@@ -74,6 +79,7 @@ export async function syncGitHub(ctx: SyncContext): Promise<SyncResult> {
           comments: item.comments,
           author: item.user?.login ?? null,
         },
+        containers: [{ source: "github", id: fullName.toLowerCase(), name: fullName }],
       });
       result.items += 1;
       result.stored.push(stored);

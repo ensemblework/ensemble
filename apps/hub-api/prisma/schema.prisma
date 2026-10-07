@@ -24,6 +24,12 @@ enum TaskSource {
   manual
   notion
   linear
+  jira
+  trello
+  asana
+  todoist
+  clickup
+  monday
   other
 }
 
@@ -165,75 +171,85 @@ enum SkillProvenance {
 // ── core — tasks, plans, runs, approvals ──────────────────────────────────
 
 model Task {
-  id                 String           @id @default(uuid())
-  userId             String           @map("user_id")
-  title              String
-  description        String           @default("")
-  notes              String           @default("")
-  boardOrder         Float            @default(0) @map("board_order")
-  todayFocus         String           @default("auto") @map("today_focus")
-  skillIds           String[]         @default([]) @map("skill_ids")
-  sourceKind         TaskSource       @default(manual) @map("source_kind")
-  sourceRef          String           @default("") @map("source_ref")
-  sourceUrl          String?          @map("source_url")
-  excerpt            String?
-  owner              TaskOwner        @default(unassigned)
-  status             TaskStatus       @default(proposed)
-  priority           Priority         @default(p1)
+  id               String           @id @default(uuid())
+  userId           String           @map("user_id")
+  title            String
+  description      String           @default("")
+  notes            String           @default("")
+  boardOrder       Float            @default(0) @map("board_order")
+  todayFocus       String           @default("auto") @map("today_focus")
+  skillIds         String[]         @default([]) @map("skill_ids")
+  sourceKind       TaskSource       @default(manual) @map("source_kind")
+  sourceRef        String           @default("") @map("source_ref")
+  sourceUrl        String?          @map("source_url")
+  excerpt          String?
+  owner            TaskOwner        @default(unassigned)
+  status           TaskStatus       @default(proposed)
+  priority         Priority         @default(p1)
   /// Orthogonal to priority: an urgent easy task is still easy.
-  complexity         TaskComplexity   @default(medium)
+  complexity       TaskComplexity   @default(medium)
   /// `me` is pinned: nothing re-infers over an explicit choice.
-  complexitySource   ComplexitySource @default(agent) @map("complexity_source")
-  autonomy           AutonomyLevel    @default(assist)
-  due                DateTime?
-  projectId          String?          @map("project_id")
-  repoId             String?          @map("repo_id")
-  workItemId         String?          @map("work_item_id")
-  deliverableId      String?          @map("deliverable_id")
-  people             String[]         @default([])
-  rationale          String?
-  confidence         Float?
-  agentSuitability   Float?           @map("agent_suitability")
-  taskType           String?          @map("task_type")
+  complexitySource ComplexitySource @default(agent) @map("complexity_source")
+  autonomy         AutonomyLevel    @default(assist)
+  due              DateTime?
+  projectId        String?          @map("project_id")
+  repoId           String?          @map("repo_id")
+  workItemId       String?          @map("work_item_id")
+  deliverableId    String?          @map("deliverable_id")
+  people           String[]         @default([])
+  rationale        String?
+  confidence       Float?
+  agentSuitability Float?           @map("agent_suitability")
+  taskType         String?          @map("task_type")
   /// Minutes or a score. The widget config says which. Not a time tracker.
-  measure            Int?
-  estimate           String?
-  snoozedUntil       DateTime?        @map("snoozed_until")
+  measure          Int?
+  estimate         String?
+  snoozedUntil     DateTime?        @map("snoozed_until")
   /// "Still relevant?" stays quiet until this instant. Not a due-date snooze.
-  nudgePausedUntil   DateTime?        @map("nudge_paused_until")
-  blockedQuestion    Json?            @map("blocked_question")
-  createdBy          Actor            @default(agent) @map("created_by")
-  completedAt        DateTime?        @map("completed_at")
-  createdAt          DateTime         @default(now()) @map("created_at")
-  updatedAt          DateTime         @updatedAt @map("updated_at")
-  deletedAt          DateTime?        @map("deleted_at")
+  nudgePausedUntil DateTime?        @map("nudge_paused_until")
+  blockedQuestion  Json?            @map("blocked_question")
+  createdBy        Actor            @default(agent) @map("created_by")
+  completedAt      DateTime?        @map("completed_at")
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
+  deletedAt        DateTime?        @map("deleted_at")
   /// Completed rows with pinned = true are kept past the completed-item window.
-  pinned             Boolean          @default(false)
-  startsAt           DateTime?        @map("starts_at")
-  dependsOn          String[]         @default([]) @map("depends_on")
-  matterStage        String?          @map("matter_stage")
-  court              String?
-  orderDate          DateTime?        @map("order_date")
-  subject            String?
-  weight             Float?
-  wordCount          Int?             @map("word_count")
-  pipelineStage      String?          @map("pipeline_stage")
+  pinned           Boolean          @default(false)
+  startsAt         DateTime?        @map("starts_at")
+  dependsOn        String[]         @default([]) @map("depends_on")
+  matterStage      String?          @map("matter_stage")
+  court            String?
+  orderDate        DateTime?        @map("order_date")
+  subject          String?
+  weight           Float?
+  wordCount        Int?             @map("word_count")
+  pipelineStage    String?          @map("pipeline_stage")
   /// Limitation Act period, such as 30d or 3m. The due date is computed, not stored.
-  limitationRule     String?          @map("limitation_rule")
+  limitationRule   String?          @map("limitation_rule")
+  /// Free-form tags. Imports bring labels, tags and multi-selects here.
+  labels           String[]         @default([])
+  /// Set by importers and connectors so running an import again updates rather than duplicates.
+  externalSource   String?          @map("external_source")
+  externalId       String?          @map("external_id")
+  /// The meeting an action item came from (meeting-notes connectors).
+  meetingNoteId    String?          @map("meeting_note_id")
 
-  planSteps    PlanStep[]
-  runs         Run[]
-  transitions  TaskTransition[]
-  workspaces   WorkspaceSession[]
+  planSteps     PlanStep[]
+  runs          Run[]
+  transitions   TaskTransition[]
+  workspaces    WorkspaceSession[]
   workspaceJobs WorkspaceJob[]
-  page         TaskPage?
-  discussions  PageDiscussion[]
-  artifacts    Artifact[]
-  deliverable  Deliverable?     @relation(fields: [deliverableId], references: [id], onDelete: SetNull)
-  project      Project?         @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  repo         Repo?            @relation(fields: [repoId], references: [id], onDelete: SetNull)
+  page          TaskPage?
+  discussions   PageDiscussion[]
+  artifacts     Artifact[]
+  deliverable   Deliverable?       @relation(fields: [deliverableId], references: [id], onDelete: SetNull)
+  project       Project?           @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  repo          Repo?              @relation(fields: [repoId], references: [id], onDelete: SetNull)
+  meetingNote   MeetingNote?       @relation(fields: [meetingNoteId], references: [id], onDelete: SetNull)
 
+  @@unique([userId, externalSource, externalId])
   @@index([userId, status])
+  @@index([meetingNoteId])
   @@index([userId, owner])
   @@index([userId, createdAt])
   @@index([userId, status, boardOrder])
@@ -246,23 +262,26 @@ model Task {
 }
 
 model TaskPage {
-  id            String   @id @default(uuid())
-  userId        String   @map("user_id")
+  id             String            @id @default(uuid())
+  userId         String            @map("user_id")
   /// Null for a standalone note. Linked pages keep the task they belong to.
-  taskId        String?  @unique @map("task_id")
+  taskId         String?           @unique @map("task_id")
   /// Standalone notes use this title. Linked pages keep the task title.
-  title         String   @default("")
-  revision      Int      @default(1)
-  content       Json?
-  annotations   Json     @default("[]")
-  notesSnapshot String   @default("") @map("notes_snapshot")
+  title          String            @default("")
+  revision       Int               @default(1)
+  content        Json?
+  annotations    Json              @default("[]")
+  notesSnapshot  String            @default("") @map("notes_snapshot")
   /// Plain title and body. NULL means not indexed yet; a save or the startup backfill fills it.
-  searchText    String?  @map("search_text")
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
-  task          Task?    @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  mentions      TaskPageMention[]
+  searchText     String?           @map("search_text")
+  externalSource String?           @map("external_source")
+  externalId     String?           @map("external_id")
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+  task           Task?             @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  mentions       TaskPageMention[]
 
+  @@unique([userId, externalSource, externalId])
   @@index([userId])
   @@index([userId, updatedAt])
   @@map("task_pages")
@@ -283,42 +302,42 @@ model TaskPageMention {
 }
 
 model PageDiscussion {
-  id                 String       @id @default(uuid())
-  userId             String       @map("user_id")
-  taskId             String?      @map("task_id")
-  projectId          String?      @map("project_id")
-  deliverableId      String?      @map("deliverable_id")
-  pageKind           String       @map("page_kind")
-  pageId             String       @map("page_id")
-  sourceKind         String       @map("source_kind")
-  sourceId           String       @map("source_id")
+  id                 String           @id @default(uuid())
+  userId             String           @map("user_id")
+  taskId             String?          @map("task_id")
+  projectId          String?          @map("project_id")
+  deliverableId      String?          @map("deliverable_id")
+  pageKind           String           @map("page_kind")
+  pageId             String           @map("page_id")
+  sourceKind         String           @map("source_kind")
+  sourceId           String           @map("source_id")
   kind               String
   anchor             Json?
   body               Json
-  mentions           Json         @default("[]")
-  version            Int          @default(1)
-  status             String       @default("open")
-  resolved           Boolean      @default(false)
+  mentions           Json             @default("[]")
+  version            Int              @default(1)
+  status             String           @default("open")
+  resolved           Boolean          @default(false)
   answer             String?
   error              String?
-  toolCalls          Json         @default("[]") @map("tool_calls")
-  conversationId     String?      @map("conversation_id")
-  assistantMessageId String?      @map("assistant_message_id")
-  requestId          String?      @map("request_id")
-  leaseAt            DateTime?    @map("lease_at")
-  parentId           String?      @map("parent_id")
+  toolCalls          Json             @default("[]") @map("tool_calls")
+  conversationId     String?          @map("conversation_id")
+  assistantMessageId String?          @map("assistant_message_id")
+  requestId          String?          @map("request_id")
+  leaseAt            DateTime?        @map("lease_at")
+  parentId           String?          @map("parent_id")
   /// "human" or "ensemble". A child row may only be ensemble.
-  authorKind         String       @default("human") @map("author_kind")
-  markId             String?      @map("mark_id")
-  quote              String       @default("")
-  deletedAt          DateTime?    @map("deleted_at")
+  authorKind         String           @default("human") @map("author_kind")
+  markId             String?          @map("mark_id")
+  quote              String           @default("")
+  deletedAt          DateTime?        @map("deleted_at")
   model              String?
   tier               String?
-  createdAt          DateTime     @default(now()) @map("created_at")
-  updatedAt          DateTime     @updatedAt @map("updated_at")
-  task               Task?        @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  project            Project?     @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  deliverable        Deliverable? @relation(fields: [deliverableId], references: [id], onDelete: Cascade)
+  createdAt          DateTime         @default(now()) @map("created_at")
+  updatedAt          DateTime         @updatedAt @map("updated_at")
+  task               Task?            @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  project            Project?         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  deliverable        Deliverable?     @relation(fields: [deliverableId], references: [id], onDelete: Cascade)
   parent             PageDiscussion?  @relation("DiscussionChildren", fields: [parentId], references: [id], onDelete: Cascade)
   children           PageDiscussion[] @relation("DiscussionChildren")
 
@@ -345,39 +364,39 @@ model PlanStep {
 }
 
 model Run {
-  id                      String          @id @default(uuid())
-  taskId                  String          @map("task_id")
-  userId                  String          @map("user_id")
-  worker                  String
-  skillIds                String[]        @default([]) @map("skill_ids")
+  id                     String          @id @default(uuid())
+  taskId                 String          @map("task_id")
+  userId                 String          @map("user_id")
+  worker                 String
+  skillIds               String[]        @default([]) @map("skill_ids")
   /// Immutable signatures of the exact instructions used, never archived bodies.
-  skillSignatures         Json            @default("[]") @map("skill_signatures")
-  contextPackId           String?         @map("context_pack_id")
-  promptVersion           String?         @map("prompt_version")
-  assignmentInstructions  String?         @map("assignment_instructions")
+  skillSignatures        Json            @default("[]") @map("skill_signatures")
+  contextPackId          String?         @map("context_pack_id")
+  promptVersion          String?         @map("prompt_version")
+  assignmentInstructions String?         @map("assignment_instructions")
   /// Index of the next step. Persisted after every step so a restart resumes.
-  cursor                  Int             @default(0)
-  waitingApprovalId       String?         @map("waiting_approval_id")
+  cursor                 Int             @default(0)
+  waitingApprovalId      String?         @map("waiting_approval_id")
   /// Exact continuation captured at an approval gate; never re-plan an approved write.
-  checkpoint              Json?
-  question                Json?
-  traceId                 String?         @map("trace_id")
-  complexity              TaskComplexity?
-  requestedModel          String?         @map("requested_model")
-  plannerModel            String?         @map("planner_model")
-  plannerCredits          Float           @default(0) @map("planner_credits")
-  startedAt               DateTime        @default(now()) @map("started_at")
-  endedAt                 DateTime?       @map("ended_at")
-  outcome                 RunOutcome?
-  error                   String?
-  deletedAt               DateTime?       @map("deleted_at")
+  checkpoint             Json?
+  question               Json?
+  traceId                String?         @map("trace_id")
+  complexity             TaskComplexity?
+  requestedModel         String?         @map("requested_model")
+  plannerModel           String?         @map("planner_model")
+  plannerCredits         Float           @default(0) @map("planner_credits")
+  startedAt              DateTime        @default(now()) @map("started_at")
+  endedAt                DateTime?       @map("ended_at")
+  outcome                RunOutcome?
+  error                  String?
+  deletedAt              DateTime?       @map("deleted_at")
   /// The finished piece of work, as Markdown — not the step log.
-  result                  String?
-  task                    Task            @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  steps                   RunStep[]
-  approvals               Approval[]
-  contextPack             ContextPack?    @relation(fields: [contextPackId], references: [id], onDelete: SetNull)
-  workspaceJob            WorkspaceJob?
+  result                 String?
+  task                   Task            @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  steps                  RunStep[]
+  approvals              Approval[]
+  contextPack            ContextPack?    @relation(fields: [contextPackId], references: [id], onDelete: SetNull)
+  workspaceJob           WorkspaceJob?
 
   @@index([userId, startedAt])
   @@index([taskId])
@@ -386,18 +405,18 @@ model Run {
 
 /// Append-only: the board history tab reads straight from this.
 model TaskTransition {
-  id         String     @id @default(uuid())
-  userId     String     @map("user_id")
-  taskId     String     @map("task_id")
+  id         String      @id @default(uuid())
+  userId     String      @map("user_id")
+  taskId     String      @map("task_id")
   fromStatus TaskStatus? @map("from_status")
   toStatus   TaskStatus  @map("to_status")
   fromOwner  TaskOwner?  @map("from_owner")
   toOwner    TaskOwner?  @map("to_owner")
   actor      Actor
   reason     String?
-  runId      String?    @map("run_id")
-  at         DateTime   @default(now())
-  task       Task       @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  runId      String?     @map("run_id")
+  at         DateTime    @default(now())
+  task       Task        @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
   @@index([userId, at])
   @@index([taskId, at])
@@ -405,19 +424,19 @@ model TaskTransition {
 }
 
 model WorkspaceSession {
-  id             String    @id @default(uuid())
-  userId         String    @map("user_id")
-  taskId         String    @map("task_id")
-  repoFullName   String?   @map("repo_full_name")
-  repoPath       String?   @map("repo_path")
-  branch         String?
-  contextJson    Json      @default("{}") @map("context_json")
-  contextPackId  String?   @map("context_pack_id")
-  handoffNote    String?   @map("handoff_note")
-  status         String    @default("open")
-  createdAt      DateTime  @default(now()) @map("created_at")
-  closedAt       DateTime? @map("closed_at")
-  task           Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  id            String    @id @default(uuid())
+  userId        String    @map("user_id")
+  taskId        String    @map("task_id")
+  repoFullName  String?   @map("repo_full_name")
+  repoPath      String?   @map("repo_path")
+  branch        String?
+  contextJson   Json      @default("{}") @map("context_json")
+  contextPackId String?   @map("context_pack_id")
+  handoffNote   String?   @map("handoff_note")
+  status        String    @default("open")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  closedAt      DateTime? @map("closed_at")
+  task          Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
   @@index([userId, status])
   @@map("workspace_sessions")
@@ -565,27 +584,27 @@ model WorkspaceLogChunk {
 }
 
 model CodeReview {
-  id           String               @id @default(uuid())
-  userId       String               @map("user_id")
-  jobId        String               @unique @map("job_id")
-  repoPath     String               @map("repo_path")
-  initialHead  String               @map("initial_head")
-  startTree    String               @map("start_tree")
-  endTree      String               @map("end_tree")
-  startCommit  String?              @map("start_commit")
-  endCommit    String?              @map("end_commit")
-  exactStart   Boolean              @default(true) @map("exact_start")
-  agentPaths   String[]             @default([]) @map("agent_paths")
-  attributed   Boolean              @default(false)
-  ignoredChanged Json               @default("[]") @map("ignored_changed")
-  chunkTotal   Int?                 @map("chunk_total")
-  expiresAt    DateTime             @map("expires_at")
-  expiredAt    DateTime?            @map("expired_at")
-  completedAt  DateTime?            @map("completed_at")
-  createdAt    DateTime             @default(now()) @map("created_at")
-  updatedAt    DateTime             @updatedAt @map("updated_at")
-  job          WorkspaceJob         @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  decisions    CodeReviewDecision[]
+  id             String               @id @default(uuid())
+  userId         String               @map("user_id")
+  jobId          String               @unique @map("job_id")
+  repoPath       String               @map("repo_path")
+  initialHead    String               @map("initial_head")
+  startTree      String               @map("start_tree")
+  endTree        String               @map("end_tree")
+  startCommit    String?              @map("start_commit")
+  endCommit      String?              @map("end_commit")
+  exactStart     Boolean              @default(true) @map("exact_start")
+  agentPaths     String[]             @default([]) @map("agent_paths")
+  attributed     Boolean              @default(false)
+  ignoredChanged Json                 @default("[]") @map("ignored_changed")
+  chunkTotal     Int?                 @map("chunk_total")
+  expiresAt      DateTime             @map("expires_at")
+  expiredAt      DateTime?            @map("expired_at")
+  completedAt    DateTime?            @map("completed_at")
+  createdAt      DateTime             @default(now()) @map("created_at")
+  updatedAt      DateTime             @updatedAt @map("updated_at")
+  job            WorkspaceJob         @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  decisions      CodeReviewDecision[]
 
   @@index([userId, createdAt])
   @@index([expiresAt])
@@ -702,79 +721,130 @@ model Approval {
   expiresAt     DateTime?         @map("expires_at")
   run           Run               @relation(fields: [runId], references: [id], onDelete: Cascade)
 
+  @@unique([runId, stepIndex])
   @@index([userId, decision, requestedAt])
   @@index([userId, decision])
-  @@unique([runId, stepIndex])
   @@map("approvals")
 }
 
 // ── context — Engineer Graph + normalized artifacts ───────────────────────
 
 model Person {
-  id                    String          @id @default(uuid())
-  userId                String          @map("user_id")
-  upn                   String?
-  name                  String
-  email                 String?
-  role                  String?
-  team                  String?
-  relationshipWeight    Float           @default(0) @map("relationship_weight")
-  typicalResponseHours  Float?          @map("typical_response_hours")
-  lastInteraction       DateTime?       @map("last_interaction")
-  evidence              String[]        @default([])
-  confidence            Float           @default(0.5)
-  createdAt             DateTime        @default(now()) @map("created_at")
-  updatedAt             DateTime        @updatedAt @map("updated_at")
-  deletedAt             DateTime?       @map("deleted_at")
-  capacityHours         Float?          @map("capacity_hours")
-  oneOnOneDays          Int?            @map("one_on_one_days")
-  projects              ProjectPerson[]
+  id                   String           @id @default(uuid())
+  userId               String           @map("user_id")
+  upn                  String?
+  name                 String
+  email                String?
+  role                 String?
+  team                 String?
+  relationshipWeight   Float            @default(0) @map("relationship_weight")
+  typicalResponseHours Float?           @map("typical_response_hours")
+  lastInteraction      DateTime?        @map("last_interaction")
+  evidence             String[]         @default([])
+  confidence           Float            @default(0.5)
+  createdAt            DateTime         @default(now()) @map("created_at")
+  updatedAt            DateTime         @updatedAt @map("updated_at")
+  deletedAt            DateTime?        @map("deleted_at")
+  capacityHours        Float?           @map("capacity_hours")
+  oneOnOneDays         Int?             @map("one_on_one_days")
+  projects             ProjectPerson[]
+  identities           PersonIdentity[] @relation("PersonIdentities")
 
   @@unique([userId, upn])
   @@index([userId, name])
   @@map("people")
 }
 
+/// One address or handle a person is known by (docs/03 §4.3). Ingest resolves a
+/// person by any of these, email first. Two existing people are never merged here.
+model PersonIdentity {
+  id                String   @id @default(uuid())
+  userId            String   @map("user_id")
+  personId          String   @map("person_id")
+  /// email | slack | github | linear | jira | teams | zoom | phone | name
+  kind              String
+  /// Normalised: trimmed and lowercase.
+  value             String
+  /// Where it was seen first: gmail, slack, calendar, fireflies, merge, backfill…
+  source            String   @default("ingest")
+  verified          Boolean  @default(false)
+  /// Ingest saw this identity together with another person's address. A merge suggestion until merged or dismissed.
+  suggestedPersonId String?  @map("suggested_person_id")
+  createdAt         DateTime @default(now()) @map("created_at")
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  person            Person   @relation("PersonIdentities", fields: [personId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, kind, value])
+  @@index([personId])
+  @@map("person_identities")
+}
+
 model Project {
-  id           String           @id @default(uuid())
-  userId       String           @map("user_id")
-  name         String
-  summary      String           @default("")
-  notes        String           @default("")
-  status       ProjectStatus    @default(active)
-  aliases      String[]         @default([])
-  workItemRoot String?          @map("work_item_root")
-  createdBy    Actor            @default(agent) @map("created_by")
-  evidence     String[]         @default([])
-  confidence   Float            @default(0.5)
+  id             String           @id @default(uuid())
+  userId         String           @map("user_id")
+  name           String
+  summary        String           @default("")
+  notes          String           @default("")
+  status         ProjectStatus    @default(active)
+  aliases        String[]         @default([])
+  workItemRoot   String?          @map("work_item_root")
+  createdBy      Actor            @default(agent) @map("created_by")
+  evidence       String[]         @default([])
+  confidence     Float            @default(0.5)
   /// TipTap page body. Tasks keep their page on task_pages; this is the project page.
-  content      Json?
-  completedAt  DateTime?        @map("completed_at")
-  createdAt    DateTime         @default(now()) @map("created_at")
-  updatedAt    DateTime         @updatedAt @map("updated_at")
-  deletedAt    DateTime?        @map("deleted_at")
-  discussions  PageDiscussion[]
-  tasks        Task[]
-  artifacts    Artifact[]
-  meetingNotes MeetingNote[]
-  people       ProjectPerson[]
-  repoLinks    ProjectRepo[]
-  deliverables Deliverable[]
+  content        Json?
+  externalSource String?          @map("external_source")
+  externalId     String?          @map("external_id")
+  completedAt    DateTime?        @map("completed_at")
+  createdAt      DateTime         @default(now()) @map("created_at")
+  updatedAt      DateTime         @updatedAt @map("updated_at")
+  deletedAt      DateTime?        @map("deleted_at")
+  discussions    PageDiscussion[]
+  tasks          Task[]
+  artifacts      Artifact[]
+  meetingNotes   MeetingNote[]
+  people         ProjectPerson[]
+  repoLinks      ProjectRepo[]
+  deliverables   Deliverable[]
+  sourceLinks    ProjectLink[]
 
   @@unique([userId, name])
+  @@unique([userId, externalSource, externalId])
   @@index([userId, status])
   @@index([userId, completedAt])
   @@map("projects")
 }
 
+/// "This channel is Project Atlas": a source container mapped to a project once,
+/// applied at ingest to artifacts and proposed todos (docs/03 §4.4).
+model ProjectLink {
+  id            String   @id @default(uuid())
+  userId        String   @map("user_id")
+  projectId     String   @map("project_id")
+  /// slack | github | linear | jira | notion | trello | asana | google_drive | calendar | …
+  source        String
+  /// Slack channel id, GitHub owner/repo (lowercase), Linear team or project id, Jira project id, Notion database id, Trello board id, Drive folder id.
+  containerId   String   @map("container_id")
+  containerName String   @default("") @map("container_name")
+  /// me | import
+  createdBy     String   @default("me") @map("created_by")
+  createdAt     DateTime @default(now()) @map("created_at")
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, source, containerId])
+  @@index([projectId])
+  @@map("project_links")
+}
+
 model ProjectPerson {
-  projectId String  @map("project_id")
-  personId  String  @map("person_id")
+  projectId String   @map("project_id")
+  personId  String   @map("person_id")
   role      String?
-  addedBy   Actor   @default(agent) @map("added_by")
+  addedBy   Actor    @default(agent) @map("added_by")
   createdAt DateTime @default(now()) @map("created_at")
-  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  person    Person  @relation(fields: [personId], references: [id], onDelete: Cascade)
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  person    Person   @relation(fields: [personId], references: [id], onDelete: Cascade)
 
   @@id([projectId, personId])
   @@index([personId])
@@ -795,22 +865,22 @@ model ProjectRepo {
 }
 
 model Deliverable {
-  id          String             @id @default(uuid())
-  userId      String             @map("user_id")
-  projectId   String             @map("project_id")
+  id          String            @id @default(uuid())
+  userId      String            @map("user_id")
+  projectId   String            @map("project_id")
   title       String
-  status      DeliverableStatus  @default(upcoming)
+  status      DeliverableStatus @default(upcoming)
   due         DateTime?
   owner       String?
-  notes       String             @default("")
-  sourceRef   String?            @map("source_ref")
-  createdBy   Actor              @default(agent) @map("created_by")
-  completedAt DateTime?          @map("completed_at")
-  pinned      Boolean            @default(false)
-  createdAt   DateTime           @default(now()) @map("created_at")
-  updatedAt   DateTime           @updatedAt @map("updated_at")
-  deletedAt   DateTime?          @map("deleted_at")
-  project     Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  notes       String            @default("")
+  sourceRef   String?           @map("source_ref")
+  createdBy   Actor             @default(agent) @map("created_by")
+  completedAt DateTime?         @map("completed_at")
+  pinned      Boolean           @default(false)
+  createdAt   DateTime          @default(now()) @map("created_at")
+  updatedAt   DateTime          @updatedAt @map("updated_at")
+  deletedAt   DateTime?         @map("deleted_at")
+  project     Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
   tasks       Task[]
   discussions PageDiscussion[]
 
@@ -880,40 +950,52 @@ model ContextSuppression {
 }
 
 model MeetingNote {
-  id                String    @id @default(uuid())
-  userId            String    @map("user_id")
-  title             String
-  titleSource       String    @default("derived") @map("title_source")
-  prompt            String    @default("")
-  answer            String    @default("")
-  model             String?
-  tookSeconds       Float?    @map("took_seconds")
-  askedAt           DateTime  @default(now()) @map("asked_at")
-  occurredAt        DateTime? @map("occurred_at")
-  personIds         String[]  @default([]) @map("person_ids")
-  projectId         String?   @map("project_id")
-  repoId            String?   @map("repo_id")
-  comment           String?
-  status            String    @default("ready")
+  id                   String    @id @default(uuid())
+  userId               String    @map("user_id")
+  title                String
+  titleSource          String    @default("derived") @map("title_source")
+  prompt               String    @default("")
+  answer               String    @default("")
+  model                String?
+  tookSeconds          Float?    @map("took_seconds")
+  askedAt              DateTime  @default(now()) @map("asked_at")
+  occurredAt           DateTime? @map("occurred_at")
+  personIds            String[]  @default([]) @map("person_ids")
+  projectId            String?   @map("project_id")
+  repoId               String?   @map("repo_id")
+  comment              String?
+  status               String    @default("ready")
   /// paste | connector | upload — not a vendor-specific paste path.
-  source            String    @default("paste")
-  error             String?
-  extraction        Json?
-  extractionModel   String?   @map("extraction_model")
-  extractionCredits Float?    @map("extraction_credits")
-  extractedAt       DateTime? @map("extracted_at")
-  appliedAt         DateTime? @map("applied_at")
-  artifactId        String?   @map("artifact_id")
-  createdAt         DateTime  @default(now()) @map("created_at")
-  updatedAt         DateTime  @updatedAt @map("updated_at")
-  deletedAt         DateTime? @map("deleted_at")
-  project           Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  repo              Repo?     @relation(fields: [repoId], references: [id], onDelete: SetNull)
+  source               String    @default("paste")
+  error                String?
+  extraction           Json?
+  extractionModel      String?   @map("extraction_model")
+  extractionCredits    Float?    @map("extraction_credits")
+  extractedAt          DateTime? @map("extracted_at")
+  appliedAt            DateTime? @map("applied_at")
+  artifactId           String?   @map("artifact_id")
+  /// The calendar event this meeting matched (connectors/meetings/match.ts). Null when no event matched or the match was ambiguous.
+  eventArtifactId      String?   @map("event_artifact_id")
+  /// The stored transcript (Artifact kind transcript) for imported meetings.
+  transcriptArtifactId String?   @map("transcript_artifact_id")
+  /// Meeting-notes connector (fireflies, fathom, granola, …) and its meeting id, so a re-sync updates in place.
+  externalSource       String?   @map("external_source")
+  externalId           String?   @map("external_id")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+  deletedAt            DateTime? @map("deleted_at")
+  project              Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  repo                 Repo?     @relation(fields: [repoId], references: [id], onDelete: SetNull)
+  eventArtifact        Artifact? @relation("MeetingNoteEvent", fields: [eventArtifactId], references: [id], onDelete: SetNull)
+  transcriptArtifact   Artifact? @relation("MeetingNoteTranscript", fields: [transcriptArtifactId], references: [id], onDelete: SetNull)
+  tasks                Task[]
 
+  @@unique([userId, externalSource, externalId])
   @@index([userId, askedAt])
   @@index([userId, extractedAt])
   @@index([userId, projectId])
   @@index([userId, status])
+  @@index([eventArtifactId])
   @@map("meeting_notes")
 }
 
@@ -947,32 +1029,34 @@ model MeetingSession {
 }
 
 model Artifact {
-  id            String                    @id @default(uuid())
-  userId        String                    @map("user_id")
-  taskId        String?                   @map("task_id")
-  kind          ArtifactKind
-  externalId    String                    @map("external_id")
-  url           String?
-  ts            DateTime
-  actorId       String?                   @map("actor_id")
-  participants  Json                      @default("[]")
-  title         String                    @default("")
-  text          String                    @default("")
-  threadId      String?                   @map("thread_id")
-  parentId      String?                   @map("parent_id")
-  projectId     String?                   @map("project_id")
-  repoId        String?                   @map("repo_id")
-  metadata      Json                      @default("{}")
-  authoredByMe  Boolean                   @default(false) @map("authored_by_me")
-  searchVector  Unsupported("tsvector")?  @map("search_vector")
-  createdAt     DateTime                  @default(now()) @map("created_at")
-  deletedAt     DateTime?                 @map("deleted_at")
-  task          Task?                     @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  project       Project?                  @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  repo          Repo?                     @relation(fields: [repoId], references: [id], onDelete: SetNull)
-  chunks        ArtifactChunk[]
-  extractions   Extraction[]
-  document      Document?
+  id                       String                   @id @default(uuid())
+  userId                   String                   @map("user_id")
+  taskId                   String?                  @map("task_id")
+  kind                     ArtifactKind
+  externalId               String                   @map("external_id")
+  url                      String?
+  ts                       DateTime
+  actorId                  String?                  @map("actor_id")
+  participants             Json                     @default("[]")
+  title                    String                   @default("")
+  text                     String                   @default("")
+  threadId                 String?                  @map("thread_id")
+  parentId                 String?                  @map("parent_id")
+  projectId                String?                  @map("project_id")
+  repoId                   String?                  @map("repo_id")
+  metadata                 Json                     @default("{}")
+  authoredByMe             Boolean                  @default(false) @map("authored_by_me")
+  searchVector             Unsupported("tsvector")? @map("search_vector")
+  createdAt                DateTime                 @default(now()) @map("created_at")
+  deletedAt                DateTime?                @map("deleted_at")
+  task                     Task?                    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  project                  Project?                 @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  repo                     Repo?                    @relation(fields: [repoId], references: [id], onDelete: SetNull)
+  chunks                   ArtifactChunk[]
+  extractions              Extraction[]
+  document                 Document?
+  meetingNotesAsEvent      MeetingNote[]            @relation("MeetingNoteEvent")
+  meetingNotesAsTranscript MeetingNote[]            @relation("MeetingNoteTranscript")
 
   @@unique([userId, kind, externalId])
   @@index([userId, taskId])
@@ -985,44 +1069,44 @@ model Artifact {
 }
 
 model Document {
-  id                  String    @id @default(uuid())
-  userId              String    @map("user_id")
-  artifactId          String?   @unique @map("artifact_id")
-  filename            String
-  mediaType           String    @map("media_type")
-  byteSize            Int       @map("byte_size")
-  sha256              String
-  original            Bytes
-  format              String
-  parseStatus         String    @default("queued") @map("parse_status")
-  parseError          Json?     @map("parse_error")
-  parserVersion       String?   @map("parser_version")
-  textCharacters      Int       @default(0) @map("text_characters")
-  pageCount           Int?      @map("page_count")
-  warnings            String[]  @default([])
-  parsedAt            DateTime? @map("parsed_at")
-  enrichmentStatus    String    @default("queued") @map("enrichment_status")
-  enrichmentError     Json?     @map("enrichment_error")
-  summary             String?
-  enrichedAt          DateTime? @map("enriched_at")
-  manualTags          Json      @default("{}") @map("manual_tags")
-  matchedTags         Json      @default("{}") @map("matched_tags")
-  projectIds          String[]  @default([]) @map("project_ids")
-  repoIds             String[]  @default([]) @map("repo_ids")
-  personIds           String[]  @default([]) @map("person_ids")
-  taskIds             String[]  @default([]) @map("task_ids")
-  workItemIds         String[]  @default([]) @map("work_item_ids")
-  deliverableIds      String[]  @default([]) @map("deliverable_ids")
-  generation          Int       @default(1)
-  parseAttempts       Int       @default(0) @map("parse_attempts")
-  enrichmentAttempts  Int       @default(0) @map("enrichment_attempts")
-  leaseToken          String?   @map("lease_token")
-  leaseExpiresAt      DateTime? @map("lease_expires_at")
-  modelUsage          Json      @default("[]") @map("model_usage")
-  createdAt           DateTime  @default(now()) @map("created_at")
-  updatedAt           DateTime  @updatedAt @map("updated_at")
-  deletedAt           DateTime? @map("deleted_at")
-  artifact            Artifact? @relation(fields: [artifactId], references: [id], onDelete: SetNull)
+  id                 String    @id @default(uuid())
+  userId             String    @map("user_id")
+  artifactId         String?   @unique @map("artifact_id")
+  filename           String
+  mediaType          String    @map("media_type")
+  byteSize           Int       @map("byte_size")
+  sha256             String
+  original           Bytes
+  format             String
+  parseStatus        String    @default("queued") @map("parse_status")
+  parseError         Json?     @map("parse_error")
+  parserVersion      String?   @map("parser_version")
+  textCharacters     Int       @default(0) @map("text_characters")
+  pageCount          Int?      @map("page_count")
+  warnings           String[]  @default([])
+  parsedAt           DateTime? @map("parsed_at")
+  enrichmentStatus   String    @default("queued") @map("enrichment_status")
+  enrichmentError    Json?     @map("enrichment_error")
+  summary            String?
+  enrichedAt         DateTime? @map("enriched_at")
+  manualTags         Json      @default("{}") @map("manual_tags")
+  matchedTags        Json      @default("{}") @map("matched_tags")
+  projectIds         String[]  @default([]) @map("project_ids")
+  repoIds            String[]  @default([]) @map("repo_ids")
+  personIds          String[]  @default([]) @map("person_ids")
+  taskIds            String[]  @default([]) @map("task_ids")
+  workItemIds        String[]  @default([]) @map("work_item_ids")
+  deliverableIds     String[]  @default([]) @map("deliverable_ids")
+  generation         Int       @default(1)
+  parseAttempts      Int       @default(0) @map("parse_attempts")
+  enrichmentAttempts Int       @default(0) @map("enrichment_attempts")
+  leaseToken         String?   @map("lease_token")
+  leaseExpiresAt     DateTime? @map("lease_expires_at")
+  modelUsage         Json      @default("[]") @map("model_usage")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+  deletedAt          DateTime? @map("deleted_at")
+  artifact           Artifact? @relation(fields: [artifactId], references: [id], onDelete: SetNull)
 
   @@index([userId, createdAt, id])
   @@index([parseStatus, enrichmentStatus, createdAt])
@@ -1065,13 +1149,13 @@ model SyncState {
 }
 
 model ArtifactChunk {
-  id        String                   @id @default(uuid())
-  artifactId String                  @map("artifact_id")
-  index     Int                      @default(0)
-  text      String
-  embedding Unsupported("vector(3072)")?
-  createdAt DateTime                 @default(now()) @map("created_at")
-  artifact  Artifact                 @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  id         String                       @id @default(uuid())
+  artifactId String                       @map("artifact_id")
+  index      Int                          @default(0)
+  text       String
+  embedding  Unsupported("vector(3072)")?
+  createdAt  DateTime                     @default(now()) @map("created_at")
+  artifact   Artifact                     @relation(fields: [artifactId], references: [id], onDelete: Cascade)
 
   @@unique([artifactId, index])
   @@map("artifact_chunks")
@@ -1217,6 +1301,8 @@ model AuthToken {
   expiresAt    DateTime @map("expires_at")
   scopes       String[] @default([])
   account      String?
+  /// Non-secret connection details, e.g. { cloudId, site } for Atlassian or { baseUri, accountId } for DocuSign.
+  meta         Json     @default("{}")
   createdAt    DateTime @default(now()) @map("created_at")
   updatedAt    DateTime @updatedAt @map("updated_at")
 
@@ -1395,46 +1481,50 @@ model ReminderDesktopBinding {
 /// The first account created on an instance adopts ENSEMBLE_DEV_USER_ID so data
 /// made before sign-in existed stays with its owner.
 model User {
-  id                      String         @id @default(uuid())
-  email                   String         @unique
-  name                    String         @default("")
-  passwordHash            String?        @map("password_hash")
-  emailVerifiedAt         DateTime?      @map("email_verified_at")
-  createdAt               DateTime       @default(now()) @map("created_at")
-  lastLoginAt             DateTime?      @map("last_login_at")
+  id                    String                @id @default(uuid())
+  email                 String                @unique
+  name                  String                @default("")
+  passwordHash          String?               @map("password_hash")
+  emailVerifiedAt       DateTime?             @map("email_verified_at")
+  createdAt             DateTime              @default(now()) @map("created_at")
+  lastLoginAt           DateTime?             @map("last_login_at")
   /// student | teacher | lawyer | engineer | vibe. Not an ActAs value.
-  onboardingRole          String?        @map("onboarding_role")
-  onboardingTemplateId    String?        @map("onboarding_template_id")
+  onboardingRole        String?               @map("onboarding_role")
+  onboardingTemplateId  String?               @map("onboarding_template_id")
   /// Null until the role wizard finishes. Existing accounts are stamped by migration.
-  onboardingCompletedAt   DateTime?      @map("onboarding_completed_at")
-  gender                  String?
-  profession              String?
-  organization            String?
-  heardFrom               String?        @map("heard_from")
-  profileCompletedAt      DateTime?      @map("profile_completed_at")
+  onboardingCompletedAt DateTime?             @map("onboarding_completed_at")
+  gender                String?
+  profession            String?
+  organization          String?
+  heardFrom             String?               @map("heard_from")
+  profileCompletedAt    DateTime?             @map("profile_completed_at")
   /// Optional modules that are on. Sorted ids. Empty means none of them.
-  moduleSet               String         @default("code,diagrams,metrics,runs,skills,workspace") @map("module_set")
+  moduleSet             String                @default("code,diagrams,metrics,runs,skills,workspace") @map("module_set")
   /// Tester accounts may open the marketplace and switch desks. Everyone else keeps the signup role.
-  tester                  Boolean        @default(false)
-  activeTemplateId        String?        @map("active_template_id")
-  appliedVersion          Int            @default(0) @map("applied_version")
-  chromeLabels            Json           @default("{}") @map("chrome_labels")
-  templateExpiresAt       DateTime?      @map("template_expires_at")
+  tester                Boolean               @default(false)
+  activeTemplateId      String?               @map("active_template_id")
+  appliedVersion        Int                   @default(0) @map("applied_version")
+  chromeLabels          Json                  @default("{}") @map("chrome_labels")
+  templateExpiresAt     DateTime?             @map("template_expires_at")
   /// Layouts from before the first marketplace apply. Default restores these.
-  layoutBaseline          Json?          @map("layout_baseline")
-  sessions                Session[]
-  authIdentities          AuthIdentity[]
-  emailTokens             EmailToken[]
-  authFlows               AuthFlow[]
-  cliAuthRequests         CliAuthRequest[]
-  apiTokens               ApiToken[]
-  devicePairings          DevicePairing[]
-  diagrams                BlockDiagram[]
-  diagramLinks            DiagramLink[]
-  plotDatasets            PlotDataset[]
-  plots                   Plot[]
-  widgetLayouts           WidgetLayout[]
-  templateApplications    TemplateApplication[]
+  layoutBaseline        Json?                 @map("layout_baseline")
+  sessions              Session[]
+  authIdentities        AuthIdentity[]
+  emailTokens           EmailToken[]
+  authFlows             AuthFlow[]
+  cliAuthRequests       CliAuthRequest[]
+  importJobs            ImportJob[]
+  mcpConnections        McpConnection[]
+  personIdentities      PersonIdentity[]
+  projectLinks          ProjectLink[]
+  apiTokens             ApiToken[]
+  devicePairings        DevicePairing[]
+  diagrams              BlockDiagram[]
+  diagramLinks          DiagramLink[]
+  plotDatasets          PlotDataset[]
+  plots                 Plot[]
+  widgetLayouts         WidgetLayout[]
+  templateApplications  TemplateApplication[]
 
   @@map("users")
 }
@@ -1514,16 +1604,16 @@ model CliAuthRequest {
 /// A person's block diagram. `document` is the versioned JSON model (maps keyed by id).
 /// `version` is the per-save revision, ready for optimistic concurrency and later collaboration.
 model BlockDiagram {
-  id        String   @id @default(uuid())
-  userId    String   @map("user_id")
-  title     String   @default("Untitled diagram")
-  source    String   @default("")
-  document  Json     @default("{}")
-  version   Int      @default(1)
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-  deletedAt DateTime? @map("deleted_at")
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id        String                 @id @default(uuid())
+  userId    String                 @map("user_id")
+  title     String                 @default("Untitled diagram")
+  source    String                 @default("")
+  document  Json                   @default("{}")
+  version   Int                    @default(1)
+  createdAt DateTime               @default(now()) @map("created_at")
+  updatedAt DateTime               @updatedAt @map("updated_at")
+  deletedAt DateTime?              @map("deleted_at")
+  user      User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
   links     DiagramLink[]
   revisions BlockDiagramRevision[]
 
@@ -1534,15 +1624,15 @@ model BlockDiagram {
 
 /// A saved copy of a diagram at one version, so a person can restore it.
 model BlockDiagramRevision {
-  id         String       @id @default(uuid())
-  userId     String       @map("user_id")
-  diagramId  String       @map("diagram_id")
-  version    Int
-  title      String
-  source     String
-  document   Json
-  createdAt  DateTime     @default(now()) @map("created_at")
-  diagram    BlockDiagram @relation(fields: [diagramId], references: [id], onDelete: Cascade)
+  id        String       @id @default(uuid())
+  userId    String       @map("user_id")
+  diagramId String       @map("diagram_id")
+  version   Int
+  title     String
+  source    String
+  document  Json
+  createdAt DateTime     @default(now()) @map("created_at")
+  diagram   BlockDiagram @relation(fields: [diagramId], references: [id], onDelete: Cascade)
 
   @@unique([diagramId, version])
   @@index([userId, diagramId])
@@ -1836,4 +1926,61 @@ model GradingRow {
 
   @@index([userId])
   @@map("grading_rows")
+}
+
+/// One run of "Import from …". Counts and progress are written as it goes so the dialog can poll.
+model ImportJob {
+  id         String    @id @default(uuid())
+  userId     String    @map("user_id")
+  /// notion | linear | jira | trello | asana | todoist | clickup | monday | github | csv
+  source     String
+  status     String    @default("queued")
+  options    Json      @default("{}")
+  /// { tasks: { created, updated, skipped }, pages: {...}, projects: {...} }
+  counts     Json      @default("{}")
+  progress   Json      @default("{}")
+  error      String?
+  startedAt  DateTime? @map("started_at")
+  finishedAt DateTime? @map("finished_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("import_jobs")
+}
+
+/// A remote MCP server this person connected (Notion, Linear, Atlassian, Canva, or a custom URL).
+/// Secrets (client secret, tokens, PKCE verifier) are encrypted with lib/secrets.
+model McpConnection {
+  id             String    @id @default(uuid())
+  userId         String    @map("user_id")
+  /// Catalog id such as "notion", or "custom-<hash>" for a pasted URL.
+  serverId       String    @map("server_id")
+  name           String
+  url            String
+  /// pending | connected | error | disabled
+  status         String    @default("pending")
+  /// Dynamic client registration result or a configured client: { client_id, client_secret?, ... }, encrypted JSON.
+  clientInfo     String?   @map("client_info")
+  /// OAuth tokens as encrypted JSON: { access_token, refresh_token?, expires_in?, scope?, token_type }.
+  tokens         String?
+  expiresAt      DateTime? @map("expires_at")
+  codeVerifier   String?   @map("code_verifier")
+  oauthState     String?   @unique @map("oauth_state")
+  stateExpiresAt DateTime? @map("state_expires_at")
+  returnTo       String?   @map("return_to")
+  /// Cached tools/list result: [{ name, title?, description, inputSchema, annotations? }].
+  tools          Json      @default("[]")
+  toolsSyncedAt  DateTime? @map("tools_synced_at")
+  /// Tool names this person switched off.
+  disabledTools  String[]  @default([]) @map("disabled_tools")
+  lastError      String?   @map("last_error")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, serverId])
+  @@index([userId])
+  @@map("mcp_connections")
 }

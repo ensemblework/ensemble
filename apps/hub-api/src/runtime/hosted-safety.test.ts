@@ -86,7 +86,8 @@ test("host Ollama, custom proxies, OAuth and commands reject members before IO",
     list: async () => [], upsert: async () => undefined, remove: async () => undefined,
   });
   await assert.rejects(endpoint("openai", "member", null), { statusCode: 403 });
-  await assert.rejects(beginOAuth("member", "google", "/settings"), { statusCode: 403 });
+  // Connector OAuth is open to verified members; it still refuses unverified accounts.
+  await assert.rejects(beginOAuth("unverified", "google", "/settings"), { statusCode: 403 });
   await assert.rejects(runTrustedGit({ userId: "member", cwd: "/", args: ["status"] }), { statusCode: 403 });
   await assert.rejects(runCommand({ userId: "member", argv: ["pwd"], cwd: "/", root: "/", sandboxed: false, network: false, useCredentials: false, who: "agent", timeoutMs: 100 }), { statusCode: 403 });
   assert.equal(requests, 0);

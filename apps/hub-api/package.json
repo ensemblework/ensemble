@@ -14,7 +14,7 @@
     "db:seed": "tsx prisma/seed.ts",
     "test:bridge": "node --import tsx --test src/bridge/**/*.test.ts",
     "test:desktop-ui": "tsx --test src/desktop/desktop-ui.e2e.test.ts",
-    "test:public": "tsx --test src/test/auth-gates.integration.test.ts src/test/resources.integration.test.ts src/routes/auth.integration.test.ts src/routes/cli-auth.integration.test.ts src/routes/mcp.integration.test.ts src/bridge/auth.test.ts src/lib/auth-oauth.test.ts src/lib/auth-public.test.ts src/lib/turnstile.test.ts src/lib/hosted-access.test.ts src/lib/hosted-limits.test.ts src/runtime/hosted-safety.test.ts src/runtime/hosted-safety.integration.test.ts src/plots/store.test.ts src/context/document-quota.integration.test.ts src/assistant/registry-schema.test.ts && pnpm route:inventory:check",
+    "test:public": "tsx --test src/test/auth-gates.integration.test.ts src/test/resources.integration.test.ts src/routes/auth.integration.test.ts src/routes/cli-auth.integration.test.ts src/routes/mcp.integration.test.ts src/bridge/auth.test.ts src/lib/auth-oauth.test.ts src/lib/auth-public.test.ts src/lib/turnstile.test.ts src/lib/hosted-access.test.ts src/lib/hosted-limits.test.ts src/runtime/hosted-safety.test.ts src/runtime/hosted-safety.integration.test.ts src/plots/store.test.ts src/context/document-quota.integration.test.ts src/assistant/registry-schema.test.ts src/routes/connectors.integration.test.ts src/connectors/microsoft.test.ts src/jobs/scheduler.test.ts src/connectors/mcp/mcp.test.ts src/routes/mcp-connections.integration.test.ts src/routes/imports.integration.test.ts src/imports/importers.test.ts src/lib/office/office.test.ts src/assistant/tools/google-workspace.test.ts src/assistant/tools/microsoft-365.test.ts src/assistant/apps.test.ts src/assistant/apply.integration.test.ts src/assistant/tools/zoom-docusign-jira.test.ts src/connectors/meetings/meetings.test.ts src/routes/connected-data.integration.test.ts && pnpm route:inventory:check",
     "route:inventory": "tsx scripts/route-inventory.ts",
     "route:inventory:check": "tsx scripts/route-inventory.ts --check"
   },
@@ -38,10 +38,15 @@
     "pglite-prisma-adapter": "0.6.1",
     "pino": "^9.11.0",
     "zod": "^3.24.2",
-    "zod-to-json-schema": "^3.24.6"
+    "zod-to-json-schema": "^3.24.6",
+    "papaparse": "^5.5.2",
+    "docx": "~9.8.1",
+    "exceljs": "^4.4.0",
+    "pptxgenjs": "^4.0.1"
   },
   "devDependencies": {
     "@types/node": "^22.18.6",
+    "@types/papaparse": "^5.3.16",
     "prisma": "^6.16.2",
     "tsx": "^4.20.6",
     "typescript": "^5.8.2"
