@@ -5,15 +5,23 @@
  * checks that the scopes a product needs were granted, and turns "not
  * connected" into an error the person can act on.
  */
-import { getAccount, type AccountProvider } from "./accounts.js";
-import { googleAccessToken } from "./oauth.js";
+import { requireVerifiedUser } from "../lib/hosted-access.js";
+import { getAccount, type Account, type AccountProvider } from "./accounts.js";
+import { freshAccount, ReconnectNeededError } from "./oauth.js";
 
 export interface ProviderToken {
   token: string;
   account: string | null;
   scopes: string[];
-  /** Provider-specific values saved at connect time, e.g. Atlassian cloudId or DocuSign base URI. */
+  /**
+   * Provider-specific values saved at connect time, as strings: Atlassian `cloudId`, `site` and
+   * `auth` ("bearer" for OAuth through api.atlassian.com, "basic" for email:token against the site),
+   * Trello `key`, DocuSign `accountId`/`baseUri`, Notion `workspaceName`, Linear `auth` ("bearer" or "key"),
+   * and `via` ("oauth" or "token").
+   */
   extra?: Record<string, string>;
+  /** The same details with their original JSON types. */
+  meta?: Record<string, unknown>;
 }
 
 export class ConnectorNotConnectedError extends Error {
@@ -29,22 +37,70 @@ export class ConnectorNotConnectedError extends Error {
   }
 }
 
-/** A fresh token for this person's own connection, or null when they have not connected the provider. */
-export async function providerAccessToken(userId: string, provider: AccountProvider): Promise<ProviderToken | null> {
-  if (provider === "google") {
-    const google = await googleAccessToken(userId);
-    if (!google) return null;
-    const account = await getAccount(userId, "google", false);
-    return { token: google.token, account: google.account, scopes: account?.scopes ?? [] };
+const stringExtra = (meta: Record<string, unknown>): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(meta)
+      .filter(([, value]) => value !== null && value !== undefined && typeof value !== "object")
+      .map(([key, value]) => [key, String(value)]),
+  );
+
+async function refreshed(userId: string, account: Account): Promise<Account> {
+  try {
+    return await freshAccount(userId, account);
+  } catch (error) {
+    if (error instanceof ReconnectNeededError) throw new ConnectorNotConnectedError(account.provider, error.message);
+    throw error;
   }
-  const account = await getAccount(userId, provider, false, false);
-  if (!account) return null;
-  return { token: account.accessToken, account: account.account, scopes: account.scopes };
 }
 
-export function hasScopes(token: ProviderToken, scopes: readonly string[]): boolean {
-  const granted = new Set(token.scopes);
-  return scopes.every((scope) => granted.has(scope));
+/** A fresh token for this person's own connection, or null when they have not connected the provider. */
+export async function providerAccessToken(userId: string, provider: AccountProvider): Promise<ProviderToken | null> {
+  await requireVerifiedUser(userId);
+  const stored = await getAccount(userId, provider, false, false);
+  if (!stored) return null;
+  const account = await refreshed(userId, stored);
+  return { token: account.accessToken, account: account.account, scopes: account.scopes, extra: stringExtra(account.meta), meta: account.meta };
+}
+
+/** For syncs: this person's own token (refreshed), else the local-developer fallback (env vars, gh CLI) where allowed. */
+export async function syncAccount(userId: string, provider: AccountProvider): Promise<Account | null> {
+  const own = await getAccount(userId, provider, false, false);
+  if (own) return refreshed(userId, own);
+  return getAccount(userId, provider);
+}
+
+const GOOGLE = "https://www.googleapis.com/auth/";
+
+/** A broader grant that covers a narrower one. Keys and values are normalized (lower case, no Graph prefix). */
+const IMPLIED: Record<string, readonly string[]> = {
+  "files.readwrite": ["files.read"],
+  "files.read.all": ["files.read"],
+  "files.readwrite.all": ["files.read.all", "files.readwrite", "files.read"],
+  "calendars.readwrite": ["calendars.read"],
+  "mail.readwrite": ["mail.read"],
+  [`${GOOGLE}calendar`]: [`${GOOGLE}calendar.events`, `${GOOGLE}calendar.readonly`, `${GOOGLE}calendar.events.readonly`, `${GOOGLE}calendar.calendarlist.readonly`],
+  [`${GOOGLE}calendar.events`]: [`${GOOGLE}calendar.events.readonly`],
+  [`${GOOGLE}drive`]: [`${GOOGLE}drive.file`, `${GOOGLE}drive.readonly`],
+  [`${GOOGLE}userinfo.email`]: ["email"],
+  [`${GOOGLE}userinfo.profile`]: ["profile"],
+};
+
+const normalize = (scope: string): string => scope.trim().replace(/^https:\/\/graph\.microsoft\.com\//i, "").toLowerCase();
+
+function granted(scopes: readonly string[]): Set<string> {
+  const set = new Set(scopes.map(normalize));
+  for (const scope of [...set]) for (const implied of IMPLIED[scope] ?? []) set.add(implied);
+  return set;
+}
+
+/** The requested scopes this token does not cover. Case and Graph's resource prefix do not matter. */
+export function missingScopes(token: Pick<ProviderToken, "scopes">, scopes: readonly string[]): string[] {
+  const have = granted(token.scopes);
+  return scopes.filter((scope) => !have.has(normalize(scope)));
+}
+
+export function hasScopes(token: Pick<ProviderToken, "scopes">, scopes: readonly string[]): boolean {
+  return missingScopes(token, scopes).length === 0;
 }
 
 /** Like providerAccessToken, but throws a ConnectorNotConnectedError that tells the person what to connect. */
@@ -56,7 +112,7 @@ export async function requireProviderToken(
 ): Promise<ProviderToken> {
   const token = await providerAccessToken(userId, provider);
   if (!token) throw new ConnectorNotConnectedError(provider, `${label} is not connected. Connect it in Settings → Connections.`);
-  const missing = scopes.filter((scope) => !token.scopes.includes(scope));
+  const missing = missingScopes(token, scopes);
   if (missing.length) {
     throw new ConnectorNotConnectedError(
       provider,

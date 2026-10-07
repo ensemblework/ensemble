@@ -175,11 +175,23 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
 
   const byId = useMemo(() => new Map((tasks.data?.tasks ?? []).map((task) => [task.id, task])), [tasks.data]);
 
+  // Links such as /board?q=%23design (import summaries) open the board already filtered.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search).get("q");
+    if (q) setSearch(q);
+  }, []);
+
   const visible = useMemo(() => {
     const needle = search.trim().toLowerCase();
+    const label = needle.startsWith("#") ? needle.slice(1).trim() : null;
     return (tasks.data?.tasks ?? [])
       .filter((task) => (owner === "all" || task.owner === owner) && (priority === "all" || task.priority === priority))
-      .filter((task) => !needle || task.title.toLowerCase().includes(needle))
+      .filter((task) => {
+        if (!needle) return true;
+        const labels = (task.labels ?? []).map((value) => value.toLowerCase());
+        if (label !== null) return labels.some((value) => value === label || (label.length > 0 && value.startsWith(label)));
+        return task.title.toLowerCase().includes(needle) || labels.some((value) => value.includes(needle));
+      })
       .sort((a, b) => a.boardOrder - b.boardOrder);
   }, [tasks.data, search, owner, priority]);
 
@@ -392,7 +404,7 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
           className="min-w-0 flex-1 basis-[9rem]"
           value={search}
           onValue={setSearch}
-          placeholder="Search tasks…"
+          placeholder="Search tasks or #label…"
           label="Search tasks"
           pending={tasks.isLoading && !tasks.data && search.trim().length > 0}
           count={search.trim() ? count : null}

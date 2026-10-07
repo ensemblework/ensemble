@@ -4,62 +4,30 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Settings } from "@ensemble/shared-types";
-import { AccountSection } from "@/components/settings/account";
-import { AppearanceSection } from "@/components/settings/appearance";
-import { FeaturesSection } from "@/components/features/section";
+import { AccountTab } from "@/components/settings/tab-account";
+import { SettingsTabs } from "@/components/settings/settings-tabs";
+import { navigateSettings, useSettingsLocation, type SettingsTab } from "@/components/settings/url-state";
 import { useToast } from "@/components/toast";
 import { PageHeader, SkeletonRows } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
-import { desktopShell } from "@/lib/desktop-param";
 
-const SettingsBelow = dynamic(() => import("@/components/settings/below").then((mod) => mod.SettingsBelow), { ssr: false });
+const loading = () => <SkeletonRows count={4} rowClassName="h-28" className="space-y-5" />;
+const AssistantTab = dynamic(() => import("@/components/settings/tab-assistant").then((mod) => mod.AssistantTab), { ssr: false, loading });
+const ConnectionsTab = dynamic(() => import("@/components/settings/tab-connections").then((mod) => mod.ConnectionsTab), { ssr: false, loading });
+const NotificationsTab = dynamic(() => import("@/components/settings/tab-notifications").then((mod) => mod.NotificationsTab), { ssr: false, loading });
+const DataTab = dynamic(() => import("@/components/settings/tab-data").then((mod) => mod.DataTab), { ssr: false, loading });
 
-const NAV: Array<{ label: string; items: Array<readonly [string, string]> }> = [
-  {
-    label: "You",
-    items: [
-      ["account", "Account"],
-      ["features", "Features"],
-      ["appearance", "Appearance"],
-      ["you", "Email & time zone"],
-    ],
-  },
-  {
-    label: "Agent",
-    items: [
-      ["autonomy", "Autonomy"],
-      ["orchestration", "Orchestration"],
-      ["prompts", "Prompts"],
-      ["models", "Models"],
-      ["assistant", "The assistant"],
-      ["fetch", "Fetching"],
-      ["quiet", "Quiet hours"],
-      ["editors", "Editors & agents"],
-      ["devices", "Devices"],
-    ],
-  },
-  {
-    label: "Connections",
-    items: [
-      ["connections", "Sources"],
-      ["connect", "Apps"],
-    ],
-  },
-  {
-    label: "Data & housekeeping",
-    items: [
-      ["retention", "Data retention"],
-      ["completed", "Completed"],
-      ["trash", "Trash"],
-      ["brief", "Morning brief"],
-      ["nudges", "Quiet nudges"],
-      ["capture", "Quick capture"],
-      ["reminders", "Reminders"],
-      ["terminal", "Terminal & commits"],
-      ["danger", "Deleted & delete data"],
-    ],
-  },
-];
+const PROVIDER_NAMES: Record<string, string> = {
+  google: "Google Workspace",
+  microsoft: "Microsoft 365",
+  github: "GitHub",
+  notion: "Notion",
+  linear: "Linear",
+  slack: "Slack",
+  atlassian: "Jira",
+  zoom: "Zoom",
+  docusign: "DocuSign",
+};
 
 type Plain = Record<string, unknown>;
 const isPlain = (value: unknown): value is Plain => typeof value === "object" && value !== null && !Array.isArray(value);
@@ -73,88 +41,61 @@ export default function SettingsPage() {
   const client = useQueryClient();
   const toast = useToast();
   const query = useQuery({ queryKey: ["settings"], queryFn: api.settings });
+  const location = useSettingsLocation();
   const [draft, setDraft] = useState<Settings | null>(null);
-  const [focus, setFocus] = useState("");
-  const [active, setActive] = useState("account");
   const [saving, setSaving] = useState<"idle" | "saving" | "saved">("idle");
-  const [onMac, setOnMac] = useState(false);
   const pending = useRef<Plain>({});
   const timer = useRef<number | undefined>(undefined);
   const mainRef = useRef<HTMLDivElement>(null);
-  const pinnedNav = useRef<string | null>(null);
+  const scrolled = useRef<string | null>(null);
 
   useEffect(() => {
     if (query.data && !draft) setDraft(query.data.settings);
   }, [query.data, draft]);
 
-  useEffect(() => setOnMac(desktopShell()), []);
-
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const connected = params.get("connected");
-    const failed = params.get("connectError");
-    if (connected) {
-      toast(connected === "google" ? "Signed in with Google. Gmail and Calendar are on." : `${connected} connected.`, { tone: "ok" });
-    }
+    const url = new URL(window.location.href);
+    const connected = url.searchParams.get("connected");
+    const failed = url.searchParams.get("connectError");
+    if (connected) toast(`${PROVIDER_NAMES[connected] ?? connected} connected.`, { tone: "ok" });
     if (failed) toast(failed, { tone: "error" });
-    if (connected || failed) window.history.replaceState(null, "", `/settings${window.location.hash}`);
+    if (connected || failed) {
+      url.searchParams.delete("connected");
+      url.searchParams.delete("connectError");
+      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    }
+    // Old links (/settings#models) get their tab written into the address; the hash stays for the scroll.
+    if (!url.searchParams.get("tab")) navigateSettings({});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    const hash = window.location.hash.slice(1);
-    setFocus(hash);
-    if (hash) setActive(hash);
-  }, []);
+    if (location.anchor === "keys" || location.anchor === "changes") navigateSettings({ dialog: location.anchor, anchor: null });
+  }, [location.anchor]);
 
   useEffect(() => {
-    const root = mainRef.current;
-    if (!draft || !root) return;
-    const sections = () =>
-      NAV.flatMap((group) => group.items.map(([id]) => document.getElementById(id))).filter((node): node is HTMLElement => Boolean(node));
-    const sync = () => {
-      const list = sections();
-      if (!list.length) return;
-      const pinned = pinnedNav.current;
-      if (pinned && list.some((node) => node.id === pinned)) {
-        setActive(pinned);
-        return;
+    const anchor = location.anchor;
+    if (!draft || !anchor) return;
+    const key = `${location.tab}#${anchor}`;
+    if (scrolled.current === key) return;
+    let tries = 0;
+    const timer = window.setInterval(() => {
+      const node = document.getElementById(anchor);
+      tries += 1;
+      if (node) {
+        scrolled.current = key;
+        node.scrollIntoView?.({ block: "start" });
       }
-      const atBottom = root.scrollTop + root.clientHeight >= root.scrollHeight - 8;
-      if (atBottom) {
-        setActive(list[list.length - 1]!.id);
-        return;
-      }
-      const edge = root.getBoundingClientRect().top + 32;
-      let current = list[0]!.id;
-      for (const node of list) {
-        if (node.getBoundingClientRect().top <= edge) current = node.id;
-      }
-      setActive(current);
-    };
-    const release = () => {
-      pinnedNav.current = null;
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "PageDown" || event.key === "PageUp" || event.key === "Home" || event.key === "End" || event.key === " ") {
-        pinnedNav.current = null;
-      }
-    };
-    root.addEventListener("scroll", sync, { passive: true });
-    root.addEventListener("wheel", release, { passive: true });
-    root.addEventListener("touchmove", release, { passive: true });
-    root.addEventListener("keydown", onKey);
-    const mutations = new MutationObserver(sync);
-    mutations.observe(root, { childList: true, subtree: true });
-    sync();
-    return () => {
-      root.removeEventListener("scroll", sync);
-      root.removeEventListener("wheel", release);
-      root.removeEventListener("touchmove", release);
-      root.removeEventListener("keydown", onKey);
-      mutations.disconnect();
-    };
-  }, [draft]);
+      if (node || tries > 60) window.clearInterval(timer);
+    }, 50);
+    return () => window.clearInterval(timer);
+  }, [draft, location.tab, location.anchor]);
+
+  const selectTab = useCallback((tab: SettingsTab) => {
+    scrolled.current = null;
+    navigateSettings({ tab, anchor: null, dialog: null, store: null, connector: null }, "push");
+    mainRef.current?.scrollTo?.({ top: 0 });
+  }, []);
 
   const flush = useCallback(async () => {
     const patch = pending.current;
@@ -199,68 +140,48 @@ export default function SettingsPage() {
       </div>
     );
   }
-  if (!draft) return <div className="mx-auto max-w-[760px] px-8 pt-8"><SkeletonRows count={6} /></div>;
 
+  const props = draft ? { settings: draft, patch } : null;
   return (
     <div className="absolute inset-0 overflow-hidden">
-      <div className="mx-auto flex h-full max-w-[1100px] gap-10 px-10">
-        <div ref={mainRef} className="min-w-0 max-w-[760px] flex-1 overflow-y-auto py-8" data-settings-main>
+      <div ref={mainRef} className="h-full overflow-y-auto" data-settings-main>
+        <div className="mx-auto w-full max-w-[1060px] px-4 pb-16 pt-6 sm:px-6 lg:px-10 lg:pt-8">
           <PageHeader
             title="Settings"
-            description="Make Ensemble work your way. Choose your appearance, connect your tools, and stay in control of the agent."
-            actions={<span className="text-[12px] text-muted">{saving === "saving" ? "Saving…" : saving === "saved" ? "All settings saved" : ""}</span>}
+            description="Make Ensemble work your way: your account, the assistant, the apps it connects to, and your data."
+            actions={
+              <span className="text-[12px] text-muted" aria-live="polite">
+                {saving === "saving" ? "Saving…" : saving === "saved" ? "All settings saved" : ""}
+              </span>
+            }
           />
-          <div className="space-y-5 pb-16">
-            <h2 className="page-kicker">You</h2>
-            <div id="account" className="scroll-mt-6"><AccountSection /></div>
-            <div id="features" className="scroll-mt-6"><FeaturesSection /></div>
-            <div id="appearance" className="scroll-mt-6"><AppearanceSection patch={patch} /></div>
-            <SettingsBelow settings={draft} patch={patch} focus={focus} />
+          <div className="lg:grid lg:grid-cols-[196px_minmax(0,1fr)] lg:gap-10">
+            <div className="sticky top-0 z-20 -mx-4 mb-4 border-b border-line bg-bg/95 px-4 py-2 backdrop-blur sm:-mx-6 sm:px-6 lg:top-8 lg:mx-0 lg:mb-0 lg:self-start lg:border-0 lg:bg-transparent lg:p-0 lg:backdrop-blur-none">
+              <SettingsTabs value={location.tab} onChange={selectTab} />
+            </div>
+            <div
+              role="tabpanel"
+              id="settings-panel"
+              aria-labelledby={`settings-tab-${location.tab}`}
+              className="min-w-0 max-w-[760px] space-y-5"
+              data-settings-tab={location.tab}
+            >
+              {!props ? (
+                <SkeletonRows count={6} />
+              ) : location.tab === "assistant" ? (
+                <AssistantTab {...props} />
+              ) : location.tab === "connections" ? (
+                <ConnectionsTab {...props} />
+              ) : location.tab === "notifications" ? (
+                <NotificationsTab {...props} />
+              ) : location.tab === "data" ? (
+                <DataTab {...props} />
+              ) : (
+                <AccountTab {...props} />
+              )}
+            </div>
           </div>
         </div>
-        <nav className="hidden h-full w-52 shrink-0 overflow-y-auto py-8 text-[12.5px] xl:block" aria-label="Settings sections" data-settings-nav>
-          {onMac ? (
-            <div className="mb-3">
-              <div className="page-kicker px-2 pb-1">This Mac</div>
-              <a
-                href="#this-mac"
-                aria-current={active === "this-mac" ? "true" : undefined}
-                className={`row-tile block rounded px-2 py-1 hover:text-ink ${active === "this-mac" ? "bg-accent-soft text-ink" : "text-muted"}`}
-                onClick={(event) => {
-                  event.preventDefault();
-                  pinnedNav.current = "this-mac";
-                  setActive("this-mac");
-                  document.getElementById("this-mac")?.scrollIntoView({ block: "start" });
-                  window.history.replaceState(null, "", "#this-mac");
-                }}
-              >
-                Remote tasks
-              </a>
-            </div>
-          ) : null}
-          {NAV.map((group) => (
-            <div key={group.label} className="mb-3">
-              <div className="page-kicker px-2 pb-1">{group.label}</div>
-              {group.items.map(([id, label]) => (
-                <a
-                  key={id}
-                  href={`#${id}`}
-                  aria-current={active === id ? "true" : undefined}
-                  className={`row-tile block rounded px-2 py-1 hover:text-ink ${active === id ? "bg-accent-soft text-ink" : "text-muted"}`}
-                  onClick={(event) => {
-                    event.preventDefault();
-                    pinnedNav.current = id;
-                    setActive(id);
-                    document.getElementById(id)?.scrollIntoView({ block: "start" });
-                    window.history.replaceState(null, "", `#${id}`);
-                  }}
-                >
-                  {label}
-                </a>
-              ))}
-            </div>
-          ))}
-        </nav>
       </div>
     </div>
   );

@@ -11,6 +11,8 @@ import { getAccount, oauthApp, type AccountProvider } from "./accounts.js";
 import { syncGitHub } from "./github.js";
 import { syncCalendar, syncGmail } from "./google.js";
 import { syncLinear } from "./linear.js";
+import { MEETING_SOURCES } from "./meetings/index.js";
+import { syncOutlook, syncOutlookCalendar, syncTeams } from "./microsoft.js";
 import { syncSlack } from "./slack.js";
 import type { SyncContext, SyncResult } from "./types.js";
 
@@ -37,7 +39,7 @@ const ALL: readonly Connector[] = [
     description: "Threads you are on, read-only. Asks become proposed todos; replies are drafted and need your approval.",
     account: "google",
     connect: "oauth",
-    setupHint: "Sign in with Google and allow read-only access. That connects Gmail and Calendar together.",
+    setupHint: "Connect Google Workspace with Gmail switched on.",
     sync: syncGmail,
   },
   {
@@ -47,7 +49,7 @@ const ALL: readonly Connector[] = [
     description: "Last week to three weeks out, for the Today calendar and meeting context.",
     account: "google",
     connect: "oauth",
-    setupHint: "Included when you sign in with Google.",
+    setupHint: "Connect Google Workspace with Google Calendar switched on.",
     sync: syncCalendar,
   },
   {
@@ -84,29 +86,44 @@ const ALL: readonly Connector[] = [
     id: "outlook",
     label: "Outlook mail",
     group: "mail",
-    description: "Microsoft 365 mail via Graph, read-only.",
+    description: "Inbox and sent mail you are on, read-only. Asks become proposed todos.",
     account: "microsoft",
-    connect: "later",
-    setupHint: "Not built yet. Outlook, Outlook calendar and Teams come after the Google connectors.",
+    connect: "oauth",
+    setupHint: "Connect Microsoft 365 with Outlook mail switched on.",
+    sync: syncOutlook,
   },
   {
     id: "outlook_calendar",
     label: "Outlook calendar",
     group: "calendar",
-    description: "Meetings and join links for the Today calendar.",
+    description: "Last week to three weeks out, with join links, for the Today calendar and meeting context.",
     account: "microsoft",
-    connect: "later",
-    setupHint: "Not built yet.",
+    connect: "oauth",
+    setupHint: "Connect Microsoft 365 with Outlook calendar switched on.",
+    sync: syncOutlookCalendar,
   },
   {
     id: "teams",
     label: "Teams",
     group: "chat",
-    description: "Chats and channel threads that mention you.",
+    description: "Your one-to-one and group chats. Direct asks and mentions become proposed todos. Work or school accounts only.",
     account: "microsoft",
-    connect: "later",
-    setupHint: "Not built yet.",
+    connect: "oauth",
+    setupHint: "Connect Microsoft 365 with Teams switched on (work or school account).",
+    sync: syncTeams,
   },
+  ...MEETING_SOURCES.map(
+    (source): Connector => ({
+      id: source.id,
+      label: source.label,
+      group: "notes",
+      description: "Meeting transcripts and summaries, matched to your calendar. Action items for you become proposed todos that cite the meeting.",
+      account: source.id,
+      connect: "token",
+      setupHint: source.setupHint,
+      sync: source.sync,
+    }),
+  ),
   {
     id: "meeting_notes",
     label: "Meeting notes",

@@ -51,6 +51,11 @@ import { widgetRoutes } from "./routes/widgets.js";
 import { deskRoutes } from "./routes/desk.js";
 import { cliAuthRoutes } from "./routes/cli-auth.js";
 import { mcpRoutes } from "./routes/mcp.js";
+import { mcpConnectionRoutes } from "./routes/mcp-connections.js";
+import { importRoutes } from "./routes/imports.js";
+import { peopleIdentityRoutes } from "./routes/people-identity.js";
+import { projectLinkRoutes } from "./routes/project-links.js";
+import { meetingNoteRoutes } from "./routes/meeting-notes.js";
 import { bridgeMethodRejected, deviceTokenRejected, readOnlyTokenRejected } from "./bridge/auth.js";
 import { deviceRoutes } from "./devices/routes.js";
 import { remoteRoutes } from "./remote/routes.js";
@@ -218,6 +223,11 @@ export async function buildApp(options: BuildAppOptions = {}) {
     deskRoutes,
     cliAuthRoutes,
     mcpRoutes,
+    mcpConnectionRoutes,
+    importRoutes,
+    peopleIdentityRoutes,
+    projectLinkRoutes,
+    meetingNoteRoutes,
   ]) {
     if (routes === authOAuthRoutes) await app.register(authOAuthRoutes, options.authOAuth ?? {});
     else await app.register(routes);

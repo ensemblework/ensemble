@@ -18,14 +18,16 @@ test("Settings.parse fills actAs when the assistant block is omitted or partial"
   assert.equal(Settings.parse({ assistant: { actAs: "lawyer" } }).assistant.actAs, "lawyer");
 });
 
-test("presets change the prompt and the suggestions, and say they do not change permissions", () => {
+test("presets change the prompt and the suggestions, and describe the person instead of assigning a role", () => {
   for (const actAs of ["general", "student", "engineer", "teacher", "lawyer"] as const) {
-    const block = personaBlock(actAs);
-    assert.match(block, new RegExp(`Act as: ${actAs}`));
-    assert.match(block, /does not change permissions/);
+    const block = personaBlock(actAs, "Mira Chen");
+    assert.doesNotMatch(block, /Act as|You are/);
+    assert.doesNotMatch(block, /permission|allowedWriteAreas|tool registry/i);
+    assert.match(block, /Web research must show sources\./);
     assert.ok(quickActions(actAs, "board").length > 0);
   }
-  assert.match(personaBlock("student"), /Quiz from the notes/);
+  assert.match(personaBlock("lawyer", "Mira Chen"), /^Mira works as a lawyer; they usually want /);
+  assert.match(personaBlock("student"), /quizzes from their notes/);
   assert.match(personaBlock("engineer"), /who knows this code/i);
   assert.match(personaBlock("teacher"), /falling behind/);
   assert.match(personaBlock("lawyer"), /obligations/);

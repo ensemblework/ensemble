@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { PageHeader, SkeletonRows } from "@/components/ui";
+import { ImportedMeetingNotes } from "@/components/meetings/imported-notes";
 import { useToast } from "@/components/toast";
 import { api } from "@/lib/api";
 import { whenLabel } from "@/lib/format";
@@ -110,6 +111,7 @@ function MeetingsBody() {
           </ul>
         </div>
       ) : null}
+      <ImportedMeetingNotes />
       {list.isLoading && !list.data ? (
         <SkeletonRows count={3} />
       ) : sessions.length === 0 && !session ? (

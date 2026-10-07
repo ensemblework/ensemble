@@ -13,7 +13,7 @@ import { StatusPill } from "./bits";
 import { BridgeKey } from "./bridge-key";
 import { AppMark } from "./logos";
 
-export function ConnectPage({ embedded = false }: { embedded?: boolean }) {
+export function ConnectPage() {
   const toast = useToast();
   const bridge = useQuery({
     queryKey: ["connect-bridge"],
@@ -26,20 +26,11 @@ export function ConnectPage({ embedded = false }: { embedded?: boolean }) {
   const state = bridge.isLoading ? "loading" : (bridge.data?.state ?? "not_running");
 
   return (
-    <div className={embedded ? "" : "mx-auto max-w-[1040px] px-6 pb-24 pt-8 md:px-10"}>
-      {embedded ? (
-        <section className="tile section mb-5">
-          <h2 className="text-[17px] font-semibold">Apps</h2>
-          <p className="mt-1 text-[13px] leading-5 text-muted">
-            Let the apps you already use look at your Ensemble. They can read. They cannot change anything.
-          </p>
-        </section>
-      ) : (
+    <div className="mx-auto max-w-[1040px] px-6 pb-24 pt-8 md:px-10">
       <PageHeader
         title="Connect your apps"
         description="Let the apps you already use look at your Ensemble, tasks, people, meetings, and today’s plan. They can read. They cannot change anything."
       />
-      )}
       {state === "connected" || state === "running" ? (
         <div className="mb-6 -mt-3">
           <StatusPill state={state} />

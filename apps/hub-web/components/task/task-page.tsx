@@ -13,6 +13,7 @@ import {
   MessageSquare,
   Pin,
   PinOff,
+  Tag as TagIcon,
   Trash2,
   User,
   Users,
@@ -38,6 +39,8 @@ import { useModuleOn } from "@/lib/use-module";
 import { InlineEdit, MenuItem, Popover, PriorityTag, Tag, cx } from "../ui";
 import { PageTitleField } from "../pages/title-field";
 import { isPageEnsembleBusy } from "../comments/ensemble-bus";
+import { LabelEditor } from "./labels";
+import { FromMeeting } from "../meetings/from-meeting";
 
 type SaveState = "saved" | "saving" | "dirty" | "error";
 
@@ -454,6 +457,10 @@ export function TaskPage({ taskId, variant }: { taskId: string; variant: "peek" 
           />
         </PropertyRow>
 
+        <PropertyRow icon={TagIcon} label="Labels">
+          <LabelEditor labels={record.labels ?? []} onChange={(labels) => update.mutate({ labels })} />
+        </PropertyRow>
+
         <PropertyRow icon={FolderKanban} label="Project">
           <Popover
             trigger={(_open, toggle) => (
@@ -627,6 +634,7 @@ export function TaskPage({ taskId, variant }: { taskId: string; variant: "peek" 
               }
             </Popover>
           </PropertyRow>
+          {record.meetingNoteId ? <FromMeeting meetingNoteId={record.meetingNoteId} /> : null}
           {record.sourceUrl ? (
             <PropertyRow icon={ExternalLink} label="Source">
               <a href={record.sourceUrl} target="_blank" rel="noreferrer" className="row-tile -mx-1.5 rounded px-1.5 py-0.5 text-accent">

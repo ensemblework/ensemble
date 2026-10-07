@@ -5,7 +5,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
-import { ActAs, MODULE_DENIED, hasModule, personaBlock, type AssistantToolCall } from "@ensemble/shared-types";
+import { ActAs, MODULE_DENIED, hasModule, type AssistantToolCall } from "@ensemble/shared-types";
 import { runAssistantTurn } from "../assistant/agent.js";
 import { loadSettings } from "../lib/settings.js";
 import { citeAnswer } from "../ensemble/citations.js";
@@ -135,7 +135,7 @@ export async function ensembleRoutes(app: FastifyInstance): Promise<void> {
         model: tier.model,
         provider: tier.provider,
         reasoningEffort: tier.effort !== "default" ? tier.effort : undefined,
-        preamble: personaBlock(actAs),
+        actAs,
         referenceContext: context.facts,
         signal: abort.signal,
         emit(frame) {

@@ -105,12 +105,12 @@ The authoritative copy is `.env.example` in the repo root; every variable there 
 | Service tokens and secrets | `ENSEMBLE_INTERNAL_TOKEN`, `ENSEMBLE_BRIDGE_TOKEN`, `ENSEMBLE_SECRET_KEY` |
 | Workspace and logs | `ENSEMBLE_WORKSPACE_ROOT`, `ENSEMBLE_WORKSPACE_IMAGE`, `ENSEMBLE_LOG_LEVEL`, `ENSEMBLE_LOG_TO_FILE`, `ENSEMBLE_LOG_RETENTION_DAYS`, `ENSEMBLE_FEATURES` |
 | Models | `ENSEMBLE_LLM_PROVIDER`, `GOOGLE_API_KEY` / `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `CURSOR_API_KEY`, `COPILOT_API_KEY`, `GITHUB_TOKEN`, `ENSEMBLE_MODEL_*`, `ENSEMBLE_EMBEDDING_MODEL` |
-| Connectors | `GOOGLE_CLIENT_ID/SECRET`, `MICROSOFT_TENANT_ID/CLIENT_ID/CLIENT_SECRET`, `GITHUB_ORG`, `GITHUB_APP_*`, `GITHUB_CLIENT_ID/SECRET`, `SLACK_USER_TOKEN`, `LINEAR_API_KEY` |
+| Connectors | OAuth apps: `GOOGLE_CLIENT_ID/SECRET`, `MICROSOFT_CLIENT_ID/SECRET` (+ optional `MICROSOFT_TENANT_ID`, default `common`), `GITHUB_CLIENT_ID/SECRET` (each falls back to the matching `AUTH_*` sign-in app), `LINEAR_CLIENT_ID/SECRET`, `NOTION_CLIENT_ID/SECRET`, `ATLASSIAN_CLIENT_ID/SECRET`, `SLACK_CLIENT_ID/SECRET`, `ZOOM_CLIENT_ID/SECRET`, `DOCUSIGN_CLIENT_ID/SECRET` with `DOCUSIGN_ENV=demo\|production`; Google Picker `GOOGLE_PICKER_API_KEY`, `GOOGLE_PROJECT_NUMBER`; `ENSEMBLE_SCHEDULED_FETCH` (`off` by default; `on` restores scheduled fetching); `GITHUB_ORG`, `GITHUB_APP_*`; operator/local-only fallbacks `SLACK_USER_TOKEN`, `LINEAR_API_KEY`. Redirect URI `HUB_API_PUBLIC_URL/api/connectors/<provider>/callback` ([03 §2.1](03_MODULE_CONTEXT_ENGINE.md#21-connector-store-oauth-apps-products-and-tokens)) |
 | Limits and health | `ENSEMBLE_PLOT_CONCURRENCY`, `ENSEMBLE_PLOT_MEMORY_MIB` (64-2048, default 2048; Linux address space / Mac sampled resident memory), `ENSEMBLE_RATE_*` (including `ENSEMBLE_RATE_CLI_START_*`, `ENSEMBLE_RATE_CLI_TOKEN_*`, `ENSEMBLE_RATE_CLI_APPROVE_*` and `ENSEMBLE_RATE_MCP_*`), `ENSEMBLE_HEALTH_*` |
 | Sidecar (desktop app and CLI runner) | `ENSEMBLE_DATA_DIR`, `ENSEMBLE_SECRET_KEY_FILE` (defaults to `secret.key` beside the data folder), `ENSEMBLE_REMOTE_STATE_DIR`, `ENSEMBLE_DISCOVERY_FILE`, `ENSEMBLE_REMOTE_LOOP=off` and `ENSEMBLE_AGENT_QUEUE=off` (an admin-only sidecar that never claims hosted work), `ENSEMBLE_SCHEDULER=off` |
-| Hosted account quotas | `ENSEMBLE_MAX_CONNECTORS` (5), `ENSEMBLE_MAX_JOBS_PER_DAY` (50, UTC), `ENSEMBLE_MAX_DATASET_BYTES` / `ENSEMBLE_MAX_DOCUMENT_BYTES` (104857600 each); positive integers |
+| Hosted account quotas | `ENSEMBLE_MAX_CONNECTORS` (25 connected accounts and 25 enabled sync sources), `ENSEMBLE_MAX_JOBS_PER_DAY` (50, UTC), `ENSEMBLE_MAX_DATASET_BYTES` / `ENSEMBLE_MAX_DOCUMENT_BYTES` (104857600 each); positive integers |
 
-A key pasted in Settings → Models wins over the same key in `.env`. In hosted production, environment/host CLI credentials are available only to verified exact `ENSEMBLE_OPERATOR_EMAILS` accounts; public accounts must bring their own key. Local development and desktop keep their existing fallback behavior. Login scopes are identity-only and never implicitly authorize a connector.
+A key pasted in Settings → Assistant → Models → Manage keys wins over the same key in `.env`. In hosted production, environment/host CLI credentials are available only to verified exact `ENSEMBLE_OPERATOR_EMAILS` accounts; public accounts must bring their own key. Local development and desktop keep their existing fallback behavior. Login scopes are identity-only and never implicitly authorize a connector; the Google, Microsoft and GitHub connectors may reuse the sign-in OAuth client, but each person still approves the connector's own scopes.
 
 The hosted terminal needs both `ENSEMBLE_TERMINAL=on` and operator access; `off` overrides user settings. All hosted Ollama/custom provider proxies are operator-only in this first release, including public custom proxy URLs; nonoperators can use Ollama on their paired computer. Account-email requests use `ENSEMBLE_RATE_EMAIL_LIMIT=5` per hour per IP by default; the signup/login buckets cover social initiation and recovery too.
 
@@ -137,8 +137,8 @@ From the `package.json` and `pyproject.toml` files; check those for exact versio
 
 ### TypeScript
 
-- **hub-web:** `next` 15, `react` 19, Tailwind, `@tanstack/react-query`, `@dnd-kit/*`, TipTap (`@tiptap/*`, document pages), CodeMirror (`@codemirror/*`, `@uiw/react-codemirror`, Code tab and plot code), `echarts` (Plots), `@xyflow/react` (graphs), `lucide-react`, `jspdf`, `@simplewebauthn/browser` (passkeys)
-- **hub-api:** `fastify` (+ `@fastify/cors`, `@fastify/compress`), `@prisma/client`, `zod`, `ioredis`, `pino`, `@simplewebauthn/server`, `fflate`, `jose` (OIDC JWT/JWKS validation); `@electric-sql/pglite` + `pglite-prisma-adapter` for the desktop build
+- **hub-web:** `next` 15, `react` 19, Tailwind, `@tanstack/react-query`, `@dnd-kit/*`, TipTap (`@tiptap/*`, document pages), CodeMirror (`@codemirror/*`, `@uiw/react-codemirror`, Code tab and plot code), `echarts` (Plots), `@xyflow/react` (graphs), `lucide-react`, `simple-icons` (CC0 connector logos, imported one icon at a time), `jspdf`, `@simplewebauthn/browser` (passkeys)
+- **hub-api:** `fastify` (+ `@fastify/cors`, `@fastify/compress`), `@prisma/client`, `zod`, `ioredis`, `pino`, `@simplewebauthn/server`, `fflate` (zips, including import uploads), `papaparse` (CSV/TSV imports, MIT), `jose` (OIDC JWT/JWKS validation), `docx` + `exceljs` + `pptxgenjs` (Word, Excel and PowerPoint files the assistant writes, `src/lib/office/`); `@electric-sql/pglite` + `pglite-prisma-adapter` for the desktop build
 - SSE is implemented directly on the Fastify reply (`apps/hub-api/src/lib/sse.ts`) — there is no official `@fastify/sse` package, and a small hub avoids a third-party dep for something this simple.
 - **context-bridge:** `@modelcontextprotocol/sdk`
 - **block-diagrams:** `elkjs` for layout
@@ -169,7 +169,7 @@ Ensemble uses the engineer's **GitHub Copilot subscription through HTTP APIs, no
 
 ### 6.1 Complexity picks the model
 
-Every task carries a **complexity**. *Settings → Models by complexity* maps Low, Medium, High and Max to a `{model, reasoningEffort?}` profile. Only assignment offers custom overrides; other surfaces resolve a tier. The internal `easy` key remains compatible with older tasks and settings.
+Every task carries a **complexity**. *Settings → Assistant → Models* ("Which model each tier uses") maps Low, Medium, High and Max to a `{model, reasoningEffort?}` profile. Only assignment offers custom overrides; other surfaces resolve a tier. The internal `easy` key remains compatible with older tasks and settings.
 
 | Tier | Default model | Use for |
 |---|---|---|

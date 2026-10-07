@@ -12,7 +12,7 @@ export interface SyncContext {
 /** A todo a connector can propose without asking a model (assigned issue, review request). */
 export interface Proposal {
   sourceRef: string;
-  sourceKind: "email" | "slack" | "meeting" | "github" | "linear" | "other";
+  sourceKind: "email" | "slack" | "teams" | "meeting" | "github" | "linear" | "other";
   title: string;
   description: string;
   sourceUrl?: string | null;
@@ -23,6 +23,12 @@ export interface Proposal {
   repoId?: string | null;
   artifactId: string;
   rationale: string;
+  /** Defaults to the project a link gave the artifact. */
+  projectId?: string | null;
+  /** Action items cite the meeting they came from. */
+  meetingNoteId?: string | null;
+  /** False when one artifact backs several proposals (a transcript's action items); the artifact then keeps no single task. */
+  linkArtifact?: boolean;
 }
 
 export interface SyncResult {

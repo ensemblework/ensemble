@@ -63,28 +63,43 @@ function summaries(calls: ReplyCall[]): string {
     .join("; ");
 }
 
+const NOT_APPLIED_LINE = /\n{0,2}Not applied: .*$/gm;
+
 /**
  * After Apply, the saved sentence must not still say nothing has changed.
- * A partial apply names what landed and what is still waiting.
+ * A partial apply names what landed and what is still waiting. `notApplied`
+ * are the calls this Apply tried and could not make; they are named too, so
+ * the reply never implies the whole batch landed.
  */
-export function replyAfterApply(content: string, calls: ReplyCall[]): string {
+export function replyAfterApply(content: string, calls: ReplyCall[], notApplied: ReplyCall[] = []): string {
   const writes = calls.filter((call) => call.isWrite !== false);
   const pending = writes.filter((call) => call.state === "awaiting_approval");
   const applied = writes.filter((call) => call.state === "ok");
-  if (!applied.length) return content.trim();
+  if (!applied.length && !notApplied.length) return content.trim();
   const body = content
     .replace(STALE_APPLY_PROMPT, "\n\n")
     .replace(/\n{0,2}Applied: .*Still waiting — press Apply for .*\.?/g, "\n\n")
     .replace(PROPOSED_LINE, "")
+    .replace(NOT_APPLIED_LINE, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
+  const failedLine = notApplied.length
+    ? `Not applied: ${notApplied
+        .map((call) => (call.error || call.summary || call.name || "a change").trim().replace(/^Not applied:\s*/i, "").replace(/[.\s]+$/, ""))
+        .join("; ")}.`
+    : "";
+  const withFailures = (text: string) => (failedLine ? `${text}\n\n${failedLine}`.trim() : text);
+  if (!applied.length) {
+    const left = summaries(pending);
+    return withFailures(left ? `${body}\n\nStill waiting — press Apply for ${left}.`.trim() : body);
+  }
   if (pending.length === 0) {
     const detail = summaries(applied);
     const line = detail ? `Applied. ${detail}.` : "Applied.";
-    if (body.includes(line)) return body;
-    return `${body}\n\n${line}`.trim();
+    if (body.includes(line)) return withFailures(body);
+    return withFailures(`${body}\n\n${line}`.trim());
   }
   const done = summaries(applied) || "some changes";
   const left = summaries(pending) || "the rest";
-  return `${body}\n\nApplied: ${done}. Still waiting — press Apply for ${left}.`.trim();
+  return withFailures(`${body}\n\nApplied: ${done}. Still waiting — press Apply for ${left}.`.trim());
 }

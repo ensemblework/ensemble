@@ -4,13 +4,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, RotateCcw, Trash2, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import type { AssistantToolArea, Settings } from "@ensemble/shared-types";
+import type { Settings } from "@ensemble/shared-types";
 import { SHORTCUTS, formatBinding } from "@ensemble/shared-types";
-import { api, type Complexity } from "@/lib/api";
+import { api } from "@/lib/api";
 import { useModuleOn } from "@/lib/use-module";
 import { isApplePlatform } from "@/lib/platform";
-import { clockLabel, dateTime, plural, relative } from "@/lib/format";
-import { FetchGlyph } from "@/components/motion/slot";
+import { plural, relative } from "@/lib/format";
 import { useToast } from "../toast";
 import { TERMINAL_DESKTOP_BODY, TERMINAL_DESKTOP_TITLE, useDesktopShell } from "../code/terminal-desktop-note";
 import { currentTerminalAccess } from "../code/terminal-address";
@@ -136,208 +135,7 @@ export function PromptsSection() {
   );
 }
 
-// ── models ─────────────────────────────────────────────────────────────────
-
-const TIERS: Array<{ id: Complexity; label: string; hint: string }> = [
-  { id: "easy", label: "Low model", hint: "Replies, triage, small edits." },
-  { id: "medium", label: "Medium model", hint: "Most delegated tasks." },
-  { id: "high", label: "High model", hint: "Refactors, investigations, multi-file changes." },
-  { id: "max", label: "Max model", hint: "Architecture, migrations and skill mining. Slowest, best." },
-];
-
-// ── assistant ─────────────────────────────────────────────────────────────
-
-const AREAS: Array<{ id: AssistantToolArea; label: string }> = [
-  { id: "tasks", label: "Tasks and pages" },
-  { id: "projects", label: "Projects and deliverables" },
-  { id: "context", label: "People, repos and context" },
-  { id: "skills", label: "Skills" },
-  { id: "reminders", label: "Reminders" },
-  { id: "runs", label: "Runs" },
-];
-
-function WatcherList() {
-  const client = useQueryClient();
-  const toast = useToast();
-  const watchers = useQuery({ queryKey: ["watchers"], queryFn: api.watchers });
-  const cancel = useMutation({
-    mutationFn: api.cancelWatcher,
-    onSuccess: () => {
-      toast("Watcher cancelled.");
-      void client.invalidateQueries({ queryKey: ["watchers"] });
-    },
-    onError: (error) => toast((error as Error).message, { tone: "error" }),
-  });
-  const rows = watchers.data?.watchers ?? [];
-  return (
-    <div className="mt-3">
-      <div className="text-[13px] font-medium">Watchers</div>
-      <div className="mt-1 text-[12.5px] text-muted">Conditions Ensemble is watching. Cancel one here or where you created it.</div>
-      {watchers.isLoading && !watchers.data ? (
-        <div className="mt-2 h-4 w-40 rounded bg-line" aria-hidden />
-      ) : rows.length === 0 ? (
-        <div className="mt-2 text-[12.5px] text-muted">No watchers yet.</div>
-      ) : (
-        <ul className="mt-2 space-y-1">
-          {rows.map((row) => (
-            <li key={row.id} className="flex items-center gap-2 text-[13px]">
-              <span className="min-w-0 flex-1 truncate">{row.message}</span>
-              <span className="text-[12px] text-muted">{row.status}</span>
-              {row.status === "active" ? (
-                <button type="button" className="btn h-7 px-2 text-[12px]" onClick={() => cancel.mutate(row.id)}>
-                  Cancel
-                </button>
-              ) : null}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-export function AssistantSection({ settings, patch }: Props) {
-  const assistant = settings.assistant;
-  return (
-    <SectionCard title="The assistant" description="The chat in the corner can change your board, projects, deliverables, context and skills. This decides whether it does so as it works, or asks you first.">
-      <SettingRow title="When it wants to change something" description="Preview shows what it wants to change and waits for you to press Apply in the chat.">
-        <select aria-label="Write policy" value={assistant.writePolicy} onChange={(event) => patch({ assistant: { writePolicy: event.target.value } })} className="field">
-          <option value="preview">Show me a preview first</option>
-          <option value="immediate">Just do it (undoable)</option>
-          <option value="needs-me">Queue it on Needs me</option>
-        </select>
-      </SettingRow>
-      <SettingRow title="Act as" description="Changes tone and suggested actions. It does not change what Ensemble can read or change.">
-        <select aria-label="Act as" value={assistant.actAs ?? "general"} onChange={(event) => patch({ assistant: { actAs: event.target.value } })} className="field">
-          <option value="general">General</option>
-          <option value="student">Student</option>
-          <option value="engineer">Engineer</option>
-          <option value="teacher">Teacher</option>
-          <option value="lawyer">Lawyer</option>
-        </select>
-      </SettingRow>
-      <WatcherList />
-      <SettingRow title="Default model preset">
-        <select aria-label="Default complexity" value={assistant.defaultTier} onChange={(event) => patch({ assistant: { defaultTier: event.target.value } })} className="field">
-          {TIERS.map((tier) => (
-            <option key={tier.id} value={tier.id}>
-              {tier.label.replace(" model", "")} · {settings.models[tier.id].model}
-            </option>
-          ))}
-        </select>
-      </SettingRow>
-      <div className="mt-2 text-[13px] font-medium">What it may change</div>
-      <div className="mt-2 grid grid-cols-2 gap-2">
-        {AREAS.map((area) => {
-          const on = assistant.allowedWriteAreas.includes(area.id);
-          return (
-            <label key={area.id} className="flex items-center gap-2 text-[13px]">
-              <input
-                type="checkbox"
-                checked={on}
-                onChange={() =>
-                  patch({
-                    assistant: {
-                      allowedWriteAreas: on ? assistant.allowedWriteAreas.filter((value) => value !== area.id) : [...assistant.allowedWriteAreas, area.id],
-                    },
-                  })
-                }
-                className="accent-[rgb(var(--accent-rgb))]"
-              />
-              {area.label}
-            </label>
-          );
-        })}
-      </div>
-      <p className="mt-3 text-[12px] text-muted">
-        This covers your own data, which can always be undone from the app bar. Anything that leaves the building, sending mail, opening a pull request, posting to chat, keeps its own approval gate whatever this is set to.
-      </p>
-    </SectionCard>
-  );
-}
-
-// ── fetch schedule & quiet hours ───────────────────────────────────────────
-
-export function FetchSection({ settings, patch }: Props) {
-  const client = useQueryClient();
-  const toast = useToast();
-  const connections = useQuery({ queryKey: ["connections"], queryFn: api.connections });
-  const fetchNow = useMutation({
-    mutationFn: api.fetchNow,
-    onSuccess: (result) => {
-      toast(result.message ?? `Fetched ${plural(result.results.length, "source")}.`);
-      void client.invalidateQueries();
-    },
-  });
-  const fetch = settings.fetch;
-  const nextFetch = (() => {
-    if (!fetch.scheduled || !fetch.times.length) return null;
-    const now = new Date();
-    for (let day = 0; day < 2; day += 1) {
-      for (const time of [...fetch.times].sort()) {
-        const [h, m] = time.split(":").map(Number);
-        const candidate = new Date(now);
-        candidate.setDate(now.getDate() + day);
-        candidate.setHours(h!, m!, 0, 0);
-        if (candidate > now) return candidate;
-      }
-    }
-    return null;
-  })();
-  return (
-    <SectionCard
-      title="When Ensemble fetches"
-      description="Twice a day, and whenever you press the button. Ensemble does not watch your mailbox or calendar in the background."
-      actions={
-        <button type="button" className="btn-primary" onClick={() => fetchNow.mutate()} disabled={fetchNow.isPending}>
-          <FetchGlyph active={fetchNow.isPending} size={12} /> Fetch now
-        </button>
-      }
-    >
-      <SettingRow title="Scheduled fetching" description={nextFetch ? `Next fetch ${dateTime(nextFetch)}` : "Off, fetch only when you press the button."}>
-        <Toggle label="Scheduled fetch" checked={fetch.scheduled} onChange={(scheduled) => patch({ fetch: { scheduled } })} />
-      </SettingRow>
-      <SettingRow title="Times" description={`Your local time (${settings.timezone}). Morning between ${clockLabel("08:00")} and ${clockLabel("10:00")}, afternoon between ${clockLabel("15:00")} and ${clockLabel("17:00")}, is what most days want.`}>
-        <div className="flex items-center gap-2">
-          {fetch.times.map((time, index) => (
-            <span key={index} className="flex items-center gap-1">
-              <input
-                type="time"
-                aria-label={`Fetch time ${index + 1}`}
-                value={time}
-                onChange={(event) => patch({ fetch: { times: fetch.times.map((value, i) => (i === index ? event.target.value : value)) } })}
-                className="field [color-scheme:dark]"
-              />
-              {fetch.times.length > 1 ? (
-                <button type="button" className="icon-btn h-6 w-6" onClick={() => patch({ fetch: { times: fetch.times.filter((_, i) => i !== index) } })}>
-                  <X size={12} />
-                </button>
-              ) : null}
-            </span>
-          ))}
-          {fetch.times.length < 4 ? (
-            <button type="button" className="btn-ghost" onClick={() => patch({ fetch: { times: [...fetch.times, "12:00"] } })}>
-              + time
-            </button>
-          ) : null}
-        </div>
-      </SettingRow>
-      <SettingRow title="Look back" description="How far back the first fetch after a gap reads.">
-        <select aria-label="Fetch look-back days" value={fetch.lookbackDays} onChange={(event) => patch({ fetch: { lookbackDays: Number(event.target.value) } })} className="field">
-          {[1, 2, 3, 7, 14, 30].map((days) => (
-            <option key={days} value={days}>
-              {days} day{days === 1 ? "" : "s"}
-            </option>
-          ))}
-        </select>
-      </SettingRow>
-      <SettingRow title="Propose todos from what was read" description="New items that need you become proposed todos on Today. Off means context only.">
-        <Toggle label="Propose todos" checked={fetch.proposeTodos} onChange={(proposeTodos) => patch({ fetch: { proposeTodos } })} />
-      </SettingRow>
-      <div className="mt-2 text-[12.5px] text-muted">Last fetch: {connections.data?.lastFetch ? dateTime(connections.data.lastFetch) : "never"}</div>
-    </SectionCard>
-  );
-}
+// ── quiet hours ────────────────────────────────────────────────────────────
 
 export function QuietHoursSection({ settings, patch }: Props) {
   return (
@@ -353,7 +151,9 @@ export function QuietHoursSection({ settings, patch }: Props) {
   );
 }
 
-export { ConnectionsSection, ModelsSection } from "./setup";
+export { ModelsSection } from "./models";
+export { AssistantSection } from "./assistant";
+export { FetchSection } from "./fetching";
 
 // ── retention, reminders, terminal ─────────────────────────────────────────
 

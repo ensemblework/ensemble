@@ -11,7 +11,7 @@ import { Mark } from "../mark";
 import { API, ApiError, api, type AssistantMessageRecord, type AssistantToolCallRecord, type Complexity, type Entity } from "@/lib/api";
 import { isSilentCancellation } from "@/lib/fetch-cancel";
 import { readSse } from "@/lib/sse";
-import { applyRepliesToCache } from "@/lib/assistant-apply";
+import { applyNotice, applyRepliesToCache } from "@/lib/assistant-apply";
 import { markModelOutOfQuota, quotaMessage, quotaSuffix, useQuotaMarks } from "@/lib/model-quota";
 import { AssistantAnswer, splitCutOffReply } from "./cut-off-notice";
 import { MarkdownText, choiceLines } from "../markdown-text";
@@ -205,7 +205,9 @@ function ApplyAll({ calls, conversationId }: { calls: AssistantToolCallRecord[];
           current ? applyRepliesToCache(current, result.replies) ?? current : current,
         );
       }
-      toast(result.summary || "Applied.", { tone: "ok" });
+      // A partial batch: the rows already show which calls landed and which failed; the toast says it too.
+      const notice = applyNotice(result);
+      toast(notice.text, { tone: notice.tone });
       void client.invalidateQueries();
     },
     onError: (error) => toast((error as Error).message, { tone: "error" }),

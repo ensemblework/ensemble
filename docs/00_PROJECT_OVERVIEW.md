@@ -150,6 +150,8 @@ Accounts are `User` rows scoped by `userId`, not organizations. `User.emailVerif
 
 The SQL migration `20261006010000_account_data_lifetime` adds cascading account-lifetime foreign keys to legacy `user_id` tables. They are `NOT VALID` so old placeholder/orphan data is preserved, but new writes require a live account. This stops in-flight work from recreating rows after account erasure; it is not row-level security. These keys exist only in SQL, not in `schema.prisma`, so `prisma migrate dev` and `prisma migrate diff` propose `DROP CONSTRAINT "<table>_account_lifetime_fkey"` for each one: delete those lines from any generated migration. `src/workspace/constraints.integration.test.ts` allows exactly that difference and fails on any other drift. Dev bypass creates a real local placeholder account before handling requests.
 
+The migration `20261007140000_identities_links_meetings` adds `person_identities` (every address and handle a person is known by), `project_links` (a source container mapped to a project), the calendar event, transcript and vendor id on `meeting_notes`, and `tasks.meeting_note_id` for action items that cite their meeting ([03 §2.3, §4.7, §4.8](03_MODULE_CONTEXT_ENGINE.md#23-meeting-notes-sources)).
+
 ```ts
 // packages/shared-types/src/domain.ts (abridged — keep, then generalize source kinds)
 type Task = {

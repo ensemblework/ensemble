@@ -22,3 +22,14 @@ export function applyRepliesToCache<T extends { messages: Array<{ id: string; co
   if (!changed) return current;
   return { ...current, messages };
 }
+
+/** One call of an Apply batch that did not land. `attempted` is false when it was never sent. */
+export type ApplyFailure = { callId: string | null; name: string; error: string; attempted: boolean };
+
+/** The toast after Apply: what landed, and when a batch only partly landed, what did not. */
+export function applyNotice(result: { summary?: string; partial?: boolean; failed?: ApplyFailure[] }): { text: string; tone: "ok" | "error" } {
+  const summary = result.summary?.trim() ?? "";
+  if (!result.partial || !result.failed?.length) return { text: summary || "Applied.", tone: "ok" };
+  const missed = result.failed.map((row) => row.error.trim().replace(/^Not applied:\s*/i, "").replace(/[.\s]+$/, "")).join("; ");
+  return { text: `${summary ? `${summary} ` : ""}Not applied: ${missed}.`, tone: "error" };
+}

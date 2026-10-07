@@ -5,7 +5,7 @@
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
 import type { FastifyInstance } from "fastify";
-import { ActAs, PageDocument, PageMention, documentMentions, personaBlock } from "@ensemble/shared-types";
+import { ActAs, PageDocument, PageMention, documentMentions } from "@ensemble/shared-types";
 import { pageText as documentText } from "../pages/markdown.js";
 import { runAssistantTurn } from "../assistant/agent.js";
 import { loadSettings } from "../lib/settings.js";
@@ -272,7 +272,8 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
         model: tier.model,
         provider: tier.provider,
         reasoningEffort: tier.effort !== "default" ? tier.effort : undefined,
-        preamble: `${personaBlock(body.actAs ?? settings.assistant.actAs)}\nThis is an inline page request. For a requested diagram or plot, create the artifact using the appropriate tool; the page attaches it below your answer. New diagrams and plots are authorized immediately, but other writes still follow the configured approval policy. For plots, read the mentioned dataset's actual columns with hub_get_dataset; never invent data.`,
+        actAs: body.actAs ?? settings.assistant.actAs,
+        preamble: `This is an inline page request. For a requested diagram or plot, create the artifact using the appropriate tool; the page attaches it below your answer. New diagrams and plots are authorized immediately, but other writes still follow the configured approval policy. For plots, read the mentioned dataset's actual columns with hub_get_dataset; never invent data.`,
         inlineArtifacts: true,
         mentions: [...new Map([...(body.mentions ?? []), ...(body.content ? documentMentions(body.content) : [])].map((mention) => [JSON.stringify([mention.kind, mention.id]), mention])).values()].slice(0, 40),
         referenceContext: [

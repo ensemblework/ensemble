@@ -1,6 +1,7 @@
 /**
- * In-process scheduler (docs/05 §2): the fetch times each person set, a daily
- * retention pass, and expiry of editor decisions nobody answered.
+ * In-process scheduler (docs/05 §2): the fetch times each person set (paused
+ * unless ENSEMBLE_SCHEDULED_FETCH=on), a daily retention pass, and expiry of
+ * editor decisions nobody answered.
  *
  * One minute tick. A slot runs once per user per local day, recorded in
  * sync_state so a restart inside the same minute does not run it twice.
@@ -19,6 +20,20 @@ import { dispatchDueReminders, runRetention } from "./retention.js";
 import { markSchedulerEnabled, markSchedulerTick } from "./scheduler-clock.js";
 
 const RETENTION_TIME = "03:30";
+
+/**
+ * Scheduled fetching is paused product-wide until routines replace it, whatever
+ * settings.fetch.scheduled says. ENSEMBLE_SCHEDULED_FETCH=on restores it.
+ * Fetch now and per-source Sync keep working.
+ */
+export function scheduledFetchEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.ENSEMBLE_SCHEDULED_FETCH?.trim().toLowerCase() === "on";
+}
+
+/** Whether this minute is one of the person's fetch times and scheduled fetching is allowed at all. */
+export function scheduledFetchDue(settings: { fetch: { scheduled: boolean; times: string[] } }, time: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  return scheduledFetchEnabled(env) && settings.fetch.scheduled && settings.fetch.times.includes(time);
+}
 
 function localClock(timezone: string, at = new Date()): { date: string; time: string } {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -58,7 +73,7 @@ async function tick(app: FastifyInstance): Promise<void> {
     void deliverMorningBrief(app.prisma, userId).catch((error: unknown) => app.log.error({ err: error }, "morning brief failed"));
     void ensureStaleNotice(app.prisma, userId).catch((error: unknown) => app.log.error({ err: error }, "stale nudge failed"));
     void evaluateWatchers(app.prisma, userId).catch((error: unknown) => app.log.error({ err: error }, "watcher evaluation failed"));
-    if (settings.fetch.scheduled && settings.fetch.times.includes(now.time)) {
+    if (scheduledFetchDue(settings, now.time)) {
       if (await claimSchedule(app, userId, `fetch@${now.date}T${now.time}`)) {
         app.log.info({ userId, at: now }, "scheduled fetch");
         void fetchAll(app, userId, "schedule").catch((error: unknown) => app.log.error({ err: error }, "scheduled fetch failed"));

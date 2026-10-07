@@ -40,7 +40,7 @@ Open http://localhost:3000. You are sent to **/login**. In development, the firs
 - **Google Gemini**: live. Tested with `gemini-3.5-flash-lite` for chat with tool calls, plain completions, and JSON triage. It is the default on every tier because it is the cheapest; `gemini-2.5-flash-lite` is no longer offered to new keys. The request goes to Google's OpenAI-compatible endpoint with the key as a bearer token.
 - **Cursor**: the key is validated and its models listed live (`api.cursor.com/v0/models`). Cursor runs agents, not a chat endpoint, so choosing it for the chat gives a clear error. It is meant for delegated runs (the next step).
 - **OpenAI, OpenRouter, Ollama, Anthropic (native Messages API with tools), GitHub Copilot (token exchange)**: the adapters are written. They were not called live, because no keys for them were available.
-- **Settings → Models**: paste a key per provider. It is checked against the provider before it is saved, then stored encrypted per account. A key you paste wins over the server's `.env` key. Hosted public accounts cannot borrow server env/CLI credentials or host Ollama; only verified exact `ENSEMBLE_OPERATOR_EMAILS` accounts can. Dev and desktop retain local fallback behavior. The model catalog is fetched live from each provider. There is a **Test** button per tier.
+- **Settings → Assistant → Models → Manage keys** (the *Model providers & keys* dialog): paste a key per provider. It is checked against the provider before it is saved, then stored encrypted per account. A key you paste wins over the server's `.env` key. Hosted public accounts cannot borrow server env/CLI credentials or host Ollama; only verified exact `ENSEMBLE_OPERATOR_EMAILS` accounts can. Dev and desktop retain local fallback behavior. The model catalog is fetched live from each provider. The same dialog has a **Test** button per tier.
 - The chat assistant uses the tier's provider. Verified: "add a todo…" produced a real `hub_create_tasks` call through Gemini, held for your approval because the write policy is "preview".
 
 ### Connectors (read-only)
@@ -48,29 +48,58 @@ Each one calls the real API; triage turns asks into **proposed todos** on Today.
 
 | Source | How you connect | What it reads | Live-tested |
 |---|---|---|---|
-| Gmail | **Sign in with Google** (one approval also covers Calendar) | Messages since the last fetch (look-back window after a gap), minus promotions, social and forums. Quoted history stripped. | Up to the host’s one-time Google client. After that, the button is the whole flow. |
-| Google Calendar | Same Google sign-in | Last week to three weeks out → the Today calendar | Same |
+| Gmail | **Connect Google Workspace** with Gmail on (`gmail.readonly`) | Messages since the last fetch (look-back window after a gap), minus promotions, social and forums. Quoted history stripped. | Earlier with a live Google client. The products/PKCE flow added 7 Oct 2026 is tested with mocked Google responses only. |
+| Google Calendar | Same Google Workspace connection with Calendar on (`calendar.events`, `calendar.calendarlist.readonly`) | The calendars shown in Google Calendar (up to 10), last week to three weeks out → the Today calendar | Mocked responses only for the calendar list |
+| Outlook mail | **Connect Microsoft 365** with Outlook mail on (`Mail.Read`) | Inbox and sent mail since the last fetch, minus drafts and Focused Inbox "Other". Asks → proposals. | Parsing and paging unit-tested with recorded shapes; not run against a live tenant |
+| Outlook calendar | Microsoft 365 with Outlook calendar on (`Calendars.ReadWrite`) | Last week to three weeks out with Teams join links → the Today calendar | Same |
+| Teams | Microsoft 365 with Teams on (`Chat.Read`; work or school accounts) | One-to-one and group chats; direct asks and @mentions → proposals. No channels. | Same |
 | GitHub | **Sign in with GitHub** (OAuth app) *or* paste a token; `gh auth token` fallback | Your open PRs, PRs waiting on your review, issues assigned to you. Review requests and assignments become proposals directly. | Token validation only: a bad token is rejected by GitHub. `gh` is not installed on this machine. |
-| Slack | Paste a user token | DMs, group DMs, and channels you list in Settings | Token validation only |
-| Linear | Paste a personal API key | Open issues assigned to you → proposals | Key validation only |
-| Outlook, Outlook calendar, Teams | — | Marked "coming later" in the UI | — |
+| Slack | Paste a user token, or Slack OAuth when the host set up a Slack app | DMs, group DMs, and channels you list in Settings | Token validation only |
+| Linear | Paste a personal API key, or Linear OAuth when the host set up a Linear app | Open issues assigned to you → proposals | Key validation only |
+| Notion, Atlassian (Jira), Trello, Asana, Todoist, ClickUp, monday.com | Paste a token (Notion, Jira, Zoom, Docusign and others also by OAuth when the host set up that app) | No scheduled sync. The token is checked once and stored for imports and assistant tools. | Token checks tested with mocked responses only |
+| Zoom, Docusign | OAuth when the host set up the app | No sync yet; the account is stored for tools | Not run against the live services |
+| Fireflies, Fathom, Granola, tl;dv, Krisp, Jamie, Otter | Paste your own API key from the vendor (plans vary: Fathom's free plan has one; Granola needs Business, Otter Enterprise, tl;dv/Krisp/Jamie a paid plan) | Meetings since the last sync (up to 20): transcript, summary, decisions and action items → a meeting note matched to your calendar event; your action items → proposals that cite the meeting; others' → "waiting on" ([03 §2.3](03_MODULE_CONTEXT_ENGINE.md#23-meeting-notes-sources)) | Mocked vendor responses only (7 Oct 2026); not run against live accounts |
+
+Any verified person can connect on the hosted site; only saving the instance OAuth apps is operator-only. Connect asks only for the products switched on (`settings.connectorProducts`); turning one on later asks for that permission alone. **Disconnect** revokes the grant where the provider has an endpoint, removes the token, switches the sources off, and can delete what was read. Details in [03 §2.1](03_MODULE_CONTEXT_ENGINE.md#21-connector-store-oauth-apps-products-and-tokens).
+
+**Remote MCP connectors** (every catalog entry with an `mcp` URL in `packages/shared-types/src/connectors.ts` — 49 ready on 7 Oct 2026, including Notion, Linear, Atlassian, Todoist, ClickUp, monday.com, Airtable, the meeting tools Granola, Fireflies, Fathom, Read AI, Otter, Krisp, Jamie, Avoma, Gong, Grain, Fellow, Supernormal, MeetGeek, Bluedot and Tactiq, and Canva, Miro, Calendly, Cal.com, Pipedrive, Attio, PostHog, Mixpanel, Amplitude, QuickBooks, PayPal, Greenhouse and Ashby — or any pasted MCP server URL): Connect signs in at the vendor with no operator setup (PKCE S256 and `resource`; Client ID Metadata Document on https, dynamic registration otherwise), or takes a pasted token. The assistant then gets that server's tools: reads run, writes wait for Apply. Discovery ran against every catalog server on 7 Oct 2026 without signing in, and Connect ran as far as the vendor's approval page for Notion and Linear. Signing in, token refresh and tool calls are tested only against a mock MCP server. Asana is listed for imports only, because its MCP server needs a client registered with Asana; Atlassian site admins may need to allow Ensemble's domain. Details in [03 §2.2](03_MODULE_CONTEXT_ENGINE.md#22-remote-mcp-connectors).
 
 - **Triage** (the classifier prompt) runs on the low tier. Verified with Gemini: an email asking for load-test numbers "before Thursday" became "Send p95 load test numbers to Rahul", p1, due that Thursday, with the exact sentence quoted. A newsletter in the same batch was skipped. If no model is reachable, a conservative rule-based fallback runs instead, and the extraction row records which one decided.
 - **Fetch now**, the per-source **Sync** button, **Sync calendar** on Today, and the assistant's `hub_fetch_now` tool all run the same sync.
-- **Scheduled fetching** runs at the times set in Settings → Fetching, in your time zone, once per slot. It is an in-process scheduler in hub-api.
-- People and repos are learned from what is read. Anything you deleted stays suppressed. Tokens and secret-looking strings are redacted before storage. Connector tokens are encrypted at rest.
+- **Scheduled fetching is paused** product-wide until routines replace it: the scheduler skips fetch slots unless the host sets `ENSEMBLE_SCHEDULED_FETCH=on`, whatever older saved fetch times say; Settings → Connections → Fetching shows a paused notice with Sync now, look-back and propose-todos. Fetch now and Sync still work.
+- People and repos are learned from what is read. A person is found by any address or handle they are known by (email first); ingest never merges two people, it suggests (`GET /api/people/identity-suggestions`) and you merge (`POST /api/people/:id/merge`). There is no merge screen yet: the routes exist for the UI to come ([03 §4.7](03_MODULE_CONTEXT_ENGINE.md#47-one-person-across-sources-identities)).
+- **Project links**: on a project page, *Linked sources* maps a Slack channel, GitHub repo, Linear project or team, or an imported Jira/Notion/Trello container to the project; new artifacts and proposals from it land there, and imports remember their containers ([03 §4.8](03_MODULE_CONTEXT_ENGINE.md#48-project-links)). Tested over HTTP on PGlite with mocked data, 7 Oct 2026.
+- The Meeting notes page lists notes from meeting-notes connectors (summary, decisions, your action items, waiting on others, the matched calendar event); a todo proposed from a meeting shows *From meeting* on its page.
+- Anything you deleted stays suppressed. Tokens and secret-looking strings are redacted before storage. Connector tokens are encrypted at rest.
+
+### Imports from other apps ([docs/27](27_IMPORTS.md))
+
+| What | State |
+|---|---|
+| Notion (API and Markdown & CSV zip), Linear, Jira, Trello (API and board JSON), Asana, Todoist, ClickUp, monday.com, GitHub Issues, CSV/TSV with presets for Notion, Asana, Todoist, Jira, Linear and ClickUp exports | Built (`apps/hub-api/src/imports/`, `routes/imports.ts`, `components/imports/import-dialog.tsx`). Titles, due dates, labels, status (mapping editable per import), priority, assignees, descriptions, page bodies and projects. Re-running updates, never duplicates; edited pages are kept; "Undo this import" removes what it created |
+| Task labels | Built: `labels` on task create/update/list, chips on board cards, a chip editor on the task page, `#label` board search |
+| Tested | 7 Oct 2026: CSV, Trello JSON and Notion zip end to end over HTTP on PGlite (preview, import, re-import, undo, isolation); Notion, Linear, Jira and Todoist importers and a cancelled Linear token import against mocked `fetch`. **No importer has been run against a live vendor account.** Asana, ClickUp, monday.com, GitHub and Trello over the API are built from their current docs without a mocked test of their own |
+
+### Assistant can act in Google and Microsoft apps
+
+| What | State |
+|---|---|
+| Read Gmail, Outlook mail, Teams chats, Google and Outlook calendars, Drive and OneDrive files (Docs as Markdown, Sheets as CSV, Word/Excel/PowerPoint as text; PDFs as details only) | Built (`apps/hub-api/src/assistant/tools/google/`, `tools/microsoft/`). Offered only for a connected suite and the products switched on. |
+| Create and change calendar events with invites (Google Meet or Teams link optional); create and edit Google Docs, Sheets and Slides and Word, Excel and PowerPoint files (new Office files go to OneDrive/Ensemble) | Built. **Every change waits for Apply**, whatever the write policy says, is not offered while the assistant setting `assistant.connectedAppWrites` is off, and is recorded in the audit ledger as `apps.<tool>` with its link. No undo. |
+| Tested | 7 Oct 2026 with mocked Google and Graph responses and the Apply path against a local Postgres. **Not run against a live Google or Microsoft account.** The host's Google Cloud project needs the Gmail, Calendar, Drive, Docs, Sheets and Slides APIs enabled. Details in [11 §8.2](11_HOW_THE_ASSISTANT_WORKS.md#82-connected-apps-google-workspace-and-microsoft-365). |
 
 ### Needs me: a real router for other agents' permission prompts
 - A hook in **Cursor** (shell commands and MCP calls), **Claude Code** (every permission prompt), or **VS Code Copilot agent** (tool calls that change things) holds the tool call open and posts it to Ensemble. The card appears on Needs me live. **Allow once**, **Allow for this session**, **Always allow**, or **Deny** (with a reason) goes back to that exact call, in each tool's own output format.
 - Verified end to end with the real hook script and each editor's payload shape. Cursor received `{"permission":"allow"}`; the same command in the same session was then allowed at once by the rule. Claude Code received a `PermissionRequest` deny with the reason. Copilot received a `PreToolUse` allow. Read-only tools (read_file and the like) never prompt.
 - If Ensemble is down, or nobody answers within 10 minutes, the editor shows its own prompt. **The hook never allows on its own.**
-- Setup: Settings → Editors & agents → Create token, then run the one install command shown for each editor. `scripts/ensemble-hook.mjs install|uninstall` writes `~/.cursor/hooks.json`, `~/.claude/settings.json`, or `.github/hooks/ensemble.json` and keeps any hooks already there.
+- Setup: Settings → Connections → Editors & agents → *Answer permission prompts from Needs me* → Create token, then run the one install command shown for each editor. `scripts/ensemble-hook.mjs install|uninstall` writes `~/.cursor/hooks.json`, `~/.claude/settings.json`, or `.github/hooks/ensemble.json` and keeps any hooks already there.
 - Standing answers ("always allow `npm test`") are listed and removable in Settings.
 - **Not yet tested inside the real editors on this machine.** Restart the editor after installing, and check its Hooks panel or output channel if a prompt does not arrive.
 
 ### Settings that now do something
 - **Models, Connections, Editors & agents, Account**: as above.
-- **Fetching**: the schedule runs; look-back and "propose todos" are honoured by sync and triage.
+- **Fetching**: scheduled fetching is paused (above), so Settings shows no schedule; look-back and "propose todos" are honoured by Sync now and triage.
+- **Settings layout** (read from the code and checked with the hub-web tests, 7 Oct 2026): five tabs in the address (`/settings?tab=…`), old `#anchors` still land, Model providers & keys and What it may change open as dialogs, and Connections has five featured connectors plus the connector store ([02 §3.9](02_MODULE_INTERACTION_HUB_UI.md#39-settings)).
 - **Data retention**: a daily pass at 03:30 local time purges soft-deleted rows older than the window, plus old notifications and answered decisions. The purge is recorded in the ledger.
 - **Desktop reminders and quiet hours**: while a Ensemble tab is open, due reminders pop up as browser notifications, held during quiet hours. Editor decisions notify even in quiet hours, because a tool call is waiting.
 - Appearance, the assistant's write policy and areas, terminal folders, and deleted items were already real.
@@ -88,7 +117,7 @@ In-app, not email. Schema change is `20260929180000_cowork_surfaces`.
 
 - **Morning brief**: Settings → Morning brief (default 08:00, on). The scheduler writes one `notifications` row per local day (`kind: morning_brief`, `channel: hub`) from the same today briefing the Context Bridge uses. The bell shows it. Quiet hours do not send it as a desktop popup.
 - **Quick capture**: `POST /api/capture`. Command-Control-Shift-U on macOS, Ctrl+Alt+Shift+U on Windows and Linux, also C in the Hub when you are not typing. The global hook is a Tauri shell at `apps/quick-capture` ([docs/20_QUICK_CAPTURE.md](20_QUICK_CAPTURE.md)). Parsing stays in hub-api.
-- **Meetings**: ambient cards on Today (not a modal), keyboard notes, confirmation before attaching notes onto the calendar event stored in Ensemble. Declining keeps them under Meeting notes, with a cross-meeting question box. **Calendar connectors are still read-only**, so attach does not update Google or Outlook. Voice is a TODO; there is no microphone.
+- **Meetings**: ambient cards on Today (not a modal), keyboard notes, confirmation before attaching notes onto the calendar event stored in Ensemble. Declining keeps them under Meeting notes, with a cross-meeting question box. **Calendar sync is read-only**, so attach does not update Google or Outlook. Voice is a TODO; there is no microphone.
 - **Ask Ensemble**: the bar in the top of every page. It searches with the existing Hub search and read helpers and links each source.
 - **Weekly recap**: `/recap`, copy or download. Meeting rows are the per-meeting recap text.
 - **Quiet nudges**: Settings → Quiet nudges, default 14 days. Keep, snooze (7 days), done, or Trash.
@@ -148,8 +177,7 @@ Checked on 6 Oct 2026 on macOS (Apple Silicon) against a local hub-api and Hub w
 - **Autonomy and Orchestration settings** are stored. The running queue uses `maxConcurrentJobs`, and a job uses its minute, turn and tool limits, the sandbox-network default, and `runWithoutAsking` (above). `defaultDelivery` only pre-selects the choice in the Assign dialog; the runner does not read it. Check the unattended rules in [doc 24](24_DESKTOP_SANDBOXING.md) against `workspace/trust.ts` before relying on them.
 - **Context Bridge** (read-only MCP for editors) is built, locally (`ensemble mcp` or from source) and hosted at `/mcp`. Setup, tools, and the entities this schema does not have are in [CONTEXT_BRIDGE.md](CONTEXT_BRIDGE.md). It reads hub-api over HTTP. It does not write.
 - **Skill mining**, **embeddings / semantic retrieval**, and **Metrics baselines**: unchanged.
-- **Outlook, Outlook calendar, Teams**: deliberately later.
-- **Sending** anything (mail replies, PR comments): drafts and approval cards exist, but no connector has write scope yet.
+- **Sending** mail replies or PR comments: drafts and approval cards exist, but no connector asks for a send scope. The write scopes Connect can ask for (`calendar.events`, `drive.file`, `Calendars.ReadWrite`, `Files.ReadWrite`) are for assistant tools that wait for Apply ([11](11_HOW_THE_ASSISTANT_WORKS.md)).
 
 ## One-time Google setup (whoever runs this Ensemble)
 
@@ -159,14 +187,14 @@ The console is now **Google Auth Platform** (not the old “OAuth consent screen
 
 1. [Audience](https://console.cloud.google.com/auth/audience): External, publishing status Testing.
 2. Branding: app name, support email = your Gmail. Save before adding test users. If Google says an address is ineligible, Branding or Data Access was not saved yet.
-3. Data Access: add scopes `gmail.readonly` and `calendar.readonly`. Enabling the APIs in the Library is not this step.
+3. Data Access: add scopes `gmail.readonly`, `calendar.events`, `calendar.calendarlist.readonly` and `drive.file` (and `drive.readonly` only if you offer Search all of Drive). Enabling the APIs in the Library is not this step.
 4. Clients → Web application. Redirect URI: `http://localhost:4000/api/connectors/google/callback`.
-5. Paste the client ID and secret in **Settings → Connections → Set up once**, or set `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` in `.env`.
+5. Paste the client ID and secret in **Settings → Connections → Google Workspace → Set up once** (shown to the operator only), or set `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` in `.env`. Without them the sign-in client (`AUTH_GOOGLE_CLIENT_ID` / `AUTH_GOOGLE_CLIENT_SECRET`) is used, so add the redirect URI above to that client.
 6. Audience → Test users: add each Gmail that will press the button, including yours. While the app stays in Testing, Google blocks everyone else. Publishing Gmail access for the public needs Google’s own verification, which is a later step.
 
-After that, each person presses **Sign in with Google** and allows read-only mail and calendar. Nobody else sees the secret.
+After that, each person presses **Connect** on Google Workspace and approves the products they switched on. Nobody else sees the secret.
 
-GitHub sign-in works the same way with a GitHub OAuth App (callback `http://localhost:4000/api/connectors/github/callback`). A pasted fine-grained token needs no setup.
+GitHub sign-in works the same way with a GitHub OAuth App (callback `http://localhost:4000/api/connectors/github/callback`). A pasted fine-grained token needs no setup. Microsoft 365, Linear, Notion, Atlassian, Slack, Zoom and Docusign apps are set up the same way; the steps for each are in Settings → Connections → Browse connectors → the connector → Set up once (`GET /api/connectors/apps`).
 
 ## Where things live
 
@@ -174,9 +202,9 @@ GitHub sign-in works the same way with a GitHub OAuth App (callback `http://loca
 |---|---|
 | Accounts, sessions, tokens | `apps/hub-api/src/lib/auth.ts`, `routes/auth.ts`, `apps/hub-web/app/login`, `app/signup`, `app/(hub)/welcome` |
 | Model runtime | `apps/agent-runtime/ensemble_agent/models.py`, `credentials.py`, `vault.py`, `main.py`; the desktop in-process path is `apps/hub-api/src/runtime/` |
-| Connectors | `apps/hub-api/src/connectors/{google,github,slack,linear}.ts`, `oauth.ts`, `accounts.ts`, `ingest.ts`, `triage.ts`, `sync.ts`, `routes/connectors.ts` |
+| Connectors | `apps/hub-api/src/connectors/{google,microsoft,github,slack,linear}.ts`, `oauth.ts`, `accounts.ts`, `tokens.ts`, `products.ts`, `catalog.ts`, `token-providers.ts`, `forget.ts`, `ingest.ts`, `triage.ts`, `sync.ts`, `routes/connectors.ts` |
 | Scheduler and retention | `apps/hub-api/src/jobs/scheduler.ts` |
 | Decision router | `apps/hub-api/src/lib/decisions.ts`, `routes/decisions.ts`, `scripts/ensemble-hook.mjs`, `apps/hub-web/components/needs-me/editor-decisions.tsx` |
-| Settings UI | `apps/hub-web/components/settings/setup.tsx` |
+| Settings UI | `apps/hub-web/app/(hub)/settings/page.tsx`, `components/settings/` (tabs, dialogs, sections), `components/connectors/` (store, detail, logos), `lib/api-connectors.ts` |
 | Shared encryption key | `ENSEMBLE_SECRET_KEY`, or `.ensemble/secret.key` (git-ignored, created on first use) |
 | Smoke test | `pnpm --filter @ensemble/hub-api exec tsx scripts/smoke-triage.ts` (two sample emails through live triage) |

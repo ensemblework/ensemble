@@ -231,6 +231,8 @@ model Task {
   /// Set by importers and connectors so running an import again updates rather than duplicates.
   externalSource   String?          @map("external_source")
   externalId       String?          @map("external_id")
+  /// The meeting an action item came from (meeting-notes connectors).
+  meetingNoteId    String?          @map("meeting_note_id")
 
   planSteps     PlanStep[]
   runs          Run[]
@@ -243,9 +245,11 @@ model Task {
   deliverable   Deliverable?       @relation(fields: [deliverableId], references: [id], onDelete: SetNull)
   project       Project?           @relation(fields: [projectId], references: [id], onDelete: SetNull)
   repo          Repo?              @relation(fields: [repoId], references: [id], onDelete: SetNull)
+  meetingNote   MeetingNote?       @relation(fields: [meetingNoteId], references: [id], onDelete: SetNull)
 
   @@unique([userId, externalSource, externalId])
   @@index([userId, status])
+  @@index([meetingNoteId])
   @@index([userId, owner])
   @@index([userId, createdAt])
   @@index([userId, status, boardOrder])
@@ -726,28 +730,53 @@ model Approval {
 // ── context — Engineer Graph + normalized artifacts ───────────────────────
 
 model Person {
-  id                   String          @id @default(uuid())
-  userId               String          @map("user_id")
+  id                   String           @id @default(uuid())
+  userId               String           @map("user_id")
   upn                  String?
   name                 String
   email                String?
   role                 String?
   team                 String?
-  relationshipWeight   Float           @default(0) @map("relationship_weight")
-  typicalResponseHours Float?          @map("typical_response_hours")
-  lastInteraction      DateTime?       @map("last_interaction")
-  evidence             String[]        @default([])
-  confidence           Float           @default(0.5)
-  createdAt            DateTime        @default(now()) @map("created_at")
-  updatedAt            DateTime        @updatedAt @map("updated_at")
-  deletedAt            DateTime?       @map("deleted_at")
-  capacityHours        Float?          @map("capacity_hours")
-  oneOnOneDays         Int?            @map("one_on_one_days")
+  relationshipWeight   Float            @default(0) @map("relationship_weight")
+  typicalResponseHours Float?           @map("typical_response_hours")
+  lastInteraction      DateTime?        @map("last_interaction")
+  evidence             String[]         @default([])
+  confidence           Float            @default(0.5)
+  createdAt            DateTime         @default(now()) @map("created_at")
+  updatedAt            DateTime         @updatedAt @map("updated_at")
+  deletedAt            DateTime?        @map("deleted_at")
+  capacityHours        Float?           @map("capacity_hours")
+  oneOnOneDays         Int?             @map("one_on_one_days")
   projects             ProjectPerson[]
+  identities           PersonIdentity[] @relation("PersonIdentities")
 
   @@unique([userId, upn])
   @@index([userId, name])
   @@map("people")
+}
+
+/// One address or handle a person is known by (docs/03 §4.3). Ingest resolves a
+/// person by any of these, email first. Two existing people are never merged here.
+model PersonIdentity {
+  id                String   @id @default(uuid())
+  userId            String   @map("user_id")
+  personId          String   @map("person_id")
+  /// email | slack | github | linear | jira | teams | zoom | phone | name
+  kind              String
+  /// Normalised: trimmed and lowercase.
+  value             String
+  /// Where it was seen first: gmail, slack, calendar, fireflies, merge, backfill…
+  source            String   @default("ingest")
+  verified          Boolean  @default(false)
+  /// Ingest saw this identity together with another person's address. A merge suggestion until merged or dismissed.
+  suggestedPersonId String?  @map("suggested_person_id")
+  createdAt         DateTime @default(now()) @map("created_at")
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  person            Person   @relation("PersonIdentities", fields: [personId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, kind, value])
+  @@index([personId])
+  @@map("person_identities")
 }
 
 model Project {
@@ -777,12 +806,35 @@ model Project {
   people         ProjectPerson[]
   repoLinks      ProjectRepo[]
   deliverables   Deliverable[]
+  sourceLinks    ProjectLink[]
 
   @@unique([userId, name])
   @@unique([userId, externalSource, externalId])
   @@index([userId, status])
   @@index([userId, completedAt])
   @@map("projects")
+}
+
+/// "This channel is Project Atlas": a source container mapped to a project once,
+/// applied at ingest to artifacts and proposed todos (docs/03 §4.4).
+model ProjectLink {
+  id            String   @id @default(uuid())
+  userId        String   @map("user_id")
+  projectId     String   @map("project_id")
+  /// slack | github | linear | jira | notion | trello | asana | google_drive | calendar | …
+  source        String
+  /// Slack channel id, GitHub owner/repo (lowercase), Linear team or project id, Jira project id, Notion database id, Trello board id, Drive folder id.
+  containerId   String   @map("container_id")
+  containerName String   @default("") @map("container_name")
+  /// me | import
+  createdBy     String   @default("me") @map("created_by")
+  createdAt     DateTime @default(now()) @map("created_at")
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, source, containerId])
+  @@index([projectId])
+  @@map("project_links")
 }
 
 model ProjectPerson {
@@ -898,40 +950,52 @@ model ContextSuppression {
 }
 
 model MeetingNote {
-  id                String    @id @default(uuid())
-  userId            String    @map("user_id")
-  title             String
-  titleSource       String    @default("derived") @map("title_source")
-  prompt            String    @default("")
-  answer            String    @default("")
-  model             String?
-  tookSeconds       Float?    @map("took_seconds")
-  askedAt           DateTime  @default(now()) @map("asked_at")
-  occurredAt        DateTime? @map("occurred_at")
-  personIds         String[]  @default([]) @map("person_ids")
-  projectId         String?   @map("project_id")
-  repoId            String?   @map("repo_id")
-  comment           String?
-  status            String    @default("ready")
+  id                   String    @id @default(uuid())
+  userId               String    @map("user_id")
+  title                String
+  titleSource          String    @default("derived") @map("title_source")
+  prompt               String    @default("")
+  answer               String    @default("")
+  model                String?
+  tookSeconds          Float?    @map("took_seconds")
+  askedAt              DateTime  @default(now()) @map("asked_at")
+  occurredAt           DateTime? @map("occurred_at")
+  personIds            String[]  @default([]) @map("person_ids")
+  projectId            String?   @map("project_id")
+  repoId               String?   @map("repo_id")
+  comment              String?
+  status               String    @default("ready")
   /// paste | connector | upload — not a vendor-specific paste path.
-  source            String    @default("paste")
-  error             String?
-  extraction        Json?
-  extractionModel   String?   @map("extraction_model")
-  extractionCredits Float?    @map("extraction_credits")
-  extractedAt       DateTime? @map("extracted_at")
-  appliedAt         DateTime? @map("applied_at")
-  artifactId        String?   @map("artifact_id")
-  createdAt         DateTime  @default(now()) @map("created_at")
-  updatedAt         DateTime  @updatedAt @map("updated_at")
-  deletedAt         DateTime? @map("deleted_at")
-  project           Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  repo              Repo?     @relation(fields: [repoId], references: [id], onDelete: SetNull)
+  source               String    @default("paste")
+  error                String?
+  extraction           Json?
+  extractionModel      String?   @map("extraction_model")
+  extractionCredits    Float?    @map("extraction_credits")
+  extractedAt          DateTime? @map("extracted_at")
+  appliedAt            DateTime? @map("applied_at")
+  artifactId           String?   @map("artifact_id")
+  /// The calendar event this meeting matched (connectors/meetings/match.ts). Null when no event matched or the match was ambiguous.
+  eventArtifactId      String?   @map("event_artifact_id")
+  /// The stored transcript (Artifact kind transcript) for imported meetings.
+  transcriptArtifactId String?   @map("transcript_artifact_id")
+  /// Meeting-notes connector (fireflies, fathom, granola, …) and its meeting id, so a re-sync updates in place.
+  externalSource       String?   @map("external_source")
+  externalId           String?   @map("external_id")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+  deletedAt            DateTime? @map("deleted_at")
+  project              Project?  @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  repo                 Repo?     @relation(fields: [repoId], references: [id], onDelete: SetNull)
+  eventArtifact        Artifact? @relation("MeetingNoteEvent", fields: [eventArtifactId], references: [id], onDelete: SetNull)
+  transcriptArtifact   Artifact? @relation("MeetingNoteTranscript", fields: [transcriptArtifactId], references: [id], onDelete: SetNull)
+  tasks                Task[]
 
+  @@unique([userId, externalSource, externalId])
   @@index([userId, askedAt])
   @@index([userId, extractedAt])
   @@index([userId, projectId])
   @@index([userId, status])
+  @@index([eventArtifactId])
   @@map("meeting_notes")
 }
 
@@ -965,32 +1029,34 @@ model MeetingSession {
 }
 
 model Artifact {
-  id           String                   @id @default(uuid())
-  userId       String                   @map("user_id")
-  taskId       String?                  @map("task_id")
-  kind         ArtifactKind
-  externalId   String                   @map("external_id")
-  url          String?
-  ts           DateTime
-  actorId      String?                  @map("actor_id")
-  participants Json                     @default("[]")
-  title        String                   @default("")
-  text         String                   @default("")
-  threadId     String?                  @map("thread_id")
-  parentId     String?                  @map("parent_id")
-  projectId    String?                  @map("project_id")
-  repoId       String?                  @map("repo_id")
-  metadata     Json                     @default("{}")
-  authoredByMe Boolean                  @default(false) @map("authored_by_me")
-  searchVector Unsupported("tsvector")? @map("search_vector")
-  createdAt    DateTime                 @default(now()) @map("created_at")
-  deletedAt    DateTime?                @map("deleted_at")
-  task         Task?                    @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  project      Project?                 @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  repo         Repo?                    @relation(fields: [repoId], references: [id], onDelete: SetNull)
-  chunks       ArtifactChunk[]
-  extractions  Extraction[]
-  document     Document?
+  id                       String                   @id @default(uuid())
+  userId                   String                   @map("user_id")
+  taskId                   String?                  @map("task_id")
+  kind                     ArtifactKind
+  externalId               String                   @map("external_id")
+  url                      String?
+  ts                       DateTime
+  actorId                  String?                  @map("actor_id")
+  participants             Json                     @default("[]")
+  title                    String                   @default("")
+  text                     String                   @default("")
+  threadId                 String?                  @map("thread_id")
+  parentId                 String?                  @map("parent_id")
+  projectId                String?                  @map("project_id")
+  repoId                   String?                  @map("repo_id")
+  metadata                 Json                     @default("{}")
+  authoredByMe             Boolean                  @default(false) @map("authored_by_me")
+  searchVector             Unsupported("tsvector")? @map("search_vector")
+  createdAt                DateTime                 @default(now()) @map("created_at")
+  deletedAt                DateTime?                @map("deleted_at")
+  task                     Task?                    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  project                  Project?                 @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  repo                     Repo?                    @relation(fields: [repoId], references: [id], onDelete: SetNull)
+  chunks                   ArtifactChunk[]
+  extractions              Extraction[]
+  document                 Document?
+  meetingNotesAsEvent      MeetingNote[]            @relation("MeetingNoteEvent")
+  meetingNotesAsTranscript MeetingNote[]            @relation("MeetingNoteTranscript")
 
   @@unique([userId, kind, externalId])
   @@index([userId, taskId])
@@ -1449,6 +1515,8 @@ model User {
   cliAuthRequests       CliAuthRequest[]
   importJobs            ImportJob[]
   mcpConnections        McpConnection[]
+  personIdentities      PersonIdentity[]
+  projectLinks          ProjectLink[]
   apiTokens             ApiToken[]
   devicePairings        DevicePairing[]
   diagrams              BlockDiagram[]

@@ -9,6 +9,12 @@ export const TaskSource = z.enum([
   "manual",
   "notion",
   "linear",
+  "jira",
+  "trello",
+  "asana",
+  "todoist",
+  "clickup",
+  "monday",
   "other",
 ]);
 export const TaskOwner = z.enum(["me", "agent", "unassigned"]);

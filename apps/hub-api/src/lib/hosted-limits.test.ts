@@ -4,7 +4,7 @@ import { assertWithinLimit, hostedLimits } from "./hosted-limits.js";
 import { storedTableBytes } from "../plots/store.js";
 
 test("hosted limits default to five connectors, fifty jobs and 100 MiB per storage area", () => {
-  assert.deepEqual(hostedLimits({}), { connectors: 5, jobsPerDay: 50, datasetBytes: 104857600, documentBytes: 104857600 });
+  assert.deepEqual(hostedLimits({}), { connectors: 25, jobsPerDay: 50, datasetBytes: 104857600, documentBytes: 104857600 });
   assert.deepEqual(hostedLimits({ ENSEMBLE_MAX_CONNECTORS: "2", ENSEMBLE_MAX_JOBS_PER_DAY: "3", ENSEMBLE_MAX_DATASET_BYTES: "100", ENSEMBLE_MAX_DOCUMENT_BYTES: "101" }), { connectors: 2, jobsPerDay: 3, datasetBytes: 100, documentBytes: 101 });
 });
 test("invalid quota configuration fails loudly instead of disabling the cap", () => {

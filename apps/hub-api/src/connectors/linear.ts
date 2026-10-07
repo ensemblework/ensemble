@@ -1,6 +1,6 @@
 /** Linear: open issues assigned to you become proposed todos (docs/03 §2). */
-import { getAccount } from "./accounts.js";
-import { upsertArtifact } from "./ingest.js";
+import { syncAccount } from "./tokens.js";
+import { upsertArtifact, upsertPerson } from "./ingest.js";
 import { ConnectorError, readJson, type SyncContext, type SyncResult } from "./types.js";
 
 interface Issue {
@@ -13,8 +13,9 @@ interface Issue {
   dueDate: string | null;
   updatedAt: string;
   state: { name: string; type: string };
-  team: { key: string; name: string };
-  project: { name: string } | null;
+  team: { id: string; key: string; name: string };
+  project: { id: string; name: string } | null;
+  creator: { id: string; name: string; displayName?: string | null; email: string | null } | null;
 }
 
 const QUERY = `query {
@@ -22,13 +23,13 @@ const QUERY = `query {
     name
     email
     assignedIssues(first: 50, filter: { state: { type: { nin: ["completed", "canceled"] } } }) {
-      nodes { id identifier title description url priority dueDate updatedAt state { name type } team { key name } project { name } }
+      nodes { id identifier title description url priority dueDate updatedAt state { name type } team { id key name } project { id name } creator { id name displayName email } }
     }
   }
 }`;
 
 export async function syncLinear(ctx: SyncContext): Promise<SyncResult> {
-  const account = await getAccount(ctx.userId, "linear");
+  const account = await syncAccount(ctx.userId, "linear");
   if (!account) throw new ConnectorError("Linear is not connected. Paste a Linear API key in Settings → Connections.", true);
   const key = account.accessToken;
   const body = await readJson<{ data?: { viewer: { name: string; email: string; assignedIssues: { nodes: Issue[] } } }; errors?: Array<{ message: string }> }>(
@@ -43,6 +44,14 @@ export async function syncLinear(ctx: SyncContext): Promise<SyncResult> {
   const viewer = body.data.viewer;
   const result: SyncResult = { items: 0, stored: [], proposals: [], triage: [], account: viewer.email };
   for (const issue of viewer.assignedIssues.nodes) {
+    const creator = issue.creator && issue.creator.email?.toLowerCase() !== viewer.email?.toLowerCase() ? issue.creator : null;
+    const actorId = creator
+      ? await upsertPerson(
+          ctx.userId,
+          { email: creator.email, name: creator.name || creator.displayName, handle: `linear:${creator.id}`, at: new Date(issue.updatedAt), evidence: `linear:${issue.identifier}` },
+          [viewer.email, ctx.settings.email],
+        )
+      : null;
     const stored = await upsertArtifact(ctx.userId, {
       kind: "issue",
       externalId: `linear:${issue.identifier}`,
@@ -50,7 +59,12 @@ export async function syncLinear(ctx: SyncContext): Promise<SyncResult> {
       ts: new Date(issue.updatedAt),
       title: `${issue.identifier} ${issue.title}`,
       text: issue.description ?? "",
+      actorId,
       metadata: { source: "linear", state: issue.state.name, team: issue.team.name, project: issue.project?.name ?? null, priority: issue.priority, due: issue.dueDate },
+      containers: [
+        ...(issue.project ? [{ source: "linear", id: issue.project.id, name: issue.project.name }] : []),
+        { source: "linear", id: issue.team.id, name: issue.team.name },
+      ],
     });
     result.items += 1;
     result.stored.push(stored);

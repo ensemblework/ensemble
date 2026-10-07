@@ -4,6 +4,7 @@ import type { LayoutDocument } from "@ensemble/shared-types/widgets";
 
 import { bindClient, currentExternalSignal, isRequestCancelled, RequestCancelledError, trackRequest, isPageUnloading } from "./fetch-cancel";
 import { resolveHubApi } from "./hub-origin";
+import type { ApplyFailure } from "./assistant-apply";
 
 /** Direct hub-api origin. SSE uses this so the stream is not buffered by the Next rewrite. */
 export const HUB_API = resolveHubApi({
@@ -135,6 +136,10 @@ export type TaskRecord = {
   repoId: string | null;
   deliverableId: string | null;
   people: string[];
+  /** Free-form tags; imports bring labels, tags and multi-selects here. */
+  labels?: string[];
+  /** Set on action items a meeting-notes connector proposed. */
+  meetingNoteId?: string | null;
   skillIds: string[];
   snoozedUntil: string | null;
   rationale: string | null;
@@ -1096,6 +1101,9 @@ export const api = bindClient({
       undoEntryId?: string | null;
       already?: boolean;
       replies?: Array<{ id: string; content: string; toolCalls: AssistantToolCallRecord[] }>;
+      /** Some of a batch landed and some did not; `failed` names the rest. Landed calls are never re-run. */
+      partial?: boolean;
+      failed?: ApplyFailure[];
     }>("/api/assistant/apply", data),
   stopAssistant: (id: string) => post<void>(`/api/assistant/conversations/${id}/stop`),
   ensembleReplies: (surface: string, anchorKey: string) =>

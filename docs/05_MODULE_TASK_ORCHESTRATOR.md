@@ -43,6 +43,8 @@ For hosted public accounts, email verification is required before scheduled mode
 
 ## 2. Scheduled work: two fetches a day
 
+> **Paused (7 Oct 2026).** Scheduled fetching is off product-wide until routines replace it. `startScheduler` (`apps/hub-api/src/jobs/scheduler.ts`, `scheduledFetchDue`) skips the fetch slots unless `ENSEMBLE_SCHEDULED_FETCH=on`, whatever `settings.fetch.scheduled` says (default `false`). Reminders, the morning brief, stale nudges, watchers and retention still run. Fetch now (`POST /api/fetch`) and per-source Sync (`POST /api/connections/:id/sync`) are unchanged.
+
 | | `morning_fetch` | `evening_fetch` | Fetch now |
 |---|---|---|---|
 | **When** | 09:00 local (configurable) | 16:00 local (configurable) | On demand |
@@ -228,7 +230,7 @@ OpenTelemetry spans: `job.*`, `proposer`, `plan`, `run.step`, `tool.call`, `llm.
 | Area | Where | Notes |
 |---|---|---|
 | Fetch cycle | `apps/hub-api/src/jobs/fetch.ts` | One function behind both scheduled fetches and the button. `nextFetchAt` takes the timezone as a parameter rather than reading the environment, so the rollover logic is pure and pinned by tests in both directions. |
-| Schedule | `apps/hub-api/src/jobs/scheduler.ts`, `jobs/claim.ts` | In-process scheduler. Each person's fetch times (Settings → Fetching) run once per slot in their time zone; `claim.ts` takes a Postgres claim so two API processes do not run the same slot twice. |
+| Schedule | `apps/hub-api/src/jobs/scheduler.ts`, `jobs/claim.ts` | In-process scheduler. With `ENSEMBLE_SCHEDULED_FETCH=on`, each person's saved fetch times (`settings.fetch.times`; Settings shows only a paused notice while fetching is paused) run once per slot in their time zone; otherwise fetch slots are skipped. `claim.ts` takes a Postgres claim so two API processes do not run the same slot twice. |
 | Complexity | `apps/hub-api/src/lib/complexity.ts` | Rules used when no classifier model answers. Deliberately shallow: a wrong tier costs a slightly better or worse model on one task, and pretending to more precision than that would cost more. |
 | Tool catalog | `apps/agent-runtime/ensemble_agent/tools/catalog.py` | Single source of truth for risk, gate, reversibility and undo window. The planner's gate output is **recomputed from here and never trusted from the model**, so a hallucinated `"gate": "none"` on a send cannot slip past. |
 | State | `apps/hub-api/src/lib/state-machine.ts` | `ALLOWED` transition table plus guards. `/triage`, `/delegate`, `/takeover` and `/answer` all route through `transitionTask`, so every move is logged with actor and reason. |

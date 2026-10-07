@@ -30,6 +30,19 @@ export interface ToolResult {
   invalidate?: string[];
 }
 
+/** Set on tools that act in a connected app. Gating reads it; tools without it are Hub tools. */
+export interface AppToolMeta {
+  provider: "google" | "microsoft";
+  /** Connector store suite, e.g. google_workspace. */
+  suite: string;
+  /** Products (settings.connectorProducts) that offer this tool. Any one switched on is enough. */
+  products: readonly string[];
+  /** Each entry lists alternatives; one scope from every entry must be granted. */
+  scopes: ReadonlyArray<readonly string[]>;
+  /** What the person calls it: "Google Calendar". */
+  label: string;
+}
+
 export interface AnyHubTool {
   name: string;
   area: AssistantToolArea;
@@ -38,6 +51,9 @@ export interface AnyHubTool {
   isWrite: boolean;
   risk: ToolRisk;
   undoable?: boolean;
+  app?: AppToolMeta;
+  /** Function parameters to send as-is (e.g. a remote MCP server's own schema) instead of converting `input`. */
+  jsonSchema?: Record<string, unknown>;
   preview?: (ctx: ToolContext, input: unknown) => Promise<string> | string;
   run: (ctx: ToolContext, input: unknown) => Promise<ToolResult>;
 }
@@ -50,6 +66,7 @@ export function defineTool<I extends z.ZodTypeAny>(tool: {
   isWrite: boolean;
   risk: ToolRisk;
   undoable?: boolean;
+  app?: AppToolMeta;
   preview?: (ctx: ToolContext, input: z.infer<I>) => Promise<string> | string;
   run: (ctx: ToolContext, input: z.infer<I>) => Promise<ToolResult>;
 }): AnyHubTool {

@@ -191,6 +191,14 @@ export const ConnectorId = z.enum([
   "slack",
   "linear",
   "meeting_notes",
+  // Meeting-notes sources with a pasted API key (hub-api connectors/meetings).
+  "fireflies",
+  "fathom",
+  "granola",
+  "tldv",
+  "krisp",
+  "jamie",
+  "otter",
 ]);
 export type ConnectorId = z.infer<typeof ConnectorId>;
 
@@ -277,6 +285,8 @@ export const Settings = z.object({
   morningBrief: MorningBriefSettings.default({}),
   staleNudge: StaleNudgeSettings.default({}),
   connections: z.record(ConnectorId, ConnectionSettings).default({}),
+  /** Per connector-store entry (e.g. google_workspace), which products are switched on. Missing keys use the catalog default. */
+  connectorProducts: z.record(z.string(), z.record(z.string(), z.boolean())).default({}),
   timezone: z.string().default("Asia/Kolkata"),
   email: z.string().default("you@ensemble.local"),
 });

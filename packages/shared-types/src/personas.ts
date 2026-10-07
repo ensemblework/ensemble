@@ -1,16 +1,46 @@
 import type { ActAs } from "./assistant.js";
 
-const BIAS: Record<ActAs, string> = {
-  general: "Neutral teammate. Cite the source, then propose the next change.",
-  student: "Turn an assignment brief into a plan with split tasks. Quiz from the notes. Check citations. Summarise who did what.",
-  engineer: "Triage an issue into repo-linked tasks. Explain a change plainly. Find who knows this code. Draft release notes from completed work.",
-  teacher: "Draft a lesson plan or rubric. Give inline feedback. Say who is falling behind. Write practice questions.",
-  lawyer: "Summarise a clause. Compare two drafts. Extract obligations and deadlines into tasks with reminders. Flag risky wording. Web research must show sources.",
-  researcher: "Say what a source actually claims. Point at the sentence that supports it. Keep the open questions visible. Summarise the experiment without smoothing over a gap.",
-  manager: "Name who is overloaded. Recall the decision, not the meeting. Draft the next 1:1 from the last note. Say what is blocked.",
-  aspirant: "Say what to revise today. Name the topic a mock missed. Quiz from the notes. Recall what was saved this week. No ranking, no news.",
-  maker: "Say what changed since the last spec. List the open changes. Summarise the test. Name who needs to see it.",
+/** What the person does, as a sentence fragment after their name. General has none. */
+const WORK: Record<ActAs, string | null> = {
+  general: null,
+  student: "is a student",
+  engineer: "works as an engineer",
+  teacher: "works as a teacher",
+  lawyer: "works as a lawyer",
+  researcher: "works as a researcher",
+  manager: "manages a team",
+  aspirant: "is preparing for an exam",
+  maker: "builds products",
 };
+
+/** What that kind of work usually asks of the assistant. Tone and emphasis only. */
+const WANTS: Record<ActAs, string> = {
+  general:
+    "They have not said what kind of work they do, so take the shape of the work from the request. Cite the source, then suggest the next change.",
+  student:
+    "an assignment brief turned into a plan with split tasks, quizzes from their notes, citations checked, and a summary of who did what. If teammates are not in People, ask who they are.",
+  engineer:
+    "an issue triaged into repo-linked tasks, a change explained plainly, the person who knows this code, and release notes drafted from completed work. On a task, summarise the open page and its repo and draft subtasks as proposed todos.",
+  teacher: "a lesson plan or rubric drafted, inline feedback, to know who is falling behind, practice questions, and reminders for due dates.",
+  lawyer:
+    "a clause summarised, two drafts compared, obligations and deadlines pulled into tasks with reminders, and risky wording flagged. Say where you are unsure, and never invent a citation.",
+  researcher:
+    "to know what a source actually claims and the sentence that supports it, with the open questions kept visible and experiments summarised without smoothing over a gap.",
+  manager: "to know who is overloaded and what is blocked, the decision rather than the meeting, and the next 1:1 drafted from the last note.",
+  aspirant: "to know what to revise today and which topic a mock missed, quizzes from their notes, and what they saved this week. No rankings and no news.",
+  maker: "to know what changed since the last spec, the open changes, a summary of the test, and who needs to see it.",
+};
+
+/** Onboarding roles (users.onboarding_role) that imply a persona when Act as is left on general. */
+const ROLE_PERSONA = new Map<string, ActAs>([
+  ["student", "student"],
+  ["teacher", "teacher"],
+  ["lawyer", "lawyer"],
+  ["engineer", "engineer"],
+  ["vibe", "engineer"],
+  ["manager", "manager"],
+  ["researcher", "researcher"],
+]);
 
 const PRESET_ACTIONS: Record<ActAs, string[]> = {
   general: ["Summarise this", "Draft the next step"],
@@ -40,14 +70,22 @@ const SURFACE_ACTIONS: Record<string, string[]> = {
   completed: ["What did we finish last month?"],
 };
 
-/** System-prompt persona. Tone and suggestions only — not permissions or tools. */
-export function personaBlock(actAs: ActAs): string {
-  return [
-    `Act as: ${actAs}.`,
-    BIAS[actAs],
-    "This preset changes tone and suggestions only. It does not change permissions or which tools you may use.",
-    "Web research must show sources.",
-  ].join("\n");
+/** The persona to use: an explicit Act as wins; on general, the onboarding role decides. */
+export function personaFor(actAs: ActAs | null | undefined, onboardingRole?: string | null): ActAs {
+  if (actAs && actAs !== "general") return actAs;
+  return ROLE_PERSONA.get((onboardingRole ?? "").trim().toLowerCase()) ?? "general";
+}
+
+/**
+ * A few sentences about the person for the system prompt, e.g. "Mira works as a
+ * lawyer; they usually want …". Tone and emphasis only: tools and permissions
+ * are decided in code, so the text does not mention them.
+ */
+export function personaBlock(actAs: ActAs, name?: string | null): string {
+  const who = name?.trim().split(/\s+/)[0] || "The person";
+  const work = WORK[actAs];
+  const about = work ? `${who} ${work}; they usually want ${WANTS[actAs]}` : WANTS.general;
+  return `${about} Web research must show sources.`;
 }
 
 /** Suggested prompts for one surface. The preset adds its own; neither list changes tools. */

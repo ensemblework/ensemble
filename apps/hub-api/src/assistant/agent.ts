@@ -18,6 +18,9 @@
 import type { FastifyInstance } from "fastify";
 import { randomUUID } from "node:crypto";
 import {
+  personaBlock,
+  personaFor,
+  type ActAs,
   type AssistantPageContext,
   type AssistantStreamFrame,
   type AssistantToolCall,
@@ -39,7 +42,8 @@ import {
 import { settleWriteBatch } from "./batch.js";
 import { reflectProposals } from "./reply.js";
 import { statusFor } from "./status-line.js";
-import { toolAllowedFor, chatToolSpecs, getTool, responsesToolSpecs, toolsFor } from "./registry.js";
+import { toolAllowedFor, chatToolSpecs, responsesToolSpecs } from "./registry.js";
+import { appsPrompt, ensureAppAccess, loadAppGrants, toolsForTurn, writeRefusal } from "./apps.js";
 import { diagramGuidance } from "./diagram-skill.js";
 import { hasModule } from "@ensemble/shared-types";
 import { pastScheduleWarning, withPastScheduleWarning } from "./schedule.js";
@@ -113,8 +117,13 @@ export interface AssistantTurnArgs {
   emit: (frame: AssistantStreamFrame) => void;
   mentions?: PageMention[];
   referenceContext?: string;
-  /** Persona or other instructions. Not a permission change. */
+  /** Extra instructions for this surface. Not a permission change. */
   preamble?: string;
+  /**
+   * Act as for this turn; defaults to settings.assistant.actAs. The persona goes in the system
+   * prompt unless a legacy caller already put one in `preamble` and left this unset.
+   */
+  actAs?: ActAs;
   signal?: AbortSignal;
   /** Optional modules that are on. When set, tools for a removed module are dropped. */
   modules?: string | null;
@@ -194,6 +203,15 @@ async function drive(
   const diagramsOn = args.modules === undefined || hasModule(args.modules, "diagrams");
   const reposOn = args.modules === undefined || hasModule(args.modules, "code");
   const plotsOn = args.modules === undefined || hasModule(args.modules, "plots");
+  const ctx = toolContext(args);
+  const grants = await loadAppGrants(ctx);
+  // The per-turn list: Hub tools for these settings plus this person's connected-app tools.
+  const tools = await toolsForTurn(ctx, grants);
+  const byName = new Map(tools.map((tool) => [tool.name, tool]));
+  const persona =
+    args.preamble !== undefined && args.actAs === undefined
+      ? undefined
+      : personaBlock(personaFor(args.actAs ?? settings.assistant.actAs, state.user.onboardingRole), state.user.firstName);
   const system = buildSystemPrompt(state, openPage, diagramsOn ? diagramGuidance(args.message, openPage?.path) : undefined, {
     diagrams: diagramsOn,
     repos: reposOn,
@@ -201,6 +219,8 @@ async function drive(
     today: clock.date,
     weekday: clock.weekday,
     timezone: settings.timezone,
+    persona,
+    apps: appsPrompt(tools, grants, settings) || undefined,
   });
   const history = await priorTurns(app, args.conversationId, args.messageId);
 
@@ -233,7 +253,6 @@ async function drive(
     { role: "user", content: args.message },
   ];
 
-  const tools = toolsFor(settings.assistant.allowedWriteAreas, args.modules);
   const chatTools = chatToolSpecs(tools);
   const responsesTools = responsesToolSpecs(tools);
   const calls: AssistantToolCall[] = [];
@@ -242,7 +261,6 @@ async function drive(
   let mutated = false;
   let text = "";
   let nudged = false;
-  const ctx = toolContext(args);
 
   for (let step = 0; step < MAX_STEPS; step += 1) {
     // Checked before spending anything. Between steps is the natural checkpoint.
@@ -386,7 +404,7 @@ async function drive(
         label: "Assistant is working",
         detail: requested.name,
       });
-      const outcome = await runOne({ ...ctx, pendingProjectNames: [...pendingProjectNames] }, args, requested);
+      const outcome = await runOne({ ...ctx, pendingProjectNames: [...pendingProjectNames] }, args, requested, byName);
       batch.push(outcome);
       const proposed = proposedProjectName(outcome.call);
       if (proposed) pendingProjectNames.push(proposed);
@@ -466,7 +484,14 @@ interface CallOutcome {
   forModel: unknown;
 }
 
-export function holdsAssistantWrite(policy: AssistantTurnArgs["settings"]["assistant"]["writePolicy"], toolName: string, inlineArtifacts = false): boolean {
+/** Whether a write waits for Apply. Writes to connected apps always do, whatever the policy. */
+export function holdsAssistantWrite(
+  policy: AssistantTurnArgs["settings"]["assistant"]["writePolicy"],
+  toolName: string,
+  inlineArtifacts = false,
+  area?: string,
+): boolean {
+  if (area === "apps") return true;
   if (policy === "immediate") return false;
   return !(inlineArtifacts && (toolName === "hub_create_diagram" || toolName === "hub_create_plot"));
 }
@@ -475,20 +500,18 @@ async function runOne(
   ctx: ToolContext,
   args: AssistantTurnArgs,
   requested: { id: string; name: string; arguments: string },
+  offered: ReadonlyMap<string, AnyHubTool>,
 ): Promise<CallOutcome> {
-  const tool = getTool(requested.name);
+  // Only what this turn offered can run: a Map lookup, never a name turned into code.
+  const tool = offered.get(requested.name);
   const started = Date.now();
   if (!tool || !toolAllowedFor(tool, args.modules)) {
     const call = failed(requested, tool?.area ?? "tasks", `There is no tool called ${requested.name}.`);
     return { call, forModel: { error: call.error } };
   }
-  if (tool.isWrite && !args.settings.assistant.allowedWriteAreas.includes(tool.area)) {
-    const call = failed(
-      requested,
-      tool.area,
-      `Writes to ${tool.area} are disabled in your assistant settings.`,
-      true,
-    );
+  const refusal = writeRefusal(tool, args.settings);
+  if (refusal) {
+    const call = failed(requested, tool.area, refusal, true);
     return { call, forModel: { error: call.error } };
   }
 
@@ -501,7 +524,7 @@ async function runOne(
     return { call, forModel: { error: call.error, hint: "Fix the arguments and call again." } };
   }
 
-  const held = tool.isWrite && holdsAssistantWrite(ctx.settings.assistant.writePolicy, tool.name, args.inlineArtifacts);
+  const held = tool.isWrite && holdsAssistantWrite(ctx.settings.assistant.writePolicy, tool.name, args.inlineArtifacts, tool.area);
   if (held) {
     let preview: string;
     try {
@@ -530,7 +553,9 @@ async function runOne(
     const warning = pastScheduleWarning(input as { due?: string | null; dueDate?: string | null; dueTime?: string | null; tasks?: Array<{ due?: string | null }> }, ctx.settings.timezone);
     const note = created
       ? "NOT created yet. No id exists until the user presses Apply. After Apply, call hub_list_tasks with query set to the exact title. Never reuse an id from a different task."
-      : ctx.settings.assistant.writePolicy === "needs-me"
+      : tool.area === "apps"
+        ? "NOT done yet. Nothing changes in the connected app, and nobody is emailed, until the person presses Apply. Tell them what will happen and that it is ready to apply; never say it is done, sent, or created."
+        : ctx.settings.assistant.writePolicy === "needs-me"
         ? "NOT done yet. Queued on the Needs me page. Tell the user it is waiting for them. Never say it is done."
         : "NOT done yet. Tell the user it is ready to apply; never say it is done, created, linked, or set. The preview title is the record that will change.";
     return {
@@ -578,6 +603,8 @@ async function runOne(
 }
 
 async function renderPreview(ctx: ToolContext, tool: AnyHubTool, input: unknown): Promise<string> {
+  // A connected-app write that cannot run (not connected, switched off, access missing) is reported now, not after Apply.
+  await ensureAppAccess(ctx, tool);
   const raw = tool.preview ? await tool.preview(ctx, input as never) : "```json\n" + JSON.stringify(input, null, 2) + "\n```";
   return withPastScheduleWarning(raw, input, ctx.settings.timezone);
 }
