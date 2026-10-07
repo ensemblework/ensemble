@@ -111,14 +111,17 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
     if (owned.length !== new Set(body.diagramIds).size) {
       return reply.code(404).send({ error: "One of those diagrams is not on your account." });
     }
-    const target =
+    const standalone = body.targetKind === "page"
+      ? await db.taskPage.findFirst({ where: { id: body.targetId, userId: request.userId, taskId: null }, select: { id: true } })
+      : null;
+    const target = standalone ?? (
       body.targetKind === "project"
         ? await db.project.findFirst({ where: { id: body.targetId, userId: request.userId, deletedAt: null }, select: { id: true } })
         : body.targetKind === "repo"
           ? await db.repo.findFirst({ where: { id: body.targetId, userId: request.userId, deletedAt: null }, select: { id: true } })
           : body.targetKind === "deliverable"
             ? await db.deliverable.findFirst({ where: { id: body.targetId, userId: request.userId, deletedAt: null }, select: { id: true } })
-            : await db.task.findFirst({ where: { id: body.targetId, userId: request.userId, deletedAt: null }, select: { id: true } });
+            : await db.task.findFirst({ where: { id: body.targetId, userId: request.userId, deletedAt: null }, select: { id: true } }));
     if (!target) return reply.code(404).send({ error: targetMissing(body.targetKind) });
     await db.$transaction(async (tx) => {
       await tx.diagramLink.deleteMany({
@@ -296,6 +299,13 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
     const reasons: string[] = [];
     for (const link of links) {
       if (link.targetKind === "task" || link.targetKind === "page") {
+        if (link.targetKind === "page") {
+          const page = await db.taskPage.findFirst({ where: { id: link.targetId, userId: request.userId, taskId: null }, select: { title: true, updatedAt: true } });
+          if (page) {
+            if (page.updatedAt > row.updatedAt) reasons.push(`Page “${page.title}” changed`);
+            continue;
+          }
+        }
         const task = await db.task.findFirst({ where: { id: link.targetId, userId: request.userId, deletedAt: null }, select: { title: true, updatedAt: true } });
         if (task && task.updatedAt > row.updatedAt) reasons.push(`Task “${task.title}” changed`);
       } else if (link.targetKind === "project") {

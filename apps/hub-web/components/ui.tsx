@@ -72,7 +72,7 @@ export function Tag({ tone = "gray", children, className }: { tone?: Tone; child
 
 export function PriorityTag({ priority }: { priority: Priority }) {
   const spec = PRIORITY[priority];
-  return <Tag tone={spec.tone}>{spec.label}</Tag>;
+  return <Tag tone={priority === "p1" ? "gray" : spec.tone}>{spec.label}</Tag>;
 }
 
 export function StatusPill({ status, count }: { status: TaskStatus; count?: number }) {

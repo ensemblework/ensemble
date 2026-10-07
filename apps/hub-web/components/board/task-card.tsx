@@ -41,7 +41,6 @@ export function CardBody({ task }: { task: TaskRecord }) {
   return (
     <div className="board-card group text-left">
       <div className="flex items-start gap-2 pr-4">
-        <span className="kind-dot mt-1.5" style={{ ["--kind" as string]: "var(--kind-task)" }} />
         <span className="card-title">{task.title}</span>
       </div>
       <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[12px] text-muted">
@@ -116,7 +115,7 @@ export function SortableCard({
       onMouseEnter={() => warmTask(client, task.id)}
       onFocus={() => warmTask(client, task.id)}
     >
-      <div className={cx((active || selected) && "rounded-md ring-1 ring-accent")}>
+      <div className={cx((active || selected) && "rounded-md ring-1 ring-line-strong")}>
         <CardBody task={task} />
       </div>
     </div>

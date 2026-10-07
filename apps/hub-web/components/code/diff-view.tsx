@@ -17,7 +17,7 @@ export const DiffView = forwardRef<
     onFocusHunk: (index: number) => void;
   }
 >(function DiffView({ diff, decisions, current, kind, busy, onDecide, onFocusHunk }, ref) {
-  if (diff.binary) return <div className="p-8 text-[13px] text-muted">Binary file — open it in your editor.</div>;
+  if (diff.binary) return <div className="p-8 text-[13px] text-muted">Binary file, open it in your editor.</div>;
   if (!diff.hunks.length) {
     return <div className="p-8 text-[13px] text-muted">No remaining changes in this file. Every hunk was accepted or put back.</div>;
   }

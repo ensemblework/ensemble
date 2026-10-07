@@ -7,6 +7,7 @@ import {
   CheckSquare,
   ChevronRight,
   ExternalLink,
+  FileText,
   FolderKanban,
   Gauge,
   MessageSquare,
@@ -35,6 +36,8 @@ import { TaskSkeleton } from "@/components/motion/skeletons";
 import { useDelayedFlag } from "@/lib/motion/use-delayed-flag";
 import { useModuleOn } from "@/lib/use-module";
 import { InlineEdit, MenuItem, Popover, PriorityTag, Tag, cx } from "../ui";
+import { PageTitleField } from "../pages/title-field";
+import { isPageEnsembleBusy } from "../comments/ensemble-bus";
 
 type SaveState = "saved" | "saving" | "dirty" | "error";
 
@@ -84,8 +87,9 @@ export function TaskPage({ taskId, variant }: { taskId: string; variant: "peek" 
   const peek = usePeek();
   const entities = useEntities();
   const Editor = useBlockEditor();
-  const task = useQuery({ queryKey: ["task", taskId], queryFn: () => api.task(taskId) });
-  const page = useQuery({ queryKey: ["page", taskId], queryFn: () => api.page(taskId), refetchOnWindowFocus: false });
+  const [leaving, setLeaving] = useState(false);
+  const task = useQuery({ queryKey: ["task", taskId], queryFn: () => api.task(taskId), enabled: !leaving });
+  const page = useQuery({ queryKey: ["page", taskId], queryFn: () => api.page(taskId), refetchOnWindowFocus: false, enabled: !leaving });
   const projects = useQuery({ queryKey: ["projects"], queryFn: api.projects });
   const people = useQuery({ queryKey: ["people"], queryFn: api.people });
   const repos = useQuery({ queryKey: ["repos"], queryFn: api.repos });
@@ -100,6 +104,10 @@ export function TaskPage({ taskId, variant }: { taskId: string; variant: "peek" 
   const revision = useRef(0);
   const pending = useRef<PageDocument | null>(null);
   const timer = useRef<number | undefined>(undefined);
+  const inFlight = useRef<Promise<boolean> | null>(null);
+  const titleSave = useRef<Promise<unknown> | null>(null);
+  const propertiesBusy = useRef(0);
+  const propertyWaiters = useRef<Array<() => void>>([]);
   const loaded = Boolean(page.data);
 
   /**
@@ -124,6 +132,7 @@ export function TaskPage({ taskId, variant }: { taskId: string; variant: "peek" 
   const update = useMutation({
     mutationFn: (data: Record<string, unknown>) => api.patchTask(taskId, data),
     onMutate: async (data) => {
+      propertiesBusy.current += 1;
       setPropsState("saving");
       await client.cancelQueries({ queryKey: ["task", taskId] });
       const previous = client.getQueryData<{ task: TaskRecord }>(["task", taskId]);
@@ -135,7 +144,11 @@ export function TaskPage({ taskId, variant }: { taskId: string; variant: "peek" 
       toast((error as Error).message, { tone: "error" });
     },
     onSettled: () => {
-      setPropsState("saved");
+      propertiesBusy.current -= 1;
+      if (!propertiesBusy.current) {
+        propertyWaiters.current.splice(0).forEach((resolve) => resolve());
+      }
+      setPropsState(propertiesBusy.current ? "saving" : "saved");
       void client.invalidateQueries({ queryKey: ["tasks"] });
       void client.invalidateQueries({ queryKey: ["task", taskId] });
     },
@@ -166,25 +179,62 @@ export function TaskPage({ taskId, variant }: { taskId: string; variant: "peek" 
   });
 
   const flush = useCallback(async () => {
+    while (inFlight.current) {
+      if (!(await inFlight.current)) return false;
+    }
     const doc = pending.current;
-    if (!doc) return;
+    if (!doc) return true;
     pending.current = null;
     setSaveState("saving");
-    try {
-      const saved = await api.savePage(taskId, { revision: revision.current, content: doc });
-      revision.current = saved.revision;
-      setSaveState(pending.current ? "dirty" : "saved");
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 409) {
-        toast("This page changed in another tab. Reloaded the latest version.", { tone: "error" });
-        await client.refetchQueries({ queryKey: ["page", taskId] });
-        setEpoch((value) => value + 1);
-      } else {
-        toast((error as Error).message, { tone: "error" });
+    const work = (async () => {
+      try {
+        const saved = await api.savePage(taskId, { revision: revision.current, content: doc });
+        revision.current = saved.revision;
+        setSaveState(pending.current ? "dirty" : "saved");
+        return true;
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 409) {
+          toast("This page changed in another tab. Reloaded the latest version.", { tone: "error" });
+          await client.refetchQueries({ queryKey: ["page", taskId] });
+          setEpoch((value) => value + 1);
+        } else {
+          pending.current ??= doc;
+          toast((error as Error).message, { tone: "error" });
+        }
+        setSaveState("error");
+        return false;
       }
-      setSaveState("error");
+    })();
+    inFlight.current = work;
+    try {
+      return await work;
+    } finally {
+      if (inFlight.current === work) inFlight.current = null;
     }
   }, [client, taskId, toast]);
+
+  const convert = useMutation({
+    onMutate: () => setLeaving(true),
+    mutationFn: async () => {
+      if (isPageEnsembleBusy("task", taskId)) throw new Error("Wait for Ensemble to finish before converting this task.");
+      window.clearTimeout(timer.current);
+      if (titleSave.current) await titleSave.current;
+      while (propertiesBusy.current) {
+        await new Promise<void>((resolve) => propertyWaiters.current.push(resolve));
+      }
+      if (!(await flush())) throw new Error("Save the task page before converting it.");
+      return api.convertPage("task", taskId, revision.current);
+    },
+    onSuccess: (result) => {
+      void client.invalidateQueries();
+      router.push(`/pages/${result.id}`);
+    },
+    onError: (error: Error) => {
+      setLeaving(false);
+      if (pending.current) timer.current = window.setTimeout(() => void flush(), 700);
+      toast(error.message, { tone: "error" });
+    },
+  });
 
   const onChange = useCallback(
     (doc: PageDocument) => {
@@ -230,7 +280,7 @@ export function TaskPage({ taskId, variant }: { taskId: string; variant: "peek" 
   const pinned = record.todayFocus === "keep";
 
   return (
-    <div className={cx("mx-auto w-full pb-24", variant === "peek" ? "max-w-[860px] px-4 pt-4 sm:px-8 sm:pt-6" : "max-w-[900px] px-4 pt-6 sm:px-16 sm:pt-10")}>
+    <div className={cx("mx-auto w-full pb-24", variant === "peek" ? "max-w-[860px] px-4 pt-4 sm:px-8 sm:pt-6" : "max-w-[900px] px-4 pt-6 sm:px-16 sm:pt-10")} inert={leaving}>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-[12.5px] text-muted">
         <div className="flex items-center gap-1">
           <Link href="/board" className="hover:text-ink">
@@ -263,8 +313,8 @@ export function TaskPage({ taskId, variant }: { taskId: string; variant: "peek" 
             }
           </Popover>
         </div>
-        <div className="flex items-center gap-3">
-          <span>{propsState === "saving" ? "Saving…" : "Properties saved"}</span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="whitespace-nowrap">{propsState === "saving" ? "Saving…" : "Properties saved"}</span>
           <button
             type="button"
             className="btn-ghost"
@@ -283,13 +333,19 @@ export function TaskPage({ taskId, variant }: { taskId: string; variant: "peek" 
             Comment
           </button>
           <MakeDiagramButton text={taskDiagramPrompt(taskId, record.title)} />
+          <button type="button" className="btn-ghost" disabled={convert.isPending} onClick={() => convert.mutate()}>
+            <FileText size={13} /> Convert to page
+          </button>
           <button type="button" className="icon-btn" title="Delete" onClick={() => remove.mutate()}>
             <Trash2 size={14} />
           </button>
         </div>
       </div>
 
-      <TitleInput value={record.title} onSave={(title) => update.mutate({ title })} />
+      <PageTitleField value={record.title} autoFocus={record.title === "Untitled"} onSave={(title) => {
+        titleSave.current = update.mutateAsync({ title });
+        void titleSave.current.catch(() => undefined);
+      }} />
 
       <div className="mt-5 space-y-0.5">
         <PropertyRow icon={User} label="Owner">
@@ -392,7 +448,7 @@ export function TaskPage({ taskId, variant }: { taskId: string; variant: "peek" 
               update.mutate({ due: event.target.value ? new Date(`${event.target.value}T17:00:00`).toISOString() : null })
             }
             className={cx(
-              "row-tile -mx-1.5 rounded bg-transparent px-1.5 py-0.5 text-[13.5px] outline-none [color-scheme:dark]",
+              "row-tile -mx-1.5 rounded bg-transparent px-1.5 py-0.5 text-[13.5px] outline-none",
               !record.due && "text-faint",
             )}
           />
@@ -600,7 +656,7 @@ export function TaskPage({ taskId, variant }: { taskId: string; variant: "peek" 
               ? "Saving…"
               : saveState === "dirty"
                 ? "Unsaved changes"
-                : "Could not save — retrying on next edit"}
+                : "Could not save. Retry on the next edit."}
         </span>
       </div>
 
@@ -613,6 +669,7 @@ export function TaskPage({ taskId, variant }: { taskId: string; variant: "peek" 
             onChange={onChange}
             onMentionClick={onMentionClick}
             page={{ kind: "task", id: taskId }}
+            editable={!leaving}
           />
         ) : initialDoc ? (
           <div className="skeleton mt-4 h-64 w-full" />
@@ -626,34 +683,5 @@ export function TaskPage({ taskId, variant }: { taskId: string; variant: "peek" 
         defaultKind={record.repoId || record.taskType === "code_change" ? "code" : undefined}
       />
     </div>
-  );
-}
-
-function TitleInput({ value, onSave }: { value: string; onSave: (value: string) => void }) {
-  const [draft, setDraft] = useState(value);
-  const ref = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => setDraft(value), [value]);
-  useEffect(() => {
-    const element = ref.current;
-    if (!element) return;
-    element.style.height = "0px";
-    element.style.height = `${element.scrollHeight}px`;
-  }, [draft]);
-  return (
-    <textarea
-      ref={ref}
-      rows={1}
-      value={draft}
-      onChange={(event) => setDraft(event.target.value.replace(/\n/g, ""))}
-      onBlur={() => draft.trim() && draft !== value && onSave(draft.trim())}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") {
-          event.preventDefault();
-          (event.target as HTMLTextAreaElement).blur();
-        }
-      }}
-      placeholder="Untitled"
-      className="w-full resize-none overflow-hidden bg-transparent text-[34px] font-bold leading-tight tracking-tight outline-none placeholder:text-faint"
-    />
   );
 }

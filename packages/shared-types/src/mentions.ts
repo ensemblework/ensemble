@@ -19,6 +19,8 @@ const MENTION_ALIASES: Record<string, MentionKind> = {
   diagrams: "diagram",
   plot: "plot",
   plots: "plot",
+  dataset: "dataset",
+  data: "dataset",
   date: "date",
 };
 
@@ -47,7 +49,13 @@ export function mentionHref(mention: PageMention): string | undefined {
     case "diagram":
       return `/diagrams/${id}`;
     case "plot":
+      if (mention.id.includes("/")) {
+        const [spaceId, tileId] = mention.id.split("/");
+        return `/plots?space=${encodeURIComponent(spaceId!)}&tile=${tileId}`;
+      }
       return `/plots/${id}`;
+    case "dataset":
+      return "/plots";
     case "deliverable":
       return `/today?deliverable=${id}`;
     case "date":
@@ -81,6 +89,23 @@ export function dateMention(value: string): PageMention | null {
 export const isEntityKind = (kind: MentionKind): kind is EntityMentionKind =>
   EntityMentionKind.safeParse(kind).success;
 
+export function documentMentions(document: PageDocument): PageMention[] {
+  const found = new Map<string, PageMention>();
+  const walk = (node: PageNode) => {
+    if (node.type === "mention" && node.attrs) {
+      const mention = PageMention.parse({
+        kind: String(node.attrs.kind ?? "people"),
+        id: String(node.attrs.id ?? ""),
+        label: String(node.attrs.label ?? ""),
+      });
+      if (mention.id) found.set(JSON.stringify([mention.kind, mention.id]), mention);
+    }
+    node.content?.forEach(walk);
+  };
+  document.content.forEach(walk);
+  return [...found.values()];
+}
+
 /**
  * TipTap serialises mentions as links with a `ensemble:` href. Reload those
  * back into mention nodes so the editor and the page store share one document.
@@ -92,7 +117,7 @@ export function restoreMentionLinks(document: PageDocument): PageDocument {
       const href = String(link.attrs.href);
       const question = href.match(/^ensemble:\/\/ask\/([0-9a-f-]{36})$/i);
       if (question) return { type: "ensemble", attrs: { id: question[1]! } };
-      const match = href.match(/^ensemble:\/\/(people|project|repo|task|deliverable|skill|diagram|plot|date)\/(.+)$/);
+      const match = href.match(/^ensemble:\/\/(people|project|repo|task|deliverable|skill|diagram|plot|dataset|date)\/(.+)$/);
       if (match) {
         const mention = PageMention.parse({
           kind: match[1],

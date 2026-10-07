@@ -98,7 +98,7 @@ function EnsembleCard({ decision }: { decision: AgentDecisionRecord }) {
             </div>
           ) : null}
           <button type="button" className="btn-ghost mt-2" disabled={busy} onClick={() => decide.mutate({ decision: "deny" })}>
-            Skip — let the agent decide
+            Skip, let the agent decide
           </button>
         </>
       ) : (
@@ -277,7 +277,7 @@ function EditorCard({ decision }: { decision: AgentDecisionRecord }) {
       {shown ? (
         <pre className="mt-3 max-h-60 overflow-auto whitespace-pre-wrap rounded-md border border-line bg-raised p-3 font-mono text-[12.5px] leading-5">{shown}</pre>
       ) : null}
-      <input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Reason (optional — sent back to the agent on deny)" className="field mt-2 w-full" />
+      <input value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Reason (optional, sent back to the agent on deny)" className="field mt-2 w-full" />
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <button type="button" className="btn-primary" disabled={busy} onClick={() => decide.mutate({ decision: "allow", scope: "once" })}>
           <Check size={13} /> Allow once

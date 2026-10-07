@@ -127,6 +127,7 @@ export function markdownToNodes(markdown: string): PageNode[] {
 
 function textOf(node: PageNode): string {
   if (node.type === "text") return node.text ?? "";
+  if (node.type === "mention") return `@${String(node.attrs?.label ?? "")}`;
   return (node.content ?? []).map(textOf).join(node.type === "paragraph" || node.type === "heading" ? "" : "\n");
 }
 

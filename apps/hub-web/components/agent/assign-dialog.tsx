@@ -161,7 +161,7 @@ export function AssignDialog({
     onSuccess: (result) => {
       if (!result) return;
       setFolder(result.path);
-      setFolderCheck({ ok: true, git: result.git, text: result.git ? "Git repository" : "Not a git repository — changes will not be reviewable in Code" });
+      setFolderCheck({ ok: true, git: result.git, text: result.git ? "Git repository" : "Not a git repository, changes will not be reviewable in Code" });
     },
     onError: (error) => setFolderCheck({ ok: false, text: (error as Error).message }),
   });
@@ -171,7 +171,7 @@ export function AssignDialog({
     try {
       const result = await api.resolveFolder(value);
       setFolder(result.path);
-      setFolderCheck({ ok: true, git: result.git, text: result.git ? `Git repository${result.branch ? ` · on ${result.branch}` : ""}` : "Not a git repository — changes will not be reviewable in Code" });
+      setFolderCheck({ ok: true, git: result.git, text: result.git ? `Git repository${result.branch ? ` · on ${result.branch}` : ""}` : "Not a git repository, changes will not be reviewable in Code" });
     } catch (error) {
       setFolderCheck({ ok: false, text: (error as Error).message });
     }
@@ -409,7 +409,7 @@ export function AssignDialog({
                       <option value="">Choose an earlier task…</option>
                       {(checkouts.data?.checkouts ?? []).map((row) => (
                         <option key={row.jobId} value={row.jobId}>
-                          {row.title} · {["queued", "running", "waiting_approval"].includes(row.status) ? "not finished yet — waits for it" : row.branch || row.status}
+                          {row.title} · {["queued", "running", "waiting_approval"].includes(row.status) ? "not finished yet, waits for it" : row.branch || row.status}
                         </option>
                       ))}
                     </select>

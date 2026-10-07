@@ -1,3 +1,5 @@
+import type { AssistantToolCallRecord } from "../../lib/api";
+
 export type EnsembleLive = {
   text: string;
   status: "streaming" | "open" | "error";
@@ -6,11 +8,30 @@ export type EnsembleLive = {
   model?: string;
   tier?: string;
   error?: string;
-  toolCalls?: Array<{ id: string; name: string; summary?: string; state?: string; input?: Record<string, unknown> }>;
+  toolCalls?: AssistantToolCallRecord[];
+  conversationId?: string;
 };
 
 const bus = new Map<string, EnsembleLive>();
 const listeners = new Map<string, Set<() => void>>();
+const activePages = new Map<string, number>();
+
+export function isPageEnsembleBusy(kind: string, id: string): boolean {
+  return (activePages.get(JSON.stringify([kind, id])) ?? 0) > 0;
+}
+
+export function beginPageEnsemble(kind: string, id: string): () => void {
+  const key = JSON.stringify([kind, id]);
+  activePages.set(key, (activePages.get(key) ?? 0) + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const remaining = (activePages.get(key) ?? 1) - 1;
+    if (remaining) activePages.set(key, remaining);
+    else activePages.delete(key);
+  };
+}
 
 export function readEnsemble(id: string): EnsembleLive | undefined {
   return bus.get(id);

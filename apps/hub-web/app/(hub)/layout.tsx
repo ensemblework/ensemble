@@ -121,7 +121,7 @@ function Frame({ children }: { children: React.ReactNode }) {
                   data-resize-line=""
                   className={cx(
                     "pointer-events-none absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2",
-                    dragging ? "bg-accent" : "bg-accent/40 group-hover:bg-accent/80 group-focus-visible:bg-accent/80",
+                    dragging ? "bg-accent" : "bg-transparent group-hover:bg-line-strong group-focus-visible:bg-accent/80",
                   )}
                 />
               </div>

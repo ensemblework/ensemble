@@ -61,8 +61,8 @@ Focus and triage flow together without reserving a tall empty grid cell after tr
 
 **Current Hub controls:**
 
-- **New task** in the page header and each column opens `components/board/create-task-dialog.tsx`, without creating a row just by opening it. A title is required; description, priority, and a browser-local date/time are optional. Saving calls `POST /api/tasks`; the header defaults to *Me / To do*. Column creation uses that column, with Proposed unassigned and human Waiting work blocked. Nothing is delegated implicitly.
-- **Ctrl+Enter** (or Cmd+Enter) submits the form. Repeated submission is guarded synchronously as well as by the disabled button; failures retain input, Cancel creates nothing, and success clears filters hiding the new card. Task titles are trimmed and whitespace-only titles are rejected in shared schemas and the task service.
+- **New task** in the page header or a column immediately calls `POST /api/tasks` with the title `Untitled` and opens the document editor (`components/board/board.tsx`). There is no creation dialog. The title is selected for editing; owner, priority, due date, and other properties can be set on the page. Header creation uses *To do*, column creation uses that column, and human Waiting work is blocked. The owner starts unassigned; creation never delegates execution.
+- Repeated creation is guarded synchronously and by the pending state. Errors are shown as toasts, and success clears filters hiding the new card. **Add page** converts an existing sidebar note into a task and opens it on the board. Task titles remain trimmed and whitespace-only titles are rejected.
 - **Search** title/description, **filter** by owner and priority, and **Load more tasks** when another page exists. Board and Workspace share the same paginated query cache.
 - **Drag** with the dedicated handle, leaving the title available for opening. Reordering and cross-column moves persist `boardOrder` in Postgres, using **before/after task anchors** so filters do not overwrite hidden work. Pointer and keyboard sorting are supported. Agent-owned work can be reordered; changing its progress requires an explicit *Take over* first.
 - **A new task joins its priority band.** The board's order belongs to the engineer, and nothing re-sorts it — the only question is where a task that did not exist a moment ago should be inserted. It goes **above the first task that matters less than it**, and to the bottom when nothing does: p0 above the first p1 or p2, p1 above the first p2, p2 at the end.
@@ -187,6 +187,9 @@ Before/after tiles + charts (see [module 07](07_MODULE_GOVERNANCE_AUDIT_METRICS.
 | PATCH | `/api/tasks/:id` | `{ status?, owner?, priority?, notes?, projectId?, people?, repoId?, deliverableId?, skillIds?, todayFocus?, expectedUpdatedAt?, … }` |
 | GET / POST | `/api/pages` | → `{ pages[] }`, standalone notes newest first • `POST` → `201 { page }` (§13) |
 | GET / PATCH / PUT / DELETE | `/api/pages/:id` | → the note • `{ title }` • `{ revision, content, notes?, annotations? }`, `409` on a stale revision • `204` |
+| POST | `/api/pages/:kind/:id/convert` | `{ revision }`; `kind` is `page` or `task`. Converts to the other type and returns `{ kind, id, pageId }`. Ownership, revision, and active-agent checks apply. |
+| GET / POST | `/api/pages/:kind/:id/comments` | User-scoped discussion rows for a task, page, project, or deliverable |
+| POST | `/api/pages/:kind/:id/ensemble` | Inline SSE answer; accepts `{ prompt, content?, mentions?, parentId?, quote?, tier?, actAs? }` |
 | GET | `/api/tasks/:id/context` | → context pack preview (chips, no model call) |
 | POST | `/api/tasks/:id/help` | `{ delta, excludeChipIds? }` → streams the answer (SSE) |
 | GET | `/api/approvals?state=pending` | → `{ approvals[], questions[], interrupted[] }` |
@@ -288,7 +291,7 @@ Rate limits: `/api/cli/auth/start` 10 per 10 minutes per address (`ENSEMBLE_RATE
 11. `HelpMePanel`
 12. `MetricsTiles`
 
-The shared `PageHeader` and `CreateTaskDialog` provide consistent headings and manual creation. The shell uses real navigation links, an icon rail at narrower desktop widths, a mobile navigation drawer, and a skip-to-content link.
+The shared `PageHeader` and `PageTitleField` provide consistent headings and editable document titles. Task creation opens the document directly. The shell uses real navigation links, an icon rail at narrower desktop widths, a mobile navigation drawer, and a skip-to-content link.
 
 **As built.** All twelve existed under `apps/hub-web/components/hub/` and `app/(hub)/`. MSW was not needed: the UI ran against the real API from the start, so there is no second, drifting mock contract to maintain. `DelegatePopover` is inline in `proposed-todo-card.tsx`; `TaskDrawer` is the Fluent Drawer in `board/page.tsx`.
 
@@ -435,13 +438,19 @@ Task pages are **documents**, not a second chat or a large edit form. This super
 
 ### Creation and properties
 
-**New task** in a board column opens the shared creation dialog described in §3.2. Complexity remains inferred. Owner, complexity, repository, and other document properties can be changed on the saved task page. Assigning ownership alone never authorizes execution; **Run with agent** confirms the execution, model, review, and delivery choices.
+**New task** creates an untitled document immediately, as described in §3.2. Complexity remains inferred. Owner, complexity, repository, and other document properties can be changed on the saved task page. Assigning ownership alone never authorizes execution; **Run with agent** confirms the execution, model, review, and delivery choices.
 
 The title and description look like editable text. Properties are quiet values with a chooser only when clicked. Owner and execution controls are at the top; repository, deliverable and explicit skills remain available under related properties. Existing resize, full-width, full-page, lifecycle, focus, source, question and run-history controls are retained.
 
 ### Standalone notes
 
 A note that belongs to no task is a `task_pages` row with a null `task_id` (migration `20261004180000_standalone_pages`). The sidebar lists them, and `/pages/[id]` opens one in the same block editor, with the same revision check as a task page. Saves and renames lock the row first (`apps/hub-api/src/pages/store.ts`), so two tabs saving the same revision get one save and one `409`. `search_text` is rewritten on every save and filled in for older rows by a batched pass that starts after the API is listening, so context search finds a note by its body. A standalone note never appears as a task, project or deliverable. *Delete everything* removes them, and the Context Bridge's `ensemble_read` returns the note body. Routes are in §6.
+
+**Pages sits directly below Today and can collapse.** The add action remains available while collapsed. Navigation selections use neutral backgrounds rather than colored ribbons; the shell and desk tiles have smaller corners, flat surfaces, and no decorative title dots or accent washes. Accent remains on focus controls, primary actions, and meaningful states. Static Hub UI copy uses simpler punctuation rather than em dashes.
+
+**Add to board** on a note, or **Add page** on the board, links the existing page row to a newly created To do task. **Convert to page** detaches a task's document and moves the old task to Trash, preserving its properties and execution history there. The page keeps its identity, title, document, mentions, annotations, discussions, and diagram links; inline answers are retargeted to the new page/task address. Converting the note back creates a new task, not a restoration of the archived task's properties. Conversion saves pending content first, rejects stale revisions, and is blocked while an inline answer or agent work is active. It deliberately does not add a task-creation Undo entry that could delete the retained document.
+
+The editor tracks an inline request from the moment it starts, before its first server frame. Comment/reply creation and conversion also share a database row lock and recheck ownership/type before writing, so another tab cannot start a reply against a page midway through conversion.
 
 ### Blocks and mentions
 
@@ -465,7 +474,7 @@ Tables round-trip to GitHub-flavoured pipe tables in the Markdown that notes, re
 
 Typing **/** opens a filtered menu. Arrows select, Enter or Tab inserts, and Escape dismisses it. Standard Markdown shortcuts and bold, italic and inline code also work. **Slash commands and mentions do not activate inside code.**
 
-**@** first offers people, projects, repositories, tasks/todos, deliverables, skills and dates. Selecting a category completes its prefix — for example, `@people:shach` searches existing people by a partial name. Entity mentions retain their **kind and stable ID**, not just a display string. Date mentions support a day or a local date/time converted to an offset timestamp; they do **not** change a task's due date. Unavailable references remain visibly unavailable, not recreated or silently reassigned. A mention is also not an instruction to change the task's primary project, owner or explicit skill selection.
+**@** first offers **Ask Ensemble**, then people, projects, repositories, tasks/todos, deliverables, skills, diagrams, plots, and dates (optional modules follow their gates). Selecting a category completes its prefix, for example `@people:mi` searches existing people by a partial name. Plots are hierarchical: `@plots:` offers plot spaces, a Saved plots group, and uploaded data files; selecting a space drills into its tiles. `@plot:epochs` and `@plots:epochs` both find a matching file, and the inserted dataset mention retains its stable ID. Entity mentions retain their **kind and stable ID**, not just a display string. Date mentions do **not** change a task's due date. A mention alone is not an instruction to change a task's project, owner, or skills.
 
 Project and deliverable note editors reuse the same blocks while retaining their existing Markdown persistence contracts. Encoded `ensemble://` mention links round-trip back into mentions when Markdown notes are opened.
 
@@ -511,9 +520,9 @@ It checks inline creation, failure recovery, all block and mention categories, k
 
 Select text in task notes, project notes, deliverables or agent output to reveal **Comment on selection**. Comments are saved separately from the document and original agent result. Their editor supports plain paragraphs and linked @mentions, but not slash-command blocks. Existing comments can be reopened, edited, resolved and restored from the compact *Comments* disclosure. Editable text shows a quiet highlight for open comments. Anchors retain the selected quote and surrounding text, follow unambiguous moves, and report changed or ambiguous original text rather than silently attaching to a different passage.
 
-Type **@ensemble** and select its suggestion, or finish the mention with a space or colon. Write the question after it and press **Enter** to send; text wraps naturally without requiring manual line breaks. Escape removes the active page token without calling a model. Its small disclosure opens the saved answer. **Typing, autosaving, reopening, refreshing and expanding a previous answer never start a model request.** There is no Ask button or Ctrl+Enter requirement. If the paragraph changes afterwards, *Use question from page* copies the new wording into the question without sending until Enter is pressed.
+Select **Ask Ensemble** from the `@` menu, or type `@ensemble`, write a request, and press **Enter**. Enter selects a file from an active mention menu before it can send the request; Shift+Enter remains a line break. Requests work in standalone pages and task documents, not code blocks. **Typing, autosaving, reopening, refreshing and expanding a previous answer never start a model request.** The live document and typed mention IDs travel with the request, so a save debounce does not hide the newest page content.
 
-Inline answers default to the configured **Easy** complexity model. This is the normal Ensemble tool-calling assistant: it can retrieve context and create todos under the user's existing allowed-write areas and immediate/preview/Needs me policy. Held actions render **Apply/Discard** controls with their exact payload; execution and external actions retain their existing gates. Inline requests never invent a second model channel. The global activity/stop controls still apply. Requests are bounded to **three minutes**, and failures/partial actions are retained rather than replaced with a simulated answer.
+Inline answers use the configured assistant default tier. They run the normal tool loop with user-scoped task/context retrieval. Page context is bounded to 24,000 characters; additional account context is read through tools rather than copying the entire database into a prompt. **New diagrams and plots requested inline are created immediately and attached below the answer.** Allowed-write areas and module gates still apply, and all other writes retain the configured immediate/preview/Needs me policy and show Apply when held. Dataset mentions are read through `hub_get_dataset` before plotting; the renderer uses the complete stored table. Attachments persist as document mentions, are inserted once per successful tool call, and are not re-added after removal. Plot embeds show real charts at chart/tile proportions, with compact and remove controls; Backspace also removes the mention, not the saved plot or dataset.
 
 A comment containing `@ensemble` is sent with Enter and receives an attributed Ensemble reply in that comment. There is **no human reply composer**: the engineer can edit/resolve the original comment, but only the assistant writes its answer. Comments on editable and immutable result text carry a muted orange highlight; ambiguous or removed text leaves the original quote accessible in *Comments*.
 

@@ -2,7 +2,7 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
-import { FileText, Pencil, Plus, Trash2 } from "lucide-react";
+import { ChevronRight, FileText, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { Dialog, cx } from "../ui";
 
@@ -37,6 +37,7 @@ export function PagesSection({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [pendingDelete, setPendingDelete] = useState<PageListItem | null>(null);
+  const [expanded, setExpanded] = useState(true);
 
   const commitRename = (page: PageListItem, value: string) => {
     const title = value.trim();
@@ -45,14 +46,17 @@ export function PagesSection({
   };
 
   return (
-    <nav className="mt-3 flex min-h-0 flex-col px-2" aria-label="Pages">
+    <nav className="mt-2 flex min-h-0 flex-col px-2" aria-label="Pages">
       <div className="sidebar-kicker page-kicker mx-2 mb-1 flex items-center justify-between">
-        <span>Pages</span>
+        <button type="button" className="flex items-center gap-1 py-1 hover:text-ink" aria-label="Toggle pages" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
+          <ChevronRight size={12} className={expanded ? "rotate-90" : undefined} />
+          <span>Pages</span>
+        </button>
         <button type="button" className="icon-btn" aria-label="New page" title="New page" onClick={onCreate}>
           <Plus size={14} />
         </button>
       </div>
-      <div className="flex max-h-48 flex-col gap-0.5 overflow-y-auto">
+      <div hidden={!expanded} className={expanded ? "flex max-h-48 flex-col gap-0.5 overflow-y-auto" : "hidden"}>
         {pages.length === 0 ? <p className="sidebar-label px-2 py-1 text-[12.5px] text-faint">No pages yet</p> : null}
         {pages.map((page) => {
           const href = `/pages/${page.id}`;
@@ -85,7 +89,7 @@ export function PagesSection({
                   ),
                   children: (
                     <>
-                      <FileText size={16} strokeWidth={1.8} className={active ? "text-accent" : "text-muted"} />
+                      <FileText size={16} strokeWidth={1.8} className="text-muted" />
                       <span className="sidebar-label min-w-0 flex-1 truncate">{page.title || "Untitled"}</span>
                     </>
                   ),

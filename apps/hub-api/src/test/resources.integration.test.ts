@@ -4,8 +4,12 @@ import type { InjectOptions } from "fastify";
 import { createHttpHarness, type HttpUser } from "./http.js";
 import { MISSING_ID, type HttpMethod } from "../lib/route-inventory.js";
 import { resourceRouteCoverage as routeCoverage, type RouteCheck } from "./route-coverage.js";
+import { Settings, emptyWorkspace, workspaceSchema } from "@ensemble/shared-types";
+import { plotMentionEntities } from "../plots/mentions.js";
+import { STARTER_SOURCE } from "@ensemble/block-diagrams";
 
 const harness = await createHttpHarness();
+const { commentPageText } = await import("../routes/comments.js");
 const a = await harness.asUser();
 const b = await harness.asUser();
 const covered = new Map<string, Set<RouteCheck>>();
@@ -80,6 +84,152 @@ test("task CRUD, page, board and nested histories are private and preserve owner
   await hidden("DELETE", `/api/tasks/${id}`);
   await check(a, "DELETE", `/api/tasks/${id}`, 200, "happy-path");
   await check(a, "GET", `/api/tasks/${id}`, 404, "unknown-id");
+});
+
+test("page/task conversion keeps the document, mentions, discussions, and diagram links", async () => {
+  const id = await created("/api/pages", "page");
+  await check(a, "PATCH", `/api/pages/${id}`, 200, "happy-path", { title: "Research note" });
+  const content = { type: "doc", content: [
+    { type: "paragraph", content: [{ type: "text", text: "Private page content" }, { type: "mention", attrs: { kind: "dataset", id: "data-id", label: "epochs.csv" } }, { type: "mention", attrs: { kind: "dataset", id: "data-id", label: "epochs.csv" } }] },
+    { type: "ensembleReply", attrs: { threadId: "thread", pageKind: "page", pageId: id, prompt: "Explain" } },
+  ] };
+  const saved = await check(a, "PUT", `/api/pages/${id}`, 200, "happy-path", { revision: 1, content });
+  const working = await harness.prisma.pageDiscussion.create({ data: {
+    userId: a.id, pageKind: "page", pageId: id, sourceKind: "page", sourceId: id,
+    kind: "ensemble", authorKind: "ensemble", body: { text: "Working" }, status: "streaming",
+  } });
+  await check(a, "POST", `/api/pages/page/${id}/convert`, 409, "invalid-input", { revision: saved.revision });
+  await harness.prisma.pageDiscussion.update({ where: { id: working.id }, data: { status: "open" } });
+  const comment = (await check(a, "POST", `/api/pages/page/${id}/comments`, 201, "happy-path", { body: { text: "Keep this comment" } })).comment;
+  const diagramId = await created("/api/diagrams", "diagram");
+  await check(a, "PUT", "/api/diagrams/links", 200, "happy-path", { targetKind: "page", targetId: id, diagramIds: [diagramId] });
+  await hidden("POST", `/api/pages/page/${id}/convert`, { revision: saved.revision });
+  await check(a, "POST", `/api/pages/page/${id}/convert`, 400, "invalid-input", { revision: "wrong" });
+  await check(a, "POST", `/api/pages/page/${id}/convert`, 409, "invalid-input", { revision: 0 });
+  const converted = await check(a, "POST", `/api/pages/page/${id}/convert`, 200, "happy-path", { revision: saved.revision });
+  const task = (await check(a, "GET", `/api/tasks/${converted.id}`, 200, "happy-path")).task;
+  assert.equal(task.title, "Research note");
+  assert.equal(task.status, "todo");
+  const linked = await check(a, "GET", `/api/tasks/${task.id}/page`, 200, "happy-path");
+  assert.equal(linked.content.content[1].attrs.pageKind, "task");
+  assert.equal(linked.content.content[1].attrs.pageId, task.id);
+  assert.equal(linked.mentions[0].kind, "dataset");
+  assert.equal(linked.mentions.length, 1);
+  assert.equal((await harness.prisma.pageDiscussion.findUniqueOrThrow({ where: { id: comment.id } })).pageId, task.id);
+  assert.equal(await harness.prisma.diagramLink.count({ where: { userId: a.id, targetKind: "task", targetId: task.id, diagramId } }), 1);
+  const run = await harness.prisma.run.create({ data: { userId: a.id, taskId: task.id, worker: "fixture" } });
+  await check(a, "POST", `/api/pages/task/${task.id}/convert`, 409, "invalid-input", { revision: linked.revision });
+  await harness.prisma.run.update({ where: { id: run.id }, data: { endedAt: new Date(), outcome: "success" } });
+  await hidden("POST", `/api/pages/task/${task.id}/convert`, { revision: linked.revision });
+  const back = await check(a, "POST", `/api/pages/task/${task.id}/convert`, 200, "happy-path", { revision: linked.revision });
+  assert.equal(back.id, id);
+  const note = await check(a, "GET", `/api/pages/${id}`, 200, "happy-path");
+  assert.equal(note.content.content[0].content[0].text, "Private page content");
+  assert.equal(note.content.content[1].attrs.pageKind, "page");
+  assert.equal(note.content.content[1].attrs.pageId, id);
+  assert.equal((await harness.prisma.pageDiscussion.findUniqueOrThrow({ where: { id: comment.id } })).taskId, null);
+  assert.equal(await harness.prisma.diagramLink.count({ where: { userId: a.id, targetKind: "page", targetId: id, diagramId } }), 1);
+  assert.equal((await harness.prisma.task.findUniqueOrThrow({ where: { id: task.id } })).deletedAt !== null, true);
+  assert.match(await commentPageText(harness.prisma, a.id, "page", id), /Research note[\s\S]*Private page content[\s\S]*@epochs.csv/);
+  assert.match(await commentPageText(harness.prisma, a.id, "page", id), /dataset:data-id/);
+  const live = { type: "doc" as const, content: [{ type: "paragraph", content: [{ type: "text", text: "Unsaved newest text" }] }] };
+  assert.match(await commentPageText(harness.prisma, a.id, "page", id, live), /Unsaved newest text/);
+  assert.doesNotMatch(await commentPageText(harness.prisma, a.id, "page", id, live), /Private page content/);
+  assert.equal(await commentPageText(harness.prisma, b.id, "page", id), "");
+});
+
+test("plot spaces retain their tiles, stay independently addressable, and reject foreign data", async () => {
+  const datasetId = await created("/api/plots/datasets", "dataset", { filename: "epochs.csv", text: "epoch,accuracy\n1,0.7\n2,0.8" });
+  const config = workspaceSchema.parse({ kind: "workspace", datasetIds: [datasetId], tiles: [{ id: "accuracy", title: "Accuracy", chart: "line" }] });
+  const first = await created("/api/plots", "plot", { title: "Training", config });
+  const second = await created("/api/plots", "plot", { title: "Ablation", config: emptyWorkspace() });
+  const read = await check(a, "GET", `/api/plots/${first}`, 200, "happy-path");
+  assert.equal(read.plot.config.kind, "workspace");
+  assert.equal(read.plot.config.tiles[0].title, "Accuracy");
+  const space = await check(a, "GET", `/api/plots/workspace?id=${first}`, 200, "happy-path");
+  assert.equal(space.workspace.id, first);
+  await check(a, "PUT", "/api/plots/workspace", 200, "happy-path", { id: second, config: emptyWorkspace(), title: "Renamed space" });
+  assert.equal((await check(a, "GET", `/api/plots/workspace?id=${first}`, 200, "happy-path")).workspace.title, "Training");
+  assert.equal((await b.inject({ method: "GET", url: `/api/plots/workspace?id=${first}` })).statusCode, 404);
+  const foreign = (await check(b, "POST", "/api/plots/datasets", 201, "happy-path", { text: "epoch,accuracy\n1,0.5" })).dataset.id;
+  const bad = { ...emptyWorkspace(), datasetIds: [foreign] };
+  assert.equal((await a.inject({ method: "POST", url: "/api/plots", payload: { config: bad } })).statusCode, 404);
+  assert.equal((await a.inject({ method: "PUT", url: "/api/plots/workspace", payload: { id: first, config: bad } })).statusCode, 404);
+  const entities = await check(a, "GET", "/api/entities", 200, "happy-path");
+  assert.ok(entities.entities.some((row: { kind: string; id: string }) => row.kind === "dataset" && row.id === datasetId));
+  assert.ok(entities.entities.some((row: { kind: string; id: string }) => row.kind === "plot" && row.id === `${first}/accuracy`));
+  assert.ok(!entities.entities.some((row: { id: string }) => row.id === foreign));
+  const projected = plotMentionEntities([{ id: first, title: "Training", config }], [{ id: datasetId, name: "epochs.csv", format: "csv" }]);
+  assert.equal(projected[0]?.kind, "plot");
+  assert.ok(projected[0] && "isSpace" in projected[0] && projected[0].isSpace);
+  assert.equal(projected[1]?.parentId, first);
+  const { getTool } = await import("../assistant/registry.js");
+  const readPlot = getTool("hub_get_plot")!;
+  const ctx = { app: harness.app, prisma: harness.prisma, userId: a.id, actor: "agent" as const, settings: Settings.parse({}) };
+  const tile = await readPlot.run(ctx, { plotId: first, tileId: "accuracy" });
+  assert.deepEqual(tile.data, { id: first, title: "Training", datasetIds: [datasetId], config });
+  await assert.rejects(readPlot.run({ ...ctx, userId: b.id }, { plotId: first }), /not on your account/);
+  await assert.rejects(readPlot.run(ctx, { plotId: first, tileId: "missing" }), /not in this plot space/);
+});
+
+test("an inline request reads live page context and creates actual diagrams and plots under preview policy", async () => {
+  const person = await harness.asUser();
+  await harness.prisma.user.update({ where: { id: person.id }, data: { emailVerifiedAt: new Date() } });
+  const page = (await person.inject({ method: "POST", url: "/api/pages" })).json().page;
+  const dataset = (await person.inject({ method: "POST", url: "/api/plots/datasets", payload: { filename: "epochs.csv", text: "epoch,accuracy\n1,0.7\n2,0.8" } })).json().dataset;
+  const settings = await person.inject({ method: "PATCH", url: "/api/settings", payload: {
+    assistant: { defaultTier: "medium", writePolicy: "preview" },
+    models: { medium: { provider: "google", model: "gemini-2.5-flash" } },
+  } });
+  assert.equal(settings.statusCode, 200, settings.body);
+  const { setCredentialResolverForTests } = await import("../runtime/credentials.js");
+  const { setRuntimeFetchForTests } = await import("../runtime/models.js");
+  const { setRuntimeSleepForTests, resetBuckets } = await import("../runtime/pace.js");
+  const previous = process.env.ENSEMBLE_INPROCESS_RUNTIME;
+  process.env.ENSEMBLE_INPROCESS_RUNTIME = "1";
+  setCredentialResolverForTests(async (_id, provider) => ({ provider, secret: "inline-test-key", baseUrl: null, source: "you" }));
+  setRuntimeSleepForTests(async () => undefined);
+  resetBuckets();
+  let turns = 0;
+  const prompts: string[] = [];
+  setRuntimeFetchForTests(async (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    prompts.push(JSON.stringify(body.messages));
+    const calls = turns === 0 ? [
+      { name: "hub_get_dataset", arguments: JSON.stringify({ datasetId: dataset.id }) },
+      { name: "hub_validate_diagram", arguments: JSON.stringify({ text: STARTER_SOURCE }) },
+    ] : turns === 1 ? [
+      { name: "hub_create_plot", arguments: JSON.stringify({ title: "Epoch accuracy", datasetId: dataset.id, config: { chart: "line", x: "epoch", series: [{ y: "accuracy", axis: "left" }] } }) },
+      { name: "hub_create_diagram", arguments: JSON.stringify({ title: "Requested diagram", text: STARTER_SOURCE, links: [{ kind: "page", id: page.id }] }) },
+    ] : [];
+    turns += 1;
+    const message = { role: "assistant", content: calls.length ? "" : "Created the requested artifacts.", ...(calls.length ? { tool_calls: calls.map((call, index) => ({ index, id: `inline-${turns}-${index}`, type: "function", function: call })) } : {}) };
+    const result = { model: "gemini-2.5-flash", choices: [{ index: 0, ...(body.stream ? { delta: message } : { message }), finish_reason: calls.length ? "tool_calls" : "stop" }], usage: { prompt_tokens: 10, completion_tokens: 10 } };
+    return new Response(body.stream ? `data: ${JSON.stringify(result)}\n\ndata: [DONE]\n\n` : JSON.stringify(result), { headers: { "content-type": body.stream ? "text/event-stream" : "application/json" } });
+  });
+  try {
+    const response = await person.inject({ method: "POST", url: `/api/pages/page/${page.id}/ensemble`, payload: {
+      prompt: "Create a diagram and plot epoch vs accuracy from @epochs.csv",
+      content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Latest unsaved page context" }] }] },
+      mentions: [{ kind: "dataset", id: dataset.id, label: "epochs.csv" }],
+    } });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.doesNotMatch(response.body, /event: error/);
+    assert.ok(prompts.some((prompt) => prompt.includes("Latest unsaved page context") && prompt.includes(dataset.id)));
+    assert.equal(await harness.prisma.plot.count({ where: { userId: person.id, title: "Epoch accuracy" } }), 1);
+    assert.equal(await harness.prisma.blockDiagram.count({ where: { userId: person.id, title: "Requested diagram" } }), 1);
+    const answer = await harness.prisma.pageDiscussion.findFirstOrThrow({ where: { userId: person.id, pageKind: "page", pageId: page.id, authorKind: "ensemble" } });
+    const calls = answer.toolCalls as Array<{ name: string; state: string; href?: string }>;
+    assert.equal(calls.filter((call) => call.name.startsWith("hub_create_") && call.state === "ok" && call.href).length, 2);
+    assert.equal(await harness.prisma.diagramLink.count({ where: { userId: person.id, targetKind: "page", targetId: page.id } }), 1);
+  } finally {
+    if (previous === undefined) delete process.env.ENSEMBLE_INPROCESS_RUNTIME;
+    else process.env.ENSEMBLE_INPROCESS_RUNTIME = previous;
+    setRuntimeFetchForTests(null);
+    setCredentialResolverForTests(null);
+    setRuntimeSleepForTests(null);
+    resetBuckets();
+  }
 });
 
 test("projects, people and repos reject foreign reads/writes and preserve CRUD", async () => {

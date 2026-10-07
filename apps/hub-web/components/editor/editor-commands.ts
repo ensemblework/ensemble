@@ -57,7 +57,7 @@ export const MENTION_GROUPS: ReadonlyArray<{ kind: MentionKind; label: string; d
   { kind: "deliverable", label: "Deliverables", detail: "Link an outcome" },
   { kind: "skill", label: "Skills", detail: "Reference a personal skill" },
   { kind: "diagram", label: "Diagrams", detail: "Link a block diagram" },
-  { kind: "plot", label: "Plots", detail: "Link a saved plot" },
+  { kind: "plot", label: "Plots", detail: "Browse plot spaces, tiles, and data files" },
   { kind: "date", label: "Date & time", detail: "Mention a date without changing the due date" },
 ];
 

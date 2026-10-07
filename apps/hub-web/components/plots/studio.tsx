@@ -3,11 +3,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CHART_TYPES,
   boilerplate,
   defaultPlotConfig,
+  isWorkspace,
   matplotlibSource,
   parseTableText,
   plotConfigSchema,
@@ -103,6 +105,7 @@ function bytesOf(file: File): Promise<Uint8Array> {
 }
 
 export function PlotStudio({ plotId }: { plotId: string }) {
+  const router = useRouter();
   const toast = useToast();
   const client = useQueryClient();
   const plot = useQuery({ queryKey: ["plot", plotId], queryFn: () => api.plot(plotId) });
@@ -122,16 +125,21 @@ export function PlotStudio({ plotId }: { plotId: string }) {
 
   useEffect(() => {
     if (!plot.data) return;
+    if (isWorkspace(plot.data.plot.config)) {
+      setConfig(null);
+      router.replace(`/plots?space=${plotId}`);
+      return;
+    }
     setConfig(plotConfigSchema.parse(plot.data.plot.config));
     setTitle(plot.data.plot.title);
     setCode(plot.data.plot.code);
     if (plot.data.plot.datasetId) {
       void api.plotDataset(plot.data.plot.datasetId, true).then((result) => setDataset(result.dataset as Dataset));
     }
-  }, [plot.data]);
+  }, [plot.data, plotId, router]);
 
   useEffect(() => {
-    if (!config || !plot.data) return;
+    if (!config || !plot.data || isWorkspace(plot.data.plot.config)) return;
     window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => {
       void api.updatePlot(plotId, { title, config, code }).then(() => client.invalidateQueries({ queryKey: ["plots"] }));

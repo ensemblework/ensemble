@@ -192,7 +192,11 @@ ECharts and CodeMirror are dynamic imports from the studio and the code pane. Th
 
 ## 8. Tiled workspace
 
-The primary surface is a canvas of chart tiles, not a page that edits one figure. A saved single plot still opens in the studio. The canvas is one workspace per account, stored as a plot whose config has `kind: "workspace"`. Layout and tile config autosave.
+The primary surface is a canvas of chart tiles, called a **plot space**, not a page that edits one figure. A saved single plot still opens in the studio. An account can create and name multiple plot spaces and switch between them in `components/plots/workspace.tsx`. Each is stored as a plot whose config has `kind: "workspace"`. Layout and tile config autosave; switching saves the current space before opening another. Plot spaces organize charts and files within an account; they are not independent Ensemble spaces or a context-isolation boundary.
+
+`POST /api/plots` accepts a workspace config to create a space. `GET /api/plots/workspace?id=<id>` opens a specific owned space, and `PUT /api/plots/workspace` accepts an optional `id` to save it. Omitting the ID preserves the existing most-recent-space behavior. Workspace dataset IDs are ownership-checked on create/update/save, and `GET /api/plots/:id` retains workspace configs rather than flattening them into single-chart defaults.
+
+Older `/plots/<space-id>` links redirect to `/plots?space=<id>` rather than opening a workspace in the single-chart studio. Renaming a space patches only its title, so it cannot overwrite a queued layout save.
 
 ### Packing
 
@@ -236,7 +240,7 @@ The choice is not global. `time` can be the key while `accuracy` stays two colum
 
 These are gallery entries, not a second chart engine. The gallery is grouped into Paper figures and Everyday charts, and each type has its own thumbnail (a band, error bars, log ticks, a Pareto staircase, a matrix, a reliability diagonal, violins). A training curve tells the user it wants a step, a measure, and an optional seed: per-seed rows are averaged and the sample standard deviation is shaded. An ablation wants a mean and an error column and draws error bars. A scaling law uses logarithmic axes. Matplotlib export of one tile is unchanged. Export of the canvas opens a dialog with a large preview, the venue preset and column width (ICML, NeurIPS, ICLR, CVPR), panel order, a shared legend, and PDF, SVG, PNG, or EPS. The script plots each tile's table, including a join, so the file matches the canvas rather than one of the source files. Panel labels `(a)`, `(b)`, … sit at the outside top-left of each axes.
 
-Try sample data loads a marked, one-click-clearable set: three seeds by fifty steps of train and eval loss, an ablation table with mean and std, a compute-versus-loss table, and a confusion matrix. The four tiles that open with it are the training curve, the ablation bars, the scaling law, and the matrix.
+An empty space starts with **Upload a table**, not generated sample data. There is no Try sample data action. Previously saved sample canvases can still be cleared; removing the entry point does not delete existing user data.
 
 | Gallery entry | What a paper uses it for | Chart |
 |---|---|---|
@@ -251,3 +255,9 @@ Try sample data loads a marked, one-click-clearable set: three seeds by fifty st
 Qualitative image grids are not a tile yet. The importers do not carry images, and a fake grid of empty frames would pretend otherwise.
 
 Custom Python stays. `load(name)` resolves every dataset on the workspace, by the name the user sees. `save()` still captures the figure. No file path is shown.
+
+### Plots inside pages
+
+The `@` menu offers one Plots category. `@plots:` browses named spaces, then their tiles; saved single plots live under Saved plots. Uploaded CSV/Excel/other tables appear as data-file mentions, found through either `@plot:<name>` or `@plots:<name>`. Tile identity includes the space ID, so identical tile titles do not select the wrong chart. The entity endpoint is user-scoped and omits this hierarchy when the Plots module is off.
+
+An inline `@ensemble` request can use a dataset mention to create a saved plot and attach it below its answer. `components/plots/plot-card.tsx` renders actual ECharts charts for saved plots and workspace tiles, including axes/series, rather than an empty sparkline. The embed follows chart or tile proportions and provides compact/expand and remove controls. Removing it (or Backspace) changes only the document; the saved chart and source files remain.

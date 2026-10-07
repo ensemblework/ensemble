@@ -73,7 +73,7 @@ function Orbit({
     return () => observer.disconnect();
   }, []);
   const scrollTo = (id: string) => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
-  const text = (value: number | null) => (known && value !== null ? String(value) : "—");
+  const text = (value: number | null) => (known && value !== null ? String(value) : "-");
   const beads = [
     { key: "focus", n: text(known ? focus : null), label: "in focus", onClick: () => scrollTo("focus") },
     { key: "proposed", n: text(known ? proposed : null), label: "proposed", onClick: () => scrollTo("proposed") },

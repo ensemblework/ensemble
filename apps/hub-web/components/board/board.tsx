@@ -22,12 +22,11 @@ import { useWarmEditors } from "@/lib/warm";
 import { STATUS, plural } from "@/lib/format";
 import { Held } from "@/components/motion/held";
 import { SearchQuery } from "@/components/motion/search-query";
-import { PageHeader, Skeleton, useOverflowRight } from "../ui";
+import { MenuItem, PageHeader, Popover, Skeleton, useOverflowRight } from "../ui";
 import { AskEnsemble } from "../ensemble/ask-button";
 import { CardBody, SortableCard, type BoardCardMotion } from "./task-card";
 import { BoardStrip } from "../widgets/board-strip";
 import type { LayoutPayload } from "@/lib/server-layout";
-import { CreateTaskDialog } from "./create-task-dialog";
 
 type ColumnId = "proposed" | "todo" | "in_progress" | "waiting" | "done";
 
@@ -88,10 +87,9 @@ function Column({
   const { setNodeRef } = useDroppable({ id });
   return (
     <div className="relative w-[272px] shrink-0 self-start" data-column={id} aria-label={STATUS[pill].label}>
-    <div className="board-column flex flex-col rounded-[14px] bg-panel/70 p-2">
+    <div className="board-column flex flex-col rounded-lg bg-panel/70 p-2">
       <div className="mb-2 flex items-center justify-between px-1">
         <div className="flex items-center gap-2">
-          <span className="h-2 w-2 rounded-full" style={{ background: `var(--tag-${STATUS[pill].tone}-fg)` }} />
           <span className="text-[13px] font-medium">{STATUS[pill].label}</span>
           <span className="bdg-n text-[12px] tabular-nums text-muted">{ids.length}</span>
         </div>
@@ -103,8 +101,7 @@ function Column({
         </div>
       </div>
       <div
-        className="flex min-h-[60px] flex-col gap-1.5 rounded-lg border-l-2 p-1"
-        style={{ borderColor: `var(--tag-${STATUS[pill].tone}-fg)` }}
+        className="flex min-h-[60px] flex-col gap-1.5 rounded-lg p-1"
       >
         <SortableContext id={id} items={ids} strategy={verticalListSortingStrategy}>
           {ids.map((taskId) => {
@@ -155,6 +152,7 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
   useWarmEditors("peek");
   const [boardScroll, boardMore] = useOverflowRight();
   const tasks = useQuery({ queryKey: ["tasks"], queryFn: api.tasks });
+  const pages = useQuery({ queryKey: ["pages"], queryFn: api.pages });
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings, staleTime: 60_000 });
   const completedVisible = settings.data?.settings.completedVisible ?? 5;
@@ -171,9 +169,9 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
   const [dragId, setDragId] = useState<string | null>(null);
   const [picked, setPicked] = useState<string[]>([]);
   const [layoutEdit, setLayoutEdit] = useState(false);
-  const [creating, setCreating] = useState<TaskStatus | null>(null);
   const togglePick = (id: string) => setPicked((current) => (current.includes(id) ? current.filter((row) => row !== id) : [...current, id]));
   const origin = useRef<ColumnId | null>(null);
+  const createGuard = useRef(false);
 
   const byId = useMemo(() => new Map((tasks.data?.tasks ?? []).map((task) => [task.id, task])), [tasks.data]);
 
@@ -290,7 +288,34 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
     setPriority("all");
     void client.invalidateQueries({ queryKey: ["tasks"] });
     void client.invalidateQueries({ queryKey: ["shell"] });
+    client.setQueryData(["task", task.id], { task });
+    peek.open(task.id);
   };
+
+  const create = useMutation({
+    mutationFn: (status: TaskStatus) => api.createTask({ title: "Untitled", status }),
+    onSuccess: ({ task }) => created(task),
+    onError: (error: Error) => toast(error.message, { tone: "error" }),
+    onSettled: () => { createGuard.current = false; },
+  });
+  const createNewTask = (status: TaskStatus) => {
+    if (createGuard.current) return;
+    createGuard.current = true;
+    create.mutate(status);
+  };
+  const addPage = useMutation({
+    mutationFn: async (id: string) => {
+      const page = await api.standalonePage(id);
+      const converted = await api.convertPage("page", id, page.revision);
+      return api.task(converted.id);
+    },
+    onSuccess: ({ task }) => {
+      created(task);
+      void client.invalidateQueries({ queryKey: ["pages"] });
+      void client.invalidateQueries({ queryKey: ["entities"] });
+    },
+    onError: (error: Error) => toast(error.message, { tone: "error" }),
+  });
 
   const columnFromOver = (over: DragOverEvent["over"]): ColumnId | null => {
     if (!over) return null;
@@ -406,10 +431,15 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
           </div>
         ) : null}
         <div className="ml-auto flex shrink-0 items-center gap-2">
+          <Popover trigger={(_open, toggle) => <button type="button" className="btn" disabled={addPage.isPending} onClick={toggle}>Add page</button>}>
+            {(close) => (pages.data?.pages.length ? pages.data.pages.map((page) => (
+              <MenuItem key={page.id} onClick={() => { close(); addPage.mutate(page.id); }}>{page.title || "Untitled"}</MenuItem>
+            )) : <p className="p-2 text-[13px] text-muted">No pages to add. Create one in the sidebar.</p>)}
+          </Popover>
           <button type="button" className="btn" onClick={() => setLayoutEdit(true)}>
             Edit layout
           </button>
-          <button type="button" className="btn-primary" onClick={() => setCreating("todo")}>
+          <button type="button" className="btn-primary" disabled={create.isPending} onClick={() => createNewTask("todo")}>
             <Plus size={14} />
             New task
           </button>
@@ -466,7 +496,7 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
                   over={overColumn === column.id && origin.current !== column.id ? "yes" : undefined}
                   motion={motion.sortable}
                   onOpen={peek.open}
-                  onCreate={() => setCreating(column.id === "waiting" ? "blocked" : column.drop)}
+                  onCreate={() => createNewTask(column.id === "waiting" ? "blocked" : column.drop)}
                   moreHref={column.id === "done" ? "/settings#completed" : undefined}
                   picked={picked}
                   onToggleSelect={togglePick}
@@ -486,7 +516,6 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
           </BoardDragOverlay>
         </DndContext>
       </Held>
-      {creating ? <CreateTaskDialog status={creating} onCreated={created} onClose={() => setCreating(null)} /> : null}
     </div>
   );
 }

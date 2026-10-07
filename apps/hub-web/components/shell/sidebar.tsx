@@ -107,7 +107,7 @@ function NavItem({
       aria-current={active ? "page" : undefined}
       title={label}
     >
-      <Icon size={16} strokeWidth={1.8} className={active ? "text-accent" : "text-muted"} />
+      <Icon size={16} strokeWidth={1.8} className="text-muted" />
       <span className="sidebar-label flex-1">{label}</span>
       {badge ? (
         <span className="sidebar-label on-accent rounded-md px-1.5 text-2xs font-semibold">{badge}</span>
@@ -221,9 +221,13 @@ export function Sidebar() {
         <span className="sidebar-label flex-1">Jump to…</span>
         <span className="sidebar-label kbd">{mod === "⌘" ? "⌘K" : "Ctrl+K"}</span>
       </button>
-      <div className="sidebar-kicker page-kicker mx-4 mb-1 mt-1">Desk</div>
+      <div className="min-h-0 flex-1 overflow-y-auto pb-3">
       <nav className="flex flex-col gap-0.5 px-2" aria-label="Primary">
-        {PRIMARY.filter((item) => visible(item.href)).map((item) => (
+        <NavItem href="/today" label="Today" icon={CalendarDays} />
+      </nav>
+      <PagesNav />
+      <nav className="mt-2 flex flex-col gap-0.5 px-2" aria-label="Work">
+        {PRIMARY.slice(1).filter((item) => visible(item.href)).map((item) => (
           <NavItem
             key={item.href}
             {...item}
@@ -244,8 +248,7 @@ export function Sidebar() {
           </nav>
         );
       })}
-      <PagesNav />
-      <div className="flex-1" />
+      </div>
       <div className="px-2 pb-2">
         <NavItem href="/settings" label="Settings" icon={Settings} />
       </div>
@@ -256,7 +259,7 @@ export function Sidebar() {
         <span
           className={
             person.initial
-              ? "flex h-5 w-5 items-center justify-center rounded-full bg-accent-soft text-[11px] font-semibold text-ink"
+              ? "flex h-5 w-5 items-center justify-center rounded bg-hover text-[11px] font-semibold text-ink"
               : "h-5 w-5 rounded-full border border-dashed border-muted"
           }
           aria-hidden

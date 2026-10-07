@@ -28,15 +28,15 @@ export function AutonomySection({ settings, patch }: Props) {
   return (
     <SectionCard title="Autonomy" description="The default for newly delegated tasks. You can still choose per task when you delegate.">
       <select aria-label="Autonomy level" value={settings.autonomy} onChange={(event) => patch({ autonomy: event.target.value })} className="field w-full">
-        <option value="assist">Assist — every external write needs your approval</option>
-        <option value="supervised">Supervised — reversible writes proceed; sends need you</option>
-        <option value="autonomous">Autonomous — writes proceed; everything still audited</option>
+        <option value="assist">Assist, every external write needs your approval</option>
+        <option value="supervised">Supervised, reversible writes proceed; sends need you</option>
+        <option value="autonomous">Autonomous, writes proceed; everything still audited</option>
       </select>
       <p className="mt-1.5 text-[12px] text-muted">
         Policy still forces approval for anything leaving your domain or mentioning money, legal or HR matters, at every level.
       </p>
       <div className="mt-2 divide-y divide-[var(--line)]">
-        <SettingRow title="Daily high-risk write limit" description="Beyond this, unattended sends fall back to asking you — the runaway brake.">
+        <SettingRow title="Daily high-risk write limit" description="Beyond this, unattended sends fall back to asking you, the runaway brake.">
           <input
             aria-label="Daily high-risk write limit"
             type="number"
@@ -250,7 +250,7 @@ export function AssistantSection({ settings, patch }: Props) {
         })}
       </div>
       <p className="mt-3 text-[12px] text-muted">
-        This covers your own data, which can always be undone from the app bar. Anything that leaves the building — sending mail, opening a pull request, posting to chat — keeps its own approval gate whatever this is set to.
+        This covers your own data, which can always be undone from the app bar. Anything that leaves the building, sending mail, opening a pull request, posting to chat, keeps its own approval gate whatever this is set to.
       </p>
     </SectionCard>
   );
@@ -294,7 +294,7 @@ export function FetchSection({ settings, patch }: Props) {
         </button>
       }
     >
-      <SettingRow title="Scheduled fetching" description={nextFetch ? `Next fetch ${dateTime(nextFetch)}` : "Off — fetch only when you press the button."}>
+      <SettingRow title="Scheduled fetching" description={nextFetch ? `Next fetch ${dateTime(nextFetch)}` : "Off, fetch only when you press the button."}>
         <Toggle label="Scheduled fetch" checked={fetch.scheduled} onChange={(scheduled) => patch({ fetch: { scheduled } })} />
       </SettingRow>
       <SettingRow title="Times" description={`Your local time (${settings.timezone}). Morning between ${clockLabel("08:00")} and ${clockLabel("10:00")}, afternoon between ${clockLabel("15:00")} and ${clockLabel("17:00")}, is what most days want.`}>
@@ -341,7 +341,7 @@ export function FetchSection({ settings, patch }: Props) {
 
 export function QuietHoursSection({ settings, patch }: Props) {
   return (
-    <SectionCard title="Quiet hours" description="Notifications hold until morning. Nothing is lost — the digest carries it over.">
+    <SectionCard title="Quiet hours" description="Notifications hold until morning. Nothing is lost, the digest carries it over.">
       <div className="flex items-center gap-4 text-[13px]">
         <Toggle label="Quiet hours" checked={settings.quietHours.enabled} onChange={(enabled) => patch({ quietHours: { enabled } })} />
         <span className="text-muted">From</span>
@@ -821,7 +821,7 @@ export function DeleteDataSection({ settings }: { settings: Settings }) {
   return (
     <SectionCard
       title="Delete my data"
-      description="Removes ingested mail, chats, meetings and the context graph. The audit ledger records that you deleted, and nothing about what was deleted — removing the evidence of a deletion would defeat the point of an audit trail."
+      description="Removes ingested mail, chats, meetings and the context graph. The audit ledger records that you deleted, and nothing about what was deleted, removing the evidence of a deletion would defeat the point of an audit trail."
     >
       <select aria-label="Data deletion scope" value={scope} onChange={(event) => setScope(event.target.value as "context" | "everything")} className="field w-full">
         <option value="context">Context only</option>

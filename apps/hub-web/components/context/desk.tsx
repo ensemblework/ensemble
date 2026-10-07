@@ -48,7 +48,7 @@ const PLACEHOLDER_META = new Set(["Not synced yet", "No recent touch"]);
 const EMPTY: Record<string, string> = {
   people: "No one here yet. Add a person, or connect a source that already knows them.",
   projects: "No project yet. A project is the pile a person, a repo, and the work belong to.",
-  repos: "No repo yet. Connect one when you have it — this lane does not invent one.",
+  repos: "No repo yet. Connect one when you have it, this lane does not invent one.",
   meetings: "No meeting notes yet. They show up when you take notes or a calendar syncs.",
   artifacts: "No artifacts yet. Deliverables, mail, and files land here.",
 };
@@ -517,7 +517,6 @@ export function ContextDesk({ initial }: { initial: BoardPayload | null }) {
                   data-lane={lane.id}
                   onClick={() => (lane.kind === "people" || lane.kind === "projects" ? setAdding(lane.kind) : undefined)}
                 >
-                  <span className="kind-dot" data-kind={lane.kind} />
                   {lane.label}
                   <span className="text-muted">{EMPTY[lane.kind]?.split(".")[0]}</span>
                   {lane.kind === "people" || lane.kind === "projects" ? <span className="text-accent">Add</span> : null}
@@ -763,7 +762,6 @@ function Lane({
   return (
     <section className="context-lane" data-lane={lane.id} data-kind={lane.kind} aria-label={lane.label}>
       <header className="lane-head">
-        <span className="kind-dot" data-kind={lane.kind} />
         <h2>{lane.label}</h2>
         <span className="lane-count">{filtering ? `${matchCount} / ${lane.total}` : matchCount}</span>
         {lane.progress && lane.progress.total > 0 ? (

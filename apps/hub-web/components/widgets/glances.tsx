@@ -60,7 +60,7 @@ export function NeedsMeCount() {
   const count = (shell.data?.approvals ?? 0) + (shell.data?.decisions ?? 0);
   return (
     <Link href="/needs-me" className="flex items-baseline gap-2">
-      <span className="display text-[28px] leading-none">{shell.data ? count : "—"}</span>
+      <span className="display text-[28px] leading-none">{shell.data ? count : "-"}</span>
       <span className="text-[12.5px] text-muted">waiting</span>
     </Link>
   );
@@ -89,7 +89,7 @@ export function PeopleGlance({ size }: { size: Size }) {
           ))}
         </ul>
       ) : (
-        <p className="text-[12.5px] text-muted">{people.data ? "No one here yet. Placeholders have no email — rename or delete them." : " "}</p>
+        <p className="text-[12.5px] text-muted">{people.data ? "No one here yet. Placeholders have no email, rename or delete them." : " "}</p>
       )}
       <Link href="/context?tab=people" className="mt-2 inline-block text-[12px] text-accent hover:underline">
         All people
@@ -115,7 +115,7 @@ export function ReposGlance({ size }: { size: Size }) {
           ))}
         </ul>
       ) : (
-        <p className="text-[12.5px] text-muted">{repos.data ? "No repo yet. Connect one when you have it — this tile does not invent one." : " "}</p>
+        <p className="text-[12.5px] text-muted">{repos.data ? "No repo yet. Connect one when you have it, this tile does not invent one." : " "}</p>
       )}
     </div>
   );

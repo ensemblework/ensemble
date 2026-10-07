@@ -1,5 +1,5 @@
 import type { IdeTheme, ThemeDirectoryExtension } from "@ensemble/ide-theme";
-import type { PageDocument, Settings } from "@ensemble/shared-types";
+import { emptyWorkspace, type PageDocument, type Settings } from "@ensemble/shared-types";
 import type { LayoutDocument } from "@ensemble/shared-types/widgets";
 
 import { bindClient, currentExternalSignal, isRequestCancelled, RequestCancelledError, trackRequest, isPageUnloading } from "./fetch-cancel";
@@ -309,7 +309,7 @@ export type DocumentRecord = {
   modelUsage: unknown;
 };
 
-export type Entity = { kind: string; id: string; label: string; detail: string };
+export type Entity = { kind: string; id: string; label: string; detail: string; parentId?: string; parentLabel?: string; tileId?: string; isSpace?: boolean };
 
 export type GraphNode = { id: string; kind: string; label: string; sub: string };
 export type GraphEdge = { source: string; target: string; kind: string };
@@ -819,6 +819,8 @@ export const api = bindClient({
     put<PageRecord>(`/api/tasks/${id}/page`, data),
   pages: () => get<{ pages: StandalonePageSummary[] }>("/api/pages"),
   createPage: () => post<{ page: StandalonePageSummary }>("/api/pages", {}),
+  convertPage: (kind: "page" | "task", id: string, revision: number) =>
+    post<{ kind: "page" | "task"; id: string; pageId: string }>(`/api/pages/${kind}/${id}/convert`, { revision }),
   renamePage: (id: string, title: string) => patch<{ page: StandalonePageSummary }>(`/api/pages/${id}`, { title }),
   deletePage: (id: string) => del<void>(`/api/pages/${id}`),
   standalonePage: (id: string) => get<StandalonePageRecord>(`/api/pages/${id}`),
@@ -1204,9 +1206,10 @@ export const api = bindClient({
     ),
   restoreDiagram: (id: string, version: number) => post<{ diagram: DiagramDetail }>(`/api/diagrams/${id}/restore`, { version }),
   duplicateDiagram: (id: string) => post<{ diagram: DiagramDetail }>(`/api/diagrams/${id}/duplicate`),
-  plots: () => get<{ plots: Array<{ id: string; title: string; datasetId: string | null; datasetName: string | null; updatedAt: string }> }>("/api/plots"),
+  plots: () => get<{ plots: Array<{ id: string; title: string; datasetId: string | null; datasetName: string | null; config: unknown; updatedAt: string }> }>("/api/plots"),
   plot: (id: string) => get<{ plot: { id: string; title: string; datasetId: string | null; config: unknown; code: string }; spark: number[] }>(`/api/plots/${id}`),
   createPlot: (body?: { title?: string; datasetId?: string }) => post<{ plot: { id: string; title: string } }>("/api/plots", body ?? {}),
+  createPlotSpace: () => post<{ plot: { id: string; title: string } }>("/api/plots", { title: "Untitled space", config: emptyWorkspace() }),
   updatePlot: (id: string, body: { title?: string; datasetId?: string | null; config?: unknown; code?: string }) => patch<{ plot: { id: string } }>(`/api/plots/${id}`, body),
   duplicatePlot: (id: string) => post<{ plot: { id: string; title: string } }>(`/api/plots/${id}/duplicate`),
   deletePlot: (id: string) => del<void>(`/api/plots/${id}`),
@@ -1218,9 +1221,9 @@ export const api = bindClient({
   plotSheet: (id: string, sheet: string) => post(`/api/plots/datasets/${id}/sheet`, { sheet }),
   renderPlot: (id: string, body: { format: "png" | "svg" | "pdf" | "eps"; code?: string; dpi?: number }) =>
     post<{ format: string; data: string; stdout: string; stderr: string }>(`/api/plots/${id}/render`, body),
-  plotWorkspace: () =>
-    get<{ workspace: { id: string; title: string; config: unknown; code: string; updatedAt: string } }>("/api/plots/workspace"),
-  savePlotWorkspace: (body: { config: unknown; code?: string; title?: string }) =>
+  plotWorkspace: (id?: string) =>
+    get<{ workspace: { id: string; title: string; config: unknown; code: string; updatedAt: string } }>(`/api/plots/workspace${qs({ id })}`),
+  savePlotWorkspace: (body: { id?: string; config: unknown; code?: string; title?: string }) =>
     put<{ workspace: { id: string; config: unknown; code: string } }>("/api/plots/workspace", body),
   deletePlotDataset: (id: string) => del<void>(`/api/plots/datasets/${id}`),
   diagramFreshness: (id: string) => get<{ stale: boolean; reasons: string[] }>(`/api/diagrams/${id}/freshness`),
@@ -1370,6 +1373,9 @@ export type PageComment = {
   resolved: boolean;
   model: string | null;
   tier: string | null;
+  toolCalls: AssistantToolCallRecord[];
+  conversationId: string | null;
+  error: string | null;
   anchor: { orphaned?: boolean; quote?: string } | null;
   createdAt: string;
 };

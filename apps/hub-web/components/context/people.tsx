@@ -36,7 +36,6 @@ function PersonCard({ person }: { person: PersonRecord }) {
         </button>
       )}
       <div className="flex items-start gap-2.5 pr-6">
-        <span className="kind-dot mt-1.5" style={{ ["--kind" as string]: "var(--kind-people)" }} />
         <div className="min-w-0">
           <div className="text-[15px] font-semibold leading-5">{person.name}</div>
           <div className="truncate text-[12.5px] text-muted">{person.email ?? "No email"}</div>
@@ -121,7 +120,7 @@ export function PeopleTab({ initialSearch, who = "" }: { initialSearch: string; 
         <Empty>
           {wanted
             ? "No one on today's work."
-            : "No people yet. They are learned from mail, chat and PR reviews as sources sync — or add them yourself."}
+            : "No people yet. They are learned from mail, chat and PR reviews as sources sync, or add them yourself."}
         </Empty>
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(270px,1fr))] gap-3">

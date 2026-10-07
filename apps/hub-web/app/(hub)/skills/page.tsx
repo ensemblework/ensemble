@@ -122,7 +122,7 @@ function SkillDetail({ skill }: { skill: SkillRecord }) {
         </ul>
       ) : (
         <p className="mt-1 text-[12.5px] text-muted">
-          Nothing mined yet — this skill is a starting point. It improves from your feedback even before any history is connected.
+          Nothing mined yet, this skill is a starting point. It improves from your feedback even before any history is connected.
         </p>
       )}
     </div>

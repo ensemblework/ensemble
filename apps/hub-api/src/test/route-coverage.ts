@@ -74,6 +74,7 @@ export const resourceRouteCoverage: Readonly<Record<string, readonly RouteCheck[
   "DELETE /api/comments/:id": ["happy-path", "isolation", "unknown-id"],
   "POST /api/pages/:kind/:id/ensemble": ["isolation", "unknown-id", "invalid-input", "relation-isolation", "hosted-verification"],
   "POST /api/pages": ["happy-path"],
+  "POST /api/pages/:kind/:id/convert": ["happy-path", "isolation", "unknown-id", "invalid-input"],
   "GET /api/pages": ["happy-path", "isolation"],
   "GET /api/pages/:id": ["happy-path", "isolation", "unknown-id"],
   "PATCH /api/pages/:id": ["happy-path", "isolation", "unknown-id", "invalid-input"],

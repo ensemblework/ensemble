@@ -118,6 +118,8 @@ export interface AssistantTurnArgs {
   signal?: AbortSignal;
   /** Optional modules that are on. When set, tools for a removed module are dropped. */
   modules?: string | null;
+  /** Inline page requests authorize new visual artifacts, not other writes. Area and module gates still apply. */
+  inlineArtifacts?: boolean;
 }
 
 export interface AssistantTurnResult {
@@ -464,6 +466,11 @@ interface CallOutcome {
   forModel: unknown;
 }
 
+export function holdsAssistantWrite(policy: AssistantTurnArgs["settings"]["assistant"]["writePolicy"], toolName: string, inlineArtifacts = false): boolean {
+  if (policy === "immediate") return false;
+  return !(inlineArtifacts && (toolName === "hub_create_diagram" || toolName === "hub_create_plot"));
+}
+
 async function runOne(
   ctx: ToolContext,
   args: AssistantTurnArgs,
@@ -494,7 +501,7 @@ async function runOne(
     return { call, forModel: { error: call.error, hint: "Fix the arguments and call again." } };
   }
 
-  const held = tool.isWrite && ctx.settings.assistant.writePolicy !== "immediate";
+  const held = tool.isWrite && holdsAssistantWrite(ctx.settings.assistant.writePolicy, tool.name, args.inlineArtifacts);
   if (held) {
     let preview: string;
     try {

@@ -7,6 +7,7 @@ import type { PageDocument, PageMention } from "@ensemble/shared-types";
 import { api } from "@/lib/api";
 import { diagramMentionIds, editorExtensions, type EntitySource } from "./extensions";
 import { useModuleState } from "@/lib/use-module";
+import { useToast } from "../toast";
 
 const CommentLayer = dynamic(() => import("../comments/comment-layer").then((mod) => mod.CommentLayer), { ssr: false });
 
@@ -32,6 +33,7 @@ export function BlockEditor({
   editable?: boolean;
   page?: { kind: string; id: string };
 }) {
+  const toast = useToast();
   const changeRef = useRef(onChange);
   const clickRef = useRef(onMentionClick);
   const pageRef = useRef(page);
@@ -94,10 +96,11 @@ export function BlockEditor({
     const key = `${current.kind}:${current.id}:${ids.join(",")}`;
     if (linked.current === key) return;
     linked.current = key;
-    const targetKind = current.kind === "page" ? "task" : current.kind;
+    const targetKind = current.kind;
     if (!["task", "deliverable", "project", "repo", "page"].includes(targetKind)) return;
-    void api.syncDiagramLinks({ targetKind, targetId: current.id, diagramIds: ids }).catch(() => {
+    void api.syncDiagramLinks({ targetKind, targetId: current.id, diagramIds: ids }).catch((error: Error) => {
       linked.current = "";
+      toast(error.message, { tone: "error" });
     });
   }
 

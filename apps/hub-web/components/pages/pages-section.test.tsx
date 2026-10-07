@@ -35,6 +35,22 @@ const pages = [
   { id: "page-old", title: "Older note" },
 ];
 
+test("Pages can collapse without losing the create action", async () => {
+  const mounted = await render(
+    <PagesSection pages={pages} pathname="/today" onCreate={() => undefined} onRename={() => undefined} onDelete={() => undefined} renderLink={(props) => <Anchor {...props} />} />,
+  );
+  try {
+    const toggle = mounted.host.querySelector<HTMLButtonElement>("[aria-label='Toggle pages']")!;
+    assert.equal(toggle.getAttribute("aria-expanded"), "true");
+    await act(async () => toggle.click());
+    assert.equal(toggle.getAttribute("aria-expanded"), "false");
+    assert.equal(mounted.host.querySelector("a")?.parentElement?.parentElement?.hidden, true);
+    assert.ok(mounted.host.querySelector("[aria-label='New page']"));
+    await act(async () => toggle.click());
+    assert.equal(toggle.getAttribute("aria-expanded"), "true");
+  } finally { await unmount(mounted); }
+});
+
 test("the Pages section lists notes as /pages links and + creates one", async () => {
   let created = 0;
   const mounted = await render(

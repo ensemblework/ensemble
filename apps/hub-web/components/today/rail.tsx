@@ -165,7 +165,7 @@ export function DeliverablesRail({ highlightId, size = "l" }: { highlightId?: st
             </select>
           </Field>
           <Field label="Due (optional)">
-            <input type="date" value={due} onChange={(event) => setDue(event.target.value)} className="field [color-scheme:dark]" />
+            <input type="date" value={due} onChange={(event) => setDue(event.target.value)} className="field" />
           </Field>
           <div className="flex justify-end">
             <button type="button" className="btn-primary" disabled={!title || !projectId} onClick={() => create.mutate()}>
@@ -227,8 +227,8 @@ export function RemindersRail({ timezone, size = "l" }: { timezone: string; size
             className="field w-full min-w-0"
           />
           <div className="flex min-w-0 flex-col gap-2">
-            <input type="date" value={date} onChange={(event) => setDate(event.target.value)} className="field min-w-0 [color-scheme:dark]" />
-            <input type="time" value={time} onChange={(event) => setTime(event.target.value)} className="field min-w-0 [color-scheme:dark]" />
+            <input type="date" value={date} onChange={(event) => setDate(event.target.value)} className="field min-w-0" />
+            <input type="time" value={time} onChange={(event) => setTime(event.target.value)} className="field min-w-0" />
           </div>
           <div className="flex justify-end gap-2">
             <button type="button" className="btn-ghost" onClick={() => setAdding(false)}>

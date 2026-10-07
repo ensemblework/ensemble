@@ -43,7 +43,7 @@ export function SourcesTab() {
       <section>
         <h3 className="mb-1 text-[15px] font-semibold">Connected sources</h3>
         <p className="mb-3 text-[12.5px] text-muted">
-          Every item links back to where it lives — the email in your mail client, the thread in Teams, the PR on GitHub.
+          Every item links back to where it lives, the email in your mail client, the thread in Teams, the PR on GitHub.
         </p>
         <div className="grid grid-cols-[repeat(auto-fill,minmax(250px,1fr))] gap-2">
           {(connections.data?.connections ?? []).map((row) => (

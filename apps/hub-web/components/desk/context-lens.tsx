@@ -53,7 +53,7 @@ const PEOPLE_L = [
 
 const ART_L = [
   { i: FileText, t: "HC order dt. 8 Jul 2026 · certified copy.pdf", m: "Mehta Textiles", w: "Tue" },
-  { i: Mail, t: "Re: vakalatnama signature — Sunita Rao", m: "Rao v. Sunrise", w: "Mon" },
+  { i: Mail, t: "Re: vakalatnama signature, Sunita Rao", m: "Rao v. Sunrise", w: "Mon" },
   { i: MessageCircle, t: "Payment receipts 2019 (7 photos)", m: "Arora v. DLF", w: "Sun" },
   { i: Receipt, t: "e-Filing acknowledgement · Diary 41822/2026", m: "Mehta Textiles", w: "25 Sept" },
   { i: ScanLine, t: "Exhibit P-7 · site inspection report", m: "Nair Estates", w: "22 Sept" },
@@ -67,10 +67,10 @@ const PEOPLE_R = [
 
 const ART_R = [
   { i: FileText, t: "Radford-2023-Whisper.pdf · 14 highlights", m: "Reading", w: "today" },
-  { i: NotebookText, t: "Notes — IndicWav2Vec pretraining recipe", m: "Notes", w: "Tue" },
+  { i: NotebookText, t: "Notes, IndicWav2Vec pretraining recipe", m: "Notes", w: "Tue" },
   { i: FileCode2, t: "thesis.bib · 212 entries, 3 missing DOIs", m: "Ch 2", w: "Mon" },
   { i: GitFork, t: "iitm-speech/indic-asr-bench · 4 open PRs", m: "Code", w: "Mon" },
-  { i: Presentation, t: "Lab talk — SSL for Indic ASR.pptx", m: "Talks", w: "18 Sept" },
+  { i: Presentation, t: "Lab talk, SSL for Indic ASR.pptx", m: "Talks", w: "18 Sept" },
 ];
 
 function PeopleLens({ groups, meta, more, state }: { groups: typeof PEOPLE_L; meta: string; more: string; state: State }) {

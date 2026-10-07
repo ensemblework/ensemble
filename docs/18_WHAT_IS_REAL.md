@@ -98,6 +98,16 @@ In-app, not email. Schema change is `20260929180000_cowork_surfaces`.
 
 The code review space has a VS Code theme picker. Built-in themes live in `@ensemble/ide-theme`. Open VSX themes are fetched through hub-api (`/api/themes/search`, `/api/themes/openvsx`) and cached under `.theme-cache` (gitignored). The choice is `ideTheme` on the user settings document, so there is no database migration. Star up to three themes; Alt+Shift+T switches between them.
 
+## Hub UI and editor pass (7 Oct 2026, local checkout)
+
+The focused in-memory API and editor regressions were run locally, not against a deployed service. Navigation and tiles use quieter neutral selections and smaller corners, Pages is collapsible below Today, and new tasks open immediately as untitled documents. Notes can be added to the board and tasks converted back to pages while retaining their document/discussions/diagram links ([02 §13](02_MODULE_INTERACTION_HUB_UI.md#13-document-style-pages)).
+
+Inline `@ensemble` requests now include standalone-page and live-editor context. New diagrams and plots are created through real tool calls and attached beneath the answer; other writes still follow approval settings. Plot spaces can be named/switched, file/tile mentions are hierarchical, and embedded plots render real charts with compact/remove controls. The sample-data entry point is removed ([20 §8](20_PLOTS_DESIGN.md#8-tiled-workspace)).
+
+**Independent Ensemble spaces remain a separate implementation pass.** Plot spaces do not isolate account context, connectors, tasks, or agent retrieval. This change does not claim workspace-level isolation.
+
+**Checked 7 Oct 2026:** all-package TypeScript checks, the production Hub UI build, 3,166 public API checks, 33 shared-type checks, and all 190 Hub UI checks passed. Focused editor/plot/page tests passed. Browser checks used an isolated PGlite account and mocked model transport, covering immediate task creation, page/task round-trip, mention selection before sending, actual chart sizing, removal surviving reload, and plot-space creation/switching. No live-model or deployment claim is made. The earlier assistant-message test-process timeout was a retained mutation-cache timer; its test client now uses zero mutation garbage-collection time, matching the other isolated UI tests without changing application behavior or weakening the Apply/reload assertions.
+
 ## Added since 27 Sep (read from the code on 5 Oct 2026)
 
 These are on `main` and have their own docs. They were not re-tested live for this page.

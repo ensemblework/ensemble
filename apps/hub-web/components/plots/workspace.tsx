@@ -10,23 +10,21 @@ import {
   placeNew,
   poolColumns,
   resizeItem,
-  sampleTables,
-  sampleTiles,
   tileSchema,
   workspaceBoilerplate,
   workspaceSchema,
   emptyWorkspace,
+  isWorkspace,
   type LinkChoice,
   type PackItem,
   type PoolDataset,
-  type SampleKey,
   type WorkspaceConfig,
   type WorkspaceTile,
 } from "@ensemble/shared-types";
 import { AddTileDialog } from "@/components/plots/add-tile";
 import { UploadDialog } from "@/components/plots/upload-dialog";
 import { ExportDialog } from "@/components/plots/export-dialog";
-import { Popover } from "@/components/ui";
+import { InlineEdit, Popover } from "@/components/ui";
 import { seriesSwatchColor, usePlotTheme } from "@/lib/plots/theme";
 import { api } from "@/lib/api";
 import { PLOTS_WORKSPACE_KEY, plotsWorkspaceOwner, readPlotsWorkspaceCache, writePlotsWorkspaceCache } from "@/lib/tab-session";
@@ -90,27 +88,31 @@ function PlotWorkspaceInner() {
   const client = useQueryClient();
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
   const userId = shell.data?.user.id ?? null;
+  const [spaceId, setSpaceId] = useState<string | undefined>(() => typeof window === "undefined" ? undefined : new URLSearchParams(window.location.search).get("space") ?? undefined);
+  const spaces = useQuery({ queryKey: ["plots"], queryFn: api.plots });
   const workspace = useQuery({
-    queryKey: ["plot-workspace"],
-    queryFn: () => withTimeout(api.plotWorkspace(), 12_000),
+    queryKey: ["plot-workspace", spaceId],
+    queryFn: () => withTimeout(api.plotWorkspace(spaceId), 12_000),
     retry: 1,
     networkMode: "always",
     staleTime: 30_000,
-    placeholderData: () => (typeof window === "undefined" ? undefined : readPlotsWorkspaceCache(window.sessionStorage, userId)),
+    placeholderData: () => (typeof window === "undefined" || spaceId ? undefined : readPlotsWorkspaceCache(window.sessionStorage, userId)),
   });
   const [config, setConfig] = useState<WorkspaceConfig | null>(null);
   const [code, setCode] = useState("");
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [title, setTitle] = useState("Plots");
+  const [switching, setSwitching] = useState(false);
+  const saveFlight = useRef(Promise.resolve());
   const [uploadOpen, setUploadOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
-  const [focus, setFocus] = useState<string | null>(null);
+  const [focus, setFocus] = useState<string | null>(() => typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("tile"));
   const [codeOpen, setCodeOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [linksHidden, setLinksHidden] = useState(false);
   const [preview, setPreview] = useState<PackItem[] | null>(null);
   const [ghost, setGhost] = useState<PackItem | null>(null);
-  const [sampling, setSampling] = useState(false);
   const hydrated = useRef(false);
   const fromServer = useRef(false);
   const savedSnapshot = useRef("");
@@ -143,6 +145,7 @@ function PlotWorkspaceInner() {
     setConfig(nextConfig);
     setCode(nextCode);
     setWorkspaceId(row.id);
+    setTitle(row.title);
     hydrated.current = true;
     if (!workspace.isFetched || !workspace.data) return;
     writePlotsWorkspaceCache(window.sessionStorage, userId, workspace.data);
@@ -172,15 +175,44 @@ function PlotWorkspaceInner() {
   }, [config]);
 
   useEffect(() => {
-    if (!hydrated.current || !fromServer.current || !config) return;
+    if (!hydrated.current || !fromServer.current || !config || !workspaceId || switching) return;
     const snapshot = JSON.stringify({ config, code });
     if (snapshot === savedSnapshot.current) return;
     const timer = window.setTimeout(() => {
       savedSnapshot.current = snapshot;
-      void api.savePlotWorkspace({ config, code }).catch(() => undefined);
+      saveFlight.current = saveFlight.current.then(async () => {
+        await api.savePlotWorkspace({ id: workspaceId, config, code });
+      }).catch((error: Error) => {
+        savedSnapshot.current = "";
+        toast(error.message, { tone: "error" });
+      });
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [config, code]);
+  }, [config, code, workspaceId, switching, toast]);
+
+  const openSpace = async (id?: string, create = false) => {
+    if (switching) return;
+    setSwitching(true);
+    try {
+      await saveFlight.current;
+      if (workspaceId && config) await api.savePlotWorkspace({ id: workspaceId, config, code });
+      const nextId = create ? (await api.createPlotSpace()).plot.id : id;
+      hydrated.current = false;
+      fromServer.current = false;
+      savedSnapshot.current = "";
+      setConfig(null);
+      setWorkspaceId(null);
+      setSelected(null);
+      setFocus(null);
+      setSpaceId(nextId);
+      await client.invalidateQueries({ queryKey: ["plots"] });
+      await client.invalidateQueries({ queryKey: ["entities"] });
+    } catch (error) {
+      toast(error instanceof Error ? error.message : "Could not open this plot space.", { tone: "error" });
+    } finally {
+      setSwitching(false);
+    }
+  };
 
   const ids = config?.datasetIds ?? [];
   const idsKey = ids.join(",");
@@ -215,36 +247,6 @@ function PlotWorkspaceInner() {
   tilesRef.current = config?.tiles ?? [];
 
   const update = (patch: Partial<WorkspaceConfig>) => setConfig((current) => (current ? { ...current, ...patch } : current));
-
-  const loadSample = async () => {
-    if (!config || sampling) return;
-    setSampling(true);
-    try {
-      if (config.sample) {
-        await Promise.all(config.datasetIds.map((id) => api.deletePlotDataset(id).catch(() => undefined)));
-      }
-      const made: Partial<Record<SampleKey, string>> = {};
-      for (const table of sampleTables()) {
-        const result = await api.createPlotDataset({ text: table.csv, filename: table.filename, name: table.name });
-        made[table.key] = result.dataset.id;
-      }
-      const nextIds = { runs: made.runs!, ablation: made.ablation!, scaling: made.scaling!, confusion: made.confusion!, scores: made.scores! };
-      setConfig(workspaceSchema.parse({
-        kind: "workspace",
-        tiles: sampleTiles(nextIds),
-        datasetIds: [nextIds.runs, nextIds.ablation, nextIds.scaling, nextIds.confusion, nextIds.scores],
-        links: {},
-        sample: true,
-      }));
-      setLinksHidden(false);
-      await client.invalidateQueries({ queryKey: ["plot-workspace-tables"] });
-      toast("Sample data is on the canvas. Clear sample removes it.");
-    } catch (error) {
-      toast(error instanceof Error ? error.message : "Could not load the sample.", { tone: "error" });
-    } finally {
-      setSampling(false);
-    }
-  };
 
   const clearSample = async () => {
     if (!config?.sample) return;
@@ -353,17 +355,27 @@ function PlotWorkspaceInner() {
   const showLinks = groups.length > 0 && !linksHidden;
 
   return (
-    <div className="flex h-[calc(100dvh-4.5rem)] min-h-0 flex-col px-4 pb-4 pt-3" data-plot-canvas>
+    <div className="flex h-[calc(100dvh-4.5rem)] min-h-0 flex-col px-4 pb-4 pt-3" data-plot-canvas inert={switching}>
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <h1 className="display mr-auto text-[28px] leading-none">Plots</h1>
+        <InlineEdit value={title} onSave={(next) => {
+          if (!workspaceId) return;
+          void api.updatePlot(workspaceId, { title: next }).then(() => {
+            setTitle(next);
+            void client.invalidateQueries({ queryKey: ["plots"] });
+            void client.invalidateQueries({ queryKey: ["entities"] });
+          }).catch((error: Error) => toast(error.message, { tone: "error" }));
+        }} className="display text-[28px] leading-none" />
+        <select aria-label="Plot space" className="field mr-auto max-w-48 text-[13px]" disabled={switching} value={workspaceId ?? ""} onChange={(event) => void openSpace(event.target.value)}>
+          {!(spaces.data?.plots ?? []).some((space) => space.id === workspaceId) ? <option value={workspaceId ?? ""}>{title}</option> : null}
+          {(spaces.data?.plots ?? []).filter((space) => isWorkspace(space.config)).map((space) => <option key={space.id} value={space.id}>{space.title}</option>)}
+        </select>
+        <button type="button" className="btn" disabled={switching} onClick={() => void openSpace(undefined, true)}>New space</button>
         {config.sample ? (
           <>
             <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-accent" data-sample-mark>Sample</span>
             <button type="button" className="btn" onClick={() => void clearSample()} data-clear-sample>Clear sample</button>
           </>
-        ) : (
-          <button type="button" className="btn" disabled={sampling} onClick={() => void loadSample()} data-plot-sample>Try sample data</button>
-        )}
+        ) : null}
         {showLinks ? (
           <div className="inline-flex items-center gap-1 rounded-full border border-line bg-panel pl-1" data-shared-columns>
             <Popover
@@ -414,7 +426,6 @@ function PlotWorkspaceInner() {
                   <span className="display block text-[24px] leading-none">Upload a table</span>
                   <span className="mt-2 block text-[13px] text-muted">Data is shared by every tile. Then add a chart from the gallery.</span>
                 </button>
-                <button type="button" className="btn" disabled={sampling} onClick={() => void loadSample()} data-plot-sample>Try sample data</button>
               </div>
             ) : null}
             {ghost ? (

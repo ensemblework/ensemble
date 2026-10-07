@@ -31,7 +31,6 @@ function ProjectCard({ project }: { project: ProjectRecord }) {
         <Trash2 size={13} />
       </button>
       <button type="button" className="flex items-center gap-2 pr-6 text-left text-[15px] font-semibold leading-5 hover:underline" onClick={() => peek.open(project.id, "project")}>
-        <span className="kind-dot" style={{ ["--kind" as string]: "var(--kind-project)" }} />
         {project.name}
         {project.status === "done" ? <Tag tone="green">done</Tag> : null}
       </button>
