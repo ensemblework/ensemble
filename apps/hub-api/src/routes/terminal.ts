@@ -172,7 +172,7 @@ export async function terminalRoutes(app: FastifyInstance): Promise<void> {
 
   app.post("/api/terminal/passkeys/options", async (request) => {
     humanOnly(request);
-    const user = await prisma.user.findUniqueOrThrow({ where: { id: request.userId } });
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: request.accountId } });
     if (!user.passwordHash) throw new GuardError("Terminal passkey enrollment requires an account password. OAuth-only sign-in is valid, but password or reauthentication enrollment support is required before adding a terminal passkey.");
     const { password } = z.object({ password: z.string().min(1) }).parse(request.body);
     if (!(await verifyPassword(password, user.passwordHash))) throw new GuardError("That password is not right.");

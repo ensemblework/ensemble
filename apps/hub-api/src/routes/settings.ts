@@ -4,6 +4,7 @@ import { loadSettings, saveSettings } from "../lib/settings.js";
 import { checkCodeRootsPatch } from "../lib/code-folders.js";
 import { setOwnModule } from "../lib/own-modules.js";
 import { connectionState, listConnectors } from "../connectors/base.js";
+import { mirrorSettings } from "../spaces/store.js";
 
 export async function settingsRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/settings", async (request) => {
@@ -24,6 +25,7 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
     const current = await loadSettings(app.prisma, request.userId);
     const patch = await checkCodeRootsPatch(current, body, request.userId);
     const settings = await saveSettings(app.prisma, request.userId, patch);
+    await mirrorSettings(app.prisma, request.userId);
     return { settings };
   });
 

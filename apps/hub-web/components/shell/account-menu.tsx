@@ -3,7 +3,7 @@
 /** @jsxImportSource react */
 
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Keyboard, LayoutTemplate, LogOut, Moon, Plug, Settings, Sparkles, Sun, UserRound } from "lucide-react";
+import { Keyboard, Layers, LayoutTemplate, LogOut, Moon, Plug, Settings, Sparkles, Sun, UserRound } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import type { AppearanceSettings } from "@ensemble/shared-types";
@@ -109,6 +109,7 @@ export function AccountMenu() {
           </div>
           <div className="my-1 h-px bg-line" />
           <Row icon={UserRound} onSelect={() => go(close, "/settings?tab=account")}>Account settings</Row>
+          <Row icon={Layers} onSelect={() => go(close, "/settings?tab=spaces")}>Spaces</Row>
           <Row icon={Sparkles} onSelect={() => go(close, "/settings?tab=assistant")}>Assistant and models</Row>
           <Row icon={Plug} onSelect={() => go(close, "/settings?tab=connections")}>Connected apps</Row>
           <Row icon={Keyboard} onSelect={() => go(close, "/settings?tab=shortcuts")} hint="?">Keyboard shortcuts</Row>

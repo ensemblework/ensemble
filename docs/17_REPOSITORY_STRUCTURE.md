@@ -142,6 +142,7 @@ apps/skill-forge/             pyproject.toml + ensemble_forge/__init__.py; miner
 | Shared API / domain shape | `packages/shared-types/` |
 | Editor access to Ensemble context | `apps/context-bridge/`, `apps/hub-api/src/bridge/`, `apps/hub-api/src/routes/mcp.ts` (hosted `/mcp`) |
 | The `ensemble` CLI, its installers and releases | `apps/cli/`, `scripts/package-cli.mjs`, `packaging/`, `apps/landing/public/`, `.github/workflows/cli-release.yml` |
+| Ensemble spaces (separate workspaces per account) | `apps/hub-api/src/spaces/`, the space cookie in `apps/hub-api/src/lib/auth.ts`, `apps/hub-web/components/shell/space-switcher.tsx`, `apps/hub-web/app/(hub)/spaces/` ([28](28_ENSEMBLE_SPACES.md)) |
 | Database schema change | a new migration in `apps/hub-api/prisma/` |
 | Desktop shell | `apps/desktop/` |
 | Local infrastructure or VM deploy | `infra/` |

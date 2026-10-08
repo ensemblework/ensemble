@@ -15,6 +15,7 @@ import { normalizeCookieDomain } from "@ensemble/shared-types/cookie-site";
 import { knownTokenScope } from "../bridge/auth.js";
 import { sessionCookieHeader, sessionCookieSecure } from "./cookie.js";
 import { prisma } from "./prisma.js";
+import { ownedSpace, SPACE_COOKIE } from "../spaces/store.js";
 
 const scryptAsync = promisify(scrypt) as (password: string, salt: Buffer, length: number) => Promise<Buffer>;
 
@@ -78,7 +79,7 @@ function cookieSecure(request: FastifyRequest): boolean {
 export async function startSession(reply: FastifyReply, userId: string, request: FastifyRequest): Promise<void> {
   const token = randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + SESSION_DAYS * 86_400_000);
-  const user = await prisma.user.findUnique({ where: { id: userId }, select: { moduleSet: true } });
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { moduleSet: true, lastSpaceId: true } });
   const agent = request.headers["user-agent"];
   const userAgent = Array.isArray(agent) ? (agent[0] ?? "") : (agent ?? "");
   await prisma.session.create({
@@ -91,6 +92,9 @@ export async function startSession(reply: FastifyReply, userId: string, request:
     },
   });
   appendCookie(reply, sessionCookieHeader(SESSION_COOKIE, token, SESSION_DAYS * 86_400, cookieSecure(request), sessionCookieDomain()));
+  // A new sign-in reopens the space used last. Anything else (or a deleted space) is the account's own.
+  const last = await ownedSpace(prisma, userId, user?.lastSpaceId);
+  appendCookie(reply, sessionCookieHeader(SPACE_COOKIE, last?.id ?? "", last ? 400 * 86_400 : 0, cookieSecure(request), sessionCookieDomain()));
 }
 
 function sessionCookieDomain(): string | null {
@@ -101,6 +105,7 @@ export async function endSession(request: FastifyRequest, reply: FastifyReply): 
   const token = readCookie(request, SESSION_COOKIE);
   if (token) await prisma.session.deleteMany({ where: { id: sha256(token) } });
   appendCookie(reply, sessionCookieHeader(SESSION_COOKIE, "", 0, cookieSecure(request), sessionCookieDomain()));
+  appendCookie(reply, sessionCookieHeader(SPACE_COOKIE, "", 0, cookieSecure(request), sessionCookieDomain()));
 }
 
 export function newApiToken(): { token: string; hash: string; prefix: string } {
@@ -111,7 +116,18 @@ export function newApiToken(): { token: string; hash: string; prefix: string } {
 export type AuthVia = "session" | "token" | "internal" | "bypass" | "desktop";
 export type TokenScope = "full" | "bridge" | "device";
 
-export type Identity = { userId: string; via: AuthVia; tokenScope?: TokenScope; tokenId?: string; modules: string | null };
+/**
+ * `userId` is whose data the request reads and writes: the active Ensemble space.
+ * `accountId` is who signed in. They differ only inside a space other than the account's own.
+ */
+export type Identity = { userId: string; accountId?: string; via: AuthVia; tokenScope?: TokenScope; tokenId?: string; modules: string | null };
+
+/** Browser sign-ins open the space named by the space cookie. Tokens and service calls never do. */
+async function inSpace(request: FastifyRequest, who: Identity): Promise<Identity> {
+  const space = await ownedSpace(prisma, who.userId, readCookie(request, SPACE_COOKIE));
+  if (!space) return { ...who, accountId: who.userId };
+  return { ...who, userId: space.id, accountId: who.userId, modules: space.moduleSet };
+}
 
 async function modulesForUser(userId: string): Promise<string | null> {
   const user = await prisma.user.findUnique({ where: { id: userId }, select: { moduleSet: true } });
@@ -128,7 +144,7 @@ export async function identify(request: FastifyRequest): Promise<Identity | null
   const authorization = request.headers.authorization;
   if (desktopTokenMatches(authorization, process.env.ENSEMBLE_DESKTOP_TOKEN)) {
     const userId = env.ENSEMBLE_DEV_USER_ID;
-    return { userId, via: "desktop", tokenScope: "full", modules: await modulesForUser(userId) };
+    return inSpace(request, { userId, via: "desktop", tokenScope: "full", modules: await modulesForUser(userId) });
   }
   if (authorization?.startsWith("Bearer ens_")) {
     const row = await prisma.apiToken.findUnique({
@@ -144,8 +160,8 @@ export async function identify(request: FastifyRequest): Promise<Identity | null
   const cookie = readCookie(request, SESSION_COOKIE);
   if (cookie) {
     const session = await prisma.session.findUnique({ where: { id: sha256(cookie) } });
-    if (session && session.expiresAt > new Date()) return { userId: session.userId, via: "session", modules: session.modules };
+    if (session && session.expiresAt > new Date()) return inSpace(request, { userId: session.userId, via: "session", modules: session.modules });
   }
-  if (env.ENSEMBLE_DEV_AUTH_BYPASS) return { userId: env.ENSEMBLE_DEV_USER_ID, via: "bypass", modules: await modulesForUser(env.ENSEMBLE_DEV_USER_ID) };
+  if (env.ENSEMBLE_DEV_AUTH_BYPASS) return inSpace(request, { userId: env.ENSEMBLE_DEV_USER_ID, via: "bypass", modules: await modulesForUser(env.ENSEMBLE_DEV_USER_ID) });
   return null;
 }

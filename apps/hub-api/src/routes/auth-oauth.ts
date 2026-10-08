@@ -48,7 +48,7 @@ export async function authOAuthRoutes(app: FastifyInstance, options: { exchange?
       const cookie = readCookie(request, SESSION_COOKIE);
       if (!cookie) throw Object.assign(new Error("Sign in again before linking a provider."), { statusCode: 401 });
       sessionId = sha256(cookie);
-      const session = await prisma.session.findFirst({ where: { id: sessionId, userId: request.userId, expiresAt: { gt: new Date() } } });
+      const session = await prisma.session.findFirst({ where: { id: sessionId, userId: request.accountId, expiresAt: { gt: new Date() } } });
       if (!session || session.createdAt < new Date(Date.now() - 10 * 60_000)) {
         throw Object.assign(new Error("Sign in again before linking a provider."), { statusCode: 403 });
       }
@@ -59,7 +59,7 @@ export async function authOAuthRoutes(app: FastifyInstance, options: { exchange?
     await prisma.authFlow.create({
       data: {
         id: sha256(flow.state), provider, codeVerifier: flow.verifier, nonce: flow.nonce,
-        userId: link ? request.userId : null, sessionId, expiresAt: new Date(Date.now() + FLOW_SECONDS * 1000),
+        userId: link ? request.accountId : null, sessionId, expiresAt: new Date(Date.now() + FLOW_SECONDS * 1000),
       },
     });
     setFlowCookie(reply, request, flow.state, FLOW_SECONDS);

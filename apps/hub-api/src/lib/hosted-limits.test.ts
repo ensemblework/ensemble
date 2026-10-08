@@ -36,14 +36,22 @@ test("the hosted user lock reuses an open transaction instead of nesting one", a
   process.env.NODE_ENV = "production";
   try {
     const locks: string[] = [];
-    const tx = { $queryRaw: async () => { locks.push("tx"); return [{ id: "user-1" }]; } };
+    // A space is locked through its account, so every space of one account shares one quota lock.
+    const users = { findUnique: async () => ({ ownerId: "account-1" }), findMany: async () => [{ id: "user-1" }] };
+    const tx = {
+      user: users,
+      $queryRaw: async (_strings: TemplateStringsArray, id: string) => {
+        locks.push(id);
+        return [{ id }];
+      },
+    };
     const result = await withHostedUserLock(tx as never, "user-1", async (inner) => (inner === (tx as never) ? "same" : "other"), false);
     assert.equal(result, "same");
-    assert.deepEqual(locks, ["tx"]);
+    assert.deepEqual(locks, ["account-1"]);
     const opened: unknown[] = [];
     const client = {
       $transaction: async (fn: (inner: unknown) => Promise<unknown>) => {
-        const inner = { $queryRaw: async () => [{ id: "user-1" }] };
+        const inner = { user: { findUnique: async () => ({ ownerId: null }), findMany: async () => [] }, $queryRaw: async () => [{ id: "user-1" }] };
         opened.push(inner);
         return fn(inner);
       },

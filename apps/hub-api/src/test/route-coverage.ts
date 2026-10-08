@@ -224,6 +224,17 @@ export const connectedDataRouteCoverage: Readonly<Record<string, readonly RouteC
   "GET /api/meetings/notes/:id": ["happy-path", "isolation", "unknown-id"],
 };
 
+/** Ensemble spaces. Owned by src/spaces/routes.ts; checked in src/spaces/spaces.integration.test.ts. */
+export const spacesRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
+  "GET /api/spaces": ["happy-path", "isolation"],
+  "POST /api/spaces": ["happy-path", "invalid-input"],
+  "POST /api/spaces/:id/switch": ["isolation"],
+  "PATCH /api/spaces/:id": ["isolation"],
+  "DELETE /api/spaces/:id": ["happy-path", "isolation", "invalid-input"],
+  "POST /api/spaces/settings/copy": ["happy-path", "isolation"],
+  "PUT /api/spaces/settings/sync": ["happy-path"],
+};
+
 export const routeCoverage = {
   ...resourceRouteCoverage,
   ...authRouteCoverage,
@@ -233,4 +244,5 @@ export const routeCoverage = {
   ...mcpConnectionRouteCoverage,
   ...importRouteCoverage,
   ...connectedDataRouteCoverage,
+  ...spacesRouteCoverage,
 };

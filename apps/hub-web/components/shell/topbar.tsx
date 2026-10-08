@@ -1,14 +1,12 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Menu, Moon, MoreHorizontal, PanelRight, PanelRightDashed, Redo2, Sun, Undo2 } from "lucide-react";
+import { Menu, MoreHorizontal, PanelRight, PanelRightDashed, Redo2, Undo2 } from "lucide-react";
 import { FetchGlyph } from "@/components/motion/slot";
 import { usePathname } from "next/navigation";
 import { useEffect } from "react";
-import type { AppearanceSettings } from "@ensemble/shared-types";
 import { api } from "@/lib/api";
 import { useModKey } from "@/lib/platform";
-import { APPEARANCE_KEY, DEFAULT_APPEARANCE, publishAppearance, usePersistentState } from "@/lib/prefs";
 import { useLive } from "../live";
 import { useToast } from "../toast";
 import { MenuItem, Popover, cx } from "../ui";
@@ -79,7 +77,6 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell });
   const canUndo = shell.data?.canUndo === true;
   const canRedo = shell.data?.canRedo === true;
-  const [appearance] = usePersistentState<AppearanceSettings>(APPEARANCE_KEY, DEFAULT_APPEARANCE);
   const title = TITLES.find(([prefix]) => pathname.startsWith(prefix))?.[1] ?? "Ensemble";
 
   const fetchNow = useMutation({
@@ -116,17 +113,15 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [undo, redo, client]);
 
-  const dark = appearance.theme !== "light";
   const mod = useModKey();
   const toggleMode = () => {
     const next = mode === "side" ? "page" : "side";
     setMode(next);
     toast(next === "side" ? "Tasks will open in a side peek." : "Tasks will open as a full page.");
   };
-  const toggleTheme = () => publishAppearance({ ...appearance, theme: dark ? "light" : "dark" });
 
   return (
-    <header className="topbar grid h-11 shrink-0 grid-cols-[minmax(0,1fr)_minmax(0,560px)_minmax(0,1fr)] items-center gap-3 border-b border-line px-3 max-md:grid-cols-[auto_minmax(0,1fr)_auto]">
+    <header className="topbar grid h-11 shrink-0 grid-cols-[minmax(max-content,1fr)_minmax(0,560px)_minmax(max-content,1fr)] items-center gap-3 border-b border-line px-3 max-md:grid-cols-[auto_minmax(0,1fr)_auto]">
       <div className="flex min-w-0 items-center gap-2">
         <button type="button" className="icon-btn" onClick={onToggleSidebar} aria-label="Toggle sidebar">
           <Menu size={16} />
@@ -168,15 +163,6 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
       >
         {mode === "side" ? <PanelRight size={15} /> : <PanelRightDashed size={15} />}
       </button>
-      <button
-        type="button"
-        className="icon-btn hidden lg:inline-flex"
-        title={dark ? "Switch to light" : "Switch to dark"}
-        aria-label={dark ? "Switch to light theme" : "Switch to dark theme"}
-        onClick={toggleTheme}
-      >
-        {dark ? <Sun size={15} /> : <Moon size={15} />}
-      </button>
       <Popover
         align="right"
         className="lg:hidden"
@@ -192,7 +178,6 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
             <MenuItem disabled={!canRedo || redo.isPending} onClick={() => { redo.mutate(); close(); }}><Redo2 size={14} /> Redo</MenuItem>
             <MenuItem disabled={fetchNow.isPending} onClick={() => { fetchNow.mutate(); close(); }}><FetchGlyph active={fetchNow.isPending} size={14} /> Fetch now</MenuItem>
             <MenuItem onClick={() => { toggleMode(); close(); }}><PanelRight size={14} /> {mode === "side" ? "Open tasks as full pages" : "Open tasks in a side peek"}</MenuItem>
-            <MenuItem onClick={() => { toggleTheme(); close(); }}>{dark ? <Sun size={14} /> : <Moon size={14} />} {dark ? "Switch to light" : "Switch to dark"}</MenuItem>
           </>
         )}
       </Popover>

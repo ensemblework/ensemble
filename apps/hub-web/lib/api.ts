@@ -98,7 +98,7 @@ export const get = <T>(path: string) => request<T>(path);
 export const post = <T>(path: string, json?: unknown) => request<T>(path, { method: "POST", json: json ?? {} });
 export const patch = <T>(path: string, json: unknown) => request<T>(path, { method: "PATCH", json });
 export const put = <T>(path: string, json: unknown) => request<T>(path, { method: "PUT", json });
-export const del = <T>(path: string) => request<T>(path, { method: "DELETE" });
+export const del = <T>(path: string, json?: unknown) => request<T>(path, json === undefined ? { method: "DELETE" } : { method: "DELETE", json });
 
 const qs = (params: Record<string, string | number | boolean | undefined | null>) => {
   const search = new URLSearchParams();
@@ -792,6 +792,8 @@ export const api = bindClient({
       labels?: Record<string, string>;
       activeTemplateId?: string | null;
       onboardingTemplateId?: string | null;
+      /** The Ensemble space this request ran in. */
+      space?: { id: string; name: string; icon: string | null; primary: boolean };
       templateName?: string | null;
       seasonEnded?: { id: string; name: string } | null;
       devTools?: boolean;
@@ -1252,6 +1254,14 @@ export const api = bindClient({
     get<{ templates: OnboardingTemplateCard[] }>(
       `/api/onboarding/templates${qs({ role })}`,
     ),
+  spaces: () => get<SpacesPayload>("/api/spaces"),
+  createSpace: (data: { name: string; icon: string | null; templateId: string; settings: { mode: SpaceSettingsMode; from?: string } }) =>
+    post<{ space: SpaceSummary; activeId: string }>("/api/spaces", data),
+  switchSpace: (id: string) => post<{ activeId: string }>(`/api/spaces/${id}/switch`, {}),
+  updateSpace: (id: string, data: { name?: string; icon?: string | null }) => patch<{ space: SpaceSummary }>(`/api/spaces/${id}`, data),
+  deleteSpace: (id: string, confirmation: string) => del<void>(`/api/spaces/${id}`, { confirmation }),
+  copySpaceSettings: (from: string) => post<{ copied: boolean }>("/api/spaces/settings/copy", { from }),
+  syncSpaceSettings: (on: boolean, from?: string) => put<{ sync: boolean }>("/api/spaces/settings/sync", { on, from }),
   completeOnboarding: (role: string, templateId: string) =>
     post<{ role: string; templateId: string; onboardingComplete: boolean }>("/api/onboarding", { role, templateId }),
   widgetFeed: () =>
@@ -1291,6 +1301,10 @@ export const api = bindClient({
     post<{ id: string; kind: string; title: string; undoEntryId: string | null }>("/api/desk/entries", { kind, fields }),
   deskRemove: (kind: string, id: string) => del<{ ok: boolean }>(`/api/desk/entries/${kind}/${id}`),
 });
+
+export type SpaceSummary = { id: string; name: string; icon: string | null; primary: boolean; role: string | null; templateId: string | null; createdAt: string };
+export type SpacesPayload = { activeId: string; account: { sync: boolean; role: string | null }; spaces: SpaceSummary[] };
+export type SpaceSettingsMode = "fresh" | "copy" | "sync";
 
 export type OnboardingTemplateCard = {
   id: string;

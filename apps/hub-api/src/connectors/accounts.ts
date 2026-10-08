@@ -11,7 +11,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { decrypt, encrypt } from "../lib/secrets.js";
 import { canUseHostCredentials, isHosted, requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
-import { assertWithinLimit, hostedLimits, withHostedUserLock } from "../lib/hosted-limits.js";
+import { assertWithinLimit, hostedLimits, quotaScope, withHostedUserLock } from "../lib/hosted-limits.js";
 
 const run = promisify(execFile);
 
@@ -82,7 +82,8 @@ export async function saveAccount(
   const meta = data.meta as Prisma.InputJsonValue | undefined;
   await withHostedUserLock(prisma, userId, async (tx) => {
     if (isHosted() && !(await tx.authToken.findUnique({ where: { userId_provider: { userId, provider } } }))) {
-      assertWithinLimit(await tx.authToken.count({ where: { userId } }), 1, hostedLimits().connectors, "connector accounts");
+      const { ids } = await quotaScope(tx, userId);
+      assertWithinLimit(await tx.authToken.count({ where: { userId: { in: ids } } }), 1, hostedLimits().connectors, "connector accounts");
     }
     await tx.authToken.upsert({
       where: { userId_provider: { userId, provider } },

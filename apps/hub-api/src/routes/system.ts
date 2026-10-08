@@ -13,6 +13,7 @@ import { encrypt } from "../lib/secrets.js";
 import { listActivities } from "../lib/activity.js";
 import { GITHUB_GIT_PROVIDER } from "../lib/git-auth.js";
 import { HostedAccessError, requireVerifiedUser } from "../lib/hosted-access.js";
+import { mirrorSettings, spaceIds } from "../spaces/store.js";
 
 const MODEL_CATALOG_TTL_MS = 15_000;
 const MODEL_CATALOG_MAX = 32;
@@ -195,6 +196,12 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
     }
   });
 
+  /** With settings kept in sync, a key saved in one space is saved in all of them. */
+  const mirrorKeys = async (userId: string, accountId: string) => {
+    await mirrorSettings(prisma, userId);
+    for (const id of await spaceIds(prisma, accountId)) modelCatalogCache.delete(id);
+  };
+
   app.get("/api/model-keys", async (request) =>
     runtime<{ credentials: unknown[] }>(`/api/credentials?${new URLSearchParams({ userId: request.userId })}`),
   );
@@ -209,6 +216,7 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
     });
     // The ledger records that a key changed, never the key.
     await appendLedger({ userId: request.userId, actor: "me", action: "model.key.save", payload: { provider } });
+    await mirrorKeys(request.userId, request.accountId);
     return result;
   });
 
@@ -242,6 +250,7 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
     modelCatalogCache.delete(request.userId);
     await runtime(`/api/credentials/${provider}?${new URLSearchParams({ userId: request.userId })}`, { method: "DELETE" });
     await appendLedger({ userId: request.userId, actor: "me", action: "model.key.remove", payload: { provider } });
+    await mirrorKeys(request.userId, request.accountId);
     return reply.code(204).send();
   });
 

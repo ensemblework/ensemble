@@ -31,6 +31,8 @@ import { Drafts } from "./widgets/legal";
 import { CiteGraph } from "./widgets/research";
 import "./desk.css";
 import { contextTabs, tabKey } from "./context-tabs";
+import { useLayoutPreference, useTileControls, type Arrangeable, type TileControls } from "./arrange";
+import { arrange, hiddenTilesFor, isDefaultLayout, showTile } from "./layout";
 
 const GraphTab = dynamic(() => import("@/components/context/graph").then((mod) => mod.GraphTab), {
   ssr: false,
@@ -278,24 +280,17 @@ export function ContextLens({ deskId, state, initialTab = null, search = "", who
         {rich && deskId === "chambers" ? <Chambers state={state} /> : null}
         {rich && deskId === "literature" ? <Literature state={state} /> : null}
         {!rich && state === "populated" ? <SamplePanel deskId={deskId} tab={tabKey(active)} /> : null}
-        {!rich && state !== "populated" && tabKey(active) === "overview" ? <LivePeople onOpen={() => choose("People")} /> : null}
-        {!rich && state !== "populated" && tabKey(active) === "overview" ? (
-          <LiveArtifacts rows={live.data?.artifacts ?? []} ready={live.isFetched} />
+        {!rich && state !== "populated" ? (
+          <ArrangedLens
+            deskId={deskId}
+            tab={tabKey(active)}
+            sections={sections}
+            live={live.data}
+            ready={live.isFetched}
+            onPeople={() => choose("People")}
+            onSection={(kind) => router.push(`/today?form=${encodeURIComponent(kind)}`)}
+          />
         ) : null}
-        {!rich && state !== "populated"
-          ? sections.map((section) => (
-              <Tile key={section.title} title={section.title} icon={Users} c={section.rows.length > 3 ? 6 : 4} r={3} meta={section.rows.length ? String(section.rows.length) : "Empty"} ghost={section.rows.length ? false : { label: `Nothing in ${section.title.toLowerCase()} yet`, action: "Add it on Today", kind: section.kind, onAction: () => router.push(`/today?form=${encodeURIComponent(section.kind)}`) }}>
-                <div className="col gap6">
-                  {section.rows.map((row) => (
-                    <div key={row.id} className="row sb">
-                      <span className="trunc" style={{ fontSize: 13, fontWeight: 600 }}>{row.title}</span>
-                      {row.meta ? <span className="faint" style={{ fontSize: 12 }}>{row.meta}</span> : null}
-                    </div>
-                  ))}
-                </div>
-              </Tile>
-            ))
-          : null}
       </div>
       )}
     </div>
@@ -323,20 +318,23 @@ function personActivity(person: { openTasks?: number; recentTitle?: string | nul
   return person.recentTitle ? `${open} · ${person.recentTitle}` : open;
 }
 
-function LivePeople({ onOpen }: { onOpen: () => void }) {
+type Placed = { size: { c: number; r: number }; control: TileControls };
+
+function LivePeople({ onOpen, size, control }: { onOpen: () => void } & Placed) {
   const people = useQuery({ queryKey: ["people"], queryFn: api.people, staleTime: 15_000 });
   const rows = people.data?.people ?? [];
   return (
     <Tile
       title="People"
       icon={Users}
-      c={6}
-      r={3}
+      c={size.c}
+      r={size.r}
+      {...control}
       meta={people.isFetched ? String(rows.length) : undefined}
       onAdd={onOpen}
       ghost={people.isFetched && rows.length === 0 ? { label: "Add the people you work with", sub: "Teammates, clients, advisors, or classmates. They link to tasks, pages, and the graph.", action: "Add a person", kind: "person", onAction: onOpen } : false}
     >
-      <div className="col" data-lens-people style={{ gap: 2 }}>
+      {rows.length ? <div className="col" data-lens-people style={{ gap: 2 }}>
         {rows.map((person) => (
           <div key={person.id} className="row gap8" style={{ padding: "6px 0", alignItems: "flex-start" }} data-person={person.id} data-person-name={person.name}>
             <Av n={person.name} s={28} />
@@ -347,7 +345,7 @@ function LivePeople({ onOpen }: { onOpen: () => void }) {
             </div>
           </div>
         ))}
-      </div>
+      </div> : null}
     </Tile>
   );
 }
@@ -367,17 +365,18 @@ const KIND_LABEL: Record<string, string> = {
   meeting_note: "Note",
 };
 
-function LiveArtifacts({ rows, ready }: { rows: DeskLive["artifacts"]; ready: boolean }) {
+function LiveArtifacts({ rows, ready, size, control }: { rows: DeskLive["artifacts"]; ready: boolean } & Placed) {
   return (
     <Tile
       title="Artifacts"
       icon={FileText}
-      c={8}
-      r={4}
+      c={size.c}
+      r={size.r}
+      {...control}
       meta={ready ? String(rows.length) : undefined}
-      ghost={ready && rows.length === 0 ? { label: "No artifacts yet", sub: "Files, links, documents, and pull requests land here. Tasks stay on the board.", action: "Nothing to sync" } : false}
+      ghost={ready && rows.length === 0 ? { label: "No files or links yet", sub: "Documents, mail, and pull requests from connected apps land here.", action: "Connect an app", onAction: () => window.location.assign("/settings?tab=connections") } : false}
     >
-      <div className="col" data-lens-artifacts>
+      {rows.length ? <div className="col" data-lens-artifacts>
         {rows.filter((row) => row.kind in KIND_LABEL && row.title.trim()).map((row) => (
           <div key={row.id} className="li" data-artifact={row.id}>
             <span className="pill">{KIND_LABEL[row.kind] ?? row.kind}</span>
@@ -386,8 +385,69 @@ function LiveArtifacts({ rows, ready }: { rows: DeskLive["artifacts"]; ready: bo
             <span className="m" style={{ width: 64, textAlign: "right" }}>{shortWhen(row.ts)}</span>
           </div>
         ))}
-      </div>
+      </div> : null}
     </Tile>
+  );
+}
+
+type Section = ReturnType<typeof lensSections>[number];
+
+/**
+ * The live tiles of one Context tab, arranged by the person: moved, resized, hidden.
+ * Saved per desk and tab as `desk.context.<desk>.<tab>`.
+ */
+function ArrangedLens({ deskId, tab, sections, live, ready, onPeople, onSection }: { deskId: DeskId; tab: string; sections: Section[]; live: DeskLive | undefined; ready: boolean; onPeople: () => void; onSection: (kind: string) => void }) {
+  const defaults: Arrangeable[] = [
+    ...(tab === "overview" ? [{ key: "people", title: "People", c: 6, r: 3 }, { key: "artifacts", title: "Artifacts", c: 8, r: 4 }] : []),
+    ...sections.map((section) => ({ key: `section:${section.title.toLowerCase()}`, title: section.title, c: section.rows.length > 3 ? 6 : 4, r: 3 })),
+  ];
+  const { layout, save } = useLayoutPreference(`desk.context.${deskId}.${tab}`);
+  const pool = new Map(defaults.map((spec) => [spec.key, spec]));
+  const shown = arrange(defaults, pool, layout);
+  const hidden = hiddenTilesFor(defaults, shown);
+  const customized = !isDefaultLayout(layout, shown, defaults);
+  const tiles = useTileControls({ shown, hidden: hidden.map((spec) => spec.key), save, customized, restoreHint: "Bring it back below the tiles." });
+  const byKey = new Map(sections.map((section) => [`section:${section.title.toLowerCase()}`, section]));
+  return (
+    <>
+      {shown.map((spec) => {
+        const size = tiles.sizeOf(spec);
+        const control = tiles.controls(spec);
+        if (spec.key === "people") return <LivePeople key={spec.key} onOpen={onPeople} size={size} control={control} />;
+        if (spec.key === "artifacts") return <LiveArtifacts key={spec.key} rows={live?.artifacts ?? []} ready={ready} size={size} control={control} />;
+        const section = byKey.get(spec.key);
+        if (!section) return null;
+        return (
+          <Tile key={spec.key} title={section.title} icon={section.icon} c={size.c} r={size.r} {...control} meta={section.rows.length ? String(section.rows.length) : undefined} ghost={section.rows.length ? false : { label: `Nothing in ${section.title.toLowerCase()} yet`, action: "Add it on Today", kind: section.kind, onAction: () => onSection(section.kind) }}>
+            {section.rows.length ? (
+              <div className="col gap6">
+                {section.rows.map((row) => (
+                  <div key={row.id} className="row sb">
+                    <span className="trunc" style={{ fontSize: 13, fontWeight: 600 }}>{row.title}</span>
+                    {row.meta ? <span className="faint" style={{ fontSize: 12 }}>{row.meta}</span> : null}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </Tile>
+        );
+      })}
+      {hidden.length || customized ? (
+        <div className="lens-hidden" style={{ gridColumn: "1 / -1" }} data-lens-hidden>
+          {hidden.length ? <span>Hidden:</span> : null}
+          {hidden.map((spec) => (
+            <button key={spec.key} type="button" className="lens-chip" onClick={() => void save(showTile({ shown, hidden: hidden.map((item) => item.key) }, spec))}>
+              + {spec.title}
+            </button>
+          ))}
+          {customized ? (
+            <button type="button" className="lens-reset" onClick={() => void save(null)}>
+              Reset layout
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </>
   );
 }
 

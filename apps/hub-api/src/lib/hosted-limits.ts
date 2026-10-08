@@ -2,6 +2,20 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 import { isHosted, requireVerifiedUser } from "./hosted-access.js";
 import { lockUserTransaction } from "./user-lock.js";
 
+type Db = PrismaClient | Prisma.TransactionClient;
+
+/**
+ * Hosted caps belong to the signed-in account, not to one Ensemble space: usage is summed
+ * over every space, the lock is on the account row, and the daily job counter lives on the
+ * account so deleting a space does not reset it.
+ */
+export async function quotaScope(db: Db, userId: string): Promise<{ account: string; ids: string[] }> {
+  const row = await db.user.findUnique({ where: { id: userId }, select: { ownerId: true } });
+  const account = row?.ownerId ?? userId;
+  const owned = await db.user.findMany({ where: { ownerId: account }, select: { id: true } });
+  return { account, ids: [account, ...owned.map((item) => item.id)] };
+}
+
 export class HostedLimitError extends Error {
   readonly statusCode = 429;
   readonly expose = true;
@@ -43,36 +57,37 @@ export async function withHostedUserLock<T>(
   if (verify) await requireVerifiedUser(userId);
   // A transaction client cannot open another transaction; lock and work inside the caller's.
   if (!("$transaction" in db) || typeof db.$transaction !== "function") {
-    await lockUserTransaction(db, userId);
+    await lockUserTransaction(db, (await quotaScope(db, userId)).account);
     return work(db);
   }
   return (db as PrismaClient).$transaction(async (tx) => {
-    await lockUserTransaction(tx, userId);
+    await lockUserTransaction(tx, (await quotaScope(tx, userId)).account);
     return work(tx);
   }, { isolationLevel: "ReadCommitted" });
 }
 
 export async function createCappedJob(db: PrismaClient, userId: string, args: Prisma.WorkspaceJobCreateArgs) {
   return withHostedUserLock(db, userId, async (tx) => {
-    let usage: { key: string; count: number } | undefined;
+    let usage: { key: string; count: number; account: string } | undefined;
     if (isHosted()) {
       if (args.data.userId !== userId) throw new Error("The job account does not match its quota account.");
+      const scope = await quotaScope(tx, userId);
       const from = new Date();
       from.setUTCHours(0, 0, 0, 0);
       const key = `hosted.agent-jobs.${from.toISOString().slice(0, 10)}`;
-      const counter = await tx.preference.findUnique({ where: { userId_key: { userId, key } } });
+      const counter = await tx.preference.findUnique({ where: { userId_key: { userId: scope.account, key } } });
       const value = counter?.value;
       const saved = value && typeof value === "object" && !Array.isArray(value) ? value.count : undefined;
       if (counter && (typeof saved !== "number" || !Number.isSafeInteger(saved) || saved < 0)) throw new Error("The hosted daily job usage counter is invalid.");
-      const used = Math.max(typeof saved === "number" ? saved : 0, await tx.workspaceJob.count({ where: { userId, createdAt: { gte: from } } }));
+      const used = Math.max(typeof saved === "number" ? saved : 0, await tx.workspaceJob.count({ where: { userId: { in: scope.ids }, createdAt: { gte: from } } }));
       assertWithinLimit(used, 1, hostedLimits().jobsPerDay, "agent jobs per UTC day");
-      usage = { key, count: used + 1 };
+      usage = { key, count: used + 1, account: scope.account };
     }
     const job = await tx.workspaceJob.create(args);
     if (usage) {
       await tx.preference.upsert({
-        where: { userId_key: { userId, key: usage.key } },
-        create: { userId, key: usage.key, value: { count: usage.count }, source: "system" },
+        where: { userId_key: { userId: usage.account, key: usage.key } },
+        create: { userId: usage.account, key: usage.key, value: { count: usage.count }, source: "system" },
         update: { value: { count: usage.count }, deletedAt: null },
       });
     }
@@ -82,7 +97,8 @@ export async function createCappedJob(db: PrismaClient, userId: string, args: Pr
 
 export async function checkDatasetBytes(tx: Prisma.TransactionClient, userId: string, bytes: number, replacingId?: string) {
   if (!isHosted()) return;
-  const sum = await tx.plotDataset.aggregate({ where: { userId, ...(replacingId ? { id: { not: replacingId } } : {}) }, _sum: { byteSize: true } });
+  const { ids } = await quotaScope(tx, userId);
+  const sum = await tx.plotDataset.aggregate({ where: { userId: { in: ids }, ...(replacingId ? { id: { not: replacingId } } : {}) }, _sum: { byteSize: true } });
   assertWithinLimit(sum._sum.byteSize ?? 0, bytes, hostedLimits().datasetBytes, "dataset bytes");
 }
 
@@ -96,7 +112,8 @@ export async function createCappedDocument<T extends Prisma.DocumentCreateArgs>(
   if (args.data.byteSize !== bytes) throw new Error("The document size does not match its original bytes.");
   return withHostedUserLock(db, userId, async (tx) => {
     if (isHosted()) {
-      const sum = await tx.document.aggregate({ where: { userId }, _sum: { byteSize: true } });
+      const { ids } = await quotaScope(tx, userId);
+      const sum = await tx.document.aggregate({ where: { userId: { in: ids } }, _sum: { byteSize: true } });
       assertWithinLimit(sum._sum.byteSize ?? 0, bytes, hostedLimits().documentBytes, "uploaded document bytes");
     }
     return tx.document.create(args);

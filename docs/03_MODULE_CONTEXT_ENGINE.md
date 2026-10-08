@@ -13,6 +13,8 @@
 5. **Build Context Packs** on demand for a task, a meeting, a chat, or a coding session (bounded, ranked, cited).
 6. **Emit deltas** ("what changed") to the orchestrator for todo proposals.
 
+Everything here is scoped by `user_id`. An Ensemble space is its own user id, so each space has its own connectors, graph, artifacts and context packs, and nothing is retrieved across spaces ([28](28_ENSEMBLE_SPACES.md)).
+
 ---
 
 ## 2. Connectors

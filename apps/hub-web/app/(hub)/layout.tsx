@@ -68,7 +68,8 @@ function Frame({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  if (pathname === "/start") {
+  // Signup and a new space are full-screen: no sidebar, top bar, or assistant.
+  if (pathname === "/start" || pathname === "/spaces/new") {
     return (
       <div className="h-screen overflow-y-auto bg-bg" data-focused-frame>
         <PageProgress />

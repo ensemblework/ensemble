@@ -28,7 +28,7 @@ import { startDevWarm } from "@/lib/dev-warm";
 import { prefetchHref } from "@/lib/prefetch";
 import { toggleSidebarRail } from "@/lib/sidebar-rail";
 import { useModKey } from "@/lib/platform";
-import { HomeLogoLink } from "@/components/motion/brand-morph";
+import { SpaceSwitcher } from "./space-switcher";
 import { PagesNav } from "@/components/pages/pages-nav";
 import { useLive } from "../live";
 import { cx } from "../ui";
@@ -165,13 +165,9 @@ export function Sidebar() {
   const waiting = (shell.data?.approvals ?? 0) + (shell.data?.decisions ?? 0);
   return (
     <aside className="app-sidebar flex h-full shrink-0 flex-col border-r border-line bg-sidebar/90">
-      <HomeLogoLink
-        href="/today"
-        size={16}
-        railSize={20}
-        className="sidebar-brand flex items-center gap-2.5 px-4 pb-3 pt-4"
-        wordmarkClassName="sidebar-label text-[15px] font-semibold tracking-tight"
-      />
+      <div className="px-2 pb-2 pt-3">
+        <SpaceSwitcher />
+      </div>
       <button
         type="button"
         className="sidebar-search mx-2 mb-3 flex items-center gap-2 rounded-lg border border-line bg-panel/80 px-2.5 py-1.5 text-left text-[12.5px] text-muted hover:border-line-strong hover:text-ink"

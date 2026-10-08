@@ -27,15 +27,17 @@ function Closed({ title, detail, onRetry }: { title: string; detail: string; onR
 export function FeatureGate({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
-  const userId = shell.data?.user.id ?? null;
+  // Per space: two spaces of one account can have different modules.
+  const userId = shell.data?.space?.id ?? shell.data?.user.id ?? null;
   const cached = useSyncExternalStore(
     () => () => {},
     () => (typeof window === "undefined" ? null : readModuleCache(window.sessionStorage, userId)),
     () => null,
   );
   useEffect(() => {
-    if (!shell.data?.user.id) return;
-    syncModuleCache(window.sessionStorage, shell.data.user.id, shell.data.modules ?? "");
+    const owner = shell.data?.space?.id ?? shell.data?.user.id;
+    if (!owner) return;
+    syncModuleCache(window.sessionStorage, owner, shell.data?.modules ?? "");
   }, [shell.data]);
   let gate: OptionalModule | null = null;
   try {

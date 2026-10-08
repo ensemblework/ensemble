@@ -154,13 +154,13 @@ export async function connectorRoutes(app: FastifyInstance): Promise<void> {
         };
       }),
     );
-    return { apps, canEdit: isHosted() ? await isOperatorUser(request.userId) : request.userId === env.ENSEMBLE_DEV_USER_ID };
+    return { apps, canEdit: isHosted() ? await isOperatorUser(request.userId) : request.accountId === env.ENSEMBLE_DEV_USER_ID };
   });
 
   app.put("/api/connectors/apps/:provider", async (request, reply) => {
     const provider = OAuthProvider.parse((request.params as { provider: string }).provider);
     if (isHosted()) await requireHostAccess(request.userId, "Connector OAuth app administration");
-    else if (request.userId !== env.ENSEMBLE_DEV_USER_ID) {
+    else if (request.accountId !== env.ENSEMBLE_DEV_USER_ID) {
       return reply.code(403).send({ error: "Only the person who runs this Ensemble can set up sign-in apps." });
     }
     const body = z.object({ clientId: z.string().trim().min(8), clientSecret: z.string().trim().min(8) }).parse(request.body);

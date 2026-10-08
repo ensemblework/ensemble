@@ -33,6 +33,7 @@ Keeping these files current is part of every change. See [`AGENTS.md`](../AGENTS
 | 21 | [Block diagrams](21_BLOCK_DIAGRAMS_DSL.md) | Diagram language, shapes, layout, examples |
 | — | [Diagram cheat sheet](21_BLOCK_DIAGRAMS_CHEATSHEET.md) | Short prompt for an agent writing a diagram |
 | 22 | [Block diagrams for agents](22_BLOCK_DIAGRAMS_FOR_AGENTS.md) | The diagram skill the assistant loads |
+| 28 | [Ensemble spaces](28_ENSEMBLE_SPACES.md) | Separate spaces per account: storage, isolation, switching, settings copy and sync |
 | 27 | [Imports](27_IMPORTS.md) | Import from Notion, Linear, Jira, Trello, Asana, Todoist, ClickUp, monday.com, GitHub and spreadsheets; re-runs and undo |
 | — | [Context Bridge setup](CONTEXT_BRIDGE.md) | What the bridge runs, and editor config |
 | — | [Demo data](DEMO_DATA.md) | The Branch desk demo and `pnpm seed:demo` |
