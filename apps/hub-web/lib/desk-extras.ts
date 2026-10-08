@@ -3,9 +3,9 @@
 import type { DeskId } from "@/components/desk/desks";
 
 export const DESK_EXTRAS = [
-  { id: "deadlines", label: "Deadlines", line: "Dated deadlines, as a timeline. On for Exam season until you turn it off." },
-  { id: "learning", label: "Learning", line: "A tab for what you yourself are learning. On for Classes until you turn it off." },
-  { id: "bench", label: "On the bench", line: "What is clamped right now, and the next check. On for Bench until you turn it off." },
+  { id: "deadlines", tile: "deadlines", label: "Deadlines", line: "Dated deadlines, as a timeline. On for Exam season until you turn it off." },
+  { id: "learning", tile: "concepts", label: "Learning", line: "A tab for what you yourself are learning. On for Classes until you turn it off." },
+  { id: "bench", tile: "hold", label: "On the bench", line: "What is clamped right now, and the next check. On for Bench until you turn it off." },
 ] as const;
 
 export type DeskExtraId = (typeof DESK_EXTRAS)[number]["id"];

@@ -4,6 +4,7 @@ import Mention, { type MentionOptions } from "@tiptap/extension-mention";
 import { api } from "@/lib/api";
 import { mountDiagramCard, mountDiagramOff } from "../diagrams/diagram-card";
 import { mountPlotCard, mountPlotOff } from "../plots/plot-card";
+import { storedEmbedHeight } from "./embed-resize";
 import Placeholder from "@tiptap/extension-placeholder";
 import Table from "@tiptap/extension-table";
 import TableCell from "@tiptap/extension-table-cell";
@@ -114,6 +115,11 @@ const EntityMention = Mention.extend<MentionOptions & { diagramsOn: () => boolea
         parseHTML: (element) => element.getAttribute("data-kind"),
         renderHTML: (attributes) => ({ "data-kind": attributes.kind }),
       },
+      height: {
+        default: null,
+        parseHTML: (element) => storedEmbedHeight(element.getAttribute("data-height")),
+        renderHTML: (attributes) => (attributes.height ? { "data-height": String(attributes.height) } : {}),
+      },
     };
   },
   parseHTML() {
@@ -140,23 +146,58 @@ const EntityMention = Mention.extend<MentionOptions & { diagramsOn: () => boolea
         return { dom };
       }
       const dom = document.createElement("span");
+      const same = (next: typeof node) =>
+        next.type === node.type && next.attrs.kind === node.attrs.kind && next.attrs.id === node.attrs.id && next.attrs.label === node.attrs.label;
+      // The height lives on the mention so it saves with the page. Undo restores it too.
+      const resize = editor.isEditable
+        ? (height: number) => {
+            const pos = getPos();
+            if (typeof pos !== "number") return;
+            const current = editor.state.doc.nodeAt(pos);
+            if (!current || current.attrs.height === height) return;
+            editor.view.dispatch(editor.state.tr.setNodeMarkup(pos, undefined, { ...current.attrs, height }));
+          }
+        : undefined;
       if (kind === "plot") {
         if (this.options.plotsOn() === false) {
           mountPlotOff(dom, String(node.attrs.label ?? ""));
           return { dom };
         }
-        const stop = mountPlotCard(dom, String(node.attrs.id ?? ""), String(node.attrs.label ?? ""), editor.isEditable ? () => {
+        const card = mountPlotCard(dom, String(node.attrs.id ?? ""), String(node.attrs.label ?? ""), editor.isEditable ? () => {
           const pos = getPos();
           if (typeof pos === "number") editor.chain().focus().deleteRange({ from: pos, to: pos + node.nodeSize }).run();
-        } : undefined);
-        return { dom, destroy: stop };
+        } : undefined, { height: storedEmbedHeight(node.attrs.height), onResize: resize });
+        return {
+          dom,
+          destroy: card.destroy,
+          update: (next) => {
+            if (!same(next)) return false;
+            card.setHeight(storedEmbedHeight(next.attrs.height));
+            return true;
+          },
+          stopEvent: (event) => Boolean((event.target as HTMLElement | null)?.closest?.(".embed-resize")),
+          ignoreMutation: (mutation) => mutation.type !== "selection",
+        };
       }
       if (this.options.diagramsOn() === false) {
         mountDiagramOff(dom, String(node.attrs.label ?? ""));
         return { dom };
       }
-      const stop = mountDiagramCard(dom, String(node.attrs.id ?? ""), String(node.attrs.label ?? ""));
-      return { dom, destroy: stop };
+      const card = mountDiagramCard(dom, String(node.attrs.id ?? ""), String(node.attrs.label ?? ""), {
+        height: storedEmbedHeight(node.attrs.height),
+        onResize: resize,
+      });
+      return {
+        dom,
+        destroy: card.destroy,
+        update: (next) => {
+          if (!same(next)) return false;
+          card.setHeight(storedEmbedHeight(next.attrs.height));
+          return true;
+        },
+        stopEvent: (event) => Boolean((event.target as HTMLElement | null)?.closest?.(".embed-resize, .diagram-inline-stage, button")),
+        ignoreMutation: (mutation) => mutation.type !== "selection",
+      };
     };
   },
 });

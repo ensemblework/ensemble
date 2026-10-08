@@ -35,20 +35,28 @@ const pages = [
   { id: "page-old", title: "Older note" },
 ];
 
-test("Pages can collapse without losing the create action", async () => {
+test("Pages start collapsed on load, open for an open note, and expand when a page is created", async () => {
+  let created = 0;
   const mounted = await render(
-    <PagesSection pages={pages} pathname="/today" onCreate={() => undefined} onRename={() => undefined} onDelete={() => undefined} renderLink={(props) => <Anchor {...props} />} />,
+    <PagesSection pages={pages} pathname="/today" onCreate={() => { created += 1; }} onRename={() => undefined} onDelete={() => undefined} renderLink={(props) => <Anchor {...props} />} />,
   );
   try {
     const toggle = mounted.host.querySelector<HTMLButtonElement>("[aria-label='Toggle pages']")!;
-    assert.equal(toggle.getAttribute("aria-expanded"), "true");
-    await act(async () => toggle.click());
     assert.equal(toggle.getAttribute("aria-expanded"), "false");
     assert.equal(mounted.host.querySelector("a")?.parentElement?.parentElement?.hidden, true);
-    assert.ok(mounted.host.querySelector("[aria-label='New page']"));
     await act(async () => toggle.click());
     assert.equal(toggle.getAttribute("aria-expanded"), "true");
+    await act(async () => toggle.click());
+    await act(async () => mounted.host.querySelector<HTMLButtonElement>("[aria-label='New page']")!.click());
+    assert.equal(created, 1);
+    assert.equal(toggle.getAttribute("aria-expanded"), "true");
   } finally { await unmount(mounted); }
+  const onPage = await render(
+    <PagesSection pages={pages} pathname="/pages/page-old" onCreate={() => undefined} onRename={() => undefined} onDelete={() => undefined} renderLink={(props) => <Anchor {...props} />} />,
+  );
+  try {
+    assert.equal(onPage.host.querySelector("[aria-label='Toggle pages']")?.getAttribute("aria-expanded"), "true");
+  } finally { await unmount(onPage); }
 });
 
 test("the Pages section lists notes as /pages links and + creates one", async () => {

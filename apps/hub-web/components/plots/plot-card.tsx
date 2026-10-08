@@ -2,13 +2,16 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ChevronDown, ChevronUp, Trash2 } from "lucide-react";
 import { chartFrame, isWorkspace, plotConfigSchema, workspaceSchema, type Frame, type PlotConfig } from "@ensemble/shared-types";
 import { ApiError, api } from "@/lib/api";
 import { MODULE_DENIED } from "@ensemble/shared-types/modules";
 import { ChartView } from "./chart-view";
+import { createHeightHandle, storedEmbedHeight } from "../editor/embed-resize";
+
+const PLOT_MIN_HEIGHT = 180;
 
 export function mountPlotOff(host: HTMLElement, label: string): void {
   host.replaceChildren();
@@ -25,7 +28,17 @@ export function inlinePlotRatio(chart: string, tile?: { w: number; h: number }):
 
 type Figure = { id: string; title: string; frame: Frame; config: PlotConfig; ratio: number; warnings: string[] };
 
-function InlinePlot({ id, label, onRemove }: { id: string; label: string; onRemove?: () => void }) {
+type InlinePlotProps = { id: string; label: string; onRemove?: () => void; height?: number | null; onResize?: (height: number) => void };
+
+function InlinePlot({ id, label, onRemove, height: storedHeight = null, onResize }: InlinePlotProps) {
+  const [height, setHeight] = useState<number | null>(() => storedEmbedHeight(storedHeight, PLOT_MIN_HEIGHT));
+  const heightRef = useRef(height);
+  heightRef.current = height;
+  const stageRef = useRef<HTMLDivElement>(null);
+  const handleHost = useRef<HTMLDivElement>(null);
+  const commitRef = useRef(onResize);
+  commitRef.current = onResize;
+  useEffect(() => setHeight(storedEmbedHeight(storedHeight, PLOT_MIN_HEIGHT)), [storedHeight]);
   const [title, setTitle] = useState(label || "Plot");
   const [href, setHref] = useState(`/plots/${id.split("/")[0]}`);
   const [compact, setCompact] = useState(false);
@@ -77,6 +90,24 @@ function InlinePlot({ id, label, onRemove }: { id: string; label: string; onRemo
     return () => { cancelled = true; };
   }, [id, label]);
 
+  const resizable = Boolean(onResize);
+  useEffect(() => {
+    const host = handleHost.current;
+    if (!host || !resizable) return;
+    const handle = createHeightHandle({
+      label: `Resize ${label || "plot"}`,
+      min: PLOT_MIN_HEIGHT,
+      read: () => heightRef.current ?? stageRef.current?.querySelector<HTMLElement>("[data-plot-figure]")?.clientHeight ?? 320,
+      apply: (next) => {
+        heightRef.current = next;
+        setHeight(next);
+      },
+      commit: (next) => commitRef.current?.(next),
+    });
+    host.append(handle);
+    return () => handle.remove();
+  }, [resizable, label, compact]);
+
   if (off) return <span className="mention mention-off" aria-disabled="true">@{label || "Plot"} · not part of your template</span>;
   return (
     <div className="plot-inline" contentEditable={false}>
@@ -89,11 +120,11 @@ function InlinePlot({ id, label, onRemove }: { id: string; label: string; onRemo
         {onRemove ? <button type="button" className="icon-btn" aria-label="Remove plot from page" title="Remove from page" onClick={onRemove}><Trash2 size={14} /></button> : null}
       </div>
       {!compact ? (
-        <div className="space-y-3 p-2">
+        <div ref={stageRef} className="space-y-3 p-2">
           {error ? <p role="alert" className="text-[13px] text-danger">{error}</p> : figures === null ? <p className="p-3 text-[13px] text-muted">Loading plot…</p> : !figures.length ? <p className="p-3 text-[13px] text-muted">No chart yet. Open this plot to add data and choose columns.</p> : figures.map((figure) => (
             <div key={figure.id}>
               {figures.length > 1 ? <p className="mb-1 text-[12px] text-muted">{figure.title}</p> : null}
-              <div className="relative w-full" style={{ aspectRatio: figure.ratio }}>
+              <div className="relative w-full" data-plot-figure style={height ? { height } : { aspectRatio: figure.ratio }}>
                 <ChartView frame={figure.frame} config={figure.config} variant="tile" />
               </div>
               {figure.warnings.map((warning) => <p key={warning} className="text-[12px] text-warn">{warning}</p>)}
@@ -101,15 +132,29 @@ function InlinePlot({ id, label, onRemove }: { id: string; label: string; onRemo
           ))}
         </div>
       ) : null}
+      {!compact && resizable ? <div ref={handleHost} /> : null}
     </div>
   );
 }
 
-export function mountPlotCard(host: HTMLElement, id: string, label: string, onRemove?: () => void): () => void {
+export type PlotCardHandle = { destroy: () => void; setHeight: (height: number | null) => void };
+
+export function mountPlotCard(
+  host: HTMLElement,
+  id: string,
+  label: string,
+  onRemove?: () => void,
+  options: { height?: number | null; onResize?: (height: number) => void } = {},
+): PlotCardHandle {
   host.replaceChildren();
   host.className = "plot-mention";
   host.contentEditable = "false";
   const root = createRoot(host);
-  root.render(<InlinePlot id={id} label={label} onRemove={onRemove} />);
-  return () => queueMicrotask(() => root.unmount());
+  const render = (height: number | null) =>
+    root.render(<InlinePlot id={id} label={label} onRemove={onRemove} height={height} onResize={options.onResize} />);
+  render(options.height ?? null);
+  return {
+    destroy: () => queueMicrotask(() => root.unmount()),
+    setHeight: render,
+  };
 }

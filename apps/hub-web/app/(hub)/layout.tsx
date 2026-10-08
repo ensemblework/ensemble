@@ -68,6 +68,15 @@ function Frame({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  if (pathname === "/start") {
+    return (
+      <div className="h-screen overflow-y-auto bg-bg" data-focused-frame>
+        <PageProgress />
+        <FeatureGate>{children}</FeatureGate>
+      </div>
+    );
+  }
+
   return (
     <div className="flex h-screen overflow-hidden bg-bg">
       <PageProgress />
@@ -83,7 +92,7 @@ function Frame({ children }: { children: React.ReactNode }) {
         </div>
       ) : null}
       <div ref={area} className="relative flex min-w-0 flex-1">
-        <div className={cx("flex min-w-0 flex-1 flex-col", peeking && fullscreen && "hidden")}>
+        <div className={cx("relative flex min-w-0 flex-1 flex-col", peeking && fullscreen && "hidden")}>
           <TopBar
             onToggleSidebar={() => {
               if (window.matchMedia("(max-width: 767px)").matches) setDrawer((open) => !open);

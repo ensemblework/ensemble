@@ -791,6 +791,7 @@ export const api = bindClient({
       modules?: string | null;
       labels?: Record<string, string>;
       activeTemplateId?: string | null;
+      onboardingTemplateId?: string | null;
       templateName?: string | null;
       seasonEnded?: { id: string; name: string } | null;
       devTools?: boolean;
@@ -918,7 +919,7 @@ export const api = bindClient({
   saveContextOrder: (body: Pick<BoardPayload, "view" | "group" | "groups"> & { lanes: Record<string, string[]> }) =>
     put<{ ok: boolean }>("/api/context/order", body),
   people: () => get<{ people: PersonRecord[] }>("/api/people"),
-  createPerson: (data: { name: string; email?: string }) => post("/api/people", data),
+  createPerson: (data: { name: string; email?: string; role?: string }) => post("/api/people", data),
   patchPerson: (id: string, data: Record<string, unknown>) => patch(`/api/people/${id}`, data),
   deletePerson: (id: string) => del(`/api/people/${id}`),
   projects: () => get<{ projects: ProjectRecord[] }>("/api/projects"),
@@ -1248,7 +1249,7 @@ export const api = bindClient({
   resetLayout: (surface: "today" | "context" | "board") =>
     post<{ surface: string; document: LayoutDocument }>(`/api/layouts/${surface}/reset`),
   onboardingTemplates: (role: string) =>
-    get<{ templates: Array<{ id: string; role: string; name: string; blurb: string; image: string; imageLight: string }> }>(
+    get<{ templates: OnboardingTemplateCard[] }>(
       `/api/onboarding/templates${qs({ role })}`,
     ),
   completeOnboarding: (role: string, templateId: string) =>
@@ -1290,6 +1291,22 @@ export const api = bindClient({
     post<{ id: string; kind: string; title: string; undoEntryId: string | null }>("/api/desk/entries", { kind, fields }),
   deskRemove: (kind: string, id: string) => del<{ ok: boolean }>(`/api/desk/entries/${kind}/${id}`),
 });
+
+export type OnboardingTemplateCard = {
+  id: string;
+  role: string;
+  name: string;
+  blurb: string;
+  desk: "semester" | "exam" | "literature" | "chambers" | "classes" | "staff" | "branch" | "bench";
+  tiles: Array<[string, number, number]>;
+  features: [string, string, string];
+  preview: {
+    project: string;
+    tasks: Array<{ title: string; people: string[] }>;
+    people: Array<{ name: string; role: string | null }>;
+    deliverables: Array<{ title: string; dueInDays: number | null }>;
+  };
+};
 
 export type DeskLive = {
   today: string;

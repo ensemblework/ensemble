@@ -8,7 +8,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Mark } from "../mark";
-import { API, ApiError, api, type AssistantMessageRecord, type AssistantToolCallRecord, type Complexity, type Entity } from "@/lib/api";
+import { AskLauncher } from "./ask-launcher";
+import { formatChord } from "@ensemble/shared-types";
+import { isApplePlatform } from "@/lib/platform";
+import { useShortcuts } from "@/lib/shortcut-store";
+import { API, ApiError, api, type AssistantMessageRecord, type AssistantToolCallRecord, type Complexity } from "@/lib/api";
 import { isSilentCancellation } from "@/lib/fetch-cancel";
 import { readSse } from "@/lib/sse";
 import { applyNotice, applyRepliesToCache } from "@/lib/assistant-apply";
@@ -35,63 +39,24 @@ function ReplyMorph({ waiting }: { waiting: boolean }) {
   return <BrandMorph size={48} state={waiting ? "loop" : "idle"} onIdle={() => { if (!waiting) setShown(false); }} />;
 }
 
-function ground(pathname: string, entities: Entity[], writePolicy: "immediate" | "preview" | "needs-me" = "preview"): { kicker: string; line: string; prompts: string[] } {
-  const writes =
-    writePolicy === "immediate"
-      ? "Writes apply as soon as the assistant makes them."
-      : writePolicy === "needs-me"
-        ? "Writes land on Needs me for you to decide."
-        : "Writes wait until you apply them.";
-  const names = entities.slice(0, 3).map((entity) => entity.label);
-  const person = entities.find((entity) => entity.kind === "people")?.label;
-  const project = entities.find((entity) => entity.kind === "project")?.label;
-  const task = entities.find((entity) => entity.kind === "task")?.label;
-  if (pathname.startsWith("/board")) {
-    return {
-      kicker: "Board",
-      line: `Grounded in the columns on this board. ${writes}`,
-      prompts: [
-        task ? `Move “${task}” to the right column and tell me why.` : "What is stuck in Waiting for me?",
-        "Which tasks should I do, and which can you take?",
-        project ? `What on ${project} is still proposed?` : "Summarise what changed on the board.",
-      ],
-    };
-  }
-  if (pathname.startsWith("/context")) {
-    return {
-      kicker: "Context",
-      line: `Grounded in the people, projects, and repos linked here. ${writes}`,
-      prompts: [
-        person ? `What is ${person} waiting on?` : "Who have I not talked to recently?",
-        project ? `What connects to ${project}?` : "Which project has the most open tasks?",
-        "What is in the graph that is not on Today's focus?",
-      ],
-    };
-  }
-  if (pathname.startsWith("/needs-me")) {
-    return { kicker: "Needs me", line: `Grounded in approvals waiting on you. ${writes}`, prompts: ["What should I approve first?", "Summarise the oldest item waiting on me.", "Which of these can wait until tomorrow?"] };
-  }
-  if (pathname.startsWith("/metrics")) {
-    return { kicker: "Metrics", line: `Grounded in the last 14 days of model calls. ${writes}`, prompts: ["Where did the calls go this week?", "Which model cost the most?", "What asked for the agent most often?"] };
-  }
-  if (pathname.startsWith("/skills")) {
-    return { kicker: "Skills", line: `Grounded in the skill library. ${writes}`, prompts: ["Which skill is least like how I actually write?", "What should I tighten before the next run?", "Summarise the skill I have open."] };
-  }
-  if (pathname.startsWith("/code")) {
-    return { kicker: "Code", line: `Grounded in the reviews and repos on this page. ${writes}`, prompts: ["What is left to review?", "Summarise the open diff.", "Diagram this repo."] };
-  }
-  if (pathname.startsWith("/diagrams")) {
-    return { kicker: "Diagrams", line: `Grounded in the diagrams on your account. ${writes}`, prompts: ["Diagram the repo I mention.", "Update the diagram I have open."] };
-  }
-  return {
-    kicker: "Today",
-    line: names.length ? `Grounded in ${names.join(", ")}. ${writes}` : `Grounded in today's focus and proposals. ${writes}`,
-    prompts: [
-      "What needs me today, and what can you take?",
-      person ? `Draft the next note to ${person}.` : "Summarise my last meeting and add the todos it created.",
-      task ? `What is the next step on “${task}”?` : "Update this week's deliverables from what I actually finished.",
-    ],
-  };
+/** Short, page-aware starters. They never quote a record title, so an Untitled task never shows up here. */
+export function starterPrompts(pathname: string): string[] {
+  if (pathname.startsWith("/board")) return ["What is blocked, and why?", "Which tasks could you take for me?", "Summarize what moved this week."];
+  if (pathname.startsWith("/context")) return ["Who have I not talked to in a while?", "Which project has the most open work?", "Add a person I work with."];
+  if (pathname.startsWith("/needs-me")) return ["What should I approve first?", "Summarize what is waiting on me.", "What can wait until tomorrow?"];
+  if (pathname.startsWith("/pages/") || pathname.startsWith("/tasks/")) return ["Summarize this page.", "Turn this into a checklist.", "What is missing here?"];
+  if (pathname.startsWith("/plots")) return ["Plot one column against another.", "Which chart fits this data?"];
+  if (pathname.startsWith("/diagrams")) return ["Draw a diagram of a project.", "Simplify the diagram I have open."];
+  if (pathname.startsWith("/code")) return ["What is left to review?", "Summarize the open change."];
+  if (pathname.startsWith("/metrics")) return ["Where did model calls go this week?", "Which model cost the most?"];
+  return ["Plan my day.", "What is due this week?", "Turn a note into tasks."];
+}
+
+export function greeting(name: string | null | undefined, now = new Date()): string {
+  const first = (name ?? "").trim().split(/\s+/)[0];
+  const hour = now.getHours();
+  const part = hour < 5 ? "Hello" : hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
+  return first ? `${part}, ${first}` : part;
 }
 
 const TIER_LABEL: Record<Complexity, string> = { easy: "Low", medium: "Medium", high: "High", max: "Max" };
@@ -262,33 +227,14 @@ export function Message({
   );
 }
 
-function EmptyAssistant({
-  pathname,
-  entities,
-  writePolicy,
-  onPick,
-}: {
-  pathname: string;
-  entities: Entity[];
-  writePolicy: "immediate" | "preview" | "needs-me";
-  onPick: (text: string) => void;
-}) {
-  const copy = ground(pathname, entities, writePolicy);
+function EmptyAssistant({ pathname, name, onPick }: { pathname: string; name: string | null; onPick: (text: string) => void }) {
   return (
-    <div className="flex h-full flex-col justify-center">
-      <div className="mb-3 flex items-center gap-2 text-faint">
-        <Mark />
-        <span className="text-[11.5px] font-medium uppercase tracking-[0.14em]">{copy.kicker}</span>
-      </div>
-      <p className="display text-[22px] leading-snug text-ink">{copy.line}</p>
-      <div className="mt-4 space-y-1">
-        {copy.prompts.map((suggestion) => (
-          <button
-            key={suggestion}
-            type="button"
-            onClick={() => onPick(suggestion)}
-            className="row-tile block w-full rounded-lg px-3 py-2 text-left text-[13.5px] text-ink/90"
-          >
+    <div className="flex h-full flex-col justify-end pb-2" data-assistant-empty>
+      <p className="display text-[26px] leading-tight text-ink">{greeting(name)}</p>
+      <p className="mt-1 text-[14px] text-muted">How can I help?</p>
+      <div className="mt-5 flex flex-wrap gap-2">
+        {starterPrompts(pathname).map((suggestion) => (
+          <button key={suggestion} type="button" onClick={() => onPick(suggestion)} className="assistant-starter">
             {suggestion}
           </button>
         ))}
@@ -325,9 +271,12 @@ export function AssistantDock() {
 
   const quotas = useQuotaMarks();
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings, enabled: open });
+  const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
+  const { bindings } = useShortcuts();
+  const assistantBinding = bindings.find((binding) => binding.id === "assistant");
+  const assistantChord = assistantBinding ? formatChord(isApplePlatform() ? assistantBinding.mac : assistantBinding.other, isApplePlatform()) : "";
   const savedTier = settings.data?.settings.assistant.defaultTier ?? "medium";
   const tier = tierOverride ?? savedTier;
-  const writePolicy = settings.data?.settings.assistant.writePolicy ?? "preview";
   const messages = useQuery({
     queryKey: ["assistant-messages", conversationId],
     queryFn: () => api.conversationMessages(conversationId!),
@@ -352,14 +301,10 @@ export function AssistantDock() {
   }, [setOpen]);
 
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "j") {
-        event.preventDefault();
-        setOpen((value) => !value);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    // The chord is configurable, so the shortcut host owns it and asks the dock to toggle.
+    const onToggle = () => setOpen((value) => !value);
+    window.addEventListener("ensemble:assistant-toggle", onToggle);
+    return () => window.removeEventListener("ensemble:assistant-toggle", onToggle);
   }, [setOpen]);
 
   useEffect(() => {
@@ -544,23 +489,9 @@ export function AssistantDock() {
 
   if (!open) {
     if (peekId) return null;
-    const chord = mod === "⌘" ? "⌘J" : "Ctrl+J";
-    return (
-      <div className="flex h-12 shrink-0 items-center border-t border-line bg-bg px-3">
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        title={`Ask Ensemble (${chord})`}
-        aria-label="Ask Ensemble"
-        aria-expanded={false}
-        className="flex min-h-7 items-center gap-2 rounded-full border border-line-strong bg-panel px-3 py-2 text-[13px] font-medium text-ink shadow-pop transition hover:border-accent"
-      >
-        <Mark />
-        Ask
-        <span className="kbd">{chord}</span>
-      </button>
-      </div>
-    );
+    if (pathname.startsWith("/start")) return null;
+    const chord = assistantChord || (mod === "⌘" ? "⌘J" : "Ctrl+J");
+    return <AskLauncher onOpen={() => setOpen(true)} title={`Ask Ensemble (${chord}). Drag to move it.`} />;
   }
 
   return (
@@ -587,7 +518,7 @@ export function AssistantDock() {
 
       <div ref={scroller} className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5">
         {all.length === 0 ? (
-          <EmptyAssistant pathname={pathname} entities={entities.entities} writePolicy={writePolicy} onPick={(text) => void sendText(text)} />
+          <EmptyAssistant pathname={pathname} name={shell.data?.user?.name ?? null} onPick={(text) => void sendText(text)} />
         ) : (
           all.map((message) => (
             <Message key={message.id} message={message} conversationId={conversationId} onChoose={(choice) => void sendText(choice)} />

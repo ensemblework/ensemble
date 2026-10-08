@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
@@ -30,10 +30,20 @@ import { accentVars, Av, Tile, type State } from "./ui";
 import { Drafts } from "./widgets/legal";
 import { CiteGraph } from "./widgets/research";
 import "./desk.css";
+import { contextTabs, tabKey } from "./context-tabs";
 
 const GraphTab = dynamic(() => import("@/components/context/graph").then((mod) => mod.GraphTab), {
   ssr: false,
   loading: () => <div className="skeleton h-[480px] w-full rounded-xl" />,
+});
+const PeopleTab = dynamic(() => import("@/components/context/people").then((mod) => mod.PeopleTab), {
+  loading: () => <div className="skeleton h-[320px] w-full rounded-xl" />,
+});
+const ProjectsTab = dynamic(() => import("@/components/context/projects").then((mod) => mod.ProjectsTab), {
+  loading: () => <div className="skeleton h-[320px] w-full rounded-xl" />,
+});
+const ArtifactsTab = dynamic(() => import("@/components/context/artifacts").then((mod) => mod.ArtifactsTab), {
+  loading: () => <div className="skeleton h-[320px] w-full rounded-xl" />,
 });
 
 const MATTERS = [
@@ -190,42 +200,38 @@ function Literature({ state }: { state: State }) {
   );
 }
 
-const LENS_TABS: Record<DeskId, string[]> = {
-  default: ["Overview", "People", "Work", "Dates"],
-  semester: ["Overview", "Courses", "People", "Deadlines"],
-  exam: ["Overview", "Subjects", "Mocks", "Revision"],
-  literature: ["Overview", "People", "Papers", "Artifacts & sync", "Graph"],
-  chambers: ["Overview", "People", "Matters", "Artifacts & sync", "Graph"],
-  classes: ["Overview", "Classes", "People", "Marking"],
-  staff: ["Overview", "Team", "Decisions", "Load"],
-  branch: ["Overview", "Repos", "Reviews", "Deploys"],
-  bench: ["Overview", "Builds", "Parts", "Tests"],
-};
 
-function tabKey(label: string) {
-  return label.toLowerCase().split(" ")[0] ?? "overview";
-}
-
-export function ContextLens({ deskId, state }: { deskId: DeskId; state: State }) {
+export function ContextLens({ deskId, state, initialTab = null, search = "", who = "", ids = "" }: { deskId: DeskId; state: State; initialTab?: string | null; search?: string; who?: string; ids?: string }) {
   const desk = DESKS[deskId];
   const prefs = useQuery({ queryKey: ["preferences"], queryFn: api.preferences, staleTime: 30_000 });
   const extras = resolveExtras(deskId, prefs.data?.preferences.find((row) => row.key === "desk.extras")?.value);
   const router = useRouter();
-  const baseTabs = LENS_TABS[deskId];
-  const tabs = extras.has("learning") && !baseTabs.includes("Learning") ? [...baseTabs, "Learning"] : baseTabs;
-  const [tab, setTab] = useState(tabs[0] ?? "Overview");
+  const tabs = contextTabs(deskId, extras.has("learning"));
+  const [tab, setTab] = useState(() => tabs.find((label) => tabKey(label) === initialTab) ?? "Overview");
+  // Links inside the lens (a graph node, a mention) change ?tab= without remounting it.
+  const wanted = tabs.find((label) => tabKey(label) === (initialTab ?? "overview"));
+  useEffect(() => {
+    if (wanted) setTab(wanted);
+  }, [wanted]);
   const active = tabs.includes(tab) ? tab : tabs[0]!;
+  const choose = (label: string) => {
+    setTab(label);
+    const key = tabKey(label);
+    router.replace(key === "overview" ? "/context" : `/context?tab=${key}`, { scroll: false });
+  };
+  const shared = ["people", "projects", "graph", "artifacts"].includes(tabKey(active));
   const rich = state === "populated" && (deskId === "chambers" || deskId === "literature") && active === "Overview";
   const live = useQuery({ queryKey: ["desk-live"], queryFn: api.deskLive, enabled: state !== "populated", staleTime: 15_000 });
-  const sections = state === "populated" ? [] : lensSections(deskId, tabKey(active), live.data ?? emptyLive(), extras);
+  const sections = state === "populated" || shared ? [] : lensSections(deskId, tabKey(active), live.data ?? emptyLive(), extras);
   return (
     <div className="desk page" style={accentVars(desk.accent)} data-context-lens={deskId} data-sample={state === "populated" ? "1" : undefined}>
       <div className="phead" style={{ marginBottom: 14 }}>
         <div>
-          <div className="kick">
-            <span className="deskchip"><i />{desk.name} lens</span>
-            {state === "populated" ? <span className="sample-mark">Sample</span> : null}
-          </div>
+          {state === "populated" ? (
+            <div className="kick">
+              <span className="sample-mark">Sample</span>
+            </div>
+          ) : null}
           <h1 className="display">Context</h1>
           <div className="sub">
             {state === "populated" ? (
@@ -239,12 +245,12 @@ export function ContextLens({ deskId, state }: { deskId: DeskId; state: State })
             ) : !live.isFetched ? (
               <span className="sub-skel sk" aria-hidden />
             ) : (
-              `You're on ${desk.name}. This lens follows what you add on Today.`
+              "The people, projects, and files around your work."
             )}
           </div>
         </div>
       </div>
-      <div className="row" role="tablist" aria-label="Context lens" style={{ gap: 2, padding: 3, borderRadius: 10, border: "1px solid var(--line)", width: "fit-content", marginBottom: 16 }}>
+      <div className="context-tabs" role="tablist" aria-label="Context sections">
         {tabs.map((label) => (
           <button
             key={label}
@@ -252,27 +258,31 @@ export function ContextLens({ deskId, state }: { deskId: DeskId; state: State })
             role="tab"
             aria-selected={label === active}
             data-lens-tab={tabKey(label)}
-            onClick={() => setTab(label)}
-            style={{ padding: "4px 11px", borderRadius: 7, fontSize: 12.5, color: label === active ? "var(--ink)" : "var(--muted)", background: label === active ? "var(--raised)" : "transparent", border: 0, cursor: "pointer", fontFamily: "inherit" }}
+            onClick={() => choose(label)}
+            className="context-tab"
           >
             {label}
           </button>
         ))}
       </div>
+      {tabKey(active) === "people" ? (
+        <div data-lens-panel="people"><PeopleTab key={`${search}|${who}`} initialSearch={search} who={who} /></div>
+      ) : tabKey(active) === "projects" ? (
+        <div data-lens-panel="projects"><ProjectsTab ids={ids} /></div>
+      ) : tabKey(active) === "graph" ? (
+        <div data-lens-panel="graph" data-lens-graph style={{ height: "min(72vh, 720px)" }}><GraphTab /></div>
+      ) : tabKey(active) === "artifacts" ? (
+        <div data-lens-panel="artifacts"><ArtifactsTab /></div>
+      ) : (
       <div className="bento" data-lens-panel={tabKey(active)}>
         {rich && deskId === "chambers" ? <Chambers state={state} /> : null}
         {rich && deskId === "literature" ? <Literature state={state} /> : null}
         {!rich && state === "populated" ? <SamplePanel deskId={deskId} tab={tabKey(active)} /> : null}
-        {!rich && state !== "populated" && tabKey(active) === "people" ? <LivePeople /> : null}
-        {!rich && state !== "populated" && tabKey(active) === "graph" ? (
-          <div style={{ gridColumn: "1 / -1", height: 640 }} data-lens-graph>
-            <GraphTab />
-          </div>
-        ) : null}
-        {!rich && state !== "populated" && tabKey(active) === "artifacts" ? (
+        {!rich && state !== "populated" && tabKey(active) === "overview" ? <LivePeople onOpen={() => choose("People")} /> : null}
+        {!rich && state !== "populated" && tabKey(active) === "overview" ? (
           <LiveArtifacts rows={live.data?.artifacts ?? []} ready={live.isFetched} />
         ) : null}
-        {!rich && state !== "populated" && !["people", "graph", "artifacts"].includes(tabKey(active))
+        {!rich && state !== "populated"
           ? sections.map((section) => (
               <Tile key={section.title} title={section.title} icon={Users} c={section.rows.length > 3 ? 6 : 4} r={3} meta={section.rows.length ? String(section.rows.length) : "Empty"} ghost={section.rows.length ? false : { label: `Nothing in ${section.title.toLowerCase()} yet`, action: "Add it on Today", kind: section.kind, onAction: () => router.push(`/today?form=${encodeURIComponent(section.kind)}`) }}>
                 <div className="col gap6">
@@ -287,6 +297,7 @@ export function ContextLens({ deskId, state }: { deskId: DeskId; state: State })
             ))
           : null}
       </div>
+      )}
     </div>
   );
 }
@@ -312,18 +323,18 @@ function personActivity(person: { openTasks?: number; recentTitle?: string | nul
   return person.recentTitle ? `${open} · ${person.recentTitle}` : open;
 }
 
-function LivePeople() {
+function LivePeople({ onOpen }: { onOpen: () => void }) {
   const people = useQuery({ queryKey: ["people"], queryFn: api.people, staleTime: 15_000 });
   const rows = people.data?.people ?? [];
   return (
     <Tile
       title="People"
       icon={Users}
-      c={8}
-      r={2}
-      style={{ gridRow: "auto", alignSelf: "start" }}
+      c={6}
+      r={3}
       meta={people.isFetched ? String(rows.length) : undefined}
-      ghost={people.isFetched && rows.length === 0 ? { label: "No people in this workspace yet", sub: "Assignees, collaborators, and meeting attendees show up here.", action: "People come from your work" } : false}
+      onAdd={onOpen}
+      ghost={people.isFetched && rows.length === 0 ? { label: "Add the people you work with", sub: "Teammates, clients, advisors, or classmates. They link to tasks, pages, and the graph.", action: "Add a person", kind: "person", onAction: onOpen } : false}
     >
       <div className="col" data-lens-people style={{ gap: 2 }}>
         {rows.map((person) => (

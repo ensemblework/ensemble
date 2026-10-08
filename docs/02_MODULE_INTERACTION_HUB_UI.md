@@ -20,7 +20,7 @@
 
 ## 2. Information architecture & navigation
 
-**Left rail (Fluent Nav):** Today • Board • Needs Me *(n)* • Runs • Context • Skills • Workspace • Code • Metrics • ⚙ Settings (tabs: Account, Assistant, Connections, Notifications, Data; see [§3.9](#39-settings)).
+**Left rail (Fluent Nav):** Today • Board • Needs Me *(n)* • Runs • Context • Skills • Workspace • Code • Metrics • ⚙ Settings (tabs: Account, Assistant, Connections, Notifications, Shortcuts, Data; see [§3.9](#39-settings)). **Pages** sits directly below Today and starts collapsed on every load, unless the open route is a page (`components/pages/pages-section.tsx`).
 
 Two surfaces are deliberately **not** in the rail, because they are reached from the thing they belong to rather than browsed:
 
@@ -29,7 +29,7 @@ Two surfaces are deliberately **not** in the rail, because they are reached from
 
 Prompt transparency is the expandable **Prompts** section at `/settings?tab=assistant#prompts` ("Open prompts"), backed by `GET /api/prompts`. There is no standalone `/prompts` page.
 
-**Global header:** compact page title, fetch/pause controls and a theme toggle. Collapse the sidebar to icons at any desktop width; the choice is saved. On Board, *Task board* is the heading in this bar, not a second large heading inside the work area.
+**Global header:** a three-part grid (`components/shell/topbar.tsx`): the page title on the left, the Ask bar centred, and one right-hand cluster with notifications, undo/redo, Fetch, activity, view mode, the theme toggle, and an initials avatar. The avatar (`components/shell/account-menu.tsx`, first and last initial from `lib/initials.ts`) opens a menu with the name and email, Account settings, Assistant and models, Connected apps, Keyboard shortcuts, Templates (dev tools only), a theme switch, and Sign out. Collapse the sidebar to icons at any desktop width; the choice is saved. On Board, *Task board* is the heading in this bar, not a second large heading inside the work area.
 
 Below the `lg` breakpoint, Undo/Redo, Fetch, task-view mode, and theme move into **More actions** (`components/shell/topbar.tsx`). Search, notifications, activity, and the kill switch remain directly reachable. The activity popover stays inside the narrow viewport.
 
@@ -54,6 +54,15 @@ The old count tiles, *Your day*, *Recent meetings* and uneditable deliverable li
 - **Reminders:** private, mention-aware title/date rows below deliverables. Date-only reminders start at 09:00; timed reminders start 30 minutes early. Snooze is always 15 minutes, with strict 22:00–09:00 quiet hours. See §14.
 
 Focus and triage flow together without reserving a tall empty grid cell after triage finishes. Meetings remain accessible in Context, not duplicated here.
+
+**Persona desks.** An account with a desk template (`activeTemplateId` maps to a desk in `components/desk/desks.ts`) sees `DeskView` instead: live tiles on a 12-column grid (72 px rows) drawn by `LiveBoard` (`components/desk/live-board.tsx`) from `/api/desk/live`. The person arranges it in place:
+
+- **Resize:** drag the corner of a tile, or focus the corner and use the arrow keys. Sizes snap to whole cells. Every tile has a minimum (`components/desk/layout.ts` `tileLimits`): 3 × 2 cells by default, 4 × 3 for tiles that draw a week, band or timeline, 6 × 3 for hero tiles; at most 12 × 8.
+- **Move:** drag the grip before a tile's title, or focus it and use the arrow keys.
+- **Hide:** the eye button in a tile's header. The toast offers Undo.
+- **Add a tile:** lists tiles hidden from this desk, live tiles borrowed from other desks (one per title, saved with real desk entries), and the older shortcut widgets. **Reset layout** returns to the arrangement the signup template chose, or the bare desk.
+
+The arrangement is the `desk.layout.<desk>` preference `{ v: 1, tiles: [{ key, c, r }], hidden: [] }`. A signup template writes it with `exact: true`, meaning only those tiles; the first edit writes the hidden list out instead. Desk tiles that are in neither list (a new tile in a later release) are appended. The desk extras in Settings → Account → Features (Deadlines, Learning, On the bench) still show or hide their tile when a layout is saved: switching one changes that desk's layout too, an extra that is off is never borrowed back, and one that is on is added to a template layout. An empty desk shows one quiet line offering a sample (`desk.sample`), and the dismissal is remembered in the browser. The desk's name is not shown on Today or Context.
 
 ### 3.2 Board (Kanban)
 
@@ -110,6 +119,8 @@ The archive lists every run, newest first, including failed and cancelled ones, 
 
 ### 3.5 Context (Engineer Graph explorer)
 
+On a persona desk, Context (`components/desk/context-lens.tsx`) has the same tab row for every desk: **Overview, People, Projects**, the desk's own tabs (for example Repos, Reviews, Deploys), **Graph**, and **Artifacts & sync** (`components/desk/context-tabs.ts`). People, Projects, Graph and Artifacts render the full components from `components/context/`. The tab is in the address (`/context?tab=people&search=…`), so mention links land on it. *Add person* takes a name, an optional email and an optional role, reports errors in a toast, and an empty People tab offers the same action. The Overview's People tile links to the People tab.
+
 **Tabs:** *People* (who I work with, on what, last interaction, my typical response time), *Projects* (deliverables, work items, meetings, docs), *Repos* (my ownership, PR stats, style skill), *Preferences* (working hours, focus preferences, tone notes). Each node shows evidence (*"inferred from 14 emails and 3 meetings"*) and an **Edit / Correct** button — corrections are first-class data.
 
 > Later: evidence and confidence badges were removed from the cards (see [03 §3](03_MODULE_CONTEXT_ENGINE.md#3-normalized-model)).
@@ -140,7 +151,7 @@ Before/after tiles + charts (see [module 07](07_MODULE_GOVERNANCE_AUDIT_METRICS.
 
 ### 3.9 Settings
 
-`app/(hub)/settings/page.tsx` is one page with five tabs (`components/settings/settings-tabs.tsx`): a vertical list on wide screens and a scrolling row on narrow ones. Arrow keys, Home and End move between tabs, and each tab is a real link. The tab lives in the address (`/settings?tab=connections`); switching tabs pushes a history entry, so Back returns to the previous tab. Old one-page anchors still land: `/settings#models`, `#connections`, `#devices`, `#fetch`, `#retention` and the rest are mapped to their tab in `components/settings/url-state.ts` (`SECTION_TAB`) and scrolled into view. Only the open tab's code loads (`next/dynamic`).
+`app/(hub)/settings/page.tsx` is one page with six tabs (`components/settings/settings-tabs.tsx`): a vertical list on wide screens and a scrolling row on narrow ones. Arrow keys, Home and End move between tabs, and each tab is a real link. The tab lives in the address (`/settings?tab=connections`); switching tabs pushes a history entry, so Back returns to the previous tab. Old one-page anchors still land: `/settings#models`, `#connections`, `#devices`, `#fetch`, `#retention` and the rest are mapped to their tab in `components/settings/url-state.ts` (`SECTION_TAB`) and scrolled into view. Only the open tab's code loads (`next/dynamic`).
 
 | Tab | Sections (anchor) |
 |---|---|
@@ -148,12 +159,15 @@ Before/after tiles + charts (see [module 07](07_MODULE_GOVERNANCE_AUDIT_METRICS.
 | Assistant | The assistant (`#assistant`): *Your field*, write policy, default preset, *What it may change*; Models (`#models`); Watching for you (`#watchers`, only while a watcher is active); Autonomy, Orchestration, Quiet hours, Prompts |
 | Connections | Connections (`#connections`), Recent imports (`#imports`, once there is one), Fetching (`#fetch`), Editors & agents (`#editors`, `#connect`), Devices (`#devices`) |
 | Notifications | Morning brief (`#brief`), Quiet nudges (`#nudges`), Desktop reminders (`#reminders`), Quick capture (`#capture`) |
+| Shortcuts | Every key binding by group (`#shortcuts`, `#keyboard`), see below |
 | Data | Data retention (`#retention`), Completed (`#completed`), Trash (`#trash`), Terminal and commits (`#terminal`), Failed jobs, Deleted items, Delete my data (`#danger`) |
 
 Big or rarely used controls open in dialogs (`components/settings/modal.tsx`: Escape and a backdrop click close only the top dialog, Tab stays inside it, focus returns to the button that opened it). Dialogs are in the address too, so a link opens them:
 
 - **Model providers & keys** (`?tab=assistant&dialog=keys`, or `#keys`): API keys per provider with inline add/replace/remove, a Test button per tier, the Ollama URL and the GitHub token for private clones. The Models card itself keeps only "Which model each tier uses" and a one-line summary of which providers have keys (`components/settings/models.tsx`).
 - **What the assistant may change** (`?tab=assistant&dialog=changes`, or `#changes`): the six areas inside Ensemble, plus the *Connected apps* switch (`assistant.connectedAppWrites`): the assistant may propose changes in Google, Microsoft and other connected apps, and each one waits for Apply. The card shows a summary such as "Everything inside Ensemble · Connected apps ask first" (`components/settings/assistant.tsx`).
+
+**Shortcuts** (`components/settings/tab-shortcuts.tsx`) lists every binding from `@ensemble/shared-types` `shortcuts.ts`, grouped Everywhere, Create, Go to, Today, Code and Diagrams. *Change* records the next chord; Escape cancels. A custom chord must use Command/Ctrl or Option/Alt with a key, and `customChordProblem` refuses chords the browser or macOS already own (Command-P, Command-W, Command-T, Command-Q and the rest), named keys, function keys, and chords another action uses. Overrides are the `ui.shortcuts` preference, applied by `lib/shortcut-store.ts` everywhere shortcuts are read, including the `?` sheet. *New task* (N then T) and *New page* (N then P) are new bindings; a custom chord works alongside the two-key sequence. Option chords match the physical key, so macOS dead characters do not break them. `ui.*` and `desk.*` preferences are hidden from the Preferences list in Context.
 
 *Your field* (`assistant.actAs`) offers every `ActAs` value, with "Match my sign-up role" for `general`. It shapes the assistant's tone and suggestions only, never what Ensemble can read or change. *Watching for you* lists the conditions the assistant watches after "tell me when …", with Cancel; it is hidden when none are active.
 
@@ -417,7 +431,7 @@ These measurements and file names come from an earlier prototype. They describe 
 
 ## 10. The Hub assistant
 
-A bubble in the bottom-right corner that expands into a centred panel. It is **the only chat surface in Ensemble**, and it is deliberately **not** the front door: the board, the briefing and the approvals queue are. Chat is for the things a board cannot express — *"add todos from today's meeting and update this week's deliverables"* — and for reaching the parts of the tenant no page exposes.
+A round launcher (`components/assistant/ask-launcher.tsx`) that expands into a panel. It starts bottom-right and can be dragged anywhere along the bottom or right edge of the content column, never over the sidebar or top bar; it snaps to the nearer edge and the spot is saved in the browser (`ensemble.assistant.launcher`). Arrow keys move it when focused. The shortcut (Command-J by default, configurable in Settings → Shortcuts) still opens it; the launcher no longer prints the shortcut. It is **the only chat surface in Ensemble**, and it is deliberately **not** the front door: the board, the briefing and the approvals queue are. Chat is for the things a board cannot express — *"add todos from today's meeting and update this week's deliverables"* — and for reaching the parts of the tenant no page exposes.
 
 ### 10.1 The Hub Action Layer
 
@@ -600,7 +614,7 @@ Select text in task notes, project notes, deliverables or agent output to reveal
 
 Select **Ask Ensemble** from the `@` menu, or type `@ensemble`, write a request, and press **Enter**. Enter selects a file from an active mention menu before it can send the request; Shift+Enter remains a line break. Requests work in standalone pages and task documents, not code blocks. **Typing, autosaving, reopening, refreshing and expanding a previous answer never start a model request.** The live document and typed mention IDs travel with the request, so a save debounce does not hide the newest page content.
 
-Inline answers use the configured assistant default tier. They run the normal tool loop with user-scoped task/context retrieval. Page context is bounded to 24,000 characters; additional account context is read through tools rather than copying the entire database into a prompt. **New diagrams and plots requested inline are created immediately and attached below the answer.** Allowed-write areas and module gates still apply, and all other writes retain the configured immediate/preview/Needs me policy and show Apply when held. Dataset mentions are read through `hub_get_dataset` before plotting; the renderer uses the complete stored table. Attachments persist as document mentions, are inserted once per successful tool call, and are not re-added after removal. Plot embeds show real charts at chart/tile proportions, with compact and remove controls; Backspace also removes the mention, not the saved plot or dataset.
+Inline answers use the configured assistant default tier. They run the normal tool loop with user-scoped task/context retrieval. Page context is bounded to 24,000 characters; additional account context is read through tools rather than copying the entire database into a prompt. **New diagrams and plots requested inline are created immediately and attached below the answer.** Allowed-write areas and module gates still apply, and all other writes retain the configured immediate/preview/Needs me policy and show Apply when held. Dataset mentions are read through `hub_get_dataset` before plotting; the renderer uses the complete stored table. Attachments persist as document mentions, are inserted once per successful tool call, and are not re-added after removal. Plot embeds show real charts at chart/tile proportions, with compact and remove controls; Backspace also removes the mention, not the saved plot or dataset. Plot and diagram embeds always take the page width and have a resize bar along the bottom edge (`components/editor/embed-resize.ts`): drag it, or focus it and use the up and down arrows. Heights run from 160 px to 1,400 px and are saved on the mention as `height`, so they survive reload; a diagram with no saved height fits its drawing (up to 560 px) and has a *Fit* button.
 
 A comment containing `@ensemble` is sent with Enter and receives an attributed Ensemble reply in that comment. There is **no human reply composer**: the engineer can edit/resolve the original comment, but only the assistant writes its answer. Comments on editable and immutable result text carry a muted orange highlight; ambiguous or removed text leaves the original quote accessible in *Comments*.
 
@@ -710,6 +724,8 @@ Hosted email signup needs `EMAIL_PROVIDER=resend`, `EMAIL_API_KEY`, `EMAIL_FROM`
 | GET | `/api/auth/me` | Identity/appearance/modules plus `user.profile`, `verificationRequired`, `onboardingComplete`, and `profileComplete` |
 | PATCH | `/api/auth/me` | `{ name?, password?, current? }`; sensitive password changes require browser authentication |
 | PUT | `/api/auth/profile` | Browser session. `{ name, gender?, profession?, organization?, heardFrom? }`; trims optional empty values to `null`, sets `profileCompletedAt`, returns `{ user, profile }` |
+| GET | `/api/onboarding/templates?role=` | → `{ templates: [{ id, role, name, blurb, desk, tiles: [key, c, r][], features[3], preview: { project, tasks[], people[], deliverables[] } }] }` for the `/start` previews |
+| POST | `/api/onboarding` | `{ role, templateId }` → `{ role, templateId, onboardingComplete }`. Once per account (409 after). Seeds starters, sets the desk and modules, sets `profession` when empty, writes `desk.layout.<desk>` |
 | GET | `/api/auth/oauth/:provider/start` | Redirects to login provider; `?link=1` requires an existing browser session |
 | GET | `/api/auth/oauth/:provider/callback` | Consumes browser-bound state and returns to a fixed Hub-origin page |
 | POST | `/api/auth/verify-email` | Browser session. `{ code }`; normalizes spaces/dashes/case, locks after five wrong tries, consumes the active verification code |
@@ -722,9 +738,16 @@ Hosted email signup needs `EMAIL_PROVIDER=resend`, `EMAIL_API_KEY`, `EMAIL_FROM`
 
 `/verify` (`app/verify/page.tsx`, `components/account-recovery.tsx`) is now a code entry page. It shows the signed-in email, posts `{ code }`, offers **Send a new code**, and asks signed-out people to sign in at `/login?next=/verify`. Successful verification follows a safe relative `next` query, then `/start` if onboarding is incomplete, otherwise `/today`.
 
-`/start` (`app/(hub)/start/page.tsx`) first shows the **About you** profile step while `/api/auth/me.profileComplete` is false. It collects required full name plus optional gender, profession, organization, and referral source, then continues to the existing role and template picker.
+`/start` (`app/(hub)/start/page.tsx`) is a focused two-step screen without the sidebar, top bar or assistant launcher. The left column asks the questions; the right column previews the desk live.
+
+1. **About you.** Name, then *What do you do?* (Student, Teacher, Lawyer, Engineer, Builder, Manager), plus optional organization and how they heard about Ensemble. The role is saved as the profession, so the question is asked once; gender stays in Settings → Account. Someone whose profile is already complete sees only the role question, preselected from their profession when it matches (`components/onboarding/roles.ts`).
+2. **Your desk.** Six templates for that role, each with a small preview. The large preview switches between **Today**, **Board** and **Context**, drawn from fictional sample rows (`components/onboarding/sample.ts`) by the same tile renderer as Today (`PreviewTiles`), scaled to fit. Nothing in the preview is saved.
+
+*Start with …* calls `POST /api/onboarding`, which seeds the template's starters, sets the desk, saves the profession when it was empty, and writes the template's Today layout to `desk.layout.<desk>`. There are 36 templates, six per role, and no two in a role share a Today layout (`packages/shared-types/src/templates/manifest.ts`, checked in `apps/hub-api/src/layouts/layouts.test.ts`).
 
 Settings → Account supports profile editing, linked methods, adding/changing passwords, JSON export and deletion. Sensitive method removal/deletion uses a recent session (10 minutes) or current-password confirmation. Deletion leaves local user files alone; provider copies and infrastructure backup retention are separate. The landing site includes `/privacy`, `/terms`, and direct registration links.
+
+Sign-in and sign-up (`components/auth-form.tsx`) use a split screen: on the left, `components/auth-backdrop.tsx` draws a slow context graph and three app-like cards (a task, an `@ensemble` answer, a chart); on the right, the form. The motion stops under reduced motion, and below 900 px only the form shows.
 
 `emailSignupAvailable` describes method readiness, independently of open/allowlist/closed policy. Hosted email signup requires configured delivery and both Turnstile keys; development and desktop retain no-mail signup. `components/auth-form.tsx` hides an unusable email form, keeps configured social providers, and shows an upfront unavailable message when none can be offered. Existing password logins remain available. Provider configuration and real verification mail still need operator setup; the UI does not bypass those guards.
 

@@ -72,7 +72,8 @@ This is why there was no code change to the webapp: the operations already exist
 
 | Path | LOC | What it is |
 |---|---|---|
-| `apps/hub-web/components/assistant/assistant-dock.tsx` | 623 | the floating panel: bubble, transcript, composer |
+| `apps/hub-web/components/assistant/assistant-dock.tsx` | 629 | the floating panel: transcript, composer, and the empty state ("Good morning, {first name}" with three generic starter prompts; no record titles) |
+| `apps/hub-web/components/assistant/ask-launcher.tsx` | 152 | the round launcher: draggable along the bottom or right edge, position saved in the browser; the configurable shortcut (Command-J by default) toggles the panel |
 | `apps/hub-web/components/shell/topbar.tsx` | — | the undo / redo buttons in the app bar |
 | `apps/hub-web/components/comments/` | ~700 | text comments and `@ensemble` replies on a page |
 | `apps/hub-api/src/assistant/types.ts` | 98 | what a tool *is* — the contract every tool obeys |

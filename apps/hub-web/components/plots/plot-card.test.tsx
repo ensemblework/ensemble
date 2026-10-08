@@ -19,7 +19,7 @@ test("an empty plot shows a useful state, compacts, and removes just its page em
   let stop = () => {};
   let removed = 0;
   try {
-    await act(async () => { stop = mountPlotCard(host, "plot", "Plot", () => { removed += 1; }); });
+    await act(async () => { stop = mountPlotCard(host, "plot", "Plot", () => { removed += 1; }).destroy; });
     assert.match(host.textContent ?? "", /No chart yet/);
     const compact = host.querySelector<HTMLButtonElement>("[aria-label='Compact plot']")!;
     await act(async () => compact.click());
@@ -41,12 +41,40 @@ test("workspace tiles render their real chart instead of an empty sparkline", as
   document.body.append(host);
   let stop = () => {};
   try {
-    await act(async () => { stop = mountPlotCard(host, "space/tile", "Accuracy"); });
+    await act(async () => { stop = mountPlotCard(host, "space/tile", "Accuracy").destroy; });
     assert.equal(host.querySelectorAll("[data-plot-chart]").length, 1);
     assert.equal(host.querySelector("a")?.getAttribute("href"), "/plots?space=space&tile=tile");
     assert.equal(Number.parseFloat(host.querySelector<HTMLElement>("[style*='aspect-ratio']")!.style.aspectRatio), 480 / 312);
   } finally {
     await act(async () => stop());
+    host.remove();
+    globalThis.fetch = original;
+  }
+});
+
+test("an editable plot embed keeps page width and resizes its height with a minimum", async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => new Response(JSON.stringify({ plot: { id: "plot", title: "Empty plot", datasetId: null, config: defaultPlotConfig() }, spark: [] }), { headers: { "content-type": "application/json" } });
+  const host = document.createElement("span");
+  document.body.append(host);
+  const committed: number[] = [];
+  let card: ReturnType<typeof mountPlotCard> | null = null;
+  try {
+    await act(async () => { card = mountPlotCard(host, "plot", "Plot", undefined, { height: 240, onResize: (value) => committed.push(value) }); });
+    const handle = host.querySelector<HTMLElement>("[role='separator']")!;
+    assert.equal(handle.getAttribute("aria-valuenow"), "240");
+    await act(async () => { handle.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true })); });
+    assert.deepEqual(committed, [264]);
+    for (let index = 0; index < 20; index += 1) {
+      await act(async () => { handle.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true })); });
+    }
+    assert.equal(committed.at(-1), 180);
+    await act(async () => { card!.setHeight(400); });
+    const next = host.querySelector<HTMLElement>("[role='separator']")!;
+    next.dispatchEvent(new window.FocusEvent("focus"));
+    assert.equal(next.getAttribute("aria-valuenow"), "400");
+  } finally {
+    await act(async () => card?.destroy());
     host.remove();
     globalThis.fetch = original;
   }

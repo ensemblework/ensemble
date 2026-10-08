@@ -66,6 +66,7 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
       modules: request.modules,
       labels: user?.chromeLabels && typeof user.chromeLabels === "object" ? user.chromeLabels : {},
       activeTemplateId: user?.activeTemplateId ?? null,
+      onboardingTemplateId: user?.onboardingTemplateId ?? null,
       templateName:
         user?.activeTemplateId === "default"
           ? "Default"

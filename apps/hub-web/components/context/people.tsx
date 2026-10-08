@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Clock3, Plus, Search, Trash2 } from "lucide-react";
+import { Clock3, Plus, Search, Trash2, Users } from "lucide-react";
 import { useState } from "react";
 import { api, type PersonRecord } from "@/lib/api";
 import { plural, shortDate } from "@/lib/format";
@@ -82,14 +82,21 @@ export function PeopleTab({ initialSearch, who = "" }: { initialSearch: string; 
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
+  const [role, setRole] = useState("");
+  const toast = useToast();
   const create = useMutation({
-    mutationFn: () => api.createPerson({ name, email: email || undefined }),
+    mutationFn: () => api.createPerson({ name: name.trim(), email: email.trim() || undefined, role: role.trim() || undefined }),
     onSuccess: () => {
       setAdding(false);
+      toast(`Added ${name.trim()}.`, { tone: "ok" });
       setName("");
       setEmail("");
+      setRole("");
       void client.invalidateQueries({ queryKey: ["people"] });
+      void client.invalidateQueries({ queryKey: ["entities"] });
+      void client.invalidateQueries({ queryKey: ["desk-live"] });
     },
+    onError: (error: Error) => toast(error.message, { tone: "error" }),
   });
   const wanted = who ? new Set(who.split(",").filter(Boolean)) : null;
   const list = (people.data?.people ?? []).filter((person) => {
@@ -100,7 +107,7 @@ export function PeopleTab({ initialSearch, who = "" }: { initialSearch: string; 
     <div>
       <div className="mb-4 flex items-center gap-3">
         <span className="text-[13px] font-semibold">{plural(list.length, "person", "people")}</span>
-        <div className="tile flex items-center gap-1.5 rounded-md bg-panel px-2 py-1">
+        <div className="flex items-center gap-1.5 rounded-md border border-line bg-panel px-2 py-1">
           <Search size={13} className="text-faint" />
           <input
             value={search}
@@ -117,11 +124,15 @@ export function PeopleTab({ initialSearch, who = "" }: { initialSearch: string; 
       {people.isLoading ? (
         <Spinner />
       ) : list.length === 0 ? (
-        <Empty>
-          {wanted
-            ? "No one on today's work."
-            : "No people yet. They are learned from mail, chat and PR reviews as sources sync, or add them yourself."}
-        </Empty>
+        wanted ? (
+          <Empty>No one on today's work.</Empty>
+        ) : (
+          <div className="empty-state flex flex-col items-start gap-3" data-people-empty>
+            <span className="flex items-center gap-2 text-[14px] font-medium text-ink"><Users size={15} /> Add the people you work with</span>
+            <span>Teammates, clients, advisors, or classmates. Mention them on pages and tasks, and they appear on the graph. Connected mail, chat, and reviews add more as they sync.</span>
+            <button type="button" className="btn-primary" onClick={() => setAdding(true)}>Add a person</button>
+          </div>
+        )
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(270px,1fr))] gap-3">
           {list.map((person) => (
@@ -135,11 +146,14 @@ export function PeopleTab({ initialSearch, who = "" }: { initialSearch: string; 
             <input autoFocus value={name} onChange={(event) => setName(event.target.value)} className="field w-full" />
           </Field>
           <Field label="Email (optional)">
-            <input value={email} onChange={(event) => setEmail(event.target.value)} className="field w-full" />
+            <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} className="field w-full" />
+          </Field>
+          <Field label="Role (optional)">
+            <input value={role} onChange={(event) => setRole(event.target.value)} placeholder="e.g. Advisor, client, teammate" className="field w-full" />
           </Field>
           <div className="flex justify-end">
-            <button type="button" className="btn-primary" disabled={!name.trim()} onClick={() => create.mutate()}>
-              Add
+            <button type="button" className="btn-primary" disabled={!name.trim() || create.isPending} onClick={() => create.mutate()}>
+              {create.isPending ? "Adding…" : "Add person"}
             </button>
           </div>
         </div>

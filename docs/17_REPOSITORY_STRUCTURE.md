@@ -127,7 +127,6 @@ apps/skill-forge/             pyproject.toml + ensemble_forge/__init__.py; miner
 | `build-mac-dmg.sh` | `pnpm desktop:dmg`: unsigned macOS disk image |
 | `desktop-discovery.mjs`, `desktop-spawn.mjs` | Shared helpers for finding the desktop API and spawning processes on every OS |
 | `check-icons.mjs` | Validates the `.ico` / `.icns` app icons |
-| `render-template-previews.mjs` | Renders template card images |
 | `measure-*.mjs`, `ui-walk.mjs`, `verify-followup.mjs` | Playwright perf and UI probes (docs/UI_PERF_DESIGN.md) |
 
 ---

@@ -31,9 +31,9 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       dry_run: ${{ steps.version.outputs.dry_run }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
 
@@ -116,18 +116,18 @@ jobs:
           - os: windows-2022
             target: windows-x64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v5
         with:
           version: ${{ env.PNPM_VERSION }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         if: matrix.target == 'windows-x64'
         with:
           go-version: "1.23.x"
@@ -170,7 +170,7 @@ jobs:
           node scripts/smoke-cli-package.mjs (Join-Path $smoke "ensemble")
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: ensemble-cli-${{ matrix.target }}
           if-no-files-found: error
@@ -191,13 +191,13 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       NFPM_VERSION: 2.47.0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v5
         with:
           version: ${{ env.PNPM_VERSION }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
@@ -208,7 +208,7 @@ jobs:
       - name: Build CLI for npm pack
         run: pnpm --filter ensemblework build
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           pattern: ensemble-cli-*
           path: dist/downloaded-cli
@@ -256,13 +256,13 @@ jobs:
       - name: Re-render packaging metadata with final checksums
         run: node packaging/render.mjs --version "$VERSION" --assets dist/cli-release --out dist/packaging
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: cli-release-assets
           if-no-files-found: error
           path: dist/cli-release/*
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: cli-packaging
           if-no-files-found: error
@@ -294,7 +294,7 @@ jobs:
     if: needs.resolve.outputs.dry_run != 'true' && needs.secret-flags.outputs.homebrew == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: cli-packaging
           path: dist/packaging
@@ -334,7 +334,7 @@ jobs:
     if: needs.resolve.outputs.dry_run != 'true' && needs.secret-flags.outputs.scoop == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: cli-packaging
           path: dist/packaging
@@ -397,12 +397,12 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: "https://registry.npmjs.org"
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: cli-release-assets
           path: dist/cli-release

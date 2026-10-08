@@ -1,15 +1,18 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, X } from "lucide-react";
+import { Plus, RotateCcw, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { hasModule } from "@ensemble/shared-types/modules";
 import { MARKET_CARDS } from "@ensemble/shared-types/marketplace-manifest";
 import { WIDGET_REGISTRY, widgetIdsFor, type WidgetId } from "@ensemble/shared-types/widgets";
 import { api } from "@/lib/api";
 import { appendDeskTile, readAdded, removeDeskTile } from "@/lib/desk-added";
+import type { DeskId } from "./desks";
+import { showTile } from "./layout";
+import { useDeskLayout, type Spec } from "./live-board";
 
-export function AddTileButton({ plots, startOpen = false }: { plots: boolean; startOpen?: boolean }) {
+export function AddTileButton({ deskId, plots, startOpen = false }: { deskId: DeskId; plots: boolean; startOpen?: boolean }) {
   const [open, setOpen] = useState(startOpen);
   useEffect(() => {
     if (startOpen) setOpen(true);
@@ -25,12 +28,12 @@ export function AddTileButton({ plots, startOpen = false }: { plots: boolean; st
         <Plus size={13} />
         Add a tile
       </button>
-      {open ? <AddTileDialog plots={plots} onClose={() => setOpen(false)} /> : null}
+      {open ? <AddTileDialog deskId={deskId} plots={plots} onClose={() => setOpen(false)} /> : null}
     </>
   );
 }
 
-function AddTileDialog({ plots, onClose }: { plots: boolean; onClose: () => void }) {
+function AddTileDialog({ deskId, plots, onClose }: { deskId: DeskId; plots: boolean; onClose: () => void }) {
   const client = useQueryClient();
   const [q, setQ] = useState("");
   const [error, setError] = useState("");
@@ -40,6 +43,13 @@ function AddTileDialog({ plots, onClose }: { plots: boolean; onClose: () => void
   const templateId = shell.data?.activeTemplateId;
   const preferred = useMemo(() => new Set(MARKET_CARDS.find((card) => card.id === templateId)?.widgets ?? []), [templateId]);
   const query = q.trim().toLowerCase();
+  const layout = useDeskLayout(deskId);
+  const matches = (spec: Spec) => !query || `${spec.title} ${spec.ghost}`.toLowerCase().includes(query);
+  const live = [
+    { id: "hidden", label: "Hidden from Today", specs: layout.hiddenSpecs.filter(matches) },
+    { id: "borrow", label: "Live tiles", specs: layout.others.filter(matches) },
+  ].filter((group) => group.specs.length);
+  const place = (spec: Spec) => void layout.save(showTile({ shown: layout.shown, hidden: layout.hidden }, spec));
   const ids = widgetIdsFor("today").filter((id) => {
     const spec = WIDGET_REGISTRY[id];
     if (spec.requires && !hasModule(shell.data?.modules, spec.requires)) return false;
@@ -67,7 +77,7 @@ function AddTileDialog({ plots, onClose }: { plots: boolean; onClose: () => void
         role="dialog"
         aria-modal="true"
         aria-label="Add a tile"
-        className="relative w-[min(640px,calc(100%-1rem))] rounded-xl border border-line bg-panel p-4 shadow-pop"
+        className="relative max-h-[calc(100dvh-6rem)] w-[min(680px,calc(100%-1rem))] overflow-y-auto rounded-lg border border-line bg-panel p-4 shadow-pop"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="flex items-center gap-2">
@@ -97,10 +107,35 @@ function AddTileDialog({ plots, onClose }: { plots: boolean; onClose: () => void
           </div>
         ) : null}
         {error ? <p className="mt-3 text-[13px] text-danger">{error}</p> : null}
-        {groups.length === 0 ? <p className="mt-3 text-[13px] text-muted">Nothing matches.</p> : null}
+        {live.map((group) => (
+          <div key={group.id} className="mt-3" data-live-group={group.id}>
+            <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-faint">{group.label}</div>
+            <div className="mt-1 grid gap-1 sm:grid-cols-2">
+              {group.specs.map((spec) => {
+                const Icon = spec.icon;
+                return (
+                  <button
+                    key={spec.key}
+                    type="button"
+                    data-gallery-tile={spec.key}
+                    className="flex items-start gap-2 rounded-md border border-line px-2.5 py-2 text-left hover:border-line-strong hover:bg-hover"
+                    onClick={() => place(spec)}
+                  >
+                    <Icon size={14} className="mt-0.5 shrink-0 text-muted" />
+                    <span className="min-w-0">
+                      <span className="block text-[13px] font-medium">{spec.title}</span>
+                      <span className="block text-[12px] text-muted">{spec.ghost}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+        {groups.length === 0 && live.length === 0 ? <p className="mt-3 text-[13px] text-muted">Nothing matches.</p> : null}
         {groups.map((group) => (
           <div key={group.id} className="mt-3">
-            <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-faint">{group.label}</div>
+            <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-faint">{group.id === "desk" ? "Shortcuts for this desk" : group.id === "shared" ? "Shortcuts" : "Shortcuts from other desks"}</div>
             <div className="mt-1 grid gap-1 sm:grid-cols-2">
               {group.ids.map((id) => {
                 const spec = WIDGET_REGISTRY[id];
@@ -111,7 +146,7 @@ function AddTileDialog({ plots, onClose }: { plots: boolean; onClose: () => void
                     type="button"
                     data-gallery-tile={id}
                     disabled={on}
-                    className="rounded-lg border border-line px-2.5 py-2 text-left hover:border-line-strong disabled:opacity-60"
+                    className="rounded-md border border-line px-2.5 py-2 text-left hover:border-line-strong hover:bg-hover disabled:opacity-60"
                     onClick={() => void add(id)}
                   >
                     <div className="text-[13px] font-medium">{on ? `${spec.label} · on Today` : spec.label}</div>
@@ -122,6 +157,15 @@ function AddTileDialog({ plots, onClose }: { plots: boolean; onClose: () => void
             </div>
           </div>
         ))}
+        {layout.customized ? (
+          <div className="mt-4 flex items-center justify-between gap-3 border-t border-line pt-3">
+            <span className="text-[12.5px] text-muted">You moved, resized, or hid tiles on this desk.</span>
+            <button type="button" className="btn" onClick={() => void layout.reset()}>
+              <RotateCcw size={12} />
+              Reset layout
+            </button>
+          </div>
+        ) : null}
       </div>
     </div>
   );

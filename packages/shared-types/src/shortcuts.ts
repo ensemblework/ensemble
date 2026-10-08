@@ -144,9 +144,29 @@ export const SHORTCUTS: readonly ShortcutBinding[] = [
     label: "Open or close the assistant",
     group: "Everywhere",
     scope: "global",
-    whileTyping: false,
+    whileTyping: true,
     mac: { key: "j", mod: true },
     other: { key: "j", mod: true },
+  },
+  {
+    id: "new-task",
+    label: "New task",
+    group: "Create",
+    scope: "global",
+    whileTyping: false,
+    mac: null,
+    other: null,
+    sequence: ["n", "t"],
+  },
+  {
+    id: "new-page",
+    label: "New page",
+    group: "Create",
+    scope: "global",
+    whileTyping: false,
+    mac: null,
+    other: null,
+    sequence: ["n", "p"],
   },
   {
     id: CYCLE_FAVOURITE_THEMES.id,
@@ -485,15 +505,24 @@ export function formatBinding(binding: ShortcutBinding, apple: boolean): string 
 
 export interface KeyEventLike {
   key: string;
+  /** Physical key. Option on macOS turns "a" into "å", so Alt chords also match by code. */
+  code?: string;
   metaKey: boolean;
   ctrlKey: boolean;
   altKey: boolean;
   shiftKey: boolean;
 }
 
+/** The key a chord should record or match: the typed character, or the physical letter or digit under Alt. */
+export function chordKeyFromEvent(event: KeyEventLike): string {
+  const physical = /^Key([A-Z])$/.exec(event.code ?? "")?.[1] ?? /^Digit([0-9])$/.exec(event.code ?? "")?.[1];
+  if (event.altKey && physical) return physical.toLowerCase();
+  return event.key.toLowerCase();
+}
+
 export function eventMatchesChord(event: KeyEventLike, chord: ShortcutChord, apple: boolean): boolean {
-  const key = event.key.length === 1 ? event.key.toLowerCase() : event.key.toLowerCase();
-  if (key !== chord.key.toLowerCase()) return false;
+  const want = chord.key.toLowerCase();
+  if (event.key.toLowerCase() !== want && chordKeyFromEvent(event) !== want) return false;
   const wantMeta = Boolean(chord.meta) || (Boolean(chord.mod) && apple);
   const wantCtrl = Boolean(chord.ctrl) || (Boolean(chord.mod) && !apple);
   if (wantMeta !== event.metaKey) return false;
@@ -512,7 +541,6 @@ export function matchShortcut(
 ): ShortcutBinding | null {
   for (const binding of list) {
     if (binding.scope !== "global") continue;
-    if (binding.sequence) continue;
     if (typing && !binding.whileTyping) continue;
     const chord = apple ? binding.mac : binding.other;
     if (!chord) continue;
@@ -535,4 +563,108 @@ export function isCycleFavouriteThemesShortcut(event: {
     event.ctrlKey === CYCLE_FAVOURITE_THEMES.ctrl &&
     event.metaKey === CYCLE_FAVOURITE_THEMES.meta
   );
+}
+
+/** Bindings a person may change. Undo and redo stay fixed; scoped editor keys stay with their editor. */
+export const CUSTOMIZABLE_SHORTCUTS = new Set([
+  "palette",
+  "help",
+  "capture",
+  "ask",
+  "assistant",
+  "new-task",
+  "new-page",
+  "go-today",
+  "go-board",
+  "go-needs",
+  "go-meetings",
+  "go-recap",
+  "go-settings",
+  "go-diagrams",
+  "go-plots",
+]);
+
+/** A person's chord per binding id. `mod` means Command on macOS and Control elsewhere, so one choice covers both. */
+export type ShortcutOverrides = Record<string, ShortcutChord>;
+
+const MODIFIER_KEYS = new Set(["shift", "control", "alt", "meta", "os", "capslock", "fn", "hyper", "super"]);
+const NAMED_KEYS = new Set(["enter", "tab", "escape", " ", "space", "backspace", "delete"]);
+
+/**
+ * Chords the browser or the operating system already owns. Binding them would
+ * either never fire or take a browser action away (print, new tab, address bar).
+ */
+const BROWSER_OWNED = new Set([
+  ...["a", "c", "v", "x", "z", "y", "t", "n", "w", "q", "r", "l", "p", "s", "f", "d", "h", "o", "u", "g", "e", "m", "+", "=", "-", "0", "[", "]", "tab", "arrowleft", "arrowright", "enter", "backspace", "delete"].map((key) => `mod+${key}`),
+  ...["t", "n", "w", "b", "i", "j", "c", "delete", "r", "p", "a", "o", "s", "g", "z", "tab", "[", "]"].map((key) => `mod+shift+${key}`),
+  ...["1", "2", "3", "4", "5", "6", "7", "8", "9"].map((key) => `mod+${key}`),
+  "alt+arrowleft",
+  "alt+arrowright",
+  "alt+home",
+  "alt+f4",
+  "alt+tab",
+  "alt+space",
+  "mod+alt+i",
+  "mod+alt+j",
+  "mod+alt+c",
+  "mod+alt+escape",
+  "ctrl+alt+delete",
+  "ctrl+alt+t",
+  "ctrl+alt+arrowleft",
+  "ctrl+alt+arrowright",
+  "ctrl+alt+arrowup",
+  "ctrl+alt+arrowdown",
+]);
+
+/** The chord a keydown would record. Null while only a modifier is held. */
+export function chordFromEvent(event: KeyEventLike, apple: boolean): ShortcutChord | null {
+  const key = chordKeyFromEvent(event);
+  if (!key || MODIFIER_KEYS.has(key)) return null;
+  const chord: ShortcutChord = { key };
+  const mod = apple ? event.metaKey : event.ctrlKey;
+  if (mod) chord.mod = true;
+  if (apple && event.ctrlKey) chord.ctrl = true;
+  if (!apple && event.metaKey) chord.meta = true;
+  if (event.altKey) chord.alt = true;
+  if (event.shiftKey) chord.shift = true;
+  return chord;
+}
+
+/** Defaults with a person's chords applied. A changed binding keeps its typed sequence. */
+export function applyShortcutOverrides(overrides: unknown, list: readonly ShortcutBinding[] = SHORTCUTS): ShortcutBinding[] {
+  const valid = overrides && typeof overrides === "object" && !Array.isArray(overrides) ? (overrides as Record<string, unknown>) : {};
+  return list.map((binding) => {
+    const chord = valid[binding.id] as ShortcutChord | undefined;
+    if (!CUSTOMIZABLE_SHORTCUTS.has(binding.id) || !chord || typeof chord.key !== "string" || !chord.key) return binding;
+    const clean: ShortcutChord = { key: chord.key.toLowerCase() };
+    for (const flag of ["mod", "ctrl", "alt", "shift"] as const) if (chord[flag] === true) clean[flag] = true;
+    return { ...binding, mac: clean, other: clean };
+  });
+}
+
+/**
+ * Why a chord cannot be used, or null. It needs Command/Control or Option/Alt,
+ * must not be a browser or OS chord, and must not collide with another binding.
+ */
+export function customChordProblem(id: string, chord: ShortcutChord, list: readonly ShortcutBinding[], apple: boolean): string | null {
+  if (!CUSTOMIZABLE_SHORTCUTS.has(id)) return "This shortcut cannot be changed.";
+  const key = chord.key.toLowerCase();
+  if (chord.meta) return "The Windows or Super key is kept for the operating system.";
+  if (!chord.mod && !chord.alt && !chord.ctrl) return apple ? "Use Command or Option with a key." : "Use Ctrl or Alt with a key.";
+  if (NAMED_KEYS.has(key)) return "Pick a letter, number, or symbol key.";
+  if (/^f([1-9]|1[0-2])$/.test(key)) return "Function keys are kept for the browser.";
+  // The override is saved for the account and applied on every computer, so check it as macOS and as
+  // Windows/Linux read it: off a Mac, Control is the main modifier, so Mac Control+K is Ctrl+K there.
+  const onMac: ShortcutChord = apple ? chord : { ...chord, ctrl: false };
+  const elsewhere: ShortcutChord = { ...chord, mod: Boolean(chord.mod || chord.ctrl), ctrl: false };
+  for (const token of [chordToken(onMac), chordToken(elsewhere)]) {
+    if (RESERVED.has(token) || BROWSER_OWNED.has(token)) return "Your browser or system already uses this shortcut.";
+  }
+  for (const binding of list) {
+    if (binding.id === id) continue;
+    if (binding.scope !== "global" && binding.scope !== "diagrams") continue;
+    if (binding.mac && chordToken(binding.mac) === chordToken(onMac)) return `Already used by “${binding.label}”.`;
+    if (binding.other && chordToken(binding.other) === chordToken(elsewhere)) return `Already used by “${binding.label}”.`;
+  }
+  return null;
 }

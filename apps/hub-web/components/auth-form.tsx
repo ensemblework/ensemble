@@ -6,14 +6,10 @@ import { useEffect, useState } from "react";
 import { api, HUB_API } from "@/lib/api";
 import { clearBrowserTabSession } from "@/lib/tab-session";
 import { INVITE_ONLY, safeLoginNext, showInviteNote, signupPanel } from "@/lib/signup-ui";
-import { EnsembleLogo, EnsembleMark } from "./brand/Logo";
+import { EnsembleLogo } from "./brand/Logo";
 import { Spinner } from "./ui";
 import { AuthTurnstile } from "./auth-turnstile";
-
-/** Whole Two-voices mark, quiet, in the corner. Never cropped into stripes. */
-function LoginStrand() {
-  return <EnsembleMark size={140} className="login-strand pointer-events-none absolute" />;
-}
+import { AuthBackdrop } from "./auth-backdrop";
 
 export function authRedirectTarget(mode: "login" | "signup", result: { verificationSent?: boolean; user?: unknown }, next: string | null): string {
   if (mode === "signup") return result.verificationSent ? "/verify?next=/start" : "/start";
@@ -47,32 +43,20 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const unavailable = !closed && !emailAvailable && !status.data?.providers.length;
   const inviteNote = showInviteNote(signup);
   return (
-    <div className="flex min-h-screen items-center justify-center bg-bg px-4">
-      <div className="grid w-full max-w-[820px] overflow-hidden rounded-2xl border border-line bg-panel shadow-pop md:grid-cols-[1fr_1.1fr]">
-        <div className="relative hidden min-h-[480px] flex-col overflow-hidden bg-sidebar p-8 md:flex">
-          <LoginStrand />
-          <div className="relative">
-            <EnsembleLogo size={32} />
-          </div>
-          <div className="relative mt-8 max-w-[16rem]">
-            <p className="display text-[28px] leading-[1.15]">A shared workspace for you and your agent.</p>
-            <p className="mt-3 text-[13px] leading-5 text-muted">
-              A board for what is due. A graph for the people, projects, and tasks around it.
-            </p>
-          </div>
-          <p className="relative mt-6 text-[12.5px] text-muted">Nothing leaves without you.</p>
-        </div>
+    <div className="auth-shell">
+      <div className="auth-brand">
+        <EnsembleLogo size={24} />
+      </div>
+      <AuthBackdrop />
+      <div className="auth-main">
       <form
-        className="w-full p-6 sm:p-8"
+        className="auth-form"
         onSubmit={(event) => {
           event.preventDefault();
           if (emailAvailable && !submit.isPending) submit.mutate();
         }}
       >
-        <div className="mb-5 md:hidden">
-          <EnsembleLogo size={20} />
-        </div>
-        <h1 className="text-[22px] font-semibold tracking-tight">
+        <h1 className="display text-[30px] leading-tight tracking-tight">
           {closed ? "Invite only" : unavailable ? "Signup unavailable" : mode === "signup" ? "Create your account" : "Sign in"}
         </h1>
         <p className="mt-1 text-[13px] text-muted">
@@ -134,7 +118,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
         {submit.error ? <div className="mt-3 text-[12.5px] text-[#ffb4ae]">{(submit.error as Error).message}</div> : null}
         {status.error ? <p role="alert" className="mt-3 text-[13px] text-muted">{status.error.message}</p> : null}
         {closed || !emailAvailable ? null : (
-        <button type="submit" className="btn-primary mt-5 w-full justify-center py-1.5" disabled={submit.isPending || status.isPending || status.isError || (mode === "signup" && Boolean(status.data?.turnstileSiteKey) && !turnstileToken)}>
+        <button type="submit" className="btn-primary mt-5 w-full justify-center py-2" disabled={submit.isPending || status.isPending || status.isError || (mode === "signup" && Boolean(status.data?.turnstileSiteKey) && !turnstileToken)}>
           {submit.isPending ? <Spinner size={12} /> : null} {mode === "signup" ? "Create account" : "Sign in"}
         </button>
         )}

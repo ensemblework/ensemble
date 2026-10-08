@@ -3,13 +3,23 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 import { PageDocument } from "@ensemble/shared-types";
 import { FULL_MODULE_SET } from "@ensemble/shared-types/modules";
 import { templateByMarketId } from "@ensemble/shared-types/marketplace";
-import { signupDeskId, templateById, type RoleTemplate } from "@ensemble/shared-types/templates";
+import { signupDeskId, templateById, type OnboardingRole, type RoleTemplate } from "@ensemble/shared-types/templates";
+import { templateDeskLayout } from "@ensemble/shared-types/manifest";
 import type { LayoutDocument, LayoutSurface } from "@ensemble/shared-types/widgets";
 import { zonedParts } from "../lib/clock.js";
 import { pageSearchText } from "../pages/markdown.js";
 import { loadSettings, saveSettings } from "../lib/settings.js";
 
 type Db = Prisma.TransactionClient;
+
+const ROLE_PROFESSION: Record<OnboardingRole, string> = {
+  student: "Student",
+  teacher: "Teacher",
+  lawyer: "Lawyer",
+  engineer: "Engineer",
+  vibe: "Builder",
+  manager: "Manager",
+};
 
 export function templateSourceRef(templateId: string, slug: string): string {
   return `template:${templateId}:${slug}`;
@@ -267,8 +277,17 @@ export async function applyOnboarding(prisma: PrismaClient, userId: string, temp
         moduleSet: modules,
         chromeLabels: (market?.labels ?? {}) as object,
         templateExpiresAt: null,
+        ...(user.profession ? {} : { profession: ROLE_PROFESSION[template.role] }),
       },
     });
+    const deskLayout = templateDeskLayout(template.id);
+    if (deskLayout) {
+      await tx.preference.upsert({
+        where: { userId_key: { userId, key: deskLayout.key } },
+        create: { userId, key: deskLayout.key, value: deskLayout.value, source: "template", confidence: 1 },
+        update: { value: deskLayout.value, source: "template", confidence: 1, deletedAt: null },
+      });
+    }
     await tx.session.updateMany({ where: { userId }, data: { modules } });
     const patch: Record<string, unknown> = { assistant: { actAs: market?.actAs ?? template.actAs } };
     if (market?.accent) patch.appearance = { accent: market.accent };

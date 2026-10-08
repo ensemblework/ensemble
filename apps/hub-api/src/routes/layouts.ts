@@ -16,14 +16,24 @@ export async function layoutsRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/onboarding/templates", async (request) => {
     const role = z.object({ role: z.string().optional() }).parse(request.query).role ?? "";
-    const cards = TEMPLATE_CARDS.filter((card) => !role || card.role === role).map(({ id, role: cardRole, name, blurb, image, imageLight }) => ({
-      id,
-      role: cardRole,
-      name,
-      blurb,
-      image,
-      imageLight,
-    }));
+    const cards = TEMPLATE_CARDS.filter((card) => !role || card.role === role).map(({ id, role: cardRole, name, blurb, desk, tiles, features }) => {
+      const starter = templateById(id)?.starter;
+      return {
+        id,
+        role: cardRole,
+        name,
+        blurb,
+        desk,
+        tiles,
+        features,
+        preview: {
+          project: starter?.project ?? name,
+          tasks: (starter?.tasks ?? []).map((task) => ({ title: task.title, people: task.people ?? [] })),
+          people: (starter?.people ?? []).map((person) => ({ name: person.name, role: person.role ?? null })),
+          deliverables: (starter?.deliverables ?? []).map((item) => ({ title: item.title, dueInDays: item.dueInDays })),
+        },
+      };
+    });
     return { templates: cards };
   });
 

@@ -112,7 +112,8 @@
 .desk .ghost .gcta { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; text-align: center; padding: 0 16px; background: radial-gradient(closest-side, rgba(30,26,22,0.92) 45%, rgba(30,26,22,0.55) 75%, transparent); }
 .desk .ghost .gcta .gl { font-size: 13px; color: var(--ink-2); font-weight: 500; }
 .desk .ghost .gcta .gs { font-size: 12px; color: var(--faint); max-width: 280px; }
-.desk .gbtn { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 99px; font-size: 12px; font-weight: 600; color: var(--ink); background: rgb(var(--accent-rgb) / 0.16); border: 1px solid rgb(var(--accent-rgb) / 0.35); box-shadow: 0 0 0 4px rgb(var(--accent-rgb) / 0.06); cursor: pointer; font-family: inherit; }
+.desk .gbtn { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 6px; font-size: 12px; font-weight: 500; color: var(--ink); background: var(--hover); border: 1px solid var(--line-strong); cursor: pointer; font-family: inherit; }
+.desk .gbtn:hover { border-color: rgb(var(--ink-rgb) / 0.3); }
 .desk .qadd { margin-top: 8px; align-self: flex-start; padding: 0; border: 0; background: transparent; color: var(--faint); font-size: 12px; font-weight: 500; cursor: pointer; font-family: inherit; }
 .desk .qadd:hover { color: var(--ink-2); }
 /* Centering uses the translate property, not transform, so a hover rule cannot
@@ -226,3 +227,53 @@
   .desk .bento > .tile { animation: none; }
 }
 [data-reduce-motion="true"] .desk .bento > .tile { animation: none; }
+
+/* ── Context section tabs ───────────────────────────────────────────────── */
+.desk .context-tabs { display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 16px; border-bottom: 1px solid var(--line); }
+.desk .context-tab { position: relative; padding: 7px 11px 9px; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; border-radius: 6px 6px 0 0; }
+.desk .context-tab:hover { color: var(--ink); background: var(--hover); }
+.desk .context-tab[aria-selected="true"] { color: var(--ink); font-weight: 600; }
+.desk .context-tab[aria-selected="true"]::after { content: ""; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 2px; border-radius: 2px; background: var(--ink); }
+.desk .context-tab:focus-visible { outline: none; box-shadow: inset 0 0 0 2px rgb(var(--accent-rgb) / 0.6); }
+
+/* ── Tile layout controls ───────────────────────────────────────────────── */
+.desk .th .tacts button,
+.desk .th .tacts a { width: 22px; height: 22px; border-radius: 5px; display: grid; place-items: center; color: var(--muted); background: transparent; border: 0; cursor: pointer; padding: 0; }
+.desk .th .tacts button:hover,
+.desk .th .tacts a:hover { color: var(--ink); background: var(--hover); }
+.desk .th .tacts span { border-radius: 5px; background: transparent; border: 0; }
+.desk .th .tgrip { width: 16px; height: 20px; margin-left: -8px; margin-right: -6px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--faint); cursor: grab; opacity: 0; transition: opacity var(--dur-fast) var(--ease); touch-action: none; }
+.desk .tile:hover .th .tgrip,
+.desk .th .tgrip:focus-visible { opacity: 1; }
+.desk .th .tgrip:hover { color: var(--ink); background: var(--hover); }
+.desk .th .tacts:focus-within { opacity: 1; }
+.desk .tresize { position: absolute; z-index: 3; right: 2px; bottom: 2px; width: 16px; height: 16px; padding: 0; border: 0; background: transparent; cursor: nwse-resize; opacity: 0; touch-action: none; transition: opacity var(--dur-fast) var(--ease); }
+.desk .tresize::before { content: ""; position: absolute; right: 4px; bottom: 4px; width: 7px; height: 7px; border-right: 1.5px solid var(--faint); border-bottom: 1.5px solid var(--faint); border-bottom-right-radius: 2px; }
+.desk .tile:hover .tresize,
+.desk .tresize:focus-visible,
+.desk .tile[data-resizing="1"] .tresize { opacity: 1; }
+.desk .tresize:hover::before { border-color: var(--ink); }
+.desk .tgrip:focus-visible,
+.desk .tresize:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--accent-rgb) / 0.55); }
+.desk .tile[data-resizing="1"] { border-color: var(--line-strong); box-shadow: 0 0 0 1px var(--line-strong); transition: none; }
+.desk .tile[data-dragging="1"] { opacity: 0.45; }
+.desk .tile[data-drop]::before { content: ""; position: absolute; z-index: 4; top: 8px; bottom: 8px; width: 2px; border-radius: 2px; background: var(--ink-2); opacity: 1; }
+.desk .tile[data-drop="before"]::before { left: 3px; }
+.desk .tile[data-drop="after"]::before { right: 3px; }
+body[data-desk-resizing="1"], body[data-desk-resizing="1"] * { cursor: nwse-resize !important; user-select: none; }
+body[data-desk-moving="1"], body[data-desk-moving="1"] * { cursor: grabbing !important; user-select: none; }
+
+/* A tile with nothing in it says so plainly, top-left, with one quiet action. */
+.desk .ghost .gx:empty { display: none; }
+.desk .ghost .gx:empty + .gcta { position: static; inset: auto; align-items: flex-start; justify-content: flex-start; text-align: left; gap: 4px; padding: 0; background: none; }
+[data-theme="light"] .desk .ghost .gx:empty + .gcta { background: none; }
+.desk .ghost .gx:empty + .gcta .gl { color: var(--muted); font-weight: 400; }
+.desk .ghost .gx:empty + .gcta .gs { max-width: none; }
+.desk .ghost .gx:empty + .gcta .gbtn { margin-top: 6px; margin-left: -8px; padding: 4px 8px; border-radius: 6px; border: 0; background: transparent; box-shadow: none; color: var(--ink-2); font-weight: 500; }
+.desk .ghost .gx:empty + .gcta .gbtn:hover { background: var(--hover); color: var(--ink); }
+.desk .ghost:has(.gx:empty) { min-height: 0; }
+
+.desk .today-hint { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; padding: 8px 8px 8px 12px; border: 1px solid var(--line); border-radius: 8px; font-size: 13px; color: var(--muted); }
+.desk .today-hint > span { flex: 1; min-width: 0; }
+.desk .today-hint-x { display: grid; place-items: center; width: 24px; height: 24px; border: 0; border-radius: 5px; background: transparent; color: var(--faint); cursor: pointer; }
+.desk .today-hint-x:hover { background: var(--hover); color: var(--ink); }

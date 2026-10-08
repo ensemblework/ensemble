@@ -1,147 +1,274 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowLeft, ArrowRight, Check } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
-import { api } from "@/lib/api";
+import { useEffect, useMemo, useState } from "react";
+import { api, type OnboardingTemplateCard } from "@/lib/api";
 import { useToast } from "@/components/toast";
-import { ProfileForm } from "@/components/profile-form";
+import { TemplatePreview, type PreviewView } from "@/components/onboarding/template-preview";
+import { ROLES, roleFromProfession, type Role } from "@/components/onboarding/roles";
 
-const ROLES = [
-  ["student", "Student", "Assignments, exams, and the people on the work."],
-  ["teacher", "Teacher", "Lessons, check-ins, and the marking pile."],
-  ["lawyer", "Lawyer", "A matter, two drafts, and the dates."],
-  ["engineer", "Engineer", "A branch, a review, and who knows the code."],
-  ["vibe", "Vibe coder", "One idea. Fewer tiles. The engineer preset, a quieter desk."],
-  ["manager", "Manager", "The week, the 1:1s, and what you already decided."],
-] as const;
+const HEARD = ["A friend or colleague", "X", "LinkedIn", "Search", "YouTube", "Somewhere else"];
+
+const VIEWS: Array<[PreviewView, string]> = [
+  ["today", "Today"],
+  ["board", "Board"],
+  ["context", "Context"],
+];
 
 export default function StartPage() {
   const toast = useToast();
   const client = useQueryClient();
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 15_000 });
-  const me = useQuery({ queryKey: ["me"], queryFn: api.me, staleTime: 30_000 });
-  const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings, staleTime: 60_000 });
-  const [role, setRole] = useState<string | null>(null);
+  // Not ["me"]: the hub layout seeds that key from /shell, which does not carry profileComplete.
+  const me = useQuery({ queryKey: ["me", "profile"], queryFn: api.me, staleTime: 30_000 });
+  const profileDone = me.data?.profileComplete !== false;
+  const [step, setStep] = useState<"you" | "desk">("you");
+  const [name, setName] = useState("");
+  const [role, setRole] = useState<Role | null>(null);
+  const [org, setOrg] = useState("");
+  const [heard, setHeard] = useState("");
   const [templateId, setTemplateId] = useState<string | null>(null);
+  const [view, setView] = useState<PreviewView>("today");
+  const [seeded, setSeeded] = useState(false);
+
+  useEffect(() => {
+    if (seeded || !me.data) return;
+    setSeeded(true);
+    setName(me.data.user.name && me.data.user.name !== me.data.user.email ? me.data.user.name : "");
+    setOrg(me.data.user.profile?.organization ?? "");
+    setHeard(me.data.user.profile?.heardFrom ?? "");
+    setRole(roleFromProfession(me.data.user.profile?.profession));
+  }, [me.data, seeded]);
+
   const cards = useQuery({
     queryKey: ["onboarding-templates", role],
     queryFn: () => api.onboardingTemplates(role ?? ""),
     enabled: Boolean(role),
+    staleTime: 5 * 60_000,
   });
-  const light = settings.data?.settings.appearance.theme === "light";
+  const list = cards.data?.templates ?? [];
+  const selected = list.find((card) => card.id === templateId) ?? list[0] ?? null;
+  const roleInfo = ROLES.find((item) => item.id === role) ?? null;
 
+  const profile = useMutation({
+    mutationFn: () =>
+      api.updateProfile({
+        name: name.trim(),
+        gender: me.data?.user.profile?.gender ?? null,
+        profession: roleInfo?.profession ?? null,
+        organization: org.trim() || null,
+        heardFrom: heard || null,
+      }),
+    onSuccess: async () => {
+      await client.invalidateQueries({ queryKey: ["me"] });
+      setStep("desk");
+      setView("today");
+    },
+    onError: (error) => toast((error as Error).message, { tone: "error" }),
+  });
   const apply = useMutation({
-    mutationFn: () => api.completeOnboarding(role ?? "", templateId ?? ""),
+    mutationFn: () => api.completeOnboarding(role ?? "", selected?.id ?? ""),
     onSuccess: async () => {
       await client.invalidateQueries({ queryKey: ["shell"] });
       window.location.href = "/today";
     },
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
-  const profile = useMutation({
-    mutationFn: api.updateProfile,
-    onSuccess: async () => {
-      await client.invalidateQueries({ queryKey: ["me"] });
-      await client.invalidateQueries({ queryKey: ["shell"] });
-    },
-    onError: (error) => toast((error as Error).message, { tone: "error" }),
-  });
-
-  if (me.data?.profileComplete === false) {
-    return (
-      <div className="mx-auto max-w-[640px] px-4 pb-24 pt-16">
-        <p className="page-kicker mb-2">About you</p>
-        <h1 className="display text-[32px] leading-none">Tell Ensemble what to call you</h1>
-        <p className="mt-3 max-w-[46ch] text-[14px] leading-6 text-muted">
-          These fields are optional except your name. They help personalize labels and can be changed later in Settings.
-        </p>
-        <div className="tile mt-6 rounded-2xl p-4">
-          <ProfileForm
-            initial={{ name: me.data.user.name, profile: me.data.user.profile }}
-            submitLabel="Continue"
-            pending={profile.isPending}
-            onSubmit={(values) => profile.mutate(values)}
-          />
-        </div>
-      </div>
-    );
-  }
 
   if (shell.data?.onboardingComplete) {
     return (
-      <div className="mx-auto max-w-[640px] px-4 pt-16">
-        <h1 className="display text-[32px] leading-none">You're set up</h1>
-        <p className="mt-3 max-w-[42ch] text-[14px] leading-6 text-muted">Today is the desk. Context holds the people and projects that work is tied to. You can change the layout whenever you want.</p>
-        <div className="mt-5 flex flex-wrap gap-2">
-          <Link href="/today" className="btn-primary">
-            Go to Today
-          </Link>
-          <Link href="/context" className="btn">
-            Open Context
-          </Link>
+      <div className="onboard-done">
+        <div className="onboard-brand">Ensemble</div>
+        <h1 className="display text-[34px] leading-tight">You're set up</h1>
+        <p className="mt-2 max-w-[44ch] text-[14px] leading-6 text-muted">Today is your desk. Context holds the people and projects your work ties to. Tiles can be moved, resized, or hidden whenever you like.</p>
+        <div className="mt-6 flex flex-wrap gap-2">
+          <Link href="/today" className="btn-primary">Go to Today</Link>
+          <Link href="/context" className="btn">Open Context</Link>
         </div>
       </div>
     );
   }
 
+  const canContinue = Boolean(role) && (profileDone || name.trim().length > 0);
+  const next = () => {
+    if (!canContinue) return;
+    if (profileDone) setStep("desk");
+    else profile.mutate();
+  };
+
   return (
-    <div className="mx-auto max-w-[980px] px-4 pb-24 pt-10 sm:px-8">
-      <div className="page-head">
-      <div>
-      <h1 className="display text-[32px] leading-none">Pick a desk</h1>
-      <p className="mt-2 max-w-[46ch] text-[14px] text-muted">A role, then a template. You can move the tiles later. This does not change what Ensemble is allowed to do.</p>
-      </div>
-      </div>
+    <div className="onboard" data-step={step}>
+      <aside className="onboard-side">
+        <div className="onboard-brand">Ensemble</div>
+        <ol className="onboard-steps" aria-label="Setup steps">
+          <li data-on={step === "you" ? "1" : undefined} data-done={step === "desk" ? "1" : undefined}>
+            <span>{step === "desk" ? <Check size={11} strokeWidth={3} /> : 1}</span>About you
+          </li>
+          <li data-on={step === "desk" ? "1" : undefined}>
+            <span>2</span>Your desk
+          </li>
+        </ol>
 
-      <h2 className="page-kicker mb-2">Role</h2>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" data-role-picker>
-        {ROLES.map(([id, name, blurb]) => (
-          <button
-            key={id}
-            type="button"
-            data-role={id}
-            aria-pressed={role === id}
-            onClick={() => {
-              setRole(id);
-              setTemplateId(null);
-            }}
-            className={`tile lift relative rounded-xl px-3 py-3 text-left ${role === id ? "bg-accent-soft ring-2 ring-accent" : ""}`}
-          >
-            {role === id ? <span className="on-accent absolute right-2 top-2 rounded-full px-1.5 py-px text-[10px] font-medium">Selected</span> : null}
-            <div className="text-[14px] font-semibold">{name}</div>
-            <p className="mt-1 text-[12.5px] leading-5 text-muted">{blurb}</p>
-          </button>
-        ))}
-      </div>
-
-      {role ? (
-        <div className="mt-8" data-template-picker>
-          <h2 className="text-[15px] font-semibold">Choose one</h2>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {(cards.data?.templates ?? []).map((card) => (
-              <button
-                key={card.id}
-                type="button"
-                data-template={card.id}
-                aria-pressed={templateId === card.id}
-                onClick={() => setTemplateId(card.id)}
-                className={`tile lift relative overflow-hidden rounded-xl text-left ${templateId === card.id ? "bg-accent-soft ring-2 ring-accent" : ""}`}
-              >
-                {templateId === card.id ? <span className="on-accent absolute right-2 top-2 z-10 rounded-full px-1.5 py-px text-[10px] font-medium">Selected</span> : null}
-                <img src={light ? card.imageLight : card.image} alt="" className="aspect-[8/5] w-full bg-panel object-contain" />
-                <div className="px-3 py-3">
-                  <div className="text-[14px] font-semibold">{card.name}</div>
-                  <p className="mt-1 text-[12.5px] leading-5 text-muted">{card.blurb}</p>
-                </div>
-              </button>
-            ))}
+        {!me.isSuccess ? (
+          <div className="onboard-form" aria-busy="true">
+            <div className="skeleton h-9 w-4/5 rounded-md" />
+            <div className="skeleton h-4 w-3/5 rounded" />
+            <div className="skeleton h-44 w-full rounded-md" />
           </div>
-          <button type="button" className="btn-primary mt-4" disabled={!templateId || apply.isPending} onClick={() => apply.mutate()}>
-            {apply.isPending ? "Setting up…" : "Use this template"}
-          </button>
-        </div>
-      ) : null}
+        ) : step === "you" ? (
+          <form
+            className="onboard-form"
+            data-onboard-you
+            onSubmit={(event) => {
+              event.preventDefault();
+              next();
+            }}
+          >
+            <h1 className="onboard-title">{profileDone ? "What do you work on?" : "Welcome. Let's set up your space."}</h1>
+            <p className="onboard-lede">One question picks your starting desk. Everything can change later.</p>
+            {profileDone ? null : (
+              <label className="onboard-field">
+                <span>Your name</span>
+                <input required maxLength={80} autoComplete="name" autoFocus className="field" value={name} onChange={(event) => setName(event.target.value)} placeholder="Mira Chen" />
+              </label>
+            )}
+            <fieldset className="onboard-field">
+              <legend>What do you do?</legend>
+              <div className="onboard-roles" role="radiogroup" data-role-picker>
+                {ROLES.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={role === item.id}
+                      data-role={item.id}
+                      className="onboard-role"
+                      onClick={() => {
+                        setRole(item.id);
+                        setTemplateId(null);
+                      }}
+                    >
+                      <Icon size={16} strokeWidth={1.8} />
+                      <span className="min-w-0">
+                        <span className="block text-[13.5px] font-medium text-ink">{item.label}</span>
+                        <span className="block text-[12px] leading-[1.35] text-muted">{item.line}</span>
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </fieldset>
+            {profileDone ? null : (
+              <>
+                <label className="onboard-field">
+                  <span>
+                    {roleInfo?.org ?? "Where you work or study"} <em>optional</em>
+                  </span>
+                  <input maxLength={80} autoComplete="organization" className="field" value={org} onChange={(event) => setOrg(event.target.value)} />
+                </label>
+                <div className="onboard-field">
+                  <span>
+                    How did you hear about us? <em>optional</em>
+                  </span>
+                  <div className="onboard-chips">
+                    {HEARD.map((item) => (
+                      <button key={item} type="button" aria-pressed={heard === item} onClick={() => setHeard(heard === item ? "" : item)}>
+                        {item}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+            <div className="onboard-actions">
+              <button type="submit" className="btn-primary" disabled={!canContinue || profile.isPending}>
+                {profile.isPending ? "Saving…" : "Continue"}
+                <ArrowRight size={14} />
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div className="onboard-form" data-template-picker>
+            <h1 className="onboard-title">Pick a starting point</h1>
+            <p className="onboard-lede">
+              Six ways to start as {roleInfo ? (/^[aeiou]/i.test(roleInfo.label) ? "an" : "a") : "a"} {roleInfo?.label.toLowerCase() ?? "new member"}. Every tile can be moved, resized, or hidden later.
+            </p>
+            <div className="onboard-templates" role="radiogroup" aria-label="Templates">
+              {cards.isLoading ? Array.from({ length: 6 }, (_, index) => <div key={index} className="onboard-template skeleton" style={{ height: 76 }} />) : null}
+              {list.map((card) => (
+                <TemplateOption key={card.id} card={card} role={role ?? ""} on={selected?.id === card.id} onPick={() => setTemplateId(card.id)} />
+              ))}
+            </div>
+            <div className="onboard-actions">
+              <button type="button" className="btn" onClick={() => setStep("you")}>
+                <ArrowLeft size={14} />
+                Back
+              </button>
+              <button type="button" className="btn-primary" data-start-template disabled={!selected || apply.isPending} onClick={() => apply.mutate()}>
+                {apply.isPending ? "Setting up…" : selected ? `Start with ${selected.name}` : "Start"}
+                <ArrowRight size={14} />
+              </button>
+            </div>
+          </div>
+        )}
+      </aside>
+
+      <section className="onboard-stage" aria-label="Preview">
+        {selected ? (
+          <div className="onboard-stage-inner">
+            <div className="onboard-stage-head">
+              <div className="min-w-0">
+                <div className="text-[12px] text-faint">{step === "you" ? "A desk you could start with" : "Preview with sample data"}</div>
+                <div className="truncate text-[15px] font-medium text-ink">{selected.name}</div>
+              </div>
+              <div className="onboard-views" role="tablist" aria-label="Preview view">
+                {VIEWS.map(([id, label]) => (
+                  <button key={id} type="button" role="tab" aria-selected={view === id} onClick={() => setView(id)}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="onboard-canvas" key={`${selected.id}-${view}`}>
+              <TemplatePreview card={selected} role={role ?? ""} view={view} />
+            </div>
+            <ul className="onboard-features">
+              {selected.features.map((feature) => (
+                <li key={feature}>
+                  <Check size={13} strokeWidth={2.4} />
+                  {feature}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : (
+          <div className="onboard-stage-empty">
+            <div className="onboard-stage-ghost" aria-hidden="true">
+              {Array.from({ length: 7 }, (_, index) => (
+                <i key={index} />
+              ))}
+            </div>
+            <p>Pick what you do. A desk built for it shows up here.</p>
+          </div>
+        )}
+      </section>
     </div>
+  );
+}
+
+function TemplateOption({ card, role, on, onPick }: { card: OnboardingTemplateCard; role: string; on: boolean; onPick: () => void }) {
+  const thumb = useMemo(() => <TemplatePreview card={card} role={role} view="today" maxHeight={86} />, [card, role]);
+  return (
+    <button type="button" role="radio" aria-checked={on} data-template={card.id} className="onboard-template" onClick={onPick}>
+      <span className="onboard-thumb">{thumb}</span>
+      <span className="min-w-0 flex-1">
+        <span className="block text-[14px] font-medium text-ink">{card.name}</span>
+        <span className="mt-0.5 block text-[12.5px] leading-[1.45] text-muted">{card.blurb}</span>
+      </span>
+    </button>
   );
 }

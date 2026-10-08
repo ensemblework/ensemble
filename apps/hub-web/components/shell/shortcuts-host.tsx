@@ -1,9 +1,14 @@
 "use client";
 
-import { SHORTCUTS, matchShortcut } from "@ensemble/shared-types";
+import { matchShortcut } from "@ensemble/shared-types";
+import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
+import { api } from "@/lib/api";
 import { isApplePlatform } from "@/lib/platform";
+import { activeShortcuts, useShortcuts } from "@/lib/shortcut-store";
+import { standalonePageHref } from "../pages/page-href";
+import { useToast } from "../toast";
 
 const GO: Record<string, string> = {
   "go-today": "/today",
@@ -15,6 +20,8 @@ const GO: Record<string, string> = {
   "go-diagrams": "/diagrams",
   "go-plots": "/plots",
 };
+
+const HANDLED = new Set(["palette", "help", "capture", "ask", "assistant", "new-task", "new-page", ...Object.keys(GO)]);
 
 function typingTarget(event: KeyboardEvent): boolean {
   const target = event.target as HTMLElement | null;
@@ -34,12 +41,35 @@ export function ShortcutsHost({
   onAsk: () => void;
 }) {
   const router = useRouter();
+  const client = useQueryClient();
+  const toast = useToast();
+  useShortcuts();
   const buffer = useRef("");
+  const creating = useRef(false);
+  const createRef = useRef<(kind: "task" | "page") => void>(() => undefined);
+  createRef.current = (kind) => {
+    if (creating.current) return;
+    creating.current = true;
+    const work =
+      kind === "page"
+        ? api.createPage().then(({ page }) => {
+            void client.invalidateQueries({ queryKey: ["pages"] });
+            router.push(standalonePageHref(page.id, true));
+          })
+        : api.createTask({ title: "Untitled", status: "todo" }).then(({ task }) => {
+            void client.invalidateQueries({ queryKey: ["tasks"] });
+            router.push(`/tasks/${task.id}`);
+          });
+    void work
+      .catch((error: Error) => toast(error.message, { tone: "error" }))
+      .finally(() => {
+        creating.current = false;
+      });
+  };
   const actions = useRef({ onPalette, onHelp, onCapture, onAsk });
   actions.current = { onPalette, onHelp, onCapture, onAsk };
 
   useEffect(() => {
-    const sequences = SHORTCUTS.filter((binding) => binding.scope === "global" && binding.sequence?.length);
     let timer = 0;
     const clear = () => {
       buffer.current = "";
@@ -55,6 +85,9 @@ export function ShortcutsHost({
       else if (id === "help") actions.current.onHelp();
       else if (id === "capture" || id === "capture-key") actions.current.onCapture();
       else if (id === "ask") actions.current.onAsk();
+      else if (id === "assistant") window.dispatchEvent(new CustomEvent("ensemble:assistant-toggle"));
+      else if (id === "new-task") createRef.current("task");
+      else if (id === "new-page") createRef.current("page");
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.metaKey && event.key.toLowerCase() === "q") return;
@@ -62,8 +95,9 @@ export function ShortcutsHost({
       if (event.altKey && event.key.toLowerCase() === "f4") return;
       const typing = typingTarget(event);
       const apple = isApplePlatform();
-      const chord = matchShortcut(event, apple, typing);
-      if (chord && (chord.id === "palette" || chord.id === "help" || chord.id === "capture" || chord.id === "ask")) {
+      const bindings = activeShortcuts();
+      const chord = matchShortcut(event, apple, typing, bindings);
+      if (chord && HANDLED.has(chord.id)) {
         event.preventDefault();
         clear();
         run(chord.id);
@@ -72,6 +106,7 @@ export function ShortcutsHost({
       if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
       if (event.key.length !== 1) return;
       const key = event.key.toLowerCase();
+      const sequences = bindings.filter((binding) => binding.scope === "global" && binding.sequence?.length);
       buffer.current = (buffer.current + key).slice(-2);
       const hit = sequences.find((binding) => binding.sequence?.join("") === buffer.current);
       if (hit) {

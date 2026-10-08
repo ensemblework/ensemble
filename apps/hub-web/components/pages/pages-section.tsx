@@ -37,7 +37,8 @@ export function PagesSection({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [pendingDelete, setPendingDelete] = useState<PageListItem | null>(null);
-  const [expanded, setExpanded] = useState(true);
+  // Collapsed on every load so a long list never pushes the app's nav down. Opening a note shows its row.
+  const [expanded, setExpanded] = useState(() => pathname.startsWith("/pages/"));
 
   const commitRename = (page: PageListItem, value: string) => {
     const title = value.trim();
@@ -52,7 +53,7 @@ export function PagesSection({
           <ChevronRight size={12} className={expanded ? "rotate-90" : undefined} />
           <span>Pages</span>
         </button>
-        <button type="button" className="icon-btn" aria-label="New page" title="New page" onClick={onCreate}>
+        <button type="button" className="icon-btn" aria-label="New page" title="New page" onClick={() => { setExpanded(true); onCreate(); }}>
           <Plus size={14} />
         </button>
       </div>
