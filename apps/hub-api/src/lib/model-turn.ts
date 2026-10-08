@@ -16,6 +16,7 @@ import { DecryptError, ModelAuthError, ProviderError, statusForProvider } from "
 import { completeWithTools, streamWithTools } from "../runtime/models.js";
 import { useInProcessRuntime } from "../runtime/mode.js";
 import type { Json } from "../runtime/payload.js";
+import { keysFor } from "../sharing/context.js";
 
 export const RuntimeTurn = z.object({
   text: z.string(),
@@ -186,7 +187,7 @@ function chatBody(args: {
     provider: args.provider,
     ollamaUrl: args.ollamaUrl,
     reasoningEffort: args.reasoningEffort,
-    userId: args.userId,
+    userId: keysFor(args.userId),
     activityId: args.activityId,
     role: "coder",
     chatTools: args.chatTools,

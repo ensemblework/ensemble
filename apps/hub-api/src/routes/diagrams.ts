@@ -4,6 +4,7 @@ import { z } from "zod";
 import { STARTER_SOURCE, explainDiagram, looksLikeMermaid, parseDiagram, printDiagram, renderDiagramSvg, toMermaid, type DiagramModel } from "@ensemble/block-diagrams";
 import { rememberRevision } from "../diagrams/history.js";
 import { declareModule } from "../lib/module-gate.js";
+import { sseHub } from "../lib/sse.js";
 
 const writeBody = z.object({
   title: z.string().trim().max(200).optional(),
@@ -230,6 +231,8 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
     }
     const row = await db.blockDiagram.findFirst({ where: { id, userId: request.userId, deletedAt: null } });
     if (!row) return notFound(reply);
+    // Anyone else with it open (another tab, or someone it is shared with) picks up the change.
+    sseHub.publish(request.userId, { event: "diagram", data: { id, version: row.version }, about: { kind: "diagram", id } });
     return { diagram: present(row) };
   });
 
@@ -273,6 +276,7 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
         version: { increment: 1 },
       },
     });
+    sseHub.publish(request.userId, { event: "diagram", data: { id, version: updated.version }, about: { kind: "diagram", id } });
     return { diagram: present(updated) };
   });
 

@@ -21,6 +21,7 @@ import { APP_TOOL_LIST, getTool, toolsFor } from "./registry.js";
 import { APP_PROVIDERS, appAccess, SUITE_LABEL } from "./tools/apps-common.js";
 import type { AnyHubTool, AppToolMeta, ToolContext } from "./types.js";
 import { isMcpToolName, mcpToolsForUser, resolveMcpTool } from "./mcp-tools.js";
+import { currentScope, isGuestIn } from "../sharing/context.js";
 
 /** Built-in app tools, for every person; gating decides who is offered which. */
 export const BUILTIN_APP_TOOLS: readonly AnyHubTool[] = APP_TOOL_LIST;
@@ -67,7 +68,23 @@ export interface AppGrant {
 }
 
 /** Which suites this person connected. Reads the non-secret columns only. */
+/** Hub tools that reach the owner's private surfaces: reminders, connector syncs, repository links. */
+const OWNER_TOOLS = new Set(["hub_fetch_now", "hub_link_repo", "hub_unlink_repo", "hub_create_watcher"]);
+
+/**
+ * In a space shared with you, the assistant works on the space's content only: never the
+ * owner's connected apps, reminders or syncs. A viewer's assistant only reads.
+ */
+export function guestMayUse(tool: AnyHubTool, spaceId: string): boolean {
+  if (!isGuestIn(spaceId)) return true;
+  if (tool.area === "apps" || tool.area === "reminders" || OWNER_TOOLS.has(tool.name)) return false;
+  const access = currentScope()?.access;
+  return !(tool.isWrite && access?.kind === "member" && access.role === "viewer");
+}
+
 export async function loadAppGrants(ctx: { prisma: PrismaClient; userId: string }): Promise<AppGrant[]> {
+  // The owner's connected apps are theirs alone.
+  if (isGuestIn(ctx.userId)) return [];
   const rows = await ctx.prisma.authToken.findMany({
     where: { userId: ctx.userId, provider: { in: APP_PROVIDERS } },
     select: { provider: true, account: true, scopes: true },
@@ -127,13 +144,15 @@ export async function appToolsFor(ctx: ToolContext, grants?: readonly AppGrant[]
 
 /** Every tool one turn may call: the Hub catalog for these settings plus this person's app tools. */
 export async function toolsForTurn(ctx: ToolContext, grants?: readonly AppGrant[]): Promise<AnyHubTool[]> {
-  return [...toolsFor(ctx.settings.assistant.allowedWriteAreas, ctx.modules), ...(await appToolsFor(ctx, grants))];
+  const tools = [...toolsFor(ctx.settings.assistant.allowedWriteAreas, ctx.modules), ...(await appToolsFor(ctx, grants))];
+  return tools.filter((tool) => guestMayUse(tool, ctx.userId));
 }
 
 /** Finds a tool by name for Apply: the Hub catalog, built-in app tools, then registered resolvers. */
 export async function resolveTool(ctx: Pick<ToolContext, "prisma" | "userId">, name: string): Promise<AnyHubTool | undefined> {
   const known = getTool(name) ?? BUILTIN.get(name);
-  if (known) return known;
+  if (known) return guestMayUse(known, ctx.userId) ? known : undefined;
+  if (isGuestIn(ctx.userId)) return undefined;
   for (const resolver of resolvers) {
     const tool = await resolver(ctx, name);
     if (tool && tool.name === name) return tool;

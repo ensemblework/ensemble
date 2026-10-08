@@ -15,6 +15,7 @@ import { Settings } from "@ensemble/shared-types";
 import { appendLedger } from "./ledger.js";
 import { sseHub } from "./sse.js";
 import { lockUserTransaction } from "./user-lock.js";
+import { actorFor } from "../sharing/context.js";
 
 export type UndoModel =
   | "task"
@@ -214,7 +215,9 @@ async function writeEntry(
   input: { userId: string; label: string; kind: UndoKind; actor?: Actor; subject: string; href?: string; source?: string; patches: UndoPatch[] },
 ): Promise<string> {
   await lockUserTransaction(db, input.userId);
-  await db.undoEntry.deleteMany({ where: { userId: input.userId, undoneAt: { not: null } } });
+  // Each person in a space has their own undo history (null: the owner).
+  const actorAccountId = actorFor(input.userId);
+  await db.undoEntry.deleteMany({ where: { userId: input.userId, actorAccountId, undoneAt: { not: null } } });
   const last = await db.undoEntry.findFirst({ where: { userId: input.userId }, orderBy: { seq: "desc" }, select: { seq: true } });
   const seq = (last?.seq ?? 0n) + 1n;
   const id = randomUUID();
@@ -223,6 +226,7 @@ async function writeEntry(
     data: {
       id,
       userId: input.userId,
+      actorAccountId,
       seq,
       label: input.label.slice(0, 240),
       kind: input.patches.length > 1 ? "batch" : input.kind,
@@ -238,7 +242,7 @@ async function writeEntry(
   });
   const depth = await depthFor(db, input.userId);
   const extras = await db.undoEntry.findMany({
-    where: { userId: input.userId, undoneAt: null },
+    where: { userId: input.userId, actorAccountId, undoneAt: null },
     orderBy: { seq: "desc" },
     skip: depth,
     select: { id: true },
@@ -406,11 +410,12 @@ async function flipStoredCalls(db: PrismaClient, userId: string, entryId: string
 }
 
 async function runEntry(db: PrismaClient, userId: string, entryId: string | undefined, direction: "undo" | "redo"): Promise<{ label: string; entryId: string }> {
+  const actorAccountId = actorFor(userId);
   const entry = entryId
-    ? await db.undoEntry.findFirst({ where: { id: entryId, userId } })
+    ? await db.undoEntry.findFirst({ where: { id: entryId, userId, actorAccountId } })
     : direction === "undo"
-      ? await db.undoEntry.findFirst({ where: { userId, undoneAt: null }, orderBy: { seq: "desc" } })
-      : await db.undoEntry.findFirst({ where: { userId, undoneAt: { not: null } }, orderBy: { undoneAt: "desc" } });
+      ? await db.undoEntry.findFirst({ where: { userId, actorAccountId, undoneAt: null }, orderBy: { seq: "desc" } })
+      : await db.undoEntry.findFirst({ where: { userId, actorAccountId, undoneAt: { not: null } }, orderBy: { undoneAt: "desc" } });
   if (!entry) throw Object.assign(new Error(direction === "undo" ? "Nothing to undo." : "Nothing to redo."), { statusCode: 204 });
   if (direction === "undo" && entry.undoneAt) throw new UndoConflict(entry.label);
   if (direction === "redo" && !entry.undoneAt) throw new UndoConflict(entry.label);
@@ -451,8 +456,8 @@ async function runEntry(db: PrismaClient, userId: string, entryId: string | unde
   await flipStoredCalls(db, userId, entry.id, direction);
   await appendLedger({ userId, actor: entry.actor, action: direction, payload: { id: entry.id, label: entry.label } });
   const [undoable, redoable] = await Promise.all([
-    db.undoEntry.count({ where: { userId, undoneAt: null } }),
-    db.undoEntry.count({ where: { userId, undoneAt: { not: null } } }),
+    db.undoEntry.count({ where: { userId, actorAccountId, undoneAt: null } }),
+    db.undoEntry.count({ where: { userId, actorAccountId, undoneAt: { not: null } } }),
   ]);
   sseHub.publish(userId, {
     event: "undo.changed",

@@ -2,6 +2,7 @@ import type { PrismaClient } from "@prisma/client";
 import { hasModule } from "@ensemble/shared-types";
 import { workWeekLine } from "../lib/clock.js";
 import { truncateText } from "../lib/text.js";
+import { keysFor } from "../sharing/context.js";
 
 export async function buildHubState(prisma: PrismaClient, userId: string, modules?: string | null) {
   const [proposed, todo, inProgress, needsMe, projects, people, repos, skills, account] = await Promise.all([
@@ -35,11 +36,16 @@ export async function buildHubState(prisma: PrismaClient, userId: string, module
           take: 12,
         })
       : Promise.resolve([]),
-    prisma.user.findUnique({ where: { id: userId }, select: { name: true, onboardingRole: true } }),
+    // The person asking: in a space shared with them, their own name, not the owner's.
+    prisma.user.findUnique({ where: { id: keysFor(userId) }, select: { name: true, onboardingRole: true } }),
   ]);
+  const guest = keysFor(userId) !== userId;
+  const space = guest ? await prisma.user.findUnique({ where: { id: userId }, select: { name: true } }) : null;
   const user = {
     firstName: (account?.name ?? "").trim().split(/\s+/)[0] ?? "",
     onboardingRole: account?.onboardingRole ?? null,
+    /** The space owner's first name when this space is shared with the person. */
+    guestOf: space ? (space.name.trim().split(/\s+/)[0] ?? "") || "someone" : null,
   };
   return { proposed, todo, inProgress, needsMe, projects, people, repos, skills, user };
 }
@@ -54,10 +60,13 @@ const DIAGRAM_RULE_NO_REPOS =
  * The opening of the system prompt. It describes where the conversation is and
  * what the tools reach, rather than giving the model a role to play.
  */
-function assistantRules(firstName?: string): string {
+function assistantRules(firstName?: string, guestOf?: string | null): string {
   const name = firstName?.trim();
   const who = name || "the person";
-  return `This conversation is inside Ensemble, where ${who} keeps their tasks, pages, projects, people and the apps they connected. You can read and change that workspace with the tools that come with this message. Answer plain questions and text requests (writing, counting, explaining, maths) directly in text.
+  const where = guestOf
+    ? `This conversation is inside Ensemble, in a space ${guestOf} shared with ${who}. It holds ${guestOf}'s tasks, pages, projects and people. ${guestOf}'s connected apps, reminders and settings are private and not reachable here.`
+    : `This conversation is inside Ensemble, where ${who} keeps their tasks, pages, projects, people and the apps they connected.`;
+  return `${where} You can read and change that workspace with the tools that come with this message. Answer plain questions and text requests (writing, counting, explaining, maths) directly in text.
 
 Working here:
 - When ${who} asks for something in the workspace and a tool can do it, call the tool in this turn. Do not say you will do it later.
@@ -105,7 +114,7 @@ export interface OpenPage {
 
 /** The snapshot buildHubState returns; `user` may be absent for callers that build one by hand. */
 export type HubState = Omit<Awaited<ReturnType<typeof buildHubState>>, "user"> & {
-  user?: Awaited<ReturnType<typeof buildHubState>>["user"];
+  user?: Omit<Awaited<ReturnType<typeof buildHubState>>["user"], "guestOf"> & { guestOf?: string | null };
 };
 
 export function buildSystemPrompt(
@@ -125,7 +134,7 @@ export function buildSystemPrompt(
     apps?: string;
   } = {},
 ) {
-  const opening = assistantRules(state.user?.firstName);
+  const opening = assistantRules(state.user?.firstName, state.user?.guestOf);
   const rules =
     options.diagrams === false
       ? opening.replace(`\n${DIAGRAM_RULE}`, "")

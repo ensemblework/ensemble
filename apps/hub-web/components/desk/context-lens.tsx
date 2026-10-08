@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { api, type DeskLive } from "@/lib/api";
+import { useSpaceAccess } from "@/lib/access";
 import { resolveExtras } from "@/lib/desk-extras";
 import { lensSections } from "./live-board";
 import {
@@ -366,6 +367,7 @@ const KIND_LABEL: Record<string, string> = {
 };
 
 function LiveArtifacts({ rows, ready, size, control }: { rows: DeskLive["artifacts"]; ready: boolean } & Placed) {
+  const guest = useSpaceAccess().guest;
   return (
     <Tile
       title="Artifacts"
@@ -374,7 +376,7 @@ function LiveArtifacts({ rows, ready, size, control }: { rows: DeskLive["artifac
       r={size.r}
       {...control}
       meta={ready ? String(rows.length) : undefined}
-      ghost={ready && rows.length === 0 ? { label: "No files or links yet", sub: "Documents, mail, and pull requests from connected apps land here.", action: "Connect an app", onAction: () => window.location.assign("/settings?tab=connections") } : false}
+      ghost={ready && rows.length === 0 ? { label: "No files or links yet", sub: "Documents, mail, and pull requests from connected apps land here.", ...(guest ? {} : { action: "Connect an app", onAction: () => window.location.assign("/settings?tab=connections") }) } : false}
     >
       {rows.length ? <div className="col" data-lens-artifacts>
         {rows.filter((row) => row.kind in KIND_LABEL && row.title.trim()).map((row) => (
@@ -397,6 +399,8 @@ type Section = ReturnType<typeof lensSections>[number];
  * Saved per desk and tab as `desk.context.<desk>.<tab>`.
  */
 function ArrangedLens({ deskId, tab, sections, live, ready, onPeople, onSection }: { deskId: DeskId; tab: string; sections: Section[]; live: DeskLive | undefined; ready: boolean; onPeople: () => void; onSection: (kind: string) => void }) {
+  // Today is the space owner's own: someone it is shared with is not sent there.
+  const guest = useSpaceAccess().guest;
   const defaults: Arrangeable[] = [
     ...(tab === "overview" ? [{ key: "people", title: "People", c: 6, r: 3 }, { key: "artifacts", title: "Artifacts", c: 8, r: 4 }] : []),
     ...sections.map((section) => ({ key: `section:${section.title.toLowerCase()}`, title: section.title, c: section.rows.length > 3 ? 6 : 4, r: 3 })),
@@ -418,7 +422,7 @@ function ArrangedLens({ deskId, tab, sections, live, ready, onPeople, onSection 
         const section = byKey.get(spec.key);
         if (!section) return null;
         return (
-          <Tile key={spec.key} title={section.title} icon={section.icon} c={size.c} r={size.r} {...control} meta={section.rows.length ? String(section.rows.length) : undefined} ghost={section.rows.length ? false : { label: `Nothing in ${section.title.toLowerCase()} yet`, action: "Add it on Today", kind: section.kind, onAction: () => onSection(section.kind) }}>
+          <Tile key={spec.key} title={section.title} icon={section.icon} c={size.c} r={size.r} {...control} meta={section.rows.length ? String(section.rows.length) : undefined} ghost={section.rows.length ? false : { label: `Nothing in ${section.title.toLowerCase()} yet`, ...(guest ? {} : { action: "Add it on Today", kind: section.kind, onAction: () => onSection(section.kind) }) }}>
             {section.rows.length ? (
               <div className="col gap6">
                 {section.rows.map((row) => (

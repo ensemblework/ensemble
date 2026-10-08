@@ -14,6 +14,9 @@ import { loadSettings } from "../lib/settings.js";
 import { serializeTask } from "./tasks.js";
 import { isHosted } from "../lib/hosted-access.js";
 import { defaultSpaceName } from "../spaces/store.js";
+import { accountIdOf, ownsOpenSpace } from "../lib/auth.js";
+import { actorFor } from "../sharing/context.js";
+import { displayName, initialsOf } from "../sharing/store.js";
 
 async function countOrZero(query: Promise<number>): Promise<number> {
   try {
@@ -28,18 +31,25 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/shell", async (request, reply) => {
     const userId = request.userId;
-    const [user, approvals, decisions, settings, sync, undoable, redoable] = await Promise.all([
+    const actorAccountId = actorFor(userId);
+    const [user, approvals, decisions, settings, sync, undoable, redoable, members, recipients] = await Promise.all([
       prisma.user.findUnique({ where: { id: userId } }),
       countOrZero(prisma.approval.count({ where: { userId, decision: null } })),
       countOrZero(prisma.agentDecision.count({ where: { userId, status: "pending" } })),
       loadSettings(prisma, userId),
       prisma.syncState.findMany({ where: { userId } }),
-      countOrZero(prisma.undoEntry.count({ where: { userId, undoneAt: null } })),
-      countOrZero(prisma.undoEntry.count({ where: { userId, undoneAt: { not: null } } })),
+      countOrZero(prisma.undoEntry.count({ where: { userId, actorAccountId, undoneAt: null } })),
+      countOrZero(prisma.undoEntry.count({ where: { userId, actorAccountId, undoneAt: { not: null } } })),
+      countOrZero(prisma.spaceMember.count({ where: { spaceId: userId } })),
+      prisma.share.findMany({ where: { spaceId: userId }, distinct: ["recipientId"], select: { recipientId: true } }).catch(() => []),
     ]);
     if (!user && request.authVia !== "bypass") return reply.code(401).send({ error: "Sign in." });
-    // Inside a space, `user` is the space. Who you are (name, email, verification) is the account.
-    const account = user && user.ownerId ? await prisma.user.findUnique({ where: { id: user.ownerId } }) : user;
+    // Inside a space, `user` is the space. Who you are (name, email, verification) is the signed-in account.
+    const owner = ownsOpenSpace(request);
+    const account = accountIdOf(request) === userId ? user : await prisma.user.findUnique({ where: { id: accountIdOf(request) } });
+    const spaceOwnerId = user?.ownerId ?? user?.id ?? null;
+    const spaceOwner = !owner && spaceOwnerId ? await prisma.user.findUnique({ where: { id: spaceOwnerId }, select: { id: true, name: true, email: true, spaceName: true } }) : null;
+    const access = request.access;
     const flags = await Promise.all(
       listConnectors().map(async (connector) => {
         const status = await connectionState(userId, connector);
@@ -59,15 +69,26 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
         : { id: userId, email: "", name: "Local (no account)", emailVerified: true, hasPassword: false },
       space: {
         id: userId,
-        name: user?.ownerId ? user.spaceName || "Untitled space" : account?.spaceName || defaultSpaceName(account?.name ?? ""),
-        icon: user?.ownerId ? user.spaceIcon : (account?.spaceIcon ?? null),
-        primary: !user?.ownerId,
+        name: user?.ownerId ? user.spaceName || "Untitled space" : user?.spaceName || defaultSpaceName(user?.name ?? account?.name ?? ""),
+        icon: user?.spaceIcon ?? null,
+        primary: owner && !user?.ownerId,
+        members,
+        /** Members plus people with a single shared item: when above zero, presence is worth sending. */
+        collaborators: members + recipients.length,
+        // Set when the space is someone else's and shared with you.
+        shared:
+          spaceOwner && access && access.kind !== "owner" && access.kind !== "gone"
+            ? {
+                owner: { id: spaceOwner.id, name: displayName(spaceOwner.name, spaceOwner.email), initials: initialsOf(spaceOwner.name, spaceOwner.email) },
+                role: access.kind === "member" ? access.role : access.role === "edit" ? "editor" : "viewer",
+              }
+            : null,
       },
       via: request.authVia,
       verificationRequired: isHosted() && !account?.emailVerifiedAt,
       approvals,
       decisions,
-      attention: flags.filter(Boolean).length,
+      attention: owner ? flags.filter(Boolean).length : 0,
       canUndo: undoable > 0,
       canRedo: redoable > 0,
       onboardingComplete: request.authVia === "bypass" || Boolean(user?.onboardingCompletedAt),
@@ -86,7 +107,7 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
         user?.templateExpiresAt && user.templateExpiresAt.getTime() < Date.now() && user.activeTemplateId && user.activeTemplateId !== "default"
           ? { id: user.activeTemplateId, name: templateByMarketId(user.activeTemplateId)?.name ?? "This template" }
           : null,
-      devTools: envDevTools() || Boolean(user?.tester),
+      devTools: envDevTools() || Boolean(account?.tester),
       pageWidth: settings.pageWidth,
     };
   });

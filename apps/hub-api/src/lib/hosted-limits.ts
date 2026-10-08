@@ -70,7 +70,8 @@ export async function createCappedJob(db: PrismaClient, userId: string, args: Pr
   return withHostedUserLock(db, userId, async (tx) => {
     let usage: { key: string; count: number; account: string } | undefined;
     if (isHosted()) {
-      if (args.data.userId !== userId) throw new Error("The job account does not match its quota account.");
+      // A run in a space shared with you counts against you, the person whose computer runs it.
+      if (args.data.userId !== userId && args.data.runnerAccountId !== userId) throw new Error("The job account does not match its quota account.");
       const scope = await quotaScope(tx, userId);
       const from = new Date();
       from.setUTCHours(0, 0, 0, 0);
@@ -79,7 +80,8 @@ export async function createCappedJob(db: PrismaClient, userId: string, args: Pr
       const value = counter?.value;
       const saved = value && typeof value === "object" && !Array.isArray(value) ? value.count : undefined;
       if (counter && (typeof saved !== "number" || !Number.isSafeInteger(saved) || saved < 0)) throw new Error("The hosted daily job usage counter is invalid.");
-      const used = Math.max(typeof saved === "number" ? saved : 0, await tx.workspaceJob.count({ where: { userId: { in: scope.ids }, createdAt: { gte: from } } }));
+      const mine = { OR: [{ userId: { in: scope.ids }, runnerAccountId: null }, { runnerAccountId: scope.account }] };
+      const used = Math.max(typeof saved === "number" ? saved : 0, await tx.workspaceJob.count({ where: { ...mine, createdAt: { gte: from } } }));
       assertWithinLimit(used, 1, hostedLimits().jobsPerDay, "agent jobs per UTC day");
       usage = { key, count: used + 1, account: scope.account };
     }

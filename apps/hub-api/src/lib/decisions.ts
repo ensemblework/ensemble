@@ -8,6 +8,7 @@
 import { EventEmitter } from "node:events";
 import type { AgentDecision } from "@prisma/client";
 import { prisma } from "./prisma.js";
+import { actorFor } from "../sharing/context.js";
 
 export const decisionBus = new EventEmitter();
 decisionBus.setMaxListeners(0);
@@ -98,16 +99,27 @@ export async function matchingRule(userId: string, call: Normalized) {
   );
 }
 
+/**
+ * In a shared space everyone sees a run's questions, but only the person whose computer runs
+ * it (or the owner, for everything else) may answer, and only they see which computer it is.
+ */
 export function publicDecision(row: AgentDecision) {
+  const detail = row.detail && typeof row.detail === "object" && !Array.isArray(row.detail) ? (row.detail as Record<string, unknown>) : null;
+  const runner = typeof detail?.runnerAccountId === "string" && detail.runnerAccountId ? detail.runnerAccountId : null;
+  const me = actorFor(row.userId);
+  const canAnswer = runner ? me === runner : me === null;
+  const shown = canAnswer || !detail ? row.detail : { ...detail, deviceName: null, deviceId: null };
   return {
     id: row.id,
     source: row.source,
     event: row.event,
     toolName: row.toolName,
     title: row.title,
-    detail: row.detail,
+    detail: shown,
     sessionId: row.sessionId,
-    cwd: row.cwd,
+    cwd: canAnswer ? row.cwd : null,
+    canAnswer,
+    runnerAccountId: runner,
     status: row.status,
     decision: row.decision,
     scope: row.scope,

@@ -3,6 +3,7 @@ import type { Prisma, PrismaClient } from "@prisma/client";
 import { env } from "../config.js";
 import { isHosted } from "./hosted-access.js";
 import { checkConnectorLimit, withHostedUserLock } from "./hosted-limits.js";
+import { keysFor } from "../sharing/context.js";
 
 const KEY = "hub.settings";
 
@@ -20,7 +21,12 @@ export function deepMerge(base: Plain, patch: Plain): Plain {
   return out;
 }
 
-export async function loadSettings(prisma: PrismaClient | Prisma.TransactionClient, userId: string): Promise<SettingsType> {
+/**
+ * Settings are never shared: in a space shared with you, the space's settings are your own
+ * account's (keysFor), for both reads and writes.
+ */
+export async function loadSettings(prisma: PrismaClient | Prisma.TransactionClient, spaceOrUser: string): Promise<SettingsType> {
+  const userId = keysFor(spaceOrUser);
   const row = await prisma.preference.findFirst({ where: { userId, key: KEY, deletedAt: null } });
   const parsed = Settings.safeParse(row?.value ?? {});
   const base = parsed.success ? parsed.data : DEFAULT_SETTINGS;
@@ -28,7 +34,8 @@ export async function loadSettings(prisma: PrismaClient | Prisma.TransactionClie
   return base;
 }
 
-export async function saveSettings(prisma: PrismaClient | Prisma.TransactionClient, userId: string, patch: unknown): Promise<SettingsType> {
+export async function saveSettings(prisma: PrismaClient | Prisma.TransactionClient, spaceOrUser: string, patch: unknown): Promise<SettingsType> {
+  const userId = keysFor(spaceOrUser);
   const write = async (db: PrismaClient | Prisma.TransactionClient) => {
     const current = await loadSettings(db, userId);
     const next = Settings.parse(deepMerge(current as unknown as Plain, isPlain(patch) ? patch : {}));

@@ -10,12 +10,14 @@ import { navigateSettings, useSettingsLocation, type SettingsTab } from "@/compo
 import { useToast } from "@/components/toast";
 import { PageHeader, SkeletonRows } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
+import { useSpaceAccess } from "@/lib/access";
 
 const loading = () => <SkeletonRows count={4} rowClassName="h-28" className="space-y-5" />;
 const AssistantTab = dynamic(() => import("@/components/settings/tab-assistant").then((mod) => mod.AssistantTab), { ssr: false, loading });
 const ConnectionsTab = dynamic(() => import("@/components/settings/tab-connections").then((mod) => mod.ConnectionsTab), { ssr: false, loading });
 const NotificationsTab = dynamic(() => import("@/components/settings/tab-notifications").then((mod) => mod.NotificationsTab), { ssr: false, loading });
 const SpacesTab = dynamic(() => import("@/components/settings/tab-spaces").then((mod) => mod.SpacesTab), { ssr: false, loading });
+const SharingTab = dynamic(() => import("@/components/settings/tab-sharing").then((mod) => mod.SharingTab), { ssr: false, loading });
 const ShortcutsTab = dynamic(() => import("@/components/settings/tab-shortcuts").then((mod) => mod.ShortcutsTab), { ssr: false, loading });
 const DataTab = dynamic(() => import("@/components/settings/tab-data").then((mod) => mod.DataTab), { ssr: false, loading });
 
@@ -44,6 +46,12 @@ export default function SettingsPage() {
   const toast = useToast();
   const query = useQuery({ queryKey: ["settings"], queryFn: api.settings });
   const location = useSettingsLocation();
+  // In a space shared with you, connected apps and the space's data are the owner's.
+  const access = useSpaceAccess();
+  const guestTabs: SettingsTab[] = access.guest ? ["connections", "data"] : [];
+  useEffect(() => {
+    if (access.guest && (location.tab === "connections" || location.tab === "data")) navigateSettings({ tab: "account" });
+  }, [access.guest, location.tab]);
   const [draft, setDraft] = useState<Settings | null>(null);
   const [saving, setSaving] = useState<"idle" | "saving" | "saved">("idle");
   const pending = useRef<Plain>({});
@@ -157,9 +165,15 @@ export default function SettingsPage() {
               </span>
             }
           />
+          {access.guest ? (
+            <div className="mb-5 rounded-lg border border-line bg-panel px-4 py-3 text-[12.5px] leading-5 text-muted">
+              You&apos;re in {access.owner?.split(" ")[0] ?? "someone"}&apos;s space. Settings here are your own: your theme, models, keys, notifications and
+              shortcuts. Connected apps and the space&apos;s data belong to them; switch to one of your spaces to manage yours.
+            </div>
+          ) : null}
           <div className="lg:grid lg:grid-cols-[196px_minmax(0,1fr)] lg:gap-10">
             <div className="sticky top-0 z-20 -mx-4 mb-4 border-b border-line bg-bg/95 px-4 py-2 backdrop-blur sm:-mx-6 sm:px-6 lg:top-8 lg:mx-0 lg:mb-0 lg:self-start lg:border-0 lg:bg-transparent lg:p-0 lg:backdrop-blur-none">
-              <SettingsTabs value={location.tab} onChange={selectTab} />
+              <SettingsTabs value={location.tab} onChange={selectTab} hidden={guestTabs} />
             </div>
             <div
               role="tabpanel"
@@ -178,6 +192,8 @@ export default function SettingsPage() {
                 <NotificationsTab {...props} />
               ) : location.tab === "spaces" ? (
                 <SpacesTab />
+              ) : location.tab === "sharing" ? (
+                <SharingTab />
               ) : location.tab === "shortcuts" ? (
                 <ShortcutsTab />
               ) : location.tab === "data" ? (

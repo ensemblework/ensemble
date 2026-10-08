@@ -6,6 +6,7 @@ import { useCallback, useLayoutEffect, useRef, useState, type KeyboardEvent as R
 import { api } from "@/lib/api";
 import { useToast } from "@/components/toast";
 import { hideTile, moveTile, readLayout, resizeTile, showTile, sizeFromDrag, stepTile, tileLimits, type DeskLayout, type TileSize } from "./layout";
+import { useSpaceAccess } from "@/lib/access";
 
 /**
  * Moving, resizing and hiding tiles on any 12-column `.bento` grid. Today's desk and the
@@ -64,6 +65,9 @@ export function useTileControls<S extends Arrangeable>({
   restoreHint: string;
 }) {
   const toast = useToast();
+  // A space shared with you keeps its owner's arrangement: no grips, no resizing, no hiding.
+  const access = useSpaceAccess();
+  const fixed = Boolean(mobile) || access.guest;
   const [preview, setPreview] = useState<({ key: string } & TileSize) | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
   const [drop, setDrop] = useState<{ key: string; after: boolean } | null>(null);
@@ -184,7 +188,7 @@ export function useTileControls<S extends Arrangeable>({
       "data-drop": drop?.key === spec.key ? (drop.after ? "after" : "before") : undefined,
       "data-resizing": preview?.key === spec.key ? "1" : undefined,
     },
-    grip: mobile ? undefined : (
+    grip: fixed ? undefined : (
       <button
         type="button"
         className="tgrip"
@@ -196,7 +200,7 @@ export function useTileControls<S extends Arrangeable>({
         <GripVertical size={12} />
       </button>
     ),
-    corner: mobile ? undefined : (
+    corner: fixed ? undefined : (
       <button
         type="button"
         className="tresize"
@@ -206,7 +210,7 @@ export function useTileControls<S extends Arrangeable>({
         onKeyDown={(event) => resizeByKey(event, spec)}
       />
     ),
-    onHide: () => hide(spec),
+    onHide: fixed && !mobile ? undefined : () => hide(spec),
   });
 
   return { sizeOf, controls };

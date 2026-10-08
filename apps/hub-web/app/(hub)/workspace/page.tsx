@@ -10,6 +10,8 @@ import { useToast } from "@/components/toast";
 import { Held } from "@/components/motion/held";
 import { PageHeader, QueryError, SkeletonRows, cx } from "@/components/ui";
 import { ApiError, api, type AgentJob } from "@/lib/api";
+import { useSpaceAccess } from "@/lib/access";
+import { ShareButton } from "@/components/sharing/share-dialog";
 
 function Lane({ title, hint, items, empty, wide }: { title: string; hint?: string; items: AgentJob[]; empty: string; wide?: boolean }) {
   return (
@@ -33,6 +35,8 @@ export default function WorkspacePage() {
   });
   const [assigning, setAssigning] = useState(false);
   const data = board.data;
+  const access = useSpaceAccess();
+  const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
   const toggle = useMutation({
     mutationFn: () => (data?.paused ? api.resumeAgent() : api.pauseAgent()),
     onSuccess: () => {
@@ -53,12 +57,17 @@ export default function WorkspacePage() {
         }
         actions={
           <>
-            <Link href="/settings#orchestration" className="icon-btn" title="How many run at once, limits">
-              <Settings2 size={15} />
-            </Link>
-            <button type="button" className={cx("btn", data?.paused && "border-warn text-warn")} onClick={() => toggle.mutate()} disabled={!data || toggle.isPending}>
-              {data?.paused ? <Play size={13} /> : <Pause size={13} />} {data?.paused ? "Resume" : "Pause all"}
-            </button>
+            {shell.data?.space ? <ShareButton target={{ kind: "workspace", resourceId: shell.data.space.id, title: "Workspace" }} /> : null}
+            {access.guest ? null : (
+              <>
+                <Link href="/settings#orchestration" className="icon-btn" title="How many run at once, limits">
+                  <Settings2 size={15} />
+                </Link>
+                <button type="button" className={cx("btn", data?.paused && "border-warn text-warn")} onClick={() => toggle.mutate()} disabled={!data || toggle.isPending}>
+                  {data?.paused ? <Play size={13} /> : <Pause size={13} />} {data?.paused ? "Resume" : "Pause all"}
+                </button>
+              </>
+            )}
             <button type="button" className="btn-primary" onClick={() => setAssigning(true)}>
               Assign task
             </button>

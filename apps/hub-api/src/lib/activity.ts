@@ -6,6 +6,7 @@
  * cancellation at every step boundary.
  */
 import { Redis } from "ioredis";
+import { keysFor } from "../sharing/context.js";
 
 export type ActivityKind = "assistant" | "run" | "fetch" | "workspace";
 
@@ -21,12 +22,14 @@ export interface Activity {
 
 const ttlSeconds = 60 * 30;
 
+// What someone does in a space shared with them (keysFor) shows in their own Activity panel.
+// The kill switch (pausedKey) stays the space's.
 function activityKey(userId: string, activityId: string): string {
-  return `ensemble:activity:${userId}:${activityId}`;
+  return `ensemble:activity:${keysFor(userId)}:${activityId}`;
 }
 
 function cancelKey(userId: string, activityId: string): string {
-  return `ensemble:cancel:${userId}:${activityId}`;
+  return `ensemble:cancel:${keysFor(userId)}:${activityId}`;
 }
 
 function pausedKey(userId: string): string {
@@ -35,7 +38,7 @@ function pausedKey(userId: string): string {
 
 /** Ids for this user. Listing is SMEMBERS, not KEYS. */
 function indexKey(userId: string): string {
-  return `ensemble:activity-ids:${userId}`;
+  return `ensemble:activity-ids:${keysFor(userId)}`;
 }
 
 async function safeGet(redis: Redis, key: string): Promise<string | null> {

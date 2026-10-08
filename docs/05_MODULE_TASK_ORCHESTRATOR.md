@@ -194,7 +194,7 @@ Each worker = a Microsoft Agent Framework `Agent` with a **bounded toolset**: wo
 
 ## 9. Failure handling
 
-- **Needs me** combines persisted publishing/external-write approvals, structured planner questions, workspace tool-permission/question checkpoints and genuinely interrupted older attempts. Workspace decisions retain exact choice IDs/labels and optional custom text; resuming uses the saved continuation, not a newly planned command. See [docs/06 A5](06_MODULE_WORKSPACE_AND_SURFACES.md#a5-durable-queue-and-global-stop).
+- **Needs me** combines persisted publishing/external-write approvals, structured planner questions, workspace tool-permission/question checkpoints and genuinely interrupted older attempts. Workspace decisions retain exact choice IDs/labels and optional custom text; resuming uses the saved continuation, not a newly planned command. See [docs/06 A5](06_MODULE_WORKSPACE_AND_SURFACES.md#a5-durable-queue-and-global-stop). In a shared space, everyone there sees a run's questions, but only the person whose computer runs it may answer (`canAnswer` from `lib/decisions.ts`, checked in `applyAnswer`); hosted-run approvals and the owner's own editor prompts stay the owner's ([29 §4](29_SHARING.md#4-agent-runs-in-a-shared-space)).
 - **Tool errors:** retry ×2 with backoff; Graph 429 honours `Retry-After`.
 - **LLM structured-output validation failure:** re-ask once with error, then mark step failed with readable message.
 - **Missing info** → `blocked(needs_info)` question card (options grounded in context).

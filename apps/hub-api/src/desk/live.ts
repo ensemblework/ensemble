@@ -4,6 +4,7 @@ import { zonedParts } from "../lib/clock.js";
 import { isLimitationRule, limitationDue, daysBetween, type LimitationRule } from "./limitation.js";
 import { TASK_SELECT } from "./entries.js";
 import { isListedArtifact } from "./artifacts.js";
+import { isGuestIn, visibleArtifacts } from "../sharing/context.js";
 
 const TASKS = 48;
 const MATTERS = 24;
@@ -58,17 +59,20 @@ export async function loadDeskLive(db: PrismaClient, userId: string, now = new D
         select: { id: true, title: true },
       }),
       db.artifact.findMany({
-        where: { userId, deletedAt: null },
+        where: { userId, deletedAt: null, AND: [visibleArtifacts(userId)] },
         orderBy: { ts: "desc" },
         take: 8,
         select: { id: true, title: true, kind: true, url: true, ts: true, metadata: true },
       }),
-      db.reminder.findMany({
-        where: { userId, deletedAt: null, dismissedAt: null },
-        orderBy: { dueDate: "asc" },
-        take: 8,
-        select: { id: true, title: true, dueDate: true },
-      }),
+      // Reminders are private to the space's owner.
+      isGuestIn(userId)
+        ? Promise.resolve([] as Array<{ id: string; title: string; dueDate: string }>)
+        : db.reminder.findMany({
+            where: { userId, deletedAt: null, dismissedAt: null },
+            orderBy: { dueDate: "asc" },
+            take: 8,
+            select: { id: true, title: true, dueDate: true },
+          }),
       db.timetableSlot.findMany({ where: { userId }, orderBy: [{ weekday: "asc" }, { startMin: "asc" }], take: 40 }),
       db.courtHoliday.findMany({
         where: { userId, day: { gte: holidayFrom, lt: holidayTo } },

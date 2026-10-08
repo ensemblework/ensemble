@@ -10,6 +10,8 @@ import { sseHub } from "../lib/sse.js";
 import { resolveWorkFolder, within, workspaceRoot } from "../workspace/guard.js";
 import { OUTSIDE_TOOL, RUN_RULE_SOURCE } from "../workspace/tools.js";
 import { PATH_RULE_SOURCE, PATH_RULE_TOOL } from "../workspace/trust.js";
+import { actorFor } from "../sharing/context.js";
+import { ownsOpenSpace } from "../lib/auth.js";
 
 const HOOK_SCRIPT = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../scripts/ensemble-hook.mjs");
 
@@ -36,8 +38,17 @@ export async function applyAnswer(
   if (row.status !== "pending") {
     throw new AnswerError(409, row.status === "expired" ? "The tool stopped waiting. It showed its own prompt instead." : "Already answered.");
   }
-  const detail = (row.detail ?? {}) as { deviceId?: unknown; command?: string | null; tier?: unknown; deviceName?: unknown; options?: unknown };
+  const detail = (row.detail ?? {}) as { deviceId?: unknown; command?: string | null; tier?: unknown; deviceName?: unknown; options?: unknown; runnerAccountId?: unknown };
   const deviceId = typeof detail.deviceId === "string" && detail.deviceId.length > 0 ? detail.deviceId : null;
+  // In a shared space: a run's question is answered by the person whose computer runs it;
+  // anything else (editor hooks, hosted runs) by the space's owner. Others only see it.
+  const runner = typeof detail.runnerAccountId === "string" && detail.runnerAccountId ? detail.runnerAccountId : null;
+  const me = actorFor(userId);
+  if (runner ? me !== runner : me !== null) {
+    const who = runner ? await prisma.user.findUnique({ where: { id: runner }, select: { name: true } }) : null;
+    const first = who?.name.trim().split(/\s+/)[0];
+    throw new AnswerError(403, runner ? `Only ${first || "the person running it"} can answer this. It runs on their computer.` : "Only the space's owner can answer this.");
+  }
   let scope = body.scope;
   let reason = body.reason;
   if (deviceId) {
@@ -83,7 +94,7 @@ export async function applyAnswer(
     action: `decision.${body.decision}`,
     payload: { source: row.source, tool: row.toolName, title: row.title, scope, via: actor === "system" ? "remote" : "mac" },
   });
-  sseHub.publish(userId, { event: "decision", data: publicDecision(updated) });
+  sseHub.publish(userId, { event: "decision", data: decisionFrame(updated), ownerOnly: updated.source !== "ensemble" });
   return updated;
 }
 
@@ -94,6 +105,12 @@ const Ask = z.object({
   /** How long the hook will hold the tool call open. */
   waitSeconds: z.number().int().min(5).max(3600).default(600),
 });
+
+/** What the live stream carries: enough for a toast, and who may answer it. */
+function decisionFrame(row: { id: string; status: string; title: string; source: string; detail: unknown }) {
+  const detail = row.detail && typeof row.detail === "object" ? (row.detail as { runnerAccountId?: unknown }) : {};
+  return { id: row.id, status: row.status, title: row.title, source: row.source, runnerAccountId: typeof detail.runnerAccountId === "string" ? detail.runnerAccountId : null };
+}
 
 export async function decisionRoutes(app: FastifyInstance): Promise<void> {
   const { prisma } = app;
@@ -128,7 +145,8 @@ export async function decisionRoutes(app: FastifyInstance): Promise<void> {
     await prisma.notification.create({
       data: { userId: request.userId, kind: "decision", title: `${label(call.source)} is waiting: ${call.title}`, body: call.cwd ?? "", urgent: true, url: "/needs-me" },
     });
-    sseHub.publish(request.userId, { event: "decision", data: publicDecision(row) });
+    // From the owner's own editors: their commands and folders, never shown to people they share with.
+    sseHub.publish(request.userId, { event: "decision", data: decisionFrame(row), ownerOnly: true });
     return reply.code(202).send({ id: row.id, status: "pending" });
   });
 
@@ -162,6 +180,8 @@ export async function decisionRoutes(app: FastifyInstance): Promise<void> {
     const rows = await prisma.agentDecision.findMany({
       where: {
         userId: request.userId,
+        // People a space is shared with see its runs' questions, not the owner's own editors.
+        ...(ownsOpenSpace(request) ? {} : { source: "ensemble" }),
         ...(status === "pending" ? { status: "pending" } : { requestedAt: { gte: new Date(Date.now() - 7 * 86_400_000) } }),
       },
       orderBy: { requestedAt: status === "pending" ? "asc" : "desc" },

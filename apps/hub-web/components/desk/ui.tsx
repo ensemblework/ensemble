@@ -34,7 +34,7 @@ export const accentVars = (id: AccentId): CSSProperties =>
 export function Tile(props: {
   title: string; icon: LucideIcon; meta?: ReactNode; right?: ReactNode; c?: number; r?: number;
   hero?: boolean; hover?: boolean; add?: boolean; openHref?: string; onAdd?: () => void; children: ReactNode; style?: CSSProperties; className?: string; pad?: string; skel?: boolean; mark?: string;
-  ghost?: { label: string; sub?: string; action: string; kind?: string; onAction?: () => void } | false;
+  ghost?: { label: string; sub?: string; action?: string; kind?: string; onAction?: () => void } | false;
   /** Layout controls from LiveBoard: a move grip before the title, hide in the actions, a resize corner. */
   deskKey?: string; grip?: ReactNode; onHide?: () => void; corner?: ReactNode; attrs?: Record<string, string | undefined>;
 }) {
@@ -272,7 +272,8 @@ export function Sk({ w = "100%", h = 10, r = 5, style }: { w?: number | string; 
 }
 
 /* Empty ghost: the populated preview, dimmed, with one action */
-export function Ghost({ children, label, sub, action, kind, onAction }: { children: ReactNode; label: string; sub?: string; action: string; kind?: string; onAction?: () => void }) {
+/** An empty tile. Without an action (someone else's space), it only says what would be here. */
+export function Ghost({ children, label, sub, action, kind, onAction }: { children: ReactNode; label: string; sub?: string; action?: string; kind?: string; onAction?: () => void }) {
   const preview = useContext(DeskPreviewContext);
   return (
     <div className="ghost">
@@ -280,7 +281,7 @@ export function Ghost({ children, label, sub, action, kind, onAction }: { childr
       <div className="gcta">
         <div className="gl">{label}</div>
         {sub && <div className="gs">{sub}</div>}
-        {preview ? (
+        {!action ? null : preview ? (
           <span className="gbtn" aria-hidden="true">
             <Plus size={12} strokeWidth={2.4} />
             {action}

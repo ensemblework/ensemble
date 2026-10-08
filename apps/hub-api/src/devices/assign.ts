@@ -7,6 +7,10 @@ import { requireVerifiedUser } from "../lib/hosted-access.js";
 const GITHUB = /^(https:\/\/|git@)[\w.@:/~-]+$/;
 const SLUG = /^[\w.-]+\/[\w.-]+$/;
 
+/**
+ * `userId` owns the computer. `space` is where the job lives: the same, or a space shared with
+ * them (then `runner` is their account and only their own earlier runs can be continued).
+ */
 export async function deviceAssignment(
   prisma: PrismaClient,
   userId: string,
@@ -18,6 +22,7 @@ export async function deviceAssignment(
     repoUrl?: string;
     continueFromJobId?: string;
   },
+  where: { space: string; runner: string | null } = { space: userId, runner: null },
 ): Promise<{
   deviceId: string;
   name: string;
@@ -28,7 +33,7 @@ export async function deviceAssignment(
 }> {
   await requireVerifiedUser(userId);
   const device = await prisma.device.findFirst({ where: { id: input.deviceId, userId, revokedAt: null } });
-  if (!device) throw new GuardError("That computer is not paired.");
+  if (!device) throw new GuardError(where.runner ? "Pick one of your own paired computers." : "That computer is not paired.");
 
   const requested = (input.folderLabel ?? input.folder ?? "").trim();
   let folderLabel: string | null = null;
@@ -51,7 +56,7 @@ export async function deviceAssignment(
   const resourceKeys: string[] = [];
   if (input.kind === "code" && input.continueFromJobId) {
     const previous = await prisma.workspaceJob.findFirst({
-      where: { id: input.continueFromJobId, userId },
+      where: { id: input.continueFromJobId, userId: where.space, runnerAccountId: where.runner },
       select: { id: true, kind: true, continueFromJobId: true, folderLabel: true },
     });
     if (!previous || previous.kind !== "code") throw new GuardError("Pick an earlier code task to continue from.");

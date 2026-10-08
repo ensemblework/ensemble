@@ -14,6 +14,8 @@ declare module "fastify" {
      * (lib/auth.ts), never directly: test apps and service calls only set userId.
      */
     accountId?: string;
+    /** Owner, member of the space, or one shared item. Unset for tokens and service calls (owner). */
+    access?: import("./sharing/context.js").Access;
     authVia: import("./lib/auth.js").AuthVia;
     tokenScope?: import("./lib/auth.js").TokenScope;
     /** Set when the caller presented a personal `ens_` token. */

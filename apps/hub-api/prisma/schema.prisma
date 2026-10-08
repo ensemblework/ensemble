@@ -328,6 +328,8 @@ model PageDiscussion {
   parentId           String?          @map("parent_id")
   /// "human" or "ensemble". A child row may only be ensemble.
   authorKind         String           @default("human") @map("author_kind")
+  /// The person who wrote a human comment, in a shared space. Null: the space owner.
+  authorAccountId    String?          @map("author_account_id")
   markId             String?          @map("mark_id")
   quote              String           @default("")
   deletedAt          DateTime?        @map("deleted_at")
@@ -446,6 +448,9 @@ model WorkspaceJob {
   id                   String              @id @default(uuid())
   sequence             BigInt              @default(autoincrement())
   userId               String              @map("user_id")
+  /// The account whose computer and keys run this job, in a space more than one person can open.
+  /// Null: the space owner. Only this account may answer its Needs me requests.
+  runnerAccountId      String?             @map("runner_account_id")
   taskId               String              @map("task_id")
   runId                String?             @unique @map("run_id")
   /// "research" works without a computer; "code" works in a folder on this machine.
@@ -1313,6 +1318,8 @@ model AuthToken {
 model AssistantConversation {
   id        String             @id @default(uuid())
   userId    String             @map("user_id")
+  /// Who is chatting, in a shared space. Null: the space owner. Conversations are private to this person.
+  accountId String?            @map("account_id")
   title     String             @default("New chat")
   startedOn String?            @map("started_on")
   createdAt DateTime           @default(now()) @map("created_at")
@@ -1341,21 +1348,23 @@ model AssistantMessage {
 }
 
 model UndoEntry {
-  id        String    @id @default(uuid())
-  userId    String    @map("user_id")
-  seq       BigInt
-  label     String
-  kind      String
-  actor     Actor     @default(me)
-  subject   String
-  href      String?
-  inverse   Json
-  forward   Json
-  ops       Json      @default("[]")
-  source    String    @default("ui")
-  groupId   String?   @map("group_id")
-  undoneAt  DateTime? @map("undone_at")
-  createdAt DateTime  @default(now()) @map("created_at")
+  id             String    @id @default(uuid())
+  userId         String    @map("user_id")
+  seq            BigInt
+  label          String
+  kind           String
+  actor          Actor     @default(me)
+  subject        String
+  href           String?
+  inverse        Json
+  forward        Json
+  ops            Json      @default("[]")
+  source         String    @default("ui")
+  groupId        String?   @map("group_id")
+  undoneAt       DateTime? @map("undone_at")
+  /// Who made the change, in a shared space. Null: the space owner. Each person undoes only their own changes.
+  actorAccountId String?   @map("actor_account_id")
+  createdAt      DateTime  @default(now()) @map("created_at")
 
   @@unique([userId, seq])
   @@index([userId, undoneAt, seq])
@@ -1522,6 +1531,13 @@ model User {
   spaceSettingsSync     Boolean               @default(false) @map("space_settings_sync")
   /// Account only. The space a new sign-in opens.
   lastSpaceId           String?               @map("last_space_id")
+  contacts              Contact[]             @relation("ContactOwner")
+  contactOf             Contact[]             @relation("ContactPerson")
+  members               SpaceMember[]         @relation("SpaceMembers")
+  memberships           SpaceMember[]         @relation("MemberAccount")
+  sharesOut             Share[]               @relation("ShareSpace")
+  sharesIn              Share[]               @relation("ShareRecipient")
+  transfers             SpaceTransfer[]
   sessions              Session[]
   authIdentities        AuthIdentity[]
   emailTokens           EmailToken[]
@@ -1998,4 +2014,66 @@ model McpConnection {
   @@unique([userId, serverId])
   @@index([userId])
   @@map("mcp_connections")
+}
+
+/// People an account shares with. At most five per account; removing one revokes everything shared with them.
+model Contact {
+  id        String   @id @default(uuid())
+  ownerId   String   @map("owner_id")
+  contactId String   @map("contact_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  owner     User     @relation("ContactOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  contact   User     @relation("ContactPerson", fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerId, contactId])
+  @@index([contactId])
+  @@map("contacts")
+}
+
+/// Another account that may open a whole space. role: viewer | editor. At most two per space.
+model SpaceMember {
+  id        String   @id @default(uuid())
+  spaceId   String   @map("space_id")
+  accountId String   @map("account_id")
+  role      String   @default("editor")
+  addedBy   String   @map("added_by")
+  createdAt DateTime @default(now()) @map("created_at")
+  space     User     @relation("SpaceMembers", fields: [spaceId], references: [id], onDelete: Cascade)
+  account   User     @relation("MemberAccount", fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([spaceId, accountId])
+  @@index([accountId])
+  @@map("space_members")
+}
+
+/// One item in a space shared with one account. kind: page | task | board | diagram | plot_space | plot | meeting | skill | workspace | code. role: view | edit.
+model Share {
+  id          String    @id @default(uuid())
+  spaceId     String    @map("space_id")
+  kind        String
+  resourceId  String    @map("resource_id")
+  title       String    @default("")
+  recipientId String    @map("recipient_id")
+  role        String    @default("view")
+  createdBy   String    @map("created_by")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  openedAt    DateTime? @map("opened_at")
+  space       User      @relation("ShareSpace", fields: [spaceId], references: [id], onDelete: Cascade)
+  recipient   User      @relation("ShareRecipient", fields: [recipientId], references: [id], onDelete: Cascade)
+
+  @@unique([spaceId, kind, resourceId, recipientId])
+  @@index([recipientId])
+  @@map("shares")
+}
+
+/// A space's one change of owner.
+model SpaceTransfer {
+  id            String   @id @default(uuid())
+  spaceId       String   @unique @map("space_id")
+  fromAccountId String   @map("from_account_id")
+  toAccountId   String   @map("to_account_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+  space         User     @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+
+  @@map("space_transfers")
 }

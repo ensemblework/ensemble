@@ -6,8 +6,10 @@ import { revokePairedDevice } from "../devices/revoke.js";
 import { applyOnboarding } from "../layouts/apply.js";
 import { deleteAccountData } from "../lib/account-data.js";
 import { appendLedger } from "../lib/ledger.js";
-import { copySettings, createSpaceUser, listSpaces, mirrorSettings, setSpaceCookie, spaceIds } from "./store.js";
-import { accountIdOf } from "../lib/auth.js";
+import { copySettings, createSpaceUser, listSpaces, mirrorSettings, openableSpace, setSpaceCookie, spaceIds } from "./store.js";
+import { accountIdOf, ownsOpenSpace, settingsUserOf } from "../lib/auth.js";
+import { sharedWithMe } from "../sharing/store.js";
+import { sseHub } from "../lib/sse.js";
 
 /** Not a UUID check: the local and desktop account id is "local". Ownership is checked by `mine`. */
 const Id = z.string().trim().min(1).max(64);
@@ -49,8 +51,8 @@ export async function spacesRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/spaces", async (request) => {
     browserOnly(request);
-    const listed = await listSpaces(prisma, accountIdOf(request));
-    return { activeId: request.userId, ...listed };
+    const [listed, withMe] = await Promise.all([listSpaces(prisma, accountIdOf(request)), sharedWithMe(prisma, accountIdOf(request))]);
+    return { activeId: request.userId, ...listed, shared: withMe.spaces };
   });
 
   app.post("/api/spaces", async (request, reply) => {
@@ -64,7 +66,9 @@ export async function spacesRoutes(app: FastifyInstance): Promise<void> {
       throw Object.assign(new Error("Pick a template for your role."), { statusCode: 400 });
     }
     // Whatever the mode, the source is checked: with sync on, even "fresh" copies from it.
-    const from = body.settings.mode === "fresh" ? request.userId : (body.settings.from ?? request.userId);
+    // In a space shared with you, "the open space" is not yours to copy: your own account is.
+    const here = settingsUserOf(request);
+    const from = body.settings.mode === "fresh" ? here : (body.settings.from ?? here);
     await mine(request, from);
 
     const spaceId = await createSpaceUser(prisma, accountIdOf(request), { name: body.name, icon: body.icon ?? null });
@@ -90,7 +94,10 @@ export async function spacesRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/spaces/:id/switch", async (request, reply) => {
     browserOnly(request);
     const id = Id.parse((request.params as { id: string }).id);
-    await mine(request, id);
+    // Yours, or shared with you as a member.
+    if (id !== accountIdOf(request) && !(await openableSpace(prisma, accountIdOf(request), id))) {
+      throw Object.assign(new Error("That space is not yours."), { statusCode: 404 });
+    }
     await prisma.user.update({ where: { id: accountIdOf(request) }, data: { lastSpaceId: id === accountIdOf(request) ? null : id } });
     setSpaceCookie(reply, request, id === accountIdOf(request) ? null : id);
     return { activeId: id };
@@ -124,7 +131,14 @@ export async function spacesRoutes(app: FastifyInstance): Promise<void> {
     if (active) throw Object.assign(new Error("Stop the agent runs in this space before deleting it."), { statusCode: 409 });
     const devices = await prisma.device.findMany({ where: { userId: id, revokedAt: null } });
     for (const device of devices) await revokePairedDevice(prisma, id, device);
+    // Everyone it was shared with loses it with the space; tell their open tabs.
+    const told = [
+      ...(await prisma.spaceMember.findMany({ where: { spaceId: id }, select: { accountId: true } })).map((row) => row.accountId),
+      ...(await prisma.share.findMany({ where: { spaceId: id }, select: { recipientId: true } })).map((row) => row.recipientId),
+    ];
     await deleteAccountData(prisma, id);
+    for (const person of new Set(told)) sseHub.publish(person, { event: "sharing.changed", data: {} });
+    sseHub.close(id);
     await prisma.user.updateMany({ where: { id: accountIdOf(request), lastSpaceId: id }, data: { lastSpaceId: null } });
     await appendLedger({ userId: accountIdOf(request), actor: "me", action: "space.delete", payload: { spaceId: id } });
     if (request.userId === id) setSpaceCookie(reply, request, null);
@@ -135,6 +149,7 @@ export async function spacesRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/spaces/settings/copy", async (request) => {
     browserOnly(request);
     const { from } = z.object({ from: Id }).parse(request.body);
+    if (!ownsOpenSpace(request)) throw Object.assign(new Error("Only the space's owner can change its settings."), { statusCode: 403 });
     await mine(request, from);
     await copySettings(prisma, from, request.userId);
     await mirrorSettings(prisma, request.userId);
@@ -146,7 +161,7 @@ export async function spacesRoutes(app: FastifyInstance): Promise<void> {
   app.put("/api/spaces/settings/sync", async (request) => {
     browserOnly(request);
     const body = z.object({ on: z.boolean(), from: Id.optional() }).parse(request.body);
-    const from = body.from ?? request.userId;
+    const from = body.from ?? settingsUserOf(request);
     const ids = await mine(request, from);
     await prisma.user.update({ where: { id: accountIdOf(request) }, data: { spaceSettingsSync: body.on } });
     if (body.on) for (const id of ids) if (id !== from) await copySettings(prisma, from, id);

@@ -23,6 +23,8 @@ import { STATUS, plural } from "@/lib/format";
 import { Held } from "@/components/motion/held";
 import { SearchQuery } from "@/components/motion/search-query";
 import { MenuItem, PageHeader, Popover, Skeleton, useOverflowRight } from "../ui";
+import { ShareButton } from "../sharing/share-dialog";
+import { PagePeople } from "../sharing/page-people";
 import { AskEnsemble } from "../ensemble/ask-button";
 import { CardBody, SortableCard, type BoardCardMotion } from "./task-card";
 import { BoardStrip } from "../widgets/board-strip";
@@ -397,7 +399,16 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
     <div ref={boardRef} className="board-frame flex min-h-full min-w-0 flex-col" data-motion-slot="board.drag" data-dragging={dragId ? "1" : undefined}>
       <div className="board-chrome relative z-20 bg-bg">
       <div className="px-4 pt-6 sm:px-6">
-        <PageHeader title={shell.data?.labels?.board || "Task board"} description="Proposed through done. Drag a card to move it." />
+        <PageHeader
+          title={shell.data?.labels?.board || "Task board"}
+          description="Proposed through done. Drag a card to move it."
+          actions={
+            <span className="flex items-center gap-2">
+              {shell.data?.space ? <PagePeople kind="board" id={shell.data.space.id} /> : null}
+              {shell.data?.space ? <ShareButton target={{ kind: "board", resourceId: shell.data.space.id, title: shell.data.labels?.board || "Board" }} /> : null}
+            </span>
+          }
+        />
       </div>
       <div className="flex w-full min-w-0 flex-wrap items-center gap-2 px-4 pb-3 pt-2 sm:px-6">
         <SearchQuery
@@ -448,9 +459,11 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
               <MenuItem key={page.id} onClick={() => { close(); addPage.mutate(page.id); }}>{page.title || "Untitled"}</MenuItem>
             )) : <p className="p-2 text-[13px] text-muted">No pages to add. Create one in the sidebar.</p>)}
           </Popover>
-          <button type="button" className="btn" onClick={() => setLayoutEdit(true)}>
-            Edit layout
-          </button>
+          {shell.data?.space?.shared ? null : (
+            <button type="button" className="btn" onClick={() => setLayoutEdit(true)}>
+              Edit layout
+            </button>
+          )}
           <button type="button" className="btn-primary" disabled={create.isPending} onClick={() => createNewTask("todo")}>
             <Plus size={14} />
             New task

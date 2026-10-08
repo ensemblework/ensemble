@@ -141,17 +141,28 @@ type HeldJob = NonNullable<Awaited<ReturnType<typeof loadHeldJob>>>;
 
 type HeldLease = { ok: false; status: 404 | 409; message: string } | { ok: true; job: HeldJob; now: Date };
 
+/** Jobs this computer runs: its owner's own, and theirs in spaces shared with them. */
+function runsOn(device: Device) {
+  return { deviceId: device.id, OR: [{ userId: device.userId }, { runnerAccountId: device.userId }] };
+}
+
 function loadHeldJob(app: FastifyInstance, device: Device, jobId: string) {
   return app.prisma.workspaceJob.findFirst({
-    where: { id: jobId, deviceId: device.id, userId: device.userId },
+    where: { id: jobId, ...runsOn(device) },
     include: { task: { select: { id: true, title: true, status: true, owner: true, complexity: true } } },
   });
+}
+
+/** A run in someone else's space only while its runner is still a member there. */
+async function stillMember(app: FastifyInstance, job: { userId: string; runnerAccountId: string | null }): Promise<boolean> {
+  if (!job.runnerAccountId) return true;
+  return Boolean(await app.prisma.spaceMember.findUnique({ where: { spaceId_accountId: { spaceId: job.userId, accountId: job.runnerAccountId } }, select: { id: true } }));
 }
 
 async function holdLease(app: FastifyInstance, device: Device, jobId: string, leaseToken: string): Promise<HeldLease> {
   const now = new Date();
   const job = await loadHeldJob(app, device, jobId);
-  if (!job) return { ok: false, status: 404, message: "Job not found." };
+  if (!job || !(await stillMember(app, job))) return { ok: false, status: 404, message: "Job not found." };
   if (job.leaseToken !== leaseToken || !job.leaseUntil || job.leaseUntil <= now || !LIVE_DEVICE_STATUSES.includes(job.status as (typeof LIVE_DEVICE_STATUSES)[number])) {
     return { ok: false, status: 409, message: LEASE_REJECTED };
   }
@@ -295,11 +306,15 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     if (await isPaused(app.redis, device.userId)) return reply.code(204).send();
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const next = await prisma.workspaceJob.findFirst({
-        where: { deviceId: device.id, userId: device.userId, status: "queued" },
+        where: { ...runsOn(device), status: "queued" },
         orderBy: { sequence: "asc" },
         include: { task: { select: { id: true, title: true } } },
       });
       if (!next) return reply.code(204).send();
+      if (!(await stillMember(app, next))) {
+        await prisma.workspaceJob.updateMany({ where: { id: next.id, status: "queued" }, data: { status: "cancelled", finishedAt: new Date(), error: "Removed from the shared space.", progress: "Cancelled" } });
+        continue;
+      }
       const now = new Date();
       const leaseToken = randomBytes(24).toString("base64url");
       const leaseUntil = new Date(now.getTime() + LEASE_MS);
@@ -318,7 +333,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       });
       if (won.count !== 1) continue;
       await prisma.task.updateMany({ where: { id: next.taskId, owner: "agent", status: { in: ["todo", "proposed", "blocked"] } }, data: { status: "in_progress" } });
-      sseHub.publish(device.userId, { event: "workspace", data: { id: next.id } });
+      sseHub.publish(next.userId, { event: "workspace", data: { id: next.id } });
       return {
         id: next.id,
         leaseToken,
@@ -398,7 +413,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       await prisma.workspaceEvent.create({ data: { jobId: held.job.id, kind: event.kind, data: (redactValue(event.data ?? {}) ?? {}) as Prisma.InputJsonValue } });
     }
     const logs = body.logs ? await storeLog(app, held.job.id, body.logs) : { stored: false, duplicate: false, truncated: false };
-    sseHub.publish(device.userId, { event: "workspace", data: { id: held.job.id } });
+    sseHub.publish(held.job.userId, { event: "workspace", data: { id: held.job.id } });
     return { ok: true, leaseUntil: extended.toISOString(), logs };
   });
 
@@ -424,9 +439,11 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       data: { status: "waiting_approval", progress: title.slice(0, 200), lastProgressAt: held.now, leaseUntil: extended },
     });
     if (won.count !== 1) return reply.code(409).send({ error: LEASE_REJECTED });
+    // The question shows in the job's space (everyone there sees it); only the person whose
+    // computer runs the job may answer it (decisions.ts), and only they are notified.
     const row = await prisma.agentDecision.create({
       data: {
-        userId: device.userId,
+        userId: held.job.userId,
         source: "ensemble",
         event,
         toolName: body.toolName?.slice(0, 80) || (event === "question" ? "Question" : "Permission"),
@@ -441,6 +458,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
           jobId: held.job.id,
           deviceId: device.id,
           deviceName: device.name,
+          runnerAccountId: held.job.runnerAccountId,
           tier: body.tier,
         },
         sessionId: held.job.id,
@@ -448,11 +466,19 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       },
     });
     await prisma.notification.create({
-      data: { userId: device.userId, kind: "decision", title: `Agent needs you: ${title}`.slice(0, 200), body: held.job.task.title, urgent: true, url: "/needs-me" },
+      data: {
+        userId: device.userId,
+        kind: "decision",
+        title: `Agent needs you: ${title}`.slice(0, 200),
+        body: held.job.task.title,
+        urgent: true,
+        url: held.job.userId === device.userId ? "/needs-me" : `/needs-me?openSpace=${held.job.userId}`,
+      },
     });
     await prisma.workspaceEvent.create({ data: { jobId: held.job.id, kind: "needs_me", data: { decisionId: row.id, title, tier: body.tier } } });
-    sseHub.publish(device.userId, { event: "decision", data: { id: row.id, status: "pending", title, source: "ensemble" } });
-    sseHub.publish(device.userId, { event: "workspace", data: { id: held.job.id } });
+    sseHub.publish(held.job.userId, { event: "decision", data: { id: row.id, status: "pending", title, source: "ensemble", runnerAccountId: held.job.runnerAccountId } });
+    sseHub.publish(held.job.userId, { event: "workspace", data: { id: held.job.id } });
+    if (held.job.userId !== device.userId) sseHub.publish(device.userId, { event: "notification", data: { kind: "decision" } });
     return reply.code(201).send({ decisionId: row.id });
   });
 
@@ -461,7 +487,8 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     if (!device) return;
     const { id } = request.params as { id: string };
     const { timeout } = z.object({ timeout: z.coerce.number().int().min(1).max(55).default(25) }).parse(request.query);
-    const owned = await prisma.agentDecision.findFirst({ where: { id, userId: device.userId } });
+    // Asked by this computer: in its owner's space or in a space shared with them.
+    const owned = await prisma.agentDecision.findFirst({ where: { id } });
     const detail = (owned?.detail ?? {}) as { deviceId?: string };
     if (!owned || detail.deviceId !== device.id) return reply.code(404).send({ error: "Decision not found." });
     const row = await waitFor(id, timeout * 1000);

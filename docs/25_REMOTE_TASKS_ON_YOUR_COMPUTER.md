@@ -387,6 +387,10 @@ Real sleep suspends the process. Heartbeats stop. The lease is 120 s (§4.3). Th
 
 The 120 s figure is a proposal (open question 3). It is long enough that one missed heartbeat does not kill a job, and short enough that a quit Mac does not sit on `running`.
 
+### 8.1 In a space someone shared with you
+
+Built 8 Oct 2026; see [29 §4](29_SHARING.md#4-agent-runs-in-a-shared-space). A member who assigns a task in someone else's space runs it on one of **their own** paired computers, the ones paired to their account. The server's runner and the owner's computers are refused. The job row lives in the shared space and records `runner_account_id`. The member's computer claims it (claim and lease match `deviceId` and either `userId` or `runnerAccountId`). Progress, questions and decisions publish to the shared space. Everyone there sees the run and its log; only the runner sees which computer it is, stops it, runs it again, or answers its questions. The runner is notified, and the link opens the shared space. Phone answers (§5.1) still work only for your own spaces.
+
 ---
 
 ## 9. Walkthroughs

@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { useToast } from "@/components/toast";
 import { Empty, PageHeader, SkeletonRows, Tag, Toggle, cx } from "@/components/ui";
 import { api, type SkillRecord } from "@/lib/api";
+import { ShareButton } from "@/components/sharing/share-dialog";
 import { dateTime } from "@/lib/format";
 
 function SkillDetail({ skill }: { skill: SkillRecord }) {
@@ -43,7 +44,10 @@ function SkillDetail({ skill }: { skill: SkillRecord }) {
 
   return (
     <div className="tile min-w-0 rounded-lg bg-panel p-5">
-      <h2 className="text-[18px] font-semibold">{skill.name}</h2>
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-[18px] font-semibold">{skill.name}</h2>
+        <ShareButton target={{ kind: "skill", resourceId: skill.id, title: skill.name }} />
+      </div>
       <textarea
         value={body}
         onChange={(event) => {

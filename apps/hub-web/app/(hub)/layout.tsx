@@ -7,6 +7,8 @@ import { Suspense, useEffect, useRef, useState } from "react";
 import { AssistantDock } from "@/components/assistant/assistant-dock";
 import { EnsembleHotkey } from "@/components/ensemble/hotkey";
 import { LiveProvider } from "@/components/live";
+import { PresenceHost } from "@/components/sharing/presence-host";
+import { FollowHost } from "@/components/sharing/people";
 import { CommandPalette, ShortcutSheet } from "@/components/shell/command-palette";
 import { QuickCapture } from "@/components/shell/quick-capture";
 import { ShortcutsHost } from "@/components/shell/shortcuts-host";
@@ -24,6 +26,7 @@ import { Splash } from "@/components/motion/skeletons";
 import { Skeleton, cx } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
 import { clearBrowserTabSession } from "@/lib/tab-session";
+import { switchSpace } from "@/lib/spaces";
 import { ShellLabelsProvider } from "@/lib/shell-labels";
 import { peekPanel, warmPeek } from "@/lib/warm";
 
@@ -163,6 +166,9 @@ function Frame({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** The owner's own surfaces: never shown in a space someone shared with you. */
+const OWNER_ONLY_PAGES = ["/today", "/metrics", "/connect", "/marketplace", "/trash", "/start", "/welcome"];
+
 /** Renders immediately. A 401 on the shell query sends the browser to /login. */
 function AuthGate({ children }: { children: React.ReactNode }) {
   const client = useQueryClient();
@@ -188,6 +194,28 @@ function AuthGate({ children }: { children: React.ReactNode }) {
       window.location.href = `/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
     }
   }, [unauthorized]);
+  // A link that names a space (a notification from a shared space): open that space first.
+  const spaceId = shell.data?.space?.id;
+  useEffect(() => {
+    if (!spaceId) return;
+    const params = new URLSearchParams(window.location.search);
+    const wanted = params.get("openSpace");
+    if (!wanted) return;
+    params.delete("openSpace");
+    if (wanted === spaceId) {
+      window.history.replaceState(null, "", `${pathname}${params.toString() ? `?${params.toString()}` : ""}`);
+      return;
+    }
+    const rest = params.toString();
+    void switchSpace(wanted, `${pathname}${rest ? `?${rest}` : ""}`).catch(() => undefined);
+  }, [spaceId, pathname]);
+  // In a space shared with you, the owner's private pages are not there: the board is home.
+  const guest = Boolean(shell.data?.space?.shared);
+  useEffect(() => {
+    if (guest && OWNER_ONLY_PAGES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`))) {
+      window.location.replace("/board");
+    }
+  }, [guest, pathname]);
   useEffect(() => {
     if (shell.data && shell.data.onboardingComplete === false && pathname !== "/start") {
       window.location.href = "/start";
@@ -215,6 +243,8 @@ export default function HubLayout({ children }: { children: React.ReactNode }) {
       <AuthGate>
         <LiveProvider>
           <Notifier />
+          <PresenceHost />
+          <FollowHost />
           <PeekProvider>
             <Frame>{children}</Frame>
           </PeekProvider>

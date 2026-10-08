@@ -8,7 +8,8 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { plotMentionEntities } from "../plots/mentions.js";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
+import { accountIdOf, ownsOpenSpace } from "../lib/auth.js";
 import { hasModule } from "@ensemble/shared-types";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings } from "../lib/settings.js";
@@ -20,6 +21,7 @@ import { enrichDocument } from "../context/enrich-documents.js";
 import { assertOwned } from "../services/records.js";
 import { createCappedDocument } from "../lib/hosted-limits.js";
 import { mirrorSettings } from "../spaces/store.js";
+import { isGuestIn, visibleArtifacts } from "../sharing/context.js";
 
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 const HOSTED_PREFERENCE_PREFIX = "hosted.";
@@ -340,38 +342,59 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
 
   // ── preferences (learned + declared; settings live under hub.* keys) ────
 
+  /**
+   * In a space shared with you, `ui.*` (your shortcuts and chrome) is yours and lives on your
+   * account; `desk.*` is the owner's Today; the rest is the space's context, which editors share.
+   */
+  const preferenceOwner = (request: FastifyRequest, key: string): string => {
+    if (ownsOpenSpace(request)) return request.userId;
+    if (key.startsWith("ui.")) return accountIdOf(request);
+    // Settings and usage counters are never the space's to share.
+    if (key.startsWith("hub.") || key.startsWith("hosted.")) throw Object.assign(new Error("Only the space's owner can change this."), { statusCode: 403 });
+    const access = request.access;
+    if (key.startsWith("desk.") || access?.kind !== "member" || access.role !== "editor") {
+      throw Object.assign(new Error("Only the space's owner can change this."), { statusCode: 403 });
+    }
+    return request.userId;
+  };
+
   app.get("/api/preferences", async (request) => {
+    const hidden = [{ key: { startsWith: "hub." } }, { key: { startsWith: HOSTED_PREFERENCE_PREFIX } }];
     const preferences = await prisma.preference.findMany({
-      where: {
-        userId: request.userId,
-        deletedAt: null,
-        NOT: [{ key: { startsWith: "hub." } }, { key: { startsWith: HOSTED_PREFERENCE_PREFIX } }],
-      },
+      where: { userId: request.userId, deletedAt: null, NOT: hidden },
       orderBy: { key: "asc" },
     });
-    return { preferences };
+    if (ownsOpenSpace(request)) return { preferences };
+    const mine = await prisma.preference.findMany({
+      where: { userId: accountIdOf(request), deletedAt: null, key: { startsWith: "ui." } },
+      orderBy: { key: "asc" },
+    });
+    return { preferences: [...preferences.filter((row) => !row.key.startsWith("ui.")), ...mine] };
   });
 
   app.put("/api/preferences/:key", async (request, reply) => {
     const { key } = request.params as { key: string };
     assertEditablePreference(key);
+    const owner = preferenceOwner(request, key);
     // Settings save through PATCH /api/settings, which checks what they hold (Code folders, for one).
     if (key === "hub.settings") return reply.code(400).send({ error: "Settings are saved from the Settings page, not as a preference." });
     const body = z.object({ value: z.unknown() }).parse(request.body);
     const preference = await prisma.preference.upsert({
-      where: { userId_key: { userId: request.userId, key } },
-      create: { userId: request.userId, key, value: body.value as never, source: "me", confidence: 1 },
+      where: { userId_key: { userId: owner, key } },
+      create: { userId: owner, key, value: body.value as never, source: "me", confidence: 1 },
       update: { value: body.value as never, source: "me", confidence: 1, deletedAt: null },
     });
-    if (key.startsWith("ui.")) await mirrorSettings(prisma, request.userId);
+    if (key.startsWith("ui.")) await mirrorSettings(prisma, owner);
     return { preference };
   });
 
   app.delete("/api/preferences/:key", async (request, reply) => {
     const { key } = request.params as { key: string };
     assertEditablePreference(key);
-    await prisma.preference.updateMany({ where: { userId: request.userId, key }, data: { deletedAt: new Date() } });
-    if (key.startsWith("ui.")) await mirrorSettings(prisma, request.userId);
+    if (key === "hub.settings") return reply.code(400).send({ error: "Settings are changed from the Settings page, not as a preference." });
+    const owner = preferenceOwner(request, key);
+    await prisma.preference.updateMany({ where: { userId: owner, key }, data: { deletedAt: new Date() } });
+    if (key.startsWith("ui.")) await mirrorSettings(prisma, owner);
     return reply.code(204).send();
   });
 
@@ -415,7 +438,7 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
         select: { id: true, title: true, askedAt: true, projectId: true, personIds: true },
       }),
       prisma.artifact.findMany({
-        where: { userId, deletedAt: null },
+        where: { userId, deletedAt: null, AND: [visibleArtifacts(userId)] },
         orderBy: { ts: "desc" },
         take: CARD_CAP,
         select: { id: true, kind: true, title: true, ts: true, projectId: true, repoId: true, url: true },
@@ -648,6 +671,7 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
       where: {
         userId: request.userId,
         deletedAt: null,
+        AND: [visibleArtifacts(request.userId)],
         ...(query.kind ? { kind: query.kind as never } : {}),
         ...(query.q
           ? { OR: [{ title: { contains: query.q, mode: "insensitive" } }, { text: { contains: query.q, mode: "insensitive" } }] }
@@ -659,10 +683,11 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
     });
     const counts = await prisma.artifact.groupBy({
       by: ["kind"],
-      where: { userId: request.userId, deletedAt: null },
+      where: { userId: request.userId, deletedAt: null, AND: [visibleArtifacts(request.userId)] },
       _count: true,
     });
-    const sync = await prisma.syncState.findMany({ where: { userId: request.userId } });
+    // Sync state describes the owner's connected apps.
+    const sync = isGuestIn(request.userId) ? [] : await prisma.syncState.findMany({ where: { userId: request.userId } });
     return {
       artifacts,
       counts: counts.map((row) => ({ kind: row.kind, count: row._count })),
@@ -919,7 +944,7 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
           ? prisma.plot.findMany({ where: { userId, deletedAt: null }, select: { id: true, title: true }, take: 80 })
           : Promise.resolve([]),
         prisma.artifact.findMany({
-          where: { userId, deletedAt: null },
+          where: { userId, deletedAt: null, AND: [visibleArtifacts(userId)] },
           select: { id: true, title: true, kind: true, projectId: true, repoId: true, taskId: true },
           orderBy: { ts: "desc" },
           take: 80,

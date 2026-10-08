@@ -62,6 +62,10 @@ export async function exportAccountData(prisma: PrismaClient, userId: string) {
       );
       tables[table] = rows.map((row) => withoutSecrets(row.row));
     }
+    // Sharing rows key on the account or the space, not userId: who you share with, and what.
+    tables.contacts = (await tx.contact.findMany({ where: { ownerId: userId } })) as unknown as Prisma.JsonValue[];
+    tables.space_members = (await tx.spaceMember.findMany({ where: { OR: [{ spaceId: userId }, { accountId: userId }] } })) as unknown as Prisma.JsonValue[];
+    tables.shares = (await tx.share.findMany({ where: { OR: [{ spaceId: userId }, { recipientId: userId }] } })) as unknown as Prisma.JsonValue[];
     return { version: 1, exportedAt: new Date().toISOString(), user, tables };
   }, { timeout: 60_000, isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
 }

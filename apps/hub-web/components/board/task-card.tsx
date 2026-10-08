@@ -22,7 +22,8 @@ function OwnerMark({ owner }: { owner: string }) {
   if (owner === "unassigned") {
     return <span title={label} role="img" aria-label={label} className="inline-block h-4 w-4 rounded-full border border-dashed border-muted" />;
   }
-  const name = shell.data?.user.name || shell.data?.user.email || "";
+  // "Me" on a task is the space's owner: in a space shared with you, that is them, not you.
+  const name = shell.data?.space?.shared?.owner.name || shell.data?.user.name || shell.data?.user.email || "";
   const initial = name ? name.charAt(0).toUpperCase() : "";
   const personLabel = name ? `${label}, ${name}` : label;
   return (

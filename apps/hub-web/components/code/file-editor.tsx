@@ -37,12 +37,14 @@ export function FileEditor({
   onChange,
   onCursor,
   onSave,
+  readOnly = false,
 }: {
   path: string;
   value: string;
   onChange: (value: string) => void;
   onCursor: (line: number, column: number) => void;
   onSave: () => void;
+  readOnly?: boolean;
 }) {
   const ide = useIdeTheme();
   const custom = useMemo(() => (ide?.editor ? codeMirrorTheme(ide) : null), [ide]);
@@ -72,6 +74,8 @@ export function FileEditor({
       height="100%"
       theme={custom ? "none" : oneDark}
       extensions={extensions}
+      readOnly={readOnly}
+      editable={!readOnly}
       onChange={onChange}
       onUpdate={(update: ViewUpdate) => {
         if (!update.selectionSet && !update.docChanged) return;
