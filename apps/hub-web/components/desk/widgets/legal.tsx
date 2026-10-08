@@ -125,7 +125,7 @@ function HeroBody() {
         {PINS.slice(1, 5).map((p) => {
           const z = zone(p.d);
           return (
-            <div key={p.label} style={{ flex: 1, minWidth: 0, borderRadius: 10, padding: "8px 10px", background: "rgba(243,238,230,0.025)", border: "1px solid rgba(243,238,230,0.06)", boxShadow: `inset 2px 0 0 ${zc[z]}` }}>
+            <div key={p.label} style={{ flex: 1, minWidth: 0, borderRadius: 10, padding: "8px 10px", border: "1px solid rgba(243,238,230,0.06)", background: `color-mix(in srgb, ${zc[z]} 10%, transparent)` }}>
               <div className="row sb"><span className="trunc" style={{ fontSize: 12.5, fontWeight: 600 }}>{p.label}</span><span className="num" style={{ fontSize: 20, color: z === "g" ? "var(--ink-2)" : zc[z] }}>{p.d}<span style={{ fontSize: 11, fontFamily: "Figtree", color: "var(--faint)", letterSpacing: 0 }}>d</span></span></div>
               <div className="trunc" style={{ fontSize: 11.5, color: "var(--faint)", marginTop: 1 }}>{p.what} · {p.court}</div>
             </div>

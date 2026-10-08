@@ -67,7 +67,7 @@ export function Blockers(p: WP) {
     <Tile title="Blockers" icon={OctagonAlert} c={p.c ?? 4} r={p.r ?? 4} meta="4 open · oldest 6d" hover={p.hover} ghost={ghost} add>
       <div className="col" style={{ gap: 8 }}>
         {BLOCK.map((b) => (
-          <div key={b.t} style={{ borderRadius: 10, padding: "8px 10px", background: "rgba(243,238,230,0.03)", border: "1px solid rgba(243,238,230,0.06)", boxShadow: `inset 2px 0 0 ${b.sev === "r" ? "var(--danger)" : "var(--warn)"}` }}>
+          <div key={b.t} style={{ borderRadius: 10, padding: "8px 10px", border: "1px solid rgba(243,238,230,0.06)", background: `color-mix(in srgb, ${b.sev === "r" ? "var(--danger)" : "var(--warn)"} 10%, transparent)` }}>
             <div style={{ fontSize: 12.5, fontWeight: 500, lineHeight: 1.3 }}>{b.t}</div>
             <div className="row gap6" style={{ marginTop: 5 }}><Av n={b.who} s={18} /><span className="faint" style={{ fontSize: 11.5 }}>{b.who.split(" ")[0]}</span><span className={`pill ${b.sev}`} style={{ marginLeft: "auto" }}>{b.age}d</span></div>
           </div>

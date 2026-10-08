@@ -227,7 +227,6 @@ function DeskSketch({ card, accent, large }: { card: GalleryCard; accent: string
               gridColumn: `span ${Math.min(12, cell.w)}`,
               gridRow: `span ${Math.max(1, Math.round(cell.h / 2))}`,
               background: index === 0 ? `${accent}22` : "#00000033",
-              boxShadow: index === 0 ? `inset 2px 0 0 ${accent}` : undefined,
             }}
           >
             {index === 0 && numeral ? (

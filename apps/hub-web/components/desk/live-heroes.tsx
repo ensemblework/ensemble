@@ -113,7 +113,7 @@ function Limitation({ live }: { live: DeskLive }) {
         {pins.slice(0, 4).map((pin) => {
           const z = zone(pin.days);
           return (
-            <div key={pin.id} style={{ flex: 1, minWidth: 0, borderRadius: 10, padding: "8px 10px", background: "color-mix(in srgb, var(--ink) 4%, transparent)", boxShadow: `inset 3px 0 0 ${ZONE[z]}` }}>
+            <div key={pin.id} style={{ flex: 1, minWidth: 0, borderRadius: 10, padding: "8px 10px", background: `color-mix(in srgb, ${ZONE[z]} 10%, transparent)` }}>
               <div className="row sb" style={{ gap: 8 }}>
                 <span className="trunc" style={{ fontSize: 12.5, fontWeight: 650 }}>{pin.title}</span>
                 <span className="num" style={{ fontSize: 20, color: ZONE[z] }}>{pin.days}<span style={{ fontSize: 11, color: "var(--faint)" }}>d</span></span>
@@ -165,7 +165,7 @@ function Week({ live }: { live: DeskLive }) {
         {slots.slice(0, 4).map((slot) => {
           const tint = colorFor(slot.course || slot.title);
           return (
-            <div key={slot.id} className="col" style={{ flex: 1, minWidth: 0, minHeight: 108, justifyContent: "space-between", borderRadius: 12, padding: "12px 14px", background: `color-mix(in srgb, ${tint} 18%, transparent)`, boxShadow: `inset 3px 0 0 ${tint}` }}>
+            <div key={slot.id} className="col" style={{ flex: 1, minWidth: 0, minHeight: 108, justifyContent: "space-between", borderRadius: 12, padding: "12px 14px", background: `color-mix(in srgb, ${tint} 18%, transparent)` }}>
               <span className="num" style={{ fontSize: 28 }}>{DAYS[slot.weekday]!.slice(0, 3)}</span>
               <div>
                 <div className="trunc" style={{ fontSize: 16, fontWeight: 700 }}>{slot.title}</div>
@@ -347,7 +347,7 @@ function Build({ live }: { live: DeskLive }) {
       </div>
       <div className="row" style={{ gap: 8 }}>
         {rows.slice(0, 4).map((row) => (
-          <div key={row.id} className="col" style={{ flex: 1, minWidth: 0, borderRadius: 10, padding: "8px 10px", background: "color-mix(in srgb, var(--ink) 4%, transparent)", boxShadow: "inset 3px 0 0 var(--accent)" }}>
+          <div key={row.id} className="col" style={{ flex: 1, minWidth: 0, borderRadius: 10, padding: "8px 10px", background: "color-mix(in srgb, var(--ink) 4%, transparent)" }}>
             <span className="trunc" style={{ fontSize: 12.5, fontWeight: 650 }}>{row.title}</span>
             <span className="faint" style={{ fontSize: 11.5, marginTop: 2 }}>{row.due ? short(row.due) : "Open"}</span>
           </div>
@@ -382,7 +382,7 @@ function Pipeline({ live }: { live: DeskLive }) {
             <div key={stage} className="col" style={{ flex: 1, minWidth: 0, gap: 6, minHeight: 96, borderRadius: 10, padding: 8, background: active ? "color-mix(in srgb, var(--accent) 10%, transparent)" : "transparent", boxShadow: active ? "inset 0 0 0 1px rgb(var(--accent-rgb) / 0.28)" : "inset 0 0 0 1px color-mix(in srgb, var(--ink) 8%, transparent)" }}>
               <span className="cap" style={{ color: active ? "var(--accent)" : undefined }}>{stage}</span>
               {inStage.slice(0, 2).map((row) => (
-                <div key={row.id} style={{ borderRadius: 8, padding: "8px 10px", background: "color-mix(in srgb, var(--accent) 16%, transparent)", boxShadow: "inset 3px 0 0 var(--accent)" }}>
+                <div key={row.id} style={{ borderRadius: 8, padding: "8px 10px", background: "color-mix(in srgb, var(--accent) 16%, transparent)" }}>
                   <div className="trunc" style={{ fontSize: 12.5, fontWeight: 650 }}>{row.title}</div>
                   {row.wordCount ? <div className="faint" style={{ fontSize: 11, marginTop: 2 }}>{row.wordCount} words</div> : null}
                 </div>

@@ -504,8 +504,8 @@ select:focus-visible {
 .agent-block {
   position: relative;
   margin: 0.9em 0;
-  border-left: 3px solid rgb(140 90 210 / 0.75);
-  border-radius: 0 8px 8px 0;
+  border: 1px solid rgb(140 90 210 / 0.22);
+  border-radius: 8px;
   background: rgb(140 90 210 / 0.07);
   padding: 0.25em 0.9em 0.6em;
 }
@@ -629,7 +629,7 @@ select:focus-visible {
   padding: 0;
 }
 .ProseMirror blockquote {
-  border-left: 3px solid var(--ink);
+  border-left: 2px solid var(--line-strong, var(--line));
   padding-left: 0.9em;
 }
 .ProseMirror hr {
@@ -1925,12 +1925,20 @@ select:focus-visible {
   background: color-mix(in srgb, var(--bg) 55%, var(--panel));
   padding: 0.6rem 0.65rem;
 }
-/* A priority stripe on the left edge, and a faint wash for Critical. */
-.board-card[data-priority] { box-shadow: inset 3px 0 0 var(--card-prio); padding-left: 0.85rem; }
-.board-card[data-priority="critical"] { --card-prio: var(--prio-critical); background: color-mix(in srgb, var(--prio-critical-bg) 45%, color-mix(in srgb, var(--bg) 55%, var(--panel))); }
+/* The whole card takes a quiet wash of its priority color; no edge stripe. */
+.board-card[data-priority] {
+  --card-base: color-mix(in srgb, var(--bg) 55%, var(--panel));
+  background: color-mix(in srgb, var(--card-prio) var(--card-wash, 13%), var(--card-base));
+  border-color: color-mix(in srgb, var(--card-prio) 28%, var(--line));
+}
+.board-card[data-priority="critical"] { --card-prio: var(--prio-critical); --card-wash: 17%; }
 .board-card[data-priority="p0"] { --card-prio: var(--prio-high); }
-.board-card[data-priority="p1"] { --card-prio: var(--prio-medium); }
-.board-card[data-priority="p2"] { --card-prio: var(--prio-low); }
+.board-card[data-priority="p1"] { --card-prio: var(--prio-medium); --card-wash: 9%; }
+.board-card[data-priority="p2"] { --card-prio: var(--prio-low); --card-wash: 8%; }
+[data-theme="light"] .board-card[data-priority] { --card-wash: 9%; }
+[data-theme="light"] .board-card[data-priority="critical"] { --card-wash: 12%; }
+[data-theme="light"] .board-card[data-priority="p1"],
+[data-theme="light"] .board-card[data-priority="p2"] { --card-wash: 6%; }
 .graph-toolbar { container-type: inline-size; }
 .graph-zoom { display: none; }
 .graph-count-short { display: none; }

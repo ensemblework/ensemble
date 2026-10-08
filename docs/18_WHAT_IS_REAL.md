@@ -131,7 +131,7 @@ The code review space has a VS Code theme picker. Built-in themes live in `@ense
 ## Board priorities, downloads and fixes (9 Oct 2026, local checkout)
 
 - **Fixed:** Settings › Account crashed after a profile change (choosing an avatar, or turning Plots on in Features), showing "We dropped a stitch". The shell refresh replaced the cached account without its profile; `app/(hub)/layout.tsx` now keeps the profile and the avatar picker tolerates a missing one.
-- **Priorities:** Critical, High, Medium and Low (migration `20261009010000_priority_assignee` adds `critical` to the `Priority` enum). Muted colors in both themes, a stripe on each card, and *By priority* or *Manual* order on the board ([02 §3.2](02_MODULE_INTERACTION_HUB_UI.md#32-board-kanban)).
+- **Priorities:** Critical, High, Medium and Low (migration `20261009010000_priority_assignee` adds `critical` to the `Priority` enum). Muted colors in both themes, each card tinted by its priority, and *By priority* or *Manual* order on the board ([02 §3.2](02_MODULE_INTERACTION_HUB_UI.md#32-board-kanban)).
 - **Who a task is with:** cards say Me, Agent, or someone's initials, relative to the viewer. In a shared space a task can be given to a member (`tasks.assignee_account_id`, [29](29_SHARING.md#tasks-with-a-person)).
 - **Downloads:** pages, tasks, meeting notes and skills as PDF, Word (also for Apple Pages), Markdown, HTML or text; diagrams from the list; a whole space as a ZIP with sections to pick. All built in the browser ([02 §18](02_MODULE_INTERACTION_HUB_UI.md#18-downloads)).
 - **Smaller:** a themed dialog replaces the browser's prompt and confirm (new skill, Trash and others); a new notifications panel; *Block diagrams* is now *Diagrams*.

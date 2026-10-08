@@ -414,7 +414,7 @@ function Thread({
   });
   return (
     <article className={`rounded-lg px-2 py-2 ${active ? "bg-accent-soft" : ""}`} onClick={onOpen}>
-      {row.quote ? <div className="mb-1 border-l-2 border-accent pl-2 text-[12px] text-muted">“{row.quote}”</div> : null}
+      {row.quote ? <div className="mb-1 border-l-2 border-line pl-2 text-[12px] text-muted">“{row.quote}”</div> : null}
       {orphan ? <div className="mb-1 text-[12px] text-warn">The highlighted text was removed. “{row.quote}”</div> : null}
       {editing ? (
         <textarea aria-label="Edit comment" value={text} onChange={(event) => setText(event.target.value)} className="field min-h-16 w-full" />
