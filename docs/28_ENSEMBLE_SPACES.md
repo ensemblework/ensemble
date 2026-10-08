@@ -19,7 +19,7 @@ A space row has an undeliverable `space-…@spaces.ensemble.invalid` email and n
 
 ## 2. Which space a request uses
 
-`identify()` (`apps/hub-api/src/lib/auth.ts`) reads the httpOnly `ensemble_space` cookie for browser sign-ins (session, local bypass, desktop). It switches `request.userId` to that space only when the row's `owner_id` is the signed-in account; otherwise the cookie is ignored. A forged cookie can at most pick another space of your own. `request.accountId` always holds the account.
+`identify()` (`apps/hub-api/src/lib/auth.ts`) reads the httpOnly `ensemble_space` cookie for browser sign-ins (session, local bypass, desktop). It switches `request.userId` to that space only when the row's `owner_id` is the signed-in account; otherwise the cookie is ignored. A forged cookie can at most pick another space of your own. `request.accountId` holds the account; code reads it through `accountIdOf(request)`, which falls back to `request.userId` where nothing set it (service calls and the small Fastify apps in integration tests).
 
 - **Personal API tokens, CLI keys and service calls ignore the cookie.** A token belongs to the space it was created in, so an editor connected from a space reads only that space. `ensemble login` approved inside a space gives the CLI that space.
 - **Account routes use `request.accountId`:** `/api/auth/me`, profile, password, email verification, linked sign-in methods, export, account deletion, OAuth linking, and terminal passkey enrolment.

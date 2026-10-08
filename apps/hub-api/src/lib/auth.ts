@@ -122,6 +122,11 @@ export type TokenScope = "full" | "bridge" | "device";
  */
 export type Identity = { userId: string; accountId?: string; via: AuthVia; tokenScope?: TokenScope; tokenId?: string; modules: string | null };
 
+/** The signed-in account. Falls back to userId where nothing set it (service calls, test apps). */
+export function accountIdOf(request: { userId: string; accountId?: string }): string {
+  return request.accountId ?? request.userId;
+}
+
 /** Browser sign-ins open the space named by the space cookie. Tokens and service calls never do. */
 async function inSpace(request: FastifyRequest, who: Identity): Promise<Identity> {
   const space = await ownedSpace(prisma, who.userId, readCookie(request, SPACE_COOKIE));

@@ -273,7 +273,7 @@ Python-only Linux CI does not install Node workspace dependencies. The Mac launc
 
 Repository secrets: `ENSEMBLE_API_URL`, `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID_APP`, `VERCEL_PROJECT_ID_LANDING`. The Vercel projects hold the build settings (root directory `apps/hub-web` or `apps/landing`) and the Hub's `NEXT_PUBLIC_*` values. Server secrets stay in `/etc/ensemble.env` on the VM and never go to GitHub or Vercel.
 
-`.github/workflows/desktop.yml` (desktop installers and macOS sandbox tests) also runs on every pull request; it is described in [DESKTOP.md](DESKTOP.md).
+`.github/workflows/desktop.yml` (desktop installers and macOS sandbox tests) also runs on every pull request; it is described in [DESKTOP.md](DESKTOP.md). Its *Export the desktop UI* step retries once, because the build's Google Fonts download sometimes fails on hosted runners.
 
 **`.github/workflows/cli-release.yml`** runs on a tag `cli-v<version>` (it must match `apps/cli/package.json`) or by hand as a dry run. It builds and smoke-tests the CLI on macOS (arm64, Intel), Linux (x64, arm64) and Windows, builds `.deb`/`.rpm`, publishes a GitHub release with `--latest=false`, and pushes the Homebrew formula and Scoop manifest with deploy keys. Secrets: `HOMEBREW_TAP_DEPLOY_KEY` and `SCOOP_BUCKET_DEPLOY_KEY` (write deploy keys on `ensemblework/homebrew-tap` and `ensemblework/scoop-bucket`), and optionally `WINGET_TOKEN` and `NPM_TOKEN`; a job whose secret is missing is skipped with a notice. Details: [26 §7](26_CLI.md#7-releases).
 

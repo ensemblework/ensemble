@@ -14,6 +14,7 @@ import { listActivities } from "../lib/activity.js";
 import { GITHUB_GIT_PROVIDER } from "../lib/git-auth.js";
 import { HostedAccessError, requireVerifiedUser } from "../lib/hosted-access.js";
 import { mirrorSettings, spaceIds } from "../spaces/store.js";
+import { accountIdOf } from "../lib/auth.js";
 
 const MODEL_CATALOG_TTL_MS = 15_000;
 const MODEL_CATALOG_MAX = 32;
@@ -216,7 +217,7 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
     });
     // The ledger records that a key changed, never the key.
     await appendLedger({ userId: request.userId, actor: "me", action: "model.key.save", payload: { provider } });
-    await mirrorKeys(request.userId, request.accountId);
+    await mirrorKeys(request.userId, accountIdOf(request));
     return result;
   });
 
@@ -250,7 +251,7 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
     modelCatalogCache.delete(request.userId);
     await runtime(`/api/credentials/${provider}?${new URLSearchParams({ userId: request.userId })}`, { method: "DELETE" });
     await appendLedger({ userId: request.userId, actor: "me", action: "model.key.remove", payload: { provider } });
-    await mirrorKeys(request.userId, request.accountId);
+    await mirrorKeys(request.userId, accountIdOf(request));
     return reply.code(204).send();
   });
 

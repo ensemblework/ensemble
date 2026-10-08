@@ -27,7 +27,7 @@ import { env } from "../config.js";
 import { requireHostTerminal } from "../lib/hosted-access.js";
 import { streamCorsHeaders } from "../lib/cors-origin.js";
 import { hubCorsPolicy } from "../lib/hub-cors.js";
-import { readCookie, verifyPassword } from "../lib/auth.js";
+import { readCookie, verifyPassword, accountIdOf } from "../lib/auth.js";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings } from "../lib/settings.js";
 import { declareModule } from "../lib/module-gate.js";
@@ -172,7 +172,7 @@ export async function terminalRoutes(app: FastifyInstance): Promise<void> {
 
   app.post("/api/terminal/passkeys/options", async (request) => {
     humanOnly(request);
-    const user = await prisma.user.findUniqueOrThrow({ where: { id: request.accountId } });
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: accountIdOf(request) } });
     if (!user.passwordHash) throw new GuardError("Terminal passkey enrollment requires an account password. OAuth-only sign-in is valid, but password or reauthentication enrollment support is required before adding a terminal passkey.");
     const { password } = z.object({ password: z.string().min(1) }).parse(request.body);
     if (!(await verifyPassword(password, user.passwordHash))) throw new GuardError("That password is not right.");

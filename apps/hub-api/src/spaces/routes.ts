@@ -7,6 +7,7 @@ import { applyOnboarding } from "../layouts/apply.js";
 import { deleteAccountData } from "../lib/account-data.js";
 import { appendLedger } from "../lib/ledger.js";
 import { copySettings, createSpaceUser, listSpaces, mirrorSettings, setSpaceCookie, spaceIds } from "./store.js";
+import { accountIdOf } from "../lib/auth.js";
 
 /** Not a UUID check: the local and desktop account id is "local". Ownership is checked by `mine`. */
 const Id = z.string().trim().min(1).max(64);
@@ -41,21 +42,21 @@ export async function spacesRoutes(app: FastifyInstance): Promise<void> {
 
   /** The ids this account may open: its own and every space it owns. */
   const mine = async (request: FastifyRequest, id: string) => {
-    const ids = await spaceIds(prisma, request.accountId);
+    const ids = await spaceIds(prisma, accountIdOf(request));
     if (!ids.includes(id)) throw Object.assign(new Error("That space is not yours."), { statusCode: 404 });
     return ids;
   };
 
   app.get("/api/spaces", async (request) => {
     browserOnly(request);
-    const listed = await listSpaces(prisma, request.accountId);
+    const listed = await listSpaces(prisma, accountIdOf(request));
     return { activeId: request.userId, ...listed };
   });
 
   app.post("/api/spaces", async (request, reply) => {
     browserOnly(request);
     const body = CreateBody.parse(request.body);
-    const account = await prisma.user.findUniqueOrThrow({ where: { id: request.accountId }, select: { onboardingRole: true, spaceSettingsSync: true } });
+    const account = await prisma.user.findUniqueOrThrow({ where: { id: accountIdOf(request) }, select: { onboardingRole: true, spaceSettingsSync: true } });
     const template = templateById(body.templateId);
     if (!template) throw Object.assign(new Error("Pick a template."), { statusCode: 400 });
     // A space starts from a template for the role picked at signup.
@@ -66,23 +67,23 @@ export async function spacesRoutes(app: FastifyInstance): Promise<void> {
     const from = body.settings.mode === "fresh" ? request.userId : (body.settings.from ?? request.userId);
     await mine(request, from);
 
-    const spaceId = await createSpaceUser(prisma, request.accountId, { name: body.name, icon: body.icon ?? null });
+    const spaceId = await createSpaceUser(prisma, accountIdOf(request), { name: body.name, icon: body.icon ?? null });
     try {
       // Settings first, so the template's assistant tone (applied next) is the one that stays.
       if (body.settings.mode !== "fresh" || account.spaceSettingsSync) await copySettings(prisma, from, spaceId);
       if (body.settings.mode === "sync" && !account.spaceSettingsSync) {
-        await prisma.user.update({ where: { id: request.accountId }, data: { spaceSettingsSync: true } });
-        for (const id of await spaceIds(prisma, request.accountId)) if (id !== from && id !== spaceId) await copySettings(prisma, from, id);
+        await prisma.user.update({ where: { id: accountIdOf(request) }, data: { spaceSettingsSync: true } });
+        for (const id of await spaceIds(prisma, accountIdOf(request))) if (id !== from && id !== spaceId) await copySettings(prisma, from, id);
       }
       await applyOnboarding(prisma, spaceId, template.id);
     } catch (error) {
       await deleteAccountData(prisma, spaceId).catch(() => undefined);
       throw error;
     }
-    await prisma.user.update({ where: { id: request.accountId }, data: { lastSpaceId: spaceId } });
-    await appendLedger({ userId: request.accountId, actor: "me", action: "space.create", payload: { spaceId, templateId: template.id, settings: body.settings.mode } });
+    await prisma.user.update({ where: { id: accountIdOf(request) }, data: { lastSpaceId: spaceId } });
+    await appendLedger({ userId: accountIdOf(request), actor: "me", action: "space.create", payload: { spaceId, templateId: template.id, settings: body.settings.mode } });
     setSpaceCookie(reply, request, spaceId);
-    const listed = await listSpaces(prisma, request.accountId);
+    const listed = await listSpaces(prisma, accountIdOf(request));
     return reply.code(201).send({ space: listed.spaces.find((row) => row.id === spaceId), activeId: spaceId });
   });
 
@@ -90,8 +91,8 @@ export async function spacesRoutes(app: FastifyInstance): Promise<void> {
     browserOnly(request);
     const id = Id.parse((request.params as { id: string }).id);
     await mine(request, id);
-    await prisma.user.update({ where: { id: request.accountId }, data: { lastSpaceId: id === request.accountId ? null : id } });
-    setSpaceCookie(reply, request, id === request.accountId ? null : id);
+    await prisma.user.update({ where: { id: accountIdOf(request) }, data: { lastSpaceId: id === accountIdOf(request) ? null : id } });
+    setSpaceCookie(reply, request, id === accountIdOf(request) ? null : id);
     return { activeId: id };
   });
 
@@ -104,7 +105,7 @@ export async function spacesRoutes(app: FastifyInstance): Promise<void> {
       where: { id },
       data: { ...(body.name !== undefined ? { spaceName: body.name } : {}), ...(body.icon !== undefined ? { spaceIcon: body.icon } : {}) },
     });
-    const listed = await listSpaces(prisma, request.accountId);
+    const listed = await listSpaces(prisma, accountIdOf(request));
     return { space: listed.spaces.find((row) => row.id === id) };
   });
 
@@ -112,7 +113,7 @@ export async function spacesRoutes(app: FastifyInstance): Promise<void> {
     browserOnly(request);
     const id = Id.parse((request.params as { id: string }).id);
     const body = z.object({ confirmation: z.string().max(80) }).parse(request.body ?? {});
-    if (id === request.accountId) throw Object.assign(new Error("Your first space is your account. Delete the account from Settings instead."), { statusCode: 400 });
+    if (id === accountIdOf(request)) throw Object.assign(new Error("Your first space is your account. Delete the account from Settings instead."), { statusCode: 400 });
     await mine(request, id);
     const space = await prisma.user.findUniqueOrThrow({ where: { id }, select: { spaceName: true } });
     if (body.confirmation.trim() !== (space.spaceName ?? "").trim()) {
@@ -124,8 +125,8 @@ export async function spacesRoutes(app: FastifyInstance): Promise<void> {
     const devices = await prisma.device.findMany({ where: { userId: id, revokedAt: null } });
     for (const device of devices) await revokePairedDevice(prisma, id, device);
     await deleteAccountData(prisma, id);
-    await prisma.user.updateMany({ where: { id: request.accountId, lastSpaceId: id }, data: { lastSpaceId: null } });
-    await appendLedger({ userId: request.accountId, actor: "me", action: "space.delete", payload: { spaceId: id } });
+    await prisma.user.updateMany({ where: { id: accountIdOf(request), lastSpaceId: id }, data: { lastSpaceId: null } });
+    await appendLedger({ userId: accountIdOf(request), actor: "me", action: "space.delete", payload: { spaceId: id } });
     if (request.userId === id) setSpaceCookie(reply, request, null);
     return reply.code(204).send();
   });
@@ -137,7 +138,7 @@ export async function spacesRoutes(app: FastifyInstance): Promise<void> {
     await mine(request, from);
     await copySettings(prisma, from, request.userId);
     await mirrorSettings(prisma, request.userId);
-    await appendLedger({ userId: request.accountId, actor: "me", action: "space.settings.copy", payload: { from, to: request.userId } });
+    await appendLedger({ userId: accountIdOf(request), actor: "me", action: "space.settings.copy", payload: { from, to: request.userId } });
     return { copied: true };
   });
 
@@ -147,9 +148,9 @@ export async function spacesRoutes(app: FastifyInstance): Promise<void> {
     const body = z.object({ on: z.boolean(), from: Id.optional() }).parse(request.body);
     const from = body.from ?? request.userId;
     const ids = await mine(request, from);
-    await prisma.user.update({ where: { id: request.accountId }, data: { spaceSettingsSync: body.on } });
+    await prisma.user.update({ where: { id: accountIdOf(request) }, data: { spaceSettingsSync: body.on } });
     if (body.on) for (const id of ids) if (id !== from) await copySettings(prisma, from, id);
-    await appendLedger({ userId: request.accountId, actor: "me", action: "space.settings.sync", payload: { on: body.on, from } });
+    await appendLedger({ userId: accountIdOf(request), actor: "me", action: "space.settings.sync", payload: { on: body.on, from } });
     return { sync: body.on };
   });
 }
