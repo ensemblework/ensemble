@@ -28,6 +28,7 @@ const EXACT = new Set([
   "/connect",
   "/settings",
   "/start",
+  "/spaces/new",
   "/welcome",
   "/unavailable",
   "/diagrams",

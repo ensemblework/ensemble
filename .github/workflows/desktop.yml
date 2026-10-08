@@ -58,8 +58,11 @@ jobs:
       - name: Install the workspace
         run: pnpm install --frozen-lockfile
 
+      # next/font fetches Google Fonts while building. That fetch sometimes gets an odd reply on
+      # hosted runners ("Cannot read properties of null" in the font loader), so one retry.
       - name: Export the desktop UI
-        run: node scripts/export-desktop-web.mjs
+        shell: bash
+        run: node scripts/export-desktop-web.mjs || (echo "Export failed once; retrying." && sleep 20 && node scripts/export-desktop-web.mjs)
 
       - name: Assemble the local API sidecar
         run: node scripts/assemble-desktop-sidecar.mjs

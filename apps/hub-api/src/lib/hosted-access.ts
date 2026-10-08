@@ -52,9 +52,12 @@ export function createHostedAccessPolicy(resolveUser: UserResolver, env: NodeJS.
   };
 }
 
+/** A space answers with its owner: verification and operator status belong to the account. */
 const defaultResolver: UserResolver = async (userId) => {
   const { prisma } = await import("./prisma.js");
-  return prisma.user.findUnique({ where: { id: userId }, select: { email: true, emailVerifiedAt: true } });
+  const row = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, emailVerifiedAt: true, owner: { select: { email: true, emailVerifiedAt: true } } } });
+  if (!row) return null;
+  return row.owner ?? { email: row.email, emailVerifiedAt: row.emailVerifiedAt };
 };
 let resolver = defaultResolver;
 

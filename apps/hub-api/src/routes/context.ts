@@ -19,6 +19,7 @@ import { peopleCards } from "../context/people-view.js";
 import { enrichDocument } from "../context/enrich-documents.js";
 import { assertOwned } from "../services/records.js";
 import { createCappedDocument } from "../lib/hosted-limits.js";
+import { mirrorSettings } from "../spaces/store.js";
 
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 const HOSTED_PREFERENCE_PREFIX = "hosted.";
@@ -362,6 +363,7 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
       create: { userId: request.userId, key, value: body.value as never, source: "me", confidence: 1 },
       update: { value: body.value as never, source: "me", confidence: 1, deletedAt: null },
     });
+    if (key.startsWith("ui.")) await mirrorSettings(prisma, request.userId);
     return { preference };
   });
 
@@ -369,6 +371,7 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
     const { key } = request.params as { key: string };
     assertEditablePreference(key);
     await prisma.preference.updateMany({ where: { userId: request.userId, key }, data: { deletedAt: new Date() } });
+    if (key.startsWith("ui.")) await mirrorSettings(prisma, request.userId);
     return reply.code(204).send();
   });
 

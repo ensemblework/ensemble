@@ -87,7 +87,7 @@ function PlotWorkspaceInner() {
   const toast = useToast();
   const client = useQueryClient();
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
-  const userId = shell.data?.user.id ?? null;
+  const userId = shell.data?.space?.id ?? shell.data?.user.id ?? null;
   const [spaceId, setSpaceId] = useState<string | undefined>(() => typeof window === "undefined" ? undefined : new URLSearchParams(window.location.search).get("space") ?? undefined);
   const spaces = useQuery({ queryKey: ["plots"], queryFn: api.plots });
   const workspace = useQuery({

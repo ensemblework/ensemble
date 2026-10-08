@@ -4,7 +4,8 @@ import type { FastifyInstance } from "fastify";
 import { env } from "../config.js";
 import { envDevTools } from "../lib/dev-tools.js";
 import { requireBrowserSession } from "../bridge/auth.js";
-import { endSession, hashPassword, newApiToken, readCookie, SESSION_COOKIE, sha256, startSession, verifyPassword } from "../lib/auth.js";
+import { mirrorAccount, spaceIds } from "../spaces/store.js";
+import { endSession, hashPassword, newApiToken, readCookie, SESSION_COOKIE, sha256, startSession, verifyPassword, accountIdOf } from "../lib/auth.js";
 import { currentSignupPolicy, INVITE_ONLY, signupMode, signupPermitted } from "../lib/signup.js";
 import { emailConfigured, requireEmailConfigured, sendAccountEmail, verifyCodeTokenId } from "../lib/auth-email.js";
 import { LoginProvider, loginProviderConfigured } from "../lib/auth-oauth.js";
@@ -69,7 +70,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   const sensitiveSession = async (request: import("fastify").FastifyRequest, current?: string) => {
     requireBrowserSession(request);
     if (request.authVia !== "session") throw Object.assign(new Error("Sign in with a browser account first."), { statusCode: 403 });
-    const user = await prisma.user.findUniqueOrThrow({ where: { id: request.userId } });
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: accountIdOf(request) } });
     if (user.passwordHash && current !== undefined) {
       if (!(await verifyPassword(current, user.passwordHash))) throw Object.assign(new Error("Your current password is wrong."), { statusCode: 400 });
     } else {
@@ -162,14 +163,16 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.get("/api/auth/me", async (request, reply) => {
-    const user = await prisma.user.findUnique({ where: { id: request.userId } });
+    const user = await prisma.user.findUnique({ where: { id: accountIdOf(request) } });
+    const space = request.userId === accountIdOf(request) ? null : await prisma.user.findUnique({ where: { id: request.userId }, select: { onboardingCompletedAt: true } });
     if (!user && request.authVia !== "bypass") return reply.code(401).send({ error: "Sign in." });
     const settings = await loadSettings(prisma, request.userId);
     const pref = await prisma.preference.findFirst({ where: { userId: request.userId, key: "hub.settings", deletedAt: null } });
     return {
       user: user && request.authVia !== "bypass" && request.authVia !== "desktop"
         ? userView(user)
-        : { id: request.userId, email: "", name: "Local (no account)", emailVerified: true, hasPassword: false, profile: { gender: null, profession: null, organization: null, heardFrom: null } },
+        : { id: accountIdOf(request), email: "", name: "Local (no account)", emailVerified: true, hasPassword: false, profile: { gender: null, profession: null, organization: null, heardFrom: null } },
+      spaceId: request.userId,
       via: request.authVia,
       verificationRequired: process.env.NODE_ENV === "production" && process.env.ENSEMBLE_DESKTOP !== "1" && !user?.emailVerifiedAt,
       profileComplete: request.authVia === "bypass" || process.env.ENSEMBLE_DESKTOP === "1" || Boolean(user?.profileCompletedAt),
@@ -179,7 +182,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
         theme: settings.appearance.theme,
         accentAt: pref?.updatedAt.getTime() ?? 0,
       },
-      onboardingComplete: request.authVia === "bypass" || Boolean(user?.onboardingCompletedAt),
+      onboardingComplete: request.authVia === "bypass" || Boolean((space ?? user)?.onboardingCompletedAt),
       modules: request.modules,
       devTools: envDevTools() || Boolean(user?.tester),
     };
@@ -189,7 +192,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     const body = z
       .object({ name: z.string().trim().max(80).optional(), password: Credentials.shape.password.optional(), current: z.string().max(256).optional() })
       .parse(request.body);
-    const user = await prisma.user.findUniqueOrThrow({ where: { id: request.userId } });
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: accountIdOf(request) } });
     if (body.password) {
       await sensitiveSession(request, user.passwordHash ? body.current ?? "" : undefined);
       if (!user.emailVerifiedAt && process.env.NODE_ENV === "production") {
@@ -205,13 +208,14 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       await startSession(reply, user.id, request);
       await appendLedger({ userId: user.id, actor: "me", action: "auth.password" });
     }
+    await mirrorAccount(prisma, user.id);
     return { user: userView(updated) };
   });
 
   app.put("/api/auth/profile", async (request) => {
     requireBrowserSession(request);
     const body = Profile.parse(request.body);
-    const user = await prisma.user.findUniqueOrThrow({ where: { id: request.userId } });
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: accountIdOf(request) } });
     const updated = await prisma.user.update({
       where: { id: user.id },
       data: {
@@ -223,6 +227,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
         profileCompletedAt: user.profileCompletedAt ?? new Date(),
       },
     });
+    await mirrorAccount(prisma, updated.id);
     await appendLedger({ userId: updated.id, actor: "me", action: "auth.profile" });
     return { user: userView(updated), profile: profileView(updated) };
   });
@@ -232,7 +237,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     if (request.authVia !== "session") {
       throw Object.assign(new Error("Sign in to the account you are verifying, then enter the code."), { statusCode: 401 });
     }
-    const user = await prisma.user.findUniqueOrThrow({ where: { id: request.userId } });
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: accountIdOf(request) } });
     if (user.emailVerifiedAt) return { verified: true };
     const code = normalizeVerifyCode(rawCode);
     const row = await prisma.emailToken.findFirst({
@@ -262,13 +267,14 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       await tx.user.update({ where: { id: user.id }, data: { emailVerifiedAt: new Date() } });
       await tx.emailToken.deleteMany({ where: { userId: user.id, kind: "verify" } });
     });
+    await mirrorAccount(prisma, user.id);
     await appendLedger({ userId: user.id, actor: "me", action: "auth.verify" });
     return { verified: true };
   });
 
   app.post("/api/auth/resend-verification", async (request) => {
     requireBrowserSession(request);
-    const user = await prisma.user.findUniqueOrThrow({ where: { id: request.userId } });
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: accountIdOf(request) } });
     if (!user.emailVerifiedAt) await sendAccountEmail(prisma, user, "verify");
     return { sent: !user.emailVerifiedAt };
   });
@@ -303,7 +309,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/auth/identities", async (request) => {
     requireBrowserSession(request);
     const identities = await prisma.authIdentity.findMany({
-      where: { userId: request.userId }, select: { provider: true, email: true, createdAt: true },
+      where: { userId: accountIdOf(request) }, select: { provider: true, email: true, createdAt: true },
     });
     return { identities, providers: LoginProvider.options.filter(loginProviderConfigured) };
   });
@@ -313,12 +319,12 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     const { current } = z.object({ current: z.string().max(256).optional() }).parse(request.body ?? {});
     await sensitiveSession(request, current);
     await prisma.$transaction(async (tx) => {
-      const user = await tx.user.update({ where: { id: request.userId }, data: { id: request.userId } });
+      const user = await tx.user.update({ where: { id: accountIdOf(request) }, data: { id: accountIdOf(request) } });
       const count = await tx.authIdentity.count({ where: { userId: user.id } });
       if (!user.passwordHash && count <= 1) throw Object.assign(new Error("Add a password or another provider before removing your last login method."), { statusCode: 400 });
       await tx.authIdentity.deleteMany({ where: { userId: user.id, provider } });
     });
-    await appendLedger({ userId: request.userId, actor: "me", action: "auth.unlink", payload: { provider } });
+    await appendLedger({ userId: accountIdOf(request), actor: "me", action: "auth.unlink", payload: { provider } });
     return reply.code(204).send();
   });
 
@@ -326,17 +332,22 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     requireBrowserSession(request);
     reply.header("Content-Disposition", 'attachment; filename="ensemble-data.json"');
     reply.header("Cache-Control", "no-store");
-    return exportAccountData(prisma, request.userId);
+    const account = await exportAccountData(prisma, accountIdOf(request));
+    const owned = await prisma.user.findMany({ where: { ownerId: accountIdOf(request) }, select: { id: true, spaceName: true }, orderBy: { createdAt: "asc" } });
+    const spaces = [];
+    for (const row of owned) spaces.push({ id: row.id, name: row.spaceName, data: await exportAccountData(prisma, row.id) });
+    return { ...account, spaces };
   });
 
   app.delete("/api/auth/account", async (request, reply) => {
     const body = z.object({ confirmation: z.literal("DELETE"), current: z.string().max(256).optional() }).parse(request.body);
     await sensitiveSession(request, body.current);
-    const active = await prisma.workspaceJob.count({ where: { userId: request.userId, status: { in: ["running", "claimed", "stopping", "waiting_approval"] } } });
+    const everyone = await spaceIds(prisma, accountIdOf(request));
+    const active = await prisma.workspaceJob.count({ where: { userId: { in: everyone }, status: { in: ["running", "claimed", "stopping", "waiting_approval"] } } });
     if (active) throw Object.assign(new Error("Stop your active agent runs before deleting your account."), { statusCode: 409 });
-    const devices = await prisma.device.findMany({ where: { userId: request.userId, revokedAt: null } });
-    for (const device of devices) await revokePairedDevice(prisma, request.userId, device);
-    await deleteAccountData(prisma, request.userId);
+    const devices = await prisma.device.findMany({ where: { userId: { in: everyone }, revokedAt: null } });
+    for (const device of devices) await revokePairedDevice(prisma, device.userId, device);
+    await deleteAccountData(prisma, accountIdOf(request));
     await endSession(request, reply);
     return reply.code(204).send();
   });

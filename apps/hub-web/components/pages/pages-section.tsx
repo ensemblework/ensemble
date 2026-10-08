@@ -3,7 +3,8 @@
 /** @jsxImportSource react */
 
 import { ChevronRight, FileText, Pencil, Plus, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { setSidebarRail } from "@/lib/sidebar-rail";
 import { Dialog, cx } from "../ui";
 
 export type PageLinkProps = {
@@ -46,8 +47,27 @@ export function PagesSection({
     if (title && title !== page.title) onRename(page.id, title);
   };
 
+  // The rail has no room for a list. Its Pages icon opens the sidebar with the list showing.
+  useEffect(() => {
+    const show = () => setExpanded(true);
+    window.addEventListener("ensemble:pages-open", show);
+    return () => window.removeEventListener("ensemble:pages-open", show);
+  }, []);
+
   return (
-    <nav className="mt-2 flex min-h-0 flex-col px-2" aria-label="Pages">
+    <nav className="pages-nav mt-2 flex min-h-0 flex-col px-2" aria-label="Pages">
+      <button
+        type="button"
+        className="pages-rail nav-link row-tile items-center rounded-lg py-[6px]"
+        title="Pages"
+        aria-label="Show pages"
+        onClick={() => {
+          setSidebarRail(false);
+          window.dispatchEvent(new CustomEvent("ensemble:pages-open"));
+        }}
+      >
+        <FileText size={16} strokeWidth={1.8} className="text-muted" />
+      </button>
       <div className="sidebar-kicker page-kicker mx-2 mb-1 flex items-center justify-between">
         <button type="button" className="flex items-center gap-1 py-1 hover:text-ink" aria-label="Toggle pages" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
           <ChevronRight size={12} className={expanded ? "rotate-90" : undefined} />

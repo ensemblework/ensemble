@@ -68,6 +68,8 @@ This is why there was no code change to the webapp: the operations already exist
 
 ---
 
+The assistant works inside the open Ensemble space. Its tools read and write with that space's user id, so it never sees another space's tasks, people, pages, or connected apps ([28](28_ENSEMBLE_SPACES.md)).
+
 ## 3. The moving parts
 
 | Path | LOC | What it is |

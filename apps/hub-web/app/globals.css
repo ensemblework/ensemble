@@ -2272,3 +2272,38 @@ button.account-avatar:focus-visible {
   .auth-art { display: none; }
   .auth-brand { left: 24px; top: 24px; }
 }
+
+/* ── Space switcher and the collapsed rail ─────────────────────────────── */
+.space-switcher { display: flex; width: 100%; align-items: center; gap: 9px; padding: 5px 6px; border: 0; border-radius: 7px; background: transparent; cursor: pointer; font: inherit; }
+.space-switcher:hover, .space-switcher[aria-expanded="true"] { background: var(--hover); }
+.space-switcher:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--accent-rgb) / 0.55); }
+.space-icon { display: inline-grid; flex-shrink: 0; place-items: center; border-radius: 6px; background: var(--hover); box-shadow: inset 0 0 0 1px var(--line); color: var(--ink); font-weight: 600; line-height: 1; }
+html[data-sidebar="rail"] .space-switcher { justify-content: center; padding: 6px 0; }
+.pages-rail { display: none; }
+html[data-sidebar="rail"] .pages-rail { display: flex; justify-content: center; border: 0; background: transparent; width: 100%; cursor: pointer; }
+html[data-sidebar="rail"] .pages-nav > :not(.pages-rail) { display: none; }
+/* Today, Pages and the work links are one group in the rail: no divider and no empty row between them. */
+html[data-sidebar="rail"] aside nav.pages-nav,
+html[data-sidebar="rail"] aside nav.pages-nav + nav { margin-top: 0; border-top: 0; padding-top: 0; }
+html[data-sidebar="rail"] aside nav.pages-nav { margin-top: 2px; }
+
+/* ── New space (/spaces/new). Shares the onboarding layout. */
+.space-icon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(34px, 1fr)); gap: 4px; }
+.space-icon-grid button { display: grid; place-items: center; height: 34px; border: 1px solid transparent; border-radius: 7px; background: transparent; font-size: 17px; font-weight: 600; color: var(--ink); cursor: pointer; }
+.space-icon-grid button:hover { background: var(--hover); }
+.space-icon-grid button[aria-checked="true"] { border-color: rgb(var(--ink-rgb) / 0.45); background: var(--hover); }
+.space-icon-grid button:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--accent-rgb) / 0.55); }
+.space-option { display: flex; align-items: flex-start; gap: 11px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; transition: border-color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease); }
+.space-option:hover { border-color: var(--line-strong); background: var(--hover); }
+.space-option.is-on { border-color: rgb(var(--ink-rgb) / 0.45); background: var(--hover); }
+.space-option:focus-visible { outline: none; box-shadow: 0 0 0 2px rgb(var(--accent-rgb) / 0.55); }
+.space-option-dot { flex-shrink: 0; width: 15px; height: 15px; margin-top: 2px; border-radius: 999px; border: 1.5px solid var(--line-strong); }
+.space-option.is-on .space-option-dot { border: 4.5px solid rgb(var(--ink-rgb)); }
+.space-inline-select { max-width: 160px; padding: 0 2px; border: 0; border-bottom: 1px dashed var(--line-strong); background: transparent; color: var(--ink); font: inherit; font-weight: 500; cursor: pointer; }
+.space-inline-select:focus-visible { outline: none; border-bottom-color: rgb(var(--accent-rgb)); }
+.space-separate { padding: 11px 12px; border-radius: 8px; background: var(--hover); }
+.space-separate ul { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 6px 0 0; padding: 0; list-style: none; font-size: 12.5px; color: var(--muted); }
+.space-separate li::before { content: "·"; margin-right: 6px; color: var(--faint); }
+
+/* A dark brand mark on its own dark square, as the apps draw their icons. */
+.app-mark-tile { display: inline-grid; place-items: center; background: #0d0d0d; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.12); }

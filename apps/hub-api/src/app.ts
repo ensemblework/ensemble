@@ -46,6 +46,7 @@ import { themeRoutes } from "./routes/themes.js";
 import { diagramRoutes } from "./routes/diagrams.js";
 import { plotRoutes } from "./routes/plots.js";
 import { layoutsRoutes } from "./routes/layouts.js";
+import { spacesRoutes } from "./spaces/routes.js";
 import { marketplaceRoutes } from "./routes/marketplace.js";
 import { widgetRoutes } from "./routes/widgets.js";
 import { deskRoutes } from "./routes/desk.js";
@@ -138,6 +139,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     }
     if (who) {
       request.userId = who.userId;
+      request.accountId = who.accountId ?? who.userId;
       request.authVia = who.via;
       request.tokenScope = who.tokenScope;
       request.tokenId = who.tokenId;
@@ -218,6 +220,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     diagramRoutes,
     plotRoutes,
     layoutsRoutes,
+    spacesRoutes,
     marketplaceRoutes,
     widgetRoutes,
     deskRoutes,

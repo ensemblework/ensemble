@@ -3,19 +3,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, Check } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { api, type OnboardingTemplateCard } from "@/lib/api";
+import { useEffect, useState } from "react";
+import { api } from "@/lib/api";
 import { useToast } from "@/components/toast";
-import { TemplatePreview, type PreviewView } from "@/components/onboarding/template-preview";
+import { TemplateList, TemplateStage } from "@/components/onboarding/template-picker";
 import { ROLES, roleFromProfession, type Role } from "@/components/onboarding/roles";
 
 const HEARD = ["A friend or colleague", "X", "LinkedIn", "Search", "YouTube", "Somewhere else"];
-
-const VIEWS: Array<[PreviewView, string]> = [
-  ["today", "Today"],
-  ["board", "Board"],
-  ["context", "Context"],
-];
 
 export default function StartPage() {
   const toast = useToast();
@@ -30,7 +24,6 @@ export default function StartPage() {
   const [org, setOrg] = useState("");
   const [heard, setHeard] = useState("");
   const [templateId, setTemplateId] = useState<string | null>(null);
-  const [view, setView] = useState<PreviewView>("today");
   const [seeded, setSeeded] = useState(false);
 
   useEffect(() => {
@@ -64,7 +57,6 @@ export default function StartPage() {
     onSuccess: async () => {
       await client.invalidateQueries({ queryKey: ["me"] });
       setStep("desk");
-      setView("today");
     },
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
@@ -197,12 +189,7 @@ export default function StartPage() {
             <p className="onboard-lede">
               Six ways to start as {roleInfo ? (/^[aeiou]/i.test(roleInfo.label) ? "an" : "a") : "a"} {roleInfo?.label.toLowerCase() ?? "new member"}. Every tile can be moved, resized, or hidden later.
             </p>
-            <div className="onboard-templates" role="radiogroup" aria-label="Templates">
-              {cards.isLoading ? Array.from({ length: 6 }, (_, index) => <div key={index} className="onboard-template skeleton" style={{ height: 76 }} />) : null}
-              {list.map((card) => (
-                <TemplateOption key={card.id} card={card} role={role ?? ""} on={selected?.id === card.id} onPick={() => setTemplateId(card.id)} />
-              ))}
-            </div>
+            <TemplateList cards={list} loading={cards.isLoading} role={role ?? ""} selectedId={selected?.id ?? null} onPick={setTemplateId} />
             <div className="onboard-actions">
               <button type="button" className="btn" onClick={() => setStep("you")}>
                 <ArrowLeft size={14} />
@@ -217,58 +204,12 @@ export default function StartPage() {
         )}
       </aside>
 
-      <section className="onboard-stage" aria-label="Preview">
-        {selected ? (
-          <div className="onboard-stage-inner">
-            <div className="onboard-stage-head">
-              <div className="min-w-0">
-                <div className="text-[12px] text-faint">{step === "you" ? "A desk you could start with" : "Preview with sample data"}</div>
-                <div className="truncate text-[15px] font-medium text-ink">{selected.name}</div>
-              </div>
-              <div className="onboard-views" role="tablist" aria-label="Preview view">
-                {VIEWS.map(([id, label]) => (
-                  <button key={id} type="button" role="tab" aria-selected={view === id} onClick={() => setView(id)}>
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="onboard-canvas" key={`${selected.id}-${view}`}>
-              <TemplatePreview card={selected} role={role ?? ""} view={view} />
-            </div>
-            <ul className="onboard-features">
-              {selected.features.map((feature) => (
-                <li key={feature}>
-                  <Check size={13} strokeWidth={2.4} />
-                  {feature}
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : (
-          <div className="onboard-stage-empty">
-            <div className="onboard-stage-ghost" aria-hidden="true">
-              {Array.from({ length: 7 }, (_, index) => (
-                <i key={index} />
-              ))}
-            </div>
-            <p>Pick what you do. A desk built for it shows up here.</p>
-          </div>
-        )}
-      </section>
+      <TemplateStage
+        card={selected}
+        role={role ?? ""}
+        kicker={step === "you" ? "A desk you could start with" : "Preview with sample data"}
+        empty="Pick what you do. A desk built for it shows up here."
+      />
     </div>
-  );
-}
-
-function TemplateOption({ card, role, on, onPick }: { card: OnboardingTemplateCard; role: string; on: boolean; onPick: () => void }) {
-  const thumb = useMemo(() => <TemplatePreview card={card} role={role} view="today" maxHeight={86} />, [card, role]);
-  return (
-    <button type="button" role="radio" aria-checked={on} data-template={card.id} className="onboard-template" onClick={onPick}>
-      <span className="onboard-thumb">{thumb}</span>
-      <span className="min-w-0 flex-1">
-        <span className="block text-[14px] font-medium text-ink">{card.name}</span>
-        <span className="mt-0.5 block text-[12.5px] leading-[1.45] text-muted">{card.blurb}</span>
-      </span>
-    </button>
   );
 }

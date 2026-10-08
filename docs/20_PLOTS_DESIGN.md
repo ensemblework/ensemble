@@ -192,7 +192,7 @@ ECharts and CodeMirror are dynamic imports from the studio and the code pane. Th
 
 ## 8. Tiled workspace
 
-The primary surface is a canvas of chart tiles, called a **plot space**, not a page that edits one figure. A saved single plot still opens in the studio. An account can create and name multiple plot spaces and switch between them in `components/plots/workspace.tsx`. Each is stored as a plot whose config has `kind: "workspace"`. Layout and tile config autosave; switching saves the current space before opening another. Plot spaces organize charts and files within an account; they are not independent Ensemble spaces or a context-isolation boundary.
+The primary surface is a canvas of chart tiles, called a **plot space**, not a page that edits one figure. (A plot space lives inside one Ensemble space; see [28](28_ENSEMBLE_SPACES.md).) A saved single plot still opens in the studio. An account can create and name multiple plot spaces and switch between them in `components/plots/workspace.tsx`. Each is stored as a plot whose config has `kind: "workspace"`. Layout and tile config autosave; switching saves the current space before opening another. Plot spaces organize charts and files within an account; they are not independent Ensemble spaces or a context-isolation boundary.
 
 `POST /api/plots` accepts a workspace config to create a space. `GET /api/plots/workspace?id=<id>` opens a specific owned space, and `PUT /api/plots/workspace` accepts an optional `id` to save it. Omitting the ID preserves the existing most-recent-space behavior. Workspace dataset IDs are ownership-checked on create/update/save, and `GET /api/plots/:id` retains workspace configs rather than flattening them into single-chart defaults.
 

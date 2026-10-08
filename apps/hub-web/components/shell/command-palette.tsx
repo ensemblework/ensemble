@@ -9,6 +9,7 @@ import { useShortcuts } from "@/lib/shortcut-store";
 import { hasModule, moduleForPath } from "@ensemble/shared-types/modules";
 import { DESK_IDS, DESKS, MARKET_ID } from "@/components/desk/desks";
 import { api } from "@/lib/api";
+import { switchSpace } from "@/lib/spaces";
 import { plural } from "@/lib/format";
 import { isApplePlatform, modKey } from "@/lib/platform";
 import { warmPeek } from "@/lib/warm";
@@ -53,6 +54,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
   const [index, setIndex] = useState(0);
   const tasks = useQuery({ queryKey: ["tasks"], queryFn: api.tasks, enabled: open, staleTime: 20_000 });
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, enabled: open, staleTime: 30_000 });
+  const spaces = useQuery({ queryKey: ["spaces"], queryFn: api.spaces, enabled: open, staleTime: 30_000 });
 
   const items = useMemo<Item[]>(() => {
     const needle = query.trim().toLowerCase();
@@ -80,6 +82,12 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
               },
             }]
           : [],
+      )
+      .concat(
+        (spaces.data?.spaces ?? [])
+          .filter((space) => space.id !== spaces.data?.activeId)
+          .map((space) => ({ id: `space-${space.id}`, label: `Switch to ${space.name}`, hint: "Space", run: () => void switchSpace(space.id) })),
+        [{ id: "act-new-space", label: "New space", hint: "A separate line of work", run: () => router.push("/spaces/new") }],
       )
       .concat(
         shell.data?.devTools
@@ -120,7 +128,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
         run: () => peek.open(task.id),
       }));
     return [...actions, ...pages, ...rows];
-  }, [query, tasks.data, router, peek, shell.data]);
+  }, [query, tasks.data, router, peek, shell.data, spaces.data]);
 
   useEffect(() => {
     if (!open) return;

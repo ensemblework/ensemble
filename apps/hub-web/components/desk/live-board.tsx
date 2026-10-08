@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import {
   BookOpen,
@@ -11,7 +11,6 @@ import {
   Flag,
   Gavel,
   GitPullRequest,
-  GripVertical,
   GraduationCap,
   Hourglass,
   Layers,
@@ -29,25 +28,11 @@ import { templateDeskLayout } from "@ensemble/shared-types/manifest";
 import { useToast } from "@/components/toast";
 import { placeCenteredPanel } from "@/lib/place-layer";
 import { DESK_IDS, type DeskId } from "./desks";
-import {
-  arrange,
-  hiddenTilesFor,
-  hideTile,
-  isDefaultLayout,
-  layoutKey,
-  moveTile,
-  readLayout,
-  resizeTile,
-  showTile,
-  sizeFromDrag,
-  stepTile,
-  tileLimits,
-  type DeskLayout,
-  type TileSize,
-} from "./layout";
+import { arrange, hiddenTilesFor, isDefaultLayout, layoutKey, readLayout } from "./layout";
 import { LiveDraw, liveDrawKind } from "./live-draw";
 import { liveHero } from "./live-heroes";
 import { DeskPreviewProvider, Num, Tile } from "./ui";
+import { useLayoutPreference, useTileControls } from "./arrange";
 
 type Row = { id: string; title: string; meta?: string };
 type Field = { key: string; label: string; input?: "text" | "date" | "number" | "select"; options?: Array<[string, string]>; optional?: boolean; placeholder?: string };
@@ -483,37 +468,19 @@ function borrowable(defaults: Spec[], shown: Spec[]): Spec[] {
 export function useDeskLayout(deskId: DeskId) {
   const client = useQueryClient();
   const toast = useToast();
-  const prefs = useQuery({ queryKey: ["preferences"], queryFn: api.preferences, staleTime: 30_000 });
+  const key = layoutKey(deskId);
+  const { prefs, layout, save } = useLayoutPreference(key);
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
   const extraValue = prefs.data?.preferences.find((row) => row.key === "desk.extras")?.value;
   const enabled = resolveExtras(deskId, extraValue);
   const defaults = boardSpecs(deskId, enabled);
   const gates = extraGates(deskId, enabled);
-  const key = layoutKey(deskId);
   // Reset goes back to the arrangement the signup template chose for this desk, not the bare desk.
   const template = templateDeskLayout(shell.data?.onboardingTemplateId ?? "");
   const start = template && template.desk === deskId ? template.value : null;
   const baseline = start ? arrange(defaults, specPool(), readLayout(start), gates) : defaults;
-  const layout = readLayout(prefs.data?.preferences.find((row) => row.key === key)?.value);
   const shown = arrange(defaults, specPool(), layout, gates);
   const hidden = layout?.exact ? hiddenTilesFor(defaults, shown).map((spec) => spec.key) : (layout?.hidden ?? []);
-  const save = useCallback(
-    async (next: DeskLayout | null) => {
-      const before = client.getQueryData<Prefs>(["preferences"]);
-      const rest = (before?.preferences ?? []).filter((row) => row.key !== key);
-      client.setQueryData<Prefs>(["preferences"], {
-        preferences: next ? [...rest, { key, value: next } as Prefs["preferences"][number]] : rest,
-      });
-      try {
-        if (next) await api.putPreference(key, next);
-        else await api.deletePreference(key);
-      } catch (error) {
-        if (before) client.setQueryData(["preferences"], before);
-        toast((error as Error).message, { tone: "error" });
-      }
-    },
-    [client, key, toast],
-  );
   return {
     ready: prefs.isSuccess,
     defaults,
@@ -742,18 +709,7 @@ export function LiveBoard({ deskId, live, mobile, plots, formKind = null }: { de
   }, [form]);
   const consumed = useRef<string | null>(null);
   const specs = layout.shown;
-  const [preview, setPreview] = useState<({ key: string } & TileSize) | null>(null);
-  const [dragging, setDragging] = useState<string | null>(null);
-  const [drop, setDrop] = useState<{ key: string; after: boolean } | null>(null);
-  const arranged = { shown: specs, hidden: layout.hidden };
-  // Reordering moves the focused tile's section, and the browser drops focus to <body>. Put it back on the grip.
-  const refocus = useRef<string | null>(null);
-  useLayoutEffect(() => {
-    const key = refocus.current;
-    if (!key) return;
-    refocus.current = null;
-    document.querySelector<HTMLElement>(`[data-desk-key="${CSS.escape(key)}"] .tgrip`)?.focus();
-  });
+  const tiles = useTileControls({ shown: specs, hidden: layout.hidden, save: layout.save, customized: layout.customized, mobile, restoreHint: "Add it back from Add a tile." });
 
   useEffect(() => {
     const kind = formKind;
@@ -764,104 +720,6 @@ export function LiveBoard({ deskId, live, mobile, plots, formKind = null }: { de
     setForm(spec);
     setValues({});
   }, [formKind, layout.ready, specs, layout.defaults]);
-
-  function startResize(event: ReactPointerEvent<HTMLElement>, spec: Spec) {
-    if (event.button !== 0) return;
-    const grid = event.currentTarget.closest("section")?.parentElement;
-    if (!grid) return;
-    event.preventDefault();
-    event.stopPropagation();
-    const style = getComputedStyle(grid);
-    const gap = Number.parseFloat(style.columnGap) || 12;
-    const row = Number.parseFloat(style.gridAutoRows) || 72;
-    const column = (grid.clientWidth - gap * 11) / 12;
-    const limits = tileLimits(spec);
-    const start = { c: spec.c, r: spec.r };
-    const x0 = event.clientX;
-    const y0 = event.clientY;
-    let last = start;
-    document.body.dataset.deskResizing = "1";
-    const move = (next: PointerEvent) => {
-      last = sizeFromDrag(start, { dx: next.clientX - x0, dy: next.clientY - y0 }, { column, row, gap }, limits);
-      setPreview({ key: spec.key, ...last });
-    };
-    const end = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", end);
-      window.removeEventListener("pointercancel", end);
-      delete document.body.dataset.deskResizing;
-      setPreview(null);
-      if (last.c !== start.c || last.r !== start.r) void layout.save(resizeTile(arranged, spec.key, last));
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", end);
-    window.addEventListener("pointercancel", end);
-  }
-
-  function resizeByKey(event: ReactKeyboardEvent<HTMLElement>, spec: Spec) {
-    const step = { ArrowRight: [1, 0], ArrowLeft: [-1, 0], ArrowDown: [0, 1], ArrowUp: [0, -1] }[event.key];
-    if (!step) return;
-    event.preventDefault();
-    void layout.save(resizeTile(arranged, spec.key, { c: spec.c + step[0]!, r: spec.r + step[1]! }));
-  }
-
-  function startMove(event: ReactPointerEvent<HTMLElement>, spec: Spec) {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    const x0 = event.clientX;
-    const y0 = event.clientY;
-    let moved = false;
-    let target: { key: string; after: boolean } | null = null;
-    const move = (next: PointerEvent) => {
-      if (!moved && Math.hypot(next.clientX - x0, next.clientY - y0) < 4) return;
-      if (!moved) {
-        moved = true;
-        setDragging(spec.key);
-        document.body.dataset.deskMoving = "1";
-      }
-      const over = document.elementFromPoint(next.clientX, next.clientY)?.closest<HTMLElement>("[data-desk-key]");
-      const key = over?.dataset.deskKey;
-      if (!over || !key || key === spec.key) {
-        target = null;
-        setDrop(null);
-        return;
-      }
-      const rect = over.getBoundingClientRect();
-      target = { key, after: next.clientX > rect.left + rect.width / 2 };
-      setDrop(target);
-    };
-    const end = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", end);
-      window.removeEventListener("pointercancel", end);
-      delete document.body.dataset.deskMoving;
-      setDragging(null);
-      setDrop(null);
-      if (!moved || !target) return;
-      const index = specs.findIndex((item) => item.key === target!.key);
-      const before = target.after ? (specs[index + 1]?.key ?? null) : target.key;
-      void layout.save(moveTile(arranged, spec.key, before));
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", end);
-    window.addEventListener("pointercancel", end);
-  }
-
-  function moveByKey(event: ReactKeyboardEvent<HTMLElement>, spec: Spec) {
-    const delta = event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : 0;
-    if (!delta) return;
-    event.preventDefault();
-    refocus.current = spec.key;
-    void layout.save(stepTile(arranged, spec.key, delta));
-  }
-
-  function hide(spec: Spec) {
-    const before = layout.customized ? { v: 1 as const, tiles: specs.map((item) => ({ key: item.key, c: item.c, r: item.r })), hidden: layout.hidden } : null;
-    void layout.save(hideTile(arranged, spec.key));
-    toast(`Hid ${spec.title}. Add it back from Add a tile.`, {
-      action: { label: "Undo", run: () => void layout.save(before ?? showTile({ shown: specs.filter((item) => item.key !== spec.key), hidden: layout.hidden }, spec)) },
-    });
-  }
 
   function open(spec: Spec) {
     setForm(spec);
@@ -904,48 +762,21 @@ export function LiveBoard({ deskId, live, mobile, plots, formKind = null }: { de
       {specs.map((spec) => {
         const rows = spec.rows(live);
         const filled = rows.length > 0 || Boolean(spec.stat?.(live));
-        const size = preview?.key === spec.key ? preview : spec;
+        const size = tiles.sizeOf(spec);
+        const control = tiles.controls(spec);
         return (
           <Tile
             key={spec.key}
-            deskKey={spec.key}
+            deskKey={control.deskKey}
             title={spec.title}
             icon={spec.icon}
             c={mobile ? 4 : size.c}
             r={size.r}
             hero={spec.hero}
-            attrs={{
-              "data-dragging": dragging === spec.key ? "1" : undefined,
-              "data-drop": drop?.key === spec.key ? (drop.after ? "after" : "before") : undefined,
-              "data-resizing": preview?.key === spec.key ? "1" : undefined,
-            }}
-            grip={
-              mobile ? undefined : (
-                <button
-                  type="button"
-                  className="tgrip"
-                  aria-label={`Move ${spec.title}. Drag, or use the arrow keys.`}
-                  title="Drag to move"
-                  onPointerDown={(event) => startMove(event, spec)}
-                  onKeyDown={(event) => moveByKey(event, spec)}
-                >
-                  <GripVertical size={12} />
-                </button>
-              )
-            }
-            onHide={() => hide(spec)}
-            corner={
-              mobile ? undefined : (
-                <button
-                  type="button"
-                  className="tresize"
-                  aria-label={`Resize ${spec.title}, ${size.c} columns by ${size.r} rows. Use the arrow keys.`}
-                  title="Drag to resize"
-                  onPointerDown={(event) => startResize(event, spec)}
-                  onKeyDown={(event) => resizeByKey(event, spec)}
-                />
-              )
-            }
+            attrs={control.attrs}
+            grip={control.grip}
+            onHide={control.onHide}
+            corner={control.corner}
             meta={filled ? `${rows.length || 1}` : "Nothing yet"}
             onAdd={filled ? () => open(spec) : undefined}
             openHref={filled ? tileHref(spec.key) : undefined}
@@ -1066,9 +897,9 @@ const TAB_MATCH: Record<string, string[]> = {
   learning: ["concepts"],
 };
 
-export function lensSections(id: DeskId, tab: string, live: DeskLive, extras: ReadonlySet<DeskExtraId> = new Set()): Array<{ title: string; kind: string; rows: Row[] }> {
+export function lensSections(id: DeskId, tab: string, live: DeskLive, extras: ReadonlySet<DeskExtraId> = new Set()): Array<{ title: string; kind: string; icon: LucideIcon; rows: Row[] }> {
   const all = boardSpecs(id, extras);
   const keys = TAB_MATCH[tab];
   const specs = !keys ? all.slice(0, 4) : all.filter((spec) => keys.includes(spec.key));
-  return specs.slice(0, 4).map((spec) => ({ title: spec.title, kind: spec.kind, rows: spec.rows(live).slice(0, 6) }));
+  return specs.slice(0, 4).map((spec) => ({ title: spec.title, kind: spec.kind, icon: spec.icon, rows: spec.rows(live).slice(0, 6) }));
 }

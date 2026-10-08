@@ -13,6 +13,7 @@ import { envDevTools } from "../lib/dev-tools.js";
 import { loadSettings } from "../lib/settings.js";
 import { serializeTask } from "./tasks.js";
 import { isHosted } from "../lib/hosted-access.js";
+import { defaultSpaceName } from "../spaces/store.js";
 
 async function countOrZero(query: Promise<number>): Promise<number> {
   try {
@@ -37,6 +38,8 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
       countOrZero(prisma.undoEntry.count({ where: { userId, undoneAt: { not: null } } })),
     ]);
     if (!user && request.authVia !== "bypass") return reply.code(401).send({ error: "Sign in." });
+    // Inside a space, `user` is the space. Who you are (name, email, verification) is the account.
+    const account = user && user.ownerId ? await prisma.user.findUnique({ where: { id: user.ownerId } }) : user;
     const flags = await Promise.all(
       listConnectors().map(async (connector) => {
         const status = await connectionState(userId, connector);
@@ -51,11 +54,17 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
       }),
     );
     return {
-      user: user
-        ? { id: user.id, email: user.email, name: user.name, emailVerified: Boolean(user.emailVerifiedAt), hasPassword: Boolean(user.passwordHash) }
+      user: account
+        ? { id: account.id, email: account.email, name: account.name, emailVerified: Boolean(account.emailVerifiedAt), hasPassword: Boolean(account.passwordHash) }
         : { id: userId, email: "", name: "Local (no account)", emailVerified: true, hasPassword: false },
+      space: {
+        id: userId,
+        name: user?.ownerId ? user.spaceName || "Untitled space" : account?.spaceName || defaultSpaceName(account?.name ?? ""),
+        icon: user?.ownerId ? user.spaceIcon : (account?.spaceIcon ?? null),
+        primary: !user?.ownerId,
+      },
       via: request.authVia,
-      verificationRequired: isHosted() && !user?.emailVerifiedAt,
+      verificationRequired: isHosted() && !account?.emailVerifiedAt,
       approvals,
       decisions,
       attention: flags.filter(Boolean).length,

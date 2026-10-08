@@ -15,6 +15,7 @@ const loading = () => <SkeletonRows count={4} rowClassName="h-28" className="spa
 const AssistantTab = dynamic(() => import("@/components/settings/tab-assistant").then((mod) => mod.AssistantTab), { ssr: false, loading });
 const ConnectionsTab = dynamic(() => import("@/components/settings/tab-connections").then((mod) => mod.ConnectionsTab), { ssr: false, loading });
 const NotificationsTab = dynamic(() => import("@/components/settings/tab-notifications").then((mod) => mod.NotificationsTab), { ssr: false, loading });
+const SpacesTab = dynamic(() => import("@/components/settings/tab-spaces").then((mod) => mod.SpacesTab), { ssr: false, loading });
 const ShortcutsTab = dynamic(() => import("@/components/settings/tab-shortcuts").then((mod) => mod.ShortcutsTab), { ssr: false, loading });
 const DataTab = dynamic(() => import("@/components/settings/tab-data").then((mod) => mod.DataTab), { ssr: false, loading });
 
@@ -149,7 +150,7 @@ export default function SettingsPage() {
         <div className="mx-auto w-full max-w-[1060px] px-4 pb-16 pt-6 sm:px-6 lg:px-10 lg:pt-8">
           <PageHeader
             title="Settings"
-            description="Make Ensemble work your way: your account, the assistant, connected apps, shortcuts, and your data."
+            description="Make Ensemble work your way: your account and spaces, the assistant, connected apps, shortcuts, and your data."
             actions={
               <span className="text-[12px] text-muted" aria-live="polite">
                 {saving === "saving" ? "Saving…" : saving === "saved" ? "All settings saved" : ""}
@@ -175,6 +176,8 @@ export default function SettingsPage() {
                 <ConnectionsTab {...props} />
               ) : location.tab === "notifications" ? (
                 <NotificationsTab {...props} />
+              ) : location.tab === "spaces" ? (
+                <SpacesTab />
               ) : location.tab === "shortcuts" ? (
                 <ShortcutsTab />
               ) : location.tab === "data" ? (

@@ -1508,6 +1508,20 @@ model User {
   templateExpiresAt     DateTime?             @map("template_expires_at")
   /// Layouts from before the first marketplace apply. Default restores these.
   layoutBaseline        Json?                 @map("layout_baseline")
+  /// Set on an Ensemble space: the account that owns it. Null on the account itself.
+  /// A space is never signed in to directly; the account switches into it.
+  ownerId               String?               @map("owner_id")
+  owner                 User?                 @relation("Spaces", fields: [ownerId], references: [id], onDelete: Cascade)
+  spaces                User[]                @relation("Spaces")
+  /// The space's label in the switcher. On the account it names the first space.
+  spaceName             String?               @map("space_name")
+  /// One emoji, or null for the initial.
+  spaceIcon             String?               @map("space_icon")
+  spacePosition         Int                   @default(0) @map("space_position")
+  /// Account only. Settings, model keys and shortcuts are mirrored to every space.
+  spaceSettingsSync     Boolean               @default(false) @map("space_settings_sync")
+  /// Account only. The space a new sign-in opens.
+  lastSpaceId           String?               @map("last_space_id")
   sessions              Session[]
   authIdentities        AuthIdentity[]
   emailTokens           EmailToken[]
@@ -1526,6 +1540,7 @@ model User {
   widgetLayouts         WidgetLayout[]
   templateApplications  TemplateApplication[]
 
+  @@index([ownerId])
   @@map("users")
 }
 

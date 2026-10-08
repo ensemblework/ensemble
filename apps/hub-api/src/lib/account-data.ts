@@ -67,6 +67,9 @@ export async function exportAccountData(prisma: PrismaClient, userId: string) {
 }
 
 export async function deleteAccountData(prisma: PrismaClient, userId: string): Promise<void> {
+  // An account takes its Ensemble spaces with it. Each space is removed the same way.
+  const owned = await prisma.user.findMany({ where: { ownerId: userId }, select: { id: true } });
+  for (const space of owned) await deleteAccountData(prisma, space.id);
   await prisma.$transaction(async (tx) => {
     await tx.user.update({ where: { id: userId }, data: { id: userId } });
     await tx.$queryRaw`SELECT id FROM workspace_jobs WHERE user_id = ${userId} FOR UPDATE`;
