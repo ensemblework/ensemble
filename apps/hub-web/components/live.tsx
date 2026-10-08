@@ -7,6 +7,8 @@ import { isSilentCancellation } from "@/lib/fetch-cancel";
 import { eventSourceInit, eventsStreamUrl } from "@/lib/events";
 import { invalidateSoon } from "@/lib/invalidate";
 import { notify, notifyDecision } from "@/lib/notify";
+import { presenceStore } from "@/lib/presence";
+import { consumeFlash, flash } from "@/lib/flash";
 
 type LiveState = {
   connected: boolean;
@@ -30,6 +32,9 @@ const INVALIDATES: Record<string, string[][]> = {
   deliverable: [["deliverables"], ["graph"]],
   approval: [["approvals"], ["shell"]],
   decision: [["decisions"], ["shell"]],
+  "sharing.changed": [["spaces"], ["sharing"], ["shared-with-me"], ["space-members"], ["item-shares"], ["notifications"]],
+  notification: [["notifications"]],
+  diagram: [["diagrams"]],
   context: [["people"], ["projects"], ["repos"], ["graph"], ["entities"]],
   sync: [["connections"], ["calendar"], ["artifacts"], ["shell"]],
   "assistant.acted": [["tasks"], ["projects"], ["deliverables"], ["reminders"], ["skills"], ["graph"], ["shell"]],
@@ -104,8 +109,11 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
       source.addEventListener("decision", (event) => {
         invalidateSoon(client, ["decisions"]);
         try {
-          const data = JSON.parse((event as MessageEvent<string>).data) as { status?: string; title?: string; source?: string };
-          if (data.status === "pending") notifyDecision(data.title ?? "An agent is waiting", data.source ?? "agent");
+          const data = JSON.parse((event as MessageEvent<string>).data) as { status?: string; title?: string; source?: string; runnerAccountId?: string | null };
+          // In a shared space only the person who can answer is alerted.
+          const shell = client.getQueryData<Awaited<ReturnType<typeof api.shell>>>(["shell"]);
+          const mine = data.runnerAccountId ? data.runnerAccountId === shell?.user.id : !shell?.space?.shared;
+          if (data.status === "pending" && mine) notifyDecision(data.title ?? "An agent is waiting", data.source ?? "agent");
         } catch {
           // ignore malformed frames
         }
@@ -115,6 +123,42 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
           for (const queryKey of keys) invalidateSoon(client, queryKey);
         });
       }
+      // Pages and tasks listen for saves made elsewhere (another tab, or someone in a shared space).
+      source.addEventListener("page", (event) => {
+        try {
+          window.dispatchEvent(new CustomEvent("ensemble:page", { detail: JSON.parse((event as MessageEvent<string>).data) }));
+        } catch {
+          // ignore malformed frames
+        }
+      });
+      source.addEventListener("diagram", (event) => {
+        try {
+          window.dispatchEvent(new CustomEvent("ensemble:diagram", { detail: JSON.parse((event as MessageEvent<string>).data) }));
+        } catch {
+          // ignore malformed frames
+        }
+      });
+      source.addEventListener("presence", (event) => {
+        try {
+          presenceStore.apply(JSON.parse((event as MessageEvent<string>).data));
+        } catch {
+          // ignore malformed frames
+        }
+      });
+      source.addEventListener("sharing.changed", () => {
+        // Removed from the space you are in: the next request falls back to your own space.
+        const before = client.getQueryData<Awaited<ReturnType<typeof api.shell>>>(["shell"])?.space;
+        if (!before?.shared) return void client.invalidateQueries({ queryKey: ["shell"] });
+        void api
+          .shell()
+          .then((after) => {
+            if (after.space?.id !== before.id) {
+              flash(`You no longer have access to ${before.name}. You're back in your own space.`);
+              window.location.assign("/");
+            } else client.setQueryData(["shell"], after);
+          })
+          .catch(() => undefined);
+      });
       source.addEventListener("reminder.due", (event) => {
         try {
           const data = JSON.parse((event as MessageEvent<string>).data) as { title?: string; id?: string };
@@ -156,6 +200,7 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
       void connect();
     };
 
+    consumeFlash();
     void connect();
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("pagehide", close);

@@ -5,7 +5,7 @@ import { env } from "../config.js";
 import { envDevTools } from "../lib/dev-tools.js";
 import { requireBrowserSession } from "../bridge/auth.js";
 import { mirrorAccount, spaceIds } from "../spaces/store.js";
-import { endSession, hashPassword, newApiToken, readCookie, SESSION_COOKIE, sha256, startSession, verifyPassword, accountIdOf } from "../lib/auth.js";
+import { endSession, hashPassword, newApiToken, readCookie, SESSION_COOKIE, sha256, startSession, verifyPassword, accountIdOf, settingsUserOf } from "../lib/auth.js";
 import { currentSignupPolicy, INVITE_ONLY, signupMode, signupPermitted } from "../lib/signup.js";
 import { emailConfigured, requireEmailConfigured, sendAccountEmail, verifyCodeTokenId } from "../lib/auth-email.js";
 import { LoginProvider, loginProviderConfigured } from "../lib/auth-oauth.js";
@@ -166,8 +166,9 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     const user = await prisma.user.findUnique({ where: { id: accountIdOf(request) } });
     const space = request.userId === accountIdOf(request) ? null : await prisma.user.findUnique({ where: { id: request.userId }, select: { onboardingCompletedAt: true } });
     if (!user && request.authVia !== "bypass") return reply.code(401).send({ error: "Sign in." });
-    const settings = await loadSettings(prisma, request.userId);
-    const pref = await prisma.preference.findFirst({ where: { userId: request.userId, key: "hub.settings", deletedAt: null } });
+    // Theme and accent are yours, even in a space shared with you.
+    const settings = await loadSettings(prisma, settingsUserOf(request));
+    const pref = await prisma.preference.findFirst({ where: { userId: settingsUserOf(request), key: "hub.settings", deletedAt: null } });
     return {
       user: user && request.authVia !== "bypass" && request.authVia !== "desktop"
         ? userView(user)
@@ -343,7 +344,10 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     const body = z.object({ confirmation: z.literal("DELETE"), current: z.string().max(256).optional() }).parse(request.body);
     await sensitiveSession(request, body.current);
     const everyone = await spaceIds(prisma, accountIdOf(request));
-    const active = await prisma.workspaceJob.count({ where: { userId: { in: everyone }, status: { in: ["running", "claimed", "stopping", "waiting_approval"] } } });
+    // Yours: in your spaces, and on your computer in spaces shared with you.
+    const active = await prisma.workspaceJob.count({
+      where: { OR: [{ userId: { in: everyone } }, { runnerAccountId: accountIdOf(request) }], status: { in: ["running", "claimed", "stopping", "waiting_approval"] } },
+    });
     if (active) throw Object.assign(new Error("Stop your active agent runs before deleting your account."), { statusCode: 409 });
     const devices = await prisma.device.findMany({ where: { userId: { in: everyone }, revokedAt: null } });
     for (const device of devices) await revokePairedDevice(prisma, device.userId, device);

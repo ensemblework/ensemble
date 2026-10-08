@@ -36,6 +36,9 @@ import { DiagramMore } from "./diagram-more";
 import { downloadDiagram, type DiagramExportKind } from "./export-image";
 import { ShapeGlyph } from "./glyph";
 import { layoutInBackground } from "./layout-client";
+import { useSpaceAccess } from "@/lib/access";
+import { PagePeople } from "../sharing/page-people";
+import { ShareButton } from "../sharing/share-dialog";
 
 const DiagramCode = dynamic(() => import("./diagram-code").then((mod) => mod.DiagramCode), {
   ssr: false,
@@ -84,7 +87,11 @@ function typingTarget(target: EventTarget | null): boolean {
   return Boolean((target as HTMLElement | null)?.closest("input, textarea, select, [contenteditable=true], .cm-editor"));
 }
 
-export function DiagramEditor({ id }: { id: string }) {
+export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "view" | "edit" } }) {
+  const access = useSpaceAccess();
+  const readOnly = shared ? shared.role !== "edit" : !access.canEdit;
+  const readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
   const roomy = useRoomy();
   const toast = useToast();
   const client = useQueryClient();
@@ -227,7 +234,36 @@ export function DiagramEditor({ id }: { id: string }) {
     return () => window.clearTimeout(timer);
   }, [dirty, text, model, version, save.isPending]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Someone else saved this diagram: take their version when you have nothing unsaved.
+  useEffect(() => {
+    const onRemote = (event: Event) => {
+      const detail = (event as CustomEvent<{ id?: string; version?: number }>).detail;
+      if (detail?.id !== id || !detail.version || detail.version <= versionRef.current) return;
+      if (dirtyRef.current || save.isPending) return;
+      void api
+        .diagram(id)
+        .then(({ diagram }) => {
+          if (dirtyRef.current || diagram.version <= versionRef.current) return;
+          epoch.current += 1;
+          const parsed = parseDiagram(diagram.source);
+          printed.current = diagram.source;
+          textRef.current = diagram.source;
+          versionRef.current = diagram.version;
+          setText(diagram.source);
+          setModel(parsed.model);
+          setDiagnostics(parsed.diagnostics);
+          setVersion(diagram.version);
+        })
+        .catch(() => undefined);
+    };
+    window.addEventListener("ensemble:diagram", onRemote);
+    return () => window.removeEventListener("ensemble:diagram", onRemote);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
   function commit(next: DiagramModel) {
+    // View only: nothing changes, so nothing saves.
+    if (readOnlyRef.current) return;
     if (parseTimer.current != null) {
       window.clearTimeout(parseTimer.current);
       parseTimer.current = null;
@@ -574,10 +610,16 @@ export function DiagramEditor({ id }: { id: string }) {
             placeholder="Untitled diagram"
             className="field min-w-[8rem] flex-1 bg-transparent px-2 py-1 text-[15px] font-semibold"
             onChange={(event) => commit(setTitle(model, event.target.value))}
+            readOnly={readOnly}
           />
+          <PagePeople kind="diagram" id={id} />
+          {readOnly ? <span className="rounded-md border border-line px-1.5 py-0.5 text-2xs text-muted">View only</span> : null}
+          {shared ? null : <ShareButton target={{ kind: "diagram", resourceId: id, title: model.meta.title }} />}
           <span className="text-[12px] text-muted">
             {saveState === "saving" ? "Saving…" : saveState === "saved" ? "Saved" : saveState === "error" ? "Not saved" : "Edits save automatically"}
           </span>
+          {readOnly ? null : (
+          <>
           <span className="mx-0.5 h-4 w-px bg-line" aria-hidden />
           <button type="button" className="btn" disabled={busy} onClick={() => void reorganize()}>
             {busy ? "Reorganizing…" : "Reorganize"}
@@ -612,6 +654,8 @@ export function DiagramEditor({ id }: { id: string }) {
           <button type="button" className="btn" title="Alt+Shift+F" onClick={() => void enterFocus()}>
             Canvas only
           </button>
+          </>
+          )}
           <div className="relative" data-diagram-menu>
             <button type="button" className="btn" aria-expanded={focusExport && !focus} aria-haspopup="menu" disabled={exporting} onClick={() => setFocusExport((open) => !open)}>
               Export
@@ -708,6 +752,8 @@ export function DiagramEditor({ id }: { id: string }) {
         <div ref={stageRef} className={focus ? "diagram-stage is-focus" : "diagram-stage"}>
           <DiagramCanvas
             ref={canvasRef}
+            diagramId={id}
+            readOnly={readOnly}
             model={model}
             markedId={markedId}
             fitTick={fitTick}

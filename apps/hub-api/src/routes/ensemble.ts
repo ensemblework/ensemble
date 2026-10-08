@@ -14,6 +14,7 @@ import { parseWatcher } from "../ensemble/watchers.js";
 import { streamCorsHeaders } from "../lib/cors-origin.js";
 import { hubCorsPolicy } from "../lib/hub-cors.js";
 import { truncateText } from "../lib/text.js";
+import { actorFor, isGuestIn } from "../sharing/context.js";
 
 const InvokeBody = z.object({
   surface: z.enum(SURFACE_IDS),
@@ -77,6 +78,10 @@ export async function ensembleRoutes(app: FastifyInstance): Promise<void> {
     if (body.surface === "code" && !hasModule(request.modules, "code")) {
       return reply.code(404).send({ error: MODULE_DENIED });
     }
+    // Today (reminders, the owner's brief) and Needs me are the space owner's own.
+    if ((body.surface === "today" || body.surface === "needs_me") && isGuestIn(request.userId)) {
+      return reply.code(403).send({ error: "Only the space's owner can ask about this." });
+    }
     const since = new Date(Date.now() - 60_000);
     const [recentReplies, recentComments] = await Promise.all([
       app.prisma.ensembleReply.count({ where: { userId: request.userId, createdAt: { gte: since } } }),
@@ -92,7 +97,7 @@ export async function ensembleRoutes(app: FastifyInstance): Promise<void> {
     const tier = settings.models[tierName];
     const context = await loadSurfaceContext(app.prisma, request.userId, body);
     const conversation = await app.prisma.assistantConversation.create({
-      data: { userId: request.userId, title: truncateText(body.prompt, 60) || "Ensemble" },
+      data: { userId: request.userId, accountId: actorFor(request.userId), title: truncateText(body.prompt, 60) || "Ensemble" },
     });
     const row = await app.prisma.ensembleReply.create({
       data: {

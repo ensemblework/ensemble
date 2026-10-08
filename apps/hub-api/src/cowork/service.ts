@@ -28,6 +28,7 @@ import {
 } from "./meetings.js";
 import { nudgeQuestion, nudgeReasons, pathToDone, OPEN_STATUSES, type NudgeReason } from "./nudges.js";
 import { clipSummary, renderWeeklyRecap } from "./recap.js";
+import { isGuestIn } from "../sharing/context.js";
 
 type Db = PrismaClient;
 
@@ -673,7 +674,8 @@ export async function askEnsemble(db: Db, userId: string, question: string) {
   const asked = question.trim();
   if (!asked) throw fail(400, "Ask a question first.");
   const { captureDeskIntent } = await import("../desk/intents.js");
-  const desk = await captureDeskIntent(db, userId, asked);
+  // A shorthand like "mock 7/10" writes to the owner's desk: only from the owner's own question.
+  const desk = isGuestIn(userId) ? null : await captureDeskIntent(db, userId, asked);
   if (desk) {
     return {
       question: asked,
@@ -755,7 +757,8 @@ export async function weeklyRecap(db: Db, userId: string, anchor?: string) {
       take: 40,
     }),
     db.agentDecision.findMany({
-      where: { userId, decidedAt: { gte: startUtc, lt: endUtc }, decision: { not: null } },
+      // The owner's own editors (Cursor, Claude Code…) are theirs alone; runs' questions are the space's.
+      where: { userId, decidedAt: { gte: startUtc, lt: endUtc }, decision: { not: null }, ...(isGuestIn(userId) ? { source: "ensemble" } : {}) },
       select: { id: true, title: true, decision: true },
       take: 40,
     }),

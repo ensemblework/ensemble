@@ -2,11 +2,12 @@
 
 import { useMemo, useSyncExternalStore } from "react";
 
-export type SettingsTab = "account" | "spaces" | "assistant" | "connections" | "notifications" | "shortcuts" | "data";
+export type SettingsTab = "account" | "spaces" | "sharing" | "assistant" | "connections" | "notifications" | "shortcuts" | "data";
 
 export const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTab; label: string; hint: string }> = [
   { id: "account", label: "Account", hint: "Profile, appearance, features" },
   { id: "spaces", label: "Spaces", hint: "Your spaces, and shared settings" },
+  { id: "sharing", label: "Sharing", hint: "Contacts, what you share, shared with you" },
   { id: "assistant", label: "Assistant", hint: "Models, autonomy, what it may change" },
   { id: "connections", label: "Connections", hint: "Apps, imports, editors, devices" },
   { id: "notifications", label: "Notifications", hint: "Brief, nudges, reminders" },
@@ -48,6 +49,8 @@ export const SECTION_TAB: Readonly<Record<string, SettingsTab>> = {
   shortcuts: "shortcuts",
   keyboard: "shortcuts",
   spaces: "spaces",
+  sharing: "sharing",
+  contacts: "sharing",
   retention: "data",
   completed: "data",
   trash: "data",

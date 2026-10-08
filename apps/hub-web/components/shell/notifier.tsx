@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { api } from "@/lib/api";
+import { useSpaceAccess } from "@/lib/access";
 import { safeDate } from "@/lib/safe-date";
 import { notify, setNotifyConfig } from "@/lib/notify";
 import { accentWriteIsFresh, publishAppearance, readAppearance } from "@/lib/prefs";
@@ -10,7 +11,9 @@ import { accentWriteIsFresh, publishAppearance, readAppearance } from "@/lib/pre
 /** Fires reminder notifications while a Ensemble tab is open (docs/02 §14). */
 export function Notifier() {
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
-  const reminders = useQuery({ queryKey: ["reminders"], queryFn: api.reminders, refetchInterval: 60_000 });
+  // Reminders are the space owner's own: none to fire in a space shared with you.
+  const access = useSpaceAccess();
+  const reminders = useQuery({ queryKey: ["reminders"], queryFn: api.reminders, refetchInterval: 60_000, enabled: access.ready && !access.guest });
   const shown = useRef(new Set<string>());
 
   useEffect(() => {

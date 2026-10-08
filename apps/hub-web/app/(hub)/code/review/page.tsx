@@ -10,12 +10,14 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronUp,
+  Lock,
   PanelLeft,
   Search,
   TerminalSquare,
   Undo2,
   Upload,
 } from "lucide-react";
+import { useSpaceAccess } from "@/lib/access";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -50,6 +52,7 @@ function useFileEditor() {
 
 export default function ReviewPage() {
   const params = useSearchParams();
+  const access = useSpaceAccess();
   const client = useQueryClient();
   useWarmEditors("file");
   const toast = useToast();
@@ -262,6 +265,8 @@ export default function ReviewPage() {
   }
   const data = info.data;
   const filesLeft = files.length - (fileIndex + 1);
+  // In a space shared with you, code is view only: the owner accepts, rejects, edits and pushes.
+  const viewOnly = access.guest;
 
   return (
     <IdeSpace className="relative flex h-full min-h-0 max-md:flex-col">
@@ -305,7 +310,7 @@ export default function ReviewPage() {
               <ChevronUp size={12} className={cx("transition-transform", !scmOpen && "rotate-180")} />
               Source control
             </button>
-            {scmOpen ? (
+            {scmOpen && !viewOnly ? (
               <div className="max-h-[48vh] overflow-y-auto">
                 <SourceControl repo={data.repo} onOpenFile={(value) => { setPath(value); setMode("changes"); }} />
               </div>
@@ -322,10 +327,16 @@ export default function ReviewPage() {
           <span className="truncate text-muted">{data.repo.split("/").slice(-2).join("/")} · {data.branch}</span>
           <div className="flex-1" />
           <ThemeControl />
+          {viewOnly ? (
+            <span className="flex items-center gap-1 rounded-md border border-line px-2 py-0.5 text-[12px] text-muted" title={`Accepting, rejecting, editing and pushing stay with ${access.owner ?? "the owner"}.`}>
+              <Lock size={12} /> View only
+            </span>
+          ) : (
           <button type="button" className={cx("btn", terminal && "bg-hover")} onClick={() => setTerminal(!terminal)} title="Terminal (Ctrl+`)">
             <TerminalSquare size={13} /> Terminal
           </button>
-          {data.kind === "review" && data.review && !data.review.completedAt ? (
+          )}
+          {!viewOnly && data.kind === "review" && data.review && !data.review.completedAt ? (
             <>
               {confirmDiscard ? (
                 <>
@@ -443,11 +454,12 @@ export default function ReviewPage() {
               }}
               onCursor={(line, column) => setCursor({ line, column })}
               onSave={onSave}
+              readOnly={viewOnly}
             />
           )}
         </div>
 
-        {terminal ? <Terminal initialCwd={data.repo} onClose={() => setTerminal(false)} /> : null}
+        {terminal && !viewOnly ? <Terminal initialCwd={data.repo} onClose={() => setTerminal(false)} /> : null}
 
         <div className="flex h-6 shrink-0 items-center gap-4 overflow-x-auto whitespace-nowrap border-t border-line bg-sidebar px-3 text-[11.5px] text-muted">
           <span>{filePath ? languageFor(filePath) : "-"}</span>

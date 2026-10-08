@@ -16,11 +16,22 @@ import { errorFromRuntimeBody } from "../runtime/errors.js";
 import { truncateText } from "./text.js";
 import { RuntimeError } from "./runtime-error.js";
 import { requireHostAccess, requireVerifiedUser } from "./hosted-access.js";
+import { keysFor } from "../sharing/context.js";
 
 export { RuntimeError };
 
 export async function runtime<T>(path: string, init: RequestInit & { json?: unknown; timeoutMs?: number } = {}): Promise<T> {
   const url = new URL(path, "http://runtime.local");
+  // The runtime reads userId only for model keys, pacing and host access: in a space shared
+  // with you, those are yours, never the owner's.
+  if (init.json && typeof init.json === "object" && "userId" in init.json && typeof init.json.userId === "string") {
+    init = { ...init, json: { ...init.json, userId: keysFor(init.json.userId) } };
+  }
+  const queried = url.searchParams.get("userId");
+  if (queried && keysFor(queried) !== queried) {
+    url.searchParams.set("userId", keysFor(queried));
+    path = `${url.pathname}${url.search}`;
+  }
   const body = init.json && typeof init.json === "object" && "userId" in init.json ? init.json : null;
   const userId = body && typeof body.userId === "string" ? body.userId : url.searchParams.get("userId");
   if (["/api/complete", "/api/chat/tools", "/api/chat/tools/stream", "/api/search", "/api/models"].includes(url.pathname)) await requireVerifiedUser(userId);

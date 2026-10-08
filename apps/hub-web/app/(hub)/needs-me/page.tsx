@@ -1,7 +1,8 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Pencil, X } from "lucide-react";
+import { Check, Lock, Pencil, X } from "lucide-react";
+import { useSpaceAccess } from "@/lib/access";
 import { useState } from "react";
 import { EditorDecisions } from "@/components/needs-me/editor-decisions";
 import { usePeek } from "@/components/shell/peek";
@@ -31,6 +32,7 @@ function previewText(preview: unknown): string {
 }
 
 function ApprovalCard({ approval }: { approval: ApprovalRecord }) {
+  const access = useSpaceAccess();
   const client = useQueryClient();
   const toast = useToast();
   const peek = usePeek();
@@ -110,6 +112,11 @@ function ApprovalCard({ approval }: { approval: ApprovalRecord }) {
         placeholder="Why? (optional, helps the skill learn)"
         className="field mt-2 w-full"
       />
+      {access.guest ? (
+        <div className="mt-3 flex items-center gap-1.5 text-[12px] text-faint">
+          <Lock size={12} /> Only {access.owner?.split(" ")[0] ?? "the owner"} can approve this. It runs on their resources.
+        </div>
+      ) : (
       <div className="mt-3 flex items-center gap-2">
         {editing ? (
           <button type="button" className="btn-primary" onClick={() => decide.mutate("edited")} disabled={decide.isPending}>
@@ -127,6 +134,7 @@ function ApprovalCard({ approval }: { approval: ApprovalRecord }) {
           <X size={13} /> Reject
         </button>
       </div>
+      )}
       </div>
     </div>
   );

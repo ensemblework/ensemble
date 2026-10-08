@@ -8,6 +8,7 @@ import { PageHeader, SkeletonRows } from "@/components/ui";
 import { ImportedMeetingNotes } from "@/components/meetings/imported-notes";
 import { useToast } from "@/components/toast";
 import { api } from "@/lib/api";
+import { ShareButton } from "@/components/sharing/share-dialog";
 import { whenLabel } from "@/lib/format";
 
 function MeetingsBody() {
@@ -142,7 +143,10 @@ function MeetingsBody() {
         </ul>
         {session ? (
           <article>
-            <h2 className="text-[18px] font-semibold">{session.title}</h2>
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-[18px] font-semibold">{session.title}</h2>
+              <ShareButton target={{ kind: "meeting", resourceId: session.id, title: session.title }} />
+            </div>
             <p className="mt-1 text-[12px] text-muted">{list.data?.voice}</p>
             <label className="mt-3 block">
               <span className="text-[12px] font-medium text-muted">Notes</span>

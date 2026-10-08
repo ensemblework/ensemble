@@ -22,7 +22,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PageDocument, PageMention } from "@ensemble/shared-types";
-import { ApiError, api, type TaskRecord, type TaskStatus } from "@/lib/api";
+import { ApiError, api, currentShare, withShare, type TaskRecord, type TaskStatus } from "@/lib/api";
 import { useEntities } from "@/lib/entities";
 import { COMPLEXITY_LABEL, OWNER_LABEL, PRIORITY, STATUS, dateTime, isoDate } from "@/lib/format";
 import { MakeDiagramButton, taskDiagramPrompt } from "../diagrams/make-diagram";
@@ -41,6 +41,10 @@ import { PageTitleField } from "../pages/title-field";
 import { isPageEnsembleBusy } from "../comments/ensemble-bus";
 import { LabelEditor } from "./labels";
 import { FromMeeting } from "../meetings/from-meeting";
+import { useSpaceAccess } from "@/lib/access";
+import { announceTyping, onResource, tabId, usePresence } from "@/lib/presence";
+import { PagePeople } from "../sharing/page-people";
+import { ShareButton } from "../sharing/share-dialog";
 
 type SaveState = "saved" | "saving" | "dirty" | "error";
 
@@ -83,7 +87,16 @@ function ValueButton({ onClick, empty, children }: { onClick: () => void; empty?
   );
 }
 
-export function TaskPage({ taskId, variant }: { taskId: string; variant: "peek" | "page" }) {
+export function TaskPage({
+  taskId,
+  variant,
+  shared,
+}: {
+  taskId: string;
+  variant: "peek" | "page";
+  /** Opened from a share link: the task and its page only, read-only unless it may be edited. */
+  shared?: { role: "view" | "edit" };
+}) {
   const client = useQueryClient();
   const router = useRouter();
   const toast = useToast();
@@ -109,9 +122,17 @@ export function TaskPage({ taskId, variant }: { taskId: string; variant: "peek" 
   const timer = useRef<number | undefined>(undefined);
   const inFlight = useRef<Promise<boolean> | null>(null);
   const titleSave = useRef<Promise<unknown> | null>(null);
+  // The share (or none) this task was opened under. The last save on leaving must go there.
+  const openedAs = useRef(currentShare());
   const propertiesBusy = useRef(0);
   const propertyWaiters = useRef<Array<() => void>>([]);
   const loaded = Boolean(page.data);
+  const access = useSpaceAccess();
+  const canEdit = shared ? shared.role === "edit" : access.canEdit;
+  const watching = Boolean(shared) || onResource(usePresence(), "task", taskId).length > 0;
+  const watchingRef = useRef(watching);
+  watchingRef.current = watching;
+  const [remote, setRemote] = useState<{ doc: PageDocument; stamp: number } | null>(null);
 
   /**
    * The editor owns the document once it is loaded. Background refetches
@@ -125,10 +146,12 @@ export function TaskPage({ taskId, variant }: { taskId: string; variant: "peek" 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId, loaded, epoch]);
 
+  // Saved elsewhere (another tab, or someone you share it with): take it in place, keeping your cursor.
   useEffect(() => {
     if (!page.data || page.data.revision <= revision.current) return;
     if (pending.current || saveState === "saving" || saveState === "dirty") return;
-    setEpoch((value) => value + 1);
+    revision.current = page.data.revision;
+    setRemote({ doc: page.data.content ?? textToDoc(page.data.notes), stamp: Date.now() });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page.data?.revision]);
 
@@ -191,7 +214,7 @@ export function TaskPage({ taskId, variant }: { taskId: string; variant: "peek" 
     setSaveState("saving");
     const work = (async () => {
       try {
-        const saved = await api.savePage(taskId, { revision: revision.current, content: doc });
+        const saved = await withShare(openedAs.current, () => api.savePage(taskId, { revision: revision.current, content: doc }));
         revision.current = saved.revision;
         setSaveState(pending.current ? "dirty" : "saved");
         return true;
@@ -243,6 +266,7 @@ export function TaskPage({ taskId, variant }: { taskId: string; variant: "peek" 
     (doc: PageDocument) => {
       pending.current = doc;
       setSaveState("dirty");
+      if (watchingRef.current) announceTyping((typing) => api.sendPresence({ tabId: tabId(), typing }));
       window.clearTimeout(timer.current);
       timer.current = window.setTimeout(() => void flush(), 700);
     },
@@ -317,7 +341,12 @@ export function TaskPage({ taskId, variant }: { taskId: string; variant: "peek" 
           </Popover>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <span className="whitespace-nowrap">{propsState === "saving" ? "Saving…" : "Properties saved"}</span>
+          <PagePeople kind="task" id={taskId} />
+          {shared ? <span className="whitespace-nowrap">{canEdit ? "Shared with you · can edit" : "Shared with you · view only"}</span> : !canEdit ? <span className="whitespace-nowrap">View only</span> : null}
+          {canEdit ? <span className="whitespace-nowrap">{propsState === "saving" ? "Saving…" : "Properties saved"}</span> : null}
+          {shared || !canEdit ? null : (
+          <>
+          <ShareButton target={{ kind: "task", resourceId: taskId, title: record.title }} />
           <button
             type="button"
             className="btn-ghost"
@@ -342,15 +371,21 @@ export function TaskPage({ taskId, variant }: { taskId: string; variant: "peek" 
           <button type="button" className="icon-btn" title="Delete" onClick={() => remove.mutate()}>
             <Trash2 size={14} />
           </button>
+          </>
+          )}
         </div>
       </div>
 
-      <PageTitleField value={record.title} autoFocus={record.title === "Untitled"} onSave={(title) => {
-        titleSave.current = update.mutateAsync({ title });
-        void titleSave.current.catch(() => undefined);
-      }} />
+      {canEdit ? (
+        <PageTitleField value={record.title} autoFocus={record.title === "Untitled"} onSave={(title) => {
+          titleSave.current = update.mutateAsync({ title });
+          void titleSave.current.catch(() => undefined);
+        }} />
+      ) : (
+        <h1 className="text-[32px] font-semibold leading-tight tracking-tight">{record.title || "Untitled"}</h1>
+      )}
 
-      <div className="mt-5 space-y-0.5">
+      <div className="mt-5 space-y-0.5" inert={!canEdit || undefined}>
         <PropertyRow icon={User} label="Owner">
           <Popover
             trigger={(_open, toggle) => <ValueButton onClick={toggle}>{OWNER_LABEL[record.owner]}</ValueButton>}
@@ -371,7 +406,7 @@ export function TaskPage({ taskId, variant }: { taskId: string; variant: "peek" 
               ))
             }
           </Popover>
-          {record.owner === "agent" ? (
+          {shared ? null : record.owner === "agent" ? (
             <>
               <button type="button" className="btn-ghost" onClick={() => setAssigning(true)}>
                 <Bot size={13} />
@@ -388,7 +423,7 @@ export function TaskPage({ taskId, variant }: { taskId: string; variant: "peek" 
             </button>
           )}
         </PropertyRow>
-        <TaskAgentPanel taskId={taskId} />
+        {shared ? null : <TaskAgentPanel taskId={taskId} />}
 
         <PropertyRow icon={Gauge} label="Priority">
           <Popover
@@ -677,7 +712,8 @@ export function TaskPage({ taskId, variant }: { taskId: string; variant: "peek" 
             onChange={onChange}
             onMentionClick={onMentionClick}
             page={{ kind: "task", id: taskId }}
-            editable={!leaving}
+            editable={!leaving && canEdit}
+            remote={remote}
           />
         ) : initialDoc ? (
           <div className="skeleton mt-4 h-64 w-full" />

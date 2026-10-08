@@ -37,6 +37,16 @@ export async function skillRoutes(app: FastifyInstance): Promise<void> {
     return { skills };
   });
 
+  app.get("/api/skills/:id", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const skill = await prisma.skill.findFirst({
+      where: { id, userId: request.userId, deletedAt: null },
+      include: { versions: { orderBy: { version: "desc" }, take: KEEP_VERSIONS } },
+    });
+    if (!skill) return reply.code(404).send({ error: "Skill not found." });
+    return { skill };
+  });
+
   app.post("/api/skills", async (request, reply) => {
     const body = z.object({ name: z.string().min(1), description: z.string().default("") }).parse(request.body);
     const slug = slugify(body.name);

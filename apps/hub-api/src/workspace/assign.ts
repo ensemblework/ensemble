@@ -18,6 +18,7 @@ import { GuardError, resolveWorkFolder, sandboxAvailable, within, workspaceRoot 
 import { capabilities } from "./sandbox/spawn.js";
 import { checkUnattended, isFolderTrusted, PATH_RULE_SOURCE, PATH_RULE_TOOL, rulesForJob, UnattendedAskModeError } from "./trust.js";
 import { kick } from "./worker.js";
+import { actorFor, keysFor } from "../sharing/context.js";
 
 export const Assign = z.object({
   taskId: z.string().uuid(),
@@ -79,17 +80,21 @@ async function createDeviceJob(
   if (body.kind === "code" && body.branchMode !== "as-is" && (!body.branch || !BRANCH.test(body.branch))) {
     throw new GuardError("Give a valid branch name.");
   }
-  const assigned = await deviceAssignment(prisma, userId, {
+  // In a space shared with you, the job runs on your computer and counts against you.
+  const runner = actorFor(userId);
+  const owner = runner ?? userId;
+  const assigned = await deviceAssignment(prisma, owner, {
     deviceId: body.deviceId!,
     kind: body.kind,
     folder: body.folder,
     folderLabel: body.folderLabel,
     repoUrl: body.repoUrl,
     continueFromJobId: body.continueFromJobId,
-  });
-  const job = await createCappedJob(prisma, userId, {
+  }, { space: userId, runner });
+  const job = await createCappedJob(prisma, owner, {
     data: {
       userId,
+      runnerAccountId: runner,
       taskId: task.id,
       kind: body.kind,
       executionMode: body.kind === "code" && !body.sandbox ? "native" : "sandbox",
@@ -150,12 +155,12 @@ async function createDeviceJob(
   sseHub.publish(userId, { event: "task", data: { id: task.id, action: "assign" } });
   sseHub.publish(userId, { event: "workspace", data: { id: job.id } });
   publishDevice(assigned.deviceId, "job.queued", job.id);
-  publishBrowserDevice(userId, assigned.deviceId);
+  publishBrowserDevice(owner, assigned.deviceId);
   return { jobId: job.id };
 }
 
 export async function createJob(prisma: PrismaClient, userId: string, body: AssignInput, options: CreateJobOptions = {}): Promise<{ jobId: string } | null> {
-  await requireVerifiedUser(userId);
+  await requireVerifiedUser(keysFor(userId));
   const task = await prisma.task.findFirst({ where: { id: body.taskId, userId, deletedAt: null } });
   if (!task) return null;
   const settings = await loadSettings(prisma, userId);
@@ -163,6 +168,8 @@ export async function createJob(prisma: PrismaClient, userId: string, body: Assi
   const provider = body.model ? body.provider ?? tier.provider : tier.provider;
   const model = body.model || tier.model;
   if (body.deviceId) return createDeviceJob(prisma, userId, task, body, provider, model, tier.effort, settings.orchestration, options);
+  // This server's runner belongs to the space's owner. Someone it is shared with runs on their own computer.
+  if (actorFor(userId)) throw new GuardError("In a shared space, the agent runs on your own computer. Pick one of your paired computers.");
   await requireHostAccess(userId, "Host workspace execution");
 
   if (provider === "cursor") throw new GuardError("Cursor cannot run tasks on this computer. Pick a chat model for the agent.");

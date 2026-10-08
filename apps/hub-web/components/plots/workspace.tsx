@@ -29,6 +29,8 @@ import { seriesSwatchColor, usePlotTheme } from "@/lib/plots/theme";
 import { api } from "@/lib/api";
 import { PLOTS_WORKSPACE_KEY, plotsWorkspaceOwner, readPlotsWorkspaceCache, writePlotsWorkspaceCache } from "@/lib/tab-session";
 import { useToast } from "@/components/toast";
+import { useSpaceAccess } from "@/lib/access";
+import { ShareButton } from "@/components/sharing/share-dialog";
 
 const CodePane = dynamic(() => import("./code-pane").then((mod) => mod.PlotCodePane), { ssr: false });
 const ChartView = dynamic(() => import("./chart-view").then((mod) => mod.ChartView), { ssr: false });
@@ -83,13 +85,18 @@ class PlotBoundary extends Component<{ children: ReactNode }, { message: string 
   }
 }
 
-function PlotWorkspaceInner() {
+type SharedPlots = { spaceId: string; role: "view" | "edit" };
+
+function PlotWorkspaceInner({ shared }: { shared?: SharedPlots }) {
   const toast = useToast();
   const client = useQueryClient();
-  const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
+  const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000, enabled: !shared });
   const userId = shell.data?.space?.id ?? shell.data?.user.id ?? null;
-  const [spaceId, setSpaceId] = useState<string | undefined>(() => typeof window === "undefined" ? undefined : new URLSearchParams(window.location.search).get("space") ?? undefined);
-  const spaces = useQuery({ queryKey: ["plots"], queryFn: api.plots });
+  const access = useSpaceAccess();
+  // One plot space shared with you: that space only, and changes only with edit access.
+  const readOnly = shared ? shared.role !== "edit" : !access.canEdit;
+  const [spaceId, setSpaceId] = useState<string | undefined>(() => shared?.spaceId ?? (typeof window === "undefined" ? undefined : new URLSearchParams(window.location.search).get("space") ?? undefined));
+  const spaces = useQuery({ queryKey: ["plots"], queryFn: api.plots, enabled: !shared });
   const workspace = useQuery({
     queryKey: ["plot-workspace", spaceId],
     queryFn: () => withTimeout(api.plotWorkspace(spaceId), 12_000),
@@ -175,7 +182,7 @@ function PlotWorkspaceInner() {
   }, [config]);
 
   useEffect(() => {
-    if (!hydrated.current || !fromServer.current || !config || !workspaceId || switching) return;
+    if (!hydrated.current || !fromServer.current || !config || !workspaceId || switching || readOnly) return;
     const snapshot = JSON.stringify({ config, code });
     if (snapshot === savedSnapshot.current) return;
     const timer = window.setTimeout(() => {
@@ -188,7 +195,7 @@ function PlotWorkspaceInner() {
       });
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [config, code, workspaceId, switching, toast]);
+  }, [config, code, workspaceId, switching, toast, readOnly]);
 
   const openSpace = async (id?: string, create = false) => {
     if (switching) return;
@@ -357,6 +364,10 @@ function PlotWorkspaceInner() {
   return (
     <div className="flex h-[calc(100dvh-4.5rem)] min-h-0 flex-col px-4 pb-4 pt-3" data-plot-canvas inert={switching}>
       <div className="mb-3 flex flex-wrap items-center gap-2">
+        {shared ? (
+          <h1 className="display mr-auto text-[28px] leading-none">{title}</h1>
+        ) : (
+        <>
         <InlineEdit value={title} onSave={(next) => {
           if (!workspaceId) return;
           void api.updatePlot(workspaceId, { title: next }).then(() => {
@@ -370,6 +381,10 @@ function PlotWorkspaceInner() {
           {(spaces.data?.plots ?? []).filter((space) => isWorkspace(space.config)).map((space) => <option key={space.id} value={space.id}>{space.title}</option>)}
         </select>
         <button type="button" className="btn" disabled={switching} onClick={() => void openSpace(undefined, true)}>New space</button>
+        {workspaceId ? <ShareButton target={{ kind: "plot_space", resourceId: workspaceId, title }} /> : null}
+        </>
+        )}
+        {readOnly ? <span className="rounded-md border border-line px-1.5 py-0.5 text-2xs text-muted">View only</span> : null}
         {config.sample ? (
           <>
             <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-accent" data-sample-mark>Sample</span>
@@ -405,8 +420,8 @@ function PlotWorkspaceInner() {
             <button type="button" className="rounded-full px-2 py-1 text-[12px] text-muted" aria-label="Dismiss shared columns" onClick={() => setLinksHidden(true)}>×</button>
           </div>
         ) : null}
-        <button type="button" className="btn" onClick={() => setUploadOpen(true)} data-plot-upload>Upload</button>
-        <button type="button" className="btn" onClick={() => setAddOpen(true)} data-plot-add>Add tile</button>
+        {shared || readOnly ? null : <button type="button" className="btn" onClick={() => setUploadOpen(true)} data-plot-upload>Upload</button>}
+        {readOnly ? null : <button type="button" className="btn" onClick={() => setAddOpen(true)} data-plot-add>Add tile</button>}
         <button type="button" className="btn" onClick={() => setCodeOpen((open) => !open)}>Code</button>
         <button type="button" className="btn-primary" onClick={() => setExportOpen(true)} data-export-figure>Export figure</button>
       </div>
@@ -498,10 +513,10 @@ function PlotWorkspaceInner() {
   );
 }
 
-export function PlotWorkspace() {
+export function PlotWorkspace({ shared }: { shared?: SharedPlots } = {}) {
   return (
     <PlotBoundary>
-      <PlotWorkspaceInner />
+      <PlotWorkspaceInner shared={shared} />
     </PlotBoundary>
   );
 }

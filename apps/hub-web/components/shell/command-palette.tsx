@@ -111,6 +111,8 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     const pages = PAGES.filter((page) => {
       const gate = moduleForPath(page.href);
       if (gate && !hasModule(modules, gate)) return false;
+      // The owner's own pages are not there in a space shared with you.
+      if (shell.data?.space?.shared && ["/today", "/metrics", "/connect", "/marketplace", "/trash"].includes(page.href)) return false;
       return !needle || `${page.label} ${page.hint}`.toLowerCase().includes(needle);
     }).map((page) => ({
       id: page.href,

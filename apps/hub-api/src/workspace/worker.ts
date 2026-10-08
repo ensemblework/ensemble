@@ -329,8 +329,9 @@ export async function stopEverything(app: FastifyInstance, userId: string, optio
   } catch {
     // Redis down: local controllers below still stop.
   }
+  // The kill switch stops the owner's runs. Runs on someone else's computer are theirs to stop.
   const active = await app.prisma.workspaceJob.findMany({
-    where: { userId, status: { in: ["claimed", "running", "stopping", "waiting_approval"] } },
+    where: { userId, runnerAccountId: null, status: { in: ["claimed", "running", "stopping", "waiting_approval"] } },
     select: { id: true, deviceId: true },
   });
   for (const job of active) {
@@ -349,7 +350,7 @@ export async function stopEverything(app: FastifyInstance, userId: string, optio
   }
   let cancelled = 0;
   if (options.cancelQueued) {
-    const queued = await app.prisma.workspaceJob.findMany({ where: { userId, status: "queued" }, select: { id: true, deviceId: true } });
+    const queued = await app.prisma.workspaceJob.findMany({ where: { userId, runnerAccountId: null, status: "queued" }, select: { id: true, deviceId: true } });
     for (const job of queued) {
       if (job.deviceId) askDeviceToStop(userId, { id: job.id, deviceId: job.deviceId });
     }

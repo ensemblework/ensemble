@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api, type BoardCard, type BoardPayload } from "@/lib/api";
+import { useSpaceAccess } from "@/lib/access";
 import { placeAnchoredPanel } from "@/lib/place-layer";
 import { emitToast } from "@/lib/toast-bus";
 import { useShellLabels } from "@/lib/shell-labels";
@@ -243,7 +244,11 @@ export function ContextDesk({ initial }: { initial: BoardPayload | null }) {
     }));
   }, [data, group, typeFilter, q, params, projectsWord, labels.people]);
 
+  const access = useSpaceAccess();
+  const guest = !access.ready || access.guest;
   useEffect(() => {
+    // Connected apps are the owner's; in a space shared with you there is nothing to show here.
+    if (guest) return;
     let live = true;
     void api.connections().then((result) => {
       if (!live) return;
@@ -252,7 +257,7 @@ export function ContextDesk({ initial }: { initial: BoardPayload | null }) {
     return () => {
       live = false;
     };
-  }, []);
+  }, [guest]);
 
   useEffect(() => {
     const el = scroller.current;

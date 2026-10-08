@@ -5,6 +5,8 @@ import { FolderGit2, TerminalSquare } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Terminal } from "@/components/code/terminal";
+import { useSpaceAccess } from "@/lib/access";
+import { ShareButton } from "@/components/sharing/share-dialog";
 import { Empty, PageHeader, QueryError, SkeletonRows, Tag } from "@/components/ui";
 import { ApiError, api, type ReviewSummary } from "@/lib/api";
 import { dateTime } from "@/lib/format";
@@ -43,27 +45,38 @@ export default function CodePage() {
   const reviews = useQuery({ queryKey: ["reviews", filter, expired], queryFn: () => api.reviews(filter, expired) });
   const repos = useQuery({ queryKey: ["code-repos"], queryFn: api.codeRepos });
   const [terminal, setTerminal] = useState(false);
+  const access = useSpaceAccess();
+  const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.ctrlKey && event.key === "`") {
+      if (event.ctrlKey && event.key === "`" && !access.guest) {
         event.preventDefault();
         setTerminal((value) => !value);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [access.guest]);
   return (
     <div className="flex h-full flex-col">
     <div className="min-h-0 flex-1 overflow-y-auto">
     <div className="mx-auto max-w-[980px] px-10 pb-24 pt-8">
       <PageHeader
         title="Code"
-        description="Review what an agent changed, one change at a time: accept keeps it, reject puts the old lines back on disk, and you can write any part yourself. Then commit and push from the same place."
+        description={
+          access.guest
+            ? `What the agents changed in ${access.owner?.split(" ")[0] ?? "this"}'s space. View only: accepting, rejecting, editing and pushing stay with them.`
+            : "Review what an agent changed, one change at a time: accept keeps it, reject puts the old lines back on disk, and you can write any part yourself. Then commit and push from the same place."
+        }
         actions={
-          <button type="button" className="btn" onClick={() => setTerminal(!terminal)} title="Ctrl+`">
-            <TerminalSquare size={13} /> Terminal
-          </button>
+          access.guest ? null : (
+            <span className="flex items-center gap-2">
+              {shell.data?.space ? <ShareButton target={{ kind: "code", resourceId: shell.data.space.id, title: "Code" }} /> : null}
+              <button type="button" className="btn" onClick={() => setTerminal(!terminal)} title="Ctrl+`">
+                <TerminalSquare size={13} /> Terminal
+              </button>
+            </span>
+          )
         }
       />
       <div className="mb-3 flex items-center gap-3 text-[13px]">
@@ -120,7 +133,7 @@ export default function CodePage() {
       )}
     </div>
     </div>
-    {terminal ? <Terminal onClose={() => setTerminal(false)} /> : null}
+    {terminal && !access.guest ? <Terminal onClose={() => setTerminal(false)} /> : null}
     </div>
   );
 }

@@ -50,6 +50,26 @@ export async function ownedSpace(db: Db, accountId: string, spaceId: string | nu
   return db.user.findFirst({ where: { id: spaceId, ownerId: accountId }, select: { id: true, moduleSet: true } });
 }
 
+/**
+ * A space this account may open: one it owns, or one shared with it as a member. Null for the
+ * account's own first space (no cookie needed) and for anything else.
+ */
+export async function openableSpace(db: Db, accountId: string, spaceId: string | null | undefined) {
+  if (!spaceId || spaceId === accountId) return null;
+  const owned = await db.user.findFirst({ where: { id: spaceId, ownerId: accountId }, select: { id: true, moduleSet: true } });
+  if (owned) return { id: owned.id, moduleSet: owned.moduleSet, member: null };
+  const member = await db.spaceMember.findUnique({
+    where: { spaceId_accountId: { spaceId, accountId } },
+    select: { role: true, space: { select: { id: true, moduleSet: true, ownerId: true } } },
+  });
+  if (!member) return null;
+  return {
+    id: member.space.id,
+    moduleSet: member.space.moduleSet,
+    member: { role: member.role === "viewer" ? ("viewer" as const) : ("editor" as const), ownerId: member.space.ownerId ?? member.space.id },
+  };
+}
+
 /** The account a user id belongs to: itself, or the owner of a space. */
 export async function accountOf(db: Db, userId: string): Promise<string> {
   const row = await db.user.findUnique({ where: { id: userId }, select: { ownerId: true } });

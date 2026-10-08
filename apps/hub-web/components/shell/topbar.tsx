@@ -15,9 +15,11 @@ import { AccountMenu } from "./account-menu";
 import { AskBar } from "./ask-bar";
 import { NotificationBell } from "./notification-bell";
 import { usePeek } from "./peek";
+import { SharedBadge, SpacePeople } from "../sharing/people";
 
 const TITLES: Array<[string, string]> = [
   ["/today", "Today"],
+  ["/shared", "Shared with you"],
   ["/board", "Task board"],
   ["/needs-me", "Needs me"],
   ["/runs", "Runs"],
@@ -77,6 +79,8 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell });
   const canUndo = shell.data?.canUndo === true;
   const canRedo = shell.data?.canRedo === true;
+  // Connected apps are the owner's: someone a space is shared with does not fetch them.
+  const guest = Boolean(shell.data?.space?.shared);
   const title = TITLES.find(([prefix]) => pathname.startsWith(prefix))?.[1] ?? "Ensemble";
 
   const fetchNow = useMutation({
@@ -127,11 +131,13 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
           <Menu size={16} />
         </button>
         <div className="hidden min-w-0 truncate text-[13.5px] font-medium sm:block">{title}</div>
+        <SharedBadge />
       </div>
       <div className="flex min-w-0 justify-center">
         <AskBar />
       </div>
       <div className="flex min-w-0 items-center justify-end gap-1">
+      <SpacePeople />
       <NotificationBell />
       <div className="hidden items-center lg:flex">
         <button type="button" className="icon-btn disabled:pointer-events-none disabled:opacity-30" title={`Undo (${mod === "⌘" ? "⌘Z" : "Ctrl+Z"})`} aria-label="Undo" onClick={() => undo.mutate()} disabled={!canUndo}>
@@ -144,7 +150,7 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
       <span className="mx-1 hidden h-4 w-px bg-line lg:block" aria-hidden />
       <button
         type="button"
-        className="icon-btn hidden lg:inline-flex"
+        className={cx("icon-btn hidden", !guest && "lg:inline-flex")}
         onClick={() => fetchNow.mutate()}
         disabled={fetchNow.isPending}
         title="Fetch now: read every switched-on source"
@@ -176,7 +182,7 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
           <>
             <MenuItem disabled={!canUndo || undo.isPending} onClick={() => { undo.mutate(); close(); }}><Undo2 size={14} /> Undo</MenuItem>
             <MenuItem disabled={!canRedo || redo.isPending} onClick={() => { redo.mutate(); close(); }}><Redo2 size={14} /> Redo</MenuItem>
-            <MenuItem disabled={fetchNow.isPending} onClick={() => { fetchNow.mutate(); close(); }}><FetchGlyph active={fetchNow.isPending} size={14} /> Fetch now</MenuItem>
+            {guest ? null : <MenuItem disabled={fetchNow.isPending} onClick={() => { fetchNow.mutate(); close(); }}><FetchGlyph active={fetchNow.isPending} size={14} /> Fetch now</MenuItem>}
             <MenuItem onClick={() => { toggleMode(); close(); }}><PanelRight size={14} /> {mode === "side" ? "Open tasks as full pages" : "Open tasks in a side peek"}</MenuItem>
           </>
         )}

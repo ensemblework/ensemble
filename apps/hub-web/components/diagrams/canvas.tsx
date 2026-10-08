@@ -27,6 +27,7 @@ import {
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 import "@xyflow/react/dist/style.css";
 import { GroupNode, ShapeNode, TextNode, type GroupNodeData, type ShapeNodeData, type TextNodeData } from "./nodes";
+import { LiveCursors, useCursorBroadcast } from "../sharing/live-cursors";
 
 const nodeTypes = { shape: ShapeNode, text: TextNode, frame: GroupNode };
 
@@ -165,10 +166,14 @@ function Surface({
   onRename,
   onSelection,
   markedId,
+  diagramId,
+  readOnly = false,
 }: {
   model: DiagramModel;
   fitTick: number;
   markedId: string | null;
+  diagramId?: string;
+  readOnly?: boolean;
   onMove: (id: string, x: number, y: number) => void;
   onConnect: (connection: Connection) => void;
   onRename: (id: string, label: string) => void;
@@ -195,11 +200,17 @@ function Surface({
     });
   }, []);
 
+  const cursors = useCursorBroadcast(diagramId ?? "");
   return (
     <ReactFlow
+      onMouseMove={diagramId ? cursors.onMouseMove : undefined}
+      onMouseLeave={diagramId ? cursors.onMouseLeave : undefined}
+      onMoveEnd={diagramId ? cursors.onMoveEnd : undefined}
       nodes={nodes}
       edges={edges}
       nodeTypes={nodeTypes}
+      nodesDraggable={!readOnly}
+      nodesConnectable={!readOnly}
       onNodesChange={(changes: NodeChange[]) => setNodes((current) => applyNodeChanges(changes, current))}
       onNodeDragStop={(_event, node) => {
         onMove(node.id, node.position.x, node.position.y);
@@ -220,6 +231,7 @@ function Surface({
       tabIndex={0}
     >
       <Fit tick={fitTick} />
+      {diagramId ? <LiveCursors diagramId={diagramId} /> : null}
       <Background variant={BackgroundVariant.Dots} gap={18} size={1.15} color="var(--diagram-dot)" />
     </ReactFlow>
   );
@@ -249,6 +261,9 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, {
   onRename: (id: string, label: string) => void;
   onSelection: (selection: { nodes: string[]; edges: string[] }) => void;
   markedId?: string | null;
+  /** Set on a saved diagram: live cursors of others on it. */
+  diagramId?: string;
+  readOnly?: boolean;
 }>(function DiagramCanvas(props, ref) {
   return (
     <ReactFlowProvider>
@@ -259,6 +274,8 @@ export const DiagramCanvas = forwardRef<DiagramCanvasHandle, {
         onRename={props.onRename}
         onSelection={props.onSelection}
         markedId={props.markedId ?? null}
+        diagramId={props.diagramId}
+        readOnly={props.readOnly}
         onMove={props.onMove}
         onConnect={(connection) => {
           if (!connection.source || !connection.target || connection.source === connection.target) return;

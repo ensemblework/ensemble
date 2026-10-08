@@ -14,6 +14,7 @@ import {
   trustForIngested,
   zonedDayRange,
 } from "./text.js";
+import { visibleArtifacts } from "../sharing/context.js";
 
 type Db = PrismaClient;
 
@@ -660,7 +661,7 @@ export async function readItem(
       };
     }
     case "artifact": {
-      const artifact = await db.artifact.findFirst({ where: { id, userId, deletedAt: null } });
+      const artifact = await db.artifact.findFirst({ where: { id, userId, deletedAt: null, AND: [visibleArtifacts(userId)] } });
       if (!artifact) return { found: false };
       const trust = trustForIngested(artifact.kind, artifact.authoredByMe);
       return {
@@ -889,6 +890,7 @@ export async function searchHub(db: Db, userId: string, q: string, limit: number
       where: {
         userId,
         deletedAt: null,
+        AND: [visibleArtifacts(userId)],
         OR: [{ title: { contains: q, mode: "insensitive" } }, { text: { contains: q, mode: "insensitive" } }],
       },
       take: limit,

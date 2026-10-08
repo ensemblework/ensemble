@@ -235,6 +235,28 @@ export const spacesRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>
   "PUT /api/spaces/settings/sync": ["happy-path"],
 };
 
+/** Sharing and presence. Owned by src/sharing/routes.ts; checked in src/sharing/sharing.integration.test.ts. */
+export const sharingRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
+  "GET /api/sharing/people": ["happy-path", "invalid-input"],
+  "GET /api/sharing/overview": ["happy-path"],
+  "GET /api/sharing/contacts": ["happy-path"],
+  "POST /api/sharing/contacts": ["happy-path", "invalid-input"],
+  "DELETE /api/sharing/contacts/:id": ["happy-path", "isolation"],
+  "GET /api/sharing/with-me": ["happy-path"],
+  "GET /api/sharing/spaces/:id/members": ["happy-path", "isolation"],
+  "POST /api/sharing/spaces/:id/members": ["happy-path", "isolation", "invalid-input"],
+  "PATCH /api/sharing/spaces/:id/members/:personId": ["happy-path"],
+  "DELETE /api/sharing/spaces/:id/members/:personId": ["happy-path", "isolation"],
+  "POST /api/sharing/spaces/:id/transfer": ["happy-path", "isolation", "invalid-input"],
+  "GET /api/sharing/items": ["happy-path", "isolation"],
+  "POST /api/sharing/items": ["happy-path", "invalid-input"],
+  "PATCH /api/sharing/items/:id": ["happy-path", "isolation"],
+  "DELETE /api/sharing/items/:id": ["happy-path"],
+  "GET /api/sharing/open/:id": ["happy-path", "isolation"],
+  "GET /api/presence": ["happy-path", "isolation"],
+  "POST /api/presence": ["happy-path"],
+};
+
 export const routeCoverage = {
   ...resourceRouteCoverage,
   ...authRouteCoverage,
@@ -245,4 +267,5 @@ export const routeCoverage = {
   ...importRouteCoverage,
   ...connectedDataRouteCoverage,
   ...spacesRouteCoverage,
+  ...sharingRouteCoverage,
 };

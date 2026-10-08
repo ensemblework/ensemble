@@ -8,6 +8,9 @@ import { env } from "./config.js";
 import "./types.js";
 import { enforceRouteModule } from "./lib/module-gate.js";
 import { identify } from "./lib/auth.js";
+import { keysFor } from "./sharing/context.js";
+import { scopeHook, sharingGate } from "./sharing/gate.js";
+import { sharingRoutes } from "./sharing/routes.js";
 import { enforceHostedRequest, requireVerifiedUser } from "./lib/hosted-access.js";
 import { isPublicAuthPath } from "./lib/auth-public.js";
 import { corsPluginOptions, type CorsPolicy } from "./lib/cors-origin.js";
@@ -140,6 +143,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     if (who) {
       request.userId = who.userId;
       request.accountId = who.accountId ?? who.userId;
+      request.access = who.access;
       request.authVia = who.via;
       request.tokenScope = who.tokenScope;
       request.tokenId = who.tokenId;
@@ -157,11 +161,15 @@ export async function buildApp(options: BuildAppOptions = {}) {
     }
     return reply.code(401).send({ error: "Sign in to Ensemble first." });
   });
+  // Must follow identity: every later hook and the handler run inside this request's scope.
+  app.addHook("onRequest", scopeHook);
 
+  app.addHook("preHandler", sharingGate);
   app.addHook("preHandler", enforceRouteModule);
   app.addHook("preHandler", async (request) => {
     if (request.method === "POST" && ADDITIONAL_MODEL_STREAM_ROUTES.has(request.routeOptions.url ?? "")) {
-      await requireVerifiedUser(request.userId);
+      // The person whose model keys pay for it: you, even in a space shared with you.
+      await requireVerifiedUser(keysFor(request.userId));
     }
   });
 
@@ -221,6 +229,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     plotRoutes,
     layoutsRoutes,
     spacesRoutes,
+    sharingRoutes,
     marketplaceRoutes,
     widgetRoutes,
     deskRoutes,

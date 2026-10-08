@@ -7,7 +7,7 @@ import { CheckSquare, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EMPTY_PAGE, type PageDocument, type PageMention } from "@ensemble/shared-types";
-import { ApiError, api } from "@/lib/api";
+import { ApiError, api, currentShare, withShare } from "@/lib/api";
 import { useEntities } from "@/lib/entities";
 import { blockEditor, warmPeek } from "@/lib/warm";
 import { mentionHref } from "../editor/editor-commands";
@@ -16,6 +16,10 @@ import { Dialog } from "../ui";
 import { PageLoadFailure } from "./page-load";
 import { PageTitleField } from "./title-field";
 import { isPageEnsembleBusy } from "../comments/ensemble-bus";
+import { announceTyping, onResource, tabId, usePresence } from "@/lib/presence";
+import { PagePeople } from "../sharing/page-people";
+import { ShareButton } from "../sharing/share-dialog";
+import { useSpaceAccess } from "@/lib/access";
 
 type SaveState = "saved" | "saving" | "dirty" | "error";
 
@@ -35,7 +39,16 @@ function useBlockEditor() {
 }
 
 /** The same block editor linked task pages use, for a note that is not a task. */
-export function NotePage({ pageId, focusTitle = false }: { pageId: string; focusTitle?: boolean }) {
+export function NotePage({
+  pageId,
+  focusTitle = false,
+  shared,
+}: {
+  pageId: string;
+  focusTitle?: boolean;
+  /** Opened from a share link: no board or delete actions, and read-only unless it may be edited. */
+  shared?: { role: "view" | "edit" };
+}) {
   const client = useQueryClient();
   const router = useRouter();
   const toast = useToast();
@@ -56,7 +69,38 @@ export function NotePage({ pageId, focusTitle = false }: { pageId: string; focus
   const timer = useRef<number | undefined>(undefined);
   const inFlight = useRef<Promise<boolean> | null>(null);
   const titleSave = useRef<Promise<unknown> | null>(null);
+  // The share (or none) this page was opened under. The last save on leaving must go there.
+  const openedAs = useRef(currentShare());
   const loaded = Boolean(page.data);
+  const access = useSpaceAccess();
+  const canEdit = shared ? shared.role === "edit" : access.canEdit;
+  const others = onResource(usePresence(), "page", pageId);
+  const watching = Boolean(shared) || others.length > 0;
+  const [remote, setRemote] = useState<{ doc: PageDocument; stamp: number } | null>(null);
+  const watchingRef = useRef(watching);
+  watchingRef.current = watching;
+
+  // Someone else saved: take their version when you have nothing unsaved. Your own saves
+  // come back with the revision you already hold and change nothing.
+  useEffect(() => {
+    if (!watching) return;
+    const onSaved = (event: Event) => {
+      const detail = (event as CustomEvent<{ id?: string; pageId?: string; action?: string }>).detail;
+      if ((detail?.id ?? detail?.pageId) !== pageId) return;
+      if (pending.current || inFlight.current) return;
+      void api
+        .standalonePage(pageId)
+        .then((fresh) => {
+          if (pending.current || inFlight.current || fresh.revision === revision.current) return;
+          revision.current = fresh.revision;
+          client.setQueryData(["standalone-page", pageId], fresh);
+          setRemote({ doc: fresh.content ?? EMPTY_PAGE, stamp: Date.now() });
+        })
+        .catch(() => undefined);
+    };
+    window.addEventListener("ensemble:page", onSaved);
+    return () => window.removeEventListener("ensemble:page", onSaved);
+  }, [watching, pageId, client]);
 
   const initialDoc = useMemo(() => {
     if (!page.data) return null;
@@ -94,13 +138,13 @@ export function NotePage({ pageId, focusTitle = false }: { pageId: string; focus
     setSaveState("saving");
     const work = (async () => {
       try {
-        const saved = await api.saveStandalonePage(pageId, { revision: revision.current, content: doc });
+        const saved = await withShare(openedAs.current, () => api.saveStandalonePage(pageId, { revision: revision.current, content: doc }));
         revision.current = saved.revision;
         setSaveState(pending.current ? "dirty" : "saved");
         return true;
       } catch (error) {
         if (error instanceof ApiError && error.status === 409) {
-          toast("This page changed in another tab. Reloaded the latest version.", { tone: "error" });
+          toast("This page changed elsewhere (another tab, or someone you share it with). Reloaded the latest version.", { tone: "error" });
           await client.refetchQueries({ queryKey: ["standalone-page", pageId] });
           setEpoch((value) => value + 1);
         } else {
@@ -143,6 +187,7 @@ export function NotePage({ pageId, focusTitle = false }: { pageId: string; focus
     (doc: PageDocument) => {
       pending.current = doc;
       setSaveState("dirty");
+      if (watchingRef.current) announceTyping((typing) => api.sendPresence({ tabId: tabId(), typing }));
       window.clearTimeout(timer.current);
       timer.current = window.setTimeout(() => void flush(), 700);
     },
@@ -175,20 +220,30 @@ export function NotePage({ pageId, focusTitle = false }: { pageId: string; focus
   return (
     <div className="mx-auto w-full max-w-[900px] px-4 pb-24 pt-6 sm:px-16 sm:pt-10" inert={leaving}>
       <div className="mb-3 flex items-center justify-between text-[12.5px] text-muted">
-        <span>Pages</span>
+        <span>{shared ? (canEdit ? "Shared with you · can edit" : "Shared with you · view only") : canEdit ? "Pages" : "Pages · view only"}</span>
         <div className="flex items-center gap-2">
-          <button type="button" className="btn-ghost" disabled={convert.isPending} onClick={() => convert.mutate()}>
-            <CheckSquare size={13} /> Add to board
-          </button>
-          <button type="button" className="icon-btn" title="Delete" aria-label="Delete page" onClick={() => setConfirming(true)}>
-            <Trash2 size={14} />
-          </button>
+          <PagePeople kind="page" id={pageId} />
+          {shared || !canEdit ? null : (
+            <>
+              <ShareButton target={{ kind: "page", resourceId: pageId, title: record.title }} />
+              <button type="button" className="btn-ghost" disabled={convert.isPending} onClick={() => convert.mutate()}>
+                <CheckSquare size={13} /> Add to board
+              </button>
+              <button type="button" className="icon-btn" title="Delete" aria-label="Delete page" onClick={() => setConfirming(true)}>
+                <Trash2 size={14} />
+              </button>
+            </>
+          )}
         </div>
       </div>
-      <PageTitleField value={record.title} autoFocus={focusTitle} onSave={(title) => {
-        titleSave.current = rename.mutateAsync(title);
-        void titleSave.current.catch(() => undefined);
-      }} />
+      {canEdit ? (
+        <PageTitleField value={record.title} autoFocus={focusTitle} onSave={(title) => {
+          titleSave.current = rename.mutateAsync(title);
+          void titleSave.current.catch(() => undefined);
+        }} />
+      ) : (
+        <h1 className="text-[32px] font-semibold leading-tight tracking-tight">{record.title || "Untitled"}</h1>
+      )}
       <div className="mt-6 flex items-center justify-between border-t border-line pt-3 text-[12px] text-muted">
         <span className="font-medium">Page content</span>
         <span className={saveState === "error" ? "text-danger" : undefined}>
@@ -210,7 +265,8 @@ export function NotePage({ pageId, focusTitle = false }: { pageId: string; focus
             onChange={onChange}
             onMentionClick={onMentionClick}
             page={{ kind: "page", id: pageId }}
-            editable={!leaving}
+            editable={!leaving && canEdit}
+            remote={remote}
           />
         ) : initialDoc ? (
           <div className="skeleton mt-4 h-64 w-full" />

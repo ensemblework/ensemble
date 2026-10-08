@@ -1,7 +1,8 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ShieldCheck, X } from "lucide-react";
+import { Check, Lock, ShieldCheck, X } from "lucide-react";
+import { useRunnerName } from "@/lib/runner";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useToast } from "@/components/toast";
@@ -208,7 +209,36 @@ function DeviceCard({ decision }: { decision: AgentDecisionRecord }) {
   );
 }
 
+/** In a shared space: someone else's question. You can see it; only they can answer. */
+function ObserveCard({ decision }: { decision: AgentDecisionRecord }) {
+  const nameOf = useRunnerName();
+  const name = nameOf(decision.runnerAccountId);
+  const options = Array.isArray((decision.detail as { options?: unknown }).options) ? ((decision.detail as { options: unknown[] }).options.filter((row) => typeof row === "string") as string[]) : [];
+  return (
+    <div className="tile rounded-lg border border-line bg-panel px-4 py-3">
+      <div className="flex items-center gap-2 text-[12px] text-muted">
+        <Tag tone="gray">{decision.event === "question" ? "Question" : "Permission"}</Tag>
+        <span className="truncate">{(decision.detail as { taskTitle?: string }).taskTitle ?? ""}</span>
+      </div>
+      <div className="mt-2 text-[14px] font-medium leading-5">{decision.title}</div>
+      {options.length ? (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {options.map((option) => (
+            <span key={option} className="rounded-md border border-line px-2 py-0.5 text-[12px] text-muted">
+              {option}
+            </span>
+          ))}
+        </div>
+      ) : null}
+      <div className="mt-3 flex items-center gap-1.5 text-[12px] text-faint">
+        <Lock size={12} /> Only {name} can answer this. It runs on their computer.
+      </div>
+    </div>
+  );
+}
+
 function DecisionCard({ decision }: { decision: AgentDecisionRecord }) {
+  if (decision.canAnswer === false) return <ObserveCard decision={decision} />;
   if (decision.source === "ensemble" && decision.detail.deviceId) return <DeviceCard decision={decision} />;
   if (decision.source === "ensemble") return <EnsembleCard decision={decision} />;
   return <EditorCard decision={decision} />;

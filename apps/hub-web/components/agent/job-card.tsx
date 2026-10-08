@@ -1,7 +1,8 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Code2, FileText, GitBranch, Lock, RotateCcw, ShieldAlert, ShieldCheck, Square } from "lucide-react";
+import { ChevronRight, Code2, FileText, GitBranch, Lock, Monitor, RotateCcw, ShieldAlert, ShieldCheck, Square } from "lucide-react";
+import { useRunnerName } from "@/lib/runner";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api, type AgentJob } from "@/lib/api";
@@ -120,6 +121,28 @@ function RunAgainButton({ job, compact }: { job: AgentJob; compact?: boolean }) 
   );
 }
 
+/** A run on someone else's computer in a shared space: who runs it, never which computer. */
+function RunnerTag({ job }: { job: AgentJob }) {
+  const nameOf = useRunnerName();
+  if (job.yours !== false) return job.runnerAccountId && job.yours ? <Tag tone="blue"><Monitor size={11} /> Your computer</Tag> : null;
+  return (
+    <Tag tone="gray">
+      <Monitor size={11} /> {nameOf(job.runnerAccountId)}'s computer
+    </Tag>
+  );
+}
+
+/** Stop and Run again belong to the person whose computer runs the job. */
+function RunnerLock({ job, compact }: { job: AgentJob; compact?: boolean }) {
+  const nameOf = useRunnerName();
+  const name = nameOf(job.runnerAccountId);
+  return (
+    <span className={cx("inline-flex items-center gap-1 text-faint", compact ? "text-[11px]" : "text-[12px]")} title={`Only ${name} can stop or rerun this. It runs on their computer.`}>
+      <Lock size={11} /> {name}'s run
+    </span>
+  );
+}
+
 export function JobCard({ job, wide }: { job: AgentJob; wide?: boolean }) {
   const peek = usePeek();
   const live = job.status === "claimed" || job.status === "running" || job.status === "stopping" || job.status === "waiting_approval";
@@ -143,6 +166,7 @@ export function JobCard({ job, wide }: { job: AgentJob; wide?: boolean }) {
       </div>
       <div className="flex flex-wrap items-center gap-1.5">
         <Tag tone={state.tone}>{state.label}</Tag>
+        <RunnerTag job={job} />
         {job.origin === "web" ? <Tag tone="blue">from web</Tag> : null}
         <PriorityTag priority={job.priority} />
         {job.kind === "code" ? (
@@ -169,14 +193,14 @@ export function JobCard({ job, wide }: { job: AgentJob; wide?: boolean }) {
       ) : null}
       {wide && (job.error || job.summary) ? <div className="line-clamp-2 text-muted">{job.error ?? job.summary}</div> : null}
       <JobResults job={job} />
-      {job.status === "interrupted" && job.deviceId && !job.deviceRevoked ? <RunAgain job={job} /> : null}
+      {job.status === "interrupted" && job.deviceId && !job.deviceRevoked && job.yours !== false ? <RunAgain job={job} /> : null}
       <div className="flex items-center justify-between gap-2 pt-0.5 text-[11.5px] text-faint">
         <span className="truncate">
           {job.model}
           {job.turns ? ` · ${plural(job.turns, "turn")} · ${plural(job.toolCalls, "tool")}` : ""}
           {elapsed ? ` · ${elapsed}` : job.finishedAt ? ` · ${relative(job.finishedAt)}` : ""}
         </span>
-        {job.status === "queued" || live ? <StopButton job={job} compact /> : !job.deviceId && RETRYABLE.has(job.status) ? <RunAgainButton job={job} compact /> : null}
+        {job.yours === false ? <RunnerLock job={job} compact /> : job.status === "queued" || live ? <StopButton job={job} compact /> : !job.deviceId && RETRYABLE.has(job.status) ? <RunAgainButton job={job} compact /> : null}
       </div>
     </div>
   );
@@ -224,7 +248,7 @@ export function TaskAgentPanel({ taskId }: { taskId: string }) {
             Review changes
           </Link>
         ) : null}
-        {job.status === "queued" || live ? <StopButton job={job} /> : !job.deviceId && RETRYABLE.has(job.status) ? <RunAgainButton job={job} /> : null}
+        {job.yours === false ? <RunnerLock job={job} /> : job.status === "queued" || live ? <StopButton job={job} /> : !job.deviceId && RETRYABLE.has(job.status) ? <RunAgainButton job={job} /> : null}
       </div>
       {showProgress && job.progress ? (
         <div className="mt-1.5 flex items-center gap-1.5 text-muted">

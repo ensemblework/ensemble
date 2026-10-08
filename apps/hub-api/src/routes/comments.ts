@@ -4,7 +4,9 @@
  */
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
+import { ownsOpenSpace } from "../lib/auth.js";
+import { displayName, initialsOf } from "../sharing/store.js";
 import { ActAs, PageDocument, PageMention, documentMentions } from "@ensemble/shared-types";
 import { pageText as documentText } from "../pages/markdown.js";
 import { runAssistantTurn } from "../assistant/agent.js";
@@ -14,6 +16,7 @@ import { streamCorsHeaders } from "../lib/cors-origin.js";
 import { hubCorsPolicy } from "../lib/hub-cors.js";
 import { truncateText } from "../lib/text.js";
 import { assertOwned } from "../services/records.js";
+import { actorFor } from "../sharing/context.js";
 
 const Body = z.object({
   type: z.literal("doc").optional(),
@@ -102,6 +105,30 @@ function textOf(body: { text?: string; content?: unknown[] }): string {
   return parts.join(" ").trim();
 }
 
+/** Who wrote each human comment: the space owner (null) or someone it is shared with. */
+async function withAuthors<T extends { authorKind: string; authorAccountId: string | null }>(prisma: FastifyInstance["prisma"], spaceId: string, rows: T[]) {
+  const space = await prisma.user.findUnique({ where: { id: spaceId }, select: { id: true, ownerId: true } });
+  const ownerId = space?.ownerId ?? spaceId;
+  const ids = [...new Set([ownerId, ...rows.map((row) => row.authorAccountId).filter((id): id is string => Boolean(id))])];
+  const people = new Map(
+    (await prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, name: true, email: true } })).map((row) => [
+      row.id,
+      { id: row.id, name: displayName(row.name, row.email), initials: initialsOf(row.name, row.email) },
+    ]),
+  );
+  return rows.map((row) => ({ ...row, author: row.authorKind === "human" ? (people.get(row.authorAccountId ?? ownerId) ?? null) : null }));
+}
+
+/** A comment you may change: your own; the space owner may also remove anyone's. A shared page reaches only its own. */
+function commentRefusal(request: FastifyRequest, existing: { authorKind: string; authorAccountId: string | null; pageId: string }, action: "edit" | "delete"): string | null {
+  const access = request.access;
+  if (access?.kind === "share" && existing.pageId !== access.resourceId) return "Comment not found.";
+  if (existing.authorKind !== "human") return action === "edit" ? "You can only edit your own comments." : "You can only delete your own comments.";
+  const mine = existing.authorAccountId === actorFor(request.userId);
+  if (mine || (action === "delete" && ownsOpenSpace(request))) return null;
+  return action === "edit" ? "You can only edit your own comments." : "You can only delete your own comments.";
+}
+
 export async function commentRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/pages/:kind/:id/comments", async (request) => {
     const { kind, id } = request.params as { kind: string; id: string };
@@ -110,7 +137,7 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
       where: { userId: request.userId, pageKind: kind, pageId: id, deletedAt: null },
       orderBy: { createdAt: "asc" },
     });
-    return { comments: rows };
+    return { comments: await withAuthors(app.prisma, request.userId, rows) };
   });
 
   app.post("/api/pages/:kind/:id/comments", async (request, reply) => {
@@ -137,6 +164,7 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
         deliverableId: kind === "deliverable" ? id : null,
         kind: "comment",
         authorKind: "human",
+        authorAccountId: actorFor(request.userId),
         markId: body.markId,
         quote: body.quote,
         anchor: { markId: body.markId, quote: body.quote, ...(body.anchor ?? {}) },
@@ -144,7 +172,8 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
         mentions: (body.mentions ?? []) as never,
       },
     }));
-    return reply.code(201).send({ comment: row });
+    const [comment] = await withAuthors(app.prisma, request.userId, [row]);
+    return reply.code(201).send({ comment });
   });
 
   app.patch("/api/comments/:id", async (request, reply) => {
@@ -157,7 +186,9 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
       .parse(request.body);
     const existing = await app.prisma.pageDiscussion.findFirst({ where: { id, userId: request.userId, deletedAt: null } });
     if (!existing) return reply.code(404).send({ error: "Comment not found." });
-    if (existing.authorKind !== "human" && body.body) return reply.code(403).send({ error: "You can only edit your own comments." });
+    if (request.access?.kind === "share" && existing.pageId !== request.access.resourceId) return reply.code(404).send({ error: "Comment not found." });
+    const refusal = body.body ? commentRefusal(request, existing, "edit") : null;
+    if (refusal) return reply.code(403).send({ error: refusal });
     const row = await app.prisma.pageDiscussion.update({
       where: { id },
       data: {
@@ -173,7 +204,8 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
     const { id } = request.params as { id: string };
     const existing = await app.prisma.pageDiscussion.findFirst({ where: { id, userId: request.userId, deletedAt: null } });
     if (!existing) return reply.code(404).send({ error: "Comment not found." });
-    if (existing.authorKind !== "human") return reply.code(403).send({ error: "You can only delete your own comments." });
+    const refusal = commentRefusal(request, existing, "delete");
+    if (refusal) return reply.code(refusal === "Comment not found." ? 404 : 403).send({ error: refusal });
     await app.prisma.pageDiscussion.update({ where: { id }, data: { deletedAt: new Date() } });
     return reply.code(204).send();
   });
@@ -219,7 +251,7 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
     const tierName = body.tier ?? settings.assistant.defaultTier;
     const tier = settings.models[tierName];
     const conversation = await app.prisma.assistantConversation.create({
-      data: { userId: request.userId, title: truncateText(body.prompt, 60) || "Comment" },
+      data: { userId: request.userId, accountId: actorFor(request.userId), title: truncateText(body.prompt, 60) || "Comment" },
     });
     const row = await withCommentPage(app.prisma, request.userId, kind, id, (tx) => tx.pageDiscussion.create({
       data: {
@@ -233,6 +265,8 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
         deliverableId: kind === "deliverable" ? id : null,
         kind: "ensemble",
         authorKind: "ensemble",
+        // Who asked, so the answer is attributed in a shared space.
+        authorAccountId: actorFor(request.userId),
         parentId: body.parentId,
         markId: body.markId,
         quote: body.quote ?? "",

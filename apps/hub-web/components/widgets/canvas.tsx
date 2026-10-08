@@ -18,6 +18,7 @@ import {
 import { api } from "@/lib/api";
 import { useToast } from "@/components/toast";
 import type { LayoutPayload, TodayCues, TodayNudges } from "@/lib/server-layout";
+import { useSpaceAccess } from "@/lib/access";
 
 const EditCanvas = dynamic(() => import("./edit-mode").then((mod) => mod.EditCanvas), { ssr: false });
 
@@ -47,6 +48,8 @@ export function WidgetCanvas({
   samples?: boolean;
   render: (type: WidgetId, size: Size, placement?: Placement) => ReactNode;
 }) {
+  // Layouts are the space owner's: someone it is shared with sees theirs, unchanged.
+  const guest = useSpaceAccess().guest;
   const layout = useQuery({
     queryKey: ["layout", surface],
     queryFn: () => api.layout(surface),
@@ -155,16 +158,20 @@ export function WidgetCanvas({
                 Clear samples
               </button>
             ) : null}
-            <button type="button" className="btn" onClick={() => setEditing(true)}>
-              Edit layout
-            </button>
+            {guest ? null : (
+              <button type="button" className="btn" onClick={() => setEditing(true)}>
+                Edit layout
+              </button>
+            )}
           </div>
         </div>
       ) : (
         <div className="mb-2 flex justify-end">
-          <button type="button" className="btn-ghost text-[12.5px]" onClick={() => setEditing(true)}>
-            Edit layout
-          </button>
+          {guest ? null : (
+            <button type="button" className="btn-ghost text-[12.5px]" onClick={() => setEditing(true)}>
+              Edit layout
+            </button>
+          )}
         </div>
       )}
       {sampleNotice ? (

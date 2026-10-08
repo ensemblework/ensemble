@@ -20,9 +20,11 @@
 
 ## 2. Information architecture & navigation
 
-**Left rail (Fluent Nav):** Today • Board • Needs Me *(n)* • Runs • Context • Skills • Workspace • Code • Metrics • ⚙ Settings (tabs: Account, Spaces, Assistant, Connections, Notifications, Shortcuts, Data; see [§3.9](#39-settings)). **Pages** sits directly below Today and starts collapsed on every load, unless the open route is a page (`components/pages/pages-section.tsx`). In the collapsed icon rail, Pages is one icon that opens the sidebar with the list showing, so the rail has no empty row.
+**Left rail (Fluent Nav):** Today • Board • Needs Me *(n)* • Runs • Context • Skills • Workspace • Code • Metrics • ⚙ Settings (tabs: Account, Spaces, Sharing, Assistant, Connections, Notifications, Shortcuts, Data; see [§3.9](#39-settings)). **Shared with you** (`/shared`) appears under Pages once someone has shared something with you, with a count of items not yet opened. **Pages** sits directly below Today and starts collapsed on every load, unless the open route is a page (`components/pages/pages-section.tsx`). In the collapsed icon rail, Pages is one icon that opens the sidebar with the list showing, so the rail has no empty row.
 
-**Space switcher.** The top of the sidebar is the open Ensemble space: its emoji or initial and its name (`components/shell/space-switcher.tsx`). The menu lists every space with its template, **New space** (`/spaces/new`) and **Manage spaces**. Switching reloads into Today; other tabs follow. See [28](28_ENSEMBLE_SPACES.md).
+**Space switcher.** The top of the sidebar is the open Ensemble space: its emoji or initial and its name (`components/shell/space-switcher.tsx`). The menu lists every space with its template, the spaces **shared with you** (owner's avatar on the icon), **Share ‹space›…**, **New space** (`/spaces/new`) and **Manage spaces**. Switching reloads into Today (the board, in a shared space); other tabs follow. See [28](28_ENSEMBLE_SPACES.md) and [29](29_SHARING.md).
+
+**In a space shared with you** the sidebar has no Today or Metrics, the top bar has no Fetch now and shows "Shared by ‹owner› · Can edit/Can view", and layouts, the kill switch, Connections and Data settings are hidden. Viewers get read-only pages, tasks, diagrams and plots. The top bar shows who else is in the space now; click someone to go to them or follow them. Pages, tasks, diagrams and the board show who is on them, and diagrams show their live cursors ([29 §5](29_SHARING.md#5-live-presence)).
 
 Two surfaces are deliberately **not** in the rail, because they are reached from the thing they belong to rather than browsed:
 
@@ -153,7 +155,7 @@ Before/after tiles + charts (see [module 07](07_MODULE_GOVERNANCE_AUDIT_METRICS.
 
 ### 3.9 Settings
 
-`app/(hub)/settings/page.tsx` is one page with seven tabs (`components/settings/settings-tabs.tsx`): a vertical list on wide screens and a scrolling row on narrow ones. Arrow keys, Home and End move between tabs, and each tab is a real link. The tab lives in the address (`/settings?tab=connections`); switching tabs pushes a history entry, so Back returns to the previous tab. Old one-page anchors still land: `/settings#models`, `#connections`, `#devices`, `#fetch`, `#retention` and the rest are mapped to their tab in `components/settings/url-state.ts` (`SECTION_TAB`) and scrolled into view. Only the open tab's code loads (`next/dynamic`).
+`app/(hub)/settings/page.tsx` is one page with eight tabs (`components/settings/settings-tabs.tsx`): a vertical list on wide screens and a scrolling row on narrow ones. Arrow keys, Home and End move between tabs, and each tab is a real link. The tab lives in the address (`/settings?tab=connections`); switching tabs pushes a history entry, so Back returns to the previous tab. Old one-page anchors still land: `/settings#models`, `#connections`, `#devices`, `#fetch`, `#retention` and the rest are mapped to their tab in `components/settings/url-state.ts` (`SECTION_TAB`) and scrolled into view. Only the open tab's code loads (`next/dynamic`).
 
 | Tab | Sections (anchor) |
 |---|---|
@@ -162,6 +164,7 @@ Before/after tiles + charts (see [module 07](07_MODULE_GOVERNANCE_AUDIT_METRICS.
 | Connections | Connections (`#connections`), Recent imports (`#imports`, once there is one), Fetching (`#fetch`), Editors & agents (`#editors`, `#connect`), Devices (`#devices`) |
 | Notifications | Morning brief (`#brief`), Quiet nudges (`#nudges`), Desktop reminders (`#reminders`), Quick capture (`#capture`) |
 | Spaces | Your spaces (`#spaces`): rename, icon, open, delete; *Settings across spaces*: keep every space in sync, or copy another space's settings in ([28](28_ENSEMBLE_SPACES.md)) |
+| Sharing | Contacts (`#contacts`, 5 slots), spaces you share and their members, hand over a space (once), items you shared, shared with you ([29](29_SHARING.md)). In a space shared with you, Connections and Data are hidden and a note says settings are your own |
 | Shortcuts | Every key binding by group (`#shortcuts`, `#keyboard`), see below |
 | Data | Data retention (`#retention`), Completed (`#completed`), Trash (`#trash`), Terminal and commits (`#terminal`), Failed jobs, Deleted items, Delete my data (`#danger`) |
 
@@ -361,6 +364,22 @@ All import routes need a verified email on the hosted site. Per person: 60 previ
 
 Rate limits: `/api/cli/auth/start` 10 per 10 minutes per address (`ENSEMBLE_RATE_CLI_START_*`), `/token` 120 per minute (`ENSEMBLE_RATE_CLI_TOKEN_*`), `/request` and `/approve` together 30 per 10 minutes per user (`ENSEMBLE_RATE_CLI_APPROVE_*`), `/mcp` 240 per minute per user (`ENSEMBLE_RATE_MCP_*`).
 
+### Sharing and presence ([docs/29](29_SHARING.md))
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/sharing/people?q=` | People with an Ensemble account by name or email; masked emails |
+| GET | `/api/sharing/overview` • `/api/sharing/with-me` | Everything for Settings › Sharing • what is shared with you |
+| GET / POST / DELETE | `/api/sharing/contacts` • `/api/sharing/contacts/:id` | At most 5. Removing takes back everything shared with them |
+| GET / POST / PATCH / DELETE | `/api/sharing/spaces/:id/members` • `…/members/:personId` | At most 2 members; viewer or editor; removing yourself leaves |
+| POST | `/api/sharing/spaces/:id/transfer` | Hand a space to a member, once |
+| GET / POST / PATCH / DELETE | `/api/sharing/items` • `/api/sharing/items/:id` | One item from the open space; view or edit |
+| GET | `/api/sharing/open/:id` | What a share link opens, for its recipient |
+| GET / POST | `/api/presence` | Who is here, and your heartbeat, cursor and view |
+| GET | `/api/skills/:id` | One skill (used by a shared skill) |
+
+Requests from `/shared/[id]` carry `x-ensemble-share: <shareId>`. Every route has a sharing class in `apps/hub-api/src/sharing/policy.ts`; unlisted routes are owner-only.
+
 ### Internal, called by agent-runtime (service-to-service)
 
 | Method | Path | Notes |
@@ -461,7 +480,7 @@ The full walkthrough is in [docs/11](11_HOW_THE_ASSISTANT_WORKS.md).
 
 Two things in Ensemble move faster than the engineer can check them: keyboard triage, where one keystroke decides a todo, and the assistant, which can rewrite six rows while the transcript is still streaming. Both need a way back that does not require first working out what happened.
 
-Every reversible mutation, **whoever made it**, appends to a per-engineer journal. The buttons sit in the app bar; **Ctrl+Z / Ctrl+Shift+Z** work anywhere except inside a text field, which owns its own undo.
+Every reversible mutation, **whoever made it**, appends to a per-engineer journal. In a shared space each person has their own journal there, so you only ever undo your own changes ([29](29_SHARING.md#3-what-stays-private-and-how)). The buttons sit in the app bar; **Ctrl+Z / Ctrl+Shift+Z** work anywhere except inside a text field, which owns its own undo.
 
 - **Ten deep.** The span within which "that was wrong" is still a reaction rather than an investigation, and enough to walk back a whole assistant turn that touched several rows.
 - **Server-side.** A browser-local history would not contain the rows the agent changed while the tab was on another page, which is the case the feature exists for.

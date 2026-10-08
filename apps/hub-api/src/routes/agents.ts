@@ -20,6 +20,7 @@ import { liveLog } from "../workspace/live-log.js";
 import { capabilities } from "../workspace/sandbox/spawn.js";
 import { PATH_RULE_SOURCE, PATH_RULE_TOOL } from "../workspace/trust.js";
 import { resume, stopEverything, stopJob } from "../workspace/worker.js";
+import { actorFor } from "../sharing/context.js";
 
 const run = promisify(execFile);
 
@@ -28,7 +29,25 @@ type JobRow = Awaited<ReturnType<FastifyInstance["prisma"]["workspaceJob"]["find
   device?: { name: string; lastSeenAt: Date | null; revokedAt: Date | null } | null;
 };
 
+/**
+ * Whose computer a job runs on. In a shared space only that person sees which computer it is;
+ * everyone else sees "<name>'s computer" (the web resolves the name from runnerAccountId).
+ */
+function yours(job: { userId: string; runnerAccountId: string | null }): boolean {
+  return (job.runnerAccountId ?? null) === actorFor(job.userId);
+}
+
+/** Only the person whose computer runs a job may stop it or run it again. */
+async function runnerRefusal(app: FastifyInstance, job: { userId: string; runnerAccountId: string | null }): Promise<string | null> {
+  if (yours(job)) return null;
+  const id = job.runnerAccountId ?? (await app.prisma.user.findUnique({ where: { id: job.userId }, select: { ownerId: true } }))?.ownerId ?? job.userId;
+  const row = await app.prisma.user.findUnique({ where: { id }, select: { name: true } });
+  const first = row?.name.trim().split(/\s+/)[0];
+  return `Only ${first && !first.includes("@") ? first : "the person running it"} can do this. It runs on their computer.`;
+}
+
 function card(job: JobRow, position?: number) {
+  const mine = yours(job);
   return {
     id: job.id,
     taskId: job.taskId,
@@ -50,8 +69,10 @@ function card(job: JobRow, position?: number) {
     networkAccess: job.networkAccess,
     maxTurns: job.maxTurns,
     folder: job.folderLabel ?? job.externalRoot ?? job.repoPath ?? "",
-    deviceId: job.deviceId,
-    deviceName: job.device?.name ?? null,
+    deviceId: mine ? job.deviceId : null,
+    deviceName: mine ? (job.device?.name ?? null) : null,
+    runnerAccountId: job.runnerAccountId,
+    yours: mine,
     deviceOnline: job.deviceId ? deviceOnline(job.device?.lastSeenAt ?? null) && !job.device?.revokedAt : null,
     deviceRevoked: Boolean(job.device?.revokedAt),
     folderLabel: job.folderLabel,
@@ -107,6 +128,8 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
     const { id } = request.params as { id: string };
     const old = await prisma.workspaceJob.findFirst({ where: { id, userId: request.userId } });
     if (!old) return reply.code(404).send({ error: "Job not found." });
+    const refusal = await runnerRefusal(app, old);
+    if (refusal) return reply.code(403).send({ error: refusal });
     if (!["interrupted", "failed", "cancelled", "blocked"].includes(old.status)) {
       return reply.code(409).send({ error: "Only a stopped job can be run again." });
     }
@@ -218,6 +241,9 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
 
   app.post("/api/agent/jobs/:id/stop", async (request, reply) => {
     const { id } = request.params as { id: string };
+    const job = await prisma.workspaceJob.findFirst({ where: { id, userId: request.userId }, select: { userId: true, runnerAccountId: true } });
+    const refusal = job ? await runnerRefusal(app, job) : null;
+    if (refusal) return reply.code(403).send({ error: refusal });
     const ok = await stopJob(app, request.userId, id);
     return ok ? reply.code(204).send() : reply.code(404).send({ error: "Job not found." });
   });

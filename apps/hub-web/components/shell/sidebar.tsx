@@ -18,6 +18,7 @@ import {
   ListChecks,
   Settings,
   Users,
+  UsersRound,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -137,6 +138,8 @@ export function Sidebar() {
       void (async () => {
         for (const href of WARM) {
           if (cancelled) return;
+          const shared = client.getQueryData<{ space?: { shared?: unknown } }>(["shell"])?.space?.shared;
+          if (shared && (href === "/today" || href === "/metrics")) continue;
           const gate = moduleForPath(href);
           if (gate) {
             const modules = client.getQueryData<{ modules?: string | null }>(["shell"])?.modules;
@@ -154,7 +157,10 @@ export function Sidebar() {
     };
   }, [client]);
   const modules = shell.data?.modules;
+  // A space shared with you: Today and Metrics are the owner's own.
+  const guest = Boolean(shell.data?.space?.shared);
   const visible = (href: string) => {
+    if (guest && (href === "/today" || href === "/metrics")) return false;
     const gate = moduleForPath(href);
     if (!gate) return true;
     // Hide a module only after the shell says it is off. Until then the link
@@ -163,6 +169,9 @@ export function Sidebar() {
     return hasModule(modules, gate as OptionalModule);
   };
   const waiting = (shell.data?.approvals ?? 0) + (shell.data?.decisions ?? 0);
+  const withMe = useQuery({ queryKey: ["shared-with-me"], queryFn: api.sharedWithMe, staleTime: 60_000, enabled: Boolean(shell.data) });
+  const sharedCount = (withMe.data?.spaces.length ?? 0) + (withMe.data?.items.length ?? 0);
+  const unopened = withMe.data?.items.filter((item) => !item.openedAt).length ?? 0;
   return (
     <aside className="app-sidebar flex h-full shrink-0 flex-col border-r border-line bg-sidebar/90">
       <div className="px-2 pb-2 pt-3">
@@ -179,10 +188,17 @@ export function Sidebar() {
         <span className="sidebar-label kbd">{mod === "⌘" ? "⌘K" : "Ctrl+K"}</span>
       </button>
       <div className="min-h-0 flex-1 overflow-y-auto pb-3">
-      <nav className="flex flex-col gap-0.5 px-2" aria-label="Primary">
-        <NavItem href="/today" label="Today" icon={CalendarDays} />
-      </nav>
+      {guest ? null : (
+        <nav className="flex flex-col gap-0.5 px-2" aria-label="Primary">
+          <NavItem href="/today" label="Today" icon={CalendarDays} />
+        </nav>
+      )}
       <PagesNav />
+      {sharedCount ? (
+        <nav className="mt-1 flex flex-col gap-0.5 px-2" aria-label="Shared with you">
+          <NavItem href="/shared" label="Shared with you" icon={UsersRound} badge={unopened || undefined} />
+        </nav>
+      ) : null}
       <nav className="mt-2 flex flex-col gap-0.5 px-2" aria-label="Work">
         {PRIMARY.slice(1).filter((item) => visible(item.href)).map((item) => (
           <NavItem
@@ -192,7 +208,7 @@ export function Sidebar() {
             badge={item.badge === "approvals" ? waiting : undefined}
           />
         ))}
-        {shell.data?.devTools ? <NavItem href="/marketplace" label="Templates" icon={LayoutTemplate} /> : null}
+        {shell.data?.devTools && !guest ? <NavItem href="/marketplace" label="Templates" icon={LayoutTemplate} /> : null}
       </nav>
       {GROUPS.map((group) => {
         const items = group.filter((item) => visible(item.href));

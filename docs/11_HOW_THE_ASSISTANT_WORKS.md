@@ -393,6 +393,16 @@ Merging them would force the safer half to carry the stricter half's ceremony.
 
 Connected-app tools (area `apps`) are the outside-world tools that do live in `assistant/registry.ts`, because each one is a single typed call the person can read in full before it happens. They carry the stricter rule themselves: every write is held for Apply whatever the write policy says, and is ledgered when applied.
 
+### In a space someone shared with you
+
+The assistant works on the shared space's content as **you** ([29](29_SHARING.md)):
+
+- **Your keys and settings.** `loadSettings` and every model call resolve to your account (`keysFor` in `src/sharing/context.ts`), so your models, keys, tone and quota apply, never the owner's.
+- **Not the owner's private surfaces.** `guestMayUse` in `assistant/apps.ts` drops connected-app tools, reminders and watchers, `hub_fetch_now` and repository links from the turn, and `resolveTool` refuses them on Apply. App grants load as none. The owner's mail, calendar and drives are never reachable.
+- **Viewers only read.** A viewer's turn offers no write tools, and `POST /api/assistant/apply` and inline @ensemble are refused for them.
+- **Your own chats.** Conversations carry `account_id`, so each person sees only their own. Streamed frames go only to the person who asked (`lib/sse.ts`).
+- **It knows where it is.** The prompt names you, says whose space this is, and that their apps, reminders and settings are private (`assistant/state.ts`).
+
 ---
 
 ## 8. Meeting notes are ordinary context

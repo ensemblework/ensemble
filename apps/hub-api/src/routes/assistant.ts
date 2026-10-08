@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
+import { actorFor } from "../sharing/context.js";
 import {
   AssistantPageContext,
   PageMention,
@@ -42,7 +43,8 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/assistant/conversations", async (request) => {
     const conversations = await app.prisma.assistantConversation.findMany({
-      where: { userId: request.userId },
+      // Each person's chats are their own, even in a shared space.
+      where: { userId: request.userId, accountId: actorFor(request.userId) },
       orderBy: { updatedAt: "desc" },
       take: 40,
       select: { id: true, title: true, updatedAt: true, createdAt: true },
@@ -53,7 +55,7 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/assistant/conversations", async (request, reply) => {
     const body = z.object({ title: z.string().optional() }).parse(request.body ?? {});
     const conversation = await app.prisma.assistantConversation.create({
-      data: { userId: request.userId, title: truncateText(body.title ?? "", 80) || "New chat" },
+      data: { userId: request.userId, accountId: actorFor(request.userId), title: truncateText(body.title ?? "", 80) || "New chat" },
     });
     return reply.code(201).send({ conversation });
   });
@@ -61,7 +63,7 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/assistant/conversations/:id/messages", async (request, reply) => {
     const { id } = request.params as { id: string };
     const conversation = await app.prisma.assistantConversation.findFirst({
-      where: { id, userId: request.userId },
+      where: { id, userId: request.userId, accountId: actorFor(request.userId) },
     });
     if (!conversation) return reply.code(404).send({ error: "Conversation not found." });
     const messages = await app.prisma.assistantMessage.findMany({
@@ -86,7 +88,7 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
       .parse(request.body);
     if (body.conversationId) {
       const owned = await app.prisma.assistantConversation.findFirst({
-        where: { id: body.conversationId, userId: request.userId },
+        where: { id: body.conversationId, userId: request.userId, accountId: actorFor(request.userId) },
         select: { id: true },
       });
       if (!owned) return reply.code(404).send({ error: "Conversation not found." });
@@ -263,7 +265,7 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
 
   app.post("/api/assistant/conversations/:id/stop", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const owned = await app.prisma.assistantConversation.findFirst({ where: { id, userId: request.userId }, select: { id: true } });
+    const owned = await app.prisma.assistantConversation.findFirst({ where: { id, userId: request.userId, accountId: actorFor(request.userId) }, select: { id: true } });
     if (!owned) return reply.code(404).send({ error: "Conversation not found." });
     abortAssistantTurn(id);
     await requestCancel(app.redis, request.userId, `assistant:${id}`);
@@ -277,10 +279,10 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
     const settings = await loadSettings(app.prisma, request.userId);
     const conversation = body.conversationId
       ? await app.prisma.assistantConversation.findFirst({
-          where: { id: body.conversationId, userId: request.userId },
+          where: { id: body.conversationId, userId: request.userId, accountId: actorFor(request.userId) },
         })
       : await app.prisma.assistantConversation.create({
-          data: { userId: request.userId, title: truncateText(message, 60) || "New chat" },
+          data: { userId: request.userId, accountId: actorFor(request.userId), title: truncateText(message, 60) || "New chat" },
         });
     if (!conversation) return reply.code(404).send({ error: "Conversation not found." });
 

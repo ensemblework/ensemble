@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Check, ChevronRight, Code2, FileText, FolderOpen, GitBranch, Lock, Monitor, ShieldCheck, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { api, type AssignInput, type Complexity } from "@/lib/api";
+import { useSpaceAccess } from "@/lib/access";
 import { pickFolderNative } from "@/lib/desktop-dialog";
 import { computerName, folderPlace, freshCloneHint, sandboxStay } from "@/lib/device-copy";
 import { usePersistentState } from "@/lib/prefs";
@@ -115,11 +116,13 @@ export function AssignDialog({
   const board = useQuery({ queryKey: ["workspace"], queryFn: api.workspace, enabled: open });
   const computers = useQuery({ queryKey: ["devices"], queryFn: api.devices, enabled: open, refetchInterval: open ? 15_000 : false });
   const selectedDevice = (computers.data?.devices ?? []).find((device) => device.id === runOn) ?? null;
-  const serverRunner = (computers.data?.serverRunner ?? board.data?.serverRunner) !== false;
+  // In a space shared with you, the agent runs on your own computers only (they are the only ones listed).
+  const access = useSpaceAccess();
+  const serverRunner = !access.guest && (computers.data?.serverRunner ?? board.data?.serverRunner) !== false;
   useEffect(() => {
     if (!open || !computers.data) return;
-    if (!computers.data.serverRunner && runOn === "server") setRunOn(computers.data.devices[0]?.id ?? "server");
-  }, [open, computers.data, runOn]);
+    if ((!computers.data.serverRunner || access.guest) && runOn === "server") setRunOn(computers.data.devices[0]?.id ?? "server");
+  }, [open, computers.data, runOn, access.guest]);
   const branchSource = place === "folder" && folderCheck?.ok && folderCheck.git ? folder : place === "fresh" && repo.startsWith("/") ? repo : "";
   const branches = useQuery({ queryKey: ["branches", branchSource], queryFn: () => api.branches(branchSource), enabled: open && Boolean(branchSource) });
 
@@ -336,6 +339,12 @@ export function AssignDialog({
             ))}
             {!serverRunner && !(computers.data?.devices.length) ? <div className="text-[12.5px] text-muted">Add a computer with the Ensemble CLI in Settings → Devices, or pair the desktop app. Code tasks run there.</div> : null}
           </div>
+          {access.guest ? (
+            <p className="mt-2 rounded-md bg-panel px-2.5 py-2 text-[12px] leading-[18px] text-muted">
+              This is {access.owner?.split(" ")[0] ?? "someone"}'s space, so the agent runs on one of your computers. They see that it runs on your computer, never which one,
+              and they can follow its log. Only you can answer its questions or stop it.
+            </p>
+          ) : null}
         </div>
 
         <div className="grid grid-cols-[minmax(0,1fr)_170px] gap-3">

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Actor, Prisma } from "@prisma/client";
 import { prisma } from "./prisma.js";
 import { lockUserTransaction } from "./user-lock.js";
+import { actorFor } from "../sharing/context.js";
 
 export async function appendLedger(input: {
   userId: string;
@@ -12,6 +13,13 @@ export async function appendLedger(input: {
   approvalId?: string;
   payload?: Prisma.InputJsonValue;
 }): Promise<void> {
+  // Someone the space is shared with: the entry says who it was.
+  const by = actorFor(input.userId);
+  if (by) {
+    const plain = input.payload && typeof input.payload === "object" && !Array.isArray(input.payload);
+    const base = plain ? (input.payload as Record<string, Prisma.InputJsonValue>) : input.payload === undefined ? {} : { value: input.payload };
+    input = { ...input, payload: { ...base, byAccountId: by } };
+  }
   await prisma.$transaction(async (tx) => {
     await lockUserTransaction(tx, input.userId);
     const prev = await tx.auditLedger.findFirst({

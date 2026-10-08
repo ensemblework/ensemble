@@ -11,11 +11,12 @@ import { SETTINGS_TABS, type SettingsTab } from "./url-state";
  * ones. Arrow keys, Home and End move between tabs; each tab is also a real
  * link, so it can be opened in a new browser tab.
  */
-export function SettingsTabs({ value, onChange }: { value: SettingsTab; onChange: (tab: SettingsTab) => void }) {
+export function SettingsTabs({ value, onChange, hidden = [] }: { value: SettingsTab; onChange: (tab: SettingsTab) => void; hidden?: SettingsTab[] }) {
   const refs = useRef<Partial<Record<SettingsTab, HTMLAnchorElement | null>>>({});
+  const tabs = SETTINGS_TABS.filter((tab) => !hidden.includes(tab.id));
   const move = (event: React.KeyboardEvent) => {
-    const index = SETTINGS_TABS.findIndex((tab) => tab.id === value);
-    const last = SETTINGS_TABS.length - 1;
+    const index = tabs.findIndex((tab) => tab.id === value);
+    const last = tabs.length - 1;
     const next =
       event.key === "ArrowDown" || event.key === "ArrowRight"
         ? index === last
@@ -32,7 +33,7 @@ export function SettingsTabs({ value, onChange }: { value: SettingsTab; onChange
               : -1;
     if (next < 0) return;
     event.preventDefault();
-    const id = SETTINGS_TABS[next]!.id;
+    const id = tabs[next]!.id;
     onChange(id);
     const node = refs.current[id];
     node?.focus();
@@ -46,7 +47,7 @@ export function SettingsTabs({ value, onChange }: { value: SettingsTab; onChange
       className="-mx-1 flex gap-1 overflow-x-auto px-1 [scrollbar-width:none] lg:mx-0 lg:flex-col lg:overflow-visible lg:px-0"
       data-settings-nav
     >
-      {SETTINGS_TABS.map((tab) => {
+      {tabs.map((tab) => {
         const selected = tab.id === value;
         return (
           <a

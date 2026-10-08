@@ -4,7 +4,7 @@ import { EditorContent, useEditor, type Editor, type JSONContent } from "@tiptap
 import dynamic from "next/dynamic";
 import { useEffect, useState, useRef } from "react";
 import type { PageDocument, PageMention } from "@ensemble/shared-types";
-import { api } from "@/lib/api";
+import { api, currentShare } from "@/lib/api";
 import { diagramMentionIds, editorExtensions, type EntitySource } from "./extensions";
 import { useModuleState } from "@/lib/use-module";
 import { useToast } from "../toast";
@@ -24,6 +24,7 @@ export function BlockEditor({
   placeholder = "Type / for blocks, @ to mention…",
   editable = true,
   page,
+  remote,
 }: {
   initial: PageDocument;
   entities: EntitySource;
@@ -32,6 +33,8 @@ export function BlockEditor({
   placeholder?: string;
   editable?: boolean;
   page?: { kind: string; id: string };
+  /** Someone else's saved version. Applied in place (your selection kept), never saved back. */
+  remote?: { doc: PageDocument; stamp: number } | null;
 }) {
   const toast = useToast();
   const changeRef = useRef(onChange);
@@ -91,7 +94,8 @@ export function BlockEditor({
 
   function syncDiagramLinks(doc: PageDocument) {
     const current = pageRef.current;
-    if (!current || !diagramsRef.current) return;
+    // Diagram links are space-wide; one shared page cannot rewrite them.
+    if (!current || !diagramsRef.current || currentShare()) return;
     const ids = diagramMentionIds(doc);
     const key = `${current.kind}:${current.id}:${ids.join(",")}`;
     if (linked.current === key) return;
@@ -107,6 +111,22 @@ export function BlockEditor({
   useEffect(() => {
     editor?.setEditable(editable);
   }, [editor, editable]);
+
+  useEffect(() => {
+    if (!editor || !remote || editor.isDestroyed) return;
+    const next = JSON.stringify(remote.doc);
+    if (next === baseline.current) return;
+    const { from, to } = editor.state.selection;
+    editor.commands.setContent(remote.doc as JSONContent, false);
+    baseline.current = JSON.stringify(editor.getJSON());
+    const size = editor.state.doc.content.size;
+    try {
+      editor.commands.setTextSelection({ from: Math.min(from, size), to: Math.min(to, size) });
+    } catch {
+      // The old position no longer exists; the cursor stays where setContent put it.
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor, remote?.stamp]);
 
   useEffect(() => {
     // The shell can load after the editor. Reconcile links once the diagrams module is known to be on.

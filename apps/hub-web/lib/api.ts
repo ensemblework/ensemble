@@ -54,6 +54,34 @@ function unreachable(status: number, text: string): boolean {
   return trimmed === "Internal Server Error" || /ECONNREFUSED|ECONNRESET|ENOTFOUND|EAI_AGAIN|socket hang up/i.test(trimmed);
 }
 
+/**
+ * While a single shared item is open (/shared/[id]), every request names that share. The
+ * server then answers as if you were in the owner's space, limited to that item.
+ */
+let openShare: string | null = null;
+export const SHARE_HEADER = "x-ensemble-share";
+export function setOpenShare(id: string | null): void {
+  openShare = id;
+}
+export function currentShare(): string | null {
+  return openShare;
+}
+
+/**
+ * Runs `fn` with the share header fixed to `share`. Requests read the header synchronously,
+ * so a save made while a page unmounts goes where the page was opened, whichever page is
+ * mounting at the same moment.
+ */
+export function withShare<T>(share: string | null, fn: () => T): T {
+  const before = openShare;
+  openShare = share;
+  try {
+    return fn();
+  } finally {
+    openShare = before;
+  }
+}
+
 export async function request<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
   const { json, signal: explicit, ...rest } = init ?? {};
   const external = explicit ?? currentExternalSignal();
@@ -66,6 +94,7 @@ export async function request<T>(path: string, init?: RequestInit & { json?: unk
       body: json === undefined ? rest.body : JSON.stringify(json),
       headers: {
         ...(json !== undefined ? { "Content-Type": "application/json" } : {}),
+        ...(openShare ? { [SHARE_HEADER]: openShare } : {}),
         ...(rest.headers ?? {}),
       },
       credentials: "include",
@@ -408,6 +437,10 @@ export type AgentJob = {
   continueFromJobId: string | null;
   deviceId?: string | null;
   deviceName?: string | null;
+  /** In a shared space: whose computer runs it (null: the space's owner). */
+  runnerAccountId?: string | null;
+  /** True when it runs on your own computer (only then is the computer named). */
+  yours?: boolean;
   deviceOnline?: boolean | null;
   deviceRevoked?: boolean;
   folderLabel?: string | null;
@@ -760,6 +793,9 @@ export type AgentDecisionRecord = {
   requestedAt: string;
   decidedAt: string | null;
   expiresAt: string;
+  /** In a shared space: false when only someone else (the runner, or the owner) may answer. */
+  canAnswer?: boolean;
+  runnerAccountId?: string | null;
 };
 
 export type DecisionRuleRecord = {
@@ -793,7 +829,17 @@ export const api = bindClient({
       activeTemplateId?: string | null;
       onboardingTemplateId?: string | null;
       /** The Ensemble space this request ran in. */
-      space?: { id: string; name: string; icon: string | null; primary: boolean };
+      space?: {
+        id: string;
+        name: string;
+        icon: string | null;
+        primary: boolean;
+        members?: number;
+        /** Members and people with a shared item. Above zero, presence is sent. */
+        collaborators?: number;
+        /** Set when this is someone else's space, shared with you. */
+        shared?: { owner: SharingPerson; role: "viewer" | "editor" } | null;
+      };
       templateName?: string | null;
       seasonEnded?: { id: string; name: string } | null;
       devTools?: boolean;
@@ -954,6 +1000,7 @@ export const api = bindClient({
 
   // skills
   skills: () => get<{ skills: SkillRecord[] }>("/api/skills"),
+  skill: (id: string) => get<{ skill: SkillRecord }>(`/api/skills/${id}`),
   createSkill: (name: string) => post<{ skill: SkillRecord }>("/api/skills", { name }),
   patchSkill: (id: string, data: Record<string, unknown>) => patch<{ skill: SkillRecord }>(`/api/skills/${id}`, data),
   deleteSkill: (id: string) => del<void>(`/api/skills/${id}`),
@@ -1168,6 +1215,17 @@ export const api = bindClient({
     post<{ question: string; answer: string; sources: AskSource[]; undoEntryId?: string | null }>("/api/ask", { question }),
   meetingCues: () => get<{ cues: MeetingCue[]; voice: string }>("/api/meetings/cues"),
   meetingSessions: () => get<{ sessions: MeetingSessionRecord[]; voice: string }>("/api/meetings/sessions"),
+  importedMeetingNote: (id: string) =>
+    get<{
+      note: {
+        id: string;
+        title: string;
+        occurredAt: string;
+        summary: string;
+        decisions: string[];
+        actionItems: Array<{ text: string; owner: { name: string | null } | null; completed: boolean }>;
+      };
+    }>(`/api/meetings/notes/${id}`),
   meetingSession: (id: string) =>
     get<{ session: MeetingSessionRecord; openTasks: Array<{ id: string; title: string; href: string }>; voice: string }>(`/api/meetings/sessions/${id}`),
   startMeeting: (artifactId: string | null, title?: string) =>
@@ -1262,6 +1320,32 @@ export const api = bindClient({
   deleteSpace: (id: string, confirmation: string) => del<void>(`/api/spaces/${id}`, { confirmation }),
   copySpaceSettings: (from: string) => post<{ copied: boolean }>("/api/spaces/settings/copy", { from }),
   syncSpaceSettings: (on: boolean, from?: string) => put<{ sync: boolean }>("/api/spaces/settings/sync", { on, from }),
+
+  // sharing
+  searchPeople: (q: string) => get<{ people: SharingPerson[] }>(`/api/sharing/people${qs({ q })}`),
+  sharingOverview: () => get<SharingOverview>("/api/sharing/overview"),
+  contacts: () => get<{ limit: number; contacts: SharingContact[] }>("/api/sharing/contacts"),
+  addContact: (personId: string) => post<{ limit: number; contacts: SharingContact[] }>("/api/sharing/contacts", { personId }),
+  removeContact: (personId: string) =>
+    del<{ removed: { spaces: number; items: number }; limit: number; contacts: SharingContact[] }>(`/api/sharing/contacts/${personId}`),
+  sharedWithMe: () => get<SharedWithMe>("/api/sharing/with-me"),
+  spaceMembers: (spaceId: string) => get<SpaceMembers>(`/api/sharing/spaces/${spaceId}/members`),
+  addMember: (spaceId: string, personId: string, role: MemberRole) =>
+    post<{ limit: number; members: SpaceMember[] }>(`/api/sharing/spaces/${spaceId}/members`, { personId, role }),
+  setMemberRole: (spaceId: string, personId: string, role: MemberRole) =>
+    patch<{ limit: number; members: SpaceMember[] }>(`/api/sharing/spaces/${spaceId}/members/${personId}`, { role }),
+  removeMember: (spaceId: string, personId: string) => del<void>(`/api/sharing/spaces/${spaceId}/members/${personId}`),
+  transferSpace: (spaceId: string, toId: string, confirmation: string) =>
+    post<{ transferred: boolean }>(`/api/sharing/spaces/${spaceId}/transfer`, { toId, confirmation }),
+  itemShares: (kind: ShareKind, resourceId: string) =>
+    get<{ viewOnly: boolean; shares: ItemShare[] }>(`/api/sharing/items${qs({ kind, resourceId })}`),
+  shareItem: (data: { kind: ShareKind; resourceId: string; personId: string; role: ItemRole }) =>
+    post<{ viewOnly: boolean; shares: ItemShare[] }>("/api/sharing/items", data),
+  setShareRole: (id: string, role: ItemRole) => patch<{ updated: boolean }>(`/api/sharing/items/${id}`, { role }),
+  removeShare: (id: string) => del<void>(`/api/sharing/items/${id}`),
+  openShare: (id: string) => get<OpenedShare>(`/api/sharing/open/${id}`),
+  presence: () => get<{ you: string; people: PresenceEntry[] }>("/api/presence"),
+  sendPresence: (data: PresenceUpdate, keepalive = false) => request<void>("/api/presence", { method: "POST", json: data, keepalive }),
   completeOnboarding: (role: string, templateId: string) =>
     post<{ role: string; templateId: string; onboardingComplete: boolean }>("/api/onboarding", { role, templateId }),
   widgetFeed: () =>
@@ -1303,7 +1387,59 @@ export const api = bindClient({
 });
 
 export type SpaceSummary = { id: string; name: string; icon: string | null; primary: boolean; role: string | null; templateId: string | null; createdAt: string };
-export type SpacesPayload = { activeId: string; account: { sync: boolean; role: string | null }; spaces: SpaceSummary[] };
+export type SpacesPayload = { activeId: string; account: { sync: boolean; role: string | null }; spaces: SpaceSummary[]; shared?: SharedSpace[] };
+
+// ── sharing ────────────────────────────────────────────────────────────────
+
+export type ShareKind = "page" | "task" | "board" | "diagram" | "plot_space" | "plot" | "meeting" | "skill" | "workspace" | "code";
+export type MemberRole = "viewer" | "editor";
+export type ItemRole = "view" | "edit";
+export type SharingPerson = { id: string; name: string; initials: string; email?: string; exact?: boolean; contact?: boolean };
+export type SharingContact = { id: string; name: string; initials: string; email: string; spaces: number; items: number; addedAt: string };
+export type SpaceMember = { id: string; name: string; initials: string; email: string; role: MemberRole; addedAt: string };
+export type SpaceMembers = {
+  owner: SharingPerson;
+  you: "owner" | MemberRole;
+  limit: number;
+  members: SpaceMember[];
+  canTransfer: boolean;
+  transferredAt: string | null;
+};
+export type ItemShare = { id: string; person: SharingPerson & { email: string }; role: ItemRole; createdAt: string };
+export type SharedSpace = { id: string; name: string; icon: string | null; owner: SharingPerson; role: MemberRole; since: string };
+export type SharedItem = { id: string; kind: ShareKind; title: string; role: ItemRole; owner: SharingPerson; spaceName: string; since: string; openedAt: string | null };
+export type SharedWithMe = { spaces: SharedSpace[]; items: SharedItem[] };
+export type SharingOverview = {
+  limits: { contacts: number; members: number };
+  contacts: SharingContact[];
+  spaces: Array<{ id: string; name: string; icon: string | null; primary: boolean; members: SpaceMember[]; transferredAt: string | null }>;
+  items: Array<{ id: string; kind: ShareKind; title: string; role: ItemRole; spaceId: string; resourceId: string; createdAt: string; person: SharingPerson }>;
+  withMe: SharedWithMe;
+};
+export type OpenedShare = { id: string; kind: ShareKind; resourceId: string; title: string; role: ItemRole; spaceId: string; owner: SharingPerson };
+export type PresenceEntry = {
+  accountId: string;
+  tabId: string;
+  name: string;
+  initials: string;
+  color: string;
+  route: string | null;
+  resource: { kind: ShareKind; id: string } | null;
+  cursor: { x: number; y: number } | null;
+  viewport: { x: number; y: number; zoom: number } | null;
+  typing: boolean;
+  at: number;
+  gone?: boolean;
+};
+export type PresenceUpdate = {
+  tabId: string;
+  route?: string | null;
+  resource?: { kind: ShareKind; id: string } | null;
+  cursor?: { x: number; y: number } | null;
+  viewport?: { x: number; y: number; zoom: number } | null;
+  typing?: boolean;
+  leave?: boolean;
+};
 export type SpaceSettingsMode = "fresh" | "copy" | "sync";
 
 export type OnboardingTemplateCard = {

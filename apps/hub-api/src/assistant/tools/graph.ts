@@ -11,6 +11,7 @@ import {
   updatePerson,
 } from "../../services/records.js";
 import { defineTool, inTransaction, toolOk } from "../types.js";
+import { isGuestIn } from "../../sharing/context.js";
 
 export const graphTools = [
   defineTool({
@@ -259,11 +260,14 @@ export const graphTools = [
           select: { id: true, title: true, due: true, projectId: true },
           take: 40,
         }),
-        ctx.prisma.reminder.findMany({
-          where: { userId: ctx.userId, deletedAt: null, dismissedAt: null, dueDate: { gte: input.from, lte: input.to } },
-          select: { id: true, title: true, dueDate: true, dueTime: true },
-          take: 40,
-        }),
+        // Reminders are private to the space's owner.
+        isGuestIn(ctx.userId)
+          ? Promise.resolve([] as Array<{ id: string; title: string; dueDate: string; dueTime: string | null }>)
+          : ctx.prisma.reminder.findMany({
+              where: { userId: ctx.userId, deletedAt: null, dismissedAt: null, dueDate: { gte: input.from, lte: input.to } },
+              select: { id: true, title: true, dueDate: true, dueTime: true },
+              take: 40,
+            }),
       ]);
       return toolOk(
         `${tasks.length} task(s), ${deliverables.length} deliverable(s), ${reminders.length} reminder(s) due ${input.from} to ${input.to}.`,

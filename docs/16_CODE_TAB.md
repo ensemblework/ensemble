@@ -129,6 +129,10 @@ A passkey belongs to the **site it was made on** and stays on the **computer tha
 
 ---
 
+## 6a. In a space shared with you
+
+Code is view only for anyone the space is shared with ([29](29_SHARING.md)): they can read reviews, files and diffs, but every `/api/code` write (accept, reject, edit, commit, push, discard) and the terminal are the owner's. The review page shows **View only** instead of the terminal and review actions, and the file editor is read-only. A single "code" share opens the list of reviews the same way.
+
 ## 7. Not in this version
 
 - Side-by-side view and a change overview on the scrollbar (the unified view and the gutter cover the same ground).
