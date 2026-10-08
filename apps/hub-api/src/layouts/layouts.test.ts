@@ -3,7 +3,7 @@ import test from "node:test";
 import { personaBlock, quickActions } from "@ensemble/shared-types";
 import { templateByMarketId } from "@ensemble/shared-types/marketplace";
 import { signupDeskId, TEMPLATES, templatesForRole } from "@ensemble/shared-types/templates";
-import { TEMPLATE_CARDS } from "@ensemble/shared-types/manifest";
+import { TEMPLATE_CARDS, templateDeskLayout } from "@ensemble/shared-types/manifest";
 import {
   findCollisions,
   moveByCell,
@@ -125,16 +125,29 @@ test("zod and the registry reject illegal layouts", () => {
 });
 
 test("templates match the cards and stay inside the registry", () => {
-  assert.equal(TEMPLATES.length, 26);
-  for (const role of ["student", "teacher", "lawyer", "engineer", "vibe"] as const) {
-    assert.equal(templatesForRole(role).length, 5);
-    assert.equal(TEMPLATE_CARDS.filter((card) => card.role === role).length, 5);
+  assert.equal(TEMPLATES.length, 36);
+  for (const role of ["student", "teacher", "lawyer", "engineer", "vibe", "manager"] as const) {
+    assert.equal(templatesForRole(role).length, 6, role);
+    const cards = TEMPLATE_CARDS.filter((card) => card.role === role);
+    assert.equal(cards.length, 6, role);
+    const shapes = new Set(cards.map((card) => card.tiles.map(([key, c, r]) => `${key}:${c}x${r}`).join(",")));
+    assert.equal(shapes.size, 6, `${role} templates should not share a Today layout`);
+    const heads = new Set(cards.map((card) => card.tiles[0]![0]));
+    assert.ok(heads.size >= 5, `${role} templates should lead with different tiles`);
   }
-  assert.equal(templatesForRole("manager").length, 1);
-  assert.equal(TEMPLATE_CARDS.filter((card) => card.role === "manager").length, 1);
   const ids = new Set(TEMPLATES.map((row) => row.id));
-  assert.equal(ids.size, 26);
-  for (const card of TEMPLATE_CARDS) assert.ok(ids.has(card.id));
+  assert.equal(ids.size, 36);
+  assert.equal(TEMPLATE_CARDS.length, 36);
+  for (const card of TEMPLATE_CARDS) {
+    assert.ok(ids.has(card.id));
+    assert.equal(TEMPLATES.find((row) => row.id === card.id)?.role, card.role, card.id);
+    assert.equal(card.features.length, 3);
+    for (const [key, c, r] of card.tiles) {
+      assert.ok(key && c >= 3 && c <= 12 && r >= 2 && r <= 8, `${card.id} ${key}`);
+    }
+    assert.equal(new Set(card.tiles.map(([key]) => key)).size, card.tiles.length, `${card.id} repeats a tile`);
+    assert.doesNotMatch(`${card.name} ${card.blurb} ${card.features.join(" ")}`, /—/);
+  }
   for (const template of TEMPLATES) {
     assert.equal(validateLayout("today", template.today).ok, true, template.id);
     assert.equal(validateLayout("context", template.context).ok, true, template.id);
@@ -157,7 +170,7 @@ test("templates match the cards and stay inside the registry", () => {
 
 test("every signup template maps to a desk", () => {
   const ids = TEMPLATES.map((row) => row.id);
-  assert.equal(new Set(ids).size, 26);
+  assert.equal(new Set(ids).size, 36);
   for (const id of ids) {
     const desk = signupDeskId(id);
     assert.notEqual(desk, "default", `${id} should name a desk`);
@@ -171,7 +184,14 @@ test("every signup template maps to a desk", () => {
   assert.equal(signupDeskId("one-idea"), "mkt.bench");
   assert.equal(signupDeskId("weeks-lessons"), "mkt.classes");
   assert.equal(signupDeskId("staff-week"), "mkt.staff-week");
+  assert.equal(signupDeskId("one-on-ones"), "mkt.staff-week");
+  assert.equal(signupDeskId("thesis-year"), "mkt.literature-desk");
   assert.equal(signupDeskId("nope"), "default");
+  const layout = templateDeskLayout("exam-setter");
+  assert.equal(layout?.key, "desk.layout.classes");
+  assert.equal(layout?.value.exact, true);
+  assert.deepEqual(layout?.value.tiles[0], { key: "countdown", c: 8, r: 4 });
+  assert.equal(templateDeskLayout("nope"), null);
 });
 
 test("highlights stay suggestions and do not grant tools", () => {

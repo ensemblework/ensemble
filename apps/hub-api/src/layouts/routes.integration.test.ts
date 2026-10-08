@@ -68,12 +68,23 @@ test("onboarding seeds once per user and layouts stay off the undo stack", async
   try {
     const cards = await app.inject({ method: "GET", url: "/api/onboarding/templates?role=student" });
     assert.equal(cards.statusCode, 200);
-    assert.equal((cards.json() as { templates: unknown[] }).templates.length, 5);
+    const listed = (cards.json() as { templates: Array<{ id: string; desk: string; tiles: unknown[]; features: string[]; preview: { project: string; tasks: unknown[] } }> }).templates;
+    assert.equal(listed.length, 6);
+    const semester = listed.find((card) => card.id === "semester-desk");
+    assert.equal(semester?.desk, "semester");
+    assert.ok(semester?.tiles.length);
+    assert.equal(semester?.features.length, 3);
+    assert.equal(semester?.preview.project, "This semester");
+    assert.equal(semester?.preview.tasks.length, 3);
 
     const applied = await app.inject({ method: "POST", url: "/api/onboarding", payload: { role: "student", templateId: "semester-desk" } });
     assert.equal(applied.statusCode, 200);
     const again = await app.inject({ method: "POST", url: "/api/onboarding", payload: { role: "student", templateId: "exam-week" } });
     assert.equal(again.statusCode, 409);
+
+    const layout = await prisma.preference.findFirst({ where: { userId: owner.id, key: "desk.layout.semester" } });
+    assert.equal((layout?.value as { exact?: boolean } | null)?.exact, true);
+    assert.equal((await prisma.user.findUnique({ where: { id: owner.id } }))?.profession, "Student");
 
     const tasks = await prisma.task.count({ where: { userId: owner.id, sourceRef: { startsWith: "template:semester-desk:" } } });
     assert.equal(tasks, 3);

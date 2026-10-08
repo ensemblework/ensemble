@@ -1,6 +1,6 @@
 # Branch desk demo
 
-One engineer desk is filled: **Branch desk** (`branch-desk` / `mkt.branch-desk`). It is Mira Chen’s workspace at Fieldnote, a small startup shipping Relay, a webhook delivery product for design partners. The other engineer templates (inbox triage, release desk, on-call morning, partner work) are not seeded. Notes for building them are at the bottom.
+One engineer desk is filled: **Branch desk** (`branch-desk` / `mkt.branch-desk`). It is Mira Chen’s workspace at Fieldnote, a small startup shipping Relay, a webhook delivery product for design partners. The other engineer templates (inbox triage, release desk, on-call morning, partner work, tech lead) are not seeded. Notes for building them are at the bottom.
 
 The account, if this command creates it:
 

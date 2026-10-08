@@ -122,7 +122,8 @@ export function PreferencesTab() {
     mutationFn: (name: string) => api.deletePreference(name),
     onSuccess: () => client.invalidateQueries({ queryKey: ["preferences"] }),
   });
-  const list = preferences.data?.preferences ?? [];
+  // UI state (desk layout, shortcuts) shares the table but is not something the agent learned.
+  const list = (preferences.data?.preferences ?? []).filter((row) => !row.key.startsWith("ui.") && !row.key.startsWith("desk."));
   return (
     <div>
       <p className="mb-4 max-w-2xl text-[13px] text-muted">

@@ -13,6 +13,7 @@ import { useLive } from "../live";
 import { useToast } from "../toast";
 import { MenuItem, Popover, cx } from "../ui";
 import { ActivityControls } from "./activity-panel";
+import { AccountMenu } from "./account-menu";
 import { AskBar } from "./ask-bar";
 import { NotificationBell } from "./notification-bell";
 import { usePeek } from "./peek";
@@ -125,31 +126,36 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
   const toggleTheme = () => publishAppearance({ ...appearance, theme: dark ? "light" : "dark" });
 
   return (
-    <header className="flex h-11 shrink-0 items-center gap-2 border-b border-line px-3">
-      <button type="button" className="icon-btn" onClick={onToggleSidebar} aria-label="Toggle sidebar">
-        <Menu size={16} />
-      </button>
-      <div className="hidden min-w-0 shrink truncate text-[13.5px] font-medium sm:block sm:max-w-[140px]">{title}</div>
-      <AskBar />
+    <header className="topbar grid h-11 shrink-0 grid-cols-[minmax(0,1fr)_minmax(0,560px)_minmax(0,1fr)] items-center gap-3 border-b border-line px-3 max-md:grid-cols-[auto_minmax(0,1fr)_auto]">
+      <div className="flex min-w-0 items-center gap-2">
+        <button type="button" className="icon-btn" onClick={onToggleSidebar} aria-label="Toggle sidebar">
+          <Menu size={16} />
+        </button>
+        <div className="hidden min-w-0 truncate text-[13.5px] font-medium sm:block">{title}</div>
+      </div>
+      <div className="flex min-w-0 justify-center">
+        <AskBar />
+      </div>
+      <div className="flex min-w-0 items-center justify-end gap-1">
       <NotificationBell />
-      <div className="hidden items-center rounded-lg border border-line lg:flex">
-        <button type="button" className="icon-btn disabled:pointer-events-none disabled:opacity-30" title={`Undo (${mod === "⌘" ? "⌘Z" : "Ctrl+Z"})`} onClick={() => undo.mutate()} disabled={!canUndo}>
+      <div className="hidden items-center lg:flex">
+        <button type="button" className="icon-btn disabled:pointer-events-none disabled:opacity-30" title={`Undo (${mod === "⌘" ? "⌘Z" : "Ctrl+Z"})`} aria-label="Undo" onClick={() => undo.mutate()} disabled={!canUndo}>
           <Undo2 size={15} />
         </button>
-        <button type="button" className="icon-btn disabled:pointer-events-none disabled:opacity-30" title={`Redo (${mod === "⌘" ? "⇧⌘Z" : "Ctrl+Shift+Z"})`} onClick={() => redo.mutate()} disabled={!canRedo}>
+        <button type="button" className="icon-btn disabled:pointer-events-none disabled:opacity-30" title={`Redo (${mod === "⌘" ? "⇧⌘Z" : "Ctrl+Shift+Z"})`} aria-label="Redo" onClick={() => redo.mutate()} disabled={!canRedo}>
           <Redo2 size={15} />
         </button>
       </div>
+      <span className="mx-1 hidden h-4 w-px bg-line lg:block" aria-hidden />
       <button
         type="button"
-        className="btn-ghost hidden text-ink lg:inline-flex"
+        className="icon-btn hidden lg:inline-flex"
         onClick={() => fetchNow.mutate()}
         disabled={fetchNow.isPending}
-        title="Read every switched-on source now"
+        title="Fetch now: read every switched-on source"
         aria-label="Fetch now"
       >
-        <FetchGlyph active={fetchNow.isPending} size={14} />
-        <span className="hidden sm:inline">Fetch now</span>
+        <FetchGlyph active={fetchNow.isPending} size={15} />
       </button>
       <ActivityControls connected={connected} />
       <button
@@ -166,6 +172,7 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
         type="button"
         className="icon-btn hidden lg:inline-flex"
         title={dark ? "Switch to light" : "Switch to dark"}
+        aria-label={dark ? "Switch to light theme" : "Switch to dark theme"}
         onClick={toggleTheme}
       >
         {dark ? <Sun size={15} /> : <Moon size={15} />}
@@ -189,6 +196,8 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
           </>
         )}
       </Popover>
+      <AccountMenu />
+      </div>
     </header>
   );
 }

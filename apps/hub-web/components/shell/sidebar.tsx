@@ -21,13 +21,12 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { hasModule, moduleForPath, type OptionalModule } from "@ensemble/shared-types/modules";
 import { api } from "@/lib/api";
 import { startDevWarm } from "@/lib/dev-warm";
 import { prefetchHref } from "@/lib/prefetch";
 import { toggleSidebarRail } from "@/lib/sidebar-rail";
-import { SHELL_USER_KEY } from "@/lib/tab-session";
 import { useModKey } from "@/lib/platform";
 import { HomeLogoLink } from "@/components/motion/brand-morph";
 import { PagesNav } from "@/components/pages/pages-nav";
@@ -116,20 +115,6 @@ function NavItem({
   );
 }
 
-type RememberedUser = { name: string; email: string; via: string };
-
-function readRememberedUser(): RememberedUser | null {
-  try {
-    const raw = sessionStorage.getItem(SHELL_USER_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as RememberedUser;
-    if (!parsed || typeof parsed.email !== "string") return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
 export function Sidebar() {
   const { connected } = useLive();
   const mod = useModKey();
@@ -140,7 +125,6 @@ export function Sidebar() {
     queryFn: api.shell,
     refetchInterval: connected ? 60_000 : 2_000,
   });
-  const [remembered, setRemembered] = useState<RememberedUser | null>(null);
   useEffect(() => startDevWarm(), []);
   // Full RSC prefetch as soon as the shell mounts, including Marketplace
   // before its link is allowed to render. A click then skips loading.tsx.
@@ -169,20 +153,6 @@ export function Sidebar() {
       window.clearTimeout(start);
     };
   }, [client]);
-  useEffect(() => {
-    const me = shell.data;
-    if (!me) {
-      setRemembered(readRememberedUser());
-      return;
-    }
-    const next = { name: me.user.name, email: me.user.email, via: me.via };
-    try {
-      sessionStorage.setItem(SHELL_USER_KEY, JSON.stringify(next));
-    } catch {
-      // private mode
-    }
-    setRemembered(next);
-  }, [shell.data]);
   const modules = shell.data?.modules;
   const visible = (href: string) => {
     const gate = moduleForPath(href);
@@ -193,15 +163,6 @@ export function Sidebar() {
     return hasModule(modules, gate as OptionalModule);
   };
   const waiting = (shell.data?.approvals ?? 0) + (shell.data?.decisions ?? 0);
-  const me = shell.data;
-  const person = me
-    ? { initial: (me.user.name || me.user.email || "You").charAt(0).toUpperCase(), label: me.via === "bypass" ? "No-login mode" : me.user.email }
-    : remembered
-      ? {
-          initial: (remembered.name || remembered.email || "You").charAt(0).toUpperCase(),
-          label: remembered.via === "bypass" ? "No-login mode" : remembered.email || "Account",
-        }
-      : { initial: "", label: "Account" };
   return (
     <aside className="app-sidebar flex h-full shrink-0 flex-col border-r border-line bg-sidebar/90">
       <HomeLogoLink
@@ -249,25 +210,12 @@ export function Sidebar() {
         );
       })}
       </div>
-      <div className="px-2 pb-2">
+      <div className="border-t border-line px-2 pb-3 pt-2">
         <NavItem href="/settings" label="Settings" icon={Settings} />
       </div>
       <button type="button" className="sidebar-expand icon-btn mx-auto mb-2" aria-label="Expand sidebar" title="Expand sidebar" onClick={toggleSidebarRail}>
         <PanelLeft size={16} />
       </button>
-      <Link href="/settings#account" title={person.label} className="sidebar-account mx-2 mb-3 flex min-h-8 items-center gap-2 rounded-lg px-2 py-1 text-[12.5px] text-muted hover:bg-hover hover:text-ink">
-        <span
-          className={
-            person.initial
-              ? "flex h-5 w-5 items-center justify-center rounded bg-hover text-[11px] font-semibold text-ink"
-              : "h-5 w-5 rounded-full border border-dashed border-muted"
-          }
-          aria-hidden
-        >
-          {person.initial}
-        </span>
-        <span className="sidebar-label min-w-0 flex-1 truncate">{person.label}</span>
-      </Link>
     </aside>
   );
 }

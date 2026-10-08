@@ -157,7 +157,7 @@ export function ArtifactsTab() {
       </div>
 
       <div className="flex items-center gap-2">
-        <div className="tile flex items-center gap-1.5 rounded-md bg-panel px-2 py-1">
+        <div className="flex items-center gap-1.5 rounded-md border border-line bg-panel px-2 py-1">
           <Search size={13} className="text-faint" />
           <input
             value={search}

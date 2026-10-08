@@ -1,7 +1,8 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
+import Link from "next/link";
 import {
   BookOpen,
   Boxes,
@@ -10,6 +11,7 @@ import {
   Flag,
   Gavel,
   GitPullRequest,
+  GripVertical,
   GraduationCap,
   Hourglass,
   Layers,
@@ -22,17 +24,34 @@ import {
 } from "lucide-react";
 import { api, type DeskLive } from "@/lib/api";
 import { plural } from "@/lib/format";
-import { resolveExtras, type DeskExtraId } from "@/lib/desk-extras";
+import { DESK_EXTRAS, resolveExtras, type DeskExtraId } from "@/lib/desk-extras";
+import { templateDeskLayout } from "@ensemble/shared-types/manifest";
 import { useToast } from "@/components/toast";
 import { placeCenteredPanel } from "@/lib/place-layer";
-import type { DeskId } from "./desks";
+import { DESK_IDS, type DeskId } from "./desks";
+import {
+  arrange,
+  hiddenTilesFor,
+  hideTile,
+  isDefaultLayout,
+  layoutKey,
+  moveTile,
+  readLayout,
+  resizeTile,
+  showTile,
+  sizeFromDrag,
+  stepTile,
+  tileLimits,
+  type DeskLayout,
+  type TileSize,
+} from "./layout";
 import { LiveDraw, liveDrawKind } from "./live-draw";
 import { liveHero } from "./live-heroes";
-import { Num, Tile } from "./ui";
+import { DeskPreviewProvider, Num, Tile } from "./ui";
 
 type Row = { id: string; title: string; meta?: string };
 type Field = { key: string; label: string; input?: "text" | "date" | "number" | "select"; options?: Array<[string, string]>; optional?: boolean; placeholder?: string };
-type Spec = {
+export type Spec = {
   key: string;
   title: string;
   icon: LucideIcon;
@@ -424,6 +443,90 @@ export function boardSpecs(id: DeskId, extras: ReadonlySet<DeskExtraId> = new Se
   return [...base, ...extraSpecs(extras).filter((spec) => !keys.has(spec.key))];
 }
 
+let NATIVE: Set<string> | null = null;
+/** Extra tiles that are off and not drawn by any desk on its own. A saved layout cannot bring these back. */
+export function extraGates(deskId: DeskId, extras: ReadonlySet<DeskExtraId>) {
+  NATIVE ??= new Set(DESK_IDS.flatMap((id) => specsFor(id).map((spec) => spec.key)));
+  const own = new Set(specsFor(deskId).map((spec) => spec.key));
+  const on = new Set(extraSpecs(extras).map((spec) => spec.key).filter((key) => !own.has(key)));
+  const blocked = new Set(DESK_EXTRAS.map((extra) => extra.tile).filter((key) => !on.has(key) && !NATIVE!.has(key)));
+  return { extras: on, blocked };
+}
+
+let POOL: Map<string, Spec> | null = null;
+/** Every live tile any desk can draw, first desk wins on a shared key. A layout may borrow from here. */
+export function specPool(): ReadonlyMap<string, Spec> {
+  if (POOL) return POOL;
+  const pool = new Map<string, Spec>();
+  for (const id of DESK_IDS) for (const spec of specsFor(id)) if (!pool.has(spec.key)) pool.set(spec.key, spec);
+  for (const spec of extraSpecs(new Set(DESK_EXTRAS.map((extra) => extra.id)))) if (!pool.has(spec.key)) pool.set(spec.key, spec);
+  POOL = pool;
+  return pool;
+}
+
+type Prefs = Awaited<ReturnType<typeof api.preferences>>;
+
+/** Tiles from other desks, one per title. A title this desk already has is left out. */
+function borrowable(defaults: Spec[], shown: Spec[]): Spec[] {
+  const taken = new Set([...defaults, ...shown].flatMap((spec) => [spec.key, `t:${spec.title.toLowerCase()}`]));
+  const out: Spec[] = [];
+  for (const spec of specPool().values()) {
+    const title = `t:${spec.title.toLowerCase()}`;
+    if (taken.has(spec.key) || taken.has(title)) continue;
+    taken.add(title);
+    out.push(spec);
+  }
+  return out;
+}
+
+/** The person's arrangement of this desk: order, sizes, and what they hid. Saved per desk in preferences. */
+export function useDeskLayout(deskId: DeskId) {
+  const client = useQueryClient();
+  const toast = useToast();
+  const prefs = useQuery({ queryKey: ["preferences"], queryFn: api.preferences, staleTime: 30_000 });
+  const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
+  const extraValue = prefs.data?.preferences.find((row) => row.key === "desk.extras")?.value;
+  const enabled = resolveExtras(deskId, extraValue);
+  const defaults = boardSpecs(deskId, enabled);
+  const gates = extraGates(deskId, enabled);
+  const key = layoutKey(deskId);
+  // Reset goes back to the arrangement the signup template chose for this desk, not the bare desk.
+  const template = templateDeskLayout(shell.data?.onboardingTemplateId ?? "");
+  const start = template && template.desk === deskId ? template.value : null;
+  const baseline = start ? arrange(defaults, specPool(), readLayout(start), gates) : defaults;
+  const layout = readLayout(prefs.data?.preferences.find((row) => row.key === key)?.value);
+  const shown = arrange(defaults, specPool(), layout, gates);
+  const hidden = layout?.exact ? hiddenTilesFor(defaults, shown).map((spec) => spec.key) : (layout?.hidden ?? []);
+  const save = useCallback(
+    async (next: DeskLayout | null) => {
+      const before = client.getQueryData<Prefs>(["preferences"]);
+      const rest = (before?.preferences ?? []).filter((row) => row.key !== key);
+      client.setQueryData<Prefs>(["preferences"], {
+        preferences: next ? [...rest, { key, value: next } as Prefs["preferences"][number]] : rest,
+      });
+      try {
+        if (next) await api.putPreference(key, next);
+        else await api.deletePreference(key);
+      } catch (error) {
+        if (before) client.setQueryData(["preferences"], before);
+        toast((error as Error).message, { tone: "error" });
+      }
+    },
+    [client, key, toast],
+  );
+  return {
+    ready: prefs.isSuccess,
+    defaults,
+    shown,
+    hidden,
+    customized: !isDefaultLayout(layout, shown, baseline),
+    reset: () => save(start),
+    hiddenSpecs: hiddenTilesFor(defaults, shown),
+    others: borrowable(defaults, shown),
+    save,
+  };
+}
+
 /** Rows the person added. Signup starters, people, and reminders do not dismiss the sample offer. */
 export function ownCount(live: DeskLive): number {
   return (
@@ -617,9 +720,7 @@ function stubLive(live: DeskLive, kind: string, values: Record<string, string>):
 export function LiveBoard({ deskId, live, mobile, plots, formKind = null }: { deskId: DeskId; live: DeskLive; mobile?: boolean; plots?: boolean; formKind?: string | null }) {
   const toast = useToast();
   const client = useQueryClient();
-  const prefs = useQuery({ queryKey: ["preferences"], queryFn: api.preferences, staleTime: 30_000 });
-  const extraValue = prefs.data?.preferences.find((row) => row.key === "desk.extras")?.value;
-  const extras = resolveExtras(deskId, extraValue);
+  const layout = useDeskLayout(deskId);
   const [form, setForm] = useState<Spec | null>(null);
   const formRef = useRef<HTMLFormElement>(null);
   const [values, setValues] = useState<Record<string, string>>({});
@@ -640,17 +741,127 @@ export function LiveBoard({ deskId, live, mobile, plots, formKind = null }: { de
     return () => window.removeEventListener("resize", place);
   }, [form]);
   const consumed = useRef<string | null>(null);
-  const specs = boardSpecs(deskId, extras);
+  const specs = layout.shown;
+  const [preview, setPreview] = useState<({ key: string } & TileSize) | null>(null);
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [drop, setDrop] = useState<{ key: string; after: boolean } | null>(null);
+  const arranged = { shown: specs, hidden: layout.hidden };
+  // Reordering moves the focused tile's section, and the browser drops focus to <body>. Put it back on the grip.
+  const refocus = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    const key = refocus.current;
+    if (!key) return;
+    refocus.current = null;
+    document.querySelector<HTMLElement>(`[data-desk-key="${CSS.escape(key)}"] .tgrip`)?.focus();
+  });
 
   useEffect(() => {
     const kind = formKind;
-    if (!kind || consumed.current === kind) return;
-    const spec = boardSpecs(deskId, resolveExtras(deskId, extraValue)).find((item) => item.kind === kind || item.key === kind);
+    if (!kind || consumed.current === kind || !layout.ready) return;
+    const spec = [...specs, ...layout.defaults].find((item) => item.kind === kind || item.key === kind);
     if (!spec) return;
     consumed.current = kind;
     setForm(spec);
     setValues({});
-  }, [formKind, deskId, extraValue]);
+  }, [formKind, layout.ready, specs, layout.defaults]);
+
+  function startResize(event: ReactPointerEvent<HTMLElement>, spec: Spec) {
+    if (event.button !== 0) return;
+    const grid = event.currentTarget.closest("section")?.parentElement;
+    if (!grid) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const style = getComputedStyle(grid);
+    const gap = Number.parseFloat(style.columnGap) || 12;
+    const row = Number.parseFloat(style.gridAutoRows) || 72;
+    const column = (grid.clientWidth - gap * 11) / 12;
+    const limits = tileLimits(spec);
+    const start = { c: spec.c, r: spec.r };
+    const x0 = event.clientX;
+    const y0 = event.clientY;
+    let last = start;
+    document.body.dataset.deskResizing = "1";
+    const move = (next: PointerEvent) => {
+      last = sizeFromDrag(start, { dx: next.clientX - x0, dy: next.clientY - y0 }, { column, row, gap }, limits);
+      setPreview({ key: spec.key, ...last });
+    };
+    const end = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      delete document.body.dataset.deskResizing;
+      setPreview(null);
+      if (last.c !== start.c || last.r !== start.r) void layout.save(resizeTile(arranged, spec.key, last));
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+  }
+
+  function resizeByKey(event: ReactKeyboardEvent<HTMLElement>, spec: Spec) {
+    const step = { ArrowRight: [1, 0], ArrowLeft: [-1, 0], ArrowDown: [0, 1], ArrowUp: [0, -1] }[event.key];
+    if (!step) return;
+    event.preventDefault();
+    void layout.save(resizeTile(arranged, spec.key, { c: spec.c + step[0]!, r: spec.r + step[1]! }));
+  }
+
+  function startMove(event: ReactPointerEvent<HTMLElement>, spec: Spec) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const x0 = event.clientX;
+    const y0 = event.clientY;
+    let moved = false;
+    let target: { key: string; after: boolean } | null = null;
+    const move = (next: PointerEvent) => {
+      if (!moved && Math.hypot(next.clientX - x0, next.clientY - y0) < 4) return;
+      if (!moved) {
+        moved = true;
+        setDragging(spec.key);
+        document.body.dataset.deskMoving = "1";
+      }
+      const over = document.elementFromPoint(next.clientX, next.clientY)?.closest<HTMLElement>("[data-desk-key]");
+      const key = over?.dataset.deskKey;
+      if (!over || !key || key === spec.key) {
+        target = null;
+        setDrop(null);
+        return;
+      }
+      const rect = over.getBoundingClientRect();
+      target = { key, after: next.clientX > rect.left + rect.width / 2 };
+      setDrop(target);
+    };
+    const end = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      delete document.body.dataset.deskMoving;
+      setDragging(null);
+      setDrop(null);
+      if (!moved || !target) return;
+      const index = specs.findIndex((item) => item.key === target!.key);
+      const before = target.after ? (specs[index + 1]?.key ?? null) : target.key;
+      void layout.save(moveTile(arranged, spec.key, before));
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+  }
+
+  function moveByKey(event: ReactKeyboardEvent<HTMLElement>, spec: Spec) {
+    const delta = event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : 0;
+    if (!delta) return;
+    event.preventDefault();
+    refocus.current = spec.key;
+    void layout.save(stepTile(arranged, spec.key, delta));
+  }
+
+  function hide(spec: Spec) {
+    const before = layout.customized ? { v: 1 as const, tiles: specs.map((item) => ({ key: item.key, c: item.c, r: item.r })), hidden: layout.hidden } : null;
+    void layout.save(hideTile(arranged, spec.key));
+    toast(`Hid ${spec.title}. Add it back from Add a tile.`, {
+      action: { label: "Undo", run: () => void layout.save(before ?? showTile({ shown: specs.filter((item) => item.key !== spec.key), hidden: layout.hidden }, spec)) },
+    });
+  }
 
   function open(spec: Spec) {
     setForm(spec);
@@ -689,29 +900,52 @@ export function LiveBoard({ deskId, live, mobile, plots, formKind = null }: { de
 
   return (
     <>
-      {plots ? (
-        <Tile title="Plots" icon={LineChart} c={mobile ? 4 : 4} r={2} meta="Soon">
-          <div data-plots-live className="col gap8">
-            <span style={{ fontSize: 13, color: "var(--muted)" }}>Ring, Plot, and Trend are reserved. They are not drawn from your rows yet.</span>
-            <div className="row gap8">
-              {["Ring", "Plot", "Trend"].map((name) => (
-                <span key={name} className="pill" aria-disabled="true">{name} · soon</span>
-              ))}
-            </div>
-          </div>
-        </Tile>
-      ) : null}
+      {plots ? <PlotsTile mobile={mobile} /> : null}
       {specs.map((spec) => {
         const rows = spec.rows(live);
         const filled = rows.length > 0 || Boolean(spec.stat?.(live));
+        const size = preview?.key === spec.key ? preview : spec;
         return (
           <Tile
             key={spec.key}
+            deskKey={spec.key}
             title={spec.title}
             icon={spec.icon}
-            c={mobile ? 4 : spec.c}
-            r={spec.r}
+            c={mobile ? 4 : size.c}
+            r={size.r}
             hero={spec.hero}
+            attrs={{
+              "data-dragging": dragging === spec.key ? "1" : undefined,
+              "data-drop": drop?.key === spec.key ? (drop.after ? "after" : "before") : undefined,
+              "data-resizing": preview?.key === spec.key ? "1" : undefined,
+            }}
+            grip={
+              mobile ? undefined : (
+                <button
+                  type="button"
+                  className="tgrip"
+                  aria-label={`Move ${spec.title}. Drag, or use the arrow keys.`}
+                  title="Drag to move"
+                  onPointerDown={(event) => startMove(event, spec)}
+                  onKeyDown={(event) => moveByKey(event, spec)}
+                >
+                  <GripVertical size={12} />
+                </button>
+              )
+            }
+            onHide={() => hide(spec)}
+            corner={
+              mobile ? undefined : (
+                <button
+                  type="button"
+                  className="tresize"
+                  aria-label={`Resize ${spec.title}, ${size.c} columns by ${size.r} rows. Use the arrow keys.`}
+                  title="Drag to resize"
+                  onPointerDown={(event) => startResize(event, spec)}
+                  onKeyDown={(event) => resizeByKey(event, spec)}
+                />
+              )
+            }
             meta={filled ? `${rows.length || 1}` : "Nothing yet"}
             onAdd={filled ? () => open(spec) : undefined}
             openHref={filled ? tileHref(spec.key) : undefined}
@@ -728,9 +962,7 @@ export function LiveBoard({ deskId, live, mobile, plots, formKind = null }: { de
                   {quietAdd(spec)}
                 </button>
               </>
-            ) : (
-              <div />
-            )}
+            ) : null}
           </Tile>
         );
       })}
@@ -766,6 +998,44 @@ export function LiveBoard({ deskId, live, mobile, plots, formKind = null }: { de
         </form>
       ) : null}
     </>
+  );
+}
+
+/** A template's Today drawn from sample rows. Nothing in it is interactive. */
+export function PreviewTiles({ deskId, tiles, live }: { deskId: DeskId; tiles: ReadonlyArray<readonly [string, number, number]>; live: DeskLive }) {
+  const specs = arrange(boardSpecs(deskId), specPool(), { v: 1, exact: true, hidden: [], tiles: tiles.map(([key, c, r]) => ({ key, c, r })) });
+  return (
+    <DeskPreviewProvider>
+      {specs.map((spec) => {
+        const rows = spec.rows(live);
+        return (
+          <Tile key={spec.key} title={spec.title} icon={spec.icon} c={spec.c} r={spec.r} hero={spec.hero} meta={rows.length ? String(rows.length) : undefined}>
+            <Body spec={spec} live={live} />
+          </Tile>
+        );
+      })}
+    </DeskPreviewProvider>
+  );
+}
+
+function PlotsTile({ mobile }: { mobile?: boolean }) {
+  const plots = useQuery({ queryKey: ["plots"], queryFn: api.plots, staleTime: 30_000 });
+  const rows = plots.data?.plots ?? [];
+  return (
+    <Tile title="Plots" icon={LineChart} c={mobile ? 4 : 4} r={3} meta={rows.length ? String(rows.length) : undefined} openHref="/plots">
+      <div data-plots-live className="col gap8">
+        {rows.length ? (
+          rows.slice(0, 4).map((row) => (
+            <Link key={row.id} href={`/plots/${row.id}`} className="row sb" style={{ gap: 8, minWidth: 0 }}>
+              <span className="trunc" style={{ fontSize: 13, fontWeight: 600 }}>{row.title}</span>
+              {row.datasetName ? <span className="faint trunc" style={{ fontSize: 12, maxWidth: "46%" }}>{row.datasetName}</span> : null}
+            </Link>
+          ))
+        ) : (
+          <span style={{ fontSize: 13, color: "var(--muted)" }}>{plots.isFetched ? "Upload a CSV or spreadsheet in Plots to chart it here." : ""}</span>
+        )}
+      </div>
+    </Tile>
   );
 }
 

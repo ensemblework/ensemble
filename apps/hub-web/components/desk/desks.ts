@@ -25,7 +25,7 @@ export const DESKS: Record<DeskId, DeskMeta> = {
     persona: "Default",
     accent: "indigo",
     line: "Good morning, Prajwal. Priya is waiting on the latency numbers; the ranker ADR has your 10 am block.",
-    empty: "You're on Your desk. Every tile below is waiting for its first entry.",
+    empty: "Nothing here yet. Add a first entry to any tile below.",
     steps: [
       { l: "Add what needs you", s: "a decision or a review" },
       { l: "Connect your calendar", s: "the day fills in" },
@@ -43,7 +43,7 @@ export const DESKS: Record<DeskId, DeskMeta> = {
     accent: "orchid",
     board: "Coursework",
     line: "CN assignment 2 is due tonight. You're in OS until 12:15, and attendance in CN is at 72%.",
-    empty: "You're on Semester. Every tile below is waiting for its first entry.",
+    empty: "Nothing here yet. Add a first entry to any tile below.",
     steps: [
       { l: "Add your timetable", s: "a photo of the PDF works" },
       { l: "Forward one Moodle email", s: "deadlines pin themselves" },
@@ -61,7 +61,7 @@ export const DESKS: Record<DeskId, DeskMeta> = {
     accent: "rose",
     board: "Plan",
     line: "235 days to Prelims. Five topics are due for revision, and mock 10 moved you to 106.",
-    empty: "You're on Exam season. Every tile below is waiting for its first entry.",
+    empty: "Nothing here yet. Add a first entry to any tile below.",
     steps: [
       { l: "Set the exam date", s: "the countdown starts" },
       { l: "Load the syllabus", s: "coverage has a home" },
@@ -79,7 +79,7 @@ export const DESKS: Record<DeskId, DeskMeta> = {
     accent: "tide",
     board: "Papers",
     line: "Chapter 2 is at 7,840 words. ARR closes in 15 days, and Dr. Iyer meets you Monday.",
-    empty: "You're on Literature desk. Every tile below is waiting for its first entry.",
+    empty: "Nothing here yet. Add a first entry to any tile below.",
     steps: [
       { l: "Add a paper", s: "it starts in To read" },
       { l: "Link your draft", s: "the word count follows" },
@@ -97,7 +97,7 @@ export const DESKS: Record<DeskId, DeskMeta> = {
     accent: "brass",
     board: "Matters",
     line: "Good morning, Prajwal. Two limitation dates fall inside a week, and Khanna is item 14 in Court 32.",
-    empty: "You're on Chambers. Every tile below is waiting for its first entry.",
+    empty: "Nothing here yet. Add a first entry to any tile below.",
     steps: [
       { l: "Add a matter", s: "with its order date" },
       { l: "Connect your calendar", s: "hearings fill in" },
@@ -115,7 +115,7 @@ export const DESKS: Record<DeskId, DeskMeta> = {
     accent: "moss",
     board: "Lessons",
     line: "Period 5 with 10-B in Lab 2, 20 minutes left. 85 copies to mark, and 12-A's pre-board is due Friday.",
-    empty: "You're on This week's classes. Every tile below is waiting for its first entry.",
+    empty: "Nothing here yet. Add a first entry to any tile below.",
     steps: [
       { l: "Add today's periods", s: "the timetable fills" },
       { l: "Add a set to mark", s: "the pile has a class" },
@@ -133,7 +133,7 @@ export const DESKS: Record<DeskId, DeskMeta> = {
     accent: "ember",
     board: "Team board",
     line: "Two people are over capacity, and you haven't met Divya in 29 days. Four blockers are open.",
-    empty: "You're on Staff week. Every tile below is waiting for its first entry.",
+    empty: "Nothing here yet. Add a first entry to any tile below.",
     steps: [
       { l: "Add your team", s: "load has a name" },
       { l: "Set a 1:1 cadence", s: "overdue meetings show" },
@@ -150,7 +150,7 @@ export const DESKS: Record<DeskId, DeskMeta> = {
     persona: "Developer",
     accent: "indigo",
     line: "Three reviews are waiting on you, #479 has a failing check, and v0.42.1 went to prod two hours ago.",
-    empty: "You're on Branch desk. Every tile below is waiting for its first entry.",
+    empty: "Nothing here yet. Add a first entry to any tile below.",
     steps: [
       { l: "Link a repo", s: "reviews and CI show up" },
       { l: "Connect deploys", s: "what shipped stays visible" },
@@ -168,7 +168,7 @@ export const DESKS: Record<DeskId, DeskMeta> = {
     accent: "sky",
     board: "Build",
     line: "Rev C boards are in transit, B2 failed thermal at 6 A, and 7 parts are still out.",
-    empty: "You're on Bench. Every tile below is waiting for its first entry.",
+    empty: "Nothing here yet. Add a first entry to any tile below.",
     steps: [
       { l: "Paste a BOM", s: "parts get a status" },
       { l: "Log a test run", s: "pass and fail show" },

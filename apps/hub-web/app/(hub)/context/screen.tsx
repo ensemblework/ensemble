@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { ContextDesk } from "@/components/context/desk";
 import { ContextLens } from "@/components/desk/context-lens";
+import { contextTabs, tabKey } from "@/components/desk/context-tabs";
 import { deskIdFromTemplate } from "@/components/desk/desks";
 import { api, type BoardPayload } from "@/lib/api";
 import type { LayoutPayload } from "@/lib/server-layout";
@@ -24,8 +25,8 @@ export function ContextScreen({ initialLayout, initialBoard }: { initialLayout: 
   if (requested === "preferences" || requested === "sources") return <Utility tab={requested} />;
   const deskId = deskIdFromTemplate(shell.data?.activeTemplateId);
   const sample = prefs.data?.preferences.some((row) => row.key === "desk.sample" && row.value === true) === true;
-  if (!requested && deskId) {
-    return <ContextLens deskId={deskId} state={sample ? "populated" : "empty"} />;
+  if (deskId && (!requested || contextTabs(deskId, true).some((label) => tabKey(label) === requested))) {
+    return <ContextLens deskId={deskId} state={sample ? "populated" : "empty"} initialTab={requested} search={params.get("search") ?? ""} who={params.get("who") ?? ""} ids={params.get("ids") ?? ""} />;
   }
   return <ContextDesk initial={initialBoard} />;
 }

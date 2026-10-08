@@ -1,12 +1,13 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Sparkles, X } from "lucide-react";
+import { X } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, type ComponentType } from "react";
 import { useDelayedFlag } from "@/lib/motion/use-delayed-flag";
 import { api } from "@/lib/api";
 import { useModuleOn } from "@/lib/use-module";
 import { useToast } from "@/components/toast";
+import { usePersistentState } from "@/lib/prefs";
 import { resolveExtras } from "@/lib/desk-extras";
 import { DESKS, type DeskId } from "./desks";
 import { LiveBoard, liveLine, ownCount } from "./live-board";
@@ -64,7 +65,7 @@ export function DeskView({
   const diagrams = useQuery({ queryKey: ["diagrams"], queryFn: api.diagrams, enabled: diagramsOn });
   const [Tiles, setTiles] = useState<ComponentType<{ state?: State; plots?: boolean; mobile?: boolean }> | null>(null);
   const [phone, setPhone] = useState(false);
-  const [banner, setBanner] = useState(true);
+  const [banner, setBanner, bannerReady] = usePersistentState("ensemble.today.sample-hint", true);
   const [enter, setEnter] = useState(false);
   const sawLoader = useRef(false);
 
@@ -136,11 +137,9 @@ export function DeskView({
         <div>
           <div className="kick">
             {kickDate()}
-            <span className="deskchip"><i />{desk.name}</span>
             {sample ? <span className="sample-mark">Sample</span> : null}
           </div>
           <h1 className="display">Today</h1>
-          <div className="u-title-thread" />
           <div className="sub">
             {sample ? (
               desk.line
@@ -154,50 +153,17 @@ export function DeskView({
           </div>
         </div>
         <div className="row gap8">
-          <button
-            type="button"
-            className="btn"
-            onClick={() => {
-              const input = document.querySelector<HTMLInputElement>('input[aria-label="Ask Ensemble"]');
-              if (input) {
-                input.focus();
-                return;
-              }
-              window.dispatchEvent(new CustomEvent("ensemble:ask"));
-            }}
-          >
-            <Sparkles size={13} />Ask
-          </button>
-          <AddTileButton plots={plots} startOpen={add} />
+          <AddTileButton deskId={deskId} plots={plots} startOpen={add} />
         </div>
       </div>
-      {!sample && banner && liveQuery.isFetched && !filled ? (
-        <section className="tile hero sample-banner">
-          <div style={{ position: "relative", width: 54, height: 54, borderRadius: 14, display: "grid", placeItems: "center", background: "rgb(var(--accent-rgb) / 0.14)", boxShadow: "inset 0 0 0 1px rgb(var(--accent-rgb) / 0.3)", color: "var(--accent)", flexShrink: 0 }}>
-            <Sparkles size={24} />
-          </div>
-          <div className="col" style={{ gap: 3, minWidth: 0, flex: "0 1 360px" }}>
-            <span className="display" style={{ fontSize: 21 }}>See it full before you fill it</span>
-            <span style={{ fontSize: 13, color: "var(--muted)" }}>Load a sample of this desk. It's marked as sample and clears in one click.</span>
-          </div>
-          <button type="button" className="btn-p" style={{ padding: "8px 14px", fontSize: 13 }} onClick={() => void setFlag(SAMPLE_KEY, true)}>
-            <Sparkles size={14} />Try with sample data
+      {!sample && bannerReady && banner && liveQuery.isFetched && !filled ? (
+        <div className="today-hint" data-sample-hint>
+          <span>Want to see what a full desk looks like first?</span>
+          <button type="button" className="btn" onClick={() => void setFlag(SAMPLE_KEY, true)}>Show a sample</button>
+          <button type="button" className="today-hint-x" aria-label="Dismiss" onClick={() => setBanner(false)}>
+            <X size={13} />
           </button>
-          <div className="row" style={{ marginLeft: "auto", gap: 18, paddingLeft: 18, borderLeft: "1px solid var(--line)" }}>
-            {desk.steps.map((step, index) => (
-              <div key={step.l} className="row gap8">
-                <span style={{ width: 22, height: 22, borderRadius: 99, display: "grid", placeItems: "center", fontSize: 11, fontWeight: 700, border: `1.5px solid ${index === 0 ? "var(--accent)" : "var(--line-strong)"}`, color: index === 0 ? "var(--accent)" : "var(--faint)" }}>{index + 1}</span>
-                <div className="col" style={{ whiteSpace: "nowrap" }}>
-                  <span style={{ fontSize: 12.5, fontWeight: 600 }}>{step.l}</span>
-                  <span style={{ fontSize: 11, color: "var(--faint)" }}>{step.s}</span>
-                </div>
-              </div>
-            ))}
-            <button type="button" className="btn" aria-label="Dismiss sample offer" onClick={() => setBanner(false)} style={{ padding: 4 }}>
-              <X size={14} color="var(--faint)" />
-            </button>
-          </div>
-        </section>
+        </div>
       ) : null}
       {sample ? (
         <div className="row sb" style={{ marginBottom: 12 }}>

@@ -1,5 +1,6 @@
 import type { ActAs } from "../assistant.js";
 import { type LayoutConfig, type LayoutDocument, type Size, type WidgetId } from "../widgets.js";
+import { DESK_MARKET_ID, templateCard } from "./manifest.js";
 
 export const ONBOARDING_ROLES = ["student", "teacher", "lawyer", "engineer", "vibe", "manager"] as const;
 export type OnboardingRole = (typeof ONBOARDING_ROLES)[number];
@@ -121,7 +122,7 @@ export const TEMPLATES: readonly RoleTemplate[] = [
         },
       ],
       deliverables: [{ slug: "final", title: "Final", dueInDays: 5 }],
-      reminders: [{ slug: "eve", title: "Exam tomorrow — stop adding topics", dueInDays: 4, time: "18:00" }],
+      reminders: [{ slug: "eve", title: "Exam tomorrow. Stop adding topics.", dueInDays: 4, time: "18:00" }],
     },
   ),
   template(
@@ -422,7 +423,7 @@ export const TEMPLATES: readonly RoleTemplate[] = [
     "teacher",
     "check-ins",
     "Who needs a check-in",
-    "People before content. Placeholder students — rename or delete them.",
+    "People before content. Placeholder students, so rename or delete them.",
     [["people", "l"], ["focus", "m"], ["calendar", "m"]],
     [["people", "l"], ["graph", "l"], ["meetings", "m"]],
     {
@@ -540,8 +541,8 @@ export const TEMPLATES: readonly RoleTemplate[] = [
       summary: "A comparison, not a folder of files.",
       taskType: "draft",
       tasks: [
-        { slug: "draft-a", title: "Draft A", page: "Sample clause — replace this\n\nThe party shall …" },
-        { slug: "draft-b", title: "Draft B", page: "Sample clause — replace this\n\nThe party may …" },
+        { slug: "draft-a", title: "Draft A", page: "Sample clause. Replace this.\n\nThe party shall …" },
+        { slug: "draft-b", title: "Draft B", page: "Sample clause. Replace this.\n\nThe party may …" },
       ],
     },
   ),
@@ -623,6 +624,241 @@ export const TEMPLATES: readonly RoleTemplate[] = [
       deliverables: [{ slug: "objective", title: "Objective", dueInDays: 30 }],
     },
   ),
+  template(
+    "student",
+    "thesis-year",
+    "Thesis year",
+    "Papers move from to-read to drafted. The advisor and the word count stay in view.",
+    [["deliverables", "l"], ["focus", "m"], ["calendar", "m"], ["reminders", "s"]],
+    [["artifacts", "l"], ["graph", "l"], ["people", "m"], ["recent-links", "m"]],
+    {
+      project: "Thesis",
+      summary: "The thesis and the papers it rests on. Rename this to your title.",
+      taskType: "task",
+      people: [
+        { slug: "advisor", name: "Advisor", role: "Advisor" },
+        { slug: "coauthor", name: "Co-author", role: "Co-author" },
+      ],
+      tasks: [
+        { slug: "lit-review", title: "Literature review chapter", people: ["Advisor"] },
+        { slug: "method", title: "Write up the method" },
+        { slug: "advisor-notes", title: "Questions for the advisor meeting", people: ["Advisor"], page: "Questions\n\n1.\n2.\n3." },
+      ],
+      deliverables: [{ slug: "chapter", title: "Chapter draft to advisor", dueInDays: 21 }],
+    },
+  ),
+  template(
+    "teacher",
+    "exam-setter",
+    "Exam setter",
+    "Set the paper, mark it, and see which class needs another pass.",
+    [["deliverables", "l"], ["focus", "m"], ["calendar", "m"], ["reminders", "s"]],
+    [["people", "m"], ["artifacts", "l"], ["recent-links", "m"]],
+    {
+      project: "End-of-term paper",
+      summary: "Writing, moderating, and marking one paper.",
+      taskType: "grade",
+      people: [{ slug: "moderator", name: "Moderator", role: "Second marker" }],
+      tasks: [
+        { slug: "blueprint", title: "Blueprint the paper by topic", page: "Topic | Marks | Question\n\n" },
+        { slug: "moderate", title: "Send for moderation", people: ["Moderator"] },
+        { slug: "scheme", title: "Write the mark scheme" },
+      ],
+      deliverables: [{ slug: "paper", title: "Paper to print", dueInDays: 12 }],
+    },
+  ),
+  template(
+    "lawyer",
+    "in-house-counsel",
+    "In-house counsel",
+    "Contracts in review, what the business decided, and who is waiting on legal.",
+    [["needs-me", "s"], ["focus", "l"], ["calendar", "m"], ["reminders", "s"]],
+    [["people", "m"], ["decisions", "m"], ["artifacts", "l"], ["recent-links", "s"]],
+    {
+      project: "Legal requests",
+      summary: "Contracts and questions from the business, in the order they arrived.",
+      taskType: "draft",
+      people: [
+        { slug: "sales", name: "Sales lead", role: "Requester" },
+        { slug: "vendor", name: "Vendor counsel", role: "Counterparty" },
+      ],
+      tasks: [
+        { slug: "msa", title: "Review the vendor MSA", people: ["Vendor counsel"] },
+        { slug: "nda", title: "Mutual NDA for the pilot", people: ["Sales lead"] },
+        { slug: "policy", title: "Data retention clause" },
+      ],
+    },
+  ),
+  template(
+    "engineer",
+    "tech-lead",
+    "Tech lead",
+    "Reviews, the team's 1:1s, and the objectives the quarter is measured on.",
+    [["focus", "l"], ["proposals", "m"], ["calendar", "m"], ["one-on-ones", "m"]],
+    [["people", "m"], ["decisions", "m"], ["okr-strip", "m"], ["recent-links", "m"]],
+    {
+      project: "Platform team",
+      summary: "The team, the quarter's objectives, and the reviews in flight.",
+      taskType: "task",
+      people: [
+        { slug: "dev-a", name: "Teammate", role: "Engineer" },
+        { slug: "dev-b", name: "New hire", role: "Engineer" },
+      ],
+      tasks: [
+        { slug: "review", title: "Review the migration PR", people: ["Teammate"] },
+        { slug: "onboard", title: "Onboarding plan for the new hire", people: ["New hire"] },
+        { slug: "rfc", title: "Decision: caching approach" },
+      ],
+      deliverables: [{ slug: "okr", title: "Quarter objective review", dueInDays: 30 }],
+    },
+    [
+      ["wip", "m"],
+      ["blocked", "m"],
+      ["column-summary", "s"],
+    ],
+  ),
+  template(
+    "vibe",
+    "launch-week",
+    "Launch week",
+    "A checklist, the people trying it, and the bugs they found.",
+    [["deliverables", "l"], ["focus", "m"], ["people", "m"], ["reminders", "s"]],
+    [["people", "m"], ["artifacts", "m"], ["recent-links", "m"]],
+    {
+      project: "Launch",
+      summary: "Getting the first people to use it.",
+      taskType: "task",
+      people: [{ slug: "tester", name: "Beta tester", role: "Tester" }],
+      tasks: [
+        { slug: "landing", title: "Write the landing page" },
+        { slug: "invite", title: "Invite five testers", people: ["Beta tester"] },
+        { slug: "bugs", title: "Fix what the testers found" },
+      ],
+      deliverables: [{ slug: "launch", title: "Launch post", dueInDays: 7 }],
+    },
+  ),
+  template(
+    "manager",
+    "one-on-ones",
+    "1:1s",
+    "Every report, when you last met, and what you promised them.",
+    [["one-on-ones", "m"], ["people", "m"], ["focus", "m"], ["calendar", "m"]],
+    [["people", "l"], ["meetings", "m"], ["decisions", "m"]],
+    {
+      project: "1:1s",
+      summary: "One page per person. What they raised and what you owe.",
+      taskType: "task",
+      people: [
+        { slug: "report-a", name: "Report", role: "Direct report" },
+        { slug: "report-b", name: "New report", role: "Direct report" },
+      ],
+      tasks: [
+        { slug: "agenda", title: "Agenda for the next 1:1", people: ["Report"], page: "Their topics\n\nMy topics\n\nFollow-ups from last time" },
+        { slug: "promise", title: "Send the promotion doc feedback", people: ["Report"] },
+      ],
+      notes: [{ slug: "last", title: "Last 1:1", body: "What they raised\n\nWhat I promised\n\nNext time", people: ["Report"] }],
+    },
+  ),
+  template(
+    "manager",
+    "okr-quarter",
+    "Quarter goals",
+    "Objectives with real progress, and what is in the way.",
+    [["deliverables", "l"], ["focus", "m"], ["incident-now", "m"], ["calendar", "m"]],
+    [["okr-strip", "m"], ["decisions", "m"], ["people", "m"], ["artifacts", "m"]],
+    {
+      project: "This quarter",
+      summary: "Objectives and the key results that prove them.",
+      taskType: "objective",
+      people: [{ slug: "owner", name: "Objective owner", role: "Owner" }],
+      tasks: [
+        { slug: "kr1", title: "Key result: activation to 40%", people: ["Objective owner"] },
+        { slug: "kr2", title: "Key result: cut onboarding time in half" },
+        { slug: "review", title: "Mid-quarter check-in" },
+      ],
+      deliverables: [{ slug: "review", title: "Quarter review", dueInDays: 45 }],
+    },
+  ),
+  template(
+    "manager",
+    "hiring-loop",
+    "Hiring loop",
+    "Candidates are people, interviews are meetings, and the call is a decision.",
+    [["people", "m"], ["calendar", "m"], ["focus", "m"], ["reminders", "m"]],
+    [["people", "l"], ["meetings", "m"], ["decisions", "m"], ["artifacts", "m"]],
+    {
+      project: "Hiring",
+      summary: "One open role and the people in the loop.",
+      taskType: "decision",
+      people: [
+        { slug: "candidate", name: "Candidate", role: "Candidate" },
+        { slug: "panel", name: "Panel interviewer", role: "Interviewer" },
+      ],
+      tasks: [
+        { slug: "scorecard", title: "Write the scorecard", page: "Must have\n\nNice to have\n\nSignals to listen for" },
+        { slug: "debrief", title: "Debrief with the panel", people: ["Panel interviewer", "Candidate"] },
+        { slug: "decision", title: "Decision: offer or pass", people: ["Candidate"] },
+      ],
+      reminders: [{ slug: "interview", title: "Interview", dueInDays: 2, time: "14:00" }],
+    },
+  ),
+  template(
+    "manager",
+    "project-launch",
+    "Project launch",
+    "Milestones to a launch date, with blockers where you can see them.",
+    [["deliverables", "xl"], ["focus", "m"], ["incident-now", "m"], ["calendar", "m"]],
+    [["people", "m"], ["decisions", "m"], ["artifacts", "m"], ["recent-links", "m"]],
+    {
+      project: "Launch",
+      summary: "The milestones, the owners, and the date.",
+      taskType: "deadline",
+      people: [
+        { slug: "eng", name: "Engineering lead", role: "Owner" },
+        { slug: "design", name: "Design lead", role: "Owner" },
+      ],
+      tasks: [
+        { slug: "beta", title: "Beta to ten customers", people: ["Engineering lead"] },
+        { slug: "copy", title: "Launch copy and screenshots", people: ["Design lead"] },
+        { slug: "go", title: "Decision: go or slip" },
+      ],
+      deliverables: [
+        { slug: "beta", title: "Beta", dueInDays: 14 },
+        { slug: "ga", title: "General availability", dueInDays: 35 },
+      ],
+    },
+    [
+      ["blocked", "m"],
+      ["wip", "m"],
+      ["column-summary", "s"],
+    ],
+  ),
+  template(
+    "manager",
+    "team-standup",
+    "Team standup",
+    "Today across the team: in progress, done, and stuck.",
+    [["focus", "l"], ["person-load", "m"], ["needs-me", "s"], ["calendar", "m"]],
+    [["people", "m"], ["meetings", "m"], ["decisions", "m"]],
+    {
+      project: "Team",
+      summary: "What everyone is on today.",
+      taskType: "task",
+      people: [
+        { slug: "a", name: "Teammate", role: "Engineer" },
+        { slug: "b", name: "Designer", role: "Designer" },
+      ],
+      tasks: [
+        { slug: "yesterday", title: "What shipped yesterday", people: ["Teammate"] },
+        { slug: "stuck", title: "Unblock the review", people: ["Designer"] },
+      ],
+    },
+    [
+      ["wip", "m"],
+      ["week-done", "m"],
+      ["column-summary", "s"],
+    ],
+  ),
 ];
 
 const BY_ID = new Map(TEMPLATES.map((row) => [row.id, row]));
@@ -640,39 +876,10 @@ export function isOnboardingRole(value: string): value is OnboardingRole {
 }
 
 /**
- * The desk a new account lands on. The starters stay; this only chooses the bento.
- * Student splits into Semester or Exam season. Reading pile is the research desk.
- * Vibe coder is the non-dev engineer, so it lands on Bench. Unknown ids use Default.
+ * The desk a new account lands on comes from the template card. The starters stay; this only chooses the bento.
+ * Unknown ids use Default.
  */
-const SIGNUP_DESK: Record<string, string> = {
-  "semester-desk": "mkt.semester-desk",
-  "group-project": "mkt.semester-desk",
-  "exam-week": "mkt.exam-season",
-  "application-season": "mkt.exam-season",
-  "reading-pile": "mkt.literature-desk",
-  "matter-desk": "mkt.chambers",
-  "two-drafts": "mkt.chambers",
-  "deadline-wall": "mkt.chambers",
-  "client-morning": "mkt.chambers",
-  "research-trail": "mkt.chambers",
-  "weeks-lessons": "mkt.classes",
-  "check-ins": "mkt.classes",
-  "marking-pile": "mkt.classes",
-  "office-hours": "mkt.classes",
-  "course-hub": "mkt.classes",
-  "branch-desk": "mkt.branch-desk",
-  "inbox-triage": "mkt.branch-desk",
-  "release-desk": "mkt.branch-desk",
-  "on-call-morning": "mkt.branch-desk",
-  "partner-work": "mkt.branch-desk",
-  "one-idea": "mkt.bench",
-  "weekend-build": "mkt.bench",
-  "show-someone": "mkt.bench",
-  "learn-by-shipping": "mkt.bench",
-  "keep-it-small": "mkt.bench",
-  "staff-week": "mkt.staff-week",
-};
-
 export function signupDeskId(templateId: string): string {
-  return SIGNUP_DESK[templateId] ?? "default";
+  const card = templateCard(templateId);
+  return card ? DESK_MARKET_ID[card.desk] : "default";
 }

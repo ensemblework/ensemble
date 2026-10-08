@@ -9,6 +9,7 @@ import { api } from "@/lib/api";
 import { setFeature } from "@/lib/features";
 import { deskIdFromTemplate } from "@/components/desk/desks";
 import { DESK_EXTRAS, resolveExtras, type DeskExtraId } from "@/lib/desk-extras";
+import { layoutKey, readLayout } from "@/components/desk/layout";
 import { useToast } from "@/components/toast";
 
 export function FeaturesSection() {
@@ -39,9 +40,19 @@ export function FeaturesSection() {
       if (on) next.add(id);
       else next.delete(id);
       const saved = await api.putPreference("desk.extras", [...next]);
+      const writes = [saved.preference];
+      // A saved Today layout lists tiles by key, so the switch also shows or hides the tile there.
+      const tile = DESK_EXTRAS.find((extra) => extra.id === id)?.tile;
+      const layout = deskId && tile ? readLayout(prefs.data?.preferences.find((row) => row.key === layoutKey(deskId))?.value) : null;
+      if (deskId && tile && layout) {
+        const hidden = on ? layout.hidden.filter((key) => key !== tile) : [...new Set([...layout.hidden, tile])];
+        const tiles = on ? layout.tiles : layout.tiles.filter((row) => row.key !== tile);
+        writes.push((await api.putPreference(layoutKey(deskId), { ...layout, tiles, hidden })).preference);
+      }
       client.setQueryData<{ preferences: Array<{ key: string; value: unknown }> }>(["preferences"], (current) => {
+        const keys = new Set(writes.map((row) => row.key));
         const list = current?.preferences ?? [];
-        return { preferences: [...list.filter((row) => row.key !== "desk.extras"), saved.preference] };
+        return { preferences: [...list.filter((row) => !keys.has(row.key)), ...writes] };
       });
     } catch (error) {
       toast((error as Error).message, { tone: "error" });

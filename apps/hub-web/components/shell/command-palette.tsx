@@ -4,7 +4,8 @@ import { useQuery } from "@tanstack/react-query";
 import { CornerDownLeft } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { SHORTCUTS, formatBinding } from "@ensemble/shared-types";
+import { formatBinding } from "@ensemble/shared-types";
+import { useShortcuts } from "@/lib/shortcut-store";
 import { hasModule, moduleForPath } from "@ensemble/shared-types/modules";
 import { DESK_IDS, DESKS, MARKET_ID } from "@/components/desk/desks";
 import { api } from "@/lib/api";
@@ -215,6 +216,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
 }
 
 export function ShortcutSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const { bindings } = useShortcuts();
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
@@ -233,17 +235,22 @@ export function ShortcutSheet({ open, onClose }: { open: boolean; onClose: () =>
       <div
         role="dialog"
         aria-label="Keyboard shortcuts"
-        className="pop-in w-full max-w-[420px] rounded-xl border border-line-strong bg-panel p-4 shadow-pop"
+        className="pop-in max-h-[70vh] w-full max-w-[460px] overflow-y-auto rounded-xl border border-line-strong bg-panel p-4 shadow-pop"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-[15px] font-semibold">Shortcuts</h2>
-          <button type="button" className="btn-ghost" onClick={onClose}>
-            Close
-          </button>
+          <span className="flex items-center gap-1">
+            <a href="/settings?tab=shortcuts" className="btn-ghost" onClick={onClose}>
+              Change
+            </a>
+            <button type="button" className="btn-ghost" onClick={onClose}>
+              Close
+            </button>
+          </span>
         </div>
         <ul className="space-y-1.5">
-          {SHORTCUTS.map((binding) => (
+          {bindings.map((binding) => (
             <li key={binding.id} className="flex items-center justify-between gap-4 text-[13px]">
               <span className="text-muted">{binding.label}</span>
               <span className="kbd">{formatBinding(binding, isApplePlatform())}</span>
