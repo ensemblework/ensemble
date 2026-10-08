@@ -419,7 +419,7 @@ function isFocus(task: { status: string; todayFocus: string; priority: string; d
   if (task.status === "done" || task.status === "dropped" || task.status === "proposed") return false;
   if (task.todayFocus === "hidden") return false;
   if (task.todayFocus === "keep") return true;
-  if (task.priority === "p0") return true;
+  if (task.priority === "p0" || task.priority === "critical") return true;
   return Boolean(task.due && task.due < todayEnd);
 }
 

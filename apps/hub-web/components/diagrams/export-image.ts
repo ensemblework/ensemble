@@ -80,3 +80,15 @@ export async function downloadDiagram(model: DiagramModel, kind: DiagramExportKi
   const mime = kind === "jpg" ? "image/jpeg" : "image/png";
   saveUrl(canvas.toDataURL(mime, 0.92), `${name}.${kind}`);
 }
+
+/** PNG and SVG for one diagram, for exports that bundle many files. Always the light theme so they print well. */
+export async function diagramFiles(model: DiagramModel): Promise<{ svg: string; png: Blob | null }> {
+  const svg = renderDiagramSvg(model, { theme: "light" });
+  try {
+    const { canvas } = await draw(model, "light");
+    const png = await new Promise<Blob | null>((resolve) => canvas.toBlob((value) => resolve(value), "image/png"));
+    return { svg, png };
+  } catch {
+    return { svg, png: null };
+  }
+}

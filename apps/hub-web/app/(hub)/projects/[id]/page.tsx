@@ -23,7 +23,7 @@ type ProjectDetail = {
   people: Array<{ person: { id: string; name: string; email: string | null } }>;
   repoLinks: Array<{ repo: { id: string; fullName: string; url: string | null } }>;
   deliverables: Array<{ id: string; title: string; status: string; due: string | null }>;
-  tasks: Array<{ id: string; title: string; status: TaskStatus; priority: "p0" | "p1" | "p2" }>;
+  tasks: Array<{ id: string; title: string; status: TaskStatus; priority: "critical" | "p0" | "p1" | "p2" }>;
   meetingNotes: Array<{ id: string; title: string; askedAt: string }>;
 };
 

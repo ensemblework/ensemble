@@ -8,6 +8,7 @@ import { shortDate } from "@/lib/format";
 import { TaskPage } from "../task/task-page";
 import { usePeek, type PeekKind } from "./peek";
 import { ShareButton } from "../sharing/share-dialog";
+import { TaskExportMenu } from "../task/task-export";
 
 type ProjectDetail = {
   id: string;
@@ -57,6 +58,7 @@ export function PeekPanel({ id, kind = "task" }: { id: string; kind?: PeekKind }
         >
           {fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
         </button>
+        {kind === "task" ? <TaskExportMenu taskId={id} /> : null}
         {kind === "task" ? <ShareButton compact target={{ kind: "task", resourceId: id, title: task.data?.task.title ?? "Task" }} /> : null}
         <span className="mx-0.5 h-4 w-px bg-line" aria-hidden />
         <button type="button" className="icon-btn" title="Close (Esc)" aria-label="Close" onClick={close}>

@@ -128,11 +128,21 @@ In-app, not email. Schema change is `20260929180000_cowork_surfaces`.
 
 The code review space has a VS Code theme picker. Built-in themes live in `@ensemble/ide-theme`. Open VSX themes are fetched through hub-api (`/api/themes/search`, `/api/themes/openvsx`) and cached under `.theme-cache` (gitignored). The choice is `ideTheme` on the user settings document, so there is no database migration. Star up to three themes; Alt+Shift+T switches between them.
 
-## Public links, avatars and sidebar resize (8 Oct 2026, local checkout)
+## Board priorities, downloads and fixes (9 Oct 2026, local checkout)
+
+- **Fixed:** Settings › Account crashed after a profile change (choosing an avatar, or turning Plots on in Features), showing "We dropped a stitch". The shell refresh replaced the cached account without its profile; `app/(hub)/layout.tsx` now keeps the profile and the avatar picker tolerates a missing one.
+- **Priorities:** Critical, High, Medium and Low (migration `20261009010000_priority_assignee` adds `critical` to the `Priority` enum). Muted colors in both themes, a stripe on each card, and *By priority* or *Manual* order on the board ([02 §3.2](02_MODULE_INTERACTION_HUB_UI.md#32-board-kanban)).
+- **Who a task is with:** cards say Me, Agent, or someone's initials, relative to the viewer. In a shared space a task can be given to a member (`tasks.assignee_account_id`, [29](29_SHARING.md#tasks-with-a-person)).
+- **Downloads:** pages, tasks, meeting notes and skills as PDF, Word (also for Apple Pages), Markdown, HTML or text; diagrams from the list; a whole space as a ZIP with sections to pick. All built in the browser ([02 §18](02_MODULE_INTERACTION_HUB_UI.md#18-downloads)).
+- **Smaller:** a themed dialog replaces the browser's prompt and confirm (new skill, Trash and others); a new notifications panel; *Block diagrams* is now *Diagrams*.
+
+**Checked 9 Oct 2026:** a new HTTP test in `sharing.integration.test.ts` covers assigning to a member, "me" meaning whoever acts, an outsider refused, reassigning to the owner, and the agent clearing the person; `critical` is accepted. Three export model checks (`lib/export/document.test.ts`) and the existing API and Hub suites pass. Headless Chrome against an isolated PGlite API: the board as the owner and as a member, the notifications panel in both themes, page downloads as `.md`/`.pdf`/`.docx`, a task download from the side peek, a public-link download while signed out, the full-space ZIP, and the new skill dialog. The schema drift check needs Postgres and runs in CI.
+
+## Public links, avatars and sidebar resize (8 Oct 2026, deployed)
 
 Pages, tasks, diagrams and meeting notes can be opened by anyone with the link, no account needed, as view only or edit (content only), at most 5 per account; a whole space never ([29 §9](29_SHARING.md#9-anyone-with-the-link)). Visitors without an account get a creature name ("Curious Otter 🦦") and show in presence and live cursors. Everyone can pick one of 15 profession avatars (5 women, 5 men, 5 neutral) or keep initials ([29 §10](29_SHARING.md#10-avatars)). The sidebar can be resized (184 to 360 px) and the space switcher no longer overflows it or sits off-centre in the rail. Share moved to the top right of pages and next to close on the task peek, whose header now reads open in new tab, full screen, Share, close.
 
-**Checked 8 Oct 2026:** three HTTP tests (`src/sharing/links.integration.test.ts`, in `test:public`) cover a view link opening one page and nothing else (other pages, settings, comments, the assistant refused), edits through an edit link with no undo rows for visitors, a signed-in person showing by name, rotate and turn off ending access, the 5-link limit, kinds that can't be public, task properties refused on an edit link, and a visitor's creature in presence. The policy test checks every link rule names a real route. Headless Chrome: the peek header order, the rail alignment, dragging the sidebar wider, the avatar picker, General access in the share dialog, and an anonymous edit on `/p/<token>`. Not deployed.
+**Checked 8 Oct 2026:** three HTTP tests (`src/sharing/links.integration.test.ts`, in `test:public`) cover a view link opening one page and nothing else (other pages, settings, comments, the assistant refused), edits through an edit link with no undo rows for visitors, a signed-in person showing by name, rotate and turn off ending access, the 5-link limit, kinds that can't be public, task properties refused on an edit link, and a visitor's creature in presence. The policy test checks every link rule names a real route. Headless Chrome: the peek header order, the rail alignment, dragging the sidebar wider, the avatar picker, General access in the share dialog, and an anonymous edit on `/p/<token>`. Deployed 8 Oct 2026 (PR #7).
 
 ## Sharing (8 Oct 2026, deployed)
 
@@ -174,7 +184,7 @@ Plot spaces do not isolate account context, connectors, tasks, or agent retrieva
 These are on `main` and have their own docs. They were not re-tested live for this page.
 
 - **Plots** (`/plots`): charts from uploaded tables with ECharts on screen and matplotlib for publication export. Export runs in agent-runtime (`ensemble_agent/plots/`) or, on desktop, the computer's own `python3`. See [20 · Plots](20_PLOTS_DESIGN.md).
-- **Block diagrams** (`/diagrams`): a text DSL in `packages/block-diagrams`, revisions in `apps/hub-api/src/diagrams/`, and assistant tools to draw them. See [21](21_BLOCK_DIAGRAMS_DSL.md) and [22](22_BLOCK_DIAGRAMS_FOR_AGENTS.md).
+- **Diagrams** (`/diagrams`): a text DSL in `packages/block-diagrams`, revisions in `apps/hub-api/src/diagrams/`, and assistant tools to draw them. See [21](21_BLOCK_DIAGRAMS_DSL.md) and [22](22_BLOCK_DIAGRAMS_FOR_AGENTS.md).
 - **Desktop app** (`apps/desktop`): a Tauri window with a static export of the site and a local hub-api sidecar on PGlite. No Docker. Model calls run in-process. See [DESKTOP.md](DESKTOP.md) and the [Mac checklist](desktop/MAC_CHECKLIST.md).
 - **Remote tasks on your computer**: pair a computer under Settings → Devices (`/api/devices/*`), then choose it under *Run on* when assigning. The desktop app claims and runs the job and asks for approvals through Needs me (`apps/hub-api/src/remote/`, `src/devices/`). See [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md).
 - **Templates, desks and marketplace**: role templates at signup, the Today desk widgets, and the marketplace (`/marketplace`, `apps/hub-api/src/marketplace/`, `src/layouts/`). See [`design/`](design/) and [DEMO_DATA.md](DEMO_DATA.md).

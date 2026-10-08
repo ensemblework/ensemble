@@ -43,7 +43,7 @@ export function focusIds(tasks: TaskSnap[], now = new Date()): string[] {
       if (task.status === "done" || task.status === "dropped" || task.status === "proposed") return false;
       if (task.todayFocus === "hidden") return false;
       if (task.todayFocus === "keep") return true;
-      if (task.priority === "p0") return true;
+      if (task.priority === "p0" || task.priority === "critical") return true;
       if (!task.due) return false;
       const due = new Date(task.due);
       if (Number.isNaN(due.getTime())) return false;

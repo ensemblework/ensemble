@@ -9,6 +9,7 @@ import { PageHeader } from "@/components/ui";
 import { useToast } from "@/components/toast";
 import { api } from "@/lib/api";
 import { relative } from "@/lib/format";
+import { DiagramDownloadMenu } from "@/components/diagrams/download-menu";
 
 export default function DiagramsPage() {
   const router = useRouter();
@@ -47,7 +48,7 @@ export default function DiagramsPage() {
   return (
     <div className="mx-auto max-w-[880px] px-4 pb-24 pt-8 sm:px-10">
       <PageHeader
-        title="Block diagrams"
+        title="Diagrams"
         description="Describe a system in plain text, or start from a few blocks and rearrange them."
         actions={
           <button type="button" className="btn-primary" disabled={create.isPending} onClick={() => setGallery((open) => !open)}>
@@ -114,9 +115,12 @@ export default function DiagramsPage() {
                 </button>
               </span>
             ) : (
-              <button type="button" className="btn-ghost" onClick={() => setPending(diagram.id)}>
-                Delete
-              </button>
+              <span className="flex items-center gap-1">
+                <DiagramDownloadMenu id={diagram.id} />
+                <button type="button" className="btn-ghost" onClick={() => setPending(diagram.id)}>
+                  Delete
+                </button>
+              </span>
             )}
           </li>
         ))}

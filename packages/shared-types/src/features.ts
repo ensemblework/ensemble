@@ -43,7 +43,7 @@ export const FEATURES: Record<OptionalModule, FeatureCopy> = {
   },
   diagrams: {
     id: "diagrams",
-    label: "Block diagrams",
+    label: "Diagrams",
     line: "Draw how a system fits together, and keep the picture next to the work.",
     starters: [],
   },

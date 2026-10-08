@@ -50,6 +50,7 @@ enum TaskStatus {
 }
 
 enum Priority {
+  critical
   p0
   p1
   p2
@@ -171,68 +172,70 @@ enum SkillProvenance {
 // ── core — tasks, plans, runs, approvals ──────────────────────────────────
 
 model Task {
-  id               String           @id @default(uuid())
-  userId           String           @map("user_id")
-  title            String
-  description      String           @default("")
-  notes            String           @default("")
-  boardOrder       Float            @default(0) @map("board_order")
-  todayFocus       String           @default("auto") @map("today_focus")
-  skillIds         String[]         @default([]) @map("skill_ids")
-  sourceKind       TaskSource       @default(manual) @map("source_kind")
-  sourceRef        String           @default("") @map("source_ref")
-  sourceUrl        String?          @map("source_url")
-  excerpt          String?
-  owner            TaskOwner        @default(unassigned)
-  status           TaskStatus       @default(proposed)
-  priority         Priority         @default(p1)
+  id                String           @id @default(uuid())
+  userId            String           @map("user_id")
+  title             String
+  description       String           @default("")
+  notes             String           @default("")
+  boardOrder        Float            @default(0) @map("board_order")
+  todayFocus        String           @default("auto") @map("today_focus")
+  skillIds          String[]         @default([]) @map("skill_ids")
+  sourceKind        TaskSource       @default(manual) @map("source_kind")
+  sourceRef         String           @default("") @map("source_ref")
+  sourceUrl         String?          @map("source_url")
+  excerpt           String?
+  owner             TaskOwner        @default(unassigned)
+  status            TaskStatus       @default(proposed)
+  /// When owner is "me" in a shared space: which person. Null means the space's owner.
+  assigneeAccountId String?          @map("assignee_account_id")
+  priority          Priority         @default(p1)
   /// Orthogonal to priority: an urgent easy task is still easy.
-  complexity       TaskComplexity   @default(medium)
+  complexity        TaskComplexity   @default(medium)
   /// `me` is pinned: nothing re-infers over an explicit choice.
-  complexitySource ComplexitySource @default(agent) @map("complexity_source")
-  autonomy         AutonomyLevel    @default(assist)
-  due              DateTime?
-  projectId        String?          @map("project_id")
-  repoId           String?          @map("repo_id")
-  workItemId       String?          @map("work_item_id")
-  deliverableId    String?          @map("deliverable_id")
-  people           String[]         @default([])
-  rationale        String?
-  confidence       Float?
-  agentSuitability Float?           @map("agent_suitability")
-  taskType         String?          @map("task_type")
+  complexitySource  ComplexitySource @default(agent) @map("complexity_source")
+  autonomy          AutonomyLevel    @default(assist)
+  due               DateTime?
+  projectId         String?          @map("project_id")
+  repoId            String?          @map("repo_id")
+  workItemId        String?          @map("work_item_id")
+  deliverableId     String?          @map("deliverable_id")
+  people            String[]         @default([])
+  rationale         String?
+  confidence        Float?
+  agentSuitability  Float?           @map("agent_suitability")
+  taskType          String?          @map("task_type")
   /// Minutes or a score. The widget config says which. Not a time tracker.
-  measure          Int?
-  estimate         String?
-  snoozedUntil     DateTime?        @map("snoozed_until")
+  measure           Int?
+  estimate          String?
+  snoozedUntil      DateTime?        @map("snoozed_until")
   /// "Still relevant?" stays quiet until this instant. Not a due-date snooze.
-  nudgePausedUntil DateTime?        @map("nudge_paused_until")
-  blockedQuestion  Json?            @map("blocked_question")
-  createdBy        Actor            @default(agent) @map("created_by")
-  completedAt      DateTime?        @map("completed_at")
-  createdAt        DateTime         @default(now()) @map("created_at")
-  updatedAt        DateTime         @updatedAt @map("updated_at")
-  deletedAt        DateTime?        @map("deleted_at")
+  nudgePausedUntil  DateTime?        @map("nudge_paused_until")
+  blockedQuestion   Json?            @map("blocked_question")
+  createdBy         Actor            @default(agent) @map("created_by")
+  completedAt       DateTime?        @map("completed_at")
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
+  deletedAt         DateTime?        @map("deleted_at")
   /// Completed rows with pinned = true are kept past the completed-item window.
-  pinned           Boolean          @default(false)
-  startsAt         DateTime?        @map("starts_at")
-  dependsOn        String[]         @default([]) @map("depends_on")
-  matterStage      String?          @map("matter_stage")
-  court            String?
-  orderDate        DateTime?        @map("order_date")
-  subject          String?
-  weight           Float?
-  wordCount        Int?             @map("word_count")
-  pipelineStage    String?          @map("pipeline_stage")
+  pinned            Boolean          @default(false)
+  startsAt          DateTime?        @map("starts_at")
+  dependsOn         String[]         @default([]) @map("depends_on")
+  matterStage       String?          @map("matter_stage")
+  court             String?
+  orderDate         DateTime?        @map("order_date")
+  subject           String?
+  weight            Float?
+  wordCount         Int?             @map("word_count")
+  pipelineStage     String?          @map("pipeline_stage")
   /// Limitation Act period, such as 30d or 3m. The due date is computed, not stored.
-  limitationRule   String?          @map("limitation_rule")
+  limitationRule    String?          @map("limitation_rule")
   /// Free-form tags. Imports bring labels, tags and multi-selects here.
-  labels           String[]         @default([])
+  labels            String[]         @default([])
   /// Set by importers and connectors so running an import again updates rather than duplicates.
-  externalSource   String?          @map("external_source")
-  externalId       String?          @map("external_id")
+  externalSource    String?          @map("external_source")
+  externalId        String?          @map("external_id")
   /// The meeting an action item came from (meeting-notes connectors).
-  meetingNoteId    String?          @map("meeting_note_id")
+  meetingNoteId     String?          @map("meeting_note_id")
 
   planSteps     PlanStep[]
   runs          Run[]
@@ -254,6 +257,7 @@ model Task {
   @@index([userId, createdAt])
   @@index([userId, status, boardOrder])
   @@index([userId, due])
+  @@index([assigneeAccountId])
   @@index([userId, deletedAt])
   @@index([userId, completedAt])
   @@index([userId, taskType], map: "tasks_user_id_task_type_idx")

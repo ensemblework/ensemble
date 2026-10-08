@@ -181,7 +181,7 @@ const qs = (params: Record<string, string | number | boolean | undefined | null>
 
 // ── records ─────────────────────────────────────────────────────────────────
 
-export type Priority = "p0" | "p1" | "p2";
+export type Priority = "critical" | "p0" | "p1" | "p2";
 export type TaskStatus = "proposed" | "todo" | "in_progress" | "waiting_approval" | "blocked" | "done" | "dropped";
 export type Owner = "me" | "agent" | "unassigned";
 export type Complexity = "easy" | "medium" | "high" | "max";
@@ -206,6 +206,8 @@ export type TaskRecord = {
   repoId: string | null;
   deliverableId: string | null;
   people: string[];
+  /** In a shared space: which person a "me" task is with. Null: the space's owner. */
+  assigneeAccountId?: string | null;
   /** Free-form tags; imports bring labels, tags and multi-selects here. */
   labels?: string[];
   /** Set on action items a meeting-notes connector proposed. */
@@ -1256,6 +1258,19 @@ export const api = bindClient({
     post<{ question: string; answer: string; sources: AskSource[]; undoEntryId?: string | null }>("/api/ask", { question }),
   meetingCues: () => get<{ cues: MeetingCue[]; voice: string }>("/api/meetings/cues"),
   meetingSessions: () => get<{ sessions: MeetingSessionRecord[]; voice: string }>("/api/meetings/sessions"),
+  importedMeetings: () =>
+    get<{
+      notes: Array<{
+        id: string;
+        title: string;
+        sourceLabel: string;
+        occurredAt: string;
+        summary: string;
+        decisions: string[];
+        actionItems: Array<{ text: string; owner: { name: string | null } | null; completed: boolean }>;
+        people: Array<{ id: string; name: string | null }>;
+      }>;
+    }>("/api/meetings/imported"),
   importedMeetingNote: (id: string) =>
     get<{
       note: {

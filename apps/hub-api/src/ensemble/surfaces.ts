@@ -30,7 +30,7 @@ export interface SurfaceContext {
   scopes: WatcherScope[];
 }
 
-const PRIORITY: Record<string, string> = { p0: "High", p1: "Normal", p2: "Low" };
+const PRIORITY: Record<string, string> = { critical: "Critical", p0: "High", p1: "Medium", p2: "Low" };
 
 /** Ids the caller named that this read did not return. The query itself is already scoped by userId. */
 export function hiddenRequested(requested: readonly string[] | undefined, ownedIds: Iterable<string>): string[] {

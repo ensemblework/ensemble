@@ -20,6 +20,8 @@ import { announceTyping, onResource, tabId, usePresence } from "@/lib/presence";
 import { PagePeople } from "../sharing/page-people";
 import { ShareButton } from "../sharing/share-dialog";
 import { useSpaceAccess } from "@/lib/access";
+import { ExportMenu } from "../export-menu";
+import { pageDoc } from "@/lib/export/items";
 
 type SaveState = "saved" | "saving" | "dirty" | "error";
 
@@ -236,7 +238,7 @@ export function NotePage({
         </span>
         <div className="flex items-center gap-2">
           <PagePeople kind="page" id={pageId} />
-          {shared || !canEdit ? null : (
+          {shared || !canEdit ? <ExportMenu load={async () => pageDoc(await api.standalonePage(pageId).catch(() => record))} /> : (
             <>
               <button type="button" className="btn-ghost" disabled={convert.isPending} onClick={() => convert.mutate()}>
                 <CheckSquare size={13} /> Add to board
@@ -245,6 +247,7 @@ export function NotePage({
                 <Trash2 size={14} />
               </button>
               <span className="mx-0.5 h-4 w-px bg-line" aria-hidden />
+              <ExportMenu load={async () => pageDoc(await api.standalonePage(pageId).catch(() => record))} />
               <ShareButton compact target={{ kind: "page", resourceId: pageId, title: record.title }} />
             </>
           )}

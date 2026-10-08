@@ -50,7 +50,7 @@ The dialog shows these next to the upload box (`EXPORT_HELP` in `src/imports/sou
 `src/imports/mapping.ts` and `src/imports/apply.ts`.
 
 - **Status** uses the choice made in the review step. Values you did not see are matched by name: done, complete, closed, resolved, shipped, merged → Done; cancelled, won't do, duplicate, not planned → Dropped; blocked, on hold, waiting → Blocked; in progress, doing, started, review, testing, QA → In progress; backlog, to do, open, unstarted, not started, new, triage → To do. When the name says nothing, the app's status group decides (Linear state type, Jira status category, ClickUp status type). Anything else is To do. A done checkbox or completion date makes the task Done.
-- **Priority:** Ensemble has High, Normal and Low. Urgent, highest, critical and high → High; medium, normal and no priority → Normal; low and lowest → Low.
+- **Priority:** Ensemble has Critical, High, Medium and Low. Critical, blocker, showstopper and P0 → Critical; urgent, highest, high and P1 → High; medium, normal and no priority → Medium; low, lowest, minor and P3 or lower → Low (`mapPriority` in `apps/hub-api/src/imports/mapping.ts`).
 - **Dates:** a date with no time is stored the way Ensemble stores date-only dues, midnight UTC on that day (`parseDue` in `src/lib/clock.ts`). A time with a zone is kept as that instant; a time with no zone keeps its day. Spreadsheet dates may be ISO, `MM/DD/YYYY` (or `DD/MM/YYYY` when the first part is over 12), Jira's `07/Oct/26`, "October 7, 2026" or "7 Oct 2026"; ranges ("start → end") give start and due.
 - **Labels** are trimmed, de-duplicated without regard to case, at most 20 per task and 40 characters each.
 - **Assignees** become the task's people, by name.

@@ -134,6 +134,8 @@ export const CreateTask = z.object({
   description: z.string().optional(),
   notes: z.string().optional(),
   owner: TaskOwner.optional(),
+  /** In a shared space: the person (account id) a "me" task is with. Setting it sets owner to "me". */
+  assignee: z.string().trim().min(1).max(64).nullable().optional(),
   status: TaskStatus.optional(),
   priority: Priority.optional(),
   complexity: TaskComplexity.optional(),

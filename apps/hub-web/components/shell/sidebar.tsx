@@ -54,7 +54,7 @@ const GROUPS: Array<Array<{ href: string; label: string; icon: typeof Activity }
   ],
   [
     { href: "/metrics", label: "Metrics", icon: BarChart3 },
-    { href: "/diagrams", label: "Block diagrams", icon: Workflow },
+    { href: "/diagrams", label: "Diagrams", icon: Workflow },
     { href: "/plots", label: "Plots", icon: ChartSpline },
     { href: "/recap", label: "Weekly recap", icon: ListChecks },
   ],

@@ -163,7 +163,8 @@ type Task = {
   };
   owner: 'me' | 'agent' | 'unassigned';
   status: 'proposed' | 'todo' | 'in_progress' | 'waiting_approval' | 'blocked' | 'done' | 'dropped';
-  priority: 'p0' | 'p1' | 'p2';
+  priority: 'critical' | 'p0' | 'p1' | 'p2'; // Critical, High, Medium, Low
+  assigneeAccountId?: string; // shared spaces: the member an owner:'me' task is with (null = the space's owner)
   due?: string; project?: string; people: string[]; repo?: string;
   agentPlan?: PlanStep[]; runIds: string[];
   createdBy: 'agent' | 'me'; createdAt: string; updatedAt: string;

@@ -29,9 +29,9 @@ export function AvatarPicker() {
   const user = me.data?.user;
   const current = user?.avatar ?? null;
   const spaces = useQuery({ queryKey: ["spaces"], queryFn: api.spaces, staleTime: 60_000 });
-  const fromProfile = avatarRoleFor(spaces.data?.account.role, user?.profile.profession);
+  const fromProfile = avatarRoleFor(spaces.data?.account.role, user?.profile?.profession);
   const [role, setRole] = useState<AvatarRole>(fromProfile);
-  const firstGender = avatarGenderFor(user?.profile.gender);
+  const firstGender = avatarGenderFor(user?.profile?.gender);
   useEffect(() => {
     const picked = parseAvatar(current);
     setRole(picked?.role ?? fromProfile);

@@ -580,7 +580,7 @@ Schema version is `1`. Do not author this by hand. It is the contract between th
 - **Lock** on the selection, or `locked` in the text, is the same flag.
 - **Add a text box** inserts a `text` statement.
 - **Add a block** inserts a `node` statement.
-- Export is PNG, JPG, or PDF of the whole diagram, from the same geometry.
+- Export is PNG, JPG, PDF or SVG of the whole diagram, from the same geometry, in the editor or from the download menu on each row of the Diagrams list (`components/diagrams/download-menu.tsx`). *Settings › Data › Download this space* includes every diagram as PNG, SVG and source text.
 - The editor needs a window at least 1024 by 640 pixels.
 - On a diagram, Alt+Shift+R reorganizes, Alt+Shift+L locks the selection, Alt+Shift+N adds a text box, Alt+Shift+F shows only the canvas, and Delete removes the selection. Esc leaves the canvas-only view. `g` then `d` opens the diagram list from anywhere.
 

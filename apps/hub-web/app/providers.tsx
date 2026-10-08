@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import type { AppearanceSettings } from "@ensemble/shared-types";
 import { MotionContextProvider } from "@/components/motion/slot";
 import { ToastProvider } from "@/components/toast";
+import { AskHost } from "@/components/ask-dialog";
 import { ApiError, api } from "@/lib/api";
 import { isRequestCancelled } from "@/lib/fetch-cancel";
 import { FetchGuards } from "@/lib/use-fetch-guards";
@@ -88,6 +89,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
       <FetchGuards />
       <ToastProvider>
         <Appearance>{children}</Appearance>
+        <AskHost />
       </ToastProvider>
     </QueryClientProvider>
   );

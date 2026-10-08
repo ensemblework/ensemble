@@ -142,7 +142,7 @@ Disabled until the person enables Plots. `/plots` then shows the blurred landing
 5. **Interaction.** Tooltip, wheel zoom, box zoom via data zoom, pan, reset, brush a range (offered as a filter), legend toggles a series, click a bar or slice to recolour it, crosshair.
 6. **Style.** Per-series colour, dash pattern (solid, dashed, dotted, dash-dot), width, marker, opacity. Title, subtitle, axis titles, tick format, legend position, grid, font size. Palette presets.
 7. **Annotations.** Horizontal line, vertical line, `y = mx + c`, shaded band. Label, colour, dash. Not data.
-8. **Export.** PNG at 1×, 2×, 4× and a custom DPI. SVG. CSV of the plotted (aggregated) rows. Copy PNG. Matplotlib source. Server render of that figure to PDF, SVG, PNG, and EPS in the chosen preset.
+8. **Export.** PNG at 1×, 2×, 4× and a custom DPI. SVG. CSV of the plotted (aggregated) rows. Copy PNG. Matplotlib source. Server render of that figure to PDF, SVG, PNG, and EPS in the chosen preset. *Settings › Data › Download this space* with Plots ticked adds each plot space's settings as JSON and its data as CSV; it does not render figures.
 9. **Code view.** CodeMirror with the Code tab's theme, Python mode, lazy-loaded. Boilerplate calls `load` / `save`. Run goes to the sandbox. `plt.show()` and `save()` both capture the figure. The script is stored on the plot.
 10. **Saved plots.** Dataset id, config, style, annotations, optional code. Autosave. Duplicate. `@` mention renders a card and opens the plot. Ask search returns plots when the module is on. Assistant tools create and edit a plot the same way they create a task (a write waits for Apply). The Context Bridge can read a plot and cannot write one.
 

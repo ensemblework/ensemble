@@ -489,3 +489,34 @@ test("review fixes: transfer keeps each person's chats; removal stops their runs
   const after = await db.workspaceJob.findUniqueOrThrow({ where: { id: job.id } });
   assert.equal(after.status, "cancelled");
 });
+
+test("tasks in a shared space: assign to a member, 'me' is whoever acts, outsiders are refused", async () => {
+  const mira = await person("Mira Chen");
+  const ben = await person("Ben Ortiz");
+  const cara = await person("Cara Diaz");
+  const space = await ok<{ space: { id: string } }>(as(mira, { method: "POST", url: "/api/spaces", payload: { name: "Assign", templateId: "semester-desk" } }), 201);
+  const S = space.space.id;
+  await ok(as(mira, { method: "POST", url: `/api/sharing/spaces/${S}/members`, payload: { personId: ben.id, role: "editor" } }), 201);
+
+  type Task = { task: { id: string; owner: string; priority: string; assigneeAccountId: string | null } };
+  const forBen = await ok<Task>(as(mira, { method: "POST", url: "/api/tasks", payload: { title: "Review copy", assignee: ben.id, priority: "critical" } }, { space: S }), 201);
+  assert.equal(forBen.task.owner, "me");
+  assert.equal(forBen.task.assigneeAccountId, ben.id);
+  assert.equal(forBen.task.priority, "critical", "critical is a priority above High");
+
+  const bensOwn = await ok<Task>(as(ben, { method: "POST", url: "/api/tasks", payload: { title: "Draft FAQ", owner: "me" } }, { space: S }), 201);
+  assert.equal(bensOwn.task.assigneeAccountId, ben.id, "'me' from a member means that member");
+  const mirasOwn = await ok<Task>(as(mira, { method: "POST", url: "/api/tasks", payload: { title: "Book venue", owner: "me" } }, { space: S }), 201);
+  assert.equal(mirasOwn.task.assigneeAccountId, null, "'me' from the owner stays the owner");
+
+  const outsider = await as(mira, { method: "POST", url: "/api/tasks", payload: { title: "Nope", assignee: cara.id } }, { space: S });
+  assert.equal(outsider.statusCode, 400, outsider.body);
+  assert.match(outsider.body, /shared with/);
+
+  const toMira = await ok<Task>(as(ben, { method: "PATCH", url: `/api/tasks/${bensOwn.task.id}`, payload: { assignee: mira.id } }, { space: S }));
+  assert.equal(toMira.task.owner, "me");
+  assert.equal(toMira.task.assigneeAccountId, null, "the owner is stored as no assignee");
+  const toAgent = await ok<Task>(as(mira, { method: "PATCH", url: `/api/tasks/${forBen.task.id}`, payload: { owner: "agent" } }, { space: S }));
+  assert.equal(toAgent.task.owner, "agent");
+  assert.equal(toAgent.task.assigneeAccountId, null, "handing to the agent clears the person");
+});

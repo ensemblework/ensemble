@@ -28,7 +28,7 @@ const PAGES: Array<{ href: string; label: string; hint: string }> = [
   { href: "/skills", label: "Skills", hint: "How the agent should work" },
   { href: "/workspace", label: "Workspace", hint: "The agent queue" },
   { href: "/code", label: "Code", hint: "Reviews and repos" },
-  { href: "/diagrams", label: "Block diagrams", hint: "Draw systems and flows" },
+  { href: "/diagrams", label: "Diagrams", hint: "Draw systems and flows" },
   { href: "/plots", label: "Plots", hint: "Chart a table in two dimensions" },
   { href: "/metrics", label: "Metrics", hint: "Calls and cost" },
   { href: "/settings?tab=connections", label: "Connectors", hint: "Connect Google, Microsoft, Notion, Linear and more" },

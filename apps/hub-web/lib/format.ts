@@ -1,11 +1,15 @@
 import type { Priority, TaskStatus } from "./api";
 import { safeDate } from "./safe-date";
 
-export const PRIORITY: Record<Priority, { label: string; tone: Tone }> = {
-  p0: { label: "High", tone: "red" },
-  p1: { label: "Normal", tone: "orange" },
-  p2: { label: "Low", tone: "blue" },
+export const PRIORITY: Record<Priority, { label: string; tone: Tone; key: string }> = {
+  critical: { label: "Critical", tone: "red", key: "critical" },
+  p0: { label: "High", tone: "orange", key: "high" },
+  p1: { label: "Medium", tone: "blue", key: "medium" },
+  p2: { label: "Low", tone: "gray", key: "low" },
 };
+/** Most urgent first. */
+export const PRIORITY_ORDER: Priority[] = ["critical", "p0", "p1", "p2"];
+export const PRIORITY_RANK: Record<Priority, number> = { critical: 0, p0: 1, p1: 2, p2: 3 };
 
 export type Tone = "red" | "orange" | "yellow" | "green" | "blue" | "pink" | "purple" | "gray";
 

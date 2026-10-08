@@ -184,7 +184,7 @@ function MetricsPreview() {
 function DiagramsPreview() {
   return (
     <div>
-      <Head title="Block diagrams" description="Describe a system in plain text, or start from a few blocks." action="New diagram" />
+      <Head title="Diagrams" description="Describe a system in plain text, or start from a few blocks." action="New diagram" />
       <div className="mb-4 rounded-xl border border-line bg-panel p-4">
         <div className="mb-3 flex items-center justify-between">
           <span className="text-[13px] font-medium">Checkout</span>
