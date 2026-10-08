@@ -29,6 +29,9 @@ import { AskEnsemble } from "../ensemble/ask-button";
 import { CardBody, SortableCard, type BoardCardMotion } from "./task-card";
 import { BoardStrip } from "../widgets/board-strip";
 import type { LayoutPayload } from "@/lib/server-layout";
+import { usePersistentState } from "@/lib/prefs";
+import { taskPersonId, useSpacePeople } from "@/lib/space-people";
+import { PRIORITY, PRIORITY_ORDER, PRIORITY_RANK } from "@/lib/format";
 
 type ColumnId = "proposed" | "todo" | "in_progress" | "waiting" | "done";
 
@@ -161,6 +164,9 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
   const [search, setSearch] = useState("");
   const [owner, setOwner] = useState<Owner | "all">("all");
   const [priority, setPriority] = useState<Priority | "all">("all");
+  // Most urgent first by default; "manual" keeps the order cards were dragged into.
+  const [order, setOrder] = usePersistentState<"priority" | "manual">("ensemble.board.order", "priority");
+  const people = useSpacePeople();
   const [columns, setColumns] = useState<Record<ColumnId, string[]>>({
     proposed: [],
     todo: [],
@@ -187,15 +193,21 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
     const needle = search.trim().toLowerCase();
     const label = needle.startsWith("#") ? needle.slice(1).trim() : null;
     return (tasks.data?.tasks ?? [])
-      .filter((task) => (owner === "all" || task.owner === owner) && (priority === "all" || task.priority === priority))
+      .filter((task) => {
+        if (priority !== "all" && task.priority !== priority) return false;
+        if (owner === "all") return true;
+        // "Me" is whoever is looking: in a shared space, only the tasks that are with you.
+        if (owner === "me") return task.owner === "me" && (taskPersonId(task, people.ownerId) ?? people.me) === people.me;
+        return task.owner === owner;
+      })
       .filter((task) => {
         if (!needle) return true;
         const labels = (task.labels ?? []).map((value) => value.toLowerCase());
         if (label !== null) return labels.some((value) => value === label || (label.length > 0 && value.startsWith(label)));
         return task.title.toLowerCase().includes(needle) || labels.some((value) => value.includes(needle));
       })
-      .sort((a, b) => a.boardOrder - b.boardOrder);
-  }, [tasks.data, search, owner, priority]);
+      .sort((a, b) => (order === "priority" ? (PRIORITY_RANK[a.priority] ?? 2) - (PRIORITY_RANK[b.priority] ?? 2) : 0) || a.boardOrder - b.boardOrder);
+  }, [tasks.data, search, owner, priority, order, people.me, people.ownerId]);
 
   const draggingRef = useRef(false);
   draggingRef.current = dragId !== null;
@@ -390,6 +402,8 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
     const beforeId = list[index - 1] ?? null;
     const afterId = list[index + 1] ?? null;
     if (origin.current === column && status === task.status && activeIndex === overIndex) return;
+    // A hand-placed card would jump back under the priority sort, so arranging means manual order.
+    if (order === "priority" && origin.current === column && activeIndex !== overIndex) setOrder("manual");
     move.mutate({ id, status, beforeId, afterId });
   };
 
@@ -436,9 +450,15 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
           aria-label="Priority"
         >
           <option value="all">All priorities</option>
-          <option value="p0">High</option>
-          <option value="p1">Normal</option>
-          <option value="p2">Low</option>
+          {PRIORITY_ORDER.map((value) => (
+            <option key={value} value={value}>
+              {PRIORITY[value].label}
+            </option>
+          ))}
+        </select>
+        <select value={order} onChange={(event) => setOrder(event.target.value as "priority" | "manual")} className="field py-1 text-[13px]" aria-label="Order">
+          <option value="priority">By priority</option>
+          <option value="manual">Manual order</option>
         </select>
         <span className="text-[12.5px] text-muted">{plural(count, "task")}</span>
         {picked.length ? (

@@ -15,6 +15,7 @@ import { TERMINAL_DESKTOP_BODY, TERMINAL_DESKTOP_TITLE, useDesktopShell } from "
 import { currentTerminalAccess } from "../code/terminal-address";
 import { pickFolderNative } from "@/lib/desktop-dialog";
 import { InfoTip, SectionCard, SettingRow, Spinner, Tag, Toggle, cx } from "../ui";
+import { confirmAction } from "@/components/ask-dialog";
 
 export type Patch = (patch: Record<string, unknown>) => void;
 type Props = { settings: Settings; patch: Patch };
@@ -567,7 +568,7 @@ export function DeletedSection() {
           <button type="button" className="btn" onClick={() => restore.mutate({})}>
             <RotateCcw size={12} /> Restore all
           </button>
-          <button type="button" className="btn" onClick={() => window.confirm("Permanently remove everything in deleted items?") && empty.mutate()}>
+          <button type="button" className="btn" onClick={() => void confirmAction({ title: "Remove deleted items?", body: "Everything in deleted items is removed for good.", confirm: "Remove all", danger: true }).then((yes) => yes && empty.mutate())}>
             <Trash2 size={12} /> Empty now
           </button>
         </>

@@ -17,7 +17,7 @@ export interface Proposal {
   description: string;
   sourceUrl?: string | null;
   excerpt?: string | null;
-  priority: "p0" | "p1" | "p2";
+  priority: "critical" | "p0" | "p1" | "p2";
   due?: Date | null;
   people?: string[];
   repoId?: string | null;

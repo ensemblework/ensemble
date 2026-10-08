@@ -179,8 +179,10 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   });
   useEffect(() => {
     if (!shell.data) return;
+    // The shell's user has no profile: keep the one /api/auth/me already loaded.
+    const known = client.getQueryData<{ user?: { profile?: unknown } }>(["me"]);
     client.setQueryData(["me"], {
-      user: shell.data.user,
+      user: { ...shell.data.user, ...(known?.user?.profile ? { profile: known.user.profile } : {}) },
       via: shell.data.via,
       modules: shell.data.modules,
       verificationRequired: shell.data.verificationRequired,

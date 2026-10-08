@@ -17,7 +17,7 @@ const TaskDraftInput = z
     notes: z.string().optional(),
     owner: z.enum(["me", "agent", "unassigned"]).optional(),
     status: TaskStatus.optional(),
-    priority: Priority.describe("p0 = High/urgent, p1 = Normal, p2 = Low").optional(),
+    priority: Priority.describe("critical = Critical/drop everything, p0 = High/urgent, p1 = Medium, p2 = Low").optional(),
     complexity: z.enum(["easy", "medium", "high", "max"]).optional(),
     due: Due.describe("YYYY-MM-DD or ISO datetime. Resolve relative dates from the system prompt."),
     projectId: z.string().uuid().optional(),
@@ -95,7 +95,7 @@ export const taskTools = [
     name: "hub_create_tasks",
     area: "tasks",
     description:
-      "Add one or more todos. Prefer one call with several tasks. Set status to proposed for work you inferred. priority p0 is High, p1 is Normal, p2 is Low. Use projectName to attach tasks to a project created earlier in this turn.",
+      "Add one or more todos. Prefer one call with several tasks. Set status to proposed for work you inferred. priority critical is Critical, p0 is High, p1 is Medium, p2 is Low. Use projectName to attach tasks to a project created earlier in this turn.",
     input: z.object({ tasks: z.array(TaskDraftInput).min(1).max(12) }),
     isWrite: true,
     risk: "low",
@@ -142,7 +142,7 @@ export const taskTools = [
     name: "hub_update_task",
     area: "tasks",
     description:
-      "Update fields on an existing task, including marking it done. taskId must be the exact id from hub_list_tasks (search with query). matchTitle must be that task's current title. The write is refused when they do not match. priority p0 is High, p1 is Normal, p2 is Low. Do not use this to link a repo or create a person.",
+      "Update fields on an existing task, including marking it done. taskId must be the exact id from hub_list_tasks (search with query). matchTitle must be that task's current title. The write is refused when they do not match. priority critical is Critical, p0 is High, p1 is Medium, p2 is Low. Do not use this to link a repo or create a person.",
     input: z
       .object({
         taskId: z.string().uuid(),
@@ -152,7 +152,7 @@ export const taskTools = [
         notes: z.string().optional(),
         owner: z.enum(["me", "agent", "unassigned"]).optional(),
         status: TaskStatus.optional(),
-        priority: Priority.describe("p0 = High/urgent, p1 = Normal, p2 = Low").optional(),
+        priority: Priority.describe("critical = Critical/drop everything, p0 = High/urgent, p1 = Medium, p2 = Low").optional(),
         complexity: z.enum(["easy", "medium", "high", "max"]).optional(),
         due: Due,
         projectId: z.string().uuid().nullable().optional(),

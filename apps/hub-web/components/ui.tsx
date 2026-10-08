@@ -70,9 +70,18 @@ export function Tag({ tone = "gray", children, className }: { tone?: Tone; child
   );
 }
 
+/** Priority in its own muted colour (globals.css --prio-*), with a dot. */
 export function PriorityTag({ priority }: { priority: Priority }) {
-  const spec = PRIORITY[priority];
-  return <Tag tone={priority === "p1" ? "gray" : spec.tone}>{spec.label}</Tag>;
+  const spec = PRIORITY[priority] ?? PRIORITY.p1;
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded px-1.5 py-[1px] text-[11.5px] font-medium leading-4"
+      style={{ background: `var(--prio-${spec.key}-bg)`, color: `var(--prio-${spec.key}-fg)` }}
+    >
+      <span className="size-1.5 rounded-full" style={{ background: `var(--prio-${spec.key})` }} aria-hidden />
+      {spec.label}
+    </span>
+  );
 }
 
 export function StatusPill({ status, count }: { status: TaskStatus; count?: number }) {

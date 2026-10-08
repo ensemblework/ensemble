@@ -76,14 +76,16 @@ export function resolveStatus(
   return status;
 }
 
-/** Ensemble has three priorities: p0 High, p1 Normal, p2 Low. Urgent and high both land on High. */
+/** Ensemble has four priorities: critical, p0 High, p1 Medium, p2 Low. Blockers and "critical" land on Critical; urgent and high on High. */
 export function mapPriority(raw: string | number | null | undefined): Priority {
   if (raw === null || raw === undefined) return "p1";
   const text = words(String(raw));
   if (!text) return "p1";
-  if (/^(urgent|highest|critical|blocker|asap|p0|0|1|p1|high|important|major)$/.test(text)) return "p0";
+  if (/^(critical|blocker|showstopper|p0|0)$/.test(text)) return "critical";
+  if (/^(urgent|highest|asap|1|p1|high|important|major)$/.test(text)) return "p0";
   if (/^(low|lowest|minor|trivial|p3|p4|3|4|5)$/.test(text)) return "p2";
-  if (/\b(urgent|highest|critical|high)\b/.test(text)) return "p0";
+  if (/\b(critical|blocker)\b/.test(text)) return "critical";
+  if (/\b(urgent|highest|high)\b/.test(text)) return "p0";
   if (/\b(low|lowest|minor)\b/.test(text)) return "p2";
   return "p1";
 }

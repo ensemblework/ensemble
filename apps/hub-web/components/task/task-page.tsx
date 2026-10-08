@@ -24,7 +24,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PageDocument, PageMention } from "@ensemble/shared-types";
 import { ApiError, api, currentLink, currentShare, withLink, withShare, type TaskRecord, type TaskStatus } from "@/lib/api";
 import { useEntities } from "@/lib/entities";
-import { COMPLEXITY_LABEL, OWNER_LABEL, PRIORITY, STATUS, dateTime, isoDate } from "@/lib/format";
+import { COMPLEXITY_LABEL, OWNER_LABEL, PRIORITY, PRIORITY_ORDER, STATUS, dateTime, isoDate } from "@/lib/format";
 import { MakeDiagramButton, taskDiagramPrompt } from "../diagrams/make-diagram";
 import { AssignDialog } from "../agent/assign-dialog";
 import { TaskAgentPanel } from "../agent/job-card";
@@ -45,6 +45,9 @@ import { useSpaceAccess } from "@/lib/access";
 import { announceTyping, onResource, tabId, usePresence } from "@/lib/presence";
 import { PagePeople } from "../sharing/page-people";
 import { ShareButton } from "../sharing/share-dialog";
+import { taskPersonId, useSpacePeople } from "@/lib/space-people";
+import { colorFor } from "@/lib/presence";
+import { TaskExportMenu } from "./task-export";
 
 type SaveState = "saved" | "saving" | "dirty" | "error";
 
@@ -133,6 +136,9 @@ export function TaskPage({
   const access = useSpaceAccess();
   const canEdit = shared ? shared.role === "edit" : access.canEdit;
   const canEditProperties = canEdit && !shared?.link;
+  // Who it is with, relative to you: "Me", or another person in a shared space.
+  const space = useSpacePeople();
+  const others = space.people.filter((person) => person.id !== space.me);
   const watching = Boolean(shared) || onResource(usePresence(), "task", taskId).length > 0;
   const watchingRef = useRef(watching);
   watchingRef.current = watching;
@@ -309,12 +315,16 @@ export function TaskPage({
   const deliverable = deliverables.data?.deliverables.find((row) => row.id === record.deliverableId);
   const personName = (value: string) => people.data?.people.find((row) => row.id === value)?.name ?? value;
   const pinned = record.todayFocus === "keep";
+  const personId = taskPersonId(record, space.ownerId) ?? space.me;
+  const ownerText =
+    record.owner !== "me" ? OWNER_LABEL[record.owner] : personId === space.me ? "Me" : (space.byId.get(personId ?? "")?.name ?? "Someone");
 
   return (
     <div className={cx("mx-auto w-full pb-24", variant === "peek" ? "max-w-[860px] px-4 pt-4 sm:px-8 sm:pt-6" : "max-w-[900px] px-4 pt-6 sm:px-16 sm:pt-10")} inert={leaving}>
-      {variant === "page" && !shared ? (
-        <div className="-mb-1 flex justify-end">
-          <ShareButton compact target={{ kind: "task", resourceId: taskId, title: record.title }} />
+      {variant === "page" ? (
+        <div className="-mb-1 flex justify-end gap-1">
+          <TaskExportMenu taskId={taskId} />
+          {shared ? null : <ShareButton compact target={{ kind: "task", resourceId: taskId, title: record.title }} />}
         </div>
       ) : null}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-[12.5px] text-muted">
@@ -396,23 +406,41 @@ export function TaskPage({
       <div className="mt-5 space-y-0.5" inert={!canEditProperties || undefined}>
         <PropertyRow icon={User} label="Owner">
           <Popover
-            trigger={(_open, toggle) => <ValueButton onClick={toggle}>{OWNER_LABEL[record.owner]}</ValueButton>}
-            width={180}
+            trigger={(_open, toggle) => <ValueButton onClick={toggle}>{ownerText}</ValueButton>}
+            width={220}
           >
-            {(close) =>
-              (["me", "agent", "unassigned"] as const).map((owner) => (
-                <MenuItem
-                  key={owner}
-                  active={record.owner === owner}
-                  onClick={() => {
-                    close();
-                    update.mutate({ owner });
-                  }}
-                >
-                  {OWNER_LABEL[owner]}
-                </MenuItem>
-              ))
-            }
+            {(close) => (
+              <>
+                {(["me", "agent", "unassigned"] as const).map((owner) => (
+                  <MenuItem
+                    key={owner}
+                    active={record.owner === owner && (owner !== "me" || personId === space.me)}
+                    onClick={() => {
+                      close();
+                      update.mutate({ owner });
+                    }}
+                  >
+                    {OWNER_LABEL[owner]}
+                  </MenuItem>
+                ))}
+                {others.length ? <div className="mx-2 my-1 border-t border-line" /> : null}
+                {others.map((person) => (
+                  <MenuItem
+                    key={person.id}
+                    active={record.owner === "me" && personId === person.id}
+                    onClick={() => {
+                      close();
+                      update.mutate({ assignee: person.id });
+                    }}
+                  >
+                    <span className="grid h-[18px] min-w-[22px] place-items-center rounded-full px-1 text-[10.5px] font-semibold text-white" style={{ background: colorFor(person.id) }}>
+                      {person.initials}
+                    </span>
+                    {person.name}
+                  </MenuItem>
+                ))}
+              </>
+            )}
           </Popover>
           {shared ? null : record.owner === "agent" ? (
             <>
@@ -443,7 +471,7 @@ export function TaskPage({
             width={160}
           >
             {(close) =>
-              (["p0", "p1", "p2"] as const).map((priority) => (
+              PRIORITY_ORDER.map((priority) => (
                 <MenuItem
                   key={priority}
                   active={record.priority === priority}

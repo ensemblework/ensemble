@@ -44,6 +44,7 @@ import {
 } from "@ensemble/shared-types/widgets";
 import { api } from "@/lib/api";
 import { useToast } from "@/components/toast";
+import { confirmAction } from "@/components/ask-dialog";
 
 const XL_LIMIT = "Only one extra-large tile fits on this page. Shrink the other one first.";
 
@@ -130,7 +131,7 @@ export function EditCanvas({
   };
 
   const reset = async () => {
-    if (!window.confirm("Reset this layout to the template? Tasks and people stay.")) return;
+    if (!(await confirmAction({ title: "Reset this layout?", body: "Tiles go back to the template's. Tasks and people stay.", confirm: "Reset" }))) return;
     setBusy(true);
     try {
       await api.resetLayout(surface);

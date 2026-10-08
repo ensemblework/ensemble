@@ -84,6 +84,10 @@ A member who assigns a task to the agent runs it **on their own computer**:
 - Only the runner can stop it, run it again, or answer its questions in Needs me. The owner sees the question with a lock. The runner gets the notification, and its link opens the shared space (`?openSpace=`). The owner's kill switch and stop-all skip runs on other people's computers.
 - Code stays view-only for everyone but the owner: all `/api/code` writes, the terminal, and approving hosted runs are owner-only.
 
+### Tasks with a person
+
+In a space with members, a task whose owner is `me` can be with any one person: the owner or a member. The task page's Owner menu lists them; picking one sends `assignee` (an account id) and the server stores it in `tasks.assignee_account_id`, or null for the space's owner (`resolveAssignee` in `services/tasks.ts`). Anyone else is refused with 400. `owner: "me"` without an assignee means the person acting, so a member's "Me" is that member. Handing a task to the agent or leaving it unassigned clears the person. Board cards show it relative to whoever is looking: **Me**, **Agent**, or the other person's initials. Checked 9 Oct 2026 by `sharing.integration.test.ts` ("tasks in a shared space").
+
 ## 5. Live presence
 
 `POST /api/presence` (heartbeat every 15 s, on every route change, and while typing or moving on a diagram) and `GET /api/presence` keep an in-memory room per space (`sharing/presence.ts`). Production runs one API process, like the event stream. Entries expire after 45 s; closing a tab sends a `leave`. Each person has a fixed colour. Presence is only sent when the space has collaborators (`shell.space.collaborators`).

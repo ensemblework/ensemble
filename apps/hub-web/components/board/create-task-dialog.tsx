@@ -52,7 +52,7 @@ export function CreateTaskDialog({ status = "todo", onCreated, onClose }: {
         <label className="block text-[13px] font-medium">
           Priority
           <select aria-label="Priority" value={priority} onChange={(event) => setPriority(event.target.value as Priority)} className="field mt-1 w-full">
-            <option value="p0">High</option><option value="p1">Normal</option><option value="p2">Low</option>
+            <option value="critical">Critical</option><option value="p0">High</option><option value="p1">Medium</option><option value="p2">Low</option>
           </select>
         </label>
         <label className="block text-[13px] font-medium">

@@ -1,41 +1,45 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useSortable, type AnimateLayoutChanges } from "@dnd-kit/sortable";
-import { Bot, GripVertical, UserRound } from "lucide-react";
-import { api, type TaskRecord } from "@/lib/api";
+import { Bot, GripVertical } from "lucide-react";
+import { type TaskRecord } from "@/lib/api";
 import { warmTask } from "@/lib/warm";
-import { OWNER_LABEL, dueLabel, plural } from "@/lib/format";
+import { dueLabel, plural } from "@/lib/format";
 import { PriorityTag, cx } from "../ui";
 import { LabelChips } from "../task/labels";
-import { PersonaAvatar } from "@/components/avatars/persona";
+import { colorFor } from "@/lib/presence";
+import { taskPersonId, useSpacePeople } from "@/lib/space-people";
 
-function OwnerMark({ owner }: { owner: string }) {
-  const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 60_000 });
-  const label = OWNER_LABEL[owner] ?? "Owner";
-  if (owner === "agent") {
+/**
+ * Who does it, as a small pill: "Me", "Agent", or someone's initials in a shared space. "Me" is
+ * relative: whoever is looking sees their own tasks as Me and everyone else's as initials.
+ */
+function OwnerMark({ task }: { task: TaskRecord }) {
+  const { me, ownerId, byId } = useSpacePeople();
+  if (task.owner === "agent") {
     return (
-      <span title={label} role="img" aria-label={label} className="flex h-4 w-4 items-center justify-center rounded-md bg-ink/10 text-ink">
-        <Bot size={11} aria-hidden />
+      <span title="The agent does it" className="inline-flex h-[18px] items-center gap-1 rounded-full bg-ink/10 px-1.5 text-[11px] font-medium leading-none text-ink">
+        <Bot size={11} aria-hidden /> Agent
       </span>
     );
   }
-  if (owner === "unassigned") {
-    return <span title={label} role="img" aria-label={label} className="inline-block h-4 w-4 rounded-full border border-dashed border-muted" />;
+  if (task.owner === "unassigned") {
+    return <span title="Nobody yet" className="inline-flex h-[18px] items-center rounded-full border border-dashed border-line-strong px-1.5 text-[11px] leading-none text-faint">Unassigned</span>;
   }
-  // "Me" on a task is the space's owner: in a space shared with you, that is them, not you.
-  const name = shell.data?.space?.shared?.owner.name || shell.data?.user.name || shell.data?.user.email || "";
-  const avatar = shell.data?.space?.shared ? shell.data.space.shared.owner.avatar : shell.data?.user.avatar;
-  const initial = name ? name.charAt(0).toUpperCase() : "";
-  const personLabel = name ? `${label}, ${name}` : label;
+  const personId = taskPersonId(task, ownerId);
+  const person = personId ? byId.get(personId) : undefined;
+  if (!personId || personId === me) {
+    return <span title="You" className="inline-flex h-[18px] items-center rounded-full bg-accent-soft px-1.5 text-[11px] font-medium leading-none text-ink">Me</span>;
+  }
   return (
     <span
-      title={personLabel}
-      role="img"
-      aria-label={personLabel}
-      className="flex h-6 w-6 items-center justify-center rounded-full bg-accent-soft text-[12px] font-semibold leading-none text-ink"
+      title={person?.name ?? "Someone in this space"}
+      aria-label={person?.name ?? "Someone in this space"}
+      className="inline-flex h-[18px] min-w-[22px] items-center justify-center rounded-full px-1.5 text-[10.5px] font-semibold leading-none text-white"
+      style={{ background: colorFor(personId) }}
     >
-      {avatar ? <PersonaAvatar id={avatar} size={24} /> : initial || <UserRound size={11} aria-hidden />}
+      {person?.initials ?? "··"}
     </span>
   );
 }
@@ -43,13 +47,13 @@ function OwnerMark({ owner }: { owner: string }) {
 export function CardBody({ task }: { task: TaskRecord }) {
   const due = dueLabel(task.due, task.status === "done");
   return (
-    <div className="board-card group text-left">
+    <div className="board-card group text-left" data-priority={task.priority}>
       <div className="flex items-start gap-2 pr-4">
         <span className="card-title">{task.title}</span>
       </div>
       <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[12px] text-muted">
         <PriorityTag priority={task.priority} />
-        <OwnerMark owner={task.owner} />
+        <OwnerMark task={task} />
         {task.people.length ? <span>{plural(task.people.length, "person", "people")}</span> : null}
         {due ? <span className={due.overdue ? "text-[#ffb4ae]" : undefined}>{due.text}</span> : null}
         <LabelChips labels={task.labels} />

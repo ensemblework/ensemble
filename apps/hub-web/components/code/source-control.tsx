@@ -21,6 +21,7 @@ import { api } from "@/lib/api";
 import { relative } from "@/lib/format";
 import { useToast } from "../toast";
 import { Spinner, cx } from "../ui";
+import { confirmAction } from "@/components/ask-dialog";
 
 function Group({ title, count, children }: { title: string; count: number; children: React.ReactNode }) {
   const [open, setOpen] = useState(true);
@@ -121,7 +122,7 @@ export function SourceControl({ repo, onOpenFile }: { repo: string; onOpenFile: 
                 type="button"
                 className="icon-btn h-5 w-5 opacity-0 group-hover:opacity-100"
                 title="Discard changes"
-                onClick={() => window.confirm(`Discard your changes to ${entry.path}? This cannot be undone.`) && run.mutate(() => api.discard(repo, [entry.path]))}
+                onClick={() => void confirmAction({ title: "Discard changes?", body: `Your changes to ${entry.path} are thrown away. This cannot be undone.`, confirm: "Discard", danger: true }).then((yes) => yes && run.mutate(() => api.discard(repo, [entry.path])))}
               >
                 <Undo2 size={11} />
               </button>

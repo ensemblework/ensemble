@@ -10,6 +10,8 @@ import { useToast } from "@/components/toast";
 import { api } from "@/lib/api";
 import { ShareButton } from "@/components/sharing/share-dialog";
 import { whenLabel } from "@/lib/format";
+import { ExportMenu } from "@/components/export-menu";
+import { meetingDoc } from "@/lib/export/items";
 
 function MeetingsBody() {
   const params = useSearchParams();
@@ -145,7 +147,10 @@ function MeetingsBody() {
           <article>
             <div className="flex items-center justify-between gap-2">
               <h2 className="text-[18px] font-semibold">{session.title}</h2>
-              <ShareButton target={{ kind: "meeting", resourceId: session.id, title: session.title }} />
+              <div className="flex items-center gap-1">
+                <ExportMenu load={() => meetingDoc({ ...session, notes })} />
+                <ShareButton target={{ kind: "meeting", resourceId: session.id, title: session.title }} />
+              </div>
             </div>
             <p className="mt-1 text-[12px] text-muted">{list.data?.voice}</p>
             <label className="mt-3 block">

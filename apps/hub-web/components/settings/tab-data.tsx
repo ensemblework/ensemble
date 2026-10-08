@@ -3,6 +3,7 @@
 import type { Settings } from "@ensemble/shared-types";
 import { CompletedList } from "@/components/housekeeping/completed-list";
 import { TrashList } from "@/components/housekeeping/trash-list";
+import { SpaceExportSection } from "./space-export";
 import { DeleteDataSection, DeletedSection, FailedJobsSection, RetentionSection, TerminalSection } from "./sections";
 
 type Plain = Record<string, unknown>;
@@ -11,6 +12,7 @@ export function DataTab({ settings, patch }: { settings: Settings; patch: (value
   const props = { settings, patch };
   return (
     <>
+      <div id="export" className="scroll-mt-6"><SpaceExportSection /></div>
       <div id="retention" className="scroll-mt-6"><RetentionSection {...props} /></div>
       <div id="completed" className="scroll-mt-6"><CompletedList embedded /></div>
       <div id="trash" className="scroll-mt-6"><TrashList embedded /></div>

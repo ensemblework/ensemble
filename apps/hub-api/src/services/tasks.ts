@@ -9,6 +9,7 @@ import { assertTransition } from "../lib/state-machine.js";
 import { recordUndoInTransaction } from "../lib/undo.js";
 import { assertOwned } from "./records.js";
 import { CreateTask, TaskLabels } from "@ensemble/shared-types";
+import { actorFor } from "../sharing/context.js";
 
 type Tx = Prisma.TransactionClient;
 type Db = PrismaClient | Tx;
@@ -32,6 +33,8 @@ export interface TaskDraft {
   repoId?: string | null;
   deliverableId?: string | null;
   boardOrder?: number;
+  /** In a shared space: who a "me" task is with. */
+  assignee?: string | null;
   sourceRef?: string;
   taskType?: string | null;
   measure?: number | null;
@@ -54,13 +57,31 @@ export interface TaskPatch extends Partial<TaskDraft> {
   matchTitle?: string;
 }
 
+/**
+ * Who a task is with. "me" is relative: the person acting (null when that is the space's owner).
+ * An explicit assignee must be the space's owner or one of its members.
+ */
+async function resolveAssignee(tx: Tx, spaceId: string, owner: string | undefined, assignee: string | null | undefined): Promise<{ owner?: Task["owner"]; assigneeAccountId?: string | null }> {
+  if (assignee !== undefined && assignee !== null) {
+    const space = await tx.user.findUnique({ where: { id: spaceId }, select: { id: true, ownerId: true } });
+    const spaceOwner = space?.ownerId ?? space?.id ?? spaceId;
+    if (assignee === spaceOwner || assignee === spaceId) return { owner: "me", assigneeAccountId: null };
+    const member = await tx.spaceMember.findUnique({ where: { spaceId_accountId: { spaceId, accountId: assignee } }, select: { id: true } });
+    if (!member) throw Object.assign(new Error("Assign it to someone this space is shared with."), { statusCode: 400 });
+    return { owner: "me", assigneeAccountId: assignee };
+  }
+  if (owner === "me") return { owner: "me", assigneeAccountId: actorFor(spaceId) };
+  if (owner === "agent" || owner === "unassigned" || assignee === null) return { owner: owner as Task["owner"] | undefined, assigneeAccountId: null };
+  return {};
+}
+
 function asDate(value: string | null | undefined): Date | null {
   if (!value) return null;
   const date = new Date(value.includes("T") ? value : `${value}T00:00:00.000Z`);
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-const PRIORITY_LABEL: Record<string, string> = { p0: "High", p1: "Normal", p2: "Low" };
+const PRIORITY_LABEL: Record<string, string> = { critical: "Critical", p0: "High", p1: "Medium", p2: "Low" };
 const STATUS_LABEL: Record<string, string> = {
   proposed: "Proposed",
   todo: "To do",
@@ -140,7 +161,10 @@ export async function createTask(tx: Tx, userId: string, draft: TaskDraft, actor
       title,
       description: draft.description ?? "",
       notes: draft.notes ?? "",
-      owner: draft.owner ?? "unassigned",
+      ...(await (async () => {
+        const who = await resolveAssignee(tx, userId, draft.owner, draft.assignee);
+        return { owner: who.owner ?? draft.owner ?? "unassigned", assigneeAccountId: who.assigneeAccountId ?? null };
+      })()),
       status,
       priority: draft.priority ?? "p1",
       complexity: draft.complexity ?? inferComplexity({ title: draft.title, description: draft.description }),
@@ -213,13 +237,15 @@ export async function updateTask(tx: Tx, userId: string, id: string, patch: Task
       : undefined;
   const enteringDone = patch.status === "done" || patch.status === "dropped";
   const leavingDone = Boolean(patch.status && patch.status !== "done" && patch.status !== "dropped" && (existing.status === "done" || existing.status === "dropped"));
+  const who = await resolveAssignee(tx, userId, patch.owner, patch.assignee);
   const updated = await tx.task.update({
     where: { id },
     data: {
       title: patch.title === undefined ? undefined : CreateTask.shape.title.parse(patch.title),
       description: patch.description,
       notes: patch.notes,
-      owner: patch.owner,
+      owner: who.owner ?? patch.owner,
+      ...(who.assigneeAccountId !== undefined ? { assigneeAccountId: who.assigneeAccountId } : {}),
       status: patch.status,
       priority: patch.priority,
       complexity: patch.complexity,

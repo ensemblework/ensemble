@@ -60,6 +60,8 @@ test("status, priority, labels and dates map the forgiving way", () => {
   assert.equal(resolveStatus({ status: "Ideas" }, { ideas: "proposed" }), "proposed");
   assert.equal(resolveStatus({ status: "To Do", done: true }, {}), "done");
 
+  assert.equal(mapPriority("Critical"), "critical");
+  assert.equal(mapPriority("Blocker"), "critical");
   assert.equal(mapPriority("Urgent"), "p0");
   assert.equal(mapPriority("Highest"), "p0");
   assert.equal(mapPriority("High"), "p0");

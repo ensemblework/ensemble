@@ -126,7 +126,7 @@ function isFocus(task: TaskRecord): boolean {
   if (task.status === "done" || task.status === "dropped" || task.status === "proposed") return false;
   if (task.todayFocus === "hidden") return false;
   if (task.todayFocus === "keep") return true;
-  if (task.priority === "p0") return true;
+  if (task.priority === "p0" || task.priority === "critical") return true;
   return Boolean(task.due && startOfDay(new Date(task.due)) <= startOfDay());
 }
 

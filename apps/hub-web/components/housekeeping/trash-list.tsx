@@ -6,6 +6,7 @@ import { PageHeader, SectionCard, Spinner } from "@/components/ui";
 import { useToast } from "@/components/toast";
 import { api } from "@/lib/api";
 import { relative } from "@/lib/format";
+import { confirmAction } from "@/components/ask-dialog";
 
 export function TrashList({ embedded = false }: { embedded?: boolean }) {
   const client = useQueryClient();
@@ -37,7 +38,7 @@ export function TrashList({ embedded = false }: { embedded?: boolean }) {
         type="button"
         className="btn"
         disabled={!items.length}
-        onClick={() => window.confirm("Permanently remove everything in Trash?") && empty.mutate()}
+        onClick={() => void confirmAction({ title: "Empty Trash?", body: "Everything in Trash is removed for good.", confirm: "Empty Trash", danger: true }).then((yes) => yes && empty.mutate())}
       >
         Empty trash
       </button>

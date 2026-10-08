@@ -9,6 +9,9 @@ import { Empty, PageHeader, SkeletonRows, Tag, Toggle, cx } from "@/components/u
 import { api, type SkillRecord } from "@/lib/api";
 import { ShareButton } from "@/components/sharing/share-dialog";
 import { dateTime } from "@/lib/format";
+import { askText } from "@/components/ask-dialog";
+import { ExportMenu } from "@/components/export-menu";
+import { skillDoc } from "@/lib/export/items";
 
 function SkillDetail({ skill }: { skill: SkillRecord }) {
   const client = useQueryClient();
@@ -46,7 +49,10 @@ function SkillDetail({ skill }: { skill: SkillRecord }) {
     <div className="tile min-w-0 rounded-lg bg-panel p-5">
       <div className="flex items-center justify-between gap-2">
         <h2 className="text-[18px] font-semibold">{skill.name}</h2>
-        <ShareButton target={{ kind: "skill", resourceId: skill.id, title: skill.name }} />
+        <div className="flex items-center gap-1">
+          <ExportMenu load={() => skillDoc({ ...skill, body })} />
+          <ShareButton target={{ kind: "skill", resourceId: skill.id, title: skill.name }} />
+        </div>
       </div>
       <textarea
         value={body}
@@ -149,10 +155,15 @@ export default function SkillsPage() {
     onSuccess: () => client.invalidateQueries({ queryKey: ["skills"] }),
   });
   const create = useMutation({
-    mutationFn: () => api.createSkill(window.prompt("Name the skill, e.g. “Writing release notes”")?.trim() || "New skill"),
-    onSuccess: ({ skill }) => {
+    mutationFn: async () => {
+      const name = await askText({ title: "New skill", label: "What should the agent get good at?", placeholder: "Writing release notes", confirm: "Create skill" });
+      if (!name) return null;
+      return api.createSkill(name);
+    },
+    onSuccess: (created) => {
+      if (!created) return;
       void client.invalidateQueries({ queryKey: ["skills"] });
-      router.replace(`/skills?skill=${skill.id}`);
+      router.replace(`/skills?skill=${created.skill.id}`);
     },
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });

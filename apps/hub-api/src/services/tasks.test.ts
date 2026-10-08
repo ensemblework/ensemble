@@ -13,8 +13,9 @@ test("task titles reject blank whitespace and normalize surrounding spaces on ev
 });
 
 test("priority labels match the board", () => {
+  assert.equal(labelPriority("critical"), "Critical");
   assert.equal(labelPriority("p0"), "High");
-  assert.equal(labelPriority("p1"), "Normal");
+  assert.equal(labelPriority("p1"), "Medium");
   assert.equal(labelPriority("p2"), "Low");
 });
 
@@ -23,6 +24,6 @@ test("update preview shows titles and before/after", () => {
   assert.match(text, /Ship notes/);
   assert.match(text, /To do/);
   assert.match(text, /Done/);
-  assert.match(text, /Normal/);
+  assert.match(text, /Medium/);
   assert.match(text, /High/);
 });

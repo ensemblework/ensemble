@@ -27,7 +27,9 @@ export const TaskStatus = z.enum([
   "done",
   "dropped",
 ]);
-export const Priority = z.enum(["p0", "p1", "p2"]);
+/** critical > p0 (High) > p1 (Medium) > p2 (Low). */
+export const Priority = z.enum(["critical", "p0", "p1", "p2"]);
+export const PRIORITY_RANK: Record<z.infer<typeof Priority>, number> = { critical: 0, p0: 1, p1: 2, p2: 3 };
 export const TaskComplexity = z.enum(["easy", "medium", "high", "max"]);
 export const ComplexitySource = z.enum(["agent", "me", "default"]);
 export const Actor = z.enum(["agent", "me", "system"]);
