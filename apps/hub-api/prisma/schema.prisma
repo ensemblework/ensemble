@@ -531,6 +531,7 @@ model WorkspaceJob {
   @@index([status, sequence])
   @@index([userId, taskId, createdAt])
   @@index([deviceId, status, sequence])
+  @@index([runnerAccountId])
   @@map("workspace_jobs")
 }
 
