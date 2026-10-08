@@ -257,6 +257,16 @@ export const sharingRouteCoverage: Readonly<Record<string, readonly RouteCheck[]
   "POST /api/presence": ["happy-path"],
 };
 
+/** Public links. Owned by src/sharing/routes.ts; checked in src/sharing/links.integration.test.ts. */
+export const linksRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
+  "GET /api/links": ["happy-path"],
+  "GET /api/links/item": ["happy-path"],
+  "POST /api/links": ["happy-path", "invalid-input"],
+  "DELETE /api/links/:id": ["happy-path", "isolation"],
+  "POST /api/links/:id/rotate": ["happy-path"],
+  "GET /api/links/open": ["happy-path", "isolation"],
+};
+
 export const routeCoverage = {
   ...resourceRouteCoverage,
   ...authRouteCoverage,
@@ -268,4 +278,5 @@ export const routeCoverage = {
   ...connectedDataRouteCoverage,
   ...spacesRouteCoverage,
   ...sharingRouteCoverage,
+  ...linksRouteCoverage,
 };

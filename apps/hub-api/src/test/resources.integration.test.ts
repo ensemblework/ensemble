@@ -690,7 +690,7 @@ test("OAuth-only sessions remain real shell accounts, and unverified hosted brow
   process.env.NODE_ENV = "production";
   try {
     const shell = await check(oauth, "GET", "/api/shell", 200, "happy-path");
-    assert.deepEqual(shell.user, { id: oauth.id, email: oauth.email, name: "HTTP test user", emailVerified: false, hasPassword: false });
+    assert.deepEqual(shell.user, { id: oauth.id, email: oauth.email, name: "HTTP test user", avatar: null, emailVerified: false, hasPassword: false });
     assert.equal(shell.verificationRequired, true);
     assert.equal(shell.via, "session");
     assert.equal((await check(b, "GET", "/api/shell", 200, "isolation")).user.id, b.id);

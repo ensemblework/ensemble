@@ -163,3 +163,15 @@ export function consumeRateLimit(
 }
 
 export const rateLimiter = new MemoryRateLimiter();
+
+/**
+ * People on a public link have no account to count against, so they are counted per address:
+ * reads and writes separately. Set either to 0 to turn it off.
+ */
+export function linkRateLimit(limiter: MemoryRateLimiter, request: FastifyRequest, env: NodeJS.ProcessEnv = process.env): RateLimitHit | null {
+  const write = request.method !== "GET" && request.method !== "HEAD";
+  const limit = write ? intEnv(env, "ENSEMBLE_RATE_LINK_WRITE_LIMIT", 120) : intEnv(env, "ENSEMBLE_RATE_LINK_READ_LIMIT", 900);
+  const wait = limiter.take(`link:${write ? "write" : "read"}:${clientAddress(request)}`, limit, 60_000);
+  if (wait === null) return null;
+  return { error: "Too many requests on this link. Wait a moment and try again.", retryAfterSeconds: Math.max(1, Math.ceil(wait / 1000)) };
+}

@@ -1,7 +1,7 @@
 import type { FastifyReply, FastifyRequest, HookHandlerDoneFunction } from "fastify";
 import { prisma } from "../lib/prisma.js";
 import { runInScope } from "./context.js";
-import { memberDecision, shareDecision } from "./policy.js";
+import { linkDecision, memberDecision, shareDecision } from "./policy.js";
 
 /**
  * Runs the rest of the request inside its scope (who is acting, in which space). Must be a
@@ -44,6 +44,16 @@ export async function sharingGate(request: FastifyRequest, reply: FastifyReply):
   if (!access || access.kind === "owner" || !request.userId) return;
   const url = request.routeOptions.url ?? "";
   if (access.kind === "gone") return reply.code(404).send({ error: "This share was removed, or it is not yours." });
+
+  if (access.kind === "link") {
+    const decision = linkDecision(access, request.method, url, {
+      params: (request.params ?? {}) as Record<string, string | undefined>,
+      query: (request.query ?? {}) as Record<string, unknown>,
+      body: request.body,
+    });
+    if (!decision.allow) return reply.code(decision.status).send({ error: decision.message });
+    return;
+  }
 
   if (access.kind === "share") {
     const params = (request.params ?? {}) as Record<string, string | undefined>;

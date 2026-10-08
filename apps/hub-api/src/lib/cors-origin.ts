@@ -77,7 +77,7 @@ export function corsPluginOptions(policy: CorsPolicy): FastifyCorsOptions {
     // Cookies ride on these requests, so only the Hub's own origin may read responses.
     origin: (origin, done) => done(null, !origin || policy.origins.has(origin)),
     credentials: true,
-    allowedHeaders: ["Content-Type", "Authorization", "x-ensemble-user", "x-ensemble-internal", "x-ensemble-share"],
+    allowedHeaders: ["Content-Type", "Authorization", "x-ensemble-user", "x-ensemble-internal", "x-ensemble-share", "x-ensemble-link", "x-ensemble-visitor"],
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   };
 }

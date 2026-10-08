@@ -3,10 +3,10 @@
 /** @jsxImportSource react */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRightLeft, ExternalLink, LogOut, Share2, Trash2, UserPlus, X } from "lucide-react";
+import { ArrowRightLeft, Check, ExternalLink, Globe, Link2, LogOut, Share2, Trash2, UserPlus, X } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
-import { api, type ShareKind, type SharingContact, type SharingOverview } from "@/lib/api";
+import { api, publicLinkUrl, type ShareKind, type SharingContact, type SharingOverview } from "@/lib/api";
 import { colorFor } from "@/lib/presence";
 import { switchSpace } from "@/lib/spaces";
 import { SpaceIcon } from "../shell/space-switcher";
@@ -259,6 +259,8 @@ export function SharingTab() {
         )}
       </SectionCard>
 
+      <PublicLinks />
+
       <SectionCard title="Shared with you" description="Spaces and items other people shared with you. Leaving or removing one never touches their copy.">
         {data.withMe.spaces.length + data.withMe.items.length ? (
           <div className="divide-y divide-line">
@@ -307,5 +309,63 @@ export function SharingTab() {
       {sharingSpace ? <ShareDialog open onClose={() => { setSharingSpace(null); refresh(); }} target={{ kind: "space", spaceId: sharingSpace.id, name: sharingSpace.name }} /> : null}
       {handing ? <TransferDialog space={handing} onClose={() => setHanding(null)} /> : null}
     </div>
+  );
+}
+
+/** Links anyone can open without an account: five per account for now. */
+function PublicLinks() {
+  const client = useQueryClient();
+  const toast = useToast();
+  const [copied, setCopied] = useState<string | null>(null);
+  const links = useQuery({ queryKey: ["public-links"], queryFn: api.publicLinks });
+  const remove = useMutation({
+    mutationFn: (id: string) => api.removePublicLink(id),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: ["public-links"] });
+      void client.invalidateQueries({ queryKey: ["public-link"] });
+      toast("The link is off. Nobody can open it now.");
+    },
+    onError: (error) => toast((error as Error).message, { tone: "error" }),
+  });
+  const rows = links.data?.links ?? [];
+  return (
+    <SectionCard
+      title="Public links"
+      description="Pages, tasks, diagrams and meeting notes anyone with the link can open, no account needed. A whole space is never public."
+      actions={links.data ? <Meter label="public links" used={rows.length} limit={links.data.limit} /> : undefined}
+    >
+      {rows.length ? (
+        <div className="divide-y divide-line">
+          {rows.map((link) => (
+            <div key={link.id} className="flex items-center gap-3 py-2">
+              <Globe size={14} className="shrink-0 text-faint" />
+              <span className="w-24 shrink-0 text-2xs uppercase tracking-wide text-faint">{KIND_NAMES[link.kind]}</span>
+              <span className="min-w-0 flex-1 truncate text-[13px]">{link.title}</span>
+              <span className="text-2xs text-muted">
+                {link.role === "edit" ? "anyone can edit" : "view only"} · {link.opens} open{link.opens === 1 ? "" : "s"}
+              </span>
+              <button
+                type="button"
+                className="icon-btn"
+                title="Copy link"
+                aria-label={`Copy the link to ${link.title}`}
+                onClick={() => {
+                  void navigator.clipboard.writeText(publicLinkUrl(link.token));
+                  setCopied(link.id);
+                  window.setTimeout(() => setCopied(null), 1500);
+                }}
+              >
+                {copied === link.id ? <Check size={13} /> : <Link2 size={13} />}
+              </button>
+              <button type="button" className="icon-btn" title="Turn the link off" aria-label={`Turn off the link to ${link.title}`} onClick={() => remove.mutate(link.id)}>
+                <X size={13} />
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-[12.5px] text-muted">None yet. Open Share on a page, task, diagram or meeting notes and choose "Anyone with the link".</p>
+      )}
+    </SectionCard>
   );
 }

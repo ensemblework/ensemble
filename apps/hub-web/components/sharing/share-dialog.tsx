@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, Link2, Lock, Search, Share2, X } from "lucide-react";
+import { Check, ChevronDown, Globe, Link2, Lock, RefreshCw, Search, Share2, X } from "lucide-react";
 import {
   api,
   type ItemRole,
@@ -11,6 +11,7 @@ import {
   type SharingPerson,
 } from "@/lib/api";
 import { colorFor } from "@/lib/presence";
+import { publicLinkUrl } from "@/lib/api";
 import { Dialog } from "@/components/ui";
 import { useToast } from "@/components/toast";
 import { Avatar } from "./people";
@@ -294,7 +295,7 @@ export function ShareDialog({ open, onClose, target }: { open: boolean; onClose:
           </div>
           <div className="divide-y divide-line rounded-lg border border-line">
             <div className="flex items-center gap-2.5 px-3 py-2">
-              <Avatar person={{ name: me?.name ?? "You", initials: myInitials }} color={me ? colorFor(me.id) : undefined} size={28} />
+              <Avatar person={{ name: me?.name ?? "You", initials: myInitials, avatar: me?.avatar ?? null }} color={me ? colorFor(me.id) : undefined} size={28} />
               <div className="min-w-0 flex-1 text-[13px]">
                 {me?.name ?? "You"} <span className="text-muted">(you)</span>
               </div>
@@ -334,6 +335,8 @@ export function ShareDialog({ open, onClose, target }: { open: boolean; onClose:
             ) : null}
           </div>
         </section>
+
+        <GeneralAccess target={target} />
 
         <section className="rounded-lg bg-panel px-3 py-2.5">
           <button type="button" className="flex w-full items-center justify-between text-left text-[12.5px] font-medium" onClick={() => setShowWhat((value) => !value)} aria-expanded={showWhat}>
@@ -382,6 +385,99 @@ export function ShareDialog({ open, onClose, target }: { open: boolean; onClose:
         </div>
       </div>
     </Dialog>
+  );
+}
+
+const PUBLIC_KINDS: ReadonlySet<string> = new Set(["page", "task", "diagram", "meeting"]);
+
+/**
+ * "Anyone with the link": open one page, task, diagram or meeting notes to people without an
+ * account. Whole spaces, boards, code and runs never.
+ */
+function GeneralAccess({ target }: { target: ShareTarget }) {
+  const client = useQueryClient();
+  const toast = useToast();
+  const [copied, setCopied] = useState(false);
+  const itemKind = target.kind === "space" ? null : target.kind;
+  const allowed = Boolean(itemKind && PUBLIC_KINDS.has(itemKind));
+  const resourceId = target.kind === "space" ? "" : target.resourceId;
+  const state = useQuery({
+    queryKey: ["public-link", itemKind, resourceId],
+    queryFn: () => api.publicLinkFor(itemKind as ShareKind, resourceId),
+    enabled: allowed,
+  });
+  const refresh = () => {
+    void client.invalidateQueries({ queryKey: ["public-link"] });
+    void client.invalidateQueries({ queryKey: ["public-links"] });
+  };
+  const fail = (error: unknown) => toast((error as Error).message, { tone: "error" });
+  const setLink = useMutation({ mutationFn: (role: ItemRole) => api.setPublicLink({ kind: itemKind as ShareKind, resourceId, role }), onSuccess: refresh, onError: fail });
+  const remove = useMutation({ mutationFn: (id: string) => api.removePublicLink(id), onSuccess: () => { refresh(); toast("The link is off. Nobody can open it now."); }, onError: fail });
+  const rotate = useMutation({ mutationFn: (id: string) => api.rotatePublicLink(id), onSuccess: () => { refresh(); toast("New link made. The old one stopped working.", { tone: "ok" }); }, onError: fail });
+
+  if (target.kind === "space") {
+    return (
+      <section className="flex items-start gap-2.5 rounded-lg border border-line px-3 py-2.5 text-[12.5px] text-muted">
+        <Lock size={14} className="mt-0.5 shrink-0 text-faint" />
+        <span>A whole space can't be opened to anyone with a link. To share something publicly, open a page, task, diagram or meeting notes and use its Share button.</span>
+      </section>
+    );
+  }
+  if (!allowed) return null;
+  const link = state.data?.link ?? null;
+  const viewOnly = target.kind === "meeting";
+  const full = !link && (state.data?.used ?? 0) >= (state.data?.limit ?? 5);
+  const copy = (token: string) => {
+    void navigator.clipboard.writeText(publicLinkUrl(token));
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <section>
+      <div className="mb-1.5 flex items-center justify-between">
+        <h4 className="text-2xs font-medium uppercase tracking-wide text-faint">General access</h4>
+        {state.data ? <Meter label="public links" used={state.data.used} limit={state.data.limit} /> : null}
+      </div>
+      <div className="flex items-center gap-2.5 rounded-lg border border-line px-3 py-2">
+        <span className={`grid size-7 shrink-0 place-items-center rounded-full ${link ? "bg-accent-soft text-ink" : "bg-hover text-muted"}`}>
+          {link ? <Globe size={14} /> : <Lock size={13} />}
+        </span>
+        <div className="min-w-0 flex-1">
+          <RoleSelect
+            value={link ? "anyone" : "restricted"}
+            options={[["restricted", "Only people you add"], ["anyone", "Anyone with the link"]]}
+            disabled={state.isLoading || setLink.isPending || remove.isPending || (full && !link)}
+            onChange={(next) => (next === "anyone" ? setLink.mutate("view") : link ? remove.mutate(link.id) : undefined)}
+          />
+          <div className="mt-0.5 text-2xs text-muted">
+            {link
+              ? `No account needed. ${link.opens ? `Opened ${link.opens} time${link.opens === 1 ? "" : "s"}.` : "Not opened yet."}`
+              : full
+                ? "You have 5 public links. Turn one off in Settings › Sharing to make another."
+                : "Only the people above can open it."}
+          </div>
+        </div>
+        {link ? (
+          <>
+            <RoleSelect
+              value={link.role}
+              options={viewOnly ? [["view", "Can view"]] : [["view", "Can view"], ["edit", "Can edit"]]}
+              disabled={viewOnly || setLink.isPending}
+              onChange={(next) => setLink.mutate(next as ItemRole)}
+            />
+            <button type="button" className="icon-btn" title="Make a new link (the old one stops working)" aria-label="Make a new link" onClick={() => rotate.mutate(link.id)} disabled={rotate.isPending}>
+              <RefreshCw size={13} />
+            </button>
+            <button type="button" className="btn h-7 gap-1.5 px-2.5 text-[12.5px]" onClick={() => copy(link.token)}>
+              {copied ? <Check size={13} /> : <Link2 size={13} />} {copied ? "Copied" : "Copy link"}
+            </button>
+          </>
+        ) : null}
+      </div>
+      {link?.role === "edit" ? (
+        <p className="mt-1.5 text-2xs text-faint">Anyone with the link can change this {target.kind}'s content without signing in. They show up with a creature name.</p>
+      ) : null}
+    </section>
   );
 }
 

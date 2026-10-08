@@ -20,6 +20,12 @@ export type PresenceEntry = {
   name: string;
   initials: string;
   color: string;
+  /** A picture avatar id, or null. */
+  avatar: string | null;
+  /** Anonymous visitors on a public link show a creature instead. */
+  emoji: string | null;
+  /** Signed in (false: anonymous on a public link). */
+  signedIn: boolean;
   route: string | null;
   resource: PresenceResource | null;
   /** Diagram coordinates, so everyone sees it at the same place whatever their zoom. */
@@ -31,7 +37,8 @@ export type PresenceEntry = {
 };
 
 const rooms = new Map<string, Map<string, PresenceEntry>>();
-const names = new Map<string, { name: string; initials: string }>();
+type Person = { name: string; initials: string; avatar: string | null; emoji: string | null; color?: string; signedIn: boolean };
+const names = new Map<string, Person>();
 const lastPost = new Map<string, number>();
 
 export function colorFor(accountId: string): string {
@@ -40,11 +47,11 @@ export function colorFor(accountId: string): string {
   return COLORS[hash % COLORS.length]!;
 }
 
-async function who(db: PrismaClient, accountId: string): Promise<{ name: string; initials: string }> {
+async function who(db: PrismaClient, accountId: string): Promise<Person> {
   const known = names.get(accountId);
   if (known) return known;
-  const row = await db.user.findUnique({ where: { id: accountId }, select: { name: true, email: true } });
-  const value = { name: row ? displayName(row.name, row.email) : "Someone", initials: row ? initialsOf(row.name, row.email) : "?" };
+  const row = await db.user.findUnique({ where: { id: accountId }, select: { name: true, email: true, avatar: true } });
+  const value: Person = { name: row ? displayName(row.name, row.email) : "Someone", initials: row ? initialsOf(row.name, row.email) : "?", avatar: row?.avatar ?? null, emoji: null, signedIn: true };
   if (names.size > 2000) names.clear();
   names.set(accountId, value);
   return value;
@@ -76,7 +83,12 @@ export type PresenceUpdate = {
 };
 
 /** Records one tab's state and tells the space. Returns false when throttled. */
-export async function updatePresence(db: PrismaClient, spaceId: string, accountId: string, update: PresenceUpdate): Promise<boolean> {
+/** Forget a cached name and avatar after a change, so the next heartbeat shows the new one. */
+export function forgetPerson(accountId: string): void {
+  names.delete(accountId);
+}
+
+export async function updatePresence(db: PrismaClient, spaceId: string, accountId: string, update: PresenceUpdate, known?: Person): Promise<boolean> {
   const key = `${accountId}:${update.tabId}`;
   const now = Date.now();
   if (!update.leave && now - (lastPost.get(key) ?? 0) < MIN_GAP_MS) return false;
@@ -91,13 +103,16 @@ export async function updatePresence(db: PrismaClient, spaceId: string, accountI
     return true;
   }
   const previous = room.get(key);
-  const person = await who(db, accountId);
+  const person = known ?? (await who(db, accountId));
   const entry: PresenceEntry = {
     accountId,
     tabId: update.tabId,
     name: person.name,
     initials: person.initials,
-    color: colorFor(accountId),
+    color: person.color ?? colorFor(accountId),
+    avatar: person.avatar,
+    emoji: person.emoji,
+    signedIn: person.signedIn,
     route: update.route === undefined ? (previous?.route ?? null) : update.route,
     resource: update.resource === undefined ? (previous?.resource ?? null) : update.resource,
     cursor: update.cursor === undefined ? (previous?.cursor ?? null) : update.cursor,

@@ -7,6 +7,7 @@ import { API, api, type DeliverableRecord } from "@/lib/api";
 import { shortDate } from "@/lib/format";
 import { TaskPage } from "../task/task-page";
 import { usePeek, type PeekKind } from "./peek";
+import { ShareButton } from "../sharing/share-dialog";
 
 type ProjectDetail = {
   id: string;
@@ -42,15 +43,23 @@ export function PeekPanel({ id, kind = "task" }: { id: string; kind?: PeekKind }
     <div className="flex h-full min-w-0 flex-col bg-bg" data-peek-kind={kind}>
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-line px-3">
         <div className="min-w-0 flex-1 truncate text-[13.5px] font-semibold">{title}</div>
-        <button type="button" className="icon-btn" title={fullscreen ? "Back to side peek" : "Full screen"} onClick={() => setFullscreen(!fullscreen)}>
-          {fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
-        </button>
         {fullHref ? (
-          <button type="button" className="icon-btn" title="Open as full page" onClick={() => router.push(fullHref)}>
+          <button type="button" className="icon-btn" title="Open as full page" aria-label="Open as full page" onClick={() => router.push(fullHref)}>
             <SquareArrowOutUpRight size={14} />
           </button>
         ) : null}
-        <button type="button" className="icon-btn" title="Close (Esc)" onClick={close}>
+        <button
+          type="button"
+          className="icon-btn"
+          title={fullscreen ? "Back to side peek" : "Full screen"}
+          aria-label={fullscreen ? "Back to side peek" : "Full screen"}
+          onClick={() => setFullscreen(!fullscreen)}
+        >
+          {fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+        </button>
+        {kind === "task" ? <ShareButton compact target={{ kind: "task", resourceId: id, title: task.data?.task.title ?? "Task" }} /> : null}
+        <span className="mx-0.5 h-4 w-px bg-line" aria-hidden />
+        <button type="button" className="icon-btn" title="Close (Esc)" aria-label="Close" onClick={close}>
           <X size={15} />
         </button>
       </div>

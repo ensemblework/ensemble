@@ -681,7 +681,8 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
           </div>
         </div>
       )}
-      {focus ? null : <DiagramMore id={id} model={model} onAdopt={adopt} />}
+      {/* Ask, explain, duplicate and history act on the whole space: not from a shared item or a public link. */}
+      {focus || shared ? null : <DiagramMore id={id} model={model} onAdopt={adopt} />}
       <div className="flex min-h-0 flex-1">
         {focus ? null : (
           <>

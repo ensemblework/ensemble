@@ -1539,6 +1539,10 @@ model User {
   sharesOut             Share[]               @relation("ShareSpace")
   sharesIn              Share[]               @relation("ShareRecipient")
   transfers             SpaceTransfer[]
+  publicLinks           PublicLink[]          @relation("PublicLinkSpace")
+  publicLinksMade       PublicLink[]          @relation("PublicLinkCreator")
+  /// A picture avatar, `role.gender.n` (packages/shared-types/src/avatars.ts). Null: initials.
+  avatar                String?
   sessions              Session[]
   authIdentities        AuthIdentity[]
   emailTokens           EmailToken[]
@@ -2077,4 +2081,25 @@ model SpaceTransfer {
   space         User     @relation(fields: [spaceId], references: [id], onDelete: Cascade)
 
   @@map("space_transfers")
+}
+
+/// One item anyone with the link can open, with no account (docs/29 §7).
+model PublicLink {
+  id         String    @id @default(uuid())
+  token      String    @unique
+  spaceId    String    @map("space_id")
+  kind       String
+  resourceId String    @map("resource_id")
+  title      String    @default("")
+  role       String    @default("view")
+  createdBy  String    @map("created_by")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  openedAt   DateTime? @map("opened_at")
+  opens      Int       @default(0)
+  space      User      @relation("PublicLinkSpace", fields: [spaceId], references: [id], onDelete: Cascade)
+  creator    User      @relation("PublicLinkCreator", fields: [createdBy], references: [id], onDelete: Cascade)
+
+  @@unique([spaceId, kind, resourceId])
+  @@index([createdBy])
+  @@map("public_links")
 }

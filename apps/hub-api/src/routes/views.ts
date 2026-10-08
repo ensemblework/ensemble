@@ -48,7 +48,7 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
     const owner = ownsOpenSpace(request);
     const account = accountIdOf(request) === userId ? user : await prisma.user.findUnique({ where: { id: accountIdOf(request) } });
     const spaceOwnerId = user?.ownerId ?? user?.id ?? null;
-    const spaceOwner = !owner && spaceOwnerId ? await prisma.user.findUnique({ where: { id: spaceOwnerId }, select: { id: true, name: true, email: true, spaceName: true } }) : null;
+    const spaceOwner = !owner && spaceOwnerId ? await prisma.user.findUnique({ where: { id: spaceOwnerId }, select: { id: true, name: true, email: true, spaceName: true, avatar: true } }) : null;
     const access = request.access;
     const flags = await Promise.all(
       listConnectors().map(async (connector) => {
@@ -65,7 +65,7 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
     );
     return {
       user: account
-        ? { id: account.id, email: account.email, name: account.name, emailVerified: Boolean(account.emailVerifiedAt), hasPassword: Boolean(account.passwordHash) }
+        ? { id: account.id, email: account.email, name: account.name, avatar: account.avatar ?? null, emailVerified: Boolean(account.emailVerifiedAt), hasPassword: Boolean(account.passwordHash) }
         : { id: userId, email: "", name: "Local (no account)", emailVerified: true, hasPassword: false },
       space: {
         id: userId,
@@ -79,7 +79,7 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
         shared:
           spaceOwner && access && access.kind !== "owner" && access.kind !== "gone"
             ? {
-                owner: { id: spaceOwner.id, name: displayName(spaceOwner.name, spaceOwner.email), initials: initialsOf(spaceOwner.name, spaceOwner.email) },
+                owner: { id: spaceOwner.id, name: displayName(spaceOwner.name, spaceOwner.email), initials: initialsOf(spaceOwner.name, spaceOwner.email), avatar: spaceOwner.avatar ?? null },
                 role: access.kind === "member" ? access.role : access.role === "edit" ? "editor" : "viewer",
               }
             : null,

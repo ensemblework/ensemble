@@ -17,6 +17,10 @@ import { sessionCookieHeader, sessionCookieSecure } from "./cookie.js";
 import { prisma } from "./prisma.js";
 import { openableSpace, SPACE_COOKIE } from "../spaces/store.js";
 import { SHARE_KINDS, type Access, type ShareKind } from "../sharing/context.js";
+import { LINK_HEADER, resolveLink, VISITOR_HEADER } from "../sharing/links.js";
+import { anonymousVisitor, cleanVisitorId } from "../sharing/visitors.js";
+import { colorFor } from "../sharing/presence.js";
+import { displayName } from "../sharing/store.js";
 
 const scryptAsync = promisify(scrypt) as (password: string, salt: Buffer, length: number) => Promise<Buffer>;
 
@@ -114,7 +118,7 @@ export function newApiToken(): { token: string; hash: string; prefix: string } {
   return { token, hash: sha256(token), prefix: token.slice(0, 8) };
 }
 
-export type AuthVia = "session" | "token" | "internal" | "bypass" | "desktop";
+export type AuthVia = "session" | "token" | "internal" | "bypass" | "desktop" | "link";
 export type TokenScope = "full" | "bridge" | "device";
 
 /**
@@ -145,8 +149,37 @@ export function settingsUserOf(request: { userId: string; accountId?: string; ac
  * you as a member. The share header opens a single item shared with you instead, and wins over
  * the cookie. Tokens and service calls never read either.
  */
+function headerValue(request: FastifyRequest, name: string): string | undefined {
+  const value = request.headers[name];
+  return Array.isArray(value) ? value[0] : value;
+}
+
 async function inSpace(request: FastifyRequest, who: Identity): Promise<Identity> {
   const account = who.userId;
+  // A public link opened while signed in: you, by name, on that one item. Your own link: your space.
+  const token = headerValue(request, LINK_HEADER);
+  if (token) {
+    const link = await resolveLink(prisma, token);
+    if (!link) return { ...who, accountId: account, access: { kind: "gone" } };
+    const space = link.space;
+    if (space.id === account || space.ownerId === account) return { ...who, userId: space.id, accountId: account, modules: space.moduleSet, access: { kind: "owner" } };
+    const me = await prisma.user.findUnique({ where: { id: account }, select: { name: true, email: true } });
+    return {
+      ...who,
+      userId: space.id,
+      accountId: account,
+      modules: space.moduleSet,
+      access: {
+        kind: "link",
+        linkId: link.id,
+        resource: link.kind,
+        resourceId: link.resourceId,
+        role: link.role,
+        ownerId: link.ownerId,
+        visitor: { id: account, name: me ? displayName(me.name, me.email) : "Someone", emoji: null, color: colorFor(account), signedIn: true },
+      },
+    };
+  }
   const header = request.headers[SHARE_HEADER];
   const shareId = Array.isArray(header) ? header[0] : header;
   if (shareId) {
@@ -215,5 +248,20 @@ export async function identify(request: FastifyRequest): Promise<Identity | null
     if (session && session.expiresAt > new Date()) return inSpace(request, { userId: session.userId, via: "session", modules: session.modules });
   }
   if (env.ENSEMBLE_DEV_AUTH_BYPASS) return inSpace(request, { userId: env.ENSEMBLE_DEV_USER_ID, via: "bypass", modules: await modulesForUser(env.ENSEMBLE_DEV_USER_ID) });
+  // No account: a public link is the only way in, as an anonymous visitor on that one item.
+  const token = headerValue(request, LINK_HEADER);
+  if (token) {
+    const link = await resolveLink(prisma, token);
+    if (!link) return null;
+    const visitorId = cleanVisitorId(request.headers[VISITOR_HEADER]) ?? sha256(`${request.ip}|${request.headers["user-agent"] ?? ""}`).slice(0, 24);
+    const visitor = anonymousVisitor(visitorId);
+    return {
+      userId: link.space.id,
+      accountId: visitor.id,
+      via: "link",
+      modules: link.space.moduleSet,
+      access: { kind: "link", linkId: link.id, resource: link.kind, resourceId: link.resourceId, role: link.role, ownerId: link.ownerId, visitor },
+    };
+  }
   return null;
 }

@@ -40,7 +40,7 @@ const EXACT = new Set([
 ]);
 
 /** One dynamic segment under a real page, such as /tasks/:id. */
-const ONE_SEGMENT = ["/tasks/", "/pages/", "/projects/", "/plots/", "/diagrams/", "/connect/", "/marketplace/", "/shared/"];
+const ONE_SEGMENT = ["/tasks/", "/pages/", "/projects/", "/plots/", "/diagrams/", "/connect/", "/marketplace/", "/shared/", "/p/"];
 
 export function isAppRoute(pathname: string): boolean {
   if (EXACT.has(pathname)) return true;

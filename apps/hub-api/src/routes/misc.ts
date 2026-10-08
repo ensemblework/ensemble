@@ -44,6 +44,7 @@ export async function miscRoutes(app: FastifyInstance): Promise<void> {
   const tickets = new Map<string, { userId: string; listener: Listener; expires: number }>();
   const stillListening = async (spaceId: string, listener: Listener): Promise<boolean> => {
     if (listener.owner !== false || !listener.accountId) return true;
+    if (listener.share?.linkId) return Boolean(await prisma.publicLink.findUnique({ where: { id: listener.share.linkId }, select: { id: true } }));
     if (listener.share?.shareId) return Boolean(await prisma.share.findFirst({ where: { id: listener.share.shareId, recipientId: listener.accountId }, select: { id: true } }));
     return Boolean(await prisma.spaceMember.findUnique({ where: { spaceId_accountId: { spaceId, accountId: listener.accountId } }, select: { id: true } }));
   };
@@ -53,6 +54,7 @@ export async function miscRoutes(app: FastifyInstance): Promise<void> {
       accountId: request.accountId ?? request.userId,
       owner: access.kind === "owner",
       ...(access.kind === "share" ? { share: { kind: access.resource, resourceId: access.resourceId, shareId: access.shareId } } : {}),
+      ...(access.kind === "link" ? { share: { kind: access.resource, resourceId: access.resourceId, linkId: access.linkId } } : {}),
     };
   };
 

@@ -15,7 +15,7 @@ export type Listener = {
   accountId?: string;
   owner?: boolean;
   /** Set for a single shared item: only frames about it get through. */
-  share?: { kind: string; resourceId: string; shareId?: string };
+  share?: { kind: string; resourceId: string; shareId?: string; linkId?: string };
   /** The account channel of someone working in another space: personal frames only. */
   personalOnly?: boolean;
 };

@@ -7,7 +7,7 @@ import { CheckSquare, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EMPTY_PAGE, type PageDocument, type PageMention } from "@ensemble/shared-types";
-import { ApiError, api, currentShare, withShare } from "@/lib/api";
+import { ApiError, api, currentLink, currentShare, withLink, withShare } from "@/lib/api";
 import { useEntities } from "@/lib/entities";
 import { blockEditor, warmPeek } from "@/lib/warm";
 import { mentionHref } from "../editor/editor-commands";
@@ -47,7 +47,7 @@ export function NotePage({
   pageId: string;
   focusTitle?: boolean;
   /** Opened from a share link: no board or delete actions, and read-only unless it may be edited. */
-  shared?: { role: "view" | "edit" };
+  shared?: { role: "view" | "edit"; link?: boolean };
 }) {
   const client = useQueryClient();
   const router = useRouter();
@@ -71,6 +71,7 @@ export function NotePage({
   const titleSave = useRef<Promise<unknown> | null>(null);
   // The share (or none) this page was opened under. The last save on leaving must go there.
   const openedAs = useRef(currentShare());
+  const openedLink = useRef(currentLink());
   const loaded = Boolean(page.data);
   const access = useSpaceAccess();
   const canEdit = shared ? shared.role === "edit" : access.canEdit;
@@ -138,7 +139,7 @@ export function NotePage({
     setSaveState("saving");
     const work = (async () => {
       try {
-        const saved = await withShare(openedAs.current, () => api.saveStandalonePage(pageId, { revision: revision.current, content: doc }));
+        const saved = await withLink(openedLink.current, () => withShare(openedAs.current, () => api.saveStandalonePage(pageId, { revision: revision.current, content: doc })));
         revision.current = saved.revision;
         setSaveState(pending.current ? "dirty" : "saved");
         return true;
@@ -220,18 +221,31 @@ export function NotePage({
   return (
     <div className="mx-auto w-full max-w-[900px] px-4 pb-24 pt-6 sm:px-16 sm:pt-10" inert={leaving}>
       <div className="mb-3 flex items-center justify-between text-[12.5px] text-muted">
-        <span>{shared ? (canEdit ? "Shared with you · can edit" : "Shared with you · view only") : canEdit ? "Pages" : "Pages · view only"}</span>
+        <span>
+          {shared?.link
+            ? canEdit
+              ? "Public link · anyone with it can edit"
+              : "Public link · view only"
+            : shared
+              ? canEdit
+                ? "Shared with you · can edit"
+                : "Shared with you · view only"
+              : canEdit
+                ? "Pages"
+                : "Pages · view only"}
+        </span>
         <div className="flex items-center gap-2">
           <PagePeople kind="page" id={pageId} />
           {shared || !canEdit ? null : (
             <>
-              <ShareButton target={{ kind: "page", resourceId: pageId, title: record.title }} />
               <button type="button" className="btn-ghost" disabled={convert.isPending} onClick={() => convert.mutate()}>
                 <CheckSquare size={13} /> Add to board
               </button>
               <button type="button" className="icon-btn" title="Delete" aria-label="Delete page" onClick={() => setConfirming(true)}>
                 <Trash2 size={14} />
               </button>
+              <span className="mx-0.5 h-4 w-px bg-line" aria-hidden />
+              <ShareButton compact target={{ kind: "page", resourceId: pageId, title: record.title }} />
             </>
           )}
         </div>

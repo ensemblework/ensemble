@@ -5,7 +5,7 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useEffect, useLayoutEffect, useState } from "react";
 import { ArrowLeft, Columns3, FileText, FolderGit2, LineChart, BookOpen, CalendarCheck, Briefcase, Workflow, CheckSquare, ShieldOff, X } from "lucide-react";
-import { ApiError, HUB_API, api, setOpenShare, withShare, type OpenedShare, type ShareKind, type TaskRecord, type TaskStatus } from "@/lib/api";
+import { ApiError, HUB_API, api, setOpenLink, setOpenShare, withLink, withShare, type OpenedShare, type ShareKind, type TaskRecord, type TaskStatus } from "@/lib/api";
 import { eventSourceInit, eventsStreamUrl } from "@/lib/events";
 import { invalidateSoon } from "@/lib/invalidate";
 import { presenceStore, tabId } from "@/lib/presence";
@@ -34,7 +34,7 @@ const KIND: Record<ShareKind, { label: string; icon: typeof FileText }> = {
 };
 
 /** The live stream for one share: saves and presence on the shared item only. */
-function useShareLive(shareId: string) {
+function useShareLive(shareId: string, link = false) {
   const client = useQueryClient();
   useEffect(() => {
     let source: EventSource | null = null;
@@ -92,10 +92,11 @@ function useShareLive(shareId: string) {
       window.clearInterval(sweep);
       source?.close();
       // The share header is already cleared when this runs: name the share explicitly.
-      void withShare(shareId, () => api.sendPresence({ tabId: tabId(), leave: true }, true)).catch(() => undefined);
+      const leave = () => api.sendPresence({ tabId: tabId(), leave: true }, true);
+      void (link ? withLink(shareId, leave) : withShare(shareId, leave)).catch(() => undefined);
       presenceStore.clear();
     };
-  }, [client, shareId]);
+  }, [client, shareId, link]);
 }
 
 function SharedBoard({ role }: { role: "view" | "edit" }) {
@@ -314,13 +315,13 @@ function SharedPlot({ id }: { id: string }) {
   );
 }
 
-function Body({ share }: { share: OpenedShare }) {
+function Body({ share, link = false }: { share: Pick<OpenedShare, "kind" | "resourceId" | "role">; link?: boolean }) {
   const role = share.role;
   switch (share.kind) {
     case "page":
-      return <NotePage pageId={share.resourceId} shared={{ role }} />;
+      return <NotePage pageId={share.resourceId} shared={{ role, link }} />;
     case "task":
-      return <TaskPage taskId={share.resourceId} variant="page" shared={{ role }} />;
+      return <TaskPage taskId={share.resourceId} variant="page" shared={{ role, link }} />;
     case "diagram":
       return <DiagramEditor id={share.resourceId} shared={{ role }} />;
     case "plot_space":
@@ -403,4 +404,77 @@ export function SharedViewer({ shareId }: { shareId: string }) {
     );
   }
   return <Opened share={opened.data} />;
+}
+
+/**
+ * /p/[token]: one item anyone with the link can open, signed in or not. Visitors without an
+ * account get a creature name and are shown to everyone else on the item.
+ */
+export function PublicViewer({ token }: { token: string }) {
+  const [ready, setReady] = useState(false);
+  useLayoutEffect(() => {
+    setOpenLink(token);
+    setReady(true);
+    return () => setOpenLink(null);
+  }, [token]);
+  const opened = useQuery({ queryKey: ["public-open", token], queryFn: api.openPublicLink, enabled: ready, retry: false });
+  if (!ready || opened.isLoading) return <div className="grid h-dvh place-items-center bg-bg text-[13px] text-muted">Opening…</div>;
+  if (!opened.data) {
+    return (
+      <div className="grid h-dvh place-items-center bg-bg px-6 text-ink">
+        <div className="max-w-sm text-center">
+          <ShieldOff size={28} className="mx-auto text-faint" />
+          <h1 className="mt-3 text-[18px] font-semibold">This link doesn't work anymore</h1>
+          <p className="mt-1.5 text-[13px] leading-5 text-muted">Its owner turned it off or made a new one. Ask them for the current link.</p>
+          <a href="/" className="btn mt-4 inline-flex">
+            Go to Ensemble
+          </a>
+        </div>
+      </div>
+    );
+  }
+  return <PublicOpened token={token} link={opened.data} />;
+}
+
+function PublicOpened({ token, link }: { token: string; link: NonNullable<Awaited<ReturnType<typeof api.openPublicLink>>> }) {
+  useShareLive(token, true);
+  const kind = KIND[link.kind];
+  const Icon = kind.icon;
+  return (
+    <div className="flex h-dvh min-h-0 flex-col bg-bg text-ink">
+      <header className="flex h-12 shrink-0 items-center gap-3 border-b border-line px-3">
+        <a href="/" className="flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[13px] font-semibold hover:bg-hover" title="Ensemble">
+          <span className="grid size-5 place-items-center rounded-md bg-ink text-[11px] font-bold text-bg">E</span>
+          <span className="hidden sm:inline">Ensemble</span>
+        </a>
+        <span className="h-4 w-px bg-line" aria-hidden />
+        <span className="flex items-center gap-1.5 rounded-md bg-panel px-2 py-1 text-2xs text-muted">
+          <Icon size={12} /> {kind.label}
+        </span>
+        <span className="min-w-0 truncate text-[14px] font-medium">{link.title}</span>
+        <span className="ml-auto flex items-center gap-3">
+          <PagePeople kind={link.kind} id={link.resourceId} />
+          <span
+            className="hidden items-center gap-1.5 rounded-full border border-line px-2 py-0.5 text-2xs text-muted md:inline-flex"
+            title={link.you.signedIn ? "You're signed in, so others see your name." : "Others on this page see you by this name. Sign in to show your own."}
+          >
+            <Avatar person={{ name: link.you.name, initials: link.you.name.slice(0, 2), emoji: link.you.emoji }} color={link.you.color} size={18} />
+            {link.you.signedIn ? link.you.name : `You're ${link.you.name}`}
+          </span>
+          <span className="hidden items-center gap-1.5 text-2xs text-muted lg:flex" title={`${link.owner.name} made this link`}>
+            <Avatar person={link.owner} size={18} />
+            {link.owner.name.split(" ")[0]} · {link.role === "edit" ? "anyone with the link can edit" : "view only"}
+          </span>
+          {link.you.signedIn ? null : (
+            <a href="/signup" className="btn btn-primary h-7 px-2.5 text-[12.5px]">
+              Try Ensemble
+            </a>
+          )}
+        </span>
+      </header>
+      <main className="min-h-0 flex-1 overflow-y-auto">
+        <Body share={link} link />
+      </main>
+    </div>
+  );
 }

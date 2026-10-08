@@ -111,9 +111,9 @@ async function withAuthors<T extends { authorKind: string; authorAccountId: stri
   const ownerId = space?.ownerId ?? spaceId;
   const ids = [...new Set([ownerId, ...rows.map((row) => row.authorAccountId).filter((id): id is string => Boolean(id))])];
   const people = new Map(
-    (await prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, name: true, email: true } })).map((row) => [
+    (await prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, name: true, email: true, avatar: true } })).map((row) => [
       row.id,
-      { id: row.id, name: displayName(row.name, row.email), initials: initialsOf(row.name, row.email) },
+      { id: row.id, name: displayName(row.name, row.email), initials: initialsOf(row.name, row.email), avatar: row.avatar ?? null },
     ]),
   );
   return rows.map((row) => ({ ...row, author: row.authorKind === "human" ? (people.get(row.authorAccountId ?? ownerId) ?? null) : null }));

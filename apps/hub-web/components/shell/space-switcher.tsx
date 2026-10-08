@@ -163,6 +163,7 @@ export function SpaceSwitcher() {
         align="left"
         width={272}
         className="space-switcher-wrap"
+        fill
         trigger={(open, toggle) => (
           <button
             type="button"

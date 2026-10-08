@@ -98,6 +98,8 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
   if (PUBLIC.has(pathname)) return NextResponse.next();
+  // Public links: anyone with the address, signed in or not (docs/29 §7).
+  if (/^\/p\/[A-Za-z0-9_-]{20,64}$/.test(pathname)) return NextResponse.next();
   const session = request.cookies.get("ensemble_session")?.value;
   const unknown = !isAppRoute(pathname);
   // Unknown URLs are not login walls. No session rewrites to the standalone

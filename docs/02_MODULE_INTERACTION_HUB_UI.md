@@ -33,7 +33,7 @@ Two surfaces are deliberately **not** in the rail, because they are reached from
 
 Prompt transparency is the expandable **Prompts** section at `/settings?tab=assistant#prompts` ("Open prompts"), backed by `GET /api/prompts`. There is no standalone `/prompts` page.
 
-**Global header:** a three-part grid (`components/shell/topbar.tsx`): the page title on the left, the Ask bar centred, and one right-hand cluster with notifications, undo/redo, Fetch, activity, view mode, and an initials avatar. The side columns never shrink below their contents, so on narrow windows the Ask bar gives way instead of the icons overlapping it. The theme switch lives only in the avatar menu. The avatar (`components/shell/account-menu.tsx`, first and last initial from `lib/initials.ts`) opens a menu with the name and email, Account settings, Assistant and models, Connected apps, Spaces, Keyboard shortcuts, Templates (dev tools only), a theme switch, and Sign out. Collapse the sidebar to icons at any desktop width; the choice is saved. On Board, *Task board* is the heading in this bar, not a second large heading inside the work area.
+**Global header:** a three-part grid (`components/shell/topbar.tsx`): the page title on the left, the Ask bar centred, and one right-hand cluster with notifications, undo/redo, Fetch, activity, view mode, and an initials avatar. The side columns never shrink below their contents, so on narrow windows the Ask bar gives way instead of the icons overlapping it. The theme switch lives only in the avatar menu. The avatar (`components/shell/account-menu.tsx`, first and last initial from `lib/initials.ts`) opens a menu with the name and email, Account settings, Assistant and models, Connected apps, Spaces, Keyboard shortcuts, Templates (dev tools only), a theme switch, and Sign out. Collapse the sidebar to icons at any desktop width; the choice is saved. Drag the sidebar's right edge to resize it between 184 and 360 px (arrow keys work on the edge too; double-click resets); the width is saved per browser (`components/shell/sidebar-resize.tsx`, `--sidebar-w`). On Board, *Task board* is the heading in this bar, not a second large heading inside the work area.
 
 Below the `lg` breakpoint, Undo/Redo, Fetch, and task-view mode move into **More actions** (`components/shell/topbar.tsx`). Search, notifications, activity, and the kill switch remain directly reachable. The activity popover stays inside the narrow viewport.
 
@@ -159,12 +159,12 @@ Before/after tiles + charts (see [module 07](07_MODULE_GOVERNANCE_AUDIT_METRICS.
 
 | Tab | Sections (anchor) |
 |---|---|
-| Account | Account and profile (`#account`), Email & time zone (`#you`), Appearance (`#appearance`), Features (`#features`), Remote tasks on this Mac (`#this-mac`, desktop app only) |
+| Account | Account and profile (`#account`), Avatar (`#avatar`: 15 picture avatars per profession, or initials), Email & time zone (`#you`), Appearance (`#appearance`), Features (`#features`), Remote tasks on this Mac (`#this-mac`, desktop app only) |
 | Assistant | The assistant (`#assistant`): *Your field*, write policy, default preset, *What it may change*; Models (`#models`); Watching for you (`#watchers`, only while a watcher is active); Autonomy, Orchestration, Quiet hours, Prompts |
 | Connections | Connections (`#connections`), Recent imports (`#imports`, once there is one), Fetching (`#fetch`), Editors & agents (`#editors`, `#connect`), Devices (`#devices`) |
 | Notifications | Morning brief (`#brief`), Quiet nudges (`#nudges`), Desktop reminders (`#reminders`), Quick capture (`#capture`) |
 | Spaces | Your spaces (`#spaces`): rename, icon, open, delete; *Settings across spaces*: keep every space in sync, or copy another space's settings in ([28](28_ENSEMBLE_SPACES.md)) |
-| Sharing | Contacts (`#contacts`, 5 slots), spaces you share and their members, hand over a space (once), items you shared, shared with you ([29](29_SHARING.md)). In a space shared with you, Connections and Data are hidden and a note says settings are your own |
+| Sharing | Contacts (`#contacts`, 5 slots), spaces you share and their members, hand over a space (once), items you shared, public links (5), shared with you ([29](29_SHARING.md)). In a space shared with you, Connections and Data are hidden and a note says settings are your own |
 | Shortcuts | Every key binding by group (`#shortcuts`, `#keyboard`), see below |
 | Data | Data retention (`#retention`), Completed (`#completed`), Trash (`#trash`), Terminal and commits (`#terminal`), Failed jobs, Deleted items, Delete my data (`#danger`) |
 
@@ -377,8 +377,10 @@ Rate limits: `/api/cli/auth/start` 10 per 10 minutes per address (`ENSEMBLE_RATE
 | GET | `/api/sharing/open/:id` | What a share link opens, for its recipient |
 | GET / POST | `/api/presence` | Who is here, and your heartbeat, cursor and view |
 | GET | `/api/skills/:id` | One skill (used by a shared skill) |
+| GET / POST / DELETE | `/api/links` • `/api/links/item` • `/api/links/:id` • `POST /api/links/:id/rotate` | Public links: anyone with the link, no account. Pages, tasks, diagrams, meeting notes; 5 per account ([29 §9](29_SHARING.md#9-anyone-with-the-link)) |
+| GET | `/api/links/open` | What a public link opens, for whoever holds it (`x-ensemble-link` header) |
 
-Requests from `/shared/[id]` carry `x-ensemble-share: <shareId>`. Every route has a sharing class in `apps/hub-api/src/sharing/policy.ts`; unlisted routes are owner-only.
+Requests from `/shared/[id]` carry `x-ensemble-share: <shareId>`; requests from `/p/[token]` carry `x-ensemble-link` and `x-ensemble-visitor`. `PATCH /api/auth/me` also takes `avatar`. Every route has a sharing class in `apps/hub-api/src/sharing/policy.ts`; unlisted routes are owner-only.
 
 ### Internal, called by agent-runtime (service-to-service)
 

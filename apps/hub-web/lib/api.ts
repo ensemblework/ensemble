@@ -60,6 +60,45 @@ function unreachable(status: number, text: string): boolean {
  */
 let openShare: string | null = null;
 export const SHARE_HEADER = "x-ensemble-share";
+/** A public link (/p/[token]): every request names it, with this tab's visitor id. */
+let openLink: string | null = null;
+export const LINK_HEADER = "x-ensemble-link";
+export const VISITOR_HEADER = "x-ensemble-visitor";
+export function setOpenLink(token: string | null): void {
+  openLink = token;
+}
+export function currentLink(): string | null {
+  return openLink;
+}
+/** On one shared item or a public link: nothing else of the owner's space is reachable. */
+export function inItemView(): boolean {
+  return Boolean(openShare || openLink);
+}
+/** Like withShare, for a public link. */
+export function withLink<T>(token: string | null, fn: () => T): T {
+  const before = openLink;
+  openLink = token;
+  try {
+    return fn();
+  } finally {
+    openLink = before;
+  }
+}
+let visitor: string | null = null;
+/** A random id this browser keeps, so a visitor keeps the same creature name across reloads. */
+function visitorId(): string {
+  if (visitor) return visitor;
+  try {
+    visitor = localStorage.getItem("ensemble.visitor");
+    if (!visitor || !/^[A-Za-z0-9-]{8,64}$/.test(visitor)) {
+      visitor = crypto.randomUUID();
+      localStorage.setItem("ensemble.visitor", visitor);
+    }
+  } catch {
+    visitor = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  }
+  return visitor;
+}
 export function setOpenShare(id: string | null): void {
   openShare = id;
 }
@@ -95,6 +134,7 @@ export async function request<T>(path: string, init?: RequestInit & { json?: unk
       headers: {
         ...(json !== undefined ? { "Content-Type": "application/json" } : {}),
         ...(openShare ? { [SHARE_HEADER]: openShare } : {}),
+        ...(openLink ? { [LINK_HEADER]: openLink, [VISITOR_HEADER]: visitorId() } : {}),
         ...(rest.headers ?? {}),
       },
       credentials: "include",
@@ -108,7 +148,8 @@ export async function request<T>(path: string, init?: RequestInit & { json?: unk
   } finally {
     tracked.close();
   }
-  if (response.status === 401 && typeof window !== "undefined" && !path.startsWith("/api/auth/")) {
+  // On a public link there is no account to sign in to: a 401 means the link stopped working.
+  if (response.status === 401 && typeof window !== "undefined" && !path.startsWith("/api/auth/") && !openLink) {
     const here = window.location.pathname;
     if (!["/login", "/signup"].includes(here)) window.location.href = `/login?next=${encodeURIComponent(here + window.location.search)}`;
   }
@@ -707,7 +748,7 @@ export type ProfileInput = {
 };
 
 export type Me = {
-  user: { id: string; email: string; name: string; emailVerified?: boolean; hasPassword?: boolean; profile: Profile };
+  user: { id: string; email: string; name: string; avatar?: string | null; emailVerified?: boolean; hasPassword?: boolean; profile: Profile };
   via: "session" | "token" | "internal" | "bypass" | "desktop";
   modules?: string | null;
   verificationRequired?: boolean;
@@ -908,7 +949,7 @@ export const api = bindClient({
     post<{ user: Me["user"]; firstAccount: boolean; verificationSent: boolean; verificationRequired: boolean }>("/api/auth/signup", data),
   login: (data: { email: string; password: string }) => post<{ user: Me["user"] }>("/api/auth/login", data),
   logout: () => post<void>("/api/auth/logout"),
-  updateMe: (data: { name?: string; password?: string; current?: string }) => patch<{ user: Me["user"] }>("/api/auth/me", data),
+  updateMe: (data: { name?: string; password?: string; current?: string; avatar?: string | null }) => patch<{ user: Me["user"] }>("/api/auth/me", data),
   updateProfile: (data: ProfileInput) => put<{ user: Me["user"]; profile: Profile }>("/api/auth/profile", data),
   verifyEmail: (code: string) => post<{ verified: boolean }>("/api/auth/verify-email", { code }),
   resendVerification: () => post<{ sent: boolean }>("/api/auth/resend-verification"),
@@ -1346,6 +1387,13 @@ export const api = bindClient({
   openShare: (id: string) => get<OpenedShare>(`/api/sharing/open/${id}`),
   presence: () => get<{ you: string; people: PresenceEntry[] }>("/api/presence"),
   sendPresence: (data: PresenceUpdate, keepalive = false) => request<void>("/api/presence", { method: "POST", json: data, keepalive }),
+  publicLinks: () => get<{ limit: number; links: PublicLink[] }>("/api/links"),
+  publicLinkFor: (kind: ShareKind, resourceId: string) =>
+    get<{ limit: number; used: number; allowed: boolean; link: PublicLink | null }>(`/api/links/item${qs({ kind, resourceId })}`),
+  setPublicLink: (data: { kind: ShareKind; resourceId: string; role: ItemRole }) => post<{ link: PublicLink; limit: number }>("/api/links", data),
+  removePublicLink: (id: string) => del<void>(`/api/links/${id}`),
+  rotatePublicLink: (id: string) => post<{ link: PublicLink }>(`/api/links/${id}/rotate`, {}),
+  openPublicLink: () => get<OpenedLink>("/api/links/open"),
   completeOnboarding: (role: string, templateId: string) =>
     post<{ role: string; templateId: string; onboardingComplete: boolean }>("/api/onboarding", { role, templateId }),
   widgetFeed: () =>
@@ -1394,9 +1442,9 @@ export type SpacesPayload = { activeId: string; account: { sync: boolean; role: 
 export type ShareKind = "page" | "task" | "board" | "diagram" | "plot_space" | "plot" | "meeting" | "skill" | "workspace" | "code";
 export type MemberRole = "viewer" | "editor";
 export type ItemRole = "view" | "edit";
-export type SharingPerson = { id: string; name: string; initials: string; email?: string; exact?: boolean; contact?: boolean };
-export type SharingContact = { id: string; name: string; initials: string; email: string; spaces: number; items: number; addedAt: string };
-export type SpaceMember = { id: string; name: string; initials: string; email: string; role: MemberRole; addedAt: string };
+export type SharingPerson = { id: string; name: string; initials: string; avatar?: string | null; email?: string; exact?: boolean; contact?: boolean };
+export type SharingContact = { id: string; name: string; initials: string; avatar?: string | null; email: string; spaces: number; items: number; addedAt: string };
+export type SpaceMember = { id: string; name: string; initials: string; avatar?: string | null; email: string; role: MemberRole; addedAt: string };
 export type SpaceMembers = {
   owner: SharingPerson;
   you: "owner" | MemberRole;
@@ -1423,6 +1471,9 @@ export type PresenceEntry = {
   name: string;
   initials: string;
   color: string;
+  avatar?: string | null;
+  emoji?: string | null;
+  signedIn?: boolean;
   route: string | null;
   resource: { kind: ShareKind; id: string } | null;
   cursor: { x: number; y: number } | null;
@@ -1431,6 +1482,20 @@ export type PresenceEntry = {
   at: number;
   gone?: boolean;
 };
+export type PublicLink = { id: string; token: string; kind: ShareKind; resourceId: string; title: string; role: ItemRole; spaceId: string; createdAt: string; openedAt: string | null; opens: number };
+export type OpenedLink = {
+  kind: "page" | "task" | "diagram" | "meeting";
+  resourceId: string;
+  title: string;
+  role: ItemRole;
+  owner: { name: string; initials: string; avatar: string | null };
+  you: { id: string; name: string; emoji: string | null; color: string; signedIn: boolean };
+};
+/** The address someone opens: /p/<token>. */
+export function publicLinkUrl(token: string): string {
+  return `${typeof window === "undefined" ? "" : window.location.origin}/p/${token}`;
+}
+
 export type PresenceUpdate = {
   tabId: string;
   route?: string | null;
