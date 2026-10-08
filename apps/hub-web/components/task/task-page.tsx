@@ -22,7 +22,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PageDocument, PageMention } from "@ensemble/shared-types";
-import { ApiError, api, currentShare, withShare, type TaskRecord, type TaskStatus } from "@/lib/api";
+import { ApiError, api, currentLink, currentShare, withLink, withShare, type TaskRecord, type TaskStatus } from "@/lib/api";
 import { useEntities } from "@/lib/entities";
 import { COMPLEXITY_LABEL, OWNER_LABEL, PRIORITY, STATUS, dateTime, isoDate } from "@/lib/format";
 import { MakeDiagramButton, taskDiagramPrompt } from "../diagrams/make-diagram";
@@ -94,8 +94,8 @@ export function TaskPage({
 }: {
   taskId: string;
   variant: "peek" | "page";
-  /** Opened from a share link: the task and its page only, read-only unless it may be edited. */
-  shared?: { role: "view" | "edit" };
+  /** Opened from a share link: the task and its page only, read-only unless it may be edited. A public link edits the page, never the properties. */
+  shared?: { role: "view" | "edit"; link?: boolean };
 }) {
   const client = useQueryClient();
   const router = useRouter();
@@ -106,12 +106,14 @@ export function TaskPage({
   const [leaving, setLeaving] = useState(false);
   const task = useQuery({ queryKey: ["task", taskId], queryFn: () => api.task(taskId), enabled: !leaving });
   const page = useQuery({ queryKey: ["page", taskId], queryFn: () => api.page(taskId), refetchOnWindowFocus: false, enabled: !leaving });
-  const projects = useQuery({ queryKey: ["projects"], queryFn: api.projects });
-  const people = useQuery({ queryKey: ["people"], queryFn: api.people });
-  const repos = useQuery({ queryKey: ["repos"], queryFn: api.repos });
-  const deliverables = useQuery({ queryKey: ["deliverables", "all"], queryFn: () => api.deliverables(true) });
+  // The rest of the space is not reachable from a shared item or a public link.
+  const whole = !shared;
+  const projects = useQuery({ queryKey: ["projects"], queryFn: api.projects, enabled: whole });
+  const people = useQuery({ queryKey: ["people"], queryFn: api.people, enabled: whole });
+  const repos = useQuery({ queryKey: ["repos"], queryFn: api.repos, enabled: whole });
+  const deliverables = useQuery({ queryKey: ["deliverables", "all"], queryFn: () => api.deliverables(true), enabled: whole });
   const skillsOn = useModuleOn("skills");
-  const skills = useQuery({ queryKey: ["skills"], queryFn: api.skills, enabled: skillsOn });
+  const skills = useQuery({ queryKey: ["skills"], queryFn: api.skills, enabled: skillsOn && whole });
 
   const [propsState, setPropsState] = useState<"saved" | "saving">("saved");
   const [saveState, setSaveState] = useState<SaveState>("saved");
@@ -124,11 +126,13 @@ export function TaskPage({
   const titleSave = useRef<Promise<unknown> | null>(null);
   // The share (or none) this task was opened under. The last save on leaving must go there.
   const openedAs = useRef(currentShare());
+  const openedLink = useRef(currentLink());
   const propertiesBusy = useRef(0);
   const propertyWaiters = useRef<Array<() => void>>([]);
   const loaded = Boolean(page.data);
   const access = useSpaceAccess();
   const canEdit = shared ? shared.role === "edit" : access.canEdit;
+  const canEditProperties = canEdit && !shared?.link;
   const watching = Boolean(shared) || onResource(usePresence(), "task", taskId).length > 0;
   const watchingRef = useRef(watching);
   watchingRef.current = watching;
@@ -214,7 +218,7 @@ export function TaskPage({
     setSaveState("saving");
     const work = (async () => {
       try {
-        const saved = await withShare(openedAs.current, () => api.savePage(taskId, { revision: revision.current, content: doc }));
+        const saved = await withLink(openedLink.current, () => withShare(openedAs.current, () => api.savePage(taskId, { revision: revision.current, content: doc })));
         revision.current = saved.revision;
         setSaveState(pending.current ? "dirty" : "saved");
         return true;
@@ -308,6 +312,11 @@ export function TaskPage({
 
   return (
     <div className={cx("mx-auto w-full pb-24", variant === "peek" ? "max-w-[860px] px-4 pt-4 sm:px-8 sm:pt-6" : "max-w-[900px] px-4 pt-6 sm:px-16 sm:pt-10")} inert={leaving}>
+      {variant === "page" && !shared ? (
+        <div className="-mb-1 flex justify-end">
+          <ShareButton compact target={{ kind: "task", resourceId: taskId, title: record.title }} />
+        </div>
+      ) : null}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-[12.5px] text-muted">
         <div className="flex items-center gap-1">
           <Link href="/board" className="hover:text-ink">
@@ -343,10 +352,9 @@ export function TaskPage({
         <div className="flex flex-wrap items-center gap-2">
           <PagePeople kind="task" id={taskId} />
           {shared ? <span className="whitespace-nowrap">{canEdit ? "Shared with you · can edit" : "Shared with you · view only"}</span> : !canEdit ? <span className="whitespace-nowrap">View only</span> : null}
-          {canEdit ? <span className="whitespace-nowrap">{propsState === "saving" ? "Saving…" : "Properties saved"}</span> : null}
+          {canEditProperties ? <span className="whitespace-nowrap">{propsState === "saving" ? "Saving…" : "Properties saved"}</span> : null}
           {shared || !canEdit ? null : (
           <>
-          <ShareButton target={{ kind: "task", resourceId: taskId, title: record.title }} />
           <button
             type="button"
             className="btn-ghost"
@@ -376,7 +384,7 @@ export function TaskPage({
         </div>
       </div>
 
-      {canEdit ? (
+      {canEditProperties ? (
         <PageTitleField value={record.title} autoFocus={record.title === "Untitled"} onSave={(title) => {
           titleSave.current = update.mutateAsync({ title });
           void titleSave.current.catch(() => undefined);
@@ -385,7 +393,7 @@ export function TaskPage({
         <h1 className="text-[32px] font-semibold leading-tight tracking-tight">{record.title || "Untitled"}</h1>
       )}
 
-      <div className="mt-5 space-y-0.5" inert={!canEdit || undefined}>
+      <div className="mt-5 space-y-0.5" inert={!canEditProperties || undefined}>
         <PropertyRow icon={User} label="Owner">
           <Popover
             trigger={(_open, toggle) => <ValueButton onClick={toggle}>{OWNER_LABEL[record.owner]}</ValueButton>}

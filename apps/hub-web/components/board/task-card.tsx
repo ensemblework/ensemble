@@ -8,6 +8,7 @@ import { warmTask } from "@/lib/warm";
 import { OWNER_LABEL, dueLabel, plural } from "@/lib/format";
 import { PriorityTag, cx } from "../ui";
 import { LabelChips } from "../task/labels";
+import { PersonaAvatar } from "@/components/avatars/persona";
 
 function OwnerMark({ owner }: { owner: string }) {
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 60_000 });
@@ -24,6 +25,7 @@ function OwnerMark({ owner }: { owner: string }) {
   }
   // "Me" on a task is the space's owner: in a space shared with you, that is them, not you.
   const name = shell.data?.space?.shared?.owner.name || shell.data?.user.name || shell.data?.user.email || "";
+  const avatar = shell.data?.space?.shared ? shell.data.space.shared.owner.avatar : shell.data?.user.avatar;
   const initial = name ? name.charAt(0).toUpperCase() : "";
   const personLabel = name ? `${label}, ${name}` : label;
   return (
@@ -33,7 +35,7 @@ function OwnerMark({ owner }: { owner: string }) {
       aria-label={personLabel}
       className="flex h-6 w-6 items-center justify-center rounded-full bg-accent-soft text-[12px] font-semibold leading-none text-ink"
     >
-      {initial || <UserRound size={11} aria-hidden />}
+      {avatar ? <PersonaAvatar id={avatar} size={24} /> : initial || <UserRound size={11} aria-hidden />}
     </span>
   );
 }

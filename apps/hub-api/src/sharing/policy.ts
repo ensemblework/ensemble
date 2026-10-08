@@ -20,7 +20,7 @@
  *
  * Single items shared with someone (a page, a diagram) are narrower still: see SHARE_RULES.
  */
-import type { ShareKind } from "./context.js";
+import type { PublicKind, ShareKind } from "./context.js";
 
 export type RouteClass = "shared" | "personal" | "owner" | "runner" | "assistant" | "self" | "live" | "open" | "prefs";
 
@@ -39,6 +39,7 @@ const RULES: Rule[] = [
   ["*", "/api/cli/*", "self"],
   ["*", "/api/spaces*", "self"],
   ["*", "/api/sharing/*", "self"],
+  ["*", "/api/links*", "self"],
 
   ["GET", "/api/events", "live"],
   ["POST", "/api/events/ticket", "live"],
@@ -282,3 +283,51 @@ export function shareDecision(
 }
 
 export const SHARE_RULE_TABLE = SHARE_RULES;
+
+/**
+ * Public links: anyone with the link, no account. Narrower than a share: the item's content
+ * only. No comments (they name people), no task properties, no history restore, no assistant.
+ */
+const LINK_RULES: Record<PublicKind, ShareRule[]> = {
+  page: [
+    { method: "GET", url: "/api/pages/:id", role: "view", bind: { param: "id" } },
+    { method: "PUT", url: "/api/pages/:id", role: "edit", bind: { param: "id" } },
+    { method: "PATCH", url: "/api/pages/:id", role: "edit", bind: { param: "id" } },
+  ],
+  task: [
+    { method: "GET", url: "/api/tasks/:id", role: "view", bind: { param: "id" } },
+    { method: "GET", url: "/api/tasks/:id/page", role: "view", bind: { param: "id" } },
+    { method: "PUT", url: "/api/tasks/:id/page", role: "edit", bind: { param: "id" } },
+  ],
+  diagram: [
+    { method: "GET", url: "/api/diagrams/:id", role: "view", bind: { param: "id" } },
+    { method: "GET", url: "/api/diagrams/:id/svg", role: "view", bind: { param: "id" } },
+    { method: "GET", url: "/api/diagrams/:id/freshness", role: "view", bind: { param: "id" } },
+    { method: "PATCH", url: "/api/diagrams/:id", role: "edit", bind: { param: "id" } },
+  ],
+  meeting: [
+    { method: "GET", url: "/api/meetings/sessions/:id", role: "view", bind: { param: "id" } },
+    { method: "GET", url: "/api/meetings/notes/:id", role: "view", bind: { param: "id" } },
+  ],
+};
+
+/** Routes every link may call: what it opens, the live stream, and presence. */
+const LINK_ALWAYS = new Set(["GET /api/links/open", "POST /api/events/ticket", "GET /api/events", "GET /api/presence", "POST /api/presence"]);
+
+export function linkDecision(
+  access: { resource: PublicKind; resourceId: string; role: "view" | "edit" },
+  method: string,
+  url: string,
+  input: { params: Record<string, string | undefined>; query: Record<string, unknown>; body: unknown },
+): ShareDecision {
+  const verb = method === "HEAD" ? "GET" : method;
+  if (LINK_ALWAYS.has(`${verb} ${url}`) || classify(verb, url) === "open") return { allow: true, personal: false };
+  const rule = LINK_RULES[access.resource].find((row) => row.method === verb && row.url === url);
+  if (!rule) return { allow: false, status: 403, message: "This link only opens the item it was made for." };
+  if (rule.role === "edit" && access.role !== "edit") return { allow: false, status: 403, message: "This link is view only." };
+  const value = rule.bind?.param ? input.params[rule.bind.param] : undefined;
+  if (rule.bind && value !== access.resourceId) return { allow: false, status: 403, message: "This link only opens the item it was made for." };
+  return { allow: true, personal: false };
+}
+
+export const LINK_RULE_TABLE = LINK_RULES;

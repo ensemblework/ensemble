@@ -23,6 +23,7 @@ export const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTab; label: string; hint
 export const SECTION_TAB: Readonly<Record<string, SettingsTab>> = {
   account: "account",
   profile: "account",
+  avatar: "account",
   features: "account",
   appearance: "account",
   you: "account",

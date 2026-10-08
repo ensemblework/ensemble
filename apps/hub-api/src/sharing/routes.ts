@@ -8,6 +8,7 @@ import { SHARE_KINDS } from "./context.js";
 import { VIEW_ONLY_KINDS } from "./policy.js";
 import { presenceIn, updatePresence } from "./presence.js";
 import { revokeMember, revokeShare } from "./revoke.js";
+import { isPublicKind, linkFor, listLinks, MAX_PUBLIC_LINKS, ownerName, removeLink, rotateLink, setLink } from "./links.js";
 import {
   addMember,
   deleteShare,
@@ -23,6 +24,7 @@ import {
   removeContact,
   removeMember,
   requireOwnedSpace,
+  resourceTitle,
   searchPeople,
   shareItem,
   sharedWithMe,
@@ -79,7 +81,7 @@ export async function sharingRoutes(app: FastifyInstance): Promise<void> {
       prisma.share.findMany({
         where: { spaceId: { in: spaces } },
         orderBy: { createdAt: "desc" },
-        select: { id: true, kind: true, title: true, role: true, spaceId: true, resourceId: true, createdAt: true, recipient: { select: { id: true, name: true, email: true } } },
+        select: { id: true, kind: true, title: true, role: true, spaceId: true, resourceId: true, createdAt: true, recipient: { select: { id: true, name: true, email: true, avatar: true } } },
       }),
       prisma.spaceTransfer.findMany({ where: { spaceId: { in: spaces } }, select: { spaceId: true, createdAt: true } }),
       sharedWithMe(prisma, account),
@@ -111,7 +113,7 @@ export async function sharingRoutes(app: FastifyInstance): Promise<void> {
           spaceId: row.spaceId,
           resourceId: row.resourceId,
           createdAt: row.createdAt.toISOString(),
-          person: { id: row.recipient.id, name: displayName(row.recipient.name, row.recipient.email), initials: initialsOf(row.recipient.name, row.recipient.email) },
+          person: { id: row.recipient.id, name: displayName(row.recipient.name, row.recipient.email), initials: initialsOf(row.recipient.name, row.recipient.email), avatar: row.recipient.avatar ?? null },
         })),
       withMe,
     };
@@ -154,10 +156,10 @@ export async function sharingRoutes(app: FastifyInstance): Promise<void> {
     const ownerId = space?.ownerId ?? space?.id;
     const member = space ? await prisma.spaceMember.findUnique({ where: { spaceId_accountId: { spaceId, accountId: account } } }) : null;
     if (!space || (ownerId !== account && !member)) throw new SharingError("That space is not shared with you.", 404);
-    const owner = await prisma.user.findUniqueOrThrow({ where: { id: ownerId! }, select: { id: true, name: true, email: true } });
+    const owner = await prisma.user.findUniqueOrThrow({ where: { id: ownerId! }, select: { id: true, name: true, email: true, avatar: true } });
     const transfer = await prisma.spaceTransfer.findUnique({ where: { spaceId } });
     return {
-      owner: { id: owner.id, name: displayName(owner.name, owner.email), initials: initialsOf(owner.name, owner.email) },
+      owner: { id: owner.id, name: displayName(owner.name, owner.email), initials: initialsOf(owner.name, owner.email), avatar: owner.avatar ?? null },
       you: ownerId === account ? "owner" : member!.role === "viewer" ? "viewer" : "editor",
       limit: MAX_MEMBERS,
       members: await listMembers(prisma, spaceId),
@@ -259,17 +261,95 @@ export async function sharingRoutes(app: FastifyInstance): Promise<void> {
   /** Who else is here. Someone with one shared item sees only the people on that item. */
   app.get("/api/presence", async (request) => {
     const access = request.access;
-    const only = access?.kind === "share" ? { kind: access.resource, id: access.resourceId } : undefined;
+    const only = access?.kind === "share" || access?.kind === "link" ? { kind: access.resource, id: access.resourceId } : undefined;
     return { you: accountIdOf(request), people: presenceIn(request.userId, only) };
   });
 
   app.post("/api/presence", async (request, reply) => {
     const body = Presence.parse(request.body);
     const access = request.access;
-    // A shared item's viewer is always on that item, and never says where else they are.
-    const pinned = access?.kind === "share" ? { route: null, resource: { kind: access.resource, id: access.resourceId } } : {};
-    await updatePresence(prisma, request.userId, accountIdOf(request), { ...body, ...pinned });
+    // A shared item's or a public link's viewer is always on that item, and never says where else they are.
+    const pinned = access?.kind === "share" || access?.kind === "link" ? { route: null, resource: { kind: access.resource, id: access.resourceId } } : {};
+    const visitor =
+      access?.kind === "link" && !access.visitor.signedIn
+        ? {
+            name: access.visitor.name,
+            initials: access.visitor.name.split(" ").map((word) => word[0]).join("").slice(0, 2).toUpperCase(),
+            avatar: null,
+            emoji: access.visitor.emoji,
+            color: access.visitor.color,
+            signedIn: false,
+          }
+        : undefined;
+    await updatePresence(prisma, request.userId, accountIdOf(request), { ...body, ...pinned }, visitor);
     return reply.code(204).send();
+  });
+
+  // ── Public links ──────────────────────────────────────────────────────
+
+  /** Your public links, across your spaces. */
+  app.get("/api/links", async (request) => {
+    browserOnly(request);
+    return { limit: MAX_PUBLIC_LINKS, links: await listLinks(prisma, accountIdOf(request)) };
+  });
+
+  /** The public link for one item in the open space (owner only), and how many of yours are in use. */
+  app.get("/api/links/item", async (request) => {
+    browserOnly(request);
+    const query = z.object({ kind: z.string().max(20), resourceId: Id }).parse(request.query);
+    await requireOwnedSpace(prisma, accountIdOf(request), request.userId);
+    const used = (await listLinks(prisma, accountIdOf(request))).length;
+    return {
+      limit: MAX_PUBLIC_LINKS,
+      used,
+      allowed: isPublicKind(query.kind),
+      link: isPublicKind(query.kind) ? await linkFor(prisma, request.userId, query.kind, query.resourceId) : null,
+    };
+  });
+
+  app.post("/api/links", async (request, reply) => {
+    browserOnly(request);
+    const body = z.object({ kind: z.string().max(20), resourceId: Id, role: ItemRole.default("view") }).parse(request.body);
+    const link = await setLink(prisma, accountIdOf(request), { spaceId: request.userId, ...body });
+    await appendLedger({ userId: request.userId, actor: "me", action: "sharing.link.set", payload: { kind: link.kind, resourceId: link.resourceId, role: link.role } });
+    sseHub.close(request.userId, (listener) => listener.share?.linkId === link.id);
+    return reply.code(201).send({ link, limit: MAX_PUBLIC_LINKS });
+  });
+
+  app.delete("/api/links/:id", async (request, reply) => {
+    browserOnly(request);
+    const id = Id.parse((request.params as { id: string }).id);
+    const link = await removeLink(prisma, accountIdOf(request), id);
+    await appendLedger({ userId: link.spaceId, actor: "me", action: "sharing.link.remove", payload: { kind: link.kind, resourceId: link.resourceId } });
+    sseHub.close(link.spaceId, (listener) => listener.share?.linkId === id);
+    return reply.code(204).send();
+  });
+
+  /** A new address for the same link. Whoever had the old one loses it. */
+  app.post("/api/links/:id/rotate", async (request) => {
+    browserOnly(request);
+    const id = Id.parse((request.params as { id: string }).id);
+    const { row, spaceId } = await rotateLink(prisma, accountIdOf(request), id);
+    sseHub.close(spaceId, (listener) => listener.share?.linkId === id);
+    return { link: row };
+  });
+
+  /** What a public link opens, for whoever holds it. */
+  app.get("/api/links/open", async (request, reply) => {
+    const access = request.access;
+    if (access?.kind !== "link") return reply.code(404).send({ error: "This link doesn't open anything." });
+    const title = await resourceTitle(prisma, request.userId, access.resource, access.resourceId);
+    if (title === null) return reply.code(404).send({ error: "The owner deleted this." });
+    await prisma.publicLink.update({ where: { id: access.linkId }, data: { opens: { increment: 1 }, openedAt: new Date() } }).catch(() => undefined);
+    const owner = await ownerName(prisma, access.ownerId);
+    return {
+      kind: access.resource,
+      resourceId: access.resourceId,
+      title,
+      role: access.role,
+      owner: { name: owner.name, initials: initialsOf(owner.name, ""), avatar: owner.avatar },
+      you: access.visitor,
+    };
   });
 
   /** What a share link opens, for the person it was shared with. Marks it opened. */
@@ -291,7 +371,7 @@ export async function sharingRoutes(app: FastifyInstance): Promise<void> {
     if (!share || !(SHARE_KINDS as readonly string[]).includes(share.kind)) throw new SharingError("This share was removed, or it is not yours.", 404);
     if (!share.openedAt) await prisma.share.update({ where: { id }, data: { openedAt: new Date() } });
     const ownerId = share.space.ownerId ?? share.space.id;
-    const owner = await prisma.user.findUniqueOrThrow({ where: { id: ownerId }, select: { id: true, name: true, email: true } });
+    const owner = await prisma.user.findUniqueOrThrow({ where: { id: ownerId }, select: { id: true, name: true, email: true, avatar: true } });
     return {
       id: share.id,
       kind: share.kind,
@@ -299,7 +379,7 @@ export async function sharingRoutes(app: FastifyInstance): Promise<void> {
       title: share.title || "Untitled",
       role: VIEW_ONLY_KINDS.has(share.kind as (typeof SHARE_KINDS)[number]) ? "view" : share.role === "edit" ? "edit" : "view",
       spaceId: share.space.id,
-      owner: { id: owner.id, name: displayName(owner.name, owner.email), initials: initialsOf(owner.name, owner.email) },
+      owner: { id: owner.id, name: displayName(owner.name, owner.email), initials: initialsOf(owner.name, owner.email), avatar: owner.avatar ?? null },
     };
   });
 }

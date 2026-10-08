@@ -9,14 +9,14 @@ import { onResource, tabId, usePresence } from "@/lib/presence";
 const SEND_EVERY_MS = 60;
 
 /** A small, friendly pointer in the person's colour, with their name beside it. */
-function Pointer({ color, name, zoom }: { color: string; name: string; zoom: number }) {
+function Pointer({ color, name, zoom, emoji }: { color: string; name: string; zoom: number; emoji?: string | null }) {
   return (
     <div style={{ transform: `scale(${1 / zoom})`, transformOrigin: "0 0" }} className="pointer-events-none">
       <svg width="18" height="20" viewBox="0 0 18 20" aria-hidden className="drop-shadow-sm">
         <path d="M2 1.5 L15.5 9.2 L9.4 10.6 L6.4 17.6 Z" fill={color} stroke="white" strokeWidth="1.4" strokeLinejoin="round" />
       </svg>
       <span className="ml-3 -mt-1 inline-block whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium leading-4 text-white shadow-sm" style={{ background: color }}>
-        {name.split(" ")[0]}
+        {emoji ? `${emoji} ${name}` : name.split(" ")[0]}
       </span>
     </div>
   );
@@ -49,7 +49,7 @@ export function LiveCursors({ diagramId }: { diagramId: string }) {
             className="absolute left-0 top-0 z-[5]"
             style={{ transform: `translate(${entry.cursor!.x}px, ${entry.cursor!.y}px)`, transition: "transform 90ms linear" }}
           >
-            <Pointer color={entry.color} name={entry.name} zoom={zoom} />
+            <Pointer color={entry.color} name={entry.name} zoom={zoom} emoji={entry.emoji} />
           </div>
         ))}
     </ViewportPortal>

@@ -1,6 +1,6 @@
 # 29 · Sharing
 
-People can share an Ensemble space, or one item in it, with other people who have an Ensemble account. A shared space is still the owner's: the work in it is shared, and everything private to the owner stays private. That covers their settings, model keys, connected apps, computers, Today and metrics. Single items (a page, a diagram, a plot space…) open on their own, without the rest of the space.
+People can share an Ensemble space, or one item in it, with other people who have an Ensemble account. A shared space is still the owner's: the work in it is shared, and everything private to the owner stays private. That covers their settings, model keys, connected apps, computers, Today and metrics. Single items (a page, a diagram, a plot space…) open on their own, without the rest of the space. A few harmless items can also be opened by **anyone with the link**, no account needed (§9).
 
 The rules are enforced in `apps/hub-api/src/sharing/`. The Hub side is `apps/hub-web/components/sharing/`, `app/(hub)/shared`, `app/shared/[id]`, and Settings › Sharing (`components/settings/tab-sharing.tsx`).
 
@@ -122,7 +122,7 @@ Also new: `GET /api/skills/:id`.
 
 ## 7. The Hub
 
-- **Share** buttons: pages, tasks, diagrams, plot spaces, skills, meeting notes, the board, the workspace tab and Code. The space itself is shared from the space switcher (**Share ‹space›…**) and Settings › Sharing. The dialog (`share-dialog.tsx`) searches people as you type, sets the role, lists who has access with each person's own link, shows the "1 of 2 members" and "3 of 5 contacts" meters, and explains what they get and what stays private.
+- **Share** buttons: pages, tasks, diagrams, plot spaces, skills, meeting notes, the board, the workspace tab and Code. On a task peek the Share icon sits in the header next to close; on full pages it is at the top right. The space itself is shared from the space switcher (**Share ‹space›…**) and Settings › Sharing. The dialog (`share-dialog.tsx`) searches people as you type, sets the role, lists who has access with each person's own link, shows the "1 of 2 members" and "3 of 5 contacts" meters, and explains what they get and what stays private.
 - **Space switcher**: a **Shared with you** section with the owner's avatar; the open shared space reads "‹name› (shared)", and the top bar says "Shared by Mira · Can edit".
 - **In a space shared with you**: no Today, Metrics, Fetch now, layout editing, kill switch, Connections or Data settings; the board is home. Viewers get read-only pages, tasks, diagrams and plots. Settings acts on your own account and says so.
 - **`/shared`**: everything shared with you, with a "New" mark until opened. The sidebar link appears when there is something.
@@ -131,9 +131,26 @@ Also new: `GET /api/skills/:id`.
 
 ## 8. Data
 
-Migration `20261008160000_sharing`: tables `contacts`, `space_members`, `shares`, `space_transfers`; columns `workspace_jobs.runner_account_id`, `assistant_conversations.account_id`, `undo_entries.actor_account_id`, `page_discussions.author_account_id`. Every foreign key to `users` cascades, so deleting an account or a space removes its memberships, shares and contacts. The data export includes your contacts, memberships and shares.
+Migration `20261008190000_public_links_avatars` adds `public_links` and `users.avatar`. Migration `20261008160000_sharing`: tables `contacts`, `space_members`, `shares`, `space_transfers`; columns `workspace_jobs.runner_account_id`, `assistant_conversations.account_id`, `undo_entries.actor_account_id`, `page_discussions.author_account_id`. Every foreign key to `users` cascades, so deleting an account or a space removes its memberships, shares and contacts. The data export includes your contacts, memberships and shares.
 
-## 9. Not covered
+## 9. Anyone with the link
+
+Built 8 Oct 2026; checked with `src/sharing/links.integration.test.ts` and in the browser.
+
+- **What can be public:** pages, tasks, diagrams and meeting notes (`PUBLIC_KINDS` in `sharing/context.ts`). A whole space, the board, plots, skills, the workspace, code and runs never: they reach other people's data, computers or code. Meeting notes are view only.
+- **Roles:** *Can view*, or *Can edit*. Edit means the item's content (a page's text and title, a task's page, a diagram), never a task's properties, comments, history restore or the assistant (`LINK_RULES` in `policy.ts`).
+- **Limit:** 5 public links per account for now (`MAX_PUBLIC_LINKS` in `sharing/links.ts`). One link per item. Only the space's owner makes them.
+- **The address** is `/p/<token>` (a random 32-character token). *New link* gives the item a new address and the old one stops working at once; turning the link off does the same. Settings › Sharing › Public links lists them with how often each was opened.
+- **People without an account** get a creature name and emoji from the browser's visitor id (`sharing/visitors.ts`), for example "Curious Otter 🦦". Everyone on the item sees them in the avatars and, on a diagram, their cursor. Signed-in people opening someone's link appear under their own name; the owner opening their own link is simply in their space.
+- **What a visitor can't do:** reach anything else in the space, see comments or who else it is shared with, call a model, leave undo history, or show where else they are. Requests are counted per address (`ENSEMBLE_RATE_LINK_READ_LIMIT`, default 900 a minute, and `ENSEMBLE_RATE_LINK_WRITE_LIMIT`, default 120).
+- **How it works:** the page sends `x-ensemble-link` and `x-ensemble-visitor` headers (`setOpenLink` in `lib/api.ts`). `identify()` resolves them to `access: { kind: "link" }` with the visitor's own id (`visitor:…`, never a users row), and the gate applies `linkDecision`.
+- **Routes:** `GET /api/links` (yours), `GET /api/links/item?kind=&resourceId=`, `POST /api/links` `{ kind, resourceId, role }` (turn on or change role; 409 past 5, 400 for a kind that can't be public), `DELETE /api/links/:id`, `POST /api/links/:id/rotate`, and `GET /api/links/open` for whoever holds the link.
+
+## 10. Avatars
+
+Everyone can pick a picture avatar in Settings › Account › Avatar: 15 per profession (5 women, 5 men, 5 gender-neutral) for engineers, lawyers, teachers, students, managers and makers. The set for your signup role is shown first, with your profile's gender group first. They are drawn as SVG from their id (`role.gender.n`, `packages/shared-types/src/avatars.ts`, `components/avatars/persona.tsx`), stored on `users.avatar`, and saved with `PATCH /api/auth/me { avatar }`. Without one you keep your initials. Avatars show in the top bar, presence, the share dialog, contacts, comments and board cards.
+
+## 11. Not covered
 
 - The CLI, `ensemble mcp`, the Context Bridge and the desktop app do not know about sharing. Tokens and service calls always act as the space they belong to, never as a guest.
 - Answering a run's question from a phone (remote answers) works for your own spaces only.

@@ -15,6 +15,8 @@ import { deleteAccountData, exportAccountData } from "../lib/account-data.js";
 import { revokePairedDevice } from "../devices/revoke.js";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings, saveSettings } from "../lib/settings.js";
+import { isAvatarId } from "@ensemble/shared-types";
+import { forgetPerson } from "../sharing/presence.js";
 
 const Credentials = z.object({
   email: z.string().trim().toLowerCase().email("Enter a valid email address."),
@@ -58,10 +60,12 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     profession: string | null;
     organization: string | null;
     heardFrom: string | null;
+    avatar?: string | null;
   }) => ({
     id: user.id,
     email: user.email,
     name: user.name,
+    avatar: user.avatar ?? null,
     emailVerified: Boolean(user.emailVerifiedAt),
     hasPassword: Boolean(user.passwordHash),
     profile: profileView(user),
@@ -191,7 +195,13 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
   app.patch("/api/auth/me", async (request, reply) => {
     const body = z
-      .object({ name: z.string().trim().max(80).optional(), password: Credentials.shape.password.optional(), current: z.string().max(256).optional() })
+      .object({
+        name: z.string().trim().max(80).optional(),
+        password: Credentials.shape.password.optional(),
+        current: z.string().max(256).optional(),
+        /** A picture avatar id, or null for initials. */
+        avatar: z.string().max(40).refine(isAvatarId, "Pick one of the avatars.").nullable().optional(),
+      })
       .parse(request.body);
     const user = await prisma.user.findUniqueOrThrow({ where: { id: accountIdOf(request) } });
     if (body.password) {
@@ -202,8 +212,9 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     }
     const updated = await prisma.user.update({
       where: { id: user.id },
-      data: { name: body.name, ...(body.password ? { passwordHash: await hashPassword(body.password) } : {}) },
+      data: { name: body.name, ...(body.avatar !== undefined ? { avatar: body.avatar } : {}), ...(body.password ? { passwordHash: await hashPassword(body.password) } : {}) },
     });
+    if (body.avatar !== undefined || body.name !== undefined) forgetPerson(user.id);
     if (body.password) {
       await prisma.session.deleteMany({ where: { userId: user.id } });
       await startSession(reply, user.id, request);

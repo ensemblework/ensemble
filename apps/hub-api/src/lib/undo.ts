@@ -15,7 +15,7 @@ import { Settings } from "@ensemble/shared-types";
 import { appendLedger } from "./ledger.js";
 import { sseHub } from "./sse.js";
 import { lockUserTransaction } from "./user-lock.js";
-import { actorFor } from "../sharing/context.js";
+import { actorFor, isVisitor } from "../sharing/context.js";
 
 export type UndoModel =
   | "task"
@@ -217,6 +217,8 @@ async function writeEntry(
   await lockUserTransaction(db, input.userId);
   // Each person in a space has their own undo history (null: the owner).
   const actorAccountId = actorFor(input.userId);
+  // Someone on a public link with no account has no undo history (and no users row to point at).
+  if (isVisitor(actorAccountId)) return randomUUID();
   await db.undoEntry.deleteMany({ where: { userId: input.userId, actorAccountId, undoneAt: { not: null } } });
   const last = await db.undoEntry.findFirst({ where: { userId: input.userId }, orderBy: { seq: "desc" }, select: { seq: true } });
   const seq = (last?.seq ?? 0n) + 1n;

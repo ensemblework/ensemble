@@ -1973,8 +1973,15 @@ select:focus-visible {
 }
 
 .app-sidebar {
-  width: 192px;
+  position: relative;
+  width: var(--sidebar-w, 192px);
 }
+/* Drag the right edge to resize; double-click resets. Hidden in the rail. */
+.sidebar-resize { position: absolute; top: 0; right: -3px; bottom: 0; z-index: 30; width: 6px; cursor: col-resize; }
+.sidebar-resize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 2px; width: 2px; background: transparent; transition: background 120ms ease; }
+.sidebar-resize:hover::after, .sidebar-resize[data-active]::after { background: rgb(var(--accent-rgb) / 0.45); }
+html[data-sidebar="rail"] .sidebar-resize { display: none; }
+body[data-sidebar-resizing], body[data-sidebar-resizing] * { cursor: col-resize !important; user-select: none !important; }
 html[data-sidebar="rail"] .app-sidebar {
   width: 56px;
 }
@@ -2071,6 +2078,8 @@ html[data-sidebar="rail"] .sidebar-brand-rail { display: block; }
   letter-spacing: 0.02em;
   transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
 }
+.account-avatar > svg { border-radius: 999px; }
+.account-avatar:has(> svg) { overflow: hidden; border-color: transparent; }
 button.account-avatar:hover,
 button.account-avatar[aria-expanded="true"] {
   border-color: var(--muted);

@@ -9,11 +9,12 @@ import { useEffect, useState } from "react";
 import type { AppearanceSettings } from "@ensemble/shared-types";
 import { api } from "@/lib/api";
 import { personInitials } from "@/lib/initials";
+import { PersonaAvatar } from "@/components/avatars/persona";
 import { APPEARANCE_KEY, DEFAULT_APPEARANCE, publishAppearance, usePersistentState } from "@/lib/prefs";
 import { SHELL_USER_KEY, clearBrowserTabSession } from "@/lib/tab-session";
 import { Popover } from "../ui";
 
-type RememberedUser = { name: string; email: string; via: string };
+type RememberedUser = { name: string; email: string; via: string; avatar?: string | null };
 
 /** The last shell user for this tab, so the initials paint before the shell request returns. */
 function readRememberedUser(): RememberedUser | null {
@@ -53,7 +54,7 @@ export function AccountMenu() {
       setRemembered(readRememberedUser());
       return;
     }
-    const next = { name: me.user.name, email: me.user.email, via: me.via };
+    const next = { name: me.user.name, email: me.user.email, via: me.via, avatar: me.user.avatar ?? null };
     try {
       sessionStorage.setItem(SHELL_USER_KEY, JSON.stringify(next));
     } catch {
@@ -92,7 +93,7 @@ export function AccountMenu() {
           className="account-avatar"
           data-account-avatar
         >
-          {initials || <UserRound size={14} aria-hidden />}
+          {user?.avatar ? <PersonaAvatar id={user.avatar} size={28} /> : initials || <UserRound size={14} aria-hidden />}
         </button>
       )}
     >
@@ -100,7 +101,7 @@ export function AccountMenu() {
         <div role="menu" aria-label="Account" className="p-1">
           <div className="flex items-center gap-2.5 px-2 pb-2 pt-1.5">
             <span className="account-avatar account-avatar-lg" aria-hidden>
-              {initials || <UserRound size={16} />}
+              {user?.avatar ? <PersonaAvatar id={user.avatar} size={36} /> : initials || <UserRound size={16} />}
             </span>
             <div className="min-w-0">
               <div className="truncate text-[13.5px] font-semibold">{name || "Your account"}</div>

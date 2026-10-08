@@ -24,7 +24,7 @@ export class SharingError extends Error {
   }
 }
 
-export type Person = { id: string; name: string; initials: string; email: string; exact: boolean; contact: boolean };
+export type Person = { id: string; name: string; initials: string; avatar: string | null; email: string; exact: boolean; contact: boolean };
 
 export function initialsOf(name: string, email: string): string {
   const words = name.trim().split(/\s+/).filter(Boolean);
@@ -85,7 +85,7 @@ export async function searchPeople(db: Db, accountId: string, rawQuery: string):
         { authIdentities: { some: { email: { equals: lower, mode: "insensitive" } } } },
       ],
     },
-    select: { id: true, name: true, email: true, authIdentities: { select: { email: true } } },
+    select: { id: true, name: true, email: true, avatar: true, authIdentities: { select: { email: true } } },
     take: 25,
   });
   const scored = rows.map((row) => {
@@ -95,7 +95,7 @@ export async function searchPeople(db: Db, accountId: string, rawQuery: string):
     const score = (contacts.has(row.id) ? 0 : 10) + (exact ? 0 : 5) + (name.toLowerCase().startsWith(lower) ? 0 : 2);
     return {
       score,
-      person: { id: row.id, name, initials: initialsOf(row.name, row.email), email: exact ? q : maskEmail(row.email), exact, contact: contacts.has(row.id) },
+      person: { id: row.id, name, initials: initialsOf(row.name, row.email), avatar: row.avatar ?? null, email: exact ? q : maskEmail(row.email), exact, contact: contacts.has(row.id) },
     };
   });
   return scored
@@ -123,14 +123,14 @@ export async function requireOwnedSpace(db: Db, accountId: string, spaceId: stri
   return space;
 }
 
-export type ContactRow = { id: string; name: string; initials: string; email: string; spaces: number; items: number; addedAt: string };
+export type ContactRow = { id: string; name: string; initials: string; avatar: string | null; email: string; spaces: number; items: number; addedAt: string };
 
 export async function listContacts(db: Db, accountId: string): Promise<ContactRow[]> {
   const spaces = await ownedSpaceIds(db, accountId);
   const rows = await db.contact.findMany({
     where: { ownerId: accountId },
     orderBy: { createdAt: "asc" },
-    select: { createdAt: true, contact: { select: { id: true, name: true, email: true } } },
+    select: { createdAt: true, contact: { select: { id: true, name: true, email: true, avatar: true } } },
   });
   const out: ContactRow[] = [];
   for (const row of rows) {
@@ -141,7 +141,7 @@ export async function listContacts(db: Db, accountId: string): Promise<ContactRo
     out.push({
       id: row.contact.id,
       name: displayName(row.contact.name, row.contact.email),
-      initials: initialsOf(row.contact.name, row.contact.email),
+      initials: initialsOf(row.contact.name, row.contact.email), avatar: row.contact.avatar ?? null,
       email: maskEmail(row.contact.email),
       spaces: members,
       items,
@@ -176,18 +176,18 @@ export async function removeContact(db: PrismaClient, accountId: string, personI
   });
 }
 
-export type MemberRow = { id: string; name: string; initials: string; email: string; role: "viewer" | "editor"; addedAt: string };
+export type MemberRow = { id: string; name: string; initials: string; avatar: string | null; email: string; role: "viewer" | "editor"; addedAt: string };
 
 export async function listMembers(db: Db, spaceId: string): Promise<MemberRow[]> {
   const rows = await db.spaceMember.findMany({
     where: { spaceId },
     orderBy: { createdAt: "asc" },
-    select: { role: true, createdAt: true, account: { select: { id: true, name: true, email: true } } },
+    select: { role: true, createdAt: true, account: { select: { id: true, name: true, email: true, avatar: true } } },
   });
   return rows.map((row) => ({
     id: row.account.id,
     name: displayName(row.account.name, row.account.email),
-    initials: initialsOf(row.account.name, row.account.email),
+    initials: initialsOf(row.account.name, row.account.email), avatar: row.account.avatar ?? null,
     email: maskEmail(row.account.email),
     role: row.role === "viewer" ? "viewer" : "editor",
     addedAt: row.createdAt.toISOString(),
@@ -275,17 +275,17 @@ export async function resourceTitle(db: Db, spaceId: string, kind: ShareKind, id
   }
 }
 
-export type ShareRow = { id: string; person: { id: string; name: string; initials: string; email: string }; role: "view" | "edit"; createdAt: string };
+export type ShareRow = { id: string; person: { id: string; name: string; initials: string; avatar: string | null; email: string }; role: "view" | "edit"; createdAt: string };
 
 export async function listItemShares(db: Db, spaceId: string, kind: ShareKind, resourceId: string): Promise<ShareRow[]> {
   const rows = await db.share.findMany({
     where: { spaceId, kind, resourceId },
     orderBy: { createdAt: "asc" },
-    select: { id: true, role: true, createdAt: true, recipient: { select: { id: true, name: true, email: true } } },
+    select: { id: true, role: true, createdAt: true, recipient: { select: { id: true, name: true, email: true, avatar: true } } },
   });
   return rows.map((row) => ({
     id: row.id,
-    person: { id: row.recipient.id, name: displayName(row.recipient.name, row.recipient.email), initials: initialsOf(row.recipient.name, row.recipient.email), email: maskEmail(row.recipient.email) },
+    person: { id: row.recipient.id, name: displayName(row.recipient.name, row.recipient.email), initials: initialsOf(row.recipient.name, row.recipient.email), avatar: row.recipient.avatar ?? null, email: maskEmail(row.recipient.email) },
     role: row.role === "edit" ? "edit" : "view",
     createdAt: row.createdAt.toISOString(),
   }));
@@ -336,8 +336,8 @@ export async function deleteShare(db: PrismaClient, accountId: string, shareId: 
 }
 
 export type SharedWithMe = {
-  spaces: Array<{ id: string; name: string; icon: string | null; owner: { id: string; name: string; initials: string }; role: "viewer" | "editor"; since: string }>;
-  items: Array<{ id: string; kind: ShareKind; title: string; role: "view" | "edit"; owner: { id: string; name: string; initials: string }; spaceName: string; since: string; openedAt: string | null }>;
+  spaces: Array<{ id: string; name: string; icon: string | null; owner: { id: string; name: string; initials: string; avatar: string | null }; role: "viewer" | "editor"; since: string }>;
+  items: Array<{ id: string; kind: ShareKind; title: string; role: "view" | "edit"; owner: { id: string; name: string; initials: string; avatar: string | null }; spaceName: string; since: string; openedAt: string | null }>;
 };
 
 export async function sharedWithMe(db: Db, accountId: string): Promise<SharedWithMe> {
@@ -355,12 +355,12 @@ export async function sharedWithMe(db: Db, accountId: string): Promise<SharedWit
   ]);
   const ownerIds = [...new Set([...members.map((row) => row.space.ownerId ?? row.space.id), ...shares.map((row) => row.space.ownerId ?? row.space.id)])];
   const owners = new Map(
-    (await db.user.findMany({ where: { id: { in: ownerIds } }, select: { id: true, name: true, email: true } })).map((row) => [
+    (await db.user.findMany({ where: { id: { in: ownerIds } }, select: { id: true, name: true, email: true, avatar: true } })).map((row) => [
       row.id,
-      { id: row.id, name: displayName(row.name, row.email), initials: initialsOf(row.name, row.email) },
+      { id: row.id, name: displayName(row.name, row.email), initials: initialsOf(row.name, row.email), avatar: row.avatar ?? null },
     ]),
   );
-  const ownerOf = (space: { id: string; ownerId: string | null }) => owners.get(space.ownerId ?? space.id) ?? { id: space.ownerId ?? space.id, name: "Someone", initials: "?" };
+  const ownerOf = (space: { id: string; ownerId: string | null }) => owners.get(space.ownerId ?? space.id) ?? { id: space.ownerId ?? space.id, name: "Someone", initials: "?", avatar: null };
   return {
     spaces: members.map((row) => ({
       id: row.space.id,

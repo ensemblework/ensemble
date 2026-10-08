@@ -15,7 +15,7 @@ import { enforceHostedRequest, requireVerifiedUser } from "./lib/hosted-access.j
 import { isPublicAuthPath } from "./lib/auth-public.js";
 import { corsPluginOptions, type CorsPolicy } from "./lib/cors-origin.js";
 import { hubCorsPolicy } from "./lib/hub-cors.js";
-import { consumeRateLimit, rateLimiter, rateLimitConfig } from "./lib/rate-limit.js";
+import { consumeRateLimit, linkRateLimit, rateLimiter, rateLimitConfig } from "./lib/rate-limit.js";
 import { redactRequestUrl, redactText } from "./lib/redact.js";
 import { prisma } from "./lib/prisma.js";
 import { redis } from "./lib/redis.js";
@@ -135,7 +135,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
       request.userId = who.userId;
       request.tokenId = who.tokenId;
     }
-    const limited = consumeRateLimit(rateLimiter, request, path, rateLimitConfig());
+    const limited = consumeRateLimit(rateLimiter, request, path, rateLimitConfig()) ?? (who?.via === "link" ? linkRateLimit(rateLimiter, request) : null);
     if (limited) {
       reply.header("Retry-After", String(limited.retryAfterSeconds));
       return reply.code(429).send({ error: limited.error });

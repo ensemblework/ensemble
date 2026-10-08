@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { classify, memberDecision, SHARE_RULE_TABLE, shareDecision, VIEW_ONLY_KINDS } from "./policy.js";
+import { classify, LINK_RULE_TABLE, linkDecision, memberDecision, SHARE_RULE_TABLE, shareDecision, VIEW_ONLY_KINDS } from "./policy.js";
 import { delivers } from "../lib/sse.js";
 
 type Row = { method: string; path: string; mode: string };
@@ -121,4 +121,16 @@ test("masked emails tell same-name people apart without giving the address away"
   assert.equal(maskEmail("akash.one@example.test"), "ak••••••e@example.test");
   assert.equal(maskEmail("akash.two@example.test"), "ak••••••o@example.test");
   assert.equal(maskEmail("ben@example.test"), "b•••@example.test");
+});
+
+test("every public link rule names a route that exists, and links never reach comments or the assistant", () => {
+  for (const [kind, rules] of Object.entries(LINK_RULE_TABLE)) {
+    for (const rule of rules) assert.ok(hosted.has(`${rule.method} ${rule.url}`), `${kind}: ${rule.method} ${rule.url} is not a route`);
+  }
+  const access = { resource: "page" as const, resourceId: "p1", role: "edit" as const };
+  const input = { params: { kind: "page", id: "p1" }, query: {}, body: undefined };
+  assert.equal(linkDecision(access, "GET", "/api/pages/:kind/:id/comments", input).allow, false);
+  assert.equal(linkDecision(access, "POST", "/api/assistant/turn", input).allow, false);
+  assert.equal(linkDecision(access, "GET", "/api/notifications", input).allow, false, "no personal routes without an account");
+  assert.equal(linkDecision(access, "PUT", "/api/pages/:id", { ...input, params: { id: "p1" } }).allow, true);
 });

@@ -11,12 +11,33 @@ import { AsyncLocalStorage } from "node:async_hooks";
 export const SHARE_KINDS = ["page", "task", "board", "diagram", "plot_space", "plot", "meeting", "skill", "workspace", "code"] as const;
 export type ShareKind = (typeof SHARE_KINDS)[number];
 
+/**
+ * What anyone with a link may open, with no account. A whole space never; nor anything that
+ * runs on someone's computer, holds code, or reaches connected apps.
+ */
+export const PUBLIC_KINDS = ["page", "task", "diagram", "meeting"] as const;
+export type PublicKind = (typeof PUBLIC_KINDS)[number];
+/** Public kinds that are only ever view-only by link. */
+export const PUBLIC_VIEW_ONLY: ReadonlySet<PublicKind> = new Set(["meeting"]);
+
+/** Who is on a public link: a signed-in person, or an anonymous visitor named by `sharing/visitors.ts`. */
+export type LinkVisitor = { id: string; name: string; emoji: string | null; color: string; signedIn: boolean };
+
 export type Access =
   | { kind: "owner" }
   | { kind: "member"; role: "viewer" | "editor"; ownerId: string }
   | { kind: "share"; shareId: string; resource: ShareKind; resourceId: string; role: "view" | "edit"; ownerId: string }
+  /** Anyone with a public link, signed in or not. */
+  | { kind: "link"; linkId: string; resource: PublicKind; resourceId: string; role: "view" | "edit"; ownerId: string; visitor: LinkVisitor }
   /** A share header that names nothing this account can open. Every route answers 404. */
   | { kind: "gone" };
+
+/** Account ids of anonymous link visitors start with this; they are never a `users` row. */
+export const VISITOR_PREFIX = "visitor:";
+
+export function isVisitor(accountId: string | null | undefined): boolean {
+  return Boolean(accountId?.startsWith(VISITOR_PREFIX));
+}
 
 export type RequestScope = { spaceId: string; accountId: string; access: Access };
 

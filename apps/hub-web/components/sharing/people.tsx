@@ -9,8 +9,12 @@ import { followStore, useFollowing } from "@/lib/follow";
 import { people, usePresence } from "@/lib/presence";
 import { Popover } from "@/components/ui";
 import { useToast } from "@/components/toast";
+import { PersonaAvatar } from "@/components/avatars/persona";
 
-/** Round initials in a person's colour. `ring` marks someone live right now. */
+/**
+ * A person: their picture avatar, an anonymous visitor's creature, or initials in their colour.
+ * `ring` marks someone live right now.
+ */
 export function Avatar({
   person,
   color,
@@ -18,13 +22,33 @@ export function Avatar({
   ring = false,
   title,
 }: {
-  person: Pick<SharingPerson, "name" | "initials">;
+  person: Pick<SharingPerson, "name" | "initials"> & { avatar?: string | null; emoji?: string | null };
   color?: string;
   size?: number;
   ring?: boolean;
   title?: string;
 }) {
   const tint = color ?? "var(--ink)";
+  const shadow = ring ? `0 0 0 2px var(--bg), 0 0 0 3.5px ${tint}` : undefined;
+  if (person.avatar) {
+    return (
+      <span title={title ?? person.name} aria-label={person.name} className="inline-flex shrink-0 rounded-full" style={{ width: size, height: size, boxShadow: shadow }}>
+        <PersonaAvatar id={person.avatar} size={size} />
+      </span>
+    );
+  }
+  if (person.emoji) {
+    return (
+      <span
+        title={title ?? person.name}
+        aria-label={person.name}
+        className="inline-flex shrink-0 select-none items-center justify-center rounded-full leading-none"
+        style={{ width: size, height: size, fontSize: Math.round(size * 0.58), background: `color-mix(in srgb, ${tint} 22%, var(--raised))`, boxShadow: shadow ?? `inset 0 0 0 1.5px ${tint}` }}
+      >
+        {person.emoji}
+      </span>
+    );
+  }
   return (
     <span
       title={title ?? person.name}

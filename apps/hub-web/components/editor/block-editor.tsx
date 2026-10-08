@@ -4,7 +4,7 @@ import { EditorContent, useEditor, type Editor, type JSONContent } from "@tiptap
 import dynamic from "next/dynamic";
 import { useEffect, useState, useRef } from "react";
 import type { PageDocument, PageMention } from "@ensemble/shared-types";
-import { api, currentShare } from "@/lib/api";
+import { api, currentLink, inItemView } from "@/lib/api";
 import { diagramMentionIds, editorExtensions, type EntitySource } from "./extensions";
 import { useModuleState } from "@/lib/use-module";
 import { useToast } from "../toast";
@@ -95,7 +95,7 @@ export function BlockEditor({
   function syncDiagramLinks(doc: PageDocument) {
     const current = pageRef.current;
     // Diagram links are space-wide; one shared page cannot rewrite them.
-    if (!current || !diagramsRef.current || currentShare()) return;
+    if (!current || !diagramsRef.current || inItemView()) return;
     const ids = diagramMentionIds(doc);
     const key = `${current.kind}:${current.id}:${ids.join(",")}`;
     if (linked.current === key) return;
@@ -138,7 +138,8 @@ export function BlockEditor({
     <div className={page ? "comment-host" : undefined}>
       <div className={page ? "page-with-comments" : undefined}>
         <EditorContent editor={editor} />
-        {page && live ? <CommentLayer editor={live} pageKind={page.kind} pageId={page.id} /> : null}
+        {/* Comments name people: never on a public link. */}
+        {page && live && !currentLink() ? <CommentLayer editor={live} pageKind={page.kind} pageId={page.id} /> : null}
       </div>
     </div>
   );

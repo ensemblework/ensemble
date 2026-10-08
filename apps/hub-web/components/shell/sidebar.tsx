@@ -30,6 +30,7 @@ import { prefetchHref } from "@/lib/prefetch";
 import { toggleSidebarRail } from "@/lib/sidebar-rail";
 import { useModKey } from "@/lib/platform";
 import { SpaceSwitcher } from "./space-switcher";
+import { SidebarResize } from "./sidebar-resize";
 import { PagesNav } from "@/components/pages/pages-nav";
 import { useLive } from "../live";
 import { cx } from "../ui";
@@ -174,6 +175,7 @@ export function Sidebar() {
   const unopened = withMe.data?.items.filter((item) => !item.openedAt).length ?? 0;
   return (
     <aside className="app-sidebar flex h-full shrink-0 flex-col border-r border-line bg-sidebar/90">
+      <SidebarResize />
       <div className="px-2 pb-2 pt-3">
         <SpaceSwitcher />
       </div>
