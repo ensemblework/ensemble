@@ -3,15 +3,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { PageHeader, SkeletonRows } from "@/components/ui";
 import { ImportedMeetingNotes } from "@/components/meetings/imported-notes";
 import { useToast } from "@/components/toast";
 import { api } from "@/lib/api";
-import { ShareButton } from "@/components/sharing/share-dialog";
+import { MeetingNotesFields } from "@/components/meetings/notes-fields";
 import { whenLabel } from "@/lib/format";
-import { ExportMenu } from "@/components/export-menu";
-import { meetingDoc } from "@/lib/export/items";
 
 function MeetingsBody() {
   const params = useSearchParams();
@@ -21,8 +19,7 @@ function MeetingsBody() {
   const list = useQuery({ queryKey: ["meeting-sessions"], queryFn: api.meetingSessions });
   const [active, setActive] = useState(selected ?? "");
   const [question, setQuestion] = useState("");
-  const saveTimer = useRef(0);
-  const [notes, setNotes] = useState("");
+
   useEffect(() => {
     if (selected) setActive(selected);
   }, [selected]);
@@ -31,9 +28,6 @@ function MeetingsBody() {
     queryFn: () => api.meetingSession(active),
     enabled: Boolean(active),
   });
-  useEffect(() => {
-    setNotes(detail.data?.session.notes ?? "");
-  }, [detail.data?.session.id, detail.data?.session.notes]);
 
   const summarize = useMutation({
     mutationFn: () => api.summarizeMeetings(question),
@@ -145,31 +139,7 @@ function MeetingsBody() {
         </ul>
         {session ? (
           <article>
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="text-[18px] font-semibold">{session.title}</h2>
-              <div className="flex items-center gap-1">
-                <ExportMenu load={() => meetingDoc({ ...session, notes })} />
-                <ShareButton target={{ kind: "meeting", resourceId: session.id, title: session.title }} />
-              </div>
-            </div>
-            <p className="mt-1 text-[12px] text-muted">{list.data?.voice}</p>
-            <label className="mt-3 block">
-              <span className="text-[12px] font-medium text-muted">Notes</span>
-              <textarea
-                value={notes}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  const id = active;
-                  setNotes(value);
-                  window.clearTimeout(saveTimer.current);
-                  saveTimer.current = window.setTimeout(() => {
-                    if (id) void api.saveMeetingNotes(id, value).catch((error: Error) => toast(error.message, { tone: "error" }));
-                  }, 600);
-                }}
-                rows={8}
-                className="field mt-1 w-full"
-              />
-            </label>
+            <MeetingNotesFields key={session.id} session={session} onRemoved={() => setActive("")} />
             <div className="mt-3 flex flex-wrap gap-2">
               {session.status !== "ended" ? (
                 <button type="button" className="btn" onClick={() => end.mutate()}>

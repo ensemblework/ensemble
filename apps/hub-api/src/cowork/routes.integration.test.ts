@@ -150,7 +150,8 @@ test("capture, brief, ask, nudges, meetings, and weekly recap", async (t) => {
     const cue = cueBody.cues.find((row) => row.title === "Design review");
     assert.ok(cue);
     assert.equal(cue.kind, "prep");
-    assert.match(cueBody.voice, /TODO: voice notes/);
+    assert.match(cueBody.voice, /Microphone recording is not available yet/);
+    assert.doesNotMatch(cueBody.voice, /TODO/i);
     assert.ok(cue.decisions.some((row) => /decided/i.test(row.text)));
 
     const started = await app.inject({ method: "POST", url: "/api/meetings/sessions", payload: { artifactId: event.id } });

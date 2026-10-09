@@ -20,6 +20,7 @@ import {
   Users,
   UsersRound,
 } from "lucide-react";
+import { HomeLogoLink } from "../motion/brand-morph";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
@@ -117,7 +118,7 @@ function NavItem({
   );
 }
 
-export function Sidebar() {
+export function Sidebar({ mobile = false }: { mobile?: boolean }) {
   const { connected } = useLive();
   const mod = useModKey();
   const client = useQueryClient();
@@ -174,8 +175,9 @@ export function Sidebar() {
   const sharedCount = (withMe.data?.spaces.length ?? 0) + (withMe.data?.items.length ?? 0);
   const unopened = withMe.data?.items.filter((item) => !item.openedAt).length ?? 0;
   return (
-    <aside className="app-sidebar flex h-full shrink-0 flex-col border-r border-line bg-sidebar/90">
-      <SidebarResize />
+    <aside className={cx("app-sidebar flex h-full shrink-0 flex-col border-r border-line bg-sidebar/90", mobile && "sidebar-mobile")}>
+      {mobile ? null : <SidebarResize />}
+      <HomeLogoLink size={24} railSize={24} className="sidebar-brand mx-2 mt-3 flex min-h-10 items-center gap-2 rounded-lg px-2 font-semibold" />
       <div className="px-2 pb-2 pt-3">
         <SpaceSwitcher />
       </div>

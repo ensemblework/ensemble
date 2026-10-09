@@ -90,6 +90,7 @@ const DELEGATE: Record<UndoModel, string> = {
 
 const TRASHABLE = new Set<UndoModel>([
   "task",
+  "taskPage",
   "project",
   "deliverable",
   "person",

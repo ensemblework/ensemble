@@ -212,7 +212,7 @@ export async function loadOpenPage(
   const noteId = !taskId && page.path.startsWith("/pages/") ? page.path.split("/").filter(Boolean)[1] : undefined;
   if (noteId && noteId !== "_") {
     const note = await prisma.taskPage.findFirst({
-      where: { id: noteId, userId, taskId: null },
+      where: { id: noteId, userId, taskId: null, deletedAt: null },
       select: { id: true, title: true, content: true, searchText: true },
     });
     if (note) {

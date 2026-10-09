@@ -144,7 +144,7 @@ export default function MetricsPage() {
         title="Metrics"
         description="Calls, models, tokens and estimated cost over the last 14 days. Dollar amounts use published list prices when we know them. Token counts are what the provider returned."
         actions={
-          <select value={provider} onChange={(event) => setProvider(event.target.value)} className="field">
+          <select aria-label="Provider" value={provider} onChange={(event) => setProvider(event.target.value)} className="field">
             <option value="all">All providers</option>
             {(data?.providers ?? []).filter((name) => name !== "unknown").map((name) => (
               <option key={name} value={name}>

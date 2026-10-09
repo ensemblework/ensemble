@@ -14,6 +14,7 @@ export type ShapeNodeData = {
   shape: ShapeId;
   color: string | null;
   locked: boolean;
+  readOnly?: boolean;
   width: number;
   height: number;
   onRename: (label: string) => void;
@@ -23,6 +24,7 @@ export type ShapeNodeData = {
 export type TextNodeData = {
   text: string;
   locked: boolean;
+  readOnly?: boolean;
   width: number;
   height: number;
   onRename: (label: string) => void;
@@ -75,7 +77,7 @@ export function ShapeNode({ data, selected }: NodeProps<Node<ShapeNodeData>>) {
         style={{ padding: labelPadding(data.shape, data.width, data.height), color: paint.text }}
         onDoubleClick={(event) => {
           event.stopPropagation();
-          setEditing(true);
+          if (!data.readOnly) setEditing(true);
         }}
       >
         {editing ? (
@@ -136,7 +138,7 @@ export function TextNode({ data, selected }: NodeProps<Node<TextNodeData>>) {
       style={{ width: data.width, height: data.height }}
       onDoubleClick={(event) => {
         event.stopPropagation();
-        setEditing(true);
+        if (!data.readOnly) setEditing(true);
       }}
     >
       {editing ? (

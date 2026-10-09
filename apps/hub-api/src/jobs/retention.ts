@@ -5,6 +5,7 @@
 import type { FastifyInstance } from "fastify";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { appendLedger } from "../lib/ledger.js";
+import { purgeDeletedStandalonePages } from "../pages/store.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -154,6 +155,7 @@ export async function runRetention(
 
 async function hardPurge(prisma: PrismaClient, userId: string, cutoff: Date): Promise<number> {
   const where = { userId, deletedAt: { lt: cutoff } };
+  const pages = await purgeDeletedStandalonePages(prisma, userId, cutoff);
   const counts = await prisma.$transaction([
     prisma.task.deleteMany({ where }),
     prisma.project.deleteMany({ where }),
@@ -170,7 +172,7 @@ async function hardPurge(prisma: PrismaClient, userId: string, cutoff: Date): Pr
     prisma.meetingSession.deleteMany({ where }),
     prisma.blockDiagram.deleteMany({ where }),
   ]);
-  return counts.reduce((sum: number, row: { count: number }) => sum + row.count, 0);
+  return pages + counts.reduce((sum: number, row: { count: number }) => sum + row.count, 0);
 }
 
 /** Fire reminders whose nextNotificationAt is due, including ones missed while the process was down. */

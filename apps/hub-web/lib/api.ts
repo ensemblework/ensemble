@@ -121,10 +121,10 @@ export function withShare<T>(share: string | null, fn: () => T): T {
   }
 }
 
-export async function request<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
-  const { json, signal: explicit, ...rest } = init ?? {};
+export async function request<T>(path: string, init?: RequestInit & { json?: unknown; surviveNavigation?: boolean }): Promise<T> {
+  const { json, signal: explicit, surviveNavigation, ...rest } = init ?? {};
   const external = explicit ?? currentExternalSignal();
-  const tracked = trackRequest(external, path);
+  const tracked = trackRequest(external, path, surviveNavigation);
   let response: Response;
   try {
     response = await fetch(`${API}${path}`, {
@@ -1286,7 +1286,9 @@ export const api = bindClient({
     get<{ session: MeetingSessionRecord; openTasks: Array<{ id: string; title: string; href: string }>; voice: string }>(`/api/meetings/sessions/${id}`),
   startMeeting: (artifactId: string | null, title?: string) =>
     post<{ session: MeetingSessionRecord }>("/api/meetings/sessions", { artifactId, title }),
-  saveMeetingNotes: (id: string, notes: string) => patch<{ session: MeetingSessionRecord }>(`/api/meetings/sessions/${id}`, { notes }),
+  updateMeeting: (id: string, data: { notes: string; title: string }) => request<{ session: MeetingSessionRecord }>(`/api/meetings/sessions/${id}`, { method: "PATCH", json: data, surviveNavigation: true }),
+  deleteMeeting: (id: string) => del<{ deleted: boolean }>(`/api/meetings/sessions/${id}`),
+  saveMeetingNotes: (id: string, notes: string) => request<{ session: MeetingSessionRecord }>(`/api/meetings/sessions/${id}`, { method: "PATCH", json: { notes }, surviveNavigation: true }),
   endMeeting: (id: string) => post<{ session: MeetingSessionRecord; askAttach: boolean }>(`/api/meetings/sessions/${id}/end`),
   attachMeeting: (id: string) => post<{ session: MeetingSessionRecord; message: string; calendarWrite: boolean }>(`/api/meetings/sessions/${id}/attach`),
   declineMeeting: (id: string) => post<{ session: MeetingSessionRecord }>(`/api/meetings/sessions/${id}/decline`),

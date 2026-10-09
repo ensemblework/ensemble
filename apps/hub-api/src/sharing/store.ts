@@ -240,7 +240,7 @@ export async function leaveSpace(db: PrismaClient, accountId: string, spaceId: s
 export async function resourceTitle(db: Db, spaceId: string, kind: ShareKind, id: string): Promise<string | null> {
   switch (kind) {
     case "page": {
-      const row = await db.taskPage.findFirst({ where: { id, userId: spaceId, taskId: null }, select: { title: true } });
+      const row = await db.taskPage.findFirst({ where: { id, userId: spaceId, taskId: null, deletedAt: null }, select: { title: true } });
       return row ? row.title || "Untitled" : null;
     }
     case "task": {

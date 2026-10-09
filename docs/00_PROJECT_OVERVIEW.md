@@ -204,6 +204,7 @@ type Skill = {
 > **Fields added on top of the core model:**
 >
 > - **Task:** `complexity` (`easy | medium | high | max`) + `complexitySource` (05 §3), `notes` (Markdown body), `deliverableId`, `skillIds` (03 §12), `todayFocus` (`auto | keep | hidden`, 02 §3.1), `boardOrder` (02 §3.2), `blockedQuestion` (05 §12), `completedAt` / `deletedAt` (07 §1.1), `sourceRef`.
+> - **TaskPage:** document content, revision, mentions and annotations; nullable `taskId` for standalone notes. `deletedAt` (migration `20261009073000_note_trash`) keeps deleted standalone notes recoverable through Trash; task documents follow their parent task. See [02 §13](02_MODULE_INTERACTION_HUB_UI.md#standalone-notes).
 > - **Run:** `outcome` also allows `needs_info` and `waiting_approval` (05 §12); `complexity`, `requestedModel`, `skillSignatures` (id, version, SHA-256), `checkpoint` (04 §4, 04 §10); per-step `model` and `credits` (01 §6.3).
 
 ---

@@ -921,7 +921,7 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
         prisma.projectPerson.findMany({ where: { project: { userId } }, select: { projectId: true, personId: true } }),
         prisma.projectRepo.findMany({ where: { project: { userId } }, select: { projectId: true, repoId: true } }),
         prisma.taskPageMention.findMany({
-          where: { page: { userId } },
+          where: { page: { userId, deletedAt: null, OR: [{ taskId: null }, { task: { deletedAt: null } }] } },
           select: { kind: true, entityId: true, page: { select: { taskId: true } } },
         }),
         prisma.meetingNote.findMany({

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { ApiError, api } from "./api";
-import { resetFetchCancelState, setPageUnloading } from "./fetch-cancel";
+import { abortAll, beginNavigation, resetFetchCancelState, setPageUnloading } from "./fetch-cancel";
 
 const OFFLINE = "Ensemble can't reach its server right now.";
 
@@ -75,5 +75,29 @@ test("Load failed while the document is unloading is a cancellation", async () =
   } finally {
     restore();
   }
+});
+
+test("meeting autosave survives SPA navigation while reads still cancel", async () => {
+  const calls: Array<{ signal: AbortSignal; resolve: (response: Response) => void }> = [];
+  const restore = installFetch(((_input: unknown, init?: RequestInit) => new Promise((resolve, reject) => {
+    const signal = init!.signal!;
+    calls.push({ signal, resolve });
+    signal.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true });
+  })) as typeof fetch);
+  try {
+    const saving = api.updateMeeting("meeting-1", { title: "Planning", notes: "Latest notes" });
+    const reading = api.health();
+    const cancelled = assert.rejects(reading, { name: "AbortError" });
+    beginNavigation();
+    assert.equal(calls[0]!.signal.aborted, false);
+    assert.equal(calls[1]!.signal.aborted, true);
+    calls[0]!.resolve(Response.json({ session: { title: "Planning", notes: "Latest notes" } }));
+    assert.equal((await saving).session.notes, "Latest notes");
+    await cancelled;
+    const nextSave = api.updateMeeting("meeting-1", { title: "Planning", notes: "More notes" });
+    const unloaded = assert.rejects(nextSave, { name: "AbortError" });
+    abortAll();
+    await unloaded;
+  } finally { restore(); }
 });
 });

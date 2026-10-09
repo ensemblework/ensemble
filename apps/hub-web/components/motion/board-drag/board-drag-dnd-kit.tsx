@@ -55,7 +55,7 @@ export function useBoardDragSensors() {
     useSensor(MouseSensor, { activationConstraint: { distance: BD.MOUSE.distance } }),
     // long-press so column/page scrolling still works; dnd-kit prevents touchmove once active
     useSensor(TouchSensor, { activationConstraint: { delay: BD.TOUCH.delay, tolerance: BD.TOUCH.tolerance } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates, keyboardCodes: { start: ["Space"], cancel: ["Escape"], end: ["Space"] } }),
   );
 }
 

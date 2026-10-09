@@ -20,6 +20,6 @@ function renderWidget(type: WidgetId, size: Size, placement?: Placement) {
   return null;
 }
 
-export function ContextCanvas({ initialLayout = null, belowHeader }: { initialLayout?: LayoutPayload | null; belowHeader?: ReactNode }) {
-  return <WidgetCanvas surface="context" title="Context" initialLayout={initialLayout} belowHeader={belowHeader} render={renderWidget} />;
+export function ContextCanvas({ initialLayout = null, belowHeader, panelId }: { initialLayout?: LayoutPayload | null; belowHeader?: ReactNode; panelId?: string }) {
+  return <WidgetCanvas surface="context" title="Context" initialLayout={initialLayout} belowHeader={belowHeader} panelId={panelId} render={renderWidget} />;
 }

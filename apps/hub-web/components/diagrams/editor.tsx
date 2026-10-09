@@ -63,10 +63,10 @@ const SHAPES: Array<{ shape: ShapeId; label: string }> = [
   { shape: "trapezoid", label: "Trapezoid" },
 ];
 
-function useRoomy(): boolean | null {
-  const [ok, setOk] = useState<boolean | null>(null);
+function useRoomy(): { width: number; height: number; ok: boolean } | null {
+  const [ok, setOk] = useState<{ width: number; height: number; ok: boolean } | null>(null);
   useEffect(() => {
-    const check = () => setOk(window.innerWidth >= MIN_VIEWPORT.width && window.innerHeight >= MIN_VIEWPORT.height);
+    const check = () => setOk({ width: window.innerWidth, height: window.innerHeight, ok: window.innerWidth >= MIN_VIEWPORT.width && window.innerHeight >= MIN_VIEWPORT.height });
     check();
     window.addEventListener("resize", check);
     return () => window.removeEventListener("resize", check);
@@ -89,10 +89,10 @@ function typingTarget(target: EventTarget | null): boolean {
 
 export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "view" | "edit" } }) {
   const access = useSpaceAccess();
-  const readOnly = shared ? shared.role !== "edit" : !access.canEdit;
+  const roomy = useRoomy();
+  const readOnly = roomy?.ok === false || (shared ? shared.role !== "edit" : !access.canEdit);
   const readOnlyRef = useRef(readOnly);
   readOnlyRef.current = readOnly;
-  const roomy = useRoomy();
   const toast = useToast();
   const client = useQueryClient();
   const query = useQuery({ queryKey: ["diagram", id], queryFn: () => api.diagram(id) });
@@ -554,25 +554,6 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
     }
   }
 
-  if (roomy === false) {
-    return (
-      <div className="flex h-full items-center justify-center px-6">
-        <div className="max-w-md text-center">
-          <h1 className="text-[22px] font-semibold tracking-tight">Screen too small</h1>
-          <p className="mt-2 text-[14px] leading-6 text-muted">
-            The diagram editor needs a window at least {MIN_VIEWPORT.width} by {MIN_VIEWPORT.height} pixels. Make this window larger, then come back.
-          </p>
-          <p className="mt-3 text-[13px] text-faint">
-            This window is {typeof window === "undefined" ? "…" : `${window.innerWidth} × ${window.innerHeight}`}.
-          </p>
-          <Link href="/diagrams" className="btn mt-5">
-            Back to diagrams
-          </Link>
-        </div>
-      </div>
-    );
-  }
-
   if (query.isError) {
     return (
       <div className="flex h-full items-center justify-center px-6 text-center">
@@ -593,6 +574,25 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
         <div className="skeleton h-8 w-48" />
         <div className="skeleton mt-4 h-64 w-full" />
       </div>
+    );
+  }
+
+  if (!roomy.ok) {
+    return (
+      <IdeSpace diagram className="flex h-full min-h-0 flex-col">
+        <header className="flex flex-wrap items-center gap-2 border-b border-line p-3">
+          <Link href="/diagrams" className="btn">Back to diagrams</Link>
+          <h1 className="order-first w-full min-w-0 break-words font-semibold sm:order-none sm:w-auto sm:flex-1">{model.meta.title || "Untitled diagram"}</h1>
+          <button type="button" className="btn" onClick={() => canvasRef.current?.fit()}>Fit</button>
+          <button type="button" className="btn" aria-label="Zoom in" onClick={() => canvasRef.current?.zoomIn()}>+</button>
+          <button type="button" className="btn" aria-label="Zoom out" onClick={() => canvasRef.current?.zoomOut()}>−</button>
+          <button type="button" className="btn" disabled={exporting} onClick={() => void exportAs("svg")}>{exporting ? "Downloading…" : "Download SVG"}</button>
+        </header>
+        <p className="px-3 py-2 text-[12px] text-muted">Preview · Pan and zoom to explore. Editing needs {MIN_VIEWPORT.width} × {MIN_VIEWPORT.height}px. This window is {roomy.width} × {roomy.height}px.</p>
+        <div className="diagram-stage min-h-0 flex-1">
+          <DiagramCanvas ref={canvasRef} model={model} readOnly fitTick={fitTick} onSelection={select} onRename={() => undefined} onMove={() => undefined} onConnect={() => undefined} />
+        </div>
+      </IdeSpace>
     );
   }
 

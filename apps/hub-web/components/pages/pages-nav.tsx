@@ -53,7 +53,8 @@ export function PagesNav() {
         void api
           .deletePage(id)
           .then(() => {
-            void client.invalidateQueries({ queryKey: ["pages"] });
+            void client.invalidateQueries();
+            toast("Note moved to Trash.", { action: { label: "Undo", run: () => { void api.restoreDeleted({ kind: "page", id }).then(() => { void client.invalidateQueries(); }).catch((error: Error) => toast(error.message, { tone: "error" })); } } });
             if (pathname === `/pages/${id}` || pathname.startsWith(`/pages/${id}/`)) router.push("/today");
           })
           .catch((error: Error) => toast(error.message, { tone: "error" }));

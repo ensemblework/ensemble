@@ -15,6 +15,7 @@ import { GITHUB_GIT_PROVIDER } from "../lib/git-auth.js";
 import { HostedAccessError, requireVerifiedUser } from "../lib/hosted-access.js";
 import { mirrorSettings, spaceIds } from "../spaces/store.js";
 import { accountIdOf } from "../lib/auth.js";
+import { purgeDeletedStandalonePages } from "../pages/store.js";
 
 const MODEL_CATALOG_TTL_MS = 15_000;
 const MODEL_CATALOG_MAX = 32;
@@ -275,7 +276,7 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/deleted", async (request) => {
     const where = { userId: request.userId, deletedAt: { not: null } };
-    const [tasks, projects, people, skills, documents, repos, deliverables, reminders, comments, meetings, diagrams] = await Promise.all([
+    const [tasks, projects, people, skills, documents, repos, deliverables, reminders, comments, meetings, diagrams, pages] = await Promise.all([
       prisma.task.findMany({ where, select: { id: true, title: true, deletedAt: true } }),
       prisma.project.findMany({ where, select: { id: true, name: true, deletedAt: true } }),
       prisma.person.findMany({ where, select: { id: true, name: true, deletedAt: true } }),
@@ -291,9 +292,11 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
       hasModule(request.modules, "diagrams")
         ? prisma.blockDiagram.findMany({ where, select: { id: true, title: true, deletedAt: true } })
         : Promise.resolve([]),
+      prisma.taskPage.findMany({ where: { ...where, taskId: null }, select: { id: true, title: true, deletedAt: true } }),
     ]);
     return {
       items: [
+        ...pages.map((row) => ({ kind: "page", id: row.id, label: row.title || "Untitled", deletedAt: row.deletedAt })),
         ...tasks.map((row) => ({ kind: "task", id: row.id, label: row.title, deletedAt: row.deletedAt })),
         ...projects.map((row) => ({ kind: "project", id: row.id, label: row.name, deletedAt: row.deletedAt })),
         ...people.map((row) => ({ kind: "person", id: row.id, label: row.name, deletedAt: row.deletedAt })),
@@ -311,6 +314,7 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
 
   const DELEGATES = {
     task: prisma.task,
+    page: prisma.taskPage,
     project: prisma.project,
     person: prisma.person,
     skill: prisma.skill,
@@ -326,7 +330,7 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/deleted/restore", async (request, reply) => {
     const body = z
       .object({
-        kind: z.enum(["task", "project", "person", "skill", "document", "repo", "deliverable", "reminder", "comment", "meeting", "diagram"]).optional(),
+        kind: z.enum(["task", "project", "person", "skill", "document", "repo", "deliverable", "reminder", "comment", "meeting", "diagram", "page"]).optional(),
         id: z.string().optional(),
       })
       .parse(request.body ?? {});
@@ -342,19 +346,33 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
     );
     let restored = 0;
     for (const kind of kinds) {
+      if (kind === "meeting") {
+        restored += await prisma.$transaction(async (tx) => {
+          const sessions = await tx.meetingSession.findMany({ where, select: { id: true, meetingNoteId: true, deletedAt: true } });
+          for (const session of sessions) {
+            if (session.meetingNoteId) {
+              await tx.meetingNote.updateMany({ where: { id: session.meetingNoteId, userId: request.userId, deletedAt: session.deletedAt }, data: { deletedAt: null } });
+            }
+          }
+          return (await tx.meetingSession.updateMany({ where: { ...where, id: { in: sessions.map((session) => session.id) } }, data: { deletedAt: null } })).count;
+        });
+        continue;
+      }
       const delegate = DELEGATES[kind] as unknown as {
         updateMany: (args: unknown) => Promise<{ count: number }>;
       };
-      restored += (await delegate.updateMany({ where, data: { deletedAt: null } })).count;
+      restored += (await delegate.updateMany({ where: { ...where, ...(kind === "page" ? { taskId: null } : {}) }, data: { deletedAt: null } })).count;
     }
     sseHub.publish(request.userId, { event: "task", data: { action: "restore" } });
+    sseHub.publish(request.userId, { event: "page", data: { action: "restore" } });
     return { restored };
   });
 
   app.post("/api/deleted/empty", async (request) => {
     const where = { userId: request.userId, deletedAt: { not: null } };
     let removed = 0;
-    for (const delegate of Object.values(DELEGATES)) {
+    for (const [kind, delegate] of Object.entries(DELEGATES)) {
+      if (kind === "page") { removed += await purgeDeletedStandalonePages(prisma, request.userId); continue; }
       removed += (await (delegate as unknown as { deleteMany: (args: unknown) => Promise<{ count: number }> }).deleteMany({ where })).count;
     }
     await appendLedger({ userId: request.userId, actor: "me", action: "deleted.empty", payload: { removed } });

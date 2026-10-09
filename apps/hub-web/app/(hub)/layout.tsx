@@ -3,6 +3,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { usePathname } from "next/navigation";
 import { VerificationBanner } from "@/components/verification-banner";
+import { createPortal } from "react-dom";
+import { useModalFocus } from "@/lib/modal-focus";
+import { X } from "lucide-react";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { AssistantDock } from "@/components/assistant/assistant-dock";
 import { EnsembleHotkey } from "@/components/ensemble/hotkey";
@@ -23,12 +26,28 @@ import { FeatureTour } from "@/components/features/tour";
 import { CelebrateHost } from "@/components/motion/celebrate";
 import { PageProgress } from "@/components/motion/page-progress";
 import { Splash } from "@/components/motion/skeletons";
-import { Skeleton, cx } from "@/components/ui";
+import { ModalScope, Skeleton, cx } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
 import { clearBrowserTabSession } from "@/lib/tab-session";
 import { switchSpace } from "@/lib/spaces";
 import { ShellLabelsProvider } from "@/lib/shell-labels";
 import { peekPanel, warmPeek } from "@/lib/warm";
+
+function MobileNavigation({ onClose }: { onClose: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useModalFocus(ref, true, onClose);
+  return createPortal(
+    <ModalScope.Provider value="mobile-navigation">
+    <div ref={ref} data-modal-layer="mobile-navigation" role="dialog" aria-modal="true" aria-label="Navigation" tabIndex={-1}
+      className="fixed inset-0 z-[70] bg-black/45" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <div className="relative h-full w-fit shadow-pop" onClick={(event) => { if ((event.target as HTMLElement).closest("a[href]")) onClose(); }}>
+        <button type="button" className="icon-btn absolute right-2 top-4 z-10" aria-label="Close menu" onClick={onClose}><X size={16} /></button>
+        <Sidebar mobile />
+      </div>
+    </div>
+    </ModalScope.Provider>, document.body,
+  );
+}
 
 function Frame({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -42,9 +61,13 @@ function Frame({ children }: { children: React.ReactNode }) {
   const { width, dragging, onPointerDown, onKeyDown, reset, min, max } = useResizablePeek(area);
   const peeking = Boolean(peekId);
 
+  useEffect(() => { setDrawer(false); }, [pathname]);
   useEffect(() => {
-    setDrawer(false);
-  }, [pathname]);
+    const query = window.matchMedia("(min-width: 768px)");
+    const close = () => { if (query.matches) setDrawer(false); };
+    query.addEventListener("change", close);
+    return () => query.removeEventListener("change", close);
+  }, []);
 
   useEffect(() => {
     if (!peekId || Peek) return;
@@ -87,14 +110,7 @@ function Frame({ children }: { children: React.ReactNode }) {
       <div className="h-full shrink-0 max-md:hidden">
         <Sidebar />
       </div>
-      {drawer ? (
-        <div className="md:hidden">
-          <button type="button" className="fixed inset-0 z-30 bg-black/45" aria-label="Close menu" onClick={() => setDrawer(false)} />
-          <div className="fixed inset-y-0 left-0 z-40 shadow-pop">
-            <Sidebar />
-          </div>
-        </div>
-      ) : null}
+      {drawer ? <MobileNavigation onClose={() => setDrawer(false)} /> : null}
       <div ref={area} className="relative flex min-w-0 flex-1">
         <div className={cx("relative flex min-w-0 flex-1 flex-col", peeking && fullscreen && "hidden")}>
           <TopBar

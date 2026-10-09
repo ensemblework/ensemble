@@ -35,7 +35,7 @@ async function ownedDiagram(ctx: ToolContext, id: string) {
 async function assertLinkTarget(ctx: ToolContext, kind: (typeof LINK_KINDS)[number], id: string) {
   const db = ctx.tx ?? ctx.prisma;
   if (kind === "page") {
-    const page = await db.taskPage.findFirst({ where: { id, userId: ctx.userId, taskId: null }, select: { id: true } });
+    const page = await db.taskPage.findFirst({ where: { id, userId: ctx.userId, taskId: null, deletedAt: null }, select: { id: true } });
     if (page) return;
   }
   if (kind === "task" || kind === "page") {
