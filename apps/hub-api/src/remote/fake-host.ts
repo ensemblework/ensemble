@@ -86,6 +86,9 @@ export async function startFakeHost(options: { leaseMs?: number; sweepMs?: numbe
   let revoked = false;
   let scopeForbidden = false;
   let unauthorizedEvents = 0;
+  // Set by closeThenUnauthorized: only the next event-stream open is refused, so the
+  // stop it causes cannot come first from a progress post racing the reconnect.
+  let refuseNextEvents = false;
   let deviceId: string | null = null;
   let deviceName: string | null = null;
   const jobs = new Map<string, Job>();
@@ -148,6 +151,7 @@ export async function startFakeHost(options: { leaseMs?: number; sweepMs?: numbe
       if (presented !== code.trim().toUpperCase()) return send(res, 401, { error: "That pairing code is not valid." });
       token = `ens_d_${randomBytes(18).toString("base64url")}`;
       revoked = false;
+      refuseNextEvents = false;
       scopeForbidden = false;
       deviceId = randomUUID();
       deviceName = typeof body.name === "string" ? body.name : "Mac";
@@ -155,6 +159,10 @@ export async function startFakeHost(options: { leaseMs?: number; sweepMs?: numbe
     }
 
     if (path === "/api/devices/self/events" && req.method === "GET") {
+      if (refuseNextEvents) {
+        refuseNextEvents = false;
+        revoked = true;
+      }
       if (!authed(req, res)) {
         unauthorizedEvents += 1;
         return;
@@ -351,7 +359,7 @@ export async function startFakeHost(options: { leaseMs?: number; sweepMs?: numbe
       for (const res of [...listeners]) res.end();
     },
     closeThenUnauthorized() {
-      revoked = true;
+      refuseNextEvents = true;
       for (const res of [...listeners]) res.end();
     },
     get unauthorizedEvents() {
