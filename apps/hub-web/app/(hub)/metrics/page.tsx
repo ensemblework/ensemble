@@ -139,7 +139,7 @@ export default function MetricsPage() {
   const maxModel = Math.max(...(shown?.byModel.map((row) => row.calls) ?? [1]), 1);
 
   return (
-    <div className="mx-auto max-w-[1100px] px-10 pb-24 pt-8">
+    <div className="mx-auto max-w-[1100px] px-4 pb-24 pt-8 sm:px-10">
       <PageHeader
         title="Metrics"
         description="Calls, models, tokens and estimated cost over the last 14 days. Dollar amounts use published list prices when we know them. Token counts are what the provider returned."
@@ -238,7 +238,7 @@ export default function MetricsPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <Stat title="Agent throughput">
               <div>{countNoun(shown.throughput.completed, "task")} completed in this window</div>
               <div>{shown.throughput.failed} failed</div>

@@ -285,3 +285,8 @@ body[data-desk-moving="1"], body[data-desk-moving="1"] * { cursor: grabbing !imp
 .desk .lens-chip:hover,
 .desk .lens-reset:hover { color: var(--ink); border-color: var(--line-strong); }
 .desk .lens-reset { margin-left: auto; border-color: transparent; }
+/* Phones: Context tiles take the full row. Their saved sizes are for wider screens and are left as they are. */
+@media (max-width: 639px) {
+  .desk[data-context-lens] .bento > .tile,
+  .desk[data-context-lens] .bento > .tile.skel { grid-column: 1 / -1 !important; }
+}

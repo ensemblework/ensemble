@@ -232,15 +232,15 @@ export function SectionCard({
 }) {
   return (
     <section className={cx("tile section", className)}>
-      <div className="flex items-start justify-between gap-4">
-        <div>
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+        <div className="min-w-0 flex-[1_1_16rem]">
           <h2 className="flex items-center gap-2 text-[17px] font-semibold">
             {title}
             {info ? <InfoTip text={info} /> : null}
           </h2>
           {description ? <p className="mt-1 text-[13px] leading-5 text-muted">{description}</p> : null}
         </div>
-        {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
+        {actions ? <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
       </div>
       {children ? <div className="mt-4">{children}</div> : null}
     </section>
@@ -670,12 +670,13 @@ export function SettingRow({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex items-start justify-between gap-6 py-3">
-      <div className="min-w-0 max-w-[560px]">
+    // Wraps instead of squeezing: on a narrow screen the control drops below the text.
+    <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2 py-3">
+      <div className="min-w-0 max-w-[560px] flex-[1_1_15rem]">
         <div className="text-[13.5px] font-medium">{title}</div>
         {description ? <div className="mt-0.5 text-[12.5px] leading-[18px] text-muted">{description}</div> : null}
       </div>
-      <div className="shrink-0">{children}</div>
+      <div className="max-w-full shrink-0">{children}</div>
     </div>
   );
 }

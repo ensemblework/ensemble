@@ -32,7 +32,7 @@ export default function WelcomePage() {
   if (!settings.data) return <div className="p-10"><Spinner /></div>;
   const value: Settings = settings.data.settings;
   return (
-    <div className="mx-auto max-w-[820px] px-10 pb-24 pt-8">
+    <div className="mx-auto max-w-[820px] px-4 pb-24 pt-8 sm:px-10">
       <PageHeader
         title={`Welcome${me.data?.user.name ? `, ${me.data.user.name.split(" ")[0]}` : ""}`}
         description="Three optional steps. Everything here can be changed later in Settings."

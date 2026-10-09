@@ -37,6 +37,8 @@ Prompt transparency is the expandable **Prompts** section at `/settings?tab=assi
 
 Below the `lg` breakpoint, Undo/Redo, Fetch, and task-view mode move into **More actions** (`components/shell/topbar.tsx`). Search, notifications, activity, and the kill switch remain directly reachable. The activity popover stays inside the narrow viewport.
 
+On phones, a setting row or card header whose control does not fit beside its text puts the control on its own line below, instead of squeezing the text (`SettingRow` and `SectionCard` in `components/ui.tsx` use a wrapping flex row, so wide screens are unchanged). Page gutters are 16 px below 640 px (`px-4 sm:px-10`). Context tiles take the full width below 640 px (`components/desk/desk.css`); their saved sizes apply on wider screens. Checked 9 Oct 2026 at 390 px, and at 1440 px against the previous build: eight desktop pages pixel-identical.
+
 Code, Workspace, and Terminal distinguish a denied/failed request from an empty result or loading state. `components/ui.tsx` supplies a shared error message and Retry action; hosted access failures also link to paired-computer setup without granting host privileges. Settings' password, run-limit, fetch-time, and quiet-hour fields have explicit accessible names.
 
 **Right side panel (collapsible, contextual):** *Ask about this* chat bound to the selected task/run — every message automatically includes the task's context-pack id; the engineer sees a chip list of what context is attached (e.g. `Ranker design review transcript`, `PR #412`, `skill: pr-description.service-x`).

@@ -46,7 +46,7 @@ export default function WorkspacePage() {
     onError: (error) => toast(error.message, { tone: "error" }),
   });
   return (
-    <div className="mx-auto max-w-[1240px] px-10 pb-24 pt-8">
+    <div className="mx-auto max-w-[1240px] px-4 pb-24 pt-8 sm:px-10">
       <PageHeader
         title="Workspace"
         description={

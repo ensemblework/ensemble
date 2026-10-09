@@ -242,7 +242,7 @@ export function SharingTab() {
           <div className="divide-y divide-line">
             {data.items.map((item) => (
               <div key={item.id} className="flex items-center gap-3 py-2">
-                <span className="w-24 shrink-0 text-2xs uppercase tracking-wide text-faint">{KIND_NAMES[item.kind]}</span>
+                <span className="shrink-0 text-2xs uppercase tracking-wide text-faint sm:w-24">{KIND_NAMES[item.kind]}</span>
                 <span className="min-w-0 flex-1 truncate text-[13px]">{item.title}</span>
                 <span className="flex items-center gap-1.5 text-2xs text-muted">
                   <Avatar person={item.person} color={colorFor(item.person.id)} size={18} />
@@ -285,7 +285,7 @@ export function SharingTab() {
             ))}
             {data.withMe.items.map((item) => (
               <div key={item.id} className="flex items-center gap-3 py-2">
-                <span className="w-24 shrink-0 text-2xs uppercase tracking-wide text-faint">{KIND_NAMES[item.kind]}</span>
+                <span className="shrink-0 text-2xs uppercase tracking-wide text-faint sm:w-24">{KIND_NAMES[item.kind]}</span>
                 <span className="min-w-0 flex-1 truncate text-[13px]">
                   {item.title}
                   {!item.openedAt ? <span className="ml-1.5 rounded bg-accent-soft px-1 text-[10px] text-ink">New</span> : null}
@@ -339,10 +339,10 @@ function PublicLinks() {
           {rows.map((link) => (
             <div key={link.id} className="flex items-center gap-3 py-2">
               <Globe size={14} className="shrink-0 text-faint" />
-              <span className="w-24 shrink-0 text-2xs uppercase tracking-wide text-faint">{KIND_NAMES[link.kind]}</span>
-              <span className="min-w-0 flex-1 truncate text-[13px]">{link.title}</span>
-              <span className="text-2xs text-muted">
-                {link.role === "edit" ? "anyone can edit" : "view only"} · {link.opens} open{link.opens === 1 ? "" : "s"}
+              <span className="shrink-0 text-2xs uppercase tracking-wide text-faint sm:w-24">{KIND_NAMES[link.kind]}</span>
+              <span className="min-w-0 flex-1 truncate text-[13px]">{link.title || "Untitled"}</span>
+              <span className="shrink-0 whitespace-nowrap text-2xs text-muted">
+                {link.role === "edit" ? "anyone can edit" : "view only"}<span className="hidden sm:inline"> · {link.opens} open{link.opens === 1 ? "" : "s"}</span>
               </span>
               <button
                 type="button"

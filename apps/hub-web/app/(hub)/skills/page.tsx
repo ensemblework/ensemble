@@ -169,7 +169,7 @@ export default function SkillsPage() {
   });
 
   return (
-    <div className="mx-auto max-w-[1180px] px-10 pb-24 pt-8">
+    <div className="mx-auto max-w-[1180px] px-4 pb-24 pt-8 sm:px-10">
       <PageHeader
         title="Skill library"
         description="Make the agent's work feel like yours. Review its guidelines, test a draft, and build on what it learns from your feedback."

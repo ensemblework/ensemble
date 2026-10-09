@@ -141,7 +141,7 @@ export function PromptsSection() {
 export function QuietHoursSection({ settings, patch }: Props) {
   return (
     <SectionCard title="Quiet hours" description="Notifications hold until morning. Nothing is lost, the digest carries it over.">
-      <div className="flex items-center gap-4 text-[13px]">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-[13px]">
         <Toggle label="Quiet hours" checked={settings.quietHours.enabled} onChange={(enabled) => patch({ quietHours: { enabled } })} />
         <span className="text-muted">From</span>
         <input type="time" aria-label="Quiet hours start" value={settings.quietHours.from} onChange={(event) => patch({ quietHours: { from: event.target.value } })} className="field [color-scheme:dark]" />

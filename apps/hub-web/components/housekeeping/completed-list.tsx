@@ -30,8 +30,8 @@ export function CompletedList({ embedded = false }: { embedded?: boolean }) {
   const items = list.data?.items ?? [];
   const body = (
     <>
-      <div className="mb-4 flex gap-2">
-        <input value={q} onChange={(event) => setQ(event.target.value)} aria-label="Search completed" placeholder="Search…" className="field w-64" />
+      <div className="mb-4 flex flex-wrap gap-2">
+        <input value={q} onChange={(event) => setQ(event.target.value)} aria-label="Search completed" placeholder="Search…" className="field w-full min-w-0 sm:w-64" />
         <select aria-label="Kind" value={kind} onChange={(event) => setKind(event.target.value as typeof kind)} className="field">
           <option value="all">Tasks and deliverables</option>
           <option value="task">Tasks</option>

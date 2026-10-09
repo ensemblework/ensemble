@@ -114,7 +114,7 @@ export default function RunsPage() {
   const openId = params.get("run");
   const toggle = (id: string) => router.replace(openId === id ? "/runs" : `/runs?run=${id}`, { scroll: false });
   return (
-    <div className="mx-auto max-w-[900px] px-10 pb-24 pt-8">
+    <div className="mx-auto max-w-[900px] px-4 pb-24 pt-8 sm:px-10">
       <PageHeader title="Recent runs" description="Every delegated task leaves a trace: its plan, each step, the model it used and what it cost." />
       <Held pending={runs.isLoading} fallback={<RunsSkeleton />}>
         {(runs.data?.runs ?? []).length === 0 ? (

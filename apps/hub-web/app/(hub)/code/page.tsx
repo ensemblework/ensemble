@@ -60,7 +60,7 @@ export default function CodePage() {
   return (
     <div className="flex h-full flex-col">
     <div className="min-h-0 flex-1 overflow-y-auto">
-    <div className="mx-auto max-w-[980px] px-10 pb-24 pt-8">
+    <div className="mx-auto max-w-[980px] px-4 pb-24 pt-8 sm:px-10">
       <PageHeader
         title="Code"
         description={
