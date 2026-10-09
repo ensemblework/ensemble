@@ -113,7 +113,7 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(404).send({ error: "One of those diagrams is not on your account." });
     }
     const standalone = body.targetKind === "page"
-      ? await db.taskPage.findFirst({ where: { id: body.targetId, userId: request.userId, taskId: null }, select: { id: true } })
+      ? await db.taskPage.findFirst({ where: { id: body.targetId, userId: request.userId, taskId: null, deletedAt: null }, select: { id: true } })
       : null;
     const target = standalone ?? (
       body.targetKind === "project"
@@ -304,7 +304,7 @@ export async function diagramRoutes(app: FastifyInstance): Promise<void> {
     for (const link of links) {
       if (link.targetKind === "task" || link.targetKind === "page") {
         if (link.targetKind === "page") {
-          const page = await db.taskPage.findFirst({ where: { id: link.targetId, userId: request.userId, taskId: null }, select: { title: true, updatedAt: true } });
+          const page = await db.taskPage.findFirst({ where: { id: link.targetId, userId: request.userId, taskId: null, deletedAt: null }, select: { title: true, updatedAt: true } });
           if (page) {
             if (page.updatedAt > row.updatedAt) reasons.push(`Page “${page.title}” changed`);
             continue;

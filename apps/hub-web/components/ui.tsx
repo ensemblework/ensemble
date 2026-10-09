@@ -3,11 +3,12 @@
 /** @jsxImportSource react */
 
 import { Info, X } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createContext, useContext, useId, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { placeAnchoredPanel, type Side } from "@/lib/place-layer";
 import type { Priority, TaskStatus } from "@/lib/api";
 import { PRIORITY, STATUS, toneStyle, type Tone } from "@/lib/format";
+import { useModalFocus } from "@/lib/modal-focus";
 import { useDelayedFlag } from "@/lib/motion/use-delayed-flag";
 
 export function cx(...parts: Array<string | false | null | undefined>): string {
@@ -247,23 +248,42 @@ export function SectionCard({
   );
 }
 
+export const ModalScope = createContext<string | undefined>(undefined);
+
 export function Tabs<T extends string>({
   tabs,
   value,
   onChange,
+  label = "Sections",
+  panelId,
 }: {
+  label?: string;
+  panelId?: string;
   tabs: Array<{ id: T; label: string; badge?: number }>;
   value: T;
   onChange: (value: T) => void;
 }) {
+  const id = useId();
   return (
-    <div className="mb-6 inline-flex max-w-full items-center gap-0.5 overflow-x-auto rounded-xl bg-raised p-1" role="tablist">
+    <div aria-label={label} className="mb-6 inline-flex max-w-full items-center gap-0.5 overflow-x-auto rounded-xl bg-raised p-1" role="tablist">
       {tabs.map((tab) => (
         <button
           key={tab.id}
           type="button"
           role="tab"
+          id={`${id}-${tab.id}`}
           aria-selected={value === tab.id}
+          aria-controls={panelId}
+          tabIndex={value === tab.id ? 0 : -1}
+          onKeyDown={(event) => {
+            const direction = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+            if (!direction && event.key !== "Home" && event.key !== "End") return;
+            event.preventDefault();
+            const index = tabs.findIndex((item) => item.id === tab.id);
+            const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (index + direction + tabs.length) % tabs.length;
+            onChange(tabs[next]!.id);
+            (event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next])?.focus();
+          }}
           onClick={() => onChange(tab.id)}
           className={cx(
             "shrink-0 whitespace-nowrap rounded-lg px-2.5 py-1 text-[13px] transition-colors",
@@ -312,6 +332,7 @@ export function Popover({
   className?: string;
   fill?: boolean;
 }) {
+  const owner = useContext(ModalScope);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -382,6 +403,7 @@ export function Popover({
             <div
               ref={panelRef}
               data-popover=""
+              data-modal-owner={owner}
               className="pop-in z-[120] overflow-auto rounded-lg bg-raised p-1 shadow-pop"
               style={{
                 position: "fixed",
@@ -431,40 +453,6 @@ export function MenuItem({
   );
 }
 
-const TEXT_INPUT_SKIP = new Set(["hidden", "button", "submit", "reset", "checkbox", "radio", "file", "image"]);
-
-function isTextInput(element: HTMLElement): boolean {
-  if (element instanceof HTMLTextAreaElement) return !element.disabled;
-  if (!(element instanceof HTMLInputElement) || element.disabled) return false;
-  return !TEXT_INPUT_SKIP.has(element.type);
-}
-
-function isField(element: HTMLElement): boolean {
-  return element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement;
-}
-
-/** Autofocus, otherwise the first text field. A button is only the fallback when nothing accepts input. */
-function dialogFocusTarget(root: HTMLElement): HTMLElement | null {
-  const marked = root.querySelector<HTMLElement>("[autofocus]");
-  if (marked) return marked;
-
-  // React's autoFocus prop focuses during commit and does not set the attribute.
-  const active = document.activeElement;
-  if (active instanceof HTMLElement && active !== root && root.contains(active) && isField(active)) return active;
-
-  const fields = root.querySelectorAll<HTMLElement>("input, textarea, select");
-  for (const field of fields) {
-    if (isTextInput(field)) return field;
-  }
-  for (const field of fields) {
-    if (field instanceof HTMLInputElement && (field.type === "hidden" || field.disabled)) continue;
-    if (field instanceof HTMLSelectElement && field.disabled) continue;
-    if (field instanceof HTMLTextAreaElement && field.disabled) continue;
-    return field;
-  }
-  return root.querySelector<HTMLElement>("button:not([disabled]), [href]");
-}
-
 export function Dialog({
   open,
   onClose,
@@ -479,60 +467,29 @@ export function Dialog({
   width?: number;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
-  const close = useCallback(() => onCloseRef.current(), []);
-  useClickOutside(ref, close, open);
-  const titleId = useRef(`dialog-${title.replace(/\s+/g, "-").toLowerCase()}`);
-  const openerRef = useRef<HTMLElement | null>(null);
-  const wasOpenRef = useRef(false);
-  const openRef = useRef(open);
-  if (typeof document !== "undefined" && open && !wasOpenRef.current) {
-    const active = document.activeElement;
-    openerRef.current = active instanceof HTMLElement ? active : null;
-  }
-  wasOpenRef.current = open;
-  openRef.current = open;
-  useEffect(() => {
-    if (!open) return;
-    const node = ref.current;
-    const target = node ? dialogFocusTarget(node) : null;
-    if (target && document.activeElement !== target) target.focus();
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onCloseRef.current();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      // Skip while the dialog is still open (including Strict Mode's extra setup/cleanup).
-      // Restoring focus here would steal the field on every keystroke if this effect re-ran.
-      if (openRef.current) return;
-      const opener = openerRef.current;
-      if (opener?.isConnected) opener.focus();
-    };
-    // onClose lives in a ref. Callers pass a new function on every render, and
-    // listing it here would re-run this effect on each keystroke.
-  }, [open]);
+  const titleId = useId();
+  useModalFocus(ref, open, onClose);
   if (!open || typeof document === "undefined") return null;
   return createPortal(
-    <div className="fixed inset-0 z-[70] flex items-start justify-center bg-black/50 pt-[12vh]">
+    <ModalScope.Provider value={titleId}>
+    <div ref={ref} data-modal-layer={titleId} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId}
+      className="fixed inset-0 z-[70] flex items-start justify-center bg-black/50 px-3 pt-[8dvh]"
+      onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+
       <div
-        ref={ref}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId.current}
-        className="pop-in max-h-[76vh] overflow-auto rounded-xl bg-raised shadow-pop"
+        className="pop-in max-h-[84dvh] max-w-full overflow-auto rounded-xl bg-raised shadow-pop"
         style={{ width }}
       >
         <div className="flex items-center justify-between border-b border-line px-4 py-3">
-          <h3 id={titleId.current} className="text-[15px] font-semibold">{title}</h3>
+          <h3 id={titleId} className="text-[15px] font-semibold">{title}</h3>
           <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
             <X size={15} />
           </button>
         </div>
         <div className="p-4">{children}</div>
       </div>
-    </div>,
+    </div>
+    </ModalScope.Provider>,
     document.body,
   );
 }

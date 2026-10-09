@@ -1,13 +1,14 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useId, useState } from "react";
 import { matplotlibSource, parseRef, seedSummaryFor, tileSchema, type Frame, type PlotConfig, type PoolColumn, type WorkspaceTile } from "@ensemble/shared-types";
 import { ChartView } from "@/components/plots/chart-view";
 import { figureBytes } from "@/lib/plots/figure-file";
 import { ColumnSelect } from "@/components/plots/column-select";
 import { StyleTab } from "@/components/plots/studio";
-import { Toggle } from "@/components/ui";
+import { useModalFocus } from "@/lib/modal-focus";
+import { ModalScope, Toggle } from "@/components/ui";
 import { api } from "@/lib/api";
 import { usePlotTheme } from "@/lib/plots/theme";
 import { useToast } from "@/components/toast";
@@ -54,25 +55,13 @@ export function FocusEditor({
   onClose: () => void;
 }) {
   const toast = useToast();
+  const ref = useRef<HTMLDivElement>(null);
+  const modalId = useId();
   const [tab, setTab] = useState<(typeof TABS)[number]>("Encode");
   const [closing, setClosing] = useState(false);
   const [panelWidth, setPanelWidth] = useState(readPanelWidth);
   const [fullScreen, setFullScreen] = useState(false);
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      if (document.querySelector("[data-popover]")) return;
-      if (fullScreen) {
-        event.preventDefault();
-        setFullScreen(false);
-        return;
-      }
-      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) onClose();
-      else setClosing(true);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [fullScreen, onClose]);
+
 
   const theme = usePlotTheme();
   const generated = useMemo(() => {
@@ -120,11 +109,13 @@ export function FocusEditor({
     setClosing(true);
   };
 
+  useModalFocus(ref, true, () => { if (fullScreen) setFullScreen(false); else close(); });
   return (
-    <div className={`plot-focus fixed inset-0 z-[80] flex p-3 ${closing ? "is-closing" : ""}`} data-plot-focus onAnimationEnd={(event) => { if (closing && event.animationName === "plot-focus-out") onClose(); }}>
+    <ModalScope.Provider value={modalId}>
+    <div ref={ref} data-modal-layer={modalId} role="dialog" aria-modal="true" aria-label={`Edit ${tile.title || "chart"}`} tabIndex={-1} className={`plot-focus fixed inset-0 z-[80] flex p-3 ${closing ? "is-closing" : ""}`} data-plot-focus onAnimationEnd={(event) => { if (closing && event.animationName === "plot-focus-out") onClose(); }}>
       <button type="button" className="plot-focus-veil absolute inset-0 border-0" aria-label="Close editor" onClick={close} />
       <div className="plot-focus-panel relative flex min-h-0 flex-1 overflow-hidden rounded-xl border border-line shadow-pop" style={{ background: "var(--panel)" }}>
-        <div className={`min-w-0 flex-1 flex-col ${fullScreen ? "hidden" : "flex"}`}>
+        <div className={`plot-focus-preview min-w-0 flex-1 flex-col ${fullScreen ? "hidden" : "flex"}`}>
           <div className="flex items-center gap-2 border-b border-line px-3 py-2">
             <button type="button" className="btn" onClick={close}>Back</button>
             <span className="min-w-0 truncate text-[14px] font-medium">{tile.title || "Tile"}</span>
@@ -169,14 +160,21 @@ export function FocusEditor({
               }}
             />
           )}
-          <div className="flex h-11 flex-nowrap items-center gap-2 overflow-hidden border-b border-line px-2" data-plot-tabs>
+          <div className="flex h-11 flex-nowrap items-center gap-2 overflow-x-auto border-b border-line px-2" data-plot-tabs>
             {fullScreen ? (
               <button type="button" className="btn shrink-0" data-plot-back onClick={close}>Back</button>
             ) : null}
             {fullScreen ? <span className="min-w-0 max-w-[16rem] shrink truncate text-[14px] font-medium" data-plot-focus-title="">{tile.title || "Tile"}</span> : null}
-            <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-0.5 overflow-hidden">
+            <div role="tablist" aria-label="Chart settings" className="flex min-w-max flex-1 flex-nowrap items-center gap-0.5">
               {TABS.map((name) => (
-                <button key={name} type="button" role="tab" aria-selected={tab === name} className={`shrink-0 whitespace-nowrap rounded-md px-1.5 py-1 text-[12px] ${tab === name ? "bg-accent-soft" : "text-muted"}`} onClick={() => setTab(name)}>{name}</button>
+                <button key={name} type="button" role="tab" aria-selected={tab === name} aria-controls={`${modalId}-panel`} tabIndex={tab === name ? 0 : -1} onKeyDown={(event) => {
+                  const direction = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+                  if (!direction && event.key !== "Home" && event.key !== "End") return;
+                  event.preventDefault();
+                  const next = event.key === "Home" ? 0 : event.key === "End" ? TABS.length - 1 : (TABS.indexOf(name) + direction + TABS.length) % TABS.length;
+                  setTab(TABS[next]!);
+                  event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>("button")[next]?.focus();
+                }} className={`shrink-0 whitespace-nowrap rounded-md px-1.5 py-1 text-[12px] ${tab === name ? "bg-accent-soft" : "text-muted"}`} onClick={() => setTab(name)}>{name}</button>
               ))}
             </div>
             <button
@@ -194,7 +192,7 @@ export function FocusEditor({
               )}
             </button>
           </div>
-          <div className={`min-h-0 flex-1 ${tab === "Code" ? "flex flex-col overflow-hidden p-3" : "overflow-auto p-3"}`}>
+          <div id={`${modalId}-panel`} role="tabpanel" aria-label={tab} className={`min-h-0 flex-1 ${tab === "Code" ? "flex flex-col overflow-hidden p-3" : "overflow-auto p-3"}`}>
             {tab === "Encode" ? <Encode columns={columns} tile={tile} warnings={warnings} onChange={onChange} /> : null}
             {tab === "Style" ? <StyleTab config={config} update={apply} /> : null}
             {tab === "Code" ? (
@@ -214,11 +212,21 @@ export function FocusEditor({
         @keyframes plot-veil { from { opacity: 0; } to { opacity: 1; } }
         @keyframes plot-focus-in { from { transform: scale(0.94); } to { transform: none; } }
         @keyframes plot-focus-out { from { transform: none; } to { transform: scale(0.96); } }
+        @media (max-width: 767px) {
+          .plot-focus { padding: 6px; }
+          .plot-focus-panel { flex-direction: column; }
+          .plot-focus-preview { flex: 0 0 38%; min-height: 150px; }
+          .plot-focus-panel [data-plot-panel] { width: 100% !important; min-height: 0; flex: 1; border-left: 0; border-top: 1px solid var(--line); }
+          .plot-focus-panel [data-plot-panel-resize] { display: none; }
+          .plot-focus-panel [data-plot-tabs] { flex-shrink: 0; }
+          .plot-focus-panel [data-plot-focus-title] { display: none; }
+        }
         @media (prefers-reduced-motion: reduce) {
           .plot-focus-veil, .plot-focus-panel, .plot-focus.is-closing .plot-focus-veil, .plot-focus.is-closing .plot-focus-panel { animation: none; }
         }
       `}</style>
     </div>
+    </ModalScope.Provider>
   );
 }
 

@@ -6,6 +6,8 @@ Written to be read start to finish. Design notes live in [02 §10–11](02_MODUL
 
 ---
 
+Standalone notes moved to Trash are excluded from open-page context (`assistant/state.ts`) and new diagram links (`assistant/tools/diagrams.ts`). This follows the note's `deletedAt` flag; restoring it makes the same document available again. The web UI recovery change does not initiate a model turn.
+
 ## 1. The one-sentence answer
 
 **The assistant never touches your UI.** It calls named functions on your own API, those functions write rows to the same Postgres your pages read, and the pages update because the data changed — not because anything simulated a click.

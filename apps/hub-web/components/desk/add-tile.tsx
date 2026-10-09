@@ -6,11 +6,23 @@ import { useEffect, useMemo, useState } from "react";
 import { hasModule } from "@ensemble/shared-types/modules";
 import { MARKET_CARDS } from "@ensemble/shared-types/marketplace-manifest";
 import { WIDGET_REGISTRY, widgetIdsFor, type WidgetId } from "@ensemble/shared-types/widgets";
+import { Dialog } from "@/components/ui";
 import { api } from "@/lib/api";
 import { appendDeskTile, readAdded, removeDeskTile } from "@/lib/desk-added";
 import type { DeskId } from "./desks";
 import { showTile } from "./layout";
 import { useDeskLayout, type Spec } from "./live-board";
+
+const SHORTCUTS: Partial<Record<WidgetId, { href: string; action: string }>> = {
+  completed: { href: "/settings#completed", action: "Open completed" },
+  repos: { href: "/context?view=widgets&tab=repos", action: "Open repositories" },
+  "review-queue": { href: "/code", action: "Open Code" },
+  deliverables: { href: "/context?view=widgets&tab=projects", action: "Open projects and deliverables" },
+  "assignment-countdown": { href: "/board", action: "Open coursework on the board" },
+  calendar: { href: "/context?view=widgets&tab=sources", action: "Open calendar sources" },
+  timetable: { href: "/context?view=widgets&tab=sources", action: "Open calendar sources" },
+  people: { href: "/context?view=widgets&tab=people", action: "Open people" },
+};
 
 export function AddTileButton({ deskId, plots, startOpen = false }: { deskId: DeskId; plots: boolean; startOpen?: boolean }) {
   const [open, setOpen] = useState(startOpen);
@@ -52,6 +64,7 @@ function AddTileDialog({ deskId, plots, onClose }: { deskId: DeskId; plots: bool
   const place = (spec: Spec) => void layout.save(showTile({ shown: layout.shown, hidden: layout.hidden }, spec));
   const ids = widgetIdsFor("today").filter((id) => {
     const spec = WIDGET_REGISTRY[id];
+    if (!SHORTCUTS[id]) return false;
     if (spec.requires && !hasModule(shell.data?.modules, spec.requires)) return false;
     if (!query) return true;
     return `${spec.label} ${spec.blurb ?? ""} ${spec.persona ?? ""}`.toLowerCase().includes(query);
@@ -72,14 +85,7 @@ function AddTileDialog({ deskId, plots, onClose }: { deskId: DeskId; plots: bool
   };
 
   return (
-    <div className="fixed inset-0 z-[65] flex items-start justify-center overflow-y-auto bg-black/45 p-4 pt-16" onMouseDown={onClose}>
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label="Add a tile"
-        className="relative max-h-[calc(100dvh-6rem)] w-[min(680px,calc(100%-1rem))] overflow-y-auto rounded-lg border border-line bg-panel p-4 shadow-pop"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
+    <Dialog open onClose={onClose} title="Add a tile" width={680}>
         <div className="flex items-center gap-2">
           <input
             value={q}
@@ -88,9 +94,6 @@ function AddTileDialog({ deskId, plots, onClose }: { deskId: DeskId; plots: bool
             aria-label="Search tiles"
             className="w-full rounded-lg border border-line bg-bg px-3 py-2 text-[14px] text-ink"
           />
-          <button type="button" className="btn" onClick={onClose}>
-            Close
-          </button>
         </div>
         {plots ? (
           <div className="mt-3" data-plots-category>
@@ -166,8 +169,7 @@ function AddTileDialog({ deskId, plots, onClose }: { deskId: DeskId; plots: bool
             </button>
           </div>
         ) : null}
-      </div>
-    </div>
+    </Dialog>
   );
 }
 
@@ -186,6 +188,7 @@ export function AddedTiles() {
     enabled: visible.includes("completed"),
     staleTime: 20_000,
   });
+  const feed = useQuery({ queryKey: ["widget-feed"], queryFn: api.widgetFeed, enabled: visible.some((id) => ["calendar", "timetable", "deliverables", "assignment-countdown"].includes(id)), staleTime: 20_000 });
   if (!visible.length) return null;
   return (
     <section data-desk-added className="col" style={{ gap: 10, marginTop: 12 }}>
@@ -193,6 +196,10 @@ export function AddedTiles() {
       <div className="row" style={{ gap: 10, alignItems: "stretch", flexWrap: "wrap" }}>
         {visible.map((id) => {
           const spec = WIDGET_REGISTRY[id];
+          const shortcut = SHORTCUTS[id];
+          const rows = id === "assignment-countdown" ? (feed.data?.tasks ?? []).filter((task) => task.taskType === "assignment" && !["done", "dropped"].includes(task.status)).map((task) => ({ id: task.id, title: task.title, href: `/tasks/${task.id}`, date: task.due }))
+            : id === "deliverables" ? (feed.data?.deliverables ?? []).map((row) => ({ id: row.id, title: row.title, href: `/projects/${row.projectId}`, date: row.due }))
+            : id === "calendar" || id === "timetable" ? (feed.data?.events ?? []).map((event) => ({ id: event.id, title: event.title, href: "/context?view=widgets&tab=artifacts", date: event.start })) : [];
           return (
             <article key={id} className="tile" data-widget={id} style={{ flex: "1 1 220px", padding: 14, minWidth: 0 }}>
               <header className="row sb">
@@ -214,10 +221,11 @@ export function AddedTiles() {
                   </li>
                 </ul>
               ) : (
-                <p style={{ margin: "8px 0 0", fontSize: 13, color: "var(--muted)" }}>
-                  {spec.blurb ?? spec.empty ?? spec.label}
-                  {id === "review-queue" || id === "repos" ? <> · <a href="/code">Open Code</a></> : null}
-                </p>
+                <div className="mt-2 space-y-2 text-[13px]">
+                  {rows.length ? <ul className="space-y-1">{rows.slice(0, 4).map((row) => <li key={row.id}><a href={row.href} className="break-words hover:underline">{row.title}</a>{row.date ? <span className="ml-2 text-[12px] text-muted">{new Date(row.date).toLocaleDateString()}</span> : null}</li>)}</ul>
+                    : <p className="text-muted">{feed.isLoading && ["calendar", "timetable", "deliverables", "assignment-countdown"].includes(id) ? "Loading…" : feed.isError && ["calendar", "timetable", "deliverables", "assignment-countdown"].includes(id) ? "Could not load this tile. Reopen Today to retry." : shortcut ? spec.empty ?? spec.blurb ?? "Open this area to get started." : "This shortcut is not available yet. Choose a live tile from Add a tile."}</p>}
+                  {shortcut ? <a href={shortcut.href} className="inline-flex text-accent hover:underline">{shortcut.action}</a> : null}
+                </div>
               )}
             </article>
           );

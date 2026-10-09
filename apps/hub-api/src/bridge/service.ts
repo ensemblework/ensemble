@@ -800,6 +800,7 @@ export async function readItem(
         where: {
           id,
           userId,
+          deletedAt: null,
           OR: [{ taskId: null }, { task: { deletedAt: null } }],
         },
         select: {
@@ -918,6 +919,7 @@ export async function searchHub(db: Db, userId: string, q: string, limit: number
     db.taskPage.findMany({
       where: {
         userId,
+        deletedAt: null,
         OR: [
           { title: { contains: q, mode: "insensitive" } },
           { searchText: { contains: q, mode: "insensitive" } },

@@ -147,7 +147,7 @@ export function PagesSection({
       </div>
       <Dialog open={Boolean(pendingDelete)} onClose={() => setPendingDelete(null)} title="Delete this page?" width={420}>
         <p className="text-[13.5px] leading-5 text-muted">
-          Delete “{pendingDelete?.title || "Untitled"}”? This removes the note. It does not change tasks or the board.
+          Delete “{pendingDelete?.title || "Untitled"}”? This moves the note to Trash. You can restore it there until the configured retention period expires.
         </p>
         <div className="mt-4 flex justify-end gap-2">
           <button type="button" className="btn-ghost" onClick={() => setPendingDelete(null)}>

@@ -33,7 +33,7 @@ import { isGuestIn } from "../sharing/context.js";
 type Db = PrismaClient;
 
 /** Keyboard only. Microphone capture is a later step. */
-export const VOICE_TODO = "TODO: voice notes. There is no microphone capture yet; take notes on the keyboard.";
+export const VOICE_TODO = "Type your notes below. Microphone recording is not available yet.";
 
 function fail(statusCode: number, message: string): Error {
   return Object.assign(new Error(message), { statusCode });
@@ -488,9 +488,9 @@ export async function startMeetingSession(db: Db, userId: string, input: { artif
   return { session: sessionJson(session) };
 }
 
-export async function saveMeetingNotes(db: Db, userId: string, id: string, notes: string) {
+export async function saveMeetingNotes(db: Db, userId: string, id: string, notes: string | undefined, title?: string) {
   const session = await ownedSession(db, userId, id);
-  await db.meetingSession.update({ where: { id: session.id }, data: { notes } });
+  await db.meetingSession.update({ where: { id: session.id }, data: { notes, title } });
   if (session.status === "ended") {
     const refreshed = await refreshMeetingRecap(db, userId, id);
     const updated = await ownedSession(db, userId, id);
@@ -585,10 +585,12 @@ export async function refreshMeetingRecap(db: Db, userId: string, id: string) {
 export async function trashMeetingSession(db: Db, userId: string, id: string) {
   const session = await ownedSession(db, userId, id);
   const now = new Date();
-  await db.meetingSession.update({ where: { id: session.id }, data: { deletedAt: now } });
-  if (session.meetingNoteId) {
-    await db.meetingNote.updateMany({ where: { id: session.meetingNoteId, userId, deletedAt: null }, data: { deletedAt: now } });
-  }
+  await db.$transaction(async (tx) => {
+    await tx.meetingSession.update({ where: { id: session.id }, data: { deletedAt: now } });
+    if (session.meetingNoteId) {
+      await tx.meetingNote.updateMany({ where: { id: session.meetingNoteId, userId, deletedAt: null }, data: { deletedAt: now } });
+    }
+  });
   return { deleted: true };
 }
 

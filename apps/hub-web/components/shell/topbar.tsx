@@ -9,6 +9,7 @@ import { api } from "@/lib/api";
 import { useModKey } from "@/lib/platform";
 import { useLive } from "../live";
 import { useToast } from "../toast";
+import { HomeLogoLink } from "../motion/brand-morph";
 import { MenuItem, Popover, cx } from "../ui";
 import { ActivityControls } from "./activity-panel";
 import { AccountMenu } from "./account-menu";
@@ -130,6 +131,7 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
         <button type="button" className="icon-btn" onClick={onToggleSidebar} aria-label="Toggle sidebar">
           <Menu size={16} />
         </button>
+        <HomeLogoLink size={24} wordmark={false} className="md:hidden" />
         <div className="hidden min-w-0 truncate text-[13.5px] font-medium sm:block">{title}</div>
         <SharedBadge />
       </div>

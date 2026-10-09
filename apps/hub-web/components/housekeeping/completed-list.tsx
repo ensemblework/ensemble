@@ -43,17 +43,21 @@ export function CompletedList({ embedded = false }: { embedded?: boolean }) {
       {!list.isLoading && items.length === 0 ? <p className="text-[14px] text-muted">Nothing completed in this view.</p> : null}
       <div className="flex flex-col gap-2">
         {items.map((item) => (
-          <div key={`${item.kind}-${item.id}`} className="record-row">
-            <Tag tone="gray">{item.kind}</Tag>
-            <span className="min-w-0 flex-1 truncate text-[14px]">{item.title}</span>
-            {item.projectName ? <span className="text-[12px] text-faint">{item.projectName}</span> : null}
-            <span className="text-[12px] text-faint">{relative(item.completedAt)}</span>
-            <button type="button" className="btn" onClick={() => pin.mutate(item)}>
-              {item.pinned ? "Unpin" : "Pin"}
-            </button>
-            <button type="button" className="btn" onClick={() => reopen.mutate(item)}>
-              Reopen
-            </button>
+          <div key={`${item.kind}-${item.id}`} className="record-row flex-col !items-stretch sm:flex-row sm:!items-center">
+            <div className="min-w-0 flex-1">
+              <div className="break-words text-[14px]">{item.title}</div>
+              <div className="mt-1 flex flex-wrap items-center gap-2 text-[12px] text-faint">
+                <Tag tone="gray">{item.kind}</Tag>
+                {item.projectName ? <span className="break-words">{item.projectName}</span> : null}
+                <span>{relative(item.completedAt)}</span>
+              </div>
+            </div>
+            <div className="flex shrink-0 gap-2">
+              <button type="button" className="btn" aria-label={`${item.pinned ? "Unpin" : "Pin"} ${item.title}`} onClick={() => pin.mutate(item)} disabled={pin.isPending}>
+                {item.pinned ? "Unpin" : "Pin"}
+              </button>
+              <button type="button" className="btn" aria-label={`Reopen ${item.title}`} onClick={() => reopen.mutate(item)} disabled={reopen.isPending}>Reopen</button>
+            </div>
           </div>
         ))}
       </div>

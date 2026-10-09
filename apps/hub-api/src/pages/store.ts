@@ -11,6 +11,8 @@ import {
   type TaskPageContent,
 } from "@ensemble/shared-types";
 import { markdownToNodes, pageSearchText } from "./markdown.js";
+import { lockUserTransaction } from "../lib/user-lock.js";
+import { recordUndoInTransaction } from "../lib/undo.js";
 import { createTask } from "../services/tasks.js";
 
 export class TaskPageError extends Error {
@@ -178,14 +180,14 @@ async function ownedStandalone(db: Db, userId: string, id: string, lock = false)
     `;
   }
   return db.taskPage.findFirst({
-    where: { id, userId, taskId: null },
+    where: { id, userId, taskId: null, deletedAt: null },
     include: { mentions: { orderBy: [{ kind: "asc" }, { entityId: "asc" }] } },
   });
 }
 
 export async function listStandalonePages(prisma: PrismaClient, userId: string): Promise<StandalonePageSummary[]> {
   const rows = await prisma.taskPage.findMany({
-    where: { userId, taskId: null },
+    where: { userId, taskId: null, deletedAt: null },
     orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
     select: { id: true, title: true, updatedAt: true },
   });
@@ -275,11 +277,35 @@ export async function saveStandalonePage(
   });
 }
 
-/** Removes a standalone note only. A linked page is left on its task. */
+/** Standalone notes stay recoverable, including their content, mentions, and discussions. */
 export async function deleteStandalonePage(prisma: PrismaClient, userId: string, id: string): Promise<void> {
-  const page = await prisma.taskPage.findFirst({ where: { id, userId, taskId: null }, select: { id: true } });
-  if (!page) throw new TaskPageError("PAGE_NOT_FOUND", "Page not found.", 404);
-  await prisma.taskPage.delete({ where: { id: page.id } });
+  await prisma.$transaction(async (db) => {
+    await lockUserTransaction(db, userId);
+    const page = await ownedStandalone(db, userId, id, true);
+    if (!page) throw new TaskPageError("PAGE_NOT_FOUND", "Page not found.", 404);
+    const updated = await db.taskPage.update({ where: { id }, data: { deletedAt: new Date() } });
+    const before = { deletedAt: page.deletedAt };
+    const after = { deletedAt: updated.deletedAt, updatedAt: updated.updatedAt };
+    const op = { op: "update" as const, model: "taskPage" as const, id, before, after };
+    await recordUndoInTransaction(db, { userId, label: `Deleted “${page.title || "Untitled"}”`, kind: "delete", subject: "page", href: `/pages/${id}`, inverse: op, forward: op });
+  });
+}
+
+/** Generic page discussions and diagram links have no foreign key to a standalone note. */
+export async function purgeDeletedStandalonePages(prisma: PrismaClient, userId: string, cutoff?: Date): Promise<number> {
+  return prisma.$transaction(async (db) => {
+    const age = cutoff ? Prisma.sql`AND deleted_at < ${cutoff}` : Prisma.empty;
+    const rows = await db.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      SELECT id FROM task_pages
+      WHERE user_id = ${userId} AND task_id IS NULL AND deleted_at IS NOT NULL ${age}
+      ORDER BY id FOR UPDATE
+    `);
+    const ids = rows.map((row) => row.id);
+    if (!ids.length) return 0;
+    await db.pageDiscussion.deleteMany({ where: { userId, pageKind: "page", pageId: { in: ids } } });
+    await db.diagramLink.deleteMany({ where: { userId, targetKind: "page", targetId: { in: ids } } });
+    return (await db.taskPage.deleteMany({ where: { userId, id: { in: ids }, taskId: null, deletedAt: { not: null } } })).count;
+  });
 }
 
 function retargetReplies(content: PageDocument, kind: "page" | "task", id: string): PageDocument {

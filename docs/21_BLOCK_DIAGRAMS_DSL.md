@@ -4,7 +4,7 @@ Agents are the primary authors. People edit lightly. The language is line-orient
 
 The editor stores the text. Dragging, connecting, renaming, locking, and reorganizing write back through the printer, into the same language, with positions kept in a `layout` section at the bottom.
 
-Minimum window for the editor: **1024 × 640** CSS pixels. Below that, Ensemble shows a short message instead of the canvas.
+Minimum window for the editor: **1024 × 640** CSS pixels. Below that, Ensemble shows a **read-only preview** with pan, zoom, Fit, SVG download and Back to diagrams. Editing controls, dragging nodes, connecting and renaming are disabled; the minimum is unchanged (`apps/hub-web/components/diagrams/editor.tsx`, `canvas.tsx`, `nodes.tsx`).
 
 ## Pipeline
 
@@ -581,7 +581,7 @@ Schema version is `1`. Do not author this by hand. It is the contract between th
 - **Add a text box** inserts a `text` statement.
 - **Add a block** inserts a `node` statement.
 - Export is PNG, JPG, PDF or SVG of the whole diagram, from the same geometry, in the editor or from the download menu on each row of the Diagrams list (`components/diagrams/download-menu.tsx`). *Settings › Data › Download this space* includes every diagram as PNG, SVG and source text.
-- The editor needs a window at least 1024 by 640 pixels.
+- **Editing requires at least 1024 × 640 CSS pixels.** Smaller windows show only a read-only pan/zoom preview and SVG download; they cannot edit the diagram.
 - On a diagram, Alt+Shift+R reorganizes, Alt+Shift+L locks the selection, Alt+Shift+N adds a text box, Alt+Shift+F shows only the canvas, and Delete removes the selection. Esc leaves the canvas-only view. `g` then `d` opens the diagram list from anywhere.
 
 Package: `packages/block-diagrams`. It has no React and no DOM. The Hub UI is only the renderer and the save buttons.

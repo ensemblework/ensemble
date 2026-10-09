@@ -229,7 +229,7 @@ Mitigations, in order of how much they actually help:
 
 **A prerequisite worth fixing first.** Fixed: `HUB_API_HOST` used to default to `::`, which binds every interface, and `ENSEMBLE_DEV_AUTH_BYPASS=true` makes every request the dev user. On a laptop on a conference network, that was the entire context database readable by anyone who could reach port 4000. It was already true before the bridge and not caused by it — but the bridge is the point at which *"it's only local"* stops being a fair description of the threat model. It now defaults to **localhost**, which Fastify binds on both `127.0.0.1` and `::1`, so the dual-stack behaviour `::` was there for survives without the exposure. Set it explicitly to publish the API on purpose; see §8.
 
-**Deleted means deleted.** The soft-delete extension filters every ordinary query, so anything I deleted is invisible to the bridge automatically. The one place to be careful is raw SQL in `pack.ts`, which needs its `deleted_at IS NULL` clauses to remain intact — they are there now, and a bridge test should assert it rather than trusting it.
+**Deleted means deleted.** Standalone note reads/search in `apps/hub-api/src/bridge/service.ts` explicitly check `TaskPage.deletedAt`; a note in Trash is hidden until restored. The soft-delete extension filters every ordinary query, so anything I deleted is invisible to the bridge automatically. The one place to be careful is raw SQL in `pack.ts`, which needs its `deleted_at IS NULL` clauses to remain intact — they are there now, and a bridge test should assert it rather than trusting it.
 
 ---
 

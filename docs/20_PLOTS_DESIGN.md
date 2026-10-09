@@ -213,7 +213,9 @@ Ensemble uses a **12-column grid with vertical compaction**, the Grafana rule. E
 
 Click selects the tile and opens quick edit on the tile (title, series colour, line style). It does not expand. Double-click, the Open button, or Enter expands the tile into the focused editor: the chart, plus encode, style, lines, code, export, and which series sits on the left or right axis. The panel scales open and closed. Hover shows the resize handles, Open, and Delete. The two gestures do different things, so neither has to guess.
 
-Arrow keys move the selected tile by one cell. Shift+arrow resizes it. Delete removes it. Enter opens it. Escape closes the editor.
+With the tile itself focused, arrow keys move it by one cell, Shift+arrow resizes it, Delete removes it and Enter opens it. Inputs and other controls inside a tile retain their normal editing keys. Explicit tile removal offers a toast Undo that restores the configuration into a free grid position (`components/plots/workspace.tsx`). Escape closes the editor; a nested popover consumes Escape first.
+
+Below 768 CSS px, the focused editor stacks its chart preview above a full-width scrolling settings panel, hides the width resize grip, and keeps Back reachable (`components/plots/focus-editor.tsx`). Chart settings tabs use Left/Right, Home and End. Checked locally 9 Oct 2026 at 320 × 800 and 390 × 844 CSS pixels; this is viewport testing, not physical-device certification.
 
 ### Adding a tile
 

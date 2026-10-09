@@ -6,6 +6,8 @@ The rules are enforced in `apps/hub-api/src/sharing/`. The Hub side is `apps/hub
 
 Checked 8 Oct 2026, with the HTTP suite (`src/sharing/sharing.integration.test.ts`, `src/sharing/policy.test.ts`), after an independent code review whose eight findings are fixed and covered by tests. Also walked through in the browser with three accounts and a second person live on the same diagram and page.
 
+Standalone notes in Trash are unavailable to shared members and item/public-link readers (`resourceTitle` in `apps/hub-api/src/sharing/store.ts` and `pages/store.ts` check `deletedAt`). Restore returns the same note and retained sharing records. Checked 9 Oct 2026 with the in-memory HTTP resource suite; these checks do not create a new share in a hosted account.
+
 ## 1. What can be shared
 
 | | Whole space (members) | One item (shares) |

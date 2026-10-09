@@ -35,7 +35,7 @@ function isPort(value: string | null | undefined): value is PortName {
   return Boolean(value && (PORTS as readonly string[]).includes(value));
 }
 
-function toFlow(model: DiagramModel, onRename: (id: string, label: string) => void, markedId: string | null): { nodes: Node[]; edges: Edge[] } {
+function toFlow(model: DiagramModel, onRename: (id: string, label: string) => void, markedId: string | null, readOnly = false): { nodes: Node[]; edges: Edge[] } {
   const nodes: Node[] = [];
   const boxes: Record<string, { x: number; y: number; w: number; h: number }> = {};
   const cursor = { y: 48 };
@@ -76,13 +76,14 @@ function toFlow(model: DiagramModel, onRename: (id: string, label: string) => vo
       width: size.w,
       height: size.h,
       zIndex: 1,
-      draggable: !node.locked,
+      draggable: !readOnly && !node.locked,
       style: { width: size.w, height: size.h },
       data: {
         label: node.label,
         shape: node.shape,
         color: node.color,
         locked: node.locked,
+        readOnly,
         width: size.w,
         height: size.h,
         onRename: (label) => onRename(id, label),
@@ -99,11 +100,12 @@ function toFlow(model: DiagramModel, onRename: (id: string, label: string) => vo
       width: size.w,
       height: size.h,
       zIndex: 2,
-      draggable: !text.locked,
+      draggable: !readOnly && !text.locked,
       style: { width: size.w, height: size.h },
       data: {
         text: text.text,
         locked: text.locked,
+        readOnly,
         width: size.w,
         height: size.h,
         onRename: (label) => onRename(id, label),
@@ -182,8 +184,8 @@ function Surface({
   const renameRef = useRef(onRename);
   renameRef.current = onRename;
   const built = useMemo(
-    () => toFlow(model, (id, label) => renameRef.current(id, label), markedId),
-    [model, markedId],
+    () => toFlow(model, (id, label) => renameRef.current(id, label), markedId, readOnly),
+    [model, markedId, readOnly],
   );
   const [nodes, setNodes] = useState<Node[]>(built.nodes);
   const [edges, setEdges] = useState<Edge[]>(built.edges);
@@ -213,9 +215,10 @@ function Surface({
       nodesConnectable={!readOnly}
       onNodesChange={(changes: NodeChange[]) => setNodes((current) => applyNodeChanges(changes, current))}
       onNodeDragStop={(_event, node) => {
+        if (readOnly) return;
         onMove(node.id, node.position.x, node.position.y);
       }}
-      onConnect={onConnect}
+      onConnect={readOnly ? undefined : onConnect}
       onSelectionChange={handleSelection}
       isValidConnection={(connection) => connection.source !== connection.target}
       connectionMode={ConnectionMode.Loose}

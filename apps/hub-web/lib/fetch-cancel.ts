@@ -29,6 +29,7 @@ type Tracked = {
   path?: string;
   onExternal?: () => void;
   external?: AbortSignal;
+  surviveNavigation?: boolean;
 };
 
 const tracked = new Set<Tracked>();
@@ -116,9 +117,9 @@ export function currentExternalSignal(): AbortSignal | undefined {
   return stacked;
 }
 
-export function trackRequest(external?: AbortSignal | null, path?: string): { signal: AbortSignal; close: () => void } {
+export function trackRequest(external?: AbortSignal | null, path?: string, surviveNavigation = false): { signal: AbortSignal; close: () => void } {
   const controller = new AbortController();
-  const entry: Tracked = { controller, epoch, path, external: external ?? undefined };
+  const entry: Tracked = { controller, epoch, path, external: external ?? undefined, surviveNavigation };
   if (external) {
     const onExternal = () => {
       if (!controller.signal.aborted) controller.abort(new RequestCancelledError());
@@ -146,6 +147,7 @@ export function abortAll(): void {
 export function abortOlderThan(nextEpoch: number, keep?: (path: string) => boolean): void {
   for (const entry of tracked) {
     if (entry.epoch < nextEpoch && !entry.controller.signal.aborted) {
+      if (entry.surviveNavigation) continue;
       if (keep && entry.path && keep(entry.path)) continue;
       entry.controller.abort(new RequestCancelledError());
     }

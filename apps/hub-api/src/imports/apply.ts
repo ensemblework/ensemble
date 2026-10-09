@@ -231,7 +231,7 @@ async function writePages(tx: Tx, state: WriterState, items: ImportItem[]): Prom
   const externalSource = state.plan.externalSource;
   const existing = await tx.taskPage.findMany({
     where: { userId, externalSource, externalId: { in: items.map((item) => item.externalId) } },
-    select: { id: true, revision: true, content: true, annotations: true, title: true, externalId: true },
+    select: { id: true, revision: true, content: true, annotations: true, title: true, externalId: true, deletedAt: true },
   });
   const byId = new Map(existing.map((row) => [row.externalId!, row]));
   for (const item of items) {
@@ -240,7 +240,7 @@ async function writePages(tx: Tx, state: WriterState, items: ImportItem[]): Prom
     const content = documentFor(markdown, breadcrumb(state, item));
     const found = byId.get(item.externalId);
     if (found) {
-      if (!pageUntouched(found)) {
+      if (found.deletedAt || !pageUntouched(found)) {
         state.counts.pages.keptEdits += 1;
         continue;
       }

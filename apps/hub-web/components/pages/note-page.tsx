@@ -123,9 +123,14 @@ export function NotePage({
   });
 
   const remove = useMutation({
-    mutationFn: () => api.deletePage(pageId),
+    mutationFn: async () => {
+      if (titleSave.current) await titleSave.current;
+      if (!(await flush())) throw new Error("Save the note before moving it to Trash.");
+      return api.deletePage(pageId);
+    },
     onSuccess: () => {
-      void client.invalidateQueries({ queryKey: ["pages"] });
+      void client.invalidateQueries();
+      toast("Note moved to Trash.", { action: { label: "Undo", run: () => { void api.restoreDeleted({ kind: "page", id: pageId }).then(() => { void client.invalidateQueries(); router.push(`/pages/${pageId}`); }).catch((error: Error) => toast(error.message, { tone: "error" })); } } });
       router.push("/today");
     },
     onError: (error: Error) => toast(error.message, { tone: "error" }),
@@ -291,7 +296,7 @@ export function NotePage({
       </div>
       <Dialog open={confirming} onClose={() => setConfirming(false)} title="Delete this page?" width={420}>
         <p className="text-[13.5px] leading-5 text-muted">
-          Delete “{record.title || "Untitled"}”? This removes the note. It does not change tasks or the board.
+          Delete “{record.title || "Untitled"}”? This moves the note to Trash. You can restore it there until the configured retention period expires.
         </p>
         <div className="mt-4 flex justify-end gap-2">
           <button type="button" className="btn-ghost" onClick={() => setConfirming(false)}>

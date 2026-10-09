@@ -546,6 +546,45 @@ test("deleted-record lists and bulk restore operate only on the current user's r
   await check(a, "POST", "/api/deleted/restore", 400, "invalid-input", { kind: "invalid" });
 });
 
+test("deleted notes retain their document, disappear from access and search, and support Undo, Redo, Trash restore, and retention", async () => {
+  const id = await created("/api/pages", "page");
+  const title = `Recoverable note ${id}`;
+  await check(a, "PATCH", `/api/pages/${id}`, 200, "happy-path", { title });
+  const content = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Keep the content" }, { type: "mention", attrs: { kind: "dataset", id: "dataset-id", label: "measurements.csv" } }] }] };
+  await check(a, "PUT", `/api/pages/${id}`, 200, "happy-path", { revision: 1, content });
+  const comment = (await check(a, "POST", `/api/pages/page/${id}/comments`, 201, "happy-path", { body: { text: "Keep the discussion" } })).comment;
+  await check(a, "DELETE", `/api/pages/${id}`, 204, "happy-path");
+  const stored = await harness.prisma.taskPage.findUniqueOrThrow({ where: { id }, include: { mentions: true } });
+  assert.ok(stored.deletedAt);
+  assert.deepEqual(stored.content, content);
+  assert.equal(stored.mentions.length, 1);
+  assert.ok(await harness.prisma.pageDiscussion.findUnique({ where: { id: comment.id } }));
+  await check(a, "GET", `/api/pages/${id}`, 404, "unknown-id");
+  assert.equal((await a.inject({ method: "PATCH", url: `/api/pages/${id}`, payload: { title: "Hidden" } })).statusCode, 404);
+  assert.equal((await a.inject({ method: "GET", url: `/api/pages/page/${id}/comments` })).statusCode, 404);
+  const { resourceTitle } = await import("../sharing/store.js");
+  const { searchHub } = await import("../bridge/service.js");
+  assert.equal(await resourceTitle(harness.prisma, a.id, "page", id), null);
+  assert.ok(!(await searchHub(harness.prisma, a.id, title, 10)).results.some((row) => row.id === id));
+  assert.ok((await check(a, "GET", "/api/deleted", 200, "happy-path")).items.some((row: { id: string; kind: string }) => row.id === id && row.kind === "page"));
+  assert.equal((await check(b, "POST", "/api/deleted/restore", 200, "isolation", { kind: "page", id })).restored, 0);
+  const undo = await a.inject({ method: "POST", url: "/api/undo", payload: {} });
+  assert.equal(undo.statusCode, 200, undo.body);
+  assert.deepEqual((await check(a, "GET", `/api/pages/${id}`, 200, "happy-path")).content, content);
+  const redo = await a.inject({ method: "POST", url: "/api/redo", payload: {} });
+  assert.equal(redo.statusCode, 200, redo.body);
+  await check(a, "GET", `/api/pages/${id}`, 404, "unknown-id");
+  assert.equal((await check(a, "POST", "/api/deleted/restore", 200, "happy-path", { kind: "page", id })).restored, 1);
+  assert.deepEqual((await check(a, "GET", `/api/pages/${id}`, 200, "happy-path")).content, content);
+  assert.equal(await resourceTitle(harness.prisma, a.id, "page", id), title);
+  await check(a, "DELETE", `/api/pages/${id}`, 204, "happy-path");
+  await harness.prisma.taskPage.update({ where: { id }, data: { deletedAt: new Date("2000-01-01") } });
+  const { runRetention } = await import("../jobs/retention.js");
+  await runRetention(harness.app, a.id, { deletedDays: 30, completedDays: 365_000 });
+  assert.equal(await harness.prisma.taskPage.findUnique({ where: { id } }), null);
+  assert.equal(await harness.prisma.pageDiscussion.findUnique({ where: { id: comment.id } }), null);
+});
+
 test("completed records, pin/reopen and approval decisions hide foreign ids", async () => {
   const taskId = await created("/api/tasks", "task", { title: "Completed private", status: "done" });
   const projectId = await created("/api/projects", "project", { name: "Completed private" });
@@ -588,6 +627,12 @@ test("notifications and meeting session writes remain scoped to the current acco
   await check(a, "GET", `/api/meetings/sessions/${session.id}`, 200, "happy-path");
   await hidden("PATCH", `/api/meetings/sessions/${session.id}`, { notes: "stolen" });
   assert.equal((await check(a, "PATCH", `/api/meetings/sessions/${session.id}`, 200, "happy-path", { notes: "Private notes" })).session.notes, "Private notes");
+  await hidden("PATCH", `/api/meetings/sessions/${session.id}`, { title: "Stolen title" });
+  const renamed = await check(a, "PATCH", `/api/meetings/sessions/${session.id}`, 200, "happy-path", { title: "Planning meeting" });
+  assert.equal(renamed.session.title, "Planning meeting");
+  assert.equal(renamed.session.notes, "Private notes");
+  await check(a, "PATCH", `/api/meetings/sessions/${session.id}`, 400, "invalid-input", { title: "   " });
+  await check(a, "PATCH", `/api/meetings/sessions/${session.id}`, 400, "invalid-input", {});
   for (const suffix of ["end", "decline", "recap"]) {
     await hidden("POST", `/api/meetings/sessions/${session.id}/${suffix}`);
     await check(a, "POST", `/api/meetings/sessions/${session.id}/${suffix}`, 200, "happy-path");
@@ -597,6 +642,12 @@ test("notifications and meeting session writes remain scoped to the current acco
   await check(a, "POST", "/api/meetings/sessions", 404, "relation-isolation", { artifactId: MISSING_ID });
   await hidden("DELETE", `/api/meetings/sessions/${session.id}`);
   await check(a, "DELETE", `/api/meetings/sessions/${session.id}`, 200, "happy-path");
+  const mirror = await harness.prisma.meetingSession.findUniqueOrThrow({ where: { id: session.id } });
+  assert.ok(mirror.meetingNoteId);
+  assert.ok((await harness.prisma.meetingNote.findUniqueOrThrow({ where: { id: mirror.meetingNoteId! } })).deletedAt);
+  assert.equal((await check(b, "POST", "/api/deleted/restore", 200, "isolation", { kind: "meeting", id: session.id })).restored, 0);
+  assert.equal((await check(a, "POST", "/api/deleted/restore", 200, "happy-path", { kind: "meeting", id: session.id })).restored, 1);
+  assert.equal((await harness.prisma.meetingNote.findUniqueOrThrow({ where: { id: mirror.meetingNoteId! } })).deletedAt, null);
 });
 
 test("layout saves and resets are per-user and reject foreign project configuration", async () => {

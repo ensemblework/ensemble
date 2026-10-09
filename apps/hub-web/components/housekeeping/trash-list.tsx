@@ -51,7 +51,7 @@ export function TrashList({ embedded = false }: { embedded?: boolean }) {
       {!deleted.isLoading && items.length === 0 ? (
         <div className="empty-panel">
           <h2 className="text-[18px] font-semibold">Trash is empty</h2>
-          <p className="mt-1 max-w-[42ch] text-[14px] leading-5 text-muted">Deleted people, projects, and tasks wait here until the retention window. Restoring a project brings its links back.</p>
+          <p className="mt-1 max-w-[42ch] text-[14px] leading-5 text-muted">Deleted notes, meetings, people, projects, and tasks wait here until the retention window. Restoring a project brings its links back.</p>
         </div>
       ) : null}
       <div className="flex flex-col gap-2">
@@ -62,7 +62,7 @@ export function TrashList({ embedded = false }: { embedded?: boolean }) {
               <span className="block truncate text-[15px] font-medium">{item.label}</span>
               <span className="mt-0.5 block text-[12px] text-muted">Deleted {relative(item.deletedAt)}</span>
             </span>
-            <button type="button" className="btn" onClick={() => restore.mutate({ kind: item.kind, id: item.id })}>
+            <button type="button" className="btn" aria-label={`Restore ${item.label}`} disabled={restore.isPending} onClick={() => restore.mutate({ kind: item.kind, id: item.id })}>
               Restore
             </button>
           </div>

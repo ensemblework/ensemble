@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useId, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PageDocument, PageMention } from "@ensemble/shared-types";
 import { ApiError, api, currentLink, currentShare, withLink, withShare, type TaskRecord, type TaskStatus } from "@/lib/api";
 import { useEntities } from "@/lib/entities";
@@ -66,21 +66,30 @@ function useBlockEditor() {
   return Editor;
 }
 
+const PropertyLabel = createContext<string | undefined>(undefined);
+
 function PropertyRow({ icon: Icon, label, children }: { icon: typeof User; label: string; children: React.ReactNode }) {
+  const id = useId();
   return (
+    <PropertyLabel.Provider value={id}>
     <div className="flex min-h-[32px] items-center gap-2 text-[13.5px]">
-      <div className="flex w-[124px] shrink-0 items-center gap-2 whitespace-nowrap text-muted">
+      <div id={id} className="flex w-[124px] shrink-0 items-center gap-2 whitespace-nowrap text-muted">
         <Icon size={14} strokeWidth={1.8} />
         {label}
       </div>
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">{children}</div>
     </div>
+    </PropertyLabel.Provider>
   );
 }
 
 function ValueButton({ onClick, empty, children }: { onClick: () => void; empty?: boolean; children: React.ReactNode }) {
+  const label = useContext(PropertyLabel);
+  const id = useId();
   return (
     <button
+      id={id}
+      aria-labelledby={label ? `${label} ${id}` : undefined}
       type="button"
       onClick={onClick}
       className={cx("row-tile -mx-1.5 flex items-center gap-1.5 rounded px-1.5 py-0.5", empty && "text-faint")}
@@ -517,6 +526,7 @@ export function TaskPage({
         <PropertyRow icon={Calendar} label="Due date">
           <input
             type="date"
+            aria-label="Due date"
             value={record.due ? isoDate(new Date(record.due)) : ""}
             onChange={(event) =>
               update.mutate({ due: event.target.value ? new Date(`${event.target.value}T17:00:00`).toISOString() : null })

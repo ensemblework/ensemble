@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import React, { StrictMode, act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { Dialog, QueryError } from "./ui.js";
+import { Dialog, Popover, QueryError, Tabs } from "./ui.js";
 import { CreateTaskDialog } from "./board/create-task-dialog.js";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
@@ -40,6 +40,67 @@ async function unmount(mounted: { root: Root; host: HTMLDivElement }) {
   });
   mounted.host.remove();
 }
+
+test("modal focus wraps, background is inert, Escape closes once, and opener is restored", async () => {
+  let closed = 0;
+  function Harness() {
+    const [open, setOpen] = useState(false);
+    return <><button onClick={() => setOpen(true)}>Open modal</button><Dialog open={open} title="Modal" onClose={() => { closed++; setOpen(false); }}><input aria-label="Name" /><button>Last</button></Dialog></>;
+  }
+  const mounted = await render(<StrictMode><Harness /></StrictMode>);
+  try {
+    const opener = mounted.host.querySelector<HTMLButtonElement>("button")!;
+    opener.focus();
+    await act(async () => opener.click());
+    assert.equal(mounted.host.inert, true);
+    const dialog = document.querySelector('[role="dialog"]')!;
+    const first = dialog.querySelector<HTMLButtonElement>("button")!;
+    const last = [...dialog.querySelectorAll<HTMLButtonElement>("button")].at(-1)!;
+    first.focus();
+    first.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true }));
+    assert.equal(document.activeElement, last);
+    last.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+    assert.equal(document.activeElement, first);
+    await act(async () => first.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+    assert.equal(closed, 1);
+    assert.equal(mounted.host.inert, false);
+    assert.equal(document.activeElement, opener);
+  } finally { await unmount(mounted); }
+});
+
+test("a modal's portalled popover stays interactive and Escape dismisses it first", async () => {
+  let closed = 0;
+  const mounted = await render(<Dialog open title="Picker" onClose={() => { closed++; }}><Popover trigger={(_, toggle) => <button onClick={toggle}>Pick</button>}>{() => <button>Option</button>}</Popover></Dialog>);
+  try {
+    await act(async () => [...document.querySelectorAll("button")].find((node) => node.textContent === "Pick")!.click());
+    const panel = document.querySelector<HTMLElement>("[data-popover]")!;
+    assert.equal(panel.inert, undefined);
+    const option = panel.querySelector<HTMLButtonElement>("button")!;
+    option.focus();
+    assert.equal(document.activeElement, option);
+    await act(async () => option.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+    assert.equal(document.querySelector("[data-popover]"), null);
+    assert.equal(closed, 0);
+  } finally { await unmount(mounted); }
+});
+
+test("tabs use one tab stop, wrap with arrows, and support Home and End", async () => {
+  function Harness() {
+    const [value, setValue] = useState("a");
+    return <Tabs label="Context" panelId="panel" tabs={[{ id: "a", label: "A" }, { id: "b", label: "B" }, { id: "c", label: "C" }]} value={value} onChange={setValue} />;
+  }
+  const mounted = await render(<Harness />);
+  try {
+    const tabs = [...mounted.host.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+    assert.deepEqual(tabs.map((tab) => tab.tabIndex), [0, -1, -1]);
+    for (const [key, next] of [["ArrowLeft", 2], ["Home", 0], ["End", 2], ["ArrowRight", 0]] as const) {
+      await act(async () => (document.activeElement?.closest('[role="tab"]') ?? tabs[0])!.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })));
+      assert.equal(document.activeElement, tabs[next]);
+      assert.equal(tabs[next]!.getAttribute("aria-selected"), "true");
+      assert.equal(tabs[next]!.getAttribute("aria-controls"), "panel");
+    }
+  } finally { await unmount(mounted); }
+});
 
 test("query failures expose their message and a working retry action", async () => {
   let retried = 0;

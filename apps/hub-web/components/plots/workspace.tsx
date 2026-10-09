@@ -472,6 +472,13 @@ function PlotWorkspaceInner({ shared }: { shared?: SharedPlots }) {
                 onDelete={() => {
                   setConfig((current) => (current ? { ...current, tiles: current.tiles.filter((item) => item.id !== tile.id) } : current));
                   if (selected === tile.id) setSelected(null);
+                  toast(`Removed ${tile.title || "chart"}.`, { action: { label: "Undo", run: () => {
+                    setConfig((current) => {
+                      if (!current || current.tiles.some((item) => item.id === tile.id)) return current;
+                      const position = placeNew(packOf(current.tiles), tile.id, tile.w, tile.h).find((item) => item.id === tile.id)!;
+                      return { ...current, tiles: [...current.tiles, { ...tile, col: position.x, row: position.y }] };
+                    });
+                  } } });
                 }}
                 onChange={(next) => setConfig((current) => (current ? { ...current, tiles: current.tiles.map((item) => (item.id === next.id ? next : item)) } : current))}
                 onLayout={layoutTiles}
@@ -606,7 +613,8 @@ function Tile({
       onClick={onSelect}
       onDoubleClick={onOpen}
       onKeyDown={(event) => {
-        if (event.key === "Enter") onOpen();
+        if (event.target !== event.currentTarget) return;
+        if (event.key === "Enter") { event.preventDefault(); onOpen(); }
         if (event.key === "Delete" || event.key === "Backspace") {
           event.preventDefault();
           onDelete();

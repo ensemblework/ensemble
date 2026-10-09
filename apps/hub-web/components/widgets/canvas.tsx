@@ -28,6 +28,7 @@ export function WidgetCanvas({
   kicker,
   toolbar,
   belowHeader,
+  panelId,
   render,
   bare = false,
   initialLayout = null,
@@ -40,6 +41,7 @@ export function WidgetCanvas({
   kicker?: string;
   toolbar?: ReactNode;
   belowHeader?: ReactNode;
+  panelId?: string;
   bare?: boolean;
   initialLayout?: LayoutPayload | null;
   initialNudges?: TodayNudges | null;
@@ -178,7 +180,7 @@ export function WidgetCanvas({
         <p className="mb-3 text-[12.5px] text-faint">These rows are samples. Clear them when the real work starts.</p>
       ) : null}
       {belowHeader}
-      <div ref={frame} className="widget-frame">
+      <div ref={frame} className="widget-frame" id={panelId} role={panelId ? "tabpanel" : undefined} aria-label={panelId ? "Overview" : undefined} tabIndex={panelId ? 0 : undefined}>
         {editing && document ? (
           <EditCanvas
             surface={surface}

@@ -30,7 +30,7 @@ async function assertCommentPage(prisma: Prisma.TransactionClient, userId: strin
     return;
   }
   if (kind === "page") {
-    const page = await prisma.taskPage.findFirst({ where: { id, userId, taskId: null }, select: { id: true } });
+    const page = await prisma.taskPage.findFirst({ where: { id, userId, taskId: null, deletedAt: null }, select: { id: true } });
     if (!page) throw Object.assign(new Error("Page not found."), { statusCode: 404 });
     return;
   }
@@ -62,7 +62,7 @@ export async function commentPageText(prisma: FastifyInstance["prisma"], userId:
     return [references ? `Page references:\n${references}` : "", documentText(doc, notes)].filter(Boolean).join("\n\n");
   };
   if (kind === "page") {
-    const page = await prisma.taskPage.findFirst({ where: { id, userId, taskId: null }, select: { title: true, content: true, notesSnapshot: true } });
+    const page = await prisma.taskPage.findFirst({ where: { id, userId, taskId: null, deletedAt: null }, select: { title: true, content: true, notesSnapshot: true } });
     return page ? [page.title, text(page.content, page.notesSnapshot)].join("\n\n").slice(0, 24_000) : "";
   }
   if (kind === "task") {
