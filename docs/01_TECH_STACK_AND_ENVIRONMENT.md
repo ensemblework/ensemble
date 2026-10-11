@@ -251,12 +251,13 @@ hub-api logs JSON lines with `pino` to the console at `ENSEMBLE_LOG_LEVEL` (defa
 
 Checked 7 Oct 2026 against the workflow files, successful GitHub `ci`/`deploy` runs, and public API health/readiness. The pipeline is enabled and has deployed the API on the VM and the Hub/landing page on Vercel. Server addresses, access instructions, and release history remain in the git-ignored `private/` runbooks.
 
-**`.github/workflows/ci.yml`** runs on every pull request and every push to `main`, as five parallel jobs:
+**`.github/workflows/ci.yml`** runs on every pull request and every push to `main`, as six parallel jobs (the sandbox job is a matrix of four runners):
 
 | Job | What it runs |
 |---|---|
 | Typecheck and unit tests | `pnpm db:generate`, `pnpm typecheck`, the `shared-types`, `block-diagrams`, `ide-theme` and `hub-web` tests. The `hub-web` plot tests render with matplotlib, so the job installs `apps/agent-runtime` and sets `PLOTS_PYTHON` |
-| hub-api tests (Postgres + Redis) | `pgvector/pgvector:pg16` and `redis:7-alpine` service containers, `infra/sql/init.sql`, `pnpm db:migrate`, the full `hub-api` suite (integration tests included, since a database is reachable), and `pnpm bridge:verify` |
+| hub-api tests (Postgres + Redis) | `pgvector/pgvector:pg16` and `redis:7-alpine` service containers, `infra/sql/init.sql`, `pnpm db:migrate`, the Landlock helper (`scripts/build-landrun.mjs`, so the agent and remote end-to-end runs are sandboxed for real), the full `hub-api` suite (integration tests included, since a database is reachable), and `pnpm bridge:verify` |
+| Sandbox escapes | Live escape tests (`src/workspace/sandbox/os-escape.test.ts`, plus the argument, trust and git-ceiling tests) on four runners, each with its own OS sandbox and no Docker: macOS (Seatbelt), Ubuntu 24.04 (Landlock through `landrun`, bubblewrap off), Ubuntu 22.04 (bubblewrap from the distribution) and Windows (the sandbox-runtime account, set up during the test; the runner is an administrator). `ENSEMBLE_REQUIRE_OS_SANDBOX=1` makes a missing sandbox a failure, not a skip |
 | CLI tests and package smoke | `apps/cli` typecheck, tests (the test script builds `dist/ensemble.mjs` first) and build, then `scripts/package-cli.mjs --target linux-x64 --skip-sidecar` and `scripts/smoke-cli-package.mjs` on the archive |
 | agent-runtime tests | Python 3.12, `pip install -e apps/agent-runtime pytest`, `pytest tests` |
 | Production builds | `next build` for `apps/hub-web` (with placeholder `example.com` origins) and `apps/landing` |

@@ -895,6 +895,33 @@ p {
   color: #e36b64;
 }
 
+/* cli */
+
+.cli-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+  gap: 28px;
+  align-items: start;
+}
+
+.cli-card {
+  margin-top: 0;
+}
+
+.cli-card pre {
+  font-size: 13px;
+}
+
+.cli-points {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.cli .ctas {
+  margin-top: 28px;
+}
+
 /* trust */
 
 .trust {
@@ -1255,7 +1282,8 @@ p {
     padding-left: 0;
     border-left: 0;
   }
-  .needs {
+  .needs,
+  .cli-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -1272,6 +1300,7 @@ p {
   }
   .compare,
   .features,
+  .cli-points,
   .targets,
   .trust,
   .install-grid,

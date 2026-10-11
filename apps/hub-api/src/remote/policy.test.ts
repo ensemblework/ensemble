@@ -126,6 +126,16 @@ test("web settings apply when this computer accepts them, and only narrow when i
   if (!isRefusal(older)) assert.equal(older.assign.mode, "unattended");
 });
 
+test("the web's sandbox toggle applies only when this computer accepts web settings", () => {
+  const folders = [{ label: "notes", path: "/Users/person/notes", kind: "folder" as const, access: "read-write" as const }];
+  const off = planLocalJob(spec({ folderLabel: "notes", sandbox: false }), settings(folders), () => null);
+  assert.ok(!isRefusal(off) && off.assign.sandbox === false);
+  const kept = planLocalJob(spec({ folderLabel: "notes", sandbox: false }), settings(folders, false), () => null);
+  assert.ok(!isRefusal(kept) && kept.assign.sandbox === true);
+  const older = planLocalJob(spec({ folderLabel: "notes" }), settings(folders), () => null);
+  assert.ok(!isRefusal(older) && older.assign.sandbox === true);
+});
+
 test("a phone answer applies only to the question the Mac asked, once", () => {
   const local = question();
   const base = { askedId: "hosted-d", hash: "abc", risk: "ordinary" as const, local };

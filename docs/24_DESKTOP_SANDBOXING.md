@@ -1,6 +1,6 @@
 # Ensemble Desktop: Cross-Platform Sandboxing Design
 
-Status: Revised after review · Owner: cross platform ensemble · Updated: 2 Oct 2026
+Status: Revised after review; v4 as built · Owner: cross platform ensemble · Updated: 11 Oct 2026
 Scope: Ensemble desktop app (Tauri 2, Rust core) running the agent against the user's real repositories and files on macOS, Linux and Windows.
 Companion: [23 · Local desktop design](23_LOCAL_DESKTOP_DESIGN.md) for the install, the embedded Postgres database, the single Node sidecar and the build order.
 
@@ -46,11 +46,30 @@ Read from the code on branch `feat/run-settings-f6` and checked with the unit te
 
 Tests: `trust.test.ts`, `guard-git.test.ts`, `remote/policy.test.ts`.
 
+## Changes in v4 (11 Oct 2026, as built): an OS sandbox on every system
+
+Read from the code and checked as listed in [doc 18](18_WHAT_IS_REAL.md). This supersedes "Windows v1 is Ask mode or WSL2" and the Linux `ensemble-sbx` plan below: Ensemble reuses maintained sandboxes instead of writing its own helper.
+
+| System | Sandbox | Setup | Internet off | Not enforced |
+|---|---|---|---|---|
+| macOS | Seatbelt, the existing profile (`sandbox/seatbelt.ts`) | none | yes | – |
+| Linux, first choice | **bubblewrap** (the distribution's `bwrap`) when it starts with a private network: read-only system, the home folder replaced by an empty one with the grants and toolchains mounted back, private `/tmp`, own PID namespace, `/run/user` and the Docker socket hidden (`sandbox/linux.ts` `bubblewrapArgs`) | none | yes (empty network namespace) | – |
+| Linux, fallback | **Landlock** through `landrun` (MIT), which Ensemble ships statically linked (`scripts/build-landrun.mjs`, bundled at `<sidecar>/bin/landrun`). Used where bubblewrap is missing or blocked, as on Ubuntu 24.04's AppArmor user-namespace restriction. Grants only: system and toolchains read/exec, the work folder and cache read/write; everything else, the rest of the home folder included, is denied (`landrunArgs`) | none | from Linux 6.7 (Landlock TCP rules) | Unix sockets; on older kernels a run with the internet off is refused |
+| Windows | **Anthropic's sandbox-runtime** (Apache-2.0, pinned 0.0.79): a hidden `srt-sandbox` account and a Windows Filtering Platform fence that lets it reach only a loopback proxy. Commands run as that account with a restricted token in a job object; it cannot read your profile; Ensemble grants it the work folder and cache (write) and toolchain folders on PATH (read) (`sandbox/windows.ts`) | one admin prompt per computer (`ensemble sandbox setup`, the Assign dialog, or `ensemble login`) | yes (no proxy) | per-user tools not on PATH; the folder must be on a local drive |
+| None works | – | – | – | A sandboxed run is refused with the reason (`sandboxRefusal`); turning the sandbox off runs it directly |
+
+- **Found once, shared.** `prepareSandbox()` probes at start (bubblewrap must start a shell with `--unshare-net`; Landlock must refuse a write outside its grant and allow a rename between two granted folders, ABI 2). `capabilities()` reports mechanism, strength (`strong`, `reduced`, `advisory`), `limits`, `networkOff` and `setup`. The CLI and the desktop app run the same runtime on a computer, so a sandbox set up from one is the other's.
+- **Proved by escape tests on each system** (`sandbox/os-escape.test.ts`, run in CI on macOS, Ubuntu 24.04 with Landlock, Ubuntu 22.04 with bubblewrap, and Windows): writes stay in the folder, a file elsewhere in the home folder is unreadable, the internet-off case cannot open a TCP connection, Ensemble's data folder is unreadable.
+- **Paths outside the folder follow the sandbox** (`commandGate` in `trust.ts`, `toolPath`/`outsideRefusal`): with the sandbox on, the folder is the boundary: Review only and Run unattended refuse an outside path back to the model and the run continues; Ask asks, and an allowed path is added to that command's sandbox grant. With the sandbox off, the person chose to run directly, so Review only and Run unattended use outside paths without asking. In every mode, the dotfiles and app folders in the home folder, Ensemble's data and code, and other accounts are refused.
+- **Engines keep their own sandbox.** When Claude Code does the work ([doc 30](30_ENGINES.md)), every tool call is judged by these same rules through a hook, and with the sandbox on Claude Code's own sandbox (the same sandbox-runtime, Seatbelt on macOS, bubblewrap on Linux) confines its shell commands to the work folder, with no unsandboxed retry and no start where it cannot run. Wrapping the whole `claude` process instead would cut it off from its own sign-in.
+- **Windows commands** run through `cmd.exe` when the program is a `.cmd`/`.bat` shim (npm, pnpm), escaped the way cross-spawn does; PATH is split on `;` with `PATHEXT`; Stop ends the tree with `taskkill /T`.
+- Plots still run unsandboxed on Linux and Windows (`advisoryOk`); the plan is to move them off Python (FEAT-14).
+
 ---
 
 ## 0. TL;DR
 
-- Use **OS-native sandboxing**, not containers: macOS Seatbelt first, then `ensemble-sbx` on Linux and (later) macOS. Windows v1 is Ask mode or WSL2.
+- Use **OS-native sandboxing**, not containers: Seatbelt on macOS, bubblewrap or Landlock on Linux, the sandbox-runtime account on Windows (v4, as built; the `ensemble-sbx` helper below was not needed).
 - Hide the mechanisms behind **one Rust crate (`ensemble-sandbox`)** with one policy type. Confinement is done by a **tiny helper (`ensemble-sbx`)**. Only the Rust core launches it.
 - The **trusted base is the Rust core, the helper, and hub-api.** The agent loop in `workspace/agent.ts` is trusted code. The commands it runs are not.
 - **`runner.ts` does not spawn.** Today it does: it `spawn`s `/usr/bin/sandbox-exec` itself. The desktop rewrite makes it ask the core.
@@ -59,7 +78,7 @@ Tests: `trust.test.ts`, `guard-git.test.ts`, `remote/policy.test.ts`.
 - **The trusted-scope rule.** Inside a trusted folder, no Allow once or Allow always prompt. Prompts appear only for paths outside it. Trust is paths only, and per device.
 - **Review only** runs commands inside a trusted folder without asking and asks only decision questions (v3). **Read-only** is the separate no-writes, no-network grant.
 - **Review only and Run unattended require a trusted folder.** A path outside that folder is blocked.
-- **Distribution is a DMG on macOS (no Mac App Store),** NSIS and zip on Windows, AppImage and `.deb` on Linux. No Flatpak.
+- **Distribution is a DMG on macOS (no Mac App Store),** NSIS and zip on Windows, AppImage and `.deb` on Linux. No Flatpak. The CLI and the app share one runtime and one sandbox per computer (v4).
 - **Build on what exists.** The new work is the helper, the profile fixes, and the trust and unattended rules. Order: doc 23 §14.
 
 ---

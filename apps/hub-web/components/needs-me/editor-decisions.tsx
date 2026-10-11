@@ -14,7 +14,7 @@ import { relative, untilLabel } from "@/lib/format";
 const SOURCE: Record<string, { label: string; tone: "blue" | "purple" | "orange" | "gray" }> = {
   cursor: { label: "Cursor", tone: "blue" },
   claude: { label: "Claude Code", tone: "orange" },
-  copilot: { label: "VS Code Copilot", tone: "purple" },
+  copilot: { label: "GitHub Copilot", tone: "purple" },
   codex: { label: "Codex", tone: "gray" },
   ensemble: { label: "Ensemble agent", tone: "purple" },
 };
@@ -281,7 +281,96 @@ function DecisionCard({ decision }: { decision: AgentDecisionRecord }) {
   if (decision.canAnswer === false) return <ObserveCard decision={decision} />;
   if (decision.source === "ensemble" && decision.detail.deviceId) return <DeviceCard decision={decision} />;
   if (decision.source === "ensemble") return <EnsembleCard decision={decision} />;
+  if (decision.event === "question") return <EditorQuestionCard decision={decision} />;
   return <EditorCard decision={decision} />;
+}
+
+/**
+ * A question another tool asked (Claude Code's multiple-choice questions):
+ * the tool's own options with their descriptions, several at once when the
+ * tool allows it, or a typed answer. The answer goes back as if it had been
+ * picked in that tool's window; "Answer there instead" hands it back.
+ */
+function EditorQuestionCard({ decision }: { decision: AgentDecisionRecord }) {
+  const client = useQueryClient();
+  const toast = useToast();
+  const [picked, setPicked] = useState<string[]>([]);
+  const [typed, setTyped] = useState("");
+  const source = SOURCE[decision.source] ?? { label: decision.source, tone: "gray" as const };
+  const options = decision.detail.optionDetails?.length
+    ? decision.detail.optionDetails
+    : (decision.detail.options ?? []).map((label) => ({ label, description: "" }));
+  const multi = decision.detail.multiSelect === true;
+  const decide = useMutation({
+    mutationFn: (input: { decision: "allow" | "deny"; reason?: string }) => api.decideAgent(decision.id, { decision: input.decision, scope: "once", reason: input.reason }),
+    onSuccess: (_result, input) => {
+      toast(input.decision === "allow" ? `Sent your answer to ${source.label}.` : `${source.label} will ask in its own window.`, { tone: "ok" });
+    },
+    onError: (error) => toast((error as Error).message, { tone: "error" }),
+    onSettled: () => void client.invalidateQueries({ queryKey: ["decisions"] }),
+  });
+  const busy = decide.isPending;
+  const toggle = (label: string) => setPicked((current) => (current.includes(label) ? current.filter((item) => item !== label) : [...current, label]));
+  return (
+    <div className="tile rounded-lg bg-panel p-4" data-testid="editor-question">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <Tag tone={source.tone}>{source.label}</Tag>
+            {decision.detail.header ? <span className="text-[12px] text-muted">{decision.detail.header}</span> : null}
+            <span className="text-[12px] text-muted">{relative(decision.requestedAt)}</span>
+          </div>
+          <div className="mt-1.5 text-[15px] font-semibold">{decision.title}</div>
+          {decision.cwd ? <div className="mt-0.5 truncate font-mono text-[12px] text-muted">{decision.cwd}</div> : null}
+        </div>
+        <span className="shrink-0 text-[12px] text-faint">
+          <Countdown until={decision.expiresAt} />
+        </span>
+      </div>
+      {options.length ? (
+        <div className="mt-3 flex flex-col gap-1.5">
+          {options.map((option) => {
+            const on = picked.includes(option.label);
+            return (
+              <button
+                key={option.label}
+                type="button"
+                className={`btn h-auto flex-col items-start justify-start py-2 text-left ${on ? "border-accent" : ""}`}
+                aria-pressed={multi ? on : undefined}
+                disabled={busy}
+                onClick={() => (multi ? toggle(option.label) : decide.mutate({ decision: "allow", reason: option.label }))}
+              >
+                <span className="font-medium">{multi ? `${on ? "☑" : "☐"} ` : ""}{option.label}</span>
+                {option.description ? <span className="text-[12px] font-normal text-muted">{option.description}</span> : null}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+      {multi ? (
+        <button type="button" className="btn-primary mt-2" disabled={busy || !picked.length} onClick={() => decide.mutate({ decision: "allow", reason: picked.join(", ") })}>
+          <Check size={13} /> Send {picked.length ? picked.length : ""} {picked.length === 1 ? "answer" : "answers"}
+        </button>
+      ) : null}
+      {decision.detail.allowCustom !== false ? (
+        <form
+          className="mt-3 flex gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (typed.trim()) decide.mutate({ decision: "allow", reason: typed.trim() });
+          }}
+        >
+          <input value={typed} onChange={(event) => setTyped(event.target.value)} maxLength={500} placeholder="Or type your own answer" className="field min-w-0 flex-1" aria-label="Your own answer" />
+          <button type="submit" className="btn" disabled={busy || !typed.trim()}>
+            Send
+          </button>
+        </form>
+      ) : null}
+      <button type="button" className="btn-ghost mt-2" disabled={busy} onClick={() => decide.mutate({ decision: "deny" })}>
+        <X size={13} /> Answer in {source.label} instead
+      </button>
+    </div>
+  );
 }
 
 function EditorCard({ decision }: { decision: AgentDecisionRecord }) {
@@ -387,7 +476,7 @@ export function EditorDecisions() {
       <h2 className="mb-2 flex items-center gap-2 text-[15px] font-semibold">
         From your editors{pending.data ? ` (${rows.length})` : ""}
         <Link href="/settings#editors" className="text-[12px] font-normal text-accent hover:underline">
-          Set up Cursor, Claude Code or VS Code
+          Set up Claude Code, Codex, Copilot or Cursor
         </Link>
       </h2>
       {pending.isLoading && !pending.data ? (

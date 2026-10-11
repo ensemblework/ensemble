@@ -112,10 +112,82 @@ jobs:
 
       - run: pnpm db:migrate
 
+      # The Linux sandbox's Landlock helper, so the agent and remote e2e tests run sandboxed for real.
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.24.x"
+          cache: false
+
+      - name: Build the Landlock helper
+        run: |
+          node scripts/build-landrun.mjs --out "$RUNNER_TEMP/landrun/landrun"
+          echo "ENSEMBLE_LANDRUN=$RUNNER_TEMP/landrun/landrun" >> "$GITHUB_ENV"
+
       - run: pnpm --filter @ensemble/hub-api test
 
       - name: Context Bridge (typecheck, MCP tests, build, smoke)
         run: pnpm bridge:verify
+
+  # Live sandbox escapes on each OS's own sandbox. No Docker anywhere.
+  sandbox:
+    name: Sandbox escapes (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS Seatbelt
+            os: macos-latest
+          - name: Linux Landlock
+            os: ubuntu-24.04
+            landrun: true
+          - name: Linux bubblewrap
+            os: ubuntu-22.04
+            bubblewrap: true
+          - name: Windows sandbox account
+            os: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 12.6.0
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - uses: actions/setup-go@v6
+        if: matrix.landrun
+        with:
+          go-version: "1.24.x"
+          cache: false
+
+      - name: Build the Landlock helper
+        if: matrix.landrun
+        shell: bash
+        run: |
+          node scripts/build-landrun.mjs --out "$RUNNER_TEMP/landrun/landrun"
+          echo "ENSEMBLE_LANDRUN=$RUNNER_TEMP/landrun/landrun" >> "$GITHUB_ENV"
+          echo "ENSEMBLE_BWRAP=off" >> "$GITHUB_ENV"
+
+      - name: Install bubblewrap (what a desktop distribution ships)
+        if: matrix.bubblewrap
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+
+      - name: Sandbox tests
+        working-directory: apps/hub-api
+        shell: bash
+        env:
+          DATABASE_URL: postgresql://localhost/ensemble_unused
+          # The Windows runner is an administrator, so the one-time setup runs without a prompt.
+          ENSEMBLE_SANDBOX_SETUP_IN_TEST: "1"
+          ENSEMBLE_REQUIRE_OS_SANDBOX: "1"
+        run: pnpm exec tsx --test src/workspace/sandbox/backends.test.ts src/workspace/sandbox/os-escape.test.ts src/workspace/trust.test.ts src/workspace/guard-git.test.ts
 
   cli:
     name: CLI tests and package smoke

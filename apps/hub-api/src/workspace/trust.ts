@@ -12,7 +12,12 @@
  *   only decision questions reach the person. Needs a trusted folder.
  * - Run unattended (`unattended` flag): nothing asks; decisions are made by the
  *   agent and reported. Needs a trusted folder.
- * In Review only and Run unattended a path outside the folder is refused.
+ * Outside the folder, the sandbox decides. With the OS sandbox on, the folder
+ * is the boundary: in Review only and Run unattended a path outside it is
+ * refused back to the model (the run continues), and in Ask it is a question.
+ * With the sandbox off the person chose to run directly, so Review only and
+ * Run unattended use outside paths without asking; Ask still asks. Secrets,
+ * app data and Ensemble's own code stay refused either way (`outsideRefusal`).
  * `review` is the older read-only grant (no writes, no network), kept for a
  * folder shared read-only from a paired computer.
  */
@@ -118,10 +123,11 @@ export class UnattendedAskModeError extends Error {
 }
 
 /**
- * `strong` is an OS sandbox (Seatbelt). `advisory` (Linux) has only the argv
- * allow-list and folder jail, so nothing stops a command from writing: Review
- * only asks before each command there. `ask` (Windows) asks before every
- * command and write, and unattended is refused.
+ * `strong`: the run's commands are inside the OS sandbox (Seatbelt, Landlock,
+ * bubblewrap or the Windows sandbox account). `advisory`: the sandbox is off
+ * for this run, so only the argv allow-list and the folder jail apply. `ask`:
+ * kept for runtimes that report no sandbox at all; every command asks and
+ * unattended is refused.
  */
 export type SandboxStrength = "strong" | "advisory" | "ask";
 
@@ -135,12 +141,18 @@ export function commandGate(input: {
   action: GateAction;
   inside: boolean;
   strength?: SandboxStrength;
+  /** The OS sandbox is on for this run. Unset means on. */
+  sandboxed?: boolean;
 }): GateResult {
   const strength = input.strength ?? "strong";
   if (input.unattended && (!input.trusted || strength === "ask")) return "block";
-  // Review only and Run unattended: nobody approves commands, so nothing leaves the folder.
   const free = input.trusted && (input.unattended || input.accessMode === "auto");
-  if (!input.inside || input.action === "outside") return free ? "block" : "prompt";
+  if (!input.inside || input.action === "outside") {
+    if (!free) return "prompt";
+    // Review only and Run unattended never ask. Sandboxed, the folder is the boundary;
+    // unsandboxed, the person chose to run directly and outside paths go ahead.
+    return input.sandboxed === false ? "allow" : "block";
+  }
   if (input.accessMode === "review") {
     // Read-only: never a write, never the network. Commands run under a read-only grant.
     if (input.action === "write" || input.action === "network" || input.action === "push" || input.action === "credential") return "block";

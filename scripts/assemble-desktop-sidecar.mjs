@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmdirSync, rmSync, unlinkSync } from "node:fs";
 import { basename, dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildLandrun } from "./build-landrun.mjs";
 import { run } from "./desktop-spawn.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -37,6 +38,17 @@ if (process.platform !== "win32") chmodSync(nodeDest, 0o755);
 // by absolute path. A packaged sidecar has to carry those libraries and point
 // the binary at the copies, or dyld aborts before the import check.
 bundleNodeLibraries(nodeSrc, nodeDest);
+
+// The hook other coding agents call (Claude Code, Codex, Copilot, Cursor), and what it imports.
+mkdirSync(join(appDir, "scripts", "hooks"), { recursive: true });
+for (const file of ["ensemble-hook.mjs", "ensemble-ask-mcp.mjs", "desktop-discovery.mjs"]) cpSync(join(root, "scripts", file), join(appDir, "scripts", "hooks", file));
+
+// Linux: the Landlock helper the sandbox falls back to where bubblewrap is missing or blocked
+// (workspace/sandbox/linux.ts looks for <sidecar>/bin/landrun).
+if (process.platform === "linux") {
+  mkdirSync(join(dest, "bin"), { recursive: true });
+  buildLandrun({ out: join(dest, "bin", "landrun"), arch: process.arch });
+}
 
 const imported = run(
   nodeDest,

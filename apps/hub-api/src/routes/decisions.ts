@@ -1,5 +1,3 @@
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import { publicApiUrl } from "../connectors/oauth.js";
@@ -10,10 +8,12 @@ import { sseHub } from "../lib/sse.js";
 import { resolveWorkFolder, within, workspaceRoot } from "../workspace/guard.js";
 import { OUTSIDE_TOOL, RUN_RULE_SOURCE } from "../workspace/tools.js";
 import { PATH_RULE_SOURCE, PATH_RULE_TOOL } from "../workspace/trust.js";
+import { hookScriptPath } from "../workspace/engines/registry.js";
 import { actorFor } from "../sharing/context.js";
 import { ownsOpenSpace } from "../lib/auth.js";
 
-const HOOK_SCRIPT = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../scripts/ensemble-hook.mjs");
+// In the repository, or copied into the packaged sidecar (scripts/assemble-desktop-sidecar.mjs).
+const HOOK_SCRIPT = hookScriptPath();
 
 const Decide = z.object({
   decision: z.enum(["allow", "deny"]),

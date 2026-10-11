@@ -125,7 +125,7 @@ export const installChannels: Record<OsId, InstallChannel[]> = {
   ],
 };
 
-export const afterInstallCommands = ["ensemble login", "ensemble folders add ~/code/my-repo", "ensemble keys set google", "ensemble runner install"];
+export const afterInstallCommands = ["ensemble login", "ensemble sandbox", "ensemble folders add ~/code/my-repo", "ensemble keys set google", "ensemble runner install"];
 
 type Editor = {
   id: string;

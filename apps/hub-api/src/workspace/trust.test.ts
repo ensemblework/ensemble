@@ -85,6 +85,17 @@ test("Run unattended never asks: inside is allowed, outside and untrusted are bl
   assert.equal(commandGate({ ...base, trusted: false, action: "command" }), "block");
 });
 
+test("with the sandbox off, Review only and Run unattended use outside paths without asking", () => {
+  const free = { trusted: true, silentWorkspace: false, explicitTrust: false, accessMode: "read-write" as const, inside: false, action: "outside" as const };
+  assert.equal(commandGate({ ...free, unattended: true, sandboxed: false }), "allow");
+  assert.equal(commandGate({ ...free, unattended: true, sandboxed: true }), "block");
+  assert.equal(commandGate({ ...free, unattended: false, accessMode: "auto", sandboxed: false }), "allow");
+  assert.equal(commandGate({ ...free, unattended: false, accessMode: "auto", sandboxed: true }), "block");
+  // Ask always asks; an untrusted folder never runs unattended.
+  assert.equal(commandGate({ ...free, unattended: false, sandboxed: false }), "prompt");
+  assert.equal(commandGate({ ...free, unattended: true, trusted: false, sandboxed: false }), "block");
+});
+
 test("read-only never writes and never uses the network", () => {
   const base = { trusted: true, silentWorkspace: true, explicitTrust: true, unattended: false, accessMode: "review" as const, inside: true };
   assert.equal(commandGate({ ...base, action: "command" }), "allow");

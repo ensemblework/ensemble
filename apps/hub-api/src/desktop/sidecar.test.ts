@@ -20,6 +20,7 @@ test("the sidecar starts, writes a private discovery file, and stops", { timeout
       NODE_ENV: "development",
       ENSEMBLE_DATA_DIR: join(root, "pglite"),
       ENSEMBLE_BACKUP_DIR: join(root, "backups"),
+      ENSEMBLE_WORKSPACE_ROOT: join(root, "workspace"),
       ENSEMBLE_DISCOVERY_FILE: discovery,
       ENSEMBLE_DESKTOP_TOKEN: token,
       ENSEMBLE_INPROCESS_RUNTIME: "1",

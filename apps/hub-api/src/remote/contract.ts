@@ -76,6 +76,8 @@ export const JobSpec = z
      */
     networkAccess: z.boolean().optional(),
     askBeforePublish: z.boolean().optional(),
+    /** The sandbox toggle from the Assign dialog. Older servers omit it (sandbox on). */
+    sandbox: z.boolean().optional(),
     markDone: z.boolean().optional(),
     maxMinutes: z.number().int().min(1).max(480).nullish(),
     maxTurns: z.number().int().min(3).max(200).nullish(),

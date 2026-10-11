@@ -16,6 +16,7 @@ export function quickProfile(orchestration?: { defaultExecution?: string; sandbo
     name: "Quick",
     kind: "code",
     deviceId: null,
+    engine: "ensemble",
     model: "",
     effort: "default",
     branchMode: "as-is",
@@ -41,6 +42,7 @@ export function profileFields(profile: RunProfile): ProfileFields {
 const KEYS: Array<keyof ProfileFields> = [
   "kind",
   "deviceId",
+  "engine",
   "model",
   "effort",
   "branchMode",
@@ -101,5 +103,6 @@ export function removeProfile(saved: RunProfile[] | undefined, id: string): RunP
 export function profileSummary(profile: RunProfile): string {
   const mode = profile.mode === "unattended" ? "Run unattended" : profile.mode === "review" ? "Review only" : "Ask";
   const git = profile.delivery === "local" ? "local only" : profile.delivery === "commit" ? "may commit" : "may commit and push";
-  return profile.kind === "research" ? "Research & writing" : `Code · ${mode} · ${git}${profile.askBeforePublish && profile.delivery !== "local" && profile.mode !== "unattended" ? " (asks before each commit)" : ""}`;
+  const engine = profile.engine === "claude-code" ? "Claude Code · " : "";
+  return profile.kind === "research" ? "Research & writing" : `${engine}Code · ${mode} · ${git}${profile.askBeforePublish && profile.delivery !== "local" && profile.mode !== "unattended" ? " (asks before each commit)" : ""}`;
 }

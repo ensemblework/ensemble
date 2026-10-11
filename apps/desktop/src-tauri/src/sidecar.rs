@@ -2,9 +2,16 @@
 //!
 //! The shell starts it, waits until the discovery file appears, and stops the
 //! process group on quit. The API binds 127.0.0.1 on a random port.
+//!
+//! The CLI runner uses the same data folder, so a computer has one runtime.
+//! When the CLI runner is already running, the shell attaches to it instead of
+//! starting a second one, and leaves it running on quit. If that runner stops
+//! while the window is open, the shell starts its own on the same port and
+//! token, so the page keeps working.
 
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -34,7 +41,12 @@ struct Launch {
 struct Discovery {
     port: u16,
     token: String,
+    #[serde(default)]
+    mode: Option<String>,
 }
+
+/// The sidecar's exit code when another runtime already holds the data folder.
+const ALREADY_RUNNING_EXIT: i32 = 75;
 
 pub fn start(app: &tauri::App) -> Result<Sidecar, String> {
     let data = app.path().app_data_dir().map_err(|error| error.to_string())?;
@@ -48,18 +60,46 @@ pub fn start(app: &tauri::App) -> Result<Sidecar, String> {
     fs::create_dir_all(&log_dir).map_err(|error| error.to_string())?;
     let log_path = log_dir.join("sidecar.log");
     let discovery = data.join("api.json");
-    let _ = fs::remove_file(&discovery);
-    let token = random_token();
     let launch = launch_for(app)?;
     let stop = Arc::new(AtomicBool::new(false));
     let pid = Arc::new(Mutex::new(None));
-    let child = spawn(&launch, &data, &discovery, &log_path, &token)?;
+    if let Some(found) = running_runtime(&discovery) {
+        let _ = append_log(&log_path, &format!("attached to the runtime already running on port {}", found.port));
+        adopt_when_gone(launch, data.clone(), discovery.clone(), log_path.clone(), found.port, found.token.clone(), stop.clone(), pid.clone());
+        return Ok(Sidecar {
+            pid,
+            stop,
+            port: found.port,
+            token: found.token,
+            log_path,
+        });
+    }
+    let _ = fs::remove_file(&discovery);
+    let token = random_token();
+    let child = spawn(&launch, &data, &discovery, &log_path, &token, 0)?;
     {
         let mut slot = pid.lock().map_err(|error| error.to_string())?;
         *slot = Some(child.id());
     }
-    watch(child, launch, data.clone(), discovery.clone(), log_path.clone(), token.clone(), stop.clone(), pid.clone());
+    watch(child, launch.clone(), data.clone(), discovery.clone(), log_path.clone(), token.clone(), 0, stop.clone(), pid.clone());
     match wait_for_discovery(&discovery, &log_path, Duration::from_secs(45)) {
+        // Another launcher won the race for the data folder; this sidecar exited and that one serves.
+        Ok(found) if found.token != token && healthy(found.port, &found.token) => {
+            if let Ok(mut slot) = pid.lock() {
+                slot.take();
+            }
+            stop.store(true, Ordering::SeqCst);
+            let stop = Arc::new(AtomicBool::new(false));
+            let pid = Arc::new(Mutex::new(None));
+            adopt_when_gone(launch, data.clone(), discovery.clone(), log_path.clone(), found.port, found.token.clone(), stop.clone(), pid.clone());
+            Ok(Sidecar {
+                pid,
+                stop,
+                port: found.port,
+                token: found.token,
+                log_path,
+            })
+        }
         Ok(found) if found.token == token => {
             eprintln!("ensemble desktop: local API on 127.0.0.1:{}", found.port);
             // Doc 25: remote tasks stay awake. macOS only; Linux has no App Nap.
@@ -101,12 +141,87 @@ fn shutdown(stop: &AtomicBool, pid: &Mutex<Option<u32>>) {
     }
 }
 
-fn watch(mut child: Child, launch: Launch, data: PathBuf, discovery: PathBuf, log_path: PathBuf, token: String, stop: Arc<AtomicBool>, pid: Arc<Mutex<Option<u32>>>) {
+/// A runtime this launch did not start, answering /health with its token.
+/// A short-lived CLI command's sidecar (`mode: admin`) is waited out, not attached to.
+fn running_runtime(discovery: &Path) -> Option<Discovery> {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let found = fs::read_to_string(discovery).ok().and_then(|text| parse_discovery(&text))?;
+        if !healthy(found.port, &found.token) {
+            return None;
+        }
+        if found.mode.as_deref() != Some("admin") || Instant::now() > deadline {
+            return Some(found);
+        }
+        thread::sleep(Duration::from_millis(500));
+    }
+}
+
+/// GET /health with the launch token, over loopback, without an async runtime.
+fn healthy(port: u16, token: &str) -> bool {
+    let address = SocketAddr::from(([127, 0, 0, 1], port));
+    let Ok(mut stream) = TcpStream::connect_timeout(&address, Duration::from_millis(1500)) else {
+        return false;
+    };
+    let _ = stream.set_read_timeout(Some(Duration::from_millis(2500)));
+    let _ = stream.set_write_timeout(Some(Duration::from_millis(1500)));
+    let request = format!("GET /health HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n");
+    if stream.write_all(request.as_bytes()).is_err() {
+        return false;
+    }
+    let mut head = [0u8; 16];
+    let Ok(read) = stream.read(&mut head) else {
+        return false;
+    };
+    let line = String::from_utf8_lossy(&head[..read]);
+    line.starts_with("HTTP/1.1 200") || line.starts_with("HTTP/1.0 200")
+}
+
+/// While attached, check the other runtime. When it has stopped, start this
+/// app's own sidecar on the same port and token so the open page keeps working.
+fn adopt_when_gone(launch: Launch, data: PathBuf, discovery: PathBuf, log_path: PathBuf, port: u16, token: String, stop: Arc<AtomicBool>, pid: Arc<Mutex<Option<u32>>>) {
+    thread::spawn(move || {
+        let mut misses = 0;
+        while !stop.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_secs(5));
+            if healthy(port, &token) {
+                misses = 0;
+                continue;
+            }
+            misses += 1;
+            if misses < 2 || stop.load(Ordering::SeqCst) {
+                continue;
+            }
+            let _ = append_log(&log_path, "the runtime this app attached to stopped; starting the app's own");
+            match spawn(&launch, &data, &discovery, &log_path, &token, port) {
+                Ok(child) => {
+                    if let Ok(mut slot) = pid.lock() {
+                        *slot = Some(child.id());
+                    }
+                    watch(child, launch, data, discovery, log_path, token, port, stop, pid);
+                }
+                Err(error) => {
+                    let _ = append_log(&log_path, &format!("could not start the app's own runtime: {error}"));
+                }
+            }
+            break;
+        }
+    });
+}
+
+fn watch(mut child: Child, launch: Launch, data: PathBuf, discovery: PathBuf, log_path: PathBuf, token: String, port: u16, stop: Arc<AtomicBool>, pid: Arc<Mutex<Option<u32>>>) {
     thread::spawn(move || {
         let mut restarts = 0;
         loop {
-            let _ = child.wait();
+            let status = child.wait();
             if stop.load(Ordering::SeqCst) {
+                break;
+            }
+            // Another launcher holds the data folder. Its runtime serves; do not fight it.
+            if status.ok().and_then(|code| code.code()) == Some(ALREADY_RUNNING_EXIT) {
+                if let Ok(mut slot) = pid.lock() {
+                    *slot = None;
+                }
                 break;
             }
             restarts += 1;
@@ -121,7 +236,7 @@ fn watch(mut child: Child, launch: Launch, data: PathBuf, discovery: PathBuf, lo
             if stop.load(Ordering::SeqCst) {
                 break;
             }
-            match spawn(&launch, &data, &discovery, &log_path, &token) {
+            match spawn(&launch, &data, &discovery, &log_path, &token, port) {
                 Ok(next) => {
                     if let Ok(mut slot) = pid.lock() {
                         *slot = Some(next.id());
@@ -137,7 +252,7 @@ fn watch(mut child: Child, launch: Launch, data: PathBuf, discovery: PathBuf, lo
     });
 }
 
-fn spawn(launch: &Launch, data: &Path, discovery: &Path, log_path: &Path, token: &str) -> Result<Child, String> {
+fn spawn(launch: &Launch, data: &Path, discovery: &Path, log_path: &Path, token: &str, port: u16) -> Result<Child, String> {
     let log = OpenOptions::new()
         .create(true)
         .append(true)
@@ -157,8 +272,9 @@ fn spawn(launch: &Launch, data: &Path, discovery: &Path, log_path: &Path, token:
         .env("ENSEMBLE_DATA_DIR", data.join("pglite"))
         .env("ENSEMBLE_BACKUP_DIR", data.join("backups"))
         .env("ENSEMBLE_DISCOVERY_FILE", discovery)
+        .env("ENSEMBLE_RUNTIME_OWNER", "desktop")
         .env("HUB_API_HOST", "127.0.0.1")
-        .env("HUB_API_PORT", "0")
+        .env("HUB_API_PORT", port.to_string())
         .env("REDIS_URL", "memory://desktop")
         .env("ENSEMBLE_DEV_AUTH_BYPASS", "false")
         .env("DATABASE_URL", "postgresql://ensemble:unused@127.0.0.1:1/ensemble_desktop")
@@ -341,9 +457,36 @@ mod tests {
     #[test]
     fn discovery_json_needs_a_port_and_a_long_token() {
         assert!(parse_discovery(r#"{"port":4000,"token":"abcdefghijklmnop"}"#).is_some());
+        let cli = parse_discovery(r#"{"port":4000,"token":"abcdefghijklmnop","pid":12,"owner":"cli","mode":"admin"}"#).unwrap();
+        assert_eq!(cli.mode.as_deref(), Some("admin"));
         assert!(parse_discovery(r#"{"port":0,"token":"abcdefghijklmnop"}"#).is_none());
         assert!(parse_discovery(r#"{"port":4000,"token":"short"}"#).is_none());
         assert!(parse_discovery("nope").is_none());
+    }
+
+    #[test]
+    fn nothing_listening_is_not_healthy() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        assert!(!healthy(port, "abcdefghijklmnop"));
+    }
+
+    #[test]
+    fn a_runtime_answering_200_is_healthy() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buffer = [0u8; 512];
+            let read = stream.read(&mut buffer).unwrap();
+            let request = String::from_utf8_lossy(&buffer[..read]).to_string();
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+            request
+        });
+        assert!(healthy(port, "abcdefghijklmnop"));
+        let request = server.join().unwrap();
+        assert!(request.contains("Authorization: Bearer abcdefghijklmnop"));
     }
 
     #[test]

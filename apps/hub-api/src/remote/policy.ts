@@ -76,7 +76,8 @@ export function planLocalJob(spec: JobSpec, settings: RemoteSettings, continueFr
     // Without web settings, every commit asks here.
     askBeforePublish: web ? spec.askBeforePublish !== false : true,
     useCredentials: false,
-    sandbox: true,
+    // The sandbox toggle from the web applies when this computer accepts web settings; otherwise the sandbox stays on.
+    sandbox: web ? spec.sandbox !== false : true,
     markDone: true,
     unattended: false,
     mode: web ? mode : "ask",
@@ -88,6 +89,8 @@ export function planLocalJob(spec: JobSpec, settings: RemoteSettings, continueFr
     ...(spec.maxToolCalls ? { maxToolCalls: spec.maxToolCalls } : {}),
     ...(spec.model?.trim() ? { model: spec.model.trim() } : {}),
     ...(spec.provider?.trim() ? { provider: spec.provider.trim() } : {}),
+    // The person's own Claude Code on this computer, with their own sign-in.
+    engine: spec.provider?.trim() === "claude-code" ? "claude-code" : "ensemble",
     ...(spec.reasoningEffort?.trim() ? { reasoningEffort: spec.reasoningEffort.trim() } : {}),
   };
   let publicCheck: string | null = null;

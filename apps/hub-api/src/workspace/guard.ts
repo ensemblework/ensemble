@@ -4,8 +4,9 @@
  * Nothing here trusts the model or the browser. Every path is resolved through
  * symlinks and measured against one root; every command is an argv checked
  * against an allow-list; every git call is checked against the job's ceiling.
- * On macOS, commands additionally run under a Seatbelt profile, so a script
- * the agent writes cannot reach outside its folder either.
+ * Commands additionally run under the computer's OS sandbox (Seatbelt,
+ * bubblewrap, Landlock or the Windows sandbox account), so a script the agent
+ * writes cannot reach outside its folder either.
  */
 import { lstat, mkdir, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -14,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { desktopDataDir } from "@ensemble/shared-types/desktop-discovery";
 import { env } from "../config.js";
 import { compileSeatbeltProfile } from "./sandbox/seatbelt.js";
+import { capabilities } from "./sandbox/spawn.js";
 
 export class GuardError extends Error {
   readonly statusCode = 403;
@@ -70,6 +72,7 @@ const SYSTEM_ROOTS = [
 /** Folders the engineer can never hand to an agent or open in the terminal. */
 const HOME_BLOCKED = [
   "Library",
+  "AppData",
   ".ssh",
   ".aws",
   ".gnupg",
@@ -91,6 +94,14 @@ const HOME_TOO_BROAD = ["Desktop", "Documents", "Downloads", "Pictures", "Movies
 /** Why a folder may not be a work root, or null when it may. */
 export function blockedReason(real: string): string | null {
   if (real === "/" || real === "/Users" || real === "/Volumes") return "A disk or top-level system folder is too broad.";
+  if (process.platform === "win32") {
+    if (/^[A-Za-z]:\\?$/.test(real)) return "A whole disk is too broad. Pick a project folder on it.";
+    if (/^\\\\/.test(real)) return "Network folders (\\\\server\\share) cannot be sandboxed. Copy the project to this computer.";
+    for (const root of windowsSystemRoots()) {
+      if (within(root, real)) return `${root} holds the operating system or installed apps.`;
+    }
+    if (dirname(HOME) !== HOME && real === dirname(HOME)) return "The folder of all accounts is too broad.";
+  }
   for (const root of SYSTEM_ROOTS) {
     if (within(root, real)) return `${root} holds the operating system or installed apps.`;
   }
@@ -107,6 +118,38 @@ export function blockedReason(real: string): string | null {
     return "This is Ensemble's own code. An agent that can edit it could remove its own guard rails.";
   }
   return null;
+}
+
+/**
+ * A path outside the work folder that a run is about to use (doc 24 §5.8).
+ * Whatever the mode and whether or not the sandbox is on, an agent never
+ * reaches Ensemble's own data or code, the dotfiles and app folders in the
+ * home folder (keys, shell start-up files, browser and editor data), or
+ * another account. Writes are also refused in system folders and in the home
+ * folder itself.
+ */
+export function outsideRefusal(real: string, write: boolean, home = HOME): string | null {
+  const appData = desktopDataDir({ platform: process.platform, home });
+  if (within(appData, real)) return "Ensemble's own data is off limits.";
+  if (within(ENSEMBLE_SOURCE, real) || within(real, ENSEMBLE_SOURCE)) return "This is Ensemble's own code.";
+  if (within(home, real, false)) {
+    const top = relative(home, real).split(/[\\/]/)[0] ?? "";
+    if (top.startsWith(".") || HOME_BLOCKED.includes(top) || top === "AppData") return `~/${top} holds settings, keys or app data.`;
+  } else if (real !== home) {
+    for (const root of [...SYSTEM_ROOTS, ...windowsSystemRoots()]) {
+      if (write && within(root, real)) return `${root} holds the operating system or installed apps.`;
+    }
+    if (dirname(real) === "/Users" || dirname(real) === "/home" || (dirname(home) !== home && within(dirname(home), real) && !within(home, real))) {
+      return "Another account's files are off limits.";
+    }
+  }
+  if (write && (real === home || real === "/" || real === dirname(home))) return "Writing at the top of the home folder or the disk is refused.";
+  return null;
+}
+
+function windowsSystemRoots(): string[] {
+  if (process.platform !== "win32") return [];
+  return [process.env.SystemRoot, process.env.ProgramFiles, process.env["ProgramFiles(x86)"], process.env.ProgramData].filter((value): value is string => Boolean(value));
 }
 
 /**
@@ -173,7 +216,8 @@ export function parseCommand(line: string): string[] {
       started = true;
       continue;
     }
-    if (char === "\\" && i + 1 < line.length) {
+    // Windows paths use backslashes, so there a backslash is a character, not an escape.
+    if (char === "\\" && i + 1 < line.length && process.platform !== "win32") {
       current += line[++i];
       started = true;
       continue;
@@ -216,6 +260,12 @@ const NEVER = new Set([
   "telnet", "docker", "env", "printenv", "export", "xargs", "eval", "exec", "source", "nohup", "screen", "tmux",
 ]);
 
+/** A program in the Never set, by name or path (sudo, osascript, ssh, docker, …). */
+export function isNeverProgram(program: string): boolean {
+  const name = program.split(/[\\/]/).pop()!.replace(/\.exe$/i, "");
+  return NEVER.has(name) && !["env", "export", "source", "exec", "eval", "xargs", "kill"].includes(name);
+}
+
 export interface CommandPolicy {
   who: "agent" | "human";
   sandboxed: boolean;
@@ -225,7 +275,7 @@ export interface CommandPolicy {
 /** Throws unless argv[0] is allowed. Returns the program name. */
 export function checkProgram(argv: string[], policy: CommandPolicy): string {
   const program = argv[0]!;
-  if (program.includes("/")) {
+  if (program.includes("/") || program.includes("\\")) {
     throw new GuardError("Run programs by name (python, node, git…). Scripts run through their interpreter: python script.py.");
   }
   if (NEVER.has(program)) throw new GuardError(`${program} is not allowed here.`);
@@ -377,6 +427,7 @@ export async function childEnv(root: string, options: { useCredentials: boolean;
   const safeHome = join(cache, "home");
   await mkdir(safeHome, { recursive: true });
   const nodeDir = dirname(process.execPath);
+  if (process.platform === "win32") return windowsChildEnv(root, cache, safeHome, nodeDir, options.who);
   const path = [nodeDir, "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin", join(HOME, ".local/bin"), join(HOME, "miniconda3/bin"), join(HOME, "anaconda3/bin")]
     .filter((dir) => !within(root, dir))
     .join(":");
@@ -412,6 +463,61 @@ export async function childEnv(root: string, options: { useCredentials: boolean;
 }
 
 /**
+ * Windows needs its system variables to start anything (SystemRoot, ComSpec,
+ * PATHEXT). PATH is the person's own, minus anything inside the work folder.
+ * Agents get the cache's home, AppData and temp folders, never the real ones,
+ * and Git Credential Manager may not open a sign-in window.
+ */
+function windowsChildEnv(root: string, cache: string, safeHome: string, nodeDir: string, who: "agent" | "human"): NodeJS.ProcessEnv {
+  const source = process.env;
+  const pick = (name: string) => source[name] ?? source[name.toUpperCase()];
+  const path = [nodeDir, ...(pick("Path") ?? pick("PATH") ?? "").split(";")]
+    .filter((dir) => dir && !within(root, dir))
+    .filter((dir, index, all) => all.indexOf(dir) === index)
+    .join(";");
+  const home = who === "human" ? HOME : safeHome;
+  const temp = join(cache, "tmp");
+  const env: NodeJS.ProcessEnv = {
+    PATH: path,
+    PATHEXT: pick("PATHEXT") ?? ".COM;.EXE;.BAT;.CMD",
+    SystemRoot: pick("SystemRoot") ?? "C:\\Windows",
+    SystemDrive: pick("SystemDrive") ?? "C:",
+    windir: pick("windir") ?? pick("SystemRoot") ?? "C:\\Windows",
+    ComSpec: pick("ComSpec") ?? "C:\\Windows\\System32\\cmd.exe",
+    ProgramData: pick("ProgramData"),
+    ProgramFiles: pick("ProgramFiles"),
+    "ProgramFiles(x86)": source["ProgramFiles(x86)"],
+    NUMBER_OF_PROCESSORS: pick("NUMBER_OF_PROCESSORS"),
+    PROCESSOR_ARCHITECTURE: pick("PROCESSOR_ARCHITECTURE"),
+    OS: pick("OS"),
+    USERNAME: pick("USERNAME"),
+    HOME: home,
+    USERPROFILE: home,
+    APPDATA: who === "human" ? pick("APPDATA") : join(safeHome, "AppData", "Roaming"),
+    LOCALAPPDATA: who === "human" ? pick("LOCALAPPDATA") : join(safeHome, "AppData", "Local"),
+    TEMP: temp,
+    TMP: temp,
+    TMPDIR: temp,
+    LANG: "en_US.UTF-8",
+    CI: "1",
+    NO_COLOR: "1",
+    PAGER: "cat",
+    GIT_PAGER: "cat",
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_OPTIONAL_LOCKS: "0",
+    GCM_INTERACTIVE: "never",
+    PIP_CACHE_DIR: join(cache, "pip"),
+    UV_CACHE_DIR: join(cache, "uv"),
+    npm_config_cache: join(cache, "npm"),
+    PYTHONDONTWRITEBYTECODE: "1",
+    PYTHONUNBUFFERED: "1",
+    PYTHONUTF8: "1",
+  };
+  for (const key of Object.keys(env)) if (env[key] === undefined) delete env[key];
+  return env;
+}
+
+/**
  * Seatbelt profile for one command. Agents are denied `$HOME`, Unix sockets,
  * LaunchServices, the Never binaries, and the desktop app-data folder.
  * `useCredentials` does not open secret paths for an agent; the app's git
@@ -436,7 +542,17 @@ export async function seatbeltProfile(
   });
 }
 
-export const sandboxAvailable = process.platform === "darwin";
+/** This computer has a working OS sandbox (see `sandbox/spawn.ts`). Checked once at start; `prepareSandbox()` refreshes it. */
+export function sandboxAvailable(): boolean {
+  return capabilities().osSandbox;
+}
+
+/** Why a sandboxed run cannot start here, with the one step that would fix it. */
+export function sandboxRefusal(): string {
+  const caps = capabilities();
+  const fix = caps.setup?.needed ? ` ${caps.setup.how}` : "";
+  return `${caps.reason}${fix} Or turn off the sandbox for this run to work directly on the computer.`;
+}
 
 export function relativeTo(root: string, path: string): string {
   const rel = relative(root, path);

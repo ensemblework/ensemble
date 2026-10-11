@@ -31,6 +31,13 @@ const PROVIDER_LABEL: Record<string, string> = {
   ollama: "Ollama",
 };
 
+const SANDBOX_NAME: Record<string, string> = {
+  seatbelt: "macOS sandbox",
+  bubblewrap: "Linux sandbox (bubblewrap)",
+  landlock: "Linux sandbox (Landlock)",
+  windows: "Windows sandbox",
+};
+
 const TIER_LABEL: Record<Complexity, string> = { easy: "Low", medium: "Medium", high: "High", max: "Max" };
 
 /** The API's ranges, so the form never offers a value the server refuses. */
@@ -214,6 +221,8 @@ export function AssignDialog({
   const [taskId, setTaskId] = useState(fixedTaskId ?? "");
   const [kind, setKind] = usePersistentState<Kind>("ensemble.assign.kind", defaultKind ?? "research");
   const [modelChoice, setModelChoice] = usePersistentState("ensemble.assign.model", "");
+  const [engine, setEngine] = usePersistentState<"ensemble" | "claude-code">("ensemble.assign.engine", "ensemble");
+  const [claudeModel, setClaudeModel] = useState("");
   const [effort, setEffort] = useState<Effort>("default");
   const [instructions, setInstructions] = useState("");
   const [place, setPlace] = useState<Place>("fresh");
@@ -269,7 +278,8 @@ export function AssignDialog({
   const fields: ProfileFields = {
     kind,
     deviceId: runOn === "server" ? null : runOn,
-    model: modelChoice,
+    engine: kind === "code" ? engine : "ensemble",
+    model: kind === "code" && engine === "claude-code" ? claudeModel : modelChoice,
     effort,
     branchMode: branchMode === "new" ? "new" : "as-is",
     delivery,
@@ -289,7 +299,9 @@ export function AssignDialog({
     setProfileId(profile.id);
     setKind(defaultKind && profile.id === defaultChoice.id ? defaultKind : profile.kind);
     if (profile.deviceId && (computers.data?.devices ?? []).some((device) => device.id === profile.deviceId)) setRunOn(profile.deviceId);
-    setModelChoice(profile.model);
+    setEngine(profile.engine ?? "ensemble");
+    if (profile.engine === "claude-code") setClaudeModel(profile.model);
+    else setModelChoice(profile.model);
     setEffort(profile.effort);
     setBranchMode(profile.branchMode);
     setDelivery(profile.delivery);
@@ -351,8 +363,18 @@ export function AssignDialog({
 
   const guard = useQuery({ queryKey: ["workspace-guard"], queryFn: api.workspaceGuard, enabled: open && kind === "code", staleTime: 5 * 60_000 });
   const strength = guard.data?.sandbox.strength ?? "strong";
-  const osSandbox = strength === "strong";
+  const osSandbox = guard.data?.sandbox.osSandbox ?? true;
   const askOnly = strength === "ask";
+  const setupSandbox = useMutation({
+    mutationFn: api.setupSandbox,
+    onSuccess: (result) => {
+      toast(result.message, { tone: result.ok ? "ok" : "error" });
+      void client.invalidateQueries({ queryKey: ["workspace-guard"] });
+    },
+    onError: (error) => toast((error as Error).message, { tone: "error" }),
+  });
+  // What the chosen computer reported about its own sandbox (never a path).
+  const deviceSandbox = (selectedDevice?.capabilities as { sandboxInfo?: { mechanism?: string; osSandbox?: boolean; setupNeeded?: boolean; reason?: string } } | null)?.sandboxInfo ?? null;
 
   const pick = useMutation({
     mutationFn: async () => {
@@ -412,12 +434,13 @@ export function AssignDialog({
 
   const assign = useMutation({
     mutationFn: () => {
+      const claude = kind === "code" && engine === "claude-code";
       const input: AssignInput = {
         taskId,
         kind,
         instructions,
-        ...(model ? { provider, model } : {}),
-        ...(effort !== "default" ? { reasoningEffort: effort } : {}),
+        ...(claude ? { engine: "claude-code" as const, ...(claudeModel ? { model: claudeModel } : {}) } : model ? { provider, model } : {}),
+        ...(effort !== "default" && !claude ? { reasoningEffort: effort } : {}),
         markDone,
         maxMinutes: limitValue(maxMinutes, "maxMinutes"),
         maxToolCalls: limitValue(maxToolCalls, "maxToolCalls"),
@@ -427,7 +450,8 @@ export function AssignDialog({
       if (kind === "code") {
         Object.assign(input, {
           mode,
-          sandbox,
+          // A computer without a sandbox would refuse a sandboxed run; say so here instead (below), and run it directly.
+          sandbox: selectedDevice ? sandbox && deviceSandbox?.osSandbox !== false : sandbox && osSandbox,
           delivery,
           askBeforePublish: mode === "unattended" ? false : askFirst,
           branchMode,
@@ -465,9 +489,16 @@ export function AssignDialog({
     const git = delivery === "local" ? "no commit or push" : delivery === "commit" ? "may commit" : "may commit and push";
     const asks = delivery !== "local" && askFirst && mode !== "unattended" ? " (asks before each commit)" : "";
     const modeLabel = mode === "review" ? " · Review only" : mode === "unattended" ? " · Run unattended" : "";
-    const box = selectedDevice ? `On ${selectedDevice.name}` : !osSandbox ? "Not fully sandboxed" : sandbox ? "Sandboxed" : "Unsandboxed";
-    return `${box} · works in ${where}${modeLabel} · ${git}${asks}${credentials && !selectedDevice ? " · git sign-in stays in the app" : ""}`;
-  }, [kind, place, delivery, sandbox, askFirst, credentials, mode, osSandbox, selectedDevice, folderLabel]);
+    const box = selectedDevice
+      ? `On ${selectedDevice.name}${deviceSandbox?.osSandbox === false ? ", no sandbox" : sandbox ? ", sandboxed" : ", unsandboxed"}`
+      : !osSandbox
+        ? "No sandbox here"
+        : sandbox
+          ? "Sandboxed"
+          : "Unsandboxed";
+    const who = engine === "claude-code" ? "Claude Code · " : "";
+    return `${who}${box} · works in ${where}${modeLabel} · ${git}${asks}${credentials && !selectedDevice ? " · git sign-in stays in the app" : ""}`;
+  }, [kind, place, delivery, sandbox, askFirst, credentials, mode, osSandbox, selectedDevice, folderLabel, engine, deviceSandbox]);
 
   const candidates = (tasks.data?.tasks ?? []).filter((row) => !["done", "dropped"].includes(row.status));
   const trustTip = selectedDevice ? undefined : "Trust this folder first. Review only and Run unattended run commands without asking.";
@@ -554,6 +585,33 @@ export function AssignDialog({
           ) : null}
         </div>
 
+        {kind === "code" ? (
+          <div>
+            <Label tip="Ensemble's agent calls a model with your key. Claude Code runs your own Claude Code on the computer, signed in with your own Claude account; Ensemble never sees that sign-in. Either way the same mode, trust, sandbox and git rules apply, and its questions come to Needs me.">
+              Who does the work
+            </Label>
+            <Segmented
+              value={engine}
+              onChange={setEngine}
+              options={[
+                { id: "ensemble", label: "Ensemble agent" },
+                { id: "claude-code", label: "Claude Code (your sign-in)" },
+              ]}
+            />
+          </div>
+        ) : null}
+
+        {kind === "code" && engine === "claude-code" ? (
+          <div>
+            <Label tip="Claude Code's own model names. Its default follows your Claude plan.">Model</Label>
+            <select value={claudeModel} onChange={(event) => setClaudeModel(event.target.value)} className="field w-full">
+              <option value="">Claude Code default</option>
+              <option value="sonnet">Sonnet</option>
+              <option value="opus">Opus</option>
+              <option value="haiku">Haiku</option>
+            </select>
+          </div>
+        ) : (
         <div className="grid grid-cols-[minmax(0,1fr)_170px] gap-3">
           <div>
             <Label tip="By default the task's complexity picks the model from Settings → Models. Pick another here for this attempt only.">Model</Label>
@@ -588,6 +646,7 @@ export function AssignDialog({
             </select>
           </div>
         </div>
+        )}
 
         {kind === "code" ? (
           <>
@@ -733,11 +792,26 @@ export function AssignDialog({
                     </div>
                   ) : null}
                   <div className="flex items-center justify-between gap-3 border-t border-line pt-2">
-                    <div className="flex items-center gap-2">
-                      <ShieldCheck size={14} className="text-ok" />
+                    <div className="flex min-w-0 items-center gap-2">
+                      <ShieldCheck size={14} className={deviceSandbox?.osSandbox === false ? "text-warn" : sandbox ? "text-ok" : "text-warn"} />
                       <span className="font-medium">Sandbox</span>
+                      <span className="truncate text-[12px] text-muted">
+                        {deviceSandbox?.osSandbox === false
+                          ? deviceSandbox.setupNeeded
+                            ? `Not set up on ${selectedDevice.name}: run \`ensemble sandbox setup\` there once`
+                            : `None on ${selectedDevice.name}`
+                          : deviceSandbox?.mechanism
+                            ? SANDBOX_NAME[deviceSandbox.mechanism] ?? deviceSandbox.mechanism
+                            : ""}
+                      </span>
                     </div>
-                    <span className="text-[12px] text-muted">Set on {selectedDevice.name}</span>
+                    {deviceSandbox?.osSandbox === false ? (
+                      <span className="text-[12px] text-muted">Runs directly</span>
+                    ) : deviceAcceptsWeb ? (
+                      <Toggle checked={sandbox} onChange={setSandbox} label="Sandbox" />
+                    ) : (
+                      <span className="text-[12px] text-muted">On ({selectedDevice.name} decides)</span>
+                    )}
                   </div>
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
@@ -761,16 +835,21 @@ export function AssignDialog({
                       <div className="flex items-center gap-2">
                         <ShieldCheck size={14} className={sandbox ? "text-ok" : "text-warn"} />
                         <span className="font-medium">Sandbox</span>
-                        <InfoTip text="A macOS sandbox around every command: files can only change inside the work folder, keys and browser data cannot be read, and Ensemble's own API and database cannot be reached." />
+                        <InfoTip text={`${guard.data?.sandbox.reason ?? "An OS sandbox around every command."} No Docker or VM is involved.${guard.data?.sandbox.limits?.length ? ` Not enforced on this computer: ${guard.data.sandbox.limits.join("; ")}.` : ""}`} />
                       </div>
                       <Toggle checked={sandbox} onChange={setSandbox} label="Sandbox" />
                     </div>
                   ) : (
                     <div className="flex items-start gap-1.5 border-t border-line pt-2 text-[12px] text-warn" data-testid="not-sandboxed">
                       <AlertTriangle size={13} className="mt-0.5 shrink-0" />
-                      <span>
-                        <span className="font-medium">Not fully sandboxed on this {guard.data?.sandbox.os === "linux" ? "Linux" : guard.data?.sandbox.os === "win32" ? "Windows" : ""} computer.</span>{" "}
-                        Commands run as you with Ensemble&apos;s allow-list and folder checks only; a script could still reach the rest of the computer.
+                      <span className="min-w-0">
+                        <span className="font-medium">No sandbox on this computer yet.</span> {guard.data?.sandbox.reason ?? ""}{" "}
+                        This run works directly on the computer, with Ensemble&apos;s allow-list and folder checks.
+                        {guard.data?.sandbox.setup?.needed ? (
+                          <button type="button" className="btn ml-1 mt-1 h-7" disabled={setupSandbox.isPending} onClick={() => setupSandbox.mutate()}>
+                            {setupSandbox.isPending ? "Waiting for Windows…" : "Set up the sandbox"}
+                          </button>
+                        ) : null}
                       </span>
                     </div>
                   )}

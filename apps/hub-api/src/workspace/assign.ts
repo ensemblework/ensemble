@@ -14,7 +14,7 @@ import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js"
 import { createCappedJob } from "../lib/hosted-limits.js";
 import { loadSettings } from "../lib/settings.js";
 import { sseHub } from "../lib/sse.js";
-import { GuardError, resolveWorkFolder, sandboxAvailable, within, workspaceRoot } from "./guard.js";
+import { GuardError, resolveWorkFolder, sandboxAvailable, sandboxRefusal, within, workspaceRoot } from "./guard.js";
 import { capabilities } from "./sandbox/spawn.js";
 import { checkModeTrust, isFolderTrusted, PATH_RULE_SOURCE, PATH_RULE_TOOL, rulesForJob, storedMode, UnattendedAskModeError, type RunMode } from "./trust.js";
 import { kick } from "./worker.js";
@@ -50,6 +50,11 @@ export const Assign = z.object({
   maxTurns: z.number().int().min(3).max(200).optional(),
   deviceId: z.string().uuid().optional(),
   folderLabel: z.string().max(200).optional(),
+  /**
+   * Who does the work: Ensemble's own agent (a model API with your key), or
+   * the person's own Claude Code on their computer with their own sign-in.
+   */
+  engine: z.enum(["ensemble", "claude-code"]).default("ensemble"),
 });
 export type AssignInput = z.infer<typeof Assign>;
 
@@ -177,20 +182,24 @@ export async function createJob(prisma: PrismaClient, userId: string, body: Assi
   if (!task) return null;
   const settings = await loadSettings(prisma, userId);
   const tier = settings.models[task.complexity];
-  const provider = body.model ? body.provider ?? tier.provider : tier.provider;
-  const model = body.model || tier.model;
+  const claudeCode = body.engine === "claude-code";
+  if (claudeCode && body.kind !== "code") throw new GuardError("Claude Code works on code tasks. Pick Ensemble's agent for research.");
+  // Claude Code is stored as the run's provider; its model is a Claude Code alias (sonnet, opus) or its own default.
+  const provider = claudeCode ? "claude-code" : body.model ? body.provider ?? tier.provider : tier.provider;
+  const model = claudeCode ? body.model?.trim() || "default" : body.model || tier.model;
   if (body.deviceId) return createDeviceJob(prisma, userId, task, body, provider, model, tier.effort, settings.orchestration, options);
   // This server's runner belongs to the space's owner. Someone it is shared with runs on their own computer.
   if (actorFor(userId)) throw new GuardError("In a shared space, the agent runs on your own computer. Pick one of your paired computers.");
   await requireHostAccess(userId, "Host workspace execution");
 
   if (provider === "cursor") throw new GuardError("Cursor cannot run tasks on this computer. Pick a chat model for the agent.");
-  if (body.kind === "code" && !serverRunnerEnabled()) throw new GuardError("This Ensemble runs code on your computer. Pick a paired computer.");
-  // The desktop still assigns on Linux and Windows: the job runs with the allow-list and shows "Not fully sandboxed".
-  // Hosted Ensemble has no Seatbelt off macOS, so a sandboxed code job there has to name a paired computer or turn the sandbox off.
-  if (body.kind === "code" && body.sandbox && !sandboxAvailable && process.env.ENSEMBLE_DESKTOP !== "1") {
-    throw new GuardError("The sandbox needs macOS. Turn off the sandbox to run directly on this machine.");
+  if (claudeCode && process.env.ENSEMBLE_DESKTOP !== "1") {
+    throw new GuardError("Claude Code runs on your own computer with your own sign-in. Pick one of your paired computers.");
   }
+  if (body.kind === "code" && !serverRunnerEnabled()) throw new GuardError("This Ensemble runs code on your computer. Pick a paired computer.");
+  // A sandboxed run needs this computer's OS sandbox. Without one it is refused with the reason and the fix,
+  // never run unsandboxed behind the person's back.
+  if (body.kind === "code" && body.sandbox && !sandboxAvailable()) throw new GuardError(sandboxRefusal());
   if (body.kind === "code" && requestedMode(body).unattended && capabilities().strength === "ask") throw new UnattendedAskModeError();
 
   let externalRoot: string | null = null;
@@ -317,7 +326,7 @@ export async function createJob(prisma: PrismaClient, userId: string, body: Assi
       repoUrl,
       continueFrom,
       retryOf: options.retryOf ?? null,
-      sandboxed: job.executionMode === "sandbox" && sandboxAvailable,
+      sandboxed: job.executionMode === "sandbox" && sandboxAvailable(),
       ...(options.context === undefined ? {} : { context: options.context }),
     },
   });

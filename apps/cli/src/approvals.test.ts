@@ -33,3 +33,30 @@ test("the list numbers questions and marks the recommended option", () => {
   assert.match(text, /ensemble needs answer 2 allow \| deny/);
   assert.equal(formatPending([]), "Nothing is waiting for you on this computer.");
 });
+
+test("a Claude Code question lists its options with descriptions and takes several answers", () => {
+  const row = {
+    id: "q1",
+    event: "question",
+    toolName: "AskUserQuestion",
+    title: "Which test runner?",
+    source: "claude",
+    detail: {
+      options: ["Vitest", "Jest", "node:test"],
+      optionDetails: [
+        { label: "Vitest", description: "Fast, Vite-native" },
+        { label: "Jest", description: "" },
+        { label: "node:test", description: "No dependency" },
+      ],
+      multiSelect: true,
+      allowCustom: true,
+    },
+  };
+  const text = formatPending([row]);
+  assert.match(text, /Claude Code · Question: Which test runner\?/);
+  assert.match(text, /1\) Vitest — Fast, Vite-native/);
+  assert.match(text, /\(several: 1,3\)/);
+  assert.deepEqual(answerFor(row, "1,3"), { decision: "allow", scope: "once", reason: "Vitest, node:test" });
+  assert.deepEqual(answerFor(row, "something else"), { decision: "allow", scope: "once", reason: "something else" });
+  assert.deepEqual(answerFor({ ...row, detail: { ...row.detail, multiSelect: false } }, "2"), { decision: "allow", scope: "once", reason: "Jest" });
+});

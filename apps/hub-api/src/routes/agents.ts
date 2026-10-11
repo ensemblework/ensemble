@@ -17,7 +17,7 @@ import { jobOrigin } from "../remote/origin.js";
 import { Assign, createJob } from "../workspace/assign.js";
 import { blockedReason, resolveWorkFolder, sandboxAvailable, ENSEMBLE_SOURCE, within, workspaceRoot } from "../workspace/guard.js";
 import { liveLog } from "../workspace/live-log.js";
-import { capabilities } from "../workspace/sandbox/spawn.js";
+import { capabilities, prepareSandbox, setupSandbox } from "../workspace/sandbox/spawn.js";
 import { PATH_RULE_SOURCE, PATH_RULE_TOOL } from "../workspace/trust.js";
 import { resume, stopEverything, stopJob } from "../workspace/worker.js";
 import { actorFor } from "../sharing/context.js";
@@ -145,6 +145,7 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
         kind: old.kind,
         provider: old.provider ?? undefined,
         model: old.model,
+        engine: old.provider === "claude-code" ? "claude-code" : "ensemble",
         reasoningEffort: old.reasoningEffort ?? undefined,
         instructions: old.instructions,
         folder: old.deviceId ? undefined : old.externalRoot ?? undefined,
@@ -195,7 +196,7 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
       root: await workspaceRoot(),
       maxConcurrent: settings.orchestration.maxConcurrentJobs,
       paused,
-      sandboxAvailable,
+      sandboxAvailable: sandboxAvailable(),
       serverRunner: serverRunnerEnabled(),
       queued: queued.map((job, index) => card(job, index + 1)),
       running: jobs.filter((job) => job.status === "running" || job.status === "stopping" || job.status === "claimed").map((job) => card(job)),
@@ -232,7 +233,7 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
         networkAccess: job.networkAccess,
         unattended: job.unattended,
         accessMode: job.accessMode,
-        sandbox: { ...capabilities(), effective: job.executionMode === "sandbox" && sandboxAvailable },
+        sandbox: { ...capabilities(), effective: job.executionMode === "sandbox" && sandboxAvailable() },
       },
       log: liveLog(job.id),
       events: events.reverse().map((event) => ({ id: event.id, kind: event.kind, data: event.data, at: event.createdAt.toISOString() })),
@@ -359,9 +360,26 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/workspace/guard", async () => ({
     root: await workspaceRoot(),
     ensembleSource: ENSEMBLE_SOURCE,
-    sandboxAvailable,
+    sandboxAvailable: sandboxAvailable(),
     sandbox: capabilities(),
   }));
+
+  // The computer's sandbox, shared by the CLI and the app (one runtime per computer).
+  app.get("/api/sandbox", async (request) => {
+    const query = z.object({ refresh: z.enum(["1", "true"]).optional() }).parse(request.query);
+    return { sandbox: query.refresh ? await prepareSandbox({ refresh: true }) : capabilities() };
+  });
+
+  // Windows asks for admin permission once; elsewhere this re-checks. Only from this computer.
+  app.post("/api/sandbox/setup", async (request, reply) => {
+    const host = request.ip.replace(/^::ffff:/, "");
+    if (process.env.ENSEMBLE_DESKTOP !== "1" || (host !== "127.0.0.1" && host !== "::1")) {
+      return reply.code(403).send({ error: "The sandbox is set up on the computer itself, from the Ensemble app or `ensemble sandbox setup`." });
+    }
+    const result = await setupSandbox();
+    await appendLedger({ userId: request.userId, actor: "me", action: "sandbox.setup", payload: { ok: result.ok, mechanism: result.caps.mechanism } });
+    return reply.code(result.ok ? 200 : 409).send({ ok: result.ok, message: result.message, sandbox: result.caps });
+  });
 
   // ── the top bar: what is running, and the kill switch ─────────────────────
 

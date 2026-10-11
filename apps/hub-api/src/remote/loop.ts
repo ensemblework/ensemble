@@ -76,6 +76,11 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
   return {
     folders: publishedFolders(settings),
     sandbox: capabilities().strength,
+    // What the web's Assign dialog shows for this computer's sandbox. Never a path.
+    sandboxInfo: (() => {
+      const caps = capabilities();
+      return { mechanism: caps.mechanism, osSandbox: caps.osSandbox, networkOff: caps.networkOff ?? false, setupNeeded: Boolean(caps.setup?.needed), reason: caps.reason.slice(0, 300) };
+    })(),
     maxConcurrent: hub?.orchestration.maxConcurrentJobs ?? null,
     // The web shows this as a locked pill. Only this Mac can change it.
     runBranchPush: settings.runBranchPush,

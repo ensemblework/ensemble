@@ -2,7 +2,15 @@ import type { InjectOptions, RouteOptions } from "fastify";
 import { isPublicAuthPath } from "./auth-public.js";
 import { routeCoverage } from "../test/route-coverage.js";
 
-export type RouteAuth = "public" | "cors-preflight" | "event-ticket-or-identity" | "device-registration-proof" | "connector-oauth-state" | "internal-token" | "identity";
+export type RouteAuth =
+  | "public"
+  | "cors-preflight"
+  | "event-ticket-or-identity"
+  | "device-registration-proof"
+  | "connector-oauth-state"
+  | "engine-run-secret"
+  | "internal-token"
+  | "identity";
 export type HttpMethod = NonNullable<InjectOptions["method"]>;
 export type InventoryRoute = {
   method: HttpMethod;
@@ -19,6 +27,8 @@ export function routeAuth(method: string, path: string): RouteAuth {
   if (path === "/api/events") return "event-ticket-or-identity";
   if (path === "/api/devices/register") return "device-registration-proof";
   if (/^\/api\/connectors\/[^/]+\/callback$/.test(path)) return "connector-oauth-state";
+  // A coding agent's hook in an engine run: the run's own secret, on loopback, on the desktop only.
+  if (path === "/api/engine/ask") return "engine-run-secret";
   if (path === "/health" || path === "/health/ready" || isPublicAuthPath(sampleRoutePath(path))) return "public";
   if (path.startsWith("/api/internal/")) return "internal-token";
   return "identity";

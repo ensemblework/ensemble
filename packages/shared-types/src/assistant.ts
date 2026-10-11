@@ -195,7 +195,9 @@ export const RunProfile = z.object({
   kind: z.enum(["research", "code"]).default("code"),
   /** A preferred paired computer. Null: this server when it runs code, else the first computer. */
   deviceId: z.string().max(100).nullable().default(null),
-  /** `provider::model`, or empty for the task's tier. */
+  /** Who does the work: Ensemble's own agent, or the person's own Claude Code on their computer. */
+  engine: z.enum(["ensemble", "claude-code"]).default("ensemble"),
+  /** `provider::model`, or empty for the task's tier. With Claude Code: its model alias, or empty for its default. */
   model: z.string().max(240).default(""),
   effort: z.enum(["default", "low", "medium", "high"]).default("default"),
   branchMode: z.enum(["as-is", "new"]).default("as-is"),

@@ -29,7 +29,7 @@ export interface Normalized {
 const str = (value: unknown): string | null => (typeof value === "string" && value.length ? value : null);
 
 function toolInput(payload: Record<string, unknown>): Record<string, unknown> {
-  const raw = payload.tool_input ?? payload.toolInput ?? payload.input ?? {};
+  const raw = payload.tool_input ?? payload.toolInput ?? payload.toolArgs ?? payload.input ?? {};
   if (typeof raw === "string") {
     try {
       return JSON.parse(raw) as Record<string, unknown>;
@@ -63,7 +63,14 @@ export function normalize(source: Source, event: string, payload: Record<string,
     command = str(input.command) ?? str(input.cmd) ?? (["Shell", "Bash", "run_in_terminal", "runInTerminal"].includes(toolName) ? str(input.value) : null);
   }
   const question = str(payload.question) ?? str(payload.prompt);
-  const options = Array.isArray(payload.options) ? payload.options.filter((item): item is string => typeof item === "string") : [];
+  const options = (Array.isArray(payload.options) ? payload.options.filter((item): item is string => typeof item === "string") : []).slice(0, 12);
+  // Claude Code's AskUserQuestion: each option's description, multi-select, and a typed "Other" answer.
+  const optionDetails = Array.isArray(payload.option_details)
+    ? payload.option_details
+        .filter((item): item is { label: string; description?: unknown } => Boolean(item) && typeof (item as { label?: unknown }).label === "string")
+        .slice(0, 12)
+        .map((item) => ({ label: item.label.slice(0, 200), description: typeof item.description === "string" ? item.description.slice(0, 500) : "" }))
+    : [];
   const cwd = str(payload.cwd) ?? (Array.isArray(payload.workspace_roots) ? str(payload.workspace_roots[0]) : null);
   const sessionId = str(payload.session_id) ?? str(payload.sessionId) ?? str(payload.conversation_id) ?? null;
   return {
@@ -81,6 +88,9 @@ export function normalize(source: Source, event: string, payload: Record<string,
       transcript: str(payload.transcript_path),
       model: str(payload.model),
       options,
+      ...(event === "question"
+        ? { optionDetails, multiSelect: payload.multi_select === true, allowCustom: payload.allow_custom !== false, header: str(payload.header) }
+        : {}),
     },
   };
 }

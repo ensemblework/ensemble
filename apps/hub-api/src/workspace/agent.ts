@@ -26,14 +26,15 @@ import { parseRuntimeBody } from "../lib/model-error.js";
 import { truncateText } from "../lib/text.js";
 import { isOwnRunBranch, runBranchName, runTrustedGit } from "./git-gate.js";
 import { flagPlanted } from "./planted.js";
-import { gitHardening, GuardError, resolveWorkFolder, sandboxAvailable, within, workspaceRoot } from "./guard.js";
-import { capabilities } from "./sandbox/spawn.js";
+import { gitHardening, GuardError, resolveWorkFolder, sandboxAvailable, sandboxRefusal, within, workspaceRoot } from "./guard.js";
+import { capabilities, prepareNetwork } from "./sandbox/spawn.js";
+import { runClaudeCode } from "./engines/claude-code.js";
 import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
 import { runCommand } from "./runner.js";
 import { interruptionMessage } from "./lifecycle.js";
 import { appendLive, dropLive } from "./live-log.js";
 import { checkModeTrust, isFolderTrusted, pathCovers, PATH_RULE_SOURCE, PATH_RULE_TOOL, REVIEW_MESSAGE, rulesForJob, runModeOf, TRUST_TOOL, UNATTENDED_MESSAGE, type SandboxStrength } from "./trust.js";
-import { askPerson, chatSpecs, responsesSpecs, runTool, toolSpecs, type JobContext } from "./tools.js";
+import { askPerson, chatSpecs, refTips, responsesSpecs, runTool, toolSpecs, undoUnapprovedCommits, type JobContext } from "./tools.js";
 
 export interface JobControl {
   signal: AbortSignal;
@@ -124,19 +125,22 @@ ${limits}`;
         : "You may not commit or push, and that includes merge, rebase, cherry-pick, revert and tag. Leave your changes uncommitted in the folder. A commit made any other way, for example by a script, is undone.";
   const askCommit = ctx.job.askBeforePublish && ctx.job.delivery !== "local" && !ctx.job.unattended;
   const mode = runModeOf(ctx.job);
+  const outsideText = ctx.sandboxed
+    ? "Paths outside the folder are refused (the sandbox is on); carry on inside it."
+    : "Paths outside the folder may be used without asking when the task needs them (the sandbox is off); keys, app data and system folders are still refused.";
   const modeText =
     ctx.accessMode === "review"
       ? "Read-only: you may read and run commands, but not change files or use the network. Anything that would write is refused."
       : mode === "unattended"
-        ? "Run unattended: nobody is watching and nobody will answer. Commands and edits inside the folder run without approval. Paths outside the folder are refused. When you face a decision, call ask_user with options and your recommended one; it returns at once and you continue with the recommended option. In your finish summary, list every decision you made and why under “Decisions I made”."
+        ? `Run unattended: nobody is watching and nobody will answer. Commands and edits inside the folder run without approval. ${outsideText} When you face a decision, call ask_user with options and your recommended one; it returns at once and you continue with the recommended option. In your finish summary, list every decision you made and why under “Decisions I made”.`
         : mode === "review"
-          ? "Review only: commands and edits inside the folder run without asking. Paths outside the folder are refused. Do not ask for permission; ask only real decisions (an unclear requirement, a choice between approaches) with ask_user, giving 2–5 options and the one you recommend."
-          : "Ask: commands and edits may wait for the person's approval unless the folder is trusted. When you need a decision, use ask_user with 2–5 options and the one you recommend.";
+          ? `Review only: commands and edits inside the folder run without asking. ${outsideText} Do not ask for permission; ask only real decisions (an unclear requirement, a choice between approaches) with ask_user, giving 2–5 options and the one you recommend.`
+          : "Ask: commands and edits may wait for the person's approval unless the folder is trusted; a path outside the folder asks first. When you need a decision, use ask_user with 2–5 options and the one you recommend.";
   return `You are Ensemble's coding agent, working for ${name} on one task from their board.
 
 Where you work: ${ctx.root}
-- File tools and commands only reach inside this folder. Paths are relative to it.
-- ${ctx.sandboxed ? "Commands run in a macOS sandbox: writes outside the folder, reading keys and credentials, and connecting to localhost are blocked." : "Commands run directly on the person's computer, not in a sandbox. Stay inside the folder."}
+- Paths are relative to this folder. Work inside it.
+- ${ctx.sandboxed ? `Commands run in ${ctx.sandboxName ?? "the OS sandbox"}: writes outside the folder and reading keys and credentials are blocked${ctx.network ? "" : ", and so is the network"}.` : "Commands run directly on the person's computer, not in a sandbox."}
 - Network: ${ctx.network ? "on" : "off"}.
 - Mode: ${modeText}
 - Git: ${delivery}${askCommit ? " Each commit waits for the person's approval on Needs me." : ""}${ctx.job.delivery === "push" ? " A push is fast-forward only, to this run's own branch, and Ensemble performs it." : ""}
@@ -153,6 +157,34 @@ How to work:
 - End with finish(summary): what changed (files), what you ran and the results, and anything left open.
 
 ${limits}`;
+}
+
+/** What another coding agent (Claude Code) is told: the same rules Ensemble enforces on its tool calls, in its own terms. */
+function enginePrompt(ctx: JobContext, name: string, task: string): string {
+  const mode = runModeOf(ctx.job);
+  const git =
+    ctx.job.delivery === "push"
+      ? "Commit your work on the current branch. Do not push: Ensemble pushes this run's branch when you finish."
+      : ctx.job.delivery === "commit"
+        ? "Commit your work on the current branch. Do not push."
+        : "Do not commit (that includes merge, rebase, cherry-pick, revert and tag). Leave your changes uncommitted.";
+  const modeText =
+    mode === "unattended"
+      ? "Nobody is watching. When you face a choice, call the ask_person tool (from the ensemble MCP server) with options and the one you recommend; it returns the recommended option at once. List every such decision at the end under \"Decisions I made\"."
+      : mode === "review"
+        ? "Commands and edits inside the folder run without asking. Ask only real decisions with the ask_person tool (from the ensemble MCP server), giving 2–5 options and the one you recommend; it waits for the person's answer."
+        : "Some actions wait for the person's approval in Ensemble. When you need a decision, call the ask_person tool (from the ensemble MCP server) with 2–5 options and the one you recommend; it waits for the person's answer.";
+  return [
+    `You are working for ${name} on a task from their Ensemble board, in ${ctx.root}.`,
+    `Rules (Ensemble checks every tool call against them; a refusal is the run's setting, not an error to work around):`,
+    `- Work inside this folder. ${ctx.sandboxed ? "Paths outside it are refused." : "Use paths outside it only when the task needs them; keys and app data are always refused."}`,
+    `- Internet: ${ctx.network ? "on" : "off"}.`,
+    `- Git: ${git}`,
+    `- ${modeText}`,
+    `- When you are done, reply with a 2–5 sentence summary of what you did, what you verified, and anything left open.`,
+    "",
+    task,
+  ].join("\n");
 }
 
 async function brief(app: FastifyInstance, ctx: JobContext, settings: Settings): Promise<string> {
@@ -350,8 +382,18 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
 
   let lastProgress = 0;
   const caps = capabilities();
-  const sandboxed = job.executionMode === "sandbox" && sandboxAvailable;
+  const sandboxed = job.executionMode === "sandbox" && sandboxAvailable();
   const strength: SandboxStrength = sandboxed ? "strong" : caps.strength === "ask" ? "ask" : "advisory";
+  const sandboxName =
+    caps.mechanism === "seatbelt"
+      ? "the macOS sandbox (Seatbelt)"
+      : caps.mechanism === "bubblewrap"
+        ? "the Linux sandbox (bubblewrap)"
+        : caps.mechanism === "landlock"
+          ? "the Linux sandbox (Landlock)"
+          : caps.mechanism === "windows"
+            ? "the Windows sandbox account"
+            : undefined;
   const ctx: JobContext = {
     prisma,
     job,
@@ -361,6 +403,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
     runId: run.id,
     root: "",
     sandboxed,
+    sandboxName,
     strength,
     network: job.networkAccess,
     signal: control.signal,
@@ -462,8 +505,11 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
   };
 
   try {
-    if (job.executionMode === "sandbox" && !sandboxAvailable && job.kind === "code") {
-      await ctx.event("not_sandboxed", { reason: caps.reason, strength });
+    // Asked for the sandbox and this computer has none (Windows setup removed, say): refuse, never run unconfined.
+    if (job.executionMode === "sandbox" && !sandboxed && job.kind === "code") throw new GuardError(sandboxRefusal());
+    if (sandboxed && job.kind === "code") {
+      await ctx.event("sandbox", { mechanism: caps.mechanism, strength: caps.strength, limits: caps.limits ?? [], network: ctx.network });
+      if (ctx.network) await prepareNetwork();
     }
     if (job.provider === "cursor") {
       throw new GuardError("Cursor runs its own cloud agents on GitHub, not local tasks. Pick a chat model (Gemini, OpenAI, Claude…) for work on this Mac.");
@@ -494,7 +540,42 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
     ];
     await ctx.progress("Thinking");
 
-    for (let turn = 0; ; turn += 1) {
+    // Another coding agent as the engine (the person's own Claude Code): its tool calls are judged by this run's rules.
+    const engine = job.kind === "code" && job.provider === "claude-code";
+    if (engine) {
+      // Local only: a commit made any way (a script, say) is undone at the end. Commits the run may make were judged as they happened.
+      const watch = job.delivery === "local" ? await refTips(ctx) : null;
+      const ran = await runClaudeCode(ctx, {
+        prompt: enginePrompt(ctx, user?.name || "the person", await brief(app, ctx, settings)),
+        model: job.model,
+        maxTurns: job.maxTurns,
+        stopCheck,
+      });
+      counts.turns = ran.turns;
+      counts.tools = ran.toolCalls;
+      counts.tokensIn = ran.tokensIn;
+      counts.tokensOut = ran.tokensOut;
+      await recordMetric(prisma, {
+        userId,
+        kind: "model.call",
+        taskId: job.taskId,
+        runId: run.id,
+        meta: { provider: "claude-code", model: ran.model || job.model, purpose: "Agent coding (Claude Code)", tokensIn: ran.tokensIn, tokensOut: ran.tokensOut, estimatedUsd: ran.costUsd, title: job.task.title },
+      });
+      const undone = await undoUnapprovedCommits(ctx, watch);
+      if (undone) await ctx.event("commit_undone", { note: undone });
+      // Ensemble, not the engine, pushes the run's branch: fast-forward, with the person's sign-in, through the push gate.
+      if (job.delivery === "push" && git && ctx.network) {
+        const pushed = await runTool(ctx, "run_command", { command: "git push" });
+        await ctx.event("tool", { name: "push", ok: pushed.ok, summary: pushed.summary });
+      }
+      finalText = ran.text.trim() || "Claude Code finished.";
+      await prisma.runStep.create({
+        data: { runId: run.id, index: 0, title: "Claude Code", status: "done", output: truncateText(finalText, 8000), model: ran.model ?? job.model, tokensIn: ran.tokensIn, tokensOut: ran.tokensOut, startedAt: new Date(), endedAt: new Date() },
+      });
+    }
+
+    for (let turn = 0; !engine; turn += 1) {
       await stopCheck();
       if (turn > 0) await ensureTrust(false);
       if (turn >= job.maxTurns) throw new LimitReached(`Reached the limit of ${job.maxTurns} model turns.`);

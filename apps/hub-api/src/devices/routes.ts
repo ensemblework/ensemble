@@ -353,6 +353,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
         delivery: next.delivery,
         task: { title: next.task.title, description: next.task.description },
         askBeforePublish: next.askBeforePublish,
+        sandbox: next.executionMode !== "native",
         useCredentials: next.useCredentials,
         unattended: next.unattended,
         mode: next.unattended ? "unattended" : next.accessMode === "auto" ? "review" : "ask",

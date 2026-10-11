@@ -43,8 +43,31 @@ const FEATURES: { icon: IconName; title: string; body: string }[] = [
   { icon: "chip", title: "Any model, your key", body: "Gemini, OpenAI, Claude, OpenRouter, Ollama or Copilot. Keys are encrypted and never leave the runtime." },
 ];
 
+const CLI_POINTS: { icon: IconName; title: string; body: string }[] = [
+  {
+    icon: "shield",
+    title: "Sandboxed on every OS",
+    body: "Commands run inside the computer's own sandbox: Seatbelt on macOS, bubblewrap or Landlock on Linux, a separate sandbox account on Windows. No Docker, no VM. Ensemble sets it up; Windows asks once.",
+  },
+  {
+    icon: "chip",
+    title: "Your own Claude Code",
+    body: "Hand a task to Claude Code with your own Claude sign-in, or to Ensemble's agent with a model key. Ensemble never sees the sign-in, and the same folder, git and internet rules apply to both.",
+  },
+  {
+    icon: "hand",
+    title: "Questions come to you",
+    body: "Permission prompts and multiple-choice questions, with the same options and a box for your own answer, reach Needs me on the web, your phone, the app, or the terminal (ensemble needs).",
+  },
+  {
+    icon: "board",
+    title: "Run unattended",
+    body: "In a folder you trust, it works without asking, takes its recommended option at each decision, and lists every decision at the end. Paths outside the folder are refused, never fatal.",
+  },
+];
+
 const TRUST = [
-  { title: "Localhost first", body: "Run the whole thing on your machine, or as a desktop app with no Docker at all." },
+  { title: "Localhost first", body: "Run it on your machine as a CLI or a desktop app. They share one runtime, so install either first. No Docker at all." },
   { title: "Least privilege", body: "Connectors read. Writes are separate actions with a preview and a policy." },
   { title: "Human in the loop", body: "Pause the agent, reject a draft, undo its writes. Control points are part of the design, not a setting." },
   { title: "Source available", body: "Read every prompt in Settings. Read every line of the code that runs them, on GitHub." },
@@ -78,6 +101,7 @@ export default function Home() {
           <a href="#why">Why</a>
           <a href="#day">A day</a>
           <a href="#features">Features</a>
+          <a href="#cli">CLI</a>
           <a href="/download">Download</a>
           <a href="#trust">Trust</a>
           <GitHubLink />
@@ -199,8 +223,9 @@ export default function Home() {
               Every agent asks <em>in one place.</em>
             </h2>
             <p className="section-lede">
-              Cursor, Claude Code and VS Code Copilot hold their permission prompts open and send them to Ensemble. Answer once,
-              for the session, or always. If nobody answers, the editor asks as usual. The hook never allows on its own.
+              Claude Code, Codex, GitHub Copilot and Cursor hold their permission prompts and questions open and send them to
+              Ensemble, with their own options and room for your own answer. Answer once, for the session, or always, from the web,
+              your phone or the terminal. If nobody answers, the tool asks as usual. The hook never allows on its own.
             </p>
           </div>
           <div className="prompt-card" aria-label="An example permission prompt from an editor agent">
@@ -218,6 +243,58 @@ export default function Home() {
               <span>Always</span>
               <span className="deny">Deny…</span>
             </div>
+          </div>
+        </section>
+
+        <section id="cli" className="section cli">
+          <div className="section-head">
+            <p className="eyebrow">CLI mode</p>
+            <h2>
+              Your board, <em>your terminal.</em>
+            </h2>
+            <p className="section-lede">
+              The <code>ensemble</code> command pairs this computer with your board. Tasks you assign on the web run here, in a
+              sandbox the operating system enforces, and everything they need from you comes back to Needs me.
+            </p>
+          </div>
+          <div className="cli-grid">
+            <div className="code-card cli-card" aria-label="An example terminal session">
+              <div className="code-head">
+                <span>terminal</span>
+              </div>
+              <pre>
+                <code>
+                  {[
+                    "$ ensemble login",
+                    "Logged in. This computer is paired as \"MacBook\".",
+                    "$ ensemble sandbox",
+                    "sandbox: macOS sandbox (Seatbelt)",
+                    "  internet off is enforced",
+                    "$ ensemble runner install",
+                    "$ ensemble needs",
+                    "1. Claude Code · Question: Add a README too?",
+                    "   1) Yes",
+                    "   2) No  (recommended)",
+                    "$ ensemble needs answer 1 2",
+                    "Sent: No. The task continues.",
+                  ].join("\n")}
+                </code>
+              </pre>
+            </div>
+            <div className="cli-points">
+              {CLI_POINTS.map((point) => (
+                <article key={point.title} className="feature">
+                  <Icon name={point.icon} />
+                  <h3>{point.title}</h3>
+                  <p>{point.body}</p>
+                </article>
+              ))}
+            </div>
+          </div>
+          <div className="ctas">
+            <a className="btn" href="/download">
+              Install the CLI <span aria-hidden="true">→</span>
+            </a>
           </div>
         </section>
 

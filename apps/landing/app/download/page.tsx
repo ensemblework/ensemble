@@ -93,7 +93,8 @@ export default function DownloadPage() {
               Sign in and let Ensemble use <em>one folder.</em>
             </h2>
             <p className="section-lede">
-              Start with login. Then share a repo folder, add the model key this computer should use, and install or start the runner.
+              Start with login. <code>ensemble sandbox</code> shows this computer&apos;s sandbox (on Windows, login sets it up and Windows asks
+              once). Then share a repo folder, add a model key or use your own Claude Code sign-in, and install or start the runner.
             </p>
           </div>
           <div className="download-two">
@@ -102,7 +103,8 @@ export default function DownloadPage() {
           </div>
           <div className="download-note">
             <p>
-              Useful checks: <code>ensemble status</code>, <code>ensemble doctor</code>, and <code>ensemble update</code>.
+              Useful checks: <code>ensemble status</code>, <code>ensemble doctor</code>, and <code>ensemble update</code>. Answer what a task
+              asks with <code>ensemble needs</code>, and trust a folder for Review only or Run unattended with <code>ensemble trust add</code>.
             </p>
           </div>
         </section>
@@ -159,6 +161,14 @@ export default function DownloadPage() {
               </p>
             </article>
             <article>
+              <h3>Is there a sandbox? Do I need Docker?</h3>
+              <p>
+                No Docker, no VM. Commands run in the operating system&apos;s own sandbox: Seatbelt on macOS, bubblewrap or Landlock on Linux,
+                and a separate sandbox account on Windows (set up once, with one Windows permission prompt). Writes stay in the task&apos;s folder,
+                your keys and browser data stay unreadable, and the internet is off unless the task allows it.
+              </p>
+            </article>
+            <article>
               <h3>Where can tasks run?</h3>
               <p>
                 Only in folders you share with <code>ensemble folders add</code>, and only while the runner is running. Remove a folder with{" "}
@@ -174,7 +184,10 @@ export default function DownloadPage() {
             </article>
             <article>
               <h3>What about the desktop app?</h3>
-              <p>The desktop app is coming later. Use the CLI for runner and MCP setup today.</p>
+              <p>
+                The CLI and the desktop app share one runtime on a computer: one database, one pairing, one list of trusted folders, one sandbox.
+                Install either first; the other uses what is already there.
+              </p>
             </article>
           </div>
         </section>

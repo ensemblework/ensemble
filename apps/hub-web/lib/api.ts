@@ -513,10 +513,16 @@ export type WorkspaceBoard = {
 /** What the agent's commands run inside on this computer. */
 export type SandboxCaps = {
   os: string;
-  strength: "strong" | "advisory" | "ask";
+  strength: "strong" | "reduced" | "advisory" | "ask";
   osSandbox: boolean;
+  /** seatbelt (macOS), bubblewrap or landlock (Linux), windows (sandbox account), none. */
   mechanism: string;
   reason: string;
+  /** What this computer's sandbox cannot enforce. */
+  limits?: string[];
+  networkOff?: boolean;
+  /** Windows: one admin prompt turns it on. */
+  setup?: { needed: boolean; how: string };
 };
 
 export type AgentCall = { id: string; kind: string; label: string; detail?: string; model?: string; startedAt: string };
@@ -541,6 +547,8 @@ export type RemoteMac = {
 export type AssignInput = {
   taskId: string;
   kind: "research" | "code";
+  /** Ensemble's own agent, or the person's own Claude Code on their computer. */
+  engine?: "ensemble" | "claude-code";
   provider?: string;
   model?: string;
   reasoningEffort?: string;
@@ -835,6 +843,12 @@ export type AgentDecisionRecord = {
     confirm?: boolean;
     /** The option the agent recommends, one of `options`. */
     recommended?: string | null;
+    /** A question from another tool (Claude Code's AskUserQuestion): each option's description. */
+    optionDetails?: Array<{ label: string; description: string }>;
+    /** More than one option may be picked. */
+    multiSelect?: boolean;
+    /** Short label the tool gave the question. */
+    header?: string | null;
   };
   sessionId: string | null;
   cwd: string | null;
@@ -1094,6 +1108,9 @@ export const api = bindClient({
   stopJob: (id: string) => post(`/api/agent/jobs/${id}/stop`),
   retryJob: (id: string) => post<{ jobId: string }>(`/api/agent/jobs/${id}/retry`),
   workspaceGuard: () => get<{ root: string; sandboxAvailable: boolean; sandbox: SandboxCaps }>("/api/workspace/guard"),
+  sandboxStatus: (refresh = false) => get<{ sandbox: SandboxCaps }>(`/api/sandbox${refresh ? "?refresh=1" : ""}`),
+  /** Windows asks for permission once; elsewhere it re-checks. Only the computer itself can do this. */
+  setupSandbox: () => post<{ ok: boolean; message: string; sandbox: SandboxCaps }>("/api/sandbox/setup", {}),
   checkouts: () => get<{ checkouts: Array<{ jobId: string; title: string; status: string; folder: string; branch: string; createdAt: string }> }>("/api/workspace/checkouts"),
   resolveFolder: (path: string) => post<{ path: string; git: boolean; branch: string | null }>("/api/workspace/resolve-folder", { path }),
   trustedFolders: () => get<{ folders: Array<{ id: string; path: string; createdAt: string }> }>("/api/workspace/trust"),

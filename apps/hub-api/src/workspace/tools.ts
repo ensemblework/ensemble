@@ -3,15 +3,15 @@
  * again, whatever the prompt said. A refusal comes back to the model as a
  * plain result, so it can report it instead of retrying around it.
  */
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import type { PrismaClient, WorkspaceJob } from "@prisma/client";
 import { decisionBus, waitFor } from "../lib/decisions.js";
 import { sseHub } from "../lib/sse.js";
 import { pageText, writeAgentBlock } from "../pages/markdown.js";
 import { PageDocument } from "@ensemble/shared-types";
 import { githubCloneAuth } from "../lib/git-auth.js";
-import { checkGit, checkProgram, expandHome, gitHardening, GuardError, jailPath, parseCommand, relativeTo, within } from "./guard.js";
+import { checkGit, checkProgram, expandHome, gitHardening, GuardError, jailPath, outsideRefusal, parseCommand, relativeTo, within } from "./guard.js";
 import { pushRefused, runTrustedGit } from "./git-gate.js";
 import { appendLive } from "./live-log.js";
 import { pushRunBranch, remotePushRefused, remotePushSkipsPrompt, webPushNeedsComputer } from "./publish.js";
@@ -29,6 +29,8 @@ export interface JobContext {
   /** Jail for files and cwd; writes are confined here when sandboxed. */
   root: string;
   sandboxed: boolean;
+  /** How the OS sandbox is applied, for the prompt and the run log ("the macOS sandbox", "Landlock", …). */
+  sandboxName?: string;
   network: boolean;
   signal: AbortSignal;
   commitAuthor: string;
@@ -231,7 +233,8 @@ export async function askPerson(
 
 /** Hooks, config and attributes inside .git would run code the next time anyone uses git here. */
 function refuseGitInternals(root: string, full: string): void {
-  if (relativeTo(root, full).split("/").includes(".git")) throw new GuardError("Files inside .git are off limits. Use git commands instead.");
+  const parts = within(root, full) ? relativeTo(root, full).split("/") : full.split(sep);
+  if (parts.includes(".git")) throw new GuardError("Files inside .git are off limits. Use git commands instead.");
 }
 
 function gate(ctx: JobContext, action: "command" | "write" | "network" | "credential" | "outside" | "push", inside: boolean) {
@@ -244,6 +247,7 @@ function gate(ctx: JobContext, action: "command" | "write" | "network" | "creden
     action,
     inside,
     strength: ctx.strength,
+    sandboxed: ctx.sandboxed,
   });
 }
 
@@ -256,17 +260,65 @@ async function runRule(ctx: JobContext, toolName: string, command: string | unde
   return rule ? (rule.decision === "deny" ? "deny" : "allow") : null;
 }
 
-function outsideArgs(root: string, args: string[]): string[] {
+/** Path-looking arguments that leave the folder: absolute, `~`, `..`, and `--flag=/path`. */
+export function outsideArgs(root: string, args: string[], cwd = root): string[] {
   const found: string[] = [];
-  for (const arg of args) {
-    if (arg.startsWith("-") || (!arg.startsWith("/") && !arg.startsWith("~"))) continue;
-    const full = resolve(expandHome(arg));
-    if (!within(root, full)) found.push(full);
+  for (const raw of args.slice(1)) {
+    const arg = raw.startsWith("-") && raw.includes("=") ? raw.slice(raw.indexOf("=") + 1) : raw;
+    if (!arg || (arg !== raw ? false : arg.startsWith("-"))) continue;
+    const pathLike = arg.startsWith("/") || arg.startsWith("~") || /^[A-Za-z]:[\\/]/.test(arg) || arg === ".." || arg.startsWith("../") || arg.startsWith("..\\") || arg.includes("/../");
+    if (!pathLike) continue;
+    const full = resolve(cwd, expandHome(arg));
+    if (!within(root, full) && !found.includes(full)) found.push(full);
   }
   return found;
 }
 
-async function allowOrRefuse(
+/** The real path of `full`, following links in the part that exists. */
+export async function realOutside(full: string): Promise<string> {
+  let probe = full;
+  for (;;) {
+    try {
+      const real = await realpath(probe);
+      return probe === full ? real : join(real, relative(probe, full));
+    } catch {
+      const parent = dirname(probe);
+      if (parent === probe) return full;
+      probe = parent;
+    }
+  }
+}
+
+/**
+ * A file tool's path. Inside the folder it goes through the jail. Outside, the
+ * hard floor applies, then the run's mode and sandbox (`commandGate`): asked in
+ * Ask, used in Review only and Run unattended without the sandbox, and refused
+ * back to the model with the sandbox on. A refusal never ends the run.
+ */
+async function toolPath(
+  ctx: JobContext,
+  input: string,
+  options: { write: boolean; mustExist?: boolean },
+): Promise<{ full: string; outside: boolean; held: null } | { full: null; outside: true; held: { ok: false; result: unknown; summary: string } }> {
+  const candidate = resolve(ctx.root, expandHome(input || "."));
+  if (within(ctx.root, candidate)) return { full: await jailPath(ctx.root, input || ".", options.mustExist), outside: false, held: null };
+  const real = await realOutside(candidate);
+  const refused = outsideRefusal(real, options.write);
+  if (refused) throw new GuardError(refused);
+  const held = await allowOrRefuse(ctx, "outside", false, {
+    toolName: OUTSIDE_TOOL,
+    title: `${options.write ? "Change" : "Read"} ${real}, outside the folder?`,
+    command: real,
+  });
+  if (held) return { full: null, outside: true, held };
+  if (options.mustExist) await stat(real).catch(() => {
+    throw new GuardError(`${input} does not exist.`);
+  });
+  return { full: real, outside: true, held: null };
+}
+
+/** The run's mode, trust and sandbox applied to one action: null when it may go ahead, else the refusal to hand back. */
+export async function allowOrRefuse(
   ctx: JobContext,
   action: "command" | "write" | "network" | "credential" | "outside" | "push",
   inside: boolean,
@@ -274,7 +326,8 @@ async function allowOrRefuse(
 ): Promise<{ ok: false; result: unknown; summary: string } | null> {
   const decision = gate(ctx, action, inside);
   if (decision === "allow") {
-    if (ctx.job.unattended && (action === "push" || action === "write" || action === "command")) {
+    if (action === "outside") await ctx.event("outside", { path: prompt.command ?? prompt.title, sandboxed: ctx.sandboxed });
+    if (ctx.job.unattended && (action === "push" || action === "write" || action === "command" || action === "outside")) {
       await ctx.event("unattended", { action, command: prompt.command ?? prompt.title });
     }
     return null;
@@ -288,9 +341,11 @@ async function allowOrRefuse(
       result: {
         error: readOnly
           ? `Blocked. This run is read-only: no file changes and no network. ${target}`
-          : `Blocked. Nobody approves commands in this run, so it stays inside the trusted folder. ${target}`,
+          : ctx.sandboxed
+            ? `Blocked. This run is sandboxed to ${ctx.root} and nobody approves paths outside it. ${target}`
+            : `Blocked. Nobody approves commands in this run, so it stays inside the trusted folder. ${target}`,
         refused: true,
-        note: "This is the run's setting. Do not try another route; mention it in your summary.",
+        note: "This is the run's setting, not an error to work around. Carry on inside the folder and mention what you could not reach in your summary.",
       },
       summary: readOnly ? "Blocked: read-only run" : "Blocked outside the trusted folder",
     };
@@ -311,8 +366,7 @@ async function allowOrRefuse(
   };
 }
 
-async function listDir(root: string, path: string, depth: number): Promise<string> {
-  const start = await jailPath(root, path, true);
+async function listDir(start: string, depth: number): Promise<string> {
   const lines: string[] = [];
   const walk = async (dir: string, level: number) => {
     if (lines.length > 400) return;
@@ -398,11 +452,15 @@ export async function runTool(ctx: JobContext, name: string, raw: Record<string,
         return { ok: true, result: { finished: true }, summary: "Finished" };
       }
       case "list_dir": {
-        const listing = await listDir(ctx.root, s("path") || ".", Math.min(Math.max(n("depth", 2), 1), 4));
+        const place = await toolPath(ctx, s("path") || ".", { write: false, mustExist: true });
+        if (place.held) return place.held;
+        const listing = await listDir(place.full, Math.min(Math.max(n("depth", 2), 1), 4));
         return { ok: true, result: { listing }, summary: `Listed ${s("path") || "."}` };
       }
       case "read_file": {
-        const full = await jailPath(ctx.root, s("path"), true);
+        const place = await toolPath(ctx, s("path"), { write: false, mustExist: true });
+        if (place.held) return place.held;
+        const full = place.full;
         const info = await stat(full);
         if (info.size > 4_000_000) return { ok: false, result: { error: "File is over 4 MB." }, summary: "Too large" };
         const lines = (await readFile(full, "utf8")).split("\n");
@@ -412,20 +470,32 @@ export async function runTool(ctx: JobContext, name: string, raw: Record<string,
         return { ok: true, result: { path: s("path"), totalLines: lines.length, content: slice }, summary: `Read ${s("path")}` };
       }
       case "write_file": {
-        const full = await jailPath(ctx.root, s("path"));
-        const allowed = await allowOrRefuse(ctx, "write", true, { toolName: WRITE_TOOL, title: `Write ${s("path")}`, command: s("path") });
-        if (allowed) return allowed;
+        const place = await toolPath(ctx, s("path"), { write: true });
+        if (place.held) return place.held;
+        const full = place.full;
+        if (!place.outside) {
+          const allowed = await allowOrRefuse(ctx, "write", true, { toolName: WRITE_TOOL, title: `Write ${s("path")}`, command: s("path") });
+          if (allowed) return allowed;
+        } else if (ctx.accessMode === "review") {
+          return { ok: false, result: { error: "Blocked. This run is read-only: no file changes.", refused: true }, summary: "Blocked: read-only run" };
+        }
         refuseGitInternals(ctx.root, full);
         await mkdir(dirname(full), { recursive: true });
         await writeFile(full, s("content"));
-        ctx.touched.add(relativeTo(ctx.root, full));
+        if (!place.outside) ctx.touched.add(relativeTo(ctx.root, full));
         await ctx.progress(`Wrote ${s("path")}`);
         return { ok: true, result: { written: s("path"), bytes: Buffer.byteLength(s("content")) }, summary: `Wrote ${s("path")}` };
       }
       case "edit_file": {
-        const full = await jailPath(ctx.root, s("path"), true);
-        const allowed = await allowOrRefuse(ctx, "write", true, { toolName: WRITE_TOOL, title: `Edit ${s("path")}`, command: s("path") });
-        if (allowed) return allowed;
+        const place = await toolPath(ctx, s("path"), { write: true, mustExist: true });
+        if (place.held) return place.held;
+        const full = place.full;
+        if (!place.outside) {
+          const allowed = await allowOrRefuse(ctx, "write", true, { toolName: WRITE_TOOL, title: `Edit ${s("path")}`, command: s("path") });
+          if (allowed) return allowed;
+        } else if (ctx.accessMode === "review") {
+          return { ok: false, result: { error: "Blocked. This run is read-only: no file changes.", refused: true }, summary: "Blocked: read-only run" };
+        }
         refuseGitInternals(ctx.root, full);
         const text = await readFile(full, "utf8");
         const count = text.split(s("old_text")).length - 1;
@@ -433,7 +503,7 @@ export async function runTool(ctx: JobContext, name: string, raw: Record<string,
           return { ok: false, result: { error: count === 0 ? "old_text was not found. Read the file again." : `old_text appears ${count} times. Include more context.` }, summary: "Edit did not apply" };
         }
         await writeFile(full, text.replace(s("old_text"), s("new_text")));
-        ctx.touched.add(relativeTo(ctx.root, full));
+        if (!place.outside) ctx.touched.add(relativeTo(ctx.root, full));
         await ctx.progress(`Edited ${s("path")}`);
         return { ok: true, result: { edited: s("path") }, summary: `Edited ${s("path")}` };
       }
@@ -490,7 +560,7 @@ export function credentialGitRefusal(args: string[]): string | null {
 }
 
 /** Branch and tag tips, for spotting commits a script made behind the run's back. Null when the folder is not a repository. */
-async function refTips(ctx: JobContext): Promise<Map<string, string> | null> {
+export async function refTips(ctx: JobContext): Promise<Map<string, string> | null> {
   if (!(await stat(join(ctx.root, ".git")).then(() => true).catch(() => false))) return null;
   const result = await runCommand({
     userId: ctx.userId,
@@ -562,14 +632,23 @@ async function command(ctx: JobContext, line: string, cwdInput: string, timeoutS
   if (left !== undefined) timeoutSeconds = Math.max(5, Math.min(timeoutSeconds, Math.floor(left / 1000)));
   const argv = parseCommand(line);
   const program = checkProgram(argv, { who: "agent", sandboxed: ctx.sandboxed, network: ctx.network });
-  const outside = outsideArgs(ctx.root, argv);
+  const cwdForArgs = resolve(ctx.root, cwdInput || ".");
+  const outside: string[] = [];
+  for (const path of outsideArgs(ctx.root, argv, within(ctx.root, cwdForArgs) ? cwdForArgs : ctx.root)) outside.push(await realOutside(path));
+  // Granted to the sandbox for this command once the person (or an unsandboxed free mode) allows them.
+  const grants: { readWrite: string[]; readOnly: string[] } = { readWrite: [], readOnly: [] };
   if (outside.length) {
+    for (const path of outside) {
+      const refused = outsideRefusal(path, false);
+      if (refused) throw new GuardError(`${path}: ${refused}`);
+    }
     const held = await allowOrRefuse(ctx, "outside", false, {
       toolName: OUTSIDE_TOOL,
-      title: `Use a path outside the folder?`,
+      title: `Use ${outside[0]}${outside.length > 1 ? ` and ${outside.length - 1} more` : ""}, outside the folder?`,
       command: outside[0],
     });
     if (held) return held;
+    for (const path of outside) (outsideRefusal(path, true) || ctx.accessMode === "review" ? grants.readOnly : grants.readWrite).push(path);
   }
   let full = argv;
   let watch: Map<string, string> | null = null;
@@ -655,8 +734,8 @@ async function command(ctx: JobContext, line: string, cwdInput: string, timeoutS
     network: ctx.network && !review,
     useCredentials: false,
     who: "agent",
-    readOnly: review ? [ctx.root] : [],
-    readWrite: review ? [] : [ctx.root],
+    readOnly: review ? [ctx.root, ...grants.readOnly, ...grants.readWrite] : grants.readOnly,
+    readWrite: review ? [] : [ctx.root, ...grants.readWrite],
     timeoutMs: timeoutSeconds * 1000,
     signal: ctx.signal,
     group: ctx.job.id,
