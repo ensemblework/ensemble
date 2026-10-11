@@ -29,6 +29,8 @@ import { flagPlanted } from "./planted.js";
 import { gitHardening, GuardError, resolveWorkFolder, sandboxAvailable, sandboxRefusal, within, workspaceRoot } from "./guard.js";
 import { capabilities, prepareNetwork } from "./sandbox/spawn.js";
 import { runClaudeCode } from "./engines/claude-code.js";
+import { runCodex } from "./engines/codex.js";
+import { runCursor } from "./engines/cursor.js";
 import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
 import { runCommand } from "./runner.js";
 import { interruptionMessage } from "./lifecycle.js";
@@ -555,17 +557,19 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
     ];
     await ctx.progress("Thinking");
 
-    // Another coding agent as the engine (the person's own Claude Code): its tool calls are judged by this run's rules.
-    const engine = job.kind === "code" && job.provider === "claude-code";
+    // Another coding agent as the engine (the person's own Claude Code or Codex): its tool calls are judged by this run's rules.
+    const engine = job.kind === "code" && (job.provider === "claude-code" || job.provider === "codex" || job.provider === "cursor-agent");
+    const engineName = job.provider === "codex" ? "Codex" : job.provider === "cursor-agent" ? "Cursor" : "Claude Code";
     if (engine) {
       // Local only: a commit made any way (a script, say) is undone at the end. Commits the run may make were judged as they happened.
       const watch = job.delivery === "local" ? await refTips(ctx) : null;
-      const ran = await runClaudeCode(ctx, {
-        prompt: enginePrompt(ctx, user?.name || "the person", await brief(app, ctx, settings)),
-        model: job.model,
-        maxTurns: job.maxTurns,
-        stopCheck,
-      });
+      const enginePromptText = enginePrompt(ctx, user?.name || "the person", await brief(app, ctx, settings));
+      const ran =
+        job.provider === "codex"
+          ? await runCodex(ctx, { prompt: enginePromptText, model: job.model, stopCheck })
+          : job.provider === "cursor-agent"
+            ? await runCursor(ctx, { prompt: enginePromptText, model: job.model, stopCheck })
+            : await runClaudeCode(ctx, { prompt: enginePromptText, model: job.model, maxTurns: job.maxTurns, stopCheck });
       counts.turns = ran.turns;
       counts.tools = ran.toolCalls;
       counts.tokensIn = ran.tokensIn;
@@ -575,7 +579,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
         kind: "model.call",
         taskId: job.taskId,
         runId: run.id,
-        meta: { provider: "claude-code", model: ran.model || job.model, purpose: "Agent coding (Claude Code)", tokensIn: ran.tokensIn, tokensOut: ran.tokensOut, estimatedUsd: ran.costUsd, title: job.task.title },
+        meta: { provider: job.provider, model: ran.model || job.model, purpose: `Agent coding (${engineName})`, tokensIn: ran.tokensIn, tokensOut: ran.tokensOut, estimatedUsd: ran.costUsd, title: job.task.title },
       });
       const undone = await undoUnapprovedCommits(ctx, watch);
       if (undone) await ctx.event("commit_undone", { note: undone });
@@ -584,9 +588,9 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
         const pushed = await runTool(ctx, "run_command", { command: "git push" });
         await ctx.event("tool", { name: "push", ok: pushed.ok, summary: pushed.summary });
       }
-      finalText = ran.text.trim() || "Claude Code finished.";
+      finalText = ran.text.trim() || `${engineName} finished.`;
       await prisma.runStep.create({
-        data: { runId: run.id, index: 0, title: "Claude Code", status: "done", output: truncateText(finalText, 8000), model: ran.model ?? job.model, tokensIn: ran.tokensIn, tokensOut: ran.tokensOut, startedAt: new Date(), endedAt: new Date() },
+        data: { runId: run.id, index: 0, title: engineName, status: "done", output: truncateText(finalText, 8000), model: ran.model ?? job.model, tokensIn: ran.tokensIn, tokensOut: ran.tokensOut, startedAt: new Date(), endedAt: new Date() },
       });
     }
 

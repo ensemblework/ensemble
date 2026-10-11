@@ -52,13 +52,15 @@ export const Assign = z.object({
   deviceId: z.string().uuid().optional(),
   folderLabel: z.string().max(200).optional(),
   /**
-   * Who does the work: Ensemble's own agent (a model API with your key), or
-   * the person's own Claude Code on their computer with their own sign-in.
+   * Who does the work: Ensemble's own agent (a model API with your key), or the person's own
+   * Claude Code, Codex or Cursor agent on their computer with their own sign-in.
    */
-  engine: z.enum(["ensemble", "claude-code"]).default("ensemble"),
+  engine: z.enum(["ensemble", "claude-code", "codex", "cursor-agent"]).default("ensemble"),
   /** In a sandboxed run, outside the work folder: read only, read and write, or nothing. Default: Settings. */
   outsideAccess: z.enum(["none", "read", "read-write"]).optional(),
 });
+
+const ENGINE_NAME = { ensemble: "Ensemble's agent", "claude-code": "Claude Code", codex: "Codex", "cursor-agent": "Cursor's agent" } as const;
 
 /** The job's context with the run's outside-folder choice in it (a JSON column, so no migration). */
 function contextWith(context: Prisma.InputJsonValue | undefined, outsideAccess: string): Prisma.InputJsonValue {
@@ -191,10 +193,11 @@ export async function createJob(prisma: PrismaClient, userId: string, body: Assi
   if (!task) return null;
   const settings = await loadSettings(prisma, userId);
   const tier = settings.models[task.complexity];
-  const claudeCode = body.engine === "claude-code";
-  if (claudeCode && body.kind !== "code") throw new GuardError("Claude Code works on code tasks. Pick Ensemble's agent for research.");
-  // Claude Code is stored as the run's provider; its model is a Claude Code alias (sonnet, opus) or its own default.
-  const provider = claudeCode ? "claude-code" : body.model ? body.provider ?? tier.provider : tier.provider;
+  const claudeCode = body.engine !== "ensemble";
+  const engineName = ENGINE_NAME[body.engine];
+  if (claudeCode && body.kind !== "code") throw new GuardError(`${engineName} works on code tasks. Pick Ensemble's agent for research.`);
+  // The engine is stored as the run's provider; its model is the engine's own name for one, or its default.
+  const provider = claudeCode ? body.engine : body.model ? body.provider ?? tier.provider : tier.provider;
   const model = claudeCode ? body.model?.trim() || "default" : body.model || tier.model;
   if (body.deviceId) return createDeviceJob(prisma, userId, task, body, provider, model, tier.effort, settings.orchestration, options);
   // This server's runner belongs to the space's owner. Someone it is shared with runs on their own computer.
@@ -203,7 +206,7 @@ export async function createJob(prisma: PrismaClient, userId: string, body: Assi
 
   if (provider === "cursor") throw new GuardError("Cursor cannot run tasks on this computer. Pick a chat model for the agent.");
   if (claudeCode && process.env.ENSEMBLE_DESKTOP !== "1") {
-    throw new GuardError("Claude Code runs on your own computer with your own sign-in. Pick one of your paired computers.");
+    throw new GuardError(`${engineName} runs on your own computer with your own sign-in. Pick one of your paired computers.`);
   }
   if (body.kind === "code" && !serverRunnerEnabled()) throw new GuardError("This Ensemble runs code on your computer. Pick a paired computer.");
   // A sandboxed run needs this computer's OS sandbox. Without one it is refused with the reason and the fix,

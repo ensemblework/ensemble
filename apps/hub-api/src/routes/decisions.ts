@@ -1,5 +1,13 @@
+import { spawnSync } from "node:child_process";
+import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
+import { requireBrowserSession } from "../bridge/auth.js";
+import { newApiToken, sha256 } from "../lib/auth.js";
+import { prisma } from "../lib/prisma.js";
 import { publicApiUrl } from "../connectors/oauth.js";
 import { publishDevice } from "../devices/publish.js";
 import { decisionBus, expireStale, matchingRule, normalize, publicDecision, waitFor, type Source } from "../lib/decisions.js";
@@ -9,6 +17,8 @@ import { resolveWorkFolder, within, workspaceRoot } from "../workspace/guard.js"
 import { OUTSIDE_TOOL, RUN_RULE_SOURCE } from "../workspace/tools.js";
 import { PATH_RULE_SOURCE, PATH_RULE_TOOL } from "../workspace/trust.js";
 import { trustChanged } from "../workspace/trust-share.js";
+import { handoffFor } from "../workspace/handoff.js";
+import { loadSettings } from "../lib/settings.js";
 import { hookScriptPath } from "../workspace/engines/registry.js";
 import { actorFor } from "../sharing/context.js";
 import { ownsOpenSpace } from "../lib/auth.js";
@@ -39,7 +49,10 @@ export async function applyAnswer(
   const row = await prisma.agentDecision.findFirst({ where: { id, userId } });
   if (!row) throw new AnswerError(404, "Decision not found.");
   if (row.status !== "pending") {
-    throw new AnswerError(409, row.status === "expired" ? "The tool stopped waiting. It showed its own prompt instead." : "Already answered.");
+    throw new AnswerError(
+      409,
+      row.status === "expired" ? "The tool stopped waiting. It showed its own prompt instead." : row.status === "settled" ? (row.reason ?? "Already answered in the tool.") : "Already answered.",
+    );
   }
   const detail = (row.detail ?? {}) as { deviceId?: unknown; command?: string | null; tier?: unknown; deviceName?: unknown; options?: unknown; runnerAccountId?: unknown; allowCustom?: unknown; confirm?: unknown };
   const deviceId = typeof detail.deviceId === "string" && detail.deviceId.length > 0 ? detail.deviceId : null;
@@ -113,6 +126,24 @@ const Ask = z.object({
   waitSeconds: z.number().int().min(5).max(3600).default(600),
 });
 
+const Activity = z.object({
+  source: z.enum(["cursor", "claude", "copilot", "codex", "other"]),
+  event: z.string().min(1).max(60),
+  payload: z.record(z.string(), z.unknown()),
+});
+
+/** Events after which nothing from that session's earlier turn can still be waiting on the person. */
+const SESSION_TURN_EVENTS = new Set(["Stop", "stop", "SessionEnd", "sessionEnd", "UserPromptSubmit", "userPromptSubmitted", "beforeSubmitPrompt"]);
+
+/** A tool call that ran (or failed) is the one a pending card asked about: same tool, same input. */
+function sameCall(row: { toolName: string; event: string; detail: unknown }, call: { toolName: string; detail: Record<string, unknown> }): boolean {
+  if (row.toolName !== call.toolName) return false;
+  // One card per question: the tool ran once all of them were answered.
+  if (row.event === "question") return true;
+  const asked = (row.detail as { input?: unknown } | null)?.input;
+  return JSON.stringify(asked ?? {}) === JSON.stringify(call.detail.input ?? {});
+}
+
 /** What the live stream carries: enough for a toast, and who may answer it. */
 function decisionFrame(row: { id: string; status: string; title: string; source: string; detail: unknown }) {
   const detail = row.detail && typeof row.detail === "object" ? (row.detail as { runnerAccountId?: unknown }) : {};
@@ -126,6 +157,12 @@ export async function decisionRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/decisions", async (request, reply) => {
     const body = Ask.parse(request.body);
     const call = normalize(body.source as Source, body.event, body.payload);
+    // Only tasks Ensemble opened in the tool, unless the person chose every session in Settings.
+    const handoff = await handoffFor(prisma, request.userId, call);
+    if (!handoff && (await loadSettings(prisma, request.userId)).orchestration.editorRequests !== "all") {
+      return { id: null, status: "skipped", reason: "Not a task Ensemble opened, so the tool asks you itself." };
+    }
+    if (handoff) call.detail = { ...call.detail, handoffId: handoff.id, taskId: handoff.taskId };
     const rule = await matchingRule(request.userId, call);
     if (rule) {
       await appendLedger({
@@ -155,6 +192,42 @@ export async function decisionRoutes(app: FastifyInstance): Promise<void> {
     // From the owner's own editors: their commands and folders, never shown to people they share with.
     sseHub.publish(request.userId, { event: "decision", data: decisionFrame(row), ownerOnly: true });
     return reply.code(202).send({ id: row.id, status: "pending" });
+  });
+
+  /**
+   * What happened in the tool's own session, from its other hooks: the prompt that names a hand-off
+   * (links the session), a tool that ran or failed, a turn that ended. A card still pending for a
+   * call the person already answered in the tool is closed as answered there, and the hook that
+   * was waiting on it lets go.
+   */
+  app.post("/api/decisions/activity", async (request) => {
+    const body = Activity.parse(request.body);
+    const call = normalize(body.source as Source, body.event, body.payload);
+    const prompt = typeof body.payload.prompt === "string" ? body.payload.prompt : null;
+    const handoff = await handoffFor(prisma, request.userId, call, prompt);
+    let settled = 0;
+    if (call.sessionId) {
+      const pending = await prisma.agentDecision.findMany({ where: { userId: request.userId, sessionId: call.sessionId, source: call.source, status: "pending" } });
+      const done = SESSION_TURN_EVENTS.has(call.event) ? pending : pending.filter((row) => sameCall(row, call));
+      if (done.length) {
+        const where = { id: { in: done.map((row) => row.id) }, status: "pending" };
+        settled = (await prisma.agentDecision.updateMany({ where, data: { status: "settled", reason: `Answered in ${label(call.source)}.`, decidedAt: new Date() } })).count;
+        for (const row of done) {
+          decisionBus.emit(row.id);
+          sseHub.publish(request.userId, { event: "decision", data: { id: row.id, status: "settled" }, ownerOnly: true });
+        }
+      }
+    }
+    if (handoff) {
+      const ended = call.event === "Stop" || call.event === "stop" || call.event === "SessionEnd";
+      const summary = typeof body.payload.last_assistant_message === "string" ? body.payload.last_assistant_message.slice(0, 4000) : null;
+      const status = ended ? "finished" : call.event === "UserPromptSubmit" || call.event === "beforeSubmitPrompt" ? "open" : handoff.status;
+      if (status !== handoff.status || summary) {
+        await prisma.agentHandoff.update({ where: { id: handoff.id }, data: { status, ...(summary ? { summary } : {}) } });
+        sseHub.publish(request.userId, { event: "task", data: { id: handoff.taskId, action: "handoff" } });
+      }
+    }
+    return { linked: Boolean(handoff), settled };
   });
 
   /** Long poll. The hook calls this until the status leaves pending or it gives up. */
@@ -209,7 +282,33 @@ export async function decisionRoutes(app: FastifyInstance): Promise<void> {
     node: process.execPath,
     script: HOOK_SCRIPT,
     apiUrl: publicApiUrl(),
+    /** This runtime is on the person's computer, so it can connect a tool itself. */
+    local: process.env.ENSEMBLE_DESKTOP === "1",
+    connected: process.env.ENSEMBLE_DESKTOP === "1" ? await connectedTargets() : [],
   }));
+
+  /**
+   * On the person's computer: installs (or removes) Ensemble's hook in one tool, signed in with a
+   * `hooks` key that can only ask, never answer. The key is made once and reused.
+   */
+  app.post("/api/editors/connect", async (request, reply) => {
+    requireBrowserSession(request);
+    if (process.env.ENSEMBLE_DESKTOP !== "1") {
+      return reply.code(409).send({ error: "Connect a tool from Ensemble on the computer it runs on (the desktop app, or `ensemble` there)." });
+    }
+    const body = z.object({ target: z.enum(["claude", "codex", "copilot-cli", "cursor"]), remove: z.boolean().default(false) }).parse(request.body);
+    const args = [HOOK_SCRIPT, body.remove ? "uninstall" : "install", "--target", body.target];
+    if (!body.remove && !(await hookKeyStillValid(request.userId))) {
+      const { token, hash, prefix } = newApiToken();
+      await prisma.apiToken.create({ data: { userId: request.userId, name: "Agent hooks (this computer)", tokenHash: hash, prefix, scope: "hooks" } });
+      await appendLedger({ userId: request.userId, actor: "me", action: "token.create", payload: { name: "Agent hooks", prefix, scope: "hooks" } });
+      // The default address lets the hook follow this runtime's port through its discovery file.
+      args.push("--token", token, "--url", "http://127.0.0.1:4000");
+    }
+    const result = spawnSync(process.execPath, args, { encoding: "utf8", timeout: 20_000, windowsHide: true });
+    if (result.status !== 0) return reply.code(500).send({ error: (result.stderr || result.stdout || "Could not change the tool's hooks.").trim() });
+    return { ok: true, message: result.stdout.trim(), connected: await connectedTargets() };
+  });
 
   app.get("/api/decision-rules", async (request) => ({
     rules: await prisma.decisionRule.findMany({ where: { userId: request.userId }, orderBy: { createdAt: "desc" } }),
@@ -270,6 +369,25 @@ async function saveEnsembleAnswer(
     });
     trustChanged(app.prisma, app.log);
   }
+}
+
+/** The tools whose user-level hook file already runs Ensemble's hook. */
+async function connectedTargets(): Promise<string[]> {
+  const hooks = (await import(pathToFileURL(HOOK_SCRIPT).href)) as { hookFile: (target: string) => string };
+  const found: string[] = [];
+  for (const target of ["claude", "codex", "copilot-cli", "cursor"]) {
+    const text = await readFile(hooks.hookFile(target), "utf8").catch(() => "");
+    if (text.includes("ensemble-hook.mjs")) found.push(target);
+  }
+  return found;
+}
+
+/** The hook's saved key is a live `hooks` key of this person's. */
+async function hookKeyStillValid(userId: string): Promise<boolean> {
+  const saved = await readFile(join(homedir(), ".ensemble", "hook.json"), "utf8").then((text) => JSON.parse(text) as { token?: unknown }).catch(() => null);
+  if (typeof saved?.token !== "string") return false;
+  const row = await prisma.apiToken.findFirst({ where: { tokenHash: sha256(saved.token), userId, revokedAt: null } });
+  return Boolean(row);
 }
 
 /** Strings the computer offered. A device answer has to be one of these, exactly. */

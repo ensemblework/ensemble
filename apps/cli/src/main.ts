@@ -1,4 +1,4 @@
-import { answerFor, answerPending, formatPending, listPending, listTrusted, trustFolder, trustSharing, untrustFolder, webApprovals, type TrustSharing } from "./approvals.js";
+import { answerFor, answerPending, connectedHooks, connectHook, formatPending, HOOK_TOOLS, listPending, listTrusted, trustFolder, trustSharing, untrustFolder, webApprovals, type HookTool, type TrustSharing } from "./approvals.js";
 import type { ChildProcess } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
@@ -58,6 +58,7 @@ Usage:
   ensemble needs [list] | answer <n> <allow|deny|option number|"answer">
   ensemble trust [list] | add [path] | remove <path> | share [on|off]
   ensemble approvals [status] | on | off
+  ensemble hooks [list] | connect <tool> | disconnect <tool>
   ensemble sandbox [status] | setup
   ensemble doctor
   ensemble update
@@ -73,6 +74,8 @@ const HELP_BY_COMMAND: Record<string, string> = {
   keys: "Usage: ensemble keys [list] | set <provider> | remove <provider>",
   needs: "Usage: ensemble needs [list] | answer <n> <allow|deny|option number|\"answer\">\nQuestions and approvals waiting on this computer, including pushes and folder trust.",
   trust: "Usage: ensemble trust [list] | add [path] | remove <path> | share [on|off]\nTrusted folders on this computer. Review only and Run unattended need one; Ensemble's own workspace is always trusted.\n`share` shows or sets whether they are trusted in Claude Code, Codex, GitHub Copilot CLI, Cursor and Gemini CLI too (on by default).",
+  hooks:
+    "Usage: ensemble hooks [list] | connect <claude|codex|copilot-cli|cursor> | disconnect <tool>\nSends permission prompts and questions from tasks Ensemble opens in these tools to Needs me, while the tool's own prompt still works. The hook signs in with a key that can ask Ensemble but never answer.",
   approvals: "Usage: ensemble approvals [status] | on | off\nOn (default): you can approve anything for this computer from the web or phone, and the mode, internet and limits chosen there apply here.",
   sandbox:
     "Usage: ensemble sandbox [status] | setup\nThis computer's OS sandbox (macOS Seatbelt, Linux bubblewrap or Landlock, Windows sandbox account). No Docker. On Windows, `setup` asks for permission once; the Ensemble app and the CLI share it.",
@@ -585,6 +588,23 @@ async function commandApprovals(args: string[]): Promise<void> {
   );
 }
 
+async function commandHooks(args: string[]): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) return void console.log(HELP_BY_COMMAND.hooks);
+  const subcommand = args[0] ?? "list";
+  if (!["list", "connect", "disconnect"].includes(subcommand)) throw new Error(HELP_BY_COMMAND.hooks);
+  const sidecarDir = resolveSidecarDir(import.meta.url);
+  if (!(await sidecarAvailable(sidecarDir))) throw new Error(NO_RUNNER);
+  if (subcommand === "list") {
+    const connected = await withAdminApi({ sidecarDir, run: connectedHooks });
+    for (const [tool, name] of Object.entries(HOOK_TOOLS)) console.log(`${connected.includes(tool) ? "connected    " : "not connected"}  ${tool.padEnd(12)} ${name}`);
+    return;
+  }
+  const tool = args[1];
+  if (!tool || !(tool in HOOK_TOOLS)) throw new Error(HELP_BY_COMMAND.hooks);
+  const result = await withAdminApi({ sidecarDir, run: (discovery) => connectHook(discovery, tool as HookTool, subcommand === "disconnect") });
+  console.log(result.message);
+}
+
 async function commandSandbox(args: string[]): Promise<void> {
   if (args.includes("--help") || args.includes("-h")) return void console.log(HELP_BY_COMMAND.sandbox);
   const subcommand = args[0] ?? "status";
@@ -792,6 +812,8 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
       return commandTrust(rest);
     case "approvals":
       return commandApprovals(rest);
+    case "hooks":
+      return commandHooks(rest);
     case "sandbox":
       return commandSandbox(rest);
     case "doctor":

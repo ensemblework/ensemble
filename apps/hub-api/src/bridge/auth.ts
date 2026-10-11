@@ -18,8 +18,21 @@ export function requireBrowserSession(request: { authVia?: AuthVia }): void {
  * rejected. `device` is not `full`: `deviceTokenRejected` limits where it can go.
  */
 export function knownTokenScope(scope: string): TokenScope | null {
-  if (scope === "full" || scope === "bridge" || scope === "device") return scope;
+  if (scope === "full" || scope === "bridge" || scope === "device" || scope === "hooks") return scope;
   return null;
+}
+
+/**
+ * A `hooks` key is what an agent's hook signs in with: it can open a Needs me card, wait on it,
+ * withdraw it, and report what happened in its session. It can never answer a card itself.
+ */
+export function hooksTokenRejected(scope: string | undefined, method: string, path: string): string | null {
+  if (scope !== "hooks") return null;
+  const clean = (path.split("?")[0] ?? path).replace(/\/+$/, "") || "/";
+  if (method === "POST" && (clean === "/api/decisions" || clean === "/api/decisions/activity")) return null;
+  if (method === "GET" && /^\/api\/decisions\/[^/]+\/wait$/.test(clean)) return null;
+  if (method === "POST" && /^\/api\/decisions\/[^/]+\/cancel$/.test(clean)) return null;
+  return "This key is for an agent's hook. It can only ask Ensemble, not answer or read.";
 }
 
 /**

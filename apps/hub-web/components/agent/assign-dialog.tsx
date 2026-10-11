@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Check, ChevronRight, Code2, FileText, FolderOpen, GitBranch, Lock, Monitor, Pencil, ShieldCheck, Star, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { RunProfile } from "@ensemble/shared-types";
-import { api, type AssignInput, type Complexity } from "@/lib/api";
+import { api, type AssignInput, type Complexity, type HandoffApp } from "@/lib/api";
 import { useSpaceAccess } from "@/lib/access";
 import { pickFolderNative } from "@/lib/desktop-dialog";
 import { computerName, folderPlace, freshCloneHint } from "@/lib/device-copy";
@@ -91,6 +91,8 @@ const MODE_HELP: Record<Mode, string> = {
   review: "Runs commands and edits inside the folder without asking. Asks only real decisions (an unclear requirement, a choice between approaches), with its recommended option marked. Outside the folder, a sandboxed run follows “Outside the work folder” below and anything more is refused.",
   unattended: "Nobody needs to be there. Runs inside the folder without asking, picks its recommended option at each decision, and lists every decision it made in the summary. Outside the folder, a sandboxed run follows “Outside the work folder” below and anything more is refused.",
 };
+
+const ENGINE_LABEL = { "claude-code": "Claude Code", codex: "Codex", "cursor-agent": "Cursor" } as const;
 
 const OUTSIDE_HELP = "What a sandboxed run may do in your other folders. Read only: it can read them (never keys or browser data) and asks before writing; with nobody to answer, a write is refused and the run carries on. Read and write: it can change them too. No access: it stays in the work folder. The default comes from Settings.";
 
@@ -243,8 +245,11 @@ export function AssignDialog({
   const [taskId, setTaskId] = useState(fixedTaskId ?? "");
   const [kind, setKind] = usePersistentState<Kind>("ensemble.assign.kind", defaultKind ?? "research");
   const [modelChoice, setModelChoice] = usePersistentState("ensemble.assign.model", "");
-  const [engine, setEngine] = usePersistentState<"ensemble" | "claude-code">("ensemble.assign.engine", "ensemble");
+  const [engine, setEngine] = usePersistentState<"ensemble" | "claude-code" | "codex" | "cursor-agent">("ensemble.assign.engine", "ensemble");
   const [claudeModel, setClaudeModel] = useState("");
+  // Opened in the agent's own app on this computer instead of run by Ensemble.
+  const [inApp, setInApp] = useState(false);
+  const [appTarget, setAppTarget] = usePersistentState<HandoffApp>("ensemble.assign.app", "claude");
   const [effort, setEffort] = useState<Effort>("default");
   const [instructions, setInstructions] = useState("");
   const [place, setPlace] = useState<Place>("fresh");
@@ -281,6 +286,9 @@ export function AssignDialog({
   const board = useQuery({ queryKey: ["workspace"], queryFn: api.workspace, enabled: open });
   const computers = useQuery({ queryKey: ["devices"], queryFn: api.devices, enabled: open, refetchInterval: open ? 15_000 : false });
   const selectedDevice = (computers.data?.devices ?? []).find((device) => device.id === runOn) ?? null;
+  const agentApps = useQuery({ queryKey: ["agent-apps"], queryFn: api.agentApps, enabled: open, staleTime: 60_000 });
+  const apps = agentApps.data?.targets ?? [];
+  const appMode = inApp && kind === "code" && !selectedDevice && apps.length > 0;
   const deviceAcceptsWeb = (selectedDevice?.capabilities as { acceptWebApprovals?: unknown } | null)?.acceptWebApprovals !== false;
   // In a space shared with you, the agent runs on your own computers only (they are the only ones listed).
   const access = useSpaceAccess();
@@ -303,7 +311,7 @@ export function AssignDialog({
     kind,
     deviceId: runOn === "server" ? null : runOn,
     engine: kind === "code" ? engine : "ensemble",
-    model: kind === "code" && engine === "claude-code" ? claudeModel : modelChoice,
+    model: kind === "code" && engine !== "ensemble" ? claudeModel : modelChoice,
     effort,
     branchMode: branchMode === "new" ? "new" : "as-is",
     delivery,
@@ -324,7 +332,7 @@ export function AssignDialog({
     setKind(defaultKind && profile.id === defaultChoice.id ? defaultKind : profile.kind);
     if (profile.deviceId && (computers.data?.devices ?? []).some((device) => device.id === profile.deviceId)) setRunOn(profile.deviceId);
     setEngine(profile.engine ?? "ensemble");
-    if (profile.engine === "claude-code") setClaudeModel(profile.model);
+    if (profile.engine && profile.engine !== "ensemble") setClaudeModel(profile.model);
     else setModelChoice(profile.model);
     setEffort(profile.effort);
     setBranchMode(profile.branchMode);
@@ -460,12 +468,12 @@ export function AssignDialog({
 
   const assign = useMutation({
     mutationFn: () => {
-      const claude = kind === "code" && engine === "claude-code";
+      const claude = kind === "code" && engine !== "ensemble";
       const input: AssignInput = {
         taskId,
         kind,
         instructions,
-        ...(claude ? { engine: "claude-code" as const, ...(claudeModel ? { model: claudeModel } : {}) } : model ? { provider, model } : {}),
+        ...(claude ? { engine, ...(claudeModel ? { model: claudeModel } : {}) } : model ? { provider, model } : {}),
         ...(effort !== "default" && !claude ? { reasoningEffort: effort } : {}),
         markDone,
         maxMinutes: limitValue(maxMinutes, "maxMinutes"),
@@ -510,6 +518,34 @@ export function AssignDialog({
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
 
+  const chosenApp: HandoffApp = apps.some((target) => target.id === appTarget) ? appTarget : apps[0]?.id ?? "claude";
+  const chosen = apps.find((target) => target.id === chosenApp);
+  // An app works on a folder: a folder here, or an earlier task's. Ensemble does not clone for it.
+  const handoffInvalid = (place === "folder" && !folderCheck?.ok) || (place === "continue" && !continueFrom) || (place === "fresh" && Boolean(repo.trim()));
+  const handoff = useMutation({
+    mutationFn: () =>
+      api.handoff({
+        taskId,
+        app: chosenApp,
+        instructions,
+        ...(place === "folder" ? { folder } : place === "continue" ? { continueFromJobId: continueFrom } : {}),
+      }),
+    onSuccess: (result) => {
+      toast(
+        result.opened
+          ? chosen?.terminal
+            ? `Started ${chosen.name}. Its prompts also come to Needs me.`
+            : `Opened ${chosen?.name ?? "the app"} with the task. Press Send there; its prompts also come to Needs me.`
+          : `Could not open ${chosen?.name ?? "the app"}. Open it on ${result.folder} and paste the task (copied).`,
+        { tone: result.opened ? "ok" : "error" },
+      );
+      if (!result.opened) void navigator.clipboard?.writeText(result.prompt).catch(() => undefined);
+      void client.invalidateQueries();
+      onClose();
+    },
+    onError: (error) => toast((error as Error).message, { tone: "error" }),
+  });
+
   const summary = useMemo(() => {
     if (kind === "research") return "Reads the web and papers, writes into the task page. Nothing runs on your computer.";
     const where = place === "folder" ? (selectedDevice ? `${folderLabel || "a folder"} on ${selectedDevice.name}` : "your folder") : place === "continue" ? "the earlier task's folder" : "its own checkout";
@@ -523,7 +559,7 @@ export function AssignDialog({
         : sandbox
           ? "Sandboxed"
           : "Unsandboxed";
-    const who = engine === "claude-code" ? "Claude Code · " : "";
+    const who = engine === "ensemble" ? "" : `${ENGINE_LABEL[engine]} · `;
     return `${who}${box} · works in ${where}${modeLabel} · ${git}${asks}${credentials && !selectedDevice ? " · git sign-in stays in the app" : ""}`;
   }, [kind, place, delivery, sandbox, askFirst, credentials, mode, osSandbox, selectedDevice, folderLabel, engine, deviceSandbox]);
 
@@ -614,21 +650,54 @@ export function AssignDialog({
 
         {kind === "code" ? (
           <div>
-            <Label tip="Ensemble's agent calls a model with your key. Claude Code runs your own Claude Code on the computer, signed in with your own Claude account; Ensemble never sees that sign-in. Either way the same mode, trust, sandbox and git rules apply, and its questions come to Needs me.">
+            <Label tip="Ensemble's agent calls a model with your key. Claude Code, Codex and Cursor run your own copy on the computer, signed in with your own account (Codex from the CLI or the ChatGPT app, Cursor from its `cursor-agent`); Ensemble never sees that sign-in. Either way the same mode, trust, sandbox and git rules apply, and their questions come to Needs me. In its own app opens the task in the Claude app, Codex, Cursor or VS Code for you to send.">
               Who does the work
             </Label>
-            <Segmented
-              value={engine}
-              onChange={setEngine}
-              options={[
-                { id: "ensemble", label: "Ensemble agent" },
-                { id: "claude-code", label: "Claude Code (your sign-in)" },
-              ]}
-            />
+            <select
+              aria-label="Who does the work"
+              className="field w-full"
+              value={appMode ? "app" : engine}
+              onChange={(event) => {
+                const value = event.target.value as typeof engine | "app";
+                setInApp(value === "app");
+                if (value === "app") return;
+                // Model names are each engine's own.
+                if (value !== engine) setClaudeModel("");
+                setEngine(value);
+              }}
+            >
+              <option value="ensemble">Ensemble agent (a model with your key)</option>
+              <option value="claude-code">Claude Code (your sign-in)</option>
+              <option value="codex">Codex (your sign-in, CLI or ChatGPT app)</option>
+              <option value="cursor-agent">Cursor agent (your sign-in)</option>
+              {!selectedDevice && apps.length ? <option value="app">In its own app or a terminal</option> : null}
+            </select>
+            {appMode ? (
+              <div className="mt-2 space-y-1.5" data-testid="assign-in-app">
+                <select aria-label="Open it in" className="field w-full" value={chosenApp} onChange={(event) => setAppTarget(event.target.value as HandoffApp)}>
+                  {apps.map((target) => (
+                    <option key={target.id} value={target.id}>
+                      {target.name}
+                    </option>
+                  ))}
+                </select>
+                <div className="text-[12px] text-muted">
+                  {chosen?.terminal
+                    ? `Ensemble opens a terminal on the folder below and starts ${chosen.name.replace(/ in a terminal$/, "")} with this task; it begins at once.`
+                    : `Ensemble opens ${chosen?.name ?? "the app"} on the folder below with this task written in; press Send there.`}{" "}
+                  Its permission prompts and questions also come to Needs me, and you can answer in either place. It works with its own settings and sign-in: the mode, sandbox and git choices here do not apply.
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : null}
 
-        {kind === "code" && engine === "claude-code" ? (
+        {appMode ? null : kind === "code" && (engine === "codex" || engine === "cursor-agent") ? (
+          <div>
+            <Label tip={`${ENGINE_LABEL[engine]}'s own model name, or leave empty for the default in its settings.`}>Model</Label>
+            <input value={claudeModel} onChange={(event) => setClaudeModel(event.target.value)} placeholder={`${ENGINE_LABEL[engine]} default`} className="field w-full font-mono text-[12.5px]" />
+          </div>
+        ) : kind === "code" && engine === "claude-code" ? (
           <div>
             <Label tip="Claude Code's own model names. Its default follows your Claude plan.">Model</Label>
             <select value={claudeModel} onChange={(event) => setClaudeModel(event.target.value)} className="field w-full">
@@ -688,6 +757,9 @@ export function AssignDialog({
                   { id: "folder", label: folderPlace(selectedDevice?.name) },
                 ]}
               />
+              {appMode && place === "fresh" ? (
+                <div className="mt-1 text-[12px] text-muted">A new empty folder in your Ensemble workspace. For a repository, pick its folder or an earlier task: Ensemble does not clone for an app.</div>
+              ) : null}
               <div className="mt-2">
                 {place === "fresh" ? (
                   <>
@@ -756,6 +828,8 @@ export function AssignDialog({
               </div>
             </div>
 
+            {appMode ? null : (
+            <>
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label tip="As is: the branch checked out now. Existing: a branch that already exists. New: a branch created first.">
@@ -933,6 +1007,8 @@ export function AssignDialog({
                 </div>
               ) : null}
             </div>
+            </>
+            )}
           </>
         ) : null}
 
@@ -996,9 +1072,15 @@ export function AssignDialog({
           <button type="button" className="btn-ghost" onClick={onClose}>
             Cancel
           </button>
-          <button type="button" className="btn-primary" disabled={invalid || assign.isPending} onClick={() => assign.mutate()}>
-            {assign.isPending ? <Spinner size={12} /> : null} Assign
-          </button>
+          {appMode ? (
+            <button type="button" className="btn-primary" disabled={!taskId || handoffInvalid || handoff.isPending} onClick={() => handoff.mutate()}>
+              {handoff.isPending ? <Spinner size={12} /> : null} {chosen?.terminal ? "Start in a terminal" : `Open in ${chosen?.name ?? "the app"}`}
+            </button>
+          ) : (
+            <button type="button" className="btn-primary" disabled={invalid || assign.isPending} onClick={() => assign.mutate()}>
+              {assign.isPending ? <Spinner size={12} /> : null} Assign
+            </button>
+          )}
         </div>
       </div>
     </Dialog>

@@ -544,6 +544,27 @@ export type RemoteMac = {
   platform: string;
 };
 
+/** An agent's app or command line found on this computer. */
+export type AgentPresence = { id: "claude" | "codex" | "cursor" | "vscode" | "copilot"; name: string; app: boolean; cli: string | null };
+export type HandoffApp = "claude" | "codex" | "cursor" | "vscode" | "claude-cli" | "codex-cli" | "cursor-cli" | "copilot-cli";
+/** Where a task can be opened on this computer: an app, or a command-line tool in a terminal. */
+export type HandoffTarget = { id: HandoffApp; name: string; terminal: boolean };
+export type HandoffInput = { taskId: string; app: HandoffApp; folder?: string; continueFromJobId?: string; instructions?: string };
+/** A task Ensemble opened in an agent's own app; its prompts reach Needs me. */
+export type HandoffRecord = {
+  id: string;
+  taskId: string;
+  taskTitle: string;
+  app: HandoffApp;
+  appName: string;
+  folder: string;
+  status: "open" | "finished" | "closed";
+  linked: boolean;
+  summary: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 /** Folder trust shared with the person's other AI tools on this computer (desktop and CLI only). */
 export type TrustSharing = { available: boolean; enabled: boolean; tools: Array<{ id: string; name: string; found: boolean; marked: number }> };
 
@@ -551,7 +572,7 @@ export type AssignInput = {
   taskId: string;
   kind: "research" | "code";
   /** Ensemble's own agent, or the person's own Claude Code on their computer. */
-  engine?: "ensemble" | "claude-code";
+  engine?: "ensemble" | "claude-code" | "codex" | "cursor-agent";
   provider?: string;
   model?: string;
   reasoningEffort?: string;
@@ -857,7 +878,8 @@ export type AgentDecisionRecord = {
   };
   sessionId: string | null;
   cwd: string | null;
-  status: "pending" | "decided" | "expired";
+  /** settled: answered in the tool's own window before anyone answered here. */
+  status: "pending" | "decided" | "expired" | "settled";
   decision: "allow" | "deny" | null;
   scope: "once" | "session" | "always" | null;
   reason: string | null;
@@ -1009,7 +1031,12 @@ export const api = bindClient({
     post<{ decision: AgentDecisionRecord }>(`/api/decisions/${id}/decide`, data),
   decisionRules: () => get<{ rules: DecisionRuleRecord[] }>("/api/decision-rules"),
   deleteDecisionRule: (id: string) => del<void>(`/api/decision-rules/${id}`),
-  editorSetup: () => get<{ node: string; script: string; apiUrl: string }>("/api/editors/setup"),
+  editorSetup: () => get<{ node: string; script: string; apiUrl: string; local?: boolean; connected?: string[] }>("/api/editors/setup"),
+  connectEditor: (target: string, remove = false) => post<{ ok: boolean; message: string; connected: string[] }>("/api/editors/connect", { target, remove }),
+  agentApps: () => get<{ available: boolean; agents: AgentPresence[]; targets: HandoffTarget[] }>("/api/agent/apps"),
+  handoff: (data: HandoffInput) => post<{ id: string; marker: string; folder: string; opened: boolean; url: string | null; prompt: string }>("/api/agent/handoff", data),
+  handoffs: (taskId?: string) => get<{ handoffs: HandoffRecord[] }>(`/api/agent/handoffs${taskId ? qs({ taskId }) : ""}`),
+  closeHandoff: (id: string) => post<void>(`/api/agent/handoffs/${id}/close`, {}),
 
   // connectors
   connectorApps: () => get<{ apps: ConnectorApp[]; canEdit: boolean }>("/api/connectors/apps"),

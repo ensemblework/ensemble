@@ -109,6 +109,19 @@ export async function untrustFolder(discovery: Discovery, folder: string): Promi
   return true;
 }
 
+/** The tools whose hook sends prompts from Ensemble's tasks to Needs me (Settings → Editors & agents). */
+export const HOOK_TOOLS = { claude: "Claude Code and the Claude app", codex: "Codex (CLI and the ChatGPT app)", "copilot-cli": "GitHub Copilot CLI", cursor: "Cursor" } as const;
+export type HookTool = keyof typeof HOOK_TOOLS;
+
+export async function connectedHooks(discovery: Discovery): Promise<string[]> {
+  return (await localJson<{ connected?: string[] }>(discovery, "/api/editors/setup")).connected ?? [];
+}
+
+/** Installs (or removes) Ensemble's hook in one tool, signed in with a key that can ask but never answer. */
+export async function connectHook(discovery: Discovery, tool: HookTool, remove = false): Promise<{ message: string; connected: string[] }> {
+  return localJson<{ message: string; connected: string[] }>(discovery, "/api/editors/connect", { method: "POST", body: JSON.stringify({ target: tool, remove }) });
+}
+
 export type TrustSharing = { available: boolean; enabled: boolean; tools: Array<{ id: string; name: string; found: boolean; marked: number }> };
 
 /** Folders trusted here, also trusted in Claude Code, Codex, Copilot CLI, Cursor and Gemini CLI. */

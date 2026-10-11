@@ -146,7 +146,7 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
         kind: old.kind,
         provider: old.provider ?? undefined,
         model: old.model,
-        engine: old.provider === "claude-code" ? "claude-code" : "ensemble",
+        engine: old.provider === "claude-code" || old.provider === "codex" || old.provider === "cursor-agent" ? old.provider : "ensemble",
         outsideAccess: outsideAccessOf(old.context) ?? undefined,
         reasoningEffort: old.reasoningEffort ?? undefined,
         instructions: old.instructions,
