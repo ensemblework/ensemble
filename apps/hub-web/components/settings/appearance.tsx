@@ -77,7 +77,7 @@ export function AppearanceSection({ patch }: { patch: Patch }) {
         ]}
       />
       <div className="mt-6">
-        <div className="text-[13px] font-medium">Accent</div>
+        <div data-jump-label="Accent" className="text-[13px] font-medium">Accent</div>
         <p className="mt-0.5 text-[12.5px] text-muted">Indigo is the default. Presets are tuned for dark and light. A custom colour keeps text on it readable.</p>
         <div className="mt-2 flex flex-wrap items-center gap-2">
           {ACCENT_PRESETS.map((preset) => {
@@ -125,7 +125,7 @@ export function AppearanceSection({ patch }: { patch: Patch }) {
         <Range label="Text size" min={80} max={130} step={5} value={appearance.textScale} onChange={(textScale) => update({ textScale })} />
       </div>
       <p className="mt-1 text-[12px] text-muted">Default is 100%. Use smaller text on large monitors or larger text when reading long notes.</p>
-      <div className="mt-4 text-[13px] font-medium">App font</div>
+      <div data-jump-label="App font" className="mt-4 text-[13px] font-medium">App font</div>
       <div className="mt-2 grid max-w-xl gap-2">
         {FONTS.map((font) => (
           <button

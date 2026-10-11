@@ -148,3 +148,5 @@ Code is view only for anyone the space is shared with ([29](29_SHARING.md)): the
 - **Native-mode agents run as you.** The terminal adds nothing they can reach, but the OS does not separate them from your account — sandbox mode is the real boundary.
 - A process running as you could register a passkey before you do. Every registration is in the ledger and listed in Settings, so an unexpected one is visible and removable.
 - Allowed programs are powerful by design: `git` follows repository config (hardened, not eliminated), and `uv sync` runs package code (hence the confirmation).
+
+Jump to searches **Local repositories** and **Code reviews** as section destinations (`/code#local-repositories`, `/code#reviews`), independently of repository or review names.

@@ -1,5 +1,6 @@
 "use client";
 
+import { SETTINGS_DESTINATIONS } from "./navigation";
 import { useMemo, useSyncExternalStore } from "react";
 
 export type SettingsTab = "account" | "spaces" | "sharing" | "assistant" | "connections" | "notifications" | "shortcuts" | "data";
@@ -21,6 +22,8 @@ export const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTab; label: string; hint
  * from elsewhere in the app and from older bookmarks still land.
  */
 export const SECTION_TAB: Readonly<Record<string, SettingsTab>> = {
+  ...Object.fromEntries(SETTINGS_DESTINATIONS.map(row => [row.id, row.tab])),
+  export: "data",
   account: "account",
   profile: "account",
   avatar: "account",

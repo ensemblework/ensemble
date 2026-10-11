@@ -37,3 +37,23 @@ test("search shows one-line snippets with a matching highlight, preserves the de
     assert.equal(document.querySelector('#workspace-link-0'), null);
   } finally { await act(async () => root.unmount()); host.remove(); client.clear(); api.searchWorkspace=original; }
 });
+
+test("Enter before search finishes opens one matching result, and Escape cancels that pending navigation",async()=>{
+  for(const cancel of [false,true]) {
+    const client=new QueryClient({defaultOptions:{queries:{retry:false,gcTime:Infinity}}});
+    const original=api.searchWorkspace;let finish:(value:Awaited<ReturnType<typeof api.searchWorkspace>>)=>void=()=>{};
+    api.searchWorkspace=()=>new Promise(resolve=>{finish=resolve;});
+    const host=document.createElement("div");document.body.append(host);const root=createRoot(host);
+    const opened:string[]=[];const intercept=(event:Event)=>{const link=(event.target as Element)?.closest('a[id^="workspace-link-"]');if(link){opened.push(link.getAttribute("href")!);event.preventDefault();}};
+    document.addEventListener("click",intercept,true);
+    try {
+      await act(async()=>root.render(<QueryClientProvider client={client}><AskBar/></QueryClientProvider>));
+      const input=host.querySelector("input")!;
+      await act(async()=>{Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,"value")!.set!.call(input,"Unique classifier");input.dispatchEvent(new Event("input",{bubbles:true}));});
+      await act(async()=>input.closest("form")!.dispatchEvent(new Event("submit",{bubbles:true,cancelable:true})));
+      if(cancel) await act(async()=>input.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true})));
+      await act(async()=>{finish({query:"Unique classifier",results:[{id:"d1",kind:"diagram",label:"Unique classifier",excerpt:"Unique classifier",path:"/diagrams/d1"}]});await new Promise(resolve=>setTimeout(resolve,30));});
+      assert.deepEqual(opened,cancel?[]:["/diagrams/d1?match=Unique+classifier"]);
+    } finally {await act(async()=>root.unmount());host.remove();client.clear();api.searchWorkspace=original;document.removeEventListener("click",intercept,true);}
+  }
+});

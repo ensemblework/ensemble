@@ -167,3 +167,15 @@ test("Model providers & keys opens as a dialog from the Models card, and Escape 
     await view.done();
   }
 });
+
+test("an Accent deep link selects Account and scrolls to the control rather than Appearance", async()=>{
+  const previous=HTMLElement.prototype.scrollIntoView;
+  const scrolled:HTMLElement[]=[];
+  HTMLElement.prototype.scrollIntoView=function(){scrolled.push(this);};
+  const view=await mount("http://localhost/settings?tab=account#jump-appearance-accent");
+  try {
+    await until(()=>scrolled.some(node=>node.dataset.jumpLabel==="Accent"),"Accent control scroll");
+    assert.match(view.selected(),/^Account/);
+    assert.equal(scrolled.at(-1)?.dataset.jumpLabel,"Accent");
+  } finally {await view.done();HTMLElement.prototype.scrollIntoView=previous;}
+});

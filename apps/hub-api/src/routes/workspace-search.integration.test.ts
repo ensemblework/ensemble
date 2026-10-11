@@ -35,3 +35,23 @@ test("workspace search rejects missing, blank and oversized queries", async () =
   for (const suffix of ["", "?q=%20", `?q=${"a".repeat(501)}`]) assert.equal((await owner.inject({ method: "GET", url: `/api/context/search${suffix}` })).statusCode, 400);
   assert.equal((await harness.app.inject({ method: "GET", url: "/api/context/search?q=private" })).statusCode, 401);
 });
+
+test("content search finds diagram titles, references and diagram text without leaking deleted, disabled or other-account diagrams", async()=>{
+  const owner=await harness.asUser(), outsider=await harness.asUser();
+  const title="ML Model to Classifier";
+  const first=await harness.prisma.blockDiagram.create({data:{userId:owner.id,title,source:'diagram "Pipeline"\nblock model label="ML Model to Classifier"'}});
+  const second=await harness.prisma.blockDiagram.create({data:{userId:owner.id,title:`${title} comparison`,source:"diagram \"Comparison\""}});
+  const page=(await owner.inject({method:"POST",url:"/api/pages"})).json().page;
+  const saved=await owner.inject({method:"PUT",url:`/api/pages/${page.id}`,payload:{revision:1,content:{type:"doc",content:[{type:"paragraph",content:[{type:"text",text:`Read ${title} before the review.`}]}]}}}); assert.equal(saved.statusCode,200,saved.body);
+  const search=async(user=owner)=> (await user.inject({method:"GET",url:`/api/context/search?q=${encodeURIComponent(title)}`})).json().results as Array<{id:string;kind:string;path:string}>;
+  let hits=await search();
+  assert.equal(hits[0]?.id,first.id,"Exact title matches come first");
+  assert.ok(hits.some(hit=>hit.path===`/diagrams/${first.id}`));
+  assert.ok(hits.some(hit=>hit.path===`/diagrams/${second.id}`));
+  assert.ok(hits.some(hit=>hit.path===`/pages/${page.id}`));
+  assert.deepEqual(await search(outsider),[]);
+  await harness.prisma.blockDiagram.update({where:{id:first.id},data:{deletedAt:new Date()}});
+  assert.ok(!(await search()).some(hit=>hit.id===first.id));
+  await harness.prisma.user.update({where:{id:owner.id},data:{moduleSet:"code"}});
+  hits=await search();assert.ok(hits.every(hit=>hit.kind!=="diagram"));assert.ok(hits.some(hit=>hit.path===`/pages/${page.id}`));
+});

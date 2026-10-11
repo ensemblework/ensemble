@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Settings } from "@ensemble/shared-types";
+import { findSettingsTarget, SETTINGS_DESTINATION_BY_ID } from "@/components/settings/navigation";
 import { AccountTab } from "@/components/settings/tab-account";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
 import { navigateSettings, useSettingsLocation, type SettingsTab } from "@/components/settings/url-state";
@@ -90,10 +91,13 @@ export default function SettingsPage() {
     if (scrolled.current === key) return;
     let tries = 0;
     const timer = window.setInterval(() => {
-      const node = document.getElementById(anchor);
+      const destination = SETTINGS_DESTINATION_BY_ID.get(anchor);
+      const section = destination ? document.getElementById(destination.section) ?? mainRef.current : null;
+      const node = destination && section ? findSettingsTarget(section, destination.target) ?? (tries > 40 ? section : null) : document.getElementById(anchor);
       tries += 1;
       if (node) {
         scrolled.current = key;
+        if (destination) node.style.scrollMarginTop = "6rem";
         node.scrollIntoView?.({ block: "start" });
       }
       if (node || tries > 60) window.clearInterval(timer);

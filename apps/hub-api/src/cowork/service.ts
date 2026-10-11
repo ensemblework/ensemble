@@ -686,7 +686,7 @@ export async function searchWorkspace(db: Db, userId: string, query: string) {
     ...sessions.map((session) => ({ id: session.id, kind: "meeting", label: session.title, excerpt: matchExcerpt(`${session.notes} ${session.recap ?? ""}`, q).excerpt, path: `/meetings?session=${session.id}` })),
   ];
   const seen = new Set<string>();
-  const results = hits.sort((a, b) => Number(b.label.toLowerCase().includes(q.toLowerCase())) - Number(a.label.toLowerCase().includes(q.toLowerCase())))
+  const results = hits.sort((a, b) => (b.label.toLowerCase() === q.toLowerCase() ? 2 : Number(b.label.toLowerCase().includes(q.toLowerCase()))) - (a.label.toLowerCase() === q.toLowerCase() ? 2 : Number(a.label.toLowerCase().includes(q.toLowerCase()))))
     .filter((hit) => { if (seen.has(hit.path)) return false; seen.add(hit.path); return true; }).slice(0, 12);
   return { query: q, results };
 }
