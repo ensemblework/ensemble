@@ -50,7 +50,7 @@ export function SearchLanding() {
         const nodes: Text[] = [];
         const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode(node) {
           const el = node.parentElement;
-          return el && el.getClientRects().length && !el.closest("button, script, style, [aria-hidden=true], .skeleton") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+          return el && el.getClientRects().length && !el.closest("input, textarea, button, script, style, [aria-hidden=true], .skeleton") ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
         } });
         while (walker.nextNode()) nodes.push(walker.currentNode as Text);
         const hay = nodes.map((n) => n.textContent ?? "").join("");
@@ -90,13 +90,22 @@ export function SearchLanding() {
           mirror.textContent = field.value;
           document.body.appendChild(mirror);
           const node = mirror.firstChild!;
-          for (let at = field.value.toLowerCase().indexOf(query.toLowerCase()); at !== -1; at = field.value.toLowerCase().indexOf(query.toLowerCase(), at + query.length)) {
+          const boxes: DOMRect[] = [];
+          let found = 0;
+          for (let at = field.value.toLowerCase().indexOf(query.toLowerCase()); at !== -1 && found++ < 40; at = field.value.toLowerCase().indexOf(query.toLowerCase(), at + query.length)) {
             const range = document.createRange(); range.setStart(node, at); range.setEnd(node, at + query.length);
-            for (const box of range.getClientRects()) {
-              const el = document.createElement("span"); el.className = "search-match-overlay";
-              Object.assign(el.style, { top:`${box.top}px`, left:`${box.left}px`, width:`${box.width}px`, height:`${box.height}px` });
-              document.body.appendChild(el); overlays.push(el);
-            }
+            boxes.push(...range.getClientRects());
+          }
+          if (boxes[0]) {
+            if (field.tagName === "TEXTAREA") field.scrollTop = Math.max(0, boxes[0].top - rect.top - field.clientHeight / 2);
+            else field.scrollLeft = Math.max(0, boxes[0].left - rect.left - field.clientWidth / 2);
+          }
+          for (const box of boxes) {
+            const top = box.top - field.scrollTop, left = box.left - field.scrollLeft;
+            if (top < rect.top || top + box.height > rect.bottom || left < rect.left || left + box.width > rect.right) continue;
+            const el = document.createElement("span"); el.className = "search-match-overlay";
+            Object.assign(el.style, { top:`${top}px`, left:`${left}px`, width:`${box.width}px`, height:`${box.height}px` });
+            document.body.appendChild(el); overlays.push(el);
           }
           mirror.remove();
         }
