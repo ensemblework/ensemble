@@ -14,7 +14,7 @@ import { githubCloneAuth } from "../lib/git-auth.js";
 import { checkGit, checkProgram, expandHome, gitHardening, GuardError, jailPath, parseCommand, relativeTo, within } from "./guard.js";
 import { pushRefused, runTrustedGit } from "./git-gate.js";
 import { appendLive } from "./live-log.js";
-import { pushRunBranch, remotePushRefused, remotePushSkipsPrompt } from "./publish.js";
+import { pushRunBranch, remotePushRefused, remotePushSkipsPrompt, webPushNeedsComputer } from "./publish.js";
 import { fetchUrl, searchPapers, webSearch } from "./research.js";
 import { runCommand } from "./runner.js";
 import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
@@ -583,7 +583,8 @@ async function command(ctx: JobContext, line: string, cwdInput: string, timeoutS
       if (refused) throw new GuardError(refused);
       const gated = await remotePushRefused(ctx.prisma, ctx.job);
       if (gated) throw new GuardError(gated);
-      const decision = gate(ctx, "push", true);
+      const pushGate = gate(ctx, "push", true);
+      const decision = pushGate === "allow" && webPushNeedsComputer(ctx.job) ? "prompt" : pushGate;
       if (decision === "block") {
         return { ok: false, result: { error: "Blocked. This run is read-only, so it does not push.", refused: true }, summary: "Push blocked" };
       }
