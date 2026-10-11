@@ -139,7 +139,7 @@ The code review space has a VS Code theme picker. Built-in themes live in `@ense
 - **Run profiles:** up to three saved Assign settings plus a built-in Quick profile, with a default ([02 §17](02_MODULE_INTERACTION_HUB_UI.md#17-linking-a-computer-and-connecting-editors)).
 - **Not done yet:** Branch Existing/New on a paired computer, pushing to a branch other than the run's own, git sign-in for paired computers, Quick assign from a board card, profiles in the CLI.
 
-**Checked 11 Oct 2026** with unit tests only: `trust.test.ts`, `guard-git.test.ts`, `remote/policy.test.ts`, `lib/run-profiles.test.ts`, `lib/device-copy.test.ts`, `apps/cli/src/approvals.test.ts`; the hub-api public suites (3,889 passed; 3 tests that start a local server could not run in the sandbox used), all 263 Hub UI checks, and typechecks. No live model, browser or paired computer was used.
+**Checked 11 Oct 2026** on a MacBook (Apple silicon), with no Postgres or Redis running: the hub-api public suites (3,908 passed, 2 skipped), the rest of the hub-api suite with `REDIS_URL=memory://` (375 passed; 79 that need Postgres skipped), including the end-to-end agent flow on a sidecar (Review only refused on an untrusted folder, a script's commit undone with its files kept) and the remote flow against a fake host (a push allowed from the phone goes ahead with web approvals on; a server's overreach is refused with them off); the CLI suite (22 passed); all 263 Hub UI checks; the route inventory; typechecks. No live model, browser session or real paired computer was used.
 
 ## Board priorities, downloads and fixes (9 Oct 2026, local checkout)
 
