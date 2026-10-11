@@ -21,6 +21,8 @@ export function layoutKey(deskId: string) {
 }
 
 export function tileLimits(spec: SpecLike): TileLimits {
+  if (spec.key === "calendar") return { minC: 3, minR: 5, maxC: GRID_COLUMNS, maxR: MAX_ROWS };
+  if (["progress", "workload", "time-split", "due-week", "mocks", "marking"].includes(spec.key)) return { minC: 3, minR: 3, maxC: GRID_COLUMNS, maxR: MAX_ROWS };
   if (spec.hero) return { minC: 6, minR: 3, maxC: GRID_COLUMNS, maxR: MAX_ROWS };
   if (WIDE.has(spec.key)) return { minC: 4, minR: 3, maxC: GRID_COLUMNS, maxR: MAX_ROWS };
   return { minC: 3, minR: 2, maxC: GRID_COLUMNS, maxR: MAX_ROWS };

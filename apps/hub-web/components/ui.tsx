@@ -459,12 +459,16 @@ export function Dialog({
   title,
   children,
   width = 520,
+  className = "",
+  bodyClassName = "",
 }: {
   open: boolean;
   onClose: () => void;
   title: string;
   children: React.ReactNode;
   width?: number;
+  className?: string;
+  bodyClassName?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const titleId = useId();
@@ -477,7 +481,7 @@ export function Dialog({
       onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
 
       <div
-        className="pop-in max-h-[84dvh] max-w-full overflow-auto rounded-xl bg-raised shadow-pop"
+        className={`pop-in max-h-[84dvh] max-w-full overflow-auto rounded-xl bg-raised shadow-pop ${className}`}
         style={{ width }}
       >
         <div className="flex items-center justify-between border-b border-line px-4 py-3">
@@ -486,7 +490,7 @@ export function Dialog({
             <X size={15} />
           </button>
         </div>
-        <div className="p-4">{children}</div>
+        <div className={`p-4 ${bodyClassName}`}>{children}</div>
       </div>
     </div>
     </ModalScope.Provider>,
