@@ -288,8 +288,8 @@ async function main() {
       const strip = tab.locator("[data-board-strip]");
       await strip.waitFor();
       const stripBox = await strip.boundingBox();
-      assert.ok(stripBox && stripBox.height < 120, `strip height ${stripBox?.height}`);
-      const tops = await strip.locator("[data-widget]").evaluateAll((els) => els.map((el) => el.getBoundingClientRect().top));
+      assert.ok(stripBox && stripBox.height < 225, `strip height ${stripBox?.height}`);
+      const tops = await strip.locator("[data-board-insight]").evaluateAll((els) => els.map((el) => el.getBoundingClientRect().top));
       assert.ok(Math.max(...tops) - Math.min(...tops) < 8);
       await tab.screenshot({ path: `${SHOTS}/board-strip.png` });
       const phoneContext = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme: "dark" });
@@ -298,15 +298,15 @@ async function main() {
       await boardPhone.goto(`${WEB}/board`, { waitUntil: "networkidle" });
       const phoneStrip = boardPhone.locator("[data-board-strip]");
       await phoneStrip.waitFor();
-      const edit = boardPhone.getByRole("button", { name: "Edit layout" });
+      const edit = boardPhone.getByRole("button", { name: "Board tiles" });
       const task = boardPhone.getByRole("button", { name: "New task", exact: true }).first();
       const editBox = await edit.boundingBox();
       const taskBox = await task.boundingBox();
       assert.ok(editBox && editBox.x >= 0 && editBox.x + editBox.width <= 394, `edit layout off screen ${JSON.stringify(editBox)}`);
       assert.ok(taskBox && taskBox.x >= 0 && taskBox.x + taskBox.width <= 394, `new task off screen ${JSON.stringify(taskBox)}`);
       assert.ok(editBox && taskBox && Math.abs(editBox.y - taskBox.y) < 8, `header actions split ${JSON.stringify({ edit: editBox, task: taskBox })}`);
-      const fadeWidth = await boardPhone.locator(".board-scroll").evaluate((el) => getComputedStyle(el, "::after").width);
-      assert.ok(parseFloat(fadeWidth) > 8, `board fade ${fadeWidth}`);
+      const insightCount = await phoneStrip.locator("[data-board-insight]").count();
+      assert.ok(insightCount <= 4, `too many board tiles: ${insightCount}`);
       await boardPhone.screenshot({ path: `${SHOTS}/board-strip-390.png` });
       await phoneContext.close();
     }

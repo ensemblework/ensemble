@@ -24,12 +24,12 @@
 .bdg-col::after { content: ""; position: absolute; inset: -1px; border-radius: 14px; pointer-events: none; opacity: 0; transition: opacity .18s; z-index: -1; }
 .bdg-col[data-over="yes"]::after { opacity: 1; }
 .bdg-col[data-over="deny"]::after { opacity: 1; }
-/* Expressive: violet wash + rim */
-.bdg-col::after { background: color-mix(in srgb, var(--bdg-agent) 7%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bdg-agent) 45%, transparent); }
-.bdg-col[data-over="deny"]::after { background: color-mix(in srgb, var(--bdg-err) 7%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bdg-err) 45%, transparent); }
+/* Drop targets keep a neutral outline. */
+.bdg-col::after { background: color-mix(in srgb, var(--ink) 3%, transparent); box-shadow: inset 0 0 0 1px var(--bdg-hair); }
+.bdg-col[data-over="deny"]::after { background: color-mix(in srgb, var(--ink) 3%, transparent); box-shadow: inset 0 0 0 1px var(--bdg-hair); }
 /* Quiet: hairline rim only */
 [data-motion-theme="minimal-quiet"] .bdg-col::after { background: none; box-shadow: inset 0 0 0 1px var(--bdg-hair); }
-[data-motion-theme="minimal-quiet"] .bdg-col[data-over="deny"]::after { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bdg-err) 50%, transparent); }
+[data-motion-theme="minimal-quiet"] .bdg-col[data-over="deny"]::after { box-shadow: inset 0 0 0 1px var(--bdg-hair); }
 /* Dot: nothing on the column, a dot by the header count instead */
 [data-motion-theme="minimal-dot"] .bdg-col::after { display: none; }
 .bdg-ch { position: relative; display: flex; align-items: center; gap: 8px; padding: 11px 12px 9px; font-weight: 600; font-size: 13px; }
@@ -77,8 +77,8 @@
 .bdg-card.is-ph::after { opacity: 0 !important; }
 .bdg-card.is-ph::before { opacity: 1; transition: opacity .16s; }
 .bdg-card.is-ph.is-landing::before { opacity: 0; }
-/* Expressive: a stitched violet gap */
-.bdg-card::before { border: 1.5px dashed color-mix(in srgb, var(--bdg-agent) 62%, transparent); background: color-mix(in srgb, var(--bdg-agent) 8%, transparent); }
+/* A neutral stitched gap marks the original position. */
+.bdg-card::before { border: 1.5px dashed var(--bdg-hair); background: color-mix(in srgb, var(--ink) 3%, transparent); }
 /* Quiet: hairline outline */
 [data-motion-theme="minimal-quiet"] .bdg-card::before { border: 1px solid var(--bdg-hair); background: none; }
 /* Dot: one violet dot marks where it lands, plus one faint line */
@@ -92,12 +92,12 @@
 .bdg-float-shadow { position: absolute; inset: 0; border-radius: var(--bdg-radius); box-shadow: var(--bdg-shadow); opacity: 0; }
 .bdg-float .bdg-card { height: 100%; box-sizing: border-box; cursor: grabbing; transition: opacity .15s; }
 .bdg-float .bdg-card::after, .bdg-float .bdg-grip { opacity: 0; }
-[data-motion-theme="expressive"] .bdg-float .bdg-card, .bdg-float .bdg-card:where(:not([data-motion-theme] *)) { border-color: color-mix(in srgb, var(--bdg-agent) 55%, var(--bdg-line)); }
+[data-motion-theme="expressive"] .bdg-float .bdg-card, .bdg-float .bdg-card:where(:not([data-motion-theme] *)) { border-color: var(--bdg-hair); }
 [data-motion-theme="minimal-quiet"] .bdg-float .bdg-card { border-color: var(--bdg-hair); }
 .bdg-float[data-intent="cancel"] .bdg-card { opacity: .72; }
 .bdg-float[data-intent="deny"] .bdg-card { opacity: .8; }
-[data-motion-theme="expressive"] .bdg-float[data-intent="deny"] .bdg-card { border-color: color-mix(in srgb, var(--bdg-err) 70%, transparent); }
-.bdg-float .bdg-card.is-agent::after { opacity: 1; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bdg-agent) 70%, transparent); }
+[data-motion-theme="expressive"] .bdg-float[data-intent="deny"] .bdg-card { border-color: var(--bdg-hair); }
+.bdg-float .bdg-card.is-agent::after { opacity: 1; box-shadow: inset 0 0 0 1px var(--bdg-hair); }
 
 /* Expressive extras: thread tether beads, crane rope + hook, sparks */
 .bdg-bead { position: absolute; left: 0; top: 0; width: 4px; height: 4px; border-radius: 50%; background: var(--bdg-agent-hi); opacity: 0; will-change: transform, opacity; }

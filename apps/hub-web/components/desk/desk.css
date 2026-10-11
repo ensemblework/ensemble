@@ -26,7 +26,7 @@
 .desk[data-enter="1"] .u-rise { animation: desk-rise var(--m-dur-ui) var(--m-ease-enter); animation-delay: calc(var(--i, 0) * var(--m-dur-micro) / 4); }
 @keyframes desk-rise { from { transform: translateY(var(--m-amp)); } }
 .desk .u-title-thread { position: relative; height: 2px; margin: 8px 0 14px; }
-.desk .u-title-thread::before { content: ""; position: absolute; left: 0; top: 0; height: 1.5px; width: 100%; border-radius: 2px; background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 10%, transparent) 70%, transparent); transform-origin: left; }
+.desk .u-title-thread::before { content: ""; position: absolute; left: 0; top: 0; height: 1.5px; width: 100%; border-radius: 2px; background: var(--line); transform-origin: left; }
 .desk[data-enter="1"] .u-title-thread::before { animation: desk-draw var(--m-dur-move) var(--m-ease-loop); }
 @keyframes desk-draw { from { transform: scaleX(0); } }
 .desk .sk { position: relative; overflow: hidden; }
@@ -431,7 +431,7 @@ body[data-desk-moving="1"], body[data-desk-moving="1"] * { cursor: grabbing !imp
 .tile-gallery-results { padding: 8px; overflow-y: auto; scrollbar-width: thin; flex: 1; min-height: 0; }
 .tile-gallery-results > button { width: 100%; display: flex; align-items: center; gap: 10px; text-align: left; padding: 11px 9px; border: 1px solid transparent; border-radius: 8px; margin-bottom: 3px; }
 .tile-gallery-results > button:hover { background: var(--hover); }
-.tile-gallery-results > button[aria-pressed="true"] { background: color-mix(in srgb, var(--accent) 8%, var(--bg)); border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
+.tile-gallery-results > button[aria-pressed="true"] { background: var(--hover); border-color: var(--line-strong); }
 .tile-gallery-icon { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; background: var(--raised); color: var(--muted); flex-shrink: 0; }
 .tile-gallery-results > button > span:nth-child(2) { display: flex; flex: 1; flex-direction: column; gap: 3px; }
 .tile-gallery-results strong { font-size: 12px; font-weight: 550; }

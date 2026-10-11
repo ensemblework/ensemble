@@ -7,8 +7,9 @@ import { useRef, useState } from "react";
 import { api, type Priority, type TaskRecord, type TaskStatus } from "@/lib/api";
 import { Dialog, Spinner } from "../ui";
 
-export function CreateTaskDialog({ status = "todo", onCreated, onClose }: {
+export function CreateTaskDialog({ status = "todo", title: dialogTitle = "New task", onCreated, onClose }: {
   status?: TaskStatus;
+  title?: string;
   onCreated: (task: TaskRecord) => void;
   onClose: () => void;
 }) {
@@ -37,7 +38,7 @@ export function CreateTaskDialog({ status = "todo", onCreated, onClose }: {
   };
   const close = () => { if (!submitting.current) onClose(); };
   return (
-    <Dialog open title="New task" onClose={close}>
+    <Dialog open title={dialogTitle} onClose={close}>
       <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); submit(); }} onKeyDown={(event) => {
         if ((event.ctrlKey || event.metaKey) && event.key === "Enter") { event.preventDefault(); submit(); }
       }}>

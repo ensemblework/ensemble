@@ -434,3 +434,7 @@ Lighthouse 12, performance only, session cookie, simulated slow 4G and 4× CPU u
 | `/connect/vscode` mobile | 94 | 1.4 s | 2.7 s | 180 ms | 0 |
 
 The mobile blocking time is the shared client shell hydrating under simulated CPU, the same shape as other Hub pages. The Connect route does not add an editor, a chart, or a video.
+
+### Neutral work surfaces (11 Oct 2026)
+
+Task, review and list cards keep neutral surfaces and borders. Shared motion rules no longer draw colored waiting, error or streaming seams; tool states use neutral outlines and subtle opacity changes. Board drag targets use neutral boundaries, and priority is shown in a label rather than a full-card wash. Charts, small status icons/labels, and keyboard focus still communicate meaning. Board insights are capped at four compact tiles and start collapsed on phones without a saved preference, preserving space for the kanban.

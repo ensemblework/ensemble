@@ -884,9 +884,9 @@ const TAB_MATCH: Record<string, string[]> = {
   learning: ["concepts"],
 };
 
-export function lensSections(id: DeskId, tab: string, live: DeskLive, extras: ReadonlySet<DeskExtraId> = new Set()): Array<{ title: string; kind: string; icon: LucideIcon; rows: Row[] }> {
+export function lensSections(id: DeskId, tab: string, live: DeskLive, extras: ReadonlySet<DeskExtraId> = new Set()): Array<{ title: string; kind: string; icon: LucideIcon; rows: Row[]; spec: Spec }> {
   const all = boardSpecs(id, extras);
   const keys = TAB_MATCH[tab];
   const specs = !keys ? all.slice(0, 4) : all.filter((spec) => keys.includes(spec.key));
-  return specs.slice(0, 4).map((spec) => ({ title: spec.title, kind: spec.kind, icon: spec.icon, rows: spec.rows(live).slice(0, 6) }));
+  return specs.slice(0, 4).map((spec) => ({ title: spec.title, kind: spec.kind, icon: spec.icon, rows: spec.rows(live).slice(0, 6), spec }));
 }

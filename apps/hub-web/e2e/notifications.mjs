@@ -54,7 +54,7 @@ try {
   await emptyPage.goto(`${WEB}/today`, { waitUntil: "domcontentloaded" });
   await emptyPage.getByRole("button", { name: "Notifications" }).click();
   await emptyPage.getByRole("dialog", { name: "Notifications" }).waitFor();
-  await emptyPage.getByText("No notes yet. The morning brief lands here.").waitFor();
+  await emptyPage.getByText("A little quiet is a good thing").waitFor();
   await emptyPage.keyboard.press("Escape");
   await emptyPage.getByRole("dialog", { name: "Notifications" }).waitFor({ state: "hidden" });
 
@@ -81,8 +81,8 @@ try {
   await dialog.getByRole("link", { name: "Open" }).click();
   await page.waitForURL((url) => url.pathname === "/needs-me");
   await page.getByRole("button", { name: "Notifications" }).click();
-  await page.getByText("No notes yet.").waitFor({ state: "hidden" });
-  const stillUnread = await page.getByRole("button", { name: /unread/ }).count();
+  await page.getByText("A little quiet is a good thing").waitFor({ state: "hidden" });
+  const stillUnread = await page.getByRole("button", { name: /^Notifications, \d+ unread$/ }).count();
   assert.equal(stillUnread, 0);
   console.log("notifications ok");
 } finally {

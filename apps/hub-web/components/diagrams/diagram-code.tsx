@@ -45,9 +45,9 @@ const diagnosticsTheme = EditorView.theme({
   ".cm-lintPoint-warning:after": { borderBottomColor: "#f5a524" },
   ".cm-lintPoint-info:after": { borderBottomColor: "#3b82f6" },
   ".cm-diagnostic": { background: "var(--panel)", color: "var(--ink)" },
-  ".cm-diagnostic-error": { borderLeftColor: "#e5484d" },
-  ".cm-diagnostic-warning": { borderLeftColor: "#f5a524" },
-  ".cm-diagnostic-info": { borderLeftColor: "#3b82f6" },
+  ".cm-diagnostic-error": { borderLeftWidth: "0" },
+  ".cm-diagnostic-warning": { borderLeftWidth: "0" },
+  ".cm-diagnostic-info": { borderLeftWidth: "0" },
   ".cm-diagnosticAction": {
     background: "transparent",
     color: "var(--ink)",

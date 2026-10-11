@@ -4,6 +4,8 @@ import { APPEARANCE_BOOT } from "@/lib/accent";
 import { PAGE_BOOT } from "@/lib/page-width";
 import { publicSiteUrl } from "@/lib/site-url";
 import "./globals.css";
+import "@/components/shell/notifications.css";
+import "@/components/work-surfaces.css";
 import "@/components/motion/suite.css";
 import "@/components/motion/springs.css";
 import "@/components/motion/search-query.css";

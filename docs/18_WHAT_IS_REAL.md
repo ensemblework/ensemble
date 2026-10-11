@@ -155,10 +155,18 @@ The code review space has a VS Code theme picker. Built-in themes live in `@ense
 
 **Checked 11 Oct 2026** on a MacBook (Apple silicon), with no Postgres or Redis running: the hub-api public suites (3,908 passed, 2 skipped), the rest of the hub-api suite with `REDIS_URL=memory://` (375 passed; 79 that need Postgres skipped), including the end-to-end agent flow on a sidecar (Review only refused on an untrusted folder, a script's commit undone with its files kept) and the remote flow against a fake host (a push allowed from the phone goes ahead with web approvals on; a server's overreach is refused with them off); the CLI suite (22 passed); all 263 Hub UI checks; the route inventory; typechecks. No live model, browser session or real paired computer was used.
 
+## Board and work-surface design (11 Oct 2026)
+
+- **Board:** a collapsible overview with ten task-based tiles and three defaults per profile, capped at four selected tiles. Charts and actions focus the kanban on progress, ownership, proposed ideas, agent work, waiting tasks, stale work, deadlines and completions. The preview library uses fictional samples; adding a tile saves only layout. Capture idea submits an unassigned proposal through the existing task API. Shared viewers do not read or write private preferences.
+- **Notifications:** a bounded notification center with unread summaries, category filters, readable date-grouped cards, explicit mark-read controls, and accessible dismissal/focus handling. Errors are distinct from empty views.
+- **Needs me:** separate request, approval, and waiting-task views with counts and an all-clear state. Approval permissions and payloads are unchanged.
+- **Meeting notes and Context:** searchable meeting cards and a reading pane; Context's live sections use the Today renderer, with people and file cards that open their existing tools.
+- **Neutral card surfaces:** waiting/error/streaming edge ribbons, priority washes, colored drag outlines, and decorative title lines are removed. Meaningful color remains in charts, icons, labels and keyboard focus.
+
 ## Board priorities, downloads and fixes (9 Oct 2026, local checkout)
 
 - **Fixed:** Settings › Account crashed after a profile change (choosing an avatar, or turning Plots on in Features), showing "We dropped a stitch". The shell refresh replaced the cached account without its profile; `app/(hub)/layout.tsx` now keeps the profile and the avatar picker tolerates a missing one.
-- **Priorities:** Critical, High, Medium and Low (migration `20261009010000_priority_assignee` adds `critical` to the `Priority` enum). Muted colors in both themes, each card tinted by its priority, and *By priority* or *Manual* order on the board ([02 §3.2](02_MODULE_INTERACTION_HUB_UI.md#32-board-kanban)).
+- **Priorities:** Critical, High, Medium and Low (migration `20261009010000_priority_assignee` adds `critical` to the `Priority` enum). Muted priority labels in both themes; card surfaces are neutral as of 11 Oct 2026, and *By priority* or *Manual* order on the board ([02 §3.2](02_MODULE_INTERACTION_HUB_UI.md#32-board-kanban)).
 - **Who a task is with:** cards say Me, Agent, or someone's initials, relative to the viewer. In a shared space a task can be given to a member (`tasks.assignee_account_id`, [29](29_SHARING.md#tasks-with-a-person)).
 - **Downloads:** pages, tasks, meeting notes and skills as PDF, Word (also for Apple Pages), Markdown, HTML or text; diagrams from the list; a whole space as a ZIP with sections to pick. All built in the browser ([02 §18](02_MODULE_INTERACTION_HUB_UI.md#18-downloads)).
 - **Smaller:** a themed dialog replaces the browser's prompt and confirm (new skill, Trash and others); a new notifications panel; *Block diagrams* is now *Diagrams*.

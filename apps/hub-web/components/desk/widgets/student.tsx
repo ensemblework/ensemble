@@ -62,7 +62,7 @@ export function WeekStrip(p: WP) {
               const co = COURSES[k.k];
               const now = d.today && k.s === 11.25;
               return (
-                <div key={i} style={{ position: "absolute", left: 0, right: 0, top: `${((k.s - T0) / (T1 - T0)) * 100}%`, height: `calc(${((k.e - k.s) / (T1 - T0)) * 100}% - 3px)`, borderRadius: 5, padding: "2px 6px", overflow: "hidden", background: `color-mix(in srgb, ${co.c} ${d.past ? 9 : now ? 30 : 16}%, transparent)`, borderLeft: `2px solid ${co.c}`, opacity: d.past ? 0.55 : 1, boxShadow: now ? `0 0 0 1px ${co.c}, 0 6px 18px -6px ${co.c}` : "none", backgroundImage: k.lab ? `repeating-linear-gradient(135deg, color-mix(in srgb, ${co.c} 10%, transparent) 0 3px, transparent 3px 7px)` : undefined }}>
+                <div key={i} style={{ position: "absolute", left: 0, right: 0, top: `${((k.s - T0) / (T1 - T0)) * 100}%`, height: `calc(${((k.e - k.s) / (T1 - T0)) * 100}% - 3px)`, borderRadius: 5, padding: "2px 6px", overflow: "hidden", background: `color-mix(in srgb, ${co.c} ${d.past ? 9 : now ? 30 : 16}%, transparent)`, border: "1px solid var(--line)", opacity: d.past ? 0.55 : 1, boxShadow: "none", backgroundImage: k.lab ? `repeating-linear-gradient(135deg, color-mix(in srgb, ${co.c} 10%, transparent) 0 3px, transparent 3px 7px)` : undefined }}>
                   <div style={{ fontSize: 10.5, lineHeight: "14px", color: "var(--ink)" }} className="trunc"><b style={{ fontWeight: 700 }}>{k.label ?? `${co.code}${k.lab ? " Lab" : ""}`}</b>{k.e - k.s < 2 && <span style={{ color: "var(--muted)" }}> · {k.room}</span>}</div>
                   {k.e - k.s >= 2 && <div style={{ fontSize: 10, color: "var(--muted)", lineHeight: 1.2 }} className="trunc">{k.room}</div>}
                 </div>
