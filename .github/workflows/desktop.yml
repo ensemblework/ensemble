@@ -146,7 +146,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mapfile -t files < <(find bundles -type f \( -name '*.dmg' -o -name '*.msi' -o -name '*.exe' -o -name '*.deb' -o -name '*.AppImage' \) | sort)
+          # Only the installers: the macOS .app also carries .exe helpers (sandbox-runtime's Windows binaries).
+          mapfile -t files < <(find bundles -type f \( -path '*/bundle/dmg/*.dmg' -o -path '*/bundle/msi/*.msi' -o -path '*/bundle/nsis/*.exe' -o -path '*/bundle/deb/*.deb' -o -path '*/bundle/appimage/*.AppImage' \) | sort)
           [[ ${#files[@]} -gt 0 ]] || { echo "No installers were built." >&2; exit 1; }
           printf '%s\n' "${files[@]}"
           gh release create "$GITHUB_REF_NAME" "${files[@]}" --verify-tag \
