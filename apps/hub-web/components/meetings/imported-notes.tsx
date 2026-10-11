@@ -11,22 +11,23 @@ import { whenLabel } from "@/lib/format";
 const ownerLabel = (owner: { name: string | null; email: string | null } | null) => owner?.name ?? owner?.email ?? "Someone";
 
 /** Meetings Fireflies, Fathom, Granola and the other meeting-notes connectors brought in. Hidden until there are any. */
-export function ImportedMeetingNotes() {
+export function ImportedMeetingNotes({ search = "" }: { search?: string }) {
   const notes = useQuery({ queryKey: ["meetings-imported"], queryFn: connectedApi.importedMeetings });
   const [open, setOpen] = useState<string | null>(null);
-  const rows = notes.data?.notes ?? [];
+  const rows = (notes.data?.notes ?? []).filter((note) => `${note.title} ${note.summary} ${note.sourceLabel}`.toLowerCase().includes(search.trim().toLowerCase()));
+  if (notes.isError) return <div className="work-load-error" role="alert">Couldn't load notes from connected meeting tools.<button type="button" className="btn" onClick={() => void notes.refetch()}>Try again</button></div>;
   if (!rows.length) return null;
   return (
     <section className="mb-8" data-testid="imported-meetings">
       <h2 className="mb-2 text-[15px] font-semibold">From your meeting tools</h2>
-      <ul className="space-y-2">
+      <ul className="imported-meeting-grid">
         {rows.map((note) => (
           <li key={note.id} className="rounded-xl border border-line bg-panel">
-            <button type="button" className="flex w-full items-baseline gap-3 px-4 py-2.5 text-left" aria-expanded={open === note.id} onClick={() => setOpen(open === note.id ? null : note.id)}>
-              <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium">{note.title}</span>
-              <span className="shrink-0 text-[12px] text-muted">
-                {note.sourceLabel} · {whenLabel(note.occurredAt)}
-              </span>
+            <button type="button" className="imported-meeting-card" aria-expanded={open === note.id} onClick={() => setOpen(open === note.id ? null : note.id)}>
+              <span className="meeting-card-meta"><CalendarDays size={14} />{note.sourceLabel} · {whenLabel(note.occurredAt)}</span>
+              <strong>{note.title}</strong>
+              {note.summary && <p>{note.summary.slice(0, 160)}</p>}
+              <span className="meeting-card-footer">{note.actionItems.length} action items · {note.decisions.length} decisions<span>{open === note.id ? "Close" : "Open notes"}</span></span>
             </button>
             {open === note.id ? <MeetingNoteDetail note={note} /> : null}
           </li>

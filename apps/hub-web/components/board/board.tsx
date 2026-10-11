@@ -11,7 +11,7 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, arrayMove, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { BoardDragOverlay, useBoardDragSensors, useBoardMotion, useBoardMoveMotion } from "@/components/motion/board-drag/board-drag-dnd-kit";
@@ -27,7 +27,12 @@ import { ShareButton } from "../sharing/share-dialog";
 import { PagePeople } from "../sharing/page-people";
 import { AskEnsemble } from "../ensemble/ask-button";
 import { CardBody, SortableCard, type BoardCardMotion } from "./task-card";
-import { BoardStrip } from "../widgets/board-strip";
+import { BoardInsights } from "./insights";
+import { focusLabel, matchesFocus, type BoardFocus } from "./insight-data";
+import "../desk/desk.css";
+import "./insights.css";
+import { CreateTaskDialog } from "./create-task-dialog";
+import { useSpaceAccess } from "@/lib/access";
 import type { LayoutPayload } from "@/lib/server-layout";
 import { usePersistentState } from "@/lib/prefs";
 import { taskPersonId, useSpacePeople } from "@/lib/space-people";
@@ -90,16 +95,17 @@ function Column({
   onToggleSelect: (id: string) => void;
 }) {
   const { setNodeRef } = useDroppable({ id });
+  const label = id === "waiting" ? "Waiting" : STATUS[pill].label;
   return (
-    <div className="relative w-[272px] shrink-0 self-start" data-column={id} aria-label={STATUS[pill].label}>
-    <div className="board-column flex flex-col rounded-lg bg-panel/70 p-2">
+    <div className="relative w-[272px] shrink-0 self-start" data-column={id} aria-label={label}>
+    <div className="board-column flex flex-col rounded-lg bg-panel/70 p-2" data-empty={ids.length === 0}>
       <div className="mb-2 flex items-center justify-between px-1">
         <div className="flex items-center gap-2">
-          <span className="text-[13px] font-medium">{STATUS[pill].label}</span>
+          <span className="text-[13px] font-medium">{label}</span>
           <span className="bdg-n text-[12px] tabular-nums text-muted">{ids.length}</span>
         </div>
         <div className="flex items-center gap-1">
-          <AskEnsemble surface="board" anchorKey={`board:column:${id}`} label={`Ask Ensemble about ${STATUS[pill].label}`} entityIds={ids} selection={STATUS[pill].label} />
+          <AskEnsemble surface="board" anchorKey={`board:column:${id}`} label={`Ask Ensemble about ${label}`} entityIds={ids} selection={label} />
           <button type="button" className="icon-btn h-6 w-6" title="New task in this column" onClick={onCreate}>
             <Plus size={14} />
           </button>
@@ -108,6 +114,7 @@ function Column({
       <div
         className="flex min-h-[60px] flex-col gap-1.5 rounded-lg p-1"
       >
+        {ids.length === 0 && <div className="board-column-empty">{id === "proposed" ? "A place for ideas before you commit." : id === "in_progress" ? "The next task you start will land here." : id === "waiting" ? "Nothing waiting in this view." : id === "done" ? "Finished work lands here." : "Ready when you are."}</div>}
         <SortableContext id={id} items={ids} strategy={verticalListSortingStrategy}>
           {ids.map((taskId) => {
             const task = tasks.get(taskId);
@@ -177,6 +184,11 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
   const [dragId, setDragId] = useState<string | null>(null);
   const [picked, setPicked] = useState<string[]>([]);
   const [layoutEdit, setLayoutEdit] = useState(false);
+  const [focus, setFocus] = useState<BoardFocus | null>(null);
+  const [ideaOpen, setIdeaOpen] = useState(false);
+  const access = useSpaceAccess();
+  const [insightNow, setInsightNow] = useState(Date.now);
+  useEffect(() => { const timer = window.setInterval(() => setInsightNow(Date.now()), 60_000); return () => window.clearInterval(timer); }, []);
   const togglePick = (id: string) => setPicked((current) => (current.includes(id) ? current.filter((row) => row !== id) : [...current, id]));
   const origin = useRef<ColumnId | null>(null);
   const createGuard = useRef(false);
@@ -189,7 +201,7 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
     if (q) setSearch(q);
   }, []);
 
-  const visible = useMemo(() => {
+  const baseVisible = useMemo(() => {
     const needle = search.trim().toLowerCase();
     const label = needle.startsWith("#") ? needle.slice(1).trim() : null;
     return (tasks.data?.tasks ?? [])
@@ -208,6 +220,7 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
       })
       .sort((a, b) => (order === "priority" ? (PRIORITY_RANK[a.priority] ?? 2) - (PRIORITY_RANK[b.priority] ?? 2) : 0) || a.boardOrder - b.boardOrder);
   }, [tasks.data, search, owner, priority, order, people.me, people.ownerId]);
+  const visible = useMemo(() => baseVisible.filter((task) => matchesFocus(task, focus, people, insightNow)), [baseVisible, focus, people.me, people.ownerId, insightNow]);
 
   const draggingRef = useRef(false);
   draggingRef.current = dragId !== null;
@@ -481,7 +494,7 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
           </Popover>
           {shell.data?.space?.shared ? null : (
             <button type="button" className="btn" onClick={() => setLayoutEdit(true)}>
-              Edit layout
+              Board tiles
             </button>
           )}
           <button type="button" className="btn-primary" disabled={create.isPending} onClick={() => createNewTask("todo")}>
@@ -490,8 +503,11 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
           </button>
         </div>
       </div>
-      <BoardStrip tasks={tasks.data?.tasks ?? []} initialLayout={initialBoardLayout} editing={layoutEdit} onEditingChange={setLayoutEdit} />
+      <BoardInsights tasks={baseVisible} initialLayout={initialBoardLayout} editing={layoutEdit} onEditingChange={setLayoutEdit} who={people} onOpen={peek.open} onIdea={access.ready && access.canEdit ? () => setIdeaOpen(true) : undefined} focus={focus} onFocus={setFocus} filtered={Boolean(search.trim() || owner !== "all" || priority !== "all")} loading={tasks.isPending} />
+      {focus && <div className="board-focus-bar"><span>{focusLabel(focus)}<button type="button" aria-label="Clear board focus" onClick={() => setFocus(null)}><X size={13} /></button></span><small>{count} matching tasks</small></div>}
       </div>
+      {tasks.isError && <div className="work-load-error mx-6" role="alert">Couldn't refresh the board.<button type="button" className="btn" onClick={() => void tasks.refetch()}>Try again</button></div>}
+      {ideaOpen && <CreateTaskDialog status="proposed" title="Capture an idea" onCreated={created} onClose={() => setIdeaOpen(false)} />}
       <Held
         pending={tasks.isLoading}
         fallback={

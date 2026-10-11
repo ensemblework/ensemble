@@ -326,7 +326,7 @@ function EditorCard({ decision }: { decision: AgentDecisionRecord }) {
   );
 }
 
-export function EditorDecisions() {
+export function EditorDecisions({ hideEmpty = false }: { hideEmpty?: boolean }) {
   const pending = useQuery({ queryKey: ["decisions"], queryFn: () => api.decisions("pending"), refetchInterval: 30_000 });
   const all = pending.data?.decisions ?? [];
   const mine = all.filter((row) => row.source === "ensemble");
@@ -343,7 +343,7 @@ export function EditorDecisions() {
         </div>
       </section>
     ) : null}
-    <section className="mb-10">
+    {(!hideEmpty || rows.length > 0 || pending.isPending) && <section className="mb-10">
       <h2 className="mb-2 flex items-center gap-2 text-[15px] font-semibold">
         From your editors{pending.data ? ` (${rows.length})` : ""}
         <Link href="/settings#editors" className="text-[12px] font-normal text-accent hover:underline">
@@ -361,7 +361,7 @@ export function EditorDecisions() {
           ))}
         </div>
       )}
-    </section>
+    </section>}
     </>
   );
 }
