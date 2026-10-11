@@ -29,9 +29,11 @@ import { useToast } from "@/components/toast";
 import { placeCenteredPanel } from "@/lib/place-layer";
 import { DESK_IDS, type DeskId } from "./desks";
 import { arrange, hiddenTilesFor, isDefaultLayout, layoutKey, readLayout } from "./layout";
-import { LiveDraw, liveDrawKind } from "./live-draw";
+import { CalendarAgenda } from "./calendar-agenda";
+import { TileVisuals } from "./tile-visuals";
+import { deskRole, tileFitsRole } from "./tile-catalog";
 import { liveHero } from "./live-heroes";
-import { DeskPreviewProvider, Num, Tile } from "./ui";
+import { DeskPreviewProvider, Tile } from "./ui";
 import { useLayoutPreference, useTileControls } from "./arrange";
 
 type Row = { id: string; title: string; meta?: string };
@@ -43,6 +45,7 @@ export type Spec = {
   c: number;
   r: number;
   hero?: boolean;
+  derived?: boolean;
   kind: string;
   action: string;
   ghost: string;
@@ -139,10 +142,10 @@ function specsFor(id: DeskId): Spec[] {
         ...live.deliverables.map((row) => ({ id: row.id, title: row.title, meta: when(row.due) })),
         ...ofType(live, "filing").map((row) => ({ id: row.id, title: row.title, meta: when(row.due) })),
       ]),
-      task("drafts", "Drafts", FileText, 4, 4, "draft", "Add a draft", "Drafts you are in stay here", (live) => ofType(live, "draft").concat(openTasks(live).filter((row) => row.taskType === "matter")).slice(0, 4).map((row) => ({ id: row.id, title: row.title, meta: row.matterStage ?? "" }))),
+      task("drafts", "Drafts", FileText, 4, 4, "draft", "Add a draft", "Drafts you are in stay here", (live) => ofType(live, "draft").slice(0, 4).map((row) => ({ id: row.id, title: row.title, meta: row.matterStage ?? "" }))),
       task("cause", "Cause list", CalendarClock, 3, 2, "hearing", "Add a hearing", "Today's list is empty", (live) => ofType(live, "hearing").filter((row) => row.due === live.today || (row.due && row.due >= live.today)).slice(0, 3).map((row) => ({ id: row.id, title: row.title, meta: row.court ?? when(row.due) })), { fields: [{ key: "title", label: "Matter" }, { key: "day", label: "Date", input: "date" }, { key: "court", label: "Court", optional: true }] }),
       tile({
-        key: "unbilled", title: "Unbilled", icon: Scale, c: 3, r: 2, kind: "time", action: "Log your first hour", ghost: "Hours you log land here",
+        key: "unbilled", title: "Logged time", icon: Scale, c: 3, r: 2, kind: "time", action: "Log your first hour", ghost: "Hours you log land here",
         fields: [{ key: "title", label: "Matter" }, { key: "hours", label: "Hours", input: "number" }],
         rows: (live) => ofType(live, "time").slice(0, 2).map((row) => ({ id: row.id, title: row.title, meta: `${((row.measure ?? 0) / 60).toFixed(1)} h` })),
         stat: (live) => {
@@ -200,7 +203,7 @@ function specsFor(id: DeskId): Spec[] {
       }),
       task("plan", "Study plan", ListTodo, 4, 3, "task", "Add a study block", "Open tasks for the week", (live) => openTasks(live).slice(0, 4).map((row) => ({ id: row.id, title: row.title, meta: when(row.due) }))),
       tile({
-        key: "group", title: "People", icon: Users, c: 4, r: 3, kind: "person", action: "Name your group", ghost: "The group is empty",
+        key: "group", title: "Project group", icon: Users, c: 4, r: 3, kind: "person", action: "Name your group", ghost: "The group is empty",
         fields: [{ key: "name", label: "Name" }],
         rows: (live) => live.people.map((row) => ({ id: row.id, title: row.name, meta: row.role ?? "" })),
       }),
@@ -274,7 +277,7 @@ function specsFor(id: DeskId): Spec[] {
       }),
       task("read", "Reading", BookOpen, 4, 3, "reading", "Add a reading", "What is open", (live) => ofType(live, "reading").map((row) => ({ id: row.id, title: row.title }))),
       task("questions", "Open questions", ListTodo, 6, 3, "task", "Add a question", "What is still open", (live) => openTasks(live).slice(0, 4).map((row) => ({ id: row.id, title: row.title }))),
-      tile({ key: "advisor", title: "People", icon: Users, c: 3, r: 3, kind: "person", action: "Add a person", ghost: "Advisor and co-authors", fields: [{ key: "name", label: "Name" }], rows: (live) => live.people.map((row) => ({ id: row.id, title: row.name, meta: row.role ?? "" })) }),
+      tile({ key: "advisor", title: "Advisors", icon: Users, c: 3, r: 3, kind: "person", action: "Add a person", ghost: "Advisor and co-authors", fields: [{ key: "name", label: "Name" }], rows: (live) => live.people.map((row) => ({ id: row.id, title: row.name, meta: row.role ?? "" })) }),
       task("venue", "Venue", Flag, 3, 3, "deadline", "Pick a venue", "The deadline stays up", (live) => live.deliverables.concat(ofType(live, "deadline").map((row) => ({ id: row.id, title: row.title, due: row.due, status: "" }))).map((row) => ({ id: row.id, title: row.title, meta: when(row.due) }))),
     ];
   }
@@ -316,7 +319,7 @@ function specsFor(id: DeskId): Spec[] {
   if (id === "staff") {
     return [
       tile({
-        key: "load", title: "Team", icon: Users, c: 8, r: 4, hero: true, kind: "person", action: "Add your team", ghost: "Load has a name",
+        key: "load", title: "Team", icon: Users, c: 8, r: 4, hero: true, kind: "person", action: "Add your team", ghost: "Weekly capacity for each person",
         fields: [{ key: "name", label: "Name" }, { key: "capacity", label: "Hours / week", input: "number", optional: true }, { key: "cadence", label: "1:1 every N days", input: "number", optional: true }],
         rows: (live) => live.people.map((row) => ({ id: row.id, title: row.name, meta: row.capacityHours != null ? `${row.capacityHours} h` : row.role ?? "" })),
       }),
@@ -336,7 +339,7 @@ function specsFor(id: DeskId): Spec[] {
         ...live.meetings.map((row) => ({ id: row.id, title: row.title, meta: "Note" })),
         ...ofType(live, "decision").map((row) => ({ id: row.id, title: row.title, meta: "" })),
       ]),
-      tile({ key: "out", title: "People", icon: Users, c: 5, r: 3, kind: "person", action: "Add your team", ghost: "Who is on the team", fields: [{ key: "name", label: "Name" }], rows: (live) => live.people.map((row) => ({ id: row.id, title: row.name, meta: row.lastInteraction ? when(row.lastInteraction) : "" })) }),
+      tile({ key: "out", title: "Team contacts", icon: Users, c: 5, r: 3, kind: "person", action: "Add your team", ghost: "Who is on the team", fields: [{ key: "name", label: "Name" }], rows: (live) => live.people.map((row) => ({ id: row.id, title: row.name, meta: row.lastInteraction ? when(row.lastInteraction) : "" })) }),
     ];
   }
   if (id === "branch") {
@@ -445,6 +448,14 @@ export function specPool(): ReadonlyMap<string, Spec> {
   const pool = new Map<string, Spec>();
   for (const id of DESK_IDS) for (const spec of specsFor(id)) if (!pool.has(spec.key)) pool.set(spec.key, spec);
   for (const spec of extraSpecs(new Set(DESK_EXTRAS.map((extra) => extra.id)))) if (!pool.has(spec.key)) pool.set(spec.key, spec);
+  for (const [key, title, ghost, c, r] of [
+    ["progress", "Task progress", "A complete picture of your work", 4, 3],
+    ["workload", "Workload", "Work grouped by its current status", 6, 3],
+    ["agenda", "Calendar agenda", "Upcoming events from your connected calendars", 6, 4],
+    ["calendar", "Calendar", "Your dates, with room to plan", 4, 5],
+    ["time-split", "Time breakdown", "Where your logged hours go", 4, 3],
+    ["due-week", "Week ahead", "Dated work across the next seven days", 6, 3],
+  ] as const) pool.set(key, { key, title, ghost, c, r, icon: ["calendar", "agenda"].includes(key) ? CalendarClock : LineChart, kind: "task", action: "Open your board", derived: true, fields: [], rows: () => [], stat: () => ({ v: "0" }) });
   POOL = pool;
   return pool;
 }
@@ -489,7 +500,7 @@ export function useDeskLayout(deskId: DeskId) {
     customized: !isDefaultLayout(layout, shown, baseline),
     reset: () => save(start),
     hiddenSpecs: hiddenTilesFor(defaults, shown),
-    others: borrowable(defaults, shown),
+    others: borrowable(defaults, shown).filter((spec) => tileFitsRole(spec.key, deskRole(deskId, shell.data?.onboardingTemplateId))),
     save,
   };
 }
@@ -610,6 +621,7 @@ const ADD_NOUN: Record<string, string> = {
 };
 
 const TILE_HREF: Record<string, string> = {
+  agenda: "/settings?tab=connections",
   reviews: "/code",
   repos: "/code",
   checks: "/runs",
@@ -633,38 +645,13 @@ export function quietAdd(spec: { key: string; title: string }): string {
   return `+ Add ${noun}`.replace(/\bfirst\b/gi, "").replace(/\s+/g, " ").trim();
 }
 
-function Body({ spec, live }: { spec: Spec; live: DeskLive }) {
-  const rows = spec.rows(live).slice(0, 5);
+export function TileBody({ spec, live, preview = false, interactivePreview = false }: { spec: Spec; live: DeskLive; preview?: boolean; interactivePreview?: boolean }) {
+  const rows = spec.rows(live);
   const stat = spec.stat?.(live) ?? null;
-  if (spec.hero) {
-    const hero = liveHero({ specKey: spec.key, live, rows, stat });
-    if (hero) {
-      return (
-        <div className="col" data-live-count={rows.length} data-live-hero={spec.key} style={{ flex: 1, minHeight: 0 }}>
-          {hero}
-        </div>
-      );
-    }
-  }
-  const kind = liveDrawKind(spec.key);
-  const drawn = kind === "ring" ? Boolean(stat) : kind === "bars" || kind === "timeline" ? rows.length > 0 : kind === "heat";
-  return (
-    <div className="col gap8" data-live-count={rows.length}>
-      {drawn && kind ? <LiveDraw specKey={spec.key} rows={rows} stat={stat} /> : null}
-      {!drawn && stat ? (
-        <div className="row gap12" style={{ alignItems: "flex-end" }}>
-          <Num v={stat.v} size={rows.length > 0 && rows.length <= 2 ? 56 : 40} unit={stat.unit} />
-          {stat.note ? <span className="trunc" style={{ fontSize: 13, color: "var(--muted)", paddingBottom: 6 }}>{stat.note}</span> : null}
-        </div>
-      ) : null}
-      {kind === "bars" ? null : rows.slice(0, kind === "timeline" ? 3 : 5).map((row) => (
-        <div key={row.id} className="row sb" style={{ gap: 8, minWidth: 0 }}>
-          <span className="trunc" style={{ fontSize: 13, fontWeight: 600 }}>{row.title}</span>
-          {kind === "timeline" ? null : row.meta ? <span className="faint trunc" style={{ fontSize: 12, maxWidth: "46%" }}>{row.meta}</span> : null}
-        </div>
-      ))}
-    </div>
-  );
+  const hero = spec.hero ? liveHero({ specKey: spec.key, live, rows, stat }) : null;
+  return <div className="visual-body" data-live-count={rows.length} data-live-hero={hero ? spec.key : undefined}>
+    {spec.key === "agenda" ? <CalendarAgenda live={live} preview={preview} /> : hero || <TileVisuals spec={spec} live={live} preview={preview} interactive={!preview || interactivePreview} />}
+  </div>;
 }
 
 function stubLive(live: DeskLive, kind: string, values: Record<string, string>): DeskLive {
@@ -777,9 +764,9 @@ export function LiveBoard({ deskId, live, mobile, plots, formKind = null }: { de
             grip={control.grip}
             onHide={control.onHide}
             corner={control.corner}
-            meta={filled ? `${rows.length || 1}` : "Nothing yet"}
-            onAdd={filled ? () => open(spec) : undefined}
-            openHref={filled ? tileHref(spec.key) : undefined}
+            meta={spec.derived ? "Live" : filled ? `${rows.length || 1}` : "Nothing yet"}
+            onAdd={filled && !spec.derived ? () => open(spec) : undefined}
+            openHref={filled ? tileHref(spec.key) ?? (spec.derived ? "/board" : undefined) : undefined}
             ghost={
               filled
                 ? false
@@ -788,10 +775,10 @@ export function LiveBoard({ deskId, live, mobile, plots, formKind = null }: { de
           >
             {filled ? (
               <>
-                <Body spec={spec} live={live} />
-                <button type="button" className="qadd" data-desk-add={spec.kind} onClick={() => open(spec)}>
+                <TileBody spec={spec} live={live} />
+                {spec.key === "agenda" ? null : spec.derived ? <Link className="qadd" href="/board">Open your board →</Link> : <button type="button" className="qadd" data-desk-add={spec.kind} onClick={() => open(spec)}>
                   {quietAdd(spec)}
-                </button>
+                </button>}
               </>
             ) : null}
           </Tile>
@@ -833,15 +820,15 @@ export function LiveBoard({ deskId, live, mobile, plots, formKind = null }: { de
 }
 
 /** A template's Today drawn from sample rows. Nothing in it is interactive. */
-export function PreviewTiles({ deskId, tiles, live }: { deskId: DeskId; tiles: ReadonlyArray<readonly [string, number, number]>; live: DeskLive }) {
+export function PreviewTiles({ deskId, tiles, live, mobile = false }: { deskId: DeskId; tiles: ReadonlyArray<readonly [string, number, number]>; live: DeskLive; mobile?: boolean }) {
   const specs = arrange(boardSpecs(deskId), specPool(), { v: 1, exact: true, hidden: [], tiles: tiles.map(([key, c, r]) => ({ key, c, r })) });
   return (
     <DeskPreviewProvider>
       {specs.map((spec) => {
         const rows = spec.rows(live);
         return (
-          <Tile key={spec.key} title={spec.title} icon={spec.icon} c={spec.c} r={spec.r} hero={spec.hero} meta={rows.length ? String(rows.length) : undefined}>
-            <Body spec={spec} live={live} />
+          <Tile key={spec.key} title={spec.title} icon={spec.icon} c={mobile ? 4 : spec.c} r={spec.r} hero={spec.hero} meta={rows.length ? String(rows.length) : undefined}>
+            <TileBody spec={spec} live={live} preview />
           </Tile>
         );
       })}

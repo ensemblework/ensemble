@@ -2,7 +2,7 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState, type ComponentType } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useDelayedFlag } from "@/lib/motion/use-delayed-flag";
 import { api } from "@/lib/api";
 import { useModuleOn } from "@/lib/use-module";
@@ -10,23 +10,12 @@ import { useToast } from "@/components/toast";
 import { usePersistentState } from "@/lib/prefs";
 import { resolveExtras } from "@/lib/desk-extras";
 import { DESKS, type DeskId } from "./desks";
-import { LiveBoard, liveLine, ownCount } from "./live-board";
+import { LiveBoard, liveLine, ownCount, PreviewTiles, useDeskLayout } from "./live-board";
 import { ChartTypePanel, PlotsGalleryPanel } from "./plots-panel";
 import { AddTileButton, AddedTiles } from "./add-tile";
-import type { State } from "./ui";
+import { sampleLive } from "../onboarding/sample";
+import { deskRole } from "./tile-catalog";
 import "./desk.css";
-
-const LOADERS: Record<DeskId, () => Promise<{ Tiles: ComponentType<{ state?: State; plots?: boolean; mobile?: boolean }> }>> = {
-  default: () => import("./boards/default"),
-  semester: () => import("./boards/semester"),
-  exam: () => import("./boards/exam"),
-  literature: () => import("./boards/literature"),
-  chambers: () => import("./boards/chambers"),
-  classes: () => import("./boards/classes"),
-  staff: () => import("./boards/staff"),
-  branch: () => import("./boards/branch"),
-  bench: () => import("./boards/bench"),
-};
 
 const SAMPLE_KEY = "desk.sample";
 const PLOTS_KEY = "desk.plots";
@@ -63,7 +52,6 @@ export function DeskView({
   const diagramsOn = useModuleOn("diagrams");
   const prefs = useQuery({ queryKey: ["preferences"], queryFn: api.preferences });
   const diagrams = useQuery({ queryKey: ["diagrams"], queryFn: api.diagrams, enabled: diagramsOn });
-  const [Tiles, setTiles] = useState<ComponentType<{ state?: State; plots?: boolean; mobile?: boolean }> | null>(null);
   const [phone, setPhone] = useState(false);
   const [banner, setBanner, bannerReady] = usePersistentState("ensemble.today.sample-hint", true);
   const [enter, setEnter] = useState(false);
@@ -73,18 +61,6 @@ export function DeskView({
   const plots = plotsQuery || flagValue(prefs.data?.preferences, PLOTS_KEY);
   const liveQuery = useQuery({ queryKey: ["desk-live"], queryFn: api.deskLive, enabled: prefs.isSuccess && !samplePref, staleTime: 15_000 });
 
-  useEffect(() => {
-    if (!samplePref) return;
-    let live = true;
-    setTiles(null);
-    void LOADERS[deskId]().then((mod) => {
-      if (live) setTiles(() => mod.Tiles);
-    });
-    return () => {
-      live = false;
-    };
-  }, [deskId, samplePref]);
-
   useLayoutEffect(() => {
     const query = window.matchMedia("(max-width: 767px)");
     const apply = () => setPhone(query.matches);
@@ -93,15 +69,17 @@ export function DeskView({
     return () => query.removeEventListener("change", apply);
   }, []);
 
+  const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
   const sample = samplePref;
+  const sampleData = useMemo(() => sampleLive(deskRole(deskId, shell.data?.onboardingTemplateId)), [deskId, shell.data?.onboardingTemplateId]);
   const openPanel = plots ? panel : null;
   useEffect(() => setPanel(panelQuery), [panelQuery]);
   const liveData = liveQuery.data;
-  const ready = prefs.isSuccess && (sample ? Boolean(Tiles) : liveQuery.isFetched);
+  const ready = prefs.isSuccess && (sample || liveQuery.isFetched);
   const filled = Boolean(liveData && ownCount(liveData) > 0);
   const extraValue = prefs.data?.preferences.find((row) => row.key === "desk.extras")?.value;
   const extras = resolveExtras(deskId, prefs.isSuccess ? extraValue : undefined);
-  const waiting = !((sample && Tiles && ready) || (!sample && ready && liveData));
+  const waiting = !((sample && ready) || (!sample && ready && liveData));
   const showSkeleton = useDelayedFlag(waiting);
   if (showSkeleton) sawLoader.current = true;
 
@@ -142,7 +120,7 @@ export function DeskView({
           <h1 className="display">Today</h1>
           <div className="sub">
             {sample ? (
-              desk.line
+              liveLine(deskId, sampleData) ?? desk.empty
             ) : !liveQuery.isFetched ? (
               <span className="sub-skel sk" data-visible={showSkeleton ? "1" : "0"} data-motion-slot="content.skeleton" data-state={showSkeleton ? "loading" : "ready"} data-motion-loading={showSkeleton ? "1" : "0"} aria-hidden />
             ) : filled && liveData ? (
@@ -172,7 +150,7 @@ export function DeskView({
         </div>
       ) : null}
       <div className={`bento${apply ? " applying" : ""}`} data-enter={enter ? "1" : undefined} data-widget-grid="desk">
-        {sample && Tiles && ready ? <Tiles state="populated" plots={plots} mobile={phone} /> : !sample && ready && liveData ? <LiveBoard deskId={deskId} live={liveData} mobile={phone} plots={plots} formKind={form} /> : spans.map((span, index) => (
+        {sample && ready ? <SampleTiles deskId={deskId} mobile={phone} live={sampleData} /> : !sample && ready && liveData ? <LiveBoard deskId={deskId} live={liveData} mobile={phone} plots={plots} formKind={form} /> : spans.map((span, index) => (
           <div key={index} className="tile skel sk" data-visible={showSkeleton ? "1" : "0"} data-motion-loading={showSkeleton ? "1" : "0"} data-motion-slot="content.skeleton" data-state={showSkeleton ? "loading" : "ready"} style={{ gridColumn: `span ${span.c}`, gridRow: `span ${span.r}`, ["--i" as string]: index }} />
         ))}
       </div>
@@ -197,4 +175,9 @@ export function DeskView({
       ) : null}
     </div>
   );
+}
+
+function SampleTiles({ deskId, mobile, live }: { deskId: DeskId; mobile: boolean; live: ReturnType<typeof sampleLive> }) {
+  const layout = useDeskLayout(deskId);
+  return <PreviewTiles deskId={deskId} tiles={layout.shown.map((s) => [s.key, mobile ? 4 : s.c, s.r])} live={live} mobile={mobile} />;
 }

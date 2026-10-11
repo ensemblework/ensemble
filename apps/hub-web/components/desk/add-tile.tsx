@@ -1,17 +1,21 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, RotateCcw, X } from "lucide-react";
+import { Check, ChevronRight, Plus, RotateCcw, Search, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { hasModule } from "@ensemble/shared-types/modules";
-import { MARKET_CARDS } from "@ensemble/shared-types/marketplace-manifest";
-import { WIDGET_REGISTRY, widgetIdsFor, type WidgetId } from "@ensemble/shared-types/widgets";
+import { WIDGET_REGISTRY, type WidgetId } from "@ensemble/shared-types/widgets";
 import { Dialog } from "@/components/ui";
 import { api } from "@/lib/api";
-import { appendDeskTile, readAdded, removeDeskTile } from "@/lib/desk-added";
+import { readAdded, removeDeskTile } from "@/lib/desk-added";
 import type { DeskId } from "./desks";
-import { showTile } from "./layout";
-import { useDeskLayout, type Spec } from "./live-board";
+import { DESK_EXTRAS, resolveExtras } from "@/lib/desk-extras";
+import { layoutKey, showTile, tileLimits } from "./layout";
+import { specPool, TileBody, useDeskLayout, type Spec } from "./live-board";
+import { deskRole, tileFitsRole, tileCategory, tileDescription, TILE_CATEGORIES, type TileCategory } from "./tile-catalog";
+import { sampleLive } from "../onboarding/sample";
+import { ROLES } from "../onboarding/roles";
+import { DeskPreviewProvider, Tile } from "./ui";
 
 const SHORTCUTS: Partial<Record<WidgetId, { href: string; action: string }>> = {
   completed: { href: "/settings#completed", action: "Open completed" },
@@ -45,132 +49,76 @@ export function AddTileButton({ deskId, plots, startOpen = false }: { deskId: De
   );
 }
 
-function AddTileDialog({ deskId, plots, onClose }: { deskId: DeskId; plots: boolean; onClose: () => void }) {
+export function AddTileDialog({ deskId, onClose }: { deskId: DeskId; plots?: boolean; onClose: () => void }) {
   const client = useQueryClient();
   const [q, setQ] = useState("");
+  const [category, setCategory] = useState<TileCategory>("All tiles");
+  const [selected, setSelected] = useState<string | null>(null);
+  const [size, setSize] = useState<4 | 6 | 12>(6);
+  const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
-  const prefs = useQuery({ queryKey: ["preferences"], queryFn: api.preferences });
-  const added = readAdded(prefs.data?.preferences);
-  const templateId = shell.data?.activeTemplateId;
-  const preferred = useMemo(() => new Set(MARKET_CARDS.find((card) => card.id === templateId)?.widgets ?? []), [templateId]);
-  const query = q.trim().toLowerCase();
   const layout = useDeskLayout(deskId);
-  const matches = (spec: Spec) => !query || `${spec.title} ${spec.ghost}`.toLowerCase().includes(query);
-  const live = [
-    { id: "hidden", label: "Hidden from Today", specs: layout.hiddenSpecs.filter(matches) },
-    { id: "borrow", label: "Live tiles", specs: layout.others.filter(matches) },
-  ].filter((group) => group.specs.length);
-  const place = (spec: Spec) => void layout.save(showTile({ shown: layout.shown, hidden: layout.hidden }, spec));
-  const ids = widgetIdsFor("today").filter((id) => {
-    const spec = WIDGET_REGISTRY[id];
-    if (!SHORTCUTS[id]) return false;
-    if (spec.requires && !hasModule(shell.data?.modules, spec.requires)) return false;
-    if (!query) return true;
-    return `${spec.label} ${spec.blurb ?? ""} ${spec.persona ?? ""}`.toLowerCase().includes(query);
-  });
-  const groups = [
-    { id: "desk", label: "From this desk", ids: ids.filter((id) => preferred.has(id)) },
-    { id: "shared", label: "Shared", ids: ids.filter((id) => !preferred.has(id) && !WIDGET_REGISTRY[id].persona) },
-    { id: "other", label: "From other desks", ids: ids.filter((id) => !preferred.has(id) && WIDGET_REGISTRY[id].persona) },
-  ].filter((group) => group.ids.length);
+  const role = deskRole(deskId, shell.data?.onboardingTemplateId);
+  const roleLabel = ROLES.find((r) => r.id === role)!.label;
+  const sample = useMemo(() => sampleLive(role), [role]);
+  const catalog = new Map(specPool());
+  for (const spec of layout.defaults) catalog.set(spec.key, spec);
+  const candidates = [...catalog.values()].filter((spec) => tileFitsRole(spec.key, role));
+  // Prefer the current desk's version when two keys draw the same content.
+  const native = new Set(layout.defaults.map((s) => s.key));
+  const all = candidates.filter((spec) => !candidates.some((other) => other.key !== spec.key && other.title === spec.title && (native.has(other.key) && !native.has(spec.key) || native.has(other.key) === native.has(spec.key) && candidates.indexOf(other) < candidates.indexOf(spec))));
+  const query = q.trim().toLowerCase();
+  const matches = all.filter((spec) => (category === "All tiles" || tileCategory(spec.key) === category) && (!query || `${spec.title} ${tileDescription(spec)} ${tileCategory(spec.key)}`.toLowerCase().includes(query)));
+  const active = matches.find((spec) => spec.key === selected) ?? matches[0];
+  const chosenSize = active ? Math.max(size, tileLimits(active).minC) : size;
+  const onDesk = new Set(layout.shown.map((spec) => spec.key));
+  const ready = layout.ready && shell.isSuccess;
 
-  const add = async (id: WidgetId) => {
-    setError("");
+  async function place(spec: Spec) {
+    if (!ready || pending || onDesk.has(spec.key)) return;
+    setPending(true); setError(""); setNotice("");
+    const next = showTile({ shown: layout.shown, hidden: layout.hidden }, { ...spec, c: chosenSize });
     try {
-      await appendDeskTile(client, id);
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  };
+      const prefs = client.getQueryData<Awaited<ReturnType<typeof api.preferences>>>(["preferences"]);
+      const extra = DESK_EXTRAS.find((e) => e.tile === spec.key);
+      const enabled = resolveExtras(deskId, prefs?.preferences.find((p) => p.key === "desk.extras")?.value);
+      const writes: Awaited<ReturnType<typeof api.putPreference>>["preference"][] = [];
+      if (extra && !enabled.has(extra.id)) writes.push((await api.putPreference("desk.extras", [...enabled, extra.id])).preference);
+      writes.push((await api.putPreference(layoutKey(deskId), next)).preference);
+      const keys = new Set(writes.map((p) => p.key));
+      client.setQueryData<Awaited<ReturnType<typeof api.preferences>>>(["preferences"], (old) => ({ preferences: [...(old?.preferences ?? []).filter((p) => !keys.has(p.key)), ...writes] }));
+      setNotice(`${spec.title} added to Today. Move or resize it whenever you like.`);
+    } catch (e) { setError((e as Error).message); await client.invalidateQueries({ queryKey: ["preferences"] }); }
+    finally { setPending(false); }
+  }
 
-  return (
-    <Dialog open onClose={onClose} title="Add a tile" width={680}>
-        <div className="flex items-center gap-2">
-          <input
-            value={q}
-            onChange={(event) => setQ(event.target.value)}
-            placeholder="Search tiles"
-            aria-label="Search tiles"
-            className="w-full rounded-lg border border-line bg-bg px-3 py-2 text-[14px] text-ink"
-          />
-        </div>
-        {plots ? (
-          <div className="mt-3" data-plots-category>
-            <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-faint">Plots · soon</div>
-            <p className="mt-1 text-[12.5px] text-muted">Plot, Trend over time, and Breakdown are reserved. They cannot be added yet.</p>
-            <div className="mt-1 grid gap-1 sm:grid-cols-3">
-              {["Plot", "Trend over time", "Breakdown"].map((name) => (
-                <div key={name} className="rounded-lg border border-dashed border-line px-2.5 py-2 text-[13px] text-faint" aria-disabled="true">
-                  {name}
-                  <div className="text-[11px]">Coming soon</div>
-                </div>
-              ))}
-            </div>
+  return <Dialog open onClose={onClose} title="Make room for your best work" width={1160} className="tile-gallery-dialog" bodyClassName="tile-gallery-dialog-body">
+    <div className="tile-gallery" data-tile-gallery>
+      <div className="tile-gallery-intro"><div><span className="tile-gallery-eyebrow">YOUR TILE LIBRARY</span><p>A desk that works the way you do.</p></div><span className="tile-gallery-profile">{roleLabel} · {all.length} tiles</span></div>
+      <div className="tile-gallery-layout">
+        <aside className="tile-gallery-sidebar">
+          <label className="tile-gallery-search"><Search size={15} /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a tile…" aria-label="Search tiles" /></label>
+          <div className="tile-gallery-categories" aria-label="Tile categories">{TILE_CATEGORIES.map((c) => <button key={c} type="button" aria-pressed={category === c} onClick={() => setCategory(c)}>{c}<span>{all.filter((s) => c === "All tiles" || tileCategory(s.key) === c).length}</span></button>)}</div>
+          <div className="tile-gallery-results" aria-label="Available tiles">
+            {matches.map((spec) => { const Icon = spec.icon; return <button key={spec.key} type="button" data-gallery-tile={spec.key} aria-pressed={active?.key === spec.key} onClick={() => { setSelected(spec.key); setNotice(""); }}><span className="tile-gallery-icon"><Icon size={17} /></span><span><strong>{spec.title}</strong><small>{onDesk.has(spec.key) ? "On your Today" : tileCategory(spec.key)}</small></span>{onDesk.has(spec.key) ? <Check size={14} /> : <ChevronRight size={14} />}</button>; })}
+            {!matches.length && <div className="tile-gallery-empty"><Search size={22} /><strong>No tiles found</strong><p>Try a different word or category.</p><button type="button" className="btn" onClick={() => { setQ(""); setCategory("All tiles"); }}>Clear filters</button></div>}
           </div>
-        ) : null}
-        {error ? <p className="mt-3 text-[13px] text-danger">{error}</p> : null}
-        {live.map((group) => (
-          <div key={group.id} className="mt-3" data-live-group={group.id}>
-            <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-faint">{group.label}</div>
-            <div className="mt-1 grid gap-1 sm:grid-cols-2">
-              {group.specs.map((spec) => {
-                const Icon = spec.icon;
-                return (
-                  <button
-                    key={spec.key}
-                    type="button"
-                    data-gallery-tile={spec.key}
-                    className="flex items-start gap-2 rounded-md border border-line px-2.5 py-2 text-left hover:border-line-strong hover:bg-hover"
-                    onClick={() => place(spec)}
-                  >
-                    <Icon size={14} className="mt-0.5 shrink-0 text-muted" />
-                    <span className="min-w-0">
-                      <span className="block text-[13px] font-medium">{spec.title}</span>
-                      <span className="block text-[12px] text-muted">{spec.ghost}</span>
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        ))}
-        {groups.length === 0 && live.length === 0 ? <p className="mt-3 text-[13px] text-muted">Nothing matches.</p> : null}
-        {groups.map((group) => (
-          <div key={group.id} className="mt-3">
-            <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-faint">{group.id === "desk" ? "Shortcuts for this desk" : group.id === "shared" ? "Shortcuts" : "Shortcuts from other desks"}</div>
-            <div className="mt-1 grid gap-1 sm:grid-cols-2">
-              {group.ids.map((id) => {
-                const spec = WIDGET_REGISTRY[id];
-                const on = added.includes(id);
-                return (
-                  <button
-                    key={id}
-                    type="button"
-                    data-gallery-tile={id}
-                    disabled={on}
-                    className="rounded-md border border-line px-2.5 py-2 text-left hover:border-line-strong hover:bg-hover disabled:opacity-60"
-                    onClick={() => void add(id)}
-                  >
-                    <div className="text-[13px] font-medium">{on ? `${spec.label} · on Today` : spec.label}</div>
-                    <div className="text-[12px] text-muted">{spec.blurb ?? spec.label}</div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        ))}
-        {layout.customized ? (
-          <div className="mt-4 flex items-center justify-between gap-3 border-t border-line pt-3">
-            <span className="text-[12.5px] text-muted">You moved, resized, or hid tiles on this desk.</span>
-            <button type="button" className="btn" onClick={() => void layout.reset()}>
-              <RotateCcw size={12} />
-              Reset layout
-            </button>
-          </div>
-        ) : null}
-    </Dialog>
-  );
+        </aside>
+        <section className="tile-gallery-detail" aria-label="Tile preview">
+          {active ? <>
+            <header><span className="tile-gallery-eyebrow">{tileCategory(active.key)}</span><h2>{active.title}</h2><p>{tileDescription(active)}</p></header>
+            <div className="tile-gallery-preview-label"><span><i />Preview with sample data</span><div aria-label="Tile width">{([4, 6, 12] as const).map((c) => <button key={c} type="button" disabled={c < tileLimits(active).minC} aria-pressed={chosenSize === c} onClick={() => setSize(c)}>{c === 4 ? "Compact" : c === 6 ? "Medium" : "Wide"}</button>)}</div></div>
+            <div className="tile-gallery-stage desk"><DeskPreviewProvider><Tile title={active.title} icon={active.icon} hero={active.hero} style={{ width: chosenSize === 4 ? 330 : chosenSize === 6 ? 470 : 660, maxWidth: "100%", height: Math.max(active.r * 72, active.key === "calendar" ? 410 : 280) }}><TileBody spec={active} live={sample} preview interactivePreview /></Tile></DeskPreviewProvider></div>
+            <footer><div><strong>Your data, automatically</strong><p>Sample entries stay in this preview. Your tile uses your own work.</p></div><button type="button" className="btn-primary" disabled={!ready || pending || onDesk.has(active.key)} onClick={() => void place(active)}>{onDesk.has(active.key) ? <><Check size={15} /> On Today</> : <><Plus size={15} />{pending ? "Adding…" : "Add to Today"}</>}</button></footer>
+          </> : <div className="tile-gallery-empty"><p>Choose a tile to see how it fits your day.</p></div>}
+        </section>
+      </div>
+      <div className="tile-gallery-bottom"><span role="status">{notice || `${onDesk.size} tiles on Today · All tiles can be moved, resized, or hidden.`}</span>{layout.customized && <button type="button" className="btn" disabled={pending || !ready} onClick={() => void layout.reset()}><RotateCcw size={12} />Reset layout</button>}</div>
+      {error && <p role="alert" className="mt-2 text-[13px] text-danger">{error}</p>}
+    </div>
+  </Dialog>;
 }
 
 /** Tiles the person placed. A module that is off hides its tiles and leaves the saved ids alone. */
