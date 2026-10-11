@@ -27,7 +27,7 @@ The Ensemble CLI's runner uses the same folder and the same sidecar (doc [26](26
 pnpm desktop:build
 ```
 
-Bundles are written under `apps/desktop/src-tauri/target/release/bundle/` (universal macOS builds use `target/universal-apple-darwin/release/bundle/`). The GitHub workflow [`.github/workflows/desktop.yml`](../.github/workflows/desktop.yml) builds unsigned artifacts on pull requests, on every push to `desktop`, and on manual dispatch, and uploads them as `ensemble-desktop-macos`, `ensemble-desktop-windows`, and `ensemble-desktop-linux`:
+Bundles are written under `apps/desktop/src-tauri/target/release/bundle/` (universal macOS builds use `target/universal-apple-darwin/release/bundle/`). The GitHub workflow [`.github/workflows/desktop.yml`](../.github/workflows/desktop.yml) builds unsigned artifacts on pull requests, on every push to `desktop`, on manual dispatch and on a `desktop-v*` tag, and uploads them as `ensemble-desktop-macos`, `ensemble-desktop-windows`, and `ensemble-desktop-linux`. A `desktop-v<version>` tag that matches `tauri.conf.json` also publishes them as a GitHub release (the `publish` job); the CLI has its own `cli-v*` releases:
 
 | Runner | Bundles |
 |---|---|
