@@ -12,7 +12,7 @@ import { mkdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { desktopDataDir } from "@ensemble/shared-types/desktop-discovery";
-import { cacheDir, childEnv, sandboxAvailable, sandboxRefusal, ENSEMBLE_SOURCE, GuardError, within } from "./guard.js";
+import { askpassPath, cacheDir, childEnv, sandboxAvailable, sandboxRefusal, ENSEMBLE_SOURCE, GuardError, within } from "./guard.js";
 import { hostExecutable } from "./policy.js";
 import { startSandboxed } from "./sandbox/spawn.js";
 import { requireHostAccess, requireHostTerminal } from "../lib/hosted-access.js";
@@ -127,6 +127,7 @@ export async function runCommand(options: RunOptions): Promise<RunResult> {
   const readWrite = [...(options.readWrite ?? [options.root])];
   if (!readWrite.includes(cache)) readWrite.push(cache);
   const home = homedir();
+  const askpass = await askpassPath();
 
   return new Promise<RunResult>((resolvePromise, reject) => {
     const { child } = startSandboxed(
@@ -142,7 +143,7 @@ export async function runCommand(options: RunOptions): Promise<RunResult> {
         home,
         ensembleSource: ENSEMBLE_SOURCE,
         appDataDir: desktopDataDir({ platform: process.platform, home }),
-        askpassPath: join(cache, "git-askpass.sh"),
+        askpassPath: askpass,
         confined: options.sandboxed,
       },
       { program, args: options.argv.slice(1) },

@@ -30,20 +30,25 @@ function policy(over: Partial<SandboxPolicy> = {}): SandboxPolicy {
 const present = (paths: string[]) => (path: string) => paths.includes(path);
 
 test("bubblewrap hides the home folder, mounts back the grants, and cuts the network", () => {
-  const args = bubblewrapArgs(policy(), { program: "/usr/bin/git", args: ["status"] }, { exists: present(["/run/user", "/var/run/docker.sock", `${home}/.nvm`, "/opt/ensemble-cli/sidecar/app"]), execPath: "/usr/bin/node" });
+  const args = bubblewrapArgs(policy(), { program: "/usr/bin/git", args: ["status"] }, {
+    exists: present(["/run/user", "/var/run/docker.sock", `${home}/.nvm`, "/opt/ensemble-cli/sidecar/app"]),
+    execPath: "/usr/bin/node",
+    // /var/run is a link to /run on most systems; bubblewrap must be given the real path.
+    real: (path) => path.replace(/^\/var\/run\//, "/run/"),
+  });
   const text = args.join(" ");
   assert.ok(text.includes("--unshare-net"));
   assert.ok(text.includes("--ro-bind / /"));
   assert.ok(text.indexOf(`--tmpfs ${home}`) < text.indexOf(`--bind-try ${home}/ensemble-workspace/runs/job`), "the home folder is emptied before the grant is mounted");
   assert.ok(text.includes("--tmpfs /run/user"), "agent sockets are hidden");
-  assert.ok(text.includes("--ro-bind /dev/null /var/run/docker.sock"), "the Docker socket is hidden");
+  assert.ok(text.includes("--ro-bind /dev/null /run/docker.sock"), "the Docker socket is hidden, at its real path");
   assert.ok(text.includes(`--ro-bind ${home}/.nvm ${home}/.nvm`), "toolchains are readable");
   assert.ok(text.includes("--tmpfs /opt/ensemble-cli/sidecar/app"), "Ensemble's own code is hidden even outside home");
   assert.deepEqual(args.slice(-5), ["--chdir", `${home}/ensemble-workspace/runs/job`, "--", "/usr/bin/git", "status"]);
 });
 
 test("bubblewrap keeps the network when the run allows it", () => {
-  const args = bubblewrapArgs(policy({ network: "outbound" }), { program: "/usr/bin/curl", args: ["https://example.com"] }, { exists: () => false, execPath: "/usr/bin/node" });
+  const args = bubblewrapArgs(policy({ network: "outbound" }), { program: "/usr/bin/curl", args: ["https://example.com"] }, { exists: () => false, execPath: "/usr/bin/node", real: (path) => path });
   assert.ok(!args.includes("--unshare-net"));
 });
 

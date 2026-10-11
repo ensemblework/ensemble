@@ -132,6 +132,39 @@ test("the OS sandbox keeps a command inside its folder", { timeout: 300_000 }, a
   }
 });
 
+test("Windows: the internet goes out only through the sandbox's proxy", { timeout: 120_000 }, async (t) => {
+  if (process.platform !== "win32") {
+    t.skip("Windows only");
+    return;
+  }
+  const caps = await sandboxHere();
+  if (!caps.osSandbox) {
+    t.skip(`no OS sandbox here: ${caps.reason}`);
+    return;
+  }
+  await prepareNetwork();
+  const parent = mkdtempSync(join(home, "ensemble-escape-proxy-"));
+  const curl = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "curl.exe");
+  const fetchPage = (network: "none" | "outbound") =>
+    new Promise<{ code: number; output: string }>((resolve, reject) => {
+      const { child } = startSandboxed(base(parent, { network }), { program: curl, args: ["-sS", "--max-time", "20", "http://example.com/"] });
+      let output = "";
+      child.stdout?.on("data", (chunk) => (output += chunk));
+      child.stderr?.on("data", (chunk) => (output += chunk));
+      child.on("error", reject);
+      child.on("close", (code) => resolve({ code: code ?? 1, output }));
+    });
+  try {
+    const online = await fetchPage("outbound");
+    assert.equal(online.code, 0, online.output);
+    assert.match(online.output, /Example Domain/);
+    const offline = await fetchPage("none");
+    assert.notEqual(offline.code, 0, offline.output);
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
 test("a run with the internet on can reach the network stack", { timeout: 60_000 }, async (t) => {
   const caps = await sandboxHere();
   if (!caps.osSandbox || process.platform === "win32") {

@@ -4,13 +4,12 @@
  * command's environment, never written into the askpass script, and never put
  * in the remote URL.
  */
-import { chmod, mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { chmod, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { PrismaClient } from "@prisma/client";
 import { decrypt } from "./secrets.js";
-import { cacheDir } from "../workspace/guard.js";
+import { askpassPath } from "../workspace/guard.js";
 import { canUseHostCredentials, requireHostAccess } from "./hosted-access.js";
 
 const exec = promisify(execFile);
@@ -28,9 +27,8 @@ export async function githubToken(prisma: PrismaClient, userId: string): Promise
 }
 
 async function askpassScript(): Promise<string> {
-  const dir = await cacheDir();
-  await mkdir(dir, { recursive: true });
-  const path = join(dir, "git-askpass.sh");
+  // Beside the agents' cache, never in it: a command that could rewrite this would run with the token.
+  const path = await askpassPath();
   const body = `#!/bin/sh
 case "$1" in
   *Username*|*username*) printf '%s\\n' "x-access-token" ;;

@@ -415,6 +415,18 @@ export function gitHardening(useCredentials: boolean, author?: string): string[]
 
 // ── environment & sandbox ─────────────────────────────────────────────────
 
+/**
+ * Ensemble's own git askpass helper. It holds no token (the token is only in
+ * the environment of Ensemble's git process), but a command that could rewrite
+ * it would run with that token the next time. So it lives beside the cache,
+ * never in it: no sandbox grant ever covers `<workspace>/.askpass`.
+ */
+export async function askpassPath(): Promise<string> {
+  const dir = join(await workspaceRoot(), ".askpass");
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  return join(dir, "git-askpass.sh");
+}
+
 export async function cacheDir(): Promise<string> {
   const dir = join(await workspaceRoot(), ".cache");
   await mkdir(dir, { recursive: true });
@@ -538,7 +550,7 @@ export async function seatbeltProfile(
     network: options.network ? "outbound" : "none",
     who: options.who,
     ensembleSource: ENSEMBLE_SOURCE,
-    askpassPath: join(cache, "git-askpass.sh"),
+    askpassPath: await askpassPath(),
   });
 }
 

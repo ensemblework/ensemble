@@ -174,7 +174,11 @@ export function windowsSpawn(
     cwd: policy.cwd,
     srtWin: state.srtWin,
     binShell,
-    setEnvVars: Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string")),
+    setEnvVars: {
+      ...Object.fromEntries(Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === "string")),
+      // Node's own fetch ignores HTTP(S)_PROXY unless told to; curl, git, npm and pip read them anyway.
+      ...(policy.network === "outbound" ? { NODE_USE_ENV_PROXY: "1" } : {}),
+    },
     allowWrite: policy.readWrite,
     quiet: true,
     ...(policy.network === "outbound" && proxy ? { httpProxyPort: proxy.http, socksProxyPort: proxy.socks, proxyAuthToken: proxy.token } : {}),

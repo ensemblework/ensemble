@@ -32,7 +32,7 @@ function profile(): string {
     network: "none",
     who: "agent",
     ensembleSource: "/Users/person/src/ensemble",
-    askpassPath: "/Users/person/ensemble-workspace/.cache/git-askpass.sh",
+    askpassPath: "/Users/person/ensemble-workspace/.askpass/git-askpass.sh",
   });
 }
 

@@ -20,8 +20,8 @@
  * The probe runs once per runtime (`probeLinux`) and is cached.
  */
 import { spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { release, tmpdir } from "node:os";
+import { accessSync, constants, existsSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { homedir, release, tmpdir } from "node:os";
 import { posix } from "node:path";
 import type { SandboxPolicy, SpawnCommand } from "./policy.js";
 import { nodeToolchainRead } from "./seatbelt.js";
@@ -67,6 +67,15 @@ export type LinuxBackend =
   | { backend: "none"; reason: string };
 
 type Exists = (path: string) => boolean;
+
+/** bubblewrap mounts over a path only through its real location: `/var/run` is a link to `/run` on most systems. */
+function realPathOr(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
 
 function covers(root: string, candidate: string): boolean {
   const rel = relative(root, candidate);
@@ -147,8 +156,13 @@ function programDir(cmd: SpawnCommand, roots: string[], denies: string[], home: 
   return dir;
 }
 
-export function bubblewrapArgs(policy: SandboxPolicy, cmd: SpawnCommand, options: { exists?: Exists; execPath?: string } = {}): string[] {
+export function bubblewrapArgs(
+  policy: SandboxPolicy,
+  cmd: SpawnCommand,
+  options: { exists?: Exists; execPath?: string; real?: (path: string) => string } = {},
+): string[] {
   const exists = options.exists ?? existsSync;
+  const realOr = options.real ?? realPathOr;
   const execPath = options.execPath ?? process.execPath;
   const home = policy.home;
   const args = ["--die-with-parent", "--new-session", "--unshare-pid", "--unshare-ipc", "--unshare-uts", "--unshare-cgroup-try"];
@@ -156,8 +170,8 @@ export function bubblewrapArgs(policy: SandboxPolicy, cmd: SpawnCommand, options
   args.push("--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp");
   // The home folder is empty except for what is mounted back below.
   args.push("--tmpfs", home);
-  if (exists("/run/user")) args.push("--tmpfs", "/run/user");
-  for (const socket of ROOT_SOCKETS) if (exists(socket)) args.push("--ro-bind", "/dev/null", socket);
+  if (exists("/run/user")) args.push("--tmpfs", realOr("/run/user"));
+  for (const socket of new Set(ROOT_SOCKETS.filter(exists).map(realOr))) args.push("--ro-bind", "/dev/null", socket);
   const toolchain = toolchainReads(policy, execPath, exists);
   const denies = hardDenies(policy);
   const extra = programDir(cmd, [...LINUX_SYSTEM_EXEC, ...toolchain, ...policy.readOnly, ...policy.readWrite], denies, home);
@@ -166,8 +180,9 @@ export function bubblewrapArgs(policy: SandboxPolicy, cmd: SpawnCommand, options
   for (const path of policy.readWrite) args.push("--bind-try", path, path);
   // Deny wins: re-cover denied places that a grant reaches or that sit outside the home folder.
   const grants = [...toolchain, ...policy.readOnly, ...policy.readWrite];
-  for (const deny of denies) {
-    if (!exists(deny)) continue;
+  for (const listed of denies) {
+    if (!exists(listed)) continue;
+    const deny = realOr(listed);
     if (covers(home, deny) && !grants.some((grant) => covers(grant, deny))) continue;
     let directory = true;
     try {
@@ -179,7 +194,7 @@ export function bubblewrapArgs(policy: SandboxPolicy, cmd: SpawnCommand, options
     else args.push("--ro-bind", "/dev/null", deny);
   }
   // A plot may not start a shell: the binary is covered by an empty device node.
-  for (const path of policy.extraExecDeny ?? []) if (exists(path)) args.push("--ro-bind", "/dev/null", path);
+  for (const path of policy.extraExecDeny ?? []) if (exists(path)) args.push("--ro-bind", "/dev/null", realOr(path));
   args.push("--chdir", policy.cwd, "--", cmd.program, ...cmd.args);
   return args;
 }
@@ -230,7 +245,29 @@ export function probeLinux(env: NodeJS.ProcessEnv = process.env): LinuxBackend {
   const bwrap = findBwrap(env);
   const reasons: string[] = [];
   if (bwrap) {
-    const code = run(bwrap, ["--die-with-parent", "--unshare-pid", "--unshare-net", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--", shell, "-c", "exit 0"]);
+    // The same arguments a real command gets, so a quirk of this system (a socket behind a link, say) shows here, not on every command.
+    const scratch = mkdtempSync(join(env.TMPDIR || tmpdir(), "ensemble-bwrap-"));
+    let code = 1;
+    try {
+      const home = env.HOME || homedir();
+      const policy: SandboxPolicy = {
+        runId: "probe",
+        cwd: scratch,
+        readWrite: [scratch],
+        readOnly: [],
+        deny: [],
+        network: "none",
+        env: {},
+        who: "agent",
+        home,
+        ensembleSource: join(scratch, "no-source"),
+        appDataDir: join(scratch, "no-data"),
+        confined: true,
+      };
+      code = run(bwrap, bubblewrapArgs(policy, { program: shell, args: ["-c", "exit 0"] }));
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
     if (code === 0) return { backend: "bubblewrap", bwrap };
     reasons.push("bubblewrap is installed but cannot start (user namespaces are restricted here)");
   } else {
