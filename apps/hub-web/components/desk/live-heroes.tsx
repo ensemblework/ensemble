@@ -255,40 +255,22 @@ function Periods({ live }: { live: DeskLive }) {
 function Team({ live }: { live: DeskLive }) {
   const people = live.people;
   if (!people.length) return null;
-  const cap = 40;
-  const over = people.filter((person) => (person.capacityHours ?? 0) > cap);
-  const lead = over[0] ?? people[0]!;
-  const leadHours = lead.capacityHours ?? 0;
-  return (
-    <Shell>
-      <div className="row" style={{ alignItems: "center", gap: 16 }}>
-        <Num v={String(over.length || people.length)} size={64} color={over.length ? "var(--danger)" : "var(--ink)"} />
-        <div className="col" style={{ minWidth: 0, flex: 1 }}>
-          <span style={{ fontSize: 15, fontWeight: 650 }}>{over.length ? "over capacity" : "on the team"}</span>
-          <span className="trunc" style={{ fontSize: 12.5, color: "var(--faint)" }}>{lead.name}{lead.capacityHours != null ? ` · ${lead.capacityHours} h of ${cap}` : ""}</span>
-        </div>
-        <Ring p={Math.max(0.08, Math.min(1, leadHours / cap))} size={84} stroke={7} color={leadHours > cap ? "var(--danger)" : "var(--accent)"} glow>
-          <span className="num" style={{ fontSize: 22 }}>{leadHours || people.length}</span>
-        </Ring>
-      </div>
-      <div className="col" style={{ gap: 8 }}>
-        {people.slice(0, 6).map((person) => {
-          const hours = person.capacityHours ?? 0;
-          const hot = hours > cap;
-          return (
-            <div key={person.id} className="row gap10" style={{ minHeight: 28 }}>
-              <span className="av" style={{ background: colorFor(person.name), boxShadow: hot ? "0 0 0 2px var(--danger)" : undefined }}>{initials(person.name)}</span>
-              <span className="trunc" style={{ width: 132, fontSize: 12.5, fontWeight: 650 }}>{person.name}</span>
-              <div className="bar grow" style={{ height: 10 }}>
-                <i style={{ width: `${Math.max(8, Math.min(100, (hours / cap) * 100))}%`, background: hot ? "var(--danger)" : "var(--accent)" }} />
-              </div>
-              <span className="num" style={{ width: 36, textAlign: "right", fontSize: 16, color: hot ? "var(--danger)" : "var(--ink-2)" }}>{hours || "–"}</span>
-            </div>
-          );
-        })}
-      </div>
-    </Shell>
-  );
+  const maximum = Math.max(1, ...people.map((p) => p.capacityHours ?? 0));
+  const total = people.reduce((sum, p) => sum + (p.capacityHours ?? 0), 0);
+  return <Shell>
+    <div className="row" style={{ alignItems: "flex-end", gap: 14 }}>
+      <Num v={String(total)} size={50} unit="h" />
+      <div className="col" style={{ paddingBottom: 4, gap: 4 }}><span style={{ fontSize: 14, fontWeight: 600 }}>weekly capacity</span><span className="faint" style={{ fontSize: 12 }}>{people.length} people · available hours</span></div>
+    </div>
+    <div className="col" style={{ gap: 5 }}>
+      {people.slice(0, 5).map((person) => <div key={person.id} className="row gap10" style={{ minHeight: 28 }}>
+        <span className="av" style={{ background: colorFor(person.name) }}>{initials(person.name)}</span>
+        <span className="trunc" style={{ width: 132, fontSize: 12, fontWeight: 550 }}>{person.name}</span>
+        <div className="bar grow" style={{ height: 8 }}><i style={{ width: `${Math.max(0, (person.capacityHours ?? 0) / maximum * 100)}%`, background: colorFor(person.name) }} /></div>
+        <span style={{ width: 38, textAlign: "right", fontSize: 12 }}>{person.capacityHours == null ? "–" : `${person.capacityHours}h`}</span>
+      </div>)}
+    </div>
+  </Shell>;
 }
 
 function Reviews({ rows }: { rows: Row[] }) {
