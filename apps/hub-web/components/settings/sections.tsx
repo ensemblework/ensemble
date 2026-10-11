@@ -454,7 +454,7 @@ function CodeFolders({ settings, patch, workspace, desktop }: Props & { workspac
     }
   };
   return (
-    <div data-testid="code-folders" className="mb-1">
+    <div data-jump-label="Folders Code can use" data-testid="code-folders" className="mb-1">
       <div className="text-[13px] font-medium">Folders Code can use</div>
       <p className="mt-0.5 text-[12px] text-muted">The Code tab lists and reviews git checkouts in these folders. The terminal keeps its own list.</p>
       <div className="mt-1.5 space-y-1 font-mono text-[12px]">

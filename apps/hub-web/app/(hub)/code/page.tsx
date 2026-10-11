@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { FolderGit2, TerminalSquare } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@/components/code/terminal";
 import { useSpaceAccess } from "@/lib/access";
 import { ShareButton } from "@/components/sharing/share-dialog";
@@ -45,6 +45,13 @@ export default function CodePage() {
   const reviews = useQuery({ queryKey: ["reviews", filter, expired], queryFn: () => api.reviews(filter, expired) });
   const repos = useQuery({ queryKey: ["code-repos"], queryFn: api.codeRepos });
   const [terminal, setTerminal] = useState(false);
+  const scrolledSection = useRef<string|null>(null);
+  useEffect(() => {
+    const section = window.location.hash.slice(1);
+    if (reviews.isPending || repos.isPending || !["reviews", "local-repositories"].includes(section) || scrolledSection.current === section) return;
+    document.getElementById(section)?.scrollIntoView({ block:"start" });
+    scrolledSection.current = section;
+  }, [reviews.isPending, repos.isPending]);
   const access = useSpaceAccess();
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
   useEffect(() => {
@@ -79,7 +86,7 @@ export default function CodePage() {
           )
         }
       />
-      <div className="mb-3 flex items-center gap-3 text-[13px]">
+      <div id="reviews" className="mb-3 flex scroll-mt-4 items-center gap-3 text-[13px]">
         <select value={filter} onChange={(event) => setFilter(event.target.value as typeof filter)} className="field py-1">
           <option value="needs">Needs review</option>
           <option value="reviewed">Reviewed</option>
@@ -102,7 +109,7 @@ export default function CodePage() {
         <div>{reviews.data!.reviews.map((review) => <ReviewRow key={review.id} review={review} />)}</div>
       )}
 
-      <h2 className="mb-1 mt-10 text-[17px] font-semibold">Local repositories</h2>
+      <h2 id="local-repositories" className="mb-1 mt-10 scroll-mt-4 text-[17px] font-semibold">Local repositories</h2>
       <p className="mb-3 text-[12.5px] text-muted">
         Checkouts inside the Ensemble workspace and the folders in{" "}
         <Link href="/settings#terminal" className="underline underline-offset-2">

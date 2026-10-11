@@ -842,7 +842,8 @@ export async function readItem(
 export async function searchHub(db: Db, userId: string, q: string, limit: number, modules?: string | null) {
   const skillsOn = hasModule(modules, "skills");
   const plotsOn = hasModule(modules, "plots");
-  const [tasks, projects, people, skills, repos, artifacts, notes, plots, pages] = await Promise.all([
+  const diagramsOn = hasModule(modules, "diagrams");
+  const [tasks, projects, people, skills, repos, artifacts, notes, plots, pages, diagrams] = await Promise.all([
     db.task.findMany({
       where: {
         userId,
@@ -938,8 +939,13 @@ export async function searchHub(db: Db, userId: string, q: string, limit: number
         task: { select: { title: true } },
       },
     }),
+    diagramsOn ? db.blockDiagram.findMany({
+      where: { userId, deletedAt:null, OR:[{title:{contains:q,mode:"insensitive"}},{source:{contains:q,mode:"insensitive"}}] },
+      take:limit, orderBy:{updatedAt:"desc"}, select:{id:true,title:true,source:true,updatedAt:true},
+    }) : Promise.resolve([]),
   ]);
   const results = [
+    ...diagrams.map(diagram => ({ id:diagram.id, kind:"diagram", label:diagram.title, when:diagram.updatedAt.toISOString(), url:hubUrl(`/diagrams/${diagram.id}`), ...matchExcerpt(diagram.title.toLowerCase().includes(q.toLowerCase()) ? diagram.title : diagram.source, q), trust:"hub" as const, trustLabel:"A diagram stored in your Ensemble Hub." })),
     ...tasks.map((task) => ({
       id: task.id,
       kind: "task",
@@ -1039,7 +1045,7 @@ export async function searchHub(db: Db, userId: string, q: string, limit: number
   return {
     query: q,
     match: "substring",
-    results: results.sort((a, b) => Number(b.label.toLowerCase().includes(q.toLowerCase())) - Number(a.label.toLowerCase().includes(q.toLowerCase()))).slice(0, limit * 3),
+    results: results.sort((a, b) => (b.label.toLowerCase() === q.toLowerCase() ? 2 : Number(b.label.toLowerCase().includes(q.toLowerCase()))) - (a.label.toLowerCase() === q.toLowerCase() ? 2 : Number(a.label.toLowerCase().includes(q.toLowerCase())))).slice(0, limit * 3),
     empty: results.length === 0,
     message: results.length === 0 ? `Nothing in Ensemble matched “${q}”.` : undefined,
     notes: `${REFERENCE_NOTE} This is not semantic search.`,

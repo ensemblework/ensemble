@@ -83,7 +83,7 @@ export function FeaturesSection() {
         })}
       </div>
       <div className="mt-4 border-t border-line pt-3" data-desk-extras>
-        <div className="text-[13px] font-medium">Desk extras</div>
+        <div data-jump-label="Desk extras" className="text-[13px] font-medium">Desk extras</div>
         <p className="mt-0.5 text-[12.5px] text-muted">Optional tiles for your current profile. Turning one off hides it. The rows stay.</p>
         {DESK_EXTRAS.filter((extra) => tileFitsRole(extra.tile, deskRole(deskId ?? "default", shell.data?.onboardingTemplateId))).map((extra) => (
           <SettingRow key={extra.id} title={extra.label} description={extra.line}>

@@ -6,37 +6,17 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatBinding } from "@ensemble/shared-types";
 import { useShortcuts } from "@/lib/shortcut-store";
-import { hasModule, moduleForPath } from "@ensemble/shared-types/modules";
+import { hasModule } from "@ensemble/shared-types/modules";
 import { DESK_IDS, DESKS, MARKET_ID } from "@/components/desk/desks";
 import { api } from "@/lib/api";
 import { switchSpace } from "@/lib/spaces";
 import { plural } from "@/lib/format";
 import { isApplePlatform, modKey } from "@/lib/platform";
-import { SECTION_TAB, SETTINGS_TABS } from "../settings/url-state";
+import { findSettingsTarget, SETTINGS_DESTINATION_BY_ID } from "../settings/navigation";
+import { navigationDestinations, navigationScore } from "./navigation-destinations";
 import { useModalFocus } from "@/lib/modal-focus";
 import { SearchQuery } from "@/components/motion/search-query";
 import { cx } from "../ui";
-
-const PAGES: Array<{ href: string; label: string; hint: string }> = [
-  { href: "/today", label: "Today", hint: "Focus and proposals" },
-  { href: "/board", label: "Board", hint: "Move work by status" },
-  { href: "/needs-me", label: "Needs me", hint: "Approvals and questions" },
-  { href: "/meetings", label: "Meeting notes", hint: "Notes and recaps" },
-  { href: "/recap", label: "Weekly recap", hint: "Done, decided, slipped" },
-  { href: "/runs", label: "Runs", hint: "What the agent did" },
-  { href: "/context", label: "Context", hint: "People, projects, graph" },
-  { href: "/skills", label: "Skills", hint: "How the agent should work" },
-  { href: "/workspace", label: "Workspace", hint: "The agent queue" },
-  { href: "/code", label: "Code", hint: "Reviews and repos" },
-  { href: "/diagrams", label: "Diagrams", hint: "Draw systems and flows" },
-  { href: "/plots", label: "Plots", hint: "Chart a table in two dimensions" },
-  { href: "/metrics", label: "Metrics", hint: "Calls and cost" },
-  { href: "/settings?tab=connections", label: "Connectors", hint: "Connect Google, Microsoft, Notion, Linear and more" },
-  { href: "/connect", label: "Editors", hint: "Use Ensemble from VS Code, Cursor, Claude and other editors" },
-  { href: "/settings", label: "Settings", hint: "Account and connections" },
-  { href: "/settings#completed", label: "Completed", hint: "Finished tasks, in Settings" },
-  { href: "/settings#trash", label: "Trash", hint: "Restore deleted items, in Settings" },
-];
 
 const ACTIONS: Array<{ id: string; label: string; hint: string; run: () => void }> = [
   { id: "act-capture", label: "Quick capture", hint: "New reminder", run: () => window.dispatchEvent(new CustomEvent("ensemble:capture")) },
@@ -57,7 +37,6 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
   const spaces = useQuery({ queryKey: ["spaces"], queryFn: api.spaces, enabled: open, staleTime: 30_000 });
 
   const items = useMemo<Item[]>(() => {
-    const needle = query.trim().toLowerCase();
     const modules = shell.data?.modules;
     const actions = [
       ...ACTIONS,
@@ -101,32 +80,22 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
             }))
           : [],
       )
-      .filter((action) => !needle || `${action.label} ${action.hint}`.toLowerCase().includes(needle))
+      .filter((action) => navigationScore(query, action.label, action.hint)>0)
       .map((action) => ({
       id: action.id,
       label: action.label,
       hint: action.hint,
       run: action.run,
     }));
-    const pages = PAGES.filter((page) => {
-      const gate = moduleForPath(page.href);
-      if (gate && !hasModule(modules, gate)) return false;
-      // The owner's own pages are not there in a space shared with you.
-      if (shell.data?.space?.shared && ["/today", "/metrics", "/connect", "/marketplace", "/trash"].includes(page.href)) return false;
-      return !needle || `${page.label} ${page.hint}`.toLowerCase().includes(needle);
-    }).map((page) => ({
-      id: page.href,
-      label: page.href === "/board" && shell.data?.labels?.board ? shell.data.labels.board : page.label,
-      hint: page.hint,
-      run: () => router.push(page.href),
-    }));
-    const settings = Object.entries(SECTION_TAB).map(([anchor, tab]) => ({
-      id: `setting-${anchor}`,
-      label: ({ keys: "API keys", changes: "Assistant changes", quiet: "Quiet hours", terminal: "Terminal history", danger: "Delete account", you: "About you", "this-mac": "This computer" } as Record<string, string>)[anchor] ?? anchor[0]!.toUpperCase() + anchor.slice(1),
-      hint: `Settings · ${SETTINGS_TABS.find((row) => row.id === tab)!.label}`,
-      run: () => router.push(`/settings?tab=${tab}${anchor === "keys" || anchor === "changes" ? `&dialog=${anchor}` : `#${anchor}`}`),
-    })).filter((item) => Boolean(needle) && `${item.label} ${item.hint}`.toLowerCase().includes(needle));
-    return [...pages, ...settings, ...actions];
+    const destinations = navigationDestinations(query, { modules, guest:Boolean(shell.data?.space?.shared), template:shell.data?.activeTemplateId, boardLabel:shell.data?.labels?.board }).map(row => ({ id:row.href, label:row.label, hint:row.hint, run:()=>{
+      const url = new URL(row.href, window.location.origin);
+      if (url.href === window.location.href) {
+        const key = decodeURIComponent(url.hash.slice(1)), setting = SETTINGS_DESTINATION_BY_ID.get(key);
+        const section = setting ? document.getElementById(setting.section) : null;
+        (setting && section ? findSettingsTarget(section, setting.target) ?? section : document.getElementById(key))?.scrollIntoView({ block:"start" });
+      } else router.push(row.href);
+    } }));
+    return [...destinations, ...actions];
   }, [query, router, shell.data, spaces.data]);
 
   useEffect(() => {
