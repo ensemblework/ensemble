@@ -1,6 +1,11 @@
 import Link from "next/link";
+import { pageMetadata } from "@/lib/metadata";
 
-export const metadata = { title: "Terms of use | Ensemble" };
+export const metadata = pageMetadata({
+  path: "/terms",
+  title: "Terms of use | Ensemble",
+  description: "The terms for using Ensemble, the AI notes app and workspace for working with AI agents, during its early testing period.",
+});
 
 export default function TermsPage() {
   return (

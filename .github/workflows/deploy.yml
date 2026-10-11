@@ -164,3 +164,10 @@ jobs:
           token: ${{ secrets.VERCEL_TOKEN }}
           org-id: ${{ secrets.VERCEL_ORG_ID }}
           project-id: ${{ secrets.VERCEL_PROJECT_ID_LANDING }}
+
+      # Bing (and DuckDuckGo, Yahoo and Ecosia through it), Yandex, Seznam and Naver
+      # read IndexNow. Google reads the sitemap instead. A failed ping never fails a deploy.
+      - name: Tell search engines the pages changed (IndexNow)
+        continue-on-error: true
+        timeout-minutes: 2
+        run: node apps/landing/scripts/indexnow.mjs

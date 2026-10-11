@@ -1,7 +1,12 @@
 import Link from "next/link";
+import { pageMetadata } from "@/lib/metadata";
 import { site } from "@/lib/site";
 
-export const metadata = { title: "Privacy policy | Ensemble" };
+export const metadata = pageMetadata({
+  path: "/privacy",
+  title: "Privacy policy | Ensemble",
+  description: "How Ensemble stores, uses and protects your notes, tasks, context and model keys, and how to export or delete your data.",
+});
 
 export default function PrivacyPage() {
   return (

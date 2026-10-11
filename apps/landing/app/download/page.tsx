@@ -1,44 +1,24 @@
-import type { Metadata } from "next";
 import { CopyCode } from "@/components/copy-code";
-import { Mark, Wordmark } from "@/components/mark";
+import { Mark } from "@/components/mark";
 import { OsInstallTabs } from "@/components/os-install-tabs";
+import { SiteFooter, SiteHeader } from "@/components/site-chrome";
+import { pageMetadata } from "@/lib/metadata";
 import { afterInstallCommands, editors, HOSTED_MCP_URL, RELEASES_URL } from "@/lib/download";
 import { site } from "@/lib/site";
 
 export const dynamic = "force-static";
 
-export const metadata: Metadata = {
-  title: "Download the Ensemble CLI",
-  description: "Install the Ensemble CLI, run tasks on your computer, and connect editors to Ensemble over MCP.",
-  alternates: { canonical: "/download" },
-  openGraph: {
-    title: "Download the Ensemble CLI",
-    description: "Install the Ensemble CLI, run tasks on your computer, and connect editors to Ensemble over MCP.",
-    url: `${site.url}/download`,
-  },
-};
+const TITLE = "Download Ensemble for macOS, Windows and Linux";
+const DESCRIPTION =
+  "Install the Ensemble CLI on macOS, Windows or Linux with Homebrew, Scoop, winget, npm or a script. Run AI agent tasks in a sandbox and connect editors over MCP.";
+
+export const metadata = pageMetadata({ path: "/download", title: TITLE, description: DESCRIPTION });
 
 export default function DownloadPage() {
   return (
     <>
       <div className="grain" aria-hidden="true" />
-      <header className="nav">
-        <a href="/" className="nav-brand" aria-label="Ensemble home">
-          <Wordmark />
-        </a>
-        <nav className="nav-links" aria-label="Sections">
-          <a href="/#why">Why</a>
-          <a href="/#features">Features</a>
-          <a href="/download">Download</a>
-          <a href="/#trust">Trust</a>
-          <a href={site.repoUrl} rel="noopener">
-            GitHub
-          </a>
-        </nav>
-        <a className="btn btn-small" href={site.appUrl}>
-          Open the app
-        </a>
-      </header>
+      <SiteHeader />
 
       <main>
         <section className="download-hero">
@@ -193,19 +173,7 @@ export default function DownloadPage() {
         </section>
       </main>
 
-      <footer className="footer">
-        <Wordmark />
-        <span className="faint">An engineer and their agent, stronger together.</span>
-        <span className="footer-links">
-          <a href={site.appUrl}>App</a>
-          <a href="/download">Download</a>
-          <a href="/privacy">Privacy</a>
-          <a href="/terms">Terms</a>
-          <a href={site.repoUrl} rel="noopener">
-            GitHub
-          </a>
-        </span>
-      </footer>
+      <SiteFooter />
     </>
   );
 }

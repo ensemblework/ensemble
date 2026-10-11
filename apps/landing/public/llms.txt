@@ -1,0 +1,30 @@
+# Ensemble
+
+> Ensemble (also called Ensemble Work, at ensemblework.com) is an AI notes app and shared workspace where people and their AI agents work from the same context. It plans your day from your mail, chat, meetings and calendar, keeps your context (people, projects, notes, decisions and skills) in one place, and hands work to AI agents that ask before anything leaves.
+
+Ensemble runs in the browser at https://app.ensemblework.com and as a CLI on macOS, Windows and Linux. Accounts are free; model features use the person's own key for Gemini, OpenAI, Claude, OpenRouter, Ollama or GitHub Copilot. The source is available on GitHub under FSL-1.1-MIT.
+
+## Pages
+
+- [Home](https://ensemblework.com/): what Ensemble is, a day with it, features, and FAQ
+- [AI notes app](https://ensemblework.com/ai-notes-app): notes, meeting notes and pages that the assistant and coding agents read as context; imports from Notion and others
+- [Plan your day with AI](https://ensemblework.com/plan-your-day-with-ai): a Today page where mail, chat and meetings become proposed todos next to your calendar
+- [AI context management](https://ensemblework.com/ai-context-management): people, projects, notes and skills kept once and given to every LLM and agent over MCP
+- [Work with AI agents](https://ensemblework.com/work-with-ai-agents): a shared board, approvals, and one place where Claude Code, Codex, Cursor and Copilot ask for you
+- [Download](https://ensemblework.com/download): install the CLI and connect editors over MCP
+
+## Facts
+
+- Notes: block editor, standalone notes, task pages, meeting notes, search, Trash with undo, downloads as PDF, Word, Markdown, HTML or text
+- Imports: Notion, Linear, Jira, Trello, Asana, Todoist, ClickUp, monday.com, GitHub Issues and spreadsheets
+- Connectors (read-only): Gmail, Google Calendar, Outlook mail and calendar, Microsoft Teams, Slack, GitHub, Linear, and meeting-notes tools such as Fireflies, Fathom, Granola and Otter
+- Context for editors: a read-only MCP server; `ensemble mcp setup` configures VS Code, Cursor, Claude Code, Codex, Gemini CLI, Windsurf, Zed and others
+- Agents: Ensemble's own agent with your model key, or Claude Code with your own sign-in; tasks run in the operating system's sandbox (Seatbelt on macOS, bubblewrap or Landlock on Linux, a sandbox account on Windows), no Docker
+- Safety: connectors read; anything that leaves the workspace waits for approval; every agent action is in a hash-chained audit ledger
+
+## Optional
+
+- [Source code](https://github.com/ensemblework/ensemble)
+- [CLI on npm](https://www.npmjs.com/package/ensemblework)
+- [Privacy policy](https://ensemblework.com/privacy)
+- [Terms of use](https://ensemblework.com/terms)
