@@ -5,7 +5,7 @@
 import { ChevronRight, FileText, Pencil, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { setSidebarRail } from "@/lib/sidebar-rail";
-import { Dialog, cx } from "../ui";
+import { cx } from "../ui";
 
 export type PageLinkProps = {
   href: string;
@@ -37,7 +37,6 @@ export function PagesSection({
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
-  const [pendingDelete, setPendingDelete] = useState<PageListItem | null>(null);
   // Collapsed on every load so a long list never pushes the app's nav down. Opening a note shows its row.
   const [expanded, setExpanded] = useState(() => pathname.startsWith("/pages/"));
 
@@ -135,7 +134,7 @@ export function PagesSection({
                     className="icon-btn"
                     aria-label={`Delete ${page.title}`}
                     title="Delete"
-                    onClick={() => setPendingDelete(page)}
+                    onClick={() => onDelete(page.id)}
                   >
                     <Trash2 size={13} />
                   </button>
@@ -145,28 +144,7 @@ export function PagesSection({
           );
         })}
       </div>
-      <Dialog open={Boolean(pendingDelete)} onClose={() => setPendingDelete(null)} title="Delete this page?" width={420}>
-        <p className="text-[13.5px] leading-5 text-muted">
-          Delete “{pendingDelete?.title || "Untitled"}”? This moves the note to Trash. You can restore it there until the configured retention period expires.
-        </p>
-        <div className="mt-4 flex justify-end gap-2">
-          <button type="button" className="btn-ghost" onClick={() => setPendingDelete(null)}>
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="btn"
-            onClick={() => {
-              if (!pendingDelete) return;
-              const id = pendingDelete.id;
-              setPendingDelete(null);
-              onDelete(id);
-            }}
-          >
-            Delete page
-          </button>
-        </div>
-      </Dialog>
+
     </nav>
   );
 }

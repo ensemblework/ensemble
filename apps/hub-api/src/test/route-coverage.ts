@@ -267,7 +267,12 @@ export const linksRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>>
   "GET /api/links/open": ["happy-path", "isolation"],
 };
 
+export const workspaceSearchRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
+  "GET /api/context/search": ["happy-path", "isolation", "invalid-input"],
+};
+
 export const routeCoverage = {
+  ...workspaceSearchRouteCoverage,
   ...resourceRouteCoverage,
   ...authRouteCoverage,
   ...cliAuthRouteCoverage,

@@ -72,7 +72,7 @@ export type ThemeFavourite = {
   id: string;
   label: string;
   kind: ThemeKind;
-  source: "builtin" | "openvsx";
+  source: "builtin" | "openvsx" | "import";
 };
 
 export const ENSEMBLE_DEFAULT_ID = "builtin:ensemble-default";
@@ -123,7 +123,8 @@ export function parseOpenVsxThemeId(
   }
 }
 
-export function themeSource(id: string): "builtin" | "openvsx" | null {
+export function themeSource(id: string): "builtin" | "openvsx" | "import" | null {
+  if (id.startsWith("import:")) return "import";
   if (id.startsWith("builtin:")) return "builtin";
   if (id.startsWith("openvsx:")) return "openvsx";
   return null;

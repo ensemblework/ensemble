@@ -50,6 +50,8 @@ export function PagesNav() {
           .catch((error: Error) => toast(error.message, { tone: "error" }));
       }}
       onDelete={(id) => {
+        // The open editor owns its pending saves before the page moves to Trash.
+        if (!window.dispatchEvent(new CustomEvent("ensemble:delete-page", { detail: { id }, cancelable: true }))) return;
         void api
           .deletePage(id)
           .then(() => {

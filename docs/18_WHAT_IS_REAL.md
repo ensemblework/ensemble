@@ -121,14 +121,14 @@ In-app, not email. Schema change is `20260929180000_cowork_surfaces`.
 - **Morning brief**: Settings → Morning brief (default 08:00, on). The scheduler writes one `notifications` row per local day (`kind: morning_brief`, `channel: hub`) from the same today briefing the Context Bridge uses. The bell shows it. Quiet hours do not send it as a desktop popup.
 - **Quick capture**: `POST /api/capture`. Command-Control-Shift-U on macOS, Ctrl+Alt+Shift+U on Windows and Linux, also C in the Hub when you are not typing. The global hook is a Tauri shell at `apps/quick-capture` ([docs/20_QUICK_CAPTURE.md](20_QUICK_CAPTURE.md)). Parsing stays in hub-api.
 - **Meetings**: ambient cards on Today (not a modal), keyboard notes, confirmation before attaching notes onto the calendar event stored in Ensemble. Declining keeps them under Meeting notes, with a cross-meeting question box. **Calendar sync is read-only**, so attach does not update Google or Outlook. Voice is a TODO; there is no microphone.
-- **Ask Ensemble**: the bar in the top of every page. It searches with the existing Hub search and read helpers and links each source.
+- **Workspace search**: the top Ask Ensemble field returns direct, read-only matches from `/api/context/search`, with a one-line matching excerpt and a temporary highlight after opening. Jump to finds views and nested Settings sections.
 - **Weekly recap**: `/recap`, copy or download. Meeting rows are the per-meeting recap text.
 - **Quiet nudges**: Settings → Quiet nudges, default 14 days. Keep, snooze (7 days), done, or Trash.
 - **Shortcuts**: `packages/shared-types/src/shortcuts.ts` is the only binding list. The help sheet is `?`. Alt+Shift+T cycles starred code themes (not Ctrl+Alt+T).
 
 ## Code themes (feature-themes)
 
-The code review space has a VS Code theme picker. Built-in themes live in `@ensemble/ide-theme`. Open VSX themes are fetched through hub-api (`/api/themes/search`, `/api/themes/openvsx`) and cached under `.theme-cache` (gitignored). The choice is `ideTheme` on the user settings document, so there is no database migration. Star up to three themes; Alt+Shift+T switches between them.
+Code review and every plot code pane share a VS Code theme picker. Built-in themes live in `@ensemble/ide-theme`. Open VSX themes are fetched through hub-api (`/api/themes/search`, `/api/themes/openvsx`) and cached under `.theme-cache` (gitignored). The choice is `ideTheme` on the user settings document, so there is no database migration. Star up to three themes; Alt+Shift+T switches between them. The picker also imports compatible Marketplace VSIX packages and JSON/JSONC color files (no extension scripts run). Imported themes are cached on that browser/device, up to eight; their IDs/favorites sync but their files must be imported on another device. Plot code editing is disabled on narrow or short screens with a clear view-only message.
 
 ## OS sandbox on every system, one runtime for the CLI and the app, Claude Code as an engine (11 Oct 2026)
 
@@ -286,3 +286,9 @@ GitHub sign-in works the same way with a GitHub OAuth App (callback `http://loca
 | Settings UI | `apps/hub-web/app/(hub)/settings/page.tsx`, `components/settings/` (tabs, dialogs, sections), `components/connectors/` (store, detail, logos), `lib/api-connectors.ts` |
 | Shared encryption key | `ENSEMBLE_SECRET_KEY`, or `.ensemble/secret.key` (git-ignored, created on first use) |
 | Smoke test | `pnpm --filter @ensemble/hub-api exec tsx scripts/smoke-triage.ts` (two sample emails through live triage) |
+
+## UI polish · 11 Oct 2026
+
+Recoverable page deletion is immediate with Undo and Trash recovery. Board has one shared Ask action, one tile library button, and inline drag/keyboard ordering and removal. Tile galleries use Browse/Preview with one vertical scroll area below 980px; phone tiles grow with content, and meeting notes switch between library and reading. Verification uses the sign-in layout and a four-slot autofill/paste field. The assistant adopts the saved user message ID during streaming, preventing duplicate optimistic/saved prompts while preserving genuine repeated messages; the composer clears on send and retains a draft for the next turn.
+
+**Checked 11 Oct 2026:** 283 Hub checks, 3,948 public API checks (two provider-dependent skips), shared-types and theme package tests, all-package TypeScript checks, and the production Hub build. Browser checks covered 390 × 844 and 844 × 390 tile galleries, one scroll area, mobile Today tiles and OTP entry, direct search landing and automatic highlight removal, and desktop keyboard tile ordering.

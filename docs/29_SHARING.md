@@ -65,6 +65,7 @@ Single items use `SHARE_RULES`: each kind lists the routes it may call and which
 
 ## 3. What stays private, and how
 
+- **Workspace search** (`GET /api/context/search`): shared-space readers search the active space, respecting the existing artifact visibility and deleted-item filters. Single-item shares cannot use this workspace-wide endpoint. It is classed as `shared` through the `/api/context/*` GET rule.
 - **Settings** (`lib/settings.ts`): `loadSettings` and `saveSettings` resolve to your account in someone else's space, so the theme, models, assistant tone and page width are yours. `/api/auth/me` and `/api/shell` report your own account, not the owner's.
 - **Model keys and verification** (`lib/runtime.ts`, `lib/model-turn.ts`): every model call sends your account to the runtime. The Python runtime only uses that id for keys, pacing and host access, never for data.
 - **Connected apps** (`assistant/apps.ts`): the assistant offers no connected-app tools, reminders, syncs or repository links in a space shared with you (`guestMayUse`), so it can never read the owner's mail. Its prompt says whose space it is and that their apps are private (`assistant/state.ts`).

@@ -53,7 +53,7 @@ Progress shows as *"17 / 23 — 2 files left"*, a ring per file, and a badge in 
 
 If something else writes the file while you have unsaved typing (VS Code, the terminal), **nothing is overwritten silently**: a bar offers *Keep mine (overwrite)* or *Use the version on disk*, and your text stays on screen until you choose.
 
-The editor follows Ensemble's theme; the moon button keeps it **dark regardless**. Code is always in a coding font (Cascadia Code → Consolas, ligatures off) at its own size, whatever font and text size *Settings → Appearance* sets for the rest of Ensemble.
+The editor has a shared theme picker with plot code panes (`components/code/ide-theme.tsx`). Built-in and Open VSX color themes persist in account settings; compatible Marketplace VSIX packages and JSON/JSONC color files can be imported locally. Imports read only bounded color data, never extension scripts; included files resolve within the package. Imported files stay on that browser/device and must be imported again on another device. Code is always in a coding font (Cascadia Code → Consolas, ligatures off) at its own size, whatever font and text size *Settings → Appearance* sets for the rest of Ensemble.
 
 ---
 

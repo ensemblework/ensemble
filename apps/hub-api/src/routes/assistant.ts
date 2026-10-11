@@ -330,7 +330,7 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
     };
     const abort = new AbortController();
     request.raw.on("close", () => abort.abort());
-    send("status", { conversationId: conversation.id });
+    send("status", { conversationId: conversation.id, userMessageId: userMessage.id });
 
     const tierName = body.tier ?? settings.assistant.defaultTier;
     const tierSetting = settings.models[tierName];

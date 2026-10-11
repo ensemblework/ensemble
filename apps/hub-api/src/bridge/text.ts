@@ -35,6 +35,16 @@ export function excerpt(text: string, max = 480): { excerpt: string; truncated: 
   return { excerpt: `${flat.slice(0, max)}…`, truncated: true };
 }
 
+/** A short excerpt centered on a literal match, even deep in a document. */
+export function matchExcerpt(text: string, query: string, max = 180): { excerpt: string; truncated: boolean } {
+  const flat = text.replace(/\s+/g, " ").trim();
+  const needle = query.replace(/\s+/g, " ").trim();
+  const match = needle ? flat.toLowerCase().indexOf(needle.toLowerCase()) : -1;
+  const start = Math.max(0, match - 55);
+  const end = Math.min(flat.length, Math.max(start + max, match + needle.length));
+  return { excerpt: `${start ? "…" : ""}${flat.slice(start, end)}${end < flat.length ? "…" : ""}`, truncated: start > 0 || end < flat.length };
+}
+
 export function pageText(text: string, offset: number, limit: number): {
   text: string;
   offset: number;

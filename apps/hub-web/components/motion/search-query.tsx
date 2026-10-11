@@ -93,7 +93,8 @@ export function SearchQuery({
     const place = () => {
       const rect = anchor.current?.getBoundingClientRect();
       if (!rect) return;
-      setPanelStyle({ position: "fixed", top: rect.bottom + 6, left: rect.left, width: rect.width, zIndex: 60 });
+      const phone = window.innerWidth < 768;
+      setPanelStyle({ position: "fixed", top: rect.bottom + 6, left: phone ? 8 : rect.left, width: phone ? window.innerWidth - 16 : rect.width, maxHeight: Math.max(120, Math.min(420, window.innerHeight - rect.bottom - 20)), zIndex: 60 });
     };
     place();
     window.addEventListener("resize", place);
