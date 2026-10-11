@@ -58,8 +58,8 @@ const CLI_POINTS: { icon: IconName; title: string; body: string }[] = [
   },
   {
     icon: "chip",
-    title: "Your own Claude Code",
-    body: "Hand a task to Claude Code with your own Claude sign-in, or to Ensemble's agent with a model key. Ensemble never sees the sign-in, and the same folder, git and internet rules apply to both.",
+    title: "Your own Claude Code, Codex or Cursor",
+    body: "Hand a task to Claude Code, Codex (its CLI or the ChatGPT app) or Cursor's agent with your own sign-in, or to Ensemble's agent with a model key, under the same folder, git and internet rules. Or open it in the agent's own app or a terminal and press Send there. Ensemble never sees a sign-in.",
   },
   {
     icon: "hand",
@@ -69,7 +69,7 @@ const CLI_POINTS: { icon: IconName; title: string; body: string }[] = [
   {
     icon: "board",
     title: "Run unattended",
-    body: "In a folder you trust, it works without asking, takes its recommended option at each decision, and lists every decision at the end. Paths outside the folder are refused, never fatal.",
+    body: "In a folder you trust, it works without asking, takes its recommended option at each decision, and lists every decision at the end. Outside the folder it may read, not write, unless you allow more; a refused path is never fatal.",
   },
 ];
 
@@ -273,9 +273,10 @@ export default function Home() {
               Every agent asks <em>in one place.</em>
             </h2>
             <p className="section-lede">
-              Claude Code, Codex, GitHub Copilot and Cursor hold their permission prompts and questions open and send them to
-              Ensemble, with their own options and room for your own answer. Answer once, for the session, or always, from the web,
-              your phone or the terminal. If nobody answers, the tool asks as usual. The hook never allows on its own.
+              For the tasks Ensemble hands them, Claude Code, Codex, GitHub Copilot and Cursor send their permission prompts and
+              questions to Ensemble, with their own options and room for your own answer. Answer from the web, your phone or the
+              terminal, or in the tool itself: in Claude both stay open and the first answer counts. Folders you trust in Ensemble
+              are trusted in those tools too. The hook never allows on its own.
             </p>
           </div>
           <div className="prompt-card" aria-label="An example permission prompt from an editor agent">

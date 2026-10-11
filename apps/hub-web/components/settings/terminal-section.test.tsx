@@ -25,15 +25,17 @@ test("agent limits and quiet-hour fields have contextual accessible labels", asy
   document.body.appendChild(host);
   const root = createRoot(host);
   try {
-    await act(async () => root.render(<>
+    // The trust-sharing row asks this computer whether it can share trust; with no answer it stays hidden.
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, enabled: false } } });
+    await act(async () => root.render(<QueryClientProvider client={client}>
       <AutonomySection settings={SETTINGS} patch={() => {}} />
       <OrchestrationSection settings={SETTINGS} patch={() => {}} />
       <QuietHoursSection settings={SETTINGS} patch={() => {}} />
-    </>));
+    </QueryClientProvider>));
     for (const input of host.querySelectorAll("input,select")) {
       assert.ok(input.getAttribute("aria-label") || input.getAttribute("aria-labelledby"), input.outerHTML);
     }
-    for (const name of ["Daily high-risk write limit", "Tasks that run at once", "Quiet hours start", "Quiet hours end"]) {
+    for (const name of ["Daily high-risk write limit", "Tasks that run at once", "Outside the work folder", "Quiet hours start", "Quiet hours end"]) {
       assert.ok(host.querySelector(`[aria-label="${name}"]`), name);
     }
   } finally {

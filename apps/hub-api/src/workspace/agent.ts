@@ -29,11 +29,14 @@ import { flagPlanted } from "./planted.js";
 import { gitHardening, GuardError, resolveWorkFolder, sandboxAvailable, sandboxRefusal, within, workspaceRoot } from "./guard.js";
 import { capabilities, prepareNetwork } from "./sandbox/spawn.js";
 import { runClaudeCode } from "./engines/claude-code.js";
+import { runCodex } from "./engines/codex.js";
+import { runCursor } from "./engines/cursor.js";
 import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
 import { runCommand } from "./runner.js";
 import { interruptionMessage } from "./lifecycle.js";
 import { appendLive, dropLive } from "./live-log.js";
-import { checkModeTrust, isFolderTrusted, pathCovers, PATH_RULE_SOURCE, PATH_RULE_TOOL, REVIEW_MESSAGE, rulesForJob, runModeOf, TRUST_TOOL, UNATTENDED_MESSAGE, type SandboxStrength } from "./trust.js";
+import { checkModeTrust, isFolderTrusted, outsideAccessOf, pathCovers, PATH_RULE_SOURCE, PATH_RULE_TOOL, REVIEW_MESSAGE, rulesForJob, runModeOf, TRUST_TOOL, UNATTENDED_MESSAGE, type SandboxStrength } from "./trust.js";
+import { trustChanged } from "./trust-share.js";
 import { askPerson, chatSpecs, refTips, responsesSpecs, runTool, toolSpecs, undoUnapprovedCommits, type JobContext } from "./tools.js";
 
 export interface JobControl {
@@ -126,7 +129,11 @@ ${limits}`;
   const askCommit = ctx.job.askBeforePublish && ctx.job.delivery !== "local" && !ctx.job.unattended;
   const mode = runModeOf(ctx.job);
   const outsideText = ctx.sandboxed
-    ? "Paths outside the folder are refused (the sandbox is on); carry on inside it."
+    ? ctx.outsideAccess === "read-write"
+      ? "Paths outside the folder may be read and written when the task needs them (the person allows it); keys and app data are still refused."
+      : ctx.outsideAccess === "read"
+        ? "Paths outside the folder may be read when the task needs them, not written (the sandbox is on); keys and app data are still refused."
+        : "Paths outside the folder are refused (the sandbox is on); carry on inside it."
     : "Paths outside the folder may be used without asking when the task needs them (the sandbox is off); keys, app data and system folders are still refused.";
   const modeText =
     ctx.accessMode === "review"
@@ -135,7 +142,7 @@ ${limits}`;
         ? `Run unattended: nobody is watching and nobody will answer. Commands and edits inside the folder run without approval. ${outsideText} When you face a decision, call ask_user with options and your recommended one; it returns at once and you continue with the recommended option. In your finish summary, list every decision you made and why under “Decisions I made”.`
         : mode === "review"
           ? `Review only: commands and edits inside the folder run without asking. ${outsideText} Do not ask for permission; ask only real decisions (an unclear requirement, a choice between approaches) with ask_user, giving 2–5 options and the one you recommend.`
-          : "Ask: commands and edits may wait for the person's approval unless the folder is trusted; a path outside the folder asks first. When you need a decision, use ask_user with 2–5 options and the one you recommend.";
+          : `Ask: commands and edits may wait for the person's approval unless the folder is trusted; ${ctx.sandboxed && ctx.outsideAccess !== "none" ? `outside the folder, ${ctx.outsideAccess === "read-write" ? "reading and writing go ahead" : "reading goes ahead and writing asks first"}` : "a path outside the folder asks first"}. When you need a decision, use ask_user with 2–5 options and the one you recommend.`;
   return `You are Ensemble's coding agent, working for ${name} on one task from their board.
 
 Where you work: ${ctx.root}
@@ -177,7 +184,15 @@ function enginePrompt(ctx: JobContext, name: string, task: string): string {
   return [
     `You are working for ${name} on a task from their Ensemble board, in ${ctx.root}.`,
     `Rules (Ensemble checks every tool call against them; a refusal is the run's setting, not an error to work around):`,
-    `- Work inside this folder. ${ctx.sandboxed ? "Paths outside it are refused." : "Use paths outside it only when the task needs them; keys and app data are always refused."}`,
+    `- Work inside this folder. ${
+      ctx.sandboxed
+        ? ctx.outsideAccess === "read-write"
+          ? "You may read and write paths outside it when the task needs them."
+          : ctx.outsideAccess === "read"
+            ? "You may read paths outside it, not change them."
+            : "Paths outside it are refused."
+        : "Use paths outside it only when the task needs them."
+    } Keys and app data are always refused.`,
     `- Internet: ${ctx.network ? "on" : "off"}.`,
     `- Git: ${git}`,
     `- ${modeText}`,
@@ -404,6 +419,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
     root: "",
     sandboxed,
     sandboxName,
+    outsideAccess: outsideAccessOf(job.context) ?? settings.orchestration.outsideAccess,
     strength,
     network: job.networkAccess,
     signal: control.signal,
@@ -493,6 +509,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
       await prisma.decisionRule.create({
         data: { userId, source: PATH_RULE_SOURCE, toolName: PATH_RULE_TOOL, pattern: folder, decision: "allow", sessionId: null },
       });
+      trustChanged(prisma);
       await readTrust();
     } else if (answer.answer === fallback) {
       job.unattended = false;
@@ -540,17 +557,19 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
     ];
     await ctx.progress("Thinking");
 
-    // Another coding agent as the engine (the person's own Claude Code): its tool calls are judged by this run's rules.
-    const engine = job.kind === "code" && job.provider === "claude-code";
+    // Another coding agent as the engine (the person's own Claude Code or Codex): its tool calls are judged by this run's rules.
+    const engine = job.kind === "code" && (job.provider === "claude-code" || job.provider === "codex" || job.provider === "cursor-agent");
+    const engineName = job.provider === "codex" ? "Codex" : job.provider === "cursor-agent" ? "Cursor" : "Claude Code";
     if (engine) {
       // Local only: a commit made any way (a script, say) is undone at the end. Commits the run may make were judged as they happened.
       const watch = job.delivery === "local" ? await refTips(ctx) : null;
-      const ran = await runClaudeCode(ctx, {
-        prompt: enginePrompt(ctx, user?.name || "the person", await brief(app, ctx, settings)),
-        model: job.model,
-        maxTurns: job.maxTurns,
-        stopCheck,
-      });
+      const enginePromptText = enginePrompt(ctx, user?.name || "the person", await brief(app, ctx, settings));
+      const ran =
+        job.provider === "codex"
+          ? await runCodex(ctx, { prompt: enginePromptText, model: job.model, stopCheck })
+          : job.provider === "cursor-agent"
+            ? await runCursor(ctx, { prompt: enginePromptText, model: job.model, stopCheck })
+            : await runClaudeCode(ctx, { prompt: enginePromptText, model: job.model, maxTurns: job.maxTurns, stopCheck });
       counts.turns = ran.turns;
       counts.tools = ran.toolCalls;
       counts.tokensIn = ran.tokensIn;
@@ -560,7 +579,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
         kind: "model.call",
         taskId: job.taskId,
         runId: run.id,
-        meta: { provider: "claude-code", model: ran.model || job.model, purpose: "Agent coding (Claude Code)", tokensIn: ran.tokensIn, tokensOut: ran.tokensOut, estimatedUsd: ran.costUsd, title: job.task.title },
+        meta: { provider: job.provider, model: ran.model || job.model, purpose: `Agent coding (${engineName})`, tokensIn: ran.tokensIn, tokensOut: ran.tokensOut, estimatedUsd: ran.costUsd, title: job.task.title },
       });
       const undone = await undoUnapprovedCommits(ctx, watch);
       if (undone) await ctx.event("commit_undone", { note: undone });
@@ -569,9 +588,9 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
         const pushed = await runTool(ctx, "run_command", { command: "git push" });
         await ctx.event("tool", { name: "push", ok: pushed.ok, summary: pushed.summary });
       }
-      finalText = ran.text.trim() || "Claude Code finished.";
+      finalText = ran.text.trim() || `${engineName} finished.`;
       await prisma.runStep.create({
-        data: { runId: run.id, index: 0, title: "Claude Code", status: "done", output: truncateText(finalText, 8000), model: ran.model ?? job.model, tokensIn: ran.tokensIn, tokensOut: ran.tokensOut, startedAt: new Date(), endedAt: new Date() },
+        data: { runId: run.id, index: 0, title: engineName, status: "done", output: truncateText(finalText, 8000), model: ran.model ?? job.model, tokensIn: ran.tokensIn, tokensOut: ran.tokensOut, startedAt: new Date(), endedAt: new Date() },
       });
     }
 

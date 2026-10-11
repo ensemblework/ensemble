@@ -12,12 +12,14 @@
  *   only decision questions reach the person. Needs a trusted folder.
  * - Run unattended (`unattended` flag): nothing asks; decisions are made by the
  *   agent and reported. Needs a trusted folder.
- * Outside the folder, the sandbox decides. With the OS sandbox on, the folder
- * is the boundary: in Review only and Run unattended a path outside it is
- * refused back to the model (the run continues), and in Ask it is a question.
- * With the sandbox off the person chose to run directly, so Review only and
- * Run unattended use outside paths without asking; Ask still asks. Secrets,
- * app data and Ensemble's own code stay refused either way (`outsideRefusal`).
+ * Outside the folder, the sandbox and the person's setting decide. With the OS
+ * sandbox on, Settings → "Outside the work folder" (read only by default, or
+ * read and write, or no access) says what goes ahead without asking; the rest
+ * asks in Ask and is refused back to the model in Review only and Run
+ * unattended (the run continues). With the sandbox off the person chose to run
+ * directly, so Review only and Run unattended use outside paths without
+ * asking; Ask still asks. Secrets, app data and Ensemble's own code stay
+ * refused either way (`outsideRefusal`).
  * `review` is the older read-only grant (no writes, no network), kept for a
  * folder shared read-only from a paired computer.
  */
@@ -143,15 +145,23 @@ export function commandGate(input: {
   strength?: SandboxStrength;
   /** The OS sandbox is on for this run. Unset means on. */
   sandboxed?: boolean;
+  /** For an outside path: whether it would be written, not only read. */
+  outsideWrite?: boolean;
+  /** Settings → outside the work folder, for sandboxed runs. Unset means no access. */
+  outsideAccess?: "none" | "read" | "read-write";
 }): GateResult {
   const strength = input.strength ?? "strong";
   if (input.unattended && (!input.trusted || strength === "ask")) return "block";
   const free = input.trusted && (input.unattended || input.accessMode === "auto");
   if (!input.inside || input.action === "outside") {
-    if (!free) return "prompt";
-    // Review only and Run unattended never ask. Sandboxed, the folder is the boundary;
-    // unsandboxed, the person chose to run directly and outside paths go ahead.
-    return input.sandboxed === false ? "allow" : "block";
+    if (input.accessMode === "review" && input.outsideWrite) return "block";
+    // Unsandboxed, the person chose to run directly: Review only and Run unattended go ahead, Ask asks.
+    if (input.sandboxed === false) return free ? "allow" : "prompt";
+    // Sandboxed, the person's outside-folder setting says what goes ahead without asking.
+    const access = input.outsideAccess ?? "none";
+    if (access === "read-write" || (access === "read" && !input.outsideWrite)) return "allow";
+    // Anything else asks in Ask, and is refused (the run continues) in Review only and Run unattended.
+    return free ? "block" : "prompt";
   }
   if (input.accessMode === "review") {
     // Read-only: never a write, never the network. Commands run under a read-only grant.
@@ -170,3 +180,11 @@ export function commandGate(input: {
 
 /** The tool name on a "trust this folder?" question, so a phone answer to it is treated as a trust grant. */
 export const TRUST_TOOL = "trust";
+
+export type OutsideAccess = "none" | "read" | "read-write";
+
+/** The outside-folder choice a run started with (kept on the job's context), if any. */
+export function outsideAccessOf(context: unknown): OutsideAccess | null {
+  const value = typeof context === "object" && context !== null ? (context as { outsideAccess?: unknown }).outsideAccess : undefined;
+  return value === "none" || value === "read" || value === "read-write" ? value : null;
+}

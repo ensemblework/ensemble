@@ -12,6 +12,7 @@ import { startAgentQueue } from "./workspace/worker.js";
 import { startRemote } from "./remote/loop.js";
 import { prepareSandbox, releaseSandbox } from "./workspace/sandbox/spawn.js";
 import { setLocalPort } from "./workspace/engines/registry.js";
+import { trustChanged } from "./workspace/trust-share.js";
 import { ensureDesktopUser } from "./lib/desktop-user.js";
 import { upgradeCodeFolders } from "./lib/code-folders.js";
 import { writeDiscoveryFile } from "./lib/desktop-discovery-file.js";
@@ -97,6 +98,8 @@ export async function startHub(): Promise<HubServer> {
   const bound = app.server.address();
   const port = bound && typeof bound === "object" ? bound.port : env.HUB_API_PORT;
   setLocalPort(port);
+  // Folders trusted here are trusted in the person's other AI tools too (on their own computer only).
+  trustChanged(prisma, app.log);
   const token = process.env.ENSEMBLE_DESKTOP_TOKEN;
   if (desktop && token) {
     const file = writeDiscoveryFile(port, token);

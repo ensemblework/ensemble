@@ -96,6 +96,26 @@ test("with the sandbox off, Review only and Run unattended use outside paths wit
   assert.equal(commandGate({ ...free, unattended: true, trusted: false, sandboxed: false }), "block");
 });
 
+test("sandboxed: the outside-folder setting says what goes ahead (read only by default)", () => {
+  const outside = { trusted: true, silentWorkspace: false, explicitTrust: false, inside: false, action: "outside" as const, sandboxed: true };
+  const free = { ...outside, unattended: true, accessMode: "read-write" as const };
+  const ask = { ...outside, unattended: false, accessMode: "read-write" as const };
+  // Read only (default): reading goes ahead in every mode; writing asks in Ask and is refused when nobody answers.
+  assert.equal(commandGate({ ...free, outsideAccess: "read", outsideWrite: false }), "allow");
+  assert.equal(commandGate({ ...free, outsideAccess: "read", outsideWrite: true }), "block");
+  assert.equal(commandGate({ ...ask, outsideAccess: "read", outsideWrite: false }), "allow");
+  assert.equal(commandGate({ ...ask, outsideAccess: "read", outsideWrite: true }), "prompt");
+  // Read and write: both go ahead.
+  assert.equal(commandGate({ ...free, outsideAccess: "read-write", outsideWrite: true }), "allow");
+  // No access: the folder is the edge.
+  assert.equal(commandGate({ ...free, outsideAccess: "none", outsideWrite: false }), "block");
+  assert.equal(commandGate({ ...ask, outsideAccess: "none", outsideWrite: false }), "prompt");
+  // A read-only run never writes outside, whatever the setting.
+  assert.equal(commandGate({ ...ask, accessMode: "review", outsideAccess: "read-write", outsideWrite: true }), "block");
+  // Unsandboxed runs ignore the setting.
+  assert.equal(commandGate({ ...free, sandboxed: false, outsideAccess: "none", outsideWrite: true }), "allow");
+});
+
 test("read-only never writes and never uses the network", () => {
   const base = { trusted: true, silentWorkspace: true, explicitTrust: true, unattended: false, accessMode: "review" as const, inside: true };
   assert.equal(commandGate({ ...base, action: "command" }), "allow");

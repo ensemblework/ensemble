@@ -116,9 +116,15 @@ test("assign → Needs me → answer → review → accept → push, plus cancel
     assert.equal(git(source, "show", `${accepted.body.branch}:hello.txt`), "hello, world");
     assert.equal(git(source, "show", "main:hello.txt"), "hello", "main is never pushed");
 
-    // ── an outside path can be allowed for this run, never "always" ──────
+    // ── outside the folder, reading goes ahead by default (Read only) ──────
+    const readTask = await newTask(side, "[outside] Read /etc");
+    const read = await assign(side, { taskId: readTask, delivery: "local" });
+    assert.equal(read.status, 201, JSON.stringify(read.body));
+    await waitStatus(side, read.body.jobId!, ["succeeded"]);
+
+    // ── with No access, an outside path asks, and is allowed for this run, never "always" ──────
     const outsideTask = await newTask(side, "[outside] Peek at /etc");
-    const outside = await assign(side, { taskId: outsideTask, delivery: "local" });
+    const outside = await assign(side, { taskId: outsideTask, delivery: "local", outsideAccess: "none" });
     assert.equal(outside.status, 201, JSON.stringify(outside.body));
     const outsideId = outside.body.jobId!;
     const ask = await pendingFor(side, outsideId);
