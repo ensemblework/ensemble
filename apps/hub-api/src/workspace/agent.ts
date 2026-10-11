@@ -32,7 +32,7 @@ import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js"
 import { runCommand } from "./runner.js";
 import { interruptionMessage } from "./lifecycle.js";
 import { appendLive, dropLive } from "./live-log.js";
-import { checkUnattended, isFolderTrusted, pathCovers, PATH_RULE_SOURCE, PATH_RULE_TOOL, rulesForJob, UNATTENDED_MESSAGE, type SandboxStrength } from "./trust.js";
+import { checkModeTrust, isFolderTrusted, pathCovers, PATH_RULE_SOURCE, PATH_RULE_TOOL, REVIEW_MESSAGE, rulesForJob, runModeOf, TRUST_TOOL, UNATTENDED_MESSAGE, type SandboxStrength } from "./trust.js";
 import { askPerson, chatSpecs, responsesSpecs, runTool, toolSpecs, type JobContext } from "./tools.js";
 
 export interface JobControl {
@@ -118,17 +118,28 @@ ${limits}`;
   }
   const delivery =
     ctx.job.delivery === "push"
-      ? `You may commit and push${ctx.chosenBranch ? ` to ${ctx.chosenBranch}` : " the current branch"}. Never force-push, never delete branches.`
+      ? `You may commit and push ${ctx.runBranch ? `branch ${ctx.runBranch}` : "the current branch"}. Never force-push, never delete branches.`
       : ctx.job.delivery === "commit"
         ? "You may commit locally. You may not push."
-        : "You may not commit or push. Leave your changes uncommitted in the folder.";
+        : "You may not commit or push, and that includes merge, rebase, cherry-pick, revert and tag. Leave your changes uncommitted in the folder. A commit made any other way, for example by a script, is undone.";
+  const askCommit = ctx.job.askBeforePublish && ctx.job.delivery !== "local" && !ctx.job.unattended;
+  const mode = runModeOf(ctx.job);
+  const modeText =
+    ctx.accessMode === "review"
+      ? "Read-only: you may read and run commands, but not change files or use the network. Anything that would write is refused."
+      : mode === "unattended"
+        ? "Run unattended: nobody is watching and nobody will answer. Commands and edits inside the folder run without approval. Paths outside the folder are refused. When you face a decision, call ask_user with options and your recommended one; it returns at once and you continue with the recommended option. In your finish summary, list every decision you made and why under “Decisions I made”."
+        : mode === "review"
+          ? "Review only: commands and edits inside the folder run without asking. Paths outside the folder are refused. Do not ask for permission; ask only real decisions (an unclear requirement, a choice between approaches) with ask_user, giving 2–5 options and the one you recommend."
+          : "Ask: commands and edits may wait for the person's approval unless the folder is trusted. When you need a decision, use ask_user with 2–5 options and the one you recommend.";
   return `You are Ensemble's coding agent, working for ${name} on one task from their board.
 
 Where you work: ${ctx.root}
 - File tools and commands only reach inside this folder. Paths are relative to it.
 - ${ctx.sandboxed ? "Commands run in a macOS sandbox: writes outside the folder, reading keys and credentials, and connecting to localhost are blocked." : "Commands run directly on the person's computer, not in a sandbox. Stay inside the folder."}
 - Network: ${ctx.network ? "on" : "off"}.
-- Git: ${delivery}${ctx.job.askBeforePublish && ctx.job.delivery !== "local" ? " Each commit waits for approval on Needs me. A push is fast-forward only, to this run's own branch, and Ensemble performs it." : " A push, if this task allows one, is fast-forward only to this run's own branch, and Ensemble performs it."}
+- Mode: ${modeText}
+- Git: ${delivery}${askCommit ? " Each commit waits for the person's approval on Needs me." : ""}${ctx.job.delivery === "push" ? " A push is fast-forward only, to this run's own branch, and Ensemble performs it." : ""}
 - Credentials: you have none. Ensemble may clone and push with the person's sign-in from outside the sandbox. You cannot read that token, and a command that prints the environment will not show it.
 
 How to work:
@@ -138,7 +149,7 @@ How to work:
 - A refusal from a tool is policy, not a bug. Do not try another route to the same thing. Mention it in your summary.
 - Do not touch anything outside the task. Do not change git config or remotes.
 - If the task asks for an analysis or a report, save it with write_page as well.
-- If only the person can make a decision that blocks you, call ask_user with 2–5 concrete options.
+- A refused git command is the run's git permission: finish without that step and say so.
 - End with finish(summary): what changed (files), what you ran and the results, and anything left open.
 
 ${limits}`;
@@ -308,7 +319,10 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
   const user = await prisma.user.findUnique({ where: { id: userId }, select: { name: true } });
   const started = Date.now();
   const activityId = `job:${job.id}`;
-  const deadline = started + job.maxMinutes * 60_000;
+  // Minutes count working time: time spent waiting on Needs me does not use them up.
+  let waited = 0;
+  const budget = job.maxMinutes * 60_000;
+  const remainingMs = () => budget - (Date.now() - started - waited);
 
   const run = await prisma.run.create({
     data: {
@@ -355,7 +369,8 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
     trusted: true,
     explicitTrust: false,
     silentWorkspace: settings.orchestration.runWithoutAsking,
-    accessMode: job.accessMode === "review" ? "review" : "read-write",
+    accessMode: job.accessMode === "review" ? "review" : job.accessMode === "auto" ? "auto" : "read-write",
+    decisions: [],
     runBranch: "",
     blockedOutside: [],
     touched: new Set(),
@@ -373,7 +388,15 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
     async event(kind, data) {
       await prisma.workspaceEvent.create({ data: { jobId: job.id, kind, data: data as never } });
     },
-    waitForPerson: control.waitForPerson,
+    waitForPerson: async (work) => {
+      const from = Date.now();
+      try {
+        return await control.waitForPerson(work);
+      } finally {
+        waited += Date.now() - from;
+      }
+    },
+    remainingMs,
   };
 
   let outcome: "success" | "failed" | "cancelled" | "blocked" | "interrupted" = "failed";
@@ -409,15 +432,17 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
     if (job.kind !== "code" || !ctx.root) return;
     const wasTrusted = ctx.trusted;
     await readTrust();
-    const unattended = checkUnattended({ unattended: job.unattended, trusted: ctx.trusted });
-    if (!unattended) return;
+    const refused = checkModeTrust({ accessMode: ctx.accessMode, unattended: job.unattended, trusted: ctx.trusted });
+    if (!refused) return;
     if (!starting && wasTrusted) await ctx.event("trust_revoked", { root: ctx.root });
     await ctx.progress(starting ? "Waiting: this folder is not trusted" : "Paused: trust for this folder was removed");
+    const message = job.unattended ? UNATTENDED_MESSAGE : REVIEW_MESSAGE;
+    const fallback = job.unattended ? "Turn off Run unattended" : "Switch to Ask";
     const answer = await askPerson(ctx, {
       event: "question",
-      toolName: "Question",
-      title: starting ? UNATTENDED_MESSAGE : `Trust for this folder was removed while the task ran unattended. ${UNATTENDED_MESSAGE}`,
-      options: ["Trust this folder", "Turn off Run unattended"],
+      toolName: TRUST_TOOL,
+      title: starting ? message : `Trust for this folder was removed while the task ran. ${message}`,
+      options: ["Trust this folder", fallback],
       allowCustom: false,
     });
     if (answer.answer === "Trust this folder") {
@@ -426,11 +451,13 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
         data: { userId, source: PATH_RULE_SOURCE, toolName: PATH_RULE_TOOL, pattern: folder, decision: "allow", sessionId: null },
       });
       await readTrust();
-    } else if (answer.answer === "Turn off Run unattended") {
+    } else if (answer.answer === fallback) {
       job.unattended = false;
-      await prisma.workspaceJob.update({ where: { id: job.id }, data: { unattended: false } });
+      job.accessMode = ctx.accessMode === "review" ? "review" : "read-write";
+      ctx.accessMode = ctx.accessMode === "review" ? "review" : "read-write";
+      await prisma.workspaceJob.update({ where: { id: job.id }, data: { unattended: false, accessMode: job.accessMode } });
     } else {
-      throw unattended;
+      throw refused;
     }
   };
 
@@ -471,7 +498,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
       await stopCheck();
       if (turn > 0) await ensureTrust(false);
       if (turn >= job.maxTurns) throw new LimitReached(`Reached the limit of ${job.maxTurns} model turns.`);
-      if (Date.now() > deadline) throw new LimitReached(`Reached the ${job.maxMinutes}-minute limit.`);
+      if (remainingMs() <= 0) throw new LimitReached(`Reached the ${job.maxMinutes}-minute limit.`);
       await heartbeat(redis, userId, activityId);
       const stepStarted = new Date();
       const ask = () =>
@@ -624,7 +651,10 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
   const blockedNote = ctx.blockedOutside.length
     ? `Blocked outside the trusted folder: ${[...new Set(ctx.blockedOutside)].join(", ")}.`
     : "";
-  const summary = [finalText || (outcome === "success" ? "Done." : error ?? ""), blockedNote].filter(Boolean).join("\n");
+  const decided = ctx.decisions?.length
+    ? `Decisions it made without asking (unattended):\n${ctx.decisions.map((row) => `- ${row.question} → ${row.recommended ?? "its own choice (see above)"}`).join("\n")}`
+    : "";
+  const summary = [finalText || (outcome === "success" ? "Done." : error ?? ""), blockedNote, decided].filter(Boolean).join("\n");
   let reviewId: string | null = null;
   let changes = "";
   const wrapCtx = { ...ctx, signal: new AbortController().signal };
@@ -695,7 +725,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
 
   const taskStatus =
     outcome === "success"
-      ? job.markDone && !reviewId
+      ? job.markDone
         ? "done"
         : "waiting_approval"
       : outcome === "cancelled"

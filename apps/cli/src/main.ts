@@ -1,3 +1,4 @@
+import { answerFor, answerPending, formatPending, listPending, listTrusted, trustFolder, untrustFolder, webApprovals } from "./approvals.js";
 import type { ChildProcess } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
@@ -52,6 +53,9 @@ Usage:
   ensemble runner [start] [--foreground] | stop | restart | status | logs [-f] | install | uninstall
   ensemble folders [list] | add <path> [--label L] [--read-only] | remove <label>
   ensemble keys [list] | set <provider> | remove <provider>
+  ensemble needs [list] | answer <n> <allow|deny|option number|"answer">
+  ensemble trust [list] | add [path] | remove <path>
+  ensemble approvals [status] | on | off
   ensemble doctor
   ensemble update
   ensemble version | --version | --help`;
@@ -64,6 +68,9 @@ const HELP_BY_COMMAND: Record<string, string> = {
   runner: "Usage: ensemble runner [start] [--foreground] | stop | restart | status | logs [-f] | install | uninstall",
   folders: "Usage: ensemble folders [list] | add <path> [--label L] [--read-only] | remove <label>",
   keys: "Usage: ensemble keys [list] | set <provider> | remove <provider>",
+  needs: "Usage: ensemble needs [list] | answer <n> <allow|deny|option number|\"answer\">\nQuestions and approvals waiting on this computer, including pushes and folder trust.",
+  trust: "Usage: ensemble trust [list] | add [path] | remove <path>\nTrusted folders on this computer. Review only and Run unattended need one; Ensemble's own workspace is always trusted.",
+  approvals: "Usage: ensemble approvals [status] | on | off\nOn (default): you can approve anything for this computer from the web or phone, and the mode, internet and limits chosen there apply here.",
   doctor: "Usage: ensemble doctor",
   update: "Usage: ensemble update",
 };
@@ -475,6 +482,68 @@ async function commandKeys(args: string[]): Promise<void> {
   console.log(`${subcommand === "set" ? "Saved" : "Removed"} ${result.positionals[0]}.`);
 }
 
+async function commandNeeds(args: string[]): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) return void console.log(HELP_BY_COMMAND.needs);
+  const subcommand = args[0] && !args[0].startsWith("-") ? args[0] : "list";
+  if (!["list", "answer"].includes(subcommand)) throw new Error(HELP_BY_COMMAND.needs);
+  const sidecarDir = resolveSidecarDir(import.meta.url);
+  if (!(await sidecarAvailable(sidecarDir))) throw new Error(NO_RUNNER);
+  if (subcommand === "list") {
+    const rows = await withAdminApi({ sidecarDir, run: listPending });
+    console.log(formatPending(rows));
+    return;
+  }
+  const [number, ...words] = args.slice(1);
+  if (!number || !words.length) throw new Error(HELP_BY_COMMAND.needs);
+  await withAdminApi({
+    sidecarDir,
+    run: async (discovery) => {
+      const rows = await listPending(discovery);
+      const row = rows[Number(number) - 1] ?? rows.find((item) => item.id === number);
+      if (!row) throw new Error(`There is no waiting item ${number}. Run \`ensemble needs\` to see the list.`);
+      const answer = answerFor(row, words.join(" "));
+      await answerPending(discovery, row, answer);
+      console.log(answer.decision === "allow" ? `Sent${answer.reason ? `: ${answer.reason}` : ""}. The task continues.` : "Denied. The agent was told.");
+    },
+  });
+}
+
+async function commandTrust(args: string[]): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) return void console.log(HELP_BY_COMMAND.trust);
+  const subcommand = args[0] && !args[0].startsWith("-") ? args[0] : "list";
+  if (!["list", "add", "remove"].includes(subcommand)) throw new Error(HELP_BY_COMMAND.trust);
+  const sidecarDir = resolveSidecarDir(import.meta.url);
+  if (!(await sidecarAvailable(sidecarDir))) throw new Error(NO_RUNNER);
+  if (subcommand === "list") {
+    const rows = await withAdminApi({ sidecarDir, run: listTrusted });
+    console.log(rows.length ? rows.map((row) => row.path).join("\n") : "No trusted folders yet. Ensemble's own workspace is always trusted. Add one with `ensemble trust add <path>`.");
+    return;
+  }
+  if (subcommand === "add") {
+    const folder = args[1] ?? process.cwd();
+    const row = await withAdminApi({ sidecarDir, run: (discovery) => trustFolder(discovery, folder) });
+    console.log(`Trusted ${row.path}. Agents can run commands there without asking, and Review only and Run unattended can use it.`);
+    return;
+  }
+  if (!args[1]) throw new Error("Usage: ensemble trust remove <path>");
+  const removed = await withAdminApi({ sidecarDir, run: (discovery) => untrustFolder(discovery, args[1]!) });
+  console.log(removed ? `No longer trusted: ${args[1]}.` : `${args[1]} was not trusted.`);
+}
+
+async function commandApprovals(args: string[]): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) return void console.log(HELP_BY_COMMAND.approvals);
+  const subcommand = args[0] ?? "status";
+  if (!["status", "on", "off"].includes(subcommand)) throw new Error(HELP_BY_COMMAND.approvals);
+  const sidecarDir = resolveSidecarDir(import.meta.url);
+  if (!(await sidecarAvailable(sidecarDir))) throw new Error(NO_RUNNER);
+  const on = await withAdminApi({ sidecarDir, run: (discovery) => webApprovals(discovery, subcommand === "status" ? undefined : subcommand === "on") });
+  console.log(
+    on
+      ? "Approvals from the web and phone: on. You can approve anything for this computer from Needs me (with a confirm step for pushes and trust), and the run settings chosen there apply here."
+      : "Approvals from the web and phone: off. Pushes, folder trust and paths outside a folder are answered only here (`ensemble needs`), and web settings can only narrow.",
+  );
+}
+
 async function statusSummary(): Promise<Record<string, unknown>> {
   const paths = resolveCliPaths();
   const config = await loadConfig(paths);
@@ -641,6 +710,12 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
       return commandFolders(rest);
     case "keys":
       return commandKeys(rest);
+    case "needs":
+      return commandNeeds(rest);
+    case "trust":
+      return commandTrust(rest);
+    case "approvals":
+      return commandApprovals(rest);
     case "doctor":
       return commandDoctor(rest);
     case "update":

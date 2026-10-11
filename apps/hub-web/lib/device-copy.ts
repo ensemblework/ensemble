@@ -40,8 +40,10 @@ export function freshCloneHint(deviceName?: string | null, serverRoot?: string |
 /**
  * How Needs me answers a question from a paired computer.
  * A question with options sends the chosen string as `reason`, which is the
- * field the computer reads. A plain Yes is only for a question with no options.
- * A run-branch push has no Yes: only the computer can grant it.
+ * field the computer reads; with `custom`, a typed answer is accepted too.
+ * A plain Yes is only for a question with no options. A risky allow (a push,
+ * a path outside the folder, trusting a folder) is confirmed first. A computer
+ * that accepts such answers only on itself sends `high_risk`: no Yes here.
  * Scope is always once. There is no Always and no remember-for-this-session choice.
  */
 export function deviceDecisionView(input: {
@@ -49,21 +51,33 @@ export function deviceDecisionView(input: {
   event?: string | null;
   options?: readonly string[] | null;
   deviceName?: string | null;
+  confirm?: boolean | null;
+  allowCustom?: boolean | null;
+  recommended?: string | null;
 }): { scope: "once" } & (
   | { kind: "approve-on-computer"; message: string }
-  | { kind: "confirm"; message: string }
-  | { kind: "choices"; options: string[] }
-  | { kind: "yes-no" }
+  | { kind: "choices"; options: string[]; recommended: string | null; custom: boolean; confirm: boolean }
+  | { kind: "yes-no"; confirm: boolean }
 ) {
-  if (input.tier === "run_branch_push") {
+  if (input.tier === "run_branch_push" || input.tier === "high_risk") {
     return { scope: "once", kind: "approve-on-computer", message: `Approve this on ${computerName(input.deviceName)}.` };
   }
-  if (input.tier === "high_risk") {
-    return { scope: "once", kind: "confirm", message: `Confirm this on ${computerName(input.deviceName)}. A Yes here does not let the task continue.` };
-  }
+  const confirm = input.confirm === true;
   const options = (input.options ?? []).filter((option) => option.length > 0);
-  if (input.event === "question" && options.length > 0) return { scope: "once", kind: "choices", options };
-  return { scope: "once", kind: "yes-no" };
+  if (input.event === "question" && options.length > 0) {
+    const recommended = input.recommended && options.includes(input.recommended) ? input.recommended : null;
+    return { scope: "once", kind: "choices", options, recommended, custom: input.allowCustom === true, confirm };
+  }
+  return { scope: "once", kind: "yes-no", confirm };
+}
+
+/** What the confirm step says before a risky allow. */
+export function confirmCopy(toolName: string | null | undefined, deviceName: string | null | undefined): string {
+  const where = computerName(deviceName);
+  if (toolName === "git push") return `Allow pushing on ${where}?`;
+  if (toolName === "outside") return `Allow the agent on ${where} to use a path outside its folder?`;
+  if (toolName === "trust") return `Trust this folder on ${where}? Agents can then run commands there without asking.`;
+  return `Allow this on ${where}?`;
 }
 
 /** True once a device id appears that was not in the list when the code was shown. */

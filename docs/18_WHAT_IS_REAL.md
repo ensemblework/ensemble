@@ -130,6 +130,17 @@ In-app, not email. Schema change is `20260929180000_cowork_surfaces`.
 
 The code review space has a VS Code theme picker. Built-in themes live in `@ensemble/ide-theme`. Open VSX themes are fetched through hub-api (`/api/themes/search`, `/api/themes/openvsx`) and cached under `.theme-cache` (gitignored). The choice is `ideTheme` on the user settings document, so there is no database migration. Star up to three themes; Alt+Shift+T switches between them.
 
+## Assign options enforced, run profiles, approvals from anywhere (11 Oct 2026, branch `feat/run-settings-f6`)
+
+- **Modes:** Ask, Review only (runs freely inside a trusted folder, asks only decisions, recommended option marked) and Run unattended (never asks; decisions take the recommended option and are listed in the summary). Review only and Run unattended need a trusted folder; the Ensemble workspace is always trusted. The mode is now stated in the agent's prompt. Details: [24 v3](24_DESKTOP_SANDBOXING.md#changes-in-v3-11-oct-2026-as-built).
+- **Git permissions really hold:** Local only also refuses merge, rebase, cherry-pick, revert, am, tag, notes and a merging pull; a commit a script makes that the run may not make is undone after the command (files kept); "Ask me before each commit" asks for every commit in every folder; Commit + push in a trusted folder pushes without asking. Refusals go back to the model, the run continues.
+- **Other fixes:** tools a run was not given are refused if called; git with the person's sign-in only fetches or `pull --ff-only` by remote and branch name; max minutes counts working time and caps a running command; Move to Done moves a successful run to Done even when it changed files; the limit fields use the API's ranges.
+- **Paired computers:** the claim now carries the mode, task description, limits, ask-before-commit and internet setting. "Accept approvals from the web and phone" (on by default; desktop card, `ensemble approvals`) lets the person approve pushes, trust and outside paths from Needs me with a confirm step; off keeps those on the computer. Answering on the computer closes the web card (`POST /api/devices/self/decisions/:id/close`). New CLI commands `ensemble needs`, `ensemble trust`, `ensemble approvals` answer and trust on a CLI-only computer, which before could never answer a push or trust question.
+- **Run profiles:** up to three saved Assign settings plus a built-in Quick profile, with a default ([02 §17](02_MODULE_INTERACTION_HUB_UI.md#17-linking-a-computer-and-connecting-editors)).
+- **Not done yet:** Branch Existing/New on a paired computer, pushing to a branch other than the run's own, git sign-in for paired computers, Quick assign from a board card, profiles in the CLI.
+
+**Checked 11 Oct 2026** with unit tests only: `trust.test.ts`, `guard-git.test.ts`, `remote/policy.test.ts`, `lib/run-profiles.test.ts`, `lib/device-copy.test.ts`, `apps/cli/src/approvals.test.ts`; the hub-api public suites (3,889 passed; 3 tests that start a local server could not run in the sandbox used), all 263 Hub UI checks, and typechecks. No live model, browser or paired computer was used.
+
 ## Board priorities, downloads and fixes (9 Oct 2026, local checkout)
 
 - **Fixed:** Settings › Account crashed after a profile change (choosing an avatar, or turning Plots on in Features), showing "We dropped a stitch". The shell refresh replaced the cached account without its profile; `app/(hub)/layout.tsx` now keeps the profile and the avatar picker tolerates a missing one.

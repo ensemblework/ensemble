@@ -1,13 +1,15 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Check, ChevronRight, Code2, FileText, FolderOpen, GitBranch, Lock, Monitor, ShieldCheck, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { AlertTriangle, Check, ChevronRight, Code2, FileText, FolderOpen, GitBranch, Lock, Monitor, Pencil, ShieldCheck, Star, Trash2, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { RunProfile } from "@ensemble/shared-types";
 import { api, type AssignInput, type Complexity } from "@/lib/api";
 import { useSpaceAccess } from "@/lib/access";
 import { pickFolderNative } from "@/lib/desktop-dialog";
-import { computerName, folderPlace, freshCloneHint, sandboxStay } from "@/lib/device-copy";
+import { computerName, folderPlace, freshCloneHint } from "@/lib/device-copy";
 import { usePersistentState } from "@/lib/prefs";
+import { canAddProfile, defaultProfile, differs, newProfileId, profileChoices, profileSummary, quickProfile, removeProfile, upsertProfile, type ProfileFields } from "@/lib/run-profiles";
 import { useToast } from "../toast";
 import { Dialog, InfoTip, SettingRow, Spinner, Toggle, cx } from "../ui";
 import { RunBranchStatus } from "./run-branch-status";
@@ -15,6 +17,7 @@ import { RunBranchStatus } from "./run-branch-status";
 type Kind = "research" | "code";
 type Place = "fresh" | "continue" | "folder";
 type Mode = "ask" | "review" | "unattended";
+type Effort = "default" | "low" | "medium" | "high";
 
 const PROVIDER_LABEL: Record<string, string> = {
   google: "Gemini",
@@ -30,15 +33,35 @@ const PROVIDER_LABEL: Record<string, string> = {
 
 const TIER_LABEL: Record<Complexity, string> = { easy: "Low", medium: "Medium", high: "High", max: "Max" };
 
-function Segmented<T extends string>({ value, options, onChange }: { value: T; options: Array<{ id: T; label: string }>; onChange: (value: T) => void }) {
+/** The API's ranges, so the form never offers a value the server refuses. */
+const LIMITS = {
+  maxMinutes: { label: "Max minutes", min: 1, max: 480 },
+  maxToolCalls: { label: "Max tool calls", min: 5, max: 500 },
+  maxTurns: { label: "Max model turns", min: 3, max: 200 },
+} as const;
+
+function Segmented<T extends string>({
+  value,
+  options,
+  onChange,
+}: {
+  value: T;
+  options: Array<{ id: T; label: string; disabled?: boolean; title?: string }>;
+  onChange: (value: T) => void;
+}) {
   return (
     <div className="inline-flex rounded-md border border-line bg-raised p-0.5">
       {options.map((option) => (
         <button
           key={option.id}
           type="button"
+          disabled={option.disabled}
+          title={option.title}
           onClick={() => onChange(option.id)}
-          className={cx("rounded px-2.5 py-1 text-[12.5px] transition-colors", value === option.id ? "bg-panel font-medium text-ink shadow-sm" : "text-muted hover:text-ink")}
+          className={cx(
+            "rounded px-2.5 py-1 text-[12.5px] transition-colors disabled:cursor-not-allowed disabled:opacity-45",
+            value === option.id ? "bg-panel font-medium text-ink shadow-sm" : "text-muted hover:text-ink",
+          )}
         >
           {option.label}
         </button>
@@ -52,6 +75,125 @@ function Label({ children, tip }: { children: React.ReactNode; tip?: string }) {
     <div className="mb-1.5 flex items-center gap-1.5 text-[12.5px] font-medium text-ink/90">
       {children}
       {tip ? <InfoTip text={tip} /> : null}
+    </div>
+  );
+}
+
+const MODE_HELP: Record<Mode, string> = {
+  ask: "Asks before commands and file changes unless the folder is trusted. A path outside the folder always asks. Decision questions come to Needs me.",
+  review: "Runs commands and edits inside the folder without asking. Asks only real decisions (an unclear requirement, a choice between approaches), with its recommended option marked. A path outside the folder is refused.",
+  unattended: "Nobody needs to be there. Runs inside the folder without asking, picks its recommended option at each decision, and lists every decision it made in the summary. A path outside the folder is refused.",
+};
+
+/** The saved profiles as chips, with save, update, rename, default and delete. Max three. */
+function ProfileBar({
+  profiles,
+  saved,
+  activeId,
+  defaultId,
+  modified,
+  onPick,
+  onSave,
+  onRemove,
+  onDefault,
+  busy,
+}: {
+  profiles: RunProfile[];
+  saved: RunProfile[];
+  activeId: string;
+  defaultId: string;
+  modified: boolean;
+  onPick: (profile: RunProfile) => void;
+  onSave: (input: { id?: string; name: string }) => void;
+  onRemove: (id: string) => void;
+  onDefault: (id: string) => void;
+  busy: boolean;
+}) {
+  const [editing, setEditing] = useState<{ id?: string; name: string } | null>(null);
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (editing) window.setTimeout(() => input.current?.select(), 20);
+  }, [editing]);
+  const active = profiles.find((row) => row.id === activeId);
+  const isSaved = saved.some((row) => row.id === activeId);
+  return (
+    <div className="space-y-1.5" data-testid="run-profiles">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="mr-0.5 text-[12px] font-medium text-muted">Profile</span>
+        {profiles.map((profile) => (
+          <button
+            key={profile.id}
+            type="button"
+            onClick={() => onPick(profile)}
+            title={profileSummary(profile)}
+            className={cx(
+              "flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[12.5px] transition-colors",
+              profile.id === activeId ? "border-accent bg-[var(--accent-soft)] text-ink" : "border-line text-muted hover:text-ink",
+            )}
+          >
+            {profile.id === defaultId ? <Star size={11} className="fill-current text-accent" aria-label="Default" /> : null}
+            {profile.name}
+            {profile.id === activeId && modified ? <span className="text-faint">· modified</span> : null}
+          </button>
+        ))}
+        {editing ? (
+          <form
+            className="flex items-center gap-1"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!editing.name.trim()) return;
+              onSave({ id: editing.id, name: editing.name.trim().slice(0, 40) });
+              setEditing(null);
+            }}
+          >
+            <input
+              ref={input}
+              value={editing.name}
+              onChange={(event) => setEditing({ ...editing, name: event.target.value })}
+              onKeyDown={(event) => event.key === "Escape" && (event.stopPropagation(), setEditing(null))}
+              maxLength={40}
+              placeholder="Profile name"
+              aria-label="Profile name"
+              className="field h-7 w-36 py-0 text-[12.5px]"
+            />
+            <button type="submit" className="btn h-7 px-2 text-[12px]" disabled={busy || !editing.name.trim()}>
+              Save
+            </button>
+            <button type="button" className="btn-ghost h-7 px-1.5" onClick={() => setEditing(null)} aria-label="Cancel">
+              <X size={13} />
+            </button>
+          </form>
+        ) : (
+          <div className="ml-auto flex items-center gap-1">
+            {isSaved && modified && active ? (
+              <button type="button" className="btn-ghost h-7 px-2 text-[12px]" disabled={busy} onClick={() => onSave({ id: active.id, name: active.name })}>
+                Update “{active.name}”
+              </button>
+            ) : null}
+            {canAddProfile(saved) ? (
+              <button type="button" className="btn-ghost h-7 px-2 text-[12px]" disabled={busy} onClick={() => setEditing({ name: "" })}>
+                Save as profile
+              </button>
+            ) : null}
+            {isSaved && active ? (
+              <>
+                <button type="button" className="btn-ghost h-7 px-1.5" title="Rename" aria-label="Rename profile" disabled={busy} onClick={() => setEditing({ id: active.id, name: active.name })}>
+                  <Pencil size={12} />
+                </button>
+                {active.id !== defaultId ? (
+                  <button type="button" className="btn-ghost h-7 px-1.5" title="Use for Quick assign" aria-label="Make default" disabled={busy} onClick={() => onDefault(active.id)}>
+                    <Star size={12} />
+                  </button>
+                ) : null}
+                <button type="button" className="btn-ghost h-7 px-1.5" title="Delete profile" aria-label="Delete profile" disabled={busy} onClick={() => onRemove(active.id)}>
+                  <Trash2 size={12} />
+                </button>
+              </>
+            ) : null}
+          </div>
+        )}
+      </div>
+      {!canAddProfile(saved) && !editing ? <div className="text-[11.5px] text-faint">Three profiles saved. Update or rename one to change it.</div> : null}
     </div>
   );
 }
@@ -72,7 +214,7 @@ export function AssignDialog({
   const [taskId, setTaskId] = useState(fixedTaskId ?? "");
   const [kind, setKind] = usePersistentState<Kind>("ensemble.assign.kind", defaultKind ?? "research");
   const [modelChoice, setModelChoice] = usePersistentState("ensemble.assign.model", "");
-  const [effort, setEffort] = useState("default");
+  const [effort, setEffort] = useState<Effort>("default");
   const [instructions, setInstructions] = useState("");
   const [place, setPlace] = useState<Place>("fresh");
   const [repo, setRepo] = useState("");
@@ -86,9 +228,8 @@ export function AssignDialog({
   const [credentials, setCredentials] = useState(false);
   const [sandbox, setSandbox] = useState(true);
   const [network, setNetwork] = useState(true);
-  const [accessMode, setAccessMode] = useState<"review" | "read-write">("read-write");
+  const [mode, setMode] = useState<Mode>("ask");
   const [trustChoice, setTrustChoice] = useState<"always" | "task" | "none">("none");
-  const [unattended, setUnattended] = useState(false);
   const [markDone, setMarkDone] = useState(true);
   const [advanced, setAdvanced] = useState(false);
   const [maxMinutes, setMaxMinutes] = useState<number | "">("");
@@ -96,16 +237,7 @@ export function AssignDialog({
   const [maxTurns, setMaxTurns] = useState<number | "">("");
   const [runOn, setRunOn] = useState("server");
   const [folderLabel, setFolderLabel] = useState("");
-
-  useEffect(() => {
-    if (open) {
-      setTaskId(fixedTaskId ?? "");
-      setInstructions("");
-      setFolderCheck(null);
-      if (defaultKind) setKind(defaultKind);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, fixedTaskId]);
+  const [profileId, setProfileId] = useState("");
 
   const tasks = useQuery({ queryKey: ["tasks"], queryFn: api.tasks, enabled: open && !fixedTaskId });
   const task = useQuery({ queryKey: ["task", taskId], queryFn: () => api.task(taskId), enabled: open && Boolean(taskId) });
@@ -116,6 +248,7 @@ export function AssignDialog({
   const board = useQuery({ queryKey: ["workspace"], queryFn: api.workspace, enabled: open });
   const computers = useQuery({ queryKey: ["devices"], queryFn: api.devices, enabled: open, refetchInterval: open ? 15_000 : false });
   const selectedDevice = (computers.data?.devices ?? []).find((device) => device.id === runOn) ?? null;
+  const deviceAcceptsWeb = (selectedDevice?.capabilities as { acceptWebApprovals?: unknown } | null)?.acceptWebApprovals !== false;
   // In a space shared with you, the agent runs on your own computers only (they are the only ones listed).
   const access = useSpaceAccess();
   const serverRunner = !access.guest && (computers.data?.serverRunner ?? board.data?.serverRunner) !== false;
@@ -127,16 +260,89 @@ export function AssignDialog({
   const branches = useQuery({ queryKey: ["branches", branchSource], queryFn: () => api.branches(branchSource), enabled: open && Boolean(branchSource) });
 
   const orchestration = settings.data?.settings.orchestration;
+  const savedProfiles = settings.data?.settings.runProfiles ?? [];
+  const quick = useMemo(() => quickProfile(orchestration), [orchestration]);
+  const profiles = profileChoices(savedProfiles, quick);
+  const defaultChoice = defaultProfile(savedProfiles, settings.data?.settings.defaultRunProfileId, quick);
   const trustedFolders = useQuery({ queryKey: ["workspace-trust"], queryFn: api.trustedFolders, enabled: open && kind === "code" });
+
+  const fields: ProfileFields = {
+    kind,
+    deviceId: runOn === "server" ? null : runOn,
+    model: modelChoice,
+    effort,
+    branchMode: branchMode === "new" ? "new" : "as-is",
+    delivery,
+    askBeforePublish: askFirst,
+    mode,
+    sandbox,
+    useCredentials: credentials,
+    network,
+    markDone,
+    maxMinutes: maxMinutes === "" ? null : maxMinutes,
+    maxToolCalls: maxToolCalls === "" ? null : maxToolCalls,
+    maxTurns: maxTurns === "" ? null : maxTurns,
+    instructions,
+  };
+
+  const applyProfile = (profile: RunProfile) => {
+    setProfileId(profile.id);
+    setKind(defaultKind && profile.id === defaultChoice.id ? defaultKind : profile.kind);
+    if (profile.deviceId && (computers.data?.devices ?? []).some((device) => device.id === profile.deviceId)) setRunOn(profile.deviceId);
+    setModelChoice(profile.model);
+    setEffort(profile.effort);
+    setBranchMode(profile.branchMode);
+    setDelivery(profile.delivery);
+    setAskFirst(profile.askBeforePublish);
+    setMode(profile.mode);
+    setSandbox(profile.sandbox);
+    setCredentials(profile.useCredentials);
+    setNetwork(profile.network);
+    setMarkDone(profile.markDone);
+    setMaxMinutes(profile.maxMinutes ?? "");
+    setMaxToolCalls(profile.maxToolCalls ?? "");
+    setMaxTurns(profile.maxTurns ?? "");
+    setInstructions(profile.instructions);
+  };
+
+  // Each time the dialog opens: the task, then the default profile once settings are in.
+  const appliedFor = useRef<string | null>(null);
   useEffect(() => {
-    if (!open || !orchestration) return;
-    const outside = place === "folder";
-    setSandbox(orchestration.defaultExecution !== "native");
-    setNetwork(outside ? false : orchestration.sandboxNetwork);
-    setAccessMode(outside ? "review" : "read-write");
+    if (!open) {
+      appliedFor.current = null;
+      return;
+    }
+    setTaskId(fixedTaskId ?? "");
+    setFolderCheck(null);
     setTrustChoice("none");
-    setUnattended(orchestration.defaultDelivery === "unattended" && !outside);
-  }, [open, orchestration, place]);
+  }, [open, fixedTaskId]);
+  useEffect(() => {
+    if (!open || !settings.data || appliedFor.current === "applied") return;
+    appliedFor.current = "applied";
+    applyProfile(defaultChoice);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, settings.data]);
+
+  const activeProfile = profiles.find((row) => row.id === profileId);
+  const modified = activeProfile ? differs(activeProfile, fields) : false;
+
+  const saveProfiles = useMutation({
+    mutationFn: (patch: { runProfiles?: RunProfile[]; defaultRunProfileId?: string | null }) => api.saveSettings(patch),
+    onSuccess: (result) => client.setQueryData(["settings"], result),
+    onError: (error) => toast((error as Error).message, { tone: "error" }),
+  });
+  const saveProfile = ({ id, name }: { id?: string; name: string }) => {
+    try {
+      const profile: RunProfile = { ...fields, id: id ?? newProfileId(), name };
+      const list = upsertProfile(savedProfiles, profile);
+      saveProfiles.mutate(
+        { runProfiles: list, ...(savedProfiles.length === 0 ? { defaultRunProfileId: profile.id } : {}) },
+        { onSuccess: () => (setProfileId(profile.id), toast(id ? `Saved “${name}”.` : `Saved the profile “${name}”.`, { tone: "ok" })) },
+      );
+    } catch (error) {
+      toast((error as Error).message, { tone: "error" });
+    }
+  };
 
   const complexity = (task.data?.task.complexity ?? "medium") as Complexity;
   const tier = settings.data?.settings.models[complexity];
@@ -147,11 +353,6 @@ export function AssignDialog({
   const strength = guard.data?.sandbox.strength ?? "strong";
   const osSandbox = strength === "strong";
   const askOnly = strength === "ask";
-  const mode: Mode = unattended ? "unattended" : accessMode === "review" ? "review" : "ask";
-  const setMode = (next: Mode) => {
-    setUnattended(next === "unattended");
-    setAccessMode(next === "review" ? "review" : "read-write");
-  };
 
   const pick = useMutation({
     mutationFn: async () => {
@@ -184,22 +385,30 @@ export function AssignDialog({
   const slots = board.data?.maxConcurrent ?? settings.data?.settings.orchestration.maxConcurrentJobs ?? 3;
   const startsNow = (board.data?.running.length ?? 0) < slots && !board.data?.paused;
 
-  const savedTrust =
-    place === "folder" &&
-    Boolean(folderCheck?.ok) &&
-    (trustedFolders.data?.folders ?? []).some((row) => folder === row.path || folder.startsWith(`${row.path}/`));
-  const folderTrusted = place !== "folder" || trustChoice !== "none" || savedTrust;
-  const reviewOnly = accessMode === "review";
-  const unattendedBlocked = kind === "code" && unattended && (!folderTrusted || askOnly);
+  // The Ensemble workspace is always trusted. A folder outside it is trusted by a saved rule or the choice below.
+  const root = board.data?.root ?? "";
+  const underRoot = (path: string) => Boolean(root) && (path === root || path.startsWith(`${root}/`));
+  const savedTrust = (path: string) => (trustedFolders.data?.folders ?? []).some((row) => path === row.path || path.startsWith(`${row.path}/`));
+  const continueFolder = (checkouts.data?.checkouts ?? []).find((row) => row.jobId === continueFrom)?.folder ?? "";
+  const folderTrusted =
+    selectedDevice !== null ||
+    place === "fresh" ||
+    (place === "continue" && (!continueFolder || underRoot(continueFolder) || savedTrust(continueFolder))) ||
+    (place === "folder" && (trustChoice !== "none" || (Boolean(folderCheck?.ok) && savedTrust(folder))));
+  const needsTrust = kind === "code" && mode !== "ask" && !folderTrusted;
+  const unattendedNoSandbox = kind === "code" && mode === "unattended" && askOnly && !selectedDevice;
   const invalid =
     !taskId ||
-    (!selectedDevice && unattendedBlocked) ||
+    needsTrust ||
+    unattendedNoSandbox ||
     (kind === "code" && !selectedDevice && place === "folder" && !folderCheck?.ok) ||
     (kind === "code" && selectedDevice && place === "folder" && !folderLabel) ||
     (kind === "code" && selectedDevice && place === "fresh" && !repo.trim()) ||
     (kind === "code" && place === "continue" && !continueFrom) ||
     (kind === "code" && branchMode !== "as-is" && !branch.trim()) ||
     (kind === "code" && !serverRunner && !selectedDevice);
+
+  const limitValue = (value: number | "", key: keyof typeof LIMITS) => (value === "" ? undefined : Math.min(LIMITS[key].max, Math.max(LIMITS[key].min, value)));
 
   const assign = useMutation({
     mutationFn: () => {
@@ -210,41 +419,26 @@ export function AssignDialog({
         ...(model ? { provider, model } : {}),
         ...(effort !== "default" ? { reasoningEffort: effort } : {}),
         markDone,
-        maxMinutes: maxMinutes || undefined,
-        maxToolCalls: maxToolCalls || undefined,
-        maxTurns: maxTurns || undefined,
-        // Hint only. A paired computer enforces its own network setting.
+        maxMinutes: limitValue(maxMinutes, "maxMinutes"),
+        maxToolCalls: limitValue(maxToolCalls, "maxToolCalls"),
+        maxTurns: limitValue(maxTurns, "maxTurns"),
         network,
       };
       if (kind === "code") {
+        Object.assign(input, {
+          mode,
+          sandbox,
+          delivery,
+          askBeforePublish: mode === "unattended" ? false : askFirst,
+          branchMode,
+          branch: branchMode === "as-is" ? undefined : branch.trim(),
+          ...(place === "fresh" && repo.trim() ? { repoUrl: repo.trim() } : {}),
+          ...(place === "continue" ? { continueFromJobId: continueFrom } : {}),
+        });
         if (selectedDevice) {
-          Object.assign(input, {
-            sandbox,
-            delivery,
-            askBeforePublish: askFirst,
-            useCredentials: false,
-            branchMode,
-            branch: branchMode === "as-is" ? undefined : branch.trim(),
-            ...(place === "fresh" && repo.trim() ? { repoUrl: repo.trim() } : {}),
-            ...(place === "continue" ? { continueFromJobId: continueFrom } : {}),
-            ...(place === "folder" ? { folderLabel } : {}),
-          });
+          Object.assign(input, { useCredentials: false, ...(place === "folder" ? { folderLabel } : {}) });
         } else {
-          Object.assign(input, {
-            sandbox,
-            network: reviewOnly ? false : network,
-            delivery: reviewOnly ? "local" : delivery,
-            askBeforePublish: askFirst,
-            useCredentials: reviewOnly ? false : credentials,
-            unattended,
-            accessMode,
-            ...(place === "folder" ? { trust: trustChoice } : {}),
-            branchMode,
-            branch: branchMode === "as-is" ? undefined : branch.trim(),
-            ...(place === "fresh" && repo.trim() ? { repoUrl: repo.trim() } : {}),
-            ...(place === "continue" ? { continueFromJobId: continueFrom } : {}),
-            ...(place === "folder" ? { folder } : {}),
-          });
+          Object.assign(input, { useCredentials: credentials, ...(place === "folder" ? { folder, trust: trustChoice } : {}) });
         }
       }
       if (selectedDevice) input.deviceId = selectedDevice.id;
@@ -253,9 +447,7 @@ export function AssignDialog({
     onSuccess: () => {
       toast(
         selectedDevice
-          ? selectedDevice.online
-            ? `Queued on ${selectedDevice.name}.`
-            : `Queued until ${selectedDevice.name} is back.`
+          ? `Queued for ${selectedDevice.name}. If it is asleep or Ensemble is not running there, it starts when it is back.`
           : startsNow
             ? "The agent started. Follow it in the top bar or Workspace."
             : "Queued. It starts when a slot frees up.",
@@ -268,18 +460,17 @@ export function AssignDialog({
   });
 
   const summary = useMemo(() => {
-    if (selectedDevice && !selectedDevice.online) return `Queued until ${selectedDevice.name} is back.`;
-    if (selectedDevice) return `Runs on ${selectedDevice.name}. ${sandboxStay(selectedDevice.name)}`;
     if (kind === "research") return "Reads the web and papers, writes into the task page. Nothing runs on your computer.";
-    const where = place === "folder" ? "your folder" : place === "continue" ? "the earlier task's folder" : "its own checkout";
+    const where = place === "folder" ? (selectedDevice ? `${folderLabel || "a folder"} on ${selectedDevice.name}` : "your folder") : place === "continue" ? "the earlier task's folder" : "its own checkout";
     const git = delivery === "local" ? "no commit or push" : delivery === "commit" ? "may commit" : "may commit and push";
-    const mode = reviewOnly ? " · review only" : "";
-    const alone = unattended ? " · run unattended" : "";
-    const box = !osSandbox ? "Not fully sandboxed" : sandbox ? "Sandboxed" : "Unsandboxed";
-    return `${box} · works in ${where}${mode} · ${git}${delivery !== "local" && askFirst && !reviewOnly ? " (asks you first)" : ""}${credentials && !reviewOnly ? " · git sign-in stays in the app" : ""}${alone}`;
-  }, [kind, place, delivery, sandbox, askFirst, credentials, reviewOnly, unattended, osSandbox, selectedDevice]);
+    const asks = delivery !== "local" && askFirst && mode !== "unattended" ? " (asks before each commit)" : "";
+    const modeLabel = mode === "review" ? " · Review only" : mode === "unattended" ? " · Run unattended" : "";
+    const box = selectedDevice ? `On ${selectedDevice.name}` : !osSandbox ? "Not fully sandboxed" : sandbox ? "Sandboxed" : "Unsandboxed";
+    return `${box} · works in ${where}${modeLabel} · ${git}${asks}${credentials && !selectedDevice ? " · git sign-in stays in the app" : ""}`;
+  }, [kind, place, delivery, sandbox, askFirst, credentials, mode, osSandbox, selectedDevice, folderLabel]);
 
   const candidates = (tasks.data?.tasks ?? []).filter((row) => !["done", "dropped"].includes(row.status));
+  const trustTip = selectedDevice ? undefined : "Trust this folder first. Review only and Run unattended run commands without asking.";
 
   return (
     <Dialog open={open} onClose={onClose} title="Assign to agent" width={640}>
@@ -296,6 +487,23 @@ export function AssignDialog({
             ))}
           </select>
         )}
+
+        <ProfileBar
+          profiles={profiles}
+          saved={savedProfiles}
+          activeId={profileId}
+          defaultId={defaultChoice.id}
+          modified={modified}
+          busy={saveProfiles.isPending}
+          onPick={applyProfile}
+          onSave={saveProfile}
+          onRemove={(id) => {
+            const list = removeProfile(savedProfiles, id);
+            saveProfiles.mutate({ runProfiles: list, ...(settings.data?.settings.defaultRunProfileId === id ? { defaultRunProfileId: list[0]?.id ?? null } : {}) });
+            setProfileId("");
+          }}
+          onDefault={(id) => saveProfiles.mutate({ defaultRunProfileId: id }, { onSuccess: () => toast("Quick assign uses this profile now.", { tone: "ok" }) })}
+        />
 
         <div className="grid grid-cols-2 gap-2">
           {([
@@ -321,7 +529,7 @@ export function AssignDialog({
         </div>
 
         <div>
-          <Label tip={selectedDevice ? `A task for ${selectedDevice.name} waits until it is open. It does not run on the server instead.` : "A task for your computer waits until that computer is open. It does not run on the server instead."}>Run on</Label>
+          <Label tip="A task for a computer waits until Ensemble is running there. It does not run on the server instead.">Run on</Label>
           <div className="space-y-1.5">
             {serverRunner ? (
               <button type="button" onClick={() => setRunOn("server")} className={cx("flex w-full items-center gap-2 rounded-md border px-2.5 py-1.5 text-left transition-colors", runOn === "server" ? "border-accent bg-[var(--accent-soft)]" : "border-line bg-raised hover:border-line-strong")}>
@@ -331,10 +539,9 @@ export function AssignDialog({
             ) : null}
             {(computers.data?.devices ?? []).map((device) => (
               <button key={device.id} type="button" onClick={() => { setRunOn(device.id); setFolderLabel(""); }} className={cx("flex w-full items-center gap-2 rounded-md border px-2.5 py-1.5 text-left transition-colors", runOn === device.id ? "border-accent bg-[var(--accent-soft)]" : "border-line bg-raised hover:border-line-strong")}>
-                <span className={cx("h-2 w-2 shrink-0 rounded-full", device.online ? "bg-ok pulse-dot" : "bg-faint")} />
                 <Monitor size={13} className="shrink-0 text-muted" />
                 <span className="min-w-0 flex-1 truncate font-medium">{device.name}</span>
-                <span className="shrink-0 text-[12px] text-muted">{device.online ? "Online" : device.lastSeenAt ? `last seen ${new Date(device.lastSeenAt).toLocaleString()}` : "Not seen yet"}</span>
+                <span className="shrink-0 text-[12px] text-muted">{device.lastSeenAt ? `last contact ${new Date(device.lastSeenAt).toLocaleString()}` : "Not seen yet"}</span>
               </button>
             ))}
             {!serverRunner && !(computers.data?.devices.length) ? <div className="text-[12.5px] text-muted">Add a computer with the Ensemble CLI in Settings → Devices, or pair the desktop app. Code tasks run there.</div> : null}
@@ -373,8 +580,8 @@ export function AssignDialog({
           </div>
           <div>
             <Label tip="Only some models accept this. Others ignore it.">Thinking</Label>
-            <select value={effort} onChange={(event) => setEffort(event.target.value)} className="field w-full">
-              <option value="default">Provider default</option>
+            <select value={effort} onChange={(event) => setEffort(event.target.value as Effort)} className="field w-full">
+              <option value="default">{model ? "Provider default" : `Tier default${tier?.effort ? ` (${tier.effort})` : ""}`}</option>
               <option value="low">Low</option>
               <option value="medium">Medium</option>
               <option value="high">High</option>
@@ -432,7 +639,7 @@ export function AssignDialog({
                         <option key={label} value={label}>{label}</option>
                       ))}
                     </select>
-                    <div className="mt-1 text-[12px] text-muted">Only names {computerName(selectedDevice?.name)} already published. A path typed here is refused.</div>
+                    <div className="mt-1 text-[12px] text-muted">Only names {computerName(selectedDevice?.name)} already published (`ensemble folders add`). A path typed here is refused.</div>
                   </>
                 ) : (
                   <>
@@ -465,10 +672,18 @@ export function AssignDialog({
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label tip="Existing switches to a branch that already exists. New creates it first. As is changes nothing.">
+                <Label tip="As is: the branch checked out now. Existing: a branch that already exists. New: a branch created first.">
                   <GitBranch size={13} /> Branch
                 </Label>
-                <Segmented value={branchMode} onChange={setBranchMode} options={[{ id: "as-is", label: "As is" }, { id: "existing", label: "Existing" }, { id: "new", label: "New" }]} />
+                <Segmented
+                  value={branchMode}
+                  onChange={setBranchMode}
+                  options={[
+                    { id: "as-is", label: "As is" },
+                    { id: "existing", label: "Existing", disabled: Boolean(selectedDevice), title: selectedDevice ? `A task for ${selectedDevice.name} works on its own run branch for now.` : undefined },
+                    { id: "new", label: "New", disabled: Boolean(selectedDevice), title: selectedDevice ? `A task for ${selectedDevice.name} works on its own run branch for now.` : undefined },
+                  ]}
+                />
                 {branchMode !== "as-is" ? (
                   <>
                     <input list="assign-branches" value={branch} onChange={(event) => setBranch(event.target.value)} placeholder={branchMode === "new" ? "ensemble/fix-tests" : "feature/x"} className="field mt-2 w-full font-mono text-[12.5px]" />
@@ -481,25 +696,17 @@ export function AssignDialog({
                 ) : null}
               </div>
               <div>
-                <Label tip="Enforced on every git call, not just asked for in the prompt. The agent is never allowed to force-push, delete branches, or change git config and remotes.">Git permissions</Label>
+                <Label tip="Enforced on every git call and on commits any script makes, and stated to the model. A refused git step goes back to the model as an error, so the run continues without it. The agent never force-pushes, deletes branches, or changes git config and remotes.">Git permissions</Label>
                 <Segmented value={delivery} onChange={setDelivery} options={[{ id: "local", label: "Local only" }, { id: "commit", label: "Commit" }, { id: "push", label: "Commit + push" }]} />
                 {delivery !== "local" ? (
-                  <label className="mt-2 flex items-center gap-2 text-[12.5px] text-muted">
-                    <input type="checkbox" checked={askFirst} onChange={(event) => setAskFirst(event.target.checked)} />
-                    Ask me on Needs me before each {delivery === "push" ? "commit and push" : "commit"}
+                  <label className={cx("mt-2 flex items-center gap-2 text-[12.5px]", mode === "unattended" ? "text-faint" : "text-muted")} title={mode === "unattended" ? "Nobody approves in an unattended run." : undefined}>
+                    <input type="checkbox" checked={askFirst && mode !== "unattended"} disabled={mode === "unattended"} onChange={(event) => setAskFirst(event.target.checked)} />
+                    Ask me on Needs me before each commit
                   </label>
                 ) : null}
               </div>
             </div>
 
-            {selectedDevice ? (
-              <div className="space-y-2 rounded-lg border border-line bg-raised p-3">
-                <div className="text-[12.5px] text-muted">Change sandbox, trust, and unattended on {selectedDevice.name}. This page cannot grant them.</div>
-                <SettingRow title="Push to this task's own branch" description={`Off unless you turn it on from ${selectedDevice.name}, and only in repos that computer already trusts.`}>
-                  <RunBranchStatus on={selectedDevice.runBranchPush} device={selectedDevice.name} />
-                </SettingRow>
-              </div>
-            ) : (
             <div className="space-y-2 rounded-lg border border-line bg-raised p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="font-medium">Mode</span>
@@ -508,83 +715,116 @@ export function AssignDialog({
                   onChange={setMode}
                   options={[
                     { id: "ask", label: "Ask" },
-                    { id: "review", label: "Review only" },
-                    { id: "unattended", label: "Run unattended" },
+                    { id: "review", label: "Review only", disabled: !folderTrusted, title: !folderTrusted ? trustTip : undefined },
+                    { id: "unattended", label: "Run unattended", disabled: !folderTrusted || (askOnly && !selectedDevice), title: !folderTrusted ? trustTip : askOnly && !selectedDevice ? "Run unattended needs an OS sandbox." : undefined },
                   ]}
                 />
               </div>
               <div className="text-[12px] text-muted" data-testid="assign-mode-help">
-                {mode === "review"
-                  ? osSandbox
-                    ? "Read-only, no network. It asks only when the agent wants to write, use the network, or leave this folder."
-                    : "Read-only, no network. Without an OS sandbox nothing stops a command from writing, so it asks before every command."
-                  : mode === "unattended"
-                    ? "No Allow prompts, inside a folder you have trusted. A path outside it is blocked, and it never pushes; you push from the review."
-                    : askOnly
-                      ? "Asks before every command and file change."
-                      : "Asks before changes and commands unless the folder is trusted. A path outside the folder always asks."}
+                {MODE_HELP[mode]}
+                {selectedDevice && mode !== "ask" ? ` ${selectedDevice.name} has to trust the folder; if it does not, the run asks you to trust it first.` : ""}
               </div>
-              {osSandbox ? (
-                <div className="flex items-center justify-between gap-3 border-t border-line pt-2">
-                  <div className="flex items-center gap-2">
-                    <ShieldCheck size={14} className={sandbox ? "text-ok" : "text-warn"} />
-                    <span className="font-medium">Sandbox</span>
-                    <InfoTip text="A macOS sandbox around every command: files can only change inside the work folder, keys and browser data cannot be read, and Ensemble's own API and database cannot be reached." />
+              {selectedDevice ? (
+                <>
+                  {!deviceAcceptsWeb ? (
+                    <div className="flex items-start gap-1.5 text-[12px] text-warn">
+                      <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                      {selectedDevice.name} accepts only narrowing settings from here: it asks before each commit, uses its own internet setting, and runs in Ask mode. Change that on {selectedDevice.name}.
+                    </div>
+                  ) : null}
+                  <div className="flex items-center justify-between gap-3 border-t border-line pt-2">
+                    <div className="flex items-center gap-2">
+                      <ShieldCheck size={14} className="text-ok" />
+                      <span className="font-medium">Sandbox</span>
+                    </div>
+                    <span className="text-[12px] text-muted">Set on {selectedDevice.name}</span>
                   </div>
-                  <Toggle checked={sandbox} onChange={setSandbox} label="Sandbox" />
-                </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <Lock size={14} className="text-muted" />
+                      <span className="font-medium">Use my git sign-in</span>
+                    </div>
+                    <span className="text-[12px] text-muted">Not yet for tasks on a computer</span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="pl-[22px] font-medium">Internet access</span>
+                    <Toggle checked={network} onChange={setNetwork} label="Internet access" />
+                  </div>
+                  <SettingRow title="Push to this task's own branch" description={`Set on ${selectedDevice.name}, for repos that computer trusts.`}>
+                    <RunBranchStatus on={selectedDevice.runBranchPush} device={selectedDevice.name} />
+                  </SettingRow>
+                </>
               ) : (
-                <div className="flex items-start gap-1.5 border-t border-line pt-2 text-[12px] text-warn" data-testid="not-sandboxed">
-                  <AlertTriangle size={13} className="mt-0.5 shrink-0" />
-                  <span>
-                    <span className="font-medium">Not fully sandboxed on this {guard.data?.sandbox.os === "linux" ? "Linux" : guard.data?.sandbox.os === "win32" ? "Windows" : ""} computer.</span>{" "}
-                    Commands run as you with Ensemble&apos;s allow-list and folder checks only; a script could still reach the rest of the computer.
-                  </span>
-                </div>
-              )}
-              {osSandbox && !sandbox ? (
-                <div className="flex items-start gap-1.5 text-[12px] text-warn">
-                  <AlertTriangle size={13} className="mt-0.5 shrink-0" /> Commands will run as you, unconfined. The file tools still stay in the folder, but a script it runs could reach the rest of your computer.
-                </div>
-              ) : null}
-              <div className="flex items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  <Lock size={14} className={credentials ? "text-warn" : "text-muted"} />
-                  <span className="font-medium">Use my git sign-in</span>
-                  <InfoTip text="Ensemble uses your GitHub sign-in to clone, fetch, and fast-forward this run's own branch. The token stays in the app. The agent never sees it." />
-                </div>
-                <Toggle checked={credentials} onChange={setCredentials} label="Use my git sign-in" />
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span className="pl-[22px] font-medium">Internet access</span>
-                <Toggle checked={reviewOnly ? false : network} onChange={setNetwork} label="Internet access" />
-              </div>
-              {place === "folder" ? (
-                <div className="space-y-2 border-t border-line pt-2">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="font-medium">Trust this folder</span>
-                    <Segmented
-                      value={trustChoice}
-                      onChange={setTrustChoice}
-                      options={[
-                        { id: "none", label: "Ask" },
-                        { id: "task", label: "This task" },
-                        { id: "always", label: "Always" },
-                      ]}
-                    />
+                <>
+                  {osSandbox ? (
+                    <div className="flex items-center justify-between gap-3 border-t border-line pt-2">
+                      <div className="flex items-center gap-2">
+                        <ShieldCheck size={14} className={sandbox ? "text-ok" : "text-warn"} />
+                        <span className="font-medium">Sandbox</span>
+                        <InfoTip text="A macOS sandbox around every command: files can only change inside the work folder, keys and browser data cannot be read, and Ensemble's own API and database cannot be reached." />
+                      </div>
+                      <Toggle checked={sandbox} onChange={setSandbox} label="Sandbox" />
+                    </div>
+                  ) : (
+                    <div className="flex items-start gap-1.5 border-t border-line pt-2 text-[12px] text-warn" data-testid="not-sandboxed">
+                      <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                      <span>
+                        <span className="font-medium">Not fully sandboxed on this {guard.data?.sandbox.os === "linux" ? "Linux" : guard.data?.sandbox.os === "win32" ? "Windows" : ""} computer.</span>{" "}
+                        Commands run as you with Ensemble&apos;s allow-list and folder checks only; a script could still reach the rest of the computer.
+                      </span>
+                    </div>
+                  )}
+                  {osSandbox && !sandbox ? (
+                    <div className="flex items-start gap-1.5 text-[12px] text-warn">
+                      <AlertTriangle size={13} className="mt-0.5 shrink-0" /> Commands will run as you, unconfined. The file tools still stay in the folder, but a script it runs could reach the rest of your computer.
+                    </div>
+                  ) : null}
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <Lock size={14} className={credentials ? "text-warn" : "text-muted"} />
+                      <span className="font-medium">Use my git sign-in</span>
+                      <InfoTip text="Ensemble uses your GitHub sign-in to clone, fetch, and fast-forward this run's own branch. The token stays in the app. The agent never sees it. Without it the run cannot push to a remote." />
+                    </div>
+                    <Toggle checked={credentials} onChange={setCredentials} label="Use my git sign-in" />
                   </div>
-                </div>
-              ) : null}
-              {unattendedBlocked ? (
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="pl-[22px] font-medium">Internet access</span>
+                    <Toggle checked={network} onChange={setNetwork} label="Internet access" />
+                  </div>
+                  {delivery === "push" && !credentials && place !== "folder" ? (
+                    <div className="text-[12px] text-muted">Pushing to a remote needs “Use my git sign-in”.</div>
+                  ) : null}
+                  {place === "folder" ? (
+                    <div className="space-y-2 border-t border-line pt-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-medium">Trust this folder</span>
+                        <Segmented
+                          value={trustChoice}
+                          onChange={setTrustChoice}
+                          options={[
+                            { id: "none", label: "No" },
+                            { id: "task", label: "This task" },
+                            { id: "always", label: "Always" },
+                          ]}
+                        />
+                      </div>
+                    </div>
+                  ) : null}
+                </>
+              )}
+              {needsTrust ? (
                 <div className="flex items-start gap-1.5 text-[12px] text-danger" role="alert">
                   <AlertTriangle size={13} className="mt-0.5 shrink-0" />
-                  {askOnly
-                    ? "Run unattended needs an OS sandbox, and this computer runs agents in Ask mode. Choose Ask or Review only."
-                    : "Run unattended can't be used with a folder you haven't trusted. Trust this folder, or turn off Run unattended."}
+                  {mode === "unattended" ? "Run unattended" : "Review only"} needs a folder you trust. Trust this folder above, or choose Ask.
+                </div>
+              ) : null}
+              {unattendedNoSandbox ? (
+                <div className="flex items-start gap-1.5 text-[12px] text-danger" role="alert">
+                  <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                  Run unattended needs an OS sandbox, and this computer runs agents in Ask mode. Choose Ask or Review only.
                 </div>
               ) : null}
             </div>
-            )}
           </>
         ) : null}
 
@@ -611,15 +851,16 @@ export function AssignDialog({
         {advanced ? (
           <div className="grid grid-cols-3 gap-3">
             {([
-              ["Max minutes", maxMinutes, setMaxMinutes, settings.data?.settings.orchestration.maxMinutes ?? 60],
-              ["Max tool calls", maxToolCalls, setMaxToolCalls, 80],
-              ["Max model turns", maxTurns, setMaxTurns, settings.data?.settings.orchestration.maxTurns ?? 40],
-            ] as const).map(([label, value, set, fallback]) => (
-              <label key={label} className="block">
-                <span className="text-[12px] text-muted">{label}</span>
+              ["maxMinutes", maxMinutes, setMaxMinutes, settings.data?.settings.orchestration.maxMinutes ?? 60],
+              ["maxToolCalls", maxToolCalls, setMaxToolCalls, 80],
+              ["maxTurns", maxTurns, setMaxTurns, settings.data?.settings.orchestration.maxTurns ?? 40],
+            ] as const).map(([key, value, set, fallback]) => (
+              <label key={key} className="block">
+                <span className="text-[12px] text-muted">{LIMITS[key].label}</span>
                 <input
                   type="number"
-                  min={1}
+                  min={LIMITS[key].min}
+                  max={LIMITS[key].max}
                   value={value}
                   placeholder={String(fallback)}
                   onChange={(event) => (set as (value: number | "") => void)(event.target.value ? Number(event.target.value) : "")}
@@ -627,6 +868,7 @@ export function AssignDialog({
                 />
               </label>
             ))}
+            <div className="col-span-3 text-[11.5px] text-faint">Minutes count working time; time waiting for you on Needs me does not use them up.</div>
           </div>
         ) : null}
 
@@ -635,9 +877,7 @@ export function AssignDialog({
             <div className="truncate">{summary}</div>
             <div>
               {selectedDevice
-                ? selectedDevice.online
-                  ? `Queued for ${selectedDevice.name}. It does not run on the server.`
-                  : "It does not run on the server."
+                ? `Runs on ${selectedDevice.name}, not on the server. It waits there until Ensemble is running.`
                 : board.data?.paused
                   ? "The agent is paused. It will queue until you resume."
                   : startsNow

@@ -263,6 +263,22 @@ const PROTECTED = new Set(["main", "master", "trunk", "develop", "production", "
 
 export type GitAction = "read" | "local" | "commit" | "push" | "network";
 
+/** Subcommands that create, rewrite or move commits and tags. They count as commits for the run's git permission. */
+const MAKES_COMMITS = new Set(["merge", "cherry-pick", "revert", "am", "rebase", "pull", "tag", "notes"]);
+/** Stops an operation already in progress without creating a commit. */
+const STOPS = ["--abort", "--quit", "--show-current-patch"];
+
+function makesCommits(sub: string, rest: string[]): boolean {
+  if (!MAKES_COMMITS.has(sub)) return false;
+  const flags = new Set(rest.filter((arg) => arg.startsWith("-")));
+  if (STOPS.some((flag) => flags.has(flag))) return false;
+  if (sub === "tag") return rest.some((arg) => !arg.startsWith("-")) && !flags.has("-l") && !flags.has("--list") && !flags.has("--contains") && !flags.has("--points-at");
+  if (sub === "notes") return !["list", "show"].includes(rest[0] ?? "list");
+  if (sub === "pull" || sub === "merge") return !flags.has("--ff-only") && !flags.has("--no-commit") && !flags.has("--squash");
+  if (sub === "cherry-pick" || sub === "revert") return !flags.has("-n") && !flags.has("--no-commit");
+  return true;
+}
+
 /** Classifies and checks a git argv. Throws with the reason when the job may not do it. */
 export function checkGit(argv: string[], limits: GitLimits): { sub: string; action: GitAction } {
   const args = argv.slice(1);
@@ -297,12 +313,18 @@ export function checkGit(argv: string[], limits: GitLimits): { sub: string; acti
     return { sub, action: rest.some((arg) => !arg.startsWith("-")) ? "local" : "read" };
   }
   if (sub === "worktree" && rest[0] !== "list") throw new GuardError("git worktree can place files outside the folder. Not allowed.");
-  if (sub === "commit") {
-    if (limits.delivery === "local") throw new GuardError("This job may not commit. It was assigned with “Local files only”.");
-    return { sub, action: "commit" };
+  if (sub === "commit" || makesCommits(sub, rest)) {
+    if (limits.delivery === "local") {
+      throw new GuardError(
+        sub === "pull"
+          ? "This run may not commit, and git pull can create a merge commit. Use git fetch, or git pull --ff-only. It was assigned with “Local only”."
+          : `This run may not commit, and git ${sub} creates or rewrites commits. Leave your changes uncommitted. It was assigned with “Local only”.`,
+      );
+    }
+    return { sub, action: sub === "pull" ? "network" : "commit" };
   }
   if (sub === "push") {
-    if (limits.delivery !== "push") throw new GuardError("This job may not push. Pushing was not allowed when it was assigned.");
+    if (limits.delivery !== "push") throw new GuardError("This run may not push. Finish without pushing. It was assigned without “Commit + push”.");
     if (has("--force", "-f", "--mirror", "--all", "--delete", "-d", "--prune")) {
       throw new GuardError(limits.who === "human" ? "Force-push and deletes are refused. Use --force-with-lease if you must rewrite." : "Force-push, mirror and branch deletes are not allowed.");
     }

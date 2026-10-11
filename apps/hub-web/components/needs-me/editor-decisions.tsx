@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 import { useToast } from "@/components/toast";
 import { SkeletonRows, Tag } from "@/components/ui";
 import { api, type AgentDecisionRecord } from "@/lib/api";
-import { deviceDecisionView } from "@/lib/device-copy";
+import { confirmCopy, deviceDecisionView } from "@/lib/device-copy";
 import { relative, untilLabel } from "@/lib/format";
 
 const SOURCE: Record<string, { label: string; tone: "blue" | "purple" | "orange" | "gray" }> = {
@@ -79,7 +79,8 @@ function EnsembleCard({ decision }: { decision: AgentDecisionRecord }) {
               {decision.detail.options.map((option, index) => (
                 <button key={option} type="button" className="btn justify-start text-left" disabled={busy} onClick={() => decide.mutate({ decision: "allow", reason: option })}>
                   <span className="w-4 shrink-0 font-mono text-[11px] text-faint">{String.fromCharCode(65 + index)}</span>
-                  {option}
+                  <span className="min-w-0 flex-1">{option}</span>
+                  {decision.detail.recommended === option ? <Tag tone="purple">Recommended</Tag> : null}
                 </button>
               ))}
             </div>
@@ -143,20 +144,25 @@ function Countdown({ until }: { until: string }) {
   return <span>{untilLabel(left)} left before it asks in the editor</span>;
 }
 
-/** A question the paired computer asked. Once only, and no note on a permission. */
+/** A question the paired computer asked. Once only, and no note on a permission. A risky allow is confirmed first. */
 function DeviceCard({ decision }: { decision: AgentDecisionRecord }) {
   const client = useQueryClient();
   const toast = useToast();
   const computer = decision.detail.deviceName || "your computer";
+  const [typed, setTyped] = useState("");
+  const [confirming, setConfirming] = useState<string | null | undefined>(undefined);
   const view = deviceDecisionView({
     tier: decision.detail.tier,
     event: decision.event,
     options: decision.detail.options,
     deviceName: decision.detail.deviceName,
+    confirm: decision.detail.confirm,
+    allowCustom: decision.detail.allowCustom,
+    recommended: decision.detail.recommended,
   });
   const decide = useMutation({
-    mutationFn: (input: { decision: "allow" | "deny"; reason?: string }) =>
-      api.decideAgent(decision.id, { decision: input.decision, scope: view.scope, reason: input.reason }),
+    mutationFn: (input: { decision: "allow" | "deny"; reason?: string; confirmed?: boolean }) =>
+      api.decideAgent(decision.id, { decision: input.decision, scope: view.scope, reason: input.reason, confirmed: input.confirmed }),
     onSuccess: (_result, input) => {
       toast(input.decision === "allow" ? `Sent to ${computer}.` : `Refused. ${computer} was told.`, { tone: "ok" });
       void client.invalidateQueries({ queryKey: ["decisions"] });
@@ -165,6 +171,12 @@ function DeviceCard({ decision }: { decision: AgentDecisionRecord }) {
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
   const busy = decide.isPending;
+  const needsConfirm = view.kind !== "approve-on-computer" && view.confirm;
+  // A risky allow: the first press asks, the second sends. `null` is a plain Yes, a string is an option.
+  const allow = (reason?: string) => {
+    if (needsConfirm && confirming === undefined) return setConfirming(reason ?? null);
+    decide.mutate({ decision: "allow", reason, confirmed: needsConfirm || undefined });
+  };
   return (
     <div className="tile rounded-lg bg-panel p-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -174,10 +186,23 @@ function DeviceCard({ decision }: { decision: AgentDecisionRecord }) {
       </div>
       <div className="mt-1.5 text-[15px] font-semibold">{decision.title}</div>
       {decision.detail.command ? <pre className="mt-2 overflow-auto whitespace-pre-wrap rounded-md border border-line bg-raised p-2.5 font-mono text-[12.5px]">{decision.detail.command}</pre> : null}
-      {view.kind === "approve-on-computer" ? (
-        <div className="mt-3 rounded-md border border-line bg-raised px-3 py-2 text-[13px] text-muted">{view.message}</div>
-      ) : view.kind === "confirm" ? (
-        <div className="mt-3 rounded-md border border-warn/40 bg-[var(--tag-yellow-bg)] px-3 py-2 text-[13px] text-[var(--tag-yellow-fg)]">{view.message}</div>
+      {confirming !== undefined ? (
+        <div className="mt-3 rounded-md border border-warn/40 bg-[var(--tag-yellow-bg)] p-3 text-[13px] text-[var(--tag-yellow-fg)]" role="alertdialog" aria-label="Confirm">
+          <div className="font-medium">{confirmCopy(decision.toolName, decision.detail.deviceName)}</div>
+          {confirming ? <div className="mt-1">Answer: {confirming}</div> : null}
+          <div className="mt-2 flex gap-2">
+            <button type="button" className="btn-primary" disabled={busy} onClick={() => decide.mutate({ decision: "allow", reason: confirming ?? undefined, confirmed: true })}>
+              <Check size={13} /> Yes, allow
+            </button>
+            <button type="button" className="btn" disabled={busy} onClick={() => setConfirming(undefined)}>
+              Back
+            </button>
+          </div>
+        </div>
+      ) : view.kind === "approve-on-computer" ? (
+        <div className="mt-3 rounded-md border border-line bg-raised px-3 py-2 text-[13px] text-muted">
+          {view.message} {computer} accepts this answer only on itself. Turn on “Accept approvals from the web” there to answer from here.
+        </div>
       ) : view.kind === "choices" ? (
         <div className="mt-3 grid gap-2">
           {view.options.map((option, index) => (
@@ -186,19 +211,34 @@ function DeviceCard({ decision }: { decision: AgentDecisionRecord }) {
               type="button"
               className="btn min-h-[44px] w-full justify-start text-left"
               disabled={busy}
-              onClick={() => decide.mutate({ decision: "allow", reason: option })}
+              onClick={() => allow(option)}
             >
-              {option}
+              <span className="min-w-0 flex-1">{option}</span>
+              {view.recommended === option ? <Tag tone="purple">Recommended</Tag> : null}
             </button>
           ))}
+          {view.custom ? (
+            <div className="flex gap-2">
+              <input
+                value={typed}
+                onChange={(event) => setTyped(event.target.value)}
+                onKeyDown={(event) => event.key === "Enter" && typed.trim() && allow(typed.trim())}
+                placeholder="Or type your own answer"
+                className="field min-w-0 flex-1"
+              />
+              <button type="button" className="btn-primary" disabled={busy || !typed.trim()} onClick={() => allow(typed.trim())}>
+                Send
+              </button>
+            </div>
+          ) : null}
           <button type="button" className="btn min-h-[44px] w-full justify-center" disabled={busy} onClick={() => decide.mutate({ decision: "deny" })}>
             <X size={15} /> No
           </button>
         </div>
       ) : (
         <div className="mt-3 grid gap-2">
-          <button type="button" className="btn-primary min-h-[44px] w-full justify-center" disabled={busy} onClick={() => decide.mutate({ decision: "allow" })}>
-            <Check size={15} /> Yes
+          <button type="button" className="btn-primary min-h-[44px] w-full justify-center" disabled={busy} onClick={() => allow()}>
+            <Check size={15} /> {needsConfirm ? "Allow…" : "Yes"}
           </button>
           <button type="button" className="btn min-h-[44px] w-full justify-center" disabled={busy} onClick={() => decide.mutate({ decision: "deny" })}>
             <X size={15} /> No

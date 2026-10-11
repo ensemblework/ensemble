@@ -19,6 +19,8 @@ const Decide = z.object({
   decision: z.enum(["allow", "deny"]),
   scope: z.enum(["once", "session", "always"]).default("once"),
   reason: z.string().max(500).optional(),
+  /** The person confirmed a risky allow (a push, a path outside the folder, trusting a folder). */
+  confirmed: z.boolean().optional(),
 });
 
 /**
@@ -38,7 +40,7 @@ export async function applyAnswer(
   if (row.status !== "pending") {
     throw new AnswerError(409, row.status === "expired" ? "The tool stopped waiting. It showed its own prompt instead." : "Already answered.");
   }
-  const detail = (row.detail ?? {}) as { deviceId?: unknown; command?: string | null; tier?: unknown; deviceName?: unknown; options?: unknown; runnerAccountId?: unknown };
+  const detail = (row.detail ?? {}) as { deviceId?: unknown; command?: string | null; tier?: unknown; deviceName?: unknown; options?: unknown; runnerAccountId?: unknown; allowCustom?: unknown; confirm?: unknown };
   const deviceId = typeof detail.deviceId === "string" && detail.deviceId.length > 0 ? detail.deviceId : null;
   // In a shared space: a run's question is answered by the person whose computer runs it;
   // anything else (editor hooks, hosted runs) by the space's owner. Others only see it.
@@ -52,15 +54,19 @@ export async function applyAnswer(
   let scope = body.scope;
   let reason = body.reason;
   if (deviceId) {
-    if (detail.tier === "run_branch_push") {
+    if ((detail.tier === "run_branch_push" || detail.tier === "high_risk") && actor === "me") {
+      // That computer answers this kind only on itself ("Accept approvals from the web" is off there).
       const name = typeof detail.deviceName === "string" && detail.deviceName.trim() ? detail.deviceName.trim() : "your computer";
       throw new AnswerError(403, `Approve this on ${name}.`);
+    }
+    if (detail.confirm === true && body.decision === "allow" && actor === "me" && body.confirmed !== true) {
+      throw new AnswerError(400, "Confirm this before allowing it.");
     }
     if (body.scope !== "once") throw new AnswerError(400, "A phone answer is once only. Change trust on your computer.");
     const offered = offeredOptions(detail.options);
     const picked = typeof body.reason === "string" && body.reason.length > 0 ? body.reason : null;
     if (row.event !== "question" && picked) throw new AnswerError(400, "A permission answer cannot include a note.");
-    if (picked !== null && !offered.includes(picked)) throw new AnswerError(400, "Pick one of the offered answers.");
+    if (picked !== null && !offered.includes(picked) && !(row.event === "question" && detail.allowCustom === true)) throw new AnswerError(400, "Pick one of the offered answers.");
     if (body.decision === "allow" && offered.length > 0 && picked === null) throw new AnswerError(400, "Pick one of the offered answers.");
     scope = "once";
     reason = picked ?? undefined;

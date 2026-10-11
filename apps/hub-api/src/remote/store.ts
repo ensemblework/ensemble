@@ -26,6 +26,13 @@ export interface RemoteSettings {
   enabled: boolean;
   /** §5.1 run-branch push. Off by default, Mac only. */
   runBranchPush: boolean;
+  /**
+   * The person who owns this computer may approve anything from the web or
+   * phone (trusting a folder, a push, a path outside the folder) and the run
+   * settings chosen there (mode, network, limits) apply here. On by default.
+   * Off: those answers only on this computer, and web settings only narrow.
+   */
+  acceptWebApprovals: boolean;
   apiBase: string | null;
   deviceId: string | null;
   deviceName: string;
@@ -96,6 +103,7 @@ export function loadSettings(): RemoteSettings {
     version: 1,
     enabled: saved.enabled === true,
     runBranchPush: saved.runBranchPush === true,
+    acceptWebApprovals: saved.acceptWebApprovals !== false,
     apiBase: typeof saved.apiBase === "string" ? saved.apiBase : null,
     deviceId: typeof saved.deviceId === "string" ? saved.deviceId : null,
     deviceName: typeof saved.deviceName === "string" && saved.deviceName ? saved.deviceName : defaultDeviceName(),

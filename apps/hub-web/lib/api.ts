@@ -456,7 +456,7 @@ export type AgentJob = {
   useCredentials: boolean;
   askBeforePublish: boolean;
   unattended?: boolean;
-  accessMode?: "review" | "read-write";
+  accessMode?: "review" | "read-write" | "auto";
   markDone?: boolean;
   instructions?: string;
   branchMode?: "as-is" | "existing" | "new";
@@ -529,6 +529,8 @@ export type RemoteMac = {
   paired: boolean;
   enabled: boolean;
   runBranchPush: boolean;
+  /** Approvals and run settings from the web and phone apply on this computer. */
+  acceptWebApprovals: boolean;
   online: boolean;
   lastHeartbeatAt: number | null;
   disconnected: { at: string; reason: string } | null;
@@ -555,6 +557,9 @@ export type AssignInput = {
   network?: boolean;
   markDone?: boolean;
   unattended?: boolean;
+  /** Ask, Review only or Run unattended. Wins over `unattended`. */
+  mode?: "ask" | "review" | "unattended";
+  /** `review` is the read-only grant, for a folder shared read-only. */
   accessMode?: "review" | "read-write";
   trust?: "always" | "task" | "none";
   maxMinutes?: number;
@@ -826,6 +831,10 @@ export type AgentDecisionRecord = {
     deviceId?: string;
     deviceName?: string;
     tier?: "ordinary" | "run_branch_push" | "high_risk";
+    /** A risky allow (push, outside path, trust): the person confirms first. */
+    confirm?: boolean;
+    /** The option the agent recommends, one of `options`. */
+    recommended?: string | null;
   };
   sessionId: string | null;
   cwd: string | null;
@@ -977,7 +986,7 @@ export const api = bindClient({
   // editor decisions (Needs me router)
   decisions: (status: "pending" | "recent" = "pending") =>
     get<{ decisions: AgentDecisionRecord[] }>(`/api/decisions${qs({ status })}`),
-  decideAgent: (id: string, data: { decision: "allow" | "deny"; scope: "once" | "session" | "always"; reason?: string }) =>
+  decideAgent: (id: string, data: { decision: "allow" | "deny"; scope: "once" | "session" | "always"; reason?: string; confirmed?: boolean }) =>
     post<{ decision: AgentDecisionRecord }>(`/api/decisions/${id}/decide`, data),
   decisionRules: () => get<{ rules: DecisionRuleRecord[] }>("/api/decision-rules"),
   deleteDecisionRule: (id: string) => del<void>(`/api/decision-rules/${id}`),
@@ -1092,7 +1101,7 @@ export const api = bindClient({
   branches: (path: string) => get<{ branches: string[] }>(`/api/workspace/branches${qs({ path })}`),
   agentState: () => get<AgentState>("/api/agent/state"),
   remote: () => get<RemoteMac>("/api/remote"),
-  saveRemote: (body: { enabled?: boolean; runBranchPush?: boolean; apiBase?: string | null; deviceName?: string }) => put<RemoteMac>("/api/remote", body),
+  saveRemote: (body: { enabled?: boolean; runBranchPush?: boolean; acceptWebApprovals?: boolean; apiBase?: string | null; deviceName?: string }) => put<RemoteMac>("/api/remote", body),
   pairRemote: (body: { apiBase: string; code: string; name?: string }) => post<RemoteMac>("/api/remote/pair", body),
   unpairRemote: () => post<RemoteMac>("/api/remote/unpair"),
   pauseAgent: () => post<{ stopped: number; cancelled: number }>("/api/agent/pause"),

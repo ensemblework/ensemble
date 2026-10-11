@@ -250,7 +250,7 @@ test("remote tasks: pair, run, refuse a server overreach, disconnect, and do not
   }
 });
 
-test("a claim with networkAccess still runs on this Mac's network setting", { timeout: 180_000 }, async (t) => {
+test("with web settings off, a claim's networkAccess does not widen this computer's network", { timeout: 180_000 }, async (t) => {
   const root = makeTestDirectory("ensemble-remote-net-");
   const stub = await startStubRuntime();
   const host = await startFakeHost();
@@ -276,8 +276,9 @@ test("a claim with networkAccess still runs on this Mac's network setting", { ti
     assert.equal(networkOff.status, 200, JSON.stringify(networkOff.body));
     const paired = await side.api("/api/remote/pair", { json: { apiBase: host.origin, code: host.code } });
     assert.equal(paired.status, 200, JSON.stringify(paired.body));
-    const enabled = await side.api("/api/remote", { method: "PUT", json: { enabled: true } });
+    const enabled = await side.api("/api/remote", { method: "PUT", json: { enabled: true, acceptWebApprovals: false } });
     assert.equal(enabled.status, 200, JSON.stringify(enabled.body));
+    assert.equal((enabled.body as { acceptWebApprovals?: boolean }).acceptWebApprovals, false);
 
     const title = "[net] No network";
     const hosted = host.enqueue(spec(title, { networkAccess: true }));

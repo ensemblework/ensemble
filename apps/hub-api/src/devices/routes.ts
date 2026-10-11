@@ -11,7 +11,7 @@ import { requireBrowserSession } from "../bridge/auth.js";
 import { isPaused } from "../lib/activity.js";
 import { newApiToken, sha256 } from "../lib/auth.js";
 import { requireVerifiedUser } from "../lib/hosted-access.js";
-import { publicDecision, waitFor } from "../lib/decisions.js";
+import { decisionBus, publicDecision, waitFor } from "../lib/decisions.js";
 import { appendLedger } from "../lib/ledger.js";
 import { redactText } from "../lib/redact.js";
 import { sseHandler, sseHub } from "../lib/sse.js";
@@ -72,7 +72,13 @@ const Ask = z.object({
   options: z.array(z.string().max(200)).max(12).optional(),
   tier: z.enum(["ordinary", "run_branch_push", "high_risk"]).default("ordinary"),
   event: z.enum(["question", "permission"]).optional(),
+  /** Risky (a push, a path outside the folder, trusting a folder): the web asks the person to confirm before allowing. */
+  confirm: z.boolean().optional(),
+  allowCustom: z.boolean().optional(),
+  recommended: z.string().max(200).optional(),
 });
+
+const Close = z.object({ decision: z.enum(["allow", "deny"]), reason: z.string().max(500).nullish() });
 
 function httpsResult(url: string): boolean {
   try {
@@ -308,7 +314,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       const next = await prisma.workspaceJob.findFirst({
         where: { ...runsOn(device), status: "queued" },
         orderBy: { sequence: "asc" },
-        include: { task: { select: { id: true, title: true } } },
+        include: { task: { select: { id: true, title: true, description: true } } },
       });
       if (!next) return reply.code(204).send();
       if (!(await stillMember(app, next))) {
@@ -345,11 +351,14 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
         repoUrl: next.repoUrl,
         folderLabel: next.folderLabel,
         delivery: next.delivery,
+        task: { title: next.task.title, description: next.task.description },
         askBeforePublish: next.askBeforePublish,
         useCredentials: next.useCredentials,
-        unattended: false,
-        // Hint only, copied from this Ensemble's sandbox setting. The computer
-        // enforces its own network setting and must ignore this or treat it as a hint.
+        unattended: next.unattended,
+        mode: next.unattended ? "unattended" : next.accessMode === "auto" ? "review" : "ask",
+        // Older computers know only these two; Review only reads as Ask there.
+        accessMode: next.accessMode === "review" ? "review" : "read-write",
+        // Applied when the computer accepts web settings; otherwise it keeps its own default.
         networkAccess: next.networkAccess,
         branchMode: next.branchMode,
         branch: next.branch,
@@ -450,7 +459,9 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
         title,
         detail: {
           options: body.options ?? [],
-          allowCustom: false,
+          allowCustom: body.allowCustom === true,
+          recommended: body.recommended && (body.options ?? []).includes(body.recommended) ? body.recommended : null,
+          confirm: body.confirm === true,
           command,
           input: {},
           taskId: held.job.taskId,
@@ -497,6 +508,26 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       return publicDecision(expired);
     }
     return publicDecision(row!);
+  });
+
+  /** Answered on the computer: the same answer closes the card here, so the phone does not keep a stale question. */
+  app.post("/api/devices/self/decisions/:id/close", async (request, reply) => {
+    const device = await ownDevice(app, request, reply);
+    if (!device) return;
+    const { id } = request.params as { id: string };
+    const body = Close.parse(request.body);
+    const owned = await prisma.agentDecision.findFirst({ where: { id } });
+    const detail = (owned?.detail ?? {}) as { deviceId?: string; jobId?: string };
+    if (!owned || detail.deviceId !== device.id) return reply.code(404).send({ error: "Decision not found." });
+    const closed = await prisma.agentDecision.updateMany({
+      where: { id, status: "pending" },
+      data: { status: "decided", decision: body.decision, scope: "once", reason: body.reason ?? null, decidedAt: new Date() },
+    });
+    if (closed.count !== 1) return reply.code(409).send({ error: "Already answered." });
+    decisionBus.emit(id);
+    sseHub.publish(owned.userId, { event: "decision", data: { id, status: "decided", title: owned.title, source: owned.source } });
+    await appendLedger({ userId: owned.userId, actor: "me", action: `decision.${body.decision}`, payload: { source: owned.source, tool: owned.toolName, title: owned.title, scope: "once", via: "computer" } });
+    return reply.code(204).send();
   });
 
   app.post("/api/devices/self/jobs/:id/complete", async (request, reply) => {

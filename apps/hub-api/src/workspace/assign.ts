@@ -16,7 +16,7 @@ import { loadSettings } from "../lib/settings.js";
 import { sseHub } from "../lib/sse.js";
 import { GuardError, resolveWorkFolder, sandboxAvailable, within, workspaceRoot } from "./guard.js";
 import { capabilities } from "./sandbox/spawn.js";
-import { checkUnattended, isFolderTrusted, PATH_RULE_SOURCE, PATH_RULE_TOOL, rulesForJob, UnattendedAskModeError } from "./trust.js";
+import { checkModeTrust, isFolderTrusted, PATH_RULE_SOURCE, PATH_RULE_TOOL, rulesForJob, storedMode, UnattendedAskModeError, type RunMode } from "./trust.js";
 import { kick } from "./worker.js";
 import { actorFor, keysFor } from "../sharing/context.js";
 
@@ -39,7 +39,9 @@ export const Assign = z.object({
   network: z.boolean().optional(),
   markDone: z.boolean().default(true),
   unattended: z.boolean().default(false),
-  /** Outside the workspace this defaults to review (read-only, no network). */
+  /** Ask, Review only (commands run without asking, only decisions are asked) or Run unattended. Wins over `unattended`. */
+  mode: z.enum(["ask", "review", "unattended"]).optional(),
+  /** `review` is the read-only grant (no writes, no network), for a folder shared read-only. */
   accessMode: z.enum(["review", "read-write"]).optional(),
   /** always saves a device path rule. task trusts only this job. none asks. */
   trust: z.enum(["always", "task", "none"]).optional(),
@@ -50,6 +52,14 @@ export const Assign = z.object({
   folderLabel: z.string().max(200).optional(),
 });
 export type AssignInput = z.infer<typeof Assign>;
+
+/** The stored mode for a request: `mode` when given, else the older `unattended` flag; a read-only grant stays read-only. */
+export function requestedMode(body: Pick<AssignInput, "kind" | "mode" | "unattended" | "accessMode">): { accessMode: "review" | "read-write" | "auto"; unattended: boolean } {
+  if (body.kind !== "code") return { accessMode: "read-write", unattended: false };
+  const mode: RunMode = body.mode ?? (body.unattended ? "unattended" : "ask");
+  const stored = storedMode(mode);
+  return body.accessMode === "review" ? { accessMode: "review", unattended: stored.unattended } : stored;
+}
 
 const BRANCH = /^(?!-)(?!.*\.\.)[A-Za-z0-9._/-]{1,200}$/;
 
@@ -91,6 +101,8 @@ async function createDeviceJob(
     repoUrl: body.repoUrl,
     continueFromJobId: body.continueFromJobId,
   }, { space: userId, runner });
+  // Trust is checked on that computer, where the folder is; Review only and unattended wait there for it.
+  const mode = requestedMode(body);
   const job = await createCappedJob(prisma, owner, {
     data: {
       userId,
@@ -98,12 +110,12 @@ async function createDeviceJob(
       taskId: task.id,
       kind: body.kind,
       executionMode: body.kind === "code" && !body.sandbox ? "native" : "sandbox",
-      delivery: body.kind === "code" ? body.delivery : "local",
-      askBeforePublish: body.askBeforePublish,
+      delivery: body.kind === "code" && mode.accessMode !== "review" ? body.delivery : "local",
+      askBeforePublish: body.askBeforePublish && !mode.unattended,
       useCredentials: body.kind === "code" && body.useCredentials,
       markDone: body.markDone,
-      unattended: false,
-      accessMode: "read-write",
+      unattended: mode.unattended,
+      accessMode: mode.accessMode,
       networkAccess: body.network ?? orchestration.sandboxNetwork,
       externalRoot: null,
       folderLabel: assigned.folderLabel,
@@ -179,7 +191,7 @@ export async function createJob(prisma: PrismaClient, userId: string, body: Assi
   if (body.kind === "code" && body.sandbox && !sandboxAvailable && process.env.ENSEMBLE_DESKTOP !== "1") {
     throw new GuardError("The sandbox needs macOS. Turn off the sandbox to run directly on this machine.");
   }
-  if (body.kind === "code" && body.unattended && capabilities().strength === "ask") throw new UnattendedAskModeError();
+  if (body.kind === "code" && requestedMode(body).unattended && capabilities().strength === "ask") throw new UnattendedAskModeError();
 
   let externalRoot: string | null = null;
   let repoUrl: string | null = null;
@@ -223,11 +235,10 @@ export async function createJob(prisma: PrismaClient, userId: string, body: Assi
     }
   }
 
-  const outside = Boolean(externalRoot);
-  const accessMode = body.kind === "code" ? (body.accessMode ?? (outside ? "review" : "read-write")) : "read-write";
+  const { accessMode, unattended } = requestedMode(body);
   const review = accessMode === "review";
   const grantingNow = body.trust === "always" || body.trust === "task";
-  if (body.kind === "code" && body.unattended) {
+  if (body.kind === "code" && (unattended || accessMode === "auto")) {
     const root = await workspaceRoot();
     const folder = externalRoot ?? root;
     const rows = await prisma.decisionRule.findMany({
@@ -239,7 +250,7 @@ export async function createJob(prisma: PrismaClient, userId: string, body: Assi
       rules: rulesForJob(rows, "assign"),
       grantingNow,
     });
-    const rejection = checkUnattended({ unattended: true, trusted });
+    const rejection = checkModeTrust({ accessMode, unattended, trusted });
     if (rejection) throw rejection;
   }
 
@@ -250,10 +261,10 @@ export async function createJob(prisma: PrismaClient, userId: string, body: Assi
       kind: body.kind,
       executionMode: body.kind === "code" && !body.sandbox ? "native" : "sandbox",
       delivery: body.kind === "code" && !review ? body.delivery : "local",
-      askBeforePublish: body.askBeforePublish,
+      askBeforePublish: body.askBeforePublish && !unattended,
       useCredentials: body.kind === "code" && body.useCredentials && !review,
       markDone: body.markDone,
-      unattended: body.kind === "code" && body.unattended,
+      unattended,
       accessMode,
       networkAccess: review ? false : (body.network ?? settings.orchestration.sandboxNetwork),
       externalRoot,

@@ -6,17 +6,22 @@ Hosted production permits public accounts, but host checkout/filesystem/tool exe
 
 `app/(hub)/workspace/page.tsx` shows query failures explicitly, with Retry and paired-computer guidance rather than an indefinitely pending queue. A 403 stops automatic queue polling; it does not silently pause or resume jobs. Repository overview's GitHub fallback uses a unique, canonical temporary directory (`src/repo/mirror.ts`), so Mac symlink aliases cannot trip the repository path jail.
 
+As built (11 Oct 2026; `components/agent/assign-dialog.tsx`, `apps/hub-api/src/workspace/assign.ts`, enforcement in `workspace/guard.ts`, `trust.ts`, `tools.ts`, `agent.ts`; modes in [doc 24 v3](24_DESKTOP_SANDBOXING.md#changes-in-v3-11-oct-2026-as-built)):
+
 | Choice | Meaning |
 |---|---|
-| **Docker sandbox (default)** | Commands see only the assigned checkout mounted from the Windows workspace. |
-| **Native Windows** | Commands use PowerShell noninteractively, with scoped file tools and workspace-local caches. **Not an OS sandbox:** scripts can technically reach other host paths. The form warns before assignment. |
-| **Repository** | An explicit repository, resolution from the task/project/notes, or **no repository at all** — an empty private folder in the workspace. |
-| **Completion outcome** | Local files only (default), local commit, commit/push to the selected working branch, or a new branch plus PR. Work without a repository is always local-only. |
-| **Review first (default)** | Save an approval before any selected commit/push/PR action. Local-only tasks need no publishing approval. |
-| **Unattended** | Authorizes only the selected outcome, not additional Git actions. No interactive questions or approval prompts. |
-| **Model** | Optional override from the existing approved model set; otherwise the task's complexity mapping. |
-| **Handoff / branches** | Optional checkout path inside the workspace, starting branch, and PR target branch. |
-| **Limits** | Default 40 model turns / 60 active minutes, bounded per assignment. |
+| **Run profile** | Up to three saved sets of the choices below (`settings.runProfiles`, `defaultRunProfileId`), plus a built-in Quick profile while none is saved. The dialog opens on the default profile; a change shows "modified" with Update or Save as profile; rename, delete and make default from the same row. |
+| **Kind** | Research & writing (web and paper tools, writes the task page) or Code (works in a folder). Tools a run was not given are refused if called. |
+| **Run on** | This server (operators only) or a paired computer. A computer gets the same settings; see [doc 25 §5.1](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#51-phone-approvals). |
+| **Model, Thinking** | The task's tier by default (with the tier's effort, shown as "Tier default"), or one model for this attempt. |
+| **Where it works** | Its own checkout (a fresh clone, or an empty repo, in `ensemble-workspace/runs/<job>`), Continue an earlier task (same folder and branch), or a folder on your computer (worked in place). |
+| **Branch** | As is, Existing, New (local runs; a paired computer works on its own run branch for now). |
+| **Git permissions** | Local only (no commit, merge, rebase, cherry-pick, revert, tag), Commit, or Commit + push. Stated in the prompt and enforced; a refused git step returns an error to the model and the run continues; a commit a script makes that the run may not make is undone, keeping the files. |
+| **Ask me before each commit** | Every commit waits on Needs me, in any folder. Not offered with Run unattended. |
+| **Mode** | Ask, Review only (runs freely inside the folder, asks only decisions), Run unattended (never asks; decisions take the recommended option and are listed in the summary). Review only and Run unattended need a trusted folder; the Ensemble workspace is always trusted. |
+| **Sandbox, git sign-in, internet** | macOS Seatbelt around commands; the person's GitHub sign-in for Ensemble's own clone, fetch and push (never handed to the agent); network on or off. |
+| **Move the task to Done** | On: a successful run moves the task to Done (its review stays on the task). Off: Waiting for me. |
+| **Limits** | Max minutes (1–480; working time, not time waiting on Needs me), max tool calls (5–500), max model turns (3–200). |
 
 ---
 
@@ -104,7 +109,7 @@ Build the default Node/Python toolchain with `pnpm workspace:image`. Windows-onl
 
 The existing Copilot API is a **model API, not a computer-use sandbox**. Ensemble supplies its own typed tool loop using the existing runtime's `/api/chat/tools`; it does not launch an unrestricted CLI with `--allow-all`. Native shells use `-NoProfile -NonInteractive`; stdin, Git prompting, caches and process lifetime are controlled. Human interaction uses the typed `workspace_ask_user` tool, not terminal prompts. Its exact options and custom-answer flag appear in Needs Me.
 
-Review-mode commands and dependency installs also request one-call permission there; unattended assignments retain their explicitly authorized execution mode. Reads through typed file/retrieval tools do **not** manufacture permission dialogs.
+Which commands ask depends on the mode (above); in Run unattended nothing asks and `ask_user` returns the agent's recommended option. Reads through typed file/retrieval tools do **not** manufacture permission dialogs.
 
 PR outcomes prepare a unique `ensemble/<task>-<job-id>` branch. Local, commit and push-only outcomes use the selected working branch. **No branch is reset.** The agent is told that checkout/branch preparation has already happened. Typed `workspace_git` and `workspace_compare` tools read state, branches, logs and bounded per-file diffs. Safe reads such as `git remote -v` are not writes; file tools accept paths inside the assigned checkout, whether relative or absolute.
 

@@ -14,10 +14,11 @@ import type { RemoteSettings } from "./store.js";
 process.env.DATABASE_URL ??= "postgresql://ensemble:unused@127.0.0.1:1/ensemble_desktop";
 const { isRefusal, judgeAnswer, planLocalJob, riskOf } = await import("./policy.js");
 
-const settings = (folders: RemoteSettings["folders"] = []): RemoteSettings => ({
+const settings = (folders: RemoteSettings["folders"] = [], acceptWebApprovals = true): RemoteSettings => ({
   version: 1,
   enabled: true,
   runBranchPush: false,
+  acceptWebApprovals,
   apiBase: "http://127.0.0.1:9",
   deviceId: "device",
   deviceName: "Test",
@@ -99,14 +100,30 @@ test("a shared label becomes a local folder, and a public https URL is checked b
   }
 });
 
-test("a claimed networkAccess is not copied onto the local assignment", () => {
-  const shared = settings([{ label: "notes", path: "/work/notes", kind: "folder", access: "read-write" }]);
-  const planned = planLocalJob(spec({ folderLabel: "notes", networkAccess: true }), shared, () => null);
-  assert.equal(isRefusal(planned), false);
-  if (!isRefusal(planned)) {
-    assert.equal(Object.hasOwn(planned.assign, "network"), false);
-    assert.equal(planned.assign.trust, "none");
+test("web settings apply when this computer accepts them, and only narrow when it does not", () => {
+  const folders = [{ label: "notes", path: "/work/notes", kind: "folder" as const, access: "read-write" as const }];
+  const claim = spec({ folderLabel: "notes", networkAccess: true, mode: "review", askBeforePublish: false, maxMinutes: 20, maxTurns: 10, maxToolCalls: 30 });
+  const accepted = planLocalJob(claim, settings(folders), () => null);
+  assert.equal(isRefusal(accepted), false);
+  if (!isRefusal(accepted)) {
+    assert.equal(accepted.assign.network, true);
+    assert.equal(accepted.assign.mode, "review");
+    assert.equal(accepted.assign.askBeforePublish, false);
+    assert.equal(accepted.assign.maxMinutes, 20);
+    assert.equal(accepted.assign.maxTurns, 10);
+    assert.equal(accepted.assign.maxToolCalls, 30);
+    assert.equal(accepted.assign.trust, "none");
   }
+  const narrow = planLocalJob(claim, settings(folders, false), () => null);
+  if (!isRefusal(narrow)) {
+    assert.equal(Object.hasOwn(narrow.assign, "network"), false);
+    assert.equal(narrow.assign.mode, "ask");
+    assert.equal(narrow.assign.askBeforePublish, true);
+  }
+  const off = planLocalJob(spec({ folderLabel: "notes", networkAccess: false }), settings(folders, false), () => null);
+  if (!isRefusal(off)) assert.equal(off.assign.network, false);
+  const older = planLocalJob(spec({ folderLabel: "notes", unattended: true }), settings(folders), () => null);
+  if (!isRefusal(older)) assert.equal(older.assign.mode, "unattended");
 });
 
 test("a phone answer applies only to the question the Mac asked, once", () => {
@@ -140,15 +157,17 @@ test("a phone answer applies only to the question the Mac asked, once", () => {
     judgeAnswer({ ...base, risk: "high", answer: { id: "hosted-d", status: "answered", decision: "allow", scope: "once", reason: null, actionHash: "abc" } }).kind,
     "refuse",
   );
+  const push: LocalDecision = { id: "local-1", event: "permission", toolName: "git push", title: "Push", detail: { command: "git push" }, status: "pending" };
+  assert.deepEqual(
+    judgeAnswer({ ...base, local: push, risk: "high", acceptWeb: true, answer: { id: "hosted-d", status: "answered", decision: "allow", scope: "once", reason: null, actionHash: "abc" } }),
+    { kind: "apply", decision: "allow", reason: null },
+  );
   assert.equal(judgeAnswer({ ...base, local: { ...local, status: "decided" }, answer: { id: "hosted-d", status: "answered", decision: "allow", scope: "once", reason: "world", actionHash: "abc" } }).kind, "stop");
 });
 
-test("a push the Mac would have to confirm is high risk, even if the server says otherwise", () => {
-  const push: LocalDecision = { id: "p", event: "permission", toolName: "git push", title: "Push main", detail: { command: "git push origin main" }, status: "pending" };
-  assert.equal(riskOf(push, { runBranchPush: true, ownRunBranch: true, trusted: true, pushTargetLocal: true }), "ordinary");
-  assert.equal(riskOf(push, { runBranchPush: true, ownRunBranch: false, trusted: true, pushTargetLocal: true }), "high");
-  assert.equal(riskOf(push, { runBranchPush: false, ownRunBranch: true, trusted: true, pushTargetLocal: true }), "high");
-  assert.equal(riskOf({ ...push, toolName: "outside" }, { runBranchPush: true, ownRunBranch: true, trusted: true, pushTargetLocal: true }), "high");
-  const trust = question({ detail: { options: ["Trust this folder"], allowCustom: false } });
-  assert.equal(riskOf(trust, { runBranchPush: true, ownRunBranch: true, trusted: true, pushTargetLocal: true }), "high");
+test("pushes, outside paths and trust grants are high risk; an ordinary question is not, whatever it says", () => {
+  assert.equal(riskOf({ toolName: "git push" }), "high");
+  assert.equal(riskOf({ toolName: "outside" }), "high");
+  assert.equal(riskOf({ toolName: "trust" }), "high");
+  assert.equal(riskOf(question({ detail: { options: ["Trust the input data", "Validate it first"], allowCustom: false } })), "ordinary");
 });
