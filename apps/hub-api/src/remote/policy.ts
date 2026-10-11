@@ -78,6 +78,8 @@ export function planLocalJob(spec: JobSpec, settings: RemoteSettings, continueFr
     useCredentials: false,
     // The sandbox toggle from the web applies when this computer accepts web settings; otherwise the sandbox stays on.
     sandbox: web ? spec.sandbox !== false : true,
+    // The web's outside-folder choice applies when this computer accepts web settings; otherwise this computer's own setting.
+    ...(web && spec.outsideAccess ? { outsideAccess: spec.outsideAccess } : {}),
     markDone: true,
     unattended: false,
     mode: web ? mode : "ask",

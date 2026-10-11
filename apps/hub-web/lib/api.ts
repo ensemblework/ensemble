@@ -544,6 +544,9 @@ export type RemoteMac = {
   platform: string;
 };
 
+/** Folder trust shared with the person's other AI tools on this computer (desktop and CLI only). */
+export type TrustSharing = { available: boolean; enabled: boolean; tools: Array<{ id: string; name: string; found: boolean; marked: number }> };
+
 export type AssignInput = {
   taskId: string;
   kind: "research" | "code";
@@ -563,6 +566,8 @@ export type AssignInput = {
   useCredentials?: boolean;
   sandbox?: boolean;
   network?: boolean;
+  /** In a sandboxed run, outside the work folder. Default: Settings. */
+  outsideAccess?: "none" | "read" | "read-write";
   markDone?: boolean;
   unattended?: boolean;
   /** Ask, Review only or Run unattended. Wins over `unattended`. */
@@ -1114,6 +1119,8 @@ export const api = bindClient({
   checkouts: () => get<{ checkouts: Array<{ jobId: string; title: string; status: string; folder: string; branch: string; createdAt: string }> }>("/api/workspace/checkouts"),
   resolveFolder: (path: string) => post<{ path: string; git: boolean; branch: string | null }>("/api/workspace/resolve-folder", { path }),
   trustedFolders: () => get<{ folders: Array<{ id: string; path: string; createdAt: string }> }>("/api/workspace/trust"),
+  trustSharing: () => get<TrustSharing>("/api/workspace/trust/sharing"),
+  setTrustSharing: (enabled: boolean) => put<TrustSharing>("/api/workspace/trust/sharing", { enabled }),
   pickFolder: () => post<{ path: string; git: boolean } | undefined>("/api/workspace/pick-folder"),
   branches: (path: string) => get<{ branches: string[] }>(`/api/workspace/branches${qs({ path })}`),
   agentState: () => get<AgentState>("/api/agent/state"),

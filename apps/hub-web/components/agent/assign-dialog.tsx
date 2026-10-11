@@ -87,10 +87,32 @@ function Label({ children, tip }: { children: React.ReactNode; tip?: string }) {
 }
 
 const MODE_HELP: Record<Mode, string> = {
-  ask: "Asks before commands and file changes unless the folder is trusted. A path outside the folder always asks. Decision questions come to Needs me.",
-  review: "Runs commands and edits inside the folder without asking. Asks only real decisions (an unclear requirement, a choice between approaches), with its recommended option marked. A path outside the folder is refused.",
-  unattended: "Nobody needs to be there. Runs inside the folder without asking, picks its recommended option at each decision, and lists every decision it made in the summary. A path outside the folder is refused.",
+  ask: "Asks before commands and file changes unless the folder is trusted. Outside the folder, a sandboxed run follows “Outside the work folder” below; anything more asks. Decision questions come to Needs me.",
+  review: "Runs commands and edits inside the folder without asking. Asks only real decisions (an unclear requirement, a choice between approaches), with its recommended option marked. Outside the folder, a sandboxed run follows “Outside the work folder” below and anything more is refused.",
+  unattended: "Nobody needs to be there. Runs inside the folder without asking, picks its recommended option at each decision, and lists every decision it made in the summary. Outside the folder, a sandboxed run follows “Outside the work folder” below and anything more is refused.",
 };
+
+const OUTSIDE_HELP = "What a sandboxed run may do in your other folders. Read only: it can read them (never keys or browser data) and asks before writing; with nobody to answer, a write is refused and the run carries on. Read and write: it can change them too. No access: it stays in the work folder. The default comes from Settings.";
+
+/** Outside the work folder, for this sandboxed run. */
+function OutsideFolder({ value, onChange }: { value: "none" | "read" | "read-write"; onChange: (value: "none" | "read" | "read-write") => void }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <span className="flex items-center gap-1.5 pl-[22px] font-medium">
+        Outside the work folder <InfoTip text={OUTSIDE_HELP} />
+      </span>
+      <Segmented
+        value={value}
+        onChange={onChange}
+        options={[
+          { id: "read", label: "Read only" },
+          { id: "read-write", label: "Read and write" },
+          { id: "none", label: "No access" },
+        ]}
+      />
+    </div>
+  );
+}
 
 /** The saved profiles as chips, with save, update, rename, default and delete. Max three. */
 function ProfileBar({
@@ -237,6 +259,8 @@ export function AssignDialog({
   const [credentials, setCredentials] = useState(false);
   const [sandbox, setSandbox] = useState(true);
   const [network, setNetwork] = useState(true);
+  // null follows Settings; a choice here is for this run only.
+  const [outside, setOutside] = useState<"none" | "read" | "read-write" | null>(null);
   const [mode, setMode] = useState<Mode>("ask");
   const [trustChoice, setTrustChoice] = useState<"always" | "task" | "none">("none");
   const [markDone, setMarkDone] = useState(true);
@@ -310,6 +334,7 @@ export function AssignDialog({
     setSandbox(profile.sandbox);
     setCredentials(profile.useCredentials);
     setNetwork(profile.network);
+    setOutside(null);
     setMarkDone(profile.markDone);
     setMaxMinutes(profile.maxMinutes ?? "");
     setMaxToolCalls(profile.maxToolCalls ?? "");
@@ -418,6 +443,7 @@ export function AssignDialog({
     (place === "continue" && (!continueFolder || underRoot(continueFolder) || savedTrust(continueFolder))) ||
     (place === "folder" && (trustChoice !== "none" || (Boolean(folderCheck?.ok) && savedTrust(folder))));
   const needsTrust = kind === "code" && mode !== "ask" && !folderTrusted;
+  const outsideAccess = outside ?? orchestration?.outsideAccess ?? "read";
   const unattendedNoSandbox = kind === "code" && mode === "unattended" && askOnly && !selectedDevice;
   const invalid =
     !taskId ||
@@ -458,6 +484,7 @@ export function AssignDialog({
           branch: branchMode === "as-is" ? undefined : branch.trim(),
           ...(place === "fresh" && repo.trim() ? { repoUrl: repo.trim() } : {}),
           ...(place === "continue" ? { continueFromJobId: continueFrom } : {}),
+          ...(outside ? { outsideAccess: outside } : {}),
         });
         if (selectedDevice) {
           Object.assign(input, { useCredentials: false, ...(place === "folder" ? { folderLabel } : {}) });
@@ -824,6 +851,7 @@ export function AssignDialog({
                     <span className="pl-[22px] font-medium">Internet access</span>
                     <Toggle checked={network} onChange={setNetwork} label="Internet access" />
                   </div>
+                  {sandbox && deviceSandbox?.osSandbox !== false && deviceAcceptsWeb ? <OutsideFolder value={outsideAccess} onChange={setOutside} /> : null}
                   <SettingRow title="Push to this task's own branch" description={`Set on ${selectedDevice.name}, for repos that computer trusts.`}>
                     <RunBranchStatus on={selectedDevice.runBranchPush} device={selectedDevice.name} />
                   </SettingRow>
@@ -870,6 +898,7 @@ export function AssignDialog({
                     <span className="pl-[22px] font-medium">Internet access</span>
                     <Toggle checked={network} onChange={setNetwork} label="Internet access" />
                   </div>
+                  {sandbox && osSandbox ? <OutsideFolder value={outsideAccess} onChange={setOutside} /> : null}
                   {delivery === "push" && !credentials && place !== "folder" ? (
                     <div className="text-[12px] text-muted">Pushing to a remote needs “Use my git sign-in”.</div>
                   ) : null}

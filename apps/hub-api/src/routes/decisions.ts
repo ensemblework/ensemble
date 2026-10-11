@@ -8,6 +8,7 @@ import { sseHub } from "../lib/sse.js";
 import { resolveWorkFolder, within, workspaceRoot } from "../workspace/guard.js";
 import { OUTSIDE_TOOL, RUN_RULE_SOURCE } from "../workspace/tools.js";
 import { PATH_RULE_SOURCE, PATH_RULE_TOOL } from "../workspace/trust.js";
+import { trustChanged } from "../workspace/trust-share.js";
 import { hookScriptPath } from "../workspace/engines/registry.js";
 import { actorFor } from "../sharing/context.js";
 import { ownsOpenSpace } from "../lib/auth.js";
@@ -267,6 +268,7 @@ async function saveEnsembleAnswer(
     await app.prisma.decisionRule.create({
       data: { userId, source: PATH_RULE_SOURCE, toolName: PATH_RULE_TOOL, pattern: folder, decision: "allow", sessionId: null },
     });
+    trustChanged(app.prisma, app.log);
   }
 }
 

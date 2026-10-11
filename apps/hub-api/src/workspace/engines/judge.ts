@@ -12,7 +12,7 @@
  */
 import { resolve } from "node:path";
 import { checkGit, expandHome, GuardError, isNeverProgram, outsideRefusal, within } from "../guard.js";
-import { allowOrRefuse, askPerson, OUTSIDE_TOOL, outsideArgs, realOutside, WRITE_TOOL, type JobContext } from "../tools.js";
+import { allowOrRefuse, askPerson, OUTSIDE_TOOL, outsideArgs, readsOnly, realOutside, WRITE_TOOL, type JobContext } from "../tools.js";
 
 export type EngineCall = { tool: string; input: Record<string, unknown> };
 export type EngineAnswer = { decision: "allow" | "deny"; message?: string; updatedInput?: Record<string, unknown> };
@@ -43,7 +43,7 @@ async function outside(ctx: JobContext, path: string, write: boolean): Promise<E
   const floor = outsideRefusal(real, write);
   if (floor) return { decision: "deny", message: `${real}: ${floor}` };
   if (write && ctx.accessMode === "review") return { decision: "deny", message: "This run is read-only: no file changes." };
-  return refused(await allowOrRefuse(ctx, "outside", false, { toolName: OUTSIDE_TOOL, title: `${write ? "Change" : "Read"} ${real}, outside the folder?`, command: real }));
+  return refused(await allowOrRefuse(ctx, "outside", false, { toolName: OUTSIDE_TOOL, title: `${write ? "Change" : "Read"} ${real}, outside the folder?`, command: real, write }));
 }
 
 function pathsOf(input: Record<string, unknown>): string[] {
@@ -87,8 +87,10 @@ async function shell(ctx: JobContext, command: string): Promise<EngineAnswer> {
   }
   const paths: string[] = [];
   for (const argv of segments) for (const path of outsideArgs(ctx.root, argv)) if (!paths.includes(path)) paths.push(path);
+  // Reading outside the folder (cat, ls, grep, git log…) is not writing it.
+  const writes = !segments.every((argv) => readsOnly(argv));
   for (const path of paths) {
-    const verdict = await outside(ctx, path, true);
+    const verdict = await outside(ctx, path, writes);
     if (verdict.decision === "deny") return verdict;
   }
   return refused(await allowOrRefuse(ctx, "command", true, { toolName: "Bash", title: `Run ${command.slice(0, 140)}`, command }));

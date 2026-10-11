@@ -18,7 +18,8 @@ import { Assign, createJob } from "../workspace/assign.js";
 import { blockedReason, resolveWorkFolder, sandboxAvailable, ENSEMBLE_SOURCE, within, workspaceRoot } from "../workspace/guard.js";
 import { liveLog } from "../workspace/live-log.js";
 import { capabilities, prepareSandbox, setupSandbox } from "../workspace/sandbox/spawn.js";
-import { PATH_RULE_SOURCE, PATH_RULE_TOOL } from "../workspace/trust.js";
+import { outsideAccessOf, PATH_RULE_SOURCE, PATH_RULE_TOOL } from "../workspace/trust.js";
+import { installedTrustTools, loadSharedTrust, setSharedTrust, TRUST_TOOLS, trustChanged, type SharedTrustState } from "../workspace/trust-share.js";
 import { resume, stopEverything, stopJob } from "../workspace/worker.js";
 import { actorFor } from "../sharing/context.js";
 
@@ -146,6 +147,7 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
         provider: old.provider ?? undefined,
         model: old.model,
         engine: old.provider === "claude-code" ? "claude-code" : "ensemble",
+        outsideAccess: outsideAccessOf(old.context) ?? undefined,
         reasoningEffort: old.reasoningEffort ?? undefined,
         instructions: old.instructions,
         folder: old.deviceId ? undefined : old.externalRoot ?? undefined,
@@ -346,6 +348,7 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
       (await prisma.decisionRule.create({
         data: { userId: request.userId, source: PATH_RULE_SOURCE, toolName: PATH_RULE_TOOL, pattern: real, decision: "allow", sessionId: null },
       }));
+    trustChanged(prisma, app.log);
     return reply.code(existing ? 200 : 201).send({ id: rule.id, path: real });
   });
 
@@ -354,7 +357,17 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
     const result = await prisma.decisionRule.deleteMany({
       where: { id, userId: request.userId, source: PATH_RULE_SOURCE, toolName: PATH_RULE_TOOL },
     });
+    if (result.count) trustChanged(prisma, app.log);
     return result.count ? reply.code(204).send() : reply.code(404).send({ error: "That folder is not trusted." });
+  });
+
+  // Trusted folders also trusted in Claude Code, Codex, Copilot CLI, Cursor and Gemini CLI on this computer.
+  app.get("/api/workspace/trust/sharing", async () => sharingReport(await loadSharedTrust()));
+
+  app.put("/api/workspace/trust/sharing", async (request, reply) => {
+    const { enabled } = z.object({ enabled: z.boolean() }).parse(request.body);
+    if (process.env.ENSEMBLE_DESKTOP !== "1") return reply.code(409).send({ error: "Trust is shared with other AI tools by Ensemble on your own computer." });
+    return sharingReport((await setSharedTrust(prisma, enabled)) ?? (await loadSharedTrust()));
   });
 
   app.get("/api/workspace/guard", async () => ({
@@ -419,4 +432,15 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
     await appendLedger({ userId: request.userId, actor: "me", action: "activity.stop", payload: { id } });
     return reply.code(204).send();
   });
+}
+
+/** The switch, and per tool whether it is on this computer and how many folders Ensemble marked in it. */
+function sharingReport(state: SharedTrustState) {
+  const local = process.env.ENSEMBLE_DESKTOP === "1";
+  const found = local ? installedTrustTools() : [];
+  return {
+    available: local,
+    enabled: state.enabled,
+    tools: TRUST_TOOLS.map((tool) => ({ id: tool.id, name: tool.name, found: found.includes(tool.id), marked: state.marks.filter((mark) => mark.tool === tool.id).length })),
+  };
 }

@@ -109,6 +109,15 @@ export async function untrustFolder(discovery: Discovery, folder: string): Promi
   return true;
 }
 
+export type TrustSharing = { available: boolean; enabled: boolean; tools: Array<{ id: string; name: string; found: boolean; marked: number }> };
+
+/** Folders trusted here, also trusted in Claude Code, Codex, Copilot CLI, Cursor and Gemini CLI. */
+export async function trustSharing(discovery: Discovery, on?: boolean): Promise<TrustSharing> {
+  return on === undefined
+    ? localJson<TrustSharing>(discovery, "/api/workspace/trust/sharing")
+    : localJson<TrustSharing>(discovery, "/api/workspace/trust/sharing", { method: "PUT", body: JSON.stringify({ enabled: on }) });
+}
+
 export async function webApprovals(discovery: Discovery, on?: boolean): Promise<boolean> {
   const body =
     on === undefined

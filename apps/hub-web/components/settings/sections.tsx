@@ -49,7 +49,7 @@ export function AutonomySection({ settings, patch }: Props) {
         </SettingRow>
         <SettingRow
           title="Network for sandboxed commands"
-          description="Commands the model runs in a sandbox can reach the network, so it can read a PR, call an API or fetch a page. The container is still read-only outside the checkout. Off is safer when a task reads untrusted input."
+          description="Commands the model runs in a sandbox can reach the network, so it can read a PR, call an API or fetch a page. The sandbox still limits what they can change on this computer. Off is safer when a task reads untrusted input."
         >
           <Toggle label="Sandbox network" checked={orchestration.sandboxNetwork} onChange={(sandboxNetwork) => set({ sandboxNetwork })} />
         </SettingRow>
@@ -59,11 +59,32 @@ export function AutonomySection({ settings, patch }: Props) {
         >
           <Toggle label="Run without asking" checked={orchestration.runWithoutAsking} onChange={(runWithoutAsking) => set({ runWithoutAsking })} />
         </SettingRow>
+        <TrustSharingRow />
         <SettingRow title={<span className="flex items-center gap-1.5">Place new tasks by priority <InfoTip text="New tasks land above lower-priority ones on the board instead of at the bottom." /></span>}>
           <Toggle label="Place by priority" checked={orchestration.placeByPriority} onChange={(placeByPriority) => set({ placeByPriority })} />
         </SettingRow>
       </div>
     </SectionCard>
+  );
+}
+
+/** On this computer only: folders trusted here are trusted in the person's other AI tools too. */
+function TrustSharingRow() {
+  const client = useQueryClient();
+  const sharing = useQuery({ queryKey: ["trust-sharing"], queryFn: api.trustSharing });
+  const toggle = useMutation({
+    mutationFn: api.setTrustSharing,
+    onSuccess: (data) => client.setQueryData(["trust-sharing"], data),
+  });
+  if (!sharing.data?.available) return null;
+  const found = sharing.data.tools.filter((tool) => tool.found).map((tool) => tool.name);
+  return (
+    <SettingRow
+      title="Trust folders in your other AI tools too"
+      description={`A folder you trust here is also trusted in ${found.length ? found.join(", ") : "Claude Code, Codex, GitHub Copilot CLI, Cursor and Gemini CLI"} on this computer, in their apps and their command lines, so they do not ask again. Untrusting it here removes only what Ensemble added. Off removes all of it.`}
+    >
+      <Toggle label="Share folder trust" checked={sharing.data.enabled} onChange={(enabled) => toggle.mutate(enabled)} />
+    </SettingRow>
   );
 }
 
@@ -93,11 +114,26 @@ export function OrchestrationSection({ settings, patch }: Props) {
         <SettingRow title="Minutes per task" description="A task that takes longer is stopped; its folder and partial work are kept.">
           {number("maxMinutes", 5, 480)}
         </SettingRow>
-        <SettingRow title="Sandbox by default" description="New code tasks start with the macOS sandbox on: files change only inside the work folder, keys and browser data cannot be read, Ensemble's own API cannot be reached. You can turn it off per task.">
+        <SettingRow title="Sandbox by default" description="New code tasks start with this computer's own sandbox on: files change only inside the work folder, keys and browser data cannot be read, Ensemble's own API cannot be reached. You can turn it off per task.">
           <Toggle label="Sandbox by default" checked={orchestration.defaultExecution === "sandbox"} onChange={(on) => set({ defaultExecution: on ? "sandbox" : "native" })} />
         </SettingRow>
         <SettingRow title="Internet for agent commands by default" description="Needed to clone, install packages or read the web. Turn it off for tasks whose inputs you do not trust.">
           <Toggle label="Sandbox network" checked={orchestration.sandboxNetwork} onChange={(sandboxNetwork) => set({ sandboxNetwork })} />
+        </SettingRow>
+        <SettingRow
+          title="Outside the work folder, in sandboxed tasks"
+          description="Read only lets the agent read your other folders (never keys or browser data) and asks before it writes there; when nobody is there to answer, a write is refused and the task carries on. Read and write lets it change them too. No access keeps it inside the work folder. Tasks without the sandbox are not affected. You can change it per task."
+        >
+          <select
+            aria-label="Outside the work folder"
+            value={orchestration.outsideAccess}
+            onChange={(event) => set({ outsideAccess: event.target.value as Settings["orchestration"]["outsideAccess"] })}
+            className="field"
+          >
+            <option value="read">Read only</option>
+            <option value="read-write">Read and write</option>
+            <option value="none">No access</option>
+          </select>
         </SettingRow>
       </div>
     </SectionCard>

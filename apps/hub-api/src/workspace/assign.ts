@@ -17,6 +17,7 @@ import { sseHub } from "../lib/sse.js";
 import { GuardError, resolveWorkFolder, sandboxAvailable, sandboxRefusal, within, workspaceRoot } from "./guard.js";
 import { capabilities } from "./sandbox/spawn.js";
 import { checkModeTrust, isFolderTrusted, PATH_RULE_SOURCE, PATH_RULE_TOOL, rulesForJob, storedMode, UnattendedAskModeError, type RunMode } from "./trust.js";
+import { trustChanged } from "./trust-share.js";
 import { kick } from "./worker.js";
 import { actorFor, keysFor } from "../sharing/context.js";
 
@@ -55,7 +56,15 @@ export const Assign = z.object({
    * the person's own Claude Code on their computer with their own sign-in.
    */
   engine: z.enum(["ensemble", "claude-code"]).default("ensemble"),
+  /** In a sandboxed run, outside the work folder: read only, read and write, or nothing. Default: Settings. */
+  outsideAccess: z.enum(["none", "read", "read-write"]).optional(),
 });
+
+/** The job's context with the run's outside-folder choice in it (a JSON column, so no migration). */
+function contextWith(context: Prisma.InputJsonValue | undefined, outsideAccess: string): Prisma.InputJsonValue {
+  const base = typeof context === "object" && context !== null && !Array.isArray(context) ? (context as Record<string, unknown>) : {};
+  return { ...base, outsideAccess } as Prisma.InputJsonValue;
+}
 export type AssignInput = z.infer<typeof Assign>;
 
 /** The stored mode for a request: `mode` when given, else the older `unattended` flag; a read-only grant stays read-only. */
@@ -89,7 +98,7 @@ async function createDeviceJob(
   provider: string,
   model: string,
   tierEffort: string | null,
-  orchestration: { sandboxNetwork: boolean; maxMinutes: number; maxTurns: number },
+  orchestration: { sandboxNetwork: boolean; maxMinutes: number; maxTurns: number; outsideAccess: string },
   options: CreateJobOptions,
 ): Promise<{ jobId: string }> {
   if (body.kind === "code" && body.branchMode !== "as-is" && (!body.branch || !BRANCH.test(body.branch))) {
@@ -138,7 +147,7 @@ async function createDeviceJob(
       maxMinutes: body.maxMinutes ?? orchestration.maxMinutes,
       maxTurns: body.maxTurns ?? orchestration.maxTurns,
       maxToolCalls: body.maxToolCalls ?? 80,
-      ...(options.context === undefined ? {} : { context: options.context }),
+      context: contextWith(options.context, body.outsideAccess ?? orchestration.outsideAccess),
     },
   });
   const nextStatus = ["proposed", "done", "dropped", "blocked", "waiting_approval"].includes(task.status) ? "todo" : task.status;
@@ -290,13 +299,14 @@ export async function createJob(prisma: PrismaClient, userId: string, body: Assi
       maxMinutes: body.maxMinutes ?? settings.orchestration.maxMinutes,
       maxTurns: body.maxTurns ?? settings.orchestration.maxTurns,
       maxToolCalls: body.maxToolCalls ?? 80,
-      ...(options.context === undefined ? {} : { context: options.context }),
+      context: contextWith(options.context, body.outsideAccess ?? settings.orchestration.outsideAccess),
     },
   });
   if (externalRoot && body.trust === "always") {
     await prisma.decisionRule.create({
       data: { userId, source: PATH_RULE_SOURCE, toolName: PATH_RULE_TOOL, pattern: externalRoot, decision: "allow", sessionId: null },
     });
+    trustChanged(prisma);
   } else if (externalRoot && body.trust === "task") {
     await prisma.decisionRule.create({
       data: { userId, source: PATH_RULE_SOURCE, toolName: PATH_RULE_TOOL, pattern: externalRoot, decision: "allow", sessionId: job.id },
