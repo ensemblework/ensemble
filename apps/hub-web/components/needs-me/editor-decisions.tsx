@@ -8,13 +8,13 @@ import { useEffect, useState } from "react";
 import { useToast } from "@/components/toast";
 import { SkeletonRows, Tag } from "@/components/ui";
 import { api, type AgentDecisionRecord } from "@/lib/api";
-import { deviceDecisionView } from "@/lib/device-copy";
+import { confirmCopy, deviceDecisionView } from "@/lib/device-copy";
 import { relative, untilLabel } from "@/lib/format";
 
 const SOURCE: Record<string, { label: string; tone: "blue" | "purple" | "orange" | "gray" }> = {
   cursor: { label: "Cursor", tone: "blue" },
   claude: { label: "Claude Code", tone: "orange" },
-  copilot: { label: "VS Code Copilot", tone: "purple" },
+  copilot: { label: "GitHub Copilot", tone: "purple" },
   codex: { label: "Codex", tone: "gray" },
   ensemble: { label: "Ensemble agent", tone: "purple" },
 };
@@ -79,7 +79,8 @@ function EnsembleCard({ decision }: { decision: AgentDecisionRecord }) {
               {decision.detail.options.map((option, index) => (
                 <button key={option} type="button" className="btn justify-start text-left" disabled={busy} onClick={() => decide.mutate({ decision: "allow", reason: option })}>
                   <span className="w-4 shrink-0 font-mono text-[11px] text-faint">{String.fromCharCode(65 + index)}</span>
-                  {option}
+                  <span className="min-w-0 flex-1">{option}</span>
+                  {decision.detail.recommended === option ? <Tag tone="purple">Recommended</Tag> : null}
                 </button>
               ))}
             </div>
@@ -143,20 +144,25 @@ function Countdown({ until }: { until: string }) {
   return <span>{untilLabel(left)} left before it asks in the editor</span>;
 }
 
-/** A question the paired computer asked. Once only, and no note on a permission. */
+/** A question the paired computer asked. Once only, and no note on a permission. A risky allow is confirmed first. */
 function DeviceCard({ decision }: { decision: AgentDecisionRecord }) {
   const client = useQueryClient();
   const toast = useToast();
   const computer = decision.detail.deviceName || "your computer";
+  const [typed, setTyped] = useState("");
+  const [confirming, setConfirming] = useState<string | null | undefined>(undefined);
   const view = deviceDecisionView({
     tier: decision.detail.tier,
     event: decision.event,
     options: decision.detail.options,
     deviceName: decision.detail.deviceName,
+    confirm: decision.detail.confirm,
+    allowCustom: decision.detail.allowCustom,
+    recommended: decision.detail.recommended,
   });
   const decide = useMutation({
-    mutationFn: (input: { decision: "allow" | "deny"; reason?: string }) =>
-      api.decideAgent(decision.id, { decision: input.decision, scope: view.scope, reason: input.reason }),
+    mutationFn: (input: { decision: "allow" | "deny"; reason?: string; confirmed?: boolean }) =>
+      api.decideAgent(decision.id, { decision: input.decision, scope: view.scope, reason: input.reason, confirmed: input.confirmed }),
     onSuccess: (_result, input) => {
       toast(input.decision === "allow" ? `Sent to ${computer}.` : `Refused. ${computer} was told.`, { tone: "ok" });
       void client.invalidateQueries({ queryKey: ["decisions"] });
@@ -165,6 +171,12 @@ function DeviceCard({ decision }: { decision: AgentDecisionRecord }) {
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
   const busy = decide.isPending;
+  const needsConfirm = view.kind !== "approve-on-computer" && view.confirm;
+  // A risky allow: the first press asks, the second sends. `null` is a plain Yes, a string is an option.
+  const allow = (reason?: string) => {
+    if (needsConfirm && confirming === undefined) return setConfirming(reason ?? null);
+    decide.mutate({ decision: "allow", reason, confirmed: needsConfirm || undefined });
+  };
   return (
     <div className="tile rounded-lg bg-panel p-4">
       <div className="flex flex-wrap items-center gap-2">
@@ -174,10 +186,23 @@ function DeviceCard({ decision }: { decision: AgentDecisionRecord }) {
       </div>
       <div className="mt-1.5 text-[15px] font-semibold">{decision.title}</div>
       {decision.detail.command ? <pre className="mt-2 overflow-auto whitespace-pre-wrap rounded-md border border-line bg-raised p-2.5 font-mono text-[12.5px]">{decision.detail.command}</pre> : null}
-      {view.kind === "approve-on-computer" ? (
-        <div className="mt-3 rounded-md border border-line bg-raised px-3 py-2 text-[13px] text-muted">{view.message}</div>
-      ) : view.kind === "confirm" ? (
-        <div className="mt-3 rounded-md border border-warn/40 bg-[var(--tag-yellow-bg)] px-3 py-2 text-[13px] text-[var(--tag-yellow-fg)]">{view.message}</div>
+      {confirming !== undefined ? (
+        <div className="mt-3 rounded-md border border-warn/40 bg-[var(--tag-yellow-bg)] p-3 text-[13px] text-[var(--tag-yellow-fg)]" role="alertdialog" aria-label="Confirm">
+          <div className="font-medium">{confirmCopy(decision.toolName, decision.detail.deviceName)}</div>
+          {confirming ? <div className="mt-1">Answer: {confirming}</div> : null}
+          <div className="mt-2 flex gap-2">
+            <button type="button" className="btn-primary" disabled={busy} onClick={() => decide.mutate({ decision: "allow", reason: confirming ?? undefined, confirmed: true })}>
+              <Check size={13} /> Yes, allow
+            </button>
+            <button type="button" className="btn" disabled={busy} onClick={() => setConfirming(undefined)}>
+              Back
+            </button>
+          </div>
+        </div>
+      ) : view.kind === "approve-on-computer" ? (
+        <div className="mt-3 rounded-md border border-line bg-raised px-3 py-2 text-[13px] text-muted">
+          {view.message} {computer} accepts this answer only on itself. Turn on “Accept approvals from the web” there to answer from here.
+        </div>
       ) : view.kind === "choices" ? (
         <div className="mt-3 grid gap-2">
           {view.options.map((option, index) => (
@@ -186,19 +211,34 @@ function DeviceCard({ decision }: { decision: AgentDecisionRecord }) {
               type="button"
               className="btn min-h-[44px] w-full justify-start text-left"
               disabled={busy}
-              onClick={() => decide.mutate({ decision: "allow", reason: option })}
+              onClick={() => allow(option)}
             >
-              {option}
+              <span className="min-w-0 flex-1">{option}</span>
+              {view.recommended === option ? <Tag tone="purple">Recommended</Tag> : null}
             </button>
           ))}
+          {view.custom ? (
+            <div className="flex gap-2">
+              <input
+                value={typed}
+                onChange={(event) => setTyped(event.target.value)}
+                onKeyDown={(event) => event.key === "Enter" && typed.trim() && allow(typed.trim())}
+                placeholder="Or type your own answer"
+                className="field min-w-0 flex-1"
+              />
+              <button type="button" className="btn-primary" disabled={busy || !typed.trim()} onClick={() => allow(typed.trim())}>
+                Send
+              </button>
+            </div>
+          ) : null}
           <button type="button" className="btn min-h-[44px] w-full justify-center" disabled={busy} onClick={() => decide.mutate({ decision: "deny" })}>
             <X size={15} /> No
           </button>
         </div>
       ) : (
         <div className="mt-3 grid gap-2">
-          <button type="button" className="btn-primary min-h-[44px] w-full justify-center" disabled={busy} onClick={() => decide.mutate({ decision: "allow" })}>
-            <Check size={15} /> Yes
+          <button type="button" className="btn-primary min-h-[44px] w-full justify-center" disabled={busy} onClick={() => allow()}>
+            <Check size={15} /> {needsConfirm ? "Allow…" : "Yes"}
           </button>
           <button type="button" className="btn min-h-[44px] w-full justify-center" disabled={busy} onClick={() => decide.mutate({ decision: "deny" })}>
             <X size={15} /> No
@@ -241,7 +281,96 @@ function DecisionCard({ decision }: { decision: AgentDecisionRecord }) {
   if (decision.canAnswer === false) return <ObserveCard decision={decision} />;
   if (decision.source === "ensemble" && decision.detail.deviceId) return <DeviceCard decision={decision} />;
   if (decision.source === "ensemble") return <EnsembleCard decision={decision} />;
+  if (decision.event === "question") return <EditorQuestionCard decision={decision} />;
   return <EditorCard decision={decision} />;
+}
+
+/**
+ * A question another tool asked (Claude Code's multiple-choice questions):
+ * the tool's own options with their descriptions, several at once when the
+ * tool allows it, or a typed answer. The answer goes back as if it had been
+ * picked in that tool's window; "Answer there instead" hands it back.
+ */
+function EditorQuestionCard({ decision }: { decision: AgentDecisionRecord }) {
+  const client = useQueryClient();
+  const toast = useToast();
+  const [picked, setPicked] = useState<string[]>([]);
+  const [typed, setTyped] = useState("");
+  const source = SOURCE[decision.source] ?? { label: decision.source, tone: "gray" as const };
+  const options = decision.detail.optionDetails?.length
+    ? decision.detail.optionDetails
+    : (decision.detail.options ?? []).map((label) => ({ label, description: "" }));
+  const multi = decision.detail.multiSelect === true;
+  const decide = useMutation({
+    mutationFn: (input: { decision: "allow" | "deny"; reason?: string }) => api.decideAgent(decision.id, { decision: input.decision, scope: "once", reason: input.reason }),
+    onSuccess: (_result, input) => {
+      toast(input.decision === "allow" ? `Sent your answer to ${source.label}.` : `${source.label} will ask in its own window.`, { tone: "ok" });
+    },
+    onError: (error) => toast((error as Error).message, { tone: "error" }),
+    onSettled: () => void client.invalidateQueries({ queryKey: ["decisions"] }),
+  });
+  const busy = decide.isPending;
+  const toggle = (label: string) => setPicked((current) => (current.includes(label) ? current.filter((item) => item !== label) : [...current, label]));
+  return (
+    <div className="tile rounded-lg bg-panel p-4" data-testid="editor-question">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <Tag tone={source.tone}>{source.label}</Tag>
+            {decision.detail.header ? <span className="text-[12px] text-muted">{decision.detail.header}</span> : null}
+            <span className="text-[12px] text-muted">{relative(decision.requestedAt)}</span>
+          </div>
+          <div className="mt-1.5 text-[15px] font-semibold">{decision.title}</div>
+          {decision.cwd ? <div className="mt-0.5 truncate font-mono text-[12px] text-muted">{decision.cwd}</div> : null}
+        </div>
+        <span className="shrink-0 text-[12px] text-faint">
+          <Countdown until={decision.expiresAt} />
+        </span>
+      </div>
+      {options.length ? (
+        <div className="mt-3 flex flex-col gap-1.5">
+          {options.map((option) => {
+            const on = picked.includes(option.label);
+            return (
+              <button
+                key={option.label}
+                type="button"
+                className={`btn h-auto flex-col items-start justify-start py-2 text-left ${on ? "border-accent" : ""}`}
+                aria-pressed={multi ? on : undefined}
+                disabled={busy}
+                onClick={() => (multi ? toggle(option.label) : decide.mutate({ decision: "allow", reason: option.label }))}
+              >
+                <span className="font-medium">{multi ? `${on ? "☑" : "☐"} ` : ""}{option.label}</span>
+                {option.description ? <span className="text-[12px] font-normal text-muted">{option.description}</span> : null}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+      {multi ? (
+        <button type="button" className="btn-primary mt-2" disabled={busy || !picked.length} onClick={() => decide.mutate({ decision: "allow", reason: picked.join(", ") })}>
+          <Check size={13} /> Send {picked.length ? picked.length : ""} {picked.length === 1 ? "answer" : "answers"}
+        </button>
+      ) : null}
+      {decision.detail.allowCustom !== false ? (
+        <form
+          className="mt-3 flex gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (typed.trim()) decide.mutate({ decision: "allow", reason: typed.trim() });
+          }}
+        >
+          <input value={typed} onChange={(event) => setTyped(event.target.value)} maxLength={500} placeholder="Or type your own answer" className="field min-w-0 flex-1" aria-label="Your own answer" />
+          <button type="submit" className="btn" disabled={busy || !typed.trim()}>
+            Send
+          </button>
+        </form>
+      ) : null}
+      <button type="button" className="btn-ghost mt-2" disabled={busy} onClick={() => decide.mutate({ decision: "deny" })}>
+        <X size={13} /> Answer in {source.label} instead
+      </button>
+    </div>
+  );
 }
 
 function EditorCard({ decision }: { decision: AgentDecisionRecord }) {
@@ -347,7 +476,7 @@ export function EditorDecisions({ hideEmpty = false }: { hideEmpty?: boolean }) 
       <h2 className="mb-2 flex items-center gap-2 text-[15px] font-semibold">
         From your editors{pending.data ? ` (${rows.length})` : ""}
         <Link href="/settings#editors" className="text-[12px] font-normal text-accent hover:underline">
-          Set up Cursor, Claude Code or VS Code
+          Set up Claude Code, Codex, Copilot or Cursor
         </Link>
       </h2>
       {pending.isLoading && !pending.data ? (

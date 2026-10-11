@@ -3,6 +3,7 @@ import { access, chmod, copyFile, mkdir, readFile, rename, rm, stat, writeFile }
 import { homedir } from "node:os";
 import { dirname } from "node:path";
 import { randomBytes } from "node:crypto";
+import { desktopDataDir } from "@ensemble/shared-types/desktop-discovery";
 import { envOf, homeOf, pathApi, platformOf, type PlatformInput } from "./platform.js";
 
 export type CliPaths = {
@@ -28,13 +29,26 @@ export function resolveConfigDir(input: PlatformInput = {}): string {
   return path.join(env.XDG_CONFIG_HOME?.trim() || path.join(home, ".config"), "ensemble");
 }
 
+/**
+ * The computer's Ensemble folder, shared with the desktop app: one database,
+ * one pairing, one trusted-folder list and one sandbox setup, whichever of the
+ * two was installed first. It is the desktop app's data folder.
+ */
 export function resolveDataHome(input: PlatformInput = {}): string {
   const platform = platformOf(input);
   const env = envOf(input);
   const home = homeOf(input) || homedir();
-  const path = pathApi(platform);
   const explicit = env.ENSEMBLE_DATA_HOME?.trim();
   if (explicit) return explicit;
+  return desktopDataDir({ platform, home, env: { APPDATA: env.APPDATA, XDG_DATA_HOME: env.XDG_DATA_HOME } });
+}
+
+/** Where CLI 0.1 kept its own database before it shared the desktop app's folder. */
+export function resolveLegacyDataHome(input: PlatformInput = {}): string {
+  const platform = platformOf(input);
+  const env = envOf(input);
+  const home = homeOf(input) || homedir();
+  const path = pathApi(platform);
   if (platform === "win32") return path.join(env.LOCALAPPDATA?.trim() || path.join(home, "AppData", "Local"), "Ensemble");
   if (platform === "darwin") return path.join(home, "Library", "Application Support", "Ensemble CLI");
   return path.join(env.XDG_DATA_HOME?.trim() || path.join(home, ".local", "share"), "ensemble");

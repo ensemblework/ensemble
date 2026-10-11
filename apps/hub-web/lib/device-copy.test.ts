@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { computerName, deviceDecisionView, folderPlace, freshCloneHint, interruptedLabel, pairingCodeConsumed, platformLabel, pullRequestNumber, rerunAssignInput, sandboxStay } from "./device-copy";
+import { computerName, confirmCopy, deviceDecisionView, folderPlace, freshCloneHint, interruptedLabel, pairingCodeConsumed, platformLabel, pullRequestNumber, rerunAssignInput, sandboxStay } from "./device-copy";
 
 test("copy uses the device name, or your computer when none is chosen", () => {
   assert.equal(computerName("Studio PC"), "Studio PC");
@@ -78,14 +78,23 @@ test("a run-branch push is approved on the computer, with no Yes", () => {
 });
 
 test("a device question sends the chosen option, and a plain Yes is only for no options", () => {
-  const choices = deviceDecisionView({ event: "question", options: ["Ship the notes", "Leave it"], deviceName: "Build box" });
-  assert.deepEqual(choices, { scope: "once", kind: "choices", options: ["Ship the notes", "Leave it"] });
+  const choices = deviceDecisionView({ event: "question", options: ["Ship the notes", "Leave it"], deviceName: "Build box", recommended: "Leave it", allowCustom: true });
+  assert.deepEqual(choices, { scope: "once", kind: "choices", options: ["Ship the notes", "Leave it"], recommended: "Leave it", custom: true, confirm: false });
+  const unknown = deviceDecisionView({ event: "question", options: ["A", "B"], recommended: "C" });
+  if (unknown.kind === "choices") assert.equal(unknown.recommended, null);
   assert.equal(deviceDecisionView({ event: "question", options: [], deviceName: "Build box" }).kind, "yes-no");
   assert.equal(deviceDecisionView({ event: "permission", deviceName: "Build box" }).kind, "yes-no");
   assert.equal(deviceDecisionView({ event: "permission", deviceName: "Build box" }).scope, "once");
-  const risk = deviceDecisionView({ tier: "high_risk", event: "permission", deviceName: "Build box" });
-  assert.equal(risk.kind, "confirm");
-  if (risk.kind === "confirm") assert.equal(risk.message, "Confirm this on Build box. A Yes here does not let the task continue.");
+});
+
+test("a risky allow is confirmed on the web unless the computer keeps it to itself", () => {
+  const push = deviceDecisionView({ event: "permission", deviceName: "Build box", confirm: true });
+  assert.deepEqual(push, { scope: "once", kind: "yes-no", confirm: true });
+  const local = deviceDecisionView({ tier: "high_risk", event: "permission", deviceName: "Build box" });
+  assert.equal(local.kind, "approve-on-computer");
+  if (local.kind === "approve-on-computer") assert.equal(local.message, "Approve this on Build box.");
+  assert.equal(confirmCopy("git push", "Build box"), "Allow pushing on Build box?");
+  assert.match(confirmCopy("trust", "Build box"), /^Trust this folder on Build box\?/);
 });
 
 test("pairing, clone path, and a removed computer", () => {

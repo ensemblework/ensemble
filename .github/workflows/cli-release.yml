@@ -127,10 +127,11 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
 
+      # Windows: the ensemble.exe launcher. Linux: landrun, the Landlock sandbox helper in the sidecar.
       - uses: actions/setup-go@v6
-        if: matrix.target == 'windows-x64'
+        if: matrix.target == 'windows-x64' || startsWith(matrix.target, 'linux-')
         with:
-          go-version: "1.23.x"
+          go-version: "1.24.x"
 
       - name: Install the workspace
         run: pnpm install --frozen-lockfile
@@ -139,6 +140,8 @@ jobs:
         run: pnpm db:generate
 
       - name: Package CLI
+        env:
+          ENSEMBLE_REQUIRE_LANDRUN: ${{ startsWith(matrix.target, 'linux-') && '1' || '' }}
         run: node scripts/package-cli.mjs --target ${{ matrix.target }} --out dist/cli
 
       - name: Smoke packaged CLI

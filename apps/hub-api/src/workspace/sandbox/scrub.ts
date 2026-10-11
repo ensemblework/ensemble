@@ -39,10 +39,13 @@ export function scrubAgentEnv(env: NodeJS.ProcessEnv, who: "agent" | "human"): N
     next[key] = value;
   }
   if (who === "agent") {
-    next.GIT_ASKPASS = "/usr/bin/false";
-    next.SSH_ASKPASS = "/usr/bin/false";
-    next.GIT_SSH_COMMAND = "ssh -o BatchMode=yes -F /dev/null";
+    const windows = process.platform === "win32";
+    // Windows has no /usr/bin/false: an empty askpass plus no terminal prompt fails the same way.
+    next.GIT_ASKPASS = windows ? "" : "/usr/bin/false";
+    next.SSH_ASKPASS = windows ? "" : "/usr/bin/false";
+    next.GIT_SSH_COMMAND = `ssh -o BatchMode=yes -F ${windows ? "NUL" : "/dev/null"}`;
     next.GIT_TERMINAL_PROMPT = "0";
+    if (windows) next.GCM_INTERACTIVE = "never";
   }
   return next;
 }

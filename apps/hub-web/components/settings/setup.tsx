@@ -544,8 +544,14 @@ export function ConnectionsPanel({ settings, patch, returnTo = "/settings?tab=co
 // ── editors & agents (decision router) ─────────────────────────────────────
 
 const TARGETS = [
+  {
+    id: "claude",
+    label: "Claude Code",
+    detail: "Every permission prompt, and its multiple-choice questions (with their options and a typed answer), come to Ensemble. Installs into ~/.claude/settings.json.",
+  },
+  { id: "codex", label: "Codex", detail: "Every approval request comes to Ensemble. Installs into ~/.codex/hooks.json; approve the hook once in Codex's /hooks." },
+  { id: "copilot-cli", label: "GitHub Copilot CLI", detail: "Tool calls ask Ensemble before they run. Installs into ~/.copilot/hooks/ensemble.json." },
   { id: "cursor", label: "Cursor", detail: "Shell commands and MCP tool calls ask Ensemble before they run. Installs into ~/.cursor/hooks.json." },
-  { id: "claude", label: "Claude Code", detail: "Every permission prompt comes to Ensemble. Installs into ~/.claude/settings.json." },
   { id: "vscode", label: "VS Code (GitHub Copilot agent)", detail: "Tool calls that change things ask Ensemble. Installs .github/hooks/ensemble.json in the project you run it from." },
 ] as const;
 
@@ -573,7 +579,7 @@ export function EditorsSection() {
     <SectionCard
       title="Editors & agents"
       info="A hook in the editor holds the tool call open and asks Ensemble. Your answer on Needs me goes back to that exact call. If Ensemble is closed or nobody answers in 10 minutes, the editor shows its own prompt, the hook never allows by itself."
-      description="Let Cursor, Claude Code, VS Code and other AI apps read your Ensemble, and answer their “Allow this command?” prompts from Needs me."
+      description="Let Claude Code, Codex, Copilot, Cursor and other AI apps read your Ensemble, and answer their “Allow this command?” prompts and questions from Needs me."
     >
       <SettingRow title="Connect an editor or AI app" description="A step-by-step guide for each app. It creates a read-only key: the app can read your tasks and notes, never change them.">
         <Link href="/connect" className="btn-primary">
@@ -593,7 +599,7 @@ export function EditorsSection() {
             <span className="block text-[12.5px] text-muted">
               {(rules.data?.rules ?? []).length || (tokens.data?.tokens ?? []).some((token) => token.scope !== "device" && token.scope !== "bridge")
                 ? `Set up${(rules.data?.rules ?? []).length ? ` · ${plural((rules.data?.rules ?? []).length, "standing answer")}` : ""}`
-                : "Install a small hook in Cursor, Claude Code or VS Code Copilot."}
+                : "Install a small hook in Claude Code, Codex, Copilot or Cursor."}
             </span>
           </span>
           <ChevronDown size={14} className={cx("shrink-0 text-muted transition-transform", routing && "rotate-180")} aria-hidden />

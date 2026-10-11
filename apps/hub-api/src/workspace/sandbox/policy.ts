@@ -1,12 +1,16 @@
 /**
- * The spawn interface the Linux helper will implement later.
+ * The spawn contract every agent command and every plot goes through.
  *
- * Doc 24 §3.1 describes a Rust `Sandbox` trait in the Tauri core and a tiny
- * `ensemble-sbx` helper. Desktop step 2 keeps that interface in the Node sidecar:
- * every agent command and every plot goes through `startSandboxed`. Nothing else
- * execs `sandbox-exec`. When step 4 lands, `prepareSpawn` on Linux is replaced
- * by a request that asks the core to exec `ensemble-sbx` with this same policy.
- * The policy is the contract. Callers do not build Seatbelt text themselves.
+ * `startSandboxed` (spawn.ts) is the only place a confined process starts.
+ * Callers describe what the command may touch with a `SandboxPolicy`; the
+ * backend for this computer turns it into an OS-native sandbox:
+ * - macOS: Seatbelt (`seatbelt.ts`).
+ * - Linux: bubblewrap when the system has it and user namespaces work, else
+ *   Landlock through the bundled `landrun` helper (`linux.ts`).
+ * - Windows: a dedicated sandbox account with folder grants and a network
+ *   fence, from Anthropic's sandbox-runtime (`windows.ts`). One admin prompt
+ *   sets it up per computer.
+ * No backend needs Docker or a VM. Callers never build sandbox arguments.
  *
  * The app's own git (clone, fetch, push) does not use this interface. That
  * process is the only one allowed to see a git token, and it is not an agent
@@ -35,9 +39,9 @@ export interface SandboxPolicy {
   askpassPath?: string;
   toolchainReads?: string[];
   /**
-   * macOS applies Seatbelt. Other platforms have no OS sandbox yet.
-   * Agent jobs refuse to run in that state. Plots may pass `advisoryOk`
-   * and are marked not safe.
+   * Apply this computer's OS sandbox. When it has none (see
+   * `capabilities()`), a confined spawn is refused; plots may pass
+   * `advisoryOk` and are marked not safe.
    */
   confined: boolean;
   advisoryOk?: boolean;
@@ -51,14 +55,27 @@ export interface SpawnCommand {
   args: string[];
 }
 
+export type SandboxMechanism = "seatbelt" | "bubblewrap" | "landlock" | "windows" | "none";
+
 export interface PlatformCaps {
   os: string;
-  /** What the UI may say. Linux is advisory until ensemble-sbx exists. */
+  /**
+   * What the UI may say. `strong`: files, secrets and the network are all
+   * enforced by the OS. `reduced`: files are enforced, something else is not
+   * (listed in `limits`). `advisory`: no OS sandbox on this computer. `ask`:
+   * kept for older runtimes that reported Windows this way.
+   */
   strength: "strong" | "reduced" | "advisory" | "ask";
   osSandbox: boolean;
-  mechanism: "seatbelt" | "none";
-  /** Shown as-is. Linux must say the confinement is not safe yet. */
+  mechanism: SandboxMechanism;
+  /** Shown as-is: which sandbox, or why there is none. */
   reason: string;
+  /** What this backend cannot enforce on this computer, in plain words. */
+  limits?: string[];
+  /** Whether "network off" is enforced by the OS here. */
+  networkOff?: boolean;
+  /** Set when one step would turn the sandbox on (Windows: one admin prompt). */
+  setup?: { needed: boolean; how: string };
 }
 
 export interface PreparedSpawn {
@@ -67,6 +84,8 @@ export interface PreparedSpawn {
   env: NodeJS.ProcessEnv;
   sandboxed: boolean;
   caps: PlatformCaps;
+  /** Windows: the args are an already-escaped cmd.exe line; Node must not quote them again. */
+  windowsVerbatimArguments?: boolean;
 }
 
 export interface SandboxBackend {

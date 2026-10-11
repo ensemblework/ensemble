@@ -35,6 +35,7 @@ Keeping these files current is part of every change. See [`AGENTS.md`](../AGENTS
 | 22 | [Block diagrams for agents](22_BLOCK_DIAGRAMS_FOR_AGENTS.md) | The diagram skill the assistant loads |
 | 28 | [Ensemble spaces](28_ENSEMBLE_SPACES.md) | Separate spaces per account: storage, isolation, switching, settings copy and sync |
 | 29 | [Sharing](29_SHARING.md) | Sharing a space or one item: contacts, roles, what stays private, runs on your own computer, live presence |
+| 30 | [Engines](30_ENGINES.md) | Who does the work (Ensemble's agent or your own Claude Code), how each tool call is judged by the run's rules, and how Claude Code, Codex, Copilot and Cursor questions reach Needs me |
 | 27 | [Imports](27_IMPORTS.md) | Import from Notion, Linear, Jira, Trello, Asana, Todoist, ClickUp, monday.com, GitHub and spreadsheets; re-runs and undo |
 | — | [Context Bridge setup](CONTEXT_BRIDGE.md) | What the bridge runs, and editor config |
 | — | [Demo data](DEMO_DATA.md) | The Branch desk demo and `pnpm seed:demo` |

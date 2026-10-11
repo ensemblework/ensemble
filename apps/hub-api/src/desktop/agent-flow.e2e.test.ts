@@ -139,6 +139,22 @@ test("assign → Needs me → answer → review → accept → push, plus cancel
     const refused = await assign(side, { taskId: unattendedTask, folder, unattended: true, trust: "none", accessMode: "read-write" });
     assert.equal(refused.status, 400);
     assert.equal(refused.body.code, "UNATTENDED_REQUIRES_TRUST");
+    // Review only runs commands without asking, so it needs a trusted folder too.
+    const reviewRefused = await assign(side, { taskId: unattendedTask, folder, mode: "review", trust: "none" });
+    assert.equal(reviewRefused.status, 400);
+    assert.equal(reviewRefused.body.code, "REVIEW_REQUIRES_TRUST");
+
+    // ── Local only holds for a commit a script makes, and the files stay ──
+    const scriptTask = await newTask(side, "[script-commit] Commit behind the run's back");
+    const scripted = await assign(side, { taskId: scriptTask, repoUrl: source, delivery: "local", askBeforePublish: false });
+    assert.equal(scripted.status, 201, JSON.stringify(scripted.body));
+    const scriptId = scripted.body.jobId!;
+    await waitStatus(side, scriptId, ["succeeded"]);
+    const scriptEvents = await side.api<{ events: Array<{ kind: string; data: { commits?: number } }> }>(`/api/agent/jobs/${scriptId}`);
+    assert.ok(scriptEvents.body.events.some((event) => event.kind === "commit_undone" && event.data.commits === 1), JSON.stringify(scriptEvents.body.events));
+    const checkout = join(root, "workspace", "runs", scriptId);
+    assert.equal(git(checkout, "rev-parse", "HEAD"), git(source, "rev-parse", "main"), "the script's commit was undone");
+    assert.match(git(checkout, "status", "--porcelain"), /made\.txt/, "the script's change is still in the folder, uncommitted");
 
     // ── cancel a running job ────────────────────────────────────────────
     const cancelTask = await newTask(side, "[slow] Cancel me");

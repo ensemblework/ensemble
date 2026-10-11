@@ -20,6 +20,8 @@ export const ROUTES = {
   progress: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/progress`,
   ask: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/ask`,
   decision: (decisionId: string) => `/api/devices/self/decisions/${encodeURIComponent(decisionId)}`,
+  /** Answered on this computer: closes the card on the web too. */
+  closeDecision: (decisionId: string) => `/api/devices/self/decisions/${encodeURIComponent(decisionId)}/close`,
   complete: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/complete`,
   events: "/api/devices/self/events",
 } as const;
@@ -65,12 +67,21 @@ export const JobSpec = z
     model: text(200).nullish(),
     reasoningEffort: text(200).nullish(),
     unattended: z.boolean().default(false),
+    /** Ask, Review only or Run unattended. Older servers send only `unattended`. */
+    mode: z.enum(["ask", "review", "unattended"]).nullish(),
     /**
-     * The server's own sandbox-network setting, copied onto the claim.
-     * The Mac does not read it. The local job uses this computer's
-     * `orchestration.sandboxNetwork` instead.
+     * Internet access chosen when it was assigned. Applied when this computer
+     * accepts web settings (`acceptWebApprovals`); otherwise this computer's
+     * `orchestration.sandboxNetwork` decides.
      */
     networkAccess: z.boolean().optional(),
+    askBeforePublish: z.boolean().optional(),
+    /** The sandbox toggle from the Assign dialog. Older servers omit it (sandbox on). */
+    sandbox: z.boolean().optional(),
+    markDone: z.boolean().optional(),
+    maxMinutes: z.number().int().min(1).max(480).nullish(),
+    maxTurns: z.number().int().min(3).max(200).nullish(),
+    maxToolCalls: z.number().int().min(5).max(500).nullish(),
     accessMode: z.enum(["review", "read-write"]).nullish(),
     useCredentials: z.boolean().default(false),
     branchMode: text(20).nullish(),

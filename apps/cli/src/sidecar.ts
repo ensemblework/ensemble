@@ -5,6 +5,7 @@ import { randomBytes } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fetchJson, HttpError } from "./http.js";
+import { migrateLegacyData } from "./migrate.js";
 import { fileExists, resolveCliPaths, type CliPaths } from "./paths.js";
 import { VERSION } from "./version.js";
 
@@ -13,7 +14,14 @@ export type Discovery = {
   token: string;
   /** Written by sidecars from CLI 0.1.0 on; absent in older ones. */
   pid?: number;
+  /** Which launcher started the runtime: the desktop app or this CLI. Absent in older sidecars. */
+  owner?: "desktop" | "cli";
+  /** `admin` for a short-lived sidecar a CLI command started; `runner` otherwise. */
+  mode?: "admin" | "runner";
 };
+
+/** The sidecar's exit code when another runtime already has this computer's data folder. */
+export const ALREADY_RUNNING_EXIT = 75;
 
 export type RunnerPid = {
   pid: number;
@@ -45,11 +53,15 @@ export async function sidecarAvailable(sidecarDir: string, platform: NodeJS.Plat
 
 export async function readDiscovery(file: string): Promise<Discovery | null> {
   try {
-    const value = JSON.parse(await readFile(file, "utf8")) as { port?: unknown; token?: unknown; pid?: unknown };
+    const value = JSON.parse(await readFile(file, "utf8")) as { port?: unknown; token?: unknown; pid?: unknown; owner?: unknown; mode?: unknown };
     const port = typeof value.port === "number" ? value.port : Number(value.port);
     if (!Number.isInteger(port) || port < 1 || port > 65535 || typeof value.token !== "string" || value.token.length < 16) return null;
     const pid = typeof value.pid === "number" && Number.isInteger(value.pid) && value.pid > 0 ? value.pid : undefined;
-    return pid ? { port, token: value.token, pid } : { port, token: value.token };
+    const found: Discovery = { port, token: value.token };
+    if (pid) found.pid = pid;
+    if (value.owner === "desktop" || value.owner === "cli") found.owner = value.owner;
+    if (value.mode === "admin" || value.mode === "runner") found.mode = value.mode;
+    return found;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
@@ -143,6 +155,8 @@ function sidecarEnv(input: {
     REDIS_URL: "memory://cli",
     ENSEMBLE_DEV_AUTH_BYPASS: "false",
     ENSEMBLE_DESKTOP_TOKEN: input.token,
+    ENSEMBLE_RUNTIME_OWNER: "cli",
+    ENSEMBLE_RUNTIME_MODE: input.adminOnly ? "admin" : "runner",
     ENSEMBLE_LOG_LEVEL: process.env.ENSEMBLE_LOG_LEVEL ?? "info",
   };
   if (input.apiBase) env.ENSEMBLE_REMOTE_API = input.apiBase;
@@ -167,6 +181,15 @@ export async function spawnSidecar(input: {
   if (!(await sidecarAvailable(input.sidecarDir))) {
     throw new Error("The packaged Ensemble sidecar is not installed. Install the full Ensemble CLI from https://ensemblework.com/download.");
   }
+  const moved = await migrateLegacyData(paths, {
+    legacyRunning: async (file) => {
+      const old = await readDiscovery(file).catch(() => null);
+      return Boolean(old && (await checkHealth(old)));
+    },
+  }).catch((error: unknown) => ({ status: "failed" as const, error }));
+  if (moved.status === "moved") console.error(`Moved this computer's Ensemble data to ${moved.to}; the CLI and the desktop app now share it.`);
+  if (moved.status === "skipped-running") console.error(`An older Ensemble runner is still running from ${moved.from}. Stop it, then run this again to move its data.`);
+  if (moved.status === "failed") console.error(`Could not move the older CLI data: ${moved.error instanceof Error ? moved.error.message : String(moved.error)}`);
   await mkdir(paths.logsDir, { recursive: true });
   await mkdir(paths.dataHome, { recursive: true });
   const token = randomBytes(32).toString("base64url");
@@ -183,6 +206,10 @@ export async function spawnSidecar(input: {
   });
   if (!input.foreground) child.unref();
   const discovery = await waitForSidecar(paths.discoveryFile, token, input.timeoutMs ?? 30_000, child);
+  if (discovery.token !== token) {
+    // The desktop app (or another runner) started first and holds the data folder: use that runtime.
+    return { discovery, stop: async () => undefined };
+  }
   return {
     discovery,
     child,
@@ -202,7 +229,12 @@ async function waitForSidecar(file: string, expectedToken: string, timeoutMs: nu
   const started = Date.now();
   let lastError = "Sidecar did not publish a discovery file.";
   while (Date.now() - started < timeoutMs) {
-    if (child.exitCode !== null) throw new Error(`Sidecar exited with code ${child.exitCode}.`);
+    if (child.exitCode === ALREADY_RUNNING_EXIT) {
+      const other = await readDiscovery(file);
+      if (other && (await checkHealth(other))) return other;
+    } else if (child.exitCode !== null) {
+      throw new Error(`Sidecar exited with code ${child.exitCode}.`);
+    }
     const discovery = await readDiscovery(file);
     if (discovery?.token === expectedToken && (await checkHealth(discovery))) return discovery;
     if (discovery && discovery.token !== expectedToken) lastError = "Sidecar discovery file belongs to another launch.";
@@ -226,9 +258,17 @@ export async function startRunner(input: { sidecarDir: string; paths?: CliPaths;
  * sidecar wrote one. A stale pid file is never trusted on its own, because
  * the operating system may have handed that number to another program.
  */
+export class DesktopOwnsRuntimeError extends Error {
+  constructor() {
+    super("The Ensemble app is running this computer's Ensemble. Quit the app to stop it; the CLI uses the same runtime meanwhile.");
+    this.name = "DesktopOwnsRuntimeError";
+  }
+}
+
 export async function stopRunner(paths: CliPaths = resolveCliPaths(), waitMs = 10_000): Promise<boolean> {
   const recorded = await readRunnerPid(paths);
   const live = await runningRunner(paths);
+  if (live?.owner === "desktop") throw new DesktopOwnsRuntimeError();
   const pid = live ? (live.pid ?? recorded?.pid) : undefined;
   if (!live || !pid) {
     await clearRunnerPid(paths);

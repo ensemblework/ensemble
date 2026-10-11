@@ -6,11 +6,20 @@
  * `resolveWorkFolder` refuses can never be trusted, because the caller has to
  * pass that check before a rule is saved. Trust does not cover domains.
  *
- * Inside a trusted folder, commands do not prompt. Outside, the choice is
- * Allow once, Allow for this run, Always, or Deny. Unattended work on an
- * untrusted folder is `UNATTENDED_REQUIRES_TRUST` at assignment and at run
- * time. Review only does not prompt per command; it prompts when the agent
- * asks for a write, the network, a credential, or a path outside the grant.
+ * Three run modes (the Assign dialog, the CLI and run profiles):
+ * - Ask (`read-write`): commands and edits ask unless the folder is trusted.
+ * - Review only (`auto`): commands and edits in the folder run without asking;
+ *   only decision questions reach the person. Needs a trusted folder.
+ * - Run unattended (`unattended` flag): nothing asks; decisions are made by the
+ *   agent and reported. Needs a trusted folder.
+ * Outside the folder, the sandbox decides. With the OS sandbox on, the folder
+ * is the boundary: in Review only and Run unattended a path outside it is
+ * refused back to the model (the run continues), and in Ask it is a question.
+ * With the sandbox off the person chose to run directly, so Review only and
+ * Run unattended use outside paths without asking; Ask still asks. Secrets,
+ * app data and Ensemble's own code stay refused either way (`outsideRefusal`).
+ * `review` is the older read-only grant (no writes, no network), kept for a
+ * folder shared read-only from a paired computer.
  */
 
 export const PATH_RULE_SOURCE = "ensemble";
@@ -20,7 +29,21 @@ export const UNATTENDED_CODE = "UNATTENDED_REQUIRES_TRUST";
 export const UNATTENDED_MESSAGE =
   "Run unattended can't be used with a folder you haven't trusted. Trust this folder, or turn off Run unattended.";
 
-export type AccessMode = "review" | "read-write";
+/** `auto` is the dialog's "Review only". `review` is the read-only grant. */
+export type AccessMode = "review" | "read-write" | "auto";
+export type RunMode = "ask" | "review" | "unattended";
+
+/** The stored pair for a run mode. A read-only folder keeps `review` whatever the mode. */
+export function storedMode(mode: RunMode): { accessMode: "read-write" | "auto"; unattended: boolean } {
+  if (mode === "unattended") return { accessMode: "read-write", unattended: true };
+  if (mode === "review") return { accessMode: "auto", unattended: false };
+  return { accessMode: "read-write", unattended: false };
+}
+
+export function runModeOf(job: { accessMode: string; unattended: boolean }): RunMode {
+  if (job.unattended) return "unattended";
+  return job.accessMode === "auto" ? "review" : "ask";
+}
 export type GateAction = "command" | "write" | "network" | "credential" | "outside" | "push";
 export type GateResult = "allow" | "block" | "prompt";
 
@@ -64,6 +87,28 @@ export function checkUnattended(input: { unattended: boolean; trusted: boolean }
   return null;
 }
 
+export const REVIEW_CODE = "REVIEW_REQUIRES_TRUST";
+export const REVIEW_MESSAGE =
+  "Review only runs commands without asking, so it needs a folder you trust. Trust this folder, or choose Ask.";
+
+export class ReviewTrustError extends Error {
+  readonly statusCode = 400;
+  readonly expose = true;
+  readonly code = REVIEW_CODE;
+  constructor() {
+    super(REVIEW_MESSAGE);
+    this.name = "ReviewTrustError";
+  }
+}
+
+/** Review only and Run unattended need a trusted folder; Ask works anywhere. */
+export function checkModeTrust(input: { accessMode: string; unattended: boolean; trusted: boolean }): UnattendedTrustError | ReviewTrustError | null {
+  if (input.trusted) return null;
+  if (input.unattended) return new UnattendedTrustError();
+  if (input.accessMode === "auto") return new ReviewTrustError();
+  return null;
+}
+
 export const UNATTENDED_ASK_MODE =
   "Run unattended needs an OS sandbox, and this system runs agents in Ask mode. Choose Ask or Review only.";
 
@@ -78,10 +123,11 @@ export class UnattendedAskModeError extends Error {
 }
 
 /**
- * `strong` is an OS sandbox (Seatbelt). `advisory` (Linux) has only the argv
- * allow-list and folder jail, so nothing stops a command from writing: Review
- * only asks before each command there. `ask` (Windows) asks before every
- * command and write, and unattended is refused.
+ * `strong`: the run's commands are inside the OS sandbox (Seatbelt, Landlock,
+ * bubblewrap or the Windows sandbox account). `advisory`: the sandbox is off
+ * for this run, so only the argv allow-list and the folder jail apply. `ask`:
+ * kept for runtimes that report no sandbox at all; every command asks and
+ * unattended is refused.
  */
 export type SandboxStrength = "strong" | "advisory" | "ask";
 
@@ -95,32 +141,32 @@ export function commandGate(input: {
   action: GateAction;
   inside: boolean;
   strength?: SandboxStrength;
+  /** The OS sandbox is on for this run. Unset means on. */
+  sandboxed?: boolean;
 }): GateResult {
   const strength = input.strength ?? "strong";
   if (input.unattended && (!input.trusted || strength === "ask")) return "block";
-  if (!input.inside || input.action === "outside") return input.unattended ? "block" : "prompt";
-  if (input.action === "push") return input.unattended ? "block" : "prompt";
-  if (input.action === "credential") return input.unattended && input.trusted ? "allow" : "prompt";
-  if (strength === "ask") return "prompt";
+  const free = input.trusted && (input.unattended || input.accessMode === "auto");
+  if (!input.inside || input.action === "outside") {
+    if (!free) return "prompt";
+    // Review only and Run unattended never ask. Sandboxed, the folder is the boundary;
+    // unsandboxed, the person chose to run directly and outside paths go ahead.
+    return input.sandboxed === false ? "allow" : "block";
+  }
   if (input.accessMode === "review") {
-    if (input.action === "command") return strength === "strong" ? "allow" : input.unattended ? "block" : "prompt";
+    // Read-only: never a write, never the network. Commands run under a read-only grant.
+    if (input.action === "write" || input.action === "network" || input.action === "push" || input.action === "credential") return "block";
+    if (strength === "strong") return "allow";
     return input.unattended ? "block" : "prompt";
   }
-  if (input.action === "network") return input.unattended && input.trusted ? "allow" : "prompt";
+  if (free) return strength === "ask" ? "prompt" : "allow";
+  // A push the run's git permission allows goes ahead in a folder the person trusts.
+  if (input.action === "push") return input.trusted && (input.explicitTrust || input.silentWorkspace) ? "allow" : "prompt";
+  if (input.action === "credential" || input.action === "network") return "prompt";
+  if (strength === "ask") return "prompt";
   const silent = input.explicitTrust || (input.trusted && input.silentWorkspace);
-  if (input.unattended && input.trusted) return "allow";
-  if (silent) return "allow";
-  return "prompt";
+  return silent ? "allow" : "prompt";
 }
 
-/** Outside the workspace, review is read-only. "Review and fix" is the read-write grant. */
-export function sandboxGrant(input: { folder: string; workspaceRoot: string; cache: string; accessMode: AccessMode }): {
-  readWrite: string[];
-  readOnly: string[];
-} {
-  const outside = !(input.folder === input.workspaceRoot || pathCovers(input.workspaceRoot, input.folder));
-  if (outside && input.accessMode === "review") {
-    return { readWrite: [input.cache], readOnly: [input.folder] };
-  }
-  return { readWrite: [input.folder, input.cache], readOnly: [] };
-}
+/** The tool name on a "trust this folder?" question, so a phone answer to it is treated as a trust grant. */
+export const TRUST_TOOL = "trust";

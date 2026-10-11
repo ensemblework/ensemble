@@ -118,9 +118,11 @@ test("remote tasks: pair, run, refuse a server overreach, disconnect, and do not
     assert.equal(host.job(heldBack).status, "queued", "paired but off still claims nothing");
     assert.equal((await cards(side)).some((row) => row.origin === "web"), false);
 
-    const enabled = await side.api<{ enabled: boolean; online: boolean }>("/api/remote", { method: "PUT", json: { enabled: true } });
+    // This flow is the server-overreach case: a computer that keeps risky approvals to itself.
+    const enabled = await side.api<{ enabled: boolean; online: boolean; acceptWebApprovals: boolean }>("/api/remote", { method: "PUT", json: { enabled: true, acceptWebApprovals: false } });
     assert.equal(enabled.status, 200, JSON.stringify(enabled.body));
     assert.equal(enabled.body.enabled, true);
+    assert.equal(enabled.body.acceptWebApprovals, false);
     await until("the Mac shows online", async () => {
       const status = await side.api<{ online: boolean }>("/api/remote");
       return status.body.online ? status.body : null;
@@ -229,7 +231,7 @@ test("remote tasks: pair, run, refuse a server overreach, disconnect, and do not
     const repaired = await side.api<{ paired: boolean; enabled: boolean }>("/api/remote/pair", { json: { apiBase: host.origin, code: host.code } });
     assert.equal(repaired.status, 200, JSON.stringify(repaired.body));
     assert.equal(repaired.body.enabled, false);
-    const on = await side.api<{ enabled: boolean }>("/api/remote", { method: "PUT", json: { enabled: true, runBranchPush: false } });
+    const on = await side.api<{ enabled: boolean }>("/api/remote", { method: "PUT", json: { enabled: true, runBranchPush: false, acceptWebApprovals: false } });
     assert.equal(on.body.enabled, true);
     const quitTitle = "[slow] Remote quit";
     const quitHosted = host.enqueue(spec(quitTitle));
@@ -250,7 +252,55 @@ test("remote tasks: pair, run, refuse a server overreach, disconnect, and do not
   }
 });
 
-test("a claim with networkAccess still runs on this Mac's network setting", { timeout: 180_000 }, async (t) => {
+test("with web approvals on, a push the computer asks about goes ahead on an allow from the phone", { timeout: 180_000 }, async (t) => {
+  const root = makeTestDirectory("ensemble-remote-phone-");
+  const stub = await startStubRuntime();
+  const host = await startFakeHost();
+  const source = makeSourceRepo(root);
+  const side = await bootSidecar(root, stub.url, {
+    ENSEMBLE_REMOTE_API: host.origin,
+    ENSEMBLE_REMOTE_HEARTBEAT_MS: "400",
+    ENSEMBLE_REMOTE_POLL_MS: "300",
+    ENSEMBLE_REMOTE_SYNC_MS: "200",
+    ENSEMBLE_REMOTE_WAIT_MS: "1500",
+  });
+  t.after(async () => {
+    await side.stop("SIGKILL");
+    await host.close();
+    await stub.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  try {
+    await prepareAccount(side);
+    const shared = await side.api("/api/remote/folders", { json: { label: "source", path: source, kind: "repo", access: "read-write" } });
+    assert.equal(shared.status, 200, JSON.stringify(shared.body));
+    // Commands in the workspace ask, so the push reaches Needs me instead of going ahead on its own.
+    const asking = await side.api("/api/settings", { method: "PATCH", json: { orchestration: { runWithoutAsking: false } } });
+    assert.equal(asking.status, 200, JSON.stringify(asking.body));
+    const paired = await side.api("/api/remote/pair", { json: { apiBase: host.origin, code: host.code } });
+    assert.equal(paired.status, 200, JSON.stringify(paired.body));
+    const enabled = await side.api<{ acceptWebApprovals: boolean }>("/api/remote", { method: "PUT", json: { enabled: true } });
+    assert.equal(enabled.body.acceptWebApprovals, true, "approvals from the web are on by default");
+
+    const title = "[push-run] Allowed from the phone";
+    const hosted = host.enqueue(spec(title, { delivery: "push" }));
+    await waitJob(side, title, "web", ["waiting_approval"]);
+    const ask = await until("the push question", async () => host.asks().find((row) => row.jobId === hosted));
+    assert.equal(ask.body.toolName, "git push");
+    assert.equal(ask.body.tier, "ordinary", "the web may answer it");
+    assert.equal(ask.body.confirm, true, "the web asks the person to confirm first");
+    host.answer(ask.id, { decision: "allow", scope: "once", actionHash: ask.actionHash });
+    const done = await waitJob(side, title, "web", ["succeeded"]);
+    assert.equal(git(source, "rev-parse", `refs/heads/${done.branch}`), git(done.folder, "rev-parse", "HEAD"), "the phone's allow pushed the run branch");
+    await until("the hosted push completes", async () => host.job(hosted).complete?.outcome === "succeeded");
+  } catch (error) {
+    console.error(side.logs().slice(-8000));
+    throw error;
+  }
+});
+
+test("with web settings off, a claim's networkAccess does not widen this computer's network", { timeout: 180_000 }, async (t) => {
   const root = makeTestDirectory("ensemble-remote-net-");
   const stub = await startStubRuntime();
   const host = await startFakeHost();
@@ -276,8 +326,9 @@ test("a claim with networkAccess still runs on this Mac's network setting", { ti
     assert.equal(networkOff.status, 200, JSON.stringify(networkOff.body));
     const paired = await side.api("/api/remote/pair", { json: { apiBase: host.origin, code: host.code } });
     assert.equal(paired.status, 200, JSON.stringify(paired.body));
-    const enabled = await side.api("/api/remote", { method: "PUT", json: { enabled: true } });
+    const enabled = await side.api("/api/remote", { method: "PUT", json: { enabled: true, acceptWebApprovals: false } });
     assert.equal(enabled.status, 200, JSON.stringify(enabled.body));
+    assert.equal((enabled.body as { acceptWebApprovals?: boolean }).acceptWebApprovals, false);
 
     const title = "[net] No network";
     const hosted = host.enqueue(spec(title, { networkAccess: true }));

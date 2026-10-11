@@ -456,7 +456,7 @@ export type AgentJob = {
   useCredentials: boolean;
   askBeforePublish: boolean;
   unattended?: boolean;
-  accessMode?: "review" | "read-write";
+  accessMode?: "review" | "read-write" | "auto";
   markDone?: boolean;
   instructions?: string;
   branchMode?: "as-is" | "existing" | "new";
@@ -513,10 +513,16 @@ export type WorkspaceBoard = {
 /** What the agent's commands run inside on this computer. */
 export type SandboxCaps = {
   os: string;
-  strength: "strong" | "advisory" | "ask";
+  strength: "strong" | "reduced" | "advisory" | "ask";
   osSandbox: boolean;
+  /** seatbelt (macOS), bubblewrap or landlock (Linux), windows (sandbox account), none. */
   mechanism: string;
   reason: string;
+  /** What this computer's sandbox cannot enforce. */
+  limits?: string[];
+  networkOff?: boolean;
+  /** Windows: one admin prompt turns it on. */
+  setup?: { needed: boolean; how: string };
 };
 
 export type AgentCall = { id: string; kind: string; label: string; detail?: string; model?: string; startedAt: string };
@@ -529,6 +535,8 @@ export type RemoteMac = {
   paired: boolean;
   enabled: boolean;
   runBranchPush: boolean;
+  /** Approvals and run settings from the web and phone apply on this computer. */
+  acceptWebApprovals: boolean;
   online: boolean;
   lastHeartbeatAt: number | null;
   disconnected: { at: string; reason: string } | null;
@@ -539,6 +547,8 @@ export type RemoteMac = {
 export type AssignInput = {
   taskId: string;
   kind: "research" | "code";
+  /** Ensemble's own agent, or the person's own Claude Code on their computer. */
+  engine?: "ensemble" | "claude-code";
   provider?: string;
   model?: string;
   reasoningEffort?: string;
@@ -555,6 +565,9 @@ export type AssignInput = {
   network?: boolean;
   markDone?: boolean;
   unattended?: boolean;
+  /** Ask, Review only or Run unattended. Wins over `unattended`. */
+  mode?: "ask" | "review" | "unattended";
+  /** `review` is the read-only grant, for a folder shared read-only. */
   accessMode?: "review" | "read-write";
   trust?: "always" | "task" | "none";
   maxMinutes?: number;
@@ -826,6 +839,16 @@ export type AgentDecisionRecord = {
     deviceId?: string;
     deviceName?: string;
     tier?: "ordinary" | "run_branch_push" | "high_risk";
+    /** A risky allow (push, outside path, trust): the person confirms first. */
+    confirm?: boolean;
+    /** The option the agent recommends, one of `options`. */
+    recommended?: string | null;
+    /** A question from another tool (Claude Code's AskUserQuestion): each option's description. */
+    optionDetails?: Array<{ label: string; description: string }>;
+    /** More than one option may be picked. */
+    multiSelect?: boolean;
+    /** Short label the tool gave the question. */
+    header?: string | null;
   };
   sessionId: string | null;
   cwd: string | null;
@@ -977,7 +1000,7 @@ export const api = bindClient({
   // editor decisions (Needs me router)
   decisions: (status: "pending" | "recent" = "pending") =>
     get<{ decisions: AgentDecisionRecord[] }>(`/api/decisions${qs({ status })}`),
-  decideAgent: (id: string, data: { decision: "allow" | "deny"; scope: "once" | "session" | "always"; reason?: string }) =>
+  decideAgent: (id: string, data: { decision: "allow" | "deny"; scope: "once" | "session" | "always"; reason?: string; confirmed?: boolean }) =>
     post<{ decision: AgentDecisionRecord }>(`/api/decisions/${id}/decide`, data),
   decisionRules: () => get<{ rules: DecisionRuleRecord[] }>("/api/decision-rules"),
   deleteDecisionRule: (id: string) => del<void>(`/api/decision-rules/${id}`),
@@ -1085,6 +1108,9 @@ export const api = bindClient({
   stopJob: (id: string) => post(`/api/agent/jobs/${id}/stop`),
   retryJob: (id: string) => post<{ jobId: string }>(`/api/agent/jobs/${id}/retry`),
   workspaceGuard: () => get<{ root: string; sandboxAvailable: boolean; sandbox: SandboxCaps }>("/api/workspace/guard"),
+  sandboxStatus: (refresh = false) => get<{ sandbox: SandboxCaps }>(`/api/sandbox${refresh ? "?refresh=1" : ""}`),
+  /** Windows asks for permission once; elsewhere it re-checks. Only the computer itself can do this. */
+  setupSandbox: () => post<{ ok: boolean; message: string; sandbox: SandboxCaps }>("/api/sandbox/setup", {}),
   checkouts: () => get<{ checkouts: Array<{ jobId: string; title: string; status: string; folder: string; branch: string; createdAt: string }> }>("/api/workspace/checkouts"),
   resolveFolder: (path: string) => post<{ path: string; git: boolean; branch: string | null }>("/api/workspace/resolve-folder", { path }),
   trustedFolders: () => get<{ folders: Array<{ id: string; path: string; createdAt: string }> }>("/api/workspace/trust"),
@@ -1092,7 +1118,7 @@ export const api = bindClient({
   branches: (path: string) => get<{ branches: string[] }>(`/api/workspace/branches${qs({ path })}`),
   agentState: () => get<AgentState>("/api/agent/state"),
   remote: () => get<RemoteMac>("/api/remote"),
-  saveRemote: (body: { enabled?: boolean; runBranchPush?: boolean; apiBase?: string | null; deviceName?: string }) => put<RemoteMac>("/api/remote", body),
+  saveRemote: (body: { enabled?: boolean; runBranchPush?: boolean; acceptWebApprovals?: boolean; apiBase?: string | null; deviceName?: string }) => put<RemoteMac>("/api/remote", body),
   pairRemote: (body: { apiBase: string; code: string; name?: string }) => post<RemoteMac>("/api/remote/pair", body),
   unpairRemote: () => post<RemoteMac>("/api/remote/unpair"),
   pauseAgent: () => post<{ stopped: number; cancelled: number }>("/api/agent/pause"),

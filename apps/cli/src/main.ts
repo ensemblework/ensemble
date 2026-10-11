@@ -1,3 +1,4 @@
+import { answerFor, answerPending, formatPending, listPending, listTrusted, trustFolder, untrustFolder, webApprovals } from "./approvals.js";
 import type { ChildProcess } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
@@ -15,6 +16,7 @@ import { openBrowser } from "./browser.js";
 import type { CliPaths } from "./paths.js";
 import {
   clearRunnerPidIf,
+  DesktopOwnsRuntimeError,
   defaultSidecarDir,
   readRunnerPid,
   resolveSidecarDir,
@@ -32,6 +34,7 @@ import { chooseEditors, configuredEditors, detectEditors, parseEditorNames, remo
 import { commandWithSubcommand, isExecutableOnPath } from "./launcher.js";
 import { installRunnerService, uninstallRunnerService } from "./services.js";
 import { runMcp } from "./mcp.js";
+import { formatSandbox, sandboxSetup, sandboxStatus } from "./sandbox.js";
 
 type ArgsOptions = NonNullable<ParseArgsConfig["options"]>;
 type ParsedArgs = {
@@ -52,6 +55,10 @@ Usage:
   ensemble runner [start] [--foreground] | stop | restart | status | logs [-f] | install | uninstall
   ensemble folders [list] | add <path> [--label L] [--read-only] | remove <label>
   ensemble keys [list] | set <provider> | remove <provider>
+  ensemble needs [list] | answer <n> <allow|deny|option number|"answer">
+  ensemble trust [list] | add [path] | remove <path>
+  ensemble approvals [status] | on | off
+  ensemble sandbox [status] | setup
   ensemble doctor
   ensemble update
   ensemble version | --version | --help`;
@@ -64,6 +71,11 @@ const HELP_BY_COMMAND: Record<string, string> = {
   runner: "Usage: ensemble runner [start] [--foreground] | stop | restart | status | logs [-f] | install | uninstall",
   folders: "Usage: ensemble folders [list] | add <path> [--label L] [--read-only] | remove <label>",
   keys: "Usage: ensemble keys [list] | set <provider> | remove <provider>",
+  needs: "Usage: ensemble needs [list] | answer <n> <allow|deny|option number|\"answer\">\nQuestions and approvals waiting on this computer, including pushes and folder trust.",
+  trust: "Usage: ensemble trust [list] | add [path] | remove <path>\nTrusted folders on this computer. Review only and Run unattended need one; Ensemble's own workspace is always trusted.",
+  approvals: "Usage: ensemble approvals [status] | on | off\nOn (default): you can approve anything for this computer from the web or phone, and the mode, internet and limits chosen there apply here.",
+  sandbox:
+    "Usage: ensemble sandbox [status] | setup\nThis computer's OS sandbox (macOS Seatbelt, Linux bubblewrap or Landlock, Windows sandbox account). No Docker. On Windows, `setup` asks for permission once; the Ensemble app and the CLI share it.",
   doctor: "Usage: ensemble doctor",
   update: "Usage: ensemble update",
 };
@@ -146,15 +158,20 @@ async function commandLogin(args: string[]): Promise<void> {
       apiBase: finalApi,
       adminOnly: true,
       run: async (discovery) => {
-        await localJson(discovery, "/api/remote/pair", {
-          method: "POST",
-          body: JSON.stringify({ apiBase: finalApi, code: token.pairingCode, name }),
-        });
+        // The desktop app may have paired this computer already: same data folder, same device.
+        const current = await remoteStatus(discovery).catch(() => null);
+        if (!(current?.paired && normalizeApiBase(current.apiBase || "") === finalApi)) {
+          await localJson(discovery, "/api/remote/pair", {
+            method: "POST",
+            body: JSON.stringify({ apiBase: finalApi, code: token.pairingCode, name }),
+          });
+        }
         await localJson(discovery, "/api/remote", { method: "PUT", body: JSON.stringify({ enabled: true }) });
       },
     });
     const config = await loadConfig(paths);
     await saveConfig({ ...config, pairedAt: new Date().toISOString() }, paths);
+    await offerSandboxSetup(sidecarDir, paths);
   }
   const paired = Boolean((await loadConfig(paths)).pairedAt);
   console.log(`Logged in${token.account?.email ? ` as ${token.account.email}` : ""}.`);
@@ -285,8 +302,9 @@ async function commandRunner(args: string[]): Promise<void> {
     if (result.values.help) return void console.log(HELP_BY_COMMAND.runner);
     if (result.values.foreground) return runForeground(sidecarDir, paths);
     const session = await startRunner({ sidecarDir, paths });
-    if (!session) {
-      console.log("Runner is already running.");
+    const running = session ? session.discovery : await runningRunner(paths);
+    if (!session?.child) {
+      console.log(running?.owner === "desktop" ? "The Ensemble app is running this computer's Ensemble. Tasks run there; nothing else to start." : "Runner is already running.");
       return;
     }
     console.log(`Runner started on http://127.0.0.1:${session.discovery.port}. Logs: ${paths.runnerLog}`);
@@ -320,16 +338,23 @@ async function commandRunner(args: string[]): Promise<void> {
     if (!(await sidecarAvailable(sidecarDir))) throw new Error("Runner service install needs the full Ensemble CLI with the packaged sidecar.");
     const launcher = commandWithSubcommand(resolveLauncherCommand({ argv1: process.argv[1], sidecarAvailable: true }), "runner").command;
     await mkdir(paths.logsDir, { recursive: true });
-    // The service takes over from a runner started by hand.
-    if (await stopRunner(paths)) console.log("Stopped the runner that was already running; the service starts it again.");
+    // The service takes over from a runner started by hand. The app's runtime is left alone; the service waits for it.
+    try {
+      if (await stopRunner(paths)) console.log("Stopped the runner that was already running; the service starts it again.");
+    } catch (error) {
+      if (!(error instanceof DesktopOwnsRuntimeError)) throw error;
+      console.log("The Ensemble app is running this computer's Ensemble. The service starts the runner when the app quits.");
+    }
     console.log(await installRunnerService({ home: homedir(), launcher, logPath: paths.runnerLog }));
     return;
   }
   if (subcommand === "uninstall") {
     parsed(rest);
     console.log(await uninstallRunnerService({ home: homedir() }));
-    // Ending a Windows scheduled task leaves its child running.
-    await stopRunner(paths);
+    // Ending a Windows scheduled task leaves its child running. The app's own runtime stays.
+    await stopRunner(paths).catch((error: unknown) => {
+      if (!(error instanceof DesktopOwnsRuntimeError)) throw error;
+    });
   }
 }
 
@@ -360,7 +385,12 @@ async function runForeground(sidecarDir: string, paths: CliPaths): Promise<void>
         break;
       }
       if (!announced) {
-        console.log("Another runner is already running. This one starts when it stops.");
+        const other = await runningRunner(paths);
+        console.log(
+          other?.owner === "desktop"
+            ? "The Ensemble app is running this computer's Ensemble. This runner starts when the app quits."
+            : "Another runner is already running. This one starts when it stops.",
+        );
         announced = true;
       }
       while (await runningRunner(paths)) await new Promise((resolve) => setTimeout(resolve, 15_000));
@@ -384,7 +414,8 @@ async function runForeground(sidecarDir: string, paths: CliPaths): Promise<void>
 async function printRunnerStatus(paths = resolveCliPaths()): Promise<void> {
   const discovery = await runningRunner(paths);
   const pid = await readRunnerPid(paths);
-  console.log(`running: ${discovery ? "yes" : "no"}`);
+  console.log(`running: ${discovery ? (discovery.owner === "desktop" ? "yes (started by the Ensemble app)" : "yes") : "no"}`);
+  console.log(`data: ${paths.dataHome}`);
   if (pid) {
     console.log(`pid: ${pid.pid}`);
     if (pid.startedAt) {
@@ -473,6 +504,100 @@ async function commandKeys(args: string[]): Promise<void> {
   if (subcommand === "set") await withAdminApi({ sidecarDir, run: (discovery) => setKey(discovery, result.positionals[0]!) });
   else await withAdminApi({ sidecarDir, run: (discovery) => removeKey(discovery, result.positionals[0]!) });
   console.log(`${subcommand === "set" ? "Saved" : "Removed"} ${result.positionals[0]}.`);
+}
+
+async function commandNeeds(args: string[]): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) return void console.log(HELP_BY_COMMAND.needs);
+  const subcommand = args[0] && !args[0].startsWith("-") ? args[0] : "list";
+  if (!["list", "answer"].includes(subcommand)) throw new Error(HELP_BY_COMMAND.needs);
+  const sidecarDir = resolveSidecarDir(import.meta.url);
+  if (!(await sidecarAvailable(sidecarDir))) throw new Error(NO_RUNNER);
+  if (subcommand === "list") {
+    const rows = await withAdminApi({ sidecarDir, run: listPending });
+    console.log(formatPending(rows));
+    return;
+  }
+  const [number, ...words] = args.slice(1);
+  if (!number || !words.length) throw new Error(HELP_BY_COMMAND.needs);
+  await withAdminApi({
+    sidecarDir,
+    run: async (discovery) => {
+      const rows = await listPending(discovery);
+      const row = rows[Number(number) - 1] ?? rows.find((item) => item.id === number);
+      if (!row) throw new Error(`There is no waiting item ${number}. Run \`ensemble needs\` to see the list.`);
+      const answer = answerFor(row, words.join(" "));
+      await answerPending(discovery, row, answer);
+      console.log(answer.decision === "allow" ? `Sent${answer.reason ? `: ${answer.reason}` : ""}. The task continues.` : "Denied. The agent was told.");
+    },
+  });
+}
+
+async function commandTrust(args: string[]): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) return void console.log(HELP_BY_COMMAND.trust);
+  const subcommand = args[0] && !args[0].startsWith("-") ? args[0] : "list";
+  if (!["list", "add", "remove"].includes(subcommand)) throw new Error(HELP_BY_COMMAND.trust);
+  const sidecarDir = resolveSidecarDir(import.meta.url);
+  if (!(await sidecarAvailable(sidecarDir))) throw new Error(NO_RUNNER);
+  if (subcommand === "list") {
+    const rows = await withAdminApi({ sidecarDir, run: listTrusted });
+    console.log(rows.length ? rows.map((row) => row.path).join("\n") : "No trusted folders yet. Ensemble's own workspace is always trusted. Add one with `ensemble trust add <path>`.");
+    return;
+  }
+  if (subcommand === "add") {
+    const folder = args[1] ?? process.cwd();
+    const row = await withAdminApi({ sidecarDir, run: (discovery) => trustFolder(discovery, folder) });
+    console.log(`Trusted ${row.path}. Agents can run commands there without asking, and Review only and Run unattended can use it.`);
+    return;
+  }
+  if (!args[1]) throw new Error("Usage: ensemble trust remove <path>");
+  const removed = await withAdminApi({ sidecarDir, run: (discovery) => untrustFolder(discovery, args[1]!) });
+  console.log(removed ? `No longer trusted: ${args[1]}.` : `${args[1]} was not trusted.`);
+}
+
+async function commandApprovals(args: string[]): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) return void console.log(HELP_BY_COMMAND.approvals);
+  const subcommand = args[0] ?? "status";
+  if (!["status", "on", "off"].includes(subcommand)) throw new Error(HELP_BY_COMMAND.approvals);
+  const sidecarDir = resolveSidecarDir(import.meta.url);
+  if (!(await sidecarAvailable(sidecarDir))) throw new Error(NO_RUNNER);
+  const on = await withAdminApi({ sidecarDir, run: (discovery) => webApprovals(discovery, subcommand === "status" ? undefined : subcommand === "on") });
+  console.log(
+    on
+      ? "Approvals from the web and phone: on. You can approve anything for this computer from Needs me (with a confirm step for pushes and trust), and the run settings chosen there apply here."
+      : "Approvals from the web and phone: off. Pushes, folder trust and paths outside a folder are answered only here (`ensemble needs`), and web settings can only narrow.",
+  );
+}
+
+async function commandSandbox(args: string[]): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) return void console.log(HELP_BY_COMMAND.sandbox);
+  const subcommand = args[0] ?? "status";
+  if (!["status", "setup"].includes(subcommand)) throw new Error(HELP_BY_COMMAND.sandbox);
+  const sidecarDir = resolveSidecarDir(import.meta.url);
+  if (!(await sidecarAvailable(sidecarDir))) throw new Error(NO_RUNNER);
+  if (subcommand === "status") {
+    const caps = await withAdminApi({ sidecarDir, run: (discovery) => sandboxStatus(discovery, true) });
+    for (const line of formatSandbox(caps)) console.log(line);
+    return;
+  }
+  if (process.platform === "win32") console.log("Setting up the Windows sandbox. Windows asks for permission once.");
+  const result = await withAdminApi({ sidecarDir, run: sandboxSetup });
+  console.log(result.message);
+  for (const line of formatSandbox(result.sandbox)) console.log(line);
+  if (!result.ok) process.exitCode = 1;
+}
+
+/** At login on Windows, turn the sandbox on while someone is there to approve the prompt. */
+async function offerSandboxSetup(sidecarDir: string, paths: CliPaths): Promise<void> {
+  if (process.platform !== "win32") return;
+  try {
+    const caps = await withLocalApi({ sidecarDir, paths, adminOnly: true, run: (discovery) => sandboxStatus(discovery, true) });
+    if (caps.osSandbox || !caps.setup?.needed) return;
+    console.log("Setting up the Windows sandbox so tasks can run safely here. Windows asks for permission once.");
+    const result = await withLocalApi({ sidecarDir, paths, adminOnly: true, run: sandboxSetup });
+    console.log(result.ok ? result.message : `${result.message} Run \`ensemble sandbox setup\` later to turn it on.`);
+  } catch (error) {
+    console.error(`Could not set up the sandbox now (${sidecarErrorMessage(error)}). Run \`ensemble sandbox setup\` later.`);
+  }
 }
 
 async function statusSummary(): Promise<Record<string, unknown>> {
@@ -592,6 +717,9 @@ async function commandDoctor(args: string[]): Promise<void> {
     ["Git on PATH", Boolean(status.git), "install git; code tasks need it"],
     ["Node 20 or newer", nodeMajor >= 20, "upgrade Node"],
   ];
+  const runner = await runningRunner(resolveCliPaths());
+  const sandbox = runner ? await sandboxStatus(runner).catch(() => null) : null;
+  if (sandbox) checks.push(["OS sandbox", sandbox.osSandbox, sandbox.setup?.needed ? "run `ensemble sandbox setup`" : sandbox.reason]);
   let failed = 0;
   for (const [label, ok, fix] of checks) {
     if (!ok) failed += 1;
@@ -641,6 +769,14 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
       return commandFolders(rest);
     case "keys":
       return commandKeys(rest);
+    case "needs":
+      return commandNeeds(rest);
+    case "trust":
+      return commandTrust(rest);
+    case "approvals":
+      return commandApprovals(rest);
+    case "sandbox":
+      return commandSandbox(rest);
     case "doctor":
       return commandDoctor(rest);
     case "update":

@@ -59,6 +59,22 @@ function script(title: string, turn: number, messages: ChatMessage[], fast: bool
   if (title.startsWith("[net]")) {
     return turn === 0 ? { name: "run_command", args: { command: "git fetch" } } : { name: "finish", args: { summary: "Tried the network." } };
   }
+  if (title.startsWith("[script-commit]")) {
+    // A program, not the agent's own git, makes the commit: the git permission still has to hold.
+    const steps: Array<() => Call> = [
+      () => ({ name: "write_file", args: { path: "made.txt", content: "made by a script\n" } }),
+      () => ({
+        name: "write_file",
+        args: {
+          path: "commit.cjs",
+          content: 'const { execFileSync } = require("node:child_process");\nexecFileSync("git", ["add", "made.txt"]);\nexecFileSync("git", ["-c", "user.name=script", "-c", "user.email=script@example.com", "commit", "-q", "-m", "made by a script"]);\n',
+        },
+      }),
+      () => ({ name: "run_command", args: { command: "node commit.cjs" } }),
+      () => ({ name: "finish", args: { summary: "Tried a commit from a script." } }),
+    ];
+    return steps[turn]?.() ?? null;
+  }
   if (title.startsWith("[fresh]")) {
     return turn === 0
       ? { name: "write_file", args: { path: "note.txt", content: "hello from a folder with no repo\n" } }

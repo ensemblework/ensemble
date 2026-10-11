@@ -1,13 +1,16 @@
 /**
  * What the Mac accepts from Ensemble on the web (doc 25 §5, §6). The server is
- * untrusted input: these checks run here whatever it sent, and they only ever
- * narrow what a local assignment could do.
+ * untrusted input: these checks run here whatever it sent. With "Accept
+ * approvals from the web" on (the default), the run settings chosen there
+ * (mode, internet, limits) apply here and the person may approve anything from
+ * the web; with it off, web settings only narrow and risky answers stay here.
  */
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { redactText } from "../lib/redact.js";
 import type { AssignInput } from "../workspace/assign.js";
 import { OUTSIDE_TOOL } from "../workspace/tools.js";
+import { TRUST_TOOL } from "../workspace/trust.js";
 import type { HostedAnswer, JobSpec } from "./contract.js";
 import { GIT_GATE_CLONE, GIT_GATE_CODE } from "./origin.js";
 import type { RemoteSettings, SharedFolder } from "./store.js";
@@ -60,23 +63,34 @@ export function planLocalJob(spec: JobSpec, settings: RemoteSettings, continueFr
       message: "A remote task works only on its own run branch (ensemble/<run-id>/…). Another branch can be chosen on the Mac.",
     };
   }
-  // `networkAccess` on the claim is the server's setting. It is not copied.
-  // Omitting `network` makes createJob use this Mac's orchestration.sandboxNetwork.
-  // Trust stays "none": a label from the web is not a trust grant. Unattended is
-  // the claim's flag, then doc 25 §6 checks it against trust that already exists here.
+  // Trust stays "none": a label from the web is not a trust grant. Review only and
+  // unattended are checked against trust that exists here (doc 25 §6); when it is
+  // missing, the run asks "Trust this folder?", which the person may answer from the web.
+  const web = settings.acceptWebApprovals;
+  const mode = spec.mode ?? (spec.unattended ? "unattended" : "ask");
   const assign: LocalPlan["assign"] = {
     kind: spec.kind,
     instructions: (spec.instructions ?? "").slice(0, 8000),
     branchMode: "as-is",
     delivery: spec.delivery,
-    askBeforePublish: true,
+    // Without web settings, every commit asks here.
+    askBeforePublish: web ? spec.askBeforePublish !== false : true,
     useCredentials: false,
-    sandbox: true,
+    // The sandbox toggle from the web applies when this computer accepts web settings; otherwise the sandbox stays on.
+    sandbox: web ? spec.sandbox !== false : true,
     markDone: true,
-    unattended: spec.unattended,
+    unattended: false,
+    mode: web ? mode : "ask",
     trust: "none",
+    // Without web settings, internet is this computer's own default unless the web turned it off.
+    ...(web && spec.networkAccess !== undefined ? { network: spec.networkAccess } : spec.networkAccess === false ? { network: false } : {}),
+    ...(spec.maxMinutes ? { maxMinutes: spec.maxMinutes } : {}),
+    ...(spec.maxTurns ? { maxTurns: spec.maxTurns } : {}),
+    ...(spec.maxToolCalls ? { maxToolCalls: spec.maxToolCalls } : {}),
     ...(spec.model?.trim() ? { model: spec.model.trim() } : {}),
     ...(spec.provider?.trim() ? { provider: spec.provider.trim() } : {}),
+    // The person's own Claude Code on this computer, with their own sign-in.
+    engine: spec.provider?.trim() === "claude-code" ? "claude-code" : "ensemble",
     ...(spec.reasoningEffort?.trim() ? { reasoningEffort: spec.reasoningEffort.trim() } : {}),
   };
   let publicCheck: string | null = null;
@@ -135,15 +149,12 @@ export function actionHash(row: LocalDecision): string {
 }
 
 /**
- * The tier is decided here, when the Mac asks (§5.1, §12). High risk is a
- * push the §5.1 setting does not cover, a path outside the folder, or a new
- * grant of trust. A phone Yes does not answer those.
+ * The tier is decided here, when the Mac asks (§5.1, §12): a push, a path
+ * outside the folder, and a new grant of trust are high risk. Ordinary model
+ * questions are not, whatever their wording.
  */
-export function riskOf(row: LocalDecision, input: { runBranchPush: boolean; ownRunBranch: boolean; trusted: boolean; pushTargetLocal: boolean }): "ordinary" | "high" {
-  if (row.toolName === "git push") return input.runBranchPush && input.ownRunBranch && input.trusted && input.pushTargetLocal ? "ordinary" : "high";
-  if (row.toolName === OUTSIDE_TOOL) return "high";
-  if (decisionOptions(row).some((option) => /trust/i.test(option))) return "high";
-  return "ordinary";
+export function riskOf(row: Pick<LocalDecision, "toolName">): "ordinary" | "high" {
+  return row.toolName === "git push" || row.toolName === OUTSIDE_TOOL || row.toolName === TRUST_TOOL ? "high" : "ordinary";
 }
 
 export type AnswerVerdict =
@@ -157,7 +168,7 @@ export type AnswerVerdict =
  * hosted id, the same action, still pending here, scope once, and a tier a
  * phone may answer. First answer wins, on the Mac or the phone.
  */
-export function judgeAnswer(input: { askedId: string; hash: string; risk: "ordinary" | "high"; local: LocalDecision | null; answer: HostedAnswer }): AnswerVerdict {
+export function judgeAnswer(input: { askedId: string; hash: string; risk: "ordinary" | "high"; local: LocalDecision | null; answer: HostedAnswer; acceptWeb?: boolean }): AnswerVerdict {
   const { answer, local } = input;
   if (!local || local.status !== "pending") return { kind: "stop", why: "answered on the Mac" };
   if (answer.id && answer.id !== input.askedId) return { kind: "refuse", why: "The answer was for a different question." };
@@ -167,7 +178,7 @@ export function judgeAnswer(input: { askedId: string; hash: string; risk: "ordin
   if (answer.actionHash && answer.actionHash !== input.hash) return { kind: "refuse", why: "The answer was for a different action." };
   if (answer.scope && answer.scope !== "once") return { kind: "refuse", why: `A remote answer is for this question only, not “${answer.scope}”.` };
   if (answer.decision === "deny") return { kind: "apply", decision: "deny", reason: null };
-  if (input.risk === "high") return { kind: "refuse", why: "This needs a confirmation on the Mac." };
+  if (input.risk === "high" && !input.acceptWeb) return { kind: "refuse", why: "This computer accepts this answer only on the computer." };
   if (local.event !== "question") return { kind: "apply", decision: "allow", reason: null };
   const options = decisionOptions(local);
   const custom = detailOf(local).allowCustom === true;

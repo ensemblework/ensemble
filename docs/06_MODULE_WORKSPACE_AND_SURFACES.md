@@ -1,4 +1,4 @@
-# 06 · Module M5 — Coding Workspace (VS Code / container)
+# 06 · Module M5 — Coding Workspace (VS Code / OS sandbox)
 
 **Purpose:** Execute delegated repository work using Ensemble's connected context. Workspace is the **agent's workboard**, not a second chat. The engineer's board and task/deliverable pages are the assignment and review surfaces. Surface-assist cards inside Teams and Outlook were removed; [section B](#b-surface-assist--designed-built-then-deleted) records why.
 
@@ -6,17 +6,23 @@ Hosted production permits public accounts, but host checkout/filesystem/tool exe
 
 `app/(hub)/workspace/page.tsx` shows query failures explicitly, with Retry and paired-computer guidance rather than an indefinitely pending queue. A 403 stops automatic queue polling; it does not silently pause or resume jobs. Repository overview's GitHub fallback uses a unique, canonical temporary directory (`src/repo/mirror.ts`), so Mac symlink aliases cannot trip the repository path jail.
 
+As built (11 Oct 2026; `components/agent/assign-dialog.tsx`, `apps/hub-api/src/workspace/assign.ts`, enforcement in `workspace/guard.ts`, `trust.ts`, `tools.ts`, `agent.ts`; modes in [doc 24 v3](24_DESKTOP_SANDBOXING.md#changes-in-v3-11-oct-2026-as-built)):
+
 | Choice | Meaning |
 |---|---|
-| **Docker sandbox (default)** | Commands see only the assigned checkout mounted from the Windows workspace. |
-| **Native Windows** | Commands use PowerShell noninteractively, with scoped file tools and workspace-local caches. **Not an OS sandbox:** scripts can technically reach other host paths. The form warns before assignment. |
-| **Repository** | An explicit repository, resolution from the task/project/notes, or **no repository at all** — an empty private folder in the workspace. |
-| **Completion outcome** | Local files only (default), local commit, commit/push to the selected working branch, or a new branch plus PR. Work without a repository is always local-only. |
-| **Review first (default)** | Save an approval before any selected commit/push/PR action. Local-only tasks need no publishing approval. |
-| **Unattended** | Authorizes only the selected outcome, not additional Git actions. No interactive questions or approval prompts. |
-| **Model** | Optional override from the existing approved model set; otherwise the task's complexity mapping. |
-| **Handoff / branches** | Optional checkout path inside the workspace, starting branch, and PR target branch. |
-| **Limits** | Default 40 model turns / 60 active minutes, bounded per assignment. |
+| **Run profile** | Up to three saved sets of the choices below (`settings.runProfiles`, `defaultRunProfileId`), plus a built-in Quick profile while none is saved. The dialog opens on the default profile; a change shows "modified" with Update or Save as profile; rename, delete and make default from the same row. |
+| **Kind** | Research & writing (web and paper tools, writes the task page) or Code (works in a folder). Tools a run was not given are refused if called. |
+| **Run on** | This server (operators only) or a paired computer. A computer gets the same settings; see [doc 25 §5.1](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#51-phone-approvals). |
+| **Who does the work** | Ensemble's agent (a model with your key), or Claude Code on your computer with your own Claude sign-in; the same rules below apply to both ([doc 30](30_ENGINES.md)). |
+| **Model, Thinking** | The task's tier by default (with the tier's effort, shown as "Tier default"), or one model for this attempt. With Claude Code: its default, Sonnet, Opus or Haiku. |
+| **Where it works** | Its own checkout (a fresh clone, or an empty repo, in `ensemble-workspace/runs/<job>`), Continue an earlier task (same folder and branch), or a folder on your computer (worked in place). |
+| **Branch** | As is, Existing, New (local runs; a paired computer works on its own run branch for now). |
+| **Git permissions** | Local only (no commit, merge, rebase, cherry-pick, revert, tag), Commit, or Commit + push. Stated in the prompt and enforced; a refused git step returns an error to the model and the run continues; a commit a script makes that the run may not make is undone, keeping the files. |
+| **Ask me before each commit** | Every commit waits on Needs me, in any folder. Not offered with Run unattended. |
+| **Mode** | Ask, Review only (runs freely inside the folder, asks only decisions), Run unattended (never asks; decisions take the recommended option and are listed in the summary). Review only and Run unattended need a trusted folder; the Ensemble workspace is always trusted. |
+| **Sandbox, git sign-in, internet** | The computer's own sandbox around every command, no Docker: Seatbelt on macOS, bubblewrap or Landlock on Linux, the sandbox account on Windows (set up once; [doc 24](24_DESKTOP_SANDBOXING.md) v4). With it on, the folder is the boundary; with it off, Review only and Run unattended may use paths outside the folder without asking. A computer without a sandbox says why and runs with it off. The person's GitHub sign-in is for Ensemble's own clone, fetch and push (never handed to the agent); network on or off. |
+| **Move the task to Done** | On: a successful run moves the task to Done (its review stays on the task). Off: Waiting for me. |
+| **Limits** | Max minutes (1–480; working time, not time waiting on Needs me), max tool calls (5–500), max model turns (3–200). |
 
 ---
 
@@ -58,7 +64,7 @@ Three properties make the grant meaningful:
 
 1. **Resolved once, pinned per job.** The chosen path is resolved through symlinks at assignment and stored on `workspace_jobs.external_root`. A junction swapped in afterwards cannot redirect a run the engineer already approved. The grant itself may not be a link — the real directory has to be named.
 2. **Refused where "confined to that folder" stops meaning anything:** a drive or filesystem root, Windows system directories, the home directory itself (a project *inside* it is fine), the Ensemble workspace root, and **Ensemble's own source tree** — an agent that can edit the guard rails has none. The last one is the easiest to forget and the most important.
-3. **Sandbox is the safer choice here, not the weaker one.** The container bind-mounts only that folder, so it cannot see the rest of the disk at all. Native execution on an external folder runs as the engineer's Windows user and can reach everything; that combination is available, and is the one the information icon warns about.
+3. **Sandbox is the safer choice here, not the weaker one.** The OS sandbox grants only that folder (plus the cache and toolchains), so commands cannot write anywhere else or read the rest of the home folder. Running without the sandbox on an external folder runs as the person and can reach everything; that combination is available, and is the one the information icon warns about.
 
 The folder is **worked in place**. Nothing is cloned, fetched, reset or branch-switched: the uncommitted work sitting there is usually the whole reason it was chosen (*"review what I have, then commit it"*). Preparation only confirms it is a checkout, records where it started, and excludes the control directory from Git. **It must be a Git checkout** — Ensemble's evidence of what changed is derived from Git, and running `git init` inside someone's folder uninvited is exactly the surprise this must not spring.
 
@@ -86,25 +92,23 @@ The assignment has always accepted an explicit checkout path, and the reservatio
 
 Root `AGENTS.md` is created if missing, **never overwritten**, read before execution, and injected as system instructions. It explains Ensemble, noninteractive work, the directory restriction, forbidden operations, cancellation, and completion. It is not presented as a substitute for OS isolation. In the assignment dialog that caveat is an **information icon**, not a standing warning banner: it is read once and understood, and repeating it on every assignment trained the eye to skip the one place warnings should be read.
 
-Sandbox commands run in disposable, **read-only-root** containers with only the checkout writable, git read-only to model commands, no Docker socket, dropped capabilities and resource limits. Fixed dependency-install tools get network access with lifecycle scripts/source builds disabled. Git networking and GitHub publishing are separate controlled operations; **credentials are not passed to the model or its command environment**. Native execution cannot offer those same isolation guarantees.
+Sandboxed commands run inside the **operating system's own sandbox**, never a container ([doc 24](24_DESKTOP_SANDBOXING.md) "Changes in v4"): Seatbelt on macOS; on Linux bubblewrap (read-only system, empty home with the grants mounted back, private `/tmp`, no Docker or agent sockets) or, where bubblewrap is blocked, Landlock through the bundled `landrun`; on Windows a separate sandbox account from Anthropic's sandbox-runtime that cannot read the person's profile and whose network is fenced. Only the checkout and the cache are writable. Git networking and GitHub publishing are separate controlled operations; **credentials are not passed to the model or its command environment**. Running without the sandbox cannot offer those guarantees.
 
-**This sandbox is Ensemble's own.** It is a Docker container configured by this project — `--read-only`, `--cap-drop=ALL`, `--security-opt=no-new-privileges`, `--pids-limit`, memory/CPU caps, one bind mount, no credentials. It shares **no code** with GitHub Copilot's sandboxing in VS Code or Copilot CLI, and does not delegate to it. Trust placed in it is trust in *this* project, not in GitHub's. Worth saying out loud, because "sandboxed" sounds like a borrowed guarantee and here it is a built one.
+**Reused, not home-grown.** Seatbelt and bubblewrap are what Claude Code and Codex use; Landlock is the kernel's own; the Windows account and fence come from Anthropic's open-source sandbox-runtime. Ensemble writes only the policy (which folders, which network) and proves it with escape tests on each system in CI.
 
-**Egress for model-issued commands is a setting, not a constant.** *Settings → Network for sandboxed commands* decides, and each job pins the answer at assignment time alongside its mode and model, so a run never changes what it may reach because a setting moved after it was queued. The default is **on**, for a reason worth stating: the sandbox was the only mode *without* egress, while native execution is host PowerShell and has always had the host's network — so an offline sandbox did not prevent a task from reaching the internet, it pushed that task onto the less contained mode. Reading a pull request or calling an API is ordinary work, and it should not cost the container.
+**Egress for model-issued commands is a setting, not a constant.** *Settings → Network for sandboxed commands* is the default, and each job pins its own Internet access at assignment time alongside its mode and model, so a run never changes what it may reach because a setting moved after it was queued. The default is **on**: reading a pull request or calling an API is ordinary work. With it off the sandbox cuts the network (an empty network namespace on Linux bubblewrap, Landlock's TCP rules from Linux 6.7, the Windows fence with no proxy, Seatbelt's network deny); where the computer cannot enforce it (Landlock before Linux 6.7) a run with the internet off is refused rather than run with it on.
 
-What egress does **not** change: the container is still read-only, still drops every capability, still sees no host filesystem beyond the checkout, and still holds no credential. What it **does** change is that a prompt-injected agent could send the checkout and its context somewhere. Turn it off for a task whose inputs are untrusted.
+What egress does **not** change: writes stay in the checkout, the rest of the home folder stays unreadable, and no credential is present. What it **does** change is that a prompt-injected agent could send the checkout and its context somewhere. Turn it off for a task whose inputs are untrusted.
 
 Because no credential is passed, a sandboxed command reaches **public endpoints only** — a private repository still answers 404, and the context pipeline, not the network, is how private data is meant to arrive.
 
-Files are ordinary Windows files. *Open checkout in VS Code* works with the engineer's own Copilot extension and sign-in. For the matching Linux toolchain, open the generated `runs\<job-id>` handoff folder and use *Dev Containers: Reopen in Container*. This needs the VS Code Dev Containers extension. **Do not edit a checkout while another task is using it.**
-
-Build the default Node/Python toolchain with `pnpm workspace:image`. Windows-only tools require native mode; other language toolchains can use a deliberately prepared `ENSEMBLE_WORKSPACE_IMAGE`. A missing image, command, credential or dependency is a **visible blocker**, not a silent fallback to unsandboxed execution.
+Files are ordinary files. *Open checkout in VS Code* works with the person's own editor and sign-in. **Do not edit a checkout while another task is using it.** Commands use the toolchains already on the computer (on Windows, `.cmd` shims such as `npm` run through `cmd.exe`). A missing command, credential or dependency is a **visible blocker**, not a silent fallback to unsandboxed execution.
 
 ### A4. Execution and completion
 
 The existing Copilot API is a **model API, not a computer-use sandbox**. Ensemble supplies its own typed tool loop using the existing runtime's `/api/chat/tools`; it does not launch an unrestricted CLI with `--allow-all`. Native shells use `-NoProfile -NonInteractive`; stdin, Git prompting, caches and process lifetime are controlled. Human interaction uses the typed `workspace_ask_user` tool, not terminal prompts. Its exact options and custom-answer flag appear in Needs Me.
 
-Review-mode commands and dependency installs also request one-call permission there; unattended assignments retain their explicitly authorized execution mode. Reads through typed file/retrieval tools do **not** manufacture permission dialogs.
+Which commands ask depends on the mode (above); in Run unattended nothing asks and `ask_user` returns the agent's recommended option. Reads through typed file/retrieval tools do **not** manufacture permission dialogs.
 
 PR outcomes prepare a unique `ensemble/<task>-<job-id>` branch. Local, commit and push-only outcomes use the selected working branch. **No branch is reset.** The agent is told that checkout/branch preparation has already happened. Typed `workspace_git` and `workspace_compare` tools read state, branches, logs and bounded per-file diffs. Safe reads such as `git remote -v` are not writes; file tools accept paths inside the assigned checkout, whether relative or absolute.
 
@@ -120,7 +124,7 @@ Postgres `workspace_jobs` is the durable queue. A transaction-level advisory loc
 
 Queued, running and stopping jobs appear in the app bar and Workspace. Jobs waiting for review **do not consume an execution slot**; their checkout remains reserved. Stopped partial checkouts and manual handoffs are held until explicitly reassigned. Heartbeats/leases detect a crashed host; its processes are cleaned up and the attempt is marked **interrupted/blocked**, not silently replayed. If cleanup cannot be confirmed, the directory stays reserved.
 
-The pause button prevents new work, aborts provider requests, and terminates workspace command trees/containers. Queued jobs remain saved until Resume. Individual stop removes a queued job or stops an active one. *Stop everything* also cancels queued work. Resume does **not** clear an older call's cancellation flag. A provider or GitHub may still finish an already-received request: stop does not undo remote writes or guarantee a provider billing refund.
+The pause button prevents new work, aborts provider requests, and terminates workspace command trees. Queued jobs remain saved until Resume. Individual stop removes a queued job or stops an active one. *Stop everything* also cancels queued work. Resume does **not** clear an older call's cancellation flag. A provider or GitHub may still finish an already-received request: stop does not undo remote writes or guarantee a provider billing refund.
 
 All runtime model entry points share a separate **three-request Redis limit** and cancellation registry, covering assistant turns, planning, extraction and workspace calls. Waiting for a model slot makes no provider request.
 

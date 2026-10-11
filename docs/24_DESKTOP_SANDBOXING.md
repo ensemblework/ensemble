@@ -1,6 +1,6 @@
 # Ensemble Desktop: Cross-Platform Sandboxing Design
 
-Status: Revised after review · Owner: cross platform ensemble · Updated: 2 Oct 2026
+Status: Revised after review; v4 as built · Owner: cross platform ensemble · Updated: 11 Oct 2026
 Scope: Ensemble desktop app (Tauri 2, Rust core) running the agent against the user's real repositories and files on macOS, Linux and Windows.
 Companion: [23 · Local desktop design](23_LOCAL_DESKTOP_DESIGN.md) for the install, the embedded Postgres database, the single Node sidecar and the build order.
 
@@ -30,20 +30,57 @@ Checked against `main` while revising. Where the tree disagrees with the review,
 6. **Same-checkout follow-up tasks (§5.10).**
 7. **Folders outside the workspace (§5.11).**
 
+## Changes in v3 (11 Oct 2026, as built)
+
+Read from the code on branch `feat/run-settings-f6` and checked with the unit tests named here; not run against a live model.
+
+1. **Three run modes** (`commandGate` in `apps/hub-api/src/workspace/trust.ts`, chosen in the Assign dialog and stored as `accessMode` + `unattended`):
+   - **Ask** (`read-write`): commands and file changes ask unless the folder is trusted; a path outside the folder always asks; decision questions go to Needs me.
+   - **Review only** (`auto`): commands and file changes inside the folder run without asking; only decision questions reach the person, with the agent's recommended option marked; a path outside the folder is refused. Needs a trusted folder (`REVIEW_REQUIRES_TRUST`).
+   - **Run unattended** (`unattended`): nothing asks. `ask_user` returns at once and the agent continues with its recommended option; every such decision is listed on the task summary. A path outside the folder is refused. Needs a trusted folder (`UNATTENDED_REQUIRES_TRUST`).
+   - **Read-only** (`review`) is the older grant: no writes and no network, ever. It is what a folder shared read-only from a paired computer gets (`ensemble folders add --read-only`); the Assign dialog no longer offers it.
+2. **Trust.** The workspace root is always trusted. A folder outside it is untrusted until the person trusts it (Assign dialog, a trust question on Needs me, or `ensemble trust add` on the computer), so an untrusted folder can only run in Ask mode. Trust is re-checked before every turn; when it is missing, the run asks "Trust this folder?" (tool name `trust`) with "Switch to Ask" or "Turn off Run unattended" as the other answer.
+3. **Git permissions** (`checkGit` in `workspace/guard.ts`): `merge`, `cherry-pick`, `revert`, `am`, `rebase`, `tag`, `notes` and a plain `pull` count as commits, so Local only refuses them (stopping one with `--abort` is allowed). A refusal goes back to the model as a tool result and the run continues. After each non-git command, a commit the run was not allowed to make (Local only) or that skipped approval ("Ask me before each commit") is undone: the branch moves back and the files stay, uncommitted (`undoUnapprovedCommits` in `workspace/tools.ts`). "Ask me before each commit" now asks for every commit in every folder, and is not offered with Run unattended. With Commit + push, a push in a trusted folder no longer asks (a task from the web on a computer with web approvals off still asks there, unless its run-branch push setting covers it; `webPushNeedsComputer` in `workspace/publish.ts`); force-push and deletes are still refused and the push is still fast-forward to the run's own branch.
+4. **Other enforcement.** A tool the model was not given (no internet, a research job) is refused if called. git with the person's sign-in runs only `fetch` and `pull --ff-only` with remote and branch names (`credentialGitRefusal`). Local git commands that change the folder follow the mode like any command. Max minutes counts working time, not time waiting on Needs me, and caps a running command.
+5. **Approvals from anywhere** (doc 25 §5.1): a paired computer accepts any answer, including pushes, trust and outside paths, from the web and phone unless its owner turned "Accept approvals from the web and phone" off.
+
+Tests: `trust.test.ts`, `guard-git.test.ts`, `remote/policy.test.ts`.
+
+## Changes in v4 (11 Oct 2026, as built): an OS sandbox on every system
+
+Read from the code and checked as listed in [doc 18](18_WHAT_IS_REAL.md). This supersedes "Windows v1 is Ask mode or WSL2" and the Linux `ensemble-sbx` plan below: Ensemble reuses maintained sandboxes instead of writing its own helper.
+
+| System | Sandbox | Setup | Internet off | Not enforced |
+|---|---|---|---|---|
+| macOS | Seatbelt, the existing profile (`sandbox/seatbelt.ts`) | none | yes | – |
+| Linux, first choice | **bubblewrap** (the distribution's `bwrap`) when it starts with a private network: read-only system, the home folder replaced by an empty one with the grants and toolchains mounted back, private `/tmp`, own PID namespace, `/run/user` and the Docker socket hidden (`sandbox/linux.ts` `bubblewrapArgs`) | none | yes (empty network namespace) | – |
+| Linux, fallback | **Landlock** through `landrun` (MIT), which Ensemble ships statically linked (`scripts/build-landrun.mjs`, bundled at `<sidecar>/bin/landrun`). Used where bubblewrap is missing or blocked, as on Ubuntu 24.04's AppArmor user-namespace restriction. Grants only: system and toolchains read/exec, the work folder and cache read/write; everything else, the rest of the home folder included, is denied (`landrunArgs`) | none | from Linux 6.7 (Landlock TCP rules) | Unix sockets; on older kernels a run with the internet off is refused |
+| Windows | **Anthropic's sandbox-runtime** (Apache-2.0, pinned 0.0.79): a hidden `srt-sandbox` account and a Windows Filtering Platform fence that lets it reach only a loopback proxy. Commands run as that account with a restricted token in a job object; it cannot read your profile; Ensemble grants it the work folder and cache (write) and toolchain folders on PATH (read) (`sandbox/windows.ts`) | one admin prompt per computer (`ensemble sandbox setup`, the Assign dialog, or `ensemble login`) | yes (no proxy) | per-user tools not on PATH; the folder must be on a local drive |
+| None works | – | – | – | A sandboxed run is refused with the reason (`sandboxRefusal`); turning the sandbox off runs it directly |
+
+- **Found once, shared.** `prepareSandbox()` probes at start (bubblewrap must start a shell with `--unshare-net`; Landlock must refuse a write outside its grant and allow a rename between two granted folders, ABI 2). `capabilities()` reports mechanism, strength (`strong`, `reduced`, `advisory`), `limits`, `networkOff` and `setup`. The CLI and the desktop app run the same runtime on a computer, so a sandbox set up from one is the other's.
+- **Proved by escape tests on each system** (`sandbox/os-escape.test.ts`, run in CI on macOS, Ubuntu 24.04 with Landlock, Ubuntu 22.04 with bubblewrap, and Windows): writes stay in the folder, a file elsewhere in the home folder is unreadable, the internet-off case cannot open a TCP connection, Ensemble's data folder is unreadable.
+- **Paths outside the folder follow the sandbox** (`commandGate` in `trust.ts`, `toolPath`/`outsideRefusal`): with the sandbox on, the folder is the boundary: Review only and Run unattended refuse an outside path back to the model and the run continues; Ask asks, and an allowed path is added to that command's sandbox grant. With the sandbox off, the person chose to run directly, so Review only and Run unattended use outside paths without asking. In every mode, the dotfiles and app folders in the home folder, Ensemble's data and code, and other accounts are refused.
+- **Engines keep their own sandbox.** When Claude Code does the work ([doc 30](30_ENGINES.md)), every tool call is judged by these same rules through a hook, and with the sandbox on Claude Code's own sandbox (the same sandbox-runtime, Seatbelt on macOS, bubblewrap on Linux) confines its shell commands to the work folder, with no unsandboxed retry and no start where it cannot run. Wrapping the whole `claude` process instead would cut it off from its own sign-in.
+- **Ensemble's git askpass helper** lives in `<workspace>/.askpass/`, beside the agents' cache, never in it (`askpassPath` in `guard.ts`): it holds no token, but a command that could rewrite it would run with the token the next time Ensemble's own git used it, and Landlock cannot deny one file inside a granted folder.
+- **Paths are resolved before bubblewrap mounts over them** (`/var/run` is a link to `/run`); the probe runs bubblewrap with the same arguments a real command gets, so a quirk shows as a fallback to Landlock, not as a failing command.
+- **Windows commands** run through `cmd.exe` when the program is a `.cmd`/`.bat` shim (npm, pnpm), escaped the way cross-spawn does; PATH is split on `;` with `PATHEXT`; Stop ends the tree with `taskkill /T`.
+- Plots still run unsandboxed on Linux and Windows (`advisoryOk`); the plan is to move them off Python (FEAT-14).
+
 ---
 
 ## 0. TL;DR
 
-- Use **OS-native sandboxing**, not containers: macOS Seatbelt first, then `ensemble-sbx` on Linux and (later) macOS. Windows v1 is Ask mode or WSL2.
+- Use **OS-native sandboxing**, not containers: Seatbelt on macOS, bubblewrap or Landlock on Linux, the sandbox-runtime account on Windows (v4, as built; the `ensemble-sbx` helper below was not needed).
 - Hide the mechanisms behind **one Rust crate (`ensemble-sandbox`)** with one policy type. Confinement is done by a **tiny helper (`ensemble-sbx`)**. Only the Rust core launches it.
 - The **trusted base is the Rust core, the helper, and hub-api.** The agent loop in `workspace/agent.ts` is trusted code. The commands it runs are not.
 - **`runner.ts` does not spawn.** Today it does: it `spawn`s `/usr/bin/sandbox-exec` itself. The desktop rewrite makes it ask the core.
 - Network is **deny-by-default** and routed through a broker-owned **local proxy**.
 - Git safety is enforced by the **broker**. The sandbox has no Git credentials.
 - **The trusted-scope rule.** Inside a trusted folder, no Allow once or Allow always prompt. Prompts appear only for paths outside it. Trust is paths only, and per device.
-- **Review only** is read-only with no network. It does not prompt per command. It prompts when the agent asks for more access.
-- **Run unattended requires a trusted folder.** A path outside that folder is blocked.
-- **Distribution is a DMG on macOS (no Mac App Store),** NSIS and zip on Windows, AppImage and `.deb` on Linux. No Flatpak.
+- **Review only** runs commands inside a trusted folder without asking and asks only decision questions (v3). **Read-only** is the separate no-writes, no-network grant.
+- **Review only and Run unattended require a trusted folder.** A path outside that folder is blocked.
+- **Distribution is a DMG on macOS (no Mac App Store),** NSIS and zip on Windows, AppImage and `.deb` on Linux. No Flatpak. The CLI and the app share one runtime and one sandbox per computer (v4).
 - **Build on what exists.** The new work is the helper, the profile fixes, and the trust and unattended rules. Order: doc 23 §14.
 
 ---
@@ -354,7 +391,7 @@ Rules:
 - Identical requests in a stack are merged.
 - Timeouts fail closed. Nothing turns into an allow.
 - After a run, the broker may suggest a rule. It never adds one by itself.
-- Modes: `Ask` (default for an untrusted folder), `Auto within scope`, `Review only` (§5.11).
+- Modes: `Ask` (the only mode for an untrusted folder), `Review only`, `Run unattended` (v3).
 
 ### 5.7 Example walkthrough
 1. The person creates the stack and approves one review screen.
@@ -390,15 +427,14 @@ Rules:
 
 **UI:**
 - The Assign dialog shows "Trusted", or "Not trusted · the agent will ask before every command", with a Trust button.
-- An untrusted folder can still run in Ask mode.
-- Review only is the other untrusted choice, and it does not ask before every command (§5.11).
+- An untrusted folder runs in Ask mode only; Review only and Run unattended are disabled with a Trust button next to them (v3).
 
 ### 5.9 Run unattended
 
 **Rule:** the agent may run with nobody present, inside a trusted folder, and **paths outside that folder are blocked.** Unattended cannot be combined with an untrusted folder.
 
 **Behaviour:**
-- Inside the folder, prompts are auto-allowed within the Git ceiling. `ask_person` questions get a reasonable choice, and the task says which. Every auto-allowed action is logged with the rule `unattended`.
+- Inside the folder, prompts are auto-allowed within the Git ceiling, including a push when the run has Commit + push. `ask_user` returns at once with the agent's recommended option, and the task summary lists every such decision. Every auto-allowed action is logged with the rule `unattended`.
 - **An outside path is blocked.** The task summary lists it.
 - The hard floor still applies. Never-commands, secret folders, app data, protected-branch pushes, force-pushes and Ensemble's own source stay denied.
 
@@ -421,7 +457,7 @@ A review task reuses the earlier task's exact checkout and branch. This builds o
 7. **Lifecycle.** The checkout stays while any chained task needs it.
 8. **"Continue from"** is the same-checkout case. **"Reads from"** is a read-only, commit-pinned mount of another task's folder.
 
-Review mode here is read-only. It follows the Review only prompting rule in §5.11: no prompt per command, and a prompt when the agent asks for more access.
+Read-only here means the read-only grant: no writes and no network, with commands under a read-only sandbox grant.
 
 ### 5.11 A folder outside the workspace
 
@@ -439,7 +475,7 @@ Review mode here is read-only. It follows the Review only prompting rule in §5.
 3. **Trust prompt, first time.** "Trust ~/Desktop/acme-api? The agent will be able to run commands in this folder without asking. It still can't read your keys or leave this folder without asking."
    - **Trust this folder.** Saved on this device. No prompts inside.
    - **Just for this task.** Trust ends with the task.
-   - **Review only, don't trust.** Read-only, no network. Commands that stay inside the grant do not prompt. A prompt appears only when the agent asks for more: a write, the network, a credential, or a path outside the grant.
+   - **Read-only, don't trust.** No writes and no network. Commands that stay inside the grant do not prompt; a write, the network or a path outside the grant is refused.
    - **Cancel.**
 4. **Work in place.** Branch mode is as-is. Switching branches or stashing is refused.
 5. **Review the person's edits.** `includePreRunChanges = true`. The summary is written on the task.
@@ -493,13 +529,13 @@ Review mode here is read-only. It follows the Review only prompting rule in §5.
 - R13. One default workspace folder, trusted on this device, changeable in Settings. Changing it never moves files.
 - R14. Folder trust stored as path rules after resolving links, per device, revocable. Folders refused by `resolveWorkFolder` cannot be trusted.
 - R15. Inside a trusted folder, no Allow once or Allow always for a command whose paths stay inside. Trust does not cover domains.
-- R16. Run unattended has no prompts inside the trusted folder. The hard floor still applies. **Paths outside the folder are blocked** and listed in the task summary. An untrusted folder is rejected with `UNATTENDED_REQUIRES_TRUST` and the message in §5.9, at assignment and at run time.
+- R16. Run unattended (and Review only) has no prompts inside the trusted folder. The hard floor still applies. **Paths outside the folder are blocked** and listed in the task summary. An untrusted folder is rejected with `UNATTENDED_REQUIRES_TRUST` and the message in §5.9, at assignment and at run time.
 - R17. A follow-up task can reuse a previous task's checkout and branch. It checks the branch and HEAD, waits on the chain lock, and is read-only in review mode.
 - R18. A folder outside the workspace is an explicit grant. Adding it triggers the trust prompt after the pre-check. Branch switching and stashing are refused there.
 - R19. The Tauri dialog replaces the macOS-only `osascript` picker.
 - R20. No Mac App Store. DMG on macOS. AppImage and `.deb` on Linux. No Flatpak.
 - R21. The Never set is denied by the Seatbelt profile and by seccomp, not only by the argv[0] check. The deny includes `/usr/bin/open`.
-- R22. Review only is read-only and has no network. It does not prompt per command. It prompts when the agent asks for more access.
+- R22. Review only runs freely inside a trusted folder and asks only decisions; Read-only never writes and has no network (v3).
 - R23. Plots run through `ensemble-sbx` (the person's Python, or JavaScript). The monkeypatch runner is not a sandbox.
 - R24. The review diff flags changes to `.vscode/tasks.json`, `.envrc`, `.husky/`, package.json lifecycle scripts and Makefiles.
 - R25. Windows v1 is Ask mode or WSL2. The UI does not call low integrity a sandbox.

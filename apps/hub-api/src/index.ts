@@ -10,6 +10,8 @@ import { assertProductionSafe } from "./lib/production.js";
 import { startDeviceRevokeBus, stopDeviceRevokeBus } from "./devices/revoke-notify.js";
 import { startAgentQueue } from "./workspace/worker.js";
 import { startRemote } from "./remote/loop.js";
+import { prepareSandbox, releaseSandbox } from "./workspace/sandbox/spawn.js";
+import { setLocalPort } from "./workspace/engines/registry.js";
 import { ensureDesktopUser } from "./lib/desktop-user.js";
 import { upgradeCodeFolders } from "./lib/code-folders.js";
 import { writeDiscoveryFile } from "./lib/desktop-discovery-file.js";
@@ -25,6 +27,12 @@ export async function startHub(): Promise<HubServer> {
   const app = await buildApp();
   const desktop = hubCorsPolicy().desktop;
   if (desktop) await ensureDesktopUser();
+  // Which OS sandbox works on this computer, found once before any job or plot starts.
+  const sandbox = await prepareSandbox().catch((error: unknown) => {
+    app.log.error({ err: error }, "could not check the OS sandbox");
+    return null;
+  });
+  if (sandbox) app.log.info({ mechanism: sandbox.mechanism, strength: sandbox.strength }, sandbox.reason);
 
   const stopScheduler = startScheduler(app);
   const stopEnrichment = startDocumentEnrichment(app);
@@ -45,6 +53,7 @@ export async function startHub(): Promise<HubServer> {
     stopEnrichment();
     await stopRemote();
     await stopQueue();
+    await releaseSandbox().catch(() => undefined);
     await stopDeviceRevokeBus();
     await app.close();
     await prisma.$disconnect();
@@ -87,6 +96,7 @@ export async function startHub(): Promise<HubServer> {
   stopPageSearchBackfill = startPageSearchBackfill(prisma, app.log).stop;
   const bound = app.server.address();
   const port = bound && typeof bound === "object" ? bound.port : env.HUB_API_PORT;
+  setLocalPort(port);
   const token = process.env.ENSEMBLE_DESKTOP_TOKEN;
   if (desktop && token) {
     const file = writeDiscoveryFile(port, token);

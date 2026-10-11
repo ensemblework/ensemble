@@ -42,6 +42,8 @@ export interface HostedClient {
   progress(jobId: string, leaseToken: string, body: { status?: string; progress: string; events: unknown[]; logs?: { seqFrom: number; seqTo: number; text: string } }): Promise<void>;
   ask(jobId: string, leaseToken: string, body: Record<string, unknown>): Promise<{ decisionId: string }>;
   decision(decisionId: string, timeoutSeconds: number, signal: AbortSignal): Promise<unknown>;
+  /** Answered here: the card on the web closes with the same answer. Older servers answer 404. */
+  closeDecision(decisionId: string, body: { decision: "allow" | "deny"; reason: string | null }): Promise<void>;
   complete(jobId: string, leaseToken: string, body: { outcome: Outcome; summary: string; results: ResultLink[] }): Promise<void>;
   events(onFrame: (event: string, data: unknown) => void, signal: AbortSignal): Promise<void>;
 }
@@ -126,6 +128,10 @@ export function hostedClient(base: string, token: string): HostedClient {
       const res = await call("GET", `${ROUTES.decision(decisionId)}?timeout=${timeoutSeconds}`, undefined, signal);
       if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "The answer could not be read."));
       return res.body;
+    },
+    async closeDecision(decisionId, body) {
+      const res = await call("POST", ROUTES.closeDecision(decisionId), body);
+      if (res.status >= 400 && res.status !== 404 && res.status !== 409) throw new RemoteError(res.status, messageOf(res.body, "The answer could not be shared."));
     },
     async complete(jobId, leaseToken, body) {
       const res = await call("POST", ROUTES.complete(jobId), { ...body, leaseToken });

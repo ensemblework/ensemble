@@ -31,6 +31,7 @@ async function status(app: FastifyInstance) {
     paired: Boolean(token && settings.pairedAt),
     enabled: settings.enabled,
     runBranchPush: settings.runBranchPush,
+    acceptWebApprovals: settings.acceptWebApprovals,
     online: presence.online,
     lastHeartbeatAt: presence.lastHeartbeatAt || null,
     disconnected: settings.disconnected,
@@ -51,6 +52,7 @@ export async function remoteRoutes(app: FastifyInstance): Promise<void> {
       .object({
         enabled: z.boolean().optional(),
         runBranchPush: z.boolean().optional(),
+        acceptWebApprovals: z.boolean().optional(),
         apiBase: z.string().max(300).nullable().optional(),
         deviceName: z.string().min(1).max(60).optional(),
       })
@@ -69,14 +71,16 @@ export async function remoteRoutes(app: FastifyInstance): Promise<void> {
       ...(body.deviceName ? { deviceName: body.deviceName } : {}),
       ...(body.enabled === undefined ? {} : { enabled: body.enabled }),
       ...(body.runBranchPush === undefined ? {} : { runBranchPush: body.runBranchPush }),
+      ...(body.acceptWebApprovals === undefined ? {} : { acceptWebApprovals: body.acceptWebApprovals }),
       ...(body.enabled === true ? { disconnected: null, unreachable: null } : {}),
       ...(body.enabled === false
         ? { disconnected: { at: new Date().toISOString(), reason: REMOTE_NOTICE.switchedOff }, unreachable: null }
         : {}),
     });
-    if (body.enabled === false || body.runBranchPush !== undefined || body.enabled === true) {
-      const action = body.enabled === true ? "remote.enable" : body.enabled === false ? "remote.disable" : "remote.push_setting";
-      await appendLedger({ userId, actor: "me", action, payload: { enabled: next.enabled, runBranchPush: next.runBranchPush } });
+    if (body.enabled === false || body.runBranchPush !== undefined || body.enabled === true || body.acceptWebApprovals !== undefined) {
+      const action =
+        body.enabled === true ? "remote.enable" : body.enabled === false ? "remote.disable" : body.acceptWebApprovals !== undefined ? "remote.web_approvals" : "remote.push_setting";
+      await appendLedger({ userId, actor: "me", action, payload: { enabled: next.enabled, runBranchPush: next.runBranchPush, acceptWebApprovals: next.acceptWebApprovals } });
     }
     if (body.enabled === false) await stopRemoteWork(app, REMOTE_NOTICE.switchedOff, "cancelled");
     wakeRemote();

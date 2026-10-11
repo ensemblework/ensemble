@@ -37,6 +37,7 @@ import { runRoutes } from "./routes/runs.js";
 import { systemRoutes } from "./routes/system.js";
 import { codeRoutes } from "./routes/code.js";
 import { agentRoutes } from "./routes/agents.js";
+import { engineRoutes } from "./routes/engine.js";
 import { terminalRoutes } from "./routes/terminal.js";
 import { viewRoutes } from "./routes/views.js";
 import { commentRoutes } from "./routes/comments.js";
@@ -69,7 +70,8 @@ const PUBLIC_PATHS = new Set(["/health", "/health/ready", "/api/events", "/api/d
 const ADDITIONAL_MODEL_STREAM_ROUTES = new Set(["/api/pages/:kind/:id/ensemble", "/api/ensemble/invoke"]);
 
 export function bypassesGlobalAuth(path: string): boolean {
-  return PUBLIC_PATHS.has(path) || isPublicAuthPath(path) || /^\/api\/connectors\/[a-z_]+\/callback$/.test(path);
+  // /api/engine/ask authenticates with its run's own secret (workspace/engines/registry.ts).
+  return PUBLIC_PATHS.has(path) || isPublicAuthPath(path) || /^\/api\/connectors\/[a-z_]+\/callback$/.test(path) || path === "/api/engine/ask";
 }
 
 export type BuildAppOptions = {
@@ -215,6 +217,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     systemRoutes,
     codeRoutes,
     agentRoutes,
+    engineRoutes,
     deviceRoutes,
     terminalRoutes,
     viewRoutes,

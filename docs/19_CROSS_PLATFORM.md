@@ -83,6 +83,9 @@ Suggested fix: one small Node script, used by both package.json scripts, that fi
 
 ### 2. Code tasks default to a sandbox that exists only on macOS
 
+**Fixed 11 Oct 2026:** Linux and Windows now have OS sandboxes (bubblewrap or Landlock; the sandbox-runtime account), and a computer without a working one says why and runs with the sandbox off ([24](24_DESKTOP_SANDBOXING.md) v4). The text below is the original finding.
+
+
 `apps/hub-api/src/workspace/guard.ts` (`sandboxAvailable`), `apps/hub-api/src/workspace/runner.ts`, `apps/hub-api/src/routes/agents.ts`, `apps/hub-web/components/agent/assign-dialog.tsx`.
 
 `sandboxAvailable` is `process.platform === "darwin"`. Assigning a code task with the sandbox on (the dialog’s initial state is on) throws “The sandbox needs macOS.” Seatbelt profiles and `/usr/bin/sandbox-exec` are Mac-only. Off macOS the only supported mode is “this machine,” which runs the command with no extra jail.
@@ -92,6 +95,9 @@ The UI still says commands run in the macOS sandbox (`apps/hub-web/components/co
 Suggested fix: when the platform is not `darwin`, start the assign dialog with the sandbox off, and say that commands run directly on this computer. Keep the allow-list. A later Linux jail would be bubblewrap or a container, not Seatbelt.
 
 ### 3. Commands the agent runs get a Unix PATH, including on Windows
+
+**Fixed 11 Oct 2026:** `childEnv` builds a Windows environment (PATH split on `;`, `PATHEXT`, `SystemRoot`, `ComSpec`, the cache's home, AppData and temp, `GCM_INTERACTIVE=never`), `findProgram` tries each `PATHEXT` extension, `.cmd`/`.bat` shims run through `cmd.exe` escaped like cross-spawn, askpass is empty on Windows, and Stop ends the tree with `taskkill /T`. Checked by unit tests and the Windows CI sandbox job, not on a Windows PC. The text below is the original finding.
+
 
 `apps/hub-api/src/workspace/guard.ts` (`childEnv`), `apps/hub-api/src/workspace/runner.ts` (`findProgram`).
 
@@ -104,6 +110,9 @@ On Linux and macOS those directories are real, so lookup works. On Windows the d
 Suggested fix: build the child `PATH` with `path.delimiter`, keep only absolute entries that exist and sit outside the work folder, and look up `name` plus `PATHEXT` on Windows. Point askpass at a tiny local script, or omit it when the file does not exist.
 
 ### 4. The folder jail knows about `/Users` and `~/Library`, not `C:\` or `/home`
+
+**Partly fixed 11 Oct 2026:** `blockedReason` refuses a whole drive, network shares, `SystemRoot`, Program Files, ProgramData, the folder of all accounts and `AppData` on Windows; paths outside the work folder are checked by `outsideRefusal` on every system. The macOS-only picker and the Linux `/home` checks below are still open.
+
 
 `apps/hub-api/src/workspace/guard.ts` (`blockedReason`, `resolveWorkFolder`), `apps/hub-api/src/routes/agents.ts` (`/api/workspace/pick-folder`).
 

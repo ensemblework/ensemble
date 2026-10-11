@@ -2,9 +2,10 @@
  * Seatbelt escapes, and the rule that a child never sees a git token.
  *
  * Profile text is checked on every OS. A live child is started on every OS
- * to prove `ENSEMBLE_GIT_TOKEN` is gone from the environment. The filesystem,
+ * to prove `ENSEMBLE_GIT_TOKEN` is gone from the environment. The
  * LaunchServices, Unix-socket, and Never-binary cases run only on macOS,
- * where Seatbelt is actually applied. Linux is not safe yet.
+ * where Seatbelt is applied. Linux and Windows escapes are in
+ * `os-escape.test.ts`.
  */
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -31,7 +32,7 @@ function profile(): string {
     network: "none",
     who: "agent",
     ensembleSource: "/Users/person/src/ensemble",
-    askpassPath: "/Users/person/ensemble-workspace/.cache/git-askpass.sh",
+    askpassPath: "/Users/person/ensemble-workspace/.askpass/git-askpass.sh",
   });
 }
 
@@ -142,8 +143,9 @@ test("prepareSpawn never puts a git token in the child, on either platform", () 
   }
 });
 
-test("a confined spawn on Linux is refused and says it is not safe", () => {
-  assert.throws(() => prepareSpawn(policy(), { program: "/bin/true", args: [] }, "linux"), /not safe/);
+test("a confined spawn is refused with the reason when no Linux sandbox has been found", () => {
+  // prepareSandbox() is not called here, so the Linux backend is still unknown.
+  assert.throws(() => prepareSpawn(policy(), { program: "/bin/true", args: [] }, "linux"), /Linux sandbox/);
 });
 
 function pythonBin(): string | null {

@@ -20,7 +20,7 @@ import { interruptJob, stopJob, whenQueueReady } from "../workspace/worker.js";
 import { acceptClaimed, resultLinks } from "./accept.js";
 import { authRejected, deviceRemovedEvent, hostedClient, remoteApiBase, RemoteError, type HostedClient } from "./client.js";
 import { deviceOwnedEvents, LOG_CHUNK_BYTES, LOG_JOB_BYTES, ONLINE_WINDOW_MS, parseAnswer, parseClaim, timing } from "./contract.js";
-import { actionHash, decisionOptions, judgeAnswer, publishedFolders, scrubOutgoing, type LocalDecision } from "./policy.js";
+import { actionHash, decisionOptions, judgeAnswer, publishedFolders, riskOf, scrubOutgoing, type LocalDecision } from "./policy.js";
 import { dropDeviceToken, loadHeld, loadSettings, readDeviceToken, saveHeld, updateSettings, type HeldJob, type RemoteSettings } from "./store.js";
 
 const userId = () => env.ENSEMBLE_DEV_USER_ID;
@@ -76,9 +76,15 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
   return {
     folders: publishedFolders(settings),
     sandbox: capabilities().strength,
+    // What the web's Assign dialog shows for this computer's sandbox. Never a path.
+    sandboxInfo: (() => {
+      const caps = capabilities();
+      return { mechanism: caps.mechanism, osSandbox: caps.osSandbox, networkOff: caps.networkOff ?? false, setupNeeded: Boolean(caps.setup?.needed), reason: caps.reason.slice(0, 300) };
+    })(),
     maxConcurrent: hub?.orchestration.maxConcurrentJobs ?? null,
     // The web shows this as a locked pill. Only this Mac can change it.
     runBranchPush: settings.runBranchPush,
+    acceptWebApprovals: settings.acceptWebApprovals,
   };
 }
 
@@ -312,7 +318,9 @@ async function relayDecisions(app: FastifyInstance, client: HostedClient, job: H
     const known = job.decisions[row.id];
     if (known?.settled) continue;
     if (!known) {
-      const risk = row.toolName === "git push" || row.toolName === "outside" || decisionOptions(decision).some((option) => /trust/i.test(option)) ? "high" : "ordinary";
+      const risk = riskOf(decision);
+      const web = loadSettings().acceptWebApprovals;
+      const detail = (row.detail ?? {}) as { allowCustom?: unknown; recommended?: unknown };
       const hash = actionHash(decision);
       const command = typeof (row.detail as { command?: unknown }).command === "string" ? scrubOutgoing((row.detail as { command: string }).command).slice(0, 2000) : "";
       const options = decisionOptions(decision).slice(0, 12).map((option) => scrubOutgoing(option).slice(0, 200)).filter(Boolean);
@@ -323,9 +331,12 @@ async function relayDecisions(app: FastifyInstance, client: HostedClient, job: H
         ...(row.toolName ? { toolName: row.toolName.slice(0, 80) } : {}),
         ...(command ? { command } : {}),
         ...(options.length ? { options } : {}),
-        // A push the Mac still has to ask about is high_risk, so a phone Yes is not offered.
-        // run_branch_push is not sent: that tier shows a Yes the Mac would refuse.
-        tier: risk === "high" ? "high_risk" : "ordinary",
+        // high_risk means "only on this computer": sent only when this computer refuses web answers to it.
+        // Otherwise a risky question is ordinary and the web asks the person to confirm before allowing.
+        tier: risk === "high" && !web ? "high_risk" : "ordinary",
+        ...(risk === "high" && web ? { confirm: true } : {}),
+        ...(detail.allowCustom === true ? { allowCustom: true } : {}),
+        ...(typeof detail.recommended === "string" && detail.recommended ? { recommended: scrubOutgoing(detail.recommended).slice(0, 200) } : {}),
       });
       job.decisions[row.id] = { hostedId: asked.decisionId, hash, risk, settled: false };
       persist();
@@ -347,6 +358,10 @@ async function followAnswer(app: FastifyInstance, client: HostedClient, job: Hel
     if (!local || local.status !== "pending") {
       mirror.settled = true;
       persist();
+      // Answered here (the app, the CLI): close the card on the web as well.
+      if (local?.status === "decided" && (local.decision === "allow" || local.decision === "deny")) {
+        await client.closeDecision(mirror.hostedId, { decision: local.decision, reason: local.reason ?? null }).catch(() => undefined);
+      }
       return;
     }
     let body: unknown;
@@ -369,6 +384,7 @@ async function followAnswer(app: FastifyInstance, client: HostedClient, job: Hel
       risk: mirror.risk,
       local: local as unknown as LocalDecision,
       answer: parseAnswer(body),
+      acceptWeb: loadSettings().acceptWebApprovals,
     });
     if (verdict.kind === "wait") continue;
     mirror.settled = true;

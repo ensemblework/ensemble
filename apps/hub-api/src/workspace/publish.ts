@@ -33,6 +33,15 @@ export async function remotePushRefused(prisma: PrismaClient, job: Pick<Workspac
 }
 
 /**
+ * A task from the web on a computer that keeps approvals to itself ("Accept
+ * approvals from the web" off): its push asks on the computer even in a trusted
+ * folder, unless the run-branch push setting below covers it.
+ */
+export function webPushNeedsComputer(job: Pick<WorkspaceJob, "context">): boolean {
+  return jobOrigin(job.context) === "web" && !loadRemoteSettings().acceptWebApprovals;
+}
+
+/**
  * §5.1. On, and only on, when this Mac allowed it: a fast-forward push to the
  * run's own branch of a trusted local repo does not wait for a confirmation.
  */

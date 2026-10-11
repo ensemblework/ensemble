@@ -10,7 +10,7 @@ Shivani's review is accepted. This draft now says:
 - Storage is embedded Postgres, via PGlite or an embedded Postgres binary. The SQLite migration is dropped. The schema and migrations stay the same for the web, desktop and hosted versions.
 - One sidecar. The Python model adapters move into hub-api. The app ships that Node binary plus `ensemble-sbx`. The Rust core stays thin.
 - The packaged skeleton comes first, on all three OSes, including the updater. macOS on today's Seatbelt is next. Google and GitHub OAuth approval starts in parallel.
-- The trusted base includes hub-api. Unattended work cannot touch a path outside the trusted folder. Trust is per device and covers paths only. "Review only" does not prompt on every command.
+- The trusted base includes hub-api. Unattended work cannot touch a path outside the trusted folder. Trust is per device and covers paths only. As built (11 Oct 2026, doc 24 v3), "Review only" runs commands inside a trusted folder without asking and asks only decisions; read-only is a separate grant.
 
 Checked against `main` while revising. Where the tree disagrees with the review, the text says what the code shows.
 
@@ -156,6 +156,8 @@ Port the model adapters to TypeScript inside hub-api, and ship **one Node binary
 
 ## 4. OS-native sandboxing (summary of doc 24)
 
+**As built (11 Oct 2026, doc 24 "Changes in v4"):** macOS keeps Seatbelt; Linux uses bubblewrap when it works, else Landlock through the bundled `landrun`; Windows uses Anthropic's sandbox-runtime account (one admin prompt per computer). No helper of Ensemble's own (`ensemble-sbx`) was needed. The table below is the original v1 plan.
+
 | OS | v1 mechanism | Strength |
 |---|---|---|
 | macOS | Today's Seatbelt (`sandbox-exec`), then `ensemble-sbx` | Strong, once the profile fixes in doc 24 land. Reads: system and toolchain allowed, `$HOME` denied by default, then specific subfolders allowed |
@@ -214,13 +216,14 @@ The `NEVER` set in `guard.ts` is checked against **argv[0] only**. `python`, `no
 
 ### 7.3 Agent on a repo outside the workspace
 - Example: the person cloned and edited a repo on their Desktop and wants a bug review.
-- The folder is added to the task's sandbox scope as an **explicitly granted path**. Adding that grant fires the **trust prompt**, with the choices Trust this folder, Just for this task, Review only (don't trust), or Cancel.
-- **Review only** is read-only and has no network. It does not prompt on every command. A prompt appears only when the agent asks for more access: a write, the network, a credential, or a path outside the grant.
+- The folder is added to the task's sandbox scope as an **explicitly granted path**. Adding that grant fires the **trust prompt**, with the choices Trust this folder, Just for this task, Read-only (don't trust), or Cancel.
+- **Read-only** has no writes and no network. Commands inside the grant do not prompt; anything that would write is refused. (**Review only**, the run mode, is different: it needs a trusted folder; doc 24 v3.)
 - `~/Desktop/acme-api` can raise a TCC prompt ("Ensemble wants to access your Desktop"), including while the runner has no window in front. The app has to expect that prompt.
 - The default is an **in-place, read-only review** of the person's uncommitted changes. Nothing is cloned, and switching branches or stashing is refused.
 
 ## 8. Default workspace
-- The default is `~/ensemble-workspace` on macOS and Linux and `%USERPROFILE%\ensemble-workspace` on Windows, the same as today's `ENSEMBLE_WORKSPACE_ROOT`.
+- The default is `~/ensemble-workspace` on macOS and Linux and `%USERPROFILE%\ensemble-workspace` on Windows. As built 11 Oct 2026 the sidecar sets it (`src/desktop/main.ts`) unless `ENSEMBLE_WORKSPACE_ROOT` is set; before, the sidecar fell back to `/tmp/ensemble-workspace`, which macOS clears on reboot.
+- **The CLI and the desktop app share one runtime** (as built 11 Oct 2026): the same data folder (`desktopDataDir`), database, pairing, trusted folders, sandbox and workspace. A lock (`runtime.lock`) keeps a second sidecar off the database; the app attaches to a CLI runner that is already running, and the CLI uses the app's runtime when the app is open (doc [26](26_CLI.md) §4).
 - It can be changed in Settings (a folder picker with Reset to default), or overridden with the environment variable for development.
 - Changing it never moves files. Old runs keep their paths.
 

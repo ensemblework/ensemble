@@ -179,6 +179,43 @@ export const OrchestrationSettings = z.object({
 });
 export type OrchestrationSettings = z.infer<typeof OrchestrationSettings>;
 
+/** Ask, Review only (commands run without asking; only decisions reach the person), Run unattended. */
+export const RunMode = z.enum(["ask", "review", "unattended"]);
+export type RunMode = z.infer<typeof RunMode>;
+
+/**
+ * A saved set of Assign options, picked in one click from the Assign dialog,
+ * the board or the CLI. At most three per person; one can be the default.
+ * Task-specific choices (which folder, which earlier task, a branch name) are
+ * not part of a profile.
+ */
+export const RunProfile = z.object({
+  id: z.string().min(1).max(40),
+  name: z.string().trim().min(1).max(40),
+  kind: z.enum(["research", "code"]).default("code"),
+  /** A preferred paired computer. Null: this server when it runs code, else the first computer. */
+  deviceId: z.string().max(100).nullable().default(null),
+  /** Who does the work: Ensemble's own agent, or the person's own Claude Code on their computer. */
+  engine: z.enum(["ensemble", "claude-code"]).default("ensemble"),
+  /** `provider::model`, or empty for the task's tier. With Claude Code: its model alias, or empty for its default. */
+  model: z.string().max(240).default(""),
+  effort: z.enum(["default", "low", "medium", "high"]).default("default"),
+  branchMode: z.enum(["as-is", "new"]).default("as-is"),
+  delivery: z.enum(["local", "commit", "push"]).default("commit"),
+  askBeforePublish: z.boolean().default(true),
+  mode: RunMode.default("ask"),
+  sandbox: z.boolean().default(true),
+  useCredentials: z.boolean().default(false),
+  network: z.boolean().default(true),
+  markDone: z.boolean().default(true),
+  maxMinutes: z.number().int().min(1).max(480).nullable().default(null),
+  maxToolCalls: z.number().int().min(5).max(500).nullable().default(null),
+  maxTurns: z.number().int().min(3).max(200).nullable().default(null),
+  instructions: z.string().max(2000).default(""),
+});
+export type RunProfile = z.infer<typeof RunProfile>;
+export const MAX_RUN_PROFILES = 3;
+
 // ── sources & schedule ─────────────────────────────────────────────────────
 
 export const ConnectorId = z.enum([
@@ -264,6 +301,14 @@ export const Settings = z.object({
   ideTheme: IdeThemeSettings.default({}),
   models: ModelSettings.default({}),
   orchestration: OrchestrationSettings.default({}),
+  /** Up to three saved Assign settings (`RunProfile`). */
+  runProfiles: z
+    .array(RunProfile)
+    .max(MAX_RUN_PROFILES, "Keep at most three run profiles.")
+    .refine((rows) => new Set(rows.map((row) => row.id)).size === rows.length, "Run profile ids must be unique.")
+    .default([]),
+  /** The profile Quick assign uses. Null: the first profile, or the built-in Quick settings. */
+  defaultRunProfileId: z.string().max(40).nullable().default(null),
   retentionDays: z.number().int().min(1).max(365).default(30),
   /** Undo stack depth. Never unlimited. */
   undoDepth: z.number().int().min(3).max(20).default(5),
