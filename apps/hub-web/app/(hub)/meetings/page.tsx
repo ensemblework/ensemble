@@ -2,23 +2,31 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { PageHeader, SkeletonRows } from "@/components/ui";
 import { ImportedMeetingNotes } from "@/components/meetings/imported-notes";
 import { useToast } from "@/components/toast";
+import { connectedApi } from "@/lib/api-connected";
 import { api } from "@/lib/api";
 import { MeetingNotesFields } from "@/components/meetings/notes-fields";
+import { ArrowUpRight, BookOpen, Clock3, FileText, MessageSquare, Plus, Search } from "lucide-react";
 import { whenLabel } from "@/lib/format";
 
 function MeetingsBody() {
   const params = useSearchParams();
   const selected = params.get("session");
+  const router = useRouter();
   const client = useQueryClient();
   const toast = useToast();
   const list = useQuery({ queryKey: ["meeting-sessions"], queryFn: api.meetingSessions });
+  const imported = useQuery({ queryKey: ["meetings-imported"], queryFn: connectedApi.importedMeetings });
   const [active, setActive] = useState(selected ?? "");
   const [question, setQuestion] = useState("");
+  const [search, setSearch] = useState("");
+  const autoSelected = useRef(false);
+  const [filter, setFilter] = useState<"all" | "active" | "recaps">("all");
+  const choose = (id: string) => { setActive(id); router.replace(id ? `/meetings?session=${encodeURIComponent(id)}` : "/meetings", { scroll: false }); };
 
   useEffect(() => {
     if (selected) setActive(selected);
@@ -36,7 +44,7 @@ function MeetingsBody() {
   const start = useMutation({
     mutationFn: () => api.startMeeting(null, "Meeting notes"),
     onSuccess: (result) => {
-      setActive(result.session.id);
+      choose(result.session.id);
       void client.invalidateQueries({ queryKey: ["meeting-sessions"] });
     },
     onError: (error) => toast((error as Error).message, { tone: "error" }),
@@ -64,31 +72,41 @@ function MeetingsBody() {
   });
   const recap = useMutation({
     mutationFn: () => api.meetingRecap(active),
+    onError: (error) => toast((error as Error).message, { tone: "error" }),
     onSuccess: () => void client.invalidateQueries({ queryKey: ["meeting-session", active] }),
   });
 
   const session = detail.data?.session;
   const sessions = list.data?.sessions ?? [];
+  const importedNotes = imported.data?.notes ?? [];
+  const libraryReady = list.isSuccess && imported.isSuccess;
+  const visible = sessions.filter((s) => (filter === "all" || filter === "active" && s.status !== "ended" || filter === "recaps" && Boolean(s.recap?.trim())) && `${s.title} ${s.notes}`.toLowerCase().includes(search.trim().toLowerCase()));
+  useEffect(() => { if (!autoSelected.current && list.isSuccess) { autoSelected.current = true; if (!active && !selected && sessions[0]) setActive(sessions[0].id); } }, [active, selected, sessions, list.isSuccess]);
 
   return (
-    <div className="page-read mx-auto max-w-[920px] px-6 pb-24 pt-8">
+    <div className="page-read meeting-workspace mx-auto max-w-[1120px] px-6 pb-24 pt-8">
       <PageHeader
         title="Meeting notes"
-        description="Every meeting you took notes for. Ask across them, or open one."
+        description="Conversations become context. Keep the notes, decisions, and next steps together."
         actions={
-          <button type="button" className="btn" onClick={() => start.mutate()}>
-            New notes
+          <button type="button" className="btn-primary" disabled={start.isPending} onClick={() => start.mutate()}>
+            <Plus size={14} /> New notes
           </button>
         }
       />
+      <div className="meeting-metrics">
+        <div><BookOpen size={17} /><strong>{libraryReady ? sessions.length + importedNotes.length : "—"}</strong><span>notes in your library</span></div>
+        <div><Clock3 size={17} /><strong>{list.isSuccess ? sessions.filter((s) => s.status !== "ended").length : "—"}</strong><span>in progress</span></div>
+        <div><FileText size={17} /><strong>{libraryReady ? sessions.filter((s) => s.recap?.trim()).length + importedNotes.filter((n) => n.summary?.trim()).length : "—"}</strong><span>with a recap</span></div>
+      </div>
       <form
-        className="mb-6 flex flex-col gap-2 sm:flex-row"
+        className="meeting-question mb-6 flex flex-col gap-2 sm:flex-row"
         onSubmit={(event) => {
           event.preventDefault();
           if (question.trim()) summarize.mutate();
         }}
       >
-        <input value={question} onChange={(event) => setQuestion(event.target.value)} className="field flex-1" aria-label="Summarize across meetings" placeholder="Ask across these notes" />
+        <input value={question} onChange={(event) => setQuestion(event.target.value)} className="field flex-1" aria-label="Summarize across meetings" placeholder="Ask across your meeting notes" />
         <button type="submit" className="btn" disabled={summarize.isPending}>
           {summarize.isPending ? "Looking…" : "Summarize"}
         </button>
@@ -108,45 +126,52 @@ function MeetingsBody() {
           </ul>
         </div>
       ) : null}
-      <ImportedMeetingNotes />
+      <div className="meeting-library-tools"><label><Search size={15} /><input aria-label="Search meeting notes" placeholder="Find a conversation…" value={search} onChange={(e) => setSearch(e.target.value)} /></label><div className="work-view-tabs" aria-label="Meeting note views">{([["all", "All notes"], ["active", "In progress"], ["recaps", "With recap"]] as const).map(([id, label]) => <button type="button" key={id} aria-pressed={filter === id} onClick={() => setFilter(id)}>{label}</button>)}</div></div>
+      <ImportedMeetingNotes search={search} />
+      {list.isError && <div className="work-load-error" role="alert">Couldn't load your meeting library.<button type="button" className="btn" onClick={() => void list.refetch()}>Try again</button></div>}
       {list.isLoading && !list.data ? (
         <SkeletonRows count={3} />
-      ) : sessions.length === 0 && !session ? (
+      ) : !list.isError && sessions.length === 0 && !session ? (
         <div className="empty-panel">
-          <h2 className="text-[18px] font-semibold">No meeting notes yet</h2>
+          <h2 className="text-[18px] font-semibold">A page for your next conversation</h2>
           <p className="mt-1 max-w-[42ch] text-[14px] leading-5 text-muted">Start a page for the meeting you are in. The notes stay here, and you can ask across them later.</p>
           <button type="button" className="btn-primary mt-4" onClick={() => start.mutate()} disabled={start.isPending}>
             Start notes
           </button>
         </div>
       ) : null}
-      <div className={sessions.length === 0 && !session ? "hidden" : "grid gap-6 md:grid-cols-[240px_minmax(0,1fr)]"}>
-        <ul className="space-y-1">
+      <div className={sessions.length === 0 && !session ? "hidden" : "meeting-library grid gap-5 md:grid-cols-[300px_minmax(0,1fr)]"}>
+        <ul className="meeting-shelf">
           {sessions.length === 0 ? <li className="text-[13px] text-muted">No meeting notes yet.</li> : null}
-          {sessions.map((row) => (
+          {visible.map((row) => (
             <li key={row.id}>
               <button
                 type="button"
-                className="tile w-full rounded-lg bg-panel px-2 py-1.5 text-left hover:border-line-strong data-[active=true]:bg-accent-soft"
+                className="meeting-note-card"
                 data-active={row.id === active || undefined}
-                onClick={() => setActive(row.id)}
+                aria-pressed={row.id === active}
+                onClick={() => choose(row.id)}
               >
-                <div className="truncate text-[13.5px]">{row.title}</div>
-                <div className="text-[12.5px] text-muted">{whenLabel(row.startedAt)}</div>
+                <span className="meeting-card-meta"><MessageSquare size={14} />{whenLabel(row.startedAt)}<i data-active={row.status !== "ended"}>{row.status !== "ended" ? "In progress" : "Ended"}</i></span>
+                <strong>{row.title}</strong>
+                <p>{row.notes.trim().slice(0, 110) || "A fresh page for this conversation."}</p>
+                <span className="meeting-card-footer">{row.recap?.trim() ? "Recap ready" : "Meeting notes"}<ArrowUpRight size={12} /></span>
               </button>
             </li>
           ))}
+          {!visible.length && sessions.length > 0 && <li className="work-quiet-state">No notes match this view.</li>}
         </ul>
-        {session ? (
-          <article>
-            <MeetingNotesFields key={session.id} session={session} onRemoved={() => setActive("")} />
+        {detail.isError ? <div className="work-load-error" role="alert">Couldn't open this meeting.<button type="button" className="btn" onClick={() => void detail.refetch()}>Try again</button></div> : detail.isPending && active ? <SkeletonRows count={4} /> : session ? (
+          <article className="meeting-paper">
+            <div className="meeting-paper-kicker"><MessageSquare size={13} />{whenLabel(session.startedAt)}<span>{session.status !== "ended" ? "In progress" : "Meeting ended"}</span></div>
+            <MeetingNotesFields key={session.id} session={session} onRemoved={() => choose("")} />
             <div className="mt-3 flex flex-wrap gap-2">
               {session.status !== "ended" ? (
-                <button type="button" className="btn" onClick={() => end.mutate()}>
+                <button type="button" className="btn" disabled={end.isPending} onClick={() => end.mutate()}>
                   End meeting
                 </button>
               ) : null}
-              <button type="button" className="btn-ghost" onClick={() => recap.mutate()}>
+              <button type="button" className="btn-ghost" disabled={recap.isPending} onClick={() => recap.mutate()}>
                 Refresh recap
               </button>
             </div>
@@ -164,15 +189,15 @@ function MeetingsBody() {
               </div>
             ) : null}
             {session.recap ? (
-              <section className="mt-5">
+              <section className="meeting-recap mt-5">
                 <h3 className="text-[13px] font-semibold">Recap</h3>
                 <p className="mt-1 whitespace-pre-wrap text-[13.5px] leading-6">{session.recap}</p>
               </section>
             ) : null}
             {detail.data?.openTasks.length ? (
-              <section className="mt-4">
+              <section className="meeting-actions mt-4">
                 <h3 className="text-[13px] font-semibold">Open tasks</h3>
-                <ul className="mt-1 space-y-1 text-[13px]">
+                <ul className="meeting-action-list mt-1 space-y-1 text-[13px]">
                   {detail.data.openTasks.map((task) => (
                     <li key={task.id}>
                       <Link href={task.href} className="hover:underline">

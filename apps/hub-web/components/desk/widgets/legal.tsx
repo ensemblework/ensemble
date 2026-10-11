@@ -216,7 +216,7 @@ function HearBody() {
             <div style={{ flex: 1, borderRadius: 7, display: "grid", placeItems: "center", textAlign: "center", fontSize: 11, color: "var(--faint)", backgroundImage: "repeating-linear-gradient(135deg, rgba(243,238,230,0.05) 0 2px, transparent 2px 7px)", padding: 4 }}>Court holiday<br />{d.holiday}</div>
           )}
           {d.items.map((it) => (
-            <div key={it.w} style={{ borderRadius: 7, padding: "5px 6px", background: it.past ? "rgba(243,238,230,0.03)" : "rgba(243,238,230,0.055)", borderLeft: `2px solid ${it.past ? "rgba(243,238,230,0.15)" : "var(--accent)"}`, opacity: it.past ? 0.55 : 1 }}>
+            <div key={it.w} style={{ borderRadius: 7, padding: "5px 6px", background: it.past ? "rgba(243,238,230,0.03)" : "rgba(243,238,230,0.055)", border: "1px solid var(--line)", opacity: it.past ? 0.55 : 1 }}>
               <div style={{ fontSize: 11.5, fontWeight: 600, color: it.past ? "var(--muted)" : "var(--ink)" }}>{it.t}</div>
               <div style={{ fontSize: 11.5, lineHeight: 1.25, marginTop: 1, color: "var(--ink-2)" }}>{it.w}</div>
               <div style={{ fontSize: 10.5, color: "var(--faint)", marginTop: 2 }} className="trunc">{it.c}</div>

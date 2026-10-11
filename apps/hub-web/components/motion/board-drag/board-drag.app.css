@@ -22,7 +22,7 @@ html {
 [data-bdg-fly] > * { opacity: 0; }
 [data-bdg-ph]::before,
 [data-bdg-fly]::before { content: ""; position: absolute; inset: 0; border-radius: 10px; pointer-events: none;
-  border: 1.5px dashed color-mix(in srgb, var(--bdg-agent) 62%, transparent); background: color-mix(in srgb, var(--bdg-agent) 8%, transparent); }
+  border: 1.5px dashed var(--bdg-hair); background: color-mix(in srgb, var(--ink) 3%, transparent); }
 [data-motion-theme="minimal-quiet"] [data-bdg-ph]::before,
 [data-motion-theme="minimal-quiet"] [data-bdg-fly]::before { border: 1px solid var(--bdg-hair); background: none; }
 [data-motion-theme="minimal-dot"] [data-bdg-ph]::before,
@@ -34,9 +34,9 @@ html {
    isOver from useDroppable is only the column box; the board also sets data-over from the card's sortable container. */
 [data-bdg-list] { position: relative; }
 [data-bdg-list]::after { content: ""; position: absolute; inset: 0; border-radius: 8px; pointer-events: none; opacity: 0; transition: opacity .18s;
-  background: color-mix(in srgb, var(--bdg-agent) 7%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bdg-agent) 45%, transparent); }
+  background: color-mix(in srgb, var(--ink) 3%, transparent); box-shadow: inset 0 0 0 1px var(--bdg-hair); }
 [data-bdg-list][data-over]::after { opacity: 1; }
-[data-bdg-list][data-over="deny"]::after { background: color-mix(in srgb, var(--bdg-err) 7%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bdg-err) 45%, transparent); }
+[data-bdg-list][data-over="deny"]::after { background: color-mix(in srgb, var(--ink) 3%, transparent); box-shadow: inset 0 0 0 1px var(--bdg-hair); }
 [data-motion-theme="minimal-quiet"] [data-bdg-list]::after { background: none; box-shadow: inset 0 0 0 1px var(--bdg-hair); }
 [data-motion-theme="minimal-dot"] [data-bdg-list]::after { display: none; }
 /* Dot: one violet dot beside the column count, instead of a wash on the list. */
@@ -58,4 +58,4 @@ html {
    Do not put a transition on .bdg-float itself — dnd-kit writes its transform on every pointer move. */
 .bdg-float-tilt { will-change: rotate, scale, opacity; }
 .bdg-float .board-card { transition: none !important; transform: none !important; translate: none !important; scale: none !important; rotate: none !important; }
-[data-motion-theme="expressive"] .bdg-float .board-card { border-color: color-mix(in srgb, var(--bdg-agent) 55%, var(--line)); }
+[data-motion-theme="expressive"] .bdg-float .board-card { border-color: var(--bdg-hair); }

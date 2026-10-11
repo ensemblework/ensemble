@@ -198,7 +198,7 @@
   position: absolute;
   inset: 0;
   transform: translateX(-100%);
-  background: linear-gradient(100deg, transparent 20%, color-mix(in srgb, var(--accent) calc(14% + var(--m-ornament) * 12%), transparent) 50%, transparent 80%);
+  background: linear-gradient(100deg, transparent 20%, color-mix(in srgb, var(--ink) 12%, transparent) 50%, transparent 80%);
   animation: m-sweep var(--m-dur-loop) var(--m-ease-loop) infinite;
   animation-delay: calc(var(--i, 0) * var(--m-dur-micro) / 4);
 }
@@ -236,13 +236,7 @@
   animation: m-rise var(--m-dur-ui) var(--m-ease-enter);
   animation-delay: calc(var(--i, 0) * var(--m-dur-micro) / 4);
 }
-html[data-motion-enter="1"] .page-head h1 {
-  background-image: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 10%, transparent) 70%, transparent);
-  background-repeat: no-repeat;
-  background-size: 100% 2px;
-  background-position: 0 100%;
-  animation: m-draw var(--m-dur-move) var(--m-ease-loop);
-}
+html[data-motion-enter="1"] .page-head h1 { animation: m-rise var(--m-dur-ui) var(--m-ease-enter); }
 @keyframes m-draw { from { background-size: 0 2px; } }
 
 /* ── duet spinner ──────────────────────────────────────────────────────── */
@@ -311,7 +305,7 @@ html[data-motion-enter="1"] .page-head h1 {
 .u-glyph.is-pause .ug-agent { stroke: var(--danger); }
 
 /* ── stream ────────────────────────────────────────────────────────────── */
-.m-stream[data-state="streaming"] { box-shadow: inset var(--m-stroke) 0 0 var(--accent); }
+.m-stream[data-state="streaming"] { box-shadow: none; }
 .m-stream[data-state="streaming"]::after {
   content: "";
   display: inline-block;
@@ -331,28 +325,23 @@ html[data-motion-enter="1"] .page-head h1 {
 }
 
 /* ── tool / run / needs / approve / error ──────────────────────────────── */
-.m-tool { border-radius: 8px; box-shadow: inset 0 0 0 var(--m-stroke) color-mix(in srgb, var(--accent) 55%, transparent); }
+.m-tool { border-radius: 8px; box-shadow: inset 0 0 0 1px var(--line); }
 .m-tool[data-state="running"] { animation: m-seam var(--m-dur-loop) var(--m-ease-loop) infinite; }
-.m-tool[data-state="done"] { box-shadow: inset 0 0 0 var(--m-stroke) color-mix(in srgb, var(--ok) 70%, transparent); animation: m-bloom var(--m-dur-ui) var(--m-ease-move); }
-.m-tool[data-state="pending"] { box-shadow: inset 0 0 0 var(--m-stroke) var(--warn); }
-.m-tool[data-state="failed"] { box-shadow: inset 0 0 0 var(--m-stroke) var(--danger); }
-@keyframes m-seam { 50% { box-shadow: inset 0 0 0 var(--m-stroke) var(--accent); } }
-@keyframes m-bloom {
-  from { box-shadow: inset 0 0 0 var(--m-stroke) var(--ok), 0 0 0 0 color-mix(in srgb, var(--ok) calc(var(--m-particles) * 40%), transparent); }
-  to { box-shadow: inset 0 0 0 var(--m-stroke) color-mix(in srgb, var(--ok) 70%, transparent), 0 0 0 calc(var(--m-amp) * var(--m-particles)) transparent; }
-}
+.m-tool[data-state="done"] { animation: m-bloom var(--m-dur-ui) var(--m-ease-move); }
+@keyframes m-seam { 50% { opacity: 0.8; } }
+@keyframes m-bloom { from { opacity: 0.75; } to { opacity: 1; } }
 .m-run { display: inline-flex; align-items: center; gap: 6px; }
 .m-run-bar { height: 3px; flex: 1; border-radius: 99px; background: var(--line-strong); overflow: hidden; min-width: 48px; }
 .m-run-bar i { display: block; height: 100%; width: 40%; background: var(--accent); }
 .m-run[data-state="running"] .m-run-bar i { animation: m-braid var(--m-dur-move) var(--m-ease-loop) infinite; }
 .m-run[data-state="done"] .m-run-bar i { width: 100%; animation: none; background: var(--ok); }
 .m-run[data-state="queued"] .m-run-bar i { width: 12%; opacity: 0.5; }
-[data-motion-slot="needs.waiting"][data-state="waiting"] { box-shadow: inset var(--m-stroke) 0 0 var(--warn); }
+[data-motion-slot="needs.waiting"][data-state="waiting"] { box-shadow: none; }
 [data-motion-slot="action.approve"][data-state="pressed"] { transform: scale(var(--m-scale-press)); }
-[data-motion-slot="action.approve"][data-state="approved"] { box-shadow: 0 0 0 calc(var(--m-amp) * var(--m-particles)) color-mix(in srgb, var(--ok) 35%, transparent); }
-[data-motion-slot="state.error"] { box-shadow: inset var(--m-stroke) 0 0 var(--danger); }
+[data-motion-slot="action.approve"][data-state="approved"] { box-shadow: none; }
+[data-motion-slot="state.error"] { box-shadow: none; }
 [data-motion-slot="net.connection"][data-state="offline"],
-[data-motion-slot="net.connection"][data-state="reconnecting"] { box-shadow: inset 0 -2px 0 var(--warn); }
+[data-motion-slot="net.connection"][data-state="reconnecting"] { box-shadow: none; }
 
 /* ── fetch / sync ──────────────────────────────────────────────────────── */
 .m-fetch { display: inline-flex; }
