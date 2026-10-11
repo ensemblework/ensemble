@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   actOnNudge,
   askEnsemble,
+  searchWorkspace,
   attachMeetingNotes,
   commitQuickCapture,
   declineMeetingAttach,
@@ -104,6 +105,11 @@ export async function coworkRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/meetings/summarize", async (request) => {
     const body = z.object({ question: z.string().min(1).max(500) }).parse(request.body);
     return summarizeMeetings(db, request.userId, body.question);
+  });
+
+  app.get("/api/context/search", async (request) => {
+    const { q } = z.object({ q: z.string().trim().min(1).max(500) }).parse(request.query);
+    return searchWorkspace(db, request.userId, q);
   });
 
   app.post("/api/ask", async (request) => {

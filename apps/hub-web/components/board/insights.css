@@ -1,8 +1,8 @@
 .board-insights { padding: 0 24px 16px; }
 .board-insights-heading { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; color: var(--muted); font-size: 11px; }
-.board-insights-toggle, .board-insights-customize { display: inline-flex; align-items: center; gap: 5px; padding: 3px 0; }
+.board-insights-toggle { display: inline-flex; align-items: center; gap: 5px; padding: 3px 0; }
 .board-insights-toggle { color: var(--ink); font-weight: 550; }
-.board-insights-customize { margin-left: auto; }
+
 .board-insight-row { display: flex; gap: 10px; overflow-x: auto; scrollbar-width: thin; padding-bottom: 2px; }
 .board-insight { flex: 1; min-width: 225px; max-width: 520px; height: 157px; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--line); background: var(--tile, var(--panel)); overflow: hidden; display: flex; flex-direction: column; }
 .board-insight > header { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--muted); margin-bottom: 10px; flex-shrink: 0; }
@@ -72,3 +72,14 @@
 .insight-loading { min-height: 157px; display: grid; place-items: center; width: 100%; color: var(--muted); font-size: 12px; border: 1px solid var(--line); border-radius: 10px; }
 .insight-cap-setting { display: flex; align-items: center; gap: 8px; }
 .insight-cap-setting input { width: 52px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel); color: var(--ink); }
+
+.board-insight-slot { flex: 1; min-width: 225px; max-width: 520px; position: relative; }
+.board-insight-slot .board-insight { min-width: 0; max-width: none; }
+.insight-grip { cursor: grab; touch-action: none; color: var(--faint); border-radius: 4px; }
+.insight-grip:active { cursor: grabbing; }
+.board-insight > header > .insight-grip { margin-left: 0; }
+@media (max-width: 767px) {
+  .board-insight-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr)); overflow: visible; }
+  .board-insight-slot { min-width: 0; max-width: none; }
+  .board-insight > header button { min-height: 32px; min-width: 32px; }
+}

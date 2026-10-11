@@ -127,7 +127,7 @@ test("rename commits the new title from the Pages list", async () => {
   }
 });
 
-test("delete asks for confirmation before removing a page", async () => {
+test("delete moves a recoverable page to Trash immediately", async () => {
   const deleted: string[] = [];
   const mounted = await render(
     <PagesSection
@@ -145,26 +145,7 @@ test("delete asks for confirmation before removing a page", async () => {
     await act(async () => {
       button.click();
     });
-    const dialog = document.querySelector("[role='dialog']");
-    assert.ok(dialog);
-    assert.match(dialog?.textContent ?? "", /Delete this page/);
-    assert.deepEqual(deleted, []);
-    const cancel = [...document.querySelectorAll("button")].find((node) => node.textContent === "Cancel");
-    assert.ok(cancel);
-    await act(async () => {
-      cancel.click();
-    });
-    assert.equal(document.querySelector("[role='dialog']"), null);
-    assert.deepEqual(deleted, []);
-
-    await act(async () => {
-      button.click();
-    });
-    const confirm = [...document.querySelectorAll("button")].find((node) => node.textContent === "Delete page");
-    assert.ok(confirm);
-    await act(async () => {
-      confirm.click();
-    });
+    assert.equal(document.querySelector("[role=dialog]"), null);
     assert.deepEqual(deleted, ["page-new"]);
   } finally {
     await unmount(mounted);

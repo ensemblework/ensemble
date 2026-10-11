@@ -105,7 +105,6 @@ function Column({
           <span className="bdg-n text-[12px] tabular-nums text-muted">{ids.length}</span>
         </div>
         <div className="flex items-center gap-1">
-          <AskEnsemble surface="board" anchorKey={`board:column:${id}`} label={`Ask Ensemble about ${label}`} entityIds={ids} selection={label} />
           <button type="button" className="icon-btn h-6 w-6" title="New task in this column" onClick={onCreate}>
             <Plus size={14} />
           </button>
@@ -474,19 +473,9 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
           <option value="manual">Manual order</option>
         </select>
         <span className="text-[12.5px] text-muted">{plural(count, "task")}</span>
-        {picked.length ? (
-          <div className="flex items-center gap-2" data-ensemble-selection>
-            <span className="text-[12.5px] text-muted">{plural(picked.length, "selected task", "selected tasks")}</span>
-            <AskEnsemble
-              surface="board"
-              anchorKey={`board:sel:${[...picked].sort().join(",")}`}
-              label="Ask Ensemble about the selection"
-              entityIds={picked}
-              selection={`${picked.length} selected`}
-            />
-          </div>
-        ) : null}
-        <div className="ml-auto flex shrink-0 items-center gap-2">
+        {picked.length > 0 && <span className="text-[12.5px] text-muted">{plural(picked.length, "selected task", "selected tasks")}</span>}
+        <div className="ml-auto flex flex-wrap items-center gap-2">
+          <AskEnsemble surface="board" anchorKey={picked.length ? `board:sel:${[...picked].sort().join(",")}` : "board:overview"} label={picked.length ? "Ask about selected tasks" : "Ask about this board"} entityIds={picked.length ? picked : baseVisible.map((task) => task.id)} selection={picked.length ? `${picked.length} selected tasks` : "This board"} />
           <Popover trigger={(_open, toggle) => <button type="button" className="btn" disabled={addPage.isPending} onClick={toggle}>Add page</button>}>
             {(close) => (pages.data?.pages.length ? pages.data.pages.map((page) => (
               <MenuItem key={page.id} onClick={() => { close(); addPage.mutate(page.id); }}>{page.title || "Untitled"}</MenuItem>

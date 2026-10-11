@@ -21,7 +21,7 @@ const settings = {
   },
 };
 
-test("Stop on a new chat's first message cancels that turn", async () => {
+test("streaming reconciles the saved user message by id, keeps real repeats, and Stop cancels the turn", async () => {
   if (typeof Element !== "undefined" && typeof Element.prototype.scrollTo !== "function") {
     Element.prototype.scrollTo = () => undefined;
   }
@@ -58,7 +58,7 @@ test("Stop on a new chat's first message cancels that turn", async () => {
       const stream = new ReadableStream({
         start(controller) {
           controller.enqueue(
-            new TextEncoder().encode(`event: status\ndata: ${JSON.stringify({ conversationId: CONVERSATION })}\n\n`),
+            new TextEncoder().encode(`event: status\ndata: ${JSON.stringify({ conversationId: CONVERSATION, userMessageId: "saved-user" })}\n\n`),
           );
           const abort = () => {
             try {
@@ -81,6 +81,8 @@ test("Stop on a new chat's first message cancels that turn", async () => {
       return new Response(
         JSON.stringify({
           messages: [
+            { id: "earlier-user", role: "user", content: "Hello from a new chat", toolCalls: [], model: null, createdAt: "2026-10-04T20:29:00.000Z" },
+            { id: "saved-user", role: "user", content: "Hello from a new chat", toolCalls: [], model: null, createdAt: "2026-10-04T20:30:00.000Z" },
             {
               id: "saved-stop",
               role: "assistant",
@@ -134,6 +136,9 @@ test("Stop on a new chat's first message cancels that turn", async () => {
     });
     const stop = [...host.querySelectorAll("button")].find((node) => node.getAttribute("aria-label") === "Stop");
     assert.ok(stop, host.innerHTML);
+    for (let i = 0; i < 20 && (host.textContent?.match(/Hello from a new chat/g) ?? []).length !== 2; i++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 15)); });
+    assert.equal(textarea.value, "");
+    assert.equal((host.textContent?.match(/Hello from a new chat/g) ?? []).length, 2);
     await act(async () => {
       stop.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await new Promise((resolve) => setTimeout(resolve, 40));

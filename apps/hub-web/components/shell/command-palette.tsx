@@ -12,10 +12,10 @@ import { api } from "@/lib/api";
 import { switchSpace } from "@/lib/spaces";
 import { plural } from "@/lib/format";
 import { isApplePlatform, modKey } from "@/lib/platform";
-import { warmPeek } from "@/lib/warm";
+import { SECTION_TAB, SETTINGS_TABS } from "../settings/url-state";
+import { useModalFocus } from "@/lib/modal-focus";
 import { SearchQuery } from "@/components/motion/search-query";
 import { cx } from "../ui";
-import { usePeek } from "./peek";
 
 const PAGES: Array<{ href: string; label: string; hint: string }> = [
   { href: "/today", label: "Today", hint: "Focus and proposals" },
@@ -48,11 +48,11 @@ type Item = { id: string; label: string; hint: string; run: () => void };
 
 export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
   const router = useRouter();
-  const peek = usePeek();
+  const dialog = useRef<HTMLDivElement>(null);
+  useModalFocus(dialog, open, onClose);
   const input = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
-  const tasks = useQuery({ queryKey: ["tasks"], queryFn: api.tasks, enabled: open, staleTime: 20_000 });
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, enabled: open, staleTime: 30_000 });
   const spaces = useQuery({ queryKey: ["spaces"], queryFn: api.spaces, enabled: open, staleTime: 30_000 });
 
@@ -120,17 +120,14 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       hint: page.hint,
       run: () => router.push(page.href),
     }));
-    const rows = (tasks.data?.tasks ?? [])
-      .filter((task) => task.status !== "dropped" && (!needle || task.title.toLowerCase().includes(needle)))
-      .slice(0, 8)
-      .map((task) => ({
-        id: task.id,
-        label: task.title,
-        hint: shell.data?.labels?.task || "Task",
-        run: () => peek.open(task.id),
-      }));
-    return [...actions, ...pages, ...rows];
-  }, [query, tasks.data, router, peek, shell.data, spaces.data]);
+    const settings = Object.entries(SECTION_TAB).map(([anchor, tab]) => ({
+      id: `setting-${anchor}`,
+      label: ({ keys: "API keys", changes: "Assistant changes", quiet: "Quiet hours", terminal: "Terminal history", danger: "Delete account", you: "About you", "this-mac": "This computer" } as Record<string, string>)[anchor] ?? anchor[0]!.toUpperCase() + anchor.slice(1),
+      hint: `Settings · ${SETTINGS_TABS.find((row) => row.id === tab)!.label}`,
+      run: () => router.push(`/settings?tab=${tab}${anchor === "keys" || anchor === "changes" ? `&dialog=${anchor}` : `#${anchor}`}`),
+    })).filter((item) => Boolean(needle) && `${item.label} ${item.hint}`.toLowerCase().includes(needle));
+    return [...pages, ...settings, ...actions];
+  }, [query, router, shell.data, spaces.data]);
 
   useEffect(() => {
     if (!open) return;
@@ -156,29 +153,26 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
 
   if (!open) return null;
   const selected = Math.min(index, Math.max(items.length - 1, 0));
-  const tasksLoading = tasks.isLoading && !tasks.data;
-  const needle = query.trim().length > 0;
 
   return (
     <div className="fixed inset-0 z-[70] flex items-start justify-center bg-black/45 px-4 pt-[14vh]" onMouseDown={onClose}>
-      <div role="dialog" aria-label="Command palette" className="pop-in w-full max-w-[560px]" onMouseDown={(event) => event.stopPropagation()}>
+      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Command palette" className="pop-in w-full max-w-[560px]" onMouseDown={(event) => event.stopPropagation()}>
         <SearchQuery
           className="flex max-h-[calc(100dvh-14vh-16px)] min-h-0 flex-col overflow-hidden rounded-xl border border-line-strong bg-panel p-2 shadow-pop"
           inputRef={input}
           value={query}
           onValue={setQuery}
-          placeholder="Jump to a page or task"
-          label="Jump to a page or task"
+          placeholder="Jump to a view or setting"
+          label="Jump to a view or setting"
           kbd={`${modKey()}K`}
-          pending={tasksLoading && needle && items.length === 0}
           count={items.length}
           list
           controls="command-list"
           resultsId="command-list"
           activeDescendant={items[selected] ? `cmd-${items[selected].id}` : undefined}
-          status={tasksLoading ? "Looking up tasks…" : `${plural(items.length, "result")} · ↑↓ move · ↵ open`}
+          status={`${plural(items.length, "result")} · ↑↓ move · ↵ open`}
           emptyTitle="Nothing matches."
-          emptyHint="Try a page name, or a task title."
+          emptyHint="Try a view or a setting, like Avatar or Devices."
           resultsClassName="min-h-0 flex-1 overflow-y-auto overscroll-contain"
           onKeyDown={(event) => {
             if (event.key === "ArrowDown") {
@@ -203,10 +197,6 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
                 className={cx("flex w-full items-center gap-3 rounded-lg px-1 py-1 text-left", itemIndex === selected ? "text-ink" : "text-ink/90")}
                 onMouseEnter={() => {
                   setIndex(itemIndex);
-                  if (item.hint === "Task") void warmPeek();
-                }}
-                onFocus={() => {
-                  if (item.hint === "Task") void warmPeek();
                 }}
                 onClick={() => {
                   item.run();

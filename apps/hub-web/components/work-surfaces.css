@@ -81,3 +81,9 @@
 .context-file-card > span { font-size: 10px; color: var(--faint); margin-top: auto; }
 .context-file-card:hover { border-color: var(--line-strong); background: var(--hover); }
 @container (max-width: 400px) { .context-file-grid { grid-template-columns: 1fr; } }
+
+@media (max-width: 767px) {
+  .meeting-library .meeting-shelf { max-height: none; overflow: visible; }
+  .meeting-library[data-reading="true"] .meeting-shelf { display: none; }
+  .meeting-library[data-reading="false"] > :not(.meeting-shelf) { display: none; }
+}

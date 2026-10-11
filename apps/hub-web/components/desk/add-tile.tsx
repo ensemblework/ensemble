@@ -1,8 +1,8 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronRight, Plus, RotateCcw, Search, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { Check, ChevronLeft, ChevronRight, Plus, RotateCcw, Search, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { hasModule } from "@ensemble/shared-types/modules";
 import { WIDGET_REGISTRY, type WidgetId } from "@ensemble/shared-types/widgets";
 import { Dialog } from "@/components/ui";
@@ -51,6 +51,9 @@ export function AddTileButton({ deskId, plots, startOpen = false }: { deskId: De
 
 export function AddTileDialog({ deskId, onClose }: { deskId: DeskId; plots?: boolean; onClose: () => void }) {
   const client = useQueryClient();
+  const gallery = useRef<HTMLDivElement>(null);
+  const [pane, setPane] = useState("browse");
+  useEffect(() => { if (window.matchMedia?.("(max-width: 980px)").matches) gallery.current?.closest(".tile-gallery-dialog-body")?.scrollTo?.({ top: 0 }); }, [pane]);
   const [q, setQ] = useState("");
   const [category, setCategory] = useState<TileCategory>("All tiles");
   const [selected, setSelected] = useState<string | null>(null);
@@ -95,14 +98,15 @@ export function AddTileDialog({ deskId, onClose }: { deskId: DeskId; plots?: boo
   }
 
   return <Dialog open onClose={onClose} title="Make room for your best work" width={1160} className="tile-gallery-dialog" bodyClassName="tile-gallery-dialog-body">
-    <div className="tile-gallery" data-tile-gallery>
+    <div ref={gallery} className="tile-gallery" data-tile-gallery data-gallery-pane={pane}>
       <div className="tile-gallery-intro"><div><span className="tile-gallery-eyebrow">YOUR TILE LIBRARY</span><p>A desk that works the way you do.</p></div><span className="tile-gallery-profile">{roleLabel} · {all.length} tiles</span></div>
+      <div className="tile-gallery-mobile-nav"><button type="button" aria-pressed={pane === "browse"} onClick={() => setPane("browse")}><ChevronLeft size={14} />Browse tiles</button><button type="button" aria-pressed={pane === "preview"} onClick={() => setPane("preview")}>Preview<ChevronRight size={14} /></button></div>
       <div className="tile-gallery-layout">
         <aside className="tile-gallery-sidebar">
           <label className="tile-gallery-search"><Search size={15} /><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a tile…" aria-label="Search tiles" /></label>
           <div className="tile-gallery-categories" aria-label="Tile categories">{TILE_CATEGORIES.map((c) => <button key={c} type="button" aria-pressed={category === c} onClick={() => setCategory(c)}>{c}<span>{all.filter((s) => c === "All tiles" || tileCategory(s.key) === c).length}</span></button>)}</div>
           <div className="tile-gallery-results" aria-label="Available tiles">
-            {matches.map((spec) => { const Icon = spec.icon; return <button key={spec.key} type="button" data-gallery-tile={spec.key} aria-pressed={active?.key === spec.key} onClick={() => { setSelected(spec.key); setNotice(""); }}><span className="tile-gallery-icon"><Icon size={17} /></span><span><strong>{spec.title}</strong><small>{onDesk.has(spec.key) ? "On your Today" : tileCategory(spec.key)}</small></span>{onDesk.has(spec.key) ? <Check size={14} /> : <ChevronRight size={14} />}</button>; })}
+            {matches.map((spec) => { const Icon = spec.icon; return <button key={spec.key} type="button" data-gallery-tile={spec.key} aria-pressed={active?.key === spec.key} onClick={() => { setSelected(spec.key); setNotice(""); setPane("preview"); }}><span className="tile-gallery-icon"><Icon size={17} /></span><span><strong>{spec.title}</strong><small>{onDesk.has(spec.key) ? "On your Today" : tileCategory(spec.key)}</small></span>{onDesk.has(spec.key) ? <Check size={14} /> : <ChevronRight size={14} />}</button>; })}
             {!matches.length && <div className="tile-gallery-empty"><Search size={22} /><strong>No tiles found</strong><p>Try a different word or category.</p><button type="button" className="btn" onClick={() => { setQ(""); setCategory("All tiles"); }}>Clear filters</button></div>}
           </div>
         </aside>

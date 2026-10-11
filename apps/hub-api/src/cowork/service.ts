@@ -1,3 +1,4 @@
+import { matchExcerpt } from "../bridge/text.js";
 /**
  * Database side of the cowork surfaces. Pure wording lives next to this file.
  * Every query is scoped to userId. Meeting notes are soft-deleted, never hard-deleted here.
@@ -670,6 +671,24 @@ async function hitsForTerm(db: Db, userId: string, term: string, modules: string
     path: `/meetings?session=${session.id}`,
   }));
   return [...fromSessions, ...fromSearch];
+}
+
+export async function searchWorkspace(db: Db, userId: string, query: string) {
+  const q = query.trim();
+  if (!q) throw fail(400, "Enter a search term.");
+  const user = await db.user.findUnique({ where: { id: userId }, select: { moduleSet: true } });
+  const [found, sessions] = await Promise.all([
+    searchHub(db, userId, q, 8, user?.moduleSet ?? ""),
+    db.meetingSession.findMany({ where: { userId, deletedAt: null, OR: [{ title: { contains: q, mode: "insensitive" } }, { notes: { contains: q, mode: "insensitive" } }, { recap: { contains: q, mode: "insensitive" } }] }, take: 8, orderBy: { startedAt: "desc" } }),
+  ]);
+  const hits = [
+    ...found.results.map((hit) => ({ id: hit.id, kind: hit.kind, label: hit.label, excerpt: hit.excerpt, path: pathFromHubUrl(hit.url) })),
+    ...sessions.map((session) => ({ id: session.id, kind: "meeting", label: session.title, excerpt: matchExcerpt(`${session.notes} ${session.recap ?? ""}`, q).excerpt, path: `/meetings?session=${session.id}` })),
+  ];
+  const seen = new Set<string>();
+  const results = hits.sort((a, b) => Number(b.label.toLowerCase().includes(q.toLowerCase())) - Number(a.label.toLowerCase().includes(q.toLowerCase())))
+    .filter((hit) => { if (seen.has(hit.path)) return false; seen.add(hit.path); return true; }).slice(0, 12);
+  return { query: q, results };
 }
 
 export async function askEnsemble(db: Db, userId: string, question: string) {

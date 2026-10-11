@@ -312,9 +312,11 @@ export function AssistantDock() {
   }, [open]);
 
   const sendText = async (text: string) => {
+    if (abortRef.current) return;
     const controller = new AbortController();
     abortRef.current = controller;
     setPending(true);
+    setDraft("");
     setTurnError(null);
     setStreaming("");
     setLiveTools([]);
@@ -361,6 +363,7 @@ export function AssistantDock() {
           conversationId?: string;
           message?: string;
           messageId?: string;
+          userMessageId?: string;
           type?: string;
           call?: AssistantToolCallRecord;
           preview?: string;
@@ -370,6 +373,7 @@ export function AssistantDock() {
           saveFailed?: boolean;
         };
         if (event === "status") {
+          if (frame.userMessageId) setOptimistic((rows) => rows.map((row) => row.role === "user" ? { ...row, id: frame.userMessageId! } : row));
           if (frame.text) setWorking(frame.text);
           if (frame.conversationId) {
             nextId = frame.conversationId;
@@ -395,7 +399,6 @@ export function AssistantDock() {
           if (frame.saveFailed && frame.content) held.reply = { messageId: frame.messageId, content: frame.content };
         }
       });
-      setDraft("");
       if (nextId) setConversationId(nextId);
       await client.invalidateQueries({ queryKey: ["assistant-messages", nextId] });
       const kept = held.reply;
@@ -449,7 +452,7 @@ export function AssistantDock() {
           setOptimistic([]);
         }
       } else {
-        setDraft(text);
+        setDraft((current) => current || text);
         setTurnError((error as Error).message);
         setOptimistic([]);
       }
@@ -466,7 +469,8 @@ export function AssistantDock() {
     if (id) void api.stopAssistant(id);
   };
 
-  const all = [...(messages.data?.messages ?? []), ...optimistic];
+  const saved = messages.data?.messages ?? [];
+  const all = [...saved, ...optimistic.filter((row) => !saved.some((message) => message.id === row.id))];
 
   useEffect(() => {
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" });

@@ -1280,6 +1280,7 @@ export const api = bindClient({
       undoEntryId: string | null;
       parsed: { title: string; due: string | null; dueLabel: string | null; matched: Array<{ id: string; name: string }>; unmatched: string[] };
     }>("/api/capture", { text }),
+  searchWorkspace: (query: string, signal?: AbortSignal) => request<{ query: string; results: WorkspaceSearchHit[] }>(`/api/context/search?q=${encodeURIComponent(query)}`, { signal }),
   ask: (question: string) =>
     post<{ question: string; answer: string; sources: AskSource[]; undoEntryId?: string | null }>("/api/ask", { question }),
   meetingCues: () => get<{ cues: MeetingCue[]; voice: string }>("/api/meetings/cues"),
@@ -1687,3 +1688,5 @@ export type CompletedItem = {
   completedAt: string | null;
   pinned: boolean;
 };
+
+export type WorkspaceSearchHit = { id: string; kind: string; label: string; excerpt: string; path: string };

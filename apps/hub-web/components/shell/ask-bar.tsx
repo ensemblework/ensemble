@@ -1,156 +1,61 @@
 "use client";
 
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
+import { ArrowUpRight, FileText, Search, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { api, type AskSource } from "@/lib/api";
-import { plural } from "@/lib/format";
+import { api } from "@/lib/api";
 import { SearchQuery } from "@/components/motion/search-query";
-import { useToast } from "../toast";
-
-type Remembered = { answer: string; sources: AskSource[]; undoId: string | null };
+import { HighlightMatch, searchHitHref } from "./search-match";
 
 export function AskBar() {
-  const toast = useToast();
-  const client = useQueryClient();
   const input = useRef<HTMLInputElement>(null);
-  const remembered = useRef(new Map<string, Remembered>());
-  const [question, setQuestion] = useState("");
+  const root = useRef<HTMLDivElement>(null);
+  const [query, setQuery] = useState("");
+  const [debounced, setDebounced] = useState("");
   const [open, setOpen] = useState(false);
-  const [answer, setAnswer] = useState("");
-  const [sources, setSources] = useState<AskSource[]>([]);
-  const [undoId, setUndoId] = useState<string | null>(null);
-
-  const undo = () => {
-    if (!undoId) return;
-    const entryId = undoId;
-    void api
-      .undo(entryId)
-      .then(() => {
-        setUndoId(null);
-        setAnswer((current) => (current.endsWith("Undone.") ? current : `${current} Undone.`));
-        void client.invalidateQueries({ queryKey: ["desk-live"] });
-      })
-      .catch((error: Error) => toast(error.message, { tone: "error" }));
-  };
-
+  const [index, setIndex] = useState(0);
   useEffect(() => {
-    const focus = () => {
-      setOpen(true);
-      input.current?.focus();
+    const timer = window.setTimeout(() => setDebounced(query.trim()), 180);
+    setIndex(0);
+    return () => window.clearTimeout(timer);
+  }, [query]);
+  const found = useQuery({ queryKey: ["workspace-search", debounced], queryFn: ({ signal }) => api.searchWorkspace(debounced, signal), enabled: open && Boolean(debounced), staleTime: 15_000, retry: false });
+  const current = debounced === query.trim();
+  const hits = current ? found.data?.results ?? [] : [];
+  const pending = open && Boolean(query.trim()) && (!current || found.isPending);
+  const selected = Math.min(index, Math.max(0, hits.length - 1));
+  useEffect(() => {
+    const focus = () => { setOpen(true); input.current?.focus(); };
+    const outside = (event: PointerEvent) => {
+      const target = event.target as Element;
+      if (!root.current?.contains(target) && !target.closest("[data-workspace-search-results]")) setOpen(false);
     };
     window.addEventListener("ensemble:ask", focus);
-    return () => window.removeEventListener("ensemble:ask", focus);
+    document.addEventListener("pointerdown", outside);
+    return () => { window.removeEventListener("ensemble:ask", focus); document.removeEventListener("pointerdown", outside); };
   }, []);
-
-  const ask = useMutation({
-    mutationFn: (key: string) => api.ask(key),
-    onSuccess: (result, key) => {
-      const row: Remembered = { answer: result.answer, sources: result.sources, undoId: result.undoEntryId ?? null };
-      remembered.current.set(key, row);
-      setAnswer(row.answer);
-      setSources(row.sources);
-      setUndoId(row.undoId);
-      setOpen(true);
-      if (result.undoEntryId) {
-        const entryId = result.undoEntryId;
-        toast(result.answer, {
-          action: {
-            label: "Undo",
-            run: () => {
-              void api
-                .undo(entryId)
-                .then(() => {
-                  setUndoId(null);
-                  setAnswer((current) => (current.endsWith("Undone.") ? current : `${current} Undone.`));
-                  void client.invalidateQueries({ queryKey: ["desk-live"] });
-                })
-                .catch((error: Error) => toast(error.message, { tone: "error" }));
-            },
-          },
-        });
-        void client.invalidateQueries({ queryKey: ["desk-live"] });
-      }
-    },
-    onError: (error) => toast((error as Error).message, { tone: "error" }),
-  });
-
-  function run() {
-    const key = question.trim();
-    if (!key) return;
-    const hit = remembered.current.get(key);
-    if (hit) {
-      setAnswer(hit.answer);
-      setSources(hit.sources);
-      setUndoId(hit.undoId);
-      setOpen(true);
-      return;
-    }
-    ask.mutate(key);
-  }
-
-  const settled = Boolean(answer) && !ask.isPending;
-  const show = open && (ask.isPending || Boolean(answer));
-  // A write with nothing to cite still needs its answer and Undo. An empty source list used to hide both.
-  const answerRow = Boolean(answer) && (sources.length > 0 || Boolean(undoId));
-  const count = !show || ask.isPending ? null : answerRow ? sources.length + 1 : 0;
-
-  return (
-    <SearchQuery
-      className="relative w-full min-w-0 max-w-[560px] sm:min-w-[160px]"
-      pill
-      overlay
-      inputRef={input}
-      value={question}
-      onValue={(next) => {
-        setQuestion(next);
-        if (!next.trim()) {
-          setAnswer("");
-          setSources([]);
-          setUndoId(null);
-        }
+  useEffect(() => {
+    document.getElementById(`workspace-hit-${selected}`)?.scrollIntoView({ block: "nearest" });
+  }, [selected]);
+  return <div ref={root} className="relative w-full min-w-0 max-w-[560px]">
+    <SearchQuery pill overlay inputRef={input} value={query} onValue={(text) => { setQuery(text); setOpen(true); }} onFocus={() => setOpen(true)}
+      placeholder="Ask Ensemble · search your work" label="Ask Ensemble · search your work"
+      pending={pending} count={open && current && Boolean(debounced) && !found.isPending ? hits.length : null} list={open && hits.length > 0}
+      controls="workspace-search-results" activeDescendant={hits[selected] ? `workspace-hit-${selected}` : undefined}
+      status={pending ? "Searching your workspace…" : `${hits.length} matches · Enter to open`}
+      emptyTitle={found.isError ? "Search couldn’t load." : `No matches for “${query.trim()}”.`}
+      emptyHint={found.isError ? "Try again in a moment." : "Search a title or a phrase inside a page, task, or meeting note."}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") { event.preventDefault(); setOpen(false); input.current?.blur(); }
+        if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); setIndex((n) => Math.max(0, Math.min(hits.length - 1, n + (event.key === "ArrowDown" ? 1 : -1)))); }
       }}
-      onSubmit={run}
-      onFocus={() => {
-        if (answer) setOpen(true);
-      }}
-      placeholder="Ask Ensemble"
-      label="Ask Ensemble"
-      pending={ask.isPending}
-      count={show ? count : null}
-      list={show && settled && count !== null && count > 0}
-      panelExtra={
-        <div className="mb-1 flex justify-end">
-          <button type="button" className="btn-ghost py-0 text-[12px]" onClick={() => setOpen(false)}>
-            Close
-          </button>
-        </div>
-      }
-      status={ask.isPending ? "Looking through your data…" : sources.length ? plural(sources.length, "source") : "Answer"}
-      emptyTitle={answer && !answerRow ? answer : question.trim() ? `Nothing came back for “${question.trim()}”.` : "Nothing came back."}
-      emptyHint="Try fewer words, or name a person, a task, or a doc."
-      results={
-        <>
-          {answerRow ? (
-            <li className="sq-item" role="option" style={{ ["--i" as string]: 0 }}>
-              <p className="m-0 min-w-0 flex-1 text-[13px] leading-5">{answer}</p>
-              {undoId ? (
-                <button type="button" className="btn h-7 shrink-0 px-2 text-[12px]" data-ask-undo onClick={undo}>
-                  Undo
-                </button>
-              ) : null}
-            </li>
-          ) : null}
-          {sources.map((source, index) => (
-            <li key={`${source.kind}-${source.id}`} className="sq-item" role="option" style={{ ["--i" as string]: index + 1 }}>
-              <Link href={source.path} className="min-w-0 flex-1" onClick={() => setOpen(false)}>
-                <div className="text-[12.5px] font-medium">{source.label}</div>
-                {source.excerpt ? <div className="line-clamp-2 text-[12px] text-muted">{source.excerpt}</div> : null}
-              </Link>
-            </li>
-          ))}
-        </>
-      }
-    />
-  );
+      onSubmit={() => { if (hits[selected]) { document.getElementById(`workspace-link-${selected}`)?.click(); setOpen(false); } }}
+      panelExtra={<div className="workspace-search-heading" data-workspace-search-results><span><Search size={12} />Your workspace</span><button type="button" aria-label="Close search results" onClick={() => setOpen(false)}><X size={14} /></button></div>}
+      resultsId="workspace-search-results" resultsClassName="workspace-search-results" results={hits.map((hit, i) => <li key={hit.path} id={`workspace-hit-${i}`} role="option" aria-selected={i === selected} className="sq-item" data-workspace-search-results>
+        <Link id={`workspace-link-${i}`} href={searchHitHref(hit.path, query.trim())} className="workspace-search-hit" onMouseEnter={() => setIndex(i)} onClick={() => setOpen(false)}>
+          <FileText size={16} className="text-muted" /><span><strong><HighlightMatch text={hit.label} query={query.trim()} /></strong><small><HighlightMatch text={hit.excerpt || hit.label} query={query.trim()} /></small></span><em>{hit.kind.replace(/_/g, " ")}</em><ArrowUpRight size={13} />
+        </Link>
+      </li>)} />
+  </div>;
 }

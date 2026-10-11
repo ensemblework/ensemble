@@ -507,3 +507,33 @@ body[data-desk-moving="1"], body[data-desk-moving="1"] * { cursor: grabbing !imp
 .desk .visual-citations > div { padding: 7px 0; }
 .desk .visual-citations section { gap: 4px; }
 .desk .visual-document { min-height: 112px; }
+
+.tile-gallery-mobile-nav { display: none; }
+@media (max-width: 980px) {
+  [data-modal-layer]:has(> .tile-gallery-dialog) { padding: 8px; }
+  .tile-gallery-dialog { height: calc(100dvh - 16px); max-height: calc(100dvh - 16px); }
+  .tile-gallery-dialog-body { overflow-y: auto; overscroll-behavior-y: contain; }
+  .tile-gallery-dialog .tile-gallery { height: auto; }
+  .tile-gallery-dialog .tile-gallery-layout { grid-template-columns: minmax(0, 1fr); flex: none; }
+  .tile-gallery-dialog .tile-gallery-detail { display: flex; }
+  .tile-gallery-dialog .tile-gallery-sidebar { border-right: 0; }
+  .tile-gallery-mobile-nav { display: flex; gap: 8px; margin-bottom: 12px; }
+  .tile-gallery-mobile-nav button { display: flex; align-items: center; justify-content: center; gap: 6px; flex: 1; min-height: 40px; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); font-size: 12px; }
+  .tile-gallery-mobile-nav button[aria-pressed="true"] { background: var(--hover); color: var(--ink); }
+  .tile-gallery-dialog .tile-gallery-sidebar { max-height: none; }
+  .tile-gallery-categories { flex-wrap: wrap; overflow: visible; }
+  .tile-gallery-categories button { min-height: 36px; }
+  .tile-gallery-results { max-height: none; overflow: visible; flex: none; }
+  .tile-gallery[data-gallery-pane="browse"] .tile-gallery-detail,
+  .tile-gallery[data-gallery-pane="preview"] .tile-gallery-sidebar { display: none; }
+  .tile-gallery-dialog .tile-gallery-stage .tile { height: auto !important; min-height: 280px; max-height: none; }
+  .tile-gallery-preview-label { flex-wrap: wrap; }
+  .tile-gallery-detail footer { align-items: flex-start; flex-direction: column; }
+  .tile-gallery-detail footer button { width: 100%; min-height: 44px; }
+  .tile-gallery-stage .visual-body { overflow: visible; }
+}
+@media (max-width: 767px) {
+  .desk .bento { grid-auto-rows: auto; }
+  .desk .bento > .tile { grid-row: auto !important; min-height: 220px; }
+  .desk .bento .visual-body { overflow: visible; }
+}

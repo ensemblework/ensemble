@@ -116,7 +116,7 @@ export const IdeThemeFavourite = z.object({
   id: z.string().min(1).max(240),
   label: z.string().min(1).max(80),
   kind: z.enum(["dark", "light", "hc"]),
-  source: z.enum(["builtin", "openvsx"]),
+  source: z.enum(["builtin", "openvsx", "import"]),
 });
 export type IdeThemeFavourite = z.infer<typeof IdeThemeFavourite>;
 

@@ -5,6 +5,8 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { safeLoginNext } from "@/lib/signup-ui";
+import { ArrowRight, MailCheck } from "lucide-react";
+import { AuthBackdrop } from "./auth-backdrop";
 import { EnsembleLogo } from "./brand/Logo";
 
 export function AccountRecovery({ mode }: { mode: "forgot" | "reset" | "verify" }) {
@@ -78,10 +80,14 @@ function EmailCodeVerification() {
   const resend = useMutation({ mutationFn: api.resendVerification });
   const signedOut = !me.data && (me.isPending || ((me.error as { status?: number } | null)?.status ?? 401) === 401);
   return (
-    <main className="flex min-h-screen items-center justify-center bg-bg px-4">
-      <form className="w-full max-w-md rounded-2xl border border-line bg-panel p-8" onSubmit={(event) => { event.preventDefault(); verify.mutate(); }}>
-        <EnsembleLogo size={24} />
-        <h1 className="mt-6 text-[22px] font-semibold">Enter your verification code</h1>
+    <main className="auth-shell">
+      <div className="auth-brand"><EnsembleLogo size={24} /></div>
+      <AuthBackdrop />
+      <div className="auth-main">
+      <form className="auth-form auth-verify" onSubmit={(event) => { event.preventDefault(); if (code.length === 4 && !verify.isPending) verify.mutate(); }}>
+        <span className="auth-verify-icon"><MailCheck size={23} /></span>
+        <p className="auth-step">One last step</p>
+        <h1 className="display text-[30px] leading-tight tracking-tight">Check your inbox</h1>
         {signedOut ? (
           <p role="alert" className="mt-4 text-[13px] text-muted">
             Sign in first to the account you are verifying.{" "}
@@ -90,28 +96,35 @@ function EmailCodeVerification() {
         ) : (
           <>
             <p className="mt-3 text-[13px] text-muted">
-              We emailed a 4-character code{me.data?.user.email ? <> to <span className="font-medium text-ink">{me.data.user.email}</span></> : null}.
+              Enter the 4-character code we emailed{me.data?.user.email ? <> to <span className="font-medium text-ink">{me.data.user.email}</span></> : null}.
             </p>
-            <input
+            <label className="otp-field">
+              <span className="sr-only">Verification code</span>
+              <span className="otp-slots" aria-hidden>{Array.from({ length: 4 }, (_, i) => <span key={i} data-active={i === code.length}>{code[i] || ""}</span>)}</span>
+              <input
               aria-label="Verification code"
               autoComplete="one-time-code"
               inputMode="text"
-              maxLength={4}
-              className="field mt-5 w-full text-center font-mono text-[22px] uppercase tracking-[0.5em]"
+              autoFocus
+              maxLength={16}
+              className="otp-input"
               value={code}
               onChange={(event) => setCode(event.target.value.toUpperCase().replace(/[\s-]+/g, "").slice(0, 4))}
             />
+            </label>
             {verify.error ? <p role="alert" className="mt-4 text-[13px] text-[#ffb4ae]">{verify.error.message}</p> : null}
             <button type="submit" className="btn-primary mt-5 w-full justify-center" disabled={verify.isPending || code.length !== 4 || me.isPending}>
-              {verify.isPending ? "Checking..." : "Verify"}
+              {verify.isPending ? "Checking…" : <>Verify email<ArrowRight size={15} /></>}
             </button>
-            <button type="button" className="btn mt-3 w-full justify-center" disabled={resend.isPending || resend.isSuccess} onClick={() => resend.mutate()}>
-              {resend.isPending ? "Sending..." : resend.isSuccess ? "Sent" : "Send a new code"}
+            <p className="mt-5 text-center text-[12px] text-muted">Didn’t receive it? Check spam, or</p>
+            <button type="button" className="btn-ghost mt-1 w-full justify-center" disabled={resend.isPending || resend.isSuccess} onClick={() => resend.mutate()}>
+              {resend.isPending ? "Sending…" : resend.isSuccess ? "New code sent" : "Send a new code"}
             </button>
             {resend.error ? <p role="alert" className="mt-3 text-[13px] text-[#ffb4ae]">{resend.error.message}</p> : null}
           </>
         )}
       </form>
+      </div>
     </main>
   );
 }

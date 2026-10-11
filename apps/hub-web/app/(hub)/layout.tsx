@@ -20,6 +20,7 @@ import { PeekProvider, usePeek, useResizablePeek } from "@/components/shell/peek
 import { toggleSidebarRail } from "@/lib/sidebar-rail";
 import { SeasonBanner } from "@/components/shell/season-banner";
 import { Sidebar } from "@/components/shell/sidebar";
+import { SearchLanding } from "@/components/shell/search-match";
 import { TopBar } from "@/components/shell/topbar";
 import { FeatureGate } from "@/components/features/gate";
 import { FeatureTour } from "@/components/features/tour";
@@ -105,8 +106,9 @@ function Frame({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-bg">
+    <div className="flex h-dvh overflow-hidden bg-bg">
       <PageProgress />
+      <SearchLanding />
       <div className="h-full shrink-0 max-md:hidden">
         <Sidebar />
       </div>

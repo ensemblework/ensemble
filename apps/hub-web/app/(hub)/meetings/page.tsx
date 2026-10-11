@@ -10,7 +10,7 @@ import { useToast } from "@/components/toast";
 import { connectedApi } from "@/lib/api-connected";
 import { api } from "@/lib/api";
 import { MeetingNotesFields } from "@/components/meetings/notes-fields";
-import { ArrowUpRight, BookOpen, Clock3, FileText, MessageSquare, Plus, Search } from "lucide-react";
+import { ArrowUpRight, ChevronLeft, BookOpen, Clock3, FileText, MessageSquare, Plus, Search } from "lucide-react";
 import { whenLabel } from "@/lib/format";
 
 function MeetingsBody() {
@@ -22,14 +22,16 @@ function MeetingsBody() {
   const list = useQuery({ queryKey: ["meeting-sessions"], queryFn: api.meetingSessions });
   const imported = useQuery({ queryKey: ["meetings-imported"], queryFn: connectedApi.importedMeetings });
   const [active, setActive] = useState(selected ?? "");
+  const [reading, setReading] = useState(Boolean(selected));
   const [question, setQuestion] = useState("");
   const [search, setSearch] = useState("");
   const autoSelected = useRef(false);
   const [filter, setFilter] = useState<"all" | "active" | "recaps">("all");
-  const choose = (id: string) => { setActive(id); router.replace(id ? `/meetings?session=${encodeURIComponent(id)}` : "/meetings", { scroll: false }); };
+  const choose = (id: string) => { setActive(id); setReading(Boolean(id)); router.replace(id ? `/meetings?session=${encodeURIComponent(id)}` : "/meetings", { scroll: false }); };
 
   useEffect(() => {
-    if (selected) setActive(selected);
+    if (selected) { setActive(selected); setReading(true); }
+    else setReading(false);
   }, [selected]);
   const detail = useQuery({
     queryKey: ["meeting-session", active],
@@ -140,7 +142,8 @@ function MeetingsBody() {
           </button>
         </div>
       ) : null}
-      <div className={sessions.length === 0 && !session ? "hidden" : "meeting-library grid gap-5 md:grid-cols-[300px_minmax(0,1fr)]"}>
+      <div data-reading={reading} className={sessions.length === 0 && !session ? "hidden" : "meeting-library grid gap-5 md:grid-cols-[300px_minmax(0,1fr)]"}>
+        {reading && <button type="button" className="btn md:hidden" onClick={() => setReading(false)}><ChevronLeft size={14} />Back to notes</button>}
         <ul className="meeting-shelf">
           {sessions.length === 0 ? <li className="text-[13px] text-muted">No meeting notes yet.</li> : null}
           {visible.map((row) => (

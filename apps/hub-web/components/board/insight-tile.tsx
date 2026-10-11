@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { ArrowUpRight, Plus, X } from "lucide-react";
 import type { TaskRecord } from "@/lib/api";
 import type { Role } from "../onboarding/roles";
@@ -10,9 +11,9 @@ const COLORS = ["var(--chart-blue)", "var(--chart-violet)", "var(--chart-amber)"
 const OWNER_LABELS = { me: "Me", agent: "Agent", team: "Teammates", unassigned: "Unassigned" };
 const same = (a: BoardFocus | null, b: BoardFocus) => JSON.stringify(a) === JSON.stringify(b);
 
-type Props = { id: InsightId; role: Role; tasks: TaskRecord[]; who: OwnerContext; now: number; cap: number; focus?: BoardFocus | null; onFocus: (focus: BoardFocus | null) => void; onOpen?: (id: string) => void; onIdea?: () => void; onRemove?: () => void; preview?: boolean };
+type Props = { id: InsightId; role: Role; tasks: TaskRecord[]; who: OwnerContext; now: number; cap: number; focus?: BoardFocus | null; onFocus: (focus: BoardFocus | null) => void; onOpen?: (id: string) => void; onIdea?: () => void; onRemove?: () => void; grip?: ReactNode; preview?: boolean };
 
-export function InsightTile({ id, role, tasks: raw, who, now, cap, focus = null, onFocus, onOpen, onIdea, onRemove, preview }: Props) {
+export function InsightTile({ id, role, tasks: raw, who, now, cap, focus = null, onFocus, onOpen, onIdea, onRemove, grip, preview }: Props) {
   const spec = INSIGHT_CATALOG[id];
   const Icon = spec.icon;
   const tasks = boardTasks(raw), open = openTasks(tasks);
@@ -59,5 +60,5 @@ export function InsightTile({ id, role, tasks: raw, who, now, cap, focus = null,
     const rows = tasks.filter((t) => matchesFocus(t, { kind: id }, who, now)).sort((a, b) => Date.parse(a.updatedAt) - Date.parse(b.updatedAt));
     body = <>{metric(rows.length, id === "stale" ? "quiet for 7+ days" : "waiting tasks")}{rows.length ? taskList(rows, id === "stale") : <p className="insight-note">{id === "stale" ? "Open work has recent updates" : "Nothing blocked or awaiting approval"}</p>}{action(id === "stale" ? "Give these a fresh look" : "Find the next step", { kind: id })}</>;
   }
-  return <section className="board-insight" data-board-insight={id} aria-label={insightTitle(id, role)}><header><Icon size={14} /><h3>{insightTitle(id, role)}</h3>{onRemove && <button type="button" aria-label={`Remove ${insightTitle(id, role)} tile`} onClick={onRemove}><X size={12} /></button>}</header><div className="insight-content">{body}</div></section>;
+  return <section className="board-insight" data-board-insight={id} aria-label={insightTitle(id, role)}><header>{grip}<Icon size={14} /><h3>{insightTitle(id, role)}</h3>{onRemove && <button type="button" aria-label={`Remove ${insightTitle(id, role)} tile`} onClick={onRemove}><X size={12} /></button>}</header><div className="insight-content">{body}</div></section>;
 }

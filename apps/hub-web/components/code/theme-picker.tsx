@@ -16,11 +16,12 @@ import {
   type ThemeFavourite,
   type ThemeKind,
 } from "@ensemble/ide-theme";
-import { Star } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { importColorThemes } from "./import-theme";
+import { Star, Upload } from "lucide-react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "@/lib/api";
-import { cx } from "../ui";
+import { ModalScope, cx } from "../ui";
 
 type Row = {
   key: string;
@@ -32,8 +33,8 @@ type Row = {
   downloads?: number;
   supported: boolean;
   reason?: string;
-  source: "builtin" | "openvsx";
-  section: "Starred" | "Included" | "Theme directory";
+  source: "builtin" | "openvsx" | "import";
+  section: "Starred" | "Included" | "Theme directory" | "Imported";
   load: () => Promise<IdeTheme | null>;
 };
 
@@ -42,6 +43,8 @@ export function ThemePicker({
   committed,
   favourites,
   catalog,
+  imported = [],
+  onImport,
   onPreview,
   onCommit,
   onFavourites,
@@ -51,12 +54,16 @@ export function ThemePicker({
   committed: IdeTheme;
   favourites: ThemeFavourite[];
   catalog: BuiltinMeta[];
+  imported?: IdeTheme[];
+  onImport?: (themes: IdeTheme[]) => void;
   onPreview: (theme: IdeTheme | null) => void;
   onCommit: (theme: IdeTheme) => void;
   onFavourites: (next: ThemeFavourite[]) => void;
   onClose: () => void;
 }) {
+  const modalOwner = useContext(ModalScope);
   const dialog = useRef<HTMLDivElement>(null);
+  const file = useRef<HTMLInputElement>(null);
   const search = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
@@ -87,7 +94,10 @@ export function ThemePicker({
     const list: Row[] = [];
     for (const fav of favourites) {
       if (!matches(`${fav.label} ${fav.id}`)) continue;
-      list.push(rowFromFavourite(fav));
+      list.push(fav.source === "import" ? { ...rowFromFavourite(fav), load: async () => imported.find((theme) => theme.id === fav.id) ?? null } : rowFromFavourite(fav));
+    }
+    for (const theme of imported) {
+      if (!favIds.has(theme.id) && matches(theme.label)) list.push({ key:theme.id, id:theme.id, label:theme.label, publisher:"This device", kind:theme.kind, badge:kindBadge(theme.kind), supported:true, source:"import", section:"Imported", load:async()=>theme });
     }
     for (const item of catalog) {
       if (favIds.has(item.id)) continue;
@@ -119,7 +129,7 @@ export function ThemePicker({
       }
     }
     return list;
-  }, [catalog, favourites, query, remote.data]);
+  }, [catalog, favourites, imported, query, remote.data]);
 
   useEffect(() => {
     setIndex(0);
@@ -223,7 +233,9 @@ export function ThemePicker({
       return;
     }
     setNote(null);
-    const theme = loaded.current.get(row.key) ?? (await row.load());
+    let theme: IdeTheme | null;
+    try { theme = loaded.current.get(row.key) ?? (await row.load()); }
+    catch (error) { setNote((error as Error).message); return; }
     if (!theme) {
       setNote(row.reason ?? "That theme couldn't be loaded.");
       return;
@@ -250,7 +262,7 @@ export function ThemePicker({
     setPending(next);
   };
 
-  const top = anchor ? Math.min(anchor.bottom + 8, window.innerHeight - 120) : 64;
+  const top = window.innerWidth < 768 ? 12 : anchor ? Math.max(12, Math.min(anchor.bottom + 8, window.innerHeight - 420)) : 64;
   const right = anchor ? Math.max(12, window.innerWidth - anchor.right) : 16;
   let lastSection = "";
 
@@ -260,10 +272,24 @@ export function ThemePicker({
       role="dialog"
       aria-label="Choose a theme"
       data-ide-theme-picker=""
+      data-modal-owner={modalOwner ?? undefined}
       className="pop-in fixed z-[60] flex w-[min(22.5rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-xl border border-line-strong bg-panel text-ink shadow-pop"
-      style={{ top, right, maxHeight: "min(32rem, calc(100vh - 1.5rem))" }}
+      style={{ top, right, maxHeight: `min(32rem, calc(100dvh - ${top + 12}px))` }}
     >
       <div className="border-b border-line p-2">
+        {onImport && <div className="mb-2 flex items-center justify-between gap-2"><span className="text-[10px] text-muted">VS Code color themes</span><button type="button" className="btn text-[11px]" onClick={() => file.current?.click()}><Upload size={12} />Import theme</button><input ref={file} type="file" className="hidden" accept=".vsix,.json,.jsonc" aria-label="Import VS Code theme" onChange={async (event) => {
+          const picked = event.target.files?.[0]; if (!picked) return;
+          try {
+            if (picked.size > 12 * 1024 * 1024) throw new Error("Choose a theme package smaller than 12 MB.");
+            const bytes = new Uint8Array(await picked.arrayBuffer());
+            const digest = await crypto.subtle.digest("SHA-256", bytes);
+            const key = Array.from(new Uint8Array(digest)).slice(0, 12).map((n) => n.toString(16).padStart(2, "0")).join("");
+            const themes = importColorThemes(bytes, picked.name, key);
+            onImport(themes); setQuery(""); setNote(`Imported ${themes.length} color theme${themes.length === 1 ? "" : "s"} on this device. Choose one below.`);
+          } catch (error) { setNote((error as Error).message); }
+          event.target.value = "";
+        }} /></div>}
+
         <input
           ref={search}
           value={query}
@@ -329,7 +355,7 @@ export function ThemePicker({
         {remote.isFetching ? <p className="px-2 py-2 text-[12.5px] text-muted">Searching the theme directory…</p> : null}
         {remote.isError ? <p className="px-2 py-2 text-[12.5px] text-muted">Search needs a connection. Included themes still work.</p> : null}
         {debounced.length < 2 && !query.trim() ? (
-          <p className="px-2 py-2 text-[12px] leading-5 text-faint">Search to use any color theme made for VS Code or Cursor. Starred themes also switch with Alt+Shift+T.</p>
+          <p className="px-2 py-2 text-[12px] leading-5 text-faint">Search Open VSX, or import a Marketplace VSIX or color JSON file. Imported themes stay on this device. Starred themes switch with Alt+Shift+T.</p>
         ) : null}
       </div>
       {pending ? (

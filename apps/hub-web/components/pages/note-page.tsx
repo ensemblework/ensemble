@@ -12,7 +12,6 @@ import { useEntities } from "@/lib/entities";
 import { blockEditor, warmPeek } from "@/lib/warm";
 import { mentionHref } from "../editor/editor-commands";
 import { useToast } from "../toast";
-import { Dialog } from "../ui";
 import { PageLoadFailure } from "./page-load";
 import { PageTitleField } from "./title-field";
 import { isPageEnsembleBusy } from "../comments/ensemble-bus";
@@ -65,7 +64,6 @@ export function NotePage({
   });
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [epoch, setEpoch] = useState(0);
-  const [confirming, setConfirming] = useState(false);
   const revision = useRef(0);
   const pending = useRef<PageDocument | null>(null);
   const timer = useRef<number | undefined>(undefined);
@@ -135,6 +133,18 @@ export function NotePage({
     },
     onError: (error: Error) => toast(error.message, { tone: "error" }),
   });
+
+  const deleteFromSidebar = useRef(() => remove.mutate());
+  deleteFromSidebar.current = () => { if (!remove.isPending) remove.mutate(); };
+  useEffect(() => {
+    const handle = (event: Event) => {
+      if ((event as CustomEvent<{ id: string }>).detail.id !== pageId) return;
+      event.preventDefault();
+      deleteFromSidebar.current();
+    };
+    window.addEventListener("ensemble:delete-page", handle);
+    return () => window.removeEventListener("ensemble:delete-page", handle);
+  }, [pageId]);
 
   const flush = useCallback(async () => {
     while (inFlight.current) {
@@ -248,7 +258,7 @@ export function NotePage({
               <button type="button" className="btn-ghost" disabled={convert.isPending} onClick={() => convert.mutate()}>
                 <CheckSquare size={13} /> Add to board
               </button>
-              <button type="button" className="icon-btn" title="Delete" aria-label="Delete page" onClick={() => setConfirming(true)}>
+              <button type="button" className="icon-btn" title="Delete" aria-label="Delete page" onClick={() => remove.mutate()}>
                 <Trash2 size={14} />
               </button>
               <span className="mx-0.5 h-4 w-px bg-line" aria-hidden />
@@ -294,26 +304,7 @@ export function NotePage({
           <div className="skeleton mt-4 h-64 w-full" />
         ) : null}
       </div>
-      <Dialog open={confirming} onClose={() => setConfirming(false)} title="Delete this page?" width={420}>
-        <p className="text-[13.5px] leading-5 text-muted">
-          Delete “{record.title || "Untitled"}”? This moves the note to Trash. You can restore it there until the configured retention period expires.
-        </p>
-        <div className="mt-4 flex justify-end gap-2">
-          <button type="button" className="btn-ghost" onClick={() => setConfirming(false)}>
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="btn"
-            onClick={() => {
-              setConfirming(false);
-              remove.mutate();
-            }}
-          >
-            Delete page
-          </button>
-        </div>
-      </Dialog>
+
     </div>
   );
 }

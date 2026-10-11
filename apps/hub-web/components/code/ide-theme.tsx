@@ -34,6 +34,8 @@ type IdeApi = {
   shown: IdeTheme;
   committed: IdeTheme;
   favourites: ThemeFavourite[];
+  imported: IdeTheme[];
+  remember: (themes: IdeTheme[]) => void;
   setPreview: (theme: IdeTheme | null) => void;
   commit: (theme: IdeTheme) => void;
   setFavourites: (next: ThemeFavourite[]) => void;
@@ -66,7 +68,7 @@ function readStore(): Store {
 function isFavourite(value: unknown): value is ThemeFavourite {
   if (!value || typeof value !== "object") return false;
   const row = value as ThemeFavourite;
-  return typeof row.id === "string" && typeof row.label === "string" && (row.kind === "dark" || row.kind === "light" || row.kind === "hc") && (row.source === "builtin" || row.source === "openvsx");
+  return typeof row.id === "string" && typeof row.label === "string" && (row.kind === "dark" || row.kind === "light" || row.kind === "hc") && (row.source === "builtin" || row.source === "openvsx" || row.source === "import");
 }
 
 function writeStore(theme: IdeTheme, favourites: ThemeFavourite[], previous: Store): void {
@@ -94,6 +96,7 @@ export function IdeSpace({ className, children, diagram = false }: { className?:
   const settings = useQuery({ queryKey: ["settings"], queryFn: hub.settings, staleTime: 30_000 });
   const [committed, setCommitted] = useState<IdeTheme>(ensembleDefaultTheme);
   const [favourites, setFavouritesState] = useState<ThemeFavourite[]>([]);
+  const [imported, setImported] = useState<IdeTheme[]>([]);
   const [preview, setPreview] = useState<IdeTheme | null>(null);
   const store = useRef<Store>(emptyStore());
   const localChange = useRef(false);
@@ -108,6 +111,7 @@ export function IdeSpace({ className, children, diagram = false }: { className?:
     const cached = sanitizeIdeTheme(store.current.themes[id]);
     if (cached) return cached;
     if (id.startsWith("builtin:")) return (await loadBuiltinTheme(id)) ?? ensembleDefaultTheme;
+    if (id.startsWith("import:")) throw new Error("Import that theme on this device to use it here.");
     const parsed = parseOpenVsxThemeId(id);
     if (!parsed) return ensembleDefaultTheme;
     const loaded = await hub.loadOpenVsxTheme(parsed);
@@ -120,6 +124,7 @@ export function IdeSpace({ className, children, diagram = false }: { className?:
     async (theme: IdeTheme, nextFavourites: ThemeFavourite[]) => {
       writeStore(theme, nextFavourites, store.current);
       store.current = readStore();
+      window.dispatchEvent(new CustomEvent("ensemble:ide-theme", { detail: { theme, favourites: nextFavourites } }));
       try {
         const saved = await hub.saveSettings({ ideTheme: { activeId: theme.id, favourites: nextFavourites } });
         client.setQueryData(["settings"], (current: { settings: unknown; connectors?: unknown } | undefined) =>
@@ -164,6 +169,7 @@ export function IdeSpace({ className, children, diagram = false }: { className?:
 
   useEffect(() => {
     store.current = readStore();
+    setImported(Object.values(store.current.themes).filter((theme) => theme.id.startsWith("import:")));
     setFavouritesState(store.current.favourites);
     const cached = sanitizeIdeTheme(store.current.themes[store.current.activeId]);
     if (cached) setCommitted(cached);
@@ -173,6 +179,28 @@ export function IdeSpace({ className, children, diagram = false }: { className?:
       });
     }
   }, []);
+
+  useEffect(() => {
+    const sync = (event: Event) => {
+      const detail = (event as CustomEvent<{ theme: IdeTheme; favourites: ThemeFavourite[] }>).detail;
+      const next = detail ? sanitizeIdeTheme(detail.theme) : null;
+      if (!next) return;
+      localChange.current = true;
+      store.current = readStore();
+      setCommitted(next);
+      setImported(Object.values(store.current.themes).filter((theme) => theme.id.startsWith("import:")));
+      setFavouritesState(detail.favourites.filter(isFavourite).slice(0, 3));
+      setPreview(null);
+    };
+    const external = (event: StorageEvent) => {
+      if (event.key !== STORE_KEY) return;
+      store.current = readStore();
+      void resolveTheme(store.current.activeId).then((theme) => sync(new CustomEvent("ensemble:ide-theme", { detail: { theme, favourites: store.current.favourites } }))).catch(() => undefined);
+    };
+    window.addEventListener("ensemble:ide-theme", sync);
+    window.addEventListener("storage", external);
+    return () => { window.removeEventListener("ensemble:ide-theme", sync); window.removeEventListener("storage", external); };
+  }, [resolveTheme]);
 
   useEffect(() => {
     const ide = settings.data?.settings.ideTheme;
@@ -192,7 +220,7 @@ export function IdeSpace({ className, children, diagram = false }: { className?:
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (!isCycleFavouriteThemesShortcut(event)) return;
+      if (event.defaultPrevented || !isCycleFavouriteThemesShortcut(event)) return;
       if (document.querySelector("[data-ide-theme-picker]")) return;
       const target = event.target as HTMLElement | null;
       if (target?.closest("input, textarea, [contenteditable=true]")) return;
@@ -208,9 +236,19 @@ export function IdeSpace({ className, children, diagram = false }: { className?:
     return () => window.removeEventListener("keydown", onKey);
   }, [applyId, toast]);
 
+  const remember = useCallback((themes: IdeTheme[]) => {
+    for (const theme of themes) store.current.themes[theme.id] = theme;
+    const next = [...themes, ...Object.values(store.current.themes).filter((theme) => theme.id.startsWith("import:") && !themes.some((row) => row.id === theme.id))].slice(0, 8);
+    store.current.order = [...next.map((theme) => theme.id), ...store.current.order].filter((id, i, all) => all.indexOf(id) === i).slice(0, 8);
+    const keep = new Set([...store.current.order, store.current.activeId, ...store.current.favourites.map((theme) => theme.id)]);
+    store.current.themes = Object.fromEntries(Object.entries(store.current.themes).filter(([id]) => keep.has(id)));
+    window.localStorage.setItem(STORE_KEY, JSON.stringify(store.current));
+    setImported(next);
+  }, []);
+
   const controls = useMemo<IdeApi>(
-    () => ({ shown, committed, favourites, setPreview, commit, setFavourites, applyId }),
-    [shown, committed, favourites, commit, setFavourites, applyId],
+    () => ({ shown, committed, favourites, imported, remember, setPreview, commit, setFavourites, applyId }),
+    [shown, committed, favourites, imported, remember, commit, setFavourites, applyId],
   );
 
   return (
@@ -283,6 +321,8 @@ export function ThemeControl() {
           committed={controls.committed}
           favourites={controls.favourites}
           catalog={BUILTINS}
+          imported={controls.imported}
+          onImport={controls.remember}
           onPreview={controls.setPreview}
           onCommit={(theme) => {
             controls.commit(theme);
