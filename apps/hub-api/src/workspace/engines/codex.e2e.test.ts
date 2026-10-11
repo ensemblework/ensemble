@@ -91,7 +91,7 @@ test("Codex as the engine: approvals and questions are answered by the run's rul
     assert.match(summary, /write:accept/);
     assert.match(summary, /question:Blue \(Recommended\)/, "unattended: Codex's recommended option");
     assert.match(summary, /mcp:The person answered: Large/, "ask_person through the thread's MCP config");
-    assert.match(summary, /policy:on-request/, "a trusted folder: Codex asks only to leave its sandbox");
+    assert.match(summary, /policy:untrusted/, "without its sandbox, Codex asks and the run's rules answer");
     assert.match(summary, /sandbox:danger-full-access/, "the sandbox was off for this run");
     assert.match(summary, /trust:untrusted/, "the folder's own .codex/ does not run");
     assert.match(summary, /keys:none/, "Ensemble's own keys are not handed to Codex");

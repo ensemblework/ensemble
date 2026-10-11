@@ -61,11 +61,13 @@ test("sign-in tokens and anything unknown are never handled", async () => {
   await assert.rejects(answerCodex(ctx(), "item/tool/call", {}, new Map(), judge), /not handled/);
 });
 
-test("Codex asks before commands only in Ask mode in a folder that is not trusted", () => {
-  assert.equal(codexApprovalPolicy({ accessMode: "read-write", trusted: false, job: { unattended: false } }), "untrusted");
-  assert.equal(codexApprovalPolicy({ accessMode: "read-write", trusted: true, job: { unattended: false } }), "on-request");
-  assert.equal(codexApprovalPolicy({ accessMode: "auto", trusted: true, job: { unattended: false } }), "on-request");
-  assert.equal(codexApprovalPolicy({ accessMode: "auto", trusted: true, job: { unattended: true } }), "on-request");
+test("Codex asks before commands in Ask mode in a folder that is not trusted, and always without its sandbox", () => {
+  assert.equal(codexApprovalPolicy({ sandboxed: true, accessMode: "read-write", trusted: false, job: { unattended: false } }), "untrusted");
+  assert.equal(codexApprovalPolicy({ sandboxed: true, accessMode: "read-write", trusted: true, job: { unattended: false } }), "on-request");
+  assert.equal(codexApprovalPolicy({ sandboxed: true, accessMode: "auto", trusted: true, job: { unattended: false } }), "on-request");
+  assert.equal(codexApprovalPolicy({ sandboxed: true, accessMode: "auto", trusted: true, job: { unattended: true } }), "on-request");
+  // Without the sandbox nothing else would see its commands: the run's rules answer each one.
+  assert.equal(codexApprovalPolicy({ sandboxed: false, accessMode: "auto", trusted: true, job: { unattended: true } }), "untrusted");
 });
 
 test("the app-server connection pairs responses, answers Codex's requests, and passes notifications on", async () => {

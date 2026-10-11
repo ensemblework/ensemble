@@ -137,8 +137,14 @@ export async function answerCodex(
   }
 }
 
-/** How Codex asks: before commands in Ask mode in a folder that is not trusted, else only to leave its sandbox. */
-export function codexApprovalPolicy(ctx: Pick<JobContext, "accessMode" | "trusted"> & { job: { unattended: boolean } }): "untrusted" | "on-request" {
+/**
+ * How Codex asks. Without its sandbox, before every command it does not consider safe, so the
+ * run's rules (the outside-folder rule above all) see each one; most are answered by those rules
+ * without the person. With its sandbox, the same in Ask mode in a folder that is not trusted, and
+ * otherwise only when it wants to leave the sandbox.
+ */
+export function codexApprovalPolicy(ctx: Pick<JobContext, "accessMode" | "trusted" | "sandboxed"> & { job: { unattended: boolean } }): "untrusted" | "on-request" {
+  if (!ctx.sandboxed) return "untrusted";
   return ctx.accessMode === "read-write" && !ctx.job.unattended && !ctx.trusted ? "untrusted" : "on-request";
 }
 

@@ -34,7 +34,7 @@ A code task is done by **Ensemble's agent** (Ensemble's own tool loop calling a 
 **How a run goes:**
 
 1. `initialize` (`clientInfo.name: "ensemble"`), `account/read`, then `thread/start` in the work folder with:
-   - `approvalPolicy`: `untrusted` (Codex asks before each command it does not consider safe) in Ask mode in a folder that is not trusted; otherwise `on-request` (Codex asks only to leave its sandbox).
+   - `approvalPolicy`: `untrusted` (Codex asks before each command it does not consider safe) with the sandbox off, so the run's rules see every command (most are answered without the person), and in Ask mode in a folder that is not trusted; otherwise `on-request` (Codex asks only to leave its sandbox).
    - `sandbox`: `workspace-write` with the sandbox on, `danger-full-access` with it off. `turn/start` passes `sandboxPolicy.workspaceWrite` with the work folder and cache as writable roots (plus the person's own home folders with **Read and write** outside access) and the run's internet setting. Codex's own sandbox (Seatbelt, bubblewrap, its Windows sandbox) does the confining; Ensemble does not nest its own around it (that fails on macOS).
    - `config.projects[<folder>].trust_level = "untrusted"` for this thread only, so the folder's own `.codex/` (hooks, rules, MCP servers) does not run, as with Claude Code's `--setting-sources user`.
    - `config.mcp_servers.ensemble`: the same `ask_person` server, with the run's secret.
