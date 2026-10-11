@@ -22,6 +22,7 @@ test("each profile has six distinct, role-relevant designs with static, truthful
     const cards = TEMPLATE_CARDS.filter((c) => c.role === role.id);
     assert.ok(cards.length >= 5, role.id);
     assert.equal(new Set(cards.map((c) => JSON.stringify(c.tiles))).size, cards.length);
+    assert.ok(new Set(cards.map((c) => c.tiles[0]![0])).size >= 5, `${role.id}: distinct leading tiles`);
     for (const c of cards) {
       for (const [key] of c.tiles) {
         assert.ok(specPool().has(key), `${c.id}: ${key}`);

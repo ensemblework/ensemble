@@ -87,7 +87,7 @@ export const TEMPLATE_CARDS: readonly TemplateCard[] = [
     [["drafts", 8, 3], ["stages", 4, 3], ["filings", 6, 3], ["cites", 6, 3], ["progress", 4, 3], ["follow", 8, 3]],
     ["Drafts side by side", "Filing dates", "Citations per clause"]),
   card("lawyer", "deadline-wall", "Deadline wall", "Dates ahead of narrative. Three reminders, one response.", "chambers",
-    [["limitation", 12, 4], ["calendar", 4, 5], ["due-week", 8, 3], ["cause", 8, 3]],
+    [["calendar", 4, 5], ["due-week", 8, 3], ["cause", 8, 3], ["limitation", 12, 4]],
     ["Reminders before each date", "Today's cause list", "Every limitation date"]),
   card("lawyer", "client-morning", "Client morning", "Who, then what they are waiting on.", "chambers",
     [["people", 8, 3], ["billable", 4, 3], ["follow", 6, 3], ["focus", 6, 3], ["progress", 4, 3], ["due-week", 8, 3]],
