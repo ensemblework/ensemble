@@ -1,5 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Figtree, Fraunces, JetBrains_Mono } from "next/font/google";
+import { JsonLd } from "@/components/json-ld";
+import { organization, website } from "@/lib/schema";
 import { site } from "@/lib/site";
 import "./globals.css";
 
@@ -15,14 +17,19 @@ const mono = JetBrains_Mono({ subsets: ["latin"], display: "swap", variable: "--
 
 export const metadata: Metadata = {
   metadataBase: new URL(site.url),
-  title: site.title,
+  title: { default: site.title, template: "%s | Ensemble" },
   description: site.description,
   applicationName: site.name,
-  alternates: { canonical: "/" },
+  keywords: [...site.keywords],
+  category: "productivity",
+  creator: site.name,
+  publisher: site.name,
+  // Let search engines show large image previews and full-length snippets.
+  robots: { googleBot: { "max-image-preview": "large", "max-snippet": -1, "max-video-preview": -1 } },
   openGraph: {
     type: "website",
-    url: site.url,
     siteName: site.name,
+    locale: "en_US",
     title: site.title,
     description: site.description,
   },
@@ -37,7 +44,10 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${sans.variable} ${display.variable} ${mono.variable}`}>
-      <body>{children}</body>
+      <body>
+        {children}
+        <JsonLd data={[organization, website]} />
+      </body>
     </html>
   );
 }

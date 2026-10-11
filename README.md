@@ -2,6 +2,8 @@
 
 A localhost-first digital coworker: a shared board, Notion-like task pages, and an agent that works the same context you do.
 
+**Website: [ensemblework.com](https://ensemblework.com)** · **App: [app.ensemblework.com](https://app.ensemblework.com)** · an AI notes app and workspace where you [plan your day with AI](https://ensemblework.com/plan-your-day-with-ai), keep [AI context](https://ensemblework.com/ai-context-management) in one place, and [work with AI agents](https://ensemblework.com/work-with-ai-agents).
+
 Design and operating docs live in [`docs/`](docs/README.md). [`docs/18_WHAT_IS_REAL.md`](docs/18_WHAT_IS_REAL.md) says what works today. Coding agents (and people) changing the code should read [`AGENTS.md`](AGENTS.md) first.
 
 ## Run locally (Mac)
@@ -145,7 +147,7 @@ pnpm cli:package --target darwin-arm64 --out dist/cli   # full archive for this 
 
 ```
 apps/hub-web            Next.js 15 — Notion-like shell (Today, Board, Needs me, pages, Code, Plots, Diagrams)
-apps/landing            static landing page for ensemblework.com (pnpm --filter @ensemble/landing dev, port 3100)
+apps/landing            static site for ensemblework.com: home, topic pages, /download (pnpm --filter @ensemble/landing dev, port 3100)
 apps/hub-api            Fastify + Prisma — tasks, pages, undo, SSE, scheduler, workspace queue, assistant
 apps/agent-runtime      Python — model adapters, planner, plot export
 apps/skill-forge        Python miners (stub)
@@ -166,7 +168,7 @@ More detail: [docs/17_REPOSITORY_STRUCTURE.md](docs/17_REPOSITORY_STRUCTURE.md).
 
 ## CI and deploys
 
-Every pull request runs `.github/workflows/ci.yml`: typecheck, the TypeScript and Python test suites (hub-api against a real Postgres and Redis), and production builds of the Hub and the landing page. After CI passes on `main`, `.github/workflows/deploy.yml` ships it: the VM pulls the new commit and the Hub and landing page are published on Vercel. How it works and which secrets it needs: [docs/01 §8](docs/01_TECH_STACK_AND_ENVIRONMENT.md#8-ci-and-deploys). A tag `cli-v<version>` runs `.github/workflows/cli-release.yml`, which builds the CLI for macOS, Windows and Linux, publishes a GitHub release, and updates the Homebrew tap and Scoop bucket ([docs/26 §7](docs/26_CLI.md#7-releases)).
+Every pull request runs `.github/workflows/ci.yml`: typecheck, the TypeScript and Python test suites (hub-api against a real Postgres and Redis), and production builds of the Hub and the landing page. After CI passes on `main`, `.github/workflows/deploy.yml` ships it: the VM pulls the new commit, the Hub and landing page are published on Vercel, and the landing pages are submitted to IndexNow search engines. How it works and which secrets it needs: [docs/01 §8](docs/01_TECH_STACK_AND_ENVIRONMENT.md#8-ci-and-deploys). A tag `cli-v<version>` runs `.github/workflows/cli-release.yml`, which builds the CLI for macOS, Windows and Linux, publishes a GitHub release, and updates the Homebrew tap and Scoop bucket ([docs/26 §7](docs/26_CLI.md#7-releases)).
 
 ## License
 

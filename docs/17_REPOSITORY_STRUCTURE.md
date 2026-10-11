@@ -98,10 +98,13 @@ apps/agent-runtime/ensemble_agent/
 └── audit/                    Ledger writer
 apps/agent-runtime/tests/     pytest suite
 
-apps/landing/                 app/ (home, /download, /privacy, /terms, Open Graph image, robots, sitemap),
-                              components/ (live board, wave motif, icons, install tabs), lib/ (site URLs,
-                              download.ts install and editor data), public/ (install.sh, install.ps1),
-                              vercel.json (text/plain headers for the install scripts)
+apps/landing/                 app/ (home, four topic pages, /download, /privacy, /terms, Open Graph image,
+                              robots, sitemap), components/ (live board, wave motif, icons, install tabs,
+                              shared header/footer, topic page, JSON-LD), lib/ (site.ts title/keywords/URLs,
+                              topics.ts topic-page copy, schema.ts structured data, metadata.ts, download.ts
+                              install and editor data), public/ (install.sh, install.ps1, llms.txt, the IndexNow
+                              key file), scripts/indexnow.mjs, vercel.json (install-script headers and the
+                              ensemblework.app redirects)
 apps/context-bridge/          src/ (MCP server; exports ./server, ./hub, ./config), clients/ (editor config samples), test/, scripts/
 apps/cli/                     src/ (commands, device login, sidecar control, editor writers, services), scripts/build.mjs
                               (esbuild bundle → dist/ensemble.mjs), bin/ensemble (POSIX launcher), launcher/ (Go, Windows)

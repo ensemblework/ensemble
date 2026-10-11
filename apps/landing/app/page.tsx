@@ -1,8 +1,15 @@
 import { Icon, type IconName } from "@/components/icon";
+import { JsonLd } from "@/components/json-ld";
 import { LiveBoard } from "@/components/live-board";
 import { Mark, Wordmark } from "@/components/mark";
+import { GitHubLink, SiteFooter } from "@/components/site-chrome";
 import { Voices } from "@/components/voices";
+import { pageMetadata } from "@/lib/metadata";
+import { faqPage, softwareApplication, webPage, type Faq } from "@/lib/schema";
 import { site } from "@/lib/site";
+import { TOPICS } from "@/lib/topics";
+
+export const metadata = pageMetadata({ path: "/", title: site.title, description: site.description });
 
 const DAY = [
   {
@@ -80,14 +87,32 @@ const TARGETS = [
   { from: "", to: "100%", label: "Agent actions in the audit ledger" },
 ];
 
-function GitHubLink({ className = "" }: { className?: string }) {
-  if (!site.repoPublic) return null;
-  return (
-    <a className={className} href={site.repoUrl} rel="noopener">
-      GitHub
-    </a>
-  );
-}
+const FAQ: Faq[] = [
+  {
+    q: "What is Ensemble?",
+    a: "Ensemble is an AI notes app and shared workspace where you and your AI agents work from the same context: notes, todos, meetings, mail, calendar, code and people. It plans your day with you, keeps your context in one place, and hands work to agents that ask before anything leaves.",
+  },
+  {
+    q: "Is Ensemble Work the same as Ensemble?",
+    a: "Yes. Ensemble lives at ensemblework.com, the web app is at app.ensemblework.com, and the command-line tool is the ensemblework package on npm. People call it Ensemble or Ensemble Work.",
+  },
+  {
+    q: "Who is Ensemble for?",
+    a: "Anyone who works with AI agents and LLMs. When you sign up you pick a role (student, teacher, lawyer, engineer, builder or manager) and a starting layout made for it. Engineers also get a CLI that runs agent tasks in a sandbox on their own computer.",
+  },
+  {
+    q: "Which AI models and agents work with Ensemble?",
+    a: "Bring your own key for Gemini, OpenAI, Claude, OpenRouter, Ollama or GitHub Copilot. Ensemble can hand coding tasks to Claude Code with your own sign-in, permission prompts from Claude Code, Codex, GitHub Copilot and Cursor come to one place, and editors read your context over MCP.",
+  },
+  {
+    q: "Is Ensemble free?",
+    a: "Creating an account is free, and notes, tasks and context work without a model key. Model features use your own provider key, so the provider bills you directly. The code is source available on GitHub.",
+  },
+  {
+    q: "Can I use Ensemble on my own computer?",
+    a: "Yes. Use it in the browser, or install the CLI on macOS, Windows or Linux to run tasks locally in the operating system's own sandbox. No Docker or VM is needed.",
+  },
+];
 
 export default function Home() {
   return (
@@ -115,14 +140,15 @@ export default function Home() {
         <section className="hero">
           <div className="glow" aria-hidden="true" />
           <div className="hero-copy">
-            <p className="eyebrow reveal">Source available · localhost first · your keys</p>
+            <p className="eyebrow reveal">AI notes app · plan your day · work with agents</p>
             <h1 className="reveal" style={{ animationDelay: "80ms" }}>
-              <span className="line">You and your agent,</span>
+              <span className="line">Notes and AI agents,</span>
               <em className="line">in the same key.</em>
             </h1>
             <p className="lede reveal" style={{ animationDelay: "160ms" }}>
-              Ensemble is a shared workspace where an engineer and their agent see the same picture: your todos, meetings, mail,
-              code and people. So it can do real work without being told the context every single time.
+              Ensemble is an AI notes app and shared workspace where you and your AI agents see the same picture: your notes,
+              todos, meetings, mail, code and people. Plan your day, keep your context in one place, and let an agent do real work
+              without being told the context every single time.
             </p>
             <div className="ctas reveal" style={{ animationDelay: "240ms" }}>
               <a className="btn" href={site.signupUrl}>
@@ -138,6 +164,30 @@ export default function Home() {
             <LiveBoard />
           </div>
           <Voices className="hero-voices" />
+        </section>
+
+        <section id="uses" className="section">
+          <div className="section-head">
+            <p className="eyebrow">What it's for</p>
+            <h2>
+              One workspace for <em>you and your agents.</em>
+            </h2>
+            <p className="section-lede">
+              Write notes, plan the day, keep context and hand off work, in one place your AI assistant and coding agents can read.
+            </p>
+          </div>
+          <div className="topic-links topic-links-4">
+            {TOPICS.map((t) => (
+              <a key={t.slug} className="feature topic-link" href={`/${t.slug}`}>
+                <Icon name={t.icon} />
+                <h3>{t.label}</h3>
+                <p>{t.summary}</p>
+                <span className="topic-more">
+                  Read more <span aria-hidden="true">→</span>
+                </span>
+              </a>
+            ))}
+          </div>
         </section>
 
         <section id="why" className="section why">
@@ -337,6 +387,23 @@ export default function Home() {
           </div>
         </section>
 
+        <section id="faq" className="section download-section faq-section">
+          <div className="section-head">
+            <p className="eyebrow">FAQ</p>
+            <h2>
+              Questions, <em>answered.</em>
+            </h2>
+          </div>
+          <div className="faq-grid">
+            {FAQ.map((f) => (
+              <article key={f.q}>
+                <h3>{f.q}</h3>
+                <p>{f.a}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+
         <section className="section final">
           <Voices className="final-voices" />
           <Mark size={44} />
@@ -353,17 +420,8 @@ export default function Home() {
         </section>
       </main>
 
-      <footer className="footer">
-        <Wordmark />
-        <span className="faint">An engineer and their agent, stronger together.</span>
-        <span className="footer-links">
-          <a href={site.appUrl}>App</a>
-          <a href="/download">Download</a>
-          <a href="/privacy">Privacy</a>
-          <a href="/terms">Terms</a>
-          <GitHubLink />
-        </span>
-      </footer>
+      <SiteFooter />
+      <JsonLd data={[webPage("/", site.title, site.description), softwareApplication, faqPage(FAQ, "/")]} />
     </>
   );
 }

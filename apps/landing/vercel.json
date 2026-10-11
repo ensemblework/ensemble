@@ -1,4 +1,50 @@
 {
+  "redirects": [
+    {
+      "source": "/",
+      "has": [
+        {
+          "type": "host",
+          "value": "ensemblework.app"
+        }
+      ],
+      "destination": "https://ensemblework.com/download",
+      "permanent": true
+    },
+    {
+      "source": "/:path+",
+      "has": [
+        {
+          "type": "host",
+          "value": "ensemblework.app"
+        }
+      ],
+      "destination": "https://ensemblework.com/:path+",
+      "permanent": true
+    },
+    {
+      "source": "/",
+      "has": [
+        {
+          "type": "host",
+          "value": "www.ensemblework.app"
+        }
+      ],
+      "destination": "https://ensemblework.com/download",
+      "permanent": true
+    },
+    {
+      "source": "/:path+",
+      "has": [
+        {
+          "type": "host",
+          "value": "www.ensemblework.app"
+        }
+      ],
+      "destination": "https://ensemblework.com/:path+",
+      "permanent": true
+    }
+  ],
   "headers": [
     {
       "source": "/install.sh",
