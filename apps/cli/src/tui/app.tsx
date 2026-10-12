@@ -10,7 +10,7 @@
  * One input router handles keys, the mouse and the slash-command menu. The layout is fixed rows
  * (tabs, main, actions, composer, status), so every click maps to a region computed here.
  */
-import { Box, Text, useApp, useInput, useStdout } from "ink";
+import { Box, Text, useApp, useInput, useStdout, type Key } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { pickRunProfile, type RunProfile } from "@ensemble/shared-types";
 import { PROVIDERS } from "../local-commands.js";
@@ -941,7 +941,7 @@ export function App(props: { api: LocalApi; folder: string; version: string; acc
     await runCommand(`/${command.name}`);
   };
 
-  useInput((input, key) => {
+  const onInput = (input: string, key: Key) => {
     if (isMouse(input)) {
       const event = parseMouse(input);
       if (!event) return;
@@ -1066,7 +1066,12 @@ export function App(props: { api: LocalApi; folder: string; version: string; acc
       const clean = input.replace(/\r\n?/g, "\n");
       setText(live.value.slice(0, live.cursor) + clean + live.value.slice(live.cursor), live.cursor + clean.length);
     }
-  });
+  };
+  // Ink re-attaches a key handler in an effect after each render, so a key that arrives just after
+  // new buttons appear would reach the old one. One stable handler always calls this render's.
+  const latestInput = useRef(onInput);
+  latestInput.current = onInput;
+  useInput(useCallback((input: string, key: Key) => latestInput.current(input, key), []));
 
   // ── render ────────────────────────────────────────────────────────────────────────────────
   return (

@@ -4,6 +4,16 @@ import type { ChatFrame, Decision, LocalApi, Workspace } from "./local.js";
 
 export const tick = (ms = 60) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** The first value `read` gives that is not undefined, or undefined after a few seconds (a slow CI machine needs the wait). */
+export async function until<T>(read: () => T | undefined, timeoutMs = 5000): Promise<T | undefined> {
+  const end = Date.now() + timeoutMs;
+  for (;;) {
+    const value = read();
+    if (value !== undefined || Date.now() > end) return value;
+    await tick(40);
+  }
+}
+
 /** The screen once it shows `pattern` (or after a few seconds, so the assertion that follows says what was there). */
 export async function screenWith(read: () => string | undefined, pattern: RegExp, timeoutMs = 5000): Promise<string> {
   const end = Date.now() + timeoutMs;
