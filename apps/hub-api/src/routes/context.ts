@@ -10,7 +10,7 @@ import type { ArtifactKind, Prisma } from "@prisma/client";
 import { plotMentionEntities } from "../plots/mentions.js";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { accountIdOf, ownsOpenSpace } from "../lib/auth.js";
-import { hasModule } from "@ensemble/shared-types";
+import { hasModule, ONBOARDING_TOUR_KEY } from "@ensemble/shared-types";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings } from "../lib/settings.js";
 import { sseHub } from "../lib/sse.js";
@@ -377,7 +377,7 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
       create: { userId: owner, key, value: body.value as never, source: "me", confidence: 1 },
       update: { value: body.value as never, source: "me", confidence: 1, deletedAt: null },
     });
-    if (key.startsWith("ui.")) await mirrorSettings(prisma, owner);
+    if (key.startsWith("ui.") && key !== ONBOARDING_TOUR_KEY) await mirrorSettings(prisma, owner);
     return { preference };
   });
 
@@ -387,7 +387,7 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
     if (key === "hub.settings") return reply.code(400).send({ error: "Settings are changed from the Settings page, not as a preference." });
     const owner = preferenceOwner(request, key);
     await prisma.preference.updateMany({ where: { userId: owner, key }, data: { deletedAt: new Date() } });
-    if (key.startsWith("ui.")) await mirrorSettings(prisma, owner);
+    if (key.startsWith("ui.") && key !== ONBOARDING_TOUR_KEY) await mirrorSettings(prisma, owner);
     return reply.code(204).send();
   });
 

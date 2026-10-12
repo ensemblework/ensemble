@@ -41,7 +41,7 @@ export function AddTileButton({ deskId, plots, startOpen = false }: { deskId: De
   }, []);
   return (
     <>
-      <button type="button" className="btn" data-add-tile onClick={() => setOpen(true)}>
+      <button type="button" className="btn" data-add-tile data-tour-anchor="add-tile" onClick={() => setOpen(true)}>
         <Plus size={13} />
         Add a tile
       </button>

@@ -110,7 +110,7 @@ export function DeskView({
   }
 
   return (
-    <div className="desk page" data-desk={deskId} data-enter={enter ? "1" : undefined} data-phone={phone ? "1" : undefined} data-plots={plots ? "1" : undefined} data-sample={sample ? "1" : undefined}>
+    <div className="desk page" data-tour-anchor="desk" data-desk={deskId} data-enter={enter ? "1" : undefined} data-phone={phone ? "1" : undefined} data-plots={plots ? "1" : undefined} data-sample={sample ? "1" : undefined}>
       <div className="phead">
         <div>
           <div className="kick">

@@ -9,6 +9,7 @@ import "../config.js";
 import { prisma } from "../lib/prisma.js";
 import { layoutsRoutes } from "../routes/layouts.js";
 import { templateSourceRef } from "./apply.js";
+import { ONBOARDING_TOUR_KEY, READY_ONBOARDING_TOUR } from "@ensemble/shared-types";
 import "../types.js";
 
 async function databaseReady(): Promise<boolean> {
@@ -85,6 +86,9 @@ test("onboarding seeds once per user and layouts stay off the undo stack", async
     const layout = await prisma.preference.findFirst({ where: { userId: owner.id, key: "desk.layout.semester" } });
     assert.equal((layout?.value as { exact?: boolean } | null)?.exact, true);
     assert.equal((await prisma.user.findUnique({ where: { id: owner.id } }))?.profession, "Student");
+    const tour = await prisma.preference.findFirst({ where: { userId: owner.id, key: ONBOARDING_TOUR_KEY } });
+    assert.deepEqual(tour?.value, READY_ONBOARDING_TOUR);
+    assert.equal(await prisma.preference.count({ where: { userId: other.id, key: ONBOARDING_TOUR_KEY } }), 0);
 
     const tasks = await prisma.task.count({ where: { userId: owner.id, sourceRef: { startsWith: "template:semester-desk:" } } });
     assert.equal(tasks, 3);

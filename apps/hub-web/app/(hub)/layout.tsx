@@ -24,6 +24,8 @@ import { SearchLanding } from "@/components/shell/search-match";
 import { TopBar } from "@/components/shell/topbar";
 import { FeatureGate } from "@/components/features/gate";
 import { FeatureTour } from "@/components/features/tour";
+import dynamic from "next/dynamic";
+import "@/components/onboarding/tour.css";
 import { CelebrateHost } from "@/components/motion/celebrate";
 import { PageProgress } from "@/components/motion/page-progress";
 import { Splash } from "@/components/motion/skeletons";
@@ -33,6 +35,8 @@ import { clearBrowserTabSession } from "@/lib/tab-session";
 import { switchSpace } from "@/lib/spaces";
 import { ShellLabelsProvider } from "@/lib/shell-labels";
 import { peekPanel, warmPeek } from "@/lib/warm";
+
+const OnboardingTour = dynamic(() => import("@/components/onboarding/guided-tour").then((module) => module.OnboardingTour), { ssr: false });
 
 function MobileNavigation({ onClose }: { onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -123,7 +127,7 @@ function Frame({ children }: { children: React.ReactNode }) {
           />
           <SeasonBanner />
           <VerificationBanner />
-          <main className="relative min-h-0 flex-1 overflow-y-auto">
+          <main className="relative min-h-0 flex-1 overflow-y-auto" data-tour-anchor="workspace">
             <FeatureGate>{children}</FeatureGate>
           </main>
           <AssistantDock />
@@ -180,6 +184,7 @@ function Frame({ children }: { children: React.ReactNode }) {
       <ShortcutSheet open={shortcuts} onClose={() => setShortcuts(false)} />
       <QuickCapture open={capture} onClose={() => setCapture(false)} />
       <FeatureTour />
+      <OnboardingTour />
     </div>
   );
 }

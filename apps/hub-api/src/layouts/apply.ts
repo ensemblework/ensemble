@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Prisma, PrismaClient } from "@prisma/client";
-import { PageDocument } from "@ensemble/shared-types";
+import { ONBOARDING_TOUR_KEY, PageDocument, READY_ONBOARDING_TOUR } from "@ensemble/shared-types";
 import { FULL_MODULE_SET } from "@ensemble/shared-types/modules";
 import { templateByMarketId } from "@ensemble/shared-types/marketplace";
 import { signupDeskId, templateById, type OnboardingRole, type RoleTemplate } from "@ensemble/shared-types/templates";
@@ -281,6 +281,11 @@ export async function applyOnboarding(prisma: PrismaClient, userId: string, temp
       },
     });
     const deskLayout = templateDeskLayout(template.id);
+    await tx.preference.upsert({
+      where: { userId_key: { userId, key: ONBOARDING_TOUR_KEY } },
+      create: { userId, key: ONBOARDING_TOUR_KEY, value: READY_ONBOARDING_TOUR, source: "template", confidence: 1 },
+      update: { value: READY_ONBOARDING_TOUR, deletedAt: null },
+    });
     if (deskLayout) {
       await tx.preference.upsert({
         where: { userId_key: { userId, key: deskLayout.key } },
