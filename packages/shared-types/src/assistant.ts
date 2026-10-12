@@ -164,6 +164,9 @@ export const ModelSettings = z.object({
 });
 export type ModelSettings = z.infer<typeof ModelSettings>;
 
+export const OutsideAccess = z.enum(["none", "read", "read-write"]);
+export type OutsideAccess = z.infer<typeof OutsideAccess>;
+
 export const OrchestrationSettings = z.object({
   dailyHighRiskLimit: z.number().int().min(0).max(500).default(20),
   sandboxNetwork: z.boolean().default(true),
@@ -175,6 +178,19 @@ export const OrchestrationSettings = z.object({
   planWithTaskModel: z.boolean().default(true),
   requireTestsBeforeCommit: z.boolean().default(true),
   defaultExecution: z.enum(["sandbox", "native"]).default("sandbox"),
+  /**
+   * In a sandboxed run, what the agent may do with a path outside its work
+   * folder without asking: read it (default), read and write it, or nothing.
+   * Anything not covered asks in Ask mode and is refused in Review only and
+   * Run unattended. Keys, dotfiles, Ensemble's data and code stay refused.
+   * Unsandboxed runs are not affected.
+   */
+  outsideAccess: OutsideAccess.default("read"),
+  /**
+   * Which sessions of Claude Code, Codex, Cursor and Copilot send their prompts to Needs me
+   * through Ensemble's hook: only tasks Ensemble opened in them (default), or every session.
+   */
+  editorRequests: z.enum(["ensemble", "all"]).default("ensemble"),
   defaultDelivery: z.enum(["review-first", "unattended"]).default("review-first"),
 });
 export type OrchestrationSettings = z.infer<typeof OrchestrationSettings>;
@@ -196,7 +212,7 @@ export const RunProfile = z.object({
   /** A preferred paired computer. Null: this server when it runs code, else the first computer. */
   deviceId: z.string().max(100).nullable().default(null),
   /** Who does the work: Ensemble's own agent, or the person's own Claude Code on their computer. */
-  engine: z.enum(["ensemble", "claude-code"]).default("ensemble"),
+  engine: z.enum(["ensemble", "claude-code", "codex", "cursor-agent"]).default("ensemble"),
   /** `provider::model`, or empty for the task's tier. With Claude Code: its model alias, or empty for its default. */
   model: z.string().max(240).default(""),
   effort: z.enum(["default", "low", "medium", "high"]).default("default"),

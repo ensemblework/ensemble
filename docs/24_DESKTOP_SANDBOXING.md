@@ -24,7 +24,7 @@ Checked against `main` while revising. Where the tree disagrees with the review,
 
 1. **No Mac App Store.** Distribution is a DMG download only. Q1 is closed.
 2. **Trusted-directory rule (§5.8).** Inside a trusted folder there are no Allow once or Allow always prompts for any command that stays inside it.
-3. **Run unattended (§5.9).** It cannot be combined with an untrusted folder. Paths outside the folder are blocked (closed in the 2 Oct review).
+3. **Run unattended (§5.9).** It cannot be combined with an untrusted folder. Paths outside the folder were blocked (closed in the 2 Oct review); since 11 Oct 2026 a sandboxed run follows the **Outside the work folder** setting, read only by default (§5.9).
 4. **Existing code folded in (§1A).** The app already has a folder jail, a command allow-list, a Git ceiling, a macOS Seatbelt profile, a job queue, and Needs me decisions.
 5. **Default workspace directory (§5.0).** `~/ensemble-workspace`, plus a setting to change it.
 6. **Same-checkout follow-up tasks (§5.10).**
@@ -35,9 +35,9 @@ Checked against `main` while revising. Where the tree disagrees with the review,
 Read from the code on branch `feat/run-settings-f6` and checked with the unit tests named here; not run against a live model.
 
 1. **Three run modes** (`commandGate` in `apps/hub-api/src/workspace/trust.ts`, chosen in the Assign dialog and stored as `accessMode` + `unattended`):
-   - **Ask** (`read-write`): commands and file changes ask unless the folder is trusted; a path outside the folder always asks; decision questions go to Needs me.
-   - **Review only** (`auto`): commands and file changes inside the folder run without asking; only decision questions reach the person, with the agent's recommended option marked; a path outside the folder is refused. Needs a trusted folder (`REVIEW_REQUIRES_TRUST`).
-   - **Run unattended** (`unattended`): nothing asks. `ask_user` returns at once and the agent continues with its recommended option; every such decision is listed on the task summary. A path outside the folder is refused. Needs a trusted folder (`UNATTENDED_REQUIRES_TRUST`).
+   - **Ask** (`read-write`): commands and file changes ask unless the folder is trusted; a path outside the folder asks unless the outside-folder setting already allows it; decision questions go to Needs me.
+   - **Review only** (`auto`): commands and file changes inside the folder run without asking; only decision questions reach the person, with the agent's recommended option marked; outside the folder, what the outside-folder setting allows goes ahead and the rest is refused. Needs a trusted folder (`REVIEW_REQUIRES_TRUST`).
+   - **Run unattended** (`unattended`): nothing asks. `ask_user` returns at once and the agent continues with its recommended option; every such decision is listed on the task summary. Outside the folder, what the outside-folder setting allows goes ahead and the rest is refused. Needs a trusted folder (`UNATTENDED_REQUIRES_TRUST`).
    - **Read-only** (`review`) is the older grant: no writes and no network, ever. It is what a folder shared read-only from a paired computer gets (`ensemble folders add --read-only`); the Assign dialog no longer offers it.
 2. **Trust.** The workspace root is always trusted. A folder outside it is untrusted until the person trusts it (Assign dialog, a trust question on Needs me, or `ensemble trust add` on the computer), so an untrusted folder can only run in Ask mode. Trust is re-checked before every turn; when it is missing, the run asks "Trust this folder?" (tool name `trust`) with "Switch to Ask" or "Turn off Run unattended" as the other answer.
 3. **Git permissions** (`checkGit` in `workspace/guard.ts`): `merge`, `cherry-pick`, `revert`, `am`, `rebase`, `tag`, `notes` and a plain `pull` count as commits, so Local only refuses them (stopping one with `--abort` is allowed). A refusal goes back to the model as a tool result and the run continues. After each non-git command, a commit the run was not allowed to make (Local only) or that skipped approval ("Ask me before each commit") is undone: the branch moves back and the files stay, uncommitted (`undoUnapprovedCommits` in `workspace/tools.ts`). "Ask me before each commit" now asks for every commit in every folder, and is not offered with Run unattended. With Commit + push, a push in a trusted folder no longer asks (a task from the web on a computer with web approvals off still asks there, unless its run-branch push setting covers it; `webPushNeedsComputer` in `workspace/publish.ts`); force-push and deletes are still refused and the push is still fast-forward to the run's own branch.
@@ -60,8 +60,8 @@ Read from the code and checked as listed in [doc 18](18_WHAT_IS_REAL.md). This s
 
 - **Found once, shared.** `prepareSandbox()` probes at start (bubblewrap must start a shell with `--unshare-net`; Landlock must refuse a write outside its grant and allow a rename between two granted folders, ABI 2). `capabilities()` reports mechanism, strength (`strong`, `reduced`, `advisory`), `limits`, `networkOff` and `setup`. The CLI and the desktop app run the same runtime on a computer, so a sandbox set up from one is the other's.
 - **Proved by escape tests on each system** (`sandbox/os-escape.test.ts`, run in CI on macOS, Ubuntu 24.04 with Landlock, Ubuntu 22.04 with bubblewrap, and Windows): writes stay in the folder, a file elsewhere in the home folder is unreadable, the internet-off case cannot open a TCP connection, Ensemble's data folder is unreadable.
-- **Paths outside the folder follow the sandbox** (`commandGate` in `trust.ts`, `toolPath`/`outsideRefusal`): with the sandbox on, the folder is the boundary: Review only and Run unattended refuse an outside path back to the model and the run continues; Ask asks, and an allowed path is added to that command's sandbox grant. With the sandbox off, the person chose to run directly, so Review only and Run unattended use outside paths without asking. In every mode, the dotfiles and app folders in the home folder, Ensemble's data and code, and other accounts are refused.
-- **Engines keep their own sandbox.** When Claude Code does the work ([doc 30](30_ENGINES.md)), every tool call is judged by these same rules through a hook, and with the sandbox on Claude Code's own sandbox (the same sandbox-runtime, Seatbelt on macOS, bubblewrap on Linux) confines its shell commands to the work folder, with no unsandboxed retry and no start where it cannot run. Wrapping the whole `claude` process instead would cut it off from its own sign-in.
+- **Paths outside the folder follow the sandbox** (`commandGate` in `trust.ts`, `toolPath`/`outsideRefusal`): with the sandbox on, the **Outside the work folder** setting decides (`orchestration.outsideAccess`, stored per run in the job's `context`, carried to a paired computer in the claim). **Read only** (the default): reading goes ahead, a write asks in Ask and is refused back to the model in Review only and Run unattended, and the run continues. **Read and write**: both go ahead. **No access**: the folder is the boundary, as before. Whether a command writes is decided from the program (`readsOnly` in `tools.ts`: `cat`, `ls`, `grep`, `git log` and the like; anything else counts as a write). An allowed path is added to that command's sandbox grant, read-only unless it writes. Read-only runs never write outside, whatever the setting. With the sandbox off, the person chose to run directly, so Review only and Run unattended use outside paths without asking. In every mode, the dotfiles and app folders in the home folder, Ensemble's data and code, and other accounts are refused.
+- **Engines keep their own sandbox.** When Claude Code does the work ([doc 30](30_ENGINES.md)), every tool call is judged by these same rules through a hook, and with the sandbox on Claude Code's own sandbox (the same sandbox-runtime, Seatbelt on macOS, bubblewrap on Linux) confines its shell commands, with no unsandboxed retry and no start where it cannot run. Its sandbox paths follow the outside-folder setting (`claudeFilesystem` in `engines/claude-code.ts`): Read only lets commands read outside and write only the folder; Read and write also opens the person's own folders in the home folder (never its dotfiles or app folders); No access denies the home folder apart from the work folder and the toolchains. Keys, browser data and Ensemble's data stay closed in every case. Wrapping the whole `claude` process instead would cut it off from its own sign-in.
 - **Ensemble's git askpass helper** lives in `<workspace>/.askpass/`, beside the agents' cache, never in it (`askpassPath` in `guard.ts`): it holds no token, but a command that could rewrite it would run with the token the next time Ensemble's own git used it, and Landlock cannot deny one file inside a granted folder.
 - **Paths are resolved before bubblewrap mounts over them** (`/var/run` is a link to `/run`); the probe runs bubblewrap with the same arguments a real command gets, so a quirk shows as a fallback to Landlock, not as a failing command.
 - **Windows commands** run through `cmd.exe` when the program is a `.cmd`/`.bat` shim (npm, pnpm), escaped the way cross-spawn does; PATH is split on `;` with `PATHEXT`; Stop ends the tree with `taskkill /T`.
@@ -79,7 +79,7 @@ Read from the code and checked as listed in [doc 18](18_WHAT_IS_REAL.md). This s
 - Git safety is enforced by the **broker**. The sandbox has no Git credentials.
 - **The trusted-scope rule.** Inside a trusted folder, no Allow once or Allow always prompt. Prompts appear only for paths outside it. Trust is paths only, and per device.
 - **Review only** runs commands inside a trusted folder without asking and asks only decision questions (v3). **Read-only** is the separate no-writes, no-network grant.
-- **Review only and Run unattended require a trusted folder.** A path outside that folder is blocked.
+- **Review only and Run unattended require a trusted folder.** Outside it, a sandboxed run follows the outside-folder setting (read only by default) and anything more is refused.
 - **Distribution is a DMG on macOS (no Mac App Store),** NSIS and zip on Windows, AppImage and `.deb` on Linux. No Flatpak. The CLI and the app share one runtime and one sandbox per computer (v4).
 - **Build on what exists.** The new work is the helper, the profile fixes, and the trust and unattended rules. Order: doc 23 §14.
 
@@ -126,7 +126,7 @@ Read on `main` after PR #30. `docs/18_WHAT_IS_REAL.md` used to say Assign to age
 | Job model | Prisma `WorkspaceJob` | Includes `unattended`, which `routes/agents.ts` always writes as `false` | Extended with trust and access mode. `unattended` gets wired up (§5.9) |
 | Queue and locks | `worker.ts`, `resourceKeys` `dir:<path>` and `chain:<root-job>` | Jobs on the same folder or chain wait. A job in Needs me gives its slot back | Is the **checkout lock** |
 | Needs me decisions | `tools.ts`, `lib/decisions.ts` `DecisionRule` | allow/deny/expired, and editor hooks with Allow once, this session, Always, Deny | Becomes the **Needs-me queue**. `DecisionRule` gains a `path` rule kind |
-| Settings | `orchestration.defaultExecution`, `sandboxNetwork`, `runWithoutAsking` (default true), `maxConcurrentJobs` | The Settings copy of `runWithoutAsking` matches the trusted-folder idea, and the runner does not read the flag yet | §5.8 generalises it. §5.9 removes the "unless unattended" escape |
+| Settings | `orchestration.defaultExecution`, `sandboxNetwork`, `outsideAccess` (default `read`, 11 Oct 2026), `runWithoutAsking` (default true), `maxConcurrentJobs` | The Settings copy of `runWithoutAsking` matches the trusted-folder idea, and the runner does not read the flag yet | §5.8 generalises it. §5.9 removes the "unless unattended" escape |
 | Action policy | `agent-runtime/ensemble_agent/policy.py` `decide` | Fails closed, can't be argued out of a deny, and every decision says which rule made it | Same three properties for filesystem and command decisions. Path decisions log their rule too |
 | Assign dialog | `components/agent/assign-dialog.tsx` | Place, branch, Git, sandbox, network, sign-in, ask-first | Gains trust state, Review only, and Run unattended with validation |
 | Folder picker | `routes/agents.ts` `/api/workspace/pick-folder` | `osascript choose folder`, **macOS only** | Replaced by the Tauri dialog |
@@ -410,6 +410,22 @@ Rules:
 - Stored as a `DecisionRule` of kind `path`. Listed and revocable in Settings.
 - A folder refused by `resolveWorkFolder` can never be trusted.
 
+**Shared with the person's other AI tools** (11 Oct 2026, `workspace/trust-share.ts`). So a folder is not trusted twice, every folder trusted in Ensemble (and the workspace root) is also marked trusted in the tools found on the computer, in the files their apps and command lines read:
+
+| Tool | Where | Mark |
+|---|---|---|
+| Claude Code (CLI and the Claude app) | `~/.claude.json` (or `$CLAUDE_CONFIG_DIR`) | `projects[<folder>].hasTrustDialogAccepted = true` |
+| Codex (CLI, IDE extension and app) | `~/.codex/config.toml` (or `$CODEX_HOME`) | `[projects.'<folder>'] trust_level = "trusted"` |
+| GitHub Copilot CLI | `~/.copilot/config.json` | `<folder>` in `trustedFolders` |
+| Cursor's agent | `~/.cursor/projects/<slug>/.workspace-trusted` | `{ trustedAt, workspacePath, trustMethod: "cli-flag" }` (what `agent --trust` writes) |
+| Gemini CLI | `~/.gemini/trustedFolders.json` | `"<folder>": "TRUST_FOLDER"` |
+
+- A tool without its config folder is left alone; a file Ensemble cannot parse is never rewritten; each write is atomic and keeps the file's other content (Copilot's comment lines too).
+- Ensemble records the marks it added (`shared-trust.json` beside `remote.json`) and removes only those when a folder is untrusted. A folder the person trusted in a tool directly stays trusted there. A Codex or Gemini value it replaced is put back.
+- A copy of each file from before Ensemble's first and latest change is kept in `trust-backups/` in the same folder.
+- On by default, per computer: Settings → Autonomy → "Trust folders in your other AI tools too", or `ensemble trust share on|off`. Off removes every mark Ensemble added. `GET`/`PUT /api/workspace/trust/sharing`; only the runtime on the person's computer writes these files.
+- Not covered: the trust prompts of the VS Code and Cursor editors themselves (kept in each editor's own state database while it runs), and "Trust this task only", which stays in Ensemble.
+
 **What "stays inside" means:**
 - The broker resolves the working directory and every path-looking argument, following links.
 - The OS sandbox makes the trusted folder, the cache and the temp dir the writable set, so a script cannot build a path out at run time.
@@ -431,11 +447,11 @@ Rules:
 
 ### 5.9 Run unattended
 
-**Rule:** the agent may run with nobody present, inside a trusted folder, and **paths outside that folder are blocked.** Unattended cannot be combined with an untrusted folder.
+**Rule:** the agent may run with nobody present, inside a trusted folder. **Outside that folder, a sandboxed run does only what the Outside the work folder setting allows** (read only by default; 11 Oct 2026, it was blocked before), and an unsandboxed one uses outside paths without asking. Unattended cannot be combined with an untrusted folder.
 
 **Behaviour:**
 - Inside the folder, prompts are auto-allowed within the Git ceiling, including a push when the run has Commit + push. `ask_user` returns at once with the agent's recommended option, and the task summary lists every such decision. Every auto-allowed action is logged with the rule `unattended`.
-- **An outside path is blocked.** The task summary lists it.
+- **An outside path the setting does not allow is refused** back to the model, and the run continues. The task summary lists it.
 - The hard floor still applies. Never-commands, secret folders, app data, protected-branch pushes, force-pushes and Ensemble's own source stay denied.
 
 **Validation:**
@@ -482,7 +498,7 @@ Read-only here means the read-only grant: no writes and no network, with command
 6. **"Review and fix"** is read-write. The Git ceiling still defaults to Local only (Q17).
 7. **Concurrent edits.** The `dir:<path>` lock. The review snapshots the tree and warns if it changes.
 8. **No sign-in by default.** `useCredentials` stays opt-in.
-9. **Unattended** only if the person picked Trust or Just for this task. Outside paths are still blocked.
+9. **Unattended** only if the person picked Trust or Just for this task. Outside paths follow the outside-folder setting.
 
 ---
 
@@ -529,7 +545,7 @@ Read-only here means the read-only grant: no writes and no network, with command
 - R13. One default workspace folder, trusted on this device, changeable in Settings. Changing it never moves files.
 - R14. Folder trust stored as path rules after resolving links, per device, revocable. Folders refused by `resolveWorkFolder` cannot be trusted.
 - R15. Inside a trusted folder, no Allow once or Allow always for a command whose paths stay inside. Trust does not cover domains.
-- R16. Run unattended (and Review only) has no prompts inside the trusted folder. The hard floor still applies. **Paths outside the folder are blocked** and listed in the task summary. An untrusted folder is rejected with `UNATTENDED_REQUIRES_TRUST` and the message in §5.9, at assignment and at run time.
+- R16. Run unattended (and Review only) has no prompts inside the trusted folder. The hard floor still applies. **Paths outside the folder follow the outside-folder setting** in a sandboxed run (read only by default), and what it does not allow is refused and listed in the task summary. An untrusted folder is rejected with `UNATTENDED_REQUIRES_TRUST` and the message in §5.9, at assignment and at run time.
 - R17. A follow-up task can reuse a previous task's checkout and branch. It checks the branch and HEAD, waits on the chain lock, and is read-only in review mode.
 - R18. A folder outside the workspace is an explicit grant. Adding it triggers the trust prompt after the pre-check. Branch switching and stashing are refused there.
 - R19. The Tauri dialog replaces the macOS-only `osascript` picker.

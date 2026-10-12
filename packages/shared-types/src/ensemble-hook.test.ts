@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { answerText, questionInput } from "../../../scripts/ensemble-ask-mcp.mjs";
-import { answeredInput, engineOutput, hookFile, normalizePayload, output, questionCards, withHooks } from "../../../scripts/ensemble-hook.mjs";
+import { ACTIVITY_EVENTS, answeredInput, engineOutput, hookFile, lastAssistantText, normalizePayload, output, questionCards, questionOutput, withHooks } from "../../../scripts/ensemble-hook.mjs";
 
 const hookCommand = (source: string) => `node ensemble-hook.mjs --source ${source}`;
 
@@ -52,25 +52,59 @@ test("each AskUserQuestion question becomes a card with its options, description
 
 test("installing keeps the person's own hooks and replaces only Ensemble's", () => {
   const theirs = { matcher: "Bash", hooks: [{ type: "command", command: "my-linter" }] };
-  const claude = withHooks("claude", { hooks: { PreToolUse: [theirs] }, model: "opus" }, false, hookCommand, 60);
+  // An earlier install also answered questions through PreToolUse, which held Claude's own question card back.
+  const legacy = { matcher: "AskUserQuestion", hooks: [{ type: "command", command: "node ensemble-hook.mjs --source claude" }] };
+  const claude = withHooks("claude", { hooks: { PreToolUse: [theirs, legacy] }, model: "opus" }, false, hookCommand, 60);
   assert.equal(claude.model, "opus");
-  assert.equal(claude.hooks.PreToolUse.length, 2);
-  assert.equal(claude.hooks.PreToolUse[1].matcher, "AskUserQuestion");
+  assert.deepEqual(claude.hooks.PreToolUse, [theirs], "questions now go through PermissionRequest, beside Claude's own card");
   assert.equal(claude.hooks.PermissionRequest.length, 1);
+  assert.equal(claude.hooks.PermissionRequest[0].hooks[0].async, undefined, "the asking hook is waited on");
+  for (const event of ["PostToolUse", "PostToolUseFailure", "UserPromptSubmit", "Stop"]) {
+    assert.equal(claude.hooks[event][0].hooks[0].async, true, `${event} reports in the background`);
+    assert.equal(claude.hooks[event][0].hooks[0].timeout, 15);
+  }
   const again = withHooks("claude", claude, false, (source: string) => `node /new/ensemble-hook.mjs --source ${source}`, 60);
-  assert.equal(again.hooks.PreToolUse.length, 2, "reinstalling does not duplicate");
+  assert.equal(again.hooks.PermissionRequest.length, 1, "reinstalling does not duplicate");
+  assert.equal(again.hooks.Stop.length, 1);
   const removed = withHooks("claude", again, true, hookCommand, 60);
   assert.deepEqual(removed.hooks.PreToolUse, [theirs]);
-  assert.deepEqual(removed.hooks.PermissionRequest, []);
+  assert.equal(removed.hooks.PermissionRequest, undefined);
+  assert.equal(removed.hooks.Stop, undefined);
 
   const codex = withHooks("codex", {}, false, hookCommand, 60);
   assert.equal(codex.hooks.PermissionRequest[0].hooks[0].command, "node ensemble-hook.mjs --source codex");
   assert.equal(codex.hooks.PreToolUse, undefined);
+  assert.deepEqual(Object.keys(codex.hooks).sort(), ["PermissionRequest", "PostToolUse", "Stop", "UserPromptSubmit"]);
+  assert.equal(codex.hooks.Stop[0].hooks[0].async, undefined, "Codex hashes each hook; no fields it may not know");
 
   const copilot = withHooks("copilot-cli", {}, false, hookCommand, 60);
   assert.equal(copilot.version, 1);
   assert.equal(copilot.hooks.preToolUse[0].bash, "node ensemble-hook.mjs --source copilot-cli");
   assert.equal(copilot.hooks.preToolUse[0].timeoutSec, 90);
+  assert.equal(copilot.hooks.postToolUse[0].timeoutSec, 15);
+
+  const cursor = withHooks("cursor", { hooks: { beforeShellExecution: [{ command: "their-hook" }] } }, false, hookCommand, 60);
+  assert.deepEqual(cursor.hooks.beforeShellExecution.map((item: { command: string }) => item.command), ["their-hook", "node ensemble-hook.mjs --source cursor"]);
+  assert.ok(cursor.hooks.beforeSubmitPrompt && cursor.hooks.stop && cursor.hooks.afterShellExecution);
+});
+
+test("reporting events never wait, and Claude's questions are answered through PermissionRequest", () => {
+  assert.ok(ACTIVITY_EVENTS.has("Stop") && ACTIVITY_EVENTS.has("PostToolUse") && ACTIVITY_EVENTS.has("beforeSubmitPrompt"));
+  assert.ok(!ACTIVITY_EVENTS.has("PermissionRequest") && !ACTIVITY_EVENTS.has("preToolUse"));
+  const answers = { questions: [{ question: "Which?" }], answers: { "Which?": "A" } };
+  assert.deepEqual(questionOutput("PermissionRequest", answers), { hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "allow", updatedInput: answers } } });
+  assert.equal(questionOutput("PreToolUse", answers).hookSpecificOutput.permissionDecision, "allow");
+});
+
+test("the task's summary is the agent's last words in its transcript", () => {
+  const lines = [
+    JSON.stringify({ type: "user", message: { content: "do it" } }),
+    JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "Done: changed two files." }, { type: "tool_use", name: "Bash" }] } }),
+    JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", name: "Read" }] } }),
+    '{"type":"assistant","message":{"content":[{"type":"te',
+  ];
+  assert.equal(lastAssistantText(lines.join("\n")), "Done: changed two files.");
+  assert.equal(lastAssistantText(""), null);
 });
 
 test("hook files live where each tool reads them", () => {

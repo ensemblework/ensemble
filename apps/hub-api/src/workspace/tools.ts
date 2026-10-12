@@ -31,6 +31,8 @@ export interface JobContext {
   sandboxed: boolean;
   /** How the OS sandbox is applied, for the prompt and the run log ("the macOS sandbox", "Landlock", …). */
   sandboxName?: string;
+  /** In a sandboxed run, what may be done outside the folder without asking (Settings, or the run's own choice). */
+  outsideAccess?: "none" | "read" | "read-write";
   network: boolean;
   signal: AbortSignal;
   commitAuthor: string;
@@ -237,7 +239,7 @@ function refuseGitInternals(root: string, full: string): void {
   if (parts.includes(".git")) throw new GuardError("Files inside .git are off limits. Use git commands instead.");
 }
 
-function gate(ctx: JobContext, action: "command" | "write" | "network" | "credential" | "outside" | "push", inside: boolean) {
+function gate(ctx: JobContext, action: "command" | "write" | "network" | "credential" | "outside" | "push", inside: boolean, outsideWrite = true) {
   return commandGate({
     trusted: ctx.trusted,
     silentWorkspace: ctx.silentWorkspace,
@@ -248,6 +250,8 @@ function gate(ctx: JobContext, action: "command" | "write" | "network" | "creden
     inside,
     strength: ctx.strength,
     sandboxed: ctx.sandboxed,
+    outsideWrite,
+    outsideAccess: ctx.outsideAccess,
   });
 }
 
@@ -272,6 +276,18 @@ export function outsideArgs(root: string, args: string[], cwd = root): string[] 
     if (!within(root, full) && !found.includes(full)) found.push(full);
   }
   return found;
+}
+
+/** Programs that only read the paths they are given. */
+const READ_ONLY_PROGRAMS = new Set(["ls", "cat", "head", "tail", "wc", "grep", "rg", "find", "tree", "diff", "file", "stat", "du", "realpath", "basename", "dirname", "cut"]);
+const READ_ONLY_GIT = new Set(["status", "log", "diff", "show", "blame", "ls-files", "ls-tree", "rev-parse", "describe", "grep", "cat-file", "shortlog"]);
+
+/** True when a command only reads: a read-only tool, or a git subcommand that only reads. */
+export function readsOnly(argv: string[]): boolean {
+  const program = (argv[0] ?? "").split(/[\\/]/).pop()!.replace(/\.exe$/i, "");
+  if (READ_ONLY_PROGRAMS.has(program)) return !(program === "find" && argv.some((arg) => ["-delete", "-exec", "-execdir", "-ok", "-fprint"].includes(arg)));
+  if (program === "git") return READ_ONLY_GIT.has(argv.find((arg, index) => index > 0 && !arg.startsWith("-")) ?? "");
+  return false;
 }
 
 /** The real path of `full`, following links in the part that exists. */
@@ -309,6 +325,7 @@ async function toolPath(
     toolName: OUTSIDE_TOOL,
     title: `${options.write ? "Change" : "Read"} ${real}, outside the folder?`,
     command: real,
+    write: options.write,
   });
   if (held) return { full: null, outside: true, held };
   if (options.mustExist) await stat(real).catch(() => {
@@ -322,9 +339,9 @@ export async function allowOrRefuse(
   ctx: JobContext,
   action: "command" | "write" | "network" | "credential" | "outside" | "push",
   inside: boolean,
-  prompt: { toolName: string; title: string; command?: string },
+  prompt: { toolName: string; title: string; command?: string; write?: boolean },
 ): Promise<{ ok: false; result: unknown; summary: string } | null> {
-  const decision = gate(ctx, action, inside);
+  const decision = gate(ctx, action, inside, prompt.write ?? true);
   if (decision === "allow") {
     if (action === "outside") await ctx.event("outside", { path: prompt.command ?? prompt.title, sandboxed: ctx.sandboxed });
     if (ctx.job.unattended && (action === "push" || action === "write" || action === "command" || action === "outside")) {
@@ -342,7 +359,7 @@ export async function allowOrRefuse(
         error: readOnly
           ? `Blocked. This run is read-only: no file changes and no network. ${target}`
           : ctx.sandboxed
-            ? `Blocked. This run is sandboxed to ${ctx.root} and nobody approves paths outside it. ${target}`
+            ? `Blocked. This run is sandboxed to ${ctx.root}; outside it the person's setting allows ${ctx.outsideAccess === "read-write" ? "reading and writing" : ctx.outsideAccess === "read" ? "reading only" : "nothing"}, and nobody approves more in this run. ${target}`
             : `Blocked. Nobody approves commands in this run, so it stays inside the trusted folder. ${target}`,
         refused: true,
         note: "This is the run's setting, not an error to work around. Carry on inside the folder and mention what you could not reach in your summary.",
@@ -642,13 +659,16 @@ async function command(ctx: JobContext, line: string, cwdInput: string, timeoutS
       const refused = outsideRefusal(path, false);
       if (refused) throw new GuardError(`${path}: ${refused}`);
     }
+    // A program that only reads (cat, ls, grep, git log…) reads outside paths; anything else might write them.
+    const write = !readsOnly(argv);
     const held = await allowOrRefuse(ctx, "outside", false, {
       toolName: OUTSIDE_TOOL,
-      title: `Use ${outside[0]}${outside.length > 1 ? ` and ${outside.length - 1} more` : ""}, outside the folder?`,
+      title: `${write ? "Use" : "Read"} ${outside[0]}${outside.length > 1 ? ` and ${outside.length - 1} more` : ""}, outside the folder?`,
       command: outside[0],
+      write,
     });
     if (held) return held;
-    for (const path of outside) (outsideRefusal(path, true) || ctx.accessMode === "review" ? grants.readOnly : grants.readWrite).push(path);
+    for (const path of outside) (!write || outsideRefusal(path, true) || ctx.accessMode === "review" ? grants.readOnly : grants.readWrite).push(path);
   }
   let full = argv;
   let watch: Map<string, string> | null = null;

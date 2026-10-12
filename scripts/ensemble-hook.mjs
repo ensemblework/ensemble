@@ -17,6 +17,12 @@
  *
  * If Ensemble is unreachable, or nobody answers before the wait runs out, the
  * tool falls back to its own prompt. The hook never allows on its own.
+ *
+ * Only tasks Ensemble opened in the tool reach Needs me (Settings can route every
+ * session); any other session is left to the tool's own prompt at once. In Claude
+ * Code the tool's own dialog stays open beside Ensemble's card: whichever is
+ * answered first wins, and the tool's later hooks (a tool that ran, a turn that
+ * ended, the next prompt) close the card Ensemble no longer needs.
  */
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
@@ -113,6 +119,30 @@ export function output(source, event, result) {
   };
 }
 
+/** Hook events that only report what happened in the session; the tool does not wait on an answer. */
+export const ACTIVITY_EVENTS = new Set([
+  "PostToolUse", "PostToolUseFailure", "UserPromptSubmit", "Stop", "SessionEnd",
+  "postToolUse", "userPromptSubmitted", "sessionEnd",
+  "afterShellExecution", "afterMCPExecution", "beforeSubmitPrompt", "stop",
+]);
+
+/** The last thing the agent said, from its transcript (Claude Code's JSONL), for the task's summary. */
+export function lastAssistantText(text) {
+  const lines = String(text).trim().split("\n").reverse();
+  for (const line of lines) {
+    try {
+      const entry = JSON.parse(line);
+      if (entry?.type !== "assistant") continue;
+      const parts = Array.isArray(entry.message?.content) ? entry.message.content : [];
+      const said = parts.filter((part) => part?.type === "text" && typeof part.text === "string").map((part) => part.text).join("\n").trim();
+      if (said) return said.slice(0, 4000);
+    } catch {
+      // a partial line at the end of a file being written
+    }
+  }
+  return null;
+}
+
 /** Copilot CLI sends `toolArgs` as a JSON string; everyone else sends `tool_input`. */
 export function normalizePayload(payload) {
   if (payload.toolArgs !== undefined && payload.tool_input === undefined) {
@@ -151,6 +181,25 @@ export function questionCards(payload) {
         },
       };
     });
+}
+
+/**
+ * Claude Code's questions, answered in Ensemble: allowed with the answers as the tool's input.
+ * Through PermissionRequest the question also shows in Claude's own window meanwhile.
+ */
+export function questionOutput(event, updatedInput) {
+  if (event === "PermissionRequest") return { hookSpecificOutput: { hookEventName: "PermissionRequest", decision: { behavior: "allow", updatedInput } } };
+  return { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow", permissionDecisionReason: "Answered in Ensemble.", updatedInput } };
+}
+
+/** The end of a file, enough for the last message of a long transcript. */
+function readTail(path, bytes = 262_144) {
+  try {
+    const text = readFileSync(path, "utf8");
+    return text.length > bytes ? text.slice(-bytes) : text;
+  } catch {
+    return "";
+  }
 }
 
 /** The tool input Claude Code continues with: the questions it asked, plus `answers` keyed by question text. */
@@ -232,11 +281,27 @@ async function ask(source, cliEvent) {
     process.exit(0);
   };
 
+  // A run Ensemble started answers through its own engine hook; this one stays out of the way.
+  if (process.env.ENSEMBLE_RUN) print(null);
   if (event === "PreToolUse" && READ_ONLY.has(tool)) print(null);
 
   const config = { ...readJson(CONFIG, {}), ...(process.env.ENSEMBLE_URL ? { url: process.env.ENSEMBLE_URL } : {}), ...(process.env.ENSEMBLE_TOKEN ? { token: process.env.ENSEMBLE_TOKEN } : {}) };
   const { base, token } = endpoint(config);
   const question = source === "claude" && tool === "AskUserQuestion";
+  if (ACTIVITY_EVENTS.has(event)) {
+    // Report and let go: never slow the tool down, never block it.
+    if (token) {
+      const transcript = typeof payload.transcript_path === "string" ? payload.transcript_path : null;
+      const said = (event === "Stop" || event === "SessionEnd") && !payload.last_assistant_message && transcript ? lastAssistantText(readTail(transcript)) : null;
+      await fetch(`${base}/api/decisions/activity`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ source: API_SOURCE[source] ?? "other", event, payload: { ...payload, ...(said ? { last_assistant_message: said } : {}) } }),
+        signal: AbortSignal.timeout(5_000),
+      }).catch(() => undefined);
+    }
+    print(source === "cursor" && event === "beforeSubmitPrompt" ? { continue: true } : null);
+  }
   if (!token) print(question ? null : output(source, event, { decision: null, note: "Ensemble hook is not set up (no token)." }));
   const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
 
@@ -258,7 +323,7 @@ async function ask(source, cliEvent) {
     });
     if (!created.ok) return { refused: created.status };
     const first = await created.json();
-    if (first.status === "decided") return first;
+    if (first.status === "decided" || first.status === "skipped") return first;
     id = first.id;
     const deadline = Date.now() + WAIT_SECONDS * 1000;
     while (Date.now() < deadline) {
@@ -266,6 +331,11 @@ async function ask(source, cliEvent) {
       if (!response.ok) break;
       const row = await response.json();
       if (row.status === "decided") {
+        id = null;
+        return row;
+      }
+      if (row.status === "settled") {
+        // Answered in the tool's own window; the tool already has its answer.
         id = null;
         return row;
       }
@@ -286,9 +356,10 @@ async function ask(source, cliEvent) {
         answers[card.question] = row.reason.trim();
       }
       if (!Object.keys(answers).length) print(null);
-      print({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow", permissionDecisionReason: "Answered in Ensemble.", updatedInput: answeredInput(payload, answers) } });
+      print(questionOutput(event, answeredInput(payload, answers)));
     }
     const row = await waitForAnswer(event, payload);
+    if (row?.status === "skipped" || row?.status === "settled") print(output(source, event, { decision: null, note: row.reason ?? "Answer it here." }));
     if (row?.refused) print(output(source, event, { decision: null, note: `Ensemble refused the request (${row.refused}).` }));
     if (!row) print(output(source, event, { decision: null, note: "Nobody answered in Ensemble in time." }));
     print(output(source, event, row));
@@ -322,44 +393,55 @@ export function hookFile(target, options = {}) {
   }
 }
 
+/**
+ * The events each tool sends to the hook. The first asks and waits; the rest only report what
+ * happened (a tool ran, a turn ended, a prompt was sent), which links a session to a task
+ * Ensemble opened and closes a card the person already answered in the tool.
+ */
+export const HOOK_EVENTS = {
+  claude: { ask: ["PermissionRequest"], report: ["PostToolUse", "PostToolUseFailure", "UserPromptSubmit", "Stop"] },
+  codex: { ask: ["PermissionRequest"], report: ["PostToolUse", "UserPromptSubmit", "Stop"] },
+  "copilot-cli": { ask: ["preToolUse"], report: ["postToolUse", "userPromptSubmitted", "sessionEnd"] },
+  cursor: { ask: ["beforeShellExecution", "beforeMCPExecution"], report: ["afterShellExecution", "afterMCPExecution", "beforeSubmitPrompt", "stop"] },
+  vscode: { ask: ["PreToolUse"], report: ["PostToolUse", "UserPromptSubmit", "Stop"] },
+};
+
 /** The hook file's new content: Ensemble's entries replaced, everything else kept. */
 export function withHooks(target, file, remove, hookCommand, wait = WAIT_SECONDS) {
   const timeout = wait + 30;
-  if (target === "cursor") {
-    const next = { version: 1, hooks: {}, ...file };
-    next.version = 1;
-    next.hooks = { ...(next.hooks ?? {}) };
-    for (const event of ["beforeShellExecution", "beforeMCPExecution"]) {
-      const list = (next.hooks[event] ?? []).filter((entry) => !mine(entry));
-      if (!remove) list.push({ command: hookCommand("cursor"), timeout });
-      next.hooks[event] = list;
-    }
-    return next;
-  }
-  if (target === "claude" || target === "codex") {
-    const next = { ...file, hooks: { ...(file.hooks ?? {}) } };
-    const permission = (next.hooks.PermissionRequest ?? []).filter((entry) => !mine(entry));
-    if (!remove) permission.push({ matcher: "", hooks: [{ type: "command", command: hookCommand(target), timeout }] });
-    next.hooks.PermissionRequest = permission;
-    if (target === "claude") {
-      // Claude Code's multiple-choice questions. Codex has no question hook.
-      const pre = (next.hooks.PreToolUse ?? []).filter((entry) => !mine(entry));
-      if (!remove) pre.push({ matcher: "AskUserQuestion", hooks: [{ type: "command", command: hookCommand("claude"), timeout }] });
-      next.hooks.PreToolUse = pre;
-    }
-    return next;
-  }
-  if (target === "copilot-cli") {
-    const next = { version: 1, ...file, hooks: { ...(file.hooks ?? {}) } };
-    const list = (next.hooks.preToolUse ?? []).filter((entry) => !mine(entry));
-    if (!remove) list.push({ type: "command", bash: hookCommand("copilot-cli"), powershell: `& ${hookCommand("copilot-cli")}`, timeoutSec: timeout });
-    next.hooks.preToolUse = list;
-    return next;
-  }
+  const events = HOOK_EVENTS[target];
+  if (!events) throw new Error("--target must be cursor, claude, codex, copilot-cli or vscode");
+  // Earlier versions also used these; they are taken out on every install.
+  const retired = { claude: ["PreToolUse"], codex: [], "copilot-cli": [], cursor: [], vscode: [] }[target];
   if (target === "vscode") {
-    return remove ? { hooks: {} } : { hooks: { PreToolUse: [{ type: "command", command: hookCommand("copilot"), timeout }] } };
+    if (remove) return { hooks: {} };
+    return { hooks: Object.fromEntries([...events.ask, ...events.report].map((event) => [event, [{ type: "command", command: hookCommand("copilot"), timeout: events.ask.includes(event) ? timeout : 15 }]])) };
   }
-  throw new Error("--target must be cursor, claude, codex, copilot-cli or vscode");
+  const next = target === "cursor" ? { version: 1, hooks: {}, ...file } : target === "copilot-cli" ? { version: 1, ...file } : { ...file };
+  if (target === "cursor") next.version = 1;
+  next.hooks = { ...(next.hooks ?? {}) };
+  for (const event of [...events.ask, ...events.report, ...retired]) {
+    const kept = (next.hooks[event] ?? []).filter((entry) => !mine(entry));
+    if (!remove && !retired.includes(event)) kept.push(entry(target, hookCommand, events.ask.includes(event) ? timeout : 15, events.report.includes(event)));
+    if (kept.length) next.hooks[event] = kept;
+    else delete next.hooks[event];
+  }
+  return next;
+}
+
+/** One hook entry in the tool's own format. Reporting hooks run in the background where the tool allows it. */
+function entry(target, hookCommand, timeout, report) {
+  switch (target) {
+    case "cursor":
+      return { command: hookCommand("cursor"), timeout };
+    case "copilot-cli":
+      return { type: "command", bash: hookCommand("copilot-cli"), powershell: `& ${hookCommand("copilot-cli")}`, timeoutSec: timeout };
+    case "claude":
+      return { matcher: "", hooks: [{ type: "command", command: hookCommand("claude"), timeout, ...(report ? { async: true } : {}) }] };
+    default:
+      // Codex trusts each hook by a hash of its definition: keep it byte-for-byte stable.
+      return { matcher: "", hooks: [{ type: "command", command: hookCommand(target), timeout }] };
+  }
 }
 
 function install(opts, remove = false) {

@@ -32,6 +32,7 @@ import { folderLabels, rejectPathLabels, runBranchPushEnabled } from "./labels.j
 import { createDevicePairing } from "./pairing.js";
 import { publishBrowserDevice, publishDevice } from "./publish.js";
 import { revokePairedDevice } from "./revoke.js";
+import { outsideAccessOf } from "../workspace/trust.js";
 import { contextForPrompt } from "../connectors/items/index.js";
 
 const Register = z.object({
@@ -364,6 +365,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
         task: { title: next.task.title, description },
         askBeforePublish: next.askBeforePublish,
         sandbox: next.executionMode !== "native",
+        outsideAccess: outsideAccessOf(next.context),
         useCredentials: next.useCredentials,
         unattended: next.unattended,
         mode: next.unattended ? "unattended" : next.accessMode === "auto" ? "review" : "ask",

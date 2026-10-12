@@ -23,7 +23,7 @@ Checked against `main` while revising. Where the tree disagrees with the review,
 - It's built on **Tauri 2**: a thin Rust core, the existing Next.js UI in the system webview, **embedded Postgres** (the same schema as the server), a **localhost-only API**, and the existing job queue inside that API.
 - The download is **one Node sidecar** (hub-api, with the model adapters ported in) plus the **`ensemble-sbx` helper**. There is no Python sidecar and no Rust port of the API.
 - Agents work on real repos under **OS-native sandboxes**. All three sit behind one Rust interface. Only the core can start the helper. See doc 24.
-- **Trusted folders** never prompt inside. **Run unattended** requires a trusted folder, and a path outside that folder is blocked. Everything sensitive goes through **Needs me**.
+- **Trusted folders** never prompt inside. **Run unattended** requires a trusted folder; outside it, a sandboxed run follows the outside-folder setting (read only by default) and anything more is refused. Everything sensitive goes through **Needs me**.
 - We **build on the code that already exists** in `apps/hub-api/src/workspace/`. `worker.ts` and `agent.ts` already run jobs. See [doc 18](18_WHAT_IS_REAL.md).
 - **No Mac App Store. No Flatpak.**
 

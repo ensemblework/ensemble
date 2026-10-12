@@ -1,4 +1,4 @@
-import { answerFor, answerPending, formatPending, listPending, listTrusted, trustFolder, untrustFolder, webApprovals } from "./approvals.js";
+import { answerFor, answerPending, connectedHooks, connectHook, formatPending, HOOK_TOOLS, listPending, listTrusted, trustFolder, trustSharing, untrustFolder, webApprovals, type HookTool, type TrustSharing } from "./approvals.js";
 import type { ChildProcess } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
@@ -56,8 +56,9 @@ Usage:
   ensemble folders [list] | add <path> [--label L] [--read-only] | remove <label>
   ensemble keys [list] | set <provider> | remove <provider>
   ensemble needs [list] | answer <n> <allow|deny|option number|"answer">
-  ensemble trust [list] | add [path] | remove <path>
+  ensemble trust [list] | add [path] | remove <path> | share [on|off]
   ensemble approvals [status] | on | off
+  ensemble hooks [list] | connect <tool> | disconnect <tool>
   ensemble sandbox [status] | setup
   ensemble doctor
   ensemble update
@@ -72,7 +73,9 @@ const HELP_BY_COMMAND: Record<string, string> = {
   folders: "Usage: ensemble folders [list] | add <path> [--label L] [--read-only] | remove <label>",
   keys: "Usage: ensemble keys [list] | set <provider> | remove <provider>",
   needs: "Usage: ensemble needs [list] | answer <n> <allow|deny|option number|\"answer\">\nQuestions and approvals waiting on this computer, including pushes and folder trust.",
-  trust: "Usage: ensemble trust [list] | add [path] | remove <path>\nTrusted folders on this computer. Review only and Run unattended need one; Ensemble's own workspace is always trusted.",
+  trust: "Usage: ensemble trust [list] | add [path] | remove <path> | share [on|off]\nTrusted folders on this computer. Review only and Run unattended need one; Ensemble's own workspace is always trusted.\n`share` shows or sets whether they are trusted in Claude Code, Codex, GitHub Copilot CLI, Cursor and Gemini CLI too (on by default).",
+  hooks:
+    "Usage: ensemble hooks [list] | connect <claude|codex|copilot-cli|cursor> | disconnect <tool>\nSends permission prompts and questions from tasks Ensemble opens in these tools to Needs me, while the tool's own prompt still works. The hook signs in with a key that can ask Ensemble but never answer.",
   approvals: "Usage: ensemble approvals [status] | on | off\nOn (default): you can approve anything for this computer from the web or phone, and the mode, internet and limits chosen there apply here.",
   sandbox:
     "Usage: ensemble sandbox [status] | setup\nThis computer's OS sandbox (macOS Seatbelt, Linux bubblewrap or Landlock, Windows sandbox account). No Docker. On Windows, `setup` asks for permission once; the Ensemble app and the CLI share it.",
@@ -535,12 +538,21 @@ async function commandNeeds(args: string[]): Promise<void> {
 async function commandTrust(args: string[]): Promise<void> {
   if (args.includes("--help") || args.includes("-h")) return void console.log(HELP_BY_COMMAND.trust);
   const subcommand = args[0] && !args[0].startsWith("-") ? args[0] : "list";
-  if (!["list", "add", "remove"].includes(subcommand)) throw new Error(HELP_BY_COMMAND.trust);
+  if (!["list", "add", "remove", "share"].includes(subcommand)) throw new Error(HELP_BY_COMMAND.trust);
   const sidecarDir = resolveSidecarDir(import.meta.url);
   if (!(await sidecarAvailable(sidecarDir))) throw new Error(NO_RUNNER);
   if (subcommand === "list") {
     const rows = await withAdminApi({ sidecarDir, run: listTrusted });
     console.log(rows.length ? rows.map((row) => row.path).join("\n") : "No trusted folders yet. Ensemble's own workspace is always trusted. Add one with `ensemble trust add <path>`.");
+    const sharing = await withAdminApi({ sidecarDir, run: (discovery) => trustSharing(discovery) }).catch(() => null);
+    if (sharing) console.log(`\n${sharingLine(sharing)}`);
+    return;
+  }
+  if (subcommand === "share") {
+    const value = args[1];
+    if (value !== undefined && value !== "on" && value !== "off") throw new Error("Usage: ensemble trust share [on|off]");
+    const sharing = await withAdminApi({ sidecarDir, run: (discovery) => trustSharing(discovery, value === undefined ? undefined : value === "on") });
+    console.log(sharingLine(sharing));
     return;
   }
   if (subcommand === "add") {
@@ -552,6 +564,14 @@ async function commandTrust(args: string[]): Promise<void> {
   if (!args[1]) throw new Error("Usage: ensemble trust remove <path>");
   const removed = await withAdminApi({ sidecarDir, run: (discovery) => untrustFolder(discovery, args[1]!) });
   console.log(removed ? `No longer trusted: ${args[1]}.` : `${args[1]} was not trusted.`);
+}
+
+function sharingLine(sharing: TrustSharing): string {
+  if (!sharing.enabled) return "Trust is not shared with other AI tools. Turn it on with `ensemble trust share on`.";
+  const found = sharing.tools.filter((tool) => tool.found).map((tool) => tool.name);
+  return found.length
+    ? `These folders are also trusted in ${found.join(", ")} on this computer. Turn that off with \`ensemble trust share off\`.`
+    : "No other AI tools found on this computer to share trust with (Claude Code, Codex, GitHub Copilot CLI, Cursor, Gemini CLI).";
 }
 
 async function commandApprovals(args: string[]): Promise<void> {
@@ -566,6 +586,23 @@ async function commandApprovals(args: string[]): Promise<void> {
       ? "Approvals from the web and phone: on. You can approve anything for this computer from Needs me (with a confirm step for pushes and trust), and the run settings chosen there apply here."
       : "Approvals from the web and phone: off. Pushes, folder trust and paths outside a folder are answered only here (`ensemble needs`), and web settings can only narrow.",
   );
+}
+
+async function commandHooks(args: string[]): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) return void console.log(HELP_BY_COMMAND.hooks);
+  const subcommand = args[0] ?? "list";
+  if (!["list", "connect", "disconnect"].includes(subcommand)) throw new Error(HELP_BY_COMMAND.hooks);
+  const sidecarDir = resolveSidecarDir(import.meta.url);
+  if (!(await sidecarAvailable(sidecarDir))) throw new Error(NO_RUNNER);
+  if (subcommand === "list") {
+    const connected = await withAdminApi({ sidecarDir, run: connectedHooks });
+    for (const [tool, name] of Object.entries(HOOK_TOOLS)) console.log(`${connected.includes(tool) ? "connected    " : "not connected"}  ${tool.padEnd(12)} ${name}`);
+    return;
+  }
+  const tool = args[1];
+  if (!tool || !(tool in HOOK_TOOLS)) throw new Error(HELP_BY_COMMAND.hooks);
+  const result = await withAdminApi({ sidecarDir, run: (discovery) => connectHook(discovery, tool as HookTool, subcommand === "disconnect") });
+  console.log(result.message);
 }
 
 async function commandSandbox(args: string[]): Promise<void> {
@@ -775,6 +812,8 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
       return commandTrust(rest);
     case "approvals":
       return commandApprovals(rest);
+    case "hooks":
+      return commandHooks(rest);
     case "sandbox":
       return commandSandbox(rest);
     case "doctor":

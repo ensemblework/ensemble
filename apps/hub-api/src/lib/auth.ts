@@ -119,7 +119,7 @@ export function newApiToken(): { token: string; hash: string; prefix: string } {
 }
 
 export type AuthVia = "session" | "token" | "internal" | "bypass" | "desktop" | "link";
-export type TokenScope = "full" | "bridge" | "device";
+export type TokenScope = "full" | "bridge" | "device" | "hooks";
 
 /**
  * `userId` is whose data the request reads and writes: the active Ensemble space.

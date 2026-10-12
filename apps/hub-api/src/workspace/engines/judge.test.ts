@@ -7,7 +7,8 @@ import type { WorkspaceJob } from "@prisma/client";
 // tools.ts pulls in the API config. A unit run has no .env; the value is never connected to.
 process.env.DATABASE_URL ??= "postgresql://ensemble:unused@127.0.0.1:1/ensemble_desktop";
 const { judgeEngineCall, shellSegments } = await import("./judge.js");
-const { claudeSettings } = await import("./claude-code.js");
+const { readsOnly } = await import("../tools.js");
+const { claudeFilesystem, claudeSettings } = await import("./claude-code.js");
 type Ctx = Parameters<typeof judgeEngineCall>[0];
 
 const root = join(homedir(), "ensemble-workspace", "runs", "job-1");
@@ -85,7 +86,7 @@ test("shell commands are split into programs for the checks", () => {
 });
 
 test("Claude Code gets the hook on every tool, a strict sandbox, and the run's internet setting", () => {
-  const settings = claudeSettings({ hookCommand: "node hook --engine", sandboxed: true, network: false, writable: ["/w"] }) as {
+  const settings = claudeSettings({ hookCommand: "node hook --engine", sandboxed: true, network: false, filesystem: { allowWrite: ["/w"], denyRead: [] } }) as {
     hooks: { PreToolUse: Array<{ matcher: string; hooks: Array<{ command: string }> }> };
     sandbox: { enabled: boolean; failIfUnavailable: boolean; allowUnsandboxedCommands: boolean; filesystem: { allowWrite: string[] }; network: { allowedDomains?: string[]; strictAllowlist?: boolean } };
     permissions: { deny?: string[]; allow?: string[] };
@@ -98,7 +99,38 @@ test("Claude Code gets the hook on every tool, a strict sandbox, and the run's i
   assert.deepEqual(settings.sandbox.filesystem.allowWrite, ["/w"]);
   assert.deepEqual(settings.sandbox.network, { allowedDomains: [], strictAllowlist: true });
   assert.ok(settings.permissions.deny?.includes("WebFetch"));
-  const online = claudeSettings({ hookCommand: "x", sandboxed: false, network: true, writable: [] }) as { sandbox: { enabled: boolean }; permissions: { allow?: string[] } };
+  const online = claudeSettings({ hookCommand: "x", sandboxed: false, network: true, filesystem: { allowWrite: [], denyRead: [] } }) as { sandbox: { enabled: boolean }; permissions: { allow?: string[] } };
   assert.equal(online.sandbox.enabled, false);
   assert.ok(online.permissions.allow?.includes("WebFetch(domain:*)"));
+});
+
+test("outside the folder, reading goes ahead with the default setting and writing does not", async () => {
+  const outside = join(homedir(), "ensemble-workspace", "runs", "other", "notes.md");
+  const run = ctx({ outsideAccess: "read" });
+  assert.equal((await judgeEngineCall(run, { tool: "Read", input: { file_path: outside } })).decision, "allow");
+  assert.equal((await judgeEngineCall(run, { tool: "Bash", input: { command: `cat ${outside}` } })).decision, "allow");
+  assert.equal((await judgeEngineCall(run, { tool: "Bash", input: { command: `cp a.txt ${outside}` } })).decision, "deny");
+  assert.equal((await judgeEngineCall(run, { tool: "Write", input: { file_path: outside } })).decision, "deny");
+  const open = ctx({ outsideAccess: "read-write" });
+  assert.equal((await judgeEngineCall(open, { tool: "Write", input: { file_path: outside } })).decision, "allow");
+  // Keys stay closed whatever the setting.
+  assert.equal((await judgeEngineCall(open, { tool: "Read", input: { file_path: join(homedir(), ".aws", "credentials") } })).decision, "deny");
+});
+
+test("read-only programs are recognised, and anything that can write is not", () => {
+  for (const argv of [["cat", "x"], ["ls", "-la", "/tmp"], ["git", "log", "-1"], ["grep", "-r", "a", "."], ["find", ".", "-name", "*.ts"]]) assert.equal(readsOnly(argv), true, argv.join(" "));
+  for (const argv of [["cp", "a", "b"], ["git", "commit"], ["find", ".", "-delete"], ["python", "x.py"], ["sort", "-o", "out", "in"]]) assert.equal(readsOnly(argv), false, argv.join(" "));
+});
+
+test("Claude Code's own sandbox follows the outside-folder setting", () => {
+  const base = { home: "/h", writable: ["/h/ensemble-workspace/runs/1", "/h/ensemble-workspace/.cache"], closed: ["/h/.ssh", "/h/.aws"], toolchain: ["/h/.nvm"] };
+  const read = claudeFilesystem({ ...base, access: "read" });
+  assert.deepEqual(read.allowWrite, base.writable);
+  assert.deepEqual(read.denyRead, base.closed);
+  const none = claudeFilesystem({ ...base, access: "none" });
+  assert.ok(none.denyRead.includes("/h") && none.denyRead.includes("/h/.ssh"));
+  assert.ok(none.allowRead?.includes("/h/ensemble-workspace/runs/1") && none.allowRead.includes("/h/.nvm"));
+  const both = claudeFilesystem({ ...base, access: "read-write", homeEntries: ["Documents", "code", ".zshrc", ".ssh", "Library", "AppData"] });
+  assert.deepEqual(both.allowWrite, [...base.writable, "/h/Documents", "/h/code"]);
+  assert.deepEqual(both.denyWrite, base.closed);
 });

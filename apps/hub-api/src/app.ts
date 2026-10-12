@@ -38,6 +38,7 @@ import { systemRoutes } from "./routes/system.js";
 import { codeRoutes } from "./routes/code.js";
 import { agentRoutes } from "./routes/agents.js";
 import { engineRoutes } from "./routes/engine.js";
+import { handoffRoutes } from "./routes/handoffs.js";
 import { terminalRoutes } from "./routes/terminal.js";
 import { viewRoutes } from "./routes/views.js";
 import { commentRoutes } from "./routes/comments.js";
@@ -62,7 +63,7 @@ import { appItemRoutes } from "./routes/app-items.js";
 import { peopleIdentityRoutes } from "./routes/people-identity.js";
 import { projectLinkRoutes } from "./routes/project-links.js";
 import { meetingNoteRoutes } from "./routes/meeting-notes.js";
-import { bridgeMethodRejected, deviceTokenRejected, readOnlyTokenRejected } from "./bridge/auth.js";
+import { bridgeMethodRejected, deviceTokenRejected, hooksTokenRejected, readOnlyTokenRejected } from "./bridge/auth.js";
 import { deviceRoutes } from "./devices/routes.js";
 import { remoteRoutes } from "./remote/routes.js";
 import { desktopHostAllowed } from "./lib/desktop-guard.js";
@@ -151,7 +152,8 @@ export async function buildApp(options: BuildAppOptions = {}) {
       request.tokenScope = who.tokenScope;
       request.tokenId = who.tokenId;
       request.modules = who.modules;
-      const denied = readOnlyTokenRejected(who.tokenScope, request.method, path) ?? deviceTokenRejected(who.tokenScope, request.method, path);
+      const denied =
+        readOnlyTokenRejected(who.tokenScope, request.method, path) ?? deviceTokenRejected(who.tokenScope, request.method, path) ?? hooksTokenRejected(who.tokenScope, request.method, path);
       if (denied) return reply.code(403).send({ error: denied });
       if (moduleDenied(path, who.modules)) return reply.code(404).send({ error: MODULE_DENIED });
       await enforceHostedRequest(request, path);
@@ -219,6 +221,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     codeRoutes,
     agentRoutes,
     engineRoutes,
+    handoffRoutes,
     deviceRoutes,
     terminalRoutes,
     viewRoutes,

@@ -242,6 +242,7 @@ model Task {
   transitions   TaskTransition[]
   workspaces    WorkspaceSession[]
   workspaceJobs WorkspaceJob[]
+  handoffs      AgentHandoff[]
   page          TaskPage?
   discussions   PageDiscussion[]
   artifacts     Artifact[]
@@ -1833,6 +1834,31 @@ model ConnectorApp {
 
 /// A permission prompt from Cursor, Claude Code, VS Code Copilot, … routed to Needs me.
 /// The hook that asked is blocked until status leaves pending or expiresAt passes.
+/// A task Ensemble opened in an agent's own app or window (Claude, Codex, Cursor, VS Code) on
+/// this computer. Prompts and questions from its sessions reach Needs me, and the person may
+/// answer in either place (docs/30_ENGINES.md "In the agent's own app").
+model AgentHandoff {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  taskId    String   @map("task_id")
+  /// claude | codex | cursor | vscode
+  app       String
+  folder    String
+  /// Written into the task's prompt; the agent's UserPromptSubmit hook links its session by it.
+  marker    String   @unique
+  /// The agent's own session ids seen with this hand-off.
+  sessions  String[] @default([])
+  /// open: the agent may still be working. finished: its last turn ended. closed: done with.
+  status    String   @default("open")
+  summary   String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@map("agent_handoffs")
+}
+
 model AgentDecision {
   id          String    @id @default(uuid())
   userId      String    @map("user_id")

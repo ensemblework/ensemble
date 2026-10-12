@@ -515,6 +515,10 @@ test("assistant conversations and stop actions stay private without invoking a p
 });
 
 test("decisions, cancel and saved rules are scoped before long polling or writes", async () => {
+  // A session Ensemble did not open is left to the tool's own prompt, unless every session is routed.
+  const skipped = await check(a, "POST", "/api/decisions", 200, "happy-path", { source: "other", event: "permission", payload: { tool_name: "fixture" }, waitSeconds: 5 });
+  assert.equal(skipped.status, "skipped");
+  await check(a, "PATCH", "/api/settings", 200, "happy-path", { orchestration: { editorRequests: "all" } });
   const ask = await check(a, "POST", "/api/decisions", 202, "happy-path", { source: "other", event: "permission", payload: { tool_name: "fixture" }, waitSeconds: 5 });
   assert.equal(typeof ask.id, "string");
   assert.ok((await check(a, "GET", "/api/decisions", 200, "happy-path")).decisions.some((row: { id: string }) => row.id === ask.id));

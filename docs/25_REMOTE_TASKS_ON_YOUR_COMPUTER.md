@@ -155,7 +155,7 @@ ensemble-app. Checked against `main` on 2 Oct 2026. Paths are relative to the re
 - Migration: `apps/hub-api/prisma/migrations/20260929150000_api_token_scope/migration.sql` adds `api_tokens.scope TEXT DEFAULT 'full'`.
 - Model: `ApiToken` (schema line 1492). Stored as a sha256 hash with a `prefix`, plus `lastUsedAt` and `revokedAt`.
 - Auth: `identify()` in `apps/hub-api/src/lib/auth.ts` accepts `Bearer ens_…`, then the `onRequest` hook in `apps/hub-api/src/app.ts` applies token-scope/module gates from `apps/hub-api/src/bridge/auth.ts`.
-- Three scopes today: `full` acts as the user subject to interactive/hosted gates; `bridge` only reads `/api/bridge`; `device` only calls `/api/devices/self/*`. Unknown scopes fail closed.
+- Four scopes today: `full` acts as the user subject to interactive/hosted gates; `bridge` only reads `/api/bridge`; `device` only calls `/api/devices/self/*`; `hooks` (12 Oct 2026, for an agent's hook, [doc 30](30_ENGINES.md) §5) only opens, waits on, withdraws and reports Needs me cards, never answers them. Unknown scopes fail closed.
 - Both `POST /api/connect/token` and `POST /api/tokens` require a browser session, so token-authenticated callers cannot mint additional keys.
 - `ENSEMBLE_DESKTOP_TOKEN` (`via: "desktop"`) is a per-launch secret for the local sidecar from PR #32, pinned to `ENSEMBLE_DEV_USER_ID`. It is not a hosted device token.
 - The hash, prefix, `lastUsedAt`, and revoke columns are reused. `Device` exists in the Prisma schema and device routes enforce owner/revocation checks.

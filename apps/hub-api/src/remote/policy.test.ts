@@ -134,6 +134,10 @@ test("the web's sandbox toggle applies only when this computer accepts web setti
   assert.ok(!isRefusal(kept) && kept.assign.sandbox === true);
   const older = planLocalJob(spec({ folderLabel: "notes" }), settings(folders), () => null);
   assert.ok(!isRefusal(older) && older.assign.sandbox === true);
+  const outside = planLocalJob(spec({ folderLabel: "notes", outsideAccess: "read-write" }), settings(folders), () => null);
+  assert.ok(!isRefusal(outside) && outside.assign.outsideAccess === "read-write");
+  const ownSetting = planLocalJob(spec({ folderLabel: "notes", outsideAccess: "read-write" }), settings(folders, false), () => null);
+  assert.ok(!isRefusal(ownSetting) && ownSetting.assign.outsideAccess === undefined, "without web settings, this computer's own setting applies");
 });
 
 test("a phone answer applies only to the question the Mac asked, once", () => {

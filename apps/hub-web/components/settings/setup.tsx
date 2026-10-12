@@ -546,14 +546,18 @@ export function ConnectionsPanel({ settings, patch, returnTo = "/settings?tab=co
 const TARGETS = [
   {
     id: "claude",
-    label: "Claude Code",
-    detail: "Every permission prompt, and its multiple-choice questions (with their options and a typed answer), come to Ensemble. Installs into ~/.claude/settings.json.",
+    label: "Claude Code and the Claude app",
+    detail:
+      "Permission prompts and multiple-choice questions (with their options and a typed answer) come to Needs me, while Claude's own window shows them too: answer in either, the first answer counts. Installs into ~/.claude/settings.json.",
   },
-  { id: "codex", label: "Codex", detail: "Every approval request comes to Ensemble. Installs into ~/.codex/hooks.json; approve the hook once in Codex's /hooks." },
-  { id: "copilot-cli", label: "GitHub Copilot CLI", detail: "Tool calls ask Ensemble before they run. Installs into ~/.copilot/hooks/ensemble.json." },
-  { id: "cursor", label: "Cursor", detail: "Shell commands and MCP tool calls ask Ensemble before they run. Installs into ~/.cursor/hooks.json." },
-  { id: "vscode", label: "VS Code (GitHub Copilot agent)", detail: "Tool calls that change things ask Ensemble. Installs .github/hooks/ensemble.json in the project you run it from." },
+  { id: "codex", label: "Codex (CLI and the ChatGPT app)", detail: "Approval requests come to Needs me first; if nobody answers there, Codex asks you itself. Installs into ~/.codex/hooks.json; approve the hook once in Codex (Settings → Hooks, or /hooks)." },
+  { id: "copilot-cli", label: "GitHub Copilot CLI", detail: "Tool calls ask Needs me before they run. Installs into ~/.copilot/hooks/ensemble.json." },
+  { id: "cursor", label: "Cursor", detail: "Shell commands and MCP tool calls ask Needs me before they run. Installs into ~/.cursor/hooks.json." },
+  { id: "vscode", label: "VS Code (GitHub Copilot agent)", detail: "Tool calls that change things ask Needs me. Installs .github/hooks/ensemble.json in the project you run it from." },
 ] as const;
+
+/** On this computer, Ensemble installs the hook itself (VS Code's lives in each project, so it stays a command). */
+const CONNECTABLE = TARGETS.filter((target) => target.id !== "vscode");
 
 export function EditorsSection() {
   const client = useQueryClient();
@@ -572,6 +576,21 @@ export function EditorsSection() {
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
   const revoke = useMutation({ mutationFn: api.revokeToken, onSuccess: () => client.invalidateQueries({ queryKey: ["tokens"] }) });
+  const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
+  const sessions = useMutation({
+    mutationFn: (editorRequests: "ensemble" | "all") => api.saveSettings({ orchestration: { editorRequests } }),
+    onSuccess: () => client.invalidateQueries({ queryKey: ["settings"] }),
+  });
+  const connect = useMutation({
+    mutationFn: ({ target, remove }: { target: string; remove?: boolean }) => api.connectEditor(target, remove),
+    onSuccess: (result) => {
+      toast(result.message.split("\n")[0] ?? "Done.");
+      void client.invalidateQueries({ queryKey: ["editor-setup"] });
+      void client.invalidateQueries({ queryKey: ["tokens"] });
+    },
+    onError: (error) => toast((error as Error).message, { tone: "error" }),
+  });
+  const connected = setup.data?.connected ?? [];
   const dropRule = useMutation({ mutationFn: api.deleteDecisionRule, onSuccess: () => client.invalidateQueries({ queryKey: ["decision-rules"] }) });
   const command = (target: string) =>
     setup.data ? `"${setup.data.node}" "${setup.data.script}" install --target ${target} --token ${fresh ?? "<create a token above>"} --url ${setup.data.apiUrl}` : "";
@@ -607,6 +626,41 @@ export function EditorsSection() {
       </div>
       {routing ? (
       <div id="editor-permission-routing" className="mt-2">
+      <SettingRow
+        title="Which sessions come to Needs me"
+        description="Tasks Ensemble opened in the tool (Assign → Who does the work), or every session you start there yourself as well. A session that is not sent here asks you in the tool, at once."
+      >
+        <select
+          aria-label="Which sessions come to Needs me"
+          className="field"
+          value={settings.data?.settings.orchestration.editorRequests ?? "ensemble"}
+          onChange={(event) => sessions.mutate(event.target.value as "ensemble" | "all")}
+        >
+          <option value="ensemble">Tasks Ensemble opened</option>
+          <option value="all">Every session</option>
+        </select>
+      </SettingRow>
+      {setup.data?.local ? (
+        <div className="mb-2 border-b border-line pb-2">
+          {CONNECTABLE.map((target) => (
+            <SettingRow key={target.id} title={target.label} description={target.detail}>
+              {connected.includes(target.id) ? (
+                <span className="flex items-center gap-2">
+                  <Tag tone="green">Connected</Tag>
+                  <button type="button" className="btn-ghost py-0 text-[12px]" disabled={connect.isPending} onClick={() => connect.mutate({ target: target.id, remove: true })}>
+                    Disconnect
+                  </button>
+                </span>
+              ) : (
+                <button type="button" className="btn" disabled={connect.isPending} onClick={() => connect.mutate({ target: target.id })}>
+                  Connect
+                </button>
+              )}
+            </SettingRow>
+          ))}
+          <div className="text-[12px] text-muted">For VS Code, or a tool on another computer, use a personal token and the commands below.</div>
+        </div>
+      ) : null}
       <SettingRow title="Personal token" description="Hooks use this to reach your Ensemble. Shown once; revoke it here any time.">
         <button type="button" className="btn" onClick={() => create.mutate()} disabled={create.isPending}>
           Create token

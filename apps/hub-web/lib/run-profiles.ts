@@ -103,6 +103,6 @@ export function removeProfile(saved: RunProfile[] | undefined, id: string): RunP
 export function profileSummary(profile: RunProfile): string {
   const mode = profile.mode === "unattended" ? "Run unattended" : profile.mode === "review" ? "Review only" : "Ask";
   const git = profile.delivery === "local" ? "local only" : profile.delivery === "commit" ? "may commit" : "may commit and push";
-  const engine = profile.engine === "claude-code" ? "Claude Code · " : "";
+  const engine = profile.engine === "claude-code" ? "Claude Code · " : profile.engine === "codex" ? "Codex · " : profile.engine === "cursor-agent" ? "Cursor · " : "";
   return profile.kind === "research" ? "Research & writing" : `${engine}Code · ${mode} · ${git}${profile.askBeforePublish && profile.delivery !== "local" && profile.mode !== "unattended" ? " (asks before each commit)" : ""}`;
 }

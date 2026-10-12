@@ -78,6 +78,8 @@ export function planLocalJob(spec: JobSpec, settings: RemoteSettings, continueFr
     useCredentials: false,
     // The sandbox toggle from the web applies when this computer accepts web settings; otherwise the sandbox stays on.
     sandbox: web ? spec.sandbox !== false : true,
+    // The web's outside-folder choice applies when this computer accepts web settings; otherwise this computer's own setting.
+    ...(web && spec.outsideAccess ? { outsideAccess: spec.outsideAccess } : {}),
     markDone: true,
     unattended: false,
     mode: web ? mode : "ask",
@@ -89,8 +91,8 @@ export function planLocalJob(spec: JobSpec, settings: RemoteSettings, continueFr
     ...(spec.maxToolCalls ? { maxToolCalls: spec.maxToolCalls } : {}),
     ...(spec.model?.trim() ? { model: spec.model.trim() } : {}),
     ...(spec.provider?.trim() ? { provider: spec.provider.trim() } : {}),
-    // The person's own Claude Code on this computer, with their own sign-in.
-    engine: spec.provider?.trim() === "claude-code" ? "claude-code" : "ensemble",
+    // The person's own Claude Code, Codex or Cursor agent on this computer, with their own sign-in.
+    engine: (["claude-code", "codex", "cursor-agent"] as const).find((engine) => engine === spec.provider?.trim()) ?? "ensemble",
     ...(spec.reasoningEffort?.trim() ? { reasoningEffort: spec.reasoningEffort.trim() } : {}),
   };
   let publicCheck: string | null = null;

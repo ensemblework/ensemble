@@ -28,6 +28,7 @@ import { COMPLEXITY_LABEL, OWNER_LABEL, PRIORITY, PRIORITY_ORDER, STATUS, dateTi
 import { MakeDiagramButton, taskDiagramPrompt } from "../diagrams/make-diagram";
 import { AssignDialog } from "../agent/assign-dialog";
 import { TaskAgentPanel } from "../agent/job-card";
+import { TaskHandoffs } from "../agent/handoff-card";
 import { textToDoc } from "../editor/doc";
 import { mentionHref } from "../editor/editor-commands";
 import { usePeek } from "../shell/peek";
@@ -471,6 +472,7 @@ export function TaskPage({
           )}
         </PropertyRow>
         {shared ? null : <TaskAgentPanel taskId={taskId} />}
+        {shared ? null : <TaskHandoffs taskId={taskId} />}
 
         <PropertyRow icon={Gauge} label="Priority">
           <Popover

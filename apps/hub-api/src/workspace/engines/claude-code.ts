@@ -19,11 +19,18 @@
  * sign-in.
  */
 import { spawn, spawnSync } from "node:child_process";
+import { readdir } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
+import { desktopDataDir } from "@ensemble/shared-types/desktop-discovery";
+import { askpassPath, cacheDir, ENSEMBLE_SOURCE } from "../guard.js";
 import { appendLive } from "../live-log.js";
 import { hostExecutable } from "../policy.js";
-import { cacheDir } from "../guard.js";
+import { LINUX_TOOLCHAIN_HOME } from "../sandbox/linux.js";
+import { SECRET_HOME_PATHS, TOOLCHAIN_HOME_READS } from "../sandbox/seatbelt.js";
 import type { JobContext } from "../tools.js";
+import type { OutsideAccess } from "../trust.js";
 import { hookScriptPath, localApiUrl, registerEngineRun, unregisterEngineRun } from "./registry.js";
 
 export type EngineResult = { text: string; turns: number; toolCalls: number; tokensIn: number; tokensOut: number; model: string | null; costUsd: number | null };
@@ -42,8 +49,39 @@ export async function detectClaudeCode(): Promise<{ path: string; version: strin
   }
 }
 
+export type ClaudeFilesystem = { allowWrite: string[]; denyWrite?: string[]; denyRead: string[]; allowRead?: string[] };
+
+/**
+ * Claude Code's sandbox paths for the run's "Outside the work folder" setting, so a script it runs
+ * gets the same answer as a named path does from the hook. Keys, browser data and Ensemble's own
+ * data (`closed`) stay shut in every case; read and write opens the person's own folders in the
+ * home folder, never its dotfiles or app folders.
+ */
+export function claudeFilesystem(input: {
+  access: OutsideAccess;
+  home: string;
+  writable: string[];
+  closed: string[];
+  /** Names in the home folder (read and write only). */
+  homeEntries?: string[];
+  /** Toolchains under the home folder that commands still need to read (no access only). */
+  toolchain?: string[];
+}): ClaudeFilesystem {
+  if (input.access === "none") {
+    // Claude Code sources its shell snapshot from its own folder before each command.
+    const allowRead = [...input.writable, ...(input.toolchain ?? []), join(input.home, ".claude", "shell-snapshots")];
+    return { allowWrite: input.writable, denyRead: [input.home, ...input.closed], allowRead };
+  }
+  if (input.access === "read") return { allowWrite: input.writable, denyRead: input.closed };
+  const own = (input.homeEntries ?? []).filter((name) => !name.startsWith(".") && !HOME_APP_FOLDERS.has(name)).map((name) => join(input.home, name));
+  return { allowWrite: [...input.writable, ...own], denyWrite: input.closed, denyRead: input.closed };
+}
+
+/** Folders in the home folder that belong to apps, not to the person's work. */
+const HOME_APP_FOLDERS = new Set(["Library", "AppData", "Applications", "snap"]);
+
 /** The per-run settings: the hook on every tool call, and the sandbox and internet the run asked for. */
-export function claudeSettings(input: { hookCommand: string; sandboxed: boolean; network: boolean; writable: string[] }): Record<string, unknown> {
+export function claudeSettings(input: { hookCommand: string; sandboxed: boolean; network: boolean; filesystem: ClaudeFilesystem }): Record<string, unknown> {
   return {
     hooks: { PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: input.hookCommand, timeout: 86_400 }] }] },
     sandbox: input.sandboxed
@@ -53,7 +91,8 @@ export function claudeSettings(input: { hookCommand: string; sandboxed: boolean;
           allowUnsandboxedCommands: false,
           // Ensemble's hook decides every command first; the sandbox is the floor under it.
           autoAllowBashIfSandboxed: true,
-          filesystem: { allowWrite: input.writable },
+          // Claude Code's sandbox reads broadly by default: keys, browser data and Ensemble's own data stay closed.
+          filesystem: input.filesystem,
           network: input.network ? {} : { allowedDomains: [], strictAllowlist: true },
         }
       : { enabled: false },
@@ -75,7 +114,18 @@ export async function runClaudeCode(
   });
   const credential = registerEngineRun(ctx);
   const hookCommand = `"${process.execPath}" "${hookScriptPath()}" --source claude --engine`;
-  const settings = claudeSettings({ hookCommand, sandboxed: ctx.sandboxed, network: ctx.network, writable: [ctx.root, await cacheDir()] });
+  const home = homedir();
+  const closed = [...SECRET_HOME_PATHS.map((name) => join(home, name)), desktopDataDir({ platform: process.platform, home }), ENSEMBLE_SOURCE, dirname(await askpassPath())];
+  const access = ctx.outsideAccess ?? "none";
+  const filesystem = claudeFilesystem({
+    access,
+    home,
+    writable: [ctx.root, await cacheDir()],
+    closed,
+    homeEntries: access === "read-write" ? await readdir(home).catch(() => []) : [],
+    toolchain: (process.platform === "darwin" ? TOOLCHAIN_HOME_READS : process.platform === "linux" ? LINUX_TOOLCHAIN_HOME : []).map((name) => join(home, name)),
+  });
+  const settings = claudeSettings({ hookCommand, sandboxed: ctx.sandboxed, network: ctx.network, filesystem });
   const args = [
     "-p",
     options.prompt,
