@@ -189,6 +189,9 @@ importers:
       '@types/react':
         specifier: ^19.3.0
         version: 19.3.0
+      '@xterm/headless':
+        specifier: ^5.5.0
+        version: 5.5.0
       esbuild:
         specifier: ^0.28.2
         version: 0.28.2
@@ -1783,6 +1786,9 @@ packages:
   '@xmldom/xmldom@0.8.15':
     resolution: {integrity: sha512-/5NV/vDALVFDXgLmfsy9TRCBlKwO2LNBFzpzvb9iIj+jR+eSc6DLYYvVOdivT/jm7MtU6TebYuRmzEOI7w40UA==}
     engines: {node: '>=10.0.0'}
+
+  '@xterm/headless@5.5.0':
+    resolution: {integrity: sha512-5xXB7kdQlFBP82ViMJTwwEc3gKCLGKR/eoxQm4zge7GPBl86tCdI0IdPJjoKd8mUSFXz5V7i/25sfsEkP4j46g==}
 
   '@xyflow/react@12.12.0':
     resolution: {integrity: sha512-74oXI0Rgm1Eu33cHQAd74J6oVgCH9mbFyTVQbsGgp2kmWwh0HdtBr2VP04z8mbPD+M/xO69nqG5dDEt7/EN2rQ==}
@@ -4887,6 +4893,8 @@ snapshots:
       - '@codemirror/search'
 
   '@xmldom/xmldom@0.8.15': {}
+
+  '@xterm/headless@5.5.0': {}
 
   '@xyflow/react@12.12.0(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
     dependencies:
