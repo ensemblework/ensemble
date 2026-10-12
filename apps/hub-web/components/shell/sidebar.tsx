@@ -11,6 +11,7 @@ import {
   CircleCheck,
   Code2,
   Columns3,
+  FolderOpen,
   LayoutTemplate,
   ChartSpline,
   PanelLeft,
@@ -198,6 +199,9 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
         </nav>
       )}
       <PagesNav />
+      <nav className="mt-1 flex flex-col gap-0.5 px-2" aria-label="Files">
+        <NavItem href="/files" label="Files" icon={FolderOpen} />
+      </nav>
       {sharedCount ? (
         <nav className="mt-1 flex flex-col gap-0.5 px-2" aria-label="Shared with you">
           <NavItem href="/shared" label="Shared with you" icon={UsersRound} badge={unopened || undefined} />

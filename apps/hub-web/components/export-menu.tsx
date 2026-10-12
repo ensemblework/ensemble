@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Download, FileCode2, FileText, FileType2, Globe, Loader2, NotebookPen, Type } from "lucide-react";
+import { Download, FileCode2, FileOutput, FileText, FileType2, Globe, Loader2, NotebookPen, Type } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 import type { ExportDoc } from "@/lib/export/document";
@@ -18,18 +18,30 @@ const ICONS: Record<DocFormat, LucideIcon> = {
   txt: Type,
 };
 
+/** A page made from a file can also go back to that file's format, keeping its formatting. */
+export type ExportExtra = { id: string; label: string; hint: string; run: () => Promise<void> };
+
 /**
  * The download button next to Share. `load` builds the document only when a format is picked,
  * so the menu costs nothing until someone uses it.
  */
-export function ExportMenu({ load, label = "Download", compact = true }: { load: () => ExportDoc | Promise<ExportDoc>; label?: string; compact?: boolean }) {
+export function ExportMenu({
+  load,
+  label = "Download",
+  compact = true,
+  extra = [],
+}: {
+  load: () => ExportDoc | Promise<ExportDoc>;
+  label?: string;
+  compact?: boolean;
+  extra?: ExportExtra[];
+}) {
   const toast = useToast();
-  const [busy, setBusy] = useState<DocFormat | null>(null);
-  const run = async (format: DocFormat, close: () => void) => {
-    setBusy(format);
+  const [busy, setBusy] = useState<string | null>(null);
+  const perform = async (key: string, work: () => Promise<void>, close: () => void) => {
+    setBusy(key);
     try {
-      await downloadDocument(await load(), format);
-      if (format === "pages") toast("Saved as .docx. Open it in Pages to edit.");
+      await work();
       close();
     } catch (error) {
       toast(error instanceof Error ? `Download failed: ${error.message}` : "Download failed", { tone: "error" });
@@ -37,6 +49,11 @@ export function ExportMenu({ load, label = "Download", compact = true }: { load:
       setBusy(null);
     }
   };
+  const run = (format: DocFormat, close: () => void) =>
+    perform(format, async () => {
+      await downloadDocument(await load(), format);
+      if (format === "pages") toast("Saved as .docx. Open it in Pages to edit.");
+    }, close);
   return (
     <Popover
       align="right"
@@ -75,6 +92,25 @@ export function ExportMenu({ load, label = "Download", compact = true }: { load:
               </button>
             );
           })}
+          {extra.length ? (
+            <>
+              <div className="px-2 pb-1 pt-2.5 text-2xs font-medium uppercase tracking-wide text-faint">With the original's formatting</div>
+              {extra.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  role="menuitem"
+                  disabled={busy !== null}
+                  onClick={() => void perform(`extra:${item.id}`, item.run, close)}
+                  className="row-tile flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[13px] disabled:opacity-50"
+                >
+                  {busy === `extra:${item.id}` ? <Loader2 size={14} className="animate-spin text-muted" /> : <FileOutput size={14} className="text-muted" />}
+                  <span className="flex-1">{item.label}</span>
+                  <span className="text-2xs text-faint">{item.hint}</span>
+                </button>
+              ))}
+            </>
+          ) : null}
         </div>
       )}
     </Popover>

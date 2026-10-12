@@ -66,7 +66,7 @@ test("uploaded-document quotas are per-user, transactional, and retain no reject
     assert.equal(await harness.prisma.artifact.count({ where: { userId: user.id, kind: "file" } }), 2);
   });
 
-  await t.test("retained soft-deleted binary originals still consume quota, independently of other users", async () => {
+  await t.test("removing a file frees its room on the account, independently of other users", async () => {
     process.env.ENSEMBLE_MAX_DOCUMENT_BYTES = "2";
     const user = await harness.asUser();
     const other = await harness.asUser();
@@ -74,17 +74,16 @@ test("uploaded-document quotas are per-user, transactional, and retain no reject
     const accepted = await upload(user, "original.pdf", original, "application/pdf");
     assert.equal(accepted.statusCode, 201, accepted.body);
     const id = accepted.json<{ document: { id: string } }>().document.id;
-    const deleted = await user.inject({ method: "DELETE", url: `/api/documents/${id}` });
-    assert.equal(deleted.statusCode, 204, deleted.body);
-    const retained = await harness.prisma.document.findUniqueOrThrow({ where: { id } });
-    assert.notEqual(retained.deletedAt, null);
-    assert.deepEqual(Buffer.from(retained.original), original);
     const rejected = await upload(user, "rejected.pdf", Buffer.from([1]), "application/pdf");
     assert.equal(rejected.statusCode, 429, rejected.body);
     assert.equal(await harness.prisma.document.count({ where: { userId: user.id } }), 1);
     const independent = await upload(other, "other.txt", Buffer.from("yz"));
     assert.equal(independent.statusCode, 201, independent.body);
-    await harness.prisma.document.delete({ where: { id } });
+    const deleted = await user.inject({ method: "DELETE", url: `/api/documents/${id}` });
+    assert.equal(deleted.statusCode, 204, deleted.body);
+    const retained = await harness.prisma.document.findUniqueOrThrow({ where: { id } });
+    assert.notEqual(retained.deletedAt, null);
+    assert.deepEqual(Buffer.from(retained.original), original, "the original stays for restoring from Deleted items");
     const freed = await upload(user, "freed.txt", Buffer.from("uv"));
     assert.equal(freed.statusCode, 201, freed.body);
   });

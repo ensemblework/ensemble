@@ -295,7 +295,7 @@ function list<T>(json: Record<string, unknown>, key: string): T[] {
 
 async function ensureApiFixtures(): Promise<void> {
   const docs = await api("GET", "/api/documents");
-  const filenames = list<{ filename: string }>(docs.json, "documents").map((row) => row.filename);
+  const filenames = list<{ filename: string }>(docs.json, "files").map((row) => row.filename);
   if (!filenames.includes("latency-readout.md")) {
     const text = "Latency readout uploaded through POST /api/documents during bridge e2e. p95 is 180ms.";
     const created = await api("POST", "/api/documents", {
@@ -375,7 +375,7 @@ async function snapshot(from: string, to: string): Promise<Snap> {
     projects: projectsFull,
     repos: list<{ id: string; fullName: string }>(repos.json, "repos"),
     skills: list<{ id: string; name: string; enabled?: boolean }>(skills.json, "skills").filter((skill) => skill.enabled !== false),
-    documents: list<{ id: string; filename: string }>(documents.json, "documents"),
+    documents: list<{ id: string; filename: string }>(documents.json, "files"),
     approvals: list<{ id: string; title: string }>(approvals.json, "approvals"),
     decisions: list<{ id: string; title: string; status?: string }>(decisions.json, "decisions"),
     meetings: list<{ id: string; title: string }>(calendar.json, "events"),

@@ -15,8 +15,9 @@ import { isGuestIn } from "../../sharing/context.js";
 import type { AccountProvider } from "../accounts.js";
 import { redact, upsertPerson } from "../ingest.js";
 import { ConnectorNotConnectedError, providerAccessToken, type ProviderToken } from "../tokens.js";
+import { tooLarge } from "./http.js";
 import { ITEM_SOURCES } from "./registry.js";
-import { DEFAULT_SEARCH_LIMIT, ItemError, MAX_ITEM_TEXT, MAX_PEOPLE, MAX_SEARCH_LIMIT, type ItemContext, type ItemSource } from "./types.js";
+import { DEFAULT_SEARCH_LIMIT, ItemError, MAX_DOWNLOAD_BYTES, MAX_ITEM_TEXT, MAX_PEOPLE, MAX_SEARCH_LIMIT, type ItemContext, type ItemDownload, type ItemSource } from "./types.js";
 
 export { ItemError } from "./types.js";
 
@@ -132,6 +133,22 @@ export async function readItem(userId: string, ref: { source: string; kind: AppI
   const content = await source.read(ctx, { kind: ref.kind, id: safeItemId(ref.id) });
   if (!content || typeof content.id !== "string") throw new ItemError(`${source.label} sent something Ensemble could not read.`);
   return { ...content, title: redact(String(content.title || "Untitled")).slice(0, 300), text: redact(String(content.text ?? "")).slice(0, MAX_ITEM_TEXT + 200) };
+}
+
+/** A file or email attachment's original bytes, through the person's own connection. */
+export async function downloadItem(userId: string, ref: { source: string; kind: AppItemKind; id: string }, signal?: AbortSignal): Promise<ItemDownload> {
+  const source = requireSource(ref.source);
+  if (!source.download || !source.kinds.includes(ref.kind)) throw new ItemError(`Ensemble cannot bring ${ref.kind.replace("_", " ")} items from ${source.label} into Files.`, 400);
+  const ctx = await contextFor(userId, source, signal ?? AbortSignal.timeout(180_000));
+  const file = await source.download(ctx, { kind: ref.kind, id: safeItemId(ref.id) });
+  if (!(file?.bytes instanceof Uint8Array)) throw new ItemError(`${source.label} sent something Ensemble could not read.`);
+  if (file.bytes.byteLength > MAX_DOWNLOAD_BYTES) throw tooLarge(source.label);
+  return {
+    filename: String(file.filename || "file").slice(0, 500),
+    mediaType: String(file.mediaType || "application/octet-stream").slice(0, 200),
+    bytes: file.bytes,
+    ...(file.url && /^https:\/\//i.test(file.url) ? { url: file.url.slice(0, 2000) } : {}),
+  };
 }
 
 const ARTIFACT_KIND: Partial<Record<AppItemKind, ArtifactKind>> = {

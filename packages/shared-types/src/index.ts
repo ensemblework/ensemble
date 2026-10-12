@@ -5,6 +5,7 @@ export * from "./personas.js";
 export * from "./mentions.js";
 export * from "./connectors.js";
 export * from "./app-items.js";
+export * from "./files.js";
 export * from "./shortcuts.js";
 export * from "./modules.js";
 export * from "./features.js";

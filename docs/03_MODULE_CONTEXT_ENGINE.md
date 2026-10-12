@@ -23,7 +23,7 @@ Everything here is scoped by `user_id`. An Ensemble space is its own user id, so
 
 Hosted public accounts must verify email before connecting, syncing or using a connector token (`requireVerifiedUser`). Any verified person can connect their own accounts through the instance's OAuth apps or a pasted token. Only two things stay operator-only: saving an instance OAuth app (`PUT /api/connectors/apps/:provider`) and the host credential fallbacks (`GITHUB_TOKEN`, `SLACK_USER_TOKEN`/`SLACK_BOT_TOKEN`, `LINEAR_API_KEY`, `gh auth token`; `canUseHostCredentials`). Login OAuth is identity-only: signing in never stores a connector token, although connectors may borrow the same OAuth client (§2.1). The scheduler and enrichment worker skip unverified users. Local and desktop behavior is unchanged.
 
-Uploaded document originals have a separate hosted per-user cap, `ENSEMBLE_MAX_DOCUMENT_BYTES` (100 MiB by default). `createCappedDocument` in `lib/hosted-limits.ts` admits under the user-row transaction lock; exact-threshold concurrent tests ensure an excess upload leaves no original/artifact. Soft-deleted originals count until physically purged. This upload cap does not prevent unverified accounts from storing their own notes/documents; model enrichment still requires verification.
+Uploaded and imported files have their own hosted caps per account: 10 files (`ENSEMBLE_MAX_DOCUMENTS`) and 50 MB combined (`ENSEMBLE_MAX_DOCUMENT_BYTES`), not counting removed files, plus the server-wide `ENSEMBLE_FILES_TOTAL_MAX_BYTES` ([32 §3](32_FILES.md#3-limits)). `createCappedDocument` in `lib/hosted-limits.ts` admits under the user-row transaction lock; exact-threshold concurrent tests ensure an excess upload leaves no original/artifact. These caps do not stop unverified accounts from storing their own files; model summaries still require verification.
 
 | Connector | Source / API | Wave | Data pulled |
 |---|---|---|---|
@@ -538,91 +538,13 @@ The opt-in integration suite uses `DATABASE_URL` (or the root `.env`) only to cr
 
 ---
 
-## 13. Independent document context: Artifacts & sync
+## 13. Files as context
 
-*Context → Artifacts & sync* accepts dropped or chosen documents. This is **reference ingestion**, not meeting extraction and not a new way to propose work.
+Uploaded and imported files are described in [32](32_FILES.md): formats, previews, edits, pages made from files, limits, imports from apps, and how agents read them. What matters for the context engine:
 
-Uploading, parsing, enrichment, retry, cancellation, tagging and removal **never create** tasks, todos, work items, projects, people, repos or deliverables. The separate *Sync connected sources now* button retains the ordinary connector pipeline and can propose inbox todos; uploading never invokes it.
-
-### Formats and honest limits
-
-| Format | Local extraction |
-|---|---|
-| DOCX | Document paragraphs/tables, headers, footers, footnotes and endnotes |
-| PPTX | Slides in presentation relationship order, including speaker notes |
-| PDF | Existing text only: **no OCR** |
-| MD/Markdown, TXT/Text | UTF-8 (optional BOM), or UTF-16 with BOM |
-| CSV, TSV, JSON/JSONL, YAML/YML, LOG, RST, ADOC, INI, TOML, CFG/CONF, VTT, SRT | Decoded text, not executed or interpreted as actions |
-| HTM/HTML, XML, RTF | Text extraction; HTML scripts/styles excluded, XML entities/DTDs refused, RTF code pages decoded |
-
-**Limits:**
-
-- Upload limit **20 MiB**; extracted text limited to **2,000,000 characters**.
-- Office archives allow at most **2,048 entries**, **64 MiB** expanded content and **16 MiB per XML part**; highly compressed large entries, duplicate or unsafe paths, encrypted archives, and external/entity XML declarations are refused. No archive is extracted to disk.
-- The parser runs in a short-lived process with a **512 MiB** memory cap and a **30-second** timeout, with at most **two** parser processes admitted by the runtime.
-- PDFs and presentations are limited to **500 pages/slides**.
-
-Empty, invalid, encrypted, scanned-only, unsupported, oversized or unreadable files report a **specific error**. There is no filename-as-content fallback, no synthetic summary and no placeholder body. Mixed text/image PDFs and slides carry missing-text warnings into the UI, retrieval and enrichment. Legacy DOC/PPT files require export to a supported format. Originals may contain active content, so downloads are **attachment-only with `nosniff`**, never an inline preview.
-
-### Persistence and isolation
-
-`POST /api/artifacts/documents` accepts a multipart file and optional JSON options (`{ enrich: true, manualTags: {} }` by default). It returns **202** after saving the original, filename, SHA-256, size and processing state in `context_documents`. It does not wait for parsing or a model. The upload intent is **audited before work is queued**: an audit failure cannot return a failed upload while leaving a billable enrichment job behind.
-
-The database-backed worker runs independently of the browser. Refreshing or closing the page does not cancel accepted work. **Compare-and-set leases and a generation fence** prevent two workers, or a late result after cancellation, from publishing the same attempt. Queued work survives a service restart; expired in-flight leases become an explicit *interrupted* error, not an automatic potentially billable replay. The engineer can retry deliberately.
-
-Successful parsing atomically writes a normal file `Artifact` and an empty `Extraction(method: 'manual', items: [])`. This is the existing connected-notes pattern: the generic extractor has nothing pending and the proposer has no candidates. The upload remains `authoredByMe: false`; importing somebody else's document must not teach Skill Forge that it is the engineer's writing. Extracted text is secret-redacted using the existing import/connector helper. The original bytes stay separate and are **never sent to enrichment**.
-
-Every list, tag lookup, metadata/body read, original download and mutation is **partitioned by the authenticated user**. User filenames are never filesystem paths. Filenames with path separators, control characters or reserved device names are rejected; original downloads use an encoded attachment filename.
-
-Removing a document removes its original and mirrored Artifact, not any of the existing entities it was tagged with. Uploads persist until explicitly removed; connector retention does not silently discard their originals. Deletion first hides both rows. At the retention cutoff cleanup deletes the private `context_documents.original` database bytes and the corresponding `ensemble:document:<id>` Artifact, chunks and extraction. It does not unlink an arbitrary path or remove a workspace checkout. Meeting, task, project and deliverable note mirrors are removed with their source, including legacy mirrors found by their stable external IDs. Saved context packs, undo snapshots, mentions and tag links referring to purged records are removed or unlinked. Live task context, leased document work and pending approvals defer deletion.
-
-### Optional manual tags; bounded enrichment by default
-
-Tags select existing projects, repositories, people, tasks/todos, ingested work-item/issue Artifacts and deliverables belonging to the same user. A tag category omitted from `manualTags` allows model matches. A supplied array, including `[]`, **pins the user's choice** over every later model result. `PATCH …/:id` accepts `manualTags: null` to unpin a category. New references are validated, while a deleted old reference is shown as unavailable rather than recreating its entity.
-
-By default the worker asks the user's configured approved **easy** model for one brief summary and existing-entity IDs. It uses `/api/chat/tools` with no tools, `userId`, `activityId`, and an **8,000-output-token cap**. The cap includes provider-native reasoning tokens, so a small reasoning-model budget must not consume the entire response before producing summary JSON. At most the first **16,000 text characters** and a bounded existing-entity catalogue are supplied; the complete prompt is capped at **32,000 characters**. Exact entity-name matches in the excerpt are preferred before a small fallback catalogue. Matching is best-effort; manual search/pagination is not limited to that catalogue.
-
-The returned JSON can contain **only a summary and matched tag IDs**. Empty model text, unknown entities, action/tool requests, invalid shapes and provider errors fail the attempt without applying model tags and **without automatic model retries**. Manual choices are re-read under a row lock when a successful response is saved, so edits made during a request still win. Parsed text stays usable when enrichment is disabled, paused, failed or cancelled.
-
-The runtime's shared `model_control.py` enforces global pause, cancellation and the three-call concurrency limit. Queued enrichment waits during pause; in-flight stop aborts the request and fences its result. An already sent request may still be billed. Returned usage is kept even when Stop wins just after the response.
-
-`Document.modelUsage` stores per-attempt token counts, estimated credits, and verbatim provider `copilot_usage`, `usage` and token details metadata when present. Reported total `nano_aiu` is not converted into guessed billed credits.
-
-### Retrieval, reading and integration
-
-All workers already using `buildContextPack` see these Artifacts. Explicit task, deliverable and work-item links seed a pack; project, repo and people tags expand it, including secondary tags and documents older than the connector seven-day window. Full-text search indexes the real redacted body. Document excerpts can come from the matching passage rather than always the first page. **Every excerpt is labelled and JSON-quoted as untrusted source data**, not authorization for actions, tools, network or filesystem access. Only an actual user request and the normal action gates authorize work.
-
-The read-only assistant tools `hub_list_documents` and `hub_read_document` are included in `contextTools`. The latter accepts the document ID or an Artifact ID returned by `hub_search_context`, and returns bounded text pages, original metadata, warnings and `nextOffset`.
-
-**HTTP access:**
-
-| Endpoint | Purpose |
-|---|---|
-| `POST /api/artifacts/documents` | Multipart upload; returns 202 |
-| `GET /api/artifacts/documents?search=&cursor=&limit=` | Private metadata/status list; no original bytes or full bodies |
-| `GET /api/artifacts/document-tags?kind=&search=&offset=&limit=` | Existing entity choices, optionally resolved by ids |
-| `GET /api/artifacts/documents/:id` | Status, tags, summary, source and usage metadata |
-| `GET …/:id/body?offset=&limit=` | Unicode-character pagination; default 6,000, maximum 12,000 characters |
-| `GET …/:id/original` | Owner-only original download |
-| `PATCH …/:id` | Manual tag overrides |
-| `POST …/:id/retry` | Explicit (`{ stage: "parse" \| … }`) retry |
-| `POST …/:id/cancel` | Durable cancellation of pending processing |
-| `DELETE …/:id` | Remove original and parsed Artifact |
-
-**Integration is deliberately narrow:**
-
-- Export `packages/shared-types/src/artifacts.ts` from the shared-types barrel and rebuild that package.
-- Apply `20260919183000_context_documents` and regenerate Prisma.
-- In `buildServer`, after Prisma/Redis/auth, call `registerDocuments(app, { startWorkers: options.startWorkers })` from `documents/init.ts`. It registers the routes and closes its worker on `preClose`; `startWorkers: false` registers routes only.
-- Include `ensemble_agent.documents_router.router` in the agent-runtime FastAPI app. Its only operation is a bounded local parser; it is not an action tool or a fabricated MCP server. It honours `ENSEMBLE_INTERNAL_TOKEN`.
-- Install the manifest/lock changes through the configured corporate package feeds, then reload the updated services. No real model is needed for the local format, pipeline, failure or cancellation tests.
-
-**Tests:** `tests/test_documents.py` generates every advertised format locally. The artifact-specific API unit/integration checks use generated files, an in-process API, a disposable database and isolated Redis user keys. They never start normal workers, invoke real models, sync connectors or modify existing user tasks.
-
-Run the opt-in database check with `pnpm --filter @ensemble/hub-api verify:artifacts`. It needs the configured local database role to create/drop its uniquely named disposable database and a reachable Redis. Ordinary unit-test runs skip that integration suite unless `ENSEMBLE_DOCUMENT_INTEGRATION=1` is explicitly set. The isolated browser flow is:
-
-```powershell
-uv run --project apps/agent-runtime --no-sync python apps/hub-web/scripts/verify-artifacts-ui.py
-```
-
-It renders the real panel against synthetic intercepted responses (no normal services), and checks choose/drop, manual tags, refresh, reading, downloads, cancellation, visible failures and a 390-pixel layout.
+- **Reference, not work.** Uploading, importing, reading or summarising a file never creates tasks, todos, projects, people, repos or deliverables, and never runs the connector sync.
+- **Text.** Each file's readable text is one file `Artifact` (`externalId = file:<documentId>`, up to 400,000 characters, secret-redacted, `authoredByMe: false`), read once per upload by `apps/hub-api/src/files/extract.ts` (PDF in a worker thread; Word, PowerPoint and Excel through `lib/office`; text, code and CSV directly). Scanned PDFs have no text and carry a warning; there is no OCR. Search, `hub_search_context`, the Context Bridge and agent briefs read this Artifact.
+- **Summary.** Once text exists, `context/enrich-documents.ts` asks the person's easy-tier model for one short summary (`context/summarize.ts`, first 16,000 characters). Unverified hosted accounts are skipped; `ENSEMBLE_DOCUMENT_ENRICHMENT=off` turns it off. Edits do not ask again.
+- **Tags.** `PATCH /api/documents/:id/tags` links a file to projects, people, repos and tasks (`projectIds`, `personIds`, `repoIds`, `taskIds`); files tagged with a task are among the task's files for agents.
+- **Isolation and removal.** Every read and change is limited to the person (or the space they are in). Removing a file hides the Document and its Artifact together; restoring brings both back; emptying the Trash and the retention purge erase both. Downloads are attachment-only with `nosniff`.
+- **Limits.** Hosted accounts keep 10 files and 50 MB combined (`ENSEMBLE_MAX_DOCUMENTS`, `ENSEMBLE_MAX_DOCUMENT_BYTES`; removed files do not count), 25 MB per file, under `ENSEMBLE_FILES_TOTAL_MAX_BYTES` for the whole server. Desktop and local servers have no file caps.

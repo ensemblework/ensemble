@@ -18,7 +18,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     const id = Date.now() + Math.random();
     const next = { id, text, tone: options?.tone ?? "info", action: options?.action };
     setToasts((rows) => [...rows, next].slice(-4));
-    window.setTimeout(() => setToasts((rows) => rows.filter((row) => row.id !== id)), 8000);
+    window.setTimeout(() => setToasts((rows) => rows.filter((row) => row.id !== id)), Math.max(1500, options?.durationMs ?? 8000));
   }, []);
   bindToast(push);
   useEffect(() => () => bindToast(null), []);

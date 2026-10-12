@@ -1,16 +1,20 @@
 /**
- * Microsoft 365: OneDrive files (search, read as text) and Outlook mail (search,
- * read one message), each only when the connection was granted that product.
- * Ids: OneDrive item ids ("driveId/itemId" for an item shared from another drive)
- * and Outlook message ids.
+ * Microsoft 365: OneDrive files (search, read as text, download) and Outlook mail
+ * (search, read one message) and email attachments (search, download), each only
+ * when the connection was granted that product.
+ * Ids: OneDrive item ids ("driveId/itemId" for an item shared from another drive),
+ * Outlook message ids, and "<messageId>:<key>" for an attachment, where the key is a
+ * short hash of Outlook's attachment id (the full pair is too long for an item id).
  */
+import { createHash } from "node:crypto";
 import type { AppItem, AppItemContent, AppItemPerson } from "@ensemble/shared-types";
 import { officeKind, officeText } from "../../../lib/office/extract.js";
 import { stripQuoted } from "../../google.js";
 import { GRAPH, odata } from "../../microsoft.js";
 import { ConnectorNotConnectedError, hasScopes, type ProviderToken } from "../../tokens.js";
-import { capText, facts, itemFetch, itemMarkdown } from "../http.js";
-import { ItemError, type ItemContext, type ItemSource } from "../types.js";
+import { capText, facts, itemFetch, itemFetchBytes, itemFetchLargeJson, itemMarkdown, tooLarge } from "../http.js";
+import { ItemError, MAX_DOWNLOAD_BYTES, type ItemContext, type ItemDownload, type ItemSource } from "../types.js";
+import { sizeText } from "./dropbox.js";
 
 const LABEL = "OneDrive and Outlook";
 const MAX_OFFICE_BYTES = 10 * 1024 * 1024;
@@ -19,6 +23,8 @@ const DOWNLOAD_TIMEOUT_MS = 30_000;
 const TEXT_EXTENSIONS = /\.(txt|md|markdown|csv|tsv|json|xml|ya?ml|log)$/i;
 const FILE_FIELDS = "id,name,size,file,folder,webUrl,lastModifiedDateTime,lastModifiedBy,parentReference";
 const MESSAGE_FIELDS = "id,subject,from,receivedDateTime,webLink,bodyPreview";
+const ATTACHMENT_FIELDS = "id,name,contentType,size,isInline";
+const FILE_ATTACHMENT = "#microsoft.graph.fileAttachment";
 
 interface DriveItem {
   id: string;
@@ -50,8 +56,21 @@ interface Message {
   body?: { contentType?: string; content?: string };
 }
 
+interface Attachment {
+  "@odata.type"?: string;
+  id: string;
+  name?: string;
+  contentType?: string;
+  size?: number;
+  isInline?: boolean;
+  contentBytes?: string;
+}
+
 const PART = /^[A-Za-z0-9!_.-]{1,200}$/;
 const MESSAGE_ID = /^[A-Za-z0-9=_+/-]{10,400}$/;
+const ATTACHMENT_REF = /^([A-Za-z0-9=_+/-]{10,400}):([0-9a-f]{16})$/;
+
+export const attachmentKey = (attachmentId: string) => createHash("sha256").update(attachmentId).digest("hex").slice(0, 16);
 
 const canFiles = (token: Pick<ProviderToken, "scopes">) => hasScopes(token, ["Files.Read"]);
 const canMail = (token: Pick<ProviderToken, "scopes">) => hasScopes(token, ["Mail.Read"]);
@@ -156,6 +175,85 @@ async function searchMail(ctx: ItemContext, text: string, limit: number): Promis
   return (found.value ?? []).map(messageItem);
 }
 
+function attachmentItem(message: Message, attachment: Attachment): AppItem {
+  const from = message.from?.emailAddress?.name || address(message.from) || "an unknown sender";
+  return {
+    source: "microsoft_365",
+    kind: "attachment",
+    id: `${message.id}:${attachmentKey(attachment.id)}`,
+    title: attachment.name || "Attachment",
+    subtitle: [`Attachment in “${message.subject || "(no subject)"}” from ${from}`, sizeText(attachment.size)].filter(Boolean).join(" · ").slice(0, 200),
+    url: message.webLink,
+    updatedAt: message.receivedDateTime,
+  };
+}
+
+/** Files attached to the message. Linked items and cloud links have no bytes to hand over; pictures shown inside the email are left out. */
+const fileAttachments = (rows: Attachment[] | undefined) =>
+  (rows ?? []).filter((row) => row["@odata.type"] === FILE_ATTACHMENT && !(row.isInline && (row.contentType ?? "").startsWith("image/")));
+
+async function listAttachments(ctx: ItemContext, messageId: string): Promise<Attachment[]> {
+  const found = await graph<{ value?: Attachment[] }>(ctx, "Outlook", `/me/messages/${encodeURIComponent(messageId)}/attachments?${odata({ $select: ATTACHMENT_FIELDS })}`);
+  return found.value ?? [];
+}
+
+async function searchAttachments(ctx: ItemContext, text: string, limit: number): Promise<AppItem[]> {
+  // Outlook search cannot be combined with $filter, so the attachment condition goes into the search words.
+  const path = text
+    ? `/me/messages?${odata({ $search: `"hasAttachments:true ${text.replace(/["\\]/g, " ")}"`, $top: limit, $select: `${MESSAGE_FIELDS},hasAttachments` })}`
+    : `/me/messages?${odata({ $filter: "hasAttachments eq true", $top: limit, $select: `${MESSAGE_FIELDS},hasAttachments` })}`;
+  const found = await graph<{ value?: Message[] }>(ctx, "Outlook", path);
+  const messages = (found.value ?? []).filter((message) => message.hasAttachments !== false);
+  const lists = await Promise.all(messages.map(async (message) => fileAttachments(await listAttachments(ctx, message.id)).map((row) => attachmentItem(message, row))));
+  return lists.flat().slice(0, limit);
+}
+
+async function attachmentRef(ctx: ItemContext, id: string): Promise<{ message: Message; attachment: Attachment }> {
+  const ref = ATTACHMENT_REF.exec(id);
+  if (!ref) throw new ItemError("That is not an Outlook attachment id.", 400);
+  const messageId = ref[1]!;
+  const [message, rows] = await Promise.all([
+    graph<Message>(ctx, "Outlook", `/me/messages/${encodeURIComponent(messageId)}?${odata({ $select: "id,subject,from,receivedDateTime,webLink" })}`),
+    listAttachments(ctx, messageId),
+  ]);
+  const attachment = rows.find((row) => attachmentKey(row.id) === ref[2]);
+  if (!attachment) throw new ItemError("That attachment is no longer on the email.", 404);
+  return { message, attachment };
+}
+
+async function readAttachment(ctx: ItemContext, id: string): Promise<AppItemContent> {
+  const { message, attachment } = await attachmentRef(ctx, id);
+  const item = attachmentItem(message, attachment);
+  const list = facts({ Email: message.subject || "(no subject)", From: named(message.from), Type: attachment.contentType, Size: sizeText(attachment.size) });
+  return { ...item, facts: list, text: itemMarkdown(item.title, list, "A file attached to an email. Bring it into Files to read its text.") };
+}
+
+async function downloadAttachment(ctx: ItemContext, id: string): Promise<ItemDownload> {
+  const { message, attachment } = await attachmentRef(ctx, id);
+  if (attachment["@odata.type"] !== FILE_ATTACHMENT) {
+    throw new ItemError("Outlook only hands over files attached to an email. This one is an attached email or a link; open it in Outlook.", 422);
+  }
+  if ((attachment.size ?? 0) > MAX_DOWNLOAD_BYTES) throw tooLarge("Outlook");
+  // Base64 makes the answer about a third larger than the file.
+  const full = await itemFetchLargeJson<Attachment>(ctx, "microsoft", "Outlook", `${GRAPH}/me/messages/${encodeURIComponent(message.id)}/attachments/${encodeURIComponent(attachment.id)}`, {
+    headers: { Authorization: `Bearer ${ctx.token.token}` },
+    maxBytes: Math.ceil((MAX_DOWNLOAD_BYTES * 4) / 3) + 64 * 1024,
+  });
+  const bytes = Buffer.from(full.contentBytes ?? "", "base64");
+  if (bytes.byteLength > MAX_DOWNLOAD_BYTES) throw tooLarge("Outlook");
+  return { filename: attachment.name || "Attachment", mediaType: attachment.contentType || "application/octet-stream", bytes: new Uint8Array(bytes), url: message.webLink };
+}
+
+async function downloadFile(ctx: ItemContext, id: string): Promise<ItemDownload> {
+  const path = itemPath(id);
+  const item = await graph<DriveItem>(ctx, "OneDrive", `${path}?${odata({ $select: FILE_FIELDS })}`);
+  if (item.folder || !item.file) throw new ItemError("That is a OneDrive folder. Pick a file inside it.", 400);
+  if ((item.size ?? 0) > MAX_DOWNLOAD_BYTES) throw tooLarge("OneDrive");
+  // /content redirects to a short-lived download address on another host; the token is not sent there.
+  const got = await itemFetchBytes(ctx, "microsoft", "OneDrive", `${GRAPH}${path}/content`, { headers: { Authorization: `Bearer ${ctx.token.token}` }, redirectTo: () => true });
+  return { filename: item.name || "Untitled file", mediaType: item.file.mimeType || got.contentType || "application/octet-stream", bytes: got.bytes, url: item.webUrl };
+}
+
 async function fileText(ctx: ItemContext, item: DriveItem, path: string): Promise<string | null> {
   const name = item.name ?? "";
   const size = item.size ?? 0;
@@ -225,7 +323,7 @@ export const microsoftItems: ItemSource = {
   id: "microsoft_365",
   provider: "microsoft",
   label: LABEL,
-  kinds: ["file", "conversation"],
+  kinds: ["file", "conversation", "attachment"],
   usable(token) {
     return canFiles(token) || canMail(token);
   },
@@ -233,7 +331,8 @@ export const microsoftItems: ItemSource = {
     const files = canFiles(ctx.token);
     const mail = canMail(ctx.token);
     if (query.kind === "file" && !files) throw new ItemError("OneDrive is switched off for Microsoft 365. Turn it on in Settings → Connections.", 403);
-    if (query.kind === "conversation" && !mail) throw new ItemError("Outlook mail is switched off for Microsoft 365. Turn it on in Settings → Connections.", 403);
+    if ((query.kind === "conversation" || query.kind === "attachment") && !mail) throw new ItemError("Outlook mail is switched off for Microsoft 365. Turn it on in Settings → Connections.", 403);
+    if (query.kind === "attachment") return searchAttachments(ctx, query.q.trim().slice(0, 200), query.limit);
     const share = files && query.kind !== "conversation" ? shareId(query.q) : null;
     if (share) {
       const item = await graph<DriveItem>(ctx, "OneDrive", `/shares/${share}/driveItem?${odata({ $select: FILE_FIELDS })}`);
@@ -248,11 +347,20 @@ export const microsoftItems: ItemSource = {
     return out;
   },
   async read(ctx, ref) {
-    if (ref.kind === "conversation") {
+    if (ref.kind === "conversation" || ref.kind === "attachment") {
       if (!canMail(ctx.token)) throw new ItemError("Outlook mail is switched off for Microsoft 365. Turn it on in Settings → Connections.", 403);
-      return readMessage(ctx, ref.id);
+      return ref.kind === "attachment" ? readAttachment(ctx, ref.id) : readMessage(ctx, ref.id);
     }
     if (!canFiles(ctx.token)) throw new ItemError("OneDrive is switched off for Microsoft 365. Turn it on in Settings → Connections.", 403);
     return readFile(ctx, ref.id);
+  },
+  async download(ctx, ref) {
+    if (ref.kind === "attachment") {
+      if (!canMail(ctx.token)) throw new ItemError("Outlook mail is switched off for Microsoft 365. Turn it on in Settings → Connections.", 403);
+      return downloadAttachment(ctx, ref.id);
+    }
+    if (ref.kind !== "file") throw new ItemError("Only OneDrive files and email attachments can be brought into Files.", 400);
+    if (!canFiles(ctx.token)) throw new ItemError("OneDrive is switched off for Microsoft 365. Turn it on in Settings → Connections.", 403);
+    return downloadFile(ctx, ref.id);
   },
 };

@@ -20,7 +20,7 @@
 
 ## 2. Information architecture & navigation
 
-**Left rail (Fluent Nav):** Today • Board • Needs Me *(n)* • Runs • Context • Skills • Workspace • Code • Metrics • ⚙ Settings (tabs: Account, Spaces, Sharing, Assistant, Connections, Notifications, Shortcuts, Data; see [§3.9](#39-settings)). **Shared with you** (`/shared`) appears under Pages once someone has shared something with you, with a count of items not yet opened. **Pages** sits directly below Today and starts collapsed on every load, unless the open route is a page (`components/pages/pages-section.tsx`); its header has **Import from Notion** next to +, which opens the import dialog on Notion ([27](27_IMPORTS.md)). In the collapsed icon rail, Pages is one icon that opens the sidebar with the list showing, so the rail has no empty row.
+**Left rail (Fluent Nav):** Today • Board • Needs Me *(n)* • Runs • Context • Skills • Workspace • Code • Metrics • ⚙ Settings (tabs: Account, Spaces, Sharing, Assistant, Connections, Notifications, Shortcuts, Data; see [§3.9](#39-settings)). **Shared with you** (`/shared`) appears under Pages once someone has shared something with you, with a count of items not yet opened. **Pages** sits directly below Today and starts collapsed on every load, unless the open route is a page (`components/pages/pages-section.tsx`); its header has **Import from Notion** next to +, which opens the import dialog on Notion ([27](27_IMPORTS.md)). In the collapsed icon rail, Pages is one icon that opens the sidebar with the list showing, so the rail has no empty row. **Files** (`/files`) sits just below Pages ([§3.10](#310-files), [32](32_FILES.md)).
 
 **Brand and space switcher.** The existing U mark and **Ensemble** home link sit above the open space. The U home link remains visible in the collapsed rail and phone header (`components/shell/sidebar.tsx`, `topbar.tsx`). Below it is the open Ensemble space: its emoji or initial and its name (`components/shell/space-switcher.tsx`). The menu lists every space with its template, the spaces **shared with you** (owner's avatar on the icon), **Share ‹space›…**, **New space** (`/spaces/new`) and **Manage spaces**. Switching reloads into Today (the board, in a shared space); other tabs follow. See [28](28_ENSEMBLE_SPACES.md) and [29](29_SHARING.md).
 
@@ -221,6 +221,12 @@ Client calls for the store and MCP routes are in `lib/api-connectors.ts` (the MC
 
 ---
 
+### 3.10 Files
+
+`/files` (`components/files/files-screen.tsx`) lists every file this person keeps, as a grid or a list, with a name search and a filter for each kind of file it holds (PDF, Document, Slides, Spreadsheet, Image, Text, Code, Audio, Video, File). **Upload** takes many files at once, and files can be dropped anywhere on the screen; each upload shows its progress. On the hosted site a meter shows files and megabytes used against the 10-file, 50 MB cap and says "Delete a file to add another" when it is full; desktop and local servers show no meter. **Add from your apps** (`import-from-apps.tsx`) lists Google Drive, Gmail, OneDrive, Outlook, Dropbox and Box with their state (Ready, Needs permission, Not connected, Not set up yet). A ready source opens a search ("Find attachments" for mail); the others show the plain sentence, numbered steps and a button to the right place in Settings → Connections. Google Drive with only the narrower Drive scope offers **Pick from Google Drive** (the Google Picker) when the server is set up for it.
+
+`/files/[id]` (`file-screen.tsx`) shows the file full size (`file-preview.tsx` loads one viewer per kind, only when needed) with **Download**, **Convert to a page** (PDF and Word; "Make a page" for text, code, Markdown, CSV and TSV), **Attach to a page…** (search pages and tasks, or copy a link to paste with @) and Delete. Imported files show the app they came from. Spreadsheets edit in place: double-click or type into a cell, **Add row**, then save; .xls, .ods and .numbers first need **Make an editable .xlsx copy**. Converting a PDF or Word file shows a short notice (about 3.5 seconds) that export back keeps the original's formatting. What each format can do is in [32 §1](32_FILES.md#1-what-each-kind-of-file-can-do).
+
 ## 4. Interaction patterns (details worth getting right)
 
 | Pattern | Behaviour |
@@ -370,6 +376,10 @@ Source: `apps/hub-api/src/routes/assistant.ts`.
 | GET • POST | `/api/app-items/update-target?taskId=` • `/api/app-items/update` | → `{ target \| null }` • `{ taskId, body }` → `{ source, url? }` (posts a comment on the task's issue, card or ticket) |
 
 Verified email on hosted; per person 120 searches and reads and 60 changes per 10 minutes, people 10 per hour.
+
+### Files ([docs/32](32_FILES.md))
+
+Upload, list with usage, read (`/original`, `/text`), replace, spreadsheet cells, make a page, formatting profile, tags, delete, and import from apps, all under `/api/documents`. The full table is [32 §8](32_FILES.md#8-api).
 
 ### Imports ([docs/27](27_IMPORTS.md))
 
@@ -625,6 +635,7 @@ The shared, lazily loaded **TipTap** editor supports:
 | `/check-list` | Interactive checklist |
 | `/code` | Plain code block, without language-specific highlighting |
 | `/table` | A 2 × 2 table with a header row |
+| `/file` | Upload a file, choose one from Files, or add one from your apps; it lands as a file card |
 
 **Tables grow from the edge that grows them.** Hovering a table puts a **+** on its right edge and another under its bottom edge: the right one adds a column, the bottom one adds a row, and neither can be ambiguous about which because of where it sits. Columns are resizable by dragging a cell border, and cells carry their alignment.
 
@@ -634,7 +645,9 @@ Tables round-trip to GitHub-flavoured pipe tables in the Markdown that notes, re
 
 Typing **/** opens a filtered menu. Arrows select, Enter or Tab inserts, and Escape dismisses it. Standard Markdown shortcuts and bold, italic and inline code also work. **Slash commands and mentions do not activate inside code.**
 
-**@** first offers **Ask Ensemble**, then people, projects, repositories, tasks/todos, deliverables, skills, diagrams, plots, and dates (optional modules follow their gates). Selecting a category completes its prefix, for example `@people:mi` searches existing people by a partial name. Plots are hierarchical: `@plots:` offers plot spaces, a Saved plots group, and uploaded data files; selecting a space drills into its tiles. `@plot:epochs` and `@plots:epochs` both find a matching file, and the inserted dataset mention retains its stable ID. Entity mentions retain their **kind and stable ID**, not just a display string. Date mentions do **not** change a task's due date. A mention alone is not an instruction to change a task's project, owner, or skills.
+**@** first offers **Ask Ensemble**, then people, projects, repositories, tasks/todos, deliverables, skills, diagrams, plots, files, and dates (optional modules follow their gates). Selecting a category completes its prefix, for example `@people:mi` searches existing people by a partial name. Plots are hierarchical: `@plots:` offers plot spaces, a Saved plots group, and uploaded data files; selecting a space drills into its tiles. `@plot:epochs` and `@plots:epochs` both find a matching file, and the inserted dataset mention retains its stable ID. Entity mentions retain their **kind and stable ID**, not just a display string. Date mentions do **not** change a task's due date. A mention alone is not an instruction to change a task's project, owner, or skills.
+
+**Files in pages.** Picking a file after `@` (`@files:` searches only files), `/file`, or dropping or pasting files into the editor inserts a file card (`components/files/file-embed.tsx`, `components/editor/file-attach.ts`). Dropped and pasted files upload to Files first, so every attachment is a stored file that agents can fetch. A card shows a compact preview (320 px tall by default, resizable from its bottom edge) with the file's name, type and **Open**. Shared pages and public links preview the files they mention. A page converted from a PDF or Word file shows "Made from report.pdf" (`components/files/source-file-banner.tsx`) with **Export back as PDF/Word**, also in the page's Download menu under "With the original's formatting" ([32 §6](32_FILES.md#6-pages)).
 
 Project and deliverable note editors reuse the same blocks while retaining their existing Markdown persistence contracts. Encoded `ensemble://` mention links round-trip back into mentions when Markdown notes are opened.
 
@@ -761,7 +774,7 @@ The two supplied **Lottie animations** are served locally from `apps/hub-web/pub
 
 Fetch, calendar-sync and refresh icons rotate **only while their own operation is pending**. Successful fetch notices dismiss after five seconds, with the timer reset for every completed fetch. Errors and partial failures stay visible.
 
-Workspace previews prefer the original ask, remove Markdown deterministically, and clamp to three lines; no model is involved. Both completed-work lists show at most five items. Blocked execution has a compact expandable notice, and run metadata uses quiet `#` labels instead of emoji. Preferences render as labelled values/lists rather than JSON. M365 intake follows **Paste → Review → Propose**; Artifacts provides a real file chooser, drag/drop, optional AI enrichment and manual entity tags.
+Workspace previews prefer the original ask, remove Markdown deterministically, and clamp to three lines; no model is involved. Both completed-work lists show at most five items. Blocked execution has a compact expandable notice, and run metadata uses quiet `#` labels instead of emoji. Preferences render as labelled values/lists rather than JSON. M365 intake follows **Paste → Review → Propose**; the Artifacts tab shows a Files card (the most recent files, the usage meter on the hosted site, **Upload**, drag/drop and **Open Files**, [§3.10](#310-files)) above the synced artifacts.
 
 The **Failed jobs** section is a real retry interface, not a decorative error list. Its explanation/details are behind information affordances. The planner's structured-context normalization fixes the reported dictionary/string join failure without discarding the job or inventing a successful result.
 

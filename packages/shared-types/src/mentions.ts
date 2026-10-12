@@ -21,6 +21,9 @@ const MENTION_ALIASES: Record<string, MentionKind> = {
   plots: "plot",
   dataset: "dataset",
   data: "dataset",
+  file: "file",
+  files: "file",
+  attachment: "file",
   date: "date",
 };
 
@@ -56,6 +59,8 @@ export function mentionHref(mention: PageMention): string | undefined {
       return `/plots/${id}`;
     case "dataset":
       return "/plots";
+    case "file":
+      return `/files/${id}`;
     case "deliverable":
       return `/today?deliverable=${id}`;
     case "date":
@@ -117,7 +122,7 @@ export function restoreMentionLinks(document: PageDocument): PageDocument {
       const href = String(link.attrs.href);
       const question = href.match(/^ensemble:\/\/ask\/([0-9a-f-]{36})$/i);
       if (question) return { type: "ensemble", attrs: { id: question[1]! } };
-      const match = href.match(/^ensemble:\/\/(people|project|repo|task|deliverable|skill|diagram|plot|dataset|date)\/(.+)$/);
+      const match = href.match(/^ensemble:\/\/(people|project|repo|task|deliverable|skill|diagram|plot|dataset|file|date)\/(.+)$/);
       if (match) {
         const mention = PageMention.parse({
           kind: match[1],

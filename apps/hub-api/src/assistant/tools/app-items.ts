@@ -14,7 +14,7 @@ import { UNTRUSTED_NOTE, quote } from "./apps-common.js";
 
 export const APP_ITEM_TOOL_PREFIX = "apps_";
 
-const KINDS = ["page", "database", "repo", "issue", "pull_request", "board", "card", "project", "task", "file", "channel", "ticket", "conversation", "contact", "company", "deal", "design", "deployment", "dashboard", "work_item", "invoice", "record", "meeting", "video"] as const satisfies readonly AppItemKind[];
+const KINDS = ["page", "database", "repo", "issue", "pull_request", "board", "card", "project", "task", "file", "channel", "ticket", "conversation", "contact", "company", "deal", "design", "deployment", "dashboard", "work_item", "invoice", "record", "meeting", "video", "attachment"] as const satisfies readonly AppItemKind[];
 
 function names(sources: readonly AppItemSourceInfo[]): string {
   const list = sources.map((source) => source.name);

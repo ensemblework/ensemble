@@ -25,7 +25,8 @@ export type BlockCommandId =
   | "code"
   | "table"
   | "quote"
-  | "divider";
+  | "divider"
+  | "file";
 
 export interface BlockCommand {
   id: BlockCommandId;
@@ -47,6 +48,7 @@ export const BLOCK_COMMANDS: readonly BlockCommand[] = [
   { id: "table", label: "Table", detail: "A header plus one row of data", aliases: "grid", symbol: "▦" },
   { id: "quote", label: "Quote", detail: "Call out a passage", aliases: "blockquote citation", symbol: "❝" },
   { id: "divider", label: "Divider", detail: "Separate sections", aliases: "hr rule line separator", symbol: "—" },
+  { id: "file", label: "File", detail: "Upload or attach a PDF, image, sheet or any file", aliases: "attach attachment upload pdf image photo picture document", symbol: "⎘" },
 ];
 
 export const MENTION_GROUPS: ReadonlyArray<{ kind: MentionKind; label: string; detail: string }> = [
@@ -58,6 +60,7 @@ export const MENTION_GROUPS: ReadonlyArray<{ kind: MentionKind; label: string; d
   { kind: "skill", label: "Skills", detail: "Reference a personal skill" },
   { kind: "diagram", label: "Diagrams", detail: "Link a block diagram" },
   { kind: "plot", label: "Plots", detail: "Browse plot spaces, tiles, and data files" },
+  { kind: "file", label: "Files", detail: "Attach a file you uploaded or imported" },
   { kind: "date", label: "Date & time", detail: "Mention a date without changing the due date" },
 ];
 
@@ -107,6 +110,10 @@ export function applyBlock(editor: Editor, range: Range, command: BlockCommandId
       // 2x2 including the header row, so what appears is a header and one
       // row of data — the smallest thing that still reads as a table.
       chain.clearNodes().insertTable({ rows: 2, cols: 2, withHeaderRow: true }).run();
+      break;
+    case "file":
+      chain.run();
+      editor.commands.chooseFile(range.from);
       break;
   }
 }

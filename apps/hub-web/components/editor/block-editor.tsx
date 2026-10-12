@@ -1,11 +1,13 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
 import { EditorContent, useEditor, type Editor, type JSONContent } from "@tiptap/react";
 import dynamic from "next/dynamic";
-import { useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useState, useRef } from "react";
 import type { PageDocument, PageMention } from "@ensemble/shared-types";
 import { api, currentLink, inItemView } from "@/lib/api";
 import { diagramMentionIds, editorExtensions, type EntitySource } from "./extensions";
+import { FileChooser } from "./file-chooser";
 import { useModuleState } from "@/lib/use-module";
 import { useToast } from "../toast";
 
@@ -13,8 +15,9 @@ const CommentLayer = dynamic(() => import("../comments/comment-layer").then((mod
 
 /**
  * The Notion-style page body: `/` for blocks, `@` for linked mentions of
- * people, projects, repos, tasks, deliverables, skills and dates. Mentions
+ * people, projects, repos, tasks, deliverables, skills, files and dates. Mentions
  * are real nodes with ids, so the Context graph can draw them as edges.
+ * Files dropped or pasted in upload and land as file cards.
  */
 export function BlockEditor({
   initial,
@@ -37,6 +40,11 @@ export function BlockEditor({
   remote?: { doc: PageDocument; stamp: number } | null;
 }) {
   const toast = useToast();
+  const client = useQueryClient();
+  const clientRef = useRef(client);
+  clientRef.current = client;
+  const [chooser, setChooser] = useState<number | null>(null);
+  const closeChooser = useCallback(() => setChooser(null), []);
   const changeRef = useRef(onChange);
   const clickRef = useRef(onMentionClick);
   const pageRef = useRef(page);
@@ -60,7 +68,10 @@ export function BlockEditor({
   const editor = useEditor({
     immediatelyRender: false,
     editable,
-    extensions: editorExtensions(entities, placeholder, () => diagramsStateRef.current, () => plotsStateRef.current),
+    extensions: editorExtensions(entities, placeholder, () => diagramsStateRef.current, () => plotsStateRef.current, {
+      client: () => clientRef.current,
+      choose: (_editor, pos) => setChooser(pos),
+    }),
     content: initial as JSONContent,
     editorProps: {
       attributes: { class: "ProseMirror", spellcheck: "true" },
@@ -138,6 +149,7 @@ export function BlockEditor({
     <div className={page ? "comment-host" : undefined}>
       <div className={page ? "page-with-comments" : undefined}>
         <EditorContent editor={editor} />
+        {live && chooser !== null ? <FileChooser editor={live} pos={chooser} onClose={closeChooser} /> : null}
         {/* Comments name people: never on a public link. */}
         {page && live && !currentLink() ? <CommentLayer editor={live} pageKind={page.kind} pageId={page.id} /> : null}
       </div>

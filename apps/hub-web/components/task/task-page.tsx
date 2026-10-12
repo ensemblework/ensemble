@@ -51,6 +51,7 @@ import { ShareButton } from "../sharing/share-dialog";
 import { taskPersonId, useSpacePeople } from "@/lib/space-people";
 import { colorFor } from "@/lib/presence";
 import { TaskExportMenu } from "./task-export";
+import { SourceFileBanner, exportBackItems } from "../files/source-file-banner";
 
 type SaveState = "saved" | "saving" | "dirty" | "error";
 
@@ -136,6 +137,8 @@ export function TaskPage({
   const [epoch, setEpoch] = useState(0);
   const revision = useRef(0);
   const pending = useRef<PageDocument | null>(null);
+  // What the editor holds now, saved or not: exporting back to the original's format reads it.
+  const latest = useRef<PageDocument | null>(null);
   const timer = useRef<number | undefined>(undefined);
   const inFlight = useRef<Promise<boolean> | null>(null);
   const titleSave = useRef<Promise<unknown> | null>(null);
@@ -164,7 +167,8 @@ export function TaskPage({
   const initialDoc = useMemo(() => {
     if (!page.data) return null;
     revision.current = page.data.revision;
-    return page.data.content ?? textToDoc(page.data.notes);
+    latest.current = page.data.content ?? textToDoc(page.data.notes);
+    return latest.current;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId, loaded, epoch]);
 
@@ -173,7 +177,8 @@ export function TaskPage({
     if (!page.data || page.data.revision <= revision.current) return;
     if (pending.current || saveState === "saving" || saveState === "dirty") return;
     revision.current = page.data.revision;
-    setRemote({ doc: page.data.content ?? textToDoc(page.data.notes), stamp: Date.now() });
+    latest.current = page.data.content ?? textToDoc(page.data.notes);
+    setRemote({ doc: latest.current, stamp: Date.now() });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page.data?.revision]);
 
@@ -287,6 +292,7 @@ export function TaskPage({
   const onChange = useCallback(
     (doc: PageDocument) => {
       pending.current = doc;
+      latest.current = doc;
       setSaveState("dirty");
       if (watchingRef.current) announceTyping((typing) => api.sendPresence({ tabId: tabId(), typing }));
       window.clearTimeout(timer.current);
@@ -330,12 +336,14 @@ export function TaskPage({
   const personId = taskPersonId(record, space.ownerId) ?? space.me;
   const ownerText =
     record.owner !== "me" ? OWNER_LABEL[record.owner] : personId === space.me ? "Me" : (space.byId.get(personId ?? "")?.name ?? "Someone");
+  const source = page.data?.sourceFile ?? null;
+  const pageNow = () => ({ title: record.title || "Untitled", doc: latest.current ?? page.data?.content ?? textToDoc(page.data?.notes ?? "") });
 
   return (
     <div className={cx("mx-auto w-full pb-24", variant === "peek" ? "max-w-[860px] px-4 pt-4 sm:px-8 sm:pt-6" : "max-w-[900px] px-4 pt-6 sm:px-16 sm:pt-10")} inert={leaving}>
       {variant === "page" ? (
         <div className="-mb-1 flex justify-end gap-1">
-          <TaskExportMenu taskId={taskId} />
+          <TaskExportMenu taskId={taskId} extra={exportBackItems(source, pageNow)} />
           {shared ? null : <ShareButton compact target={{ kind: "task", resourceId: taskId, title: record.title }} />}
         </div>
       ) : null}
@@ -406,6 +414,7 @@ export function TaskPage({
         </div>
       </div>
 
+      {source ? <SourceFileBanner source={source} page={pageNow} /> : null}
       {canEditProperties ? (
         <PageTitleField value={record.title} autoFocus={record.title === "Untitled"} onSave={(title) => {
           titleSave.current = update.mutateAsync({ title });

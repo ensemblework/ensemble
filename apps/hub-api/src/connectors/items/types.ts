@@ -13,6 +13,8 @@ export const MAX_ITEM_TEXT = 20_000;
 export const DEFAULT_SEARCH_LIMIT = 10;
 export const MAX_SEARCH_LIMIT = 25;
 export const MAX_PEOPLE = 500;
+/** Largest file brought in from an app. */
+export const MAX_DOWNLOAD_BYTES = 25 * 1024 * 1024;
 
 export interface ItemContext {
   userId: string;
@@ -29,6 +31,15 @@ export interface ItemSearch {
 }
 
 export interface CommentResult {
+  url?: string;
+}
+
+/** A file's original bytes, as the app hands them over (Google Docs exported to Office formats). */
+export interface ItemDownload {
+  filename: string;
+  mediaType: string;
+  bytes: Uint8Array;
+  /** Where it lives in the app, for the file's source link. */
   url?: string;
 }
 
@@ -50,6 +61,8 @@ export interface ItemSource {
   fromUrl?(url: string): { kind: AppItemKind; id: string } | null;
   /** Posts a comment on an issue, card or ticket. Called only after the person pressed Post. */
   comment?(ctx: ItemContext, ref: { kind: AppItemKind; id: string }, body: string): Promise<CommentResult>;
+  /** A file or email attachment's original bytes, for bringing it into Files. At most MAX_DOWNLOAD_BYTES. */
+  download?(ctx: ItemContext, ref: { kind: AppItemKind; id: string }): Promise<ItemDownload>;
 }
 
 /** The app refused or could not be reached. The message is safe to show; it never holds a token. */

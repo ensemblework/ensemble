@@ -56,9 +56,9 @@ Do not do that on a shared network.
 
 | Tool | Resource | Data |
 |---|---|---|
-| `ensemble_brief` | — | Current task from repo + branch, project, people, deliverables, your skills (`howIWork`), cited excerpts |
-| `ensemble_search` | — | Substring search across tasks, projects, people, skills, repos, artifacts, meeting notes |
-| `ensemble_read` | `ensemble://items/{kind}/{id}` | One item in full (paginated) |
+| `ensemble_brief` | — | Current task from repo + branch, project, people, deliverables, files attached to the task, your skills (`howIWork`), cited excerpts |
+| `ensemble_search` | — | Substring search across tasks, projects, people, skills, repos, artifacts, meeting notes and files (kind `document`, by name and text) |
+| `ensemble_read` | `ensemble://items/{kind}/{id}` | One item in full (paginated); a `document` is a file's text with its name, format and pages ([32](32_FILES.md)); a task or page also lists its files. Original bytes are never sent |
 | `ensemble_tasks` | `ensemble://tasks`, `ensemble://tasks/{id}` | Tasks |
 | `ensemble_projects` | `ensemble://projects`, `ensemble://projects/{id}` | Projects |
 | `ensemble_repos` | `ensemble://repos`, `ensemble://repos/{id}` | Repositories |

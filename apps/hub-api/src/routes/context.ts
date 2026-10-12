@@ -5,7 +5,6 @@
  * saved relationships and page @mentions are edges. Nothing here infers a
  * link from similarity: an edge exists because something recorded it.
  */
-import { createHash } from "node:crypto";
 import { z } from "zod";
 import { plotMentionEntities } from "../plots/mentions.js";
 import type { FastifyInstance, FastifyRequest } from "fastify";
@@ -17,31 +16,16 @@ import { sseHub } from "../lib/sse.js";
 import { arrange, CARD_CAP, emptyOrder, ORDER_KEY, OrderError, readOrder, sanitizeOrder, type LaneId, type OrderDocument } from "../context/order.js";
 import { hidesSignupStarters } from "../marketplace/starters.js";
 import { peopleCards } from "../context/people-view.js";
-import { enrichDocument } from "../context/enrich-documents.js";
 import { assertOwned } from "../services/records.js";
-import { createCappedDocument } from "../lib/hosted-limits.js";
+import { fileDetail } from "../files/store.js";
 import { mirrorSettings } from "../spaces/store.js";
 import { isGuestIn, visibleArtifacts } from "../sharing/context.js";
 
-const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
 const HOSTED_PREFERENCE_PREFIX = "hosted.";
 
 function assertEditablePreference(key: string): void {
   if (key.startsWith(HOSTED_PREFERENCE_PREFIX)) {
     throw Object.assign(new Error("Hosted usage is managed by Ensemble, not as an editable preference."), { statusCode: 403 });
-  }
-}
-
-const DocumentTags = z.object({
-  projectIds: z.array(z.string()).default([]),
-  personIds: z.array(z.string()).default([]),
-  repoIds: z.array(z.string()).default([]),
-  taskIds: z.array(z.string()).default([]),
-});
-
-async function assertDocumentTags(db: FastifyInstance["prisma"], userId: string, tags: z.infer<typeof DocumentTags>): Promise<void> {
-  for (const [key, kind] of [["projectIds", "project"], ["personIds", "person"], ["repoIds", "repo"], ["taskIds", "task"]] as const) {
-    for (const id of tags[key]) await assertOwned(db, userId, kind, id);
   }
 }
 
@@ -76,7 +60,6 @@ function dayMonth(value: Date): { day: string; month: string } {
     month: (parts.find((part) => part.type === "month")?.value ?? "").slice(0, 3).toUpperCase(),
   };
 }
-const TEXT_FORMATS = new Set(["md", "markdown", "txt", "csv", "json", "log", "yaml", "yml", "ts", "js", "py"]);
 
 export async function contextRoutes(app: FastifyInstance): Promise<void> {
   const { prisma } = app;
@@ -695,154 +678,11 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
     };
   });
 
-  // ── document library ────────────────────────────────────────────────────
-
-  app.get("/api/documents", async (request) => {
-    const { q } = request.query as { q?: string };
-    const documents = await prisma.document.findMany({
-      where: {
-        userId: request.userId,
-        deletedAt: null,
-        ...(q ? { filename: { contains: q, mode: "insensitive" } } : {}),
-      },
-      orderBy: { createdAt: "desc" },
-      select: {
-        id: true,
-        filename: true,
-        mediaType: true,
-        byteSize: true,
-        format: true,
-        parseStatus: true,
-        enrichmentStatus: true,
-        textCharacters: true,
-        summary: true,
-        enrichmentError: true,
-        sha256: true,
-        createdAt: true,
-        parsedAt: true,
-        manualTags: true,
-        projectIds: true,
-        personIds: true,
-        repoIds: true,
-        taskIds: true,
-        warnings: true,
-        modelUsage: true,
-      },
-    });
-    return { documents };
-  });
-
-  app.post(
-    "/api/documents",
-    { bodyLimit: Math.ceil(MAX_UPLOAD_BYTES * 1.4) },
-    async (request, reply) => {
-      const body = z
-        .object({
-          filename: z.string().min(1).max(255),
-          mediaType: z.string().default("application/octet-stream"),
-          dataBase64: z.string(),
-          summarize: z.boolean().default(true),
-          tags: DocumentTags.default({}),
-        })
-        .parse(request.body);
-      await assertDocumentTags(prisma, request.userId, body.tags);
-      const original = Buffer.from(body.dataBase64, "base64");
-      if (original.byteLength > MAX_UPLOAD_BYTES) {
-        return reply.code(413).send({ error: "Files are limited to 20 MiB." });
-      }
-      const format = (body.filename.split(".").pop() ?? "").toLowerCase();
-      const isText = TEXT_FORMATS.has(format) || body.mediaType.startsWith("text/");
-      const text = isText ? original.toString("utf8") : "";
-      const document = await createCappedDocument(prisma, request.userId, {
-        data: {
-          userId: request.userId,
-          filename: body.filename,
-          mediaType: body.mediaType,
-          byteSize: original.byteLength,
-          sha256: createHash("sha256").update(original).digest("hex"),
-          original,
-          format,
-          parseStatus: isText ? "ready" : "queued",
-          parserVersion: "ensemble-documents/1",
-          textCharacters: text.length,
-          parsedAt: isText ? new Date() : null,
-          enrichmentStatus: body.summarize ? "queued" : "skipped",
-          warnings: isText ? [] : ["Binary formats (DOCX, PPTX, PDF) are parsed by the context worker when it runs."],
-          ...body.tags,
-          manualTags: body.tags,
-          artifact: isText
-            ? {
-                create: {
-                  userId: request.userId,
-                  kind: "file",
-                  externalId: `upload:${createHash("sha1").update(original).digest("hex")}`,
-                  ts: new Date(),
-                  title: body.filename,
-                  text: text.slice(0, 200_000),
-                  authoredByMe: true,
-                },
-              }
-            : undefined,
-        },
-        select: { id: true, filename: true, parseStatus: true },
-      });
-      await appendLedger({
-        userId: request.userId,
-        actor: "me",
-        action: "document.upload",
-        payload: { id: document.id, filename: body.filename, bytes: original.byteLength },
-      });
-      if (body.summarize) {
-        void enrichDocument(app, document.id).catch((error: unknown) => app.log.error({ err: error }, "document summary failed"));
-      }
-      return reply.code(201).send({ document });
-    },
-  );
-
-  app.get("/api/documents/:id/text", async (request, reply) => {
-    const { id } = request.params as { id: string };
-    const document = await prisma.document.findFirst({
-      where: { id, userId: request.userId, deletedAt: null },
-      include: { artifact: { select: { text: true } } },
-    });
-    if (!document) return reply.code(404).send({ error: "Document not found." });
-    return { text: document.artifact?.text ?? "" };
-  });
-
-  app.get("/api/documents/:id/original", async (request, reply) => {
-    const { id } = request.params as { id: string };
-    const document = await prisma.document.findFirst({ where: { id, userId: request.userId, deletedAt: null } });
-    if (!document) return reply.code(404).send({ error: "Document not found." });
-    reply.header("Content-Type", document.mediaType);
-    reply.header("Content-Disposition", `attachment; filename="${encodeURIComponent(document.filename)}"`);
-    return reply.send(Buffer.from(document.original));
-  });
-
-  app.patch("/api/documents/:id/tags", async (request, reply) => {
-    const { id } = request.params as { id: string };
-    const body = DocumentTags.parse(request.body);
-    const found = await prisma.document.findFirst({ where: { id, userId: request.userId, deletedAt: null }, select: { id: true } });
-    if (!found) return reply.code(404).send({ error: "Document not found." });
-    await assertDocumentTags(prisma, request.userId, body);
-    await prisma.document.updateMany({
-      where: { id, userId: request.userId, deletedAt: null },
-      data: { ...body, manualTags: body },
-    });
-    return { ok: true };
-  });
-
-  app.delete("/api/documents/:id", async (request, reply) => {
-    const { id } = request.params as { id: string };
-    const result = await prisma.document.updateMany({ where: { id, userId: request.userId, deletedAt: null }, data: { deletedAt: new Date() } });
-    if (!result.count) return reply.code(404).send({ error: "Document not found." });
-    return reply.code(204).send();
-  });
-
   // ── @mention entities ───────────────────────────────────────────────────
 
   app.get("/api/entities", async (request) => {
     const userId = request.userId;
-    const [people, projects, repos, tasks, deliverables, skills, diagrams, plots, datasets] = await Promise.all([
+    const [people, projects, repos, tasks, deliverables, skills, diagrams, plots, datasets, files] = await Promise.all([
       prisma.person.findMany({ where: { userId, deletedAt: null }, select: { id: true, name: true, email: true }, take: 300 }),
       prisma.project.findMany({ where: { userId, deletedAt: null }, select: { id: true, name: true }, take: 200 }),
       prisma.repo.findMany({ where: { userId, deletedAt: null }, select: { id: true, fullName: true }, take: 200 }),
@@ -865,6 +705,7 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
       hasModule(request.modules, "plots")
         ? prisma.plotDataset.findMany({ where: { userId, deletedAt: null }, select: { id: true, name: true, format: true }, orderBy: { updatedAt: "desc" }, take: 100 })
         : Promise.resolve([]),
+      prisma.document.findMany({ where: { userId, deletedAt: null }, select: { id: true, filename: true, byteSize: true }, orderBy: { updatedAt: "desc" }, take: 200 }),
     ]);
     return {
       entities: [
@@ -876,6 +717,7 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
         ...skills.map((row) => ({ kind: "skill", id: row.id, label: row.name, detail: "" })),
         ...diagrams.map((row) => ({ kind: "diagram", id: row.id, label: row.title, detail: "" })),
         ...plotMentionEntities(plots, datasets),
+        ...files.map((row) => ({ kind: "file", id: row.id, label: row.filename, detail: fileDetail(row.filename, row.byteSize) })),
       ],
     };
   });

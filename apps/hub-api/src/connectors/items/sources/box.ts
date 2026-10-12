@@ -1,11 +1,11 @@
 /**
  * Box: files by name (search), or the ones you used most recently; a file's text when
  * it is a small text file or Box has extracted its text (documents, PDFs), otherwise
- * its details. Ids: Box's numeric file id.
+ * its details; and a file's original bytes. Ids: Box's numeric file id.
  */
 import type { AppItem, AppItemContent } from "@ensemble/shared-types";
-import { facts, itemFetch, itemMarkdown } from "../http.js";
-import { ItemError, type ItemContext, type ItemSource } from "../types.js";
+import { facts, itemFetch, itemFetchBytes, itemMarkdown, tooLarge } from "../http.js";
+import { ItemError, MAX_DOWNLOAD_BYTES, type ItemContext, type ItemSource } from "../types.js";
 import { extensionOf, sizeText, TEXT_EXTENSIONS } from "./dropbox.js";
 
 const API = "https://api.box.com/2.0";
@@ -115,5 +115,16 @@ export const boxItems: ItemSource = {
     const list = facts({ Folder: folderOf(file) || "All Files", Size: sizeText(file.size), Modified: file.modified_at?.slice(0, 10) });
     const text = [file.description ?? "", body || note].filter(Boolean).join("\n\n");
     return { ...fileItem(file), facts: list, text: itemMarkdown(file.name, list, text) };
+  },
+  async download(ctx, ref) {
+    if (ref.kind !== "file") throw new ItemError("Only Box files can be brought into Files.", 400);
+    if (!ID.test(ref.id)) throw new ItemError("That is not a Box file id.", 400);
+    const file = await get<BoxFile>(ctx, `/files/${ref.id}?fields=${FIELDS}`);
+    if (file.type !== "file") throw new ItemError("That Box item is not a file.", 400);
+    if ((file.size ?? 0) > MAX_DOWNLOAD_BYTES) throw tooLarge(LABEL);
+    // Box answers with a redirect to its download host; only Box's own hosts are followed, without the token.
+    const got = await itemFetchBytes(ctx, "box", LABEL, `${API}/files/${ref.id}/content`, { headers: auth(ctx), redirectTo: (url) => url.hostname.endsWith(".boxcloud.com") });
+    if (got.status === 202) throw new ItemError("Box is still preparing this file. Try again in a minute.", 503);
+    return { filename: file.name, mediaType: got.contentType || "application/octet-stream", bytes: got.bytes, url: `https://app.box.com/file/${file.id}` };
   },
 };
