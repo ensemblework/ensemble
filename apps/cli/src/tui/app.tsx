@@ -957,7 +957,7 @@ function taskPane(input: { item: Item | null; detail: JobDetail | null; width: n
   const lines: Line[] = [];
   if (input.offline) lines.push(...wrapLine([{ text: `Ensemble on this computer is not answering (${input.offline}). It restarts by itself; if it does not, run \`ensemble\` again.`, color: "red" }], width), []);
   if (input.agentsOff) {
-    lines.push(...wrapLine([{ text: "Agents are off in this space. Turn them on in Settings → Features (desktop app or ensemblework.com).", color: "yellow" }], width));
+    lines.push(...wrapLine([{ text: "Agents are off in this space. Turn them on in Settings → Account → Features (desktop app or ensemblework.com).", color: "yellow" }], width));
     return lines;
   }
   if (!item) {

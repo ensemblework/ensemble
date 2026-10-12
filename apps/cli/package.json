@@ -1,6 +1,6 @@
 {
   "name": "ensemblework",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Ensemble CLI: run tasks assigned from ensemblework.com on your computer, and connect your editor to Ensemble over MCP.",
   "license": "FSL-1.1-MIT",
   "homepage": "https://ensemblework.com/download",
@@ -33,6 +33,7 @@
     "@modelcontextprotocol/sdk": "^1.31.0",
     "@types/node": "^22.18.6",
     "@types/react": "^19.3.0",
+    "@xterm/headless": "^5.5.0",
     "esbuild": "^0.28.2",
     "ink": "^6.8.0",
     "ink-testing-library": "^4.0.0",

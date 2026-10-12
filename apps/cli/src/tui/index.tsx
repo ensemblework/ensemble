@@ -17,9 +17,7 @@ import { App, type Ops } from "./app.js";
 import { LocalApi } from "./local.js";
 import { MOUSE_OFF, MOUSE_ON } from "./mouse.js";
 import { loadPrefs, savePrefs } from "./prefs.js";
-
-const ALT_ON = "\u001B[?1049h\u001B[H";
-const ALT_OFF = "\u001B[?1049l";
+import { ALT_OFF, ALT_ON, RENDER_OPTIONS } from "./screen.js";
 
 export async function runApp(): Promise<void> {
   const paths = resolveCliPaths();
@@ -78,7 +76,7 @@ export async function runApp(): Promise<void> {
         prefs={prefs}
         ops={ops}
       />,
-      { exitOnCtrlC: false, patchConsole: true, incrementalRendering: true, maxFps: 30 },
+      RENDER_OPTIONS,
     );
     await app.waitUntilExit();
   } finally {
