@@ -37,6 +37,8 @@ test("renders package-manager metadata from release checksums", () => {
   assert.match(formula, /on_arm do/);
   assert.match(formula, /on_intel do/);
   assert.match(formula, /license "FSL-1.1-MIT"/);
+  assert.match(formula, new RegExp(`\\n  version "${version.replaceAll(".", "\\.")}"\\n`));
+  assert.match(formula, /\n {2}version_scheme 1\n/);
 
   const wingetInstaller = readFileSync(join(out, "winget/EnsembleWork.EnsembleCLI.installer.yaml"), "utf8");
   assert.match(wingetInstaller, /PackageIdentifier: EnsembleWork\.EnsembleCLI/);
