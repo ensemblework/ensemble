@@ -20,3 +20,4 @@ export * from "./plots-workspace.js";
 export * from "./plots-sample.js";
 export * from "./avatars.js";
 export * from "./settings-map.js";
+export * from "./onboarding-tour.js";

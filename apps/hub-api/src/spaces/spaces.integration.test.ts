@@ -9,6 +9,7 @@ import test, { after } from "node:test";
 import type { InjectOptions } from "fastify";
 import { createHttpHarness, HTTP_TEST_PASSWORD, type HttpHarness, type HttpUser } from "../test/http.js";
 import { spacesRouteCoverage, type RouteCheck } from "../test/route-coverage.js";
+import { ONBOARDING_TOUR_KEY, READY_ONBOARDING_TOUR } from "@ensemble/shared-types";
 
 const harness: HttpHarness = await createHttpHarness();
 const db = harness.prisma;
@@ -154,15 +155,22 @@ test("settings copy into a new space, and sync keeps every space the same except
   assert.equal(copiedSettings.settings.timezone, "Europe/Lisbon");
   const shortcut = await db.preference.findFirst({ where: { userId: copied.id, key: "ui.shortcuts", deletedAt: null } });
   assert.ok(shortcut);
+  const tourState = async (id: string) => (await db.preference.findFirst({ where: { userId: id, key: ONBOARDING_TOUR_KEY, deletedAt: null } }))?.value;
+  assert.deepEqual(await tourState(copied.id), READY_ONBOARDING_TOUR);
+  await as(mira, { method: "PUT", url: `/api/preferences/${ONBOARDING_TOUR_KEY}`, payload: { value: { ...READY_ONBOARDING_TOUR, status: "completed" } } });
 
   // Bring the account's settings into the fresh space on demand.
   assert.equal((await as(mira, { method: "POST", url: "/api/spaces/settings/copy", payload: { from: mira.id } }, fresh.id)).statusCode, 200);
   const imported = (await as(mira, { method: "GET", url: "/api/settings" }, fresh.id)).json() as { settings: { timezone: string } };
   assert.equal(imported.settings.timezone, "Europe/Lisbon");
+  assert.deepEqual(await tourState(fresh.id), READY_ONBOARDING_TOUR, "settings copy keeps the destination's tour");
   claim("POST /api/spaces/settings/copy", "happy-path");
 
   const sync = await as(mira, { method: "PUT", url: "/api/spaces/settings/sync", payload: { on: true } }, copied.id);
   assert.equal(sync.statusCode, 200, sync.body);
+  assert.deepEqual(await tourState(copied.id), READY_ONBOARDING_TOUR, "settings sync does not copy another tour");
+  await as(mira, { method: "PUT", url: `/api/preferences/${ONBOARDING_TOUR_KEY}`, payload: { value: { ...READY_ONBOARDING_TOUR, status: "skipped" } } }, copied.id);
+  assert.deepEqual(await tourState(fresh.id), READY_ONBOARDING_TOUR, "dismissing a tour does not dismiss another space's tour");
   claim("PUT /api/spaces/settings/sync", "happy-path");
   await as(mira, { method: "PATCH", url: "/api/settings", payload: { timezone: "Asia/Tokyo", connections: { github: { enabled: true } } } }, copied.id);
   for (const id of [mira.id, fresh.id]) {

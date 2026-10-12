@@ -13,7 +13,7 @@
 import { randomUUID } from "node:crypto";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import type { FastifyReply, FastifyRequest } from "fastify";
-import { Settings } from "@ensemble/shared-types";
+import { ONBOARDING_TOUR_KEY, Settings } from "@ensemble/shared-types";
 import { normalizeCookieDomain } from "@ensemble/shared-types/cookie-site";
 import { sessionCookieHeader, sessionCookieSecure } from "../lib/cookie.js";
 
@@ -194,8 +194,8 @@ export async function copySettings(db: Db, from: string, to: string): Promise<vo
     await db.modelCredential.create({ data: { userId: to, provider: row.provider, secret: row.secret, hint: row.hint, baseUrl: row.baseUrl, updatedAt: row.updatedAt } });
   }
 
-  const prefs = await db.preference.findMany({ where: { userId: from, key: { startsWith: "ui." }, deletedAt: null } });
-  await db.preference.updateMany({ where: { userId: to, key: { startsWith: "ui.", notIn: prefs.map((row) => row.key) } }, data: { deletedAt: new Date() } });
+  const prefs = await db.preference.findMany({ where: { userId: from, key: { startsWith: "ui.", not: ONBOARDING_TOUR_KEY }, deletedAt: null } });
+  await db.preference.updateMany({ where: { userId: to, key: { startsWith: "ui.", notIn: [ONBOARDING_TOUR_KEY, ...prefs.map((row) => row.key)] } }, data: { deletedAt: new Date() } });
   for (const row of prefs) {
     await db.preference.upsert({
       where: { userId_key: { userId: to, key: row.key } },
