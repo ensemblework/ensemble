@@ -144,7 +144,7 @@ Local packaging needs a host matching the target: `pnpm cli:package -- --target 
 - Windows needs one admin prompt to turn its sandbox on (`ensemble sandbox setup`); until then a sandboxed task there is refused with that instruction ([24](24_DESKTOP_SANDBOXING.md) v4). `ensemble doctor` checks the sandbox.
 - The runner needs the full archive. The npm package (once published) carries only login, status and MCP.
 - One runtime per computer, shared with the desktop app (§4).
-- Ensemble Code reads documents with built-in readers; it does not load other MCP servers. Mouse clicks need a terminal that reports SGR mouse events; the keyboard does everything without them. A terminal narrower than 90 columns hides the sidebar.
+- Ensemble Code reads documents with the Files reader ([32](32_FILES.md)), in a worker with memory and time limits; it does not load other MCP servers. Mouse clicks need a terminal that reports SGR mouse events; the keyboard does everything without them. A terminal narrower than 90 columns hides the sidebar.
 
 ## 9. Verified
 

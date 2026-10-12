@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
-import { hasModule, PageDocument } from "@ensemble/shared-types";
+import { fileFormat, hasModule, PageDocument } from "@ensemble/shared-types";
+import { describeFile, filesOnPage, filesOnTask, type AttachedFile } from "../files/attached.js";
 import { pageText as pageDocumentText } from "../pages/markdown.js";
 import { env } from "../config.js";
 import { DATA_GAPS, REFERENCE_NOTE, UNTRUSTED_NOTE } from "./gaps.js";
@@ -80,6 +81,20 @@ function taskCard(task: {
     trust: "hub" as const,
     trustLabel: "A task stored in your Ensemble Hub.",
   };
+}
+
+/** Files on a task or page, as citations an editor can read with ensemble_read kind "document". */
+function fileCitations(files: AttachedFile[]) {
+  return files.map((file) => ({
+    id: file.id,
+    kind: "document" as const,
+    label: file.filename,
+    format: file.format,
+    fileKind: file.kind,
+    details: describeFile(file),
+    text: file.textStatus,
+    url: hubUrl(`/files/${file.id}`),
+  }));
 }
 
 function toRef(task: { id: string; title: string; status: string; updatedAt: Date; repoId: string | null; projectId: string | null }): TaskRef {
@@ -541,6 +556,7 @@ export async function readItem(
           people: task.people,
           url: hubUrl(`/tasks/${task.id}`),
           body: body(`${task.description}\n\n${page}`.trim()),
+          files: fileCitations(await filesOnTask(db, userId, task.id)),
           trust: "hub",
           trustLabel: "Task text stored in your Hub. A source excerpt copied from mail or GitHub is untrusted.",
           sourceExcerpt: task.excerpt
@@ -687,19 +703,37 @@ export async function readItem(
     case "document": {
       const document = await db.document.findFirst({
         where: { id, userId, deletedAt: null },
-        include: { artifact: { select: { text: true, title: true } } },
+        select: { id: true, filename: true, mediaType: true, byteSize: true, pageCount: true, textCharacters: true, parseStatus: true, summary: true, artifact: { select: { text: true } } },
       });
       if (!document) return { found: false };
       const text = document.artifact?.text || document.summary || "";
+      const format = fileFormat(document.filename);
+      const silent = ["image", "audio", "video"].includes(format.kind);
       return {
         found: true,
         item: {
           id: document.id,
           kind,
           filename: document.filename,
+          format: format.ext,
+          fileKind: format.kind,
+          details: describeFile(document),
+          mediaType: document.mediaType,
+          byteSize: document.byteSize,
+          pages: document.pageCount,
+          textCharacters: document.textCharacters,
           summary: document.summary,
-          url: hubUrl(`/context?document=${document.id}`),
+          url: hubUrl(`/files/${document.id}`),
           body: body(text),
+          ...(text
+            ? {}
+            : {
+                note: silent
+                  ? `This ${format.label} has no text to read.`
+                  : document.parseStatus === "queued" || document.parseStatus === "running"
+                    ? "Ensemble is still reading this file's text. Try again in a minute."
+                    : "No text was found in this file.",
+              }),
           originalBytesOmitted: true,
           ...trustForIngested("document"),
         },
@@ -829,6 +863,7 @@ export async function readItem(
           title,
           url: row.taskId ? hubUrl(`/tasks/${row.taskId}`) : hubUrl(`/pages/${row.id}`),
           body: body(text),
+          files: fileCitations(await filesOnPage(db, userId, row.id)),
           trust: "hub",
           trustLabel: row.taskId ? "A page on a task stored in your Ensemble Hub." : "A note stored in your Ensemble Hub.",
         },
@@ -843,7 +878,7 @@ export async function searchHub(db: Db, userId: string, q: string, limit: number
   const skillsOn = hasModule(modules, "skills");
   const plotsOn = hasModule(modules, "plots");
   const diagramsOn = hasModule(modules, "diagrams");
-  const [tasks, projects, people, skills, repos, artifacts, notes, plots, pages, diagrams] = await Promise.all([
+  const [tasks, projects, people, skills, repos, artifacts, notes, plots, pages, diagrams, documents] = await Promise.all([
     db.task.findMany({
       where: {
         userId,
@@ -943,7 +978,19 @@ export async function searchHub(db: Db, userId: string, q: string, limit: number
       where: { userId, deletedAt:null, OR:[{title:{contains:q,mode:"insensitive"}},{source:{contains:q,mode:"insensitive"}}] },
       take:limit, orderBy:{updatedAt:"desc"}, select:{id:true,title:true,source:true,updatedAt:true},
     }) : Promise.resolve([]),
+    db.document.findMany({
+      where: {
+        userId,
+        deletedAt: null,
+        OR: [{ filename: { contains: q, mode: "insensitive" } }, { artifact: { text: { contains: q, mode: "insensitive" } } }],
+      },
+      take: limit,
+      orderBy: { updatedAt: "desc" },
+      select: { id: true, filename: true, artifactId: true, updatedAt: true, artifact: { select: { text: true } } },
+    }),
   ]);
+  // A file's text lives on its artifact too; the file is the one to cite.
+  const fileArtifacts = new Set(documents.map((row) => row.artifactId).filter(Boolean));
   const results = [
     ...diagrams.map(diagram => ({ id:diagram.id, kind:"diagram", label:diagram.title, when:diagram.updatedAt.toISOString(), url:hubUrl(`/diagrams/${diagram.id}`), ...matchExcerpt(diagram.title.toLowerCase().includes(q.toLowerCase()) ? diagram.title : diagram.source, q), trust:"hub" as const, trustLabel:"A diagram stored in your Ensemble Hub." })),
     ...tasks.map((task) => ({
@@ -998,7 +1045,7 @@ export async function searchHub(db: Db, userId: string, q: string, limit: number
       trust: "hub" as const,
       trustLabel: "A repository row in your Engineer Graph.",
     })),
-    ...artifacts.map((artifact) => ({
+    ...artifacts.filter((artifact) => !fileArtifacts.has(artifact.id)).map((artifact) => ({
       id: artifact.id,
       kind: "artifact",
       artifactKind: artifact.kind,
@@ -1008,6 +1055,15 @@ export async function searchHub(db: Db, userId: string, q: string, limit: number
       sourceUrl: artifact.url,
       ...matchExcerpt(artifact.text || artifact.title, q),
       ...trustForIngested(artifact.kind, artifact.authoredByMe),
+    })),
+    ...documents.map((document) => ({
+      id: document.id,
+      kind: "document",
+      label: document.filename,
+      when: document.updatedAt.toISOString(),
+      url: hubUrl(`/files/${document.id}`),
+      ...matchExcerpt(document.filename.toLowerCase().includes(q.toLowerCase()) || !document.artifact?.text ? document.filename : document.artifact.text, q),
+      ...trustForIngested("file"),
     })),
     ...notes.map((note) => ({
       id: note.id,
@@ -1237,7 +1293,7 @@ export async function buildBrief(
     artifactOr.push({ text: { contains: query, mode: "insensitive" } });
   }
 
-  const [skills, people, deliverables, artifacts, meetingNotes] = await Promise.all([
+  const [skills, people, deliverables, artifacts, meetingNotes, files] = await Promise.all([
     hasModule(modules, "skills")
       ? db.skill.findMany({
           where: { userId, deletedAt: null, enabled: true },
@@ -1277,6 +1333,7 @@ export async function buildBrief(
           select: { id: true, title: true, answer: true, source: true, askedAt: true },
         })
       : Promise.resolve([]),
+    task ? filesOnTask(db, userId, task.id) : Promise.resolve([]),
   ]);
 
   const howIWork = rankSkills(skills, task, resolvedRepo?.fullName ?? null, project?.name ?? null).filter((skill) => {
@@ -1368,6 +1425,7 @@ export async function buildBrief(
     },
     howIWork,
     context,
+    files: fileCitations(files),
     search: degradedSearch
       ? { query: degradedSearch.query, results: degradedSearch.results, message: degradedSearch.message }
       : undefined,
@@ -1375,7 +1433,7 @@ export async function buildBrief(
     notes: nothing
       ? `Nothing relevant was found. ${REFERENCE_NOTE}`
       : REFERENCE_NOTE,
-    readAgain: "Excerpts are bounded. Call ensemble_read with the cited kind and id for the rest.",
+    readAgain: "Excerpts are bounded. Call ensemble_read with the cited kind and id for the rest; files attached to the task are kind document.",
     gaps: DATA_GAPS,
   };
 }

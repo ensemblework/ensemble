@@ -4,13 +4,14 @@ import { api } from "@/lib/api";
 import { taskDoc } from "@/lib/export/items";
 import { OWNER_LABEL } from "@/lib/format";
 import { taskPersonId, useSpacePeople } from "@/lib/space-people";
-import { ExportMenu } from "../export-menu";
+import { ExportMenu, type ExportExtra } from "../export-menu";
 
 /** Download for one task: its properties plus its page. Reads fresh copies when a format is picked. */
-export function TaskExportMenu({ taskId }: { taskId: string }) {
+export function TaskExportMenu({ taskId, extra }: { taskId: string; extra?: ExportExtra[] }) {
   const space = useSpacePeople();
   return (
     <ExportMenu
+      extra={extra}
       load={async () => {
         // Direct reads, not the query cache: refreshing ["page", id] would reset an open editor.
         const [task, page] = await Promise.all([api.task(taskId), api.page(taskId).catch(() => null)]);

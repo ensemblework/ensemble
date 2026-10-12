@@ -21,6 +21,7 @@ const VIEWS: NavigationDestination[] = [
   {href:"/code#reviews",label:"Code reviews",hint:"Code › Agent changes",keywords:"diff review accept reject agent changes"},
   {href:"/diagrams",label:"Diagrams",hint:"Block diagrams & flows",keywords:"diagram flowchart systems graph drawing"},
   {href:"/plots",label:"Plots",hint:"Charts & data",keywords:"plot chart visualization table datasets figures"},
+  {href:"/files",label:"Files",hint:"Uploads & previews",keywords:"documents pdf word excel spreadsheet csv powerpoint slides pictures images uploads attachments"},
   {href:"/metrics",label:"Metrics",hint:"Calls & cost",keywords:"usage credits spending tokens audit ledger",ownerOnly:true},
   {href:"/connect",label:"Editors",hint:"Connect an editor or AI app",keywords:"vscode cursor claude codex mcp",ownerOnly:true},
   {href:"/settings",label:"Settings",hint:"Account & preferences",keywords:"configuration options settings"},

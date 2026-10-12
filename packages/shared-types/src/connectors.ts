@@ -364,7 +364,7 @@ export const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
     ],
     reads: ["Mail threads you are on", "Calendar events", "Drive files you pick or Ensemble created"],
     writes: ["Calendar events and invites", "Docs, Sheets and Slides"],
-    items: { kinds: ["file", "conversation"] },
+    items: { kinds: ["file", "conversation", "attachment"] },
 
     status: "ready",
     notes: [
@@ -391,7 +391,7 @@ export const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
     ],
     reads: ["Outlook mail", "Outlook calendar", "Teams chats", "OneDrive files"],
     writes: ["Outlook events and invites", "Word, Excel and PowerPoint files"],
-    items: { kinds: ["file", "conversation"] },
+    items: { kinds: ["file", "conversation", "attachment"] },
     status: "ready",
     notes: [
       "Teams chats need a work or school account; personal Microsoft accounts have no Teams chat API.",

@@ -1,16 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assertWithinLimit, hostedLimits } from "./hosted-limits.js";
+import { assertWithinLimit, hostedLimits, sizeLabel } from "./hosted-limits.js";
 import { storedTableBytes } from "../plots/store.js";
 
-test("hosted limits default to five connectors, fifty jobs and 100 MiB per storage area", () => {
-  assert.deepEqual(hostedLimits({}), { connectors: 25, jobsPerDay: 50, datasetBytes: 104857600, documentBytes: 104857600 });
-  assert.deepEqual(hostedLimits({ ENSEMBLE_MAX_CONNECTORS: "2", ENSEMBLE_MAX_JOBS_PER_DAY: "3", ENSEMBLE_MAX_DATASET_BYTES: "100", ENSEMBLE_MAX_DOCUMENT_BYTES: "101" }), { connectors: 2, jobsPerDay: 3, datasetBytes: 100, documentBytes: 101 });
+test("hosted limits default to 25 connectors, fifty jobs, 100 MiB of datasets and ten files in 50 MiB", () => {
+  assert.deepEqual(hostedLimits({}), { connectors: 25, jobsPerDay: 50, datasetBytes: 104857600, documents: 10, documentBytes: 52428800, filesTotalBytes: 10737418240 });
+  assert.deepEqual(
+    hostedLimits({ ENSEMBLE_MAX_CONNECTORS: "2", ENSEMBLE_MAX_JOBS_PER_DAY: "3", ENSEMBLE_MAX_DATASET_BYTES: "100", ENSEMBLE_MAX_DOCUMENTS: "4", ENSEMBLE_MAX_DOCUMENT_BYTES: "101", ENSEMBLE_FILES_TOTAL_MAX_BYTES: "1000" }),
+    { connectors: 2, jobsPerDay: 3, datasetBytes: 100, documents: 4, documentBytes: 101, filesTotalBytes: 1000 },
+  );
 });
 test("invalid quota configuration fails loudly instead of disabling the cap", () => {
   for (const value of ["0", "-1", "Infinity", "1.5", "abc", "9007199254740992"]) {
     assert.throws(() => hostedLimits({ ENSEMBLE_MAX_CONNECTORS: value }), /positive safe integer/);
     assert.throws(() => hostedLimits({ ENSEMBLE_MAX_DOCUMENT_BYTES: value }), /ENSEMBLE_MAX_DOCUMENT_BYTES must be a positive safe integer/);
+    assert.throws(() => hostedLimits({ ENSEMBLE_MAX_DOCUMENTS: value }), /ENSEMBLE_MAX_DOCUMENTS must be a positive safe integer/);
+    assert.throws(() => hostedLimits({ ENSEMBLE_FILES_TOTAL_MAX_BYTES: value }), /ENSEMBLE_FILES_TOTAL_MAX_BYTES must be a positive safe integer/);
   }
 });
 test("exact thresholds fit; one connector, job or byte over is refused", () => {
@@ -21,6 +26,10 @@ test("exact thresholds fit; one connector, job or byte over is refused", () => {
     assert.throws(() => assertWithinLimit(0, max + 1, max, "resource"), { statusCode: 429 });
   }
   assert.throws(() => assertWithinLimit(-1, 1, 5, "resource"), /Invalid/);
+});
+
+test("sizes read the way people say them", () => {
+  assert.deepEqual([sizeLabel(1), sizeLabel(5), sizeLabel(2048), sizeLabel(52428800), sizeLabel(2.1 * 1024 * 1024), sizeLabel(12.2 * 1024 * 1024)], ["1 byte", "5 bytes", "2 KB", "50 MB", "2.1 MB", "13 MB"]);
 });
 
 test("dataset storage counts compressed tables plus every original byte", () => {

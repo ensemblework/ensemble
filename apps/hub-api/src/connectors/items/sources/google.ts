@@ -1,8 +1,10 @@
 /**
- * Google Workspace: Drive files (search, read as text) and Gmail threads (search,
- * read), each only when the connection was granted that product. With the basic
- * Drive access (drive.file) Drive lists only files Ensemble created or the person picked.
- * Ids: Drive file ids and Gmail thread ids.
+ * Google Workspace: Drive files (search, read as text, download) and Gmail threads
+ * (search, read) and email attachments (search, download), each only when the
+ * connection was granted that product. With the basic Drive access (drive.file)
+ * Drive lists only files Ensemble created or the person picked.
+ * Ids: Drive file ids, Gmail thread ids, and "<messageId>:<partId>" for an attachment
+ * (Gmail's own attachment ids are long and change between reads; the part id does not).
  */
 import type { AppItem, AppItemContent, AppItemPerson } from "@ensemble/shared-types";
 import { gmailBody } from "../../../assistant/tools/google/mail-calendar.js";
@@ -10,14 +12,16 @@ import { DRIVE_API, DRIVE_FILE_HINT, GMAIL_API } from "../../../assistant/tools/
 import { stripQuoted } from "../../google.js";
 import { parseAddressList } from "../../ingest.js";
 import { hasScopes, type ProviderToken } from "../../tokens.js";
-import { capText, facts, itemFetch, itemMarkdown } from "../http.js";
-import { ItemError, type ItemContext, type ItemSource } from "../types.js";
+import { capText, facts, itemFetch, itemFetchBytes, itemFetchLargeJson, itemMarkdown, tooLarge } from "../http.js";
+import { ItemError, MAX_DOWNLOAD_BYTES, type ItemContext, type ItemDownload, type ItemSource } from "../types.js";
+import { sizeText } from "./dropbox.js";
 
 const LABEL = "Google Drive";
 const G = "https://www.googleapis.com/auth/";
-const DRIVE_SCOPES = [`${G}drive.file`, `${G}drive.readonly`, `${G}drive`];
-const FULL_DRIVE_SCOPES = [`${G}drive.readonly`, `${G}drive`];
-const GMAIL_SCOPES = [`${G}gmail.readonly`, `${G}gmail.modify`, "https://mail.google.com/"];
+/** Any one of these is enough. */
+export const DRIVE_SCOPES = [`${G}drive.file`, `${G}drive.readonly`, `${G}drive`];
+export const FULL_DRIVE_SCOPES = [`${G}drive.readonly`, `${G}drive`];
+export const GMAIL_SCOPES = [`${G}gmail.readonly`, `${G}gmail.modify`, "https://mail.google.com/"];
 const MAX_TEXT_FILE_BYTES = 1024 * 1024;
 const THREAD_MESSAGES = 15;
 
@@ -25,6 +29,7 @@ const MIME = {
   document: "application/vnd.google-apps.document",
   spreadsheet: "application/vnd.google-apps.spreadsheet",
   presentation: "application/vnd.google-apps.presentation",
+  drawing: "application/vnd.google-apps.drawing",
   folder: "application/vnd.google-apps.folder",
 } as const;
 
@@ -32,8 +37,20 @@ const KIND_NAME: Record<string, string> = {
   [MIME.document]: "Google Doc",
   [MIME.spreadsheet]: "Google Sheet",
   [MIME.presentation]: "Google Slides",
+  [MIME.drawing]: "Google Drawing",
   [MIME.folder]: "Folder",
+  "application/vnd.google-apps.form": "Google Form",
+  "application/vnd.google-apps.site": "Google Site",
+  "application/vnd.google-apps.shortcut": "Drive shortcut",
   "application/pdf": "PDF",
+};
+
+/** Google's own formats have no bytes of their own; they are exported as the matching Office file. */
+const EXPORT_AS: Record<string, { mime: string; ext: string }> = {
+  [MIME.document]: { mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", ext: "docx" },
+  [MIME.spreadsheet]: { mime: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ext: "xlsx" },
+  [MIME.presentation]: { mime: "application/vnd.openxmlformats-officedocument.presentationml.presentation", ext: "pptx" },
+  [MIME.drawing]: { mime: "application/pdf", ext: "pdf" },
 };
 
 const TEXT_TYPES = ["application/json", "application/xml", "application/x-yaml"];
@@ -50,15 +67,17 @@ interface DriveFile {
 }
 
 interface GmailPart {
+  partId?: string;
   mimeType?: string;
   filename?: string;
-  body?: { data?: string };
+  body?: { data?: string; attachmentId?: string; size?: number };
   parts?: GmailPart[];
   headers?: Array<{ name: string; value: string }>;
 }
 
 interface GmailMessage {
   id: string;
+  threadId?: string;
   internalDate?: string;
   snippet?: string;
   payload?: GmailPart;
@@ -66,6 +85,7 @@ interface GmailMessage {
 
 const FILE_ID = /^[A-Za-z0-9_-]{10,200}$/;
 const THREAD_ID = /^[0-9a-f]{8,40}$/i;
+const ATTACHMENT_REF = /^([0-9a-f]{8,40}):([0-9][0-9.]{0,30})$/i;
 
 const anyScope = (token: Pick<ProviderToken, "scopes">, scopes: readonly string[]) => scopes.some((scope) => hasScopes(token, [scope]));
 
@@ -84,6 +104,52 @@ const hit = ({ source, kind, id, title, subtitle, url, updatedAt }: AppItem): Ap
 const header = (message: GmailMessage, name: string) => message.payload?.headers?.find((row) => row.name.toLowerCase() === name.toLowerCase())?.value ?? "";
 const threadLink = (id: string) => `https://mail.google.com/mail/u/0/#all/${id}`;
 const fromMillis = (value: string | undefined) => (value && /^\d+$/.test(value) ? new Date(Number(value)).toISOString() : undefined);
+const partHeader = (part: GmailPart, name: string) => part.headers?.find((row) => row.name.toLowerCase() === name.toLowerCase())?.value ?? "";
+
+/** "Q3 plan" exported as docx → "Q3 plan.docx"; a name that already ends that way stays. */
+export function withExtension(name: string, ext: string): string {
+  return name.toLowerCase().endsWith(`.${ext}`) ? name : `${name}.${ext}`;
+}
+
+/** Files attached to a message: named parts with a separate body. Pictures shown inside the email (logos, signatures) are left out. */
+export function gmailAttachments(payload: GmailPart | undefined): GmailPart[] {
+  const found: GmailPart[] = [];
+  const walk = (part: GmailPart | undefined) => {
+    if (!part) return;
+    if (part.filename && part.partId && part.body?.attachmentId) {
+      const disposition = partHeader(part, "Content-Disposition").trim().toLowerCase();
+      const shownInline = (part.mimeType ?? "").startsWith("image/") && (disposition.startsWith("inline") || (Boolean(partHeader(part, "Content-ID")) && !disposition.startsWith("attachment")));
+      if (!shownInline) found.push(part);
+    }
+    part.parts?.forEach(walk);
+  };
+  walk(payload);
+  return found;
+}
+
+function findPart(part: GmailPart | undefined, partId: string): GmailPart | undefined {
+  if (!part) return undefined;
+  if (part.partId === partId) return part;
+  for (const child of part.parts ?? []) {
+    const found = findPart(child, partId);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+function attachmentItem(message: GmailMessage, part: GmailPart): AppItem {
+  const from = parseAddressList(header(message, "From"))[0];
+  const subject = header(message, "Subject") || "(no subject)";
+  return {
+    source: "google_workspace",
+    kind: "attachment",
+    id: `${message.id}:${part.partId}`,
+    title: part.filename || "Attachment",
+    subtitle: [`Attachment in “${subject}” from ${from?.name ?? from?.email ?? "an unknown sender"}`, sizeText(part.body?.size)].filter(Boolean).join(" · ").slice(0, 200),
+    url: threadLink(message.threadId ?? message.id),
+    updatedAt: fromMillis(message.internalDate),
+  };
+}
 
 function fileItem(file: DriveFile): AppItem {
   const owner = file.owners?.[0];
@@ -134,6 +200,65 @@ async function searchThreads(ctx: ItemContext, text: string, limit: number): Pro
   const metadata = "format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date";
   const threads = await Promise.all((found.threads ?? []).map((row) => gmail<{ id: string; messages?: GmailMessage[] }>(ctx, `/threads/${encodeURIComponent(row.id)}?${metadata}`)));
   return threads.map((thread) => threadItem(thread.id, thread.messages ?? []));
+}
+
+/** Messages with attachments matching the words, newest first; each attachment is one item. */
+async function searchAttachments(ctx: ItemContext, text: string, limit: number): Promise<AppItem[]> {
+  const params = new URLSearchParams({ q: ["has:attachment", text].filter(Boolean).join(" "), maxResults: String(limit) });
+  const found = await gmail<{ messages?: Array<{ id: string }> }>(ctx, `/messages?${params}`);
+  const messages = await Promise.all((found.messages ?? []).map((row) => gmail<GmailMessage>(ctx, `/messages/${encodeURIComponent(row.id)}?format=full`)));
+  return messages.flatMap((message) => gmailAttachments(message.payload).map((part) => attachmentItem(message, part))).slice(0, limit);
+}
+
+async function attachmentPart(ctx: ItemContext, id: string): Promise<{ message: GmailMessage; part: GmailPart }> {
+  const ref = ATTACHMENT_REF.exec(id);
+  if (!ref) throw new ItemError("That is not a Gmail attachment id.", 400);
+  const message = await gmail<GmailMessage>(ctx, `/messages/${ref[1]}?format=full`);
+  const part = findPart(message.payload, ref[2]!);
+  if (!part?.body?.attachmentId) throw new ItemError("That attachment is no longer on the email.", 404);
+  return { message, part };
+}
+
+async function readAttachment(ctx: ItemContext, id: string): Promise<AppItemContent> {
+  const { message, part } = await attachmentPart(ctx, id);
+  const item = attachmentItem(message, part);
+  const list = facts({ Email: header(message, "Subject") || "(no subject)", From: header(message, "From"), Type: part.mimeType, Size: sizeText(part.body?.size) });
+  return { ...item, facts: list, text: itemMarkdown(item.title, list, "A file attached to an email. Bring it into Files to read its text.") };
+}
+
+async function downloadAttachment(ctx: ItemContext, id: string): Promise<ItemDownload> {
+  const { message, part } = await attachmentPart(ctx, id);
+  if ((part.body?.size ?? 0) > MAX_DOWNLOAD_BYTES) throw tooLarge("Gmail");
+  const ref = ATTACHMENT_REF.exec(id)!;
+  // Base64 makes the answer about a third larger than the file.
+  const body = await itemFetchLargeJson<{ data?: string }>(ctx, "google", "Gmail", `${GMAIL_API}/messages/${ref[1]}/attachments/${encodeURIComponent(part.body!.attachmentId!)}`, {
+    headers: bearer(ctx),
+    maxBytes: Math.ceil((MAX_DOWNLOAD_BYTES * 4) / 3) + 64 * 1024,
+  });
+  const bytes = Buffer.from(body.data ?? "", "base64url");
+  if (bytes.byteLength > MAX_DOWNLOAD_BYTES) throw tooLarge("Gmail");
+  return { filename: part.filename || "Attachment", mediaType: part.mimeType || "application/octet-stream", bytes: new Uint8Array(bytes), url: threadLink(message.threadId ?? message.id) };
+}
+
+/** Google's own files may be served from its content hosts; the token never goes there. */
+const googleContent = (url: URL) => url.hostname.endsWith(".googleusercontent.com");
+
+async function downloadFile(ctx: ItemContext, id: string): Promise<ItemDownload> {
+  if (!FILE_ID.test(id)) throw new ItemError("That is not a Google Drive file id.", 400);
+  const path = `${DRIVE_API}/files/${encodeURIComponent(id)}`;
+  const file = await drive<DriveFile>(ctx, `${path}?fields=id,name,mimeType,size,webViewLink&supportsAllDrives=true`);
+  const mime = file.mimeType ?? "";
+  const name = file.name || "Untitled file";
+  if (mime === MIME.folder) throw new ItemError("That is a Drive folder. Pick a file inside it.", 400);
+  const exported = EXPORT_AS[mime];
+  if (exported) {
+    const got = await itemFetchBytes(ctx, "google", LABEL, `${path}/export?mimeType=${encodeURIComponent(exported.mime)}`, { headers: bearer(ctx), redirectTo: googleContent });
+    return { filename: withExtension(name, exported.ext), mediaType: exported.mime, bytes: got.bytes, url: file.webViewLink };
+  }
+  if (mime.startsWith("application/vnd.google-apps.")) throw new ItemError(`${KIND_NAME[mime] ?? "This kind of Google file"} cannot be downloaded. Open it in Google Drive.`, 422);
+  if (Number(file.size ?? 0) > MAX_DOWNLOAD_BYTES) throw tooLarge(LABEL);
+  const got = await itemFetchBytes(ctx, "google", LABEL, `${path}?alt=media&supportsAllDrives=true`, { headers: bearer(ctx), redirectTo: googleContent });
+  return { filename: name, mediaType: mime || got.contentType || "application/octet-stream", bytes: got.bytes, url: file.webViewLink };
 }
 
 /** The file's text, or null when it is not a kind Ensemble reads here. */
@@ -200,7 +325,7 @@ export const googleItems: ItemSource = {
   id: "google_workspace",
   provider: "google",
   label: LABEL,
-  kinds: ["file", "conversation"],
+  kinds: ["file", "conversation", "attachment"],
   usable(token) {
     return anyScope(token, DRIVE_SCOPES) || anyScope(token, GMAIL_SCOPES);
   },
@@ -208,7 +333,9 @@ export const googleItems: ItemSource = {
     const files = anyScope(ctx.token, DRIVE_SCOPES);
     const mail = anyScope(ctx.token, GMAIL_SCOPES);
     if (query.kind === "file" && !files) throw new ItemError("Drive is switched off for Google Workspace. Turn it on in Settings → Connections.", 403);
-    if (query.kind === "conversation" && !mail) throw new ItemError("Gmail is switched off for Google Workspace. Turn it on in Settings → Connections.", 403);
+    if ((query.kind === "conversation" || query.kind === "attachment") && !mail) throw new ItemError("Gmail is switched off for Google Workspace. Turn it on in Settings → Connections.", 403);
+    // Attachments are searched only when asked for; a search without a kind stays files and emails.
+    if (query.kind === "attachment") return searchAttachments(ctx, query.q.trim().slice(0, 200), query.limit);
     const direct = googleFileRef(query.q);
     if (direct && files && query.kind !== "conversation") return [hit(await readFile(ctx, direct))];
     const text = query.q.trim().slice(0, 200);
@@ -221,11 +348,20 @@ export const googleItems: ItemSource = {
     return out;
   },
   async read(ctx, ref) {
-    if (ref.kind === "conversation") {
+    if (ref.kind === "conversation" || ref.kind === "attachment") {
       if (!anyScope(ctx.token, GMAIL_SCOPES)) throw new ItemError("Gmail is switched off for Google Workspace. Turn it on in Settings → Connections.", 403);
-      return readThread(ctx, ref.id);
+      return ref.kind === "attachment" ? readAttachment(ctx, ref.id) : readThread(ctx, ref.id);
     }
     if (!anyScope(ctx.token, DRIVE_SCOPES)) throw new ItemError("Drive is switched off for Google Workspace. Turn it on in Settings → Connections.", 403);
     return readFile(ctx, ref.id);
+  },
+  async download(ctx, ref) {
+    if (ref.kind === "attachment") {
+      if (!anyScope(ctx.token, GMAIL_SCOPES)) throw new ItemError("Gmail is switched off for Google Workspace. Turn it on in Settings → Connections.", 403);
+      return downloadAttachment(ctx, ref.id);
+    }
+    if (ref.kind !== "file") throw new ItemError("Only Drive files and email attachments can be brought into Files.", 400);
+    if (!anyScope(ctx.token, DRIVE_SCOPES)) throw new ItemError("Drive is switched off for Google Workspace. Turn it on in Settings → Connections.", 403);
+    return downloadFile(ctx, ref.id);
   },
 };

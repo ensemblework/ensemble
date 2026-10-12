@@ -140,6 +140,18 @@ Code review and every plot code pane share a VS Code theme picker. Built-in them
 - **Desktop downloads on the site:** `/download` leads with the desktop installers for each system (the visitor's first) and first-launch steps for the unsigned builds; a test keeps its version equal to `tauri.conf.json`.
 - **Checked 12 Oct 2026:** `apps/cli` tests (the app driven through ink-testing-library with a stand-in runtime: answering by number, by typed text and by `/deny`; the slash menu; `/run`; a streamed chat reply applied; a mouse click on a tab), the code tools against real PDF and Word files, an end-to-end Apply of `ensemble_start_agent` against a local runtime (the run's folder, git delivery and sandbox settings checked), the 409 on the hosted API, and the app rendered in a real terminal against a scratch runtime. Not run: Ensemble Code with a real model and a real engine run started from it; terminals on Windows and Linux.
 
+## Files (12 Oct 2026)
+
+Built on branch `feat/files-preview`; tested with generated files, mocked vendor responses and a DOM test environment ([32 §10](32_FILES.md#10-tests)). No real browser and no vendor API with a real account were used.
+
+- **Files** (`/files`): upload or import, then preview PDF, Word (.docx), slides (.pptx), spreadsheets (xlsx, xlsm, xls, ods, numbers, csv, tsv), images, text and code, audio and video ([32 §1](32_FILES.md#1-what-each-kind-of-file-can-do)). Older and Apple formats (.doc, .ppt, Keynote, HEIC) show details and how to make them previewable.
+- **Editing**: spreadsheet cells and rows save into the original file; PDF and Word convert to a page and export back with the original's page setup, fonts (Word), sizes and colours; text and code become pages.
+- **Attachments in pages**: `@` files, `/file`, drop or paste; every attachment is a stored file, previewed as a card, readable on shared pages and public links that mention it.
+- **Hosted limits**: 10 files and 50 MB per account, 25 MB per file; desktop and local servers have no count or size cap (100 MB per file). More is planned for a paid plan.
+- **Imports**: Google Drive (with the Google Picker when set up), Gmail and Outlook attachments, OneDrive, Dropbox and Box, with a plain explanation and steps when a permission is missing.
+- **Agents**: Ensemble's agent, the Claude Code, Codex and Cursor engines, paired computers, the assistant and editors over MCP all read files attached to the work ([32 §7](32_FILES.md#7-agents-the-assistant-and-editors)).
+- **Not verified live:** every vendor download; the Google Picker (needs `GOOGLE_PICKER_API_KEY` and `GOOGLE_PROJECT_NUMBER`); previews in real browsers. No OCR for scanned PDFs.
+
 ## Connectors in use (12 Oct 2026)
 
 Built on branch `feat/connectors-in-use`; tested with mocked vendor responses only ([31 §8](31_CONNECTORS_IN_USE.md#8-tests)). No vendor API was called with a real account for these parts.

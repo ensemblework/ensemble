@@ -1,7 +1,8 @@
 "use client";
 
 export type ToastTone = "info" | "error" | "ok";
-export type ToastOptions = { tone?: ToastTone; action?: { label: string; run: () => void } };
+/** `durationMs`: how long it stays; 8 seconds by default. */
+export type ToastOptions = { tone?: ToastTone; action?: { label: string; run: () => void }; durationMs?: number };
 
 type Push = (text: string, options?: ToastOptions) => void;
 

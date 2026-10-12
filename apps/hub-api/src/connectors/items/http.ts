@@ -4,9 +4,11 @@
  */
 import { ConnectorNotConnectedError } from "../tokens.js";
 import type { AccountProvider } from "../accounts.js";
-import { ItemError, MAX_ITEM_TEXT, type ItemContext } from "./types.js";
+import { ItemError, MAX_DOWNLOAD_BYTES, MAX_ITEM_TEXT, type ItemContext } from "./types.js";
 
 const TIMEOUT_MS = 20_000;
+const DOWNLOAD_TIMEOUT_MS = 120_000;
+const MAX_REDIRECTS = 4;
 
 export interface ItemRequest {
   method?: "GET" | "POST" | "PUT" | "PATCH";
@@ -34,15 +36,37 @@ function vendorMessage(body: unknown): string {
   return "";
 }
 
+/** Turns a refusal into an error a person can read, with the token cut out of anything the app echoed. */
+function refuse(ctx: ItemContext, provider: AccountProvider, label: string, status: number, raw: string): never {
+  let parsed: unknown = raw;
+  try {
+    parsed = raw ? JSON.parse(raw) : null;
+  } catch {
+    parsed = raw.slice(0, 300);
+  }
+  if (status === 401) {
+    throw new ConnectorNotConnectedError(provider, `${label} no longer accepts the saved sign-in. Connect it again in Settings → Connections.`);
+  }
+  let said = vendorMessage(parsed).replace(/\s+/g, " ").trim();
+  if (ctx.token.token) said = said.split(ctx.token.token).join("[token]");
+  said = said.slice(0, 240);
+  if (status === 403) throw new ItemError(`${label} refused access${said ? `: ${said}` : ""}. The connection may lack permission for this.`, 403);
+  if (status === 404) throw new ItemError(`${label} could not find that. It may have moved, or this connection cannot see it.`, 404);
+  if (status === 429) throw new ItemError(`${label} is rate limiting requests. Try again in a minute.`, 429);
+  throw new ItemError(`${label} answered with an error (${status})${said ? `: ${said}` : ""}.`);
+}
+
+function bodyOf(init: ItemRequest, headers: Record<string, string>): RequestInit["body"] {
+  if (typeof init.body === "string" || init.body instanceof URLSearchParams) return init.body;
+  if (init.body === undefined) return undefined;
+  headers["Content-Type"] ??= "application/json";
+  return JSON.stringify(init.body);
+}
+
 /** Calls an app's API with the person's token. `label` names the app in errors. */
 export async function itemFetch<T>(ctx: ItemContext, provider: AccountProvider, label: string, url: string, init: ItemRequest = {}): Promise<T> {
   const headers: Record<string, string> = { Accept: "application/json", ...init.headers };
-  let body: RequestInit["body"];
-  if (typeof init.body === "string" || init.body instanceof URLSearchParams) body = init.body;
-  else if (init.body !== undefined) {
-    headers["Content-Type"] ??= "application/json";
-    body = JSON.stringify(init.body);
-  }
+  const body = bodyOf(init, headers);
   let response: Response;
   try {
     response = await ctx.fetch(url, {
@@ -56,27 +80,137 @@ export async function itemFetch<T>(ctx: ItemContext, provider: AccountProvider, 
     throw new ItemError(timedOut ? `${label} did not answer in time. Try again.` : `Could not reach ${label}. Try again in a moment.`, timedOut ? 504 : 502);
   }
   const raw = await response.text().catch(() => "");
-  if (!response.ok) {
-    let parsed: unknown = raw;
-    try {
-      parsed = raw ? JSON.parse(raw) : null;
-    } catch {
-      parsed = raw.slice(0, 300);
-    }
-    if (response.status === 401) {
-      throw new ConnectorNotConnectedError(provider, `${label} no longer accepts the saved sign-in. Connect it again in Settings → Connections.`);
-    }
-    let said = vendorMessage(parsed).replace(/\s+/g, " ").trim();
-    if (ctx.token.token) said = said.split(ctx.token.token).join("[token]");
-    said = said.slice(0, 240);
-    if (response.status === 403) throw new ItemError(`${label} refused access${said ? `: ${said}` : ""}. The connection may lack permission for this.`, 403);
-    if (response.status === 404) throw new ItemError(`${label} could not find that. It may have moved, or this connection cannot see it.`, 404);
-    if (response.status === 429) throw new ItemError(`${label} is rate limiting requests. Try again in a minute.`, 429);
-    throw new ItemError(`${label} answered with an error (${response.status})${said ? `: ${said}` : ""}.`);
-  }
+  if (!response.ok) refuse(ctx, provider, label, response.status, raw);
   if (init.text) return raw as T;
   try {
     return (raw ? JSON.parse(raw) : {}) as T;
+  } catch {
+    throw new ItemError(`${label} sent something Ensemble could not read.`);
+  }
+}
+
+export interface ItemBytesRequest extends Omit<ItemRequest, "text"> {
+  /** Larger answers are refused without reading them all. Default MAX_DOWNLOAD_BYTES. */
+  maxBytes?: number;
+  /** Other hosts a redirect may lead to (https only). The token and headers go to the first host only. */
+  redirectTo?: (url: URL) => boolean;
+}
+
+export interface ItemBytes {
+  status: number;
+  bytes: Uint8Array;
+  contentType: string | null;
+  /** From Content-Disposition, when the app sent one. */
+  filename: string | null;
+  headers: Headers;
+}
+
+const megabytes = (bytes: number) => Math.round(bytes / (1024 * 1024));
+
+export function tooLarge(label: string, max = MAX_DOWNLOAD_BYTES): ItemError {
+  return new ItemError(`That file is larger than ${megabytes(max)} MB, the most Ensemble brings in from ${label}.`, 413);
+}
+
+/** `attachment; filename*=UTF-8''Q3%20plan.pdf` → "Q3 plan.pdf". */
+export function dispositionFilename(header: string | null): string | null {
+  if (!header) return null;
+  const extended = /filename\*\s*=\s*([^']*)'[^']*'([^;]+)/i.exec(header);
+  if (extended) {
+    try {
+      return decodeURIComponent(extended[2]!.trim().replace(/^"|"$/g, ""));
+    } catch {
+      // Fall through to the plain name.
+    }
+  }
+  const plain = /filename\s*=\s*("([^"]*)"|[^;]+)/i.exec(header);
+  const name = (plain?.[2] ?? plain?.[1] ?? "").trim();
+  return name || null;
+}
+
+async function readCapped(response: Response, max: number, label: string): Promise<Uint8Array> {
+  const declared = Number(response.headers.get("content-length") ?? Number.NaN);
+  if (Number.isFinite(declared) && declared > max) {
+    await response.body?.cancel().catch(() => undefined);
+    throw tooLarge(label, max);
+  }
+  if (!response.body) return new Uint8Array(0);
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > max) {
+        await reader.cancel().catch(() => undefined);
+        throw tooLarge(label, max);
+      }
+      chunks.push(value);
+    }
+  } catch (error) {
+    if (error instanceof ItemError) throw error;
+    throw new ItemError(`The download from ${label} stopped part way. Try again.`, 502);
+  }
+  const bytes = new Uint8Array(total);
+  let at = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, at);
+    at += chunk.byteLength;
+  }
+  return bytes;
+}
+
+/**
+ * Downloads a file's bytes with the person's token, capped in size. Redirects are followed by hand:
+ * to another host only when `redirectTo` allows it, and without the token or any other header.
+ */
+export async function itemFetchBytes(ctx: ItemContext, provider: AccountProvider, label: string, url: string, init: ItemBytesRequest = {}): Promise<ItemBytes> {
+  const max = init.maxBytes ?? MAX_DOWNLOAD_BYTES;
+  const headers: Record<string, string> = { Accept: "*/*", ...init.headers };
+  const body = bodyOf(init, headers);
+  const first = new URL(url);
+  const signal = AbortSignal.any([ctx.signal, AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS)]);
+  let current = first;
+  let response: Response;
+  for (let hop = 0; ; hop += 1) {
+    const own = current.host === first.host;
+    try {
+      response = await ctx.fetch(current.toString(), {
+        method: hop === 0 ? (init.method ?? (body === undefined ? "GET" : "POST")) : "GET",
+        headers: own ? headers : {},
+        body: hop === 0 ? body : undefined,
+        redirect: "manual",
+        signal,
+      });
+    } catch (error) {
+      const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+      throw new ItemError(timedOut ? `${label} did not hand over the file in time. Try again.` : `Could not reach ${label}. Try again in a moment.`, timedOut ? 504 : 502);
+    }
+    const location = response.status >= 300 && response.status < 400 ? response.headers.get("location") : null;
+    if (!location) break;
+    await response.body?.cancel().catch(() => undefined);
+    let next: URL;
+    try {
+      next = new URL(location, current);
+    } catch {
+      throw new ItemError(`${label} sent the file from an address Ensemble could not read.`, 502);
+    }
+    if (hop >= MAX_REDIRECTS || next.protocol !== "https:" || (next.host !== first.host && !init.redirectTo?.(next))) {
+      throw new ItemError(`${label} sent the file from an address Ensemble does not download from.`, 502);
+    }
+    current = next;
+  }
+  if (!response.ok) refuse(ctx, provider, label, response.status, await response.text().catch(() => ""));
+  const bytes = await readCapped(response, max, label);
+  return { status: response.status, bytes, contentType: response.headers.get("content-type"), filename: dispositionFilename(response.headers.get("content-disposition")), headers: response.headers };
+}
+
+/** A JSON answer that may be large (a base64 attachment): read with the bytes cap, then parsed. */
+export async function itemFetchLargeJson<T>(ctx: ItemContext, provider: AccountProvider, label: string, url: string, init: ItemBytesRequest = {}): Promise<T> {
+  const { bytes } = await itemFetchBytes(ctx, provider, label, url, { ...init, headers: { Accept: "application/json", ...init.headers } });
+  try {
+    return JSON.parse(new TextDecoder().decode(bytes)) as T;
   } catch {
     throw new ItemError(`${label} sent something Ensemble could not read.`);
   }

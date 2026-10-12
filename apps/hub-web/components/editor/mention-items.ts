@@ -1,4 +1,4 @@
-import { mentionQuery } from "@ensemble/shared-types";
+import { fileFormat, mentionQuery } from "@ensemble/shared-types";
 import type { Entity } from "../../lib/api";
 import { MENTION_GROUPS } from "./editor-commands";
 import type { MenuItem } from "./suggestion-menu";
@@ -7,6 +7,14 @@ export type EntitySource = () => Entity[];
 
 const ASK_ENSEMBLE: MenuItem = { type: "action", kind: "ensemble", id: "ask-ensemble", label: "Ask Ensemble", detail: "Ask about this page, or create a diagram or plot" };
 export const NEW_DIAGRAM: MenuItem = { type: "create", kind: "diagram", id: "new-diagram", label: "New diagram", detail: "Start a blank diagram and mention it here" };
+
+/** A file's detail leads with its type ("PDF · 2.1 MB") unless the server's detail already names it. */
+function entityItem(row: Entity): MenuItem {
+  if (row.kind !== "file") return { type: "entity", ...row };
+  const type = fileFormat(row.label).label;
+  const detail = row.detail && row.detail.toLowerCase().includes(type.toLowerCase()) ? row.detail : [type, row.detail].filter(Boolean).join(" · ");
+  return { type: "entity", ...row, detail };
+}
 
 export function mentionItems(query: string, entities: EntitySource, diagramsOn: () => boolean | null, plotsOn: () => boolean | null): MenuItem[] {
   const diagrams = diagramsOn() === true;
@@ -41,7 +49,7 @@ export function mentionItems(query: string, entities: EntitySource, diagramsOn: 
   const matches = entities().filter((row) => (
     scoped ? row.kind === scoped.kind : !["plot", "dataset"].includes(row.kind)
   ) && (row.kind !== "diagram" || diagrams) && row.label.toLowerCase().includes(search))
-    .slice(0, scoped ? 40 : 10).map((row) => ({ type: "entity" as const, ...row }));
+    .slice(0, scoped ? 40 : 10).map(entityItem);
   if (scoped) return matches;
   return [
     ...("ask ensemble".includes(search) || "ensemble".includes(search) ? [ASK_ENSEMBLE] : []),

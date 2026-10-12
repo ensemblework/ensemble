@@ -13,6 +13,7 @@ test("Jump to ranks deep controls and app sections ahead of their parent views",
     ["graph","Graph","/context?tab=graph"],
     ["Local repositories","Local repositories","/code#local-repositories"],
     ["diagrams","Diagrams","/diagrams"],
+    ["files","Files","/files"],
     ["time zone","Time zone","/settings?tab=account#jump-you-time-zone"],
   ]) {
     const first=navigationDestinations(query,options)[0]; assert.equal(first?.label,label,query); assert.equal(first?.href,path,query);

@@ -156,11 +156,15 @@ export async function runRetention(
 async function hardPurge(prisma: PrismaClient, userId: string, cutoff: Date): Promise<number> {
   const where = { userId, deletedAt: { lt: cutoff } };
   const pages = await purgeDeletedStandalonePages(prisma, userId, cutoff);
+  // A purged file takes its text with it, whatever the text row's own state.
+  const files = await prisma.document.findMany({ where, select: { artifactId: true } });
+  const fileArtifacts = files.flatMap((file) => (file.artifactId ? [file.artifactId] : []));
   const counts = await prisma.$transaction([
     prisma.task.deleteMany({ where }),
     prisma.project.deleteMany({ where }),
     prisma.person.deleteMany({ where }),
     prisma.skill.deleteMany({ where }),
+    prisma.artifact.deleteMany({ where: { userId, id: { in: fileArtifacts } } }),
     prisma.document.deleteMany({ where }),
     prisma.artifact.deleteMany({ where }),
     prisma.repo.deleteMany({ where }),

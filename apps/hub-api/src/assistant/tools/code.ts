@@ -8,10 +8,10 @@
  * Offered only by the runtime on the person's computer, and only to the code surface.
  */
 import { readdir, readFile, realpath, stat } from "node:fs/promises";
-import { basename, extname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { z } from "zod";
 import { pickRunProfile, type RunProfile } from "@ensemble/shared-types";
-import { officeKind, officeText } from "../../lib/office/extract.js";
+import { readFileText } from "../../files/extract.js";
 import { createTask } from "../../services/tasks.js";
 import { expandHome, GuardError, outsideRefusal, resolveWorkFolder, within } from "../../workspace/guard.js";
 import { Assign, createJob } from "../../workspace/assign.js";
@@ -68,17 +68,15 @@ async function walk(root: string, visit: (path: string, depth: number, isDir: bo
   }
 }
 
-/** Text out of a PDF, Word, Excel or PowerPoint file, or a text file as it is. */
+/**
+ * Text out of a PDF, Word, Excel or PowerPoint file (read by the Files reader, in a worker
+ * with memory and time limits, secrets redacted), or a text file as it is.
+ */
 export async function documentText(path: string): Promise<string> {
   const data = await readFile(path);
-  const kind = officeKind(path);
-  if (kind) return officeText(kind, new Uint8Array(data));
-  if (extname(path).toLowerCase() === ".pdf") {
-    const { extractText, getDocumentProxy } = await import("unpdf");
-    const pdf = await getDocumentProxy(new Uint8Array(data));
-    const { text } = await extractText(pdf, { mergePages: false });
-    return (Array.isArray(text) ? text : [text]).map((page, index) => `--- Page ${index + 1} ---\n${page.trim()}`).join("\n\n");
-  }
+  const read = await readFileText(basename(path), new Uint8Array(data));
+  if (read.status === "ready") return read.warnings.length ? `${read.text}\n\n(${read.warnings.join(" ")})` : read.text;
+  if (read.status === "failed" || read.warnings.length) throw new ToolBlockedError(read.warnings.join(" ") || `${basename(path)} could not be read.`);
   if (looksBinary(data)) throw new ToolBlockedError(`${basename(path)} is not a text file or a document Ensemble can read (PDF, .docx, .xlsx, .pptx).`);
   return data.toString("utf8");
 }

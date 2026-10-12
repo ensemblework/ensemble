@@ -346,6 +346,16 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
     );
     let restored = 0;
     for (const kind of kinds) {
+      if (kind === "document") {
+        // A file's text comes back with it.
+        restored += await prisma.$transaction(async (tx) => {
+          const files = await tx.document.findMany({ where, select: { id: true, artifactId: true } });
+          const artifactIds = files.flatMap((file) => (file.artifactId ? [file.artifactId] : []));
+          if (artifactIds.length) await tx.artifact.updateMany({ where: { userId: request.userId, id: { in: artifactIds } }, data: { deletedAt: null } });
+          return (await tx.document.updateMany({ where: { ...where, id: { in: files.map((file) => file.id) } }, data: { deletedAt: null } })).count;
+        });
+        continue;
+      }
       if (kind === "meeting") {
         restored += await prisma.$transaction(async (tx) => {
           const sessions = await tx.meetingSession.findMany({ where, select: { id: true, meetingNoteId: true, deletedAt: true } });
@@ -373,6 +383,16 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
     let removed = 0;
     for (const [kind, delegate] of Object.entries(DELEGATES)) {
       if (kind === "page") { removed += await purgeDeletedStandalonePages(prisma, request.userId); continue; }
+      if (kind === "document") {
+        const files = await prisma.document.findMany({ where, select: { artifactId: true } });
+        const artifactIds = files.flatMap((file) => (file.artifactId ? [file.artifactId] : []));
+        const [, erased] = await prisma.$transaction([
+          prisma.artifact.deleteMany({ where: { userId: request.userId, id: { in: artifactIds } } }),
+          prisma.document.deleteMany({ where }),
+        ]);
+        removed += erased.count;
+        continue;
+      }
       removed += (await (delegate as unknown as { deleteMany: (args: unknown) => Promise<{ count: number }> }).deleteMany({ where })).count;
     }
     await appendLedger({ userId: request.userId, actor: "me", action: "deleted.empty", payload: { removed } });
