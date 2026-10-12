@@ -34,7 +34,10 @@ export function hostedLimits(env: NodeJS.ProcessEnv = process.env) {
     connectors: limit("ENSEMBLE_MAX_CONNECTORS", 25),
     jobsPerDay: limit("ENSEMBLE_MAX_JOBS_PER_DAY", 50),
     datasetBytes: limit("ENSEMBLE_MAX_DATASET_BYTES", 100 * 1024 * 1024),
-    documentBytes: limit("ENSEMBLE_MAX_DOCUMENT_BYTES", 100 * 1024 * 1024),
+    documents: limit("ENSEMBLE_MAX_DOCUMENTS", 10),
+    documentBytes: limit("ENSEMBLE_MAX_DOCUMENT_BYTES", 50 * 1024 * 1024),
+    /** Every stored original on this server, removed-but-not-purged included. */
+    filesTotalBytes: limit("ENSEMBLE_FILES_TOTAL_MAX_BYTES", 10 * 1024 * 1024 * 1024),
   };
 }
 
@@ -104,6 +107,49 @@ export async function checkDatasetBytes(tx: Prisma.TransactionClient, userId: st
   assertWithinLimit(sum._sum.byteSize ?? 0, bytes, hostedLimits().datasetBytes, "dataset bytes");
 }
 
+/** "50 MB", "12 KB", "5 bytes": sizes as people read them. */
+export function sizeLabel(bytes: number): string {
+  const mib = 1024 * 1024;
+  if (bytes < 1024) return `${bytes} ${bytes === 1 ? "byte" : "bytes"}`;
+  if (bytes < mib) return `${Math.ceil(bytes / 1024)} KB`;
+  const value = bytes / mib;
+  return `${value >= 10 || Number.isInteger(value) ? Math.ceil(value) : Math.ceil(value * 10) / 10} MB`;
+}
+
+export class FileStorageFullError extends Error {
+  readonly statusCode = 507;
+  readonly expose = true;
+  constructor() { super("File storage on this server is full right now."); this.name = "FileStorageFullError"; }
+}
+
+/**
+ * Hosted caps for files, checked under the account lock: how many files and how many bytes the
+ * account keeps (removed files do not count), and the whole server's stored originals.
+ * `replacingId` is a file whose bytes are being replaced; `files` is 1 for a new file, 0 for a replacement.
+ */
+export async function assertFileRoom(tx: Prisma.TransactionClient, userId: string, change: { files: 0 | 1; bytes: number; replacingId?: string }): Promise<void> {
+  if (!isHosted()) return;
+  const limits = hostedLimits();
+  const { ids } = await quotaScope(tx, userId);
+  const others = change.replacingId ? { id: { not: change.replacingId } } : {};
+  const kept = await tx.document.aggregate({ where: { userId: { in: ids }, deletedAt: null, ...others }, _count: true, _sum: { byteSize: true } });
+  if (change.files && kept._count + change.files > limits.documents) {
+    throw new HostedLimitError(`You can keep ${limits.documents} ${limits.documents === 1 ? "file" : "files"} on the hosted plan. Remove one to add another.`);
+  }
+  const used = kept._sum.byteSize ?? 0;
+  if (used + change.bytes > limits.documentBytes) {
+    const subject = change.replacingId ? "this change" : "this one";
+    throw new HostedLimitError(`Files can use ${sizeLabel(limits.documentBytes)} together on the hosted plan; ${subject} needs ${sizeLabel(used + change.bytes - limits.documentBytes)} more.`);
+  }
+  const replaced = change.replacingId ? await tx.document.findUnique({ where: { id: change.replacingId }, select: { byteSize: true } }) : null;
+  const growth = change.bytes - (replaced?.byteSize ?? 0);
+  if (growth > 0) {
+    const stored = await tx.document.aggregate({ _sum: { byteSize: true } });
+    if ((stored._sum.byteSize ?? 0) + growth > limits.filesTotalBytes) throw new FileStorageFullError();
+  }
+}
+
+/** Creates a file row once the hosted caps allow it, under the account lock so two uploads cannot both squeeze in. */
 export async function createCappedDocument<T extends Prisma.DocumentCreateArgs>(
   db: PrismaClient,
   userId: string,
@@ -113,11 +159,7 @@ export async function createCappedDocument<T extends Prisma.DocumentCreateArgs>(
   const bytes = args.data.original.byteLength;
   if (args.data.byteSize !== bytes) throw new Error("The document size does not match its original bytes.");
   return withHostedUserLock(db, userId, async (tx) => {
-    if (isHosted()) {
-      const { ids } = await quotaScope(tx, userId);
-      const sum = await tx.document.aggregate({ where: { userId: { in: ids } }, _sum: { byteSize: true } });
-      assertWithinLimit(sum._sum.byteSize ?? 0, bytes, hostedLimits().documentBytes, "uploaded document bytes");
-    }
+    await assertFileRoom(tx, userId, { files: 1, bytes });
     return tx.document.create(args);
   }, false);
 }

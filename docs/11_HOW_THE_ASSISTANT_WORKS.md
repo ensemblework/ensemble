@@ -474,6 +474,8 @@ Mail, chat and file text comes back marked as information, not instructions, and
 
 The prompt's *Connected apps* paragraph says these exist and to prefer them for questions about those apps. Searches and reads go through `connectors/items` with the person's own tokens; results are marked as information, not instructions.
 
+**Files.** `hub_list_files` (by name, or the files on a task or page) and `hub_read_file` (a file's text in parts, with its name, format and pages) are read-only context tools (`tools/files.ts`); images, audio and video say they have no text ([32](32_FILES.md)).
+
 **What Ensemble already keeps.** `hub_search_context` and `hub_read_context` (`tools/context.ts`, area `context`, read only) search the person's stored artifacts (synced mail, chats, events, pull requests and issues, meeting transcripts, and items attached from apps) by title or text, optionally only those on one task or project, and read one in full.
 
 ---

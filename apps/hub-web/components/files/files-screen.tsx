@@ -1,0 +1,382 @@
+"use client";
+/** @jsxRuntime automatic */
+/** @jsxImportSource react */
+
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { CheckCircle2, LayoutGrid, List, Plug, Search, UploadCloud, X } from "lucide-react";
+import Link from "next/link";
+import { useEffect, useRef, useState } from "react";
+import { FILE_KIND_LABEL, fileFormat, type FileKind, type FileRecord, type FileUsage } from "@ensemble/shared-types";
+import { FILE_QUERY, filesApi, formatBytes } from "@/lib/api-files";
+import { FILE_ACCEPT } from "@/lib/files/formats";
+import { relative } from "@/lib/format";
+import { BrandLogo, brandName } from "../connectors/brand-logo";
+import { Empty, PageHeader, QueryError, SkeletonRows, cx } from "../ui";
+import { FileIcon } from "./file-icon";
+import { ImportFromApps } from "./import-from-apps";
+import { useBlobUrl, useFileBytes } from "./use-file";
+import { useFileUploads, type UploadItem } from "./use-uploads";
+
+const KIND_ORDER: FileKind[] = ["pdf", "document", "slides", "sheet", "image", "text", "code", "audio", "video", "other"];
+const THUMB_MAX = 4 * 1024 * 1024;
+const VIEW_KEY = "ensemble.files.view";
+
+export function usageLine(usage: FileUsage): string | null {
+  if (usage.maxCount === null) return null;
+  const bytes = usage.maxBytes === null ? "" : ` · ${formatBytes(usage.bytes)} of ${formatBytes(usage.maxBytes)}`;
+  return `${usage.count} of ${usage.maxCount} files${bytes}`;
+}
+
+/** Hosted accounts only: how much of the file allowance is used. */
+export function UsageMeter({ usage }: { usage: FileUsage }) {
+  const line = usageLine(usage);
+  if (!line || usage.maxCount === null) return null;
+  const share = Math.min(1, Math.max(usage.count / usage.maxCount, usage.maxBytes ? usage.bytes / usage.maxBytes : 0));
+  const full = share >= 1;
+  return (
+    <div className="mb-4 max-w-md" data-testid="file-usage">
+      <div className="mb-1 flex items-baseline justify-between gap-2 text-[12.5px]">
+        <span className={full ? "font-medium text-warn" : "text-muted"}>{line}</span>
+        {full ? <span className="text-faint">Delete a file to add another</span> : null}
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-line" role="meter" aria-label="Files used" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(share * 100)}>
+        <div className={cx("h-full rounded-full", full ? "bg-warn" : "bg-accent")} style={{ width: `${Math.round(share * 100)}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function useDebounced<T>(value: T, ms: number): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSettled(value), ms);
+    return () => window.clearTimeout(timer);
+  }, [value, ms]);
+  return settled;
+}
+
+function ImageThumb({ file }: { file: FileRecord }) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [seen, setSeen] = useState(false);
+  useEffect(() => {
+    const node = ref.current;
+    if (!node || typeof IntersectionObserver === "undefined") return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        setSeen(true);
+        observer.disconnect();
+      }
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  const format = fileFormat(file.filename);
+  const bytes = useFileBytes(file, seen);
+  const url = useBlobUrl(bytes.data, format.mime);
+  return (
+    <span ref={ref} className="flex h-full w-full items-center justify-center overflow-hidden">
+      {url ? <img src={url} alt="" className="h-full w-full object-cover" draggable={false} /> : <FileIcon kind="image" size={40} />}
+    </span>
+  );
+}
+
+function Preview({ file }: { file: FileRecord }) {
+  const format = fileFormat(file.filename);
+  if (format.kind === "image" && format.preview && file.byteSize <= THUMB_MAX) return <ImageThumb file={file} />;
+  return <FileIcon kind={file.kind ?? format.kind} size={40} />;
+}
+
+function meta(file: FileRecord): string {
+  const format = fileFormat(file.filename);
+  return [format.ext ? format.label : FILE_KIND_LABEL.other, formatBytes(file.byteSize), relative(file.createdAt)].filter(Boolean).join(" · ");
+}
+
+function Source({ file }: { file: FileRecord }) {
+  if (!file.source) return null;
+  return (
+    <span className="inline-flex min-w-0 items-center gap-1 text-[12px] text-faint" title={`From ${file.source.label}`}>
+      <BrandLogo id={file.source.app} name={brandName(file.source.app, file.source.label)} size={13} decorative />
+      <span className="truncate">{file.source.label}</span>
+    </span>
+  );
+}
+
+function FileCard({ file }: { file: FileRecord }) {
+  return (
+    <li>
+      <Link href={`/files/${file.id}`} prefetch={false} className="tile flex h-full flex-col overflow-hidden rounded-xl bg-panel" data-file-row={file.id}>
+        <span className="flex h-28 items-center justify-center border-b border-line bg-raised">
+          <Preview file={file} />
+        </span>
+        <span className="min-w-0 space-y-0.5 px-3 py-2.5">
+          <span className="block truncate text-[13.5px] font-medium text-ink" title={file.filename}>
+            {file.filename}
+          </span>
+          <span className="block truncate text-[12px] text-muted">{meta(file)}</span>
+          <Source file={file} />
+        </span>
+      </Link>
+    </li>
+  );
+}
+
+function FileLine({ file }: { file: FileRecord }) {
+  return (
+    <li>
+      <Link href={`/files/${file.id}`} prefetch={false} className="row-tile flex items-center gap-3 rounded-lg px-2 py-2" data-file-row={file.id}>
+        <FileIcon kind={file.kind ?? fileFormat(file.filename).kind} size={30} />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[13.5px] font-medium text-ink">{file.filename}</span>
+          <span className="block truncate text-[12px] text-muted">{meta(file)}</span>
+        </span>
+        <Source file={file} />
+      </Link>
+    </li>
+  );
+}
+
+export function Uploads({ items, onDismiss }: { items: UploadItem[]; onDismiss: (key: string) => void }) {
+  if (!items.length) return null;
+  return (
+    <ul className="mb-4 space-y-1.5 rounded-xl border border-line bg-panel p-3 text-[12.5px]" aria-label="Uploads" data-testid="file-uploads">
+      {items.map((item) => (
+        <li key={item.key} className="flex items-center gap-3" data-upload-state={item.state}>
+          <span className="w-[40%] min-w-0 truncate text-ink" title={item.name}>
+            {item.name}
+          </span>
+          {item.state === "failed" ? (
+            <span className="min-w-0 flex-1 truncate text-danger" title={item.error}>
+              {item.error}
+            </span>
+          ) : item.state === "done" ? (
+            <span className="flex flex-1 items-center gap-1 text-muted">
+              <CheckCircle2 size={13} className="text-ok" aria-hidden /> Uploaded
+            </span>
+          ) : (
+            <span className="flex flex-1 items-center gap-2">
+              <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-line" role="progressbar" aria-label={`Uploading ${item.name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(item.progress * 100)}>
+                <span className={cx("block h-full rounded-full bg-accent transition-[width]", item.state === "waiting" && "opacity-40")} style={{ width: `${Math.max(4, Math.round(item.progress * 100))}%` }} />
+              </span>
+              <span className="w-10 text-right tabular-nums text-muted">{item.state === "waiting" ? "…" : `${Math.round(item.progress * 100)}%`}</span>
+            </span>
+          )}
+          <span className="w-16 text-right text-faint">{formatBytes(item.size)}</span>
+          {item.state === "done" || item.state === "failed" ? (
+            <button type="button" className="icon-btn" aria-label={`Dismiss ${item.name}`} onClick={() => onDismiss(item.key)}>
+              <X size={13} />
+            </button>
+          ) : (
+            <span className="w-7" />
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Drag files anywhere on the screen to upload them. */
+function useDropAnywhere(onFiles: (files: File[]) => void): boolean {
+  const [over, setOver] = useState(false);
+  const handler = useRef(onFiles);
+  handler.current = onFiles;
+  useEffect(() => {
+    let depth = 0;
+    const hasFiles = (event: DragEvent) => Array.from(event.dataTransfer?.types ?? []).includes("Files");
+    const enter = (event: DragEvent) => {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      depth += 1;
+      setOver(true);
+    };
+    const overHandler = (event: DragEvent) => {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = "copy";
+    };
+    const leave = (event: DragEvent) => {
+      if (!hasFiles(event)) return;
+      depth = Math.max(0, depth - 1);
+      if (!depth) setOver(false);
+    };
+    const drop = (event: DragEvent) => {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      depth = 0;
+      setOver(false);
+      const files = Array.from(event.dataTransfer?.files ?? []);
+      if (files.length) handler.current(files);
+    };
+    window.addEventListener("dragenter", enter);
+    window.addEventListener("dragover", overHandler);
+    window.addEventListener("dragleave", leave);
+    window.addEventListener("drop", drop);
+    return () => {
+      window.removeEventListener("dragenter", enter);
+      window.removeEventListener("dragover", overHandler);
+      window.removeEventListener("dragleave", leave);
+      window.removeEventListener("drop", drop);
+    };
+  }, []);
+  return over;
+}
+
+/** The Files screen: upload, bring files in from apps, find them, and open them. */
+export function FilesScreen() {
+  const [text, setText] = useState("");
+  const q = useDebounced(text.trim(), 250);
+  const list = useQuery({ queryKey: FILE_QUERY.list(q), queryFn: () => filesApi.list(q), placeholderData: keepPreviousData });
+  // The empty search holds the account's usage, which uploads check before sending.
+  useQuery({ queryKey: FILE_QUERY.list(""), queryFn: () => filesApi.list(""), enabled: Boolean(q) });
+  const [kind, setKind] = useState<FileKind | "all">("all");
+  const [view, setView] = useState<"grid" | "list">("grid");
+  const [importing, setImporting] = useState(false);
+  const input = useRef<HTMLInputElement>(null);
+  const uploads = useFileUploads();
+  const dropping = useDropAnywhere(uploads.start);
+
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(VIEW_KEY) === "list") setView("list");
+    } catch {
+      // Storage can be off; the grid is the default.
+    }
+  }, []);
+  const chooseView = (next: "grid" | "list") => {
+    setView(next);
+    try {
+      localStorage.setItem(VIEW_KEY, next);
+    } catch {
+      // Not remembered this time.
+    }
+  };
+
+  const files = list.data?.files ?? [];
+  const usage = list.data?.usage;
+  const kinds = KIND_ORDER.filter((value) => files.some((file) => (file.kind ?? fileFormat(file.filename).kind) === value));
+  const shown = kind === "all" ? files : files.filter((file) => (file.kind ?? fileFormat(file.filename).kind) === kind);
+  useEffect(() => {
+    if (kind !== "all" && !kinds.includes(kind) && !list.isPlaceholderData) setKind("all");
+  }, [kind, kinds, list.isPlaceholderData]);
+
+  return (
+    <div className="mx-auto max-w-[1080px] px-4 pb-24 pt-8 sm:px-10" data-testid="files-screen">
+      <PageHeader
+        title="Files"
+        description="PDFs, Word and Excel files, slides, pictures and more. Preview them here, edit spreadsheets, turn documents into pages, and attach files to any page."
+        actions={
+          <>
+            <button type="button" className="btn" onClick={() => setImporting(true)}>
+              <Plug size={13} aria-hidden /> Add from your apps
+            </button>
+            <button type="button" className="btn-primary" onClick={() => input.current?.click()}>
+              <UploadCloud size={13} aria-hidden /> Upload
+            </button>
+            <input
+              ref={input}
+              type="file"
+              multiple
+              accept={FILE_ACCEPT}
+              className="sr-only"
+              aria-label="Upload files"
+              tabIndex={-1}
+              onChange={(event) => {
+                uploads.start(Array.from(event.target.files ?? []));
+                event.target.value = "";
+              }}
+            />
+          </>
+        }
+      />
+      {usage ? <UsageMeter usage={usage} /> : null}
+      <Uploads items={uploads.items} onDismiss={uploads.dismiss} />
+
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <label className="flex h-9 min-w-0 flex-[1_1_16rem] items-center gap-2 rounded-lg border border-line bg-panel px-2.5 focus-within:border-accent">
+          <Search size={14} className="shrink-0 text-muted" aria-hidden />
+          <input
+            type="search"
+            value={text}
+            onChange={(event) => setText(event.target.value)}
+            placeholder="Search files by name"
+            aria-label="Search files"
+            className="min-w-0 flex-1 bg-transparent text-[13.5px] outline-none placeholder:text-faint"
+          />
+        </label>
+        <div className="inline-flex rounded-lg bg-raised p-0.5" role="radiogroup" aria-label="Show files as">
+          {(
+            [
+              ["grid", LayoutGrid, "Grid"],
+              ["list", List, "List"],
+            ] as const
+          ).map(([id, Icon, label]) => (
+            <button
+              key={id}
+              type="button"
+              role="radio"
+              aria-checked={view === id}
+              aria-label={label}
+              title={label}
+              onClick={() => chooseView(id)}
+              className={cx("rounded-md px-2 py-1", view === id ? "bg-panel text-ink shadow-sm" : "text-muted hover:text-ink")}
+            >
+              <Icon size={14} />
+            </button>
+          ))}
+        </div>
+      </div>
+      {kinds.length > 1 ? (
+        <div className="mb-4 flex flex-wrap gap-1.5" role="group" aria-label="Kind of file">
+          {(["all", ...kinds] as const).map((value) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={kind === value}
+              onClick={() => setKind(value)}
+              className={cx(
+                "rounded-full border px-2.5 py-1 text-[12.5px]",
+                kind === value ? "border-accent bg-accent-soft font-medium text-ink" : "border-line text-muted hover:text-ink",
+              )}
+            >
+              {value === "all" ? "All" : FILE_KIND_LABEL[value]}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {list.error && !list.data ? (
+        <QueryError error={list.error as Error} retry={() => void list.refetch()} />
+      ) : list.isPending ? (
+        <SkeletonRows count={4} rowClassName="h-14" />
+      ) : !files.length ? (
+        q ? (
+          <p className="text-[13.5px] text-muted">No files match “{q}”.</p>
+        ) : (
+          <Empty title="No files yet">Upload a file, drop files anywhere on this screen, or add them from your apps.</Empty>
+        )
+      ) : view === "grid" ? (
+        <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4" aria-label="Files">
+          {shown.map((file) => (
+            <FileCard key={file.id} file={file} />
+          ))}
+        </ul>
+      ) : (
+        <ul className="space-y-0.5" aria-label="Files">
+          {shown.map((file) => (
+            <FileLine key={file.id} file={file} />
+          ))}
+        </ul>
+      )}
+
+      {dropping ? (
+        <div className="pointer-events-none fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-6" data-testid="file-drop-overlay">
+          <div className="flex flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-accent bg-panel px-10 py-8 text-center shadow-pop">
+            <UploadCloud size={28} className="text-accent" aria-hidden />
+            <p className="text-[15px] font-medium">Drop to upload to Files</p>
+            {usage?.maxCount !== null && usage ? <p className="text-[12.5px] text-muted">Up to {formatBytes(usage.maxFileBytes)} each</p> : null}
+          </div>
+        </div>
+      ) : null}
+      <ImportFromApps open={importing} onClose={() => setImporting(false)} />
+    </div>
+  );
+}

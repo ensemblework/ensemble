@@ -35,6 +35,34 @@ function datasetIds(config: unknown): Set<string> {
   return ids;
 }
 
+/** Reading a file. Someone a page or task is shared with may do this for the files placed on it. */
+const FILE_READS = new Set(["/api/documents/:id", "/api/documents/:id/original", "/api/documents/:id/text"]);
+
+/** True when the page content places this file: an @ mention of it, or a block that embeds it (`attrs.fileId`). */
+export function contentHasFile(content: unknown, fileId: string): boolean {
+  const stack: unknown[] = [content];
+  while (stack.length) {
+    const node = stack.pop();
+    if (!node || typeof node !== "object") continue;
+    const { type, attrs, content: children } = node as { type?: unknown; attrs?: Record<string, unknown>; content?: unknown };
+    if (attrs && (attrs.fileId === fileId || (type === "mention" && attrs.kind === "file" && attrs.id === fileId))) return true;
+    if (Array.isArray(children)) stack.push(...children);
+  }
+  return false;
+}
+
+/** The current content of the shared page, or of the shared task's page, places this file. */
+async function fileOnSharedItem(spaceId: string, resource: string, resourceId: string, fileId: string | undefined): Promise<boolean> {
+  if (!fileId || (resource !== "page" && resource !== "task")) return false;
+  const page =
+    resource === "page"
+      ? await prisma.taskPage.findFirst({ where: { id: resourceId, userId: spaceId, taskId: null, deletedAt: null }, select: { content: true } })
+      : await prisma.taskPage.findFirst({ where: { taskId: resourceId, userId: spaceId, task: { deletedAt: null } }, select: { content: true } });
+  return Boolean(page && contentHasFile(page.content, fileId));
+}
+
+const readsFile = (method: string, url: string) => (method === "GET" || method === "HEAD") && FILE_READS.has(url);
+
 /**
  * Enforces the sharing policy (policy.ts) for anyone who is not the space owner. Runs before
  * every handler, after the body is parsed, so share rules can bind to body fields.
@@ -46,8 +74,10 @@ export async function sharingGate(request: FastifyRequest, reply: FastifyReply):
   if (access.kind === "gone") return reply.code(404).send({ error: "This share was removed, or it is not yours." });
 
   if (access.kind === "link") {
+    const params = (request.params ?? {}) as Record<string, string | undefined>;
+    if (readsFile(request.method, url) && (await fileOnSharedItem(request.userId, access.resource, access.resourceId, params.id))) return;
     const decision = linkDecision(access, request.method, url, {
-      params: (request.params ?? {}) as Record<string, string | undefined>,
+      params,
       query: (request.query ?? {}) as Record<string, unknown>,
       body: request.body,
     });
@@ -63,6 +93,7 @@ export async function sharingGate(request: FastifyRequest, reply: FastifyReply):
       if (space && params.id && datasetIds(space.config).has(params.id)) return;
       return reply.code(403).send({ error: "This link only opens the item that was shared with you." });
     }
+    if (readsFile(request.method, url) && (await fileOnSharedItem(request.userId, access.resource, access.resourceId, params.id))) return;
     const decision = shareDecision(access, request.method, url, { params, query: (request.query ?? {}) as Record<string, unknown>, body: request.body });
     if (!decision.allow) return reply.code(decision.status).send({ error: decision.message });
     if (decision.personal) request.userId = request.accountId ?? request.userId;

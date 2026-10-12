@@ -415,8 +415,8 @@ test("settings and preferences never overwrite or reveal another account", async
 test("documents enforce owner ids, private original bytes and owned manual tags", async () => {
   const body = { filename: "private.txt", dataBase64: Buffer.from("Private original").toString("base64"), summarize: false };
   const id = await created("/api/documents", "document", body);
-  assert.ok((await check(a, "GET", "/api/documents", 200, "happy-path")).documents.some((row: { id: string }) => row.id === id));
-  assert.ok(!(await check(b, "GET", "/api/documents", 200, "isolation")).documents.some((row: { id: string }) => row.id === id));
+  assert.ok((await check(a, "GET", "/api/documents", 200, "happy-path")).files.some((row: { id: string }) => row.id === id));
+  assert.ok(!(await check(b, "GET", "/api/documents", 200, "isolation")).files.some((row: { id: string }) => row.id === id));
   for (const suffix of ["text", "original"]) {
     await hidden("GET", `/api/documents/${id}/${suffix}`);
     const result = await check(a, "GET", `/api/documents/${id}/${suffix}`, 200, "happy-path");

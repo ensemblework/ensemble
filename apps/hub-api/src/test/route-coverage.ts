@@ -226,6 +226,12 @@ export const appItemRouteCoverage: Readonly<Record<string, readonly RouteCheck[]
   "POST /api/app-items/update": ["happy-path", "isolation", "invalid-input", "hosted-verification"],
 };
 
+/** Files brought in from connected apps. Owned by src/routes/file-imports.ts; checked in src/files/import.integration.test.ts. */
+export const fileImportRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
+  "GET /api/documents/import-sources": ["happy-path", "isolation", "hosted-verification"],
+  "POST /api/documents/import": ["happy-path", "isolation", "invalid-input", "hosted-verification"],
+};
+
 /** People identities, project links and imported meeting notes. Owned by routes/people-identity.ts, project-links.ts, meeting-notes.ts. */
 export const connectedDataRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
   "GET /api/people/identity-suggestions": ["happy-path", "isolation"],
@@ -282,6 +288,15 @@ export const linksRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>>
   "GET /api/links/open": ["happy-path", "isolation"],
 };
 
+/** Files (routes/files.ts) beyond the upload, list, text, original, tags and delete rows in resourceRouteCoverage. */
+export const fileRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
+  "GET /api/documents/:id": ["happy-path", "isolation", "unknown-id"],
+  "PUT /api/documents/:id/content": ["happy-path", "isolation", "unknown-id", "invalid-input"],
+  "POST /api/documents/:id/cells": ["happy-path", "isolation", "unknown-id", "invalid-input"],
+  "POST /api/documents/:id/page": ["happy-path", "isolation", "unknown-id", "invalid-input"],
+  "GET /api/documents/:id/style": ["happy-path", "isolation", "unknown-id"],
+};
+
 export const workspaceSearchRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
   "GET /api/context/search": ["happy-path", "isolation", "invalid-input"],
 };
@@ -296,8 +311,10 @@ export const routeCoverage = {
   ...mcpConnectionRouteCoverage,
   ...importRouteCoverage,
   ...appItemRouteCoverage,
+  ...fileImportRouteCoverage,
   ...connectedDataRouteCoverage,
   ...spacesRouteCoverage,
   ...sharingRouteCoverage,
   ...linksRouteCoverage,
+  ...fileRouteCoverage,
 };

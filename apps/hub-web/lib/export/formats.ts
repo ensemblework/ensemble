@@ -1,5 +1,6 @@
 "use client";
 
+import type { FileStyleProfile } from "@ensemble/shared-types";
 import type { Block, ExportDoc, Run } from "./document";
 import { plainText, toHtml, toMarkdown, toText } from "./document";
 
@@ -29,69 +30,141 @@ export function saveBlob(blob: Blob, name: string): void {
   window.setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
-/** A PDF with real, selectable text: headings, paragraphs, lists, to-dos, quotes, code, tables. */
-export async function toPdf(doc: ExportDoc): Promise<Blob> {
+export type PdfFont = "helvetica" | "times" | "courier";
+type Rgb = [number, number, number];
+
+export type PdfLayout = {
+  /** Points; null keeps jsPDF's A4. */
+  format: [number, number] | null;
+  margins: { top: number; right: number; bottom: number; left: number };
+  body: { font: PdfFont; size: number; color: Rgb; lineHeight: number };
+  headings: Record<1 | 2 | 3, { font: PdfFont; size: number; color: Rgb; bold: boolean }>;
+  /** Write the page title and properties at the top. Off when exporting back to the original's layout. */
+  title: boolean;
+};
+
+const INK: Rgb = [28, 25, 21];
+
+/** The nearest of the standard PDF fonts every reader has, by the original font's name. */
+export function pdfFontFor(name: string | undefined): PdfFont {
+  const family = (name ?? "").toLowerCase();
+  if (/mono|courier|consolas|menlo|monaco|code/.test(family)) return "courier";
+  if (!/sans/.test(family) && /times|georgia|garamond|cambria|palatino|book|baskerville|minion|serif|caslon|century|constantia|didot|bodoni|charter|cmr|libertine|merriweather|playfair|lora|crimson/.test(family)) return "times";
+  return "helvetica";
+}
+
+function rgb(hex: string | undefined, fallback: Rgb): Rgb {
+  const match = /^#?([0-9a-f]{6})$/i.exec(hex ?? "");
+  if (!match) return fallback;
+  const value = match[1]!;
+  return [parseInt(value.slice(0, 2), 16), parseInt(value.slice(2, 4), 16), parseInt(value.slice(4, 6), 16)];
+}
+
+/** Page size, margins, fonts, sizes and colours for a PDF: Ensemble's own look, or the original file's when one is given. */
+export function pdfLayout(style?: FileStyleProfile | null): PdfLayout {
+  if (!style) {
+    return {
+      format: null,
+      margins: { top: 56, right: 56, bottom: 56, left: 56 },
+      body: { font: "helvetica", size: 11, color: INK, lineHeight: 1.4 },
+      headings: {
+        1: { font: "helvetica", size: 17, color: INK, bold: true },
+        2: { font: "helvetica", size: 14.5, color: INK, bold: true },
+        3: { font: "helvetica", size: 12.5, color: INK, bold: true },
+      },
+      title: true,
+    };
+  }
+  const size = style.body?.size && style.body.size > 3 ? style.body.size : 11;
+  const font = pdfFontFor(style.body?.font);
+  const color = rgb(style.body?.color, [0, 0, 0]);
+  const heading = (level: 1 | 2 | 3, scale: number) => {
+    const own = style.headings?.[String(level) as "1" | "2" | "3"];
+    return { font: own?.font ? pdfFontFor(own.font) : font, size: own?.size ?? Math.round(size * scale * 2) / 2, color: rgb(own?.color, color), bold: own?.bold ?? true };
+  };
+  return {
+    format: style.page ? [style.page.width, style.page.height] : null,
+    margins: style.page?.margins ?? { top: 72, right: 72, bottom: 72, left: 72 },
+    body: { font, size, color, lineHeight: Math.min(2.5, Math.max(1, style.body?.lineHeight ?? 1.2)) },
+    headings: { 1: heading(1, 1.6), 2: heading(2, 1.3), 3: heading(3, 1.1) },
+    title: false,
+  };
+}
+
+/**
+ * A PDF with real, selectable text: headings, paragraphs, lists, to-dos, quotes, code, tables.
+ * With a style profile it uses the original file's page size, margins, fonts, sizes and colours.
+ */
+export async function toPdf(doc: ExportDoc, options: { style?: FileStyleProfile | null } = {}): Promise<Blob> {
   const { jsPDF } = await import("jspdf");
-  const pdf = new jsPDF({ unit: "pt", format: "a4" });
+  const layout = pdfLayout(options.style);
+  const pdf = layout.format
+    ? new jsPDF({ unit: "pt", format: layout.format, orientation: layout.format[0] > layout.format[1] ? "landscape" : "portrait" })
+    : new jsPDF({ unit: "pt", format: "a4" });
   const width = pdf.internal.pageSize.getWidth();
   const height = pdf.internal.pageSize.getHeight();
-  const margin = 56;
-  const usable = width - margin * 2;
-  let y = margin;
+  const { margins } = layout;
+  const usable = width - margins.left - margins.right;
+  let y = margins.top;
   const ensure = (space: number) => {
-    if (y + space > height - margin) {
+    if (y + space > height - margins.bottom) {
       pdf.addPage();
-      y = margin;
+      y = margins.top;
     }
   };
-  const write = (text: string, options: { size: number; style?: "normal" | "bold" | "italic"; font?: "helvetica" | "courier"; indent?: number; color?: [number, number, number]; gap?: number }) => {
-    pdf.setFont(options.font ?? "helvetica", options.style ?? "normal");
+  const write = (text: string, options: { size: number; style?: "normal" | "bold" | "italic"; font?: PdfFont; indent?: number; color?: Rgb; gap?: number; lineHeight?: number }) => {
+    pdf.setFont(options.font ?? layout.body.font, options.style ?? "normal");
     pdf.setFontSize(options.size);
-    pdf.setTextColor(...(options.color ?? [28, 25, 21]));
+    pdf.setTextColor(...(options.color ?? layout.body.color));
     const indent = options.indent ?? 0;
-    const lineHeight = options.size * 1.4;
+    const lineHeight = options.size * (options.lineHeight ?? layout.body.lineHeight);
     for (const line of pdf.splitTextToSize(text || " ", usable - indent) as string[]) {
       ensure(lineHeight);
-      pdf.text(line, margin + indent, y + options.size);
+      pdf.text(line, margins.left + indent, y + options.size);
       y += lineHeight;
     }
     y += options.gap ?? 6;
   };
   const runs = (value: Run[]) => plainText(value);
-  write(doc.title, { size: 22, style: "bold", gap: 10 });
-  for (const [label, value] of doc.meta ?? []) write(`${label}: ${value}`, { size: 10, color: [107, 101, 92], gap: 0 });
-  if (doc.meta?.length) y += 12;
+  const body = layout.body;
+  if (layout.title) {
+    write(doc.title, { size: 22, style: "bold", gap: 10 });
+    for (const [label, value] of doc.meta ?? []) write(`${label}: ${value}`, { size: 10, color: [107, 101, 92], gap: 0 });
+    if (doc.meta?.length) y += 12;
+  }
   const block = (item: Block) => {
     switch (item.type) {
-      case "heading":
+      case "heading": {
+        const heading = layout.headings[item.level];
         y += 6;
-        write(runs(item.runs), { size: item.level === 1 ? 17 : item.level === 2 ? 14.5 : 12.5, style: "bold" });
+        write(runs(item.runs), { size: heading.size, style: heading.bold ? "bold" : "normal", font: heading.font, color: heading.color, lineHeight: Math.max(1.15, Math.min(body.lineHeight, 1.4)) });
         break;
+      }
       case "paragraph":
-        write(runs(item.runs), { size: 11 });
+        write(runs(item.runs), { size: body.size });
         break;
       case "list":
-        item.items.forEach((entry, index) => write(`${item.ordered ? `${index + 1}.` : "•"}  ${runs(entry)}`, { size: 11, indent: 12, gap: 2 }));
+        item.items.forEach((entry, index) => write(`${item.ordered ? `${index + 1}.` : "•"}  ${runs(entry)}`, { size: body.size, indent: 12, gap: 2 }));
         y += 4;
         break;
       case "todo":
-        for (const entry of item.items) write(`${entry.checked ? "[x]" : "[ ]"}  ${runs(entry.runs)}`, { size: 11, indent: 12, gap: 2 });
+        for (const entry of item.items) write(`${entry.checked ? "[x]" : "[ ]"}  ${runs(entry.runs)}`, { size: body.size, indent: 12, gap: 2 });
         y += 4;
         break;
       case "quote":
-        write(runs(item.runs), { size: 11, style: "italic", indent: 14, color: [90, 85, 78] });
+        write(runs(item.runs), { size: body.size, style: "italic", indent: 14, color: layout.title ? [90, 85, 78] : body.color });
         break;
       case "code":
-        write(item.text, { size: 9.5, font: "courier", indent: 8, color: [60, 56, 50] });
+        write(item.text, { size: Math.max(7, body.size - 1.5), font: "courier", indent: 8, color: layout.title ? [60, 56, 50] : body.color });
         break;
       case "table":
-        for (const row of item.rows) write(row.join("   |   "), { size: 10, gap: 2 });
+        for (const row of item.rows) write(row.join("   |   "), { size: Math.max(7, body.size - 1), gap: 2 });
         y += 6;
         break;
       case "rule":
         ensure(16);
         pdf.setDrawColor(220, 214, 204);
-        pdf.line(margin, y + 6, width - margin, y + 6);
+        pdf.line(margins.left, y + 6, width - margins.right, y + 6);
         y += 16;
         break;
     }

@@ -56,13 +56,15 @@ apps/hub-web/
 ├── app/(hub)/                One folder per page: today, board, needs-me, runs, tasks/[id],
 │                             projects, context, skills, workspace, code, plots, diagrams,
 │                             marketplace, meetings, recap, metrics, settings, trash,
-│                             completed, connect, welcome, start, …
+│                             completed, connect, welcome, start, files, …
 ├── components/               Grouped by surface: app-items (attach from connected apps), assistant,
 │                             board, code, comments, connect, connectors (store, logos in
-│                             connectors/brands), context, desk, diagrams, editor (TipTap),
+│                             connectors/brands), context, desk, diagrams, editor (TipTap), files
+│                             (viewers per format),
 │                             imports, motion, needs-me, plots, settings, shell, today, widgets;
 │                             ui.tsx is the kit
-├── lib/                      API client, SSE, auth helpers, plots, connect configs
+├── lib/                      API client, SSE, auth helpers, plots, connect configs, files
+│                             (PDF/Word conversion, slide reader, export back)
 └── e2e/                      Playwright scripts (run by hand)
 
 apps/hub-api/src/
@@ -72,6 +74,8 @@ apps/hub-api/src/
 ├── connectors/               Gmail/Calendar, GitHub, Slack, Linear; ingest, triage, sync; mcp/ (remote
 │                             MCP client); items/ (search, read and attach in connected apps, docs/31)
 ├── imports/                  Importers from other apps, CSV/zip readers, writer, jobs (docs/27)
+├── files/                    Files: store and caps, text extraction worker, pages from files,
+│                             imports from apps, files attached to tasks (docs/32)
 ├── context/                  Context board order and people views
 ├── cowork/                   Morning brief, quick capture, nudges, weekly recap
 ├── jobs/                     In-process scheduler, retention, claim locks

@@ -61,6 +61,10 @@ Code: `apps/hub-api/src/connectors/items/` (one file per app in `sources/`, the 
 
 Imports from Notion, Linear, Jira, Trello, Asana, Todoist, ClickUp, monday.com, GitHub and spreadsheets are unchanged ([27](27_IMPORTS.md)), and now open from the Board (**Import**) and from Pages (**Import from Notion**) as well as Settings. Trello lists, Notion statuses and Jira statuses each map to an Ensemble column in the review step, so differently named columns land where the person chooses.
 
+### 2.5b Files from apps
+
+Files themselves (a PDF in Drive, a spreadsheet attached to an email, a deck in OneDrive, Dropbox or Box) come into **Files** with **Add from your apps**, which explains per app what is connected and what permission is missing, then downloads through the person's own connection. Gmail and Outlook attachments are searched as items of kind `attachment`. Details in [32 §5](32_FILES.md#5-bringing-files-in-from-apps).
+
 ### 2.6 People
 
 **Add people from …** on Context → People reads an app's members and adds them to People with their email or handle, so mail, chats, meetings and mentions point at the same person. It never merges two existing people; a clash becomes a merge suggestion. Apps: Slack, GitHub (organisation members), Linear, Jira, Notion, Asana, ClickUp, monday.com, HubSpot (owners), Zendesk (agents) and Front (teammates). People are matched by email or by the app's own handle (Slack user id, GitHub login, Atlassian account id); someone with neither is skipped, which is why Trello, whose API gives no emails, is not offered. `POST /api/app-items/people`, at most 500 people per run.

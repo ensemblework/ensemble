@@ -26,7 +26,19 @@ export class TaskPageError extends Error {
 }
 
 type Db = Prisma.TransactionClient;
-type StoredPage = Prisma.TaskPageGetPayload<{ include: { mentions: true } }>;
+
+const PAGE_INCLUDE = {
+  mentions: { orderBy: [{ kind: "asc" as const }, { entityId: "asc" as const }] },
+  sourceFile: { select: { id: true, filename: true, format: true, style: true, deletedAt: true } },
+} satisfies Prisma.TaskPageInclude;
+type StoredPage = Prisma.TaskPageGetPayload<{ include: typeof PAGE_INCLUDE }>;
+
+/** The file a page was converted from, while that file is still kept. */
+function sourceFileOf(page: StoredPage | null): TaskPageContent["sourceFile"] {
+  const file = page?.sourceFile;
+  if (!file || file.deletedAt) return null;
+  return { id: file.id, filename: file.filename, format: file.format, hasStyle: Boolean(file.style) };
+}
 
 function snapshot(page: StoredPage | null, notes: string) {
   return {
@@ -41,10 +53,7 @@ function snapshot(page: StoredPage | null, notes: string) {
 }
 
 async function readPage(db: Db, userId: string, taskId: string): Promise<StoredPage | null> {
-  return db.taskPage.findFirst({
-    where: { userId, taskId },
-    include: { mentions: { orderBy: [{ kind: "asc" }, { entityId: "asc" }] } },
-  });
+  return db.taskPage.findFirst({ where: { userId, taskId }, include: PAGE_INCLUDE });
 }
 
 export async function taskForPage(db: Db, userId: string, taskId: string, lock = false): Promise<Task> {
@@ -69,6 +78,7 @@ async function pageDto(db: Db, task: Task, page: StoredPage | null): Promise<Tas
     mentions: state.mentions,
     notesChangedExternally: state.notesSnapshot !== task.notes,
     updatedAt: page?.updatedAt.toISOString() ?? null,
+    sourceFile: sourceFileOf(page),
   };
 }
 
@@ -153,6 +163,7 @@ export type StandalonePageContent = {
   mentions: PageMention[];
   notesChangedExternally: false;
   updatedAt: string | null;
+  sourceFile: TaskPageContent["sourceFile"];
 };
 
 function standaloneDto(page: StoredPage & { title: string }): StandalonePageContent {
@@ -168,6 +179,7 @@ function standaloneDto(page: StoredPage & { title: string }): StandalonePageCont
     mentions: state.mentions,
     notesChangedExternally: false,
     updatedAt: page.updatedAt.toISOString(),
+    sourceFile: sourceFileOf(page),
   };
 }
 
@@ -179,10 +191,7 @@ async function ownedStandalone(db: Db, userId: string, id: string, lock = false)
       SELECT id FROM task_pages WHERE id = ${id} AND user_id = ${userId} AND task_id IS NULL FOR UPDATE
     `;
   }
-  return db.taskPage.findFirst({
-    where: { id, userId, taskId: null, deletedAt: null },
-    include: { mentions: { orderBy: [{ kind: "asc" }, { entityId: "asc" }] } },
-  });
+  return db.taskPage.findFirst({ where: { id, userId, taskId: null, deletedAt: null }, include: PAGE_INCLUDE });
 }
 
 export async function listStandalonePages(prisma: PrismaClient, userId: string): Promise<StandalonePageSummary[]> {
@@ -194,17 +203,27 @@ export async function listStandalonePages(prisma: PrismaClient, userId: string):
   return rows.map((row) => ({ id: row.id, title: row.title || "Untitled", updatedAt: row.updatedAt.toISOString() }));
 }
 
-export async function createStandalonePage(prisma: PrismaClient, userId: string): Promise<StandalonePageSummary> {
+/** A new note: empty, or made from a file (`sourceFileId`) with its title and content. */
+export async function createStandalonePage(
+  prisma: PrismaClient,
+  userId: string,
+  from: { title: string; content: PageDocument; sourceFileId: string } | null = null,
+): Promise<StandalonePageSummary> {
+  const title = from?.title.trim() || "Untitled";
+  const content = from ? restoreMentionLinks(PageDocument.parse(from.content)) : EMPTY_PAGE;
+  const mentions = from ? collectMentions(content) : [];
   const page = await prisma.taskPage.create({
     data: {
       userId,
       taskId: null,
-      title: "Untitled",
+      title,
       revision: 1,
-      content: EMPTY_PAGE as Prisma.InputJsonValue,
+      content: content as Prisma.InputJsonValue,
       annotations: [],
       notesSnapshot: "",
-      searchText: pageSearchText("Untitled", EMPTY_PAGE, ""),
+      searchText: pageSearchText(title, content, ""),
+      sourceFileId: from?.sourceFileId ?? null,
+      ...(mentions.length ? { mentions: { createMany: { data: mentions.map((mention) => ({ kind: mention.kind, entityId: mention.entityId, label: mention.label })) } } } : {}),
     },
     select: { id: true, title: true, updatedAt: true },
   });

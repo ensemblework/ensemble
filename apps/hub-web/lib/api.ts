@@ -1,5 +1,5 @@
 import type { IdeTheme, ThemeDirectoryExtension } from "@ensemble/ide-theme";
-import { emptyWorkspace, type PageDocument, type Settings } from "@ensemble/shared-types";
+import { emptyWorkspace, type PageDocument, type Settings, type TaskPageContent } from "@ensemble/shared-types";
 import type { LayoutDocument } from "@ensemble/shared-types/widgets";
 
 import { bindClient, currentExternalSignal, isRequestCancelled, RequestCancelledError, trackRequest, isPageUnloading } from "./fetch-cancel";
@@ -104,6 +104,14 @@ export function setOpenShare(id: string | null): void {
 }
 export function currentShare(): string | null {
   return openShare;
+}
+
+/** The share or public-link headers for requests made outside `request`, such as raw byte downloads. */
+export function itemViewHeaders(): Record<string, string> {
+  return {
+    ...(openShare ? { [SHARE_HEADER]: openShare } : {}),
+    ...(openLink ? { [LINK_HEADER]: openLink, [VISITOR_HEADER]: visitorId() } : {}),
+  };
 }
 
 /**
@@ -223,6 +231,9 @@ export type TaskRecord = {
   updatedAt: string;
 };
 
+/** The file a page was converted from. */
+export type PageSourceFile = NonNullable<TaskPageContent["sourceFile"]>;
+
 export type PageRecord = {
   taskId: string;
   revision: number;
@@ -230,6 +241,7 @@ export type PageRecord = {
   notes: string;
   notesChangedExternally: boolean;
   updatedAt: string | null;
+  sourceFile?: PageSourceFile | null;
 };
 
 export type StandalonePageSummary = {
@@ -246,6 +258,7 @@ export type StandalonePageRecord = {
   content: PageDocument | null;
   notes: string;
   updatedAt: string | null;
+  sourceFile?: PageSourceFile | null;
 };
 
 export type ApprovalRecord = {
@@ -362,28 +375,6 @@ export type ArtifactRecord = {
   repoId: string | null;
   taskId: string | null;
   metadata: Record<string, unknown>;
-};
-
-export type DocumentRecord = {
-  id: string;
-  filename: string;
-  mediaType: string;
-  byteSize: number;
-  format: string;
-  parseStatus: string;
-  enrichmentStatus: string;
-  textCharacters: number;
-  summary: string | null;
-  enrichmentError?: unknown;
-  sha256: string;
-  createdAt: string;
-  parsedAt: string | null;
-  projectIds: string[];
-  personIds: string[];
-  repoIds: string[];
-  taskIds: string[];
-  warnings: string[];
-  modelUsage: unknown;
 };
 
 export type Entity = { kind: string; id: string; label: string; detail: string; parentId?: string; parentLabel?: string; tileId?: string; isSpace?: boolean };
@@ -1087,12 +1078,6 @@ export const api = bindClient({
       counts: Array<{ kind: string; count: number }>;
       sync: Array<{ connector: string; lastSyncAt: string | null; itemCount: number; lastError: string | null }>;
     }>(`/api/artifacts${qs(params)}`),
-  documents: (q?: string) => get<{ documents: DocumentRecord[] }>(`/api/documents${qs({ q })}`),
-  uploadDocument: (data: { filename: string; mediaType: string; dataBase64: string; summarize: boolean }) =>
-    post<{ document: { id: string } }>("/api/documents", data),
-  documentText: (id: string) => get<{ text: string }>(`/api/documents/${id}/text`),
-  documentUrl: (id: string) => `${API}/api/documents/${id}/original`,
-  deleteDocument: (id: string) => del(`/api/documents/${id}`),
   graph: (includeCompleted = false) =>
     get<{ nodes: GraphNode[]; edges: GraphEdge[] }>(`/api/context/graph${qs({ includeCompleted })}`),
 

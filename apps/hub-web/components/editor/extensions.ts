@@ -4,6 +4,7 @@ import Mention, { type MentionOptions } from "@tiptap/extension-mention";
 import { api } from "@/lib/api";
 import { mountDiagramCard, mountDiagramOff } from "../diagrams/diagram-card";
 import { mountPlotCard, mountPlotOff } from "../plots/plot-card";
+import { mountFileCard } from "../files/file-embed";
 import { storedEmbedHeight } from "./embed-resize";
 import Placeholder from "@tiptap/extension-placeholder";
 import Table from "@tiptap/extension-table";
@@ -27,6 +28,7 @@ import {
 import { AgentBlock } from "./agent-block";
 import { CommentMark } from "./comment-mark";
 import { EnsembleReply } from "./ensemble-node";
+import { FileAttach, type FileAttachOptions } from "./file-attach";
 import { menuRenderer, type MenuItem } from "./suggestion-menu";
 import { mentionItems, type EntitySource } from "./mention-items";
 export type { EntitySource } from "./mention-items";
@@ -93,10 +95,10 @@ export function diagramMentionIds(doc: PageDocument): string[] {
   return [...new Set(ids)];
 }
 
-const EntityMention = Mention.extend<MentionOptions & { diagramsOn: () => boolean | null; plotsOn: () => boolean | null }>({
+const EntityMention = Mention.extend<MentionOptions & { diagramsOn: () => boolean | null; plotsOn: () => boolean | null; client: FileAttachOptions["client"] }>({
   addOptions() {
     // Tiptap calls this once before the parent is attached, so the parent is optional here.
-    return { ...(this.parent?.() as MentionOptions), diagramsOn: () => true, plotsOn: () => true };
+    return { ...(this.parent?.() as MentionOptions), diagramsOn: () => true, plotsOn: () => true, client: () => null };
   },
   addAttributes() {
     return {
@@ -135,7 +137,7 @@ const EntityMention = Mention.extend<MentionOptions & { diagramsOn: () => boolea
   addNodeView() {
     return ({ node, editor, getPos }) => {
       const kind = String(node.attrs.kind ?? "");
-      if (kind !== "diagram" && kind !== "plot") {
+      if (kind !== "diagram" && kind !== "plot" && kind !== "file") {
         const dom = document.createElement("a");
         dom.className = "mention";
         dom.href = mentionHref(node.attrs as PageMention) ?? "#";
@@ -158,6 +160,26 @@ const EntityMention = Mention.extend<MentionOptions & { diagramsOn: () => boolea
             editor.view.dispatch(editor.state.tr.setNodeMarkup(pos, undefined, { ...current.attrs, height }));
           }
         : undefined;
+      if (kind === "file") {
+        const card = mountFileCard(dom, String(node.attrs.id ?? ""), String(node.attrs.label ?? ""), {
+          height: storedEmbedHeight(node.attrs.height),
+          onResize: resize,
+          client: this.options.client(),
+        });
+        return {
+          dom,
+          destroy: card.destroy,
+          update: (next) => {
+            if (!same(next)) return false;
+            card.setHeight(storedEmbedHeight(next.attrs.height));
+            return true;
+          },
+          // Previews scroll, play and take clicks of their own. Files dropped on a card still go to the page.
+          stopEvent: (event) =>
+            !event.type.startsWith("drag") && event.type !== "drop" && Boolean((event.target as HTMLElement | null)?.closest?.(".embed-resize, .file-embed-body, button, a")),
+          ignoreMutation: (mutation) => mutation.type !== "selection",
+        };
+      }
       if (kind === "plot") {
         if (this.options.plotsOn() === false) {
           mountPlotOff(dom, String(node.attrs.label ?? ""));
@@ -206,7 +228,13 @@ const EntityMention = Mention.extend<MentionOptions & { diagramsOn: () => boolea
  * `diagramsOn` is read on every keystroke and every card mount, so it follows the
  * diagrams module after the shell loads. Null means the shell has not loaded yet.
  */
-export function editorExtensions(entities: EntitySource, placeholder: string, diagramsOn: () => boolean | null = () => true, plotsOn: () => boolean | null = () => true) {
+export function editorExtensions(
+  entities: EntitySource,
+  placeholder: string,
+  diagramsOn: () => boolean | null = () => true,
+  plotsOn: () => boolean | null = () => true,
+  files: Partial<FileAttachOptions> = {},
+) {
   return [
     StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
     Placeholder.configure({
@@ -223,9 +251,11 @@ export function editorExtensions(entities: EntitySource, placeholder: string, di
     CommentMark,
     EnsembleReply,
     SlashCommand,
+    FileAttach.configure(files),
     EntityMention.configure({
       diagramsOn,
       plotsOn,
+      client: files.client ?? (() => null),
       suggestion: {
         char: "@",
         pluginKey: ENTITY_MENTION_KEY,

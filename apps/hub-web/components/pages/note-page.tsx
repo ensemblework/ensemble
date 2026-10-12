@@ -21,6 +21,7 @@ import { ShareButton } from "../sharing/share-dialog";
 import { useSpaceAccess } from "@/lib/access";
 import { ExportMenu } from "../export-menu";
 import { pageDoc } from "@/lib/export/items";
+import { SourceFileBanner, exportBackItems } from "../files/source-file-banner";
 
 type SaveState = "saved" | "saving" | "dirty" | "error";
 
@@ -66,6 +67,8 @@ export function NotePage({
   const [epoch, setEpoch] = useState(0);
   const revision = useRef(0);
   const pending = useRef<PageDocument | null>(null);
+  // What the editor holds now, saved or not: exporting back to the original's format reads it.
+  const latest = useRef<PageDocument | null>(null);
   const timer = useRef<number | undefined>(undefined);
   const inFlight = useRef<Promise<boolean> | null>(null);
   const titleSave = useRef<Promise<unknown> | null>(null);
@@ -95,7 +98,8 @@ export function NotePage({
           if (pending.current || inFlight.current || fresh.revision === revision.current) return;
           revision.current = fresh.revision;
           client.setQueryData(["standalone-page", pageId], fresh);
-          setRemote({ doc: fresh.content ?? EMPTY_PAGE, stamp: Date.now() });
+          latest.current = fresh.content ?? EMPTY_PAGE;
+          setRemote({ doc: latest.current, stamp: Date.now() });
         })
         .catch(() => undefined);
     };
@@ -106,7 +110,8 @@ export function NotePage({
   const initialDoc = useMemo(() => {
     if (!page.data) return null;
     revision.current = page.data.revision;
-    return page.data.content ?? EMPTY_PAGE;
+    latest.current = page.data.content ?? EMPTY_PAGE;
+    return latest.current;
     // The editor owns the document after the first load. See the task page.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageId, loaded, epoch]);
@@ -204,6 +209,7 @@ export function NotePage({
   const onChange = useCallback(
     (doc: PageDocument) => {
       pending.current = doc;
+      latest.current = doc;
       setSaveState("dirty");
       if (watchingRef.current) announceTyping((typing) => api.sendPresence({ tabId: tabId(), typing }));
       window.clearTimeout(timer.current);
@@ -235,6 +241,9 @@ export function NotePage({
   }
 
   const record = page.data;
+  const source = record.sourceFile ?? null;
+  const pageNow = () => ({ title: record.title || "Untitled", doc: latest.current ?? record.content ?? EMPTY_PAGE });
+  const exportExtra = exportBackItems(source, pageNow);
   return (
     <div className="mx-auto w-full max-w-[900px] px-4 pb-24 pt-6 sm:px-16 sm:pt-10" inert={leaving}>
       <div className="mb-3 flex items-center justify-between text-[12.5px] text-muted">
@@ -253,7 +262,7 @@ export function NotePage({
         </span>
         <div className="flex items-center gap-2">
           <PagePeople kind="page" id={pageId} />
-          {shared || !canEdit ? <ExportMenu load={async () => pageDoc(await api.standalonePage(pageId).catch(() => record))} /> : (
+          {shared || !canEdit ? <ExportMenu load={async () => pageDoc(await api.standalonePage(pageId).catch(() => record))} extra={exportExtra} /> : (
             <>
               <button type="button" className="btn-ghost" disabled={convert.isPending} onClick={() => convert.mutate()}>
                 <CheckSquare size={13} /> Add to board
@@ -262,12 +271,13 @@ export function NotePage({
                 <Trash2 size={14} />
               </button>
               <span className="mx-0.5 h-4 w-px bg-line" aria-hidden />
-              <ExportMenu load={async () => pageDoc(await api.standalonePage(pageId).catch(() => record))} />
+              <ExportMenu load={async () => pageDoc(await api.standalonePage(pageId).catch(() => record))} extra={exportExtra} />
               <ShareButton compact target={{ kind: "page", resourceId: pageId, title: record.title }} />
             </>
           )}
         </div>
       </div>
+      {source ? <SourceFileBanner source={source} page={pageNow} /> : null}
       {canEdit ? (
         <PageTitleField value={record.title} autoFocus={focusTitle} onSave={(title) => {
           titleSave.current = rename.mutateAsync(title);

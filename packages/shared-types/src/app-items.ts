@@ -30,7 +30,8 @@ export type AppItemKind =
   | "invoice"
   | "record"
   | "meeting"
-  | "video";
+  | "video"
+  | "attachment";
 
 export const APP_ITEM_KIND_LABEL: Readonly<Record<AppItemKind, string>> = {
   page: "Page",
@@ -58,6 +59,7 @@ export const APP_ITEM_KIND_LABEL: Readonly<Record<AppItemKind, string>> = {
   record: "Record",
   meeting: "Meeting",
   video: "Video",
+  attachment: "Email attachment",
 };
 
 /** Kinds that become an Ensemble task when brought in ("Add as task"). */

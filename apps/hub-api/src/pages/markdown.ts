@@ -125,24 +125,36 @@ export function markdownToNodes(markdown: string): PageNode[] {
   return nodes.length ? nodes : [{ type: "paragraph" }];
 }
 
-function textOf(node: PageNode): string {
+/** `forAgents`: a file on the page names its id, so an agent can read the file. */
+function textOf(node: PageNode, forAgents: boolean): string {
   if (node.type === "text") return node.text ?? "";
-  if (node.type === "mention") return `@${String(node.attrs?.label ?? "")}`;
-  return (node.content ?? []).map(textOf).join(node.type === "paragraph" || node.type === "heading" ? "" : "\n");
+  if (node.type === "mention") {
+    const label = String(node.attrs?.label ?? "");
+    if (forAgents && node.attrs?.kind === "file" && node.attrs.id) return `[file: ${label} (id ${String(node.attrs.id)})]`;
+    return `@${label}`;
+  }
+  if (forAgents && typeof node.attrs?.fileId === "string" && node.attrs.fileId) {
+    return `[file: ${String(node.attrs.label ?? node.attrs.filename ?? "file")} (id ${node.attrs.fileId})]`;
+  }
+  return (node.content ?? []).map((child) => textOf(child, forAgents)).join(node.type === "paragraph" || node.type === "heading" ? "" : "\n");
 }
 
 /** Title plus body, replaced on every save so context search does not keep old text. */
 export function pageSearchText(title: string, doc: PageDocument | null, notes: string): string {
-  const body = pageText(doc, notes).trim();
+  const body = documentText(doc, notes, false).trim();
   return [title.trim(), body].filter(Boolean).join("\n").slice(0, 100_000);
 }
 
 /** Plain text of the page as the engineer sees it, for the agent to read. */
 export function pageText(doc: PageDocument | null, notes: string): string {
+  return documentText(doc, notes, true);
+}
+
+function documentText(doc: PageDocument | null, notes: string, forAgents: boolean): string {
   if (!doc) return notes;
   return doc.content
     .map((node) => {
-      const text = textOf(node).trim();
+      const text = textOf(node, forAgents).trim();
       if (node.type === "heading") return `${"#".repeat(Number(node.attrs?.level ?? 2))} ${text}`;
       if (node.type === "agentBlock") return `[Earlier agent output]\n${text}`;
       return text;

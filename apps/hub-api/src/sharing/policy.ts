@@ -19,6 +19,8 @@
  *   open      catalogues and health checks that hold no space data.
  *
  * Single items shared with someone (a page, a diagram) are narrower still: see SHARE_RULES.
+ * A shared page or task also opens the files placed on it, read-only; gate.ts checks that
+ * against the page's current content.
  */
 import type { PublicKind, ShareKind } from "./context.js";
 

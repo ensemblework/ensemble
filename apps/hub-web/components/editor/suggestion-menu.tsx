@@ -3,7 +3,9 @@
 import { placeAnchoredPanel, type Side } from "@/lib/place-layer";
 import { ReactRenderer } from "@tiptap/react";
 import type { SuggestionKeyDownProps, SuggestionProps } from "@tiptap/suggestion";
-import { AtSign, Calendar, ChartSpline, CheckSquare, FolderKanban, GitBranch, Target, User, Wand2, Waypoints } from "lucide-react";
+import { fileFormat } from "@ensemble/shared-types";
+import { AtSign, Calendar, ChartSpline, CheckSquare, FolderKanban, GitBranch, Paperclip, Target, User, Wand2, Waypoints } from "lucide-react";
+import { fileKindIcon } from "../files/file-embed";
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 
 export type MenuItem =
@@ -31,6 +33,15 @@ const KIND_ICON: Record<string, typeof User> = {
   ensemble: Wand2,
   date: Calendar,
 };
+
+const BLOCK_ICON: Record<string, typeof User> = { file: Paperclip };
+
+function itemIcon(item: MenuItem): typeof User | null {
+  if (item.type === "group") return null;
+  if (item.type === "block") return BLOCK_ICON[item.id] ?? null;
+  if (item.type === "entity" && item.kind === "file") return fileKindIcon(fileFormat(item.label).kind);
+  return KIND_ICON[item.kind] ?? AtSign;
+}
 
 export const SuggestionMenu = forwardRef<MenuHandle, Props>(function SuggestionMenu(props, ref) {
   const [selected, setSelected] = useState(0);
@@ -73,7 +84,7 @@ export const SuggestionMenu = forwardRef<MenuHandle, Props>(function SuggestionM
           <div className="px-2 py-3 text-[13px] text-muted">No matches. Keep typing, or press Esc.</div>
         ) : (
           props.items.map((item, index) => {
-            const Icon = item.type === "block" ? null : KIND_ICON[item.kind] ?? AtSign;
+            const Icon = itemIcon(item);
             return (
               <button
                 key={`${item.type}-${"id" in item ? item.id : item.prefix ?? item.kind}`}
@@ -88,7 +99,7 @@ export const SuggestionMenu = forwardRef<MenuHandle, Props>(function SuggestionM
                 className="row-tile flex w-full items-center gap-3 rounded-md px-2 py-1.5 text-left"
               >
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-line bg-panel text-[12.5px] font-semibold text-muted">
-                  {item.type === "block" ? item.symbol : item.type === "group" ? "@" : Icon ? <Icon size={14} /> : "@"}
+                  {Icon ? <Icon size={14} /> : item.type === "block" ? item.symbol : "@"}
                 </span>
                 <span className="min-w-0">
                   <span className="block truncate text-[13.5px] font-medium">{item.label}</span>

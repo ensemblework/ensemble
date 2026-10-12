@@ -15,7 +15,7 @@ import {
 } from "./enums.js";
 
 export const PageMention = z.object({
-  kind: z.enum(["people", "project", "repo", "task", "deliverable", "skill", "diagram", "plot", "dataset", "date"]),
+  kind: z.enum(["people", "project", "repo", "task", "deliverable", "skill", "diagram", "plot", "dataset", "file", "date"]),
   id: z.string(),
   label: z.string(),
 });
@@ -63,6 +63,8 @@ export const TaskPageContent = z.object({
   mentions: z.array(PageMention),
   notesChangedExternally: z.boolean(),
   updatedAt: z.string().nullable(),
+  /** The file this page was converted from, when it was made from a PDF, Word, text or code file. */
+  sourceFile: z.object({ id: z.string(), filename: z.string(), format: z.string(), hasStyle: z.boolean() }).nullable().optional(),
 });
 export type TaskPageContent = z.infer<typeof TaskPageContent>;
 
