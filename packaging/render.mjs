@@ -75,6 +75,10 @@ function renderHomebrew({ version, assets, urlFor, sha }) {
   return `class Ensemble < Formula
   desc "${rubyString(PACKAGE.description)}"
   homepage "${PACKAGE.homepage}"
+  # Explicit: from the URLs Homebrew would read "64" (darwin-arm64), so upgrades never showed.
+  # version_scheme 1 makes kegs installed as "64" count as outdated.
+  version "${version}"
+  version_scheme 1
   license ${PACKAGE.formulaLicense}
 
   on_macos do
