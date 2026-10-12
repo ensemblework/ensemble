@@ -22,7 +22,8 @@ export function diagramSkillText(): string {
   if (cached) return cached;
   for (const path of candidates()) {
     try {
-      cached = readFileSync(path, "utf8");
+      // A Windows checkout gives the file CRLF line endings.
+      cached = readFileSync(path, "utf8").replace(/\r\n?/g, "\n");
       return cached;
     } catch {
       /* try the next place the process might be started from */

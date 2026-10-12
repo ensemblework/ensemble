@@ -39,8 +39,15 @@ export interface Playbook {
 const DIR = fileURLToPath(new URL(".", import.meta.url));
 const INCLUDES: Record<string, () => string> = { "block-diagrams": diagramSkillText };
 
+/** LF line endings, whatever the checkout gave the file. */
+export function lf(text: string): string {
+  return text.replace(/\r\n?/g, "\n");
+}
+
 /** `key: value` lines between `---` fences, then the body. */
-export function parsePlaybook(source: string, file = "playbook"): Playbook {
+export function parsePlaybook(raw: string, file = "playbook"): Playbook {
+  // A Windows checkout (git's autocrlf) gives these files CRLF line endings.
+  const source = lf(raw);
   const fence = /^---\n([\s\S]*?)\n---\n?/.exec(source);
   if (!fence) throw new Error(`${file} has no frontmatter.`);
   const meta: Record<string, string> = {};
@@ -76,7 +83,7 @@ let cached: { playbooks: Playbook[]; map: string } | null = null;
 function load() {
   if (cached) return cached;
   const files = readdirSync(DIR).filter((file) => file.endsWith(".md")).sort();
-  const map = files.includes("map.md") ? readFileSync(`${DIR}/map.md`, "utf8").trim() : "";
+  const map = files.includes("map.md") ? lf(readFileSync(`${DIR}/map.md`, "utf8")).trim() : "";
   const playbooks = files.filter((file) => file !== "map.md").map((file) => parsePlaybook(readFileSync(`${DIR}/${file}`, "utf8"), file));
   cached = { playbooks, map };
   return cached;
