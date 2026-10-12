@@ -5,6 +5,19 @@ import type { FastifyInstance } from "fastify";
 
 export type ToolRisk = "low" | "medium" | "high";
 
+/** Ensemble Code in the person's terminal: where it was opened and how it starts agent runs. */
+export interface CodeSession {
+  /** The folder `ensemble` was opened in (absolute). */
+  folder: string;
+  /** Who does the coding work. Default: the run profile's engine. */
+  engine?: "ensemble" | "claude-code" | "codex" | "cursor-agent";
+  /** A run profile id or name. Default: the person's default profile, else Quick. */
+  profileId?: string | null;
+  /** The run's model (`provider::model` for Ensemble's agent, the engine's own name otherwise). */
+  runModel?: string | null;
+  outsideAccess?: "none" | "read" | "read-write";
+}
+
 export interface ToolContext {
   app: FastifyInstance;
   prisma: PrismaClient;
@@ -20,6 +33,8 @@ export interface ToolContext {
   modules?: string | null;
   /** Project names proposed earlier in this tool batch. Resolved for real on Apply, in order. */
   pendingProjectNames?: readonly string[];
+  /** Set only for Ensemble Code turns on the person's own computer. */
+  code?: CodeSession;
 }
 
 export interface ToolResult {
@@ -54,6 +69,8 @@ export interface AnyHubTool {
   app?: AppToolMeta;
   /** Function parameters to send as-is (e.g. a remote MCP server's own schema) instead of converting `input`. */
   jsonSchema?: Record<string, unknown>;
+  /** On Apply, runs on its own rather than in the batch's transaction (it starts work that writes elsewhere). */
+  outsideTransaction?: boolean;
   preview?: (ctx: ToolContext, input: unknown) => Promise<string> | string;
   run: (ctx: ToolContext, input: unknown) => Promise<ToolResult>;
 }
@@ -67,6 +84,7 @@ export function defineTool<I extends z.ZodTypeAny>(tool: {
   risk: ToolRisk;
   undoable?: boolean;
   app?: AppToolMeta;
+  outsideTransaction?: boolean;
   preview?: (ctx: ToolContext, input: z.infer<I>) => Promise<string> | string;
   run: (ctx: ToolContext, input: z.infer<I>) => Promise<ToolResult>;
 }): AnyHubTool {

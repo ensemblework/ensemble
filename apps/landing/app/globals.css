@@ -1451,3 +1451,106 @@ p {
     transition: none !important;
   }
 }
+
+/* ── desktop downloads ─────────────────────────────────────────────── */
+
+.desktop-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.desktop-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 22px;
+  border-radius: var(--radius);
+  background: var(--panel);
+  border: 1px solid var(--line);
+}
+
+.desktop-card.mine {
+  border-color: rgba(157, 143, 255, 0.45);
+  box-shadow: 0 18px 50px -30px rgba(157, 143, 255, 0.7);
+}
+
+.desktop-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.desktop-card .btn {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  border-radius: 14px;
+}
+
+.desktop-note {
+  font-size: 12.5px;
+  font-weight: 400;
+  opacity: 0.72;
+}
+
+.desktop-card .btn:hover .desktop-note {
+  transform: none;
+}
+
+.pill {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: var(--accent-soft);
+  color: var(--agent);
+}
+
+.desktop-version {
+  grid-column: 1 / -1;
+  color: var(--faint);
+  font-size: 13.5px;
+}
+
+/* A still of `ensemble` in a terminal. */
+.terminal-still {
+  margin-top: 18px;
+  padding: 16px 18px;
+  border-radius: 14px;
+  background: #0d0c0b;
+  border: 1px solid var(--line);
+  overflow-x: auto;
+  font-family: var(--font-code);
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  white-space: pre;
+}
+
+.terminal-still .t-accent {
+  color: var(--agent);
+}
+
+.terminal-still .t-tab {
+  background: var(--agent);
+  color: #141210;
+  font-weight: 700;
+}
+
+.terminal-still .t-warn {
+  color: var(--warn);
+}
+
+.terminal-still .t-ok {
+  color: var(--ok);
+}
+
+.terminal-still .t-dim {
+  color: var(--faint);
+}
+
+@media (max-width: 860px) {
+  .desktop-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

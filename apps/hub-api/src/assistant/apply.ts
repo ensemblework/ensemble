@@ -19,7 +19,7 @@ export interface PlannedCall {
   input: unknown;
 }
 
-export const isOutsideWrite = (tool: AnyHubTool): boolean => tool.area === "apps";
+export const isOutsideWrite = (tool: AnyHubTool): boolean => tool.area === "apps" || tool.outsideTransaction === true;
 
 /** Ids and links worth keeping in the ledger. Never the document body or a token. */
 function ledgerRefs(data: unknown): Record<string, string> {
@@ -40,10 +40,10 @@ export async function runOutsideWrite(ctx: Omit<ToolContext, "tx">, tool: AnyHub
     await appendLedger({
       userId: ctx.userId,
       actor: "agent",
-      action: `apps.${tool.name}`,
+      action: `${tool.area === "apps" ? "apps" : "assistant"}.${tool.name}`,
       payload: {
         tool: tool.name,
-        provider: tool.app?.provider ?? "mcp",
+        provider: tool.app?.provider ?? (tool.outsideTransaction ? "ensemble" : "mcp"),
         summary: result.summary,
         href: result.href ?? null,
         conversationId: ctx.conversationId ?? null,

@@ -127,7 +127,7 @@ pnpm bridge:verify    # typecheck, MCP client tests, smoke
 
 ## Ensemble CLI
 
-`ensemble` runs tasks you assign from the web on your own computer and connects editors to Ensemble over MCP, without the desktop app. Install it from [ensemblework.com/download](https://ensemblework.com/download):
+`ensemble` opens Ensemble in your terminal: a **Tasks** tab with your agent runs and everything waiting on you (answer with a click, a number or `/allow`), and a **Chat** tab, Ensemble Code, that reads the folder and hands coding work to Ensemble's agent, Claude Code, Codex or Cursor under a run profile. It starts this computer's runtime in the background, so tasks you assign from the web run here, and `ensemble mcp` connects editors over MCP. The desktop app and installers for each system are on the same page. Install it from [ensemblework.com/download](https://ensemblework.com/download):
 
 ```bash
 brew install ensemblework/tap/ensemble                 # macOS, Linux
@@ -135,7 +135,7 @@ curl -fsSL https://ensemblework.com/install.sh | sh    # macOS, Linux
 irm https://ensemblework.com/install.ps1 | iex         # Windows PowerShell
 ```
 
-Then `ensemble login`, `ensemble folders add <path>`, `ensemble runner install` and `ensemble mcp setup`. Editors that take a URL can use the hosted MCP endpoint `https://api.ensemblework.com/mcp` with an `ens_` key from Connect your apps, with nothing installed. Commands, install channels, editor files and the release process: [docs/26_CLI.md](docs/26_CLI.md).
+Then run `ensemble` in a project and type `/` for commands (`/login`, `/run`, `/profile`, `/agent`, `/keys`, `/runner install`); `ensemble help commands` lists the same actions for scripts, and `ensemble mcp setup` connects editors. Editors that take a URL can use the hosted MCP endpoint `https://api.ensemblework.com/mcp` with an `ens_` key from Connect your apps, with nothing installed. Commands, install channels, editor files and the release process: [docs/26_CLI.md](docs/26_CLI.md).
 
 ```bash
 pnpm cli:build                                   # apps/cli/dist/ensemble.mjs
@@ -152,7 +152,7 @@ apps/hub-api            Fastify + Prisma — tasks, pages, undo, SSE, scheduler,
 apps/agent-runtime      Python — model adapters, planner, plot export
 apps/skill-forge        Python miners (stub)
 apps/context-bridge     read-only MCP server (stdio + loopback Streamable HTTP); hub-api serves it at /mcp
-apps/cli                the `ensemble` CLI: runner + `ensemble mcp` (npm name ensemblework)
+apps/cli                the `ensemble` terminal app, runner and `ensemble mcp` (npm name ensemblework)
 apps/quick-capture      Tauri tray + global shortcut (macOS, Windows, Linux)
 apps/desktop            Tauri desktop app with a local API sidecar (macOS, Windows, Linux)
 packages/shared-types   Zod domain types

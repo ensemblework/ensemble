@@ -26,6 +26,7 @@ import {
   type AssistantToolCall,
   type PageMention,
   type Settings,
+  pickRunProfile,
 } from "@ensemble/shared-types";
 import { appendLedger } from "../lib/ledger.js";
 import { sseHub } from "../lib/sse.js";
@@ -49,7 +50,8 @@ import { hasModule } from "@ensemble/shared-types";
 import { pastScheduleWarning, withPastScheduleWarning } from "./schedule.js";
 import { cutOffReply, historyEntries, replyAfterStreamFailure } from "./cutoff.js";
 import { buildHubState, buildSystemPrompt, loadOpenPage } from "./state.js";
-import { ToolBlockedError, type AnyHubTool, type ToolContext } from "./types.js";
+import { ToolBlockedError, type AnyHubTool, type CodeSession, type ToolContext } from "./types.js";
+import { codePreamble, codeTools } from "./tools/code.js";
 import {
   assistantEcho,
   askRuntimeStream,
@@ -63,6 +65,8 @@ import { Prisma } from "@prisma/client";
 import type { Redis } from "ioredis";
 
 export const MAX_STEPS = 8;
+/** Ensemble Code reads files and follows runs: more steps per turn than the web assistant. */
+export const MAX_CODE_STEPS = 16;
 /** Bodies handed back to the model, so one long note cannot eat the window. */
 export const MAX_TOOL_RESULT_CHARS = 6000;
 
@@ -129,6 +133,8 @@ export interface AssistantTurnArgs {
   modules?: string | null;
   /** Inline page requests authorize new visual artifacts, not other writes. Area and module gates still apply. */
   inlineArtifacts?: boolean;
+  /** Ensemble Code in the terminal on the person's own computer: its folder, engine and run profile. */
+  code?: CodeSession;
 }
 
 export interface AssistantTurnResult {
@@ -205,8 +211,9 @@ async function drive(
   const plotsOn = args.modules === undefined || hasModule(args.modules, "plots");
   const ctx = toolContext(args);
   const grants = await loadAppGrants(ctx);
-  // The per-turn list: Hub tools for these settings plus this person's connected-app tools.
-  const tools = await toolsForTurn(ctx, grants);
+  // The per-turn list: Hub tools for these settings plus this person's connected-app tools,
+  // and in Ensemble Code the folder's read tools and agent runs.
+  const tools = [...(await toolsForTurn(ctx, grants)), ...(args.code ? codeTools : [])];
   const byName = new Map(tools.map((tool) => [tool.name, tool]));
   const persona =
     args.preamble !== undefined && args.actAs === undefined
@@ -229,6 +236,7 @@ async function drive(
     ...(args.preamble
       ? [{ role: "system" as const, content: truncateText(args.preamble, 2000) }]
       : []),
+    ...(args.code ? [{ role: "system" as const, content: codePreamble(args.code, pickRunProfile(settings, args.code.profileId)) }] : []),
     ...history,
     ...(args.mentions?.length
       ? [
@@ -262,7 +270,8 @@ async function drive(
   let text = "";
   let nudged = false;
 
-  for (let step = 0; step < MAX_STEPS; step += 1) {
+  const maxSteps = args.code ? MAX_CODE_STEPS : MAX_STEPS;
+  for (let step = 0; step < maxSteps; step += 1) {
     // Checked before spending anything. Between steps is the natural checkpoint.
     if (stop.signal.aborted || (await stopRequested(app.redis, userId, activityId))) {
       stop.abort();
@@ -270,7 +279,7 @@ async function drive(
       break;
     }
     await heartbeat(app.redis, userId, activityId);
-    const finalAnswer = step === MAX_STEPS - 1;
+    const finalAnswer = step === maxSteps - 1;
     if (finalAnswer) {
       messages.push({
         role: "system",
@@ -700,6 +709,7 @@ function toolContext(args: AssistantTurnArgs): ToolContext {
     page: args.page,
     settings: args.settings,
     modules: args.modules,
+    ...(args.code ? { code: args.code } : {}),
   };
 }
 

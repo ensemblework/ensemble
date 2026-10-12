@@ -10,7 +10,7 @@ import { bearerHeaders, fetchJson, HttpError } from "./http.js";
 import { resolveLauncherCommand } from "./launcher.js";
 import { detectInstallMethod, dailyUpdateNotice, upgradeInstruction } from "./update.js";
 import { VERSION } from "./version.js";
-import { pollDeviceToken, startDeviceFlow } from "./auth-flow.js";
+import { signIn, signOut } from "./login.js";
 import { resolveCliPaths, readJsonFile } from "./paths.js";
 import { openBrowser } from "./browser.js";
 import type { CliPaths } from "./paths.js";
@@ -42,7 +42,24 @@ type ParsedArgs = {
   positionals: string[];
 };
 
-const HELP = `Ensemble CLI ${VERSION}
+const HELP = `Ensemble ${VERSION}: your tasks and coding agents, in the terminal.
+
+  ensemble            Open Ensemble here. Two tabs:
+                        Tasks  runs on this computer, and what needs you (answer with a click,
+                               a number key, or /allow /deny /answer)
+                        Chat   Ensemble Code: ask about this folder, plan, and hand work to
+                               Ensemble's agent, Claude Code, Codex or Cursor
+                      Ensemble starts on this computer if it is not running, and keeps running
+                      tasks after you leave.
+  ensemble login      Sign in, so tasks you assign on ensemblework.com run here.
+
+Inside the app, type / for commands: /run, /allow, /deny, /answer, /profile, /agent, /model,
+/keys, /trust, /hooks, /login, /status, /help.
+
+Scripts and automation: ensemble help commands
+`;
+
+const COMMANDS_HELP = `Ensemble ${VERSION}: commands for scripts and automation (the app does all of this too).
 
 Usage:
   ensemble login [--api URL] [--name NAME] [--mcp-only] [--no-browser]
@@ -128,58 +145,23 @@ async function commandLogin(args: string[]): Promise<void> {
   });
   if (result.values.help) return void console.log(HELP_BY_COMMAND.login);
   const paths = resolveCliPaths();
-  const apiBase = normalizeApiBase(stringOption(result.values, "api") || process.env.ENSEMBLE_API_URL);
   const sidecarDir = resolveSidecarDir(import.meta.url);
-  const hasSidecar = await sidecarAvailable(sidecarDir);
-  const name = stringOption(result.values, "name") || hostname() || "this computer";
-  const scopes = result.values["mcp-only"] ? ["mcp"] : hasSidecar ? ["mcp", "runner"] : ["mcp"];
-  const start = await startDeviceFlow({ apiBase, clientName: name, platform: process.platform, scopes });
-  console.log(`Code: ${start.userCode}`);
-  console.log(`Open: ${start.verificationUriComplete || start.verificationUri}`);
-  if (!result.values["no-browser"]) {
-    const opened = openBrowser(start.verificationUriComplete || start.verificationUri);
-    if (!opened) console.error("Open the URL above in your browser to continue.");
-  }
-  const token = await pollDeviceToken({ apiBase, deviceCode: start.deviceCode, interval: start.interval, expiresIn: start.expiresIn });
-  const finalApi = normalizeApiBase(token.apiBase || apiBase);
-  await saveToken(token.token, paths);
-  await saveConfig(
-    {
-      apiBase: finalApi,
-      appUrl: token.appUrl?.replace(/\/+$/, "") || "https://ensemblework.com",
-      account: token.account ?? null,
-      tokenId: token.tokenId ?? null,
-      deviceName: name,
-      pairedAt: null,
-    },
+  const login = await signIn({
+    apiBase: stringOption(result.values, "api"),
+    name: stringOption(result.values, "name"),
+    mcpOnly: Boolean(result.values["mcp-only"]),
+    noBrowser: Boolean(result.values["no-browser"]),
     paths,
-  );
-  if (token.pairingCode && hasSidecar && !result.values["mcp-only"]) {
-    await withLocalApi({
-      sidecarDir,
-      paths,
-      apiBase: finalApi,
-      adminOnly: true,
-      run: async (discovery) => {
-        // The desktop app may have paired this computer already: same data folder, same device.
-        const current = await remoteStatus(discovery).catch(() => null);
-        if (!(current?.paired && normalizeApiBase(current.apiBase || "") === finalApi)) {
-          await localJson(discovery, "/api/remote/pair", {
-            method: "POST",
-            body: JSON.stringify({ apiBase: finalApi, code: token.pairingCode, name }),
-          });
-        }
-        await localJson(discovery, "/api/remote", { method: "PUT", body: JSON.stringify({ enabled: true }) });
-      },
-    });
-    const config = await loadConfig(paths);
-    await saveConfig({ ...config, pairedAt: new Date().toISOString() }, paths);
-    await offerSandboxSetup(sidecarDir, paths);
-  }
-  const paired = Boolean((await loadConfig(paths)).pairedAt);
-  console.log(`Logged in${token.account?.email ? ` as ${token.account.email}` : ""}.`);
-  if (paired) {
-    console.log(`This computer is paired as "${name}". Tasks you assign to it from Ensemble run here.`);
+    onCode(code, url, opened) {
+      console.log(`Code: ${code}`);
+      console.log(`Open: ${url}`);
+      if (!opened && !result.values["no-browser"]) console.error("Open the URL above in your browser to continue.");
+    },
+  });
+  if (login.paired) await offerSandboxSetup(sidecarDir, paths);
+  console.log(`Logged in${login.email ? ` as ${login.email}` : ""}.`);
+  if (login.paired) {
+    console.log(`This computer is paired as "${login.name}". Tasks you assign to it from Ensemble run here.`);
     console.log("");
     console.log("Next:");
     console.log("  ensemble folders add <path>    share a folder the agent may work in");
@@ -187,7 +169,7 @@ async function commandLogin(args: string[]): Promise<void> {
     console.log("  ensemble runner install        start the runner now and at every login");
     console.log("  ensemble mcp setup             connect your editors");
   } else {
-    if (token.pairingCode && !hasSidecar) console.log("This install has no runner. Install the full CLI to run tasks on this computer: https://ensemblework.com/download");
+    if (!login.hasRunner) console.log("This install has no runner. Install the full CLI to run tasks on this computer: https://ensemblework.com/download");
     console.log("");
     console.log("Next: ensemble mcp setup    connect your editors");
   }
@@ -196,31 +178,7 @@ async function commandLogin(args: string[]): Promise<void> {
 async function commandLogout(args: string[]): Promise<void> {
   const result = parsed(args);
   if (result.values.help) return void console.log(HELP_BY_COMMAND.logout);
-  const paths = resolveCliPaths();
-  const config = await loadConfig(paths);
-  const token = await loadToken(paths);
-  if (token) {
-    try {
-      await fetchJson(`${config.apiBase}/api/cli/logout`, { method: "POST", headers: bearerHeaders(token) });
-    } catch (error) {
-      if (!(error instanceof HttpError && (error.status === 401 || error.status === 404))) {
-        const reason = error instanceof Error ? error.message : String(error);
-        const keyName = config.deviceName ? `"Ensemble CLI on ${config.deviceName}"` : "the Ensemble CLI key";
-        console.error(`Could not revoke this computer's key on ${config.apiBase} (${reason}).`);
-        console.error(`It is removed from this computer. To revoke it on the server, delete ${keyName} under Connect your apps in Ensemble.`);
-      }
-    }
-  }
-  const sidecarDir = resolveSidecarDir(import.meta.url);
-  if (await sidecarAvailable(sidecarDir)) {
-    try {
-      await withLocalApi({ sidecarDir, paths, adminOnly: true, run: (discovery) => localJson(discovery, "/api/remote/unpair", { method: "POST" }) });
-    } catch (error) {
-      console.error(`Could not unpair local runner: ${sidecarErrorMessage(error)}`);
-    }
-  }
-  await clearToken(paths);
-  await saveConfig({ ...config, account: null, tokenId: null, pairedAt: null }, paths);
+  for (const warning of await signOut()) console.error(warning);
   console.log("Logged out.");
 }
 
@@ -780,9 +738,21 @@ async function commandUpdate(args: string[]): Promise<void> {
 }
 
 async function main(argv = process.argv.slice(2)): Promise<void> {
+  if (argv.length === 0 && process.stdin.isTTY && process.stdout.isTTY) {
+    const { runApp } = await import("./tui/index.js");
+    return runApp();
+  }
   if (argv.length === 0 || argv[0] === "--help" || argv[0] === "-h") {
     console.log(HELP);
     return;
+  }
+  if (argv[0] === "help") {
+    console.log(argv[1] === "commands" ? COMMANDS_HELP : HELP);
+    return;
+  }
+  if (argv[0] === "app") {
+    const { runApp } = await import("./tui/index.js");
+    return runApp();
   }
   if (argv[0] === "--version" || argv[0] === "version") {
     console.log(VERSION);

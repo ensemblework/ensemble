@@ -57,6 +57,8 @@ export async function pollDeviceToken(input: {
   fetchImpl?: FetchLike;
   wait?: (ms: number) => Promise<void>;
   now?: () => number;
+  /** Stops waiting (the person closed the sign-in in the app). */
+  signal?: AbortSignal;
 }): Promise<DeviceTokenResponse> {
   const fetchImpl = input.fetchImpl ?? fetch;
   const wait = input.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
@@ -65,6 +67,7 @@ export async function pollDeviceToken(input: {
   const expiresAt = now() + Math.max(1, input.expiresIn || 600) * 1000;
   while (now() < expiresAt) {
     await wait(interval * 1000);
+    if (input.signal?.aborted) throw new DeviceFlowError("unexpected", "Sign-in cancelled.");
     const response = await fetchImpl(`${input.apiBase}/api/cli/auth/token`, {
       method: "POST",
       headers: { accept: "application/json", "content-type": "application/json" },

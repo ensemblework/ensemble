@@ -6,6 +6,30 @@ export const WINGET_ACCEPTED = false;
 export const NPM_PUBLISHED = false;
 export const AUR_AVAILABLE = false;
 
+/** The desktop app's released version (apps/desktop/src-tauri/tauri.conf.json; a test keeps them equal). */
+export const DESKTOP_VERSION = "0.3.0";
+
+export type DesktopFile = { label: string; file: string; note: string; primary?: boolean };
+
+/** The installers a `desktop-v<version>` release carries, per system (`.github/workflows/desktop.yml`). */
+export function desktopFiles(version = DESKTOP_VERSION): Record<OsId, DesktopFile[]> {
+  return {
+    mac: [{ label: "Download for Mac", file: `Ensemble_${version}_universal.dmg`, note: "Apple silicon and Intel, macOS 13 or later", primary: true }],
+    windows: [
+      { label: "Download for Windows", file: `Ensemble_${version}_x64-setup.exe`, note: "Windows 10 and 11, x64", primary: true },
+      { label: ".msi installer", file: `Ensemble_${version}_x64_en-US.msi`, note: "for managed installs" },
+    ],
+    linux: [
+      { label: "Download AppImage", file: `Ensemble_${version}_amd64.AppImage`, note: "x64; make it executable and run it", primary: true },
+      { label: ".deb package", file: `Ensemble_${version}_amd64.deb`, note: "Ubuntu 22.04+, Debian 12+" },
+    ],
+  };
+}
+
+export function desktopUrl(file: string, version = DESKTOP_VERSION): string {
+  return `${RELEASES_URL}/download/desktop-v${version}/${file}`;
+}
+
 export const osTabs: Array<{ id: OsId; label: string }> = [
   { id: "mac", label: "macOS" },
   { id: "windows", label: "Windows" },
@@ -125,7 +149,10 @@ export const installChannels: Record<OsId, InstallChannel[]> = {
   ],
 };
 
-export const afterInstallCommands = ["ensemble login", "ensemble sandbox", "ensemble folders add ~/code/my-repo", "ensemble keys set google", "ensemble runner install"];
+/** After installing: open the app in the terminal; everything else is a / command inside it. */
+export const afterInstallCommands = ["cd ~/code/my-repo", "ensemble"];
+
+export const insideCommands = ["/login", "/run fix the failing tests", "/profile", "/agent", "/keys", "/runner install"];
 
 type Editor = {
   id: string;

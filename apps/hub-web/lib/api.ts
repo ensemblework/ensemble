@@ -5,6 +5,7 @@ import type { LayoutDocument } from "@ensemble/shared-types/widgets";
 import { bindClient, currentExternalSignal, isRequestCancelled, RequestCancelledError, trackRequest, isPageUnloading } from "./fetch-cancel";
 import { resolveHubApi } from "./hub-origin";
 import type { ApplyFailure } from "./assistant-apply";
+import { MODULE_DENIED } from "@ensemble/shared-types/modules";
 
 /** Direct hub-api origin. SSE uses this so the stream is not buffered by the Next rewrite. */
 export const HUB_API = resolveHubApi({
@@ -18,12 +19,20 @@ export const HUB_API = resolveHubApi({
  */
 export const API = typeof window === "undefined" ? HUB_API : "";
 
+/** Shown instead of the API's bare refusal for a feature the space's template leaves out. */
+export const MODULE_OFF_MESSAGE = "That feature is off in this space. Turn it on in Settings → Account → Features.";
+
 export class ApiError extends Error {
+  /** The request reached a feature that is off in this space (the API's 404 `MODULE_DENIED`). */
+  readonly moduleOff: boolean;
+
   constructor(
     message: string,
     public readonly status: number,
   ) {
-    super(message);
+    const off = status === 404 && message === MODULE_DENIED;
+    super(off ? MODULE_OFF_MESSAGE : message);
+    this.moduleOff = off;
   }
 }
 

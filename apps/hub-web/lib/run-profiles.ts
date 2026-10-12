@@ -3,36 +3,14 @@
  * default for Quick assign. The schema and the limit live in shared-types
  * (`RunProfile`, `MAX_RUN_PROFILES`); the API refuses a fourth.
  */
-import { MAX_RUN_PROFILES, type RunProfile } from "@ensemble/shared-types";
+import { MAX_RUN_PROFILES, QUICK_PROFILE_ID, quickRunProfile, type RunProfile } from "@ensemble/shared-types";
 
 export type ProfileFields = Omit<RunProfile, "id" | "name">;
 
-export const QUICK_ID = "quick";
+export const QUICK_ID = QUICK_PROFILE_ID;
 
 /** The built-in profile while none is saved: code in its own checkout, commits allowed, Ask. */
-export function quickProfile(orchestration?: { defaultExecution?: string; sandboxNetwork?: boolean } | null): RunProfile {
-  return {
-    id: QUICK_ID,
-    name: "Quick",
-    kind: "code",
-    deviceId: null,
-    engine: "ensemble",
-    model: "",
-    effort: "default",
-    branchMode: "as-is",
-    delivery: "commit",
-    askBeforePublish: true,
-    mode: "ask",
-    sandbox: orchestration?.defaultExecution !== "native",
-    useCredentials: false,
-    network: orchestration?.sandboxNetwork ?? true,
-    markDone: true,
-    maxMinutes: null,
-    maxToolCalls: null,
-    maxTurns: null,
-    instructions: "",
-  };
-}
+export const quickProfile = quickRunProfile;
 
 export function profileFields(profile: RunProfile): ProfileFields {
   const { id: _id, name: _name, ...fields } = profile;

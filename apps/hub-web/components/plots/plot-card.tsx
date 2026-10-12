@@ -7,7 +7,6 @@ import { createRoot } from "react-dom/client";
 import { ChevronDown, ChevronUp, Trash2 } from "lucide-react";
 import { chartFrame, isWorkspace, plotConfigSchema, workspaceSchema, type Frame, type PlotConfig } from "@ensemble/shared-types";
 import { ApiError, api } from "@/lib/api";
-import { MODULE_DENIED } from "@ensemble/shared-types/modules";
 import { ChartView } from "./chart-view";
 import { createHeightHandle, storedEmbedHeight } from "../editor/embed-resize";
 
@@ -84,7 +83,7 @@ function InlinePlot({ id, label, onRemove, height: storedHeight = null, onResize
     };
     void load().catch((failure: unknown) => {
       if (cancelled) return;
-      if (failure instanceof ApiError && failure.status === 404 && failure.message === MODULE_DENIED) setOff(true);
+      if (failure instanceof ApiError && failure.moduleOff) setOff(true);
       else setError(failure instanceof Error ? failure.message : "Could not load this plot.");
     });
     return () => { cancelled = true; };

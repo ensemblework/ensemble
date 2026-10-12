@@ -10,7 +10,10 @@ import { withPastScheduleWarning } from "../assistant/schedule.js";
 import { toolAllowedFor, catalog } from "../assistant/registry.js";
 import { resolveTool, writeRefusal } from "../assistant/apps.js";
 import { applyHeldCalls, isOutsideWrite, type AppliedBatch } from "../assistant/apply.js";
-import type { AnyHubTool } from "../assistant/types.js";
+import { ToolBlockedError, type AnyHubTool, type CodeSession } from "../assistant/types.js";
+import { codeTool } from "../assistant/tools/code.js";
+import { realpath } from "node:fs/promises";
+import { isAbsolute, resolve } from "node:path";
 import { appendLedger } from "../lib/ledger.js";
 import { abortAssistantTurn, runAssistantTurn, type AssistantTurnResult } from "../assistant/agent.js";
 import { loadSettings } from "../lib/settings.js";
@@ -27,10 +30,32 @@ import { env } from "../config.js";
 import { streamCorsHeaders } from "../lib/cors-origin.js";
 import { hubCorsPolicy } from "../lib/hub-cors.js";
 
+/** Ensemble Code (the CLI's Chat tab): only the runtime on the person's own computer accepts it. */
+const CodeBody = z.object({
+  folder: z.string().min(1).max(1000),
+  engine: z.enum(["ensemble", "claude-code", "codex", "cursor-agent"]).optional(),
+  profileId: z.string().max(40).nullish(),
+  runModel: z.string().max(240).nullish(),
+  outsideAccess: z.enum(["none", "read", "read-write"]).optional(),
+});
+
+/** The code session for a request, or a 409 reason when this is not the person's own computer. */
+async function codeSession(body: z.infer<typeof CodeBody> | undefined): Promise<CodeSession | undefined> {
+  if (!body) return undefined;
+  if (process.env.ENSEMBLE_DESKTOP !== "1") throw Object.assign(new Error("Ensemble Code runs on your own computer: open `ensemble` there."), { statusCode: 409 });
+  const folder = await realpath(isAbsolute(body.folder) ? body.folder : resolve(body.folder)).catch(() => {
+    throw Object.assign(new Error("That folder does not exist."), { statusCode: 400 });
+  });
+  return { folder, engine: body.engine, profileId: body.profileId ?? null, runModel: body.runModel ?? null, outsideAccess: body.outsideAccess };
+}
+
 const TurnBody = z.object({
   conversationId: z.string().uuid().optional(),
+  code: CodeBody.optional(),
   message: z.string().min(1),
   model: z.string().optional(),
+  /** With `model`: whose model it is (the CLI's model picker). */
+  provider: z.string().max(40).optional(),
   tier: z.enum(["easy", "medium", "high", "max"]).optional(),
   reasoningEffort: z.string().optional(),
   page: AssistantPageContext.optional(),
@@ -84,8 +109,10 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
         calls: z
           .array(z.object({ name: z.string(), input: z.record(z.unknown()), callId: z.string().optional() }))
           .optional(),
+        code: CodeBody.optional(),
       })
       .parse(request.body);
+    const code = await codeSession(body.code);
     if (body.conversationId) {
       const owned = await app.prisma.assistantConversation.findFirst({
         where: { id: body.conversationId, userId: request.userId, accountId: actorFor(request.userId) },
@@ -107,7 +134,7 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
       input: unknown;
     }> = [];
     for (const call of batch) {
-      const tool = await resolveTool({ prisma: app.prisma, userId: request.userId }, call.name);
+      const tool = (code ? codeTool(call.name) : undefined) ?? (await resolveTool({ prisma: app.prisma, userId: request.userId }, call.name));
       if (!tool || !tool.isWrite || !toolAllowedFor(tool, request.modules)) return reply.code(404).send({ error: `There is no write tool called ${call.name}.` });
       const refusal = writeRefusal(tool, settings);
       if (refusal) return reply.code(403).send({ error: refusal });
@@ -148,12 +175,14 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
     try {
       batchResult = await applyHeldCalls(
         app,
-        { app, prisma: app.prisma, userId: request.userId, actor: "agent", conversationId: body.conversationId, settings, modules: request.modules },
+        { app, prisma: app.prisma, userId: request.userId, actor: "agent", conversationId: body.conversationId, settings, modules: request.modules, ...(code ? { code } : {}) },
         pending,
       );
     } catch (error) {
       // Nothing ran, so the same Apply can be pressed again straight away.
       await release(locks.map((lock) => lock.key));
+      // A refusal (a folder Ensemble may not use, a missing trust) is the person's to act on: say why.
+      if (error instanceof ToolBlockedError) return reply.code(400).send({ error: error.remedy ? `${error.message} ${error.remedy}` : error.message });
       throw error;
     }
     const { outcomes, undoEntryId, partial } = batchResult;
@@ -274,6 +303,7 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
 
   app.post("/api/assistant/turn", async (request, reply) => {
     const body = TurnBody.parse(request.body);
+    const code = await codeSession(body.code);
     const message = stripLoneSurrogates(body.message);
     if (!message.trim()) return reply.code(400).send({ error: "That message could not be read." });
     const settings = await loadSettings(app.prisma, request.userId);
@@ -340,7 +370,7 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
     let result: AssistantTurnResult;
     try {
       result = await runAssistantTurn({
-        provider: explicitModel ? undefined : tierSetting.provider,
+        provider: explicitModel ? body.provider : tierSetting.provider,
         app,
         userId: request.userId,
         modules: request.modules,
@@ -355,6 +385,7 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
         messageId: userMessage.id,
         mentions: body.mentions,
         referenceContext: body.referenceContext,
+        ...(code ? { code } : {}),
         signal: abort.signal,
         emit(frame) {
           send(frame.type, frame);

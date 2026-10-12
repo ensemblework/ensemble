@@ -1,18 +1,35 @@
 import { CopyCode } from "@/components/copy-code";
+import { DesktopDownloads } from "@/components/desktop-downloads";
 import { Mark } from "@/components/mark";
 import { OsInstallTabs } from "@/components/os-install-tabs";
 import { SiteFooter, SiteHeader } from "@/components/site-chrome";
 import { pageMetadata } from "@/lib/metadata";
-import { afterInstallCommands, editors, HOSTED_MCP_URL, RELEASES_URL } from "@/lib/download";
-import { site } from "@/lib/site";
+import { afterInstallCommands, editors, HOSTED_MCP_URL, insideCommands, RELEASES_URL } from "@/lib/download";
 
 export const dynamic = "force-static";
 
 const TITLE = "Download Ensemble for macOS, Windows and Linux";
 const DESCRIPTION =
-  "Install the Ensemble CLI on macOS, Windows or Linux with Homebrew, Scoop, winget, npm or a script. Run AI agent tasks in a sandbox and connect editors over MCP.";
+  "The Ensemble desktop app and the ensemble terminal app for macOS, Windows and Linux. Run AI agent tasks in a sandbox on your own computer, answer them from anywhere, and connect editors over MCP.";
 
 export const metadata = pageMetadata({ path: "/download", title: TITLE, description: DESCRIPTION });
+
+type Segment = [className: string, text: string];
+
+/** A still of the `ensemble` app: the Tasks tab with a question waiting. */
+const TERMINAL: Segment[][] = [
+  [["t-accent", " ◆ Ensemble "], ["t-tab", " Tasks · 1 needs you "], ["", "  Chat"], ["t-dim", "                    ~/code/shop-api"]],
+  [["t-dim", " ──────────────────────────────┬──────────────────────────────────────────"]],
+  [["t-warn", " NEEDS YOU 1"], ["t-dim", "                   │ "], ["t-warn", "◆ "], ["", "Fix the flaky checkout test"]],
+  [["t-accent", " ▸ "], ["t-warn", "◆ "], ["", "Fix the flaky checkout…  2m "], ["t-dim", "│ Claude Code · Ask · may commit · sandbox on"]],
+  [["t-dim", " RUNNING 1                     │"]],
+  [["t-accent", "   ● "], ["", "Add rate limiting       4m "], ["t-dim", "│ "], ["t-warn", "Claude Code asks:"]],
+  [["t-dim", " DONE 3                        │ "], ["", "Pin the clock with fake timers, or retry"]],
+  [["t-ok", "   ✓ "], ["", "Release notes           1h "], ["t-dim", "│ "], ["", "the request twice?"]],
+  [["", ""]],
+  [["", " "], ["t-tab", " 1 ★ Pin the clock "], ["", "  2 Retry twice   "], ["t-warn", "3 Skip"], ["t-dim", "   or type your own answer"]],
+  [["t-accent", " › "], ["t-dim", "Type your answer, or / for commands"]],
+];
 
 export default function DownloadPage() {
   return (
@@ -24,31 +41,55 @@ export default function DownloadPage() {
         <section className="download-hero">
           <div className="glow" aria-hidden="true" />
           <Mark size={46} />
-          <p className="eyebrow">Ensemble CLI + MCP</p>
+          <p className="eyebrow">Desktop app · Terminal · MCP</p>
           <h1>
             Download Ensemble for <em>your computer.</em>
           </h1>
           <p className="lede">
-            Install the CLI to sign in, share folders, run assigned tasks, and let your editor read Ensemble through MCP. Prefer no install? Use the hosted MCP URL with a read-only key.
+            The desktop app is the easiest start. The <code>ensemble</code> command opens the same Ensemble in your terminal: your tasks, what needs you,
+            and Ensemble Code to chat and hand work to your coding agents. Both share one runtime, so install either first.
           </p>
           <div className="ctas center">
-            <a className="btn" href="#install">
-              Install the CLI <span aria-hidden="true">→</span>
+            <a className="btn" href="#desktop">
+              Download the app <span aria-hidden="true">→</span>
             </a>
-            <a className="btn btn-ghost" href="#mcp">
-              Connect an editor
+            <a className="btn btn-ghost" href="#install">
+              Install the terminal app
             </a>
+          </div>
+        </section>
+
+        <section id="desktop" className="section download-section">
+          <div className="section-head">
+            <p className="eyebrow">Desktop app</p>
+            <h2>
+              One download, <em>no setup.</em>
+            </h2>
+            <p className="section-lede">
+              Your board, Needs me and the agents, running on your computer inside its own sandbox. Sign in when you want tasks you assign on
+              ensemblework.com or from your phone to run here.
+            </p>
+          </div>
+          <DesktopDownloads />
+          <div className="download-note">
+            <h3>First launch</h3>
+            <p>
+              The installers are not code-signed yet. On macOS, open the app once, then choose System Settings → Privacy &amp; Security →{" "}
+              <em>Open Anyway</em>. On Windows, SmartScreen shows <em>More info → Run anyway</em>. On Linux, install the <code>.deb</code>, or run{" "}
+              <code>chmod +x Ensemble_*.AppImage</code> and start it. Every build, with checksums, is on <a href={RELEASES_URL}>GitHub Releases</a> under
+              tags starting <code>desktop-v</code>.
+            </p>
           </div>
         </section>
 
         <section id="install" className="section download-section">
           <div className="section-head">
-            <p className="eyebrow">Install</p>
+            <p className="eyebrow">Terminal</p>
             <h2>
-              Pick the channel that fits <em>your OS.</em>
+              Install <code>ensemble</code>, <em>then just run it.</em>
             </h2>
             <p className="section-lede">
-              Homebrew, Scoop and the scripts install the full CLI and runner. The npm package is for login and MCP only.
+              Homebrew, Scoop and the scripts install the full terminal app with its own runtime. The npm package only connects editors (MCP).
             </p>
           </div>
           <OsInstallTabs />
@@ -58,33 +99,38 @@ export default function DownloadPage() {
               Releases live on <a href={RELEASES_URL}>GitHub Releases</a>. Filter tags starting <code>cli-v</code>, download the archive or package for your CPU, then verify it against <code>SHA256SUMS.txt</code>.
             </p>
           </div>
-          <div className="download-note">
-            <h3>What it installs</h3>
-            <p>
-              The full CLI installs the <code>ensemble</code> command, a bundled Node runtime, the local runner sidecar, and a user-level runner service when you run <code>ensemble runner install</code>. It does not need sudo for script installs.
-            </p>
-          </div>
         </section>
 
         <section className="section download-section">
           <div className="section-head">
-            <p className="eyebrow">Run tasks</p>
+            <p className="eyebrow">Use it</p>
             <h2>
-              Sign in and let Ensemble use <em>one folder.</em>
+              Open it in your project. <em>Type / for the rest.</em>
             </h2>
             <p className="section-lede">
-              Start with login. <code>ensemble sandbox</code> shows this computer&apos;s sandbox (on Windows, login sets it up and Windows asks
-              once). Then share a repo folder, add a model key or use your own Claude Code sign-in, and install or start the runner.
+              <code>ensemble</code> starts Ensemble on this computer if it is not running, and it keeps running your tasks after you close the terminal.{" "}
+              <strong>Tasks</strong> shows runs and everything that needs you: click an answer, press its number, type your own, or use{" "}
+              <code>/allow</code> and <code>/deny</code>. <strong>Chat</strong> is Ensemble Code: ask about the folder, read its PDFs and Word files, and
+              hand work to Ensemble&apos;s agent, Claude Code, Codex or Cursor under one of your run profiles.
             </p>
           </div>
+          <pre className="terminal-still" aria-label="The ensemble app in a terminal, with a question waiting">
+            {TERMINAL.map((line, row) => (
+              <span key={row}>
+                {line.map(([className, text], index) => (className ? <span key={index} className={className}>{text}</span> : text))}
+                {"\n"}
+              </span>
+            ))}
+          </pre>
           <div className="download-two">
-            <CopyCode label="After install" code={afterInstallCommands.join("\n")} />
-            <CopyCode label="Start without login service" code="ensemble runner start" />
+            <CopyCode label="Open it" code={afterInstallCommands.join("\n")} />
+            <CopyCode label="Inside, type /" code={insideCommands.join("\n")} />
           </div>
           <div className="download-note">
             <p>
-              Useful checks: <code>ensemble status</code>, <code>ensemble doctor</code>, and <code>ensemble update</code>. Answer what a task
-              asks with <code>ensemble needs</code>, and trust a folder for Review only or Run unattended with <code>ensemble trust add</code>.
+              <code>/login</code> pairs this computer with your account, so tasks you assign on ensemblework.com or from your phone run here.{" "}
+              <code>/runner install</code> starts Ensemble when you log in. For scripts, every command also runs on its own:{" "}
+              <code>ensemble help commands</code>.
             </p>
           </div>
         </section>
@@ -130,14 +176,15 @@ export default function DownloadPage() {
               <h3>What systems are supported?</h3>
               <p>
                 macOS 13+ on Apple Silicon or Intel, Windows 10/11 x64, and Linux x64 or arm64 with glibc 2.35+ (Ubuntu 22.04+, Debian 12+, Fedora 36+). Git is
-                needed for code tasks. The download is about 120 MB because it carries its own Node runtime and local database.
+                needed for code tasks. The terminal app is about 120 MB because it carries its own Node runtime and local database.
               </p>
             </article>
             <article>
               <h3>Where do keys live?</h3>
               <p>
-                Model keys you save with <code>ensemble keys set</code> stay encrypted on your computer and are never sent to Ensemble. MCP is read-only: the{" "}
-                <code>ens_</code> key the CLI or the Connect page creates can read your Ensemble context and cannot change anything.
+                Model keys you add with <code>/keys</code> or in the desktop app stay encrypted on your computer and are never sent to Ensemble. Claude Code,
+                Codex and Cursor use their own sign-in. MCP is read-only: the <code>ens_</code> key the CLI or the Connect page creates can read your
+                Ensemble context and cannot change anything.
               </p>
             </article>
             <article>
@@ -151,22 +198,22 @@ export default function DownloadPage() {
             <article>
               <h3>Where can tasks run?</h3>
               <p>
-                Only in folders you share with <code>ensemble folders add</code>, and only while the runner is running. Remove a folder with{" "}
-                <code>ensemble folders remove</code>. <code>ensemble logout</code> removes this computer from your account.
+                In the folder you opened <code>ensemble</code> in, or a fresh clone of a repo, inside the sandbox. Tasks from the web run only in folders you
+                share with this computer. <code>/logout</code> removes this computer from your account.
               </p>
             </article>
             <article>
               <h3>Will macOS or Windows warn about unsigned builds?</h3>
               <p>
-                Not for Homebrew, Scoop, the install scripts, or the Linux packages: they do not mark the files as downloaded from the internet. A zip you download
-                by hand in a browser may need “Open anyway” (macOS) or “Run anyway” (Windows) once.
+                The desktop installers do, once (see First launch above). The terminal app does not when installed with Homebrew, Scoop, the install
+                scripts or the Linux packages; a zip you download by hand may need “Open anyway” or “Run anyway” once.
               </p>
             </article>
             <article>
-              <h3>What about the desktop app?</h3>
+              <h3>Desktop app or terminal?</h3>
               <p>
-                The CLI and the desktop app share one runtime on a computer: one database, one pairing, one list of trusted folders, one sandbox.
-                Install either first; the other uses what is already there.
+                Either, or both. They share one runtime on a computer: one database, one pairing, one list of trusted folders, one sandbox. A task started
+                in one shows up in the other, and either can answer what it asks.
               </p>
             </article>
           </div>

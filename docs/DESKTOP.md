@@ -43,6 +43,8 @@ On a Mac, `pnpm desktop:dmg` builds an unsigned disk image locally. [desktop/MAC
 
 The window loads `ensemble://localhost` (on Windows, `http://ensemble.localhost`). The webview rewrites `/api` to the random loopback port and sends the launch token. It does not receive shell or filesystem permissions. Other origins, `mailto:`, and `tel:` open in the system browser. `javascript:` and `file:` are dropped.
 
+**Downloads.** [ensemblework.com/download](https://ensemblework.com/download) lists the installers for the version in `apps/landing/lib/download.ts` (`DESKTOP_VERSION`, kept equal to `tauri.conf.json` by `packages/shared-types/src/release-versions.test.ts`), linking the `desktop-v<version>` release assets: `Ensemble_<v>_universal.dmg`, `Ensemble_<v>_x64-setup.exe` and `_x64_en-US.msi`, `Ensemble_<v>_amd64.AppImage` and `_amd64.deb`. The visitor's system comes first, with first-launch steps for the unsigned builds. Bump both versions together and tag after the merge, or the links point at a release that does not exist yet.
+
 The Ensemble menu exports a diagnostics file (versions and log tails, with the launch token and `ens_` keys removed) and checks for updates. An update is not installed while workspace jobs are running. Signing the updater artifacts needs the `TAURI_SIGNING_PRIVATE_KEY` secret; without it, CI builds unsigned installers.
 
 Migrations run on launch. An existing database is copied into `backups/` first. A database written by a newer build is refused.
