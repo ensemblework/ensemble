@@ -1,6 +1,6 @@
 {
   "name": "ensemblework",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "Ensemble CLI: run tasks assigned from ensemblework.com on your computer, and connect your editor to Ensemble over MCP.",
   "license": "FSL-1.1-MIT",
   "homepage": "https://ensemblework.com/download",
@@ -25,7 +25,7 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "node scripts/build.mjs && node --import tsx --test \"src/**/*.test.ts\" \"src/**/*.test.tsx\" ../../packaging/render.test.mjs"
+    "test": "node scripts/build.mjs && node --import tsx --test --test-timeout=120000 \"src/**/*.test.ts\" \"src/**/*.test.tsx\" ../../packaging/render.test.mjs"
   },
   "devDependencies": {
     "@ensemble/context-bridge": "workspace:*",

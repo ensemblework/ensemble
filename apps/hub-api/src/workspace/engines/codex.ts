@@ -27,7 +27,7 @@ import { askPerson, type JobContext } from "../tools.js";
 import { claudeFilesystem, type EngineResult } from "./claude-code.js";
 import { judgeEngineCall, type EngineAnswer } from "./judge.js";
 import { RpcConnection } from "./rpc.js";
-import { hookScriptPath, localApiUrl, registerEngineRun, unregisterEngineRun } from "./registry.js";
+import { hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
 
 /** Keys in Ensemble's own environment that must not stand in for the person's Codex sign-in. */
 const KEY_VARIABLES = ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"];
@@ -150,12 +150,13 @@ export function codexApprovalPolicy(ctx: Pick<JobContext, "accessMode" | "truste
 
 export async function runCodex(
   ctx: JobContext,
-  options: { prompt: string; model?: string | null; stopCheck: () => Promise<void> },
+  options: { prompt: string; model?: string | null; stopCheck: () => Promise<void>; resume?: string | null; chat?: boolean },
 ): Promise<EngineResult> {
   const codex = await codexBinary();
   if (!codex) throw new Error("Codex is not on this computer. Install the ChatGPT app or the Codex CLI, sign in, and Run again.");
   const credential = registerEngineRun(ctx);
-  const env: NodeJS.ProcessEnv = { ...process.env, ENSEMBLE_ENGINE_URL: localApiUrl(), ENSEMBLE_RUN: credential };
+  const ensembleMcp = mcpEnv(credential, options.chat === true);
+  const env: NodeJS.ProcessEnv = { ...process.env, ...ensembleMcp };
   for (const key of KEY_VARIABLES) delete env[key];
   delete env.ENSEMBLE_DESKTOP_TOKEN;
   delete env.ENSEMBLE_INTERNAL_TOKEN;
@@ -240,7 +241,7 @@ export async function runCodex(
     const closed = [...SECRET_HOME_PATHS.map((name) => join(home, name)), desktopDataDir({ platform: process.platform, home }), ENSEMBLE_SOURCE, dirname(await askpassPath())];
     const access = ctx.outsideAccess ?? "none";
     const writable = claudeFilesystem({ access, home, writable: [ctx.root, await cacheDir()], closed, homeEntries: access === "read-write" ? await readdir(home).catch(() => []) : [] }).allowWrite;
-    const thread = (await server.request("thread/start", {
+    const settings = {
       cwd: ctx.root,
       approvalPolicy: codexApprovalPolicy(ctx),
       approvalsReviewer: "user",
@@ -254,13 +255,20 @@ export async function runCodex(
           ensemble: {
             command: process.execPath,
             args: [hookScriptPath("ensemble-ask-mcp.mjs")],
-            env: { ENSEMBLE_ENGINE_URL: localApiUrl(), ENSEMBLE_RUN: credential },
+            env: ensembleMcp,
             tool_timeout_sec: 86_400,
           },
         },
       },
-      serviceName: "ensemble",
-    })) as { thread?: { id?: string }; model?: string };
+    };
+    // The next message in a chat continues the same Codex thread, with this run's settings.
+    const thread = (
+      options.resume
+        ? await server.request("thread/resume", { threadId: options.resume, ...settings }).catch((error: Error) => {
+            throw new SessionGoneError(`Codex could not reopen the chat's thread: ${error.message}`);
+          })
+        : await server.request("thread/start", { ...settings, serviceName: "ensemble" })
+    ) as { thread?: { id?: string }; model?: string };
     threadId = thread.thread?.id ?? null;
     if (!threadId) throw new Error("Codex did not start a thread.");
     result.model = thread.model ?? null;

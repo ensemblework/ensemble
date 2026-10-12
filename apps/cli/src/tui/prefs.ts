@@ -7,8 +7,10 @@ export type Engine = "ensemble" | "claude-code" | "codex" | "cursor-agent";
 export type Prefs = {
   /** `provider::model` for Ensemble Code's own replies, or null for the task tier's model. */
   chatModel: string | null;
-  /** Who does the coding work Ensemble Code starts; null follows the run profile. */
+  /** Who you work with (Chat and /run); null follows the run profile. */
   engine: Engine | null;
+  /** The model Claude Code, Codex or Cursor uses in Chat and /run; null is the agent's own default. */
+  agentModel: string | null;
   /** Run profile id or name; null is the default profile. */
   profileId: string | null;
   /** The last tab open. */
@@ -16,7 +18,7 @@ export type Prefs = {
   sidebar: boolean;
 };
 
-export const DEFAULT_PREFS: Prefs = { chatModel: null, engine: null, profileId: null, tab: "tasks", sidebar: true };
+export const DEFAULT_PREFS: Prefs = { chatModel: null, engine: null, agentModel: null, profileId: null, tab: "tasks", sidebar: true };
 
 const file = (paths: CliPaths) => join(paths.configDir, "app.json");
 

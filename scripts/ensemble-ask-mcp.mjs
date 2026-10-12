@@ -9,6 +9,10 @@
  *
  * Started by Claude Code from the run's --mcp-config with ENSEMBLE_ENGINE_URL
  * and ENSEMBLE_RUN set.
+ *
+ * In Chat with the person's own agent (ENSEMBLE_CHAT=1) it also offers their
+ * Ensemble board: ensemble_list_tasks, ensemble_create_task and
+ * ensemble_search, answered by /api/engine/tool for that chat's run only.
  */
 import { request as httpRequest } from "node:http";
 import { resolve } from "node:path";
@@ -30,6 +34,42 @@ const TOOL = {
   },
 };
 
+const CHAT_TOOLS = [
+  {
+    name: "ensemble_list_tasks",
+    description: "List the person's tasks on their Ensemble board (open ones unless include_done), newest first, with status, due date and id.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Only tasks whose title or description contains this." },
+        include_done: { type: "boolean", description: "Include done and dropped tasks." },
+      },
+    },
+  },
+  {
+    name: "ensemble_create_task",
+    description: "Create a task (a todo) on the person's Ensemble board, for them. Use it when they ask you to make a task, a todo or a reminder.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "A short imperative title." },
+        description: { type: "string", description: "What to do, with any detail worth keeping." },
+        due: { type: "string", description: "Due date, YYYY-MM-DD." },
+      },
+      required: ["title"],
+    },
+  },
+  {
+    name: "ensemble_search",
+    description: "Search the person's Ensemble: notes, pages, tasks, projects and meeting notes. Returns matches with a short excerpt.",
+    inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
+  },
+];
+
+export function toolsFor(env = process.env) {
+  return env.ENSEMBLE_CHAT === "1" ? [TOOL, ...CHAT_TOOLS] : [TOOL];
+}
+
 function send(message) {
   process.stdout.write(`${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`);
 }
@@ -50,13 +90,18 @@ export function questionInput(args) {
 }
 
 function ask(input) {
+  return post("/api/engine/ask", { tool_name: "AskUserQuestion", tool_input: input }, (message) => ({ decision: "deny", message }));
+}
+
+/** One request to this computer's Ensemble with the run's secret; `failed` shapes the answer when it cannot be reached. */
+function post(path, payload, failed) {
   const base = process.env.ENSEMBLE_ENGINE_URL;
   const run = process.env.ENSEMBLE_RUN;
-  if (!base || !run) return Promise.resolve({ decision: "deny", message: "Ensemble is not reachable from this run." });
-  const body = JSON.stringify({ tool_name: "AskUserQuestion", tool_input: input });
+  if (!base || !run) return Promise.resolve(failed("Ensemble is not reachable from this run."));
+  const body = JSON.stringify(payload);
   return new Promise((done) => {
     const req = httpRequest(
-      new URL("/api/engine/ask", base),
+      new URL(path, base),
       { method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body), "x-ensemble-run": run } },
       (res) => {
         let text = "";
@@ -66,12 +111,12 @@ function ask(input) {
           try {
             done(JSON.parse(text));
           } catch {
-            done({ decision: "deny", message: `Ensemble answered ${res.statusCode}.` });
+            done(failed(`Ensemble answered ${res.statusCode}.`));
           }
         });
       },
     );
-    req.on("error", (error) => done({ decision: "deny", message: `Ensemble could not be asked (${error.message}).` }));
+    req.on("error", (error) => done(failed(`Ensemble could not be reached (${error.message}).`)));
     req.end(body);
   });
 }
@@ -87,10 +132,17 @@ async function handle(message) {
   if (message.method === "initialize") {
     send({ id: message.id, result: { protocolVersion: message.params?.protocolVersion ?? "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "ensemble", version: "1" } } });
   } else if (message.method === "tools/list") {
-    send({ id: message.id, result: { tools: [TOOL] } });
+    send({ id: message.id, result: { tools: toolsFor() } });
   } else if (message.method === "tools/call") {
-    if (message.params?.name !== TOOL.name) {
-      send({ id: message.id, error: { code: -32602, message: `Unknown tool ${message.params?.name}` } });
+    const name = message.params?.name;
+    if (name !== TOOL.name && toolsFor().some((tool) => tool.name === name)) {
+      const answer = await post("/api/engine/tool", { name, input: message.params?.arguments ?? {} }, (error) => ({ error }));
+      const text = typeof answer?.text === "string" ? answer.text : String(answer?.error ?? "The tool failed.");
+      send({ id: message.id, result: { content: [{ type: "text", text }], ...(typeof answer?.text === "string" ? {} : { isError: true }) } });
+      return;
+    }
+    if (name !== TOOL.name) {
+      send({ id: message.id, error: { code: -32602, message: `Unknown tool ${name}` } });
       return;
     }
     const input = questionInput(message.params?.arguments ?? {});

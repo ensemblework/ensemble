@@ -127,7 +127,7 @@ pnpm bridge:verify    # typecheck, MCP client tests, smoke
 
 ## Ensemble CLI
 
-`ensemble` opens Ensemble in your terminal: a **Tasks** tab with your agent runs and everything waiting on you (answer with a click, a number or `/allow`), and a **Chat** tab, Ensemble Code, that reads the folder and hands coding work to Ensemble's agent, Claude Code, Codex or Cursor under a run profile. It starts this computer's runtime in the background, so tasks you assign from the web run here, and `ensemble mcp` connects editors over MCP. The desktop app and installers for each system are on the same page. Install it from [ensemblework.com/download](https://ensemblework.com/download):
+`ensemble` opens Ensemble in your terminal: a **Tasks** tab with your agent runs and everything waiting on you (answer with a click, a number or `/allow`), and a **Chat** tab with your agent: Claude Code, Codex or Cursor on your own sign-in, working in the folder under a run profile with your Ensemble board loaded (or Ensemble Code, with a model key). It starts this computer's runtime in the background, so tasks you assign from the web run here, and `ensemble mcp` connects editors over MCP. The desktop app and installers for each system are on the same page. Install it from [ensemblework.com/download](https://ensemblework.com/download):
 
 ```bash
 brew install ensemblework/tap/ensemble                 # macOS, Linux

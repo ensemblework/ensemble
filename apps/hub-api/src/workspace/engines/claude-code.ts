@@ -31,7 +31,7 @@ import { LINUX_TOOLCHAIN_HOME } from "../sandbox/linux.js";
 import { SECRET_HOME_PATHS, TOOLCHAIN_HOME_READS } from "../sandbox/seatbelt.js";
 import type { JobContext } from "../tools.js";
 import type { OutsideAccess } from "../trust.js";
-import { hookScriptPath, localApiUrl, registerEngineRun, unregisterEngineRun } from "./registry.js";
+import { hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
 
 export type EngineResult = { text: string; turns: number; toolCalls: number; tokensIn: number; tokensOut: number; model: string | null; costUsd: number | null };
 
@@ -107,7 +107,7 @@ function summarize(name: string, input: Record<string, unknown>): string {
 
 export async function runClaudeCode(
   ctx: JobContext,
-  options: { prompt: string; model?: string | null; maxTurns: number; stopCheck: () => Promise<void> },
+  options: { prompt: string; model?: string | null; maxTurns: number; stopCheck: () => Promise<void>; resume?: string | null; chat?: boolean },
 ): Promise<EngineResult> {
   const claude = await hostExecutable("claude").catch(() => {
     throw new Error("Claude Code is not installed on this computer (the `claude` command was not found). Install it and sign in, or pick another engine.");
@@ -145,15 +145,18 @@ export async function runClaudeCode(
     "--max-turns",
     String(options.maxTurns),
     ...(options.model && options.model !== "default" ? ["--model", options.model] : []),
+    // The next message in a chat: the same Claude Code session, so it remembers the conversation.
+    ...(options.resume ? ["--resume", options.resume] : []),
   ];
   // A question may wait hours for the person; the tool call must not time out first.
-  const env: NodeJS.ProcessEnv = { ...process.env, ENSEMBLE_ENGINE_URL: localApiUrl(), ENSEMBLE_RUN: credential, MCP_TOOL_TIMEOUT: String(86_400_000) };
+  const env: NodeJS.ProcessEnv = { ...process.env, ...mcpEnv(credential, options.chat === true), MCP_TOOL_TIMEOUT: String(86_400_000) };
   for (const key of KEY_VARIABLES) delete env[key];
   delete env.ENSEMBLE_DESKTOP_TOKEN;
   delete env.ENSEMBLE_INTERNAL_TOKEN;
   const child = spawn(claude, args, { cwd: ctx.root, env, stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32", windowsHide: true });
   const result: EngineResult = { text: "", turns: 0, toolCalls: 0, tokensIn: 0, tokensOut: 0, model: null, costUsd: null };
   let failure: string | null = null;
+  let started = false;
   let stderr = "";
   const stop = () => {
     if (!child.pid) return;
@@ -182,6 +185,7 @@ export async function runClaudeCode(
         continue;
       }
       if (message.type === "system" && message.subtype === "init") {
+        started = true;
         result.model = typeof message.model === "string" ? message.model : null;
         await ctx.event("engine", { engine: "claude-code", model: result.model, session: message.session_id ?? null });
         await ctx.progress(`Claude Code started${result.model ? ` (${result.model})` : ""}`);
@@ -217,6 +221,7 @@ export async function runClaudeCode(
     const code = await new Promise<number>((done) => (child.exitCode !== null ? done(child.exitCode) : child.once("close", (value) => done(value ?? 1))));
     if (ctx.signal.aborted) throw new DOMException("Stopped", "AbortError");
     if (failure) throw new Error(failure);
+    if (code !== 0 && options.resume && !started && /no conversation found|session/i.test(stderr)) throw new SessionGoneError(stderr.trim().slice(0, 300));
     if (code !== 0) {
       const sandbox = /sandbox/i.test(stderr) && ctx.sandboxed;
       throw new Error(

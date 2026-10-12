@@ -47,7 +47,7 @@ export default function DownloadPage() {
           </h1>
           <p className="lede">
             The desktop app is the easiest start. The <code>ensemble</code> command opens the same Ensemble in your terminal: your tasks, what needs you,
-            and Ensemble Code to chat and hand work to your coding agents. Both share one runtime, so install either first.
+            and a chat with Claude Code, Codex or Cursor on your own sign-in. Both share one runtime, so install either first.
           </p>
           <div className="ctas center">
             <a className="btn" href="#desktop">
@@ -110,8 +110,8 @@ export default function DownloadPage() {
             <p className="section-lede">
               <code>ensemble</code> starts Ensemble on this computer if it is not running, and it keeps running your tasks after you close the terminal.{" "}
               <strong>Tasks</strong> shows runs and everything that needs you: click an answer, press its number, type your own, or use{" "}
-              <code>/allow</code> and <code>/deny</code>. <strong>Chat</strong> is Ensemble Code: ask about the folder, read its PDFs and Word files, and
-              hand work to Ensemble&apos;s agent, Claude Code, Codex or Cursor under one of your run profiles.
+              <code>/allow</code> and <code>/deny</code>. <strong>Chat</strong> is your agent: Claude Code, Codex or Cursor on your own sign-in, working in this folder under one of your run profiles with your Ensemble board loaded, and remembering the conversation.
+              Or Ensemble Code, with a model key.
             </p>
           </div>
           <pre className="terminal-still" aria-label="The ensemble app in a terminal, with a question waiting">

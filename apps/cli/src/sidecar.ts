@@ -18,6 +18,8 @@ export type Discovery = {
   owner?: "desktop" | "cli";
   /** `admin` for a short-lived sidecar a CLI command started; `runner` otherwise. */
   mode?: "admin" | "runner";
+  /** The launcher's version (`cli-0.3.4`, `desktop-0.3.1`). Absent in older sidecars. */
+  version?: string;
 };
 
 /** The sidecar's exit code when another runtime already has this computer's data folder. */
@@ -53,7 +55,7 @@ export async function sidecarAvailable(sidecarDir: string, platform: NodeJS.Plat
 
 export async function readDiscovery(file: string): Promise<Discovery | null> {
   try {
-    const value = JSON.parse(await readFile(file, "utf8")) as { port?: unknown; token?: unknown; pid?: unknown; owner?: unknown; mode?: unknown };
+    const value = JSON.parse(await readFile(file, "utf8")) as { port?: unknown; token?: unknown; pid?: unknown; owner?: unknown; mode?: unknown; version?: unknown };
     const port = typeof value.port === "number" ? value.port : Number(value.port);
     if (!Number.isInteger(port) || port < 1 || port > 65535 || typeof value.token !== "string" || value.token.length < 16) return null;
     const pid = typeof value.pid === "number" && Number.isInteger(value.pid) && value.pid > 0 ? value.pid : undefined;
@@ -61,6 +63,7 @@ export async function readDiscovery(file: string): Promise<Discovery | null> {
     if (pid) found.pid = pid;
     if (value.owner === "desktop" || value.owner === "cli") found.owner = value.owner;
     if (value.mode === "admin" || value.mode === "runner") found.mode = value.mode;
+    if (typeof value.version === "string" && value.version.length <= 64) found.version = value.version;
     return found;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
@@ -258,6 +261,11 @@ export async function startRunner(input: { sidecarDir: string; paths?: CliPaths;
  * sidecar wrote one. A stale pid file is never trusted on its own, because
  * the operating system may have handed that number to another program.
  */
+/** A runner this CLI started (not the desktop app's, not a short admin sidecar) from another version of the CLI. */
+export function outdatedRunner(discovery: Discovery, version = VERSION): boolean {
+  return discovery.owner === "cli" && discovery.mode !== "admin" && Boolean(discovery.version) && discovery.version !== `cli-${version}`;
+}
+
 export class DesktopOwnsRuntimeError extends Error {
   constructor() {
     super("The Ensemble app is running this computer's Ensemble. Quit the app to stop it; the CLI uses the same runtime meanwhile.");

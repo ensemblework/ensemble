@@ -12,6 +12,19 @@ import type { JobContext } from "../tools.js";
 import { judgeEngineCall, type EngineAnswer, type EngineCall } from "./judge.js";
 
 type Run = { ctx: JobContext; secret: string };
+
+/** The agent could not reopen an earlier chat session (deleted, or from another computer): start a new one. */
+export class SessionGoneError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SessionGoneError";
+  }
+}
+
+/** Environment for the run's ensemble MCP server: chat turns also get the person's board (`ensemble_*` tools). */
+export function mcpEnv(credential: string, chat: boolean): Record<string, string> {
+  return { ENSEMBLE_ENGINE_URL: localApiUrl(), ENSEMBLE_RUN: credential, ...(chat ? { ENSEMBLE_CHAT: "1" } : {}) };
+}
 const runs = new Map<string, Run>();
 let localPort = 0;
 

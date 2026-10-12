@@ -304,9 +304,9 @@ export default function Home() {
               Your board, <em>your terminal.</em>
             </h2>
             <p className="section-lede">
-              Type <code>ensemble</code> in a project. One tab shows your runs and what needs you; the other is Ensemble Code, a chat
-              that reads the folder and hands work to your coding agents. Tasks you assign on the web run here too, in a sandbox the
-              operating system enforces.
+              Type <code>ensemble</code> in a project. One tab shows your runs and what needs you; the other is a chat with Claude
+              Code, Codex or Cursor on your own sign-in, working in that folder with your Ensemble board loaded. Tasks you assign on the
+              web run here too, in a sandbox the operating system enforces.
             </p>
           </div>
           <div className="cli-grid">

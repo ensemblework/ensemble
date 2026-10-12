@@ -154,6 +154,8 @@ export async function bootSidecar(root: string, runtimeUrl: string, extraEnv: Re
       ENSEMBLE_INPROCESS_RUNTIME: "0",
       REDIS_URL: "memory://desktop",
       HUB_API_PORT: "0",
+      // The test's PATH (stand-in agents first), not the developer's login shell.
+      ENSEMBLE_LOGIN_SHELL_PATH: "0",
       ...extraEnv,
     },
     stdio: ["ignore", "pipe", "pipe"],

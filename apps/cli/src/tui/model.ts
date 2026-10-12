@@ -12,18 +12,18 @@ export type Command = { name: string; args?: string; description: string; aliase
 
 export const COMMANDS: readonly Command[] = [
   { name: "tasks", description: "Agent runs, and what needs you" },
-  { name: "chat", description: "Talk to Ensemble Code" },
+  { name: "chat", description: "Chat with your agent" },
   { name: "new", description: "Start a new chat", tab: "chat" },
-  { name: "run", args: "<what to do>", description: "Start an agent on it, in this folder, with your run profile" },
+  { name: "run", args: "<what to do>", description: "Start your agent on it as a task, in this folder, with your run profile" },
   { name: "allow", args: "[once|task|always]", description: "Allow what the selected run is asking", tab: "tasks" },
   { name: "deny", args: "[reason]", description: "Deny what the selected run is asking", tab: "tasks" },
   { name: "answer", args: "<text>", description: "Answer the selected question in your own words", tab: "tasks" },
   { name: "stop", description: "Stop the selected run, or the reply being written" },
   { name: "retry", description: "Run the selected task again", tab: "tasks" },
   { name: "profile", args: "[name]", description: "Run profile: mode, git, sandbox, internet" },
-  { name: "agent", args: "[engine]", description: "Who codes: Ensemble agent, Claude Code, Codex, Cursor" },
-  { name: "model", args: "[model]", description: "The model Ensemble Code chats with" },
-  { name: "folder", description: "The folder Ensemble Code reads and works in" },
+  { name: "agent", args: "[name]", description: "Who you work with: Claude Code, Codex, Cursor (your sign-in) or Ensemble agent" },
+  { name: "model", args: "[model]", description: "Your agent's model" },
+  { name: "folder", description: "The folder your agent works in" },
   { name: "trust", description: "Trust this folder (Review only and Run unattended need it)" },
   { name: "keys", args: "[provider]", description: "Add a model key on this computer" },
   { name: "sandbox", description: "This computer's sandbox, and set it up" },
@@ -200,6 +200,50 @@ export function runRequest(input: {
     ...(profile.maxToolCalls ? { maxToolCalls: profile.maxToolCalls } : {}),
     ...(profile.maxTurns ? { maxTurns: profile.maxTurns } : {}),
   };
+}
+
+// ── chat with your own agent ────────────────────────────────────────────────────────────────
+
+export type AgentEngine = "claude-code" | "codex" | "cursor-agent";
+
+/** A run that has ended, one way or another. */
+export const FINISHED = new Set(["succeeded", "failed", "cancelled", "interrupted", "blocked"]);
+
+/** Models to offer for each agent; null means type one (the agent's names change often). */
+export const AGENT_MODELS: Record<AgentEngine, string[] | null> = { "claude-code": ["default", "sonnet", "opus", "haiku"], codex: null, "cursor-agent": null };
+
+/**
+ * The Assign request for one message in Chat with the person's own agent: in the folder the app
+ * was opened in (later messages continue the first one's folder and session), under the run profile.
+ */
+export function chatTurnRequest(input: {
+  taskId: string;
+  folder: string;
+  message: string;
+  profile: RunProfile;
+  engine: AgentEngine;
+  model: string | null;
+  previousJobId: string | null;
+}): Record<string, unknown> {
+  const first = !input.previousJobId;
+  return {
+    ...runRequest({ taskId: input.taskId, folder: input.folder, instructions: input.message, profile: { ...input.profile, instructions: first ? input.profile.instructions : "" }, engine: input.engine }),
+    ...(input.model && input.model !== "default" ? { model: input.model } : {}),
+    // A chat works on the folder's own branch; it does not start a branch per message.
+    branchMode: "as-is",
+    markDone: false,
+    chat: true,
+    ...(input.previousJobId ? { continueFromJobId: input.previousJobId } : {}),
+  };
+}
+
+/** The agent to chat with when this computer has no model key: the first one installed. */
+export function installedAgent(agents: ReadonlyArray<{ id: string; app: boolean; cli: string | null }>): AgentEngine | null {
+  const has = (id: string, app = false) => agents.some((agent) => agent.id === id && (agent.cli || (app && agent.app)));
+  if (has("claude")) return "claude-code";
+  if (has("codex", true)) return "codex";
+  if (has("cursor")) return "cursor-agent";
+  return null;
 }
 
 /** A short title from what the person typed. */
