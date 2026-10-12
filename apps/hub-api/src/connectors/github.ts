@@ -81,6 +81,7 @@ export async function syncGitHub(ctx: SyncContext): Promise<SyncResult> {
         },
         containers: [{ source: "github", id: fullName.toLowerCase(), name: fullName }],
       });
+      if (!stored) continue;
       result.items += 1;
       result.stored.push(stored);
       if (role === "reviewer" || role === "assignee") {

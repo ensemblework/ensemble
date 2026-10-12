@@ -41,7 +41,7 @@ Gmail, Outlook, Teams, Google and Outlook calendars, Slack, GitHub and Linear sy
 
 ### 2.3 Attach items to a task or project
 
-**From your apps** on a task page and a project page opens a picker: choose an app (or all of them), search, and attach. Ensemble reads the item once and keeps its text (up to 20,000 characters) as an `Artifact` linked to the task or project (`metadata.via = "app-item"`), with a link back. **Refresh** reads it again; **Remove** unlinks it.
+**From your apps** on a task page and a project page opens a picker: choose an app (or all of them), search, and attach. Ensemble reads the item once and keeps its text (up to 20,000 characters) as an `Artifact` linked to the task or project (`metadata.via = "app-item"`), with a link back. **Refresh** reads it again; **Remove** unlinks it. Attached items are also listed in Files → From your apps; removing one there takes it off every task and project, and attaching it again brings it back ([32 §11](32_FILES.md#11-from-your-apps)).
 
 Who reads attached items:
 - the assistant (`hub_search_context`, and on the task's page);

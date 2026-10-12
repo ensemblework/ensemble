@@ -842,6 +842,18 @@ select:focus-visible {
 .comment-host.has-comments .page-with-comments {
   padding-right: 248px;
 }
+/* A page in focus mode (components/pages/page-focus.tsx): the title and the body in a reading column, nothing else. */
+.page-focus > * {
+  max-width: 780px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.page-focus:has(.comment-host.has-comments) > * {
+  max-width: 1028px;
+}
+.page-focus > :not([data-focus-keep]) {
+  display: none;
+}
 .comment-margin {
   position: absolute;
   top: 0;

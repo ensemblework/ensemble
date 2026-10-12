@@ -52,6 +52,7 @@ import { taskPersonId, useSpacePeople } from "@/lib/space-people";
 import { colorFor } from "@/lib/presence";
 import { TaskExportMenu } from "./task-export";
 import { SourceFileBanner, exportBackItems } from "../files/source-file-banner";
+import { PAGE_FOCUS_CLASS, PageFocusBar, PageFocusButton, usePageFocus } from "../pages/page-focus";
 
 type SaveState = "saved" | "saving" | "dirty" | "error";
 
@@ -158,6 +159,8 @@ export function TaskPage({
   const watchingRef = useRef(watching);
   watchingRef.current = watching;
   const [remote, setRemote] = useState<{ doc: PageDocument; stamp: number } | null>(null);
+  // Focus mode is for the task's own page, not the side peek.
+  const focusMode = usePageFocus(variant === "page");
 
   /**
    * The editor owns the document once it is loaded. Background refetches
@@ -309,15 +312,19 @@ export function TaskPage({
     [flush],
   );
 
+  const exitFocus = focusMode.exit;
   const onMentionClick = useCallback(
     (mention: PageMention) => {
-      if (mention.kind === "task") peek.open(mention.id);
-      else {
+      if (mention.kind === "task") {
+        // The side peek opens under focus mode's layer, so leave focus mode first.
+        exitFocus();
+        peek.open(mention.id);
+      } else {
         const href = mentionHref(mention);
         if (href) router.push(href);
       }
     },
-    [peek, router],
+    [peek, router, exitFocus],
   );
 
   const taskPending = task.isLoading || page.isLoading;
@@ -339,10 +346,25 @@ export function TaskPage({
   const source = page.data?.sourceFile ?? null;
   const pageNow = () => ({ title: record.title || "Untitled", doc: latest.current ?? page.data?.content ?? textToDoc(page.data?.notes ?? "") });
 
+  const saveText =
+    saveState === "saved" ? "All changes saved" : saveState === "saving" ? "Saving…" : saveState === "dirty" ? "Unsaved changes" : "Could not save. Retry on the next edit.";
+
   return (
-    <div className={cx("mx-auto w-full pb-24", variant === "peek" ? "max-w-[860px] px-4 pt-4 sm:px-8 sm:pt-6" : "max-w-[900px] px-4 pt-6 sm:px-16 sm:pt-10")} inert={leaving}>
+    <div
+      ref={focusMode.layer}
+      tabIndex={focusMode.active ? -1 : undefined}
+      className={
+        focusMode.active
+          ? PAGE_FOCUS_CLASS
+          : cx("mx-auto w-full pb-24", variant === "peek" ? "max-w-[860px] px-4 pt-4 sm:px-8 sm:pt-6" : "max-w-[900px] px-4 pt-6 sm:px-16 sm:pt-10")
+      }
+      inert={leaving}
+      data-page-focus={focusMode.active ? "true" : undefined}
+    >
+      {focusMode.active ? <PageFocusBar status={saveText} error={saveState === "error"} onExit={focusMode.exit} /> : null}
       {variant === "page" ? (
         <div className="-mb-1 flex justify-end gap-1">
+          <PageFocusButton onEnter={focusMode.enter} />
           <TaskExportMenu taskId={taskId} extra={exportBackItems(source, pageNow)} />
           {shared ? null : <ShareButton compact target={{ kind: "task", resourceId: taskId, title: record.title }} />}
         </div>
@@ -415,14 +437,16 @@ export function TaskPage({
       </div>
 
       {source ? <SourceFileBanner source={source} page={pageNow} /> : null}
-      {canEditProperties ? (
-        <PageTitleField value={record.title} autoFocus={record.title === "Untitled"} onSave={(title) => {
-          titleSave.current = update.mutateAsync({ title });
-          void titleSave.current.catch(() => undefined);
-        }} />
-      ) : (
-        <h1 className="text-[32px] font-semibold leading-tight tracking-tight">{record.title || "Untitled"}</h1>
-      )}
+      <div data-focus-keep>
+        {canEditProperties ? (
+          <PageTitleField value={record.title} autoFocus={record.title === "Untitled"} onSave={(title) => {
+            titleSave.current = update.mutateAsync({ title });
+            void titleSave.current.catch(() => undefined);
+          }} />
+        ) : (
+          <h1 className="text-[32px] font-semibold leading-tight tracking-tight">{record.title || "Untitled"}</h1>
+        )}
+      </div>
 
       <div className="mt-5 space-y-0.5" inert={!canEditProperties || undefined}>
         <PropertyRow icon={User} label="Owner">
@@ -758,18 +782,10 @@ export function TaskPage({
 
       <div className="mt-6 flex items-center justify-between border-t border-line pt-3 text-[12px] text-muted">
         <span className="font-medium">Page content</span>
-        <span className={saveState === "error" ? "text-danger" : undefined}>
-          {saveState === "saved"
-            ? "All changes saved"
-            : saveState === "saving"
-              ? "Saving…"
-              : saveState === "dirty"
-                ? "Unsaved changes"
-                : "Could not save. Retry on the next edit."}
-        </span>
+        <span className={saveState === "error" ? "text-danger" : undefined}>{saveText}</span>
       </div>
 
-      <div className="mt-4">
+      <div className="mt-4" data-focus-keep>
         {initialDoc && Editor ? (
           <Editor
             key={`${taskId}-${epoch}`}

@@ -35,7 +35,7 @@ const INVALIDATES: Record<string, string[][]> = {
   "sharing.changed": [["spaces"], ["sharing"], ["shared-with-me"], ["space-members"], ["item-shares"], ["notifications"]],
   notification: [["notifications"]],
   diagram: [["diagrams"]],
-  context: [["people"], ["projects"], ["repos"], ["graph"], ["entities"]],
+  context: [["people"], ["projects"], ["repos"], ["graph"], ["entities"], ["artifacts"], ["desk-live"]],
   sync: [["connections"], ["calendar"], ["artifacts"], ["shell"]],
   "assistant.acted": [["tasks"], ["projects"], ["deliverables"], ["reminders"], ["skills"], ["graph"], ["shell"]],
   documents: [["documents"]],

@@ -82,6 +82,7 @@ const RULES: Rule[] = [
   ["GET", "/api/recap/*", "shared"],
   ["GET", "/api/completed", "shared"],
   ["GET", "/api/artifacts", "shared"],
+  ["GET", "/api/artifacts/:id", "shared"],
   ["GET", "/api/entities", "shared"],
   ["GET", "/api/shell", "shared"],
   // The space's live tiles for Context, without the owner's reminders or synced inbox (desk/live.ts).

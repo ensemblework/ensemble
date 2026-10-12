@@ -12,6 +12,7 @@ import { CONNECTOR_CATALOG, TASK_LIKE_KINDS, type AppItem, type AppItemContent, 
 import { prisma as defaultPrisma } from "../../lib/prisma.js";
 import { appendLedger } from "../../lib/ledger.js";
 import { isGuestIn } from "../../sharing/context.js";
+import { forgetRemoval } from "../../context/artifacts.js";
 import type { AccountProvider } from "../accounts.js";
 import { redact, upsertPerson } from "../ingest.js";
 import { ConnectorNotConnectedError, providerAccessToken, type ProviderToken } from "../tokens.js";
@@ -244,6 +245,8 @@ async function saveContent(db: Db, userId: string, content: AppItemContent, targ
     deletedAt: null,
   };
   if (Number.isNaN(data.ts.getTime())) data.ts = new Date();
+  // Attaching is the person's own choice, so an item they removed from Files comes back.
+  await forgetRemoval(db, userId, kind, externalId);
   const row = existing
     ? await db.artifact.update({ where: { id: existing.id }, data })
     : await db.artifact.create({ data: { userId, kind, externalId, ...data } });

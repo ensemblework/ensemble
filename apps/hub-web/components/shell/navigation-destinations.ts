@@ -22,6 +22,7 @@ const VIEWS: NavigationDestination[] = [
   {href:"/diagrams",label:"Diagrams",hint:"Block diagrams & flows",keywords:"diagram flowchart systems graph drawing"},
   {href:"/plots",label:"Plots",hint:"Charts & data",keywords:"plot chart visualization table datasets figures"},
   {href:"/files",label:"Files",hint:"Uploads & previews",keywords:"documents pdf word excel spreadsheet csv powerpoint slides pictures images uploads attachments"},
+  {href:"/files?view=apps",label:"From your apps",hint:"Files › From your apps",keywords:"artifacts synced mail email calendar events messages chats docs pull requests issues transcripts connected apps"},
   {href:"/metrics",label:"Metrics",hint:"Calls & cost",keywords:"usage credits spending tokens audit ledger",ownerOnly:true},
   {href:"/connect",label:"Editors",hint:"Connect an editor or AI app",keywords:"vscode cursor claude codex mcp",ownerOnly:true},
   {href:"/settings",label:"Settings",hint:"Account & preferences",keywords:"configuration options settings"},
@@ -39,7 +40,7 @@ export function navigationScore(query:string, label:string, hint:string, keyword
 
 export function navigationDestinations(query:string, options:{modules?:string|null; guest?:boolean; template?:string|null; boardLabel?:string}): NavigationDestination[] {
   const desk=deskIdFromTemplate(options.template) ?? "default";
-  const contextual=contextTabs(desk).map(label=>({href:`/context?tab=${tabKey(label)}`,label:label==="Artifacts & sync"?"Artifacts & sync":label,hint:`Context › ${label}`,keywords:label==="People"?"contacts team directory":label==="Graph"?"relationships knowledge graph network":label==="Artifacts & sync"?"files documents mail sources sync":""}));
+  const contextual=contextTabs(desk).map(label=>({href:`/context?tab=${tabKey(label)}`,label,hint:`Context › ${label}`,keywords:label==="People"?"contacts team directory":label==="Graph"?"relationships knowledge graph network":""}));
   const sections=SETTINGS_TABS.map(tab=>({href:`/settings?tab=${tab.id}`,label:tab.label,hint:`Settings › ${tab.label}`,keywords:tab.hint,ownerOnly:tab.id==="connections"||tab.id==="data"}));
   const settings=SETTINGS_DESTINATIONS.map(row=>({href:settingsDestinationHref(row),label:row.label,hint:`Settings › ${SETTINGS_TABS.find(tab=>tab.id===row.tab)!.label}${row.heading === SETTINGS_TABS.find(tab=>tab.id===row.tab)!.label ? "" : ` › ${row.heading ?? row.section.replace(/-/g," ")}`}`,keywords:row.keywords,ownerOnly:row.ownerOnly}));
   const connectors: NavigationDestination[] = CONNECTOR_CATALOG.flatMap(entry=>[

@@ -111,6 +111,7 @@ export async function syncSlack(ctx: SyncContext): Promise<SyncResult> {
         metadata: { channel: conversation.id, channelName: label, mentionsMe, direct: Boolean(conversation.is_im) },
         containers: conversation.is_im || conversation.is_mpim ? [] : [{ source: "slack", id: conversation.id, name: label }],
       });
+      if (!stored) continue;
       result.items += 1;
       result.stored.push(stored);
       if (stored.created && !mine && (conversation.is_im || conversation.is_mpim || mentionsMe)) result.triage.push({ ...stored, personId });

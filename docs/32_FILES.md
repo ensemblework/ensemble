@@ -10,9 +10,9 @@ The table is `FILE_FORMATS` in `packages/shared-types/src/files.ts`; the format 
 
 | Kind | Formats | Preview | Edit | Becomes a page | Agents read |
 |---|---|---|---|---|---|
-| PDF | pdf | Pages rendered with pdf.js | Convert to a page first | In the browser; export back to PDF with the original's page size, margins, sizes and colours | Text of the first 300 pages |
+| PDF | pdf | Pages rendered with pdf.js (its legacy build, so Safari and the macOS desktop app work too); Present | Convert to a page first | In the browser; export back to PDF with the original's page size, margins, sizes and colours | Text of the first 300 pages |
 | Word | docx | docx-preview | Convert to a page first | In the browser; export back to Word into the original file (its styles, fonts, page setup, headers and footers) | Paragraphs, tables, headers, footers, notes |
-| Slides | pptx | Ensemble's own slide renderer | — | — | Slide text and speaker notes |
+| Slides | pptx | Ensemble's own slide renderer; Present | — | — | Slide text and speaker notes |
 | Spreadsheets | xlsx, xlsm | Grid with sheet tabs | Cells, rows; saved into the original file | — | Each sheet as CSV (2,000 rows per sheet) |
 | | csv, tsv | Grid | Cells, rows; saved as CSV/TSV | Server: a table (first 200 rows) | The text |
 | | xls, ods, numbers | Grid | After "Make an editable .xlsx copy" | — | No (agents are told to use .xlsx) |
@@ -23,6 +23,8 @@ The table is `FILE_FORMATS` in `packages/shared-types/src/files.ts`; the format 
 | Not previewable | doc, odt, rtf, ppt, odp, key, heic, tiff, anything else | Details, a note on how to make it previewable, Download | — | — | No (a warning says which format to save as) |
 
 Every file, previewable or not, can be attached to pages and downloaded.
+
+**Present and Full screen.** On a file's own screen (`components/files/file-screen.tsx`), PDFs and slides have **Present**: one page or slide at a time, fitted to the screen on black (`components/files/viewers/present.tsx`). It starts at the page or slide in view, skips slides marked hidden in PowerPoint, draws the next one ahead, and leaves the viewer where the presentation stopped. → ↓ Space PageDown Enter N go forward; ← ↑ PageUp Backspace P go back; Home and End jump to the first and last; a click on the left third goes back, anywhere else forward; F leaves or re-enters the browser's fullscreen; Esc stops. The controls and the cursor hide after 2 seconds without the mouse moving. Word files, spreadsheets, images, video, text and code have **Full screen** instead: the same viewer, with its zoom and unsaved edits, fills the screen under a bar with the file name and Exit; Esc leaves. Both ask the browser for fullscreen and use an in-page layer where it is refused ([docs/02 §3.10](02_MODULE_INTERACTION_HUB_UI.md#310-files)).
 
 ## 2. Where files live
 
@@ -58,7 +60,7 @@ Previews, PDF and Word conversion, export back, and reading old spreadsheet form
 
 | Source | Imports | Needs |
 |---|---|---|
-| Google Drive | Any file; Google Docs, Sheets and Slides come as .docx, .xlsx and .pptx, Drawings as PDF | Google Workspace connected with Drive on. With only "Drive, Docs, Sheets and Slides" Ensemble sees files it created or the person picked, so the dialog offers **Pick from Google Drive** (the Google Picker, when the server has `GOOGLE_PICKER_API_KEY` and `GOOGLE_PROJECT_NUMBER`) or "Search all of Drive" |
+| Google Drive | Any file; Google Docs, Sheets and Slides come as .docx, .xlsx and .pptx, Drawings as PDF. Google's export call stops at 10 MB, so larger ones come through the file's own export link (as Drive's File → Download does); when Google offers none, the message says how to download it from Google and upload it | Google Workspace connected with Drive on. With only "Drive, Docs, Sheets and Slides" Ensemble sees files it created or the person picked, so the dialog offers **Pick from Google Drive** (the Google Picker, when the server has `GOOGLE_PICKER_API_KEY` and `GOOGLE_PROJECT_NUMBER`) or "Search all of Drive" |
 | Gmail | Files attached to emails | Gmail switched on |
 | OneDrive | Any file | OneDrive switched on |
 | Outlook | File attachments | Outlook mail switched on |
@@ -69,7 +71,7 @@ Each state comes with one plain sentence, short numbered steps and a button to t
 
 ## 6. Pages
 
-- **Attach**: type `@` and a file name, use `/file` (upload, choose from Files, or from your apps), or drop or paste files into the editor; files upload first, then appear as cards. Cards are resizable and show a compact preview with Open.
+- **Attach**: type `@` and a file name, use `/file` (upload, choose from Files, or from your apps), or drop or paste files into the editor; files upload first, then appear as cards. Cards are resizable and show a compact preview with Open; on a page you can edit, the card's × takes it off the page (the file stays in Files).
 - **Shared pages and public links** preview the files on them: the sharing gate allows reading a file (`GET /api/documents/:id`, `/original`, `/text`) only when the shared page currently mentions it (`sharing/gate.ts`). Nothing else about files is reachable through a share or link.
 - **Converted pages** show "Made from report.pdf" with **Export back** (PDF or Word), also offered in the page's Download menu under "With the original's formatting".
 - After converting, a notice says for a few seconds that export back keeps the original's formatting.
@@ -101,8 +103,11 @@ File text is always passed on as information, not instructions.
 | DELETE | `/api/documents/:id` | → 204; the file and its text go to Trash together |
 | GET | `/api/documents/import-sources` | → `{ sources: FileImportSource[] }` |
 | POST | `/api/documents/import` | `{ source, kind: "file" \| "attachment", id }` → 201 `{ file }` (200 when already kept) |
+| GET | `/api/artifacts?exclude=uploads&kind=&q=&before=` | From your apps (§11): → `{ artifacts[], counts[], sync[], nextCursor }` |
+| GET | `/api/artifacts/:id` | → `{ artifact }` with `text`, `participants`, `origin`, `documentId` |
+| DELETE | `/api/artifacts/:id` | Owner only → 204; 409 `{ error, documentId }` for an uploaded file's text |
 
-Hosted: a verified email for everything; imports 60 per 10 minutes. Space members may use files like other shared content (viewers read only). Ledger: `document.upload`, `document.import`, `document.update`, `document.cells`, `document.page`, `document.delete`.
+Hosted: a verified email for everything; imports 60 per 10 minutes. Space members may use files like other shared content (viewers read only). Ledger: `document.upload`, `document.import`, `document.update`, `document.cells`, `document.page`, `document.delete`, `artifact.remove`.
 
 ## 9. Honest limits
 
@@ -118,4 +123,21 @@ Hosted: a verified email for everything; imports 60 per 10 minutes. Space member
 - `apps/hub-api/src/routes/files.integration.test.ts`: upload, list and usage, hosted caps (count, bytes, per-file, removed files free room, server guard), original headers (nosniff, ETag/304, HTML as text), text paging, replace, cell edits that keep another cell's formatting, pages from Markdown, code, CSV and browser content with a style, `sourceFile` on page reads, delete hides the text, isolation, and the shared-page rule.
 - `apps/hub-api/src/files/extract.test.ts`: extraction per format and its limits.
 - `apps/hub-api/src/files/import.integration.test.ts`, `attached.integration.test.ts`, `connectors/items/downloads.test.ts`: import sources and states, downloads per app, attached files for agents, `read_attachment` and `save_attachment`.
-- Web: `components/editor/file-attach.test.tsx`, `components/files/*.test.tsx`, `lib/files/*.test.ts`.
+- `apps/hub-api/src/routes/artifacts.integration.test.ts`: From your apps without uploads, paging, one item in full, removal from the list, graph, live tiles and MCP search and read, a later sync and a purged row staying removed, attaching again restoring it, the 409 for uploads, isolation, and a space member refused.
+- Web: `components/editor/file-attach.test.tsx`, `components/files/*.test.tsx` (`from-apps.test.tsx`: the switch, list, chips, search, reader, Remove, paging, empty state, guests), `lib/files/*.test.ts`.
+- Present and Full screen: `components/files/present.test.tsx` runs them on a generated .pptx and a code file (keys, clicks, hidden slides, focus, the in-page layer when the browser has no Fullscreen API, and a browser that grants it). PDFs use the same presenter; that path was read, not run, because pdf.js does not run in the test DOM.
+
+## 11. From your apps
+
+`/files?view=apps` (`apps/hub-web/components/files/from-apps.tsx`) lists the items Ensemble keeps from connected apps: synced mail, events, chats, channel messages, transcripts, pull requests and issues, and items attached to a task or project from an app. It reads `GET /api/artifacts?exclude=uploads`, which leaves out uploaded files' text Artifacts (a Document is linked, or `externalId` starts with `file:`). `origin` says which app each item came from (`apps/hub-api/src/context/artifacts.ts`: `metadata.source`, the attached item's app, or the link). The reader is `GET /api/artifacts/:id`; for an uploaded file's text it returns `documentId` and Files opens the file. Space members see the shared kinds only: never the owner's mail, chats or calendar (`visibleArtifacts`).
+
+**Remove** (`DELETE /api/artifacts/:id`, owner only; members get 403):
+
+- sets `deletedAt` on the Artifact, so it leaves `/api/artifacts`, the Context graph and board, the live tiles, calendars, the assistant's context tools, a task's or project's attached items, and MCP search, read and briefs, which all read only rows with no `deletedAt`;
+- records a `ContextSuppression` with kind `artifact` and key `<artifact kind>:<externalId>`; `upsertArtifact` (`apps/hub-api/src/connectors/ingest.ts`) then returns null for that item, even after the retention purge erases the row, and each sync skips it (no item count, todo proposal, triage or meeting note);
+- refuses an uploaded file's text with 409; delete the file instead (`DELETE /api/documents/:id`);
+- writes `artifact.remove` to the ledger and sends a `context` event.
+
+A calendar sync also soft-deletes events that left the calendar; those have no suppression and come back when seen again. Attaching the same item again from an app (`saveContent` in `connectors/items/index.ts`) clears the suppression and restores the row. Removed items are not in Trash.
+
+Checked 12 Oct 2026 with `artifacts.integration.test.ts` for the list, the graph, live tiles, attached items and MCP search and read; that calendars and the assistant's context tools skip removed items was read in the code, not run.

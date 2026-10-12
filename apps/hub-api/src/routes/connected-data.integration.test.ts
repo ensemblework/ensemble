@@ -23,6 +23,13 @@ const { rememberImportLink, linkedProject } = await import("../projects/links.js
 const db = harness.prisma;
 const covered = new Map<string, Set<RouteCheck>>();
 
+/** A sync's write; these tests never remove an item, so there is always a row. */
+async function stored(...args: Parameters<typeof upsertArtifact>) {
+  const row = await upsertArtifact(...args);
+  assert.ok(row, "the artifact was stored");
+  return row;
+}
+
 type Handler = (url: string, init?: RequestInit) => Response | Promise<Response>;
 const handlers: Array<{ match: (url: string) => boolean; reply: Handler }> = [];
 const calls: string[] = [];
@@ -164,7 +171,7 @@ test("project links: set once, applied to new artifacts and proposals at ingest,
   const foreignProject = await db.project.create({ data: { userId: other.id, name: "Not yours" } });
 
   // A #design message arrived before the link.
-  const early = await upsertArtifact(user.id, {
+  const early = await stored(user.id, {
     kind: "channel_msg",
     externalId: "C0DESIGN:1",
     ts: hoursAgo(3),
@@ -202,9 +209,9 @@ test("project links: set once, applied to new artifacts and proposals at ingest,
   assert.equal(repo.statusCode, 201, repo.body);
 
   // New items from linked containers land in the project, and so do their proposals.
-  const later = await upsertArtifact(user.id, { kind: "channel_msg", externalId: "C0DESIGN:2", ts: new Date(), title: "#design", text: "Ship it?", containers: [{ source: "slack", id: "C0DESIGN", name: "#design" }] });
+  const later = await stored(user.id, { kind: "channel_msg", externalId: "C0DESIGN:2", ts: new Date(), title: "#design", text: "Ship it?", containers: [{ source: "slack", id: "C0DESIGN", name: "#design" }] });
   assert.equal(later.projectId, atlas.id);
-  const pr = await upsertArtifact(user.id, { kind: "pr", externalId: "fieldnote/atlas#8", ts: new Date(), title: "Fix", text: "", containers: [{ source: "github", id: "fieldnote/atlas", name: "Fieldnote/Atlas" }] });
+  const pr = await stored(user.id, { kind: "pr", externalId: "fieldnote/atlas#8", ts: new Date(), title: "Fix", text: "", containers: [{ source: "github", id: "fieldnote/atlas", name: "Fieldnote/Atlas" }] });
   assert.equal(pr.projectId, atlas.id);
   await createProposals(user.id, [{ sourceRef: "github:fieldnote/atlas#8:reviewer", sourceKind: "github", title: "Review #8", description: "", priority: "p1", artifactId: pr.id, rationale: "review" }], "connector");
   assert.equal((await db.task.findFirst({ where: { userId: user.id, sourceRef: "github:fieldnote/atlas#8:reviewer" } }))!.projectId, atlas.id);
@@ -220,7 +227,7 @@ test("project links: set once, applied to new artifacts and proposals at ingest,
   assert.equal(unknownDelete.statusCode, 404, unknownDelete.body);
   const removed = await call(user, "DELETE", `/api/project-links/${link.link.id}`, "/api/project-links/:id", "happy-path");
   assert.equal(removed.statusCode, 204, removed.body);
-  const unlinked = await upsertArtifact(user.id, { kind: "channel_msg", externalId: "C0DESIGN:3", ts: new Date(), title: "#design", text: "x", containers: [{ source: "slack", id: "C0DESIGN" }] });
+  const unlinked = await stored(user.id, { kind: "channel_msg", externalId: "C0DESIGN:3", ts: new Date(), title: "#design", text: "x", containers: [{ source: "slack", id: "C0DESIGN" }] });
   assert.equal(unlinked.projectId, null);
 
   // Imports remember the container a project came from; a later import of the same board reuses the linked project.

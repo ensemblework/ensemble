@@ -112,6 +112,8 @@ export async function ingestMeetings(ctx: SyncContext, vendor: MeetingVendor, re
         ...(record.extra ?? {}),
       },
     });
+    // The person removed this transcript: no note or action items come back with it.
+    if (!stored) continue;
     result.items += 1;
     result.stored.push(stored);
 

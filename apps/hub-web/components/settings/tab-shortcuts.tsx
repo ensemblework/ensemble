@@ -19,7 +19,7 @@ import { SHORTCUTS_PREFERENCE, useShortcuts } from "@/lib/shortcut-store";
 import { useToast } from "../toast";
 import { SectionCard, cx } from "../ui";
 
-const GROUP_ORDER = ["Everywhere", "Create", "Go to", "Today", "Code", "Diagrams"];
+const GROUP_ORDER = ["Everywhere", "Create", "Go to", "Today", "Pages", "Code", "Diagrams"];
 
 function Recorder({ binding, bindings, onSave, onCancel }: { binding: ShortcutBinding; bindings: readonly ShortcutBinding[]; onSave: (chord: NonNullable<ShortcutBinding["mac"]>) => void; onCancel: () => void }) {
   const apple = isApplePlatform();

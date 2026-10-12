@@ -1,4 +1,4 @@
-/** Kinds that belong on the Artifacts tab. Task rows are not artifacts. */
+/** Every artifact kind: what the Context Artifacts tile lists and `GET /api/artifacts?kind=` accepts. Task rows are not artifacts. */
 export const ARTIFACT_KINDS = new Set([
   "email",
   "chat_msg",

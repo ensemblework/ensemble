@@ -1,5 +1,5 @@
 import type { FileImportSource, FileRecord, FileStyleProfile, FileUsage, PageDocument, SheetPatch } from "@ensemble/shared-types";
-import { API, ApiError, del, get, itemViewHeaders, post, put } from "./api";
+import { API, ApiError, api, del, get, itemViewHeaders, post, put, type ArtifactRecord } from "./api";
 
 /** Files people uploaded or imported (routes/files.ts). Docs: docs/32_FILES.md. */
 export const FILE_QUERY = {
@@ -66,6 +66,28 @@ export const filesApi = {
   importFromApp: (ref: { source: string; kind: string; id: string }) => post<{ file: FileRecord }>("/api/documents/import", ref),
   /** What the Google Picker needs. `accessToken` is null until Google Drive access is approved. */
   googlePicker: () => get<{ apiKey: string; appId: string; accessToken: string | null; origin: string }>("/api/connectors/google/picker"),
+};
+
+/** One item from a connected app, read in full (GET /api/artifacts/:id). */
+export type AppItemDetail = ArtifactRecord & {
+  text: string;
+  participants: Array<{ name?: string | null; email?: string | null; handle?: string | null }>;
+  authoredByMe: boolean;
+  /** Set when this is an uploaded file's text: Files opens the file instead. */
+  documentId: string | null;
+};
+
+/** Files → From your apps: what Ensemble synced or attached from connected apps (routes/context.ts). */
+export const FROM_APPS_QUERY = {
+  list: (q: string, kind: string) => ["artifacts", "from-apps", q, kind] as const,
+  one: (id: string) => ["artifacts", "one", id] as const,
+};
+
+export const fromAppsApi = {
+  list: (input: { q?: string; kind?: string; before?: string }) => api.artifacts({ ...input, exclude: "uploads", take: 50 }),
+  get: (id: string) => get<{ artifact: AppItemDetail }>(`/api/artifacts/${encode(id)}`),
+  /** Owner only. Uploaded files answer 409: delete them with `filesApi.remove`. */
+  remove: (id: string) => del<void>(`/api/artifacts/${encode(id)}`),
 };
 
 /** A JSON POST over XMLHttpRequest, which (unlike fetch) reports upload progress. Errors read like `request`'s. */

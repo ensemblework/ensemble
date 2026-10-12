@@ -18,7 +18,7 @@ const OFFICIAL: Record<string, { label: string; url: string }> = {
   github: { label: "GitHub", url: "https://github.com/notifications" },
   slack: { label: "Slack", url: "https://app.slack.com" },
   linear: { label: "Linear", url: "https://linear.app" },
-  meeting_notes: { label: "Meeting notes", url: "/context?tab=artifacts" },
+  meeting_notes: { label: "Meeting notes", url: "/meetings" },
 };
 
 const KINDS: Array<{ id: string; label: string; icon: typeof Mail }> = [

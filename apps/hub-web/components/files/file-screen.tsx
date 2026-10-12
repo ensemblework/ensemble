@@ -3,23 +3,28 @@
 /** @jsxImportSource react */
 
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ExternalLink, FilePlus2, Info, Paperclip, Trash2 } from "lucide-react";
+import { ArrowLeft, ExternalLink, FilePlus2, Info, Maximize2, Minimize2, Paperclip, Presentation, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { fileFormat, type FileRecord } from "@ensemble/shared-types";
 import { ApiError } from "@/lib/api";
 import { FILE_QUERY, filesApi, formatBytes } from "@/lib/api-files";
-import { pageWay } from "@/lib/files/formats";
+import { pageWay, viewerFor, type ViewerKind } from "@/lib/files/formats";
 import { relative } from "@/lib/format";
+import { useFullscreen } from "@/lib/fullscreen";
 import { BrandLogo, brandName } from "../connectors/brand-logo";
 import { useToast } from "../toast";
-import { Dialog, Spinner } from "../ui";
+import { Spinner, cx } from "../ui";
 import { AttachToPage } from "./attach-to-page";
 import { FileIcon } from "./file-icon";
 import { FilePreview } from "./file-preview";
-import { invalidateFileLists, useFileRecord } from "./use-file";
-import { DownloadButton } from "./viewers/shared";
+import { DeleteFileDialog } from "./delete-file";
+import { useFileRecord } from "./use-file";
+import { DownloadButton, PresentContext, type PresentControl } from "./viewers/shared";
+
+/** Previews that can fill the screen as they are. PDFs and slides present instead; audio has nothing to fill it with. */
+const FULL_SCREEN = new Set<ViewerKind>(["docx", "sheet", "image", "video", "text"]);
 
 function countLabel(file: FileRecord): string | null {
   if (file.pageCount === null) return null;
@@ -38,7 +43,13 @@ export function FileScreen({ id }: { id: string }) {
   const record = useFileRecord(id);
   const [converting, setConverting] = useState<string | null>(null);
   const [attaching, setAttaching] = useState(false);
-  const [deleting, setDeleting] = useState<"ask" | "busy" | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const screen = useFullscreen();
+  const [canPresent, setCanPresent] = useState(false);
+  const present = useMemo<PresentControl>(
+    () => ({ active: screen.active, layer: screen.layer, exit: screen.exit, toggleNative: screen.toggleNative, setReady: setCanPresent }),
+    [screen.active, screen.layer, screen.exit, screen.toggleNative],
+  );
   const file = record.data?.file;
 
   if (record.error) {
@@ -64,6 +75,9 @@ export function FileScreen({ id }: { id: string }) {
   const format = fileFormat(file.filename);
   const way = pageWay(format);
   const keepsFormatting = format.ext === "pdf" || format.ext === "docx";
+  const viewer = viewerFor(format);
+  const show = viewer === "pdf" || viewer === "pptx" ? "present" : FULL_SCREEN.has(viewer) ? "full" : null;
+  const full = show === "full" && screen.active;
 
   const convert = async () => {
     setConverting("Getting ready…");
@@ -82,20 +96,6 @@ export function FileScreen({ id }: { id: string }) {
       toast(error instanceof Error ? error.message : "Could not make a page from this file.", { tone: "error" });
     } finally {
       setConverting(null);
-    }
-  };
-
-  const remove = async () => {
-    setDeleting("busy");
-    try {
-      await filesApi.remove(file.id);
-      client.removeQueries({ queryKey: FILE_QUERY.one(file.id) });
-      await invalidateFileLists(client);
-      router.push("/files");
-      toast(`Deleted ${file.filename}.`);
-    } catch (error) {
-      toast(error instanceof Error ? error.message : "Could not delete the file.", { tone: "error" });
-      setDeleting("ask");
     }
   };
 
@@ -133,6 +133,21 @@ export function FileScreen({ id }: { id: string }) {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {show === "present" ? (
+              <button
+                type="button"
+                className="btn"
+                disabled={!canPresent}
+                onClick={(event) => screen.enter(event.currentTarget)}
+                title={`One ${viewer === "pptx" ? "slide" : "page"} at a time on the whole screen. Arrow keys move, Esc stops.`}
+              >
+                <Presentation size={13} aria-hidden /> Present
+              </button>
+            ) : show === "full" ? (
+              <button type="button" className="btn" onClick={(event) => screen.enter(event.currentTarget)} title="Show the file on the whole screen. Esc leaves.">
+                <Maximize2 size={13} aria-hidden /> Full screen
+              </button>
+            ) : null}
             <DownloadButton file={file} />
             {way ? (
               <button
@@ -149,7 +164,7 @@ export function FileScreen({ id }: { id: string }) {
             <button type="button" className="btn" onClick={() => setAttaching(true)}>
               <Paperclip size={13} aria-hidden /> Attach to a page…
             </button>
-            <button type="button" className="icon-btn" aria-label={`Delete ${file.filename}`} title="Delete" onClick={() => setDeleting("ask")}>
+            <button type="button" className="icon-btn" aria-label={`Delete ${file.filename}`} title="Delete" onClick={() => setDeleting(true)}>
               <Trash2 size={15} />
             </button>
           </div>
@@ -169,25 +184,33 @@ export function FileScreen({ id }: { id: string }) {
           </ul>
         ) : null}
       </header>
-      <div className="min-h-[420px] flex-1">
-        <FilePreview fileId={file.id} />
-      </div>
-      <AttachToPage file={file} open={attaching} onClose={() => setAttaching(false)} onOpen={(href) => router.push(href)} />
-      <Dialog open={deleting !== null} onClose={() => setDeleting(null)} title="Delete this file?" width={440}>
-        <div className="space-y-3 text-[13px] leading-5">
-          <p>
-            <span className="font-medium">{file.filename}</span> will be deleted from Ensemble. Pages it is attached to will show that it was removed. Pages made from it stay.
-          </p>
-          <div className="flex justify-end gap-2">
-            <button type="button" className="btn-ghost" onClick={() => setDeleting(null)}>
-              Keep it
-            </button>
-            <button type="button" className="btn-danger" disabled={deleting === "busy"} onClick={() => void remove()}>
-              {deleting === "busy" ? <Spinner size={12} /> : <Trash2 size={13} aria-hidden />} Delete
+      <div
+        ref={show === "full" ? screen.layer : undefined}
+        tabIndex={full ? -1 : undefined}
+        role={full ? "dialog" : undefined}
+        aria-modal={full || undefined}
+        aria-label={full ? file.filename : undefined}
+        className={cx("min-h-[420px] flex-1", full && "fixed inset-0 z-[60] flex min-h-0 flex-col overscroll-contain bg-bg outline-none")}
+        data-file-full-screen={full ? "true" : undefined}
+      >
+        {full ? (
+          <div className="flex h-11 shrink-0 items-center gap-2 border-b border-line px-3">
+            <FileIcon kind={file.kind ?? format.kind} size={18} />
+            <span className="min-w-0 flex-1 truncate text-[13.5px] font-medium" title={file.filename}>
+              {file.filename}
+            </span>
+            <span className="text-[12px] text-faint max-sm:hidden">Esc to leave</span>
+            <button type="button" className="btn-ghost" onClick={screen.exit}>
+              <Minimize2 size={13} aria-hidden /> Exit full screen
             </button>
           </div>
-        </div>
-      </Dialog>
+        ) : null}
+        <PresentContext.Provider value={show === "present" ? present : null}>
+          <FilePreview fileId={file.id} className={full ? "min-h-0 flex-1" : undefined} />
+        </PresentContext.Provider>
+      </div>
+      <AttachToPage file={file} open={attaching} onClose={() => setAttaching(false)} onOpen={(href) => router.push(href)} />
+      <DeleteFileDialog file={deleting ? file : null} onClose={() => setDeleting(false)} onDeleted={() => router.push("/files")} />
     </div>
   );
 }

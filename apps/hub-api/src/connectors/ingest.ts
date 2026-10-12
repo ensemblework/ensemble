@@ -6,6 +6,7 @@ import type { ArtifactKind, Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { cleanIdentities, parseHandle, recordIdentities, resolvePerson, type IdentityInput } from "../people/identity.js";
 import { projectForContainers, type Container } from "../projects/links.js";
+import { removedByPerson } from "../context/artifacts.js";
 
 const SECRET_PATTERNS: RegExp[] = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
@@ -68,7 +69,11 @@ export interface StoredArtifact {
   projectId?: string | null;
 }
 
-export async function upsertArtifact(userId: string, input: ArtifactInput): Promise<StoredArtifact> {
+/**
+ * Stores one synced item. Returns null when the person removed this item (Files → From your
+ * apps): it stays removed, and callers skip whatever they would have done with it.
+ */
+export async function upsertArtifact(userId: string, input: ArtifactInput): Promise<StoredArtifact | null> {
   const containers = (input.containers ?? [])
     .filter((row) => row.source && row.id)
     .map((row) => ({ source: row.source, id: row.id, name: row.name ?? null }));
@@ -90,8 +95,10 @@ export async function upsertArtifact(userId: string, input: ArtifactInput): Prom
   };
   const existing = await prisma.artifact.findUnique({
     where: { userId_kind_externalId: { userId, kind: input.kind, externalId: input.externalId } },
-    select: { id: true, projectId: true },
+    select: { id: true, projectId: true, deletedAt: true },
   });
+  // A sync also soft-deletes events that left the calendar; only the person's own removal is kept.
+  if ((!existing || existing.deletedAt) && (await removedByPerson(prisma, userId, input.kind, input.externalId))) return null;
   if (existing) {
     await prisma.artifact.update({ where: { id: existing.id }, data: { ...data, deletedAt: null } });
     return { id: existing.id, created: false, input, projectId: projectId ?? existing.projectId };

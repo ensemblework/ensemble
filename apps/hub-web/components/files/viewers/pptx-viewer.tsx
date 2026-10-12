@@ -3,10 +3,11 @@
 /** @jsxImportSource react */
 
 import { BarChart3, ChevronLeft, ChevronRight, EyeOff } from "lucide-react";
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { parsePptx, type PptxDeck, type PptxFill, type PptxParagraph, type PptxShape, type PptxSlide, type PptxText } from "@/lib/files/pptx";
 import { Spinner, cx } from "../../ui";
-import { Toolbar, ViewerNote, type ViewerProps } from "./shared";
+import { Presenter } from "./present";
+import { PresentContext, Toolbar, ViewerNote, type ViewerProps } from "./shared";
 
 type Urls = Record<string, string>;
 
@@ -259,6 +260,23 @@ export default function PptxViewer({ file, bytes, compact }: ViewerProps) {
     return Math.max(80, Math.min(size.width - pad, ((size.height - pad) * deck.width) / deck.height));
   }, [deck, size, compact]);
 
+  const context = useContext(PresentContext);
+  const present = compact ? null : context;
+  const setReady = present?.setReady;
+  useEffect(() => {
+    if (!setReady || !deck) return;
+    setReady(true);
+    return () => setReady(false);
+  }, [setReady, deck]);
+  // The slideshow skips slides marked hidden, as PowerPoint does, unless every slide is.
+  const order = useMemo(() => {
+    const shown = (deck?.slides ?? []).flatMap((entry, number) => (entry.hidden ? [] : [number]));
+    return shown.length ? shown : (deck?.slides ?? []).map((_, number) => number);
+  }, [deck]);
+  const onPresentMove = useCallback((step: number) => setIndex(order[step] ?? 0), [order]);
+  // Presenting starts at the slide on screen, or the next one the slideshow shows.
+  const firstShown = order.findIndex((number) => number >= index);
+
   if (error) return <ViewerNote title={error} file={file} bytes={bytes} compact={compact} />;
   const slide = deck?.slides[Math.min(index, count - 1)];
   const onKeyDown = (event: React.KeyboardEvent) => {
@@ -330,6 +348,22 @@ export default function PptxViewer({ file, bytes, compact }: ViewerProps) {
         </div>
         {main}
       </div>
+      {present?.active && deck ? (
+        <Presenter
+          layer={present.layer}
+          label={`Presenting ${file.filename}`}
+          noun="slide"
+          count={order.length}
+          start={firstShown < 0 ? order.length - 1 : firstShown}
+          onMove={onPresentMove}
+          onExit={present.exit}
+          onToggleNative={present.toggleNative}
+          render={(step, box) => {
+            const width = Math.min(box.width, (box.height * deck.width) / deck.height);
+            return <SlideView deck={deck} slide={deck.slides[order[step]!]!} urls={urls} width={width} />;
+          }}
+        />
+      ) : null}
     </div>
   );
 }

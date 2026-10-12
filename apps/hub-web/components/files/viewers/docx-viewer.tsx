@@ -2,7 +2,7 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
-import { Maximize2, Minus, Plus } from "lucide-react";
+import { Minus, MoveHorizontal, Plus } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Spinner } from "../../ui";
 import { Toolbar, ViewerNote, type ViewerProps } from "./shared";
@@ -145,7 +145,7 @@ export default function DocxViewer({ file, bytes, compact }: ViewerProps) {
             <Plus size={14} />
           </button>
           <button type="button" className="btn-ghost" aria-pressed={zoom === "fit"} onClick={() => setZoom("fit")}>
-            <Maximize2 size={13} aria-hidden /> Fit width
+            <MoveHorizontal size={13} aria-hidden /> Fit width
           </button>
         </span>
       </Toolbar>

@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { api, type TaskRecord } from "@/lib/api";
+import { filesHref } from "@/lib/files/links";
 import type { Size } from "@ensemble/shared-types/widgets";
 
 const GraphTab = dynamic(() => import("@/components/context/graph").then((mod) => mod.GraphTab), {
@@ -155,7 +156,7 @@ export function ArtifactsGlance({ size }: { size: Size }) {
         <ul className="space-y-1">
           {rows.map((row) => (
             <li key={row.id} className="truncate text-[13.5px]">
-              <Link href="/context?tab=artifacts" className="hover:text-accent">
+              <Link href={filesHref("apps", row.id)} className="hover:text-accent">
                 {row.title || row.kind}
               </Link>
               {size !== "s" ? <span className="ml-2 text-[12px] text-muted">{row.kind}</span> : null}

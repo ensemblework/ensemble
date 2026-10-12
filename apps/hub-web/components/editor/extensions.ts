@@ -160,10 +160,18 @@ const EntityMention = Mention.extend<MentionOptions & { diagramsOn: () => boolea
             editor.view.dispatch(editor.state.tr.setNodeMarkup(pos, undefined, { ...current.attrs, height }));
           }
         : undefined;
+      // Removing a card takes it off the page only; the file stays in Files.
+      const remove = editor.isEditable
+        ? () => {
+            const pos = getPos();
+            if (typeof pos === "number") editor.chain().focus().deleteRange({ from: pos, to: pos + node.nodeSize }).run();
+          }
+        : undefined;
       if (kind === "file") {
         const card = mountFileCard(dom, String(node.attrs.id ?? ""), String(node.attrs.label ?? ""), {
           height: storedEmbedHeight(node.attrs.height),
           onResize: resize,
+          onRemove: remove,
           client: this.options.client(),
         });
         return {
@@ -185,10 +193,7 @@ const EntityMention = Mention.extend<MentionOptions & { diagramsOn: () => boolea
           mountPlotOff(dom, String(node.attrs.label ?? ""));
           return { dom };
         }
-        const card = mountPlotCard(dom, String(node.attrs.id ?? ""), String(node.attrs.label ?? ""), editor.isEditable ? () => {
-          const pos = getPos();
-          if (typeof pos === "number") editor.chain().focus().deleteRange({ from: pos, to: pos + node.nodeSize }).run();
-        } : undefined, { height: storedEmbedHeight(node.attrs.height), onResize: resize });
+        const card = mountPlotCard(dom, String(node.attrs.id ?? ""), String(node.attrs.label ?? ""), remove, { height: storedEmbedHeight(node.attrs.height), onResize: resize });
         return {
           dom,
           destroy: card.destroy,
