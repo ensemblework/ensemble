@@ -43,6 +43,10 @@ bundleNodeLibraries(nodeSrc, nodeDest);
 mkdirSync(join(appDir, "scripts", "hooks"), { recursive: true });
 for (const file of ["ensemble-hook.mjs", "ensemble-ask-mcp.mjs", "desktop-discovery.mjs"]) cpSync(join(root, "scripts", file), join(appDir, "scripts", "hooks", file));
 
+// The block-diagram skill the assistant's diagrams playbook includes (assistant/diagram-skill.ts looks in <app>/skills).
+mkdirSync(join(appDir, "skills", "block-diagrams"), { recursive: true });
+cpSync(join(root, ".github", "skills", "block-diagrams", "SKILL.md"), join(appDir, "skills", "block-diagrams", "SKILL.md"));
+
 // Linux: the Landlock helper the sandbox falls back to where bubblewrap is missing or blocked
 // (workspace/sandbox/linux.ts looks for <sidecar>/bin/landrun).
 if (process.platform === "linux") {

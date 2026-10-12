@@ -138,6 +138,19 @@ Code review and every plot code pane share a VS Code theme picker. Built-in them
 - **Upgrading** restarts a runtime an older CLI started when `ensemble` opens, unless tasks are running.
 - **Checked 13 Oct 2026:** two-message chats end to end with stand-in `claude`, `codex` and `cursor-agent` speaking their real protocols (`engines/chat.e2e.test.ts`: session resumed, the board tool creates a task, replayed history kept out of the reply), the PATH merge with stand-in shells (`desktop/user-path.test.ts`), and the app's chat flow with a stand-in runtime (`apps/cli/src/tui/app.test.tsx`). Live on this Mac: a scratch runtime started with the bare system PATH found Claude Code, Cursor's agent, Copilot CLI and the ChatGPT app's Codex, and a two-message chat with each of Claude Code, Codex and Cursor's agent remembered the first message. Not run: the board tools called by a real agent; Windows and Linux.
 
+## Assistant skills, new tools and @ mentions (13 Oct 2026)
+
+Branch `feat/assistant-skills`; checked with unit, DOM and PGlite tests and a scripted model, not with a live model or in a real browser.
+
+- **Playbooks (the assistant's built-in skills)** ([11 §10.1](11_HOW_THE_ASSISTANT_WORKS.md#101-adding-a-playbook)): 13 step-by-step guides (tasks, calendar, files, context, meeting notes, pages, diagrams, plots, inbox, apps, recap, settings, agents) written for small, cheap models. Every turn carries a map of Ensemble and one line per playbook; the open page, mentions and words preload up to two; the model loads others with `hub_how_to`. A plain turn now shows the model 17 core tools instead of 120; a playbook brings its own.
+- **27 new tools** (with `hub_how_to`): pages, meeting notes, synced calendar events, the weekly recap, the profile's desk lists, importing a file from an app into Files, saving an app item (a Notion page) as a page, datasets from files in Files, what is running and stopping it, agent runs, Code folders and agent changes, and finding and changing safe settings (always held for Apply) ([11 §8.3–8.4](11_HOW_THE_ASSISTANT_WORKS.md)).
+- **Diagrams of well-known systems** (the transformer, OAuth) are drawn from their standard design; the diagrams playbook's examples are parsed by the diagram tests.
+- **Spaces**: the prompt names the open space; a test calls every Hub tool from one space with another space's ids and words, and nothing is read, changed or linked across.
+- **Fixed**: trashing a file through the assistant or Trash left its text searchable; it now follows the file through Trash, restore and undo. The packaged desktop app now carries the block-diagram skill.
+
+- **One @ menu** for pages, the assistant, comments and quick capture ([02 §13](02_MODULE_INTERACTION_HUB_UI.md#blocks-and-mentions)): `@people` or `@people:` lists people, `@diagram:transformer` searches diagrams, and `@anik` searches every kind with the best match first, so Enter picks it. Mail senders such as `alerts` or `support` come after real names.
+- **Text boxes** write `@people:Anika Rao` and send the IDs they picked. The server resolves `@kind:name` tokens typed without an ID when exactly one record in the space has that name ([11 §4.1](11_HOW_THE_ASSISTANT_WORKS.md#41-the-browser-opens-a-stream)).
+
 ## The `ensemble` terminal app and Ensemble Code (12 Oct 2026)
 
 - **`ensemble` opens an app**, not a list of subcommands ([26 §2.1](26_CLI.md#21-the-app)): two tabs, clickable, with a sidebar. **Tasks** groups runs (needs you, running, queued, stopped, done) and answers what waits on you with buttons (a question's own options with the recommended one starred, or allow once / for this task / always / deny), a number key, a typed answer, or `/allow`, `/deny`, `/answer`. **Chat** is Ensemble Code. `/` opens a filtered command menu. The old subcommands remain for scripts under `ensemble help commands`.

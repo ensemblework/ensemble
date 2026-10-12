@@ -6,6 +6,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type { Actor, Prisma, PrismaClient } from "@prisma/client";
 import { isHmTime, isIsoDate, nextNotificationAt, parseDue } from "../lib/clock.js";
 import { recordUndoInTransaction } from "../lib/undo.js";
+import { syncFileText } from "../files/visibility.js";
 
 type Tx = Prisma.TransactionClient;
 type Db = PrismaClient | Tx;
@@ -334,6 +335,7 @@ export async function softDelete(tx: Tx, userId: string, kind: TrashKind, id: st
   const existing = await delegate.findFirst({ where: { id, userId, deletedAt: null } });
   if (!existing) throw notFound(`That ${kind} was not found.`);
   const updated = await delegate.update({ where: { id }, data: { deletedAt: now } });
+  if (kind === "document") await syncFileText(tx, id);
   const label = String(existing.title ?? existing.name ?? existing.fullName ?? existing.filename ?? kind);
   await recordUndoInTransaction(tx, {
     userId,
@@ -368,4 +370,5 @@ export async function restoreOne(db: Db, userId: string, kind: TrashKind, id: st
   const delegate = db[kind] as unknown as { updateMany: (args: unknown) => Promise<{ count: number }> };
   const result = await delegate.updateMany({ where: { id, userId, deletedAt: { not: null } }, data: { deletedAt: null } });
   if (result.count === 0) throw notFound(`That ${kind} was not found.`);
+  if (kind === "document") await syncFileText(db, id);
 }

@@ -82,6 +82,7 @@ The assistant works inside the open Ensemble space. Its tools read and write wit
 | `apps/hub-web/components/assistant/ask-launcher.tsx` | 152 | the round launcher: draggable along the bottom or right edge, position saved in the browser; the configurable shortcut (Command-J by default) toggles the panel |
 | `apps/hub-web/components/shell/topbar.tsx` | — | the undo / redo buttons in the app bar |
 | `apps/hub-web/components/comments/` | ~700 | text comments and `@ensemble` replies on a page |
+| `apps/hub-web/lib/mentions/`, `components/mentions/` | ~610 | the @ menu shared by pages and text boxes: groups, scoping, ranking (`menu.ts`), and the popover for a `textarea` or `input` (`mention-menu.tsx`) |
 | `apps/hub-api/src/assistant/types.ts` | 98 | what a tool *is* — the contract every tool obeys |
 | `apps/hub-api/src/assistant/registry.ts` | 143 | the Hub catalog + Zod → JSON Schema for the model |
 | `apps/hub-api/src/assistant/apps.ts` | 192 | which connected-app tools a turn gets, the `apps` write switch, the Apply resolver hooks |
@@ -90,8 +91,10 @@ The assistant works inside the open Ensemble space. Its tools read and write wit
 | `packages/shared-types/src/personas.ts` | — | the sentences about the person (`personaBlock`, `personaFor`) |
 | `apps/hub-api/src/assistant/agent.ts` | 730 | the loop: ask → tool calls → run → feed back |
 | `apps/hub-api/src/assistant/cutoff.ts` | 91 | detects a reply cut off by the provider |
+| `apps/hub-api/src/assistant/mentions.ts` | 130 | resolves `@people:Name` tokens typed without an id ([§4.1](#41-the-browser-opens-a-stream)) |
 | `apps/hub-api/src/assistant/diagram-skill.ts` | 39 | loads the block-diagram skill for diagram turns |
-| `apps/hub-api/src/assistant/tools/` | ~1,500 | Hub tools by area: `tasks`, `projects`, `context`, `graph`, `repos`, `skills`, `reminders`, `fetch`, `watchers`, `diagrams`, `diagram-context`, `plots` |
+| `apps/hub-api/src/assistant/skills/` | — | the playbooks (the assistant's built-in skills, one Markdown file per area), the map of Ensemble, routing and per-turn toolsets (`index.ts`), and `hub_how_to` (`tools/howto.ts`) |
+| `apps/hub-api/src/assistant/tools/` | ~1,500 | Hub tools by area: `tasks`, `projects`, `context`, `graph`, `repos`, `skills`, `reminders`, `fetch`, `watchers`, `diagrams`, `diagram-context`, `plots`, `activity` (running work and runs), `workspace` (Code, read only), `settings` ([§8.3](#83-running-work-code-and-settings)) |
 | `apps/hub-api/src/assistant/tools/google-workspace.ts`, `tools/google/` | ~1,270 | Gmail, Google Calendar, Drive, Docs, Sheets, Slides |
 | `apps/hub-api/src/assistant/tools/microsoft-365.ts`, `tools/microsoft/` | ~720 | Outlook mail and calendar, Teams, OneDrive, Word, Excel, PowerPoint (Microsoft Graph v1.0) |
 | `apps/hub-api/src/assistant/tools/zoom.ts`, `docusign.ts`, `jira.ts` | ~690 | read only: Zoom meetings, recordings, transcripts and AI summaries; Docusign envelopes; Jira issues |
@@ -107,7 +110,7 @@ The assistant works inside the open Ensemble space. Its tools read and write wit
 | `packages/shared-types/src/assistant.ts` | 267 | every shape that crosses the wire |
 | `packages/shared-types/src/undo.ts` | — | the undo/redo contract |
 
-**51 Hub tools** (24 read, 27 write) in the static catalog, grouped by the data they touch, plus **38 connected-app tools** (23 read, 15 write) offered per person ([§8.2](#82-connected-apps)).
+**82 Hub tools** (43 read, 39 write) in the static catalog, grouped by the data they touch, plus **38 connected-app tools** (23 read, 15 write) offered per person ([§8.2](#82-connected-apps)).
 
 Roughly **2,000 lines of tools and 600 of orchestration**. The tools are the bulk, and that is the right shape: the interesting part is *what the agent may do*, not the loop that lets it.
 
@@ -133,6 +136,14 @@ POST /api/assistant/turn
 ```
 
 The first frame back is `status { conversationId }`, before the model is called. The dock keeps that id, so **Stop** on the first message of a new chat can call `POST /api/assistant/conversations/:id/stop`.
+
+**Mentions travel with the turn.** Typing `@` in the box opens the same menu as pages ([02 §13](02_MODULE_INTERACTION_HUB_UI.md#blocks-and-mentions)). A pick writes `@people:Anika Rao` into the message, and the dock adds the picked mentions still in the text to the body as `"mentions": [{ "kind": "people", "id": "…", "label": "Anika Rao" }]`. A token without an ID (typed by hand, pasted, or sent from the terminal app) is resolved by `resolveTypedMentions` in `apps/hub-api/src/assistant/mentions.ts`, which the route calls before the model:
+
+- `@<kind>:<name>` gets an ID when exactly one record of that kind **in this space** has that name. Case is ignored and trailing punctuation is dropped; people also match by email. The longest name that matches wins, so `@people:Anika Rao about the deck` finds Anika Rao.
+- Two records with the name, no record, a deleted record, or a kind whose module is off: the token stays plain text.
+- An ID the dock sent wins over a typed token with the same name. At most 40 mentions go to the model.
+
+Questions to `@ensemble` in comments (`POST /api/pages/:kind/:id/ensemble`) resolve typed tokens the same way. The model sees one system line: *"The user explicitly selected these workspace references…"*, then `kind:id (label)` for each.
 
 **`page` matters more than it looks.** It is what makes *"add a todo for this"* answerable — if you are standing on `/tasks/abc`, the prompt is told that the task on screen is `abc`. The server resolves that exact owned task and includes its original ask, assignment instructions, recorded results and human notes. An inline annotation uses the particular run/workspace result it annotates. Long content is bounded and continues through `hub_read_task_page` with explicit offsets; **IDs are lookup keys, not full-text search phrases.**
 
@@ -167,7 +178,9 @@ The model now knows MOSAIC and Shachee exist and how to address them. It does **
 
 After the rules come a few sentences about the person from `personaBlock` (`packages/shared-types/src/personas.ts`), for example *"Mira works as a lawyer; they usually want a clause summarised, two drafts compared, …"*. The persona is Settings → Act as; while Act as is General, `personaFor` uses the onboarding role instead (student, teacher, lawyer, engineer, `vibe` → engineer, manager, researcher). It changes tone and emphasis only. Tools and permissions are decided in code, so the text no longer carries a disclaimer about them. The main chat gets it in the system prompt; a caller that passes `actAs` gets the same, and an older caller that still puts `personaBlock` in `preamble` without `actAs` is left as it was. Last, a **Connected apps** paragraph (`appsPrompt` in `apps.ts`) names what is connected and switched on, what is not connected, and the Apply rule for those apps.
 
-**Three — the tool list for this turn**: the Hub catalog filtered by your settings, plus this person's connected-app tools (`toolsForTurn` in `apps.ts`), in the shape the provider wants.
+**Three — the map and the playbooks** (`skills/`, §10.1). Every turn carries a short map of Ensemble (where each thing lives, with its path) and one line per playbook. The playbooks the turn points at — by the open page, the mentions, or the words of the message, at most two — come in full at the end of the prompt.
+
+**Four — the tool list for this turn**: the Hub catalog filtered by your settings, plus this person's connected-app tools (`toolsForTurn` in `apps.ts`). Any of these may run. The model is *shown* only the core tools (the reads most requests start with, task create/update, and `hub_how_to`) and the tools of the playbooks in play, so a plain turn sees the 17 core tools instead of 120; when the model loads another playbook with `hub_how_to`, its tools are added from the next step. Ensemble Code turns are shown everything. `ENSEMBLE_ASSISTANT_TOOLSETS=off` shows everything everywhere.
 
 ### 4.3 The catalog becomes a contract
 
@@ -380,7 +393,7 @@ A write passes through **five gates** before it lands:
 | Area filter | `toolsFor(allowedWriteAreas)` | Writes to areas you switched off — the tool is never even shown, so the model does not waste turns trying. `apps` is not one of these areas. |
 | Connected-app gate | `apps.ts`, `agent.ts`, `apply.ts` | App tools for suites or products that are not connected or switched on; app writes while `assistant.connectedAppWrites` is off (not offered, refused on Apply); any app write running before Apply. |
 | Zod parse | `tool.input.parse` | Malformed arguments, bad enums, missing fields. |
-| Write policy | `agent.ts` | `preview` and `needs-me` hold the call; nothing is written until you press Apply. Writes to connected apps are held under every policy. |
+| Write policy | `agent.ts` | `preview` and `needs-me` hold the call; nothing is written until you press Apply. Writes to connected apps, and tools marked `alwaysHold` (`hub_update_settings`), are held under every policy. |
 | Referential checks | each tool's `run` | Ids that do not exist. A foreign-key error naming `tasks_deliverable_id_fkey` tells the model nothing it can act on and tells you less. |
 
 And the ones that are **not negotiable:** tools that reach *outside* the Hub — starting an agent run that could send mail or open a PR — keep their existing risk-based gates from `ensemble_agent/tools/catalog.py` **whatever the write policy says**. A setting that could be turned up until the agent mails your manager unattended is not a setting, it is a trap.
@@ -406,6 +419,10 @@ The assistant works on the shared space's content as **you** ([29](29_SHARING.md
 - **Viewers only read.** A viewer's turn offers no write tools, and `POST /api/assistant/apply` and inline @ensemble are refused for them.
 - **Your own chats.** Conversations carry `account_id`, so each person sees only their own. Streamed frames go only to the person who asked (`lib/sse.ts`).
 - **It knows where it is.** The prompt names you, says whose space this is, and that their apps, reminders and settings are private (`assistant/state.ts`).
+
+### Its own space only
+
+Every tool reads and writes only the open space (`ctx.userId` is the space, never the account). The prompt names the open space and says other spaces are out of reach; asked about one, the assistant points at the space switcher. `assistant/spaces.integration.test.ts` seeds a second space of the same account and calls every Hub read tool from the first with the second's ids and names: nothing comes back.
 
 ---
 
@@ -478,6 +495,60 @@ The prompt's *Connected apps* paragraph says these exist and to prefer them for 
 
 **What Ensemble already keeps.** `hub_search_context` and `hub_read_context` (`tools/context.ts`, area `context`, read only) search the person's stored artifacts (synced mail, chats, events, pull requests and issues, meeting transcripts, and items attached from apps) by title or text, optionally only those on one task or project, and read one in full.
 
+### 8.3 Running work, Code and settings
+
+Read from the code and checked with `src/assistant/tools/activity.integration.test.ts` and `settings.integration.test.ts` (PGlite, in-memory Redis) on 13 Oct 2026. Each test seeds a second space of the same account with the same kinds of rows; nothing of it is listed, read, stopped or changed from the first.
+
+| Tool | Area | Reads or writes | What it does |
+|---|---|---|---|
+| `hub_list_activity` | `runs` | read | What runs in the open space now, as the Activity panel shows it: assistant replies in other chats of this space (the activity store, `lib/activity.ts`, read like `GET /api/activity`; the store is per person, so a reply whose chat is in another space is dropped), agent tasks running, waiting or queued (`workspace_jobs`), and imports (`import_jobs`, owner only). Each row has an id (`assistant:…`, `job:…`, `import:…`) and `canStop`; this chat's own reply, and a run on someone else's computer, cannot be stopped |
+| `hub_stop_activity` | `runs` | write (`outsideTransaction`) | Stops one row by id, as `POST /api/activity/:id/stop` does: `stopJob` for an agent task, `cancelImport` for an import, a cancel flag for a reply. The preview names what stops; an id not running in this space is refused. Ledgered as `activity.stop` with actor `agent` |
+| `hub_list_runs`, `hub_get_run` | `runs` | read | Recent runs (`runs` table, like `GET /api/runs`): task, status, engine (Ensemble agent, Claude Code, Codex, Cursor), model, times, link `/runs?run=<id>`. One run adds its steps (up to 15 titles), the result (1,500 characters), the files a code run changed (from its review's `agentPaths`), the review link and any pull request or commit it published |
+| `hub_list_code_folders` | `context` | read | The Code tab's folders (`settings.code.roots` that are still usable, the Ensemble workspace, recent agent checkouts) and the git repositories in them, each with its `/code/review?repo=…` link |
+| `hub_list_agent_changes` | `context` | read | Code → Agent changes (`code_reviews`, like `GET /api/code/reviews`): waiting, reviewed or all, with the task, folder, branch, file count and `/code/review?review=<id>` |
+| `hub_find_setting` | `context` | read | A few words → up to five entries of the settings map (below) with the place, one line, the link, and, for a setting the assistant may change, its key, allowed values and current value |
+| `hub_get_settings` | `context` | read | The current values of the settings the assistant may change, optionally by key prefix |
+| `hub_update_settings` | `context` | write (`alwaysHold`, `outsideTransaction`) | Changes those settings; anything else is refused with the setting's link |
+
+The two Code tools only look: their descriptions say coding is done by the person's editor through Ensemble's MCP ([CONTEXT_BRIDGE](CONTEXT_BRIDGE.md)) or by an agent the person assigns. They are refused while the Code module is off and, on the hosted site, for anyone but the operator (`requireHostAccess`, as `/api/code`). The registry does not yet withhold them when Code is off (`toolModule` in `registry.ts` gates only the repository readers), so the refusal comes from the call.
+
+**The settings map.** `packages/shared-types/src/settings-map.ts` (`SETTINGS_MAP`) lists every setting by Settings tab with a label, search words, one line and its link (`/settings?tab=…#jump-…`, the jump ids of `components/settings/navigation.ts`). Entries with a `key` and a `rule` are the only settings the assistant may change:
+
+- time zone; accent colour and custom accent; quiet hours (on, start, end); morning brief (on, time); quiet nudges (on, days); desktop reminders; *Your field* (`assistant.actAs`); the default model preset (`assistant.defaultTier`); each tier's thinking effort (`models.<tier>.effort`); *Place new tasks by priority*; fetching's look-back days and *Propose todos*; the board's completed count and Context review days; and each Features switch (`features.<module>`, this space only, owner only).
+- Never: model keys and the Ollama address, passwords and sign-in, email (it confirms *Delete my data*), sharing and spaces, connections and devices, the assistant's write policy and write areas, autonomy, sandbox, network, run limits and run profiles, Code and terminal folders and git settings, retention, undo depth and deletion, and a tier's provider or model (a typed model name cannot be checked without the runtime's catalog).
+- Theme, font, text size and motion have no key: they are kept per browser (`lib/prefs.ts`) and only the accent follows the server copy (`components/shell/notifier.tsx`), so a server-side change would not reach the screen. `hub_find_setting` sends the person to Appearance or the account menu instead.
+
+`hub_update_settings` waits for Apply under every write policy (`alwaysHold` in `holdsAssistantWrite`). The preview lists *before → after* for each change and how to change it back. On Apply it saves the way `PATCH /api/settings` does (`saveSettings`, then `mirrorSettings`: with *Keep every space in sync* on, the account's other spaces get the change too, and the preview says so) and switches a feature the way `PUT /api/settings/modules` does (`setOwnModule`, this space and its sessions). The settings write is journalled on the `preferences` row, so Undo in the app bar puts it back; a Features switch is switched back in Settings. It runs outside the Apply batch's transaction because the mirror has to read the committed settings, so the Apply card has no undo button of its own and the change is ledgered as `assistant.hub_update_settings`. In a space shared with you the settings are your own (`keysFor`), and Features switches are refused.
+
+### 8.4 Pages, meeting notes, calendar, the profile's lists and bringing things in
+
+Read from the code and checked with `src/assistant/tools/pages.integration.test.ts`, `meetings.integration.test.ts` and `desk-imports.integration.test.ts` (PGlite in memory, vendor calls mocked) on 13 Oct 2026. Each creates a second space of the same account (`POST /api/spaces`) and calls the tools from it with the first space's ids: nothing is listed, read or changed.
+
+| Tool | Area | Reads or writes | What it does |
+|---|---|---|---|
+| `hub_list_pages` | `projects` | read | Standalone pages, newest first; `query` matches the title and the page's search text; `offset`/`nextOffset` |
+| `hub_read_page` | `projects` | read | A page by `pageId`, or a task's page by `taskId`, as Markdown (`pageMarkdown` in `pages/markdown.ts`) in 6,000-character parts. Lists, checklists, tables and code keep their shape; mentions come out as `[@Label](ensemble://kind/id)` |
+| `hub_create_page` | `projects` | write | Title and Markdown → a standalone page (`createStandalonePage`); returns its id and `/pages/<id>` |
+| `hub_update_page` | `projects` | write | `pageId` or `taskId`, `mode` `append` or `replace`, Markdown, and `matchTitle` (refused when it is not the current title; a task page's title is its task's); `title` renames a standalone page (`writePageContent` in `pages/store.ts`). A task with no page gets one, and appending to it starts from the task's notes |
+| `hub_delete_page` | `projects` | write | A standalone page to Trash (`trashStandalonePage`, as `DELETE /api/pages/:id`); a task's page is refused |
+| `hub_list_meeting_notes` | `projects` | read | Notes written in Ensemble (meeting sessions) and notes from meeting tools (with where they came from and `readOnly`), newest first, by `query` and `from`/`to` days |
+| `hub_read_meeting_note` | `projects` | read | One note's Markdown in parts, with attendees, the calendar event and decisions; an imported note also has its action items and what is waited on |
+| `hub_create_meeting_note` | `projects` | write | Title, date and time in the person's zone (a date alone is noon), Markdown notes, attendee person ids and a calendar event id (title, time and attendees default from the event). Saved as an ended session with its recap and mirror note (`endMeetingSession`) |
+| `hub_update_meeting_note` | `projects` | write | Append or replace the notes, rename, or attach an event, behind `matchTitle` (`saveMeetingNotes`; the mirror note follows). Imported notes are refused as read only |
+| `hub_delete_meeting_note` | `projects` | write | A session and its mirror note to Trash (Trash restores them as `meeting`) |
+| `hub_list_events` | `tasks` | read | Events Ensemble keeps from every connected Google and Outlook calendar (the rows `GET /api/calendar` reads) between two days in the person's zone (default today to 7 days ahead, at most 62 days): time, place or link, attendee names, which calendar, linked meeting notes, and each calendar's last sync. Creating or moving events stays with `calendar_create_event` and `outlook_calendar_create_event` |
+| `hub_weekly_recap` | `tasks` | read | `weeklyRecap` (as `GET /api/recap/week`) for the week containing `date`: done, decided, slipped and the week's meetings, plus `upcoming`, the open tasks and deliverables due from today (or the week's start) until a week after it ends |
+| `hub_list_desk_items` | `context` | read | The profile's own lists on its desk. The desk follows the space's template (`activeTemplateId`, the same map as `components/desk/desks.ts`): a bench has parts, tests, builds and dates; a semester a timetable, deadlines, attendance, reading and people; chambers matters, hearings, filings, drafts, logged time and court holidays. Without `kind`, each list with what an entry needs and its first rows; with `kind`, that list's rows and ids |
+| `hub_add_desk_item` | `context` | write | One entry with only the fields its kind needs (flat inputs: `title`, `day`, `qty`, `status`, …), written by `createDeskEntry` (`desk/entries.ts`, as `POST /api/desk/entries`). A bad or missing field comes back as what that kind needs |
+| `hub_remove_desk_item` | `context` | write | Dated entries (tasks) and people go to Trash with an undo entry; timetable slots, parts, tests, citations, marking, objectives, deploys, holidays and attendance marks are deleted for good, and the preview says so. A task under a desk kind it is not is refused |
+| `hub_import_app_file` | `context` | write (`outsideTransaction`) | `source`, `kind` and `id` from an `apps_search` hit (`google_workspace`, `microsoft_365`, `dropbox` or `box`; `file` or `attachment`) → `importFromApp` (as `POST /api/documents/import`): a copy in Files, its id and `/files/<id>`; the same item again returns the kept copy. The preview refuses when the app is not ready (with the steps from `importSources`) or the hosted plan's file count is full |
+| `hub_save_app_item_as_page` | `context` | write (`outsideTransaction`) | One item (`readItem` in `connectors/items`, Markdown up to 20,000 characters) as a standalone page that starts with *From <app>* and a link back. The page is marked `external_source = "app-item"`, so saving the item again returns it (a copy in Trash gives up the mark) |
+| `hub_import_dataset` | `context` (Plots) | write (`outsideTransaction`) | Pasted CSV `text`, or `fileId`: a CSV or TSV in Files from its original bytes, or an `.xlsx` sheet (`sheet`, default the first with rows) from the per-sheet CSV text Files extracted (the first 2,000 rows of each sheet) |
+
+**Markdown and links.** Page Markdown goes through `markdownToNodes` (after `separateLists`, so a checklist next to a bullet list stays a checklist) and `restoreMentionLinks`: `[@report.pdf](ensemble://file/<id>)`, `[@Mira](ensemble://people/<id>)` (aliases such as `person` work) and the other mention kinds become mention nodes, so a file link is a file card and attaches the file to the page. Each mention is checked against the open space (`keepOwnMentions` in `tools/pages.ts`); an id that is not one of its rows stays as `@Label` text and the result says how many did. `replace` rewrites the whole page, so the description tells the model to read it first and keep its links.
+
+**Undo.** Page and meeting-note writes run in the Apply batch's transaction and journal their own undo (`taskPage`, and `meetingSession` in `lib/undo.ts` with the session and its mirror note in one entry): undoing a create moves the row to Trash, undoing an edit puts back the content and title (the page's mention index is rebuilt on its next save), undoing a delete restores the row. Desk entries that are tasks or people use `createTask` and `softDelete`. The three outside writes get no undo button on the Apply card; `hub_save_app_item_as_page` still puts its page on the person's undo stack. `hub_import_dataset` used to run inside the batch, where on a hosted account its dataset lock waited on the batch's own account lock; it now runs after the transaction and has no undo (remove the dataset in Plots).
+
 ---
 
 ## 9. Failure modes, and what catches them
@@ -545,6 +616,30 @@ Three rules learned the hard way:
 `pnpm --filter @ensemble/hub-api exec vitest run src/assistant` asserts the catalog has no duplicates, that nothing named `hub_list_*` writes, that every schema serialises, and that area filtering actually withholds.
 
 ---
+
+### 10.1 Adding a playbook
+
+A playbook is a Markdown file in `apps/hub-api/src/assistant/skills/` with frontmatter:
+
+```text
+---
+name: meeting-notes            # what hub_how_to takes
+title: Meeting notes
+when: one line for the index: which requests it covers
+tools: hub_list_meeting_notes, hub_read_meeting_note, …   # shown while it is in play
+appTools: true                 # optional: every connected-app tool too
+module: diagrams               # optional: only when that module is on
+include: block-diagrams        # optional: append .github/skills/block-diagrams/SKILL.md
+match: \b(meeting notes?|minutes|…)\b   # words that preload it (case-insensitive)
+paths: /meetings               # open pages that preload it
+mentions: diagram              # mention kinds that preload it
+---
+The steps: what to call, in order, for each kind of request, with examples and pitfalls.
+```
+
+Write for a small model: name the exact tools and arguments, give a recipe per common request, and say what not to do. Routing scores the open page (3), a mention (2) and the words (2, plus up to 1 for longer and more matches, so "meeting notes" beats "meeting"); the top two load. `skills/skills.test.ts` checks every file parses, every tool it names exists, and that the owner's example requests route to the right playbook. `packages/block-diagrams/src/docs.test.ts` parses every diagram example in `diagrams.md`.
+
+Playbooks today: tasks, calendar, files, context, meeting-notes, pages, diagrams, plots, inbox, apps, recap, settings, agents.
 
 ## 11. Honest limits
 

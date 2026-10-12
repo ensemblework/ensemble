@@ -32,6 +32,8 @@ import { clipSummary, renderWeeklyRecap } from "./recap.js";
 import { isGuestIn } from "../sharing/context.js";
 
 type Db = PrismaClient;
+/** Meeting-session writes also run inside the assistant's Apply transaction. */
+type Tx = PrismaClient | Prisma.TransactionClient;
 
 /** Keyboard only. Microphone capture is a later step. */
 export const VOICE_TODO = "Type your notes below. Microphone recording is not available yet.";
@@ -120,13 +122,13 @@ export async function markAllNotificationsRead(db: Db, userId: string) {
   return { updated: result.count };
 }
 
-interface PersonRow {
+export interface PersonRow {
   id: string;
   name: string;
   email: string | null;
 }
 
-function matchAttendees(names: string[], people: PersonRow[]) {
+export function matchAttendees(names: string[], people: PersonRow[]) {
   return names.map((name) => {
     const lower = name.toLowerCase();
     const exact = people.find((person) => person.name.toLowerCase() === lower || person.email?.toLowerCase() === lower);
@@ -305,14 +307,14 @@ function sessionJson(row: {
   };
 }
 
-async function ownedSession(db: Db, userId: string, id: string) {
+async function ownedSession(db: Tx, userId: string, id: string) {
   const row = await db.meetingSession.findFirst({ where: { id, userId, deletedAt: null } });
   if (!row) throw fail(404, "That meeting was not found.");
   return row;
 }
 
 async function syncNote(
-  db: Db,
+  db: Tx,
   userId: string,
   session: { id: string; meetingNoteId: string | null; title: string; notes: string; personIds: string[]; artifactId: string | null; startedAt: Date },
 ) {
@@ -335,7 +337,7 @@ async function syncNote(
 }
 
 async function prepBundle(
-  db: Db,
+  db: Tx,
   userId: string,
   attendees: Array<{ id: string | null; name: string }>,
 ) {
@@ -489,7 +491,7 @@ export async function startMeetingSession(db: Db, userId: string, input: { artif
   return { session: sessionJson(session) };
 }
 
-export async function saveMeetingNotes(db: Db, userId: string, id: string, notes: string | undefined, title?: string) {
+export async function saveMeetingNotes(db: Tx, userId: string, id: string, notes: string | undefined, title?: string) {
   const session = await ownedSession(db, userId, id);
   await db.meetingSession.update({ where: { id: session.id }, data: { notes, title } });
   if (session.status === "ended") {
@@ -503,7 +505,7 @@ export async function saveMeetingNotes(db: Db, userId: string, id: string, notes
   return { session: sessionJson(updated) };
 }
 
-async function finishSession(db: Db, userId: string, id: string) {
+async function finishSession(db: Tx, userId: string, id: string) {
   const session = await ownedSession(db, userId, id);
   if (session.status === "ended") return session;
   const people = await db.person.findMany({ where: { userId, deletedAt: null }, select: { id: true, name: true, email: true } });
@@ -530,7 +532,7 @@ async function finishSession(db: Db, userId: string, id: string) {
   return ended;
 }
 
-export async function endMeetingSession(db: Db, userId: string, id: string) {
+export async function endMeetingSession(db: Tx, userId: string, id: string) {
   const ended = await finishSession(db, userId, id);
   return {
     session: sessionJson(ended),
@@ -567,7 +569,7 @@ export async function declineMeetingAttach(db: Db, userId: string, id: string) {
   return { session: sessionJson(updated), kept: true };
 }
 
-export async function refreshMeetingRecap(db: Db, userId: string, id: string) {
+export async function refreshMeetingRecap(db: Tx, userId: string, id: string) {
   const session = await ownedSession(db, userId, id);
   const people = await db.person.findMany({ where: { userId, deletedAt: null }, select: { id: true, name: true } });
   const attendees = session.personIds.map((personId) => people.find((person) => person.id === personId)?.name ?? personId);

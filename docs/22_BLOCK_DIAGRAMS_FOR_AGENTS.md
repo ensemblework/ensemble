@@ -1,6 +1,6 @@
 # 22 · Block diagrams for agents
 
-This is the guide Ensemble gives an agent when a turn asks for a diagram. The same text is the skill at `.github/skills/block-diagrams/SKILL.md`. The assistant loads that file when the message mentions a diagram, or when the open page is a diagram. It is not injected on unrelated turns.
+This is the guide Ensemble gives an agent when a turn asks for a diagram. The same text is the skill at `.github/skills/block-diagrams/SKILL.md`. The assistant's diagrams playbook (`apps/hub-api/src/assistant/skills/diagrams.md`, [11 §10.1](11_HOW_THE_ASSISTANT_WORKS.md#101-adding-a-playbook)) appends this file after its own steps and examples; the playbook loads when the message is about a diagram, a diagram is mentioned or open, or the model asks for it with `hub_how_to`. It is not injected on unrelated turns. The packaged desktop app carries a copy beside its API.
 
 The DSL itself, including `curve` and the fit presets, is in `docs/21_BLOCK_DIAGRAMS_DSL.md`.
 
@@ -69,6 +69,8 @@ An ER-ish diagram names entities and relationships. It is not a full schema. Ski
 5. Call `hub_explain_diagram` when they want the picture described in sentences.
 
 Every block label must appear in that material or in the person’s own words. A box called “Auth service” is allowed only if something you read says so. Prefer fewer true boxes over a plausible architecture.
+
+A well-known system the person names, rather than their own work (the transformer architecture, the OAuth 2.0 authorization code flow, a TCP handshake), is drawn from its standard, textbook design with its standard names. Do not add parts of their own system to it unless they gave them.
 
 If the material is too thin (a repo name and nothing else), draw that one box and say what you could not see. Do not fill the gaps.
 

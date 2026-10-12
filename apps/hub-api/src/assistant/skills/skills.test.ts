@@ -1,0 +1,210 @@
+/**
+ * The assistant's playbooks: every file parses, every tool it names exists, routing picks the
+ * right playbook for real requests, a turn advertises the core tools plus the playbooks' tools,
+ * and loading a playbook with hub_how_to brings its tools into the next step. No database.
+ */
+import assert from "node:assert/strict";
+import test, { afterEach } from "node:test";
+import "../../runtime/test-env.js";
+import { DEFAULT_SETTINGS, type Settings } from "@ensemble/shared-types";
+import type { FastifyInstance } from "fastify";
+import { setAskRuntimeStreamForTests, type RuntimeTurn } from "../../lib/model-turn.js";
+import { runAssistantTurn } from "../agent.js";
+import { APP_TOOL_LIST, TOOL_NAMES, getTool } from "../registry.js";
+import { buildSystemPrompt } from "../state.js";
+import type { AnyHubTool } from "../types.js";
+import { CORE_TOOLS, advertisedTools, allPlaybooks, appMap, findPlaybook, playbookIndex, playbooksFor, routePlaybooks } from "./index.js";
+
+const KNOWN = new Set([...TOOL_NAMES, ...APP_TOOL_LIST.map((tool) => tool.name), "apps_search", "apps_read", "apps_post_update"]);
+
+test("every playbook parses and names only tools that exist", () => {
+  const playbooks = allPlaybooks();
+  assert.ok(playbooks.length >= 12, `found ${playbooks.length} playbooks`);
+  const names = new Set<string>();
+  for (const playbook of playbooks) {
+    assert.match(playbook.name, /^[a-z][a-z-]+$/);
+    assert.ok(!names.has(playbook.name), `duplicate ${playbook.name}`);
+    names.add(playbook.name);
+    assert.ok(playbook.body.length > 200, `${playbook.name} has steps`);
+    assert.ok(playbook.when.length < 260, `${playbook.name}'s index line stays one line`);
+    for (const tool of playbook.tools) assert.ok(KNOWN.has(tool), `${playbook.name} names unknown tool ${tool}`);
+  }
+  for (const tool of CORE_TOOLS) assert.ok(KNOWN.has(tool), `core tool ${tool} exists`);
+  assert.match(appMap(), /Map of Ensemble/);
+  assert.match(findPlaybook("diagrams")!.body, /# Block diagrams/, "the diagrams playbook carries the block-diagram skill");
+});
+
+test("hub_how_to offers exactly the playbook names", () => {
+  const tool = getTool("hub_how_to")!;
+  assert.equal(tool.isWrite, false);
+  const parsed = tool.input.safeParse({ name: "diagrams" });
+  assert.ok(parsed.success);
+  assert.equal(tool.input.safeParse({ name: "nonsense" }).success, false);
+  for (const playbook of allPlaybooks()) assert.ok(tool.input.safeParse({ name: playbook.name }).success, playbook.name);
+});
+
+const routed = (message: string, extra: { path?: string; mentions?: Array<{ kind: string }> } = {}, modules?: string | null) =>
+  routePlaybooks({ message, ...extra }, playbooksFor(modules)).map((playbook) => playbook.name);
+
+test("routing picks the playbook for the owner's example requests", () => {
+  const cases: Array<[string, string]> = [
+    ["Make a block diagram of the transformer architecture", "diagrams"],
+    ["Turn this page into a flowchart", "diagrams"],
+    ["Make a bar plot of revenue by region from sales.xlsx", "plots"],
+    ["Filter my emails from Anureet in the past 4 days", "inbox"],
+    ["Summarise my unread Slack messages", "inbox"],
+    ["Find the PDF about the Q3 budget in my Google Drive", "apps"],
+    ["Import all my Notion pages about pricing", "apps"],
+    ["What meetings do I have tomorrow?", "calendar"],
+    ["Write meeting notes for the design sync and list the action items", "meeting-notes"],
+    ["Give me my weekly recap", "recap"],
+    ["Which agents are running right now? Stop the one on the deck", "agents"],
+    ["Where do I change my time zone?", "settings"],
+    ["Move the onboarding task to in progress and mark the deck task done", "tasks"],
+    ["Who is Mira and what parts are we testing?", "context"],
+    ["Create a page with an outline for the launch plan", "pages"],
+    ["Summarise the contract PDF I uploaded", "files"],
+  ];
+  for (const [message, expected] of cases) assert.ok(routed(message).includes(expected), `${message} → ${routed(message).join(", ")}`);
+  assert.deepEqual(routed("What is 17 times 23?"), [], "a plain question loads nothing");
+  assert.ok(routed("hello", { path: "/diagrams/abc" }).includes("diagrams"), "the open page routes");
+  assert.ok(routed("make it bigger", { mentions: [{ kind: "plot" }] }).includes("plots"), "a mention routes");
+  assert.ok(routed("x".repeat(10) + " diagram chart meeting email task recap").length <= 2, "at most two");
+});
+
+test("module playbooks follow the person's modules", () => {
+  assert.equal(playbooksFor("tasks").some((playbook) => playbook.name === "diagrams"), false);
+  assert.equal(routed("Draw a flowchart of signup", {}, "tasks").includes("diagrams"), false);
+  assert.ok(playbooksFor("diagrams,plots").some((playbook) => playbook.name === "plots"));
+  assert.equal(findPlaybook("plots", "tasks"), undefined);
+});
+
+test("a turn shows the core tools plus the tools of the playbooks in play", () => {
+  const all = [...TOOL_NAMES.map((name) => getTool(name)!), ...APP_TOOL_LIST] as AnyHubTool[];
+  const bare = advertisedTools(all, []).map((tool) => tool.name);
+  assert.deepEqual(new Set(bare), new Set(CORE_TOOLS.filter((name) => all.some((tool) => tool.name === name))));
+  assert.ok(bare.length < 25, `a plain turn shows ${bare.length} tools, not ${all.length}`);
+  const diagrams = advertisedTools(all, [findPlaybook("diagrams")!]).map((tool) => tool.name);
+  assert.ok(diagrams.includes("hub_create_diagram") && diagrams.includes("hub_validate_diagram"));
+  assert.equal(diagrams.includes("gmail_search"), false);
+  const inbox = advertisedTools(all, [findPlaybook("apps")!]).map((tool) => tool.name);
+  assert.ok(inbox.includes("gmail_search") && inbox.includes("docs_create"), "appTools brings every connected-app tool");
+  process.env.ENSEMBLE_ASSISTANT_TOOLSETS = "off";
+  try {
+    assert.equal(advertisedTools(all, []).length, all.length);
+  } finally {
+    delete process.env.ENSEMBLE_ASSISTANT_TOOLSETS;
+  }
+});
+
+test("the system prompt names the open space, carries the map and the playbook index", () => {
+  const state = { proposed: 0, todo: [], inProgress: 0, needsMe: 0, projects: [], people: [], repos: [], skills: [], user: { firstName: "Mira", onboardingRole: null, guestOf: null, spaceName: "Lab notebook" } };
+  const playbooks = playbooksFor(undefined);
+  const prompt = buildSystemPrompt(state, undefined, undefined, { map: appMap(), playbooks: playbookIndex(playbooks, [findPlaybook("recap")!]), loaded: "## Playbook: Weekly recap\nsteps" });
+  assert.match(prompt, /The open space is “Lab notebook”\. Everything you can see or change is in this space\. Other spaces are out of reach/);
+  assert.match(prompt, /Map of Ensemble/);
+  assert.match(prompt, /- recap: .*\(loaded below\)/);
+  assert.match(prompt, /- diagrams: /);
+  assert.match(prompt, /## Playbook: Weekly recap\nsteps$/);
+});
+
+// A whole turn with a scripted model --------------------------------------------------
+
+afterEach(() => setAskRuntimeStreamForTests(null));
+
+function fakeApp(): FastifyInstance {
+  const sets = new Map<string, Set<string>>();
+  const empty = () => ({ findMany: async () => [], findFirst: async () => null, findUnique: async () => null, count: async () => 0, create: async () => ({}) });
+  const prisma = new Proxy(
+    {},
+    {
+      get(_target, prop) {
+        if (prop === "authToken") return { findMany: async () => [], findUnique: async () => null };
+        if (prop === "user") return { findUnique: async () => ({ name: "Mira Chen", onboardingRole: null, spaceName: "Lab notebook", ownerId: "account-mira" }) };
+        return empty();
+      },
+    },
+  );
+  return {
+    prisma,
+    redis: {
+      get: async () => null,
+      set: async () => "OK",
+      del: async () => 1,
+      mget: async (...keys: string[]) => keys.map(() => null),
+      sadd: async (key: string, value: string) => (sets.get(key) ?? sets.set(key, new Set()).get(key)!).add(value).size,
+      srem: async () => 1,
+      smembers: async (key: string) => [...(sets.get(key) ?? [])],
+      expire: async () => 1,
+    },
+    log: { error() {}, info() {}, warn() {} },
+  } as unknown as FastifyInstance;
+}
+
+test("hub_how_to loads a playbook mid-turn and its tools are offered on the next step", async () => {
+  const asked: Array<{ tools: string[]; system: string }> = [];
+  let step = 0;
+  setAskRuntimeStreamForTests(async (args) => {
+    asked.push({
+      tools: ((args.chatTools ?? []) as Array<{ function: { name: string } }>).map((spec) => spec.function.name),
+      system: String((args.messages as Array<{ content?: unknown }>)[0]?.content ?? ""),
+    });
+    step += 1;
+    const turn: RuntimeTurn = {
+      text: step === 1 ? "" : "Here is how it fits together.",
+      toolCalls: step === 1 ? [{ id: "call-0", name: "hub_how_to", arguments: JSON.stringify({ name: "diagrams" }) }] : [],
+      model: "test-model",
+      credits: 0,
+      tokensIn: 10,
+      tokensOut: 5,
+      reasoning: "",
+      raw: {},
+      finishReason: "stop",
+      cutOff: false,
+    };
+    if (turn.text) args.onDelta?.(turn.text);
+    return turn;
+  });
+  const settings: Settings = { ...DEFAULT_SETTINGS, timezone: "Asia/Kolkata" };
+  const result = await runAssistantTurn({
+    app: fakeApp(),
+    userId: "space-lab",
+    conversationId: "conv-skills",
+    message: "Help me understand our onboarding",
+    settings,
+    model: "test-model",
+    emit: () => undefined,
+  });
+  assert.equal(result.toolCalls[0]?.name, "hub_how_to");
+  assert.equal(result.toolCalls[0]?.state, "ok");
+  assert.equal(asked[0]!.tools.includes("hub_create_diagram"), false, "not offered before the playbook is loaded");
+  assert.ok(asked[0]!.tools.includes("hub_how_to"));
+  assert.ok(asked[1]!.tools.includes("hub_create_diagram") && asked[1]!.tools.includes("hub_validate_diagram"), "offered after hub_how_to");
+  assert.match(asked[0]!.system, /The open space is “Lab notebook”/);
+  assert.match(asked[0]!.system, /Playbooks: step-by-step know-how/);
+});
+
+test("a routed turn starts with the playbook's text and tools", async () => {
+  const asked: Array<{ tools: string[]; system: string }> = [];
+  setAskRuntimeStreamForTests(async (args) => {
+    asked.push({
+      tools: ((args.chatTools ?? []) as Array<{ function: { name: string } }>).map((spec) => spec.function.name),
+      system: String((args.messages as Array<{ content?: unknown }>)[0]?.content ?? ""),
+    });
+    const turn: RuntimeTurn = { text: "Sure.", toolCalls: [], model: "test-model", credits: 0, tokensIn: 1, tokensOut: 1, reasoning: "", raw: {}, finishReason: "stop", cutOff: false };
+    args.onDelta?.(turn.text);
+    return turn;
+  });
+  await runAssistantTurn({
+    app: fakeApp(),
+    userId: "space-lab",
+    conversationId: "conv-skills-2",
+    message: "Draw a block diagram of the transformer architecture",
+    settings: { ...DEFAULT_SETTINGS, timezone: "Asia/Kolkata" },
+    model: "test-model",
+    emit: () => undefined,
+  });
+  assert.ok(asked[0]!.tools.includes("hub_create_diagram"));
+  assert.match(asked[0]!.system, /## Playbook: Diagrams and flowcharts/);
+  assert.match(asked[0]!.system, /Transformer \(encoder–decoder\)/);
+});

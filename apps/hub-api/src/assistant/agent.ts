@@ -46,6 +46,7 @@ import { statusFor } from "./status-line.js";
 import { toolAllowedFor, chatToolSpecs, responsesToolSpecs } from "./registry.js";
 import { appsPrompt, ensureAppAccess, loadAppGrants, toolsForTurn, writeRefusal } from "./apps.js";
 import { diagramGuidance } from "./diagram-skill.js";
+import { advertisedTools, appMap, findPlaybook, playbookIndex, playbooksFor, routePlaybooks, type Playbook } from "./skills/index.js";
 import { hasModule } from "@ensemble/shared-types";
 import { pastScheduleWarning, withPastScheduleWarning } from "./schedule.js";
 import { cutOffReply, historyEntries, replyAfterStreamFailure } from "./cutoff.js";
@@ -212,14 +213,22 @@ async function drive(
   const ctx = toolContext(args);
   const grants = await loadAppGrants(ctx);
   // The per-turn list: Hub tools for these settings plus this person's connected-app tools,
-  // and in Ensemble Code the folder's read tools and agent runs.
+  // and in Ensemble Code the folder's read tools and agent runs. Any of these may run.
   const tools = [...(await toolsForTurn(ctx, grants)), ...(args.code ? codeTools : [])];
   const byName = new Map(tools.map((tool) => [tool.name, tool]));
+  // Outside Ensemble Code, the model is shown the core tools and those of the playbooks in play
+  // (skills/index.ts): the ones the page, mentions and words point at, and any it loads with hub_how_to.
+  const playbooks = args.code ? [] : playbooksFor(args.modules);
+  const active = new Map<string, Playbook>(
+    routePlaybooks({ message: args.message, path: openPage?.path ?? args.page?.path, mentions: args.mentions }, playbooks).map((playbook) => [playbook.name, playbook]),
+  );
+  const shown = () => (args.code ? tools : advertisedTools(tools, active.values()));
   const persona =
     args.preamble !== undefined && args.actAs === undefined
       ? undefined
       : personaBlock(personaFor(args.actAs ?? settings.assistant.actAs, state.user.onboardingRole), state.user.firstName);
-  const system = buildSystemPrompt(state, openPage, diagramsOn ? diagramGuidance(args.message, openPage?.path) : undefined, {
+  // Ensemble Code keeps the diagram skill on diagram turns; elsewhere it is part of the diagrams playbook.
+  const system = buildSystemPrompt(state, openPage, args.code && diagramsOn ? diagramGuidance(args.message, openPage?.path) : undefined, {
     diagrams: diagramsOn,
     repos: reposOn,
     plots: plotsOn,
@@ -228,6 +237,13 @@ async function drive(
     timezone: settings.timezone,
     persona,
     apps: appsPrompt(tools, grants, settings) || undefined,
+    ...(args.code
+      ? {}
+      : {
+          map: appMap() || undefined,
+          playbooks: playbookIndex(playbooks, [...active.values()]),
+          loaded: [...active.values()].map((playbook) => `## Playbook: ${playbook.title}\n${playbook.body}`).join("\n\n") || undefined,
+        }),
   });
   const history = await priorTurns(app, args.conversationId, args.messageId);
 
@@ -261,8 +277,8 @@ async function drive(
     { role: "user", content: args.message },
   ];
 
-  const chatTools = chatToolSpecs(tools);
-  const responsesTools = responsesToolSpecs(tools);
+  let chatTools = chatToolSpecs(shown());
+  let responsesTools = responsesToolSpecs(shown());
   const calls: AssistantToolCall[] = [];
   let credits: number | null = 0;
   let answered = args.model;
@@ -418,6 +434,7 @@ async function drive(
       const proposed = proposedProjectName(outcome.call);
       if (proposed) pendingProjectNames.push(proposed);
     }
+    let loadedPlaybook = false;
     for (const outcome of settleWriteBatch(batch)) {
       if (outcome.call.state === "awaiting_approval") {
         args.emit({ type: "pending", call: outcome.call, preview: outcome.call.summary ?? "" });
@@ -427,6 +444,16 @@ async function drive(
       calls.push(outcome.call);
       if (outcome.call.state === "ok" && outcome.call.isWrite) mutated = true;
       messages.push(toolResult(outcome.call.id, outcome.call.name, outcome.forModel));
+      // A loaded playbook brings its tools into the next step.
+      const playbook = outcome.call.name === "hub_how_to" && outcome.call.state === "ok" ? findPlaybook(String(outcome.call.input?.name ?? ""), args.modules) : undefined;
+      if (playbook && !active.has(playbook.name)) {
+        active.set(playbook.name, playbook);
+        loadedPlaybook = true;
+      }
+    }
+    if (loadedPlaybook && !args.code) {
+      chatTools = chatToolSpecs(shown());
+      responsesTools = responsesToolSpecs(shown());
     }
     if (stop.signal.aborted) break;
   }
@@ -493,14 +520,15 @@ interface CallOutcome {
   forModel: unknown;
 }
 
-/** Whether a write waits for Apply. Writes to connected apps always do, whatever the policy. */
+/** Whether a write waits for Apply. Writes to connected apps, and tools marked alwaysHold, always do, whatever the policy. */
 export function holdsAssistantWrite(
   policy: AssistantTurnArgs["settings"]["assistant"]["writePolicy"],
   toolName: string,
   inlineArtifacts = false,
   area?: string,
+  alwaysHold = false,
 ): boolean {
-  if (area === "apps") return true;
+  if (area === "apps" || alwaysHold) return true;
   if (policy === "immediate") return false;
   return !(inlineArtifacts && (toolName === "hub_create_diagram" || toolName === "hub_create_plot"));
 }
@@ -533,7 +561,7 @@ async function runOne(
     return { call, forModel: { error: call.error, hint: "Fix the arguments and call again." } };
   }
 
-  const held = tool.isWrite && holdsAssistantWrite(ctx.settings.assistant.writePolicy, tool.name, args.inlineArtifacts, tool.area);
+  const held = tool.isWrite && holdsAssistantWrite(ctx.settings.assistant.writePolicy, tool.name, args.inlineArtifacts, tool.area, tool.alwaysHold);
   if (held) {
     let preview: string;
     try {

@@ -1,4 +1,4 @@
-import { Prisma, type PrismaClient, type Task } from "@prisma/client";
+import { Prisma, type Actor, type PrismaClient, type Task } from "@prisma/client";
 import {
   EMPTY_PAGE,
   PageAnnotation,
@@ -203,11 +203,11 @@ export async function listStandalonePages(prisma: PrismaClient, userId: string):
   return rows.map((row) => ({ id: row.id, title: row.title || "Untitled", updatedAt: row.updatedAt.toISOString() }));
 }
 
-/** A new note: empty, or made from a file (`sourceFileId`) with its title and content. */
+/** A new note: empty, or made from a file (`sourceFileId`) or from text with its title and content. */
 export async function createStandalonePage(
-  prisma: PrismaClient,
+  prisma: Db,
   userId: string,
-  from: { title: string; content: PageDocument; sourceFileId: string } | null = null,
+  from: { title: string; content: PageDocument; sourceFileId: string | null; externalSource?: string; externalId?: string } | null = null,
 ): Promise<StandalonePageSummary> {
   const title = from?.title.trim() || "Untitled";
   const content = from ? restoreMentionLinks(PageDocument.parse(from.content)) : EMPTY_PAGE;
@@ -223,6 +223,7 @@ export async function createStandalonePage(
       notesSnapshot: "",
       searchText: pageSearchText(title, content, ""),
       sourceFileId: from?.sourceFileId ?? null,
+      ...(from?.externalSource && from.externalId ? { externalSource: from.externalSource, externalId: from.externalId } : {}),
       ...(mentions.length ? { mentions: { createMany: { data: mentions.map((mention) => ({ kind: mention.kind, entityId: mention.entityId, label: mention.label })) } } } : {}),
     },
     select: { id: true, title: true, updatedAt: true },
@@ -298,16 +299,92 @@ export async function saveStandalonePage(
 
 /** Standalone notes stay recoverable, including their content, mentions, and discussions. */
 export async function deleteStandalonePage(prisma: PrismaClient, userId: string, id: string): Promise<void> {
-  await prisma.$transaction(async (db) => {
-    await lockUserTransaction(db, userId);
-    const page = await ownedStandalone(db, userId, id, true);
-    if (!page) throw new TaskPageError("PAGE_NOT_FOUND", "Page not found.", 404);
-    const updated = await db.taskPage.update({ where: { id }, data: { deletedAt: new Date() } });
-    const before = { deletedAt: page.deletedAt };
-    const after = { deletedAt: updated.deletedAt, updatedAt: updated.updatedAt };
-    const op = { op: "update" as const, model: "taskPage" as const, id, before, after };
-    await recordUndoInTransaction(db, { userId, label: `Deleted “${page.title || "Untitled"}”`, kind: "delete", subject: "page", href: `/pages/${id}`, inverse: op, forward: op });
+  await prisma.$transaction((db) => trashStandalonePage(db, userId, id));
+}
+
+/** Moves a standalone note to Trash inside the caller's transaction, with its undo entry. */
+export async function trashStandalonePage(db: Db, userId: string, id: string, actor: Actor = "me"): Promise<{ title: string }> {
+  await lockUserTransaction(db, userId);
+  const page = await ownedStandalone(db, userId, id, true);
+  if (!page) throw new TaskPageError("PAGE_NOT_FOUND", "Page not found.", 404);
+  const updated = await db.taskPage.update({ where: { id }, data: { deletedAt: new Date() } });
+  const before = { deletedAt: page.deletedAt };
+  const after = { deletedAt: updated.deletedAt, updatedAt: updated.updatedAt };
+  const op = { op: "update" as const, model: "taskPage" as const, id, before, after };
+  await recordUndoInTransaction(db, { userId, label: `Deleted “${page.title || "Untitled"}”`, kind: "delete", actor, subject: "page", href: `/pages/${id}`, inverse: op, forward: op });
+  return { title: page.title || "Untitled" };
+}
+
+export type PageTarget = { pageId: string } | { taskId: string };
+
+/** A page to edit: a standalone note or a task's page, by its page id or its task id. Its task is checked too. */
+export async function editablePage(db: Db, userId: string, target: PageTarget, lock = false) {
+  if ("taskId" in target) {
+    const task = await taskForPage(db, userId, target.taskId, lock).catch((error: unknown) => {
+      if (error instanceof TaskPageError) throw new TaskPageError(error.code, "No task with that id. Call hub_list_tasks and use an id it returns.", 404);
+      throw error;
+    });
+    return { task, page: await readPage(db, userId, task.id) };
+  }
+  if (lock) {
+    await db.$queryRaw`SELECT id FROM task_pages WHERE id = ${target.pageId} AND user_id = ${userId} FOR UPDATE`;
+  }
+  const page = await db.taskPage.findFirst({ where: { id: target.pageId, userId, deletedAt: null }, include: PAGE_INCLUDE });
+  if (!page) throw new TaskPageError("PAGE_NOT_FOUND", "No page with that id. Call hub_list_pages and use an id it returns.", 404);
+  const task = page.taskId ? await taskForPage(db, userId, page.taskId, lock) : null;
+  return { task, page };
+}
+
+export interface CurrentPage {
+  title: string;
+  taskId: string | null;
+  content: PageDocument | null;
+  notes: string;
+}
+
+/**
+ * Writes new content (and, for a standalone note, a new title) inside the caller's transaction,
+ * keeping the mention index and search text in step and journaling one undo entry. `next` sees
+ * the page as it is once locked and may throw to refuse. A task with no page gets an empty one
+ * first, so undo returns it to "no content" rather than removing it.
+ */
+export async function writePageContent(
+  db: Db,
+  userId: string,
+  target: PageTarget,
+  next: (current: CurrentPage) => { content: PageDocument; title?: string },
+  actor: Actor = "me",
+): Promise<{ id: string; taskId: string | null; title: string; revision: number }> {
+  await lockUserTransaction(db, userId);
+  const found = await editablePage(db, userId, target, true);
+  const { task } = found;
+  const currentTitle = task ? task.title : found.page?.title || "Untitled";
+  const notesNow = task ? task.notes : (found.page?.notesSnapshot ?? "");
+  const wanted = next({ title: currentTitle, taskId: task?.id ?? null, content: found.page?.content ? PageDocument.parse(found.page.content) : null, notes: notesNow });
+  const page = found.page ?? (task ? await db.taskPage.create({ data: { userId, taskId: task.id, notesSnapshot: task.notes, searchText: pageSearchText(task.title, null, task.notes) }, include: PAGE_INCLUDE }) : null);
+  if (!page) throw new TaskPageError("PAGE_NOT_FOUND", "Page not found.", 404);
+  const content = restoreMentionLinks(PageDocument.parse(wanted.content));
+  const title = task ? task.title : wanted.title?.trim() || currentTitle;
+  const updated = await db.taskPage.update({
+    where: { id: page.id },
+    data: {
+      revision: page.revision + 1,
+      content: content as Prisma.InputJsonValue,
+      searchText: pageSearchText(task ? page.title || task.title : title, content, notesNow),
+      ...(task ? {} : { title }),
+    },
   });
+  await db.taskPageMention.deleteMany({ where: { pageId: page.id } });
+  const mentions = collectMentions(content);
+  if (mentions.length) {
+    await db.taskPageMention.createMany({ data: mentions.map((mention) => ({ pageId: page.id, kind: mention.kind, entityId: mention.entityId, label: mention.label })) });
+  }
+  const before = { content: page.content, searchText: page.searchText, ...(task ? {} : { title: page.title }), updatedAt: page.updatedAt };
+  const after = { content: updated.content, searchText: updated.searchText, ...(task ? {} : { title: updated.title }), updatedAt: updated.updatedAt };
+  const op = { op: "update" as const, model: "taskPage" as const, id: page.id, before, after };
+  const href = task ? `/tasks/${task.id}` : `/pages/${page.id}`;
+  await recordUndoInTransaction(db, { userId, label: `Edited “${title}”`, kind: "update", actor, subject: "page", href, inverse: op, forward: op });
+  return { id: page.id, taskId: task?.id ?? null, title, revision: updated.revision };
 }
 
 /** Generic page discussions and diagram links have no foreign key to a standalone note. */

@@ -6,10 +6,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUp, Check, CircleAlert, Clock3, Maximize2, Minimize2, Plus, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Mark } from "../mark";
 import { AskLauncher } from "./ask-launcher";
-import { formatChord } from "@ensemble/shared-types";
+import { formatChord, type PageMention } from "@ensemble/shared-types";
 import { isApplePlatform } from "@/lib/platform";
 import { useShortcuts } from "@/lib/shortcut-store";
 import { API, ApiError, api, type AssistantMessageRecord, type AssistantToolCallRecord, type Complexity } from "@/lib/api";
@@ -19,7 +19,7 @@ import { applyNotice, applyRepliesToCache } from "@/lib/assistant-apply";
 import { markModelOutOfQuota, quotaMessage, quotaSuffix, useQuotaMarks } from "@/lib/model-quota";
 import { AssistantAnswer, splitCutOffReply } from "./cut-off-notice";
 import { MarkdownText, choiceLines } from "../markdown-text";
-import { useEntities } from "@/lib/entities";
+import { MentionPopover, useMentionMenu } from "../mentions/mention-menu";
 import { useModKey } from "@/lib/platform";
 import { usePersistentState } from "@/lib/prefs";
 import { useLive } from "../live";
@@ -252,7 +252,6 @@ export function AssistantDock() {
   const mod = useModKey();
   const { setWorking, working } = useLive();
   const [open, setOpen] = usePersistentState("ensemble.assistant.open", false);
-  const entities = useEntities(open);
   const [expanded, setExpanded] = usePersistentState("ensemble.assistant.expanded", false);
   const [conversationId, setConversationId] = usePersistentState<string | null>("ensemble.assistant.conversation", null);
   const conversationRef = useRef(conversationId);
@@ -269,6 +268,7 @@ export function AssistantDock() {
   const [optimistic, setOptimistic] = useState<AssistantMessageRecord[]>([]);
   const scroller = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
+  const mention = useMentionMenu({ value: draft, onValue: setDraft, inputRef: input });
 
   const quotas = useQuotaMarks();
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings, enabled: open });
@@ -312,7 +312,7 @@ export function AssistantDock() {
     if (open) window.setTimeout(() => input.current?.focus(), 30);
   }, [open]);
 
-  const sendText = async (text: string) => {
+  const sendText = async (text: string, mentions: PageMention[] = []) => {
     if (abortRef.current) return;
     const controller = new AbortController();
     abortRef.current = controller;
@@ -333,6 +333,7 @@ export function AssistantDock() {
         body: JSON.stringify({
           conversationId: conversationId ?? undefined,
           message: text,
+          ...(mentions.length ? { mentions } : {}),
           ...(tierOverride ? { tier: tierOverride } : {}),
           page: {
             path: pathname,
@@ -477,17 +478,12 @@ export function AssistantDock() {
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight, behavior: "smooth" });
   }, [all.length, pending, streaming]);
 
-  const mentionMatch = draft.match(/@([\w.-]*)$/);
-  const mentionOptions = useMemo(() => {
-    if (!mentionMatch) return [];
-    const needle = mentionMatch[1]!.toLowerCase();
-    return entities.entities.filter((entity) => entity.label.toLowerCase().includes(needle)).slice(0, 6);
-  }, [mentionMatch, entities.entities]);
-
   const submit = () => {
     const text = draft.trim();
     if (!text || pending) return;
-    void sendText(text);
+    const mentions = mention.takeMentions(text);
+    mention.clear();
+    void sendText(text, mentions);
   };
 
   const tiers = settings.data?.settings.models;
@@ -553,24 +549,7 @@ export function AssistantDock() {
       </div>
 
       <div className="relative shrink-0 border-t border-line p-3">
-        {mentionOptions.length ? (
-          <div className="absolute bottom-full left-3 mb-1 w-[320px] rounded-lg bg-raised p-1 shadow-pop">
-            {mentionOptions.map((entity) => (
-              <button
-                key={`${entity.kind}-${entity.id}`}
-                type="button"
-                className="row-tile flex w-full items-center justify-between rounded px-2 py-1 text-left text-[13px]"
-                onMouseDown={(event) => {
-                  event.preventDefault();
-                  setDraft(draft.replace(/@([\w.-]*)$/, `@${entity.label} `));
-                }}
-              >
-                <span className="truncate">{entity.label}</span>
-                <span className="text-2xs text-faint">{entity.kind}</span>
-              </button>
-            ))}
-          </div>
-        ) : null}
+        <MentionPopover menu={mention} />
         {turnError && !all.some((message) => message.role === "assistant" && message.content === turnError) ? (
           <div className="mb-2 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-[12.5px] text-danger">
             {turnError}
@@ -589,8 +568,9 @@ export function AssistantDock() {
             ref={input}
             rows={1}
             value={draft}
-            onChange={(event) => setDraft(event.target.value)}
+            {...mention.inputProps}
             onKeyDown={(event) => {
+              if (mention.onKeyDown(event)) return;
               if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
                 submit();

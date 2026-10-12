@@ -3,44 +3,22 @@
 import { placeAnchoredPanel, type Side } from "@/lib/place-layer";
 import { ReactRenderer } from "@tiptap/react";
 import type { SuggestionKeyDownProps, SuggestionProps } from "@tiptap/suggestion";
-import { fileFormat } from "@ensemble/shared-types";
-import { AtSign, Calendar, ChartSpline, CheckSquare, FolderKanban, GitBranch, Paperclip, Target, User, Wand2, Waypoints } from "lucide-react";
-import { fileKindIcon } from "../files/file-embed";
+import { Paperclip, type LucideIcon } from "lucide-react";
+import type { MentionMenuItem } from "@/lib/mentions/menu";
+import { mentionBadge, mentionIcon } from "../mentions/mention-icons";
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 
-export type MenuItem =
-  | { type: "block"; id: string; label: string; detail: string; symbol: string }
-  | { type: "group"; kind: string; label: string; detail: string; prefix?: string }
-  | { type: "action"; kind: "ensemble"; id: string; label: string; detail: string }
-  | { type: "entity"; kind: string; id: string; label: string; detail: string }
-  | { type: "create"; kind: string; id: string; label: string; detail: string };
+export type MenuItem = { type: "block"; id: string; label: string; detail: string; symbol: string } | MentionMenuItem;
 
 export type MenuHandle = { onKeyDown: (event: KeyboardEvent) => boolean };
 
 type Props = SuggestionProps<MenuItem> & { title: string };
 
-const KIND_ICON: Record<string, typeof User> = {
-  people: User,
-  project: FolderKanban,
-  repo: GitBranch,
-  task: CheckSquare,
-  deliverable: Target,
-  skill: Wand2,
-  diagram: Waypoints,
-  plot: ChartSpline,
-  "plot-space": ChartSpline,
-  dataset: ChartSpline,
-  ensemble: Wand2,
-  date: Calendar,
-};
+const BLOCK_ICON: Record<string, LucideIcon> = { file: Paperclip };
 
-const BLOCK_ICON: Record<string, typeof User> = { file: Paperclip };
-
-function itemIcon(item: MenuItem): typeof User | null {
-  if (item.type === "group") return null;
+function itemIcon(item: MenuItem): LucideIcon | null {
   if (item.type === "block") return BLOCK_ICON[item.id] ?? null;
-  if (item.type === "entity" && item.kind === "file") return fileKindIcon(fileFormat(item.label).kind);
-  return KIND_ICON[item.kind] ?? AtSign;
+  return mentionIcon(item);
 }
 
 export const SuggestionMenu = forwardRef<MenuHandle, Props>(function SuggestionMenu(props, ref) {
@@ -85,9 +63,10 @@ export const SuggestionMenu = forwardRef<MenuHandle, Props>(function SuggestionM
         ) : (
           props.items.map((item, index) => {
             const Icon = itemIcon(item);
+            const badge = item.type === "block" ? null : mentionBadge(item);
             return (
               <button
-                key={`${item.type}-${"id" in item ? item.id : item.prefix ?? item.kind}`}
+                key={`${item.type}-${"id" in item ? item.id : "prefix" in item ? item.prefix : `${item.kind}-${item.label}`}`}
                 type="button"
                 data-index={index}
                 data-active={index === selected}
@@ -101,10 +80,11 @@ export const SuggestionMenu = forwardRef<MenuHandle, Props>(function SuggestionM
                 <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-line bg-panel text-[12.5px] font-semibold text-muted">
                   {Icon ? <Icon size={14} /> : item.type === "block" ? item.symbol : "@"}
                 </span>
-                <span className="min-w-0">
+                <span className="min-w-0 flex-1">
                   <span className="block truncate text-[13.5px] font-medium">{item.label}</span>
                   {item.detail ? <span className="block truncate text-[12px] text-muted">{item.detail}</span> : null}
                 </span>
+                {badge ? <span className="shrink-0 text-[11.5px] text-faint">{badge}</span> : null}
               </button>
             );
           })
