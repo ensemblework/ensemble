@@ -14,7 +14,7 @@ import { applyBlock, matchCommands } from "./editor-commands";
 import { editorExtensions } from "./extensions";
 import { FileChooser } from "./file-chooser";
 import { pastedFiles } from "./file-attach";
-import { mentionItems } from "./mention-items";
+import { mentionItems } from "@/lib/mentions/menu";
 
 Object.defineProperty(globalThis, "self", { configurable: true, value: window });
 
@@ -181,7 +181,8 @@ test("files are in the @ menu with their type, scoped and unscoped", () => {
   ];
   const on = () => true;
   const unscoped = mentionItems("q3", rows, on, on);
-  assert.deepEqual(unscoped.filter((item) => item.type === "entity").map((item) => item.label), ["Q3 report.pdf", "Q3 review"]);
+  assert.deepEqual(unscoped.filter((item) => item.type === "entity").map((item) => item.label), ["Q3 review", "Q3 report.pdf"]);
+  assert.deepEqual(unscoped.map((item) => item.type === "entity" && item.kindLabel), ["Task", "File"]);
   const scoped = mentionItems("file:", rows, on, on);
   assert.deepEqual(scoped.map((item) => item.type === "entity" && item.detail), ["PDF · 2.0 MB", "Excel workbook · 40 KB"]);
   assert.ok(mentionItems("", rows, on, on).some((item) => item.type === "group" && item.kind === "file"));

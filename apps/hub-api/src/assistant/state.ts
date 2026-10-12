@@ -3,6 +3,7 @@ import { hasModule } from "@ensemble/shared-types";
 import { workWeekLine } from "../lib/clock.js";
 import { truncateText } from "../lib/text.js";
 import { keysFor } from "../sharing/context.js";
+import { defaultSpaceName } from "../spaces/store.js";
 
 export async function buildHubState(prisma: PrismaClient, userId: string, modules?: string | null) {
   const [proposed, todo, inProgress, needsMe, projects, people, repos, skills, account] = await Promise.all([
@@ -40,33 +41,38 @@ export async function buildHubState(prisma: PrismaClient, userId: string, module
     prisma.user.findUnique({ where: { id: keysFor(userId) }, select: { name: true, onboardingRole: true } }),
   ]);
   const guest = keysFor(userId) !== userId;
-  const space = guest ? await prisma.user.findUnique({ where: { id: userId }, select: { name: true } }) : null;
+  const space = await prisma.user.findUnique({ where: { id: userId }, select: { name: true, spaceName: true, ownerId: true } });
   const user = {
     firstName: (account?.name ?? "").trim().split(/\s+/)[0] ?? "",
     onboardingRole: account?.onboardingRole ?? null,
     /** The space owner's first name when this space is shared with the person. */
-    guestOf: space ? (space.name.trim().split(/\s+/)[0] ?? "") || "someone" : null,
+    guestOf: guest && space ? (space.name.trim().split(/\s+/)[0] ?? "") || "someone" : null,
+    /** The open space's name, as the space switcher shows it. */
+    spaceName: space ? space.spaceName || (space.ownerId ? "Untitled space" : defaultSpaceName(space.name)) : null,
   };
   return { proposed, todo, inProgress, needsMe, projects, people, repos, skills, user };
 }
 
 /** Offered when the diagrams module is on. The repo half needs the code module too. */
 const DIAGRAM_RULE =
-  "- Diagrams: when the person asks for a diagram, follow the block-diagram skill appended to this prompt. Call hub_diagram_context for a task, project, or deliverable, and hub_repo_overview for a repository (a link is enough). Refine with hub_edit_diagram. Call hub_validate_diagram, then hub_create_diagram or hub_edit_diagram. Do not invent blocks. A diagram write waits for Apply.";
+  "- Diagrams: follow the diagrams playbook. Call hub_diagram_context for a task, project, or deliverable, and hub_repo_overview for a repository (a link is enough). Refine with hub_edit_diagram. Call hub_validate_diagram, then hub_create_diagram or hub_edit_diagram. Never invent facts about their own work; a well-known system they name (a transformer, OAuth) is drawn from its standard design. A diagram write waits for Apply.";
 const DIAGRAM_RULE_NO_REPOS =
-  "- Diagrams: when the person asks for a diagram, follow the block-diagram skill appended to this prompt. Call hub_diagram_context for a task, project, or deliverable. Reading a repository is not part of this template, so draw a repo only from what the person tells you. Refine with hub_edit_diagram. Call hub_validate_diagram, then hub_create_diagram or hub_edit_diagram. Do not invent blocks. A diagram write waits for Apply.";
+  "- Diagrams: follow the diagrams playbook. Call hub_diagram_context for a task, project, or deliverable. Reading a repository is not part of this template, so draw a repo only from what the person tells you. Refine with hub_edit_diagram. Call hub_validate_diagram, then hub_create_diagram or hub_edit_diagram. Never invent facts about their own work; a well-known system they name is drawn from its standard design. A diagram write waits for Apply.";
 
 /**
  * The opening of the system prompt. It describes where the conversation is and
  * what the tools reach, rather than giving the model a role to play.
  */
-function assistantRules(firstName?: string, guestOf?: string | null): string {
+function assistantRules(firstName?: string, guestOf?: string | null, spaceName?: string | null): string {
   const name = firstName?.trim();
   const who = name || "the person";
   const where = guestOf
     ? `This conversation is inside Ensemble, in a space ${guestOf} shared with ${who}. It holds ${guestOf}'s tasks, pages, projects and people. ${guestOf}'s connected apps, reminders and settings are private and not reachable here.`
     : `This conversation is inside Ensemble, where ${who} keeps their tasks, pages, projects, people and the apps they connected.`;
-  return `${where} You can read and change that workspace with the tools that come with this message. Answer plain questions and text requests (writing, counting, explaining, maths) directly in text.
+  const space = spaceName
+    ? `\nThe open space is “${spaceName}”. Everything you can see or change is in this space. Other spaces are out of reach: never claim to see them, and if asked about one, say to switch to it with the space switcher at the top of the sidebar.`
+    : "";
+  return `${where} You can read and change that workspace with the tools that come with this message. Answer plain questions and text requests (writing, counting, explaining, maths) directly in text.${space}
 
 Working here:
 - When ${who} asks for something in the workspace and a tool can do it, call the tool in this turn. Do not say you will do it later.
@@ -81,7 +87,7 @@ Working here:
 - Dates you send to tools are YYYY-MM-DD and times are HH:MM. Work out "tomorrow" and "Friday" from today's date below.
 - In task titles and text, use absolute dates (for example "before the Oct 6 release", not "before the release tomorrow").
 - When you use web search, cite the links it returned. If it returned nothing, say you could not verify it. Never invent a citation or a source.
-- Keep replies short.
+- Keep replies short. When you point at a place in Ensemble, link it with its path from the map (for example [Files](/files)).
 - Enabled skills below are ${name ? `${name}'s` : "their"} standing instructions. Follow a skill when the request matches it.
 ${DIAGRAM_RULE}`;
 }
@@ -114,7 +120,7 @@ export interface OpenPage {
 
 /** The snapshot buildHubState returns; `user` may be absent for callers that build one by hand. */
 export type HubState = Omit<Awaited<ReturnType<typeof buildHubState>>, "user"> & {
-  user?: Omit<Awaited<ReturnType<typeof buildHubState>>["user"], "guestOf"> & { guestOf?: string | null };
+  user?: Omit<Awaited<ReturnType<typeof buildHubState>>["user"], "guestOf" | "spaceName"> & { guestOf?: string | null; spaceName?: string | null };
 };
 
 export function buildSystemPrompt(
@@ -132,9 +138,15 @@ export function buildSystemPrompt(
     persona?: string;
     /** The connected-apps paragraph (apps.appsPrompt). */
     apps?: string;
+    /** The map of Ensemble (skills/map.md). */
+    map?: string;
+    /** One line per playbook (skills/index.ts playbookIndex). */
+    playbooks?: string;
+    /** The full text of the playbooks this turn starts with. */
+    loaded?: string;
   } = {},
 ) {
-  const opening = assistantRules(state.user?.firstName, state.user?.guestOf);
+  const opening = assistantRules(state.user?.firstName, state.user?.guestOf, state.user?.spaceName);
   const rules =
     options.diagrams === false
       ? opening.replace(`\n${DIAGRAM_RULE}`, "")
@@ -157,6 +169,9 @@ export function buildSystemPrompt(
     rules,
     options.persona ?? "",
     calendar,
+    ...(options.map ? ["", options.map] : []),
+    ...(options.playbooks ? ["", options.playbooks] : []),
+    "",
     "What is in the workspace right now:",
     page ? `They are looking at ${page.label ?? page.path}${page.taskId ? ` (task ${page.taskId})` : ""}.` : "",
     open
@@ -189,8 +204,9 @@ export function buildSystemPrompt(
     "Enabled skills:",
     ...skills,
     ...(options.apps ? ["", options.apps] : []),
-    ...(options.plots ? ["", "Plots: when the person asks for a chart, call hub_list_datasets or hub_import_dataset, then hub_create_plot or hub_update_plot. Use column names from the dataset. A plot write waits for Apply. Do not invent a file path."] : []),
+    ...(options.plots ? ["", "Plots: when the person asks for a chart, follow the plots playbook: hub_list_datasets or hub_import_dataset (pasted rows or a file in Files), then hub_create_plot or hub_update_plot. Use column names from the dataset. A plot write waits for Apply. Do not invent a file path."] : []),
     ...(extra ? ["", extra] : []),
+    ...(options.loaded ? ["", options.loaded] : []),
   ];
   return lines.filter((line) => line !== "").join("\n");
 }

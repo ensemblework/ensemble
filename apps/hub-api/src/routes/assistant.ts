@@ -16,6 +16,7 @@ import { realpath } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { appendLedger } from "../lib/ledger.js";
 import { abortAssistantTurn, runAssistantTurn, type AssistantTurnResult } from "../assistant/agent.js";
+import { resolveTypedMentions } from "../assistant/mentions.js";
 import { loadSettings } from "../lib/settings.js";
 import { requestCancel } from "../lib/activity.js";
 import { sseHub } from "../lib/sse.js";
@@ -366,6 +367,8 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
     const tierSetting = settings.models[tierName];
     const explicitModel = body.model && body.model !== "auto" ? body.model : null;
     const modelName = explicitModel ?? (tierSetting.model || envDefaultModel());
+    // `@people:Mira Chen` typed without an id (by hand, pasted, from the terminal app) gets one when it names one record here.
+    const mentions = await resolveTypedMentions(app.prisma, request.userId, request.modules, message, body.mentions);
 
     let result: AssistantTurnResult;
     try {
@@ -383,7 +386,7 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
           body.reasoningEffort ??
           (tierSetting.effort !== "default" ? tierSetting.effort : settings.assistant.reasoningEffort),
         messageId: userMessage.id,
-        mentions: body.mentions,
+        mentions,
         referenceContext: body.referenceContext,
         ...(code ? { code } : {}),
         signal: abort.signal,

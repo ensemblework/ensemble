@@ -185,6 +185,8 @@ Before/after tiles + charts (see [module 07](07_MODULE_GOVERNANCE_AUDIT_METRICS.
 | Shortcuts | Every key binding by group (`#shortcuts`, `#keyboard`), see below |
 | Data | Download this space (`#export`, see [§18](#18-downloads)), Data retention (`#retention`), Completed (`#completed`), Trash (`#trash`), Terminal and commits (`#terminal`), Failed jobs, Deleted items, Delete my data (`#danger`) |
 
+**The settings map.** `packages/shared-types/src/settings-map.ts` (`SETTINGS_MAP`) lists every setting on these tabs with a plain label, search words, one line on what it does and its link (`/settings?tab=…#jump-…`, the jump ids `components/settings/navigation.ts` resolves, or `&dialog=keys` / `&dialog=changes`). The assistant's `hub_find_setting` searches it, and only the entries with a `key` can be changed by `hub_update_settings` ([11 §8.3](11_HOW_THE_ASSISTANT_WORKS.md#83-running-work-code-and-settings)). `components/settings/url-state.test.ts` checks that every link opens its tab and lands on a known section or control. The page's own jump search still uses `navigation.ts`.
+
 Big or rarely used controls open in dialogs (`components/settings/modal.tsx`: Escape and a backdrop click close only the top dialog, Tab stays inside it, focus returns to the button that opened it). Dialogs are in the address too, so a link opens them:
 
 - **Model providers & keys** (`?tab=assistant&dialog=keys`, or `#keys`): API keys per provider with inline add/replace/remove, a Test button per tier, the Ollama URL and the GitHub token for private clones. The Models card itself keeps only "Which model each tier uses" and a one-line summary of which providers have keys (`components/settings/models.tsx`).
@@ -536,6 +538,8 @@ engineer ──► POST /api/assistant/turn ──► hub-api builds the turn
 
 The full walkthrough is in [docs/11](11_HOW_THE_ASSISTANT_WORKS.md).
 
+Typing `@` in the assistant's box opens the same @ menu as pages ([§13 Blocks and mentions](#blocks-and-mentions)). `@anik` then Enter writes `@people:Anika Rao`, and the turn carries that person's ID.
+
 ---
 
 ## 11. Undo / redo
@@ -659,7 +663,22 @@ Tables round-trip to GitHub-flavoured pipe tables in the Markdown that notes, re
 
 Typing **/** opens a filtered menu. Arrows select, Enter or Tab inserts, and Escape dismisses it. Standard Markdown shortcuts and bold, italic and inline code also work. **Slash commands and mentions do not activate inside code.**
 
-**@** first offers **Ask Ensemble**, then people, projects, repositories, tasks/todos, deliverables, skills, diagrams, plots, files, and dates (optional modules follow their gates). Selecting a category completes its prefix, for example `@people:mi` searches existing people by a partial name. Plots are hierarchical: `@plots:` offers plot spaces, a Saved plots group, and uploaded data files; selecting a space drills into its tiles. `@plot:epochs` and `@plots:epochs` both find a matching file, and the inserted dataset mention retains its stable ID. Entity mentions retain their **kind and stable ID**, not just a display string. Date mentions do **not** change a task's due date. A mention alone is not an instruction to change a task's project, owner, or skills.
+**@** works the same in pages and in the plain text boxes that take mentions (the assistant, comments, quick capture). One file holds the rules: `apps/hub-web/lib/mentions/menu.ts`.
+
+- `@` alone lists the groups, each with its prefix: People · `@people:`, projects, repositories, tasks/todos, deliverables, skills, diagrams, plots, files and dates. Pages also offer **Ask Ensemble** first. Diagrams and plots follow their module gates.
+- `@people` or `@people:` shows only people. Singular, plural and other names work too (`person`, `projects`, `todo`, `repository`, `data`, `attachment`). Picking a group row writes its prefix. `@people:mi`, `@diagram:transformer` and `@file:report` search inside the group.
+- Plots nest: `@plots:` offers plot spaces, a Saved plots group and uploaded data files; picking a space drills into its tiles. `@plot:epochs` and `@plots:epochs` both find a matching file.
+- Anything else, like `@anik`, searches every kind, at most 10 rows, each showing its kind ("Person", "Diagram"). Rows are ranked: exact name, then name starts with, then a word starts with, then contains. People also match on their email, below name matches. Ties go people, projects, tasks, deliverables, files, diagrams, plots, data files, repositories, skills. Mail senders that look automated (no space and no capital letter, an `_` or `@`, or a single word like `support` or `noreply`) come after real names that match as well; nothing is hidden. The best match is first, so Enter picks it.
+
+In a page the pick becomes a chip that shows `@Label`. Entity mentions retain their **kind and stable ID**, not just a display string. Date mentions do **not** change a task's due date. A mention alone is not an instruction to change a task's project, owner, or skills.
+
+**@ in plain text boxes** (`components/mentions/mention-menu.tsx`). A pick writes the mention as text, `@people:Anika Rao `, and remembers its ID. Picking a group writes `@people:` and keeps the menu open. After a prefix the name may have spaces while the menu is open, so `@people:Anika R` still searches. Up and down move, Enter or Tab picks, Escape closes; Enter sends or saves only when the menu is closed. On send, the box passes the IDs of the picked mentions still in the text:
+
+- The assistant sends them with the turn as `mentions` ([11 §4.1](11_HOW_THE_ASSISTANT_WORKS.md#41-the-browser-opens-a-stream)).
+- New comments and page comments save them on the comment; the Ask Ensemble box under a comment sends them with the question. Editing a comment uses the menu too.
+- Quick capture sends plain names (`@people:Priya Shah` goes as `Priya Shah`), because capture finds people in plain text.
+
+The search bar at the top is a search box and has no @ menu.
 
 **Files in pages.** Picking a file after `@` (`@files:` searches only files), `/file`, or dropping or pasting files into the editor inserts a file card (`components/files/file-embed.tsx`, `components/editor/file-attach.ts`). Dropped and pasted files upload to Files first, so every attachment is a stored file that agents can fetch. A card shows a compact preview (320 px tall by default, resizable from its bottom edge) with the file's name, type, **Open** and, on a page you can edit, **×** to take it off the page (the file stays in Files). Shared pages and public links preview the files they mention. A page converted from a PDF or Word file shows "Made from report.pdf" (`components/files/source-file-banner.tsx`) with **Export back as PDF/Word**, also in the page's Download menu under "With the original's formatting" ([32 §6](32_FILES.md#6-pages)).
 
@@ -678,7 +697,7 @@ Conversion is deliberately **conservative**. It needs at least two block-level m
 
 Task properties and content save after a short typing pause. **Ctrl+S** saves immediately. Writes are **serialized**: a response for an earlier snapshot never replaces keystrokes typed while it was in flight. HTTP failures and version conflicts leave the draft visible and offer retry or an explicit discard/reload. Leaving with an unsaved draft is guarded; an in-flight save must finish before the peek can be discarded. **Simply opening an editor is never a write.**
 
-The task document endpoint is `GET/PUT /api/tasks/:id/page`; it carries a revision, document, legacy Markdown notes, resolved mentions and run annotations. Writes check the expected revision and notes. The board still receives small task summaries, not document bodies. Mention suggestions are user-scoped and paged through `GET /api/page-mentions?kind=&search=&offset=&limit=`.
+The task document endpoint is `GET/PUT /api/tasks/:id/page`; it carries a revision, document, legacy Markdown notes, resolved mentions and run annotations. Writes check the expected revision and notes. The board still receives small task summaries, not document bodies. The @ menu's suggestions come from `GET /api/entities`, scoped to the space ([03](03_MODULE_CONTEXT_ENGINE.md)).
 
 `content` is omitted on annotation-only saves. Those saves preserve task notes byte-for-byte, including legacy Markdown formatting, and do not change a live run's instructions or task timestamp. Explicit body edits still compare their original notes snapshot and honour workspace locks. The additive `20260919190000_task_pages` migration stores documents, annotations and normalized mention identities; page edits participate in the existing transactional undo journal.
 
@@ -713,7 +732,7 @@ Inline answers use the configured assistant default tier. They run the normal to
 
 A comment containing `@ensemble` is sent with Enter and receives an attributed Ensemble reply in that comment. There is **no human reply composer**: the engineer can edit/resolve the original comment, but only the assistant writes its answer. Comments on editable and immutable result text carry a muted orange highlight; ambiguous or removed text leaves the original quote accessible in *Comments*.
 
-The floating assistant also uses the mention composer. A **From your apps** link under the message box (shown when an app Ensemble can search is connected; `components/app-items/add-to-message.tsx`) picks an item and adds `From Notion: “Q4 plan” <url>` to the message; the assistant reads it with `apps_read` ([11 §8.2](11_HOW_THE_ASSISTANT_WORKS.md#82-connected-apps)). Alongside visible Markdown, it sends **typed kind/ID references**. The API verifies ownership and resolves canonical names, and includes exact IDs in the tool loop *as data, not additional authority*. Two projects with similar names remain distinguishable.
+The floating assistant uses the same @ menu (see Blocks and mentions above). A **From your apps** link under the message box (shown when an app Ensemble can search is connected; `components/app-items/add-to-message.tsx`) picks an item and adds `From Notion: “Q4 plan” <url>` to the message; the assistant reads it with `apps_read` ([11 §8.2](11_HOW_THE_ASSISTANT_WORKS.md#82-connected-apps)). Alongside the text, it sends the picked mentions as **kind/ID references**; a `@kind:name` token sent without an ID is resolved on the server by exact name in this space ([11 §4.1](11_HOW_THE_ASSISTANT_WORKS.md#41-the-browser-opens-a-stream)). The IDs go into the tool loop *as data, not additional authority*. Two projects with similar names remain distinguishable.
 
 The additive `20260920123000_page_discussions` migration stores discussion anchors, body, version, answer, model, tool calls and conversation identity.
 

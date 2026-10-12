@@ -1,11 +1,12 @@
-import type { Prisma, PrismaClient } from "@prisma/client";
+import type { Actor, Prisma, PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import { isIsoDate } from "../lib/clock.js";
 import { lastUndoId } from "../lib/undo.js";
 import { createTask } from "../services/tasks.js";
 import { isLimitationRule } from "./limitation.js";
 
-type Db = PrismaClient;
+/** A client, or the caller's transaction (the assistant applies desk entries inside its batch). */
+type Db = PrismaClient | Prisma.TransactionClient;
 const day = z.string().refine(isIsoDate, "Pick a real date.");
 const title = z.string().trim().min(1).max(200);
 const hm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use a time like 09:00.");
@@ -38,8 +39,8 @@ const TASK_KINDS = new Set([
   "hold",
 ]);
 
-export async function createDeskEntry(db: Db, userId: string, kind: string, raw: unknown) {
-  if (TASK_KINDS.has(kind)) return createTaskEntry(db, userId, kind, raw);
+export async function createDeskEntry(db: Db, userId: string, kind: string, raw: unknown, actor: Actor = "me") {
+  if (TASK_KINDS.has(kind)) return createTaskEntry(db, userId, kind, raw, actor);
   if (kind === "slot") return createSlot(db, userId, raw);
   if (kind === "holiday") return createHoliday(db, userId, raw);
   if (kind === "part") return createPart(db, userId, raw);
@@ -74,14 +75,15 @@ export async function deleteDeskEntry(db: Db, userId: string, kind: string, id: 
   fail(400, "That tile cannot add this yet.");
 }
 
-async function taskTx(db: Db, userId: string, draft: Parameters<typeof createTask>[2]) {
-  return db.$transaction(async (tx) => {
-    const task = await createTask(tx, userId, draft, "me");
+async function taskTx(db: Db, userId: string, draft: Parameters<typeof createTask>[2], actor: Actor) {
+  const write = async (tx: Prisma.TransactionClient) => {
+    const task = await createTask(tx, userId, draft, actor);
     return { id: task.id, kind: draft.taskType ?? "task", title: task.title, undoEntryId: lastUndoId(tx) ?? null };
-  });
+  };
+  return "$transaction" in db && typeof db.$transaction === "function" ? (db as PrismaClient).$transaction(write) : write(db);
 }
 
-async function createTaskEntry(db: Db, userId: string, kind: string, raw: unknown) {
+async function createTaskEntry(db: Db, userId: string, kind: string, raw: unknown, actor: Actor) {
   if (kind === "mock") {
     const body = z.object({ score: z.coerce.number().int().min(0).max(10000), outOf: z.coerce.number().int().min(1).max(10000), subject: z.string().max(80).optional(), day: day.optional() }).parse(raw);
     if (body.score > body.outOf) fail(400, "That score is larger than the paper.");
@@ -95,7 +97,7 @@ async function createTaskEntry(db: Db, userId: string, kind: string, raw: unknow
       subject: subject || null,
       due: body.day ?? null,
       owner: "me",
-    });
+    }, actor);
   }
   if (kind === "matter") {
     const body = z.object({ title, orderDate: day, rule: z.string(), court: z.string().max(80).optional(), stage: z.string().max(40).optional() }).parse(raw);
@@ -109,7 +111,7 @@ async function createTaskEntry(db: Db, userId: string, kind: string, raw: unknow
       court: body.court?.trim() || null,
       matterStage: body.stage?.trim() || "Pleadings",
       owner: "me",
-    });
+    }, actor);
   }
   if (kind === "hearing") {
     const body = z.object({ title, day, court: z.string().max(80).optional(), stage: z.string().max(40).optional() }).parse(raw);
@@ -122,7 +124,7 @@ async function createTaskEntry(db: Db, userId: string, kind: string, raw: unknow
       court: body.court?.trim() || null,
       matterStage: body.stage?.trim() || null,
       owner: "me",
-    });
+    }, actor);
   }
   if (kind === "time") {
     const body = z.object({ title, hours: z.coerce.number().min(0.25).max(24) }).parse(raw);
@@ -132,7 +134,7 @@ async function createTaskEntry(db: Db, userId: string, kind: string, raw: unknow
       taskType: "time",
       measure: Math.round(body.hours * 60),
       owner: "me",
-    });
+    }, actor);
   }
   if (kind === "paper") {
     const body = z.object({ title, words: z.coerce.number().int().min(0).max(200000).optional(), stage: z.string().max(40).optional() }).parse(raw);
@@ -143,7 +145,7 @@ async function createTaskEntry(db: Db, userId: string, kind: string, raw: unknow
       wordCount: body.words ?? null,
       pipelineStage: body.stage?.trim() || "To read",
       owner: "me",
-    });
+    }, actor);
   }
   if (kind === "exam") {
     const body = z.object({ day }).parse(raw);
@@ -152,7 +154,7 @@ async function createTaskEntry(db: Db, userId: string, kind: string, raw: unknow
       await db.task.update({ where: { id: existing.id }, data: { due: new Date(`${body.day}T00:00:00.000Z`), title: "Exam" } });
       return { id: existing.id, kind, title: "Exam", undoEntryId: null };
     }
-    return taskTx(db, userId, { title: "Exam", status: "todo", taskType: "exam", due: body.day, owner: "me" });
+    return taskTx(db, userId, { title: "Exam", status: "todo", taskType: "exam", due: body.day, owner: "me" }, actor);
   }
   const body = z.object({ title, day: day.optional(), subject: z.string().max(80).optional(), stage: z.string().max(40).optional() }).parse(raw);
   const taskType = kind === "task" ? "note" : kind;
@@ -164,7 +166,7 @@ async function createTaskEntry(db: Db, userId: string, kind: string, raw: unknow
     subject: body.subject?.trim() || null,
     pipelineStage: body.stage?.trim() || null,
     owner: "me",
-  });
+  }, actor);
 }
 
 async function plain<T extends { id: string }>(row: T, kind: string, label: string) {

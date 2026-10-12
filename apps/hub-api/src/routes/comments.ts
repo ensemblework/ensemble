@@ -10,6 +10,7 @@ import { displayName, initialsOf } from "../sharing/store.js";
 import { ActAs, PageDocument, PageMention, documentMentions } from "@ensemble/shared-types";
 import { pageText as documentText } from "../pages/markdown.js";
 import { runAssistantTurn } from "../assistant/agent.js";
+import { resolveTypedMentions } from "../assistant/mentions.js";
 import { loadSettings } from "../lib/settings.js";
 import { sseHub } from "../lib/sse.js";
 import { streamCorsHeaders } from "../lib/cors-origin.js";
@@ -309,7 +310,7 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
         actAs: body.actAs ?? settings.assistant.actAs,
         preamble: `This is an inline page request. For a requested diagram or plot, create the artifact using the appropriate tool; the page attaches it below your answer. New diagrams and plots are authorized immediately, but other writes still follow the configured approval policy. For plots, read the mentioned dataset's actual columns with hub_get_dataset; never invent data.`,
         inlineArtifacts: true,
-        mentions: [...new Map([...(body.mentions ?? []), ...(body.content ? documentMentions(body.content) : [])].map((mention) => [JSON.stringify([mention.kind, mention.id]), mention])).values()].slice(0, 40),
+        mentions: await resolveTypedMentions(app.prisma, request.userId, request.modules, body.prompt, [...(body.mentions ?? []), ...(body.content ? documentMentions(body.content) : [])]),
         referenceContext: [
           await commentPageText(app.prisma, request.userId, kind, id, body.content),
           body.quote ? `Selected text:\n${body.quote}` : "",

@@ -6,12 +6,15 @@ import { api } from "@/lib/api";
 import { isApplePlatform } from "@/lib/platform";
 import { formatBinding, SHORTCUTS } from "@ensemble/shared-types";
 import { useToast } from "../toast";
+import { plainMentions } from "@/lib/mentions/text";
+import { MentionPopover, useMentionMenu } from "../mentions/mention-menu";
 
 export function QuickCapture({ open, onClose }: { open: boolean; onClose: () => void }) {
   const toast = useToast();
   const client = useQueryClient();
   const input = useRef<HTMLTextAreaElement>(null);
   const [text, setText] = useState("");
+  const mention = useMentionMenu({ value: text, onValue: setText, inputRef: input });
   const label = formatBinding(SHORTCUTS.find((binding) => binding.id === "capture")!, isApplePlatform());
 
   useEffect(() => {
@@ -32,7 +35,8 @@ export function QuickCapture({ open, onClose }: { open: boolean; onClose: () => 
   }, [open, onClose]);
 
   const save = useMutation({
-    mutationFn: () => api.capture(text.trim()),
+    // Capture reads names from plain text, so `@people:Priya Shah` goes as `Priya Shah`.
+    mutationFn: () => api.capture(plainMentions(text).trim()),
     onSuccess: (result) => {
       const due = result.parsed.dueLabel ? ` · due ${result.parsed.dueLabel}` : "";
       const who = result.parsed.matched.map((person) => person.name).concat(result.parsed.unmatched);
@@ -75,10 +79,12 @@ export function QuickCapture({ open, onClose }: { open: boolean; onClose: () => 
           <span className="kbd">{label}</span>
         </div>
         <p className="mb-3 text-[12.5px] text-muted">Type a reminder. A name and a day become a person and a due date.</p>
+        <MentionPopover menu={mention} />
         <textarea
           ref={input}
           value={text}
-          onChange={(event) => setText(event.target.value)}
+          {...mention.inputProps}
+          onKeyDown={mention.onKeyDown}
           rows={3}
           placeholder="Remind Priya about the contract Friday"
           className="field w-full resize-none"

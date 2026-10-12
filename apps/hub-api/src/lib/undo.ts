@@ -16,6 +16,7 @@ import { appendLedger } from "./ledger.js";
 import { sseHub } from "./sse.js";
 import { lockUserTransaction } from "./user-lock.js";
 import { actorFor, isVisitor } from "../sharing/context.js";
+import { syncFileText } from "../files/visibility.js";
 
 export type UndoModel =
   | "task"
@@ -25,6 +26,7 @@ export type UndoModel =
   | "person"
   | "skill"
   | "meetingNote"
+  | "meetingSession"
   | "repo"
   | "preference"
   | "contextSuppression"
@@ -62,6 +64,7 @@ const JSON_NULLABLE: Record<UndoModel, readonly string[]> = {
   person: [],
   skill: ["proposedChanges"],
   meetingNote: ["extraction"],
+  meetingSession: [],
   repo: [],
   preference: [],
   contextSuppression: [],
@@ -79,6 +82,7 @@ const DELEGATE: Record<UndoModel, string> = {
   person: "person",
   skill: "skill",
   meetingNote: "meetingNote",
+  meetingSession: "meetingSession",
   repo: "repo",
   preference: "preference",
   contextSuppression: "contextSuppression",
@@ -96,6 +100,7 @@ const TRASHABLE = new Set<UndoModel>([
   "person",
   "skill",
   "meetingNote",
+  "meetingSession",
   "repo",
   "reminder",
   "document",
@@ -349,6 +354,7 @@ async function applyPatch(db: Db, userId: string, patch: UndoPatch, direction: "
     }
     if (!TRASHABLE.has(patch.model)) throw new UndoConflict(patch.id);
     await rowDelegate.update({ where: { id: patch.id }, data: { deletedAt: direction === "undo" ? now : null } });
+    if (patch.model === "document") await syncFileText(db, patch.id);
     return;
   }
   const data: Record<string, unknown> = {};
@@ -357,6 +363,7 @@ async function applyPatch(db: Db, userId: string, patch: UndoPatch, direction: "
   }
   data.updatedAt = now;
   await rowDelegate.update({ where: { id: patch.id }, data: decodeSnapshot(patch.model, data) });
+  if (patch.model === "document" && "deletedAt" in patch.fields) await syncFileText(db, patch.id);
   const status = patch.fields.status;
   const owner = patch.fields.owner;
   if (patch.model === "task" && status) {

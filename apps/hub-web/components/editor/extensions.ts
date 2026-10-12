@@ -17,10 +17,8 @@ import { PluginKey } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
 import Suggestion from "@tiptap/suggestion";
 import type { PageDocument, PageMention, PageNode } from "@ensemble/shared-types";
-import { isoDate } from "@/lib/format";
 import {
   applyBlock,
-  dateMention,
   matchCommands,
   mentionHref,
   type BlockCommandId,
@@ -30,8 +28,8 @@ import { CommentMark } from "./comment-mark";
 import { EnsembleReply } from "./ensemble-node";
 import { FileAttach, type FileAttachOptions } from "./file-attach";
 import { menuRenderer, type MenuItem } from "./suggestion-menu";
-import { mentionItems, type EntitySource } from "./mention-items";
-export type { EntitySource } from "./mention-items";
+import { mentionItems, type EntitySource } from "@/lib/mentions/menu";
+export type { EntitySource } from "@/lib/mentions/menu";
 export const ENTITY_MENTION_KEY = new PluginKey<{ active: boolean; query: string }>("entityMention");
 
 const SlashCommand = Extension.create({
@@ -58,32 +56,6 @@ const SlashCommand = Extension.create({
     ];
   },
 });
-
-function dateItems(search: string): MenuItem[] {
-  const today = new Date();
-  const add = (days: number) => {
-    const date = new Date(today);
-    date.setDate(date.getDate() + days);
-    return date;
-  };
-  const nextMonday = add(((8 - today.getDay()) % 7) || 7);
-  const presets: Array<[string, Date]> = [
-    ["Today", today],
-    ["Tomorrow", add(1)],
-    ["Next Monday", nextMonday],
-    ["In a week", add(7)],
-  ];
-  const items: MenuItem[] = [];
-  const typed = dateMention(search.trim());
-  if (typed) items.push({ type: "entity", kind: "date", id: typed.id, label: typed.label, detail: "The date you typed" });
-  for (const [name, date] of presets) {
-    if (search && !name.toLowerCase().includes(search.toLowerCase())) continue;
-    const mention = dateMention(isoDate(date));
-    if (mention) items.push({ type: "entity", kind: "date", id: mention.id, label: mention.label, detail: name });
-  }
-  if (!items.length) items.push({ type: "group", kind: "date", label: "Type a date", detail: "YYYY-MM-DD or YYYY-MM-DD HH:MM" });
-  return items;
-}
 
 export function diagramMentionIds(doc: PageDocument): string[] {
   const ids: string[] = [];
@@ -265,10 +237,7 @@ export function editorExtensions(
         char: "@",
         pluginKey: ENTITY_MENTION_KEY,
         allowSpaces: true,
-        items: ({ query }) => {
-          const scoped = query.match(/^date:(.*)$/i);
-          return scoped ? dateItems(scoped[1]!) : mentionItems(query, entities, diagramsOn, plotsOn);
-        },
+        items: ({ query }) => mentionItems(query, entities, diagramsOn, plotsOn, { editor: true }),
         command: ({ editor, range, props }) => {
           const item = props as unknown as MenuItem;
           if (item.type === "action") {
@@ -290,8 +259,7 @@ export function editorExtensions(
             return;
           }
           if (item.type === "group") {
-            if (item.label === "Type a date") return;
-            editor.chain().focus().insertContentAt(range, `@${item.prefix ?? `${item.kind}:`}`).run();
+            editor.chain().focus().insertContentAt(range, `@${item.prefix}`).run();
             return;
           }
           if (item.type === "entity") {

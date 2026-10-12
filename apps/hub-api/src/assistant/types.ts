@@ -71,6 +71,8 @@ export interface AnyHubTool {
   jsonSchema?: Record<string, unknown>;
   /** On Apply, runs on its own rather than in the batch's transaction (it starts work that writes elsewhere). */
   outsideTransaction?: boolean;
+  /** Waits for Apply even when the person lets the assistant write without asking (settings changes). */
+  alwaysHold?: boolean;
   preview?: (ctx: ToolContext, input: unknown) => Promise<string> | string;
   run: (ctx: ToolContext, input: unknown) => Promise<ToolResult>;
 }
@@ -85,6 +87,7 @@ export function defineTool<I extends z.ZodTypeAny>(tool: {
   undoable?: boolean;
   app?: AppToolMeta;
   outsideTransaction?: boolean;
+  alwaysHold?: boolean;
   preview?: (ctx: ToolContext, input: z.infer<I>) => Promise<string> | string;
   run: (ctx: ToolContext, input: z.infer<I>) => Promise<ToolResult>;
 }): AnyHubTool {

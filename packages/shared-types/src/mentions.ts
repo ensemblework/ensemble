@@ -27,11 +27,36 @@ const MENTION_ALIASES: Record<string, MentionKind> = {
   date: "date",
 };
 
+/** The word written before the colon when a mention is typed as text: `@people:Mira Chen`, `@diagram:Pipeline`. */
+export const MENTION_PREFIX: Record<MentionKind, string> = {
+  people: "people",
+  project: "project",
+  repo: "repo",
+  task: "task",
+  deliverable: "deliverable",
+  skill: "skill",
+  diagram: "diagram",
+  plot: "plot",
+  dataset: "dataset",
+  file: "file",
+  date: "date",
+};
+
+/** The kind a typed alias names (`person`, `people`, `projects`, `todo`, …), or null. */
+export function mentionAlias(word: string): MentionKind | null {
+  const key = word.toLowerCase();
+  return Object.prototype.hasOwnProperty.call(MENTION_ALIASES, key) ? MENTION_ALIASES[key]! : null;
+}
+
+/** A mention as text: `@people:Mira Chen`. The server resolves these back to ids when the text has none. */
+export function mentionToken(kind: MentionKind, label: string): string {
+  return `@${MENTION_PREFIX[kind]}:${label}`;
+}
+
 export function mentionQuery(query: string): { kind: MentionKind; search: string } | null {
   const colon = query.indexOf(":");
   if (colon < 0) return null;
-  const raw = query.slice(0, colon).toLowerCase();
-  const kind = MENTION_ALIASES[raw];
+  const kind = mentionAlias(query.slice(0, colon));
   return kind ? { kind, search: query.slice(colon + 1).trim() } : null;
 }
 

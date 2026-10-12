@@ -29,8 +29,18 @@ import { microsoft365Tools } from "./tools/microsoft-365.js";
 import { zoomTools } from "./tools/zoom.js";
 import { docusignTools } from "./tools/docusign.js";
 import { jiraTools } from "./tools/jira.js";
+import { pageTools } from "./tools/pages.js";
+import { meetingTools } from "./tools/meetings.js";
+import { calendarTools } from "./tools/calendar.js";
+import { deskTools } from "./tools/desk.js";
+import { importTools } from "./tools/imports.js";
+import { activityTools } from "./tools/activity.js";
+import { settingsTools } from "./tools/settings.js";
+import { workspaceTools } from "./tools/workspace.js";
+import { howToTools } from "./tools/howto.js";
 
 const ALL: readonly AnyHubTool[] = [
+  ...howToTools,
   ...taskTools,
   ...projectTools,
   ...contextTools,
@@ -44,6 +54,14 @@ const ALL: readonly AnyHubTool[] = [
   ...diagramContextTools,
   ...repoReadTools,
   ...plotTools,
+  ...pageTools,
+  ...meetingTools,
+  ...calendarTools,
+  ...deskTools,
+  ...importTools,
+  ...activityTools,
+  ...settingsTools,
+  ...workspaceTools,
 ];
 
 export const TOOLS: ReadonlyMap<string, AnyHubTool> = new Map(ALL.map((tool) => [tool.name, tool]));
@@ -83,7 +101,7 @@ export const catalog = (): AssistantToolInfo[] => [...ALL, ...APP_TOOL_LIST].map
 const DIAGRAM_TOOLS = new Set<string>([...diagramTools, ...diagramContextTools].map((tool) => tool.name));
 const PLOT_TOOLS = new Set<string>(plotTools.map((tool) => tool.name));
 /** Reading a repo's files is code-space work. Without Code a diagram still draws, it just cannot read a repo. */
-const CODE_TOOLS = new Set<string>(repoReadTools.map((tool) => tool.name));
+const CODE_TOOLS = new Set<string>([...repoReadTools, ...workspaceTools].map((tool) => tool.name));
 
 /** The optional module a tool belongs to, or null for a core tool. */
 export function toolModule(tool: AnyHubTool): OptionalModule | null {

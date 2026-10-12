@@ -5,7 +5,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Download } from "lucide-react";
 import dynamic from "next/dynamic";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { TASK_LIKE_KINDS } from "@ensemble/shared-types";
 import { appItemsApi } from "@/lib/api-app-items";
 import { useSpaceAccess } from "@/lib/access";
@@ -26,6 +26,14 @@ export function BoardImport() {
   const access = useSpaceAccess();
   const [picking, setPicking] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [source, setSource] = useState<string | undefined>();
+  // `/board?import=notion` (the assistant links it) opens the Import dialog on that app.
+  useEffect(() => {
+    const asked = new URLSearchParams(window.location.search).get("import");
+    if (!asked) return;
+    setSource(asked === "1" ? undefined : asked);
+    setImporting(true);
+  }, []);
   if (access.guest) return null;
   return (
     <>
@@ -65,7 +73,7 @@ export function BoardImport() {
           });
         }}
       />
-      {importing ? <ImportDialog open onClose={() => setImporting(false)} /> : null}
+      {importing ? <ImportDialog open onClose={() => setImporting(false)} initialSource={source} /> : null}
     </>
   );
 }
