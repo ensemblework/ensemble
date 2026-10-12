@@ -211,6 +211,21 @@ export const importRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>
   "POST /api/imports/:id/undo": ["happy-path", "isolation", "unknown-id", "invalid-input"],
 };
 
+/** Items in connected apps. Owned by src/routes/app-items.ts. */
+export const appItemRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
+  "GET /api/app-items/sources": ["happy-path", "isolation", "hosted-verification"],
+  "GET /api/app-items/search": ["happy-path", "invalid-input", "hosted-verification"],
+  "POST /api/app-items/read": ["happy-path", "invalid-input"],
+  "GET /api/app-items/attached": ["happy-path", "isolation", "invalid-input"],
+  "POST /api/app-items/attach": ["happy-path", "isolation", "invalid-input", "hosted-verification"],
+  "POST /api/app-items/attached/:artifactId/refresh": ["happy-path", "isolation", "unknown-id"],
+  "DELETE /api/app-items/attached/:artifactId": ["happy-path", "isolation", "unknown-id"],
+  "POST /api/app-items/task": ["happy-path", "invalid-input"],
+  "POST /api/app-items/people": ["happy-path", "invalid-input", "hosted-verification"],
+  "GET /api/app-items/update-target": ["happy-path", "isolation"],
+  "POST /api/app-items/update": ["happy-path", "isolation", "invalid-input", "hosted-verification"],
+};
+
 /** People identities, project links and imported meeting notes. Owned by routes/people-identity.ts, project-links.ts, meeting-notes.ts. */
 export const connectedDataRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
   "GET /api/people/identity-suggestions": ["happy-path", "isolation"],
@@ -280,6 +295,7 @@ export const routeCoverage = {
   ...connectorRouteCoverage,
   ...mcpConnectionRouteCoverage,
   ...importRouteCoverage,
+  ...appItemRouteCoverage,
   ...connectedDataRouteCoverage,
   ...spacesRouteCoverage,
   ...sharingRouteCoverage,

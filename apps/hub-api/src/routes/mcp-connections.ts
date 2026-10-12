@@ -6,7 +6,8 @@
 import { createHash } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { CONNECTOR_CATALOG, catalogEntry } from "@ensemble/shared-types";
+import { CONNECTOR_CATALOG, catalogEntry, type ConnectorCatalogEntry } from "@ensemble/shared-types";
+import { oauthApp } from "../connectors/accounts.js";
 import { isHosted, requireVerifiedUser } from "../lib/hosted-access.js";
 import { appendLedger } from "../lib/ledger.js";
 import { clientAddress, MemoryRateLimiter } from "../lib/rate-limit.js";
@@ -45,6 +46,10 @@ const ConnectBody = z
     token: z.string().trim().min(8).max(8192).optional(),
     clientId: z.string().trim().min(1).max(512).optional(),
     clientSecret: z.string().trim().min(1).max(2048).optional(),
+    /** Values for the catalog entry's {placeholders}, e.g. { stack: "fieldnote" }. */
+    fields: z.record(z.string().trim().max(200)).optional(),
+    /** Sign in with the person's existing connection to the entry's provider. */
+    useConnection: z.boolean().optional(),
     returnTo: z.string().max(400).optional(),
   })
   .strict()
@@ -64,17 +69,54 @@ const PatchBody = z
   .strict()
   .refine((body) => body.disabledTools !== undefined || body.status !== undefined, { message: "Nothing to change." });
 
-type Target = { serverId: string; name: string; url: string; transport: McpTransportKind };
+type Target = { serverId: string; name: string; url: string; transport: McpTransportKind; entry?: ConnectorCatalogEntry };
 
-const CATALOG_BY_URL = new Map(
-  CONNECTOR_CATALOG.filter((entry) => entry.mcp && entry.status === "ready").map((entry) => [canonicalMcpUrl(new URL(entry.mcp!.url)), entry]),
-);
+/** Fills an entry's {placeholders}. Each value must match its field's pattern, so nobody can point the URL elsewhere. */
+export function fillMcpUrl(entry: ConnectorCatalogEntry, values: Record<string, string> = {}): string {
+  const mcp = entry.mcp!;
+  let url = mcp.url;
+  for (const field of mcp.fields ?? []) {
+    const raw = (values[field.name] ?? "").trim();
+    let value = raw.toLowerCase().startsWith("https://") ? raw.replace(/^https:\/\//i, "").replace(/\/.*$/, "") : raw;
+    // "fieldnote.grafana.net" for a template ending in "{stack}.grafana.net" means "fieldnote".
+    const after = /^[^/{]*/.exec(mcp.url.split(`{${field.name}}`)[1] ?? "")?.[0] ?? "";
+    if (after && value.toLowerCase().endsWith(after.toLowerCase())) value = value.slice(0, -after.length);
+    if (!value || !new RegExp(`^(?:${field.pattern})$`).test(value)) throw new McpConnectionError(`Enter ${field.label.toLowerCase()} (${field.placeholder ?? "see the hint"}).`, 400, "MCP_FIELD");
+    url = url.split(`{${field.name}}`).join(encodeURIComponent(value).replace(/%2E/gi, "."));
+  }
+  if (/\{[a-z_]+\}/i.test(url)) throw new McpConnectionError("This connector's address is incomplete.", 400, "MCP_FIELD");
+  return url;
+}
+
+/** A pasted address that is a catalog server connects as that entry. Loom shares Atlassian's server; the first entry wins. */
+const CATALOG_BY_URL = new Map<string, ConnectorCatalogEntry>();
+for (const entry of CONNECTOR_CATALOG) {
+  if (!entry.mcp || entry.status !== "ready" || entry.mcp.fields?.length) continue;
+  const key = canonicalMcpUrl(new URL(entry.mcp.url));
+  if (!CATALOG_BY_URL.has(key)) CATALOG_BY_URL.set(key, entry);
+}
+
+/** The field values a stored address was built from, so a reconnect does not ask again. */
+export function mcpFieldsFromUrl(entry: ConnectorCatalogEntry, url: string): Record<string, string> | undefined {
+  const names: string[] = [];
+  const pattern = entry.mcp!.url
+    .split(/(\{[a-z_]+\})/i)
+    .map((part) => {
+      const name = /^\{([a-z_]+)\}$/i.exec(part)?.[1];
+      if (!name) return part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      names.push(name);
+      return "([^/]+?)";
+    })
+    .join("");
+  const match = new RegExp(`^${pattern}/?$`, "i").exec(url);
+  return match ? Object.fromEntries(names.map((name, index) => [name, decodeURIComponent(match[index + 1]!)])) : undefined;
+}
 
 function targetFor(body: z.infer<typeof ConnectBody>): Target | string {
   if (body.serverId) {
     const entry = catalogEntry(body.serverId);
     if (!entry?.mcp || entry.status !== "ready") return "That app does not have a remote MCP server Ensemble can connect to.";
-    return { serverId: entry.id, name: entry.name, url: entry.mcp.url, transport: entry.mcp.transport };
+    return { serverId: entry.id, name: entry.name, url: fillMcpUrl(entry, body.fields), transport: entry.mcp.transport, entry };
   }
   const url = parseMcpUrl(body.url!);
   const canonical = canonicalMcpUrl(url);
@@ -105,6 +147,11 @@ export async function mcpConnectionRoutes(app: FastifyInstance): Promise<void> {
     await requireVerifiedUser(request.userId);
     const body = ConnectBody.parse(request.body ?? {});
     if (overLimit(request, reply, "connect")) return reply;
+    const fielded = body.serverId ? catalogEntry(body.serverId) : undefined;
+    if (fielded?.mcp?.fields?.length && !body.fields) {
+      const previous = await app.prisma.mcpConnection.findUnique({ where: { userId_serverId: { userId: request.userId, serverId: fielded.id } }, select: { url: true } });
+      if (previous) body.fields = mcpFieldsFromUrl(fielded, previous.url);
+    }
     const target = targetFor(body);
     if (typeof target === "string") return reply.code(400).send({ error: target });
     const existing = await app.prisma.mcpConnection.findUnique({
@@ -114,18 +161,30 @@ export async function mcpConnectionRoutes(app: FastifyInstance): Promise<void> {
     if (!existing && (await app.prisma.mcpConnection.count({ where: { userId: request.userId } })) >= MAX_MCP_CONNECTIONS) {
       return reply.code(409).send({ error: `You can keep up to ${MAX_MCP_CONNECTIONS} MCP connections. Remove one first.` });
     }
+    const mcp = target.entry?.mcp;
+    if (body.useConnection && !mcp?.connection) return reply.code(400).send({ error: `${target.name} cannot sign in with another connection.` });
+    let client = body.clientId ? { clientId: body.clientId, ...(body.clientSecret ? { clientSecret: body.clientSecret } : {}) } : undefined;
+    if (!client && !body.token && !body.useConnection && mcp?.client) {
+      const operator = await oauthApp(mcp.client.app);
+      if (!operator) return reply.code(409).send({ error: `${target.name} only accepts apps registered with it, and none is set up on this server yet.`, code: "MCP_APP_MISSING" });
+      client = { clientId: operator.clientId, clientSecret: operator.clientSecret };
+    }
     const outcome = await startConnection(app.prisma, request.userId, {
-      ...target,
+      serverId: target.serverId,
+      name: target.name,
+      url: target.url,
+      transport: target.transport,
       returnTo: body.returnTo,
       token: body.token,
-      ...(body.clientId ? { client: { clientId: body.clientId, ...(body.clientSecret ? { clientSecret: body.clientSecret } : {}) } } : {}),
+      ...(client ? { client } : {}),
+      ...(body.useConnection && mcp?.connection ? { connection: mcp.connection } : {}),
     });
     if (outcome.status === "connected") {
       await appendLedger({
         userId: request.userId,
         actor: "me",
         action: "mcp.connect",
-        payload: { serverId: target.serverId, name: target.name, auth: body.token ? "bearer" : "none" },
+        payload: { serverId: target.serverId, name: target.name, auth: body.token ? "bearer" : body.useConnection ? "connection" : "none" },
       });
     }
     return outcome;

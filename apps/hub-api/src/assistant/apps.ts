@@ -21,6 +21,7 @@ import { APP_TOOL_LIST, getTool, toolsFor } from "./registry.js";
 import { APP_PROVIDERS, appAccess, SUITE_LABEL } from "./tools/apps-common.js";
 import type { AnyHubTool, AppToolMeta, ToolContext } from "./types.js";
 import { isMcpToolName, mcpToolsForUser, resolveMcpTool } from "./mcp-tools.js";
+import { APP_ITEM_TOOL_PREFIX, appItemToolsForUser, resolveAppItemTool } from "./tools/app-items.js";
 import { currentScope, isGuestIn } from "../sharing/context.js";
 
 /** Built-in app tools, for every person; gating decides who is offered which. */
@@ -211,7 +212,10 @@ export function appsPrompt(tools: readonly AnyHubTool[], grants: readonly AppGra
         : `- ${SUITE_LABEL[provider]} is connected${who}, but none of its products are switched on.`,
     );
   }
-  const others = apps.filter((tool) => !tool.app).length;
+  if (apps.some((tool) => tool.name === "apps_search")) {
+    lines.push("- apps_search and apps_read search and read the person's other connected apps (pages, repositories, issues and more); prefer them when they ask about something in those apps.");
+  }
+  const others = apps.filter((tool) => isMcpToolName(tool.name)).length;
   if (others) lines.push(`- ${others} more connected-app tools are available (names start with mcp_).`);
   const missing = APP_PROVIDERS.filter((provider) => !grants.some((row) => row.provider === provider)).map((provider) => SUITE_LABEL[provider]);
   if (missing.length) {
@@ -228,4 +232,7 @@ export function appsPrompt(tools: readonly AnyHubTool[], grants: readonly AppGra
 // Remote MCP servers the person connected (src/connectors/mcp) add their tools to every turn and to Apply.
 registerAppToolSource((ctx) => mcpToolsForUser(ctx.prisma, ctx.userId));
 registerToolResolver((ctx, name) => (isMcpToolName(name) ? resolveMcpTool(ctx.prisma, ctx.userId, name) : Promise.resolve(undefined)));
+// Apps Ensemble can search itself (src/connectors/items): search, read, and posting an update on a linked issue.
+registerAppToolSource((ctx) => appItemToolsForUser(ctx));
+registerToolResolver((ctx, name) => (name.startsWith(APP_ITEM_TOOL_PREFIX) ? resolveAppItemTool(ctx, name) : Promise.resolve(undefined)));
 

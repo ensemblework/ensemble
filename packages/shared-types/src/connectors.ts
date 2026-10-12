@@ -6,6 +6,7 @@
  * Names and logos belong to their owners; they are shown only to identify the
  * service being connected.
  */
+import type { AppItemKind } from "./app-items.js";
 
 export type ConnectorCategory =
   | "suites"
@@ -22,7 +23,8 @@ export type ConnectorCategory =
   | "finance"
   | "recruiting"
   | "sign"
-  | "cloud";
+  | "cloud"
+  | "research";
 
 export const CONNECTOR_CATEGORIES: ReadonlyArray<{ id: ConnectorCategory; label: string }> = [
   { id: "suites", label: "Google & Microsoft" },
@@ -40,6 +42,7 @@ export const CONNECTOR_CATEGORIES: ReadonlyArray<{ id: ConnectorCategory; label:
   { id: "recruiting", label: "Recruiting" },
   { id: "sign", label: "Signatures" },
   { id: "cloud", label: "Cloud" },
+  { id: "research", label: "Web & research" },
 ];
 
 /**
@@ -78,6 +81,42 @@ export interface ConnectorImport {
   brings: readonly string[];
 }
 
+/** A value the person fills in to build a server address, e.g. their Grafana stack. */
+export interface McpField {
+  name: string;
+  label: string;
+  placeholder?: string;
+  /** Regular expression the value must match (the whole value). */
+  pattern: string;
+  help?: string;
+}
+
+export interface ConnectorMcp {
+  /** May contain {field} placeholders filled from `fields`. */
+  url: string;
+  transport: "streamable-http" | "sse";
+  docs?: string;
+  note?: string;
+  fields?: readonly McpField[];
+  /** The server takes a pasted token as Authorization: Bearer. `only`: it takes nothing else from Ensemble yet, so the token form comes first. */
+  token?: { label: string; url?: string; hint?: string; only?: boolean };
+  /** The server only accepts clients registered with the vendor: whoever runs Ensemble registers one, saved as connector app `app`. */
+  client?: { app: string };
+  /** The person's own organisation registers the client (Salesforce, Front) and pastes its id and secret. */
+  ownClient?: { hint: string; url?: string };
+  /** Signs in with the person's existing connection to this provider (an oauth_tokens provider) instead of a separate sign-in. */
+  connection?: string;
+}
+
+/** What Ensemble can do with an app's items once it is connected (hub-api connectors/items). */
+export interface ConnectorItems {
+  kinds: readonly AppItemKind[];
+  /** Its people can be added to People. */
+  people?: boolean;
+  /** Updates can be posted back as comments on its issues, cards or tickets. */
+  comments?: boolean;
+}
+
 export interface ConnectorCatalogEntry {
   id: string;
   name: string;
@@ -98,8 +137,10 @@ export interface ConnectorCatalogEntry {
   /** Things it can change. Every change waits for Apply. */
   writes: readonly string[];
   /** Remote MCP server, for auth "mcp". */
-  mcp?: { url: string; transport: "streamable-http" | "sse"; docs?: string; note?: string };
+  mcp?: ConnectorMcp;
   import?: ConnectorImport;
+  /** Search, attach, add as task, people and updates (connectors/items). */
+  items?: ConnectorItems;
   /** ready: works today. setup: needs the operator's app keys (see private setup docs). soon: listed, not built. */
   status: "ready" | "soon";
   /** Shown on the detail view: plan requirements, account types, review notes. */
@@ -107,7 +148,7 @@ export interface ConnectorCatalogEntry {
   docsUrl?: string;
 }
 
-const MCP = (url: string, note?: string): ConnectorCatalogEntry["mcp"] => ({ url, transport: "streamable-http", ...(note ? { note } : {}) });
+const MCP = (url: string, note?: string, more: Partial<ConnectorMcp> = {}): ConnectorMcp => ({ url, transport: "streamable-http", ...(note ? { note } : {}), ...more });
 
 
 const mcpApp = (
@@ -158,14 +199,150 @@ const MORE_MCP_APPS: readonly ConnectorCatalogEntry[] = [
   mcpApp("paypal", "PayPal", "PayPal", "finance", "https://mcp.paypal.com", "Invoices, orders and transactions.", ["Transactions, invoices and disputes"], ["Invoices"]),
   mcpApp("greenhouse", "Greenhouse", "Greenhouse", "recruiting", "https://mcp.greenhouse.io/mcp", "Candidates, jobs and interviews.", ["Candidates, applications and jobs"], ["Notes and stages"], ["Needs a Greenhouse Recruiting account."]),
   mcpApp("ashby", "Ashby", "Ashby", "recruiting", "https://mcp.ashbyhq.com/mcp/v1", "Candidates, jobs and interview plans.", ["Candidates, jobs and applications"], ["Notes and stages"], ["Needs an Ashby account."]),
+  // Also official remote servers that register clients on their own, or take a pasted key (checked 12 Oct 2026).
+  mcpApp("gitlab", "GitLab", "GitLab", "developer", "https://gitlab.com/api/v4/mcp", "Issues, merge requests, pipelines and code on GitLab.com.", ["Projects, issues, merge requests and pipelines"], ["Issues and merge request notes"], ["Self-managed GitLab: add a custom connector with your instance's /api/v4/mcp address."]),
+  mcpApp("shortcut", "Shortcut", "Shortcut", "work_tracking", "https://mcp.shortcut.com/mcp", "Stories, epics and iterations.", ["Stories, epics, iterations and docs"], ["Stories and comments"]),
+  mcpApp("basecamp", "Basecamp", "37signals", "work_tracking", "https://mcp.basecamp.com/mcp", "Projects, to-dos, message boards and schedules.", ["Projects, to-dos, messages and schedules"], ["To-dos and comments"]),
+  mcpApp("productboard", "Productboard", "Productboard", "work_tracking", "https://mcp.productboard.com", "Features, insights and roadmaps.", ["Features, notes, insights and roadmaps"], ["Notes and features"]),
+  mcpApp("netlify", "Netlify", "Netlify", "developer", "https://netlify-mcp.netlify.app/mcp", "Sites, deploys and build logs.", ["Sites, deploys and logs"], ["Deploys and site settings"]),
+  mcpApp("railway", "Railway", "Railway", "developer", "https://mcp.railway.com", "Projects, services, deployments and logs.", ["Projects, services, deployments and logs"], ["Deployments and variables"]),
+  mcpApp("heroku", "Heroku", "Salesforce", "developer", "https://mcp.heroku.com/mcp", "Apps, dynos, add-ons and logs.", ["Apps, releases and logs"], ["Scaling, config and releases"]),
+  mcpApp("neon", "Neon", "Databricks", "developer", "https://mcp.neon.tech/mcp", "Serverless Postgres projects, branches and SQL.", ["Projects, branches and databases"], ["Branches and SQL"]),
+  mcpApp("planetscale", "PlanetScale", "PlanetScale", "developer", "https://mcp.pscale.dev/mcp/planetscale", "Databases, branches and insights.", ["Databases, branches and query insights"], ["Branches and deploy requests"]),
+  mcpApp("prisma", "Prisma Postgres", "Prisma", "developer", "https://mcp.prisma.io/mcp", "Prisma Postgres databases and backups.", ["Databases and backups"], ["Databases"]),
+  mcpApp("postman", "Postman", "Postman", "developer", "https://mcp.postman.com/minimal", "Workspaces, collections and APIs.", ["Workspaces, collections and environments"], ["Collections and requests"], ["Postman's hosted MCP server serves US-region accounts."]),
+  mcpApp("context7", "Context7", "Upstash", "developer", "https://mcp.context7.com/mcp", "Current documentation for libraries and frameworks, for agents and the assistant.", ["Library documentation"], []),
+  mcpApp("jam", "Jam", "Jam", "developer", "https://mcp.jam.dev/mcp", "Bug reports with console logs, network requests and repro steps.", ["Bug reports, logs and recordings"], []),
+  mcpApp("resend", "Resend", "Resend", "developer", "https://mcp.resend.com/mcp", "Email sending, domains and audiences.", ["Emails, domains and audiences"], ["Emails and contacts"]),
+  mcpApp("datadog", "Datadog", "Datadog", "analytics", "https://mcp.datadoghq.com/v1/mcp", "Metrics, logs, traces, monitors and incidents.", ["Metrics, logs, traces, monitors and dashboards"], ["Monitors and notebooks"], ["Datadog asks an org admin to allow new sign-in addresses; if Connect is refused, ask them to allow api.ensemblework.com."]),
+  mcpApp("incidentio", "incident.io", "incident.io", "developer", "https://mcp.incident.io/mcp", "Incidents, on-call schedules and follow-ups.", ["Incidents, schedules and follow-ups"], ["Incident updates"], ["Your incident.io admin may need to allow api.ensemblework.com as a sign-in address."]),
+  mcpApp("hex", "Hex", "Hex", "analytics", "https://app.hex.tech/mcp", "Ask your data through Hex projects and semantic models.", ["Projects, cells and query results"], ["Threads and projects"]),
+  mcpApp("egnyte", "Egnyte", "Egnyte", "files_docs", "https://mcp-server.egnyte.com/mcp", "Search and read files in your Egnyte domain.", ["Files and folders"], []),
+  mcpApp("clay", "Clay", "Clay", "sales_support", "https://api.clay.com/v3/mcp", "Enriched people and company records from your Clay tables.", ["Tables, people and companies"], ["Table rows"]),
+  mcpApp("apollo", "Apollo.io", "Apollo.io", "sales_support", "https://mcp.apollo.io/mcp", "Prospects, accounts and sequences.", ["People, accounts and sequences"], ["Contacts and sequences"]),
+  mcpApp("square", "Square", "Block", "finance", "https://mcp.squareup.com/mcp", "Payments, orders, catalog and customers.", ["Payments, orders, catalog and customers"], ["Catalog items, orders and invoices"]),
+  mcpApp("ramp", "Ramp", "Ramp", "finance", "https://mcp.ramp.com/mcp", "Cards, spend, bills and reimbursements.", ["Transactions, bills and reimbursements"], [], ["Ramp allows sign-in only from addresses it has approved; if Connect is refused, ask Ramp support to allow api.ensemblework.com."]),
+  mcpApp("brex", "Brex", "Brex", "finance", "https://api.brex.com/mcp", "Cards, expenses and budgets.", ["Expenses, cards and budgets"], []),
+  mcpApp("mercury", "Mercury", "Mercury", "finance", "https://mcp.mercury.com/mcp", "Bank accounts and transactions.", ["Accounts and transactions"], []),
+  mcpApp("paddle", "Paddle", "Paddle", "finance", "https://mcp.paddle.com/mcp", "Products, subscriptions, customers and transactions.", ["Products, subscriptions and transactions"], ["Products and prices"]),
+  mcpApp("deel", "Deel", "Deel", "recruiting", "https://api.letsdeel.com/mcp", "People, contracts, time off and payroll.", ["People, contracts and time off"], []),
+  mcpApp("klaviyo", "Klaviyo", "Klaviyo", "sales_support", "https://mcp.klaviyo.com/mcp", "Email and SMS campaigns, flows and audiences.", ["Campaigns, flows, lists and metrics"], ["Campaigns and lists"]),
+  mcpApp("typeform", "Typeform", "Typeform", "analytics", "https://api.typeform.com/mcp", "Forms and their responses.", ["Forms and responses"], ["Forms"]),
+  mcpApp("wix", "Wix", "Wix", "design", "https://mcp.wix.com/mcp", "Sites, pages, store and bookings.", ["Sites, pages, products and bookings"], ["Site content"]),
+  mcpApp("exa", "Exa", "Exa", "research", "https://mcp.exa.ai/mcp", "Web search built for AI: pages, papers and companies.", ["Public web pages"], []),
+  mcpApp("perplexity", "Perplexity", "Perplexity", "research", "https://api.perplexity.ai/mcp", "Answers from the web with citations.", ["Public web search"], [], ["Uses your Perplexity API credits."]),
+  mcpApp("tavily", "Tavily", "Tavily", "research", "https://mcp.tavily.com/mcp/", "Web search and page extraction.", ["Public web pages"], [], ["Uses your Tavily API credits."]),
+  mcpApp("firecrawl", "Firecrawl", "Firecrawl", "research", "https://mcp.firecrawl.dev/v2/mcp", "Scrape and crawl websites into clean Markdown.", ["Public web pages"], [], ["Uses your Firecrawl credits."]),
+  {
+    ...mcpApp("render", "Render", "Render", "developer", "https://mcp.render.com/mcp", "Services, deploys, logs and Postgres.", ["Services, deploys, logs and metrics"], ["Services and environment variables"]),
+    mcp: MCP("https://mcp.render.com/mcp", undefined, { token: { label: "Render API key", url: "https://render.com/docs/api", hint: "In Render: Account Settings → API Keys → Create API Key.", only: true } }),
+  },
+  {
+    ...mcpApp("smartsheet", "Smartsheet", "Smartsheet", "work_tracking", "https://mcp.smartsheet.com", "Sheets, rows and reports.", ["Sheets, rows and reports"], ["Rows and comments"]),
+    mcp: MCP("https://mcp.smartsheet.com", undefined, { token: { label: "Smartsheet API access token", url: "https://developers.smartsheet.com/api/smartsheet/guides/basics/authentication", hint: "In Smartsheet: Account → Personal Settings → API Access → Generate new access token.", only: true } }),
+  },
+  {
+    ...mcpApp("wrike", "Wrike", "Wrike", "work_tracking", "https://mcp.wrike.com/v2", "Projects, tasks and workflows.", ["Folders, projects and tasks"], ["Tasks and comments"]),
+    mcp: MCP("https://mcp.wrike.com/v2", undefined, { token: { label: "Wrike permanent access token", url: "https://developers.wrike.com/", hint: "In Wrike: Apps & Integrations → API → create an app, then create a permanent access token.", only: true } }),
+  },
 ];
 
-const MORE_SOON: readonly ConnectorCatalogEntry[] = [
-  { id: "salesforce", name: "Salesforce", vendor: "Salesforce", category: "sales_support", featured: false, logo: "salesforce", tagline: "Accounts, opportunities and cases.", auth: ["oauth"], reads: ["CRM records"], writes: [], status: "soon", notes: ["Each Salesforce org has its own MCP address and needs an app registered by its admin."] },
-  { id: "zendesk", name: "Zendesk", vendor: "Zendesk", category: "sales_support", featured: false, logo: "zendesk", tagline: "Tickets and help-centre articles.", auth: ["token"], reads: ["Tickets"], writes: [], status: "soon" },
-  { id: "front", name: "Front", vendor: "Front", category: "sales_support", featured: false, logo: "front", tagline: "Shared inbox conversations.", auth: ["oauth"], reads: ["Conversations"], writes: [], status: "soon", notes: ["Front's MCP server needs an app registered with Front."] },
-  { id: "discord", name: "Discord", vendor: "Discord", category: "chat", featured: false, logo: "discord", tagline: "Server channels you choose.", auth: ["token"], reads: ["Channel messages"], writes: [], status: "soon" },
-  { id: "xero", name: "Xero", vendor: "Xero", category: "finance", featured: false, logo: "xero", tagline: "Invoices, bills and contacts.", auth: ["oauth"], reads: ["Accounting records"], writes: [], status: "soon" },
+const MORE_APPS: readonly ConnectorCatalogEntry[] = [
+  {
+    id: "salesforce",
+    name: "Salesforce",
+    vendor: "Salesforce",
+    category: "sales_support",
+    featured: false,
+    logo: "salesforce",
+    tagline: "Accounts, contacts, opportunities and cases through Salesforce's own MCP server.",
+    auth: ["mcp"],
+    reads: ["Accounts, contacts, opportunities, cases and other records your Salesforce user can see"],
+    writes: ["Records, through Salesforce's MCP tools"],
+    mcp: MCP("https://api.salesforce.com/platform/mcp/v1/platform/sobject-all", undefined, {
+      ownClient: {
+        hint: "Your Salesforce admin turns on the sobject-all MCP server (Setup → MCP Servers), then creates an External Client App with Ensemble's redirect URI, the scopes mcp_api and refresh_token, and PKCE. Paste its consumer key and secret.",
+        url: "https://developer.salesforce.com/docs/platform/hosted-mcp-servers/guide/create-external-client-app.html",
+      },
+    }),
+    status: "ready",
+    notes: ["Salesforce's hosted MCP servers need Enterprise Edition or above.", "Each Salesforce org registers its own app for Ensemble; there is no app that works for every org."],
+    docsUrl: "https://developer.salesforce.com/docs/platform/hosted-mcp-servers/guide/client-connection-overview.html",
+  },
+  {
+    id: "zendesk",
+    name: "Zendesk",
+    vendor: "Zendesk",
+    category: "sales_support",
+    featured: false,
+    logo: "zendesk",
+    tagline: "Find tickets, attach them to tasks, add agents to People and leave internal notes.",
+    auth: ["token"],
+    provider: "zendesk",
+    reads: ["Tickets and their comments", "Agents"],
+    writes: ["Internal notes on tickets, when you post an update"],
+    items: { kinds: ["ticket"], people: true, comments: true },
+    status: "ready",
+    notes: ["API tokens are created by a Zendesk admin (Admin Center → Apps and integrations → APIs → Zendesk API).", "Zendesk has announced an MCP server but not released it yet; Ensemble uses Zendesk's API."],
+    docsUrl: "https://developer.zendesk.com/api-reference/introduction/security-and-auth/",
+  },
+  {
+    id: "front",
+    name: "Front",
+    vendor: "Front",
+    category: "sales_support",
+    featured: false,
+    logo: "front",
+    tagline: "Shared-inbox conversations as context, internal comments, and Front's own tools.",
+    auth: ["token", "mcp"],
+    provider: "front",
+    reads: ["Conversations and messages", "Teammates"],
+    writes: ["Internal comments, when you post an update", "Whatever Front's MCP tools do"],
+    mcp: MCP("https://mcp.frontapp.com/mcp", undefined, {
+      ownClient: {
+        hint: "A Front admin creates a developer app (Settings → Company → Developer), adds OAuth with feature access set to MCP Server and Ensemble's redirect URI, then pastes its client ID and secret here.",
+        url: "https://dev.frontapp.com/docs/mcp-server",
+      },
+    }),
+    items: { kinds: ["conversation"], people: true, comments: true },
+    status: "ready",
+    notes: ["API tokens are company-level and created by a Front admin (Settings → Company → Developers → API tokens)."],
+    docsUrl: "https://dev.frontapp.com/docs/mcp-server",
+  },
+  {
+    id: "discord",
+    name: "Discord",
+    vendor: "Discord",
+    category: "chat",
+    featured: false,
+    logo: "discord",
+    tagline: "Add Ensemble's bot to a server, then read the channels you choose as context.",
+    auth: ["oauth"],
+    provider: "discord",
+    reads: ["Recent messages in channels the bot can see"],
+    writes: [],
+    items: { kinds: ["channel"] },
+    status: "ready",
+    notes: ["Discord does not let apps read messages as you; Ensemble's bot reads only the servers you add it to.", "The bot cannot see direct messages."],
+    docsUrl: "https://discord.com/developers/docs/topics/oauth2#bot-authorization-flow",
+  },
+  {
+    id: "xero",
+    name: "Xero",
+    vendor: "Xero",
+    category: "finance",
+    featured: false,
+    logo: "xero",
+    tagline: "Look up invoices and contacts and attach them to tasks.",
+    auth: ["oauth"],
+    provider: "xero",
+    reads: ["Invoices, bills and contacts"],
+    writes: [],
+    items: { kinds: ["invoice", "contact"] },
+    status: "ready",
+    notes: ["Xero has no hosted MCP server; Ensemble uses Xero's API (read only).", "Xero limits how many organisations an uncertified app can connect."],
+    docsUrl: "https://developer.xero.com/documentation/",
+  },
 ];
 
 export const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
@@ -187,6 +364,7 @@ export const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
     ],
     reads: ["Mail threads you are on", "Calendar events", "Drive files you pick or Ensemble created"],
     writes: ["Calendar events and invites", "Docs, Sheets and Slides"],
+    items: { kinds: ["file", "conversation"] },
 
     status: "ready",
     notes: [
@@ -213,6 +391,7 @@ export const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
     ],
     reads: ["Outlook mail", "Outlook calendar", "Teams chats", "OneDrive files"],
     writes: ["Outlook events and invites", "Word, Excel and PowerPoint files"],
+    items: { kinds: ["file", "conversation"] },
     status: "ready",
     notes: [
       "Teams chats need a work or school account; personal Microsoft accounts have no Teams chat API.",
@@ -226,12 +405,13 @@ export const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
     category: "notes_docs",
     featured: true,
     logo: "notion",
-    tagline: "Search, read and update pages and databases. Import your workspace.",
+    tagline: "Attach pages to tasks as context, import databases into the board, and Notion's own tools.",
     auth: ["mcp", "oauth", "token"],
     provider: "notion",
     reads: ["Pages and databases you share"],
     writes: ["Pages, database rows and comments"],
     mcp: MCP("https://mcp.notion.com/mcp"),
+    items: { kinds: ["page", "database"], people: true, comments: true },
     import: {
       source: "notion",
       files: ["zip", "csv"],
@@ -249,12 +429,13 @@ export const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
     category: "work_tracking",
     featured: true,
     logo: "linear",
-    tagline: "Your issues as proposed todos, plus issue tools and a full import.",
+    tagline: "Your issues as todos, issues as agent tasks with updates posted back, a full import, and Linear's own tools.",
     auth: ["token", "oauth", "mcp"],
     provider: "linear",
     reads: ["Issues assigned to you", "Teams, projects and cycles"],
     writes: ["Issues, comments and projects"],
-    mcp: MCP("https://mcp.linear.app/mcp"),
+    mcp: MCP("https://mcp.linear.app/mcp", undefined, { connection: "linear" }),
+    items: { kinds: ["issue", "project"], people: true, comments: true },
     import: {
       source: "linear",
       files: ["csv"],
@@ -272,11 +453,13 @@ export const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
     category: "developer",
     featured: true,
     logo: "github",
-    tagline: "Pull requests, reviews and issues; import issues as tasks.",
-    auth: ["oauth", "token"],
+    tagline: "Pick repositories for agents, attach issues and pull requests, post updates back, and GitHub's own tools.",
+    auth: ["oauth", "token", "mcp"],
     provider: "github",
-    reads: ["Your open PRs, review requests and assigned issues"],
-    writes: [],
+    reads: ["Your open PRs, review requests and assigned issues", "Repositories you can reach, for agents to clone"],
+    writes: ["Comments on issues and pull requests, when you post an update", "Whatever GitHub's MCP tools do"],
+    mcp: MCP("https://api.githubcopilot.com/mcp/", "GitHub's MCP server signs in with your GitHub connection. Organizations that restrict OAuth apps may need to approve it.", { connection: "github" }),
+    items: { kinds: ["repo", "issue", "pull_request"], people: true, comments: true },
     import: {
       source: "github",
       api: true,
@@ -293,11 +476,13 @@ export const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
     category: "chat",
     featured: false,
     logo: "slack",
-    tagline: "DMs, group DMs and channels you choose; direct asks become proposed todos.",
-    auth: ["token", "oauth"],
+    tagline: "Direct asks become proposed todos, channels become task context, and your workspace's people join People.",
+    auth: ["token", "oauth", "mcp"],
     provider: "slack",
-    reads: ["DMs, group DMs and listed channels"],
-    writes: [],
+    reads: ["DMs, group DMs and listed channels", "Workspace members"],
+    writes: ["Whatever Slack's MCP tools do"],
+    mcp: MCP("https://mcp.slack.com/mcp", "Slack's MCP server only accepts Slack apps registered for it; whoever runs Ensemble sets that up once.", { client: { app: "slack_mcp" } }),
+    items: { kinds: ["channel", "person"], people: true },
     status: "ready",
   },
   {
@@ -310,9 +495,10 @@ export const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
     tagline: "Import Jira issues with labels, due dates and status; Jira and Confluence tools when your admin allows.",
     auth: ["oauth", "token", "mcp"],
     provider: "atlassian",
-    reads: ["Jira issues and projects", "Confluence pages (through Atlassian's MCP server)"],
-    writes: ["Jira issues and Confluence pages (through Atlassian's MCP server)"],
+    reads: ["Jira issues and projects", "Confluence pages (with an API token, or through Atlassian's MCP server)"],
+    writes: ["Comments on Jira issues, when you post an update (API token connections)", "Jira issues and Confluence pages (through Atlassian's MCP server)"],
     mcp: MCP("https://mcp.atlassian.com/v2/mcp", "Your Atlassian site admin may need to add api.ensemblework.com to the allowed domains for the Rovo MCP server."),
+    items: { kinds: ["issue", "project", "page"], people: true, comments: true },
     import: {
       source: "jira",
       files: ["csv"],
@@ -334,7 +520,8 @@ export const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
     auth: ["token", "file"],
     provider: "trello",
     reads: ["Boards, lists and cards"],
-    writes: [],
+    writes: ["Comments on cards, when you post an update"],
+    items: { kinds: ["card", "board"], comments: true },
     import: {
       source: "trello",
       files: ["json"],
@@ -352,12 +539,13 @@ export const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
     category: "work_tracking",
     featured: false,
     logo: "asana",
-    tagline: "Import Asana projects and tasks with due dates, tags and assignees.",
-    auth: ["token", "file"],
+    tagline: "Import Asana projects and tasks, attach tasks as context, post updates back, and Asana's own tools.",
+    auth: ["token", "file", "mcp"],
     provider: "asana",
     reads: ["Projects and tasks"],
-    writes: [],
-    notes: ["Asana's MCP server needs an app registered with Asana, so assistant tools for Asana come later."],
+    writes: ["Comments on tasks, when you post an update", "Whatever Asana's MCP tools do"],
+    mcp: MCP("https://mcp.asana.com/v2/mcp", "Asana's MCP server accepts only registered apps; whoever runs Ensemble registers one.", { client: { app: "asana_mcp" } }),
+    items: { kinds: ["task", "project"], people: true, comments: true },
     import: {
       source: "asana",
       files: ["csv"],
@@ -381,6 +569,7 @@ export const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
     reads: ["Projects and tasks"],
     writes: ["Tasks and projects"],
     mcp: MCP("https://ai.todoist.net/mcp"),
+    items: { kinds: ["task", "project"], comments: true },
     import: {
       source: "todoist",
       files: ["csv"],
@@ -404,6 +593,7 @@ export const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
     reads: ["Spaces, lists, tasks and docs"],
     writes: ["Tasks, lists and docs"],
     mcp: MCP("https://mcp.clickup.com/mcp"),
+    items: { kinds: ["task", "project"], people: true, comments: true },
     import: {
       source: "clickup",
       files: ["csv"],
@@ -427,6 +617,7 @@ export const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
     reads: ["Boards and items"],
     writes: ["Items and updates"],
     mcp: MCP("https://mcp.monday.com/mcp"),
+    items: { kinds: ["task", "board"], people: true, comments: true },
     import: {
       source: "monday",
       api: true,
@@ -739,12 +930,14 @@ export const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
     category: "meetings",
     featured: false,
     logo: "loom",
-    tagline: "Video messages and their transcripts.",
+    tagline: "Video messages with their transcripts, summaries and action items.",
     auth: ["mcp"],
-    reads: ["Videos and transcripts"],
+    reads: ["Videos, transcripts, comments and AI summaries"],
     writes: [],
-    status: "soon",
-    notes: ["Loom has no public API for transcripts. A Loom workspace linked to an Atlassian site can be reached through the Atlassian Rovo MCP server (the Jira entry)."],
+    mcp: MCP("https://mcp.atlassian.com/v2/mcp", "Loom's tools live in Atlassian's Rovo MCP server. Your Atlassian site admin may need to add api.ensemblework.com to the allowed domains for the Rovo MCP server."),
+    status: "ready",
+    notes: ["Your Loom workspace must be linked to an Atlassian site. Loom has no other public API for transcripts."],
+    docsUrl: "https://support.atlassian.com/loom/docs/loom-mcp-tools/",
   },
   {
     id: "docusign",
@@ -827,7 +1020,9 @@ export const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
     auth: ["mcp"],
     reads: ["Customers, payments, invoices and subscriptions"],
     writes: ["Stripe objects through its API"],
-    mcp: MCP("https://mcp.stripe.com"),
+    mcp: MCP("https://mcp.stripe.com", undefined, {
+      token: { label: "Stripe agent API key", url: "https://dashboard.stripe.com/apikeys", hint: "Stripe accepts agent API keys for its MCP server; other secret keys are refused from 31 Oct 2026." },
+    }),
     status: "ready",
   },
   {
@@ -872,16 +1067,203 @@ export const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
     mcp: MCP("https://mcp.zapier.com/api/v1/connect"),
     status: "ready",
   },
-  { id: "figma", name: "Figma", vendor: "Figma", category: "design", featured: false, logo: "figma", tagline: "Design context and screenshots.", auth: ["mcp"], reads: ["Files and frames"], writes: [], status: "soon", notes: ["Figma only allows approved clients on its remote MCP server."] },
-  { id: "dropbox", name: "Dropbox", vendor: "Dropbox", category: "files_docs", featured: false, logo: "dropbox", tagline: "Files and Paper docs.", auth: ["mcp"], reads: ["Files"], writes: [], status: "soon", notes: ["Dropbox's MCP server only accepts a trusted set of clients for now."] },
-  { id: "box", name: "Box", vendor: "Box", category: "files_docs", featured: false, logo: "box", tagline: "Files and folders.", auth: ["oauth"], reads: ["Files"], writes: [], status: "soon" },
-  { id: "hubspot", name: "HubSpot", vendor: "HubSpot", category: "sales_support", featured: false, logo: "hubspot", tagline: "Contacts, companies and deals.", auth: ["oauth"], reads: ["CRM records"], writes: [], status: "soon" },
-  { id: "intercom", name: "Intercom", vendor: "Intercom", category: "sales_support", featured: false, logo: "intercom", tagline: "Conversations and help articles.", auth: ["mcp"], reads: ["Conversations and contacts"], writes: [], status: "soon" },
-  { id: "vercel", name: "Vercel", vendor: "Vercel", category: "developer", featured: false, logo: "vercel", tagline: "Deployments and logs.", auth: ["mcp"], reads: ["Projects, deployments and logs"], writes: [], status: "soon", notes: ["Vercel reviews each MCP client before it can connect."] },
-  { id: "cloudflare", name: "Cloudflare", vendor: "Cloudflare", category: "cloud", featured: false, logo: "cloudflare", tagline: "Workers, DNS, analytics and docs.", auth: ["mcp"], reads: ["Account resources"], writes: [], status: "soon" },
-  { id: "grafana", name: "Grafana Cloud", vendor: "Grafana Labs", category: "cloud", featured: false, logo: "grafana", tagline: "Metrics, logs, traces and alerts.", auth: ["mcp"], reads: ["Dashboards, metrics, logs and alerts"], writes: [], status: "soon" },
-  { id: "aws", name: "AWS", vendor: "Amazon Web Services", category: "cloud", featured: false, logo: "aws", tagline: "Resources and documentation.", auth: ["mcp"], reads: ["Account resources"], writes: [], status: "soon" },
-  { id: "azure", name: "Azure", vendor: "Microsoft", category: "cloud", featured: false, logo: "azure", tagline: "Azure DevOps work items, repos and pipelines.", auth: ["oauth"], reads: ["Work items, repos and pipelines"], writes: [], status: "soon" },
+  {
+    id: "figma",
+    name: "Figma",
+    vendor: "Figma",
+    category: "design",
+    featured: false,
+    logo: "figma",
+    tagline: "Paste a Figma link to bring a file's pages, frames and comments into a task.",
+    auth: ["token"],
+    provider: "figma",
+    reads: ["Files you open by link, with their pages, frames and comments", "Your team's projects and files, when you add the team link"],
+    writes: ["Comments on a file, when you post an update"],
+    items: { kinds: ["design", "project"], comments: true },
+    status: "ready",
+    notes: ["Figma's MCP server only accepts apps from its own catalog, so Ensemble reads Figma through its API with your personal access token (they last up to 90 days)."],
+    docsUrl: "https://developers.figma.com/docs/rest-api/personal-access-tokens/",
+  },
+  {
+    id: "dropbox",
+    name: "Dropbox",
+    vendor: "Dropbox",
+    category: "files_docs",
+    featured: false,
+    logo: "dropbox",
+    tagline: "Search your Dropbox, attach files and Paper docs to tasks, and use Dropbox's own tools.",
+    auth: ["oauth", "mcp"],
+    provider: "dropbox",
+    reads: ["File names and folders", "Text, Markdown and Paper docs you attach"],
+    writes: ["Whatever Dropbox's MCP tools do"],
+    mcp: MCP("https://mcp.dropbox.com/mcp", undefined, { client: { app: "dropbox_mcp" } }),
+    items: { kinds: ["file"] },
+    status: "ready",
+    notes: ["Dropbox's MCP server is in beta and accepts only registered apps; whoever runs Ensemble registers one."],
+    docsUrl: "https://help.dropbox.com/integrations/connect-dropbox-mcp-server",
+  },
+  {
+    id: "box",
+    name: "Box",
+    vendor: "Box",
+    category: "files_docs",
+    featured: false,
+    logo: "box",
+    tagline: "Search Box and attach documents to tasks and projects.",
+    auth: ["oauth"],
+    provider: "box",
+    reads: ["File names and folders", "The text of documents you attach"],
+    writes: [],
+    items: { kinds: ["file"] },
+    status: "ready",
+    notes: ["Your Box admin may need to allow third-party apps before you can connect."],
+    docsUrl: "https://developer.box.com/guides/authentication/oauth2/",
+  },
+  {
+    id: "hubspot",
+    name: "HubSpot",
+    vendor: "HubSpot",
+    category: "sales_support",
+    featured: false,
+    logo: "hubspot",
+    tagline: "Contacts, companies, deals and tickets as context, owners as People, and HubSpot's own tools.",
+    auth: ["mcp", "token"],
+    provider: "hubspot",
+    reads: ["Contacts, companies, deals and tickets", "Owners"],
+    writes: ["Notes on records, when you post an update", "Whatever HubSpot's MCP tools do"],
+    mcp: MCP("https://mcp.hubspot.com", undefined, { client: { app: "hubspot_mcp" } }),
+    items: { kinds: ["deal", "contact", "company", "ticket"], people: true, comments: true },
+    status: "ready",
+    notes: ["Pasting a token needs a HubSpot service key (Development → Keys → Service keys), which super admins and people with developer access can create."],
+    docsUrl: "https://developers.hubspot.com/docs/apps/developer-platform/build-apps/integrate-with-the-remote-hubspot-mcp-server",
+  },
+  {
+    id: "intercom",
+    name: "Intercom",
+    vendor: "Intercom",
+    category: "sales_support",
+    featured: false,
+    logo: "intercom",
+    tagline: "Conversations, contacts and help articles through Intercom's own tools.",
+    auth: ["mcp"],
+    reads: ["Conversations, contacts and help articles"],
+    writes: ["Whatever Intercom's MCP tools do"],
+    mcp: MCP("https://mcp.intercom.com/mcp", "EU workspaces: add a custom connector with https://mcp.eu.intercom.com/mcp instead.", {
+      token: {
+        label: "Intercom access token",
+        url: "https://developers.intercom.com/docs/build-an-integration/learn-more/authentication",
+        hint: "Developer Hub → your app → Authentication → Access token. It acts in your own Intercom workspace.",
+        only: true,
+      },
+    }),
+    status: "ready",
+    docsUrl: "https://developers.intercom.com/docs/guides/mcp",
+  },
+  {
+    id: "vercel",
+    name: "Vercel",
+    vendor: "Vercel",
+    category: "developer",
+    featured: false,
+    logo: "vercel",
+    tagline: "Projects and deployments, with build logs when a deploy fails.",
+    auth: ["token"],
+    provider: "vercel",
+    reads: ["Projects, deployments and build logs"],
+    writes: [],
+    items: { kinds: ["deployment", "project"] },
+    status: "ready",
+    notes: ["Vercel's MCP server only accepts reviewed apps, so Ensemble reads Vercel through its API with your account token."],
+    docsUrl: "https://vercel.com/docs/rest-api",
+  },
+  {
+    id: "cloudflare",
+    name: "Cloudflare",
+    vendor: "Cloudflare",
+    category: "cloud",
+    featured: false,
+    logo: "cloudflare",
+    tagline: "Workers, DNS, analytics and the Cloudflare API through Cloudflare's own tools.",
+    auth: ["mcp"],
+    reads: ["Account resources your sign-in or token allows"],
+    writes: ["Whatever Cloudflare's MCP tools do"],
+    mcp: MCP("https://mcp.cloudflare.com/mcp", undefined, {
+      token: { label: "Cloudflare API token", url: "https://dash.cloudflare.com/profile/api-tokens", hint: "My Profile → API Tokens → Create Token, with the permissions you want the assistant to have." },
+    }),
+    status: "ready",
+    docsUrl: "https://developers.cloudflare.com/agents/model-context-protocol/cloudflare/servers-for-cloudflare/",
+  },
+  {
+    id: "grafana",
+    name: "Grafana Cloud",
+    vendor: "Grafana Labs",
+    category: "cloud",
+    featured: false,
+    logo: "grafana",
+    tagline: "Dashboards, metrics, logs, traces and alerts through Grafana's hosted tools.",
+    auth: ["mcp"],
+    reads: ["Dashboards, data sources, metrics, logs, traces and alerts"],
+    writes: ["Whatever Grafana's MCP tools do"],
+    mcp: MCP("https://mcp.grafana.com/mcp/{stack}.grafana.net", undefined, {
+      fields: [{ name: "stack", label: "Your Grafana Cloud stack", placeholder: "fieldnote, from fieldnote.grafana.net", pattern: "[a-z0-9][a-z0-9-]{0,62}" }],
+    }),
+    status: "ready",
+    notes: ["Grafana Assistant must be on for the stack, and you need the Cloud MCP User role (editors have it).", "Each person using it counts as an active Grafana Assistant user."],
+    docsUrl: "https://grafana.com/docs/grafana-cloud/ai-tools/mcp-servers/cloud-mcp/",
+  },
+  {
+    id: "aws",
+    name: "AWS Knowledge",
+    vendor: "Amazon Web Services",
+    category: "cloud",
+    featured: false,
+    logo: "aws",
+    tagline: "Search AWS documentation, guidance and regional availability. No AWS account needed.",
+    auth: ["mcp"],
+    reads: ["AWS documentation and knowledge"],
+    writes: [],
+    mcp: MCP("https://knowledge-mcp.global.api.aws"),
+    status: "ready",
+    docsUrl: "https://aws.amazon.com/about-aws/whats-new/2025/10/aws-knowledge-mcp-server-generally-available/",
+  },
+  {
+    id: "aws_account",
+    name: "AWS",
+    vendor: "Amazon Web Services",
+    category: "cloud",
+    featured: false,
+    logo: "aws",
+    tagline: "Your AWS account's resources through AWS's own MCP server.",
+    auth: ["mcp"],
+    reads: ["Resources your IAM permissions allow"],
+    writes: ["Whatever your IAM permissions and the AWS MCP tools allow"],
+    mcp: MCP("https://aws-mcp.{region}.api.aws/mcp", undefined, {
+      fields: [{ name: "region", label: "AWS Region", placeholder: "us-east-1", pattern: "[a-z]{2}(-gov)?-[a-z]+-[0-9]" }],
+    }),
+    status: "ready",
+    notes: ["Your IAM user or role needs the AWSMCPSignInOAuthAccessPolicy policy.", "AWS sign-ins last 12 hours, so expect to reconnect at least twice a day."],
+    docsUrl: "https://docs.aws.amazon.com/agent-toolkit/latest/userguide/getting-started-aws-mcp-server.html",
+  },
+  {
+    id: "azure_devops",
+    name: "Azure DevOps",
+    vendor: "Microsoft",
+    category: "developer",
+    featured: false,
+    logo: "azuredevops",
+    tagline: "Work items, pull requests and repositories; attach them to tasks and post updates back.",
+    auth: ["token"],
+    provider: "azure_devops",
+    reads: ["Work items, pull requests and repositories in your organization"],
+    writes: ["Comments on work items, when you post an update"],
+    items: { kinds: ["work_item", "pull_request", "repo"], comments: true },
+    status: "ready",
+    notes: [
+      "Create an organization-scoped personal access token with read access to Work Items and Code (and Read & write on Work Items to post updates). Global tokens stop working on 1 Dec 2026.",
+      "Azure DevOps' remote MCP server needs an Entra ID app registered per tenant, so Ensemble uses the REST API.",
+    ],
+    docsUrl: "https://learn.microsoft.com/en-us/azure/devops/organizations/accounts/use-personal-access-tokens-to-authenticate",
+  },
   {
     id: "csv",
     name: "CSV or spreadsheet",
@@ -897,7 +1279,7 @@ export const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
     status: "ready",
   },
   ...MORE_MCP_APPS,
-  ...MORE_SOON,
+  ...MORE_APPS,
 ];
 
 export function catalogEntry(id: string): ConnectorCatalogEntry | undefined {

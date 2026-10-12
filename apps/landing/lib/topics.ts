@@ -127,7 +127,7 @@ export const TOPICS: Topic[] = [
       {
         icon: "shield",
         title: "Your plan, your rules",
-        body: "Nothing is assigned behind your back, and connectors only read. Pick the model that plans with you, or none: if no model is reachable, a careful rule-based triage still proposes the obvious todos.",
+        body: "Nothing is assigned behind your back, and connectors change another app only when you press Apply or Post. Pick the model that plans with you, or none: if no model is reachable, a careful rule-based triage still proposes the obvious todos.",
       },
     ],
     faq: [

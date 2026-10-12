@@ -540,6 +540,50 @@ test("bearer tokens: stored encrypted, sent as Authorization, refused tokens lea
   assert.equal(listed.find((item) => item.name === "Fieldnote Public")?.auth, "none");
 });
 
+test("connection sign-in: the person's own app connection is read fresh on every call and never copied", async () => {
+  const { saveAccount } = await import("../connectors/accounts.js");
+  const { startConnection } = await import("../connectors/mcp/manager.js");
+  await saveAccount(owner.id, "github", { accessToken: PAT, account: "mira-chen", meta: { via: "token" } });
+  const outcome = await startConnection(harness.prisma, owner.id, { serverId: "github", name: "GitHub", url: `${VENDOR}/pat/mcp`, connection: "github" });
+  assert.equal(outcome.status, "connected");
+  const row = await harness.prisma.mcpConnection.findUniqueOrThrow({ where: { id: outcome.id } });
+  assert.equal(row.tokens, null, "the token stays with the GitHub connection");
+  const listed = (await owner.inject({ method: "GET", url: "/api/mcp-connections" })).json().connections as Array<{ id: string; auth: string }>;
+  assert.equal(listed.find((item) => item.id === row.id)?.auth, "connection");
+  assert.equal((await callMcpTool(harness.prisma, owner.id, row.id, "search", { query: "atlas" })).text, "Found: Launch plan for atlas");
+
+  await saveAccount(owner.id, "github", { accessToken: "pat-rotated-elsewhere", account: "mira-chen", meta: { via: "token" } });
+  await assert.rejects(callMcpTool(harness.prisma, owner.id, row.id, "search", { query: "atlas" }), (error: Error & { code?: string }) => error.code === "MCP_RECONNECT" && /GitHub|github/.test(error.message));
+  await saveAccount(owner.id, "github", { accessToken: PAT, account: "mira-chen", meta: { via: "token" } });
+  assert.equal((await callMcpTool(harness.prisma, owner.id, row.id, "search", { query: "again" })).text, "Found: Launch plan for again");
+  await harness.prisma.authToken.deleteMany({ where: { userId: owner.id, provider: "github" } });
+  await assert.rejects(callMcpTool(harness.prisma, owner.id, row.id, "search", { query: "gone" }), (error: Error & { code?: string }) => error.code === "MCP_RECONNECT");
+  await harness.prisma.mcpConnection.delete({ where: { id: row.id } });
+});
+
+test("catalog servers: address fields, registered clients and connection sign-in are checked before any network call", async () => {
+  const lena = await harness.asUser("lena.catalog@fieldnote.example");
+  const cases: Array<[Record<string, unknown>, number, string]> = [
+    [{ serverId: "grafana" }, 400, "MCP_FIELD"],
+    [{ serverId: "grafana", fields: { stack: "fieldnote.example.com/../x" } }, 400, "MCP_FIELD"],
+    [{ serverId: "aws_account", fields: { region: "not a region" } }, 400, "MCP_FIELD"],
+    [{ serverId: "hubspot" }, 409, "MCP_APP_MISSING"],
+    [{ serverId: "slack" }, 409, "MCP_APP_MISSING"],
+  ];
+  for (const [payload, status, code] of cases) {
+    const response = await lena.inject({ method: "POST", url: "/api/mcp-connections", payload });
+    assert.equal(response.statusCode, status, `${JSON.stringify(payload)}: ${response.body}`);
+    assert.equal(response.json().code, code, JSON.stringify(payload));
+  }
+  const noConnection = await lena.inject({ method: "POST", url: "/api/mcp-connections", payload: { serverId: "notion", useConnection: true } });
+  assert.equal(noConnection.statusCode, 400, noConnection.body);
+  const unconnected = await lena.inject({ method: "POST", url: "/api/mcp-connections", payload: { serverId: "linear", useConnection: true } });
+  assert.equal(unconnected.statusCode, 409, unconnected.body);
+  assert.equal(unconnected.json().code, "MCP_RECONNECT");
+  assert.equal(await harness.prisma.mcpConnection.count({ where: { userId: lena.id, serverId: { in: ["grafana", "aws_account", "hubspot", "slack", "linear"] } } }), 0);
+  track("POST /api/mcp-connections", "invalid-input");
+});
+
 test("custom URLs are checked; bad bodies and unknown catalog servers are 400", async () => {
   for (const payload of [
     { url: "http://mcp.fieldnote.example/mcp" },

@@ -32,6 +32,7 @@ import { focusLabel, matchesFocus, type BoardFocus } from "./insight-data";
 import "../desk/desk.css";
 import "./insights.css";
 import { CreateTaskDialog } from "./create-task-dialog";
+import { BoardImport } from "../app-items/board-import";
 import { useSpaceAccess } from "@/lib/access";
 import type { LayoutPayload } from "@/lib/server-layout";
 import { usePersistentState } from "@/lib/prefs";
@@ -486,6 +487,7 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
               Board tiles
             </button>
           )}
+          <BoardImport />
           <button type="button" className="btn-primary" disabled={create.isPending} onClick={() => createNewTask("todo")}>
             <Plus size={14} />
             New task

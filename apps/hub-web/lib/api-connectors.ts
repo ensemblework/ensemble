@@ -18,6 +18,8 @@ export type ConnectorState = {
   appReady: boolean;
   /** Browser sign-in (OAuth) is set up on this server. */
   oauthReady?: boolean;
+  /** False when the vendor's MCP server only takes registered apps and none is set up on this server yet. */
+  mcpReady?: boolean;
   /** Products switched on whose access the person has not approved yet. */
   needsConsent?: string[];
   products: Record<string, boolean>;
@@ -85,12 +87,16 @@ export type McpConnectInput = ({ serverId: string } | { url: string; name: strin
   /** A pre-registered OAuth client, for servers that do not let apps register themselves. */
   clientId?: string;
   clientSecret?: string;
+  /** Values for the server address, e.g. { stack: "fieldnote" } for Grafana Cloud. */
+  fields?: Record<string, string>;
+  /** Sign in with the person's existing connection to this app (GitHub, Linear). */
+  useConnection?: boolean;
 };
 
 export type McpConnectResult = { id: string; authorizeUrl?: string | null; status: McpConnection["status"] };
 
 /** MCP connect failures hub-api names, so the form can ask for what is missing. */
-export type McpErrorCode = "MCP_URL_REFUSED" | "MCP_TOKEN_REQUIRED" | "MCP_PKCE_UNSUPPORTED" | "MCP_TOKEN_REFUSED" | (string & {});
+export type McpErrorCode = "MCP_URL_REFUSED" | "MCP_TOKEN_REQUIRED" | "MCP_PKCE_UNSUPPORTED" | "MCP_TOKEN_REFUSED" | "MCP_FIELD" | "MCP_APP_MISSING" | (string & {});
 
 export class McpConnectError extends ApiError {
   constructor(

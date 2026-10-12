@@ -15,6 +15,9 @@ const ASKS_FOR_TOKEN = new Set<McpErrorCode>(["MCP_TOKEN_REQUIRED", "MCP_TOKEN_R
 
 export type McpProblem = { code: McpErrorCode; message: string };
 
+/** What a connect adds to the target: a token, address fields, a registered client, or the existing connection. */
+export type McpConnectExtra = Pick<McpConnectInput, "token" | "fields" | "clientId" | "clientSecret" | "useConnection">;
+
 /**
  * Connects a remote MCP server. A sign-in redirect leaves the page; when the
  * server needs a token instead, `problem` says so and `connect({ token })`
@@ -33,7 +36,7 @@ export function useMcpConnect({
   const refresh = useRefreshConnections();
   const [problem, setProblem] = useState<McpProblem | null>(null);
   const mutation = useMutation({
-    mutationFn: (extra: { token?: string } = {}) => connectorsApi.addMcp({ ...target(), ...extra }),
+    mutationFn: (extra: McpConnectExtra = {}) => connectorsApi.addMcp({ ...target(), ...extra }),
     onMutate: () => setProblem(null),
     onSuccess: (result) => {
       if (result.authorizeUrl) {
@@ -46,12 +49,12 @@ export function useMcpConnect({
     },
     onError: (error) => {
       const code = mcpErrorCode(error);
-      if (code && (ASKS_FOR_TOKEN.has(code) || code === "MCP_URL_REFUSED")) setProblem({ code, message: (error as Error).message });
+      if (code && (ASKS_FOR_TOKEN.has(code) || code === "MCP_URL_REFUSED" || code === "MCP_FIELD" || code === "MCP_APP_MISSING")) setProblem({ code, message: (error as Error).message });
       else toast((error as Error).message, { tone: "error" });
     },
   });
   return {
-    connect: (extra?: { token?: string }) => mutation.mutate(extra ?? {}),
+    connect: (extra?: McpConnectExtra) => mutation.mutate(extra ?? {}),
     pending: mutation.isPending,
     problem,
     asksForToken: Boolean(problem && ASKS_FOR_TOKEN.has(problem.code)),

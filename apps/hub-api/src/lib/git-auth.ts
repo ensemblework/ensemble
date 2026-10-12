@@ -11,6 +11,7 @@ import type { PrismaClient } from "@prisma/client";
 import { decrypt } from "./secrets.js";
 import { askpassPath } from "../workspace/guard.js";
 import { canUseHostCredentials, requireHostAccess } from "./hosted-access.js";
+import { getAccount } from "../connectors/accounts.js";
 
 const exec = promisify(execFile);
 export const GITHUB_GIT_PROVIDER = "github_git";
@@ -49,6 +50,14 @@ async function ghReady(): Promise<boolean> {
   }
 }
 
+/** The person's GitHub connection, when it can read code: an OAuth grant with repo scope, or a pasted token (its own permissions decide). */
+async function connectorGithubToken(userId: string): Promise<string | null> {
+  const account = await getAccount(userId, "github", false, false).catch(() => null);
+  if (!account?.accessToken) return null;
+  if (account.meta.via === "token" || account.scopes.some((scope) => scope === "repo" || scope === "public_repo")) return account.accessToken;
+  return null;
+}
+
 export async function githubCloneAuth(
   prisma: PrismaClient,
   userId: string,
@@ -56,7 +65,8 @@ export async function githubCloneAuth(
 ): Promise<{ config: string[]; env: Record<string, string>; missing: boolean }> {
   await requireHostAccess(userId, "Repository cloning and host git credentials");
   if (!/github\.com/i.test(remote)) return { config: [], env: {}, missing: false };
-  const token = await githubToken(prisma, userId);
+  // The git token saved in Settings wins; otherwise the GitHub connector's own sign-in or pasted token.
+  const token = (await githubToken(prisma, userId)) ?? (await connectorGithubToken(userId));
   if (token) {
     const script = await askpassScript();
     return {
@@ -76,4 +86,4 @@ export async function githubCloneAuth(
 }
 
 export const GITHUB_AUTH_HINT =
-  "Git has no credentials for github.com. Save a GitHub token in Settings, or run `gh auth setup-git`.";
+  "Git has no credentials for github.com. Connect GitHub in Settings → Connections, save a GitHub token in Settings, or run `gh auth setup-git`.";

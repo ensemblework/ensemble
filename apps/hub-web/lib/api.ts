@@ -1039,7 +1039,7 @@ export const api = bindClient({
   closeHandoff: (id: string) => post<void>(`/api/agent/handoffs/${id}/close`, {}),
 
   // connectors
-  connectorApps: () => get<{ apps: ConnectorApp[]; canEdit: boolean }>("/api/connectors/apps"),
+  connectorApps: () => get<{ apps: ConnectorApp[]; canEdit: boolean; mcpRedirectUri?: string }>("/api/connectors/apps"),
   saveConnectorApp: (provider: string, data: { clientId: string; clientSecret: string }) =>
     put(`/api/connectors/apps/${provider}`, data),
   startConnect: (provider: string, returnTo?: string) =>

@@ -42,6 +42,8 @@ import { PageTitleField } from "../pages/title-field";
 import { isPageEnsembleBusy } from "../comments/ensemble-bus";
 import { LabelEditor } from "./labels";
 import { FromMeeting } from "../meetings/from-meeting";
+import { AttachedItems } from "../app-items/attached-items";
+import { PostUpdate } from "../app-items/post-update";
 import { useSpaceAccess } from "@/lib/access";
 import { announceTyping, onResource, tabId, usePresence } from "@/lib/presence";
 import { PagePeople } from "../sharing/page-people";
@@ -737,6 +739,13 @@ export function TaskPage({
           className="text-[13.5px] text-muted"
         />
       </div>
+
+      {shared ? null : (
+        <>
+          <AttachedItems taskId={taskId} className="mt-4" />
+          <PostUpdate taskId={taskId} className="mt-2" />
+        </>
+      )}
 
       <div className="mt-6 flex items-center justify-between border-t border-line pt-3 text-[12px] text-muted">
         <span className="font-medium">Page content</span>

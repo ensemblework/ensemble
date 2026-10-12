@@ -32,5 +32,5 @@ export const site = {
     "Ensemble Work",
   ],
   // Last content change, for the sitemap. Bump it when the pages change.
-  updated: "2026-10-11",
+  updated: "2026-10-12",
 } as const;

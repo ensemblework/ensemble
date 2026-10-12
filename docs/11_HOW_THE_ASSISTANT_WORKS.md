@@ -464,6 +464,18 @@ On Apply, `applyHeldCalls` (`apps/hub-api/src/assistant/apply.ts`) runs the Hub 
 
 Mail, chat and file text comes back marked as information, not instructions, and long bodies are read in 5,000-character windows (`offset`, `nextOffset`).
 
+**Searching every connected app** (`tools/app-items.ts`, registered in `apps.ts` with `registerAppToolSource` / `registerToolResolver` like MCP). When the person has connected at least one app Ensemble can search ([31 §2.3](31_CONNECTORS_IN_USE.md#23-attach-items-to-a-task-or-project)), the turn gets:
+
+| Tool | Reads or writes | What it does |
+|---|---|---|
+| `apps_search` | read | Searches one connected app or all of them (`app` is an enum of the person's connected ones); a pasted link or id finds that item; apps that fail are listed beside the hits |
+| `apps_read` | read | One item's facts and Markdown text, 6,000 characters at a time (`nextOffset`) |
+| `apps_post_update` | write (`apps`, waits for Apply) | A comment on the issue, card or ticket a task came from or has attached; the preview names the item and the app |
+
+The prompt's *Connected apps* paragraph says these exist and to prefer them for questions about those apps. Searches and reads go through `connectors/items` with the person's own tokens; results are marked as information, not instructions.
+
+**What Ensemble already keeps.** `hub_search_context` and `hub_read_context` (`tools/context.ts`, area `context`, read only) search the person's stored artifacts (synced mail, chats, events, pull requests and issues, meeting transcripts, and items attached from apps) by title or text, optionally only those on one task or project, and read one in full.
+
 ---
 
 ## 9. Failure modes, and what catches them

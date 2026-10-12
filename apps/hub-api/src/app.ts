@@ -59,6 +59,7 @@ import { cliAuthRoutes } from "./routes/cli-auth.js";
 import { mcpRoutes } from "./routes/mcp.js";
 import { mcpConnectionRoutes } from "./routes/mcp-connections.js";
 import { importRoutes } from "./routes/imports.js";
+import { appItemRoutes } from "./routes/app-items.js";
 import { peopleIdentityRoutes } from "./routes/people-identity.js";
 import { projectLinkRoutes } from "./routes/project-links.js";
 import { meetingNoteRoutes } from "./routes/meeting-notes.js";
@@ -243,6 +244,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     mcpRoutes,
     mcpConnectionRoutes,
     importRoutes,
+    appItemRoutes,
     peopleIdentityRoutes,
     projectLinkRoutes,
     meetingNoteRoutes,

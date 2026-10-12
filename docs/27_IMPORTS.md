@@ -8,7 +8,7 @@ Checked 7 Oct 2026 with the tests listed at the end. Vendor APIs were checked ag
 
 ## 1. How it works
 
-1. **Pick the app** in the import dialog (`ImportDialog`; Settings → Connections opens it).
+1. **Pick the app** in the import dialog (`ImportDialog`). It opens from Settings → Connections, the Board's **Import** menu (*Import a board…*) and the Pages sidebar (*Import from Notion*, which starts on Notion).
 2. **Connect or upload.** Use the account already connected in Settings → Connections, paste a token, or upload the app's export. A pasted token is kept in server memory for this import only (at most 30 minutes); it is not written to the database or logs.
 3. **Choose** databases, projects, boards, teams, lists or repositories. Counts show where the app reports them cheaply.
 4. **Review.** Status values found (from the file, or a first page sampled from the API) each get an Ensemble status you can change; for spreadsheets, each Ensemble field gets a column you can change; Notion databases and files can come in as tasks or as pages. A sample table shows the first rows as they will land.

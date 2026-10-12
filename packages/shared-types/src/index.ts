@@ -4,6 +4,7 @@ export * from "./assistant.js";
 export * from "./personas.js";
 export * from "./mentions.js";
 export * from "./connectors.js";
+export * from "./app-items.js";
 export * from "./shortcuts.js";
 export * from "./modules.js";
 export * from "./features.js";

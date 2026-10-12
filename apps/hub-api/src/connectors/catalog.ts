@@ -26,6 +26,8 @@ export interface ConnectorState {
   appReady: boolean;
   /** True when browser sign-in (Ensemble's own OAuth app) is available for this connector. */
   oauthReady: boolean;
+  /** False when its MCP server only takes registered clients and none is set up on this server yet. */
+  mcpReady: boolean;
   products: Record<string, boolean>;
   /** Products that are on but whose access was not approved yet. Connect again to approve them. */
   needsConsent: string[];
@@ -96,10 +98,14 @@ async function userView(prisma: PrismaClient, userId: string): Promise<UserView>
   };
 }
 
+/** Besides its OAuth app, what a provider needs from the server before anyone can use it. */
+const SERVER_NEEDS: Partial<Record<string, string>> = { discord: "DISCORD_BOT_TOKEN" };
+
 function appConfigured(view: UserView, provider: string): Promise<boolean> {
   let pending = view.apps.get(provider);
   if (!pending) {
-    pending = oauthApp(provider).then(Boolean, () => false);
+    const needs = SERVER_NEEDS[provider];
+    pending = needs && !process.env[needs]?.trim() ? Promise.resolve(false) : oauthApp(provider).then(Boolean, () => false);
     view.apps.set(provider, pending);
   }
   return pending;
@@ -112,7 +118,8 @@ async function stateFor(entry: ConnectorCatalogEntry, view: UserView): Promise<C
   const token = provider ? view.tokens.get(provider) : undefined;
   const oauthReady =
     entry.status !== "soon" && entry.auth.includes("oauth") && provider !== null && OAUTH_PROVIDERS.includes(provider) && (await appConfigured(view, provider));
-  const otherPath = entry.auth.some((kind) => kind === "token" || kind === "mcp" || kind === "file" || kind === "builtin");
+  const mcpReady = entry.status !== "soon" && Boolean(entry.mcp) && (!entry.mcp?.client || (await appConfigured(view, entry.mcp.client.app)));
+  const otherPath = entry.auth.some((kind) => kind === "token" || kind === "file" || kind === "builtin" || (kind === "mcp" && mcpReady));
   const products = entryProducts(entry, view.settings);
   const suite = suiteById(entry.id);
   const needsConsent =
@@ -139,6 +146,7 @@ async function stateFor(entry: ConnectorCatalogEntry, view: UserView): Promise<C
     account: token?.account ?? null,
     appReady: entry.status !== "soon" && (oauthReady || otherPath),
     oauthReady,
+    mcpReady,
     products,
     needsConsent,
     sources,

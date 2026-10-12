@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { categoryCounts, entryStatus, featuredEntries, filterEntries, statusLabel } from "./catalog-view.js";
+import { categoryCounts, connectorUses, entryStatus, featuredEntries, filterEntries, statusLabel, usableAuth } from "./catalog-view.js";
 import { catalogWith } from "./test-fixtures.js";
 
 test("Settings shows exactly the five featured connectors, in order", () => {
@@ -30,11 +30,27 @@ test("categories, Connected and Import filter the store", () => {
   assert.equal(counts.connected, 2);
 });
 
-test("coming-soon entries sort after ready ones", () => {
-  const list = filterEntries(catalogWith(), { category: "cloud" });
-  assert.ok(list.length > 0);
-  const firstSoon = list.findIndex((entry) => entry.status === "soon");
-  assert.ok(list.slice(firstSoon).every((entry) => entry.status === "soon"));
+test("every catalog entry can be connected; none is left as coming soon", () => {
+  const entries = catalogWith();
+  assert.deepEqual(entries.filter((entry) => entry.status === "soon").map((entry) => entry.id), []);
+  for (const id of ["loom", "figma", "dropbox", "box", "hubspot", "intercom", "vercel", "cloudflare", "grafana", "aws", "azure_devops", "salesforce", "zendesk", "front", "discord", "xero"]) {
+    const entry = entries.find((row) => row.id === id);
+    assert.ok(entry, id);
+    assert.ok(usableAuth(entry!).length > 0, `${id} has a way in`);
+  }
+});
+
+test("each connector says what Ensemble does with it", () => {
+  const entries = catalogWith({ github: { connected: true, account: "mira-chen" } });
+  const by = (id: string) => entries.find((entry) => entry.id === id)!;
+  const github = connectorUses(by("github")).join(" ");
+  assert.match(github, /clone the repositories/);
+  assert.match(github, /Post an update back/);
+  assert.match(github, /GitHub's own tools/);
+  assert.match(connectorUses(by("notion")).join(" "), /Attach pages and databases/);
+  assert.match(connectorUses(by("trello")).join(" "), /Import into Ensemble/);
+  assert.match(connectorUses(by("granola")).join(" "), /Meeting notes arrive in Meetings/);
+  assert.ok(connectorUses(by("exa")).length > 0);
 });
 
 test("status labels say who is connected, and when the server is not set up", () => {
@@ -50,5 +66,5 @@ test("status labels say who is connected, and when the server is not set up", ()
   // GitHub still works with a pasted token when its OAuth app is missing.
   assert.equal(statusLabel(by("github")), "Not connected");
   assert.equal(statusLabel(by("csv")), "Import from a file");
-  assert.equal(statusLabel(by("aws")), "Coming soon");
+  assert.equal(statusLabel(by("aws")), "Not connected");
 });

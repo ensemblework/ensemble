@@ -2,7 +2,7 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
-import { ChevronRight, FileText, Pencil, Plus, Trash2 } from "lucide-react";
+import { ChevronRight, Download, FileText, Pencil, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { setSidebarRail } from "@/lib/sidebar-rail";
 import { cx } from "../ui";
@@ -26,6 +26,7 @@ export function PagesSection({
   onCreate,
   onRename,
   onDelete,
+  onImport,
   renderLink,
 }: {
   pages: PageListItem[];
@@ -33,6 +34,8 @@ export function PagesSection({
   onCreate: () => void;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
+  /** Opens the Notion import. Left out where imports are not available. */
+  onImport?: () => void;
   renderLink: (props: PageLinkProps) => React.ReactNode;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -72,9 +75,16 @@ export function PagesSection({
           <ChevronRight size={12} className={expanded ? "rotate-90" : undefined} />
           <span>Pages</span>
         </button>
-        <button type="button" className="icon-btn" aria-label="New page" title="New page" onClick={() => { setExpanded(true); onCreate(); }}>
-          <Plus size={14} />
-        </button>
+        <span className="flex items-center">
+          {onImport ? (
+            <button type="button" className="icon-btn" aria-label="Import from Notion" title="Import from Notion…" onClick={onImport}>
+              <Download size={13} />
+            </button>
+          ) : null}
+          <button type="button" className="icon-btn" aria-label="New page" title="New page" onClick={() => { setExpanded(true); onCreate(); }}>
+            <Plus size={14} />
+          </button>
+        </span>
       </div>
       <div hidden={!expanded} className={expanded ? "flex max-h-48 flex-col gap-0.5 overflow-y-auto" : "hidden"}>
         {pages.length === 0 ? <p className="sidebar-label px-2 py-1 text-[12.5px] text-faint">No pages yet</p> : null}

@@ -13,6 +13,7 @@ import { canAddProfile, defaultProfile, differs, newProfileId, profileChoices, p
 import { useToast } from "../toast";
 import { Dialog, InfoTip, SettingRow, Spinner, Toggle, cx } from "../ui";
 import { RunBranchStatus } from "./run-branch-status";
+import { PickGitHubRepo } from "../app-items/github-repo-picker";
 
 type Kind = "research" | "code";
 type Place = "fresh" | "continue" | "folder";
@@ -763,13 +764,16 @@ export function AssignDialog({
               <div className="mt-2">
                 {place === "fresh" ? (
                   <>
-                    <input
-                      list="assign-repos"
-                      value={repo}
-                      onChange={(event) => setRepo(event.target.value)}
-                      placeholder="https://github.com/owner/repo, owner/repo, or leave empty for an empty folder"
-                      className="field w-full"
-                    />
+                    <div className="flex gap-2">
+                      <input
+                        list="assign-repos"
+                        value={repo}
+                        onChange={(event) => setRepo(event.target.value)}
+                        placeholder="https://github.com/owner/repo, owner/repo, or leave empty for an empty folder"
+                        className="field min-w-0 flex-1"
+                      />
+                      <PickGitHubRepo onPick={setRepo} />
+                    </div>
                     <datalist id="assign-repos">
                       {(repos.data?.repos ?? []).map((path) => (
                         <option key={path} value={path} />
