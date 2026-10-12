@@ -2,11 +2,15 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import test from "node:test";
 import xterm from "@xterm/headless";
-import { render } from "ink";
-import { App } from "./app.js";
 import { DEFAULT_PREFS } from "./prefs.js";
 import { ALT_ON, RENDER_OPTIONS } from "./screen.js";
 import { fakeApi, ops, tick } from "./testing.js";
+
+// In CI, Ink draws nothing until the app exits; this test needs every frame. Ink reads CI once, on import.
+process.env.CI = "false";
+process.env.CONTINUOUS_INTEGRATION = "false";
+const { render } = await import("ink");
+const { App } = await import("./app.js");
 
 /** A real terminal emulator, 100×30, standing in for stdout: what the person would see. A TTY turns \n into CR LF. */
 class Screen extends EventEmitter {
