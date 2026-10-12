@@ -58,14 +58,19 @@ export const Assign = z.object({
   engine: z.enum(["ensemble", "claude-code", "codex", "cursor-agent"]).default("ensemble"),
   /** In a sandboxed run, outside the work folder: read only, read and write, or nothing. Default: Settings. */
   outsideAccess: z.enum(["none", "read", "read-write"]).optional(),
+  /**
+   * A turn of Chat with the person's own agent: the instructions are their message, and with
+   * `continueFromJobId` the agent's own session continues. Claude Code, Codex or Cursor only.
+   */
+  chat: z.boolean().optional(),
 });
 
 const ENGINE_NAME = { ensemble: "Ensemble's agent", "claude-code": "Claude Code", codex: "Codex", "cursor-agent": "Cursor's agent" } as const;
 
 /** The job's context with the run's outside-folder choice in it (a JSON column, so no migration). */
-function contextWith(context: Prisma.InputJsonValue | undefined, outsideAccess: string): Prisma.InputJsonValue {
+function contextWith(context: Prisma.InputJsonValue | undefined, outsideAccess: string, chat = false): Prisma.InputJsonValue {
   const base = typeof context === "object" && context !== null && !Array.isArray(context) ? (context as Record<string, unknown>) : {};
-  return { ...base, outsideAccess } as Prisma.InputJsonValue;
+  return { ...base, outsideAccess, ...(chat ? { chat: true } : {}) } as Prisma.InputJsonValue;
 }
 export type AssignInput = z.infer<typeof Assign>;
 
@@ -196,6 +201,7 @@ export async function createJob(prisma: PrismaClient, userId: string, body: Assi
   const claudeCode = body.engine !== "ensemble";
   const engineName = ENGINE_NAME[body.engine];
   if (claudeCode && body.kind !== "code") throw new GuardError(`${engineName} works on code tasks. Pick Ensemble's agent for research.`);
+  if (body.chat && !claudeCode) throw new GuardError("Chat runs with Claude Code, Codex or Cursor's agent on your own sign-in. Ensemble's agent chats in Ensemble Code with a model key.");
   // The engine is stored as the run's provider; its model is the engine's own name for one, or its default.
   const provider = claudeCode ? body.engine : body.model ? body.provider ?? tier.provider : tier.provider;
   const model = claudeCode ? body.model?.trim() || "default" : body.model || tier.model;
@@ -302,7 +308,7 @@ export async function createJob(prisma: PrismaClient, userId: string, body: Assi
       maxMinutes: body.maxMinutes ?? settings.orchestration.maxMinutes,
       maxTurns: body.maxTurns ?? settings.orchestration.maxTurns,
       maxToolCalls: body.maxToolCalls ?? 80,
-      context: contextWith(options.context, body.outsideAccess ?? settings.orchestration.outsideAccess),
+      context: contextWith(options.context, body.outsideAccess ?? settings.orchestration.outsideAccess, body.chat === true),
     },
   });
   if (externalRoot && body.trust === "always") {

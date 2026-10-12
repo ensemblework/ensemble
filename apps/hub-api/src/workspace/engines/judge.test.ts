@@ -134,3 +134,11 @@ test("Claude Code's own sandbox follows the outside-folder setting", () => {
   assert.deepEqual(both.allowWrite, [...base.writable, "/h/Documents", "/h/code"]);
   assert.deepEqual(both.denyWrite, base.closed);
 });
+
+test("Ensemble's own board tools go ahead without a prompt, even in Ask in an untrusted folder; other MCP tools follow the mode", async () => {
+  const asking = ctx({ trusted: false, job: { unattended: false }, accessMode: "read-only" as never });
+  for (const tool of ["mcp__ensemble__ensemble_list_tasks", "mcp__ensemble__ensemble_search", "mcp__ensemble__ensemble_create_task", "mcp__ensemble__ask_person"]) {
+    assert.equal((await judgeEngineCall(asking, { tool, input: {} })).decision, "allow", tool);
+  }
+  assert.equal((await judgeEngineCall(ctx({ accessMode: "review" }), { tool: "mcp__github__create_issue", input: {} })).decision, "deny");
+});

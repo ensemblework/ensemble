@@ -27,6 +27,10 @@ const HARMLESS = new Set([
   "ListMcpResourcesTool", "ReadMcpResourceTool",
   // Ensemble's own question tool: the question itself is judged when the tool asks (as AskUserQuestion).
   "mcp__ensemble__ask_person",
+  // The person's own board, in Chat only (/api/engine/tool refuses other runs): nothing outside Ensemble.
+  "mcp__ensemble__ensemble_list_tasks",
+  "mcp__ensemble__ensemble_search",
+  "mcp__ensemble__ensemble_create_task",
 ]);
 
 const str = (value: unknown): string | null => (typeof value === "string" && value.trim() ? value : null);

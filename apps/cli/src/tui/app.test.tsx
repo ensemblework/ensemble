@@ -4,7 +4,7 @@ import { render } from "ink-testing-library";
 import { App } from "./app.js";
 import type { ChatFrame, Decision, LocalApi } from "./local.js";
 import { DEFAULT_PREFS } from "./prefs.js";
-import { empty, fakeApi, job, ops, tick } from "./testing.js";
+import { empty, fakeApi, job, ops, screenWith, tick } from "./testing.js";
 
 function mount(api: LocalApi, prefs = DEFAULT_PREFS) {
   return render(<App api={api} folder="/work/app" version="0.3.0" account={{ email: null, paired: false, apiBase: "https://x" }} prefs={prefs} ops={ops} />);
@@ -25,8 +25,7 @@ test("Tasks lists what needs you, with the question's own options as buttons, an
   };
   const { api, calls } = fakeApi({ workspace: { ...empty, waiting: [waiting] }, decisions: [question] });
   const app = mount(api);
-  await tick(150);
-  const frame = app.lastFrame()!;
+  const frame = await screenWith(app.lastFrame, /2 ★ Postgres/);
   assert.match(frame, /Tasks · 1 needs you/);
   assert.match(frame, /NEEDS YOU/);
   assert.match(frame, /Which database should the tests use\?/);
@@ -142,14 +141,88 @@ test("Chat streams Ensemble Code's reply, and a held change waits for Apply", as
 test("clicking a tab switches to it; Tab does too", async () => {
   const { api } = fakeApi();
   const app = mount(api);
-  await tick(100);
-  assert.match(app.lastFrame()!, /Welcome to Ensemble/);
+  assert.match(await screenWith(app.lastFrame, /Welcome to Ensemble/), /Welcome to Ensemble/);
   // " ◆ Ensemble  " is 13 cells, " Tasks " the next 7, then a space: Chat starts at column 22 (1-based).
   app.stdin.write("\u001B[<0;24;1M");
-  await tick();
-  assert.match(app.lastFrame()!, /Ensemble Code/);
+  assert.match(await screenWith(app.lastFrame, /Ensemble Code/), /Ensemble Code/);
   app.stdin.write("\t");
-  await tick();
-  assert.match(app.lastFrame()!, /Welcome to Ensemble/);
+  assert.match(await screenWith(app.lastFrame, /Welcome to Ensemble/), /Welcome to Ensemble/);
   app.unmount();
+});
+
+test("Chat with Claude Code: a message runs it here, the reply streams in, its question is answered in Chat, and the next message continues it", async () => {
+  const { api, calls, ask } = fakeApi({
+    runs: {
+      "chat-1": [
+        { status: "running", log: "Looking at the tests.\n· Read src/app.test.ts\n" },
+        { status: "waiting_approval", log: "Looking at the tests.\n· Read src/app.test.ts\n", hold: true },
+        { status: "succeeded", log: "Looking at the tests.\n· Read src/app.test.ts\nThe answer is 42.\n", summary: "The answer is 42." },
+      ],
+      "chat-2": [{ status: "succeeded", log: "", summary: "Committed it." }],
+    },
+  });
+  const app = mount(api, { ...DEFAULT_PREFS, tab: "chat", engine: "claude-code" });
+  try {
+    await tick(100);
+    assert.match(app.lastFrame()!, /Chat with Claude Code/);
+    assert.match(app.lastFrame()!, /Message Claude Code/);
+    for (const key of "what is the answer") app.stdin.write(key);
+    await tick();
+    app.stdin.write("\r");
+    await tick(150);
+    const task = calls.find((call) => call.what === "/api/tasks")?.body as { title: string };
+    assert.equal(task.title, "Chat: what is the answer");
+    const first = calls.find((call) => call.what === "/api/agent/assign")?.body as Record<string, unknown>;
+    assert.equal(first.chat, true);
+    assert.equal(first.engine, "claude-code");
+    assert.equal(first.folder, "/work/app");
+    assert.equal(first.instructions, "what is the answer");
+    assert.equal(first.branchMode, "as-is");
+    assert.equal(first.continueFromJobId, undefined);
+    assert.match(await screenWith(app.lastFrame, /⏺ Read src\/app\.test\.ts/), /⏺ Read src\/app\.test\.ts/);
+    // Claude Code asks something: the buttons are in Chat, and a number answers it.
+    ask({ id: "q1", source: "claude", event: "question", toolName: "question", title: "Run the slow tests too?", detail: { options: ["Yes", "No"], recommended: "No", jobId: "chat-1" }, cwd: "/work/app", status: "pending", requestedAt: new Date().toISOString() });
+    const asked = await screenWith(app.lastFrame, /2 ★ No/);
+    assert.match(asked, /Run the slow tests too\?/);
+    assert.match(asked, /2 ★ No/);
+    app.stdin.write("2");
+    await tick(100);
+    assert.deepEqual(calls.find((call) => call.what === "decide q1")?.body, { decision: "allow", reason: "No", confirmed: true });
+    assert.match(await screenWith(app.lastFrame, /The answer is 42\./), /The answer is 42\./);
+    // The run has ended once the composer offers it again.
+    await screenWith(app.lastFrame, /Message Claude Code/);
+    // The next message continues the same chat: same task, after the first run.
+    for (const key of "commit it") app.stdin.write(key);
+    await tick();
+    app.stdin.write("\r");
+    const reply = await screenWith(app.lastFrame, /Committed it\./);
+    const second = calls.filter((call) => call.what === "/api/agent/assign")[1]?.body as Record<string, unknown>;
+    assert.equal(second.taskId, "new-task");
+    assert.equal(second.continueFromJobId, "chat-1");
+    assert.equal(calls.filter((call) => call.what === "/api/tasks").length, 1);
+    assert.match(reply, /Committed it\./);
+  } finally {
+    app.unmount();
+  }
+});
+
+test("no model key on this computer: Chat works with the agent that is installed", async () => {
+  const { api } = fakeApi({ agents: [{ id: "claude", name: "Claude", app: true, cli: "/Users/me/.local/bin/claude" }] });
+  const app = mount(api, { ...DEFAULT_PREFS, tab: "chat" });
+  const frame = await screenWith(app.lastFrame, /Message Claude Code/);
+  assert.match(frame, /working with Claude Code on your own sign-in/);
+  assert.match(frame, /Chat with Claude Code/);
+  app.unmount();
+});
+
+test("with a model key, Chat stays Ensemble Code", async () => {
+  const { api } = fakeApi({ keys: ["anthropic"], agents: [{ id: "claude", name: "Claude", app: true, cli: "/x/claude" }] });
+  const app = mount(api, { ...DEFAULT_PREFS, tab: "chat" });
+  try {
+    await tick(200);
+    assert.match(app.lastFrame()!, /ENSEMBLE CODE/);
+    assert.doesNotMatch(app.lastFrame()!, /Message Claude Code|working with Claude Code/);
+  } finally {
+    app.unmount();
+  }
 });

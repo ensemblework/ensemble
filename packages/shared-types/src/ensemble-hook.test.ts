@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { answerText, questionInput } from "../../../scripts/ensemble-ask-mcp.mjs";
+import { answerText, questionInput, toolsFor } from "../../../scripts/ensemble-ask-mcp.mjs";
 import { ACTIVITY_EVENTS, answeredInput, engineOutput, hookFile, lastAssistantText, normalizePayload, output, questionCards, questionOutput, withHooks } from "../../../scripts/ensemble-hook.mjs";
 
 const hookCommand = (source: string) => `node ensemble-hook.mjs --source ${source}`;
@@ -128,4 +128,9 @@ test("ask_person marks the recommended option and returns the person's answer as
   assert.equal(answerText(input, { decision: "allow", updatedInput: { answers: { "Which colour?": "Blue (Recommended)" } } }), "The person answered: Blue");
   assert.equal(answerText(input, { decision: "allow", updatedInput: { answers: { "Which colour?": "Green, please" } } }), "The person answered: Green, please");
   assert.match(answerText(input, { decision: "deny", message: "skipped" }), /^No answer: skipped/);
+});
+
+test("the run's ensemble MCP server offers the person's board only in Chat", () => {
+  assert.deepEqual(toolsFor({}).map((tool) => tool.name), ["ask_person"]);
+  assert.deepEqual(toolsFor({ ENSEMBLE_CHAT: "1" }).map((tool) => tool.name), ["ask_person", "ensemble_list_tasks", "ensemble_create_task", "ensemble_search"]);
 });

@@ -68,8 +68,13 @@ if (!process.env.ENSEMBLE_SECRET_KEY?.trim() && !process.env.ENSEMBLE_SECRET_KEY
   process.env.ENSEMBLE_SECRET_KEY_FILE = keyFile;
 }
 
+// The person's own PATH, not the login service's or the GUI's minimal one, so their Claude Code,
+// Cursor, Codex, git and node are found. Resolved while the database opens.
+const { userToolPath } = await import("./user-path.js");
+const toolPath = userToolPath({ workspaceRoot: process.env.ENSEMBLE_WORKSPACE_ROOT });
 const { openDesktopDatabase } = await import("../lib/pglite-engine.js");
 const opened = await openDesktopDatabase(dataDir);
+process.env.PATH = await toolPath;
 const { startHub } = await import("../index.js");
 const started = await startHub();
 console.log(`ensemble-sidecar listening on 127.0.0.1:${started.port} migrations=${opened.applied.length} backup=${opened.backup ?? "none"}`);

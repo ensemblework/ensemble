@@ -11,6 +11,7 @@ import { mkdir, readdir, readFile, rm, rmdir, stat, writeFile } from "node:fs/pr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
+import type { PrismaClient } from "@prisma/client";
 import { hasModule, type Settings } from "@ensemble/shared-types";
 import { PageDocument } from "@ensemble/shared-types";
 import { beginActivity, endActivity, heartbeat, isCancelled, isPaused, updateActivity } from "../lib/activity.js";
@@ -33,11 +34,12 @@ import { capabilities, prepareNetwork } from "./sandbox/spawn.js";
 import { runClaudeCode } from "./engines/claude-code.js";
 import { runCodex } from "./engines/codex.js";
 import { runCursor } from "./engines/cursor.js";
+import { SessionGoneError } from "./engines/registry.js";
 import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
 import { runCommand } from "./runner.js";
 import { interruptionMessage } from "./lifecycle.js";
 import { appendLive, dropLive } from "./live-log.js";
-import { checkModeTrust, isFolderTrusted, outsideAccessOf, pathCovers, PATH_RULE_SOURCE, PATH_RULE_TOOL, REVIEW_MESSAGE, rulesForJob, runModeOf, TRUST_TOOL, UNATTENDED_MESSAGE, type SandboxStrength } from "./trust.js";
+import { checkModeTrust, isChatTurn, isFolderTrusted, outsideAccessOf, pathCovers, PATH_RULE_SOURCE, PATH_RULE_TOOL, REVIEW_MESSAGE, rulesForJob, runModeOf, TRUST_TOOL, UNATTENDED_MESSAGE, type SandboxStrength } from "./trust.js";
 import { trustChanged } from "./trust-share.js";
 import { askPerson, chatSpecs, outsideReadAllowed, realOutside, refTips, responsesSpecs, runTool, toolSpecs, undoUnapprovedCommits, type JobContext } from "./tools.js";
 
@@ -172,6 +174,18 @@ ${limits}`;
 
 /** What another coding agent (Claude Code) is told: the same rules Ensemble enforces on its tool calls, in its own terms. */
 function enginePrompt(ctx: JobContext, name: string, task: string): string {
+  return [
+    `You are working for ${name} on a task from their Ensemble board, in ${ctx.root}.`,
+    `Rules (Ensemble checks every tool call against them; a refusal is the run's setting, not an error to work around):`,
+    ...engineRules(ctx),
+    `- When you are done, reply with a 2–5 sentence summary of what you did, what you verified, and anything left open.`,
+    "",
+    task,
+  ].join("\n");
+}
+
+/** Ensemble's rules for an engine run, one line each: the folder, the internet, git and the run's mode. */
+function engineRules(ctx: JobContext): string[] {
   const mode = runModeOf(ctx.job);
   const git =
     ctx.job.delivery === "push"
@@ -186,8 +200,6 @@ function enginePrompt(ctx: JobContext, name: string, task: string): string {
         ? "Commands and edits inside the folder run without asking. Ask only real decisions with the ask_person tool (from the ensemble MCP server), giving 2–5 options and the one you recommend; it waits for the person's answer."
         : "Some actions wait for the person's approval in Ensemble. When you need a decision, call the ask_person tool (from the ensemble MCP server) with 2–5 options and the one you recommend; it waits for the person's answer.";
   return [
-    `You are working for ${name} on a task from their Ensemble board, in ${ctx.root}.`,
-    `Rules (Ensemble checks every tool call against them; a refusal is the run's setting, not an error to work around):`,
     `- Work inside this folder. ${
       ctx.sandboxed
         ? ctx.outsideAccess === "read-write"
@@ -200,10 +212,39 @@ function enginePrompt(ctx: JobContext, name: string, task: string): string {
     `- Internet: ${ctx.network ? "on" : "off"}.`,
     `- Git: ${git}`,
     `- ${modeText}`,
-    `- When you are done, reply with a 2–5 sentence summary of what you did, what you verified, and anything left open.`,
+  ];
+}
+
+/**
+ * One message in Chat with the person's own agent. The first turn states who is chatting and
+ * Ensemble's rules; a resumed session already has them, so later turns repeat only the rules
+ * (the person may have switched run profile) and the message.
+ */
+export function chatPrompt(ctx: Pick<JobContext, "job" | "root" | "sandboxed" | "outsideAccess" | "network">, name: string, message: string, turn: { resumed: boolean; earlier?: string | null }): string {
+  const rules = engineRules(ctx as JobContext);
+  if (turn.resumed) return [`(Ensemble's rules for this message, checked on every tool call:`, ...rules, `)`, "", message].join("\n");
+  return [
+    `You are chatting with ${name} in their terminal (Ensemble's Chat tab), working in ${ctx.root}. Reply conversationally and keep replies short; do the work they ask for here.`,
+    `The ensemble MCP server has their Ensemble board: ensemble_list_tasks, ensemble_create_task (when they ask you to make a task or todo), ensemble_search (their notes, pages and tasks), and ask_person.`,
+    `Rules (Ensemble checks every tool call against them; a refusal is the setting, not an error to work around):`,
+    ...rules,
+    turn.earlier ? `\nEarlier in this chat (with another agent): ${turn.earlier}` : "",
     "",
-    task,
-  ].join("\n");
+    message,
+  ]
+    .filter((line, index, all) => line !== "" || all[index - 1] !== "")
+    .join("\n");
+}
+
+/** The agent session an earlier chat turn ran in (Claude Code's session, Codex's thread, Cursor's session), if the same agent. */
+async function earlierSession(prisma: PrismaClient, job: { continueFromJobId: string | null; provider: string | null }): Promise<{ session: string | null; summary: string | null }> {
+  if (!job.continueFromJobId) return { session: null, summary: null };
+  const previous = await prisma.workspaceJob.findUnique({ where: { id: job.continueFromJobId }, select: { provider: true, summary: true } });
+  if (!previous) return { session: null, summary: null };
+  if (previous.provider !== job.provider) return { session: null, summary: previous.summary };
+  const started = await prisma.workspaceEvent.findFirst({ where: { jobId: job.continueFromJobId, kind: "engine" }, orderBy: { sequence: "desc" } });
+  const session = (started?.data as { session?: unknown } | null)?.session;
+  return { session: typeof session === "string" && session ? session : null, summary: previous.summary };
 }
 
 /** Originals copied for an engine (Claude Code, Codex, Cursor) to open with its own tools. */
@@ -417,6 +458,8 @@ async function prepareBranch(ctx: JobContext): Promise<string> {
 export async function executeJob(app: FastifyInstance, jobId: string, control: JobControl): Promise<void> {
   const { prisma, redis } = app;
   const job = await prisma.workspaceJob.findUniqueOrThrow({ where: { id: jobId }, include: { task: true } });
+  // A message in Chat with the person's own agent, not a task run.
+  const chat = isChatTurn(job.context);
   const userId = job.userId;
   if (job.deviceId) throw new Error("Device jobs must execute on the assigned computer.");
   await requireVerifiedUser(userId);
@@ -624,18 +667,38 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
     if (engine) {
       // Local only: a commit made any way (a script, say) is undone at the end. Commits the run may make were judged as they happened.
       const watch = job.delivery === "local" ? await refTips(ctx) : null;
-      // Without the copies the engine still gets each file's text in the brief.
-      copies = await copyForEngine(ctx, files).catch((failure: unknown) => {
-        app.log.warn({ err: failure }, "could not copy attached files for the engine");
-        return null;
-      });
-      const enginePromptText = enginePrompt(ctx, user?.name || "the person", await brief(app, ctx, settings, files, copies));
-      const ran =
+      let enginePromptText: string;
+      let resume: string | null = null;
+      let earlierSummary: string | null = null;
+      if (chat) {
+        // A chat message continues the agent's own session when the same agent ran the turn before.
+        const earlier = await earlierSession(prisma, job);
+        resume = earlier.session;
+        earlierSummary = earlier.summary;
+        enginePromptText = chatPrompt(ctx, user?.name || "the person", job.instructions, { resumed: Boolean(resume), earlier: resume ? null : earlier.summary });
+      } else {
+        // Without the copies the engine still gets each file's text in the brief.
+        copies = await copyForEngine(ctx, files).catch((failure: unknown) => {
+          app.log.warn({ err: failure }, "could not copy attached files for the engine");
+          return null;
+        });
+        enginePromptText = enginePrompt(ctx, user?.name || "the person", await brief(app, ctx, settings, files, copies));
+      }
+      const runEngine = (prompt: string, session: string | null) =>
         job.provider === "codex"
-          ? await runCodex(ctx, { prompt: enginePromptText, model: job.model, stopCheck })
+          ? runCodex(ctx, { prompt, model: job.model, stopCheck, resume: session, chat })
           : job.provider === "cursor-agent"
-            ? await runCursor(ctx, { prompt: enginePromptText, model: job.model, stopCheck })
-            : await runClaudeCode(ctx, { prompt: enginePromptText, model: job.model, maxTurns: job.maxTurns, stopCheck });
+            ? runCursor(ctx, { prompt, model: job.model, stopCheck, resume: session, chat })
+            : runClaudeCode(ctx, { prompt, model: job.model, maxTurns: job.maxTurns, stopCheck, resume: session, chat });
+      let ran: Awaited<ReturnType<typeof runEngine>>;
+      try {
+        ran = await runEngine(enginePromptText, resume);
+      } catch (failure) {
+        // The earlier session is gone (deleted, or made on another computer): this message starts a new one.
+        if (!(failure instanceof SessionGoneError) || ctx.signal.aborted) throw failure;
+        await ctx.event("engine_new_session", { reason: failure.message.slice(0, 300) });
+        ran = await runEngine(chatPrompt(ctx, user?.name || "the person", job.instructions, { resumed: false, earlier: earlierSummary }), null);
+      }
       counts.turns = ran.turns;
       counts.tools = ran.toolCalls;
       counts.tokensIn = ran.tokensIn;
@@ -877,7 +940,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
     if (outcome === "success" || finalText) {
       if (job.kind === "research" && !ctx.wrotePage && finalText) {
         await writeAgentBlock(prisma, userId, job.taskId, finalText, { jobId: job.id, runId: run.id, model: job.model });
-      } else if (job.kind === "code" && !ctx.wrotePage) {
+      } else if (job.kind === "code" && !ctx.wrotePage && !chat) {
         const report = [
           `**Result.** ${summary}`,
           changes ? `**Files changed**\n\n\`\`\`\n${changes}\n\`\`\`` : "No files changed.",
@@ -890,8 +953,9 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
     app.log.warn({ err: failure }, "could not write agent output to the page");
   }
 
-  const taskStatus =
-    outcome === "success"
+  const taskStatus = chat
+    ? "in_progress"
+    : outcome === "success"
       ? job.markDone
         ? "done"
         : "waiting_approval"

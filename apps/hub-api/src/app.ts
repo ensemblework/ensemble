@@ -74,8 +74,8 @@ const PUBLIC_PATHS = new Set(["/health", "/health/ready", "/api/events", "/api/d
 const ADDITIONAL_MODEL_STREAM_ROUTES = new Set(["/api/pages/:kind/:id/ensemble", "/api/ensemble/invoke"]);
 
 export function bypassesGlobalAuth(path: string): boolean {
-  // /api/engine/ask authenticates with its run's own secret (workspace/engines/registry.ts).
-  return PUBLIC_PATHS.has(path) || isPublicAuthPath(path) || /^\/api\/connectors\/[a-z_]+\/callback$/.test(path) || path === "/api/engine/ask";
+  // /api/engine/ask and /api/engine/tool authenticate with their run's own secret (workspace/engines/registry.ts).
+  return PUBLIC_PATHS.has(path) || isPublicAuthPath(path) || /^\/api\/connectors\/[a-z_]+\/callback$/.test(path) || path === "/api/engine/ask" || path === "/api/engine/tool";
 }
 
 export type BuildAppOptions = {

@@ -11,7 +11,7 @@ import { commandWithSubcommand, resolveLauncherCommand } from "../launcher.js";
 import { signIn, signOut } from "../login.js";
 import { resolveCliPaths } from "../paths.js";
 import { installRunnerService, uninstallRunnerService } from "../services.js";
-import { DesktopOwnsRuntimeError, resolveSidecarDir, runningRunner, sidecarAvailable, startRunner, stopRunner } from "../sidecar.js";
+import { DesktopOwnsRuntimeError, outdatedRunner, resolveSidecarDir, runningRunner, sidecarAvailable, startRunner, stopRunner } from "../sidecar.js";
 import { VERSION } from "../version.js";
 import { App, type Ops } from "./app.js";
 import { LocalApi } from "./local.js";
@@ -28,6 +28,20 @@ export async function runApp(): Promise<void> {
     return;
   }
   let discovery = await runningRunner(paths);
+  // After an upgrade the runtime this CLI started is still the old one: restart it, unless tasks are running.
+  if (discovery && outdatedRunner(discovery)) {
+    const busy = await new LocalApi(discovery)
+      .workspace()
+      .then((workspace) => workspace.running.length + workspace.waiting.length)
+      .catch(() => 0);
+    if (busy) {
+      console.log(`Ensemble ${discovery.version!.replace(/^cli-/, "")} is running ${busy} task${busy === 1 ? "" : "s"} on this computer and keeps them going. When they finish, run \`ensemble runner restart\` to update it to ${VERSION}.`);
+    } else {
+      console.log(`Updating Ensemble on this computer to ${VERSION}.`);
+      await stopRunner(paths).catch(() => false);
+      discovery = await runningRunner(paths);
+    }
+  }
   if (!discovery) {
     process.stdout.write("Starting Ensemble on this computer… ");
     await mkdir(paths.logsDir, { recursive: true });

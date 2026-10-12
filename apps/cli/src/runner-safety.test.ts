@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { browserCommand, safeBrowserUrl } from "./browser.js";
 import { resolveCliPaths } from "./paths.js";
 import { installRunnerService, launchAgentPlist, uninstallRunnerService } from "./services.js";
-import { readRunnerPid, stopRunner, writeRunnerPid } from "./sidecar.js";
+import { outdatedRunner, readRunnerPid, stopRunner, writeRunnerPid } from "./sidecar.js";
 import { dailyUpdateNotice } from "./update.js";
 
 async function sandboxPaths() {
@@ -109,4 +109,13 @@ test("a failed update check is cached for a day and never throws", async () => {
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("after an upgrade, only a runner this CLI started from another version counts as outdated", () => {
+  const base = { port: 4000, token: "x".repeat(32) };
+  assert.equal(outdatedRunner({ ...base, owner: "cli", mode: "runner", version: "cli-0.3.3" }, "0.3.4"), true);
+  assert.equal(outdatedRunner({ ...base, owner: "cli", mode: "runner", version: "cli-0.3.4" }, "0.3.4"), false);
+  assert.equal(outdatedRunner({ ...base, owner: "desktop", mode: "runner", version: "desktop-0.3.0" }, "0.3.4"), false, "the desktop app's runtime is the app's to restart");
+  assert.equal(outdatedRunner({ ...base, owner: "cli", mode: "admin", version: "cli-0.3.3" }, "0.3.4"), false);
+  assert.equal(outdatedRunner({ ...base, owner: "cli", mode: "runner" }, "0.3.4"), false, "an old sidecar that wrote no version is left alone");
 });

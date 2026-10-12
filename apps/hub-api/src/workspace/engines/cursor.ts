@@ -16,7 +16,7 @@ import { hostExecutable } from "../policy.js";
 import { askPerson, type JobContext } from "../tools.js";
 import type { EngineResult } from "./claude-code.js";
 import { judgeEngineCall, type EngineAnswer } from "./judge.js";
-import { hookScriptPath, localApiUrl, registerEngineRun, unregisterEngineRun } from "./registry.js";
+import { hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
 import { RpcConnection } from "./rpc.js";
 
 /** Keys in Ensemble's own environment that must not stand in for the person's Cursor sign-in. */
@@ -112,11 +112,15 @@ export async function answerCursor(
   throw Object.assign(new Error(`${method} is not handled by Ensemble.`), { code: -32601 });
 }
 
-export async function runCursor(ctx: JobContext, options: { prompt: string; model?: string | null; stopCheck: () => Promise<void> }): Promise<EngineResult> {
+export async function runCursor(
+  ctx: JobContext,
+  options: { prompt: string; model?: string | null; stopCheck: () => Promise<void>; resume?: string | null; chat?: boolean },
+): Promise<EngineResult> {
   const agent = await cursorAgentBinary();
   if (!agent) throw new Error("Cursor's agent is not on this computer (the `cursor-agent` command). Install it (curl https://cursor.com/install -fsS | bash), run `agent login`, and Run again.");
   const credential = registerEngineRun(ctx);
-  const env: NodeJS.ProcessEnv = { ...process.env, ENSEMBLE_ENGINE_URL: localApiUrl(), ENSEMBLE_RUN: credential };
+  const ensembleMcp = mcpEnv(credential, options.chat === true);
+  const env: NodeJS.ProcessEnv = { ...process.env, ...ensembleMcp };
   for (const key of KEY_VARIABLES) delete env[key];
   delete env.ENSEMBLE_DESKTOP_TOKEN;
   delete env.ENSEMBLE_INTERNAL_TOKEN;
@@ -133,9 +137,11 @@ export async function runCursor(ctx: JobContext, options: { prompt: string; mode
   let reply = "";
   let stderr = "";
   let sessionId: string | null = null;
+  // Reopening a chat session replays its history as updates: those are not this turn's reply.
+  let replaying = false;
   rpc.onRequest = (method, params) => answerCursor(ctx, method, params);
   rpc.onNotification = (method, params) => {
-    if (method !== "session/update") return;
+    if (method !== "session/update" || replaying) return;
     const update = (params.update ?? {}) as { sessionUpdate?: string; content?: { type?: string; text?: string }; title?: string; kind?: string; toolCallId?: string };
     void (async () => {
       if (update.sessionUpdate === "agent_message_chunk" && update.content?.type === "text" && update.content.text) {
@@ -177,24 +183,34 @@ export async function runCursor(ctx: JobContext, options: { prompt: string; mode
     await rpc.request("initialize", { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false } });
     // The login the person already made with `agent login`; Ensemble never sees it.
     await rpc.request("authenticate", { methodId: "cursor_login" }).catch(() => undefined);
-    const session = await rpc
-      .request("session/new", {
-        cwd: ctx.root,
-        mcpServers: [
-          {
-            name: "ensemble",
-            command: process.execPath,
-            args: [hookScriptPath("ensemble-ask-mcp.mjs")],
-            env: [
-              { name: "ENSEMBLE_ENGINE_URL", value: localApiUrl() },
-              { name: "ENSEMBLE_RUN", value: credential },
-            ],
-          },
-        ],
-      })
-      .catch((error: Error) => {
-        throw /authentication required/i.test(error.message) ? new Error("Cursor's agent is not signed in on this computer. Run `agent login` there, then Run again.") : error;
-      });
+    const mcpServers = [
+      {
+        name: "ensemble",
+        command: process.execPath,
+        args: [hookScriptPath("ensemble-ask-mcp.mjs")],
+        env: Object.entries(ensembleMcp).map(([name, value]) => ({ name, value })),
+      },
+    ];
+    const signedOut = (error: Error) => {
+      throw /authentication required/i.test(error.message) ? new Error("Cursor's agent is not signed in on this computer. Run `agent login` there, then Run again.") : error;
+    };
+    let session: Record<string, unknown>;
+    if (options.resume) {
+      // The next message in a chat: the same Cursor session, so it remembers the conversation.
+      replaying = true;
+      session = await rpc
+        .request("session/load", { sessionId: options.resume, cwd: ctx.root, mcpServers })
+        .then(() => ({ sessionId: options.resume }))
+        .catch((error: Error) => {
+          if (/authentication required/i.test(error.message)) signedOut(error);
+          throw new SessionGoneError(`Cursor could not reopen the chat's session: ${error.message}`);
+        })
+        .finally(() => {
+          replaying = false;
+        });
+    } else {
+      session = await rpc.request("session/new", { cwd: ctx.root, mcpServers }).catch(signedOut);
+    }
     sessionId = typeof session.sessionId === "string" ? session.sessionId : null;
     if (!sessionId) throw new Error("Cursor's agent did not start a session.");
     await ctx.event("engine", { engine: "cursor", model: result.model, session: sessionId });

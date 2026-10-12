@@ -188,3 +188,8 @@ export function outsideAccessOf(context: unknown): OutsideAccess | null {
   const value = typeof context === "object" && context !== null ? (context as { outsideAccess?: unknown }).outsideAccess : undefined;
   return value === "none" || value === "read" || value === "read-write" ? value : null;
 }
+
+/** A turn of Chat with the person's own agent (`ensemble`'s Chat tab), not a task run: kept on the job's context. */
+export function isChatTurn(context: unknown): boolean {
+  return typeof context === "object" && context !== null && (context as { chat?: unknown }).chat === true;
+}

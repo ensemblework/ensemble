@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { quickRunProfile } from "@ensemble/shared-types";
 import type { Decision, JobCard, Workspace } from "./local.js";
-import { buildItems, commandAnswer, decisionActions, matchCommands, parseCommand, runRequest, titleFrom } from "./model.js";
+import { buildItems, chatTurnRequest, commandAnswer, decisionActions, installedAgent, matchCommands, parseCommand, runRequest, titleFrom } from "./model.js";
 
 const job = (id: string, status: string): JobCard => ({ id, taskId: `t${id}`, title: id, status, kind: "code", folder: "/w", position: null, delivery: "commit", unattended: false, accessMode: "read-write", executionMode: "sandbox" });
 const decision = (id: string, extra: Partial<Decision> = {}): Decision => ({ id, source: "ensemble", event: "permission", toolName: "Bash", title: id, detail: {}, cwd: null, status: "pending", requestedAt: "", ...extra });
@@ -51,4 +51,29 @@ test("/run asks for a code run in this folder under the run profile, with the ch
   assert.equal(body.folder, "/work");
   assert.equal(body.instructions, "Keep it small.\n\nfix the tests");
   assert.equal(titleFrom("  fix the failing\nCI step "), "fix the failing");
+});
+
+test("a chat message runs the agent in this folder under the profile; later ones continue the first, on the same branch", () => {
+  const profile = { ...quickRunProfile(), instructions: "Run the tests first.", branchMode: "new" as const, delivery: "push" as const };
+  const first = chatTurnRequest({ taskId: "t", folder: "/work/app", message: "fix it", profile, engine: "codex", model: null, previousJobId: null });
+  assert.equal(first.chat, true);
+  assert.equal(first.engine, "codex");
+  assert.equal(first.folder, "/work/app");
+  assert.equal(first.branchMode, "as-is", "a chat does not start a branch per message");
+  assert.equal(first.delivery, "push", "the profile's git setting still holds");
+  assert.equal(first.markDone, false);
+  assert.equal(first.instructions, "Run the tests first.\n\nfix it");
+  assert.equal(first.model, undefined);
+  const next = chatTurnRequest({ taskId: "t", folder: "/work/app", message: "and commit", profile, engine: "codex", model: "gpt-5.5", previousJobId: "j1" });
+  assert.equal(next.continueFromJobId, "j1");
+  assert.equal(next.instructions, "and commit", "the profile's instructions go with the first message only");
+  assert.equal(next.model, "gpt-5.5");
+});
+
+test("with no model key, the agent to chat with is the first one installed (the ChatGPT app's Codex counts)", () => {
+  const row = (id: string, cli: string | null, app = false) => ({ id, app, cli });
+  assert.equal(installedAgent([row("claude", "/u/.local/bin/claude"), row("codex", null, true)]), "claude-code");
+  assert.equal(installedAgent([row("claude", null, true), row("codex", null, true)]), "codex", "the Claude app alone does not run Claude Code");
+  assert.equal(installedAgent([row("cursor", "/u/.local/bin/cursor-agent")]), "cursor-agent");
+  assert.equal(installedAgent([row("copilot", "/opt/homebrew/bin/copilot")]), null);
 });

@@ -3,8 +3,9 @@
  *
  *   Tasks  agent runs on this computer, and everything that needs you, answered right here
  *          (click a button, press its number, or type /allow, /deny, /answer …).
- *   Chat   Ensemble Code: ask about the folder you opened it in, plan, and hand coding work to
- *          an agent (Ensemble's, Claude Code, Codex or Cursor's) under your run profile.
+ *   Chat   your agent. Claude Code, Codex or Cursor's agent on your own sign-in, working in the
+ *          folder you opened it in under your run profile (each message continues its session),
+ *          or Ensemble Code (Ensemble's agent, a model with your key).
  *
  * One input router handles keys, the mouse and the slash-command menu. The layout is fixed rows
  * (tabs, main, actions, composer, status), so every click maps to a region computed here.
@@ -17,11 +18,15 @@ import type { ChatFrame, CodeSession, Decision, JobDetail, LocalApi, ModelRow, S
 import { hit, isMouse, parseMouse, type Region } from "./mouse.js";
 import {
   ago,
+  AGENT_MODELS,
   buildItems,
+  chatTurnRequest,
   commandAnswer,
   decisionActions,
   engineOf,
+  FINISHED,
   GROUP_LABEL,
+  installedAgent,
   matchCommands,
   parseCommand,
   profileSummary,
@@ -30,6 +35,7 @@ import {
   STATUS_GLYPH,
   titleFrom,
   type Action,
+  type AgentEngine,
   type Answer,
   type Item,
 } from "./model.js";
@@ -51,7 +57,7 @@ export type Ops = {
   connectedHooks: () => Promise<string[]>;
 };
 
-type Entry = { id: string; kind: "user" | "assistant" | "tool" | "failed" | "pending" | "note" | "error"; text: string };
+type Entry = { id: string; kind: "user" | "assistant" | "agent" | "tool" | "failed" | "pending" | "note" | "error"; text: string };
 
 type Overlay =
   | { kind: "picker"; title: string; hint?: string; items: Array<{ id: string; label: string; detail?: string; active?: boolean }>; index: number; onPick: (id: string) => void }
@@ -169,8 +175,16 @@ export function App(props: { api: LocalApi; folder: string; version: string; acc
     [settings, prefs.profileId],
   );
   const engine: Engine = prefs.engine ?? profile.engine;
+  // Claude Code, Codex or Cursor: Chat is that agent, on the person's own sign-in.
+  const agentChat = engine !== "ensemble";
   const tierModel = settings?.models[settings.assistant.defaultTier ?? "medium"]?.model ?? "";
-  const chatModelLabel = prefs.chatModel ? prefs.chatModel.split("::")[1]! : tierModel ? `${tierModel} (tier)` : "tier model";
+  const chatModelLabel = agentChat
+    ? `${prefs.agentModel ?? "default model"} · your sign-in`
+    : prefs.chatModel
+      ? prefs.chatModel.split("::")[1]!
+      : tierModel
+        ? `${tierModel} (tier)`
+        : "tier model";
   const needs = items.filter((item) => item.group === "needs").length;
 
   // ── chat ──────────────────────────────────────────────────────────────────────────────────
@@ -182,15 +196,76 @@ export function App(props: { api: LocalApi; folder: string; version: string; acc
   const chatAbort = useRef<AbortController | null>(null);
   const conversationRef = useRef<string | null>(null);
   conversationRef.current = conversationId;
+  // Chat with your agent: the chat's task, the last message's run (the next one continues it), and the run in progress.
+  const chatTask = useRef<{ taskId: string; lastJobId: string | null } | null>(null);
+  const [agentTurn, setAgentTurn] = useState<string | null>(null);
 
   const code: CodeSession = useMemo(
     () => ({ folder, engine, profileId: prefs.profileId, ...(settings?.orchestration.outsideAccess ? { outsideAccess: settings.orchestration.outsideAccess } : {}) }),
     [folder, engine, prefs.profileId, settings],
   );
 
+  const sendAgentChat = useCallback(
+    async (message: string) => {
+      setEntries((current) => [...current, entry("user", message), entry("agent", "")]);
+      setChatScroll(0);
+      setStreaming(true);
+      try {
+        let chat = chatTask.current;
+        if (!chat) {
+          const created = await api.json<{ task: { id: string } }>("/api/tasks", { body: { title: `Chat: ${titleFrom(message)}`, description: message, owner: "agent", status: "todo" } });
+          chat = { taskId: created.task.id, lastJobId: null };
+        }
+        const started = await api.json<{ jobId: string }>("/api/agent/assign", {
+          body: chatTurnRequest({ taskId: chat.taskId, folder, message, profile, engine: engine as AgentEngine, model: prefs.agentModel, previousJobId: chat.lastJobId }),
+        });
+        chatTask.current = { taskId: chat.taskId, lastJobId: started.jobId };
+        setAgentTurn(started.jobId);
+      } catch (error) {
+        const text = error instanceof Error ? error.message : String(error);
+        setEntries((current) => [...current.filter((item, index) => !(item.kind === "agent" && !item.text && index === current.length - 1)), entry("error", /trust/i.test(text) ? `${text} Type /trust to trust this folder.` : text)]);
+        setStreaming(false);
+      }
+    },
+    [api, engine, folder, prefs.agentModel, profile],
+  );
+
+  // The agent's reply streams in from its run's log; its questions and permission requests come as buttons.
+  useEffect(() => {
+    if (!agentTurn) return;
+    let live = true;
+    const poll = async () => {
+      const next = await api.job(agentTurn).catch(() => null);
+      if (!live || !next) return;
+      const done = FINISHED.has(next.job.status);
+      setEntries((current) => {
+        const at = current.map((item) => item.kind).lastIndexOf("agent");
+        if (at < 0) return current;
+        const text = next.log || current[at]!.text || (done && next.job.status === "succeeded" ? (next.job.summary ?? "") : "");
+        const updated = [...current.slice(0, at), { ...current[at]!, text }, ...current.slice(at + 1)];
+        if (!done || next.job.status === "succeeded") return updated;
+        if (next.job.status === "cancelled") return [...updated, entry("note", "Stopped.")];
+        return [...updated, entry("error", next.job.error || `${ENGINE_LABEL[engine]} stopped.`)];
+      });
+      if (done) {
+        live = false;
+        setAgentTurn(null);
+        setStreaming(false);
+        void refresh();
+      }
+    };
+    void poll();
+    const timer = setInterval(() => void poll(), 700);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [agentTurn, api, engine, refresh]);
+
   const sendChat = useCallback(
     async (message: string) => {
       if (streaming) return;
+      if (agentChat) return sendAgentChat(message);
       setEntries((current) => [...current, entry("user", message), entry("assistant", "")]);
       setChatScroll(0);
       setStreaming(true);
@@ -238,14 +313,19 @@ export function App(props: { api: LocalApi; folder: string; version: string; acc
         chatAbort.current = null;
       }
     },
-    [api, code, prefs.chatModel, streaming],
+    [agentChat, api, code, prefs.chatModel, sendAgentChat, streaming],
   );
 
   const stopChat = useCallback(() => {
+    if (agentTurn) {
+      // The run's end ("Stopped.") comes back through the poll.
+      void api.stopJob(agentTurn).catch(() => undefined);
+      return;
+    }
     chatAbort.current?.abort();
     if (conversationRef.current) void api.stopChat(conversationRef.current).catch(() => undefined);
     setEntries((current) => [...current, entry("note", "Stopped.")]);
-  }, [api]);
+  }, [agentTurn, api]);
 
   const applyPending = useCallback(
     async (apply: boolean) => {
@@ -288,6 +368,20 @@ export function App(props: { api: LocalApi; folder: string; version: string; acc
     noticeTimer.current = setTimeout(() => setNoticeState(null), tone === "error" ? 9000 : 5000);
   }, []);
 
+  // No model key on this computer, but an agent with its own sign-in: work with that agent.
+  const pickedAgent = useRef(false);
+  useEffect(() => {
+    if (pickedAgent.current || !settings || prefs.engine !== null || profile.engine !== "ensemble") return;
+    pickedAgent.current = true;
+    void Promise.all([api.modelKeys().catch(() => null), api.agentApps().catch(() => null)]).then(([keys, apps]) => {
+      if (!keys || keys.credentials.length || !apps) return;
+      const agent = installedAgent(apps.agents);
+      if (!agent) return;
+      setPrefs({ engine: agent });
+      say(`No model key here, so you're working with ${ENGINE_LABEL[agent]} on your own sign-in. /agent to change.`, "ok");
+    });
+  }, [api, prefs.engine, profile.engine, say, setPrefs, settings]);
+
   const setText = (next: string, at = next.length) => {
     composer.current = { value: next, cursor: Math.max(0, Math.min(next.length, at)) };
     redraw((count) => count + 1);
@@ -303,10 +397,14 @@ export function App(props: { api: LocalApi; folder: string; version: string; acc
 
   // ── answering ─────────────────────────────────────────────────────────────────────────────
   const selectedDecision = selected?.decision ?? null;
+  // What your agent is asking in Chat right now.
+  const chatDecision = agentTurn ? (decisions.find((row) => row.status === "pending" && row.detail?.jobId === agentTurn) ?? null) : null;
   const actions: Action[] = tab === "tasks" && selectedDecision ? decisionActions(selectedDecision) : [];
   const chatActions: Array<{ id: string; label: string; tone: Action["tone"]; run: () => void }> =
     tab === "chat"
-      ? pending.length
+      ? chatDecision
+        ? decisionActions(chatDecision).map((action) => ({ id: action.id, label: action.recommended ? `★ ${action.label}` : action.label, tone: action.tone, run: () => void answer(action.answer, chatDecision) }))
+        : pending.length
         ? [
             { id: "apply", label: pending.length > 1 ? `Apply ${pending.length} changes` : "Apply", tone: "primary", run: () => void applyPending(true) },
             { id: "discard", label: "Discard", tone: "danger", run: () => void applyPending(false) },
@@ -317,8 +415,7 @@ export function App(props: { api: LocalApi; folder: string; version: string; acc
       : [];
   const bar = tab === "tasks" ? actions.map((action) => ({ id: action.id, label: action.recommended ? `★ ${action.label}` : action.label, tone: action.tone, run: () => void answer(action.answer) })) : chatActions;
 
-  const answer = async (reply: Answer) => {
-    const decision = selectedDecision;
+  const answer = async (reply: Answer, decision: Decision | null = selectedDecision) => {
     if (!decision) return say("Nothing is waiting on you here.");
     try {
       await api.decide(decision.id, { decision: reply.decision, ...(reply.scope ? { scope: reply.scope } : {}), ...(reply.reason ? { reason: reply.reason } : {}), confirmed: true });
@@ -367,32 +464,67 @@ export function App(props: { api: LocalApi; folder: string; version: string; acc
     const found = await api.agentApps().catch(() => ({ agents: [] as Array<{ id: string; app: boolean; cli: string | null }> }));
     const has = (id: string) => found.agents.find((agent) => agent.id === id);
     const engines: Array<{ id: Engine; note: string }> = [
-      { id: "ensemble", note: "a model with your key" },
-      { id: "claude-code", note: has("claude")?.cli ? "your Claude Code sign-in" : "not installed: npm i -g @anthropic-ai/claude-code" },
-      { id: "codex", note: has("codex")?.cli || has("codex")?.app ? `your Codex sign-in${has("codex")?.cli ? "" : " (ChatGPT app)"}` : "not installed: the ChatGPT app or npm i -g @openai/codex" },
-      { id: "cursor-agent", note: has("cursor")?.cli ? "your Cursor sign-in" : "not installed: curl https://cursor.com/install -fsS | bash" },
+      { id: "ensemble", note: "Ensemble Code: a model with your key (/keys)" },
+      { id: "claude-code", note: has("claude")?.cli ? "your Claude Code sign-in" : "not found · curl -fsSL https://claude.ai/install.sh | bash" },
+      { id: "codex", note: has("codex")?.cli || has("codex")?.app ? `your Codex sign-in${has("codex")?.cli ? "" : " (the ChatGPT app's)"}` : "not found · the ChatGPT app, or npm i -g @openai/codex" },
+      { id: "cursor-agent", note: has("cursor")?.cli ? "your Cursor sign-in" : "not found · curl https://cursor.com/install -fsS | bash" },
     ];
     setOverlay({
       kind: "picker",
-      title: "Who does the coding",
-      hint: "For /run and for the agents Ensemble Code starts. Each runs under your run profile, in Ensemble's sandbox.",
+      title: "Who you work with",
+      hint: "Chat and /run go to this agent. Claude Code, Codex and Cursor work in this folder on your own sign-in, under your run profile and Ensemble's sandbox; what they ask you shows up as buttons.",
       items: [
         { id: "", label: `Follow the run profile (${ENGINE_LABEL[profile.engine]})`, active: prefs.engine === null },
         ...engines.map((item) => ({ id: item.id, label: ENGINE_LABEL[item.id], detail: item.note, active: prefs.engine === item.id })),
+        ...(has("copilot")?.cli ? [{ id: "copilot", label: "GitHub Copilot CLI", detail: "found · not yet: it has no per-run permission hook, so Ensemble can't hold it to your rules" }] : []),
       ],
       index: prefs.engine ? engines.findIndex((item) => item.id === prefs.engine) + 1 : 0,
       onPick: (id) => {
-        setPrefs({ engine: (id || null) as Engine | null });
-        say(`Coding work goes to ${ENGINE_LABEL[(id || profile.engine) as Engine]}.`, "ok");
+        if (id === "copilot") return say("Copilot CLI can't run under Ensemble's rules yet. Open a task in it from Tasks on the web, or pick Claude Code, Codex or Cursor.", "error");
+        const next = (id || null) as Engine | null;
+        const chosen = next ?? profile.engine;
+        const missing = chosen !== "ensemble" && engines.find((item) => item.id === chosen)?.note.startsWith("not found");
+        setPrefs({ engine: next, ...(next !== engine ? { agentModel: null } : {}) });
+        chatTask.current = null;
+        say(missing ? `${ENGINE_LABEL[chosen]} isn't on this computer yet: ${engines.find((item) => item.id === chosen)!.note.replace("not found · ", "")}` : `You're working with ${ENGINE_LABEL[chosen]}.`, missing ? "error" : "ok");
       },
     });
   };
 
   const pickModel = async () => {
+    if (agentChat) {
+      const listed = AGENT_MODELS[engine as AgentEngine];
+      const typeOne = () =>
+        setOverlay({
+          kind: "input",
+          title: `${ENGINE_LABEL[engine]}'s model`,
+          hint: `A model name ${ENGINE_LABEL[engine]} knows (empty for its default). Enter saves, Esc cancels.`,
+          secret: false,
+          value: prefs.agentModel ?? "",
+          onSubmit: (name) => {
+            setPrefs({ agentModel: name.trim() || null });
+            say(`${ENGINE_LABEL[engine]} uses ${name.trim() || "its default model"}.`, "ok");
+          },
+        });
+      if (!listed) return typeOne();
+      setOverlay({
+        kind: "picker",
+        title: `${ENGINE_LABEL[engine]}'s model`,
+        hint: "Chat and /run use it, on your own sign-in.",
+        items: [...listed.map((name) => ({ id: name, label: name === "default" ? "Default" : name, active: (prefs.agentModel ?? "default") === name })), { id: "\u0000type", label: "Another model…", detail: "type its name" }],
+        index: Math.max(0, listed.indexOf(prefs.agentModel ?? "default")),
+        onPick: (id) => {
+          if (id === "\u0000type") return typeOne();
+          setPrefs({ agentModel: id === "default" ? null : id });
+          say(`${ENGINE_LABEL[engine]} uses ${id === "default" ? "its default model" : id}.`, "ok");
+        },
+      });
+      return;
+    }
     const catalog = await api.models().catch(() => null);
     const rows: ModelRow[] = (catalog?.providers ?? []).filter((row) => row.available && row.chat && row.models.length);
     if (!rows.length) {
-      say("No model keys on this computer yet. Add one with /keys (or use /run with Claude Code, Codex or Cursor and your own sign-in).", "error");
+      say("No model keys on this computer yet. Add one with /keys, or chat with Claude Code, Codex or Cursor on your own sign-in: /agent.", "error");
       return;
     }
     const choices = rows.flatMap((row) => row.models.slice(0, 25).map((model) => ({ id: `${row.provider}::${model}`, label: model, detail: `${row.provider}${row.cheapest === model ? " · cheapest" : ""}` })));
@@ -436,8 +568,7 @@ export function App(props: { api: LocalApi; folder: string; version: string; acc
       [{ text: "Sandbox     ", dim: true }, { text: sandbox || "unknown" }],
       [{ text: "Folder      ", dim: true }, { text: folder }],
       [{ text: "Profile     ", dim: true }, { text: `${profile.name}: ${profileSummary(profile)}` }],
-      [{ text: "Coding      ", dim: true }, { text: ENGINE_LABEL[engine] }],
-      [{ text: "Chat model  ", dim: true }, { text: prefs.chatModel ? prefs.chatModel.replace("::", " · ") : "task tier default" }],
+      [{ text: "Agent       ", dim: true }, { text: agentChat ? `${ENGINE_LABEL[engine]} (your sign-in) · ${prefs.agentModel ?? "its default model"}` : `Ensemble agent · ${prefs.chatModel ? prefs.chatModel.replace("::", " · ") : "task tier model"}` }],
       [{ text: "Model keys  ", dim: true }, { text: keys.credentials.length ? keys.credentials.map((row) => row.provider).join(", ") : "none (/keys)" }],
       [{ text: "Version     ", dim: true }, { text: props.version }],
     ];
@@ -511,7 +642,9 @@ export function App(props: { api: LocalApi; folder: string; version: string; acc
       case "chat":
         return setPrefs({ tab: name });
       case "new":
+        if (streaming) return say("Stop the reply first (Esc), then start a new chat.");
         setConversationId(null);
+        chatTask.current = null;
         setEntries([]);
         setPending([]);
         return setPrefs({ tab: "chat" });
@@ -520,9 +653,10 @@ export function App(props: { api: LocalApi; folder: string; version: string; acc
       case "allow":
       case "deny":
       case "answer": {
-        if (!selectedDecision) return say("Nothing is waiting on you here. Pick a run under “Needs you”.");
-        const reply = commandAnswer(selectedDecision, name, args);
-        return typeof reply === "string" ? say(reply, "error") : answer(reply);
+        const target = tab === "chat" && chatDecision ? chatDecision : selectedDecision;
+        if (!target) return say("Nothing is waiting on you here. Pick a run under “Needs you”.");
+        const reply = commandAnswer(target, name, args);
+        return typeof reply === "string" ? say(reply, "error") : answer(reply, target);
       }
       case "stop":
         if (streaming) return stopChat();
@@ -547,8 +681,9 @@ export function App(props: { api: LocalApi; folder: string; version: string; acc
         const wanted = args.toLowerCase();
         const match = (Object.keys(ENGINE_LABEL) as Engine[]).find((id) => id === wanted || ENGINE_LABEL[id].toLowerCase().startsWith(wanted));
         if (wanted && match) {
-          setPrefs({ engine: match });
-          return say(`Coding work goes to ${ENGINE_LABEL[match]}.`, "ok");
+          setPrefs({ engine: match, ...(match !== engine ? { agentModel: null } : {}) });
+          chatTask.current = null;
+          return say(`You're working with ${ENGINE_LABEL[match]}.`, "ok");
         }
         return pickEngine();
       }
@@ -605,6 +740,10 @@ export function App(props: { api: LocalApi; folder: string; version: string; acc
     if (tab === "tasks" && selectedDecision) {
       const reply = commandAnswer(selectedDecision, "answer", text);
       return typeof reply === "string" ? say(reply, "error") : void answer(reply);
+    }
+    if (tab === "chat" && chatDecision) {
+      const reply = commandAnswer(chatDecision, "answer", text);
+      return typeof reply === "string" ? say(reply, "error") : void answer(reply, chatDecision);
     }
     setPrefs({ tab: "chat" });
     void sendChat(text);
@@ -680,27 +819,27 @@ export function App(props: { api: LocalApi; folder: string; version: string; acc
     paneLines.push(...taskPane({ item: selected, detail, width: paneWidth, now, agentsOff, offline }));
   } else {
     if (sidebarWidth) {
-      left.push([{ text: " ENSEMBLE CODE", bold: true, color: MUTED }]);
+      left.push([{ text: agentChat ? ` ${ENGINE_LABEL[engine].toUpperCase()}` : " ENSEMBLE CODE", bold: true, color: MUTED }]);
       left.push([{ text: " + New chat", color: ACCENT }]);
       regions.push({ x1: 0, x2: sidebarWidth - 1, y1: mainTop + 1, y2: mainTop + 1, onClick: () => void runCommand("/new") });
       left.push([]);
-      left.push([{ text: " Coding  ", dim: true }, { text: truncate(ENGINE_LABEL[engine], sidebarWidth - 10) }]);
+      left.push([{ text: " Agent   ", dim: true }, { text: truncate(agentChat ? `${ENGINE_LABEL[engine]} · your sign-in` : ENGINE_LABEL[engine], sidebarWidth - 10) }]);
       left.push([{ text: " Profile ", dim: true }, { text: truncate(profile.name, sidebarWidth - 10) }]);
       left.push(...wrapLine([{ text: ` ${profileSummary(profile)}`, dim: true }], sidebarWidth - 1, " "));
-      left.push([{ text: " Model   ", dim: true }, { text: truncate(chatModelLabel, sidebarWidth - 10) }]);
+      left.push([{ text: " Model   ", dim: true }, { text: truncate(agentChat ? (prefs.agentModel ?? "default") : chatModelLabel, sidebarWidth - 10) }]);
       left.push([]);
       for (const [label, command] of [
         [" /run   start an agent", "/run "],
-        [" /agent who codes", "/agent"],
+        [" /agent who you work with", "/agent"],
         [" /profile how it runs", "/profile"],
-        [" /model  chat model", "/model"],
+        [" /model  its model", "/model"],
       ] as const) {
         left.push([{ text: label, dim: true }]);
         const row = mainTop + left.length - 1;
         regions.push({ x1: 0, x2: sidebarWidth - 1, y1: row, y2: row, onClick: () => (command.endsWith(" ") ? setText(command) : void runCommand(command)) });
       }
     }
-    paneLines.push(...chatPane(entries, paneWidth, streaming));
+    paneLines.push(...chatPane(entries, paneWidth, streaming, { agent: agentChat ? ENGINE_LABEL[engine] : null, folder: shortPath(folder, 60), profile: `${profile.name}: ${profileSummary(profile)}`, decision: chatDecision }));
   }
 
   if (!overlay) {
@@ -762,7 +901,11 @@ export function App(props: { api: LocalApi; folder: string; version: string; acc
     overlay?.kind === "input"
       ? ""
       : tab === "chat"
-        ? "Ask Ensemble Code, or type / for commands"
+        ? chatDecision?.event === "question"
+          ? "Type your answer, or / for commands"
+          : agentChat
+            ? `Message ${ENGINE_LABEL[engine]}, or type / for commands`
+            : "Ask Ensemble Code, or type / for commands"
         : selectedDecision?.event === "question"
           ? "Type your answer, or / for commands"
           : "Type / for commands, or describe a task and press ⏎ to plan it in Chat";
@@ -1020,14 +1163,41 @@ function decisionLines(decision: Decision, width: number): Line[] {
   return lines;
 }
 
-function chatPane(entries: readonly Entry[], width: number, streaming: boolean): Line[] {
+function chatPane(
+  entries: readonly Entry[],
+  width: number,
+  streaming: boolean,
+  context: { agent: string | null; folder: string; profile: string; decision: Decision | null },
+): Line[] {
   const lines: Line[] = [];
   if (!entries.length) {
+    if (context.agent) {
+      lines.push([{ text: `Chat with ${context.agent}`, bold: true, color: ACCENT }]);
+      lines.push(
+        ...markdown(
+          [
+            `${context.agent} works in ${context.folder} on your own sign-in, under your run profile (${context.profile}). Each message continues the same conversation; /new starts over.`,
+            "",
+            "When it wants to run something or asks you a question, the buttons show up here. Ensemble's tools are loaded: it can list and create tasks on your board and search your notes.",
+            "",
+            "Try:",
+            "- “What does this repo do, and where are its tests?”",
+            "- “Fix the failing test in src/api and commit it”",
+            "- “Make a task for each TODO in this folder”",
+          ].join("\n"),
+          width,
+          { dim: true },
+        ),
+      );
+      return lines;
+    }
     lines.push([{ text: "Ensemble Code", bold: true, color: ACCENT }]);
     lines.push(
       ...markdown(
         [
           "Ask about this folder, plan a change, or hand work to an agent. It reads files and documents here (PDF, Word, Excel, PowerPoint), knows your tasks and notes, and starts runs under your run profile; the run's questions come to the Tasks tab.",
+          "",
+          "It needs a model key (/keys). No key? Chat with Claude Code, Codex or Cursor on your own sign-in instead: /agent.",
           "",
           "Try:",
           "- “What does this repo do, and where are its tests?”",
@@ -1044,13 +1214,34 @@ function chatPane(entries: readonly Entry[], width: number, streaming: boolean):
     if (item.kind === "user") lines.push([], ...wrapLine([{ text: "› ", color: ACCENT, bold: true }, { text: item.text, bold: true }], width, "  "));
     else if (item.kind === "assistant") {
       if (item.text.trim()) lines.push([], ...markdown(item.text.trim(), width));
-    } else if (item.kind === "tool") lines.push(...wrapLine([{ text: "  ✓ ", color: "green" }, { text: item.text, dim: true }], width, "    "));
+    } else if (item.kind === "agent") lines.push(...agentLines(item.text, width));
+    else if (item.kind === "tool") lines.push(...wrapLine([{ text: "  ✓ ", color: "green" }, { text: item.text, dim: true }], width, "    "));
     else if (item.kind === "failed") lines.push(...wrapLine([{ text: "  ✗ ", color: "red" }, { text: item.text, color: "red" }], width, "    "));
     else if (item.kind === "pending") lines.push([], [{ text: "  ◇ Waiting for Apply", color: "yellow", bold: true }], ...markdown(item.text, width - 4).map((line) => [{ text: "    " }, ...line]));
     else if (item.kind === "note") lines.push(...wrapLine([{ text: `  ${item.text}`, dim: true, italic: true }], width));
     else lines.push([], ...wrapLine([{ text: "  ✗ ", color: "red" }, { text: item.text, color: "red" }], width, "    "));
   }
-  if (streaming) lines.push([{ text: "  ⠿ working…", color: ACCENT, dim: true }]);
+  if (context.decision) lines.push([], ...decisionLines(context.decision, width));
+  else if (streaming) lines.push([{ text: "  ⠿ working…", color: ACCENT, dim: true }]);
+  return lines;
+}
+
+/** An agent's reply as its run logged it: what it said, and a line for each thing it did ("· Run npm test"). */
+function agentLines(text: string, width: number): Line[] {
+  const lines: Line[] = [];
+  let said: string[] = [];
+  const flush = () => {
+    const body = said.join("\n").trim();
+    if (body) lines.push([], ...markdown(body, width));
+    said = [];
+  };
+  for (const raw of text.split("\n")) {
+    if (raw.startsWith("· ")) {
+      flush();
+      lines.push(...wrapLine([{ text: "  ⏺ ", color: ACCENT }, { text: raw.slice(2), dim: true }], width, "    "));
+    } else said.push(raw);
+  }
+  flush();
   return lines;
 }
 
@@ -1175,6 +1366,6 @@ function shortPath(path: string, width: number): string {
 
 function chatError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  if (/no .*key|api key|credential|not configured|model_quota|quota/i.test(message)) return `${message} Add a model key with /keys, or pick a model with /model.`;
+  if (/no .*key|api key|credential|not configured|model_quota|quota/i.test(message)) return `${message} Add a model key with /keys, or chat with Claude Code, Codex or Cursor on your own sign-in: /agent.`;
   return message;
 }
