@@ -33,6 +33,7 @@ test("private surfaces are owner-only for members", () => {
     ["POST", "/api/approvals/:id/decide"],
     ["DELETE", "/api/data"],
     ["POST", "/api/cli/auth/approve"],
+    ["DELETE", "/api/artifacts/:id"],
   ];
   for (const [method, url] of owner) {
     assert.equal(classify(method!, url!), "owner", `${method} ${url}`);

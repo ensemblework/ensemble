@@ -13,7 +13,6 @@ const ProjectsTab = dynamic(() => import("@/components/context/projects").then((
 const ReposTab = dynamic(() => import("@/components/context/repos-prefs").then((mod) => mod.ReposTab));
 const PreferencesTab = dynamic(() => import("@/components/context/repos-prefs").then((mod) => mod.PreferencesTab));
 const SourcesTab = dynamic(() => import("@/components/context/sources").then((mod) => mod.SourcesTab));
-const ArtifactsTab = dynamic(() => import("@/components/context/artifacts").then((mod) => mod.ArtifactsTab));
 const GraphTab = dynamic(() => import("@/components/context/graph").then((mod) => mod.GraphTab), {
   loading: () => <div className="skeleton h-[420px] w-full" />,
 });
@@ -25,7 +24,6 @@ const TABS = [
   { id: "repos", label: "Repos" },
   { id: "preferences", label: "Preferences" },
   { id: "sources", label: "Sources" },
-  { id: "artifacts", label: "Artifacts & sync" },
   { id: "graph", label: "Graph" },
 ] as const;
 
@@ -98,7 +96,6 @@ export function WidgetLayout({ initialLayout }: { initialLayout: LayoutPayload |
       {tab === "repos" ? <ReposTab /> : null}
       {tab === "preferences" ? <PreferencesTab /> : null}
       {tab === "sources" ? <SourcesTab /> : null}
-      {tab === "artifacts" ? <ArtifactsTab /> : null}
       {tab === "graph" ? <GraphTab /> : null}
       </div>
     </div>

@@ -374,6 +374,9 @@ export type BoardPayload = {
   lanes: Array<{ id: BoardCard["lane"]; label: string; cards: BoardCard[] }>;
 };
 
+/** Which app an item came from. `app` is a BrandLogo key; null when only a label is known. */
+export type ArtifactOrigin = { app: string | null; label: string };
+
 export type ArtifactRecord = {
   id: string;
   kind: string;
@@ -384,6 +387,7 @@ export type ArtifactRecord = {
   repoId: string | null;
   taskId: string | null;
   metadata: Record<string, unknown>;
+  origin?: ArtifactOrigin | null;
 };
 
 export type Entity = { kind: string; id: string; label: string; detail: string; parentId?: string; parentLabel?: string; tileId?: string; isSpace?: boolean };
@@ -1081,11 +1085,13 @@ export const api = bindClient({
     put<{ preference: PreferenceRecord }>(`/api/preferences/${encodeURIComponent(key)}`, { value }),
   setModules: (id: string, on: boolean) => put<{ modules: string }>("/api/settings/modules", { id, on }),
   deletePreference: (key: string) => del(`/api/preferences/${encodeURIComponent(key)}`),
-  artifacts: (params: { kind?: string; q?: string } = {}) =>
+  /** `exclude: "uploads"` leaves out uploaded files; `before` is the previous page's `nextCursor`. */
+  artifacts: (params: { kind?: string; q?: string; take?: number; exclude?: "uploads"; before?: string } = {}) =>
     get<{
       artifacts: ArtifactRecord[];
       counts: Array<{ kind: string; count: number }>;
       sync: Array<{ connector: string; lastSyncAt: string | null; itemCount: number; lastError: string | null }>;
+      nextCursor: string | null;
     }>(`/api/artifacts${qs(params)}`),
   graph: (includeCompleted = false) =>
     get<{ nodes: GraphNode[]; edges: GraphEdge[] }>(`/api/context/graph${qs({ includeCompleted })}`),

@@ -3,16 +3,20 @@
 /** @jsxImportSource react */
 
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { CheckCircle2, LayoutGrid, List, Plug, Search, UploadCloud, X } from "lucide-react";
+import { CheckCircle2, LayoutGrid, List, Plug, Search, Trash2, UploadCloud, X } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { FILE_KIND_LABEL, fileFormat, type FileKind, type FileRecord, type FileUsage } from "@ensemble/shared-types";
 import { FILE_QUERY, filesApi, formatBytes } from "@/lib/api-files";
 import { FILE_ACCEPT } from "@/lib/files/formats";
+import { filesHref, type FilesView } from "@/lib/files/links";
+import { useSpaceAccess } from "@/lib/access";
 import { relative } from "@/lib/format";
 import { BrandLogo, brandName } from "../connectors/brand-logo";
-import { Empty, PageHeader, QueryError, SkeletonRows, cx } from "../ui";
+import { Empty, PageHeader, QueryError, SkeletonRows, Tabs, cx } from "../ui";
+import { DeleteFileDialog } from "./delete-file";
 import { FileIcon } from "./file-icon";
+import { FromApps } from "./from-apps";
 import { ImportFromApps } from "./import-from-apps";
 import { useBlobUrl, useFileBytes } from "./use-file";
 import { useFileUploads, type UploadItem } from "./use-uploads";
@@ -101,9 +105,17 @@ function Source({ file }: { file: FileRecord }) {
   );
 }
 
-function FileCard({ file }: { file: FileRecord }) {
+function RemoveFile({ file, onRemove, className }: { file: FileRecord; onRemove: () => void; className?: string }) {
   return (
-    <li>
+    <button type="button" className={cx("icon-btn", className)} aria-label={`Delete ${file.filename}`} title="Delete" onClick={onRemove}>
+      <Trash2 size={14} />
+    </button>
+  );
+}
+
+function FileCard({ file, onRemove }: { file: FileRecord; onRemove?: () => void }) {
+  return (
+    <li className="group relative">
       <Link href={`/files/${file.id}`} prefetch={false} className="tile flex h-full flex-col overflow-hidden rounded-xl bg-panel" data-file-row={file.id}>
         <span className="flex h-28 items-center justify-center border-b border-line bg-raised">
           <Preview file={file} />
@@ -116,14 +128,21 @@ function FileCard({ file }: { file: FileRecord }) {
           <Source file={file} />
         </span>
       </Link>
+      {onRemove ? (
+        <RemoveFile
+          file={file}
+          onRemove={onRemove}
+          className="absolute right-1.5 top-1.5 border-line bg-panel shadow-sm [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:focus-visible:opacity-100 [@media(hover:hover)]:group-focus-within:opacity-100 [@media(hover:hover)]:group-hover:opacity-100"
+        />
+      ) : null}
     </li>
   );
 }
 
-function FileLine({ file }: { file: FileRecord }) {
+function FileLine({ file, onRemove }: { file: FileRecord; onRemove?: () => void }) {
   return (
-    <li>
-      <Link href={`/files/${file.id}`} prefetch={false} className="row-tile flex items-center gap-3 rounded-lg px-2 py-2" data-file-row={file.id}>
+    <li className="flex items-center gap-1">
+      <Link href={`/files/${file.id}`} prefetch={false} className="row-tile flex min-w-0 flex-1 items-center gap-3 rounded-lg px-2 py-2" data-file-row={file.id}>
         <FileIcon kind={file.kind ?? fileFormat(file.filename).kind} size={30} />
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[13.5px] font-medium text-ink">{file.filename}</span>
@@ -131,6 +150,7 @@ function FileLine({ file }: { file: FileRecord }) {
         </span>
         <Source file={file} />
       </Link>
+      {onRemove ? <RemoveFile file={file} onRemove={onRemove} /> : null}
     </li>
   );
 }
@@ -220,8 +240,44 @@ function useDropAnywhere(onFiles: (files: File[]) => void): boolean {
   return over;
 }
 
-/** The Files screen: upload, bring files in from apps, find them, and open them. */
-export function FilesScreen() {
+/**
+ * The Files screen. "Your files": upload, bring files in from apps, find, open and delete them.
+ * "From your apps": what Ensemble synced or attached from connected apps (./from-apps.tsx).
+ * `navigate` changes the address (app/(hub)/files/page.tsx), so each view and item has a link.
+ */
+export function FilesScreen({ view = "files", item = null, navigate = () => undefined }: { view?: FilesView; item?: string | null; navigate?: (href: string) => void }) {
+  const tabs = (
+    <Tabs
+      label="What Files shows"
+      panelId="files-panel"
+      tabs={[
+        { id: "files", label: "Your files" },
+        { id: "apps", label: "From your apps" },
+      ]}
+      value={view}
+      onChange={(next) => navigate(filesHref(next))}
+    />
+  );
+  return (
+    <div className="mx-auto max-w-[1080px] px-4 pb-24 pt-8 sm:px-10" data-testid="files-screen">
+      {view === "apps" ? (
+        <>
+          <PageHeader title="Files" description="Mail, events, messages, docs and pull requests Ensemble keeps from your connected apps. The assistant, agents and your editors read them here too." />
+          {tabs}
+          <div id="files-panel" role="tabpanel" aria-label="From your apps">
+            <FromApps item={item} onItem={(id) => navigate(filesHref("apps", id))} onOpenFile={(id) => navigate(`/files/${encodeURIComponent(id)}`)} />
+          </div>
+        </>
+      ) : (
+        <YourFiles tabs={tabs} />
+      )}
+    </div>
+  );
+}
+
+function YourFiles({ tabs }: { tabs: ReactNode }) {
+  const { canEdit } = useSpaceAccess();
+  const [removing, setRemoving] = useState<FileRecord | null>(null);
   const [text, setText] = useState("");
   const q = useDebounced(text.trim(), 250);
   const list = useQuery({ queryKey: FILE_QUERY.list(q), queryFn: () => filesApi.list(q), placeholderData: keepPreviousData });
@@ -259,7 +315,7 @@ export function FilesScreen() {
   }, [kind, kinds, list.isPlaceholderData]);
 
   return (
-    <div className="mx-auto max-w-[1080px] px-4 pb-24 pt-8 sm:px-10" data-testid="files-screen">
+    <>
       <PageHeader
         title="Files"
         description="PDFs, Word and Excel files, slides, pictures and more. Preview them here, edit spreadsheets, turn documents into pages, and attach files to any page."
@@ -287,96 +343,100 @@ export function FilesScreen() {
           </>
         }
       />
-      {usage ? <UsageMeter usage={usage} /> : null}
-      <Uploads items={uploads.items} onDismiss={uploads.dismiss} />
+      {tabs}
+      <div id="files-panel" role="tabpanel" aria-label="Your files">
+        {usage ? <UsageMeter usage={usage} /> : null}
+        <Uploads items={uploads.items} onDismiss={uploads.dismiss} />
 
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <label className="flex h-9 min-w-0 flex-[1_1_16rem] items-center gap-2 rounded-lg border border-line bg-panel px-2.5 focus-within:border-accent">
-          <Search size={14} className="shrink-0 text-muted" aria-hidden />
-          <input
-            type="search"
-            value={text}
-            onChange={(event) => setText(event.target.value)}
-            placeholder="Search files by name"
-            aria-label="Search files"
-            className="min-w-0 flex-1 bg-transparent text-[13.5px] outline-none placeholder:text-faint"
-          />
-        </label>
-        <div className="inline-flex rounded-lg bg-raised p-0.5" role="radiogroup" aria-label="Show files as">
-          {(
-            [
-              ["grid", LayoutGrid, "Grid"],
-              ["list", List, "List"],
-            ] as const
-          ).map(([id, Icon, label]) => (
-            <button
-              key={id}
-              type="button"
-              role="radio"
-              aria-checked={view === id}
-              aria-label={label}
-              title={label}
-              onClick={() => chooseView(id)}
-              className={cx("rounded-md px-2 py-1", view === id ? "bg-panel text-ink shadow-sm" : "text-muted hover:text-ink")}
-            >
-              <Icon size={14} />
-            </button>
-          ))}
-        </div>
-      </div>
-      {kinds.length > 1 ? (
-        <div className="mb-4 flex flex-wrap gap-1.5" role="group" aria-label="Kind of file">
-          {(["all", ...kinds] as const).map((value) => (
-            <button
-              key={value}
-              type="button"
-              aria-pressed={kind === value}
-              onClick={() => setKind(value)}
-              className={cx(
-                "rounded-full border px-2.5 py-1 text-[12.5px]",
-                kind === value ? "border-accent bg-accent-soft font-medium text-ink" : "border-line text-muted hover:text-ink",
-              )}
-            >
-              {value === "all" ? "All" : FILE_KIND_LABEL[value]}
-            </button>
-          ))}
-        </div>
-      ) : null}
-
-      {list.error && !list.data ? (
-        <QueryError error={list.error as Error} retry={() => void list.refetch()} />
-      ) : list.isPending ? (
-        <SkeletonRows count={4} rowClassName="h-14" />
-      ) : !files.length ? (
-        q ? (
-          <p className="text-[13.5px] text-muted">No files match “{q}”.</p>
-        ) : (
-          <Empty title="No files yet">Upload a file, drop files anywhere on this screen, or add them from your apps.</Empty>
-        )
-      ) : view === "grid" ? (
-        <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4" aria-label="Files">
-          {shown.map((file) => (
-            <FileCard key={file.id} file={file} />
-          ))}
-        </ul>
-      ) : (
-        <ul className="space-y-0.5" aria-label="Files">
-          {shown.map((file) => (
-            <FileLine key={file.id} file={file} />
-          ))}
-        </ul>
-      )}
-
-      {dropping ? (
-        <div className="pointer-events-none fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-6" data-testid="file-drop-overlay">
-          <div className="flex flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-accent bg-panel px-10 py-8 text-center shadow-pop">
-            <UploadCloud size={28} className="text-accent" aria-hidden />
-            <p className="text-[15px] font-medium">Drop to upload to Files</p>
-            {usage?.maxCount !== null && usage ? <p className="text-[12.5px] text-muted">Up to {formatBytes(usage.maxFileBytes)} each</p> : null}
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <label className="flex h-9 min-w-0 flex-[1_1_16rem] items-center gap-2 rounded-lg border border-line bg-panel px-2.5 focus-within:border-accent">
+            <Search size={14} className="shrink-0 text-muted" aria-hidden />
+            <input
+              type="search"
+              value={text}
+              onChange={(event) => setText(event.target.value)}
+              placeholder="Search files by name"
+              aria-label="Search files"
+              className="search-line min-w-0 flex-1 bg-transparent text-[13.5px] outline-none placeholder:text-faint"
+            />
+          </label>
+          <div className="inline-flex rounded-lg bg-raised p-0.5" role="radiogroup" aria-label="Show files as">
+            {(
+              [
+                ["grid", LayoutGrid, "Grid"],
+                ["list", List, "List"],
+              ] as const
+            ).map(([id, Icon, label]) => (
+              <button
+                key={id}
+                type="button"
+                role="radio"
+                aria-checked={view === id}
+                aria-label={label}
+                title={label}
+                onClick={() => chooseView(id)}
+                className={cx("rounded-md px-2 py-1", view === id ? "bg-panel text-ink shadow-sm" : "text-muted hover:text-ink")}
+              >
+                <Icon size={14} />
+              </button>
+            ))}
           </div>
         </div>
-      ) : null}
+        {kinds.length > 1 ? (
+          <div className="mb-4 flex flex-wrap gap-1.5" role="group" aria-label="Kind of file">
+            {(["all", ...kinds] as const).map((value) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={kind === value}
+                onClick={() => setKind(value)}
+                className={cx(
+                  "rounded-full border px-2.5 py-1 text-[12.5px]",
+                  kind === value ? "border-accent bg-accent-soft font-medium text-ink" : "border-line text-muted hover:text-ink",
+                )}
+              >
+                {value === "all" ? "All" : FILE_KIND_LABEL[value]}
+              </button>
+            ))}
+          </div>
+        ) : null}
+
+        {list.error && !list.data ? (
+          <QueryError error={list.error as Error} retry={() => void list.refetch()} />
+        ) : list.isPending ? (
+          <SkeletonRows count={4} rowClassName="h-14" />
+        ) : !files.length ? (
+          q ? (
+            <p className="text-[13.5px] text-muted">No files match “{q}”.</p>
+          ) : (
+            <Empty title="No files yet">Upload a file, drop files anywhere on this screen, or add them from your apps.</Empty>
+          )
+        ) : view === "grid" ? (
+          <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4" aria-label="Files">
+            {shown.map((file) => (
+              <FileCard key={file.id} file={file} onRemove={canEdit ? () => setRemoving(file) : undefined} />
+            ))}
+          </ul>
+        ) : (
+          <ul className="space-y-0.5" aria-label="Files">
+            {shown.map((file) => (
+              <FileLine key={file.id} file={file} onRemove={canEdit ? () => setRemoving(file) : undefined} />
+            ))}
+          </ul>
+        )}
+
+        {dropping ? (
+          <div className="pointer-events-none fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-6" data-testid="file-drop-overlay">
+            <div className="flex flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-accent bg-panel px-10 py-8 text-center shadow-pop">
+              <UploadCloud size={28} className="text-accent" aria-hidden />
+              <p className="text-[15px] font-medium">Drop to upload to Files</p>
+              {usage?.maxCount !== null && usage ? <p className="text-[12.5px] text-muted">Up to {formatBytes(usage.maxFileBytes)} each</p> : null}
+            </div>
+          </div>
+        ) : null}
+      </div>
       <ImportFromApps open={importing} onClose={() => setImporting(false)} />
-    </div>
+      <DeleteFileDialog file={removing} onClose={() => setRemoving(null)} />
+    </>
   );
 }

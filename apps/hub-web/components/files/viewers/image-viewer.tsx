@@ -2,7 +2,7 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
-import { Maximize2, Minus, Plus } from "lucide-react";
+import { Minus, Plus, Scan } from "lucide-react";
 import { useState } from "react";
 import { useBlobUrl } from "../use-file";
 import { CHECKER, Toolbar, ViewerNote, type ViewerProps } from "./shared";
@@ -58,7 +58,7 @@ export default function ImageViewer({ file, format, bytes, compact }: ViewerProp
           <Plus size={14} />
         </button>
         <button type="button" className="btn-ghost" aria-pressed={zoom === "fit"} onClick={() => setZoom("fit")}>
-          <Maximize2 size={13} aria-hidden /> Fit
+          <Scan size={13} aria-hidden /> Fit
         </button>
         <button type="button" className="btn-ghost" aria-pressed={zoom === 1} onClick={() => setZoom(1)}>
           100%

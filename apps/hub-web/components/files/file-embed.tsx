@@ -5,7 +5,7 @@
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { Download, File, FileAudio, FileCode, FileImage, FileSpreadsheet, FileText, FileVideo, Presentation, type LucideIcon } from "lucide-react";
+import { Download, File, FileAudio, FileCode, FileImage, FileSpreadsheet, FileText, FileVideo, Presentation, X, type LucideIcon } from "lucide-react";
 import { fileFormat, mentionHref, type FileKind } from "@ensemble/shared-types";
 import { ApiError, inItemView } from "@/lib/api";
 import { FILE_QUERY, filesApi, formatBytes } from "@/lib/api-files";
@@ -60,10 +60,10 @@ export function OpenFileLink({ id, filename, className, children }: { id: string
   );
 }
 
-type FileEmbedProps = { id: string; label: string; height?: number | null; onResize?: (height: number) => void };
+type FileEmbedProps = { id: string; label: string; height?: number | null; onResize?: (height: number) => void; onRemove?: () => void };
 
 /** A file inside a page: what it is, a live preview, and a way to open it. */
-export function FileEmbed({ id, label, height: storedHeight = null, onResize }: FileEmbedProps) {
+export function FileEmbed({ id, label, height: storedHeight = null, onResize, onRemove }: FileEmbedProps) {
   const record = useQuery({ queryKey: FILE_QUERY.one(id), queryFn: () => filesApi.get(id) });
   const [height, setHeight] = useState<number | null>(() => storedEmbedHeight(storedHeight));
   const heightRef = useRef(height);
@@ -106,6 +106,11 @@ export function FileEmbed({ id, label, height: storedHeight = null, onResize }: 
         </span>
         {file ? <span className="shrink-0 text-[12px] text-muted">{[format.label, formatBytes(file.byteSize)].join(" · ")}</span> : null}
         {removed ? null : <OpenFileLink id={id} filename={name} className="diagram-inline-edit inline-flex items-center gap-1" />}
+        {onRemove ? (
+          <button type="button" className="icon-btn shrink-0" aria-label={`Remove ${name} from the page`} title="Remove from page. The file stays in Files." onClick={onRemove}>
+            <X size={14} aria-hidden />
+          </button>
+        ) : null}
       </div>
       {removed ? (
         <p className="px-3 py-2.5 text-[13px] text-muted">This file was removed.</p>
@@ -132,7 +137,7 @@ export function mountFileCard(
   host: HTMLElement,
   id: string,
   label: string,
-  options: { height?: number | null; onResize?: (height: number) => void; client?: QueryClient | null } = {},
+  options: { height?: number | null; onResize?: (height: number) => void; onRemove?: () => void; client?: QueryClient | null } = {},
 ): FileCardHandle {
   host.replaceChildren();
   host.className = "file-mention";
@@ -142,7 +147,7 @@ export function mountFileCard(
   const render = (height: number | null) =>
     root.render(
       <QueryClientProvider client={client}>
-        <FileEmbed id={id} label={label} height={height} onResize={options.onResize} />
+        <FileEmbed id={id} label={label} height={height} onResize={options.onResize} onRemove={options.onRemove} />
       </QueryClientProvider>,
     );
   render(options.height ?? null);

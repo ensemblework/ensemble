@@ -6,6 +6,7 @@
  * link from similarity: an edge exists because something recorded it.
  */
 import { z } from "zod";
+import type { ArtifactKind, Prisma } from "@prisma/client";
 import { plotMentionEntities } from "../plots/mentions.js";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { accountIdOf, ownsOpenSpace } from "../lib/auth.js";
@@ -19,7 +20,9 @@ import { peopleCards } from "../context/people-view.js";
 import { assertOwned } from "../services/records.js";
 import { fileDetail } from "../files/store.js";
 import { mirrorSettings } from "../spaces/store.js";
-import { isGuestIn, visibleArtifacts } from "../sharing/context.js";
+import { isGuestIn, PRIVATE_ARTIFACT_KINDS, visibleArtifacts } from "../sharing/context.js";
+import { ARTIFACT_SUPPRESSION, artifactOrigin, artifactSuppressionKey, NOT_UPLOADED } from "../context/artifacts.js";
+import { ARTIFACT_KINDS } from "../desk/artifacts.js";
 
 const HOSTED_PREFERENCE_PREFIX = "hosted.";
 
@@ -59,6 +62,13 @@ function dayMonth(value: Date): { day: string; month: string } {
     day: parts.find((part) => part.type === "day")?.value ?? "",
     month: (parts.find((part) => part.type === "month")?.value ?? "").slice(0, 3).toUpperCase(),
   };
+}
+
+/** "<ISO time>|<id>" of the last item on a page. */
+function artifactCursor(value: string): { ts: Date; id: string } | null {
+  const [when, id] = value.split("|");
+  const ts = new Date(when ?? "");
+  return id && !Number.isNaN(ts.getTime()) ? { ts, id } : null;
 }
 
 export async function contextRoutes(app: FastifyInstance): Promise<void> {
@@ -646,36 +656,117 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
 
   // ── artifacts (normalized items from every source) ──────────────────────
 
-  app.get("/api/artifacts", async (request) => {
-    const query = z
-      .object({ kind: z.string().optional(), q: z.string().optional(), take: z.coerce.number().default(60) })
-      .parse(request.query);
-    const artifacts = await prisma.artifact.findMany({
+  const ArtifactsQuery = z.object({
+    kind: z
+      .string()
+      .refine((value) => ARTIFACT_KINDS.has(value), "Unknown kind.")
+      .transform((value) => value as ArtifactKind)
+      .optional(),
+    q: z.string().optional(),
+    take: z.coerce.number().default(60),
+    /** "uploads": leave out uploaded files, which Files lists on their own. */
+    exclude: z.enum(["uploads"]).optional(),
+    /** `nextCursor` from the previous page. */
+    before: z.string().max(200).optional(),
+  });
+
+  app.get("/api/artifacts", async (request, reply) => {
+    const query = ArtifactsQuery.parse(request.query);
+    const cursor = query.before ? artifactCursor(query.before) : null;
+    if (query.before && !cursor) return reply.code(400).send({ error: "That page cursor is not valid." });
+    const take = Math.max(1, Math.min(query.take, 200));
+    const scope: Prisma.ArtifactWhereInput[] = [visibleArtifacts(request.userId), ...(query.exclude === "uploads" ? [NOT_UPLOADED] : [])];
+    const rows = await prisma.artifact.findMany({
       where: {
         userId: request.userId,
         deletedAt: null,
-        AND: [visibleArtifacts(request.userId)],
-        ...(query.kind ? { kind: query.kind as never } : {}),
-        ...(query.q
-          ? { OR: [{ title: { contains: query.q, mode: "insensitive" } }, { text: { contains: query.q, mode: "insensitive" } }] }
-          : {}),
+        AND: [
+          ...scope,
+          ...(query.kind ? [{ kind: query.kind }] : []),
+          ...(query.q ? [{ OR: [{ title: { contains: query.q, mode: "insensitive" as const } }, { text: { contains: query.q, mode: "insensitive" as const } }] }] : []),
+          ...(cursor ? [{ OR: [{ ts: { lt: cursor.ts } }, { ts: cursor.ts, id: { lt: cursor.id } }] }] : []),
+        ],
       },
-      orderBy: { ts: "desc" },
-      take: Math.min(query.take, 200),
-      select: { id: true, kind: true, title: true, url: true, ts: true, projectId: true, repoId: true, taskId: true, metadata: true },
+      orderBy: [{ ts: "desc" }, { id: "desc" }],
+      take: take + 1,
+      select: { id: true, kind: true, title: true, url: true, ts: true, projectId: true, repoId: true, taskId: true, metadata: true, externalId: true },
     });
     const counts = await prisma.artifact.groupBy({
       by: ["kind"],
-      where: { userId: request.userId, deletedAt: null, AND: [visibleArtifacts(request.userId)] },
+      where: { userId: request.userId, deletedAt: null, AND: scope },
       _count: true,
     });
     // Sync state describes the owner's connected apps.
     const sync = isGuestIn(request.userId) ? [] : await prisma.syncState.findMany({ where: { userId: request.userId } });
+    const page = rows.slice(0, take);
+    const last = page.at(-1);
     return {
-      artifacts,
+      artifacts: page.map(({ externalId, ...row }) => ({ ...row, origin: artifactOrigin({ ...row, externalId }) })),
       counts: counts.map((row) => ({ kind: row.kind, count: row._count })),
       sync,
+      nextCursor: rows.length > take && last ? `${last.ts.toISOString()}|${last.id}` : null,
     };
+  });
+
+  app.get("/api/artifacts/:id", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const row = await prisma.artifact.findFirst({
+      where: { id, userId: request.userId, deletedAt: null, AND: [visibleArtifacts(request.userId)] },
+      select: {
+        id: true,
+        kind: true,
+        title: true,
+        url: true,
+        ts: true,
+        projectId: true,
+        repoId: true,
+        taskId: true,
+        metadata: true,
+        externalId: true,
+        text: true,
+        participants: true,
+        authoredByMe: true,
+        document: { select: { id: true, deletedAt: true } },
+      },
+    });
+    if (!row) return reply.code(404).send({ error: "That item is not here anymore." });
+    const { externalId, document, ...rest } = row;
+    return {
+      artifact: {
+        ...rest,
+        origin: artifactOrigin(row),
+        // An uploaded file's text: Files opens the file itself.
+        documentId: document && !document.deletedAt ? document.id : null,
+      },
+    };
+  });
+
+  // Owner-only (sharing/policy.ts). Removes a synced or attached item from every reader and keeps later syncs from bringing it back.
+  app.delete("/api/artifacts/:id", async (request, reply) => {
+    if (isGuestIn(request.userId)) return reply.code(403).send({ error: "Only the space's owner can remove items from their apps." });
+    const userId = request.userId;
+    const { id } = request.params as { id: string };
+    const row = await prisma.artifact.findFirst({
+      where: { id, userId, deletedAt: null },
+      select: { id: true, kind: true, externalId: true, title: true, document: { select: { id: true } } },
+    });
+    if (!row) return reply.code(404).send({ error: "That item is not here anymore." });
+    if (row.document || row.externalId.startsWith("file:")) {
+      return reply.code(409).send({ error: "This is an uploaded file. Delete it in Files with DELETE /api/documents/:id.", documentId: row.document?.id ?? null });
+    }
+    const key = artifactSuppressionKey(row.kind, row.externalId);
+    await prisma.$transaction([
+      prisma.artifact.update({ where: { id }, data: { deletedAt: new Date() } }),
+      prisma.contextSuppression.upsert({
+        where: { userId_kind_key: { userId, kind: ARTIFACT_SUPPRESSION, key } },
+        create: { userId, kind: ARTIFACT_SUPPRESSION, key, label: row.title.slice(0, 200), reason: "removed in Files" },
+        update: {},
+      }),
+    ]);
+    await appendLedger({ userId, actor: "me", action: "artifact.remove", payload: { id, kind: row.kind } });
+    const inbox = (PRIVATE_ARTIFACT_KINDS as readonly string[]).includes(row.kind);
+    sseHub.publish(userId, { event: "context", data: { kind: "artifact", id, action: "remove" }, ...(inbox ? { ownerOnly: true } : {}) });
+    return reply.code(204).send();
   });
 
   // ── @mention entities ───────────────────────────────────────────────────

@@ -297,6 +297,13 @@ export const fileRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> 
   "GET /api/documents/:id/style": ["happy-path", "isolation", "unknown-id"],
 };
 
+/** Items from connected apps (routes/context.ts): Files → From your apps. Checked in src/routes/artifacts.integration.test.ts. */
+export const artifactRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
+  "GET /api/artifacts": ["happy-path", "isolation", "invalid-input"],
+  "GET /api/artifacts/:id": ["happy-path", "isolation", "unknown-id"],
+  "DELETE /api/artifacts/:id": ["happy-path", "isolation", "unknown-id", "invalid-input"],
+};
+
 export const workspaceSearchRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
   "GET /api/context/search": ["happy-path", "isolation", "invalid-input"],
 };
@@ -317,4 +324,5 @@ export const routeCoverage = {
   ...sharingRouteCoverage,
   ...linksRouteCoverage,
   ...fileRouteCoverage,
+  ...artifactRouteCoverage,
 };

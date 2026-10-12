@@ -36,6 +36,17 @@ function vendorMessage(body: unknown): string {
   return "";
 }
 
+/** Google's `{ error: { errors: [{ reason }] } }`, the machine-readable part of a refusal. */
+function vendorReason(body: unknown): string | undefined {
+  const error = body && typeof body === "object" ? (body as { error?: unknown }).error : undefined;
+  const errors = error && typeof error === "object" ? (error as { errors?: unknown }).errors : undefined;
+  const reason = Array.isArray(errors) && errors[0] && typeof errors[0] === "object" ? (errors[0] as { reason?: unknown }).reason : undefined;
+  return typeof reason === "string" && reason ? reason : undefined;
+}
+
+// Google answers 403 for limits as well as for missing permission.
+const RATE_LIMITED = new Set(["rateLimitExceeded", "userRateLimitExceeded", "quotaExceeded", "dailyLimitExceeded"]);
+
 /** Turns a refusal into an error a person can read, with the token cut out of anything the app echoed. */
 function refuse(ctx: ItemContext, provider: AccountProvider, label: string, status: number, raw: string): never {
   let parsed: unknown = raw;
@@ -49,8 +60,11 @@ function refuse(ctx: ItemContext, provider: AccountProvider, label: string, stat
   }
   let said = vendorMessage(parsed).replace(/\s+/g, " ").trim();
   if (ctx.token.token) said = said.split(ctx.token.token).join("[token]");
-  said = said.slice(0, 240);
-  if (status === 403) throw new ItemError(`${label} refused access${said ? `: ${said}` : ""}. The connection may lack permission for this.`, 403);
+  said = said.slice(0, 240).replace(/[.\s]+$/, "");
+  const reason = vendorReason(parsed);
+  if (reason === "exportSizeLimitExceeded") throw new ItemError(`${label} would not convert this file because it is larger than Google converts through its API.`, 413, reason);
+  if (reason && RATE_LIMITED.has(reason)) throw new ItemError(`${label} is rate limiting requests. Try again in a minute.`, 429, reason);
+  if (status === 403) throw new ItemError(`${label} refused access${said ? `: ${said}` : ""}. The connection may lack permission for this.`, 403, reason);
   if (status === 404) throw new ItemError(`${label} could not find that. It may have moved, or this connection cannot see it.`, 404);
   if (status === 429) throw new ItemError(`${label} is rate limiting requests. Try again in a minute.`, 429);
   throw new ItemError(`${label} answered with an error (${status})${said ? `: ${said}` : ""}.`);

@@ -151,6 +151,7 @@ export async function syncOutlook(ctx: SyncContext): Promise<SyncResult> {
         await upsertPerson(ctx.userId, { email: recipient.email, name: recipient.name, at: parsed.at, evidence }, self);
       }
       const stored = await upsertArtifact(ctx.userId, { ...parsed.input, actorId: personId });
+      if (!stored) continue;
       result.items += 1;
       result.stored.push(stored);
       if (stored.created && !parsed.sent) result.triage.push({ ...stored, personId });
@@ -239,6 +240,7 @@ export async function syncOutlookCalendar(ctx: SyncContext): Promise<SyncResult>
     }
     const stored = await upsertArtifact(ctx.userId, input);
     seen.push(input.externalId);
+    if (!stored) continue;
     result.items += 1;
     result.stored.push(stored);
   }
@@ -359,6 +361,7 @@ export async function syncTeams(ctx: SyncContext): Promise<SyncResult> {
             self,
           );
       const stored = await upsertArtifact(ctx.userId, { ...parsed.input, actorId: personId });
+      if (!stored) continue;
       result.items += 1;
       result.stored.push(stored);
       if (stored.created && parsed.asksMe) result.triage.push({ ...stored, personId });

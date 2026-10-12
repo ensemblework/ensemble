@@ -32,6 +32,7 @@ import { Drafts } from "./widgets/legal";
 import { CiteGraph } from "./widgets/research";
 import "./desk.css";
 import { contextTabs, tabKey } from "./context-tabs";
+import { filesHref } from "@/lib/files/links";
 import { useLayoutPreference, useTileControls, type Arrangeable, type TileControls } from "./arrange";
 import { arrange, hiddenTilesFor, isDefaultLayout, showTile } from "./layout";
 
@@ -43,9 +44,6 @@ const PeopleTab = dynamic(() => import("@/components/context/people").then((mod)
   loading: () => <div className="skeleton h-[320px] w-full rounded-xl" />,
 });
 const ProjectsTab = dynamic(() => import("@/components/context/projects").then((mod) => mod.ProjectsTab), {
-  loading: () => <div className="skeleton h-[320px] w-full rounded-xl" />,
-});
-const ArtifactsTab = dynamic(() => import("@/components/context/artifacts").then((mod) => mod.ArtifactsTab), {
   loading: () => <div className="skeleton h-[320px] w-full rounded-xl" />,
 });
 
@@ -222,7 +220,7 @@ export function ContextLens({ deskId, state, initialTab = null, search = "", who
     const key = tabKey(label);
     router.replace(key === "overview" ? "/context" : `/context?tab=${key}`, { scroll: false });
   };
-  const shared = ["people", "projects", "graph", "artifacts"].includes(tabKey(active));
+  const shared = ["people", "projects", "graph"].includes(tabKey(active));
   const rich = state === "populated" && (deskId === "chambers" || deskId === "literature") && active === "Overview";
   const live = useQuery({ queryKey: ["desk-live"], queryFn: api.deskLive, enabled: state !== "populated", staleTime: 15_000 });
   const sections = state === "populated" || shared ? [] : lensSections(deskId, tabKey(active), live.data ?? emptyLive(), extras);
@@ -274,8 +272,6 @@ export function ContextLens({ deskId, state, initialTab = null, search = "", who
         <div data-lens-panel="projects"><ProjectsTab ids={ids} /></div>
       ) : tabKey(active) === "graph" ? (
         <div data-lens-panel="graph" data-lens-graph style={{ height: "min(72vh, 720px)" }}><GraphTab /></div>
-      ) : tabKey(active) === "artifacts" ? (
-        <div data-lens-panel="artifacts"><ArtifactsTab /></div>
       ) : (
       <div className="bento" data-lens-panel={tabKey(active)}>
         {rich && deskId === "chambers" ? <Chambers state={state} /> : null}
@@ -289,7 +285,7 @@ export function ContextLens({ deskId, state, initialTab = null, search = "", who
             live={live.data}
             ready={live.isFetched}
             onPeople={() => choose("People")}
-            onArtifacts={() => choose("Artifacts & sync")}
+            onArtifact={(id) => router.push(filesHref("apps", id))}
             onSection={(kind) => router.push(`/today?form=${encodeURIComponent(kind)}`)}
           />
         ) : null}
@@ -367,7 +363,8 @@ const KIND_LABEL: Record<string, string> = {
   meeting_note: "Note",
 };
 
-function LiveArtifacts({ rows, ready, size, control, onOpen }: { rows: DeskLive["artifacts"]; ready: boolean; onOpen: () => void } & Placed) {
+/** Items from connected apps. Each opens in Files → From your apps. */
+function LiveArtifacts({ rows, ready, size, control, onOpen }: { rows: DeskLive["artifacts"]; ready: boolean; onOpen: (id: string) => void } & Placed) {
   const guest = useSpaceAccess().guest;
   return (
     <Tile
@@ -380,7 +377,7 @@ function LiveArtifacts({ rows, ready, size, control, onOpen }: { rows: DeskLive[
       ghost={ready && rows.length === 0 ? { label: "No files or links yet", sub: "Documents, mail, and pull requests from connected apps land here.", ...(guest ? {} : { action: "Connect an app", onAction: () => window.location.assign("/settings?tab=connections") }) } : false}
     >
       {rows.length ? <div className="visual-body"><div className="context-file-grid" data-lens-artifacts>
-        {rows.filter((row) => row.kind in KIND_LABEL && row.title.trim()).slice(0, 6).map((row) => <button type="button" onClick={onOpen} key={row.id} className="context-file-card" data-artifact={row.id}><FileText size={19} /><strong>{row.title}</strong><small>{KIND_LABEL[row.kind] ?? row.kind} · {row.source}</small><span>{shortWhen(row.ts)}</span></button>)}
+        {rows.filter((row) => row.kind in KIND_LABEL && row.title.trim()).slice(0, 6).map((row) => <button type="button" onClick={() => onOpen(row.id)} key={row.id} className="context-file-card" data-artifact={row.id}><FileText size={19} /><strong>{row.title}</strong><small>{KIND_LABEL[row.kind] ?? row.kind} · {row.source}</small><span>{shortWhen(row.ts)}</span></button>)}
       </div></div> : null}
     </Tile>
   );
@@ -392,7 +389,7 @@ type Section = ReturnType<typeof lensSections>[number];
  * The live tiles of one Context tab, arranged by the person: moved, resized, hidden.
  * Saved per desk and tab as `desk.context.<desk>.<tab>`.
  */
-function ArrangedLens({ deskId, tab, sections, live, ready, onPeople, onArtifacts, onSection }: { deskId: DeskId; tab: string; sections: Section[]; live: DeskLive | undefined; ready: boolean; onPeople: () => void; onArtifacts: () => void; onSection: (kind: string) => void }) {
+function ArrangedLens({ deskId, tab, sections, live, ready, onPeople, onArtifact, onSection }: { deskId: DeskId; tab: string; sections: Section[]; live: DeskLive | undefined; ready: boolean; onPeople: () => void; onArtifact: (id: string) => void; onSection: (kind: string) => void }) {
   // Today is the space owner's own: someone it is shared with is not sent there.
   const guest = useSpaceAccess().guest;
   const defaults: Arrangeable[] = [
@@ -412,7 +409,7 @@ function ArrangedLens({ deskId, tab, sections, live, ready, onPeople, onArtifact
         const size = tiles.sizeOf(spec);
         const control = tiles.controls(spec);
         if (spec.key === "people") return <LivePeople key={spec.key} onOpen={onPeople} size={size} control={control} />;
-        if (spec.key === "artifacts") return <LiveArtifacts key={spec.key} rows={live?.artifacts ?? []} ready={ready} size={size} control={control} onOpen={onArtifacts} />;
+        if (spec.key === "artifacts") return <LiveArtifacts key={spec.key} rows={live?.artifacts ?? []} ready={ready} size={size} control={control} onOpen={onArtifact} />;
         const section = byKey.get(spec.key);
         if (!section) return null;
         return (

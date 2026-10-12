@@ -63,6 +63,8 @@ interface DriveFile {
   description?: string;
   modifiedTime?: string;
   webViewLink?: string;
+  /** For Google's own formats: one download link per format, without the export call's 10 MB cap. */
+  exportLinks?: Record<string, string>;
   owners?: Array<{ displayName?: string; emailAddress?: string }>;
 }
 
@@ -243,17 +245,60 @@ async function downloadAttachment(ctx: ItemContext, id: string): Promise<ItemDow
 /** Google's own files may be served from its content hosts; the token never goes there. */
 const googleContent = (url: URL) => url.hostname.endsWith(".googleusercontent.com");
 
+/** Only Google's own Docs host is sent the token for an export link. */
+function exportLink(value: string | undefined): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname === "docs.google.com" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** What to call each of Google's formats, the app that opens it, and its Download menu entry. */
+const EXPORT_WORDS: Record<string, { noun: string; app: string; menu: string }> = {
+  [MIME.document]: { noun: "document", app: "Google Docs", menu: "Microsoft Word (.docx)" },
+  [MIME.spreadsheet]: { noun: "spreadsheet", app: "Google Sheets", menu: "Microsoft Excel (.xlsx)" },
+  [MIME.presentation]: { noun: "presentation", app: "Google Slides", menu: "Microsoft PowerPoint (.pptx)" },
+  [MIME.drawing]: { noun: "drawing", app: "Google Drawings", menu: "PDF document (.pdf)" },
+};
+
+/**
+ * A Google Doc, Sheet, Slides or Drawing as an Office file or PDF. Drive's export call stops at
+ * 10 MB, which decks with pictures pass easily; larger files come through the file's own export
+ * link instead, the one Drive's File → Download uses.
+ */
+async function exportFile(ctx: ItemContext, path: string, file: DriveFile, exported: { mime: string; ext: string }): Promise<Uint8Array> {
+  try {
+    return (await itemFetchBytes(ctx, "google", LABEL, `${path}/export?mimeType=${encodeURIComponent(exported.mime)}`, { headers: bearer(ctx), redirectTo: googleContent })).bytes;
+  } catch (error) {
+    if (!(error instanceof ItemError) || error.reason !== "exportSizeLimitExceeded") throw error;
+  }
+  const words = EXPORT_WORDS[file.mimeType ?? ""] ?? { noun: "file", app: "Google Drive", menu: `.${exported.ext}` };
+  const byHand = `Open it in ${words.app}, choose File → Download → ${words.menu}, then upload that file to Files.`;
+  const link = exportLink(file.exportLinks?.[exported.mime]);
+  if (!link) throw new ItemError(`This ${words.noun} is too large for Google Drive to convert here. ${byHand}`, 413);
+  try {
+    return (await itemFetchBytes(ctx, "google", LABEL, link, { headers: bearer(ctx), redirectTo: googleContent })).bytes;
+  } catch (error) {
+    // Ensemble's own size cap already says what to do; anything else gets the way round it.
+    if (error instanceof ItemError && error.statusCode === 413) throw error;
+    throw new ItemError(`Google Drive could not convert this ${words.noun}${error instanceof ItemError ? ` (${error.message.replace(/\.$/, "")})` : ""}. ${byHand}`, 502);
+  }
+}
+
 async function downloadFile(ctx: ItemContext, id: string): Promise<ItemDownload> {
   if (!FILE_ID.test(id)) throw new ItemError("That is not a Google Drive file id.", 400);
   const path = `${DRIVE_API}/files/${encodeURIComponent(id)}`;
-  const file = await drive<DriveFile>(ctx, `${path}?fields=id,name,mimeType,size,webViewLink&supportsAllDrives=true`);
+  const file = await drive<DriveFile>(ctx, `${path}?fields=id,name,mimeType,size,webViewLink,exportLinks&supportsAllDrives=true`);
   const mime = file.mimeType ?? "";
   const name = file.name || "Untitled file";
   if (mime === MIME.folder) throw new ItemError("That is a Drive folder. Pick a file inside it.", 400);
   const exported = EXPORT_AS[mime];
   if (exported) {
-    const got = await itemFetchBytes(ctx, "google", LABEL, `${path}/export?mimeType=${encodeURIComponent(exported.mime)}`, { headers: bearer(ctx), redirectTo: googleContent });
-    return { filename: withExtension(name, exported.ext), mediaType: exported.mime, bytes: got.bytes, url: file.webViewLink };
+    const bytes = await exportFile(ctx, path, file, exported);
+    return { filename: withExtension(name, exported.ext), mediaType: exported.mime, bytes, url: file.webViewLink };
   }
   if (mime.startsWith("application/vnd.google-apps.")) throw new ItemError(`${KIND_NAME[mime] ?? "This kind of Google file"} cannot be downloaded. Open it in Google Drive.`, 422);
   if (Number(file.size ?? 0) > MAX_DOWNLOAD_BYTES) throw tooLarge(LABEL);

@@ -26,6 +26,8 @@ import {
   type NodeShape,
 } from "@/lib/graph-readability";
 import { usePersistentState } from "@/lib/prefs";
+import { filesHref } from "@/lib/files/links";
+import { useFullscreen } from "@/lib/fullscreen";
 import { usePeek } from "../shell/peek";
 import { AskEnsemble } from "../ensemble/ask-button";
 import { useModuleOn } from "@/lib/use-module";
@@ -219,7 +221,8 @@ export function GraphTab({ compact = false }: { compact?: boolean }) {
   const [pins, setPins] = usePersistentState<Record<string, Pin>>("ensemble.graph.pins", {});
   const [focusKind, setFocusKind] = useState<"project" | "people">("project");
   const [focus, setFocus] = useState("");
-  const [fullscreen, setFullscreen] = useState(false);
+  // Esc is handled below: it clears the highlight before it leaves full screen.
+  const { active: fullscreen, enter: enterFullscreen, exit: exitFullscreen, layer: fullscreenLayer } = useFullscreen({ escape: false });
   const [tools, setTools] = useState(false);
   const [toolsBox, setToolsBox] = useState<{ left: number; top: number; maxHeight: number } | null>(null);
   const toolsRef = useRef<HTMLButtonElement>(null);
@@ -297,6 +300,7 @@ export function GraphTab({ compact = false }: { compact?: boolean }) {
     else if (node.kind === "deliverable") peek.open(node.id, "deliverable");
     else if (node.kind === "diagram") router.push(`/diagrams/${node.id}`);
     else if (node.kind === "plot") router.push(`/plots/${node.id}`);
+    else if (node.kind === "artifact") router.push(filesHref("apps", node.id));
   };
 
   const draw = () => {
@@ -630,11 +634,11 @@ export function GraphTab({ compact = false }: { compact?: boolean }) {
         setSelected(null);
         return;
       }
-      if (fullscreen) setFullscreen(false);
+      if (fullscreen) exitFullscreen();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [fullscreen]);
+  }, [fullscreen, exitFullscreen]);
 
   const worldAt = (event: React.PointerEvent) => {
     const canvas = canvasRef.current!;
@@ -713,7 +717,7 @@ export function GraphTab({ compact = false }: { compact?: boolean }) {
     else if (event.key === "-" || event.key === "_") setView({ ...v, zoom: Math.max(MIN_ZOOM, v.zoom - 0.1) });
     else if (event.key === "Escape") {
       if (selectedRef.current) setSelected(null);
-      else if (fullscreen) setFullscreen(false);
+      else if (fullscreen) exitFullscreen();
     }
     else return;
     event.preventDefault();
@@ -750,7 +754,7 @@ export function GraphTab({ compact = false }: { compact?: boolean }) {
   const linkCount = edges.filter((edge) => positions.has(edge.source) && positions.has(edge.target)).length;
 
   return (
-    <div className={cx("flex h-full min-h-0 min-w-0 flex-col", fullscreen && "fixed inset-0 z-[60] bg-bg p-4")}>
+    <div ref={fullscreenLayer} className={cx("flex h-full min-h-0 min-w-0 flex-col", fullscreen && "fixed inset-0 z-[60] bg-bg p-4")}>
       {compact ? (
         <div className="mb-1 flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-1.5">
@@ -928,7 +932,7 @@ export function GraphTab({ compact = false }: { compact?: boolean }) {
               <button type="button" className="menu-item flex items-center gap-2 text-left" onClick={() => void client.invalidateQueries({ queryKey: ["graph"] })}>
                 <RefreshCw size={12} /> Refresh
               </button>
-              <button type="button" className="menu-item flex items-center gap-2 text-left" onClick={() => setFullscreen(!fullscreen)}>
+              <button type="button" className="menu-item flex items-center gap-2 text-left" onClick={() => (fullscreen ? exitFullscreen() : enterFullscreen())}>
                 {fullscreen ? <Minimize2 size={12} /> : <Maximize2 size={12} />} {fullscreen ? "Exit" : "Full screen"}
               </button>
             </div>

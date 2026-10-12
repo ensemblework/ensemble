@@ -137,6 +137,56 @@ test("the list shows each file with its kind, size and source, and hosted usage 
   }
 });
 
+test("each file in the list can be deleted, after the same question the file's screen asks", async () => {
+  let listed = FILES;
+  const view = await mount(<FilesScreen />, (call) => {
+    if (call.url.pathname === "/api/documents/f2" && call.method === "DELETE") {
+      listed = listed.filter((file) => file.id !== "f2");
+      return new Response(null, { status: 204 });
+    }
+    if (call.url.pathname === "/api/documents") return { files: listed, usage: HOSTED };
+    return undefined;
+  });
+  try {
+    await waitFor(() => Boolean(document.querySelector('[data-file-row="f2"]')), "the files");
+    await click(button(/^Delete Budget\.xlsx$/));
+    const dialog = document.querySelector('[role="dialog"]')!;
+    assert.match(dialog.textContent ?? "", /Delete this file\?/);
+    assert.match(dialog.textContent ?? "", /Budget\.xlsx will be deleted from Ensemble/);
+    await click(Array.from(dialog.querySelectorAll("button")).find((node) => (node.textContent ?? "").trim() === "Keep it")!);
+    assert.equal(document.querySelector('[role="dialog"]'), null);
+    assert.ok(!view.calls.some((call) => call.method === "DELETE"), "Keep it deletes nothing");
+
+    await click(button(/^List$/));
+    await click(button(/^Delete Budget\.xlsx$/));
+    await click(Array.from(document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')).find((node) => (node.textContent ?? "").trim() === "Delete")!);
+    await waitFor(() => view.toasts.some((toast) => toast.text === "Deleted Budget.xlsx."), "the toast");
+    await waitFor(() => !document.querySelector('[data-file-row="f2"]'), "the refreshed list");
+    assert.equal(document.querySelectorAll("[data-file-row]").length, 2);
+    assert.equal(document.querySelector('[role="dialog"]'), null);
+  } finally {
+    await view.done();
+  }
+});
+
+test("someone who can only view a shared space sees no delete buttons, and the search box has one focus edge", async () => {
+  const view = await mount(<FilesScreen />, (call) => {
+    if (call.url.pathname === "/api/shell") return { user: { id: "u2", name: "Ben Ortiz" }, space: { id: "s1", name: "Mira's space", icon: null, primary: true, shared: { owner: { id: "u1", name: "Mira Chen" }, role: "viewer" } } };
+    if (call.url.pathname === "/api/documents") return { files: FILES, usage: HOSTED };
+    return undefined;
+  });
+  try {
+    await waitFor(() => Boolean(document.querySelector("[data-file-row]")) && view.calls.some((call) => call.url.pathname === "/api/shell"), "the files");
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    });
+    assert.ok(!Array.from(document.querySelectorAll("button")).some((node) => /^Delete /.test(node.getAttribute("aria-label") ?? "")));
+    assert.ok(document.querySelector('[aria-label="Search files"]')?.classList.contains("search-line"));
+  } finally {
+    await view.done();
+  }
+});
+
 test("usage is hidden where there are no caps (desktop)", async () => {
   assert.equal(usageLine({ count: 40, bytes: 900 * MB, maxCount: null, maxBytes: null, maxFileBytes: 200 * MB }), null);
   const view = await mount(<FilesScreen />, (call) =>

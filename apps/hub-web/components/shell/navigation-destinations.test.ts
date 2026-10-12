@@ -14,6 +14,7 @@ test("Jump to ranks deep controls and app sections ahead of their parent views",
     ["Local repositories","Local repositories","/code#local-repositories"],
     ["diagrams","Diagrams","/diagrams"],
     ["files","Files","/files"],
+    ["from your apps","From your apps","/files?view=apps"],
     ["time zone","Time zone","/settings?tab=account#jump-you-time-zone"],
   ]) {
     const first=navigationDestinations(query,options)[0]; assert.equal(first?.label,label,query); assert.equal(first?.href,path,query);
@@ -23,6 +24,7 @@ test("Jump to ranks deep controls and app sections ahead of their parent views",
   assert.ok(navigationDestinations("reasoning",options).some(row=>row.label==="Low model thinking"));
   assert.ok(navigationDestinations("Google Calendar",options).some(row=>row.href.includes("connector=google_workspace")));
   assert.ok(navigationDestinations("color",options).some(row=>row.label==="Accent"));
+  const synced=navigationDestinations("artifacts",options); assert.equal(synced[0]?.href,"/files?view=apps"); assert.ok(!synced.some(row=>row.href.includes("tab=artifacts")));
   assert.equal(navigationScore("appearance colour","Accent","Settings › Account › Appearance","color"),20);
 });
 test("Jump to has no record-name lookup and respects optional modules and shared-space access",()=>{

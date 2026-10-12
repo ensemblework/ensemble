@@ -120,6 +120,7 @@ export async function syncGmail(ctx: SyncContext): Promise<SyncResult> {
         directlyToMe: to.some((row) => self.some((mine) => mine && row.email === mine.toLowerCase())),
       },
     });
+    if (!stored) continue;
     result.items += 1;
     result.stored.push(stored);
     if (stored.created && !sent) result.triage.push({ ...stored, personId });
@@ -246,6 +247,7 @@ export async function syncCalendar(ctx: SyncContext): Promise<SyncResult> {
       },
     });
     seen.push(event.id);
+    if (!stored) continue;
     result.items += 1;
     result.stored.push(stored);
   }

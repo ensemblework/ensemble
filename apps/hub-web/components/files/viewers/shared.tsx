@@ -3,7 +3,7 @@
 /** @jsxImportSource react */
 
 import { Download } from "lucide-react";
-import { useState } from "react";
+import { createContext, useState } from "react";
 import type { FileFormat, FileRecord } from "@ensemble/shared-types";
 import { emitToast } from "@/lib/toast-bus";
 import { cx } from "../../ui";
@@ -16,6 +16,24 @@ export type ViewerProps = {
   /** The small preview inside a page. */
   compact: boolean;
 };
+
+/**
+ * Present mode on the file's own screen (/files/[id]). The screen owns the full-screen mode
+ * (lib/fullscreen.ts) because the browser only grants fullscreen to the click on its button;
+ * the PDF and slide viewers draw the presentation into it.
+ */
+export type PresentControl = {
+  active: boolean;
+  /** The ref for the presentation layer. */
+  layer: (node: HTMLElement | null) => void;
+  exit: () => void;
+  /** F while presenting: in and out of the browser's fullscreen, still presenting. */
+  toggleNative: () => void;
+  /** The viewer has its pages or slides and can present them. */
+  setReady: (ready: boolean) => void;
+};
+
+export const PresentContext = createContext<PresentControl | null>(null);
 
 export function DownloadButton({ file, bytes, className, label = "Download" }: { file: FileRecord; bytes?: ArrayBuffer; className?: string; label?: string }) {
   const [busy, setBusy] = useState(false);

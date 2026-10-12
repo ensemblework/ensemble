@@ -116,6 +116,49 @@ test("Drive: Sheets, Slides and Drawings export to xlsx, pptx and pdf; folders a
   assert.equal(calls.filter((call) => call.url.includes("/export?")).length, 3);
 });
 
+test("Drive: Slides too large for the export call come through the file's export link; the token goes to Google's Docs host only", async () => {
+  const PPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+  const tooLarge = () =>
+    json({ error: { code: 403, message: "This file is too large to be exported.", errors: [{ message: "This file is too large to be exported.", domain: "global", reason: "exportSizeLimitExceeded" }] } }, 403);
+  const files: Record<string, Record<string, unknown>> = {
+    "1BigDeckField01": { exportLinks: { [PPTX]: "https://docs.google.com/feeds/download/presentations/Export?id=1BigDeckField01&exportFormat=pptx" } },
+    "1BigDeckField02": {},
+    "1BigDeckField03": { exportLinks: { [PPTX]: "https://evil.example/Export?id=1BigDeckField03" } },
+  };
+  const { fetch, calls } = mockFetch([
+    ["GET", /\/export\?mimeType=/, tooLarge],
+    ["GET", /^https:\/\/docs\.google\.com\/feeds\/download\/presentations\/Export/, () => redirect("https://doc-0s-8c-docs.googleusercontent.com/export/abc?id=1BigDeckField01")],
+    ["GET", /^https:\/\/doc-0s-8c-docs\.googleusercontent\.com\//, () => bytes("big deck")],
+    ["GET", /\/files\/[A-Za-z0-9]+\?fields=/, (call) => {
+      const id = /\/files\/([A-Za-z0-9]+)\?/.exec(call.url)![1]!;
+      assert.match(call.url, /exportLinks/);
+      return json({ id, name: "Board review", mimeType: "application/vnd.google-apps.presentation", ...files[id] });
+    }],
+  ]);
+  const ctx = context(fetch, [`${G}drive.readonly`]);
+  const deck = await googleItems.download!(ctx, { kind: "file", id: "1BigDeckField01" });
+  assert.equal(deck.filename, "Board review.pptx");
+  assert.equal(deck.mediaType, PPTX);
+  assert.equal(textOf(deck.bytes), "big deck");
+  const viaLink = calls.find((call) => call.url.startsWith("https://docs.google.com/"))!;
+  assert.equal(viaLink.headers.authorization, `Bearer ${SECRET}`);
+  const content = calls.find((call) => call.url.includes("googleusercontent.com"))!;
+  assert.equal(content.headers.authorization, undefined, "the token never follows the redirect");
+
+  const noLink = await refused(googleItems.download!(ctx, { kind: "file", id: "1BigDeckField02" }), /too large for Google Drive to convert here.*Google Slides.*File → Download → Microsoft PowerPoint/, 413);
+  assert.doesNotMatch(noLink.message, /permission/);
+  await refused(googleItems.download!(ctx, { kind: "file", id: "1BigDeckField03" }), /too large for Google Drive to convert here/, 413);
+  assert.ok(!calls.some((call) => call.url.startsWith("https://evil.example")), "an export link on another host is never called");
+});
+
+test("Google's 403 for rate limits says so instead of blaming permissions", async () => {
+  const { fetch } = mockFetch([
+    ["GET", /\/files\/1PdfFieldnote01\?fields=/, () => json({ error: { code: 403, message: "User rate limit exceeded.", errors: [{ reason: "userRateLimitExceeded" }] } }, 403)],
+  ]);
+  const error = await refused(googleItems.download!(context(fetch, [`${G}drive.readonly`]), { kind: "file", id: "1PdfFieldnote01" }), /rate limiting/, 429);
+  assert.doesNotMatch(error.message, /permission/);
+});
+
 test("Drive is refused without Drive access, and Gmail attachments without Gmail access", async () => {
   const { fetch, calls } = mockFetch([]);
   await refused(googleItems.download!(context(fetch, [`${G}gmail.readonly`]), { kind: "file", id: "1PdfFieldnote01" }), /Drive is switched off/, 403);

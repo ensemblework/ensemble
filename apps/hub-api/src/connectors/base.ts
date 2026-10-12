@@ -128,10 +128,10 @@ const ALL: readonly Connector[] = [
     id: "meeting_notes",
     label: "Meeting notes",
     group: "notes",
-    description: "Notes you paste or upload in Context → Artifacts, linked to their source.",
+    description: "Meeting notes you keep in Meetings, linked to their source.",
     account: null,
     connect: "builtin",
-    setupHint: "Always on. Upload notes in Context → Artifacts.",
+    setupHint: "Always on. Keep notes in Meetings.",
   },
 ];
 

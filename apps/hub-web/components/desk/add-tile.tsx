@@ -7,6 +7,7 @@ import { hasModule } from "@ensemble/shared-types/modules";
 import { WIDGET_REGISTRY, type WidgetId } from "@ensemble/shared-types/widgets";
 import { Dialog } from "@/components/ui";
 import { api } from "@/lib/api";
+import { filesHref } from "@/lib/files/links";
 import { readAdded, removeDeskTile } from "@/lib/desk-added";
 import type { DeskId } from "./desks";
 import { DESK_EXTRAS, resolveExtras } from "@/lib/desk-extras";
@@ -151,7 +152,7 @@ export function AddedTiles() {
           const shortcut = SHORTCUTS[id];
           const rows = id === "assignment-countdown" ? (feed.data?.tasks ?? []).filter((task) => task.taskType === "assignment" && !["done", "dropped"].includes(task.status)).map((task) => ({ id: task.id, title: task.title, href: `/tasks/${task.id}`, date: task.due }))
             : id === "deliverables" ? (feed.data?.deliverables ?? []).map((row) => ({ id: row.id, title: row.title, href: `/projects/${row.projectId}`, date: row.due }))
-            : id === "calendar" || id === "timetable" ? (feed.data?.events ?? []).map((event) => ({ id: event.id, title: event.title, href: "/context?view=widgets&tab=artifacts", date: event.start })) : [];
+            : id === "calendar" || id === "timetable" ? (feed.data?.events ?? []).map((event) => ({ id: event.id, title: event.title, href: filesHref("apps", event.id), date: event.start })) : [];
           return (
             <article key={id} className="tile" data-widget={id} style={{ flex: "1 1 220px", padding: 14, minWidth: 0 }}>
               <header className="row sb">

@@ -66,6 +66,7 @@ export async function syncLinear(ctx: SyncContext): Promise<SyncResult> {
         { source: "linear", id: issue.team.id, name: issue.team.name },
       ],
     });
+    if (!stored) continue;
     result.items += 1;
     result.stored.push(stored);
     result.proposals.push({

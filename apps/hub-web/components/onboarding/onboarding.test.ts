@@ -49,14 +49,15 @@ test("a profession typed earlier picks the role", () => {
   assert.equal(roleFromProfession("Chef"), null);
 });
 
-test("every desk's Context has people, projects, graph, and files", () => {
+test("every desk's Context has people, projects and the graph; files and app items live in Files", () => {
   for (const id of DESK_IDS) {
     const tabs = contextTabs(id);
     assert.equal(tabs[0], "Overview", id);
-    for (const shared of ["People", "Projects", "Graph", "Artifacts & sync"]) assert.ok(tabs.includes(shared), `${id} lacks ${shared}`);
+    for (const shared of ["People", "Projects", "Graph"]) assert.ok(tabs.includes(shared), `${id} lacks ${shared}`);
+    assert.ok(!tabs.map(tabKey).includes("artifacts"), `${id} still has an artifacts tab`);
     assert.equal(new Set(tabs).size, tabs.length, `${id} repeats a tab`);
   }
   assert.ok(contextTabs("semester", true).includes("Learning"));
-  assert.deepEqual(contextTabs("branch").map(tabKey), ["overview", "people", "projects", "repos", "reviews", "deploys", "graph", "artifacts"]);
+  assert.deepEqual(contextTabs("branch").map(tabKey), ["overview", "people", "projects", "repos", "reviews", "deploys", "graph"]);
   assert.ok(!contextTabs("semester").map(tabKey).includes("repos"));
 });

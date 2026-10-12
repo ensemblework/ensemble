@@ -1,7 +1,9 @@
+import { redirect } from "next/navigation";
 import { Suspense } from "react";
 import { SuspenseSkeleton } from "@/components/motion/skeletons";
 import type { BoardPayload } from "@/lib/api";
 import { desktopExport } from "@/lib/desktop-export";
+import { filesHref } from "@/lib/files/links";
 import { loadContextBoard, loadLayout, type LayoutPayload } from "@/lib/server-layout";
 import { ContextScreen } from "./screen";
 
@@ -14,6 +16,8 @@ export default async function ContextPage({ searchParams }: { searchParams: Prom
   const params = await searchParams;
   const view = params.view ?? "";
   const tab = params.tab ?? "";
+  // Links to the artifacts tab open Files → From your apps. The packaged UI does the same in ContextScreen.
+  if (tab === "artifacts") redirect(filesHref("apps"));
   // The default lens uses neither payload. Layout is the widgets canvas; the board
   // is the desk, grid, list, and graph, plus a tab that opens that desk.
   const widgets = view === "widgets";

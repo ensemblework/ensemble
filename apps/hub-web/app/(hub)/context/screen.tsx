@@ -2,11 +2,13 @@
 
 import dynamic from "next/dynamic";
 import { useQuery } from "@tanstack/react-query";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect } from "react";
 import { ContextDesk } from "@/components/context/desk";
 import { ContextLens } from "@/components/desk/context-lens";
 import { contextTabs, tabKey } from "@/components/desk/context-tabs";
 import { deskIdFromTemplate } from "@/components/desk/desks";
+import { filesHref } from "@/lib/files/links";
 import { api, type BoardPayload } from "@/lib/api";
 import type { LayoutPayload } from "@/lib/server-layout";
 
@@ -19,6 +21,13 @@ export function ContextScreen({ initialLayout, initialBoard }: { initialLayout: 
   const view = params.get("view");
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
   const prefs = useQuery({ queryKey: ["preferences"], queryFn: api.preferences, staleTime: 15_000 });
+  const router = useRouter();
+  // Links to the artifacts tab open Files → From your apps.
+  const moved = requested === "artifacts";
+  useEffect(() => {
+    if (moved) router.replace(filesHref("apps"));
+  }, [moved, router]);
+  if (moved) return null;
   if (view === "widgets") return <WidgetLayout initialLayout={initialLayout} />;
   // board, grid, list, and graph force that view. desk opens the old surface and keeps the saved view.
   if (view === "board" || view === "grid" || view === "list" || view === "graph" || view === "desk") return <ContextDesk initial={initialBoard} />;

@@ -71,6 +71,8 @@ export class ItemError extends Error {
   constructor(
     message: string,
     readonly statusCode = 424,
+    /** The app's own reason code, when it gave one (Google's `exportSizeLimitExceeded`). */
+    readonly reason?: string,
   ) {
     super(message);
     this.name = "ItemError";

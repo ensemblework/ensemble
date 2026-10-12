@@ -219,7 +219,7 @@ Widget clicks:
 | People | `/context?tab=people` or the person card's existing edit |
 | Meetings | meeting note on the project, or the calendar event. There is no meetings route on this branch. |
 | Repos | `/context?tab=repos` |
-| Artifacts | `/context?tab=artifacts` |
+| Artifacts | the item in Files → From your apps (`/files?view=apps&item=<id>`) |
 | Graph snapshot | `/context?tab=graph` |
 | Recent links | the target entity |
 

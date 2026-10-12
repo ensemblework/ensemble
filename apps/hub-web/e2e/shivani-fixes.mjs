@@ -217,17 +217,17 @@ try {
   assert.match(graphNames, /Sunita Rao/);
   assert.match(graphNames, /Rao v\. Sunrise Hospital/);
   await shot(page, "context-graph");
-  await page.getByRole("tab", { name: "Artifacts & sync" }).click();
-  await page.locator("[data-lens-artifacts]").getByText("fieldnote/relay #128").waitFor();
-  await page.locator("[data-lens-artifacts]").getByText("rao-sunrise #12").waitFor();
-  const artifactText = await page.locator("[data-lens-panel=artifacts]").innerText();
+  await page.goto(`${WEB}/files?view=apps`, { waitUntil: "domcontentloaded" });
+  const fromApps = page.getByRole("region", { name: "Items from your apps" });
+  await fromApps.getByText("fieldnote/relay #128").waitFor();
+  await fromApps.getByText("rao-sunrise #12").waitFor();
+  const artifactText = await fromApps.innerText();
   assert.equal(artifactText.includes("Latency numbers for Priya"), false, artifactText);
   assert.equal(artifactText.includes("Read the draft"), false, artifactText);
   assert.equal(artifactText.includes("List the dates"), false, artifactText);
   assert.match(artifactText, /Pull request/);
   assert.match(artifactText, /GitHub/);
-  assert.match(artifactText, /File/);
-  await shot(page, "context-artifacts");
+  await shot(page, "files-from-apps");
 
   await page.goto(`${WEB}/today`, { waitUntil: "domcontentloaded" });
   await page.getByRole("button", { name: "Toggle sidebar" }).click();

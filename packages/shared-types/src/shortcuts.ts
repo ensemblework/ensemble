@@ -28,7 +28,7 @@ function chordFromTokens(tokens: readonly string[], key: string): ShortcutChord 
   return chord;
 }
 
-export type ShortcutScope = "global" | "today" | "diagrams";
+export type ShortcutScope = "global" | "today" | "diagrams" | "page";
 
 export interface ShortcutChord {
   key: string;
@@ -337,6 +337,15 @@ export const SHORTCUTS: readonly ShortcutBinding[] = [
     whileTyping: false,
     mac: { key: "backspace" },
     other: { key: "backspace" },
+  },
+  {
+    id: "page-focus",
+    label: "Focus mode on a page",
+    group: "Pages",
+    scope: "page",
+    whileTyping: true,
+    mac: { key: "z", alt: true, shift: true },
+    other: { key: "z", alt: true, shift: true },
   },
   {
     id: "today-down",
@@ -662,7 +671,7 @@ export function customChordProblem(id: string, chord: ShortcutChord, list: reado
   }
   for (const binding of list) {
     if (binding.id === id) continue;
-    if (binding.scope !== "global" && binding.scope !== "diagrams") continue;
+    if (binding.scope !== "global" && binding.scope !== "diagrams" && binding.scope !== "page") continue;
     if (binding.mac && chordToken(binding.mac) === chordToken(onMac)) return `Already used by “${binding.label}”.`;
     if (binding.other && chordToken(binding.other) === chordToken(elsewhere)) return `Already used by “${binding.label}”.`;
   }

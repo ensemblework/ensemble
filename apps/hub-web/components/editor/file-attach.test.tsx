@@ -145,6 +145,34 @@ test("a removed file shows a quiet note instead of breaking the page", async () 
   }
 });
 
+test("the card's remove button takes the file off the page, leaves the rest, and is absent when read-only", async () => {
+  const server = serve({ "file-1": record("file-1", "report.pdf") });
+  const doc = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Before " }, { type: "mention", attrs: { id: "file-1", label: "report.pdf", kind: "file" } }, { type: "text", text: " after" }] }] };
+  const editor = makeEditor(doc);
+  let readOnly: Editor | null = null;
+  try {
+    await settle(() => Boolean(editor.view.dom.querySelector("[data-file-embed] button[aria-label='Remove report.pdf from the page']")));
+    const remove = editor.view.dom.querySelector<HTMLButtonElement>("[data-file-embed] button[aria-label='Remove report.pdf from the page']");
+    assert.ok(remove, "editable pages offer a remove button on the card");
+    assert.match(remove.title, /stays in Files/);
+    await act(async () => remove.click());
+    assert.deepEqual(fileMentions(editor), []);
+    assert.equal(editor.getText(), "Before  after");
+    assert.ok(!server.calls.some((call) => call.method === "DELETE"), "the file itself is not deleted");
+
+    act(() => {
+      readOnly = new Editor({ editable: false, extensions: editorExtensions(() => [], "Type", () => true, () => true, { client: () => client }), content: doc });
+    });
+    await settle(() => Boolean(readOnly!.view.dom.querySelector("[data-file-embed] .diagram-inline-head")?.textContent?.includes("2.0 KB")));
+    assert.equal(readOnly!.view.dom.querySelector("[data-file-embed] button[aria-label^='Remove']"), null);
+  } finally {
+    const opened = readOnly as Editor | null;
+    if (opened) await act(async () => opened.destroy());
+    await act(async () => editor.destroy());
+    server.restore();
+  }
+});
+
 test("files are in the @ menu with their type, scoped and unscoped", () => {
   const rows = () => [
     { kind: "file", id: "file-1", label: "Q3 report.pdf", detail: "2.0 MB" },

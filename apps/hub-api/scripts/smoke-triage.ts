@@ -34,6 +34,7 @@ async function main(): Promise<void> {
     participants: [{ name: "TS Weekly", email: "news@tsweekly.example" }],
     metadata: { from: "TS Weekly <news@tsweekly.example>", directlyToMe: false },
   });
+  if (!ask || !newsletter) throw new Error("The smoke emails were removed by the person; pick other external ids.");
   const started = Date.now();
   const result = await triage(userId, { ...settings, fetch: { ...settings.fetch, proposeTodos: true } }, [ask, newsletter]);
   const tasks = await prisma.task.findMany({ where: { userId, sourceRef: { startsWith: "gmail:thread:smoke-thread" } } });

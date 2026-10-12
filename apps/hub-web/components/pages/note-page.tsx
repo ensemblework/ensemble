@@ -22,6 +22,7 @@ import { useSpaceAccess } from "@/lib/access";
 import { ExportMenu } from "../export-menu";
 import { pageDoc } from "@/lib/export/items";
 import { SourceFileBanner, exportBackItems } from "../files/source-file-banner";
+import { PAGE_FOCUS_CLASS, PageFocusBar, PageFocusButton, usePageFocus } from "./page-focus";
 
 type SaveState = "saved" | "saving" | "dirty" | "error";
 
@@ -83,6 +84,7 @@ export function NotePage({
   const [remote, setRemote] = useState<{ doc: PageDocument; stamp: number } | null>(null);
   const watchingRef = useRef(watching);
   watchingRef.current = watching;
+  const focusMode = usePageFocus();
 
   // Someone else saved: take their version when you have nothing unsaved. Your own saves
   // come back with the revision you already hold and change nothing.
@@ -244,8 +246,17 @@ export function NotePage({
   const source = record.sourceFile ?? null;
   const pageNow = () => ({ title: record.title || "Untitled", doc: latest.current ?? record.content ?? EMPTY_PAGE });
   const exportExtra = exportBackItems(source, pageNow);
+  const saveText =
+    saveState === "saved" ? "All changes saved" : saveState === "saving" ? "Saving…" : saveState === "dirty" ? "Unsaved changes" : "Could not save. Retry on the next edit.";
   return (
-    <div className="mx-auto w-full max-w-[900px] px-4 pb-24 pt-6 sm:px-16 sm:pt-10" inert={leaving}>
+    <div
+      ref={focusMode.layer}
+      tabIndex={focusMode.active ? -1 : undefined}
+      className={focusMode.active ? PAGE_FOCUS_CLASS : "mx-auto w-full max-w-[900px] px-4 pb-24 pt-6 sm:px-16 sm:pt-10"}
+      inert={leaving}
+      data-page-focus={focusMode.active ? "true" : undefined}
+    >
+      {focusMode.active ? <PageFocusBar status={saveText} error={saveState === "error"} onExit={focusMode.exit} /> : null}
       <div className="mb-3 flex items-center justify-between text-[12.5px] text-muted">
         <span>
           {shared?.link
@@ -262,7 +273,12 @@ export function NotePage({
         </span>
         <div className="flex items-center gap-2">
           <PagePeople kind="page" id={pageId} />
-          {shared || !canEdit ? <ExportMenu load={async () => pageDoc(await api.standalonePage(pageId).catch(() => record))} extra={exportExtra} /> : (
+          {shared || !canEdit ? (
+            <>
+              <PageFocusButton onEnter={focusMode.enter} />
+              <ExportMenu load={async () => pageDoc(await api.standalonePage(pageId).catch(() => record))} extra={exportExtra} />
+            </>
+          ) : (
             <>
               <button type="button" className="btn-ghost" disabled={convert.isPending} onClick={() => convert.mutate()}>
                 <CheckSquare size={13} /> Add to board
@@ -271,6 +287,7 @@ export function NotePage({
                 <Trash2 size={14} />
               </button>
               <span className="mx-0.5 h-4 w-px bg-line" aria-hidden />
+              <PageFocusButton onEnter={focusMode.enter} />
               <ExportMenu load={async () => pageDoc(await api.standalonePage(pageId).catch(() => record))} extra={exportExtra} />
               <ShareButton compact target={{ kind: "page", resourceId: pageId, title: record.title }} />
             </>
@@ -278,27 +295,21 @@ export function NotePage({
         </div>
       </div>
       {source ? <SourceFileBanner source={source} page={pageNow} /> : null}
-      {canEdit ? (
-        <PageTitleField value={record.title} autoFocus={focusTitle} onSave={(title) => {
-          titleSave.current = rename.mutateAsync(title);
-          void titleSave.current.catch(() => undefined);
-        }} />
-      ) : (
-        <h1 className="text-[32px] font-semibold leading-tight tracking-tight">{record.title || "Untitled"}</h1>
-      )}
+      <div data-focus-keep>
+        {canEdit ? (
+          <PageTitleField value={record.title} autoFocus={focusTitle} onSave={(title) => {
+            titleSave.current = rename.mutateAsync(title);
+            void titleSave.current.catch(() => undefined);
+          }} />
+        ) : (
+          <h1 className="text-[32px] font-semibold leading-tight tracking-tight">{record.title || "Untitled"}</h1>
+        )}
+      </div>
       <div className="mt-6 flex items-center justify-between border-t border-line pt-3 text-[12px] text-muted">
         <span className="font-medium">Page content</span>
-        <span className={saveState === "error" ? "text-danger" : undefined}>
-          {saveState === "saved"
-            ? "All changes saved"
-            : saveState === "saving"
-              ? "Saving…"
-              : saveState === "dirty"
-                ? "Unsaved changes"
-                : "Could not save. Retry on the next edit."}
-        </span>
+        <span className={saveState === "error" ? "text-danger" : undefined}>{saveText}</span>
       </div>
-      <div className="mt-4">
+      <div className="mt-4" data-focus-keep>
         {initialDoc && Editor ? (
           <Editor
             key={`${pageId}-${epoch}`}
