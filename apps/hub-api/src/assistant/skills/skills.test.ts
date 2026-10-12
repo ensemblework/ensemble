@@ -13,7 +13,7 @@ import { runAssistantTurn } from "../agent.js";
 import { APP_TOOL_LIST, TOOL_NAMES, getTool } from "../registry.js";
 import { buildSystemPrompt } from "../state.js";
 import type { AnyHubTool } from "../types.js";
-import { CORE_TOOLS, advertisedTools, allPlaybooks, appMap, findPlaybook, playbookIndex, playbooksFor, routePlaybooks } from "./index.js";
+import { CORE_TOOLS, advertisedTools, allPlaybooks, appMap, findPlaybook, parsePlaybook, playbookIndex, playbooksFor, routePlaybooks } from "./index.js";
 
 const KNOWN = new Set([...TOOL_NAMES, ...APP_TOOL_LIST.map((tool) => tool.name), "apps_search", "apps_read", "apps_post_update"]);
 
@@ -207,4 +207,12 @@ test("a routed turn starts with the playbook's text and tools", async () => {
   assert.ok(asked[0]!.tools.includes("hub_create_diagram"));
   assert.match(asked[0]!.system, /## Playbook: Diagrams and flowcharts/);
   assert.match(asked[0]!.system, /Transformer \(encoder–decoder\)/);
+});
+
+test("a playbook with Windows line endings (a Windows checkout) parses like one with LF", () => {
+  const unix = "---\nname: demo\ntitle: Demo\nwhen: always\ntools: hub_how_to\n---\n\n# Steps\n\n1. Do it.\n";
+  const windows = unix.replace(/\n/g, "\r\n");
+  const parsed = parsePlaybook(windows, "demo.md");
+  assert.deepEqual(parsed, parsePlaybook(unix, "demo.md"));
+  assert.ok(!parsed.body.includes("\r"));
 });
