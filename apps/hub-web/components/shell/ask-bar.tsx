@@ -44,7 +44,7 @@ export function AskBar() {
   useEffect(() => {
     document.getElementById(`workspace-hit-${selected}`)?.scrollIntoView({ block: "nearest" });
   }, [selected]);
-  return <div ref={root} className="relative w-full min-w-0 max-w-[560px]">
+  return <div ref={root} className="relative w-full min-w-0 max-w-[560px]" data-tour-anchor="assistant">
     <SearchQuery pill overlay inputRef={input} value={query} onValue={(text) => { setSubmitted(null); setQuery(text); setOpen(true); }} onFocus={() => setOpen(true)}
       placeholder="Ask Ensemble · search your work" label="Ask Ensemble · search your work"
       pending={pending} count={open && current && Boolean(debounced) && !found.isPending ? hits.length : null} list={open && hits.length > 0}

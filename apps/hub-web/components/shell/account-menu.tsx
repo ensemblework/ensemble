@@ -3,7 +3,7 @@
 /** @jsxImportSource react */
 
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Keyboard, Layers, LayoutTemplate, LogOut, Moon, Plug, Settings, Sparkles, Sun, UserRound } from "lucide-react";
+import { Keyboard, Layers, LayoutTemplate, LogOut, Moon, MousePointer2, Plug, Settings, Sparkles, Sun, UserRound } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import type { AppearanceSettings } from "@ensemble/shared-types";
@@ -114,6 +114,10 @@ export function AccountMenu() {
           <Row icon={Sparkles} onSelect={() => go(close, "/settings?tab=assistant")}>Assistant and models</Row>
           <Row icon={Plug} onSelect={() => go(close, "/settings?tab=connections")}>Connected apps</Row>
           <Row icon={Keyboard} onSelect={() => go(close, "/settings?tab=shortcuts")} hint="?">Keyboard shortcuts</Row>
+          {shell.data?.onboardingComplete && !shell.data.space?.shared ? <Row icon={MousePointer2} onSelect={() => {
+            close();
+            window.setTimeout(() => window.dispatchEvent(new CustomEvent("ensemble:onboarding-tour")), 0);
+          }}>Take a tour</Row> : null}
           {shell.data?.devTools ? <Row icon={LayoutTemplate} onSelect={() => go(close, "/marketplace")}>Templates</Row> : null}
           <Row
             icon={dark ? Sun : Moon}
