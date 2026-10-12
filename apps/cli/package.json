@@ -1,6 +1,6 @@
 {
   "name": "ensemblework",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Ensemble CLI: run tasks assigned from ensemblework.com on your computer, and connect your editor to Ensemble over MCP.",
   "license": "FSL-1.1-MIT",
   "homepage": "https://ensemblework.com/download",

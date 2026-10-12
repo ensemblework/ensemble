@@ -17,7 +17,7 @@ import { App, type Ops } from "./app.js";
 import { LocalApi } from "./local.js";
 import { MOUSE_OFF, MOUSE_ON } from "./mouse.js";
 import { loadPrefs, savePrefs } from "./prefs.js";
-import { ALT_OFF, ALT_ON, RENDER_OPTIONS } from "./screen.js";
+import { RENDER_OPTIONS, takeScreen } from "./screen.js";
 
 export async function runApp(): Promise<void> {
   const paths = resolveCliPaths();
@@ -63,8 +63,15 @@ export async function runApp(): Promise<void> {
     },
   };
 
-  const restore = () => process.stdout.write(MOUSE_OFF + ALT_OFF);
-  process.stdout.write(ALT_ON + MOUSE_ON);
+  const giveBack = takeScreen(process.stdout);
+  process.stdout.write(MOUSE_ON);
+  let restored = false;
+  const restore = () => {
+    if (restored) return;
+    restored = true;
+    process.stdout.write(MOUSE_OFF);
+    giveBack();
+  };
   process.once("exit", restore);
   try {
     const app = render(
