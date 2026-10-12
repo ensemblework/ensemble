@@ -3,7 +3,6 @@
 import { renderDiagramSvg, type DiagramModel } from "@ensemble/block-diagrams";
 import { useEffect, useRef } from "react";
 import { ApiError, api } from "@/lib/api";
-import { MODULE_DENIED } from "@ensemble/shared-types/modules";
 import { clampEmbedHeight, createHeightHandle, storedEmbedHeight } from "../editor/embed-resize";
 
 function themeOf(): "light" | "dark" {
@@ -168,7 +167,7 @@ export function mountDiagramCard(host: HTMLElement, id: string, label: string, o
   }).catch((error: unknown) => {
     if (cancelled) return;
     // The module can be off before the shell says so. Show the quiet chip, not a broken card.
-    if (error instanceof ApiError && error.status === 404 && error.message === MODULE_DENIED) {
+    if (error instanceof ApiError && error.moduleOff) {
       mountDiagramOff(host, label);
       return;
     }

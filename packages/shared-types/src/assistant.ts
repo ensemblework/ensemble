@@ -231,6 +231,42 @@ export const RunProfile = z.object({
 });
 export type RunProfile = z.infer<typeof RunProfile>;
 export const MAX_RUN_PROFILES = 3;
+export const QUICK_PROFILE_ID = "quick";
+
+/** The built-in profile while none is saved: code in its own checkout, commits allowed, Ask. */
+export function quickRunProfile(orchestration?: { defaultExecution?: string; sandboxNetwork?: boolean } | null): RunProfile {
+  return {
+    id: QUICK_PROFILE_ID,
+    name: "Quick",
+    kind: "code",
+    deviceId: null,
+    engine: "ensemble",
+    model: "",
+    effort: "default",
+    branchMode: "as-is",
+    delivery: "commit",
+    askBeforePublish: true,
+    mode: "ask",
+    sandbox: orchestration?.defaultExecution !== "native",
+    useCredentials: false,
+    network: orchestration?.sandboxNetwork ?? true,
+    markDone: true,
+    maxMinutes: null,
+    maxToolCalls: null,
+    maxTurns: null,
+    instructions: "",
+  };
+}
+
+/** The profile a run uses: the one named (by id or name), else the default, else Quick. */
+export function pickRunProfile(
+  settings: { runProfiles: RunProfile[]; defaultRunProfileId: string | null; orchestration?: { defaultExecution?: string; sandboxNetwork?: boolean } | null },
+  wanted?: string | null,
+): RunProfile {
+  const key = wanted?.trim().toLowerCase();
+  const named = key ? settings.runProfiles.find((profile) => profile.id.toLowerCase() === key || profile.name.toLowerCase() === key) : undefined;
+  return named ?? settings.runProfiles.find((profile) => profile.id === settings.defaultRunProfileId) ?? quickRunProfile(settings.orchestration);
+}
 
 // ── sources & schedule ─────────────────────────────────────────────────────
 

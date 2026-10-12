@@ -1,13 +1,13 @@
-# 26 · Ensemble CLI: run tasks on your computer, connect editors over MCP
+# 26 · Ensemble CLI: the `ensemble` app in your terminal, a runner, and MCP for editors
 
-The `ensemble` command gives a computer two things without the desktop app:
+Type `ensemble` in a project folder and Ensemble opens full-screen in the terminal:
 
-1. **A runner.** Tasks you assign to this computer from [app.ensemblework.com](https://app.ensemblework.com) run here, in folders you share, with model keys that stay here.
-2. **MCP for editors.** `ensemble mcp` is a read-only MCP server that reads your hosted Ensemble context. Editors start it themselves.
+1. **Tasks** (the default tab): agent runs on this computer (needs you, running, queued, stopped, done) and every question or permission waiting on you, answered right there.
+2. **Chat**: Ensemble Code, a chat built for coding and longer jobs. It reads the folder (and its PDFs and Word files), starts agents on tasks under a run profile, and follows them.
 
-People who only want editor context can skip installing anything and use the **hosted MCP URL** instead (§5).
+`ensemble` starts this computer's runtime in the background if it is not running, so tasks you assign from [app.ensemblework.com](https://app.ensemblework.com) or your phone run here, in folders you share, with model keys that stay here. It keeps running after you leave the app. `ensemble mcp` is a read-only MCP server that reads your hosted Ensemble context; editors start it themselves. People who only want editor context can skip installing anything and use the **hosted MCP URL** instead (§5).
 
-Code: `apps/cli` (npm name `ensemblework`, command `ensemble`). Packaging: `scripts/package-cli.mjs`, `packaging/`, `.github/workflows/cli-release.yml`. Install scripts: `apps/landing/public/install.sh` and `install.ps1`, served at `https://ensemblework.com/install.sh` and `/install.ps1`. User guide: [ensemblework.com/download](https://ensemblework.com/download), and in the Hub under Connect your apps and Settings → Devices.
+Code: `apps/cli` (npm name `ensemblework`, command `ensemble`); the app is `apps/cli/src/tui` (Ink and React, bundled into the same single file). Packaging: `scripts/package-cli.mjs`, `packaging/`, `.github/workflows/cli-release.yml`. Install scripts: `apps/landing/public/install.sh` and `install.ps1`, served at `https://ensemblework.com/install.sh` and `/install.ps1`. User guide: [ensemblework.com/download](https://ensemblework.com/download), and in the Hub under Connect your apps and Settings → Devices.
 
 ## 1. Install
 
@@ -34,7 +34,23 @@ ensemble/sidecar/app/        hub-api, as the desktop sidecar uses it
 
 An archive is about 120 MB (darwin-arm64 measured 116 MB on 6 Oct 2026) because it carries Node, Prisma and PGlite. The launchers set `ENSEMBLE_LAUNCHER` (the path as invoked) and `ENSEMBLE_SIDECAR_DIR`. The script installs are per user: `~/.local/share/ensemble-cli/<version>` with a link at `~/.local/bin/ensemble`, and `%LOCALAPPDATA%\Programs\Ensemble\<version>` plus a `current` folder on the user PATH. `ENSEMBLE_VERSION` pins a version, `ENSEMBLE_INSTALL_DIR` moves the install, and `ENSEMBLE_DOWNLOAD_BASE` points the scripts at another download location (used for testing). Both scripts verify the archive against `SHA256SUMS.txt`.
 
-## 2. Commands
+## 2. Using it
+
+### 2.1 The app
+
+`ensemble` with no arguments in a terminal (or `ensemble app`) opens the app on the terminal's alternate screen with mouse reporting on, and restores both on exit. When the install only connects editors (the npm package), it says so and points to the full install. Layout, top to bottom: the tabs (click one, or press Tab), the main area with a sidebar on the left when the terminal is at least 90 columns wide (Ctrl+B or `/sidebar` hides it), the answers for the selected request as numbered buttons, the composer, and a status line (folder, run profile, agent, sign-in).
+
+**Tasks.** Runs are grouped Needs you, Running, Queued, Stopped and Done, refreshed every 1.5 s from the local runtime (`/api/workspace`, `/api/decisions`). A run that is waiting on a question sits under Needs you with it; so do requests from editors and agent apps that are not tied to a run here. Select one (arrows, or click) to see its progress and log. A waiting request shows its answers as buttons: a question's own options with the recommended one starred, plus Skip; a permission offers Allow once, Allow for this task, Always and Deny (never Always for a path outside the folder). Click a button, press its number, or type your own answer and press Enter. `/allow [once|task|always]`, `/deny [reason]` and `/answer <text>` do the same from the keyboard. The answer goes to `POST /api/decisions/:id/decide`, so the card on the web and the phone closes too. `/stop` and `/retry` act on the selected run.
+
+**Chat (Ensemble Code).** Messages go to `POST /api/assistant/turn` with a `code` session: the folder `ensemble` was opened in (`/folder` changes it), the agent (`/agent`: Ensemble's agent, Claude Code, Codex or Cursor), the run profile (`/profile`: the up to three profiles saved in the Assign dialog, or Quick; [02](02_MODULE_INTERACTION_HUB_UI.md), Assign to agent) and the chat model (`/model`). Ensemble Code has the assistant's tools plus code tools: list, read and search files in the folder; read PDF, Word, Excel and PowerPoint files as text; start an agent on a new task (`ensemble_start_agent`, which can also clone a repository by URL); and check a run (`ensemble_job_status`). It never edits files or runs commands itself: the agent it starts does, in the sandbox, under the profile's mode, git delivery, sandbox and internet settings. Changes wait for Apply as the assistant's write policy says (Settings → Assistant); press 1 to apply or 2 to discard. Esc stops a reply being written. `/new` starts a new chat. Ensemble Code runs only against a runtime on this computer (`ENSEMBLE_DESKTOP=1`); the hosted API refuses it with 409.
+
+**Slash commands.** Typing `/` opens a menu under the composer, filtered as you type, with this tab's commands first; arrows choose, Tab completes, Enter runs. `/run <what to do>` creates a task and starts the chosen agent on it in this folder with the run profile, without going through chat. Others: `/tasks`, `/chat`, `/trust` (trust this folder; Review only and Run unattended need it), `/keys [provider]` (add a model key, typed masked), `/sandbox`, `/hooks` (connect Claude Code, Codex, Copilot and Cursor to Needs me), `/login` and `/logout`, `/runner install|uninstall` (start Ensemble at login), `/status`, `/help`, `/exit`.
+
+**Keys.** Tab switches tabs (completes in the slash menu). With the composer empty, Up and Down select a run (or scroll the chat), Left and Right move between the buttons, and 1–9 press one. While typing, Up and Down step through what you sent before and Ctrl+A/E/U/W edit the line. PgUp/PgDn and the mouse wheel scroll, Esc closes a menu or clears the composer, Ctrl+C twice leaves. The chosen tab, agent, profile, chat model and sidebar are saved in `<config>/app.json`.
+
+### 2.2 Commands for scripts
+
+Every action is also a plain command for scripts and automation; `ensemble help commands` lists them (`ensemble help` and `--help` show the short version).
 
 | Command | What it does |
 |---|---|
@@ -68,7 +84,7 @@ An archive is about 120 MB (darwin-arm64 measured 116 MB on 6 Oct 2026) because 
 
 **Login.** `ensemble login` calls `POST /api/cli/auth/start`, prints a code like `BCDF-GHJK` and opens `https://app.ensemblework.com/link?code=…` (only `https:` URLs, or `http:` on localhost, are passed to the system browser; `apps/cli/src/browser.ts`). The `/link` page (signed in) shows "Ensemble CLI on ‹computer name›", the platform, CLI version, the network address that started the login (with a warning when it differs from the browser's) and the requested access. Approve stays disabled until you tick that you started this login and the code matches your terminal, because someone could send you a link carrying their own code. The CLI polls `POST /api/cli/auth/token` every 5 seconds. On approval the server mints a bridge-scope `ens_` key and, when "Run tasks" was approved (verified email required on the hosted site), a one-time device pairing code. Both are created at that one exchange and never stored raw; device and user codes are stored as SHA-256 hashes and expire after 10 minutes. Routes: `apps/hub-api/src/routes/cli-auth.ts`. The CLI then pairs through the local sidecar (`POST /api/remote/pair`), which registers the device with `POST /api/devices/register`. The key belongs to the Ensemble space that was open when the request was approved, so the CLI and editors read only that space ([28](28_ENSEMBLE_SPACES.md) §2).
 
-**Runner.** The runner is the desktop sidecar (`apps/hub-api/src/desktop/main.ts`) started without the Tauri window: one Node process with hub-api on a random loopback port, PGlite, the worker queue and the remote loop (`apps/hub-api/src/remote/loop.ts`). The loop holds an event stream to the hosted API, claims jobs for this device, runs them with the in-process model runtime and this computer's keys, and reports progress and results ([25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)). When a command needs the local API and the runner is not running (`folders`, `keys`, pairing at login), the CLI starts an admin-only sidecar with `ENSEMBLE_REMOTE_LOOP=off`, `ENSEMBLE_AGENT_QUEUE=off` and `ENSEMBLE_SCHEDULER=off`, so it never claims hosted work, and stops it afterwards.
+**Runner.** `ensemble` starts the runner in the background when none is running (the desktop app's runtime counts), and leaves it running on exit. The runner is the desktop sidecar (`apps/hub-api/src/desktop/main.ts`) started without the Tauri window: one Node process with hub-api on a random loopback port, PGlite, the worker queue and the remote loop (`apps/hub-api/src/remote/loop.ts`). The loop holds an event stream to the hosted API, claims jobs for this device, runs them with the in-process model runtime and this computer's keys, and reports progress and results ([25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)). When a command needs the local API and the runner is not running (`folders`, `keys`, pairing at login), the CLI starts an admin-only sidecar with `ENSEMBLE_REMOTE_LOOP=off`, `ENSEMBLE_AGENT_QUEUE=off` and `ENSEMBLE_SCHEDULER=off`, so it never claims hosted work, and stops it afterwards.
 
 **One runtime per computer.** The CLI and the desktop app run the same sidecar on the same data folder, so a computer has one database, one pairing, one list of trusted folders and one sandbox, whichever was installed first. A lock file (`runtime.lock`, `apps/hub-api/src/desktop/runtime-lock.ts`) stops a second sidecar from opening the database; it exits with code 75 and the launcher attaches to the one already running. The desktop app attaches to a running CLI runner (and starts its own on the same port and token if that runner stops); a CLI command uses the app's runtime when the app is open. `ensemble runner stop` does not stop the app's runtime, and a runner service waits while the app runs. `ensemble login` keeps the app's pairing when it is for the same server.
 
@@ -128,6 +144,7 @@ Local packaging needs a host matching the target: `pnpm cli:package -- --target 
 - Windows needs one admin prompt to turn its sandbox on (`ensemble sandbox setup`); until then a sandboxed task there is refused with that instruction ([24](24_DESKTOP_SANDBOXING.md) v4). `ensemble doctor` checks the sandbox.
 - The runner needs the full archive. The npm package (once published) carries only login, status and MCP.
 - One runtime per computer, shared with the desktop app (§4).
+- Ensemble Code reads documents with built-in readers; it does not load other MCP servers. Mouse clicks need a terminal that reports SGR mouse events; the keyboard does everything without them. A terminal narrower than 90 columns hides the sidebar.
 
 ## 9. Verified
 

@@ -64,7 +64,7 @@ const CLI_POINTS: { icon: IconName; title: string; body: string }[] = [
   {
     icon: "hand",
     title: "Questions come to you",
-    body: "Permission prompts and multiple-choice questions, with the same options and a box for your own answer, reach Needs me on the web, your phone, the app, or the terminal (ensemble needs).",
+    body: "Permission prompts and multiple-choice questions, with the same options and a box for your own answer, reach Needs me on the web, your phone, the app, or the terminal: click an answer, press its number, type your own, or /allow.",
   },
   {
     icon: "board",
@@ -304,8 +304,9 @@ export default function Home() {
               Your board, <em>your terminal.</em>
             </h2>
             <p className="section-lede">
-              The <code>ensemble</code> command pairs this computer with your board. Tasks you assign on the web run here, in a
-              sandbox the operating system enforces, and everything they need from you comes back to Needs me.
+              Type <code>ensemble</code> in a project. One tab shows your runs and what needs you; the other is Ensemble Code, a chat
+              that reads the folder and hands work to your coding agents. Tasks you assign on the web run here too, in a sandbox the
+              operating system enforces.
             </p>
           </div>
           <div className="cli-grid">
@@ -316,18 +317,18 @@ export default function Home() {
               <pre>
                 <code>
                   {[
-                    "$ ensemble login",
-                    "Logged in. This computer is paired as \"MacBook\".",
-                    "$ ensemble sandbox",
-                    "sandbox: macOS sandbox (Seatbelt)",
-                    "  internet off is enforced",
-                    "$ ensemble runner install",
-                    "$ ensemble needs",
-                    "1. Claude Code · Question: Add a README too?",
-                    "   1) Yes",
-                    "   2) No  (recommended)",
-                    "$ ensemble needs answer 1 2",
-                    "Sent: No. The task continues.",
+                    "$ cd ~/code/shop-api && ensemble",
+                    " ◆ Ensemble   Tasks · 1 needs you   Chat",
+                    "",
+                    " ◆ Add a README too?        Claude Code asks",
+                    "",
+                    "   1 Yes   2 ★ No   3 Skip   or type an answer",
+                    " › /run fix the flaky checkout test",
+                    "   Started Claude Code · Ask · may commit",
+                    " › /profile",
+                    "   ❯ Quick       Ask · may commit · sandbox on",
+                    "     Careful     Review only · local only",
+                    "     Overnight   Run unattended · may push",
                   ].join("\n")}
                 </code>
               </pre>
@@ -344,7 +345,7 @@ export default function Home() {
           </div>
           <div className="ctas">
             <a className="btn" href="/download">
-              Install the CLI <span aria-hidden="true">→</span>
+              Download the app or the CLI <span aria-hidden="true">→</span>
             </a>
           </div>
         </section>

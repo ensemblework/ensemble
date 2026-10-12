@@ -9,6 +9,8 @@ import { useSpaceAccess } from "@/lib/access";
 import { pickFolderNative } from "@/lib/desktop-dialog";
 import { computerName, folderPlace, freshCloneHint } from "@/lib/device-copy";
 import { usePersistentState } from "@/lib/prefs";
+import { setFeature } from "@/lib/features";
+import { useModuleState } from "@/lib/use-module";
 import { canAddProfile, defaultProfile, differs, newProfileId, profileChoices, profileSummary, quickProfile, removeProfile, upsertProfile, type ProfileFields } from "@/lib/run-profiles";
 import { useToast } from "../toast";
 import { Dialog, InfoTip, SettingRow, Spinner, Toggle, cx } from "../ui";
@@ -243,6 +245,16 @@ export function AssignDialog({
 }) {
   const client = useQueryClient();
   const toast = useToast();
+  const agentsState = useModuleState("workspace");
+  const enabling = useMutation({
+    mutationFn: async () => {
+      await setFeature(client, "workspace", true);
+      // Review of a code run lives in the code space.
+      await setFeature(client, "code", true);
+    },
+    onSuccess: () => toast("Agents are on for this space.", { tone: "ok" }),
+    onError: (error) => toast((error as Error).message, { tone: "error" }),
+  });
   const [taskId, setTaskId] = useState(fixedTaskId ?? "");
   const [kind, setKind] = usePersistentState<Kind>("ensemble.assign.kind", defaultKind ?? "research");
   const [modelChoice, setModelChoice] = usePersistentState("ensemble.assign.model", "");
@@ -566,6 +578,28 @@ export function AssignDialog({
 
   const candidates = (tasks.data?.tasks ?? []).filter((row) => !["done", "dropped"].includes(row.status));
   const trustTip = selectedDevice ? undefined : "Trust this folder first. Review only and Run unattended run commands without asking.";
+
+  // A space whose template leaves agents out: say so, and turn them on here, instead of a refused request.
+  if (open && agentsState === false) {
+    return (
+      <Dialog open={open} onClose={onClose} title="Turn on agents for this space?" width={520}>
+        <div className="space-y-3 text-[13.5px]">
+          <p>
+            This space was set up from a template without agents. Turning them on adds <span className="font-medium">Workspace</span> (agent runs, their questions and
+            logs) and <span className="font-medium">Code review</span> to this space. Your tasks and pages stay as they are, and you can turn them off again in Settings → Account → Features.
+          </p>
+          <div className="flex justify-end gap-2">
+            <button type="button" className="btn-ghost" onClick={onClose}>
+              Not now
+            </button>
+            <button type="button" className="btn-primary" disabled={enabling.isPending} onClick={() => enabling.mutate()}>
+              {enabling.isPending ? <Spinner size={12} /> : null} Turn on agents
+            </button>
+          </div>
+        </div>
+      </Dialog>
+    );
+  }
 
   return (
     <Dialog open={open} onClose={onClose} title="Assign to agent" width={640}>
