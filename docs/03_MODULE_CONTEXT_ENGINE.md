@@ -6,7 +6,7 @@
 
 ## 1. Responsibilities
 
-1. **Ingest** from pluggable connectors: Gmail, Outlook, Teams, calendar, GitHub, local workspace — later Notion, Linear, and office docs. **No Azure DevOps. No M365 Copilot.**
+1. **Ingest** from pluggable connectors: Gmail, Outlook, Teams, calendar, GitHub, local workspace — later Notion, Linear, and office docs. **No Azure DevOps sync** (it connects for search, attach and updates, [31](31_CONNECTORS_IN_USE.md)). **No M365 Copilot.**
 2. **Normalize** into a common `Artifact` shape with people, time, project and repo links.
 3. **Extract** commitments, asks, decisions, action items, deadlines (LLM, structured output).
 4. **Maintain the Engineer Graph** — a small personal knowledge graph: People, Projects, Repos, WorkItems, Meetings, Threads, Preferences — with evidence and confidence.
@@ -36,7 +36,7 @@ Uploaded document originals have a separate hosted per-user cap, `ENSEMBLE_MAX_D
 | `notion` / `linear` | Official APIs | P2 | pages, issues — import, then sync |
 | `office-docs` | Word / PPTX / Excel · Google Docs / Slides / Sheets | P2 | referenced files as artifacts (reuse §13 parser) |
 
-**Out of scope:** Azure DevOps, M365 Copilot paste, fabricated seed tenants.
+**Out of scope:** syncing Azure DevOps, M365 Copilot paste, fabricated seed tenants.
 
 Microsoft 365 as built (`apps/hub-api/src/connectors/microsoft.ts`, Graph v1.0, `$select`ed fields, `@odata.nextLink` paging that never leaves `graph.microsoft.com`):
 
@@ -59,12 +59,16 @@ The store lists every app in `CONNECTOR_CATALOG` (`packages/shared-types/src/con
 | `google` | accounts.google.com, `access_type=offline`, `include_granted_scopes=true` | `openid email profile` plus the products that are on (below) | email |
 | `microsoft` | login.microsoftonline.com/`common` v2.0 | `openid email profile offline_access User.Read` plus products | mail or UPN, Graph user id |
 | `github` | github.com OAuth App | `repo read:user read:org` | login |
-| `linear` | linear.app / api.linear.app | `read` | email, `auth: bearer` |
+| `linear` | linear.app / api.linear.app | `read comments:create` (comments only for "Post an update") | email, `auth: bearer` |
 | `notion` | api.notion.com, `owner=user`, JSON exchange with HTTP Basic | none | workspace name, `workspaceId`, `botId` |
 | `atlassian` | auth.atlassian.com, `audience=api.atlassian.com`, `prompt=consent` | `read:jira-work read:jira-user offline_access` | `cloudId`, `site`, `siteName` from accessible-resources, `auth: bearer` |
-| `slack` | slack.com/oauth/v2, `user_scope` | `channels:history groups:history im:history mpim:history users:read users:read.email` (user token from `authed_user`) | `user @ team` |
+| `slack` | slack.com/oauth/v2, `user_scope` | `channels:history groups:history im:history mpim:history channels:read groups:read users:read users:read.email` (user token from `authed_user`; the two `:read` scopes let "Add from apps" list channels) | `user @ team` |
 | `zoom` | zoom.us, HTTP Basic exchange; scopes come from the app | `user:read:user meeting:read:list_meetings cloud_recording:read:list_user_recordings cloud_recording:read:meeting_transcript meeting:read:summary` | email |
 | `docusign` | account-d.docusign.com (`DOCUSIGN_ENV=demo`, default) or account.docusign.com | `signature` | email, default account `accountId`, `baseUri` |
+| `dropbox` | dropbox.com/oauth2, `token_access_type=offline`, PKCE | `account_info.read files.metadata.read files.content.read` | email |
+| `box` | account.box.com / api.box.com; scopes come from the app; refresh tokens are single use and the rotated one is saved | none | login |
+| `xero` | login.xero.com / identity.xero.com, HTTP Basic exchange | `openid profile email offline_access accounting.invoices.read accounting.contacts.read` (`XERO_SCOPES` for older apps) | first organisation's `tenantId`, `tenantName` |
+| `discord` | discord.com/oauth2, bot install (`permissions=66560`: view channels, read message history) | `identify guilds bot` | username, the servers the bot was added to (`guilds`; a second install adds to the list). Channels are read with the operator's `DISCORD_BOT_TOKEN`, only for those servers |
 
 **Products.** Google Workspace and Microsoft 365 are suites (`src/connectors/products.ts`). Connect asks only for the base scopes and the scopes of the products that are on: `GET /api/connectors/:provider/start?products=a,b` takes an explicit list, otherwise the saved toggles in `settings.connectorProducts`. `PUT /api/connectors/:id/products` saves toggles; switching a product off applies at once (its sync sources switch off), and switching on a product whose scopes the stored token lacks returns `{ reconnect: true, url }` so the person approves only the new access. The toggle is saved when the callback comes back with that scope granted (Google lets people untick a permission on its consent screen).
 
@@ -110,7 +114,7 @@ Google Calendar sync reads the calendars shown in Google Calendar (`calendarList
 
 ### 2.2 Remote MCP connectors
 
-Catalog entries with an `mcp` URL in `packages/shared-types/src/connectors.ts` (49 marked ready on 7 Oct 2026: work tools such as Notion, Linear, Atlassian, Todoist, ClickUp, monday.com and Airtable; meeting recorders such as Granola, Fireflies, Fathom and Otter; and Canva, Miro, Calendly, Cal.com, Pipedrive, Attio, PostHog, Mixpanel, QuickBooks, Greenhouse and others) and any remote MCP URL a person pastes connect to the vendor's own hosted MCP server. The operator registers nothing per vendor: Ensemble introduces itself to each vendor's authorization server. The assistant then gets that server's tools.
+Catalog entries with an `mcp` URL in `packages/shared-types/src/connectors.ts` (work tools such as Notion, Linear, Atlassian, Asana, Todoist, ClickUp, monday.com, Airtable, Shortcut, Basecamp and Productboard; meeting recorders such as Granola, Fireflies, Fathom and Otter; developer and cloud services such as GitHub, GitLab, Sentry, Netlify, Cloudflare, Grafana Cloud, AWS and Datadog; and Canva, Miro, HubSpot, Salesforce, Intercom, Calendly, QuickBooks, Greenhouse and others; the full list is in [31 §4](31_CONNECTORS_IN_USE.md#4-every-connector)) and any remote MCP URL a person pastes connect to the vendor's own hosted MCP server. For most of them the operator registers nothing: Ensemble introduces itself to each vendor's authorization server. The assistant then gets that server's tools.
 
 Code: `apps/hub-api/src/connectors/mcp/` (`manager.ts` connect/callback/calls, `provider.ts` the SDK `OAuthClientProvider` backed by the row, `url-guard.ts`, `store.ts`, `schema.ts`, `config.ts`), routes in `src/routes/mcp-connections.ts` ([02 §6](02_MODULE_INTERACTION_HUB_UI.md#6-api-contract-hub-api--ui-abridged)), assistant tools in `src/assistant/mcp-tools.ts`. It uses the `@modelcontextprotocol/sdk` client (`auth()`, `StreamableHTTPClientTransport`, and `SSEClientTransport` when a server answers 404 or 405 to Streamable HTTP). One row per person and server in `mcp_connections`; the OAuth client, cached discovery and tokens are encrypted with `lib/secrets.ts`, and tokens are never returned or logged.
 
@@ -123,7 +127,14 @@ Code: `apps/hub-api/src/connectors/mcp/` (`manager.ts` connect/callback/calls, `
 5. The authorize URL carries a PKCE S256 challenge, `resource` (RFC 8707, the server's resource from its metadata), a scope only when the server names one (`WWW-Authenticate` scope or `scopes_supported`), and a 32-byte state stored on the row for 10 minutes. The route returns `{ id, status: "pending", authorizeUrl }`.
 6. `GET /api/mcp-connections/callback` is public (listed in `lib/auth-public.ts`); the single-use state ties it to the connection. On hosted the browser must also have an Ensemble session (`SameSite=Lax`, so it arrives with the vendor's redirect) for the person who started the connection. Otherwise nothing is exchanged or saved, the state is spent, and the person sees "Sign in to Ensemble in this browser" or "started from a different Ensemble account". This stops someone sending their own sign-in link to another person to collect that person's tokens. Local and desktop skip the session check. The callback exchanges the code with the verifier and `resource`, lists tools (all pages, up to 200), caches them, and redirects to `${HUB_WEB_ORIGIN}${returnTo}` with `mcp=connected` or `mcp=error&mcpError=<message>`. A refusal at the vendor (for example Atlassian's domain allowlist) is shown in the vendor's own words and saved as `lastError`.
 
-**Tokens instead of sign-in.** `{ url, name, token }` or `{ serverId, token }` sends the token as `Authorization: Bearer`. Ensemble lists the server's tools with it first, so a refused token is a 400 (`MCP_TOKEN_REFUSED`) and nothing is saved. Use this for GitHub's MCP server (`https://api.githubcopilot.com/mcp/`, no dynamic registration; paste a personal access token), Hugging Face or Zapier keys, and private servers.
+**Tokens instead of sign-in.** `{ url, name, token }` or `{ serverId, token }` sends the token as `Authorization: Bearer`. Ensemble lists the server's tools with it first, so a refused token is a 400 (`MCP_TOKEN_REFUSED`) and nothing is saved. Use this for Hugging Face or Zapier keys and private servers. Catalog entries with `mcp.token` offer it up front (`only: true` for servers that take nothing else from Ensemble yet: Intercom until its redirect allowlist includes Ensemble, Render, Smartsheet, Wrike).
+
+**Other ways a catalog server signs in** (fields of the entry's `mcp`; [31 §3](31_CONNECTORS_IN_USE.md#3-ways-to-connect)):
+
+- `fields`: the address has `{placeholders}` the person fills in (Grafana Cloud's `{stack}`, AWS's `{region}`). Each value must match the field's `pattern`, a pasted URL or a repeated suffix is trimmed (`fieldnote.grafana.net` → `fieldnote`), and a reconnect reuses the values the stored address was built from (`fillMcpUrl`, `mcpFieldsFromUrl` in `src/routes/mcp-connections.ts`). Anything else is a 400 `MCP_FIELD` before any network call.
+- `client`: the server accepts only clients registered with the vendor (HubSpot, Asana, Slack, Dropbox). Whoever runs Ensemble registers one per server, once, and saves it like a sign-in app under the key in `client.app` (`hubspot_mcp`, `asana_mcp`, `slack_mcp`, `dropbox_mcp`; steps in `src/connectors/mcp/client-apps.ts`, redirect URI = the MCP callback). Connect sends it as the pre-registered client; without it the route answers 409 `MCP_APP_MISSING` and the catalog state has `mcpReady: false`.
+- `ownClient`: each organisation registers its own app (Salesforce's External Client App, Front's developer app) and the person pastes its client ID and secret, as with a custom server.
+- `connection`: the server takes the person's existing connection to that app as a bearer token (GitHub's MCP server takes the GitHub connection; Linear's takes the Linear connection). `{ serverId, useConnection: true }` stores no token: the row's envelope says `auth: "connection"` and names the provider, and every call reads the current token through `providerAccessToken`, so a reconnected or rotated GitHub token is used at once and a removed one turns the MCP connection to "reconnect".
 
 **What the person sees.** Connect opens the vendor's approval page; afterwards Settings shows the server as connected with its tools, each of which can be switched off (`PATCH /api/mcp-connections/:id { disabledTools }`). A whole server can be switched off and on (`status`). `POST /api/mcp-connections/:id/refresh-tools` lists tools again. `DELETE` revokes the tokens at the vendor when its metadata has a `revocation_endpoint`, then deletes the row. Ledger actions: `mcp.connect`, `mcp.enable`, `mcp.disable`, `mcp.disconnect`.
 
@@ -142,9 +153,17 @@ Code: `apps/hub-api/src/connectors/mcp/` (`manager.ts` connect/callback/calls, `
 | Notion, Linear, Atlassian, Todoist, Airtable, Granola, Canva, Sentry, Hugging Face | Offer CIMD; hosted (https) uses it, desktop uses DCR |
 | ClickUp, monday.com, Miro, Webflow, Stripe, Supabase, Zapier | DCR. monday.com, Miro and Supabase take only confidential clients, so they get a stored client secret |
 | Atlassian (Rovo) | A site admin may need to allow Ensemble's domain (`api.ensemblework.com` on the hosted service) for the Rovo MCP server; the refusal is shown as it comes back |
-| Asana (`mcp.asana.com/v2`) | No DCR and no CIMD: Connect answers `MCP_TOKEN_REQUIRED`. Use a client the person registered in Asana's developer console (`clientId`/`clientSecret`) |
+| Asana (`mcp.asana.com/v2`), HubSpot (`mcp.hubspot.com`), Slack (`mcp.slack.com/mcp`), Dropbox (`mcp.dropbox.com/mcp`) | No DCR and no CIMD: they use the operator's registered client (`mcp.client`). Slack's MCP server only accepts Slack apps published in the Marketplace or used inside their own workspace; Dropbox needs production approval after 50 linked people |
+| GitHub (`api.githubcopilot.com/mcp/`), Linear | Sign in with the person's GitHub or Linear connection (`mcp.connection`); organisations that restrict OAuth apps may need to approve Ensemble's GitHub app |
+| Salesforce, Front | Each organisation's own app (`mcp.ownClient`) |
+| Grafana Cloud, AWS (your account) | DCR and CIMD on an address with the person's stack or Region. Grafana needs Grafana Assistant on and the Cloud MCP User role; AWS needs the `AWSMCPSignInOAuthAccessPolicy` policy and its sign-ins last 12 hours |
+| AWS Knowledge | Open, no sign-in |
+| Cloudflare, Stripe | DCR or CIMD, or a pasted Cloudflare API token / Stripe agent key |
+| Intercom | DCR only for allowlisted redirect URIs, so the catalog asks for an access token (`token.only`) until Intercom allowlists Ensemble's callback |
+| Loom | Through Atlassian's Rovo MCP server (same address as the Jira entry); the Loom workspace must be linked to an Atlassian site |
+| Datadog, incident.io, Ramp | DCR, but the customer's admin (or the vendor) must allow Ensemble's callback address |
 | Hugging Face | Connects without a sign-in (public tools only). Paste a Hugging Face token for account tools |
-| Figma, Dropbox, Vercel | Listed as coming soon: their MCP servers accept only clients they approved |
+| Figma, Vercel | Their MCP servers accept only clients they approved, so Figma and Vercel connect with a pasted token to their REST APIs instead ([31](31_CONNECTORS_IN_USE.md)) |
 
 ### 2.3 Meeting-notes sources
 
@@ -160,7 +179,7 @@ Meeting tools with a personal API key sync into Meeting notes (`apps/hub-api/src
 | `jamie` | `GET beta-api.meetjamie.ai/v1/me/meetings.list` and `meetings.get` (`input={"json":…}`), `x-api-key` | Personal key (`jk_…`); Pro, Team or Enterprise |
 | `otter` | `GET api.otter.ai/v1/conversations`, `/conversations/{id}?include=action_items,transcript,outline` | Integrations → Developer; Enterprise workspaces only |
 
-Read AI (OAuth only, no personal keys), Avoma, Gong, Grain, Fellow, Supernormal, MeetGeek, Bluedot and Tactiq are MCP-only catalog entries, and so are the MCP sides of Fireflies, Fathom, Krisp, Jamie and Otter. Loom is listed as coming soon: it has no public transcript API.
+Read AI (OAuth only, no personal keys), Avoma, Gong, Grain, Fellow, Supernormal, MeetGeek, Bluedot and Tactiq are MCP-only catalog entries, and so are the MCP sides of Fireflies, Fathom, Krisp, Jamie and Otter. Loom has no public transcript API; its catalog entry connects Atlassian's Rovo MCP server, whose Loom tools return a video's transcript, comments and AI summary when the Loom workspace is linked to an Atlassian site.
 
 Every vendor maps its response into one `MeetingRecord` (`meetings/types.ts`); `meetings/ingest.ts` then does the same for all of them:
 

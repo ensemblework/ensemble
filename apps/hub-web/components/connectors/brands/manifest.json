@@ -1,0 +1,782 @@
+{
+  "google": {
+    "name": "Google Workspace",
+    "file": "google.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): google-icon"
+  },
+  "gmail": {
+    "name": "Gmail",
+    "file": "gmail.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): google-gmail"
+  },
+  "googlecalendar": {
+    "name": "Google Calendar",
+    "file": "googlecalendar.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): google-calendar"
+  },
+  "googledrive": {
+    "name": "Google Drive",
+    "file": "googledrive.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): google-drive"
+  },
+  "googlemeet": {
+    "name": "Google Meet",
+    "file": "googlemeet.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): google-meet"
+  },
+  "microsoft": {
+    "name": "Microsoft 365",
+    "file": "microsoft.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): microsoft-icon"
+  },
+  "outlook": {
+    "name": "Outlook",
+    "file": "outlook.svg",
+    "fit": "pad",
+    "source": "Iconify “vscode-icons” set (MIT): file-type-outlook"
+  },
+  "teams": {
+    "name": "Microsoft Teams",
+    "file": "teams.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): microsoft-teams"
+  },
+  "onedrive": {
+    "name": "OneDrive",
+    "file": "onedrive.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): microsoft-onedrive"
+  },
+  "sharepoint": {
+    "name": "SharePoint",
+    "file": "sharepoint.svg",
+    "fit": "pad",
+    "source": "Simple Icons (CC0) in the brand colour: microsoftsharepoint, #0078D4"
+  },
+  "azure": {
+    "name": "Microsoft Azure",
+    "file": "azure.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): microsoft-azure"
+  },
+  "azuredevops": {
+    "name": "Azure DevOps",
+    "file": "azuredevops.svg",
+    "fit": "pad",
+    "source": "Iconify “devicon” set (MIT): azuredevops"
+  },
+  "aws": {
+    "name": "Amazon Web Services",
+    "file": "aws.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): aws"
+  },
+  "slack": {
+    "name": "Slack",
+    "file": "slack.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): slack-icon"
+  },
+  "discord": {
+    "name": "Discord",
+    "file": "discord.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): discord-icon"
+  },
+  "notion": {
+    "name": "Notion",
+    "file": "notion.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): notion-icon"
+  },
+  "linear": {
+    "name": "Linear",
+    "file": "linear.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): linear-icon"
+  },
+  "github": {
+    "name": "GitHub",
+    "file": "github.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): github-icon"
+  },
+  "gitlab": {
+    "name": "GitLab",
+    "file": "gitlab.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): gitlab-icon"
+  },
+  "bitbucket": {
+    "name": "Bitbucket",
+    "file": "bitbucket.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): bitbucket"
+  },
+  "jira": {
+    "name": "Jira",
+    "file": "jira.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): jira"
+  },
+  "confluence": {
+    "name": "Confluence",
+    "file": "confluence.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): confluence"
+  },
+  "atlassian": {
+    "name": "Atlassian",
+    "file": "atlassian.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): atlassian"
+  },
+  "trello": {
+    "name": "Trello",
+    "file": "trello.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): trello"
+  },
+  "asana": {
+    "name": "Asana",
+    "file": "asana.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): asana-icon"
+  },
+  "todoist": {
+    "name": "Todoist",
+    "file": "todoist.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): todoist-icon"
+  },
+  "clickup": {
+    "name": "ClickUp",
+    "file": "clickup.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): clickup-icon"
+  },
+  "monday": {
+    "name": "monday.com",
+    "file": "monday.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): monday-icon"
+  },
+  "airtable": {
+    "name": "Airtable",
+    "file": "airtable.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): airtable"
+  },
+  "coda": {
+    "name": "Coda",
+    "file": "coda.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): coda-icon"
+  },
+  "zoom": {
+    "name": "Zoom",
+    "file": "zoom.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): zoom-icon"
+  },
+  "loom": {
+    "name": "Loom",
+    "file": "loom.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): loom-icon"
+  },
+  "granola": {
+    "name": "Granola",
+    "file": "granola.webp",
+    "fit": "fill",
+    "source": "Granola's own site icon, https://www.granola.ai/favicon/favicon.svg (rendered to 96 px)"
+  },
+  "fireflies": {
+    "name": "Fireflies.ai",
+    "file": "fireflies.webp",
+    "fit": "fill",
+    "source": "Fireflies.ai's own site icon, https://fireflies.ai/apple-icon.png?81a7679a0c7e6094 (resized to 96 px)"
+  },
+  "fathom": {
+    "name": "Fathom",
+    "file": "fathom.webp",
+    "fit": "fill",
+    "source": "Fathom's own site icon, https://cdn.prod.website-files.com/6899da9beccbdbe92be49b5d/6a4282cf896cae98018bfa8c_fathom_favicon.png (resized to 96 px)"
+  },
+  "tldv": {
+    "name": "tl;dv",
+    "file": "tldv.webp",
+    "fit": "fill",
+    "source": "tl;dv's own site icon, https://tldv.io/faviconV2.png (resized to 96 px)"
+  },
+  "krisp": {
+    "name": "Krisp",
+    "file": "krisp.webp",
+    "fit": "fill",
+    "source": "Krisp's own site icon, https://krisp.ai/wp-content/uploads/2023/12/cropped-favicon-1-180x180.png (resized to 96 px)"
+  },
+  "jamie": {
+    "name": "Jamie",
+    "file": "jamie.svg",
+    "fit": "fill",
+    "source": "Jamie's own site icon, https://www.meetjamie.ai/favicon.svg"
+  },
+  "otter": {
+    "name": "Otter.ai",
+    "file": "otter.webp",
+    "fit": "fill",
+    "source": "Otter.ai's own site icon, https://cdn.prod.website-files.com/618e9316785b3582a5178502/618e943a80919a98b5e9bf69_apple-icon.png (resized to 96 px)"
+  },
+  "readai": {
+    "name": "Read AI",
+    "file": "readai.webp",
+    "fit": "fill",
+    "source": "Read AI's own site icon, https://cdn.prod.website-files.com/614e5e239ea0f25fe5b6a797/615f71de842b191ea061fda6_ReadLogomark_256x256.png (resized to 96 px)"
+  },
+  "avoma": {
+    "name": "Avoma",
+    "file": "avoma.webp",
+    "fit": "fill",
+    "source": "Avoma's own site icon, https://cdn.prod.website-files.com/5de236b4d41434460ade73ac/5de60e45eee20578cc43a906_Avoma-Icon-Color-256.png (resized to 96 px)"
+  },
+  "gong": {
+    "name": "Gong",
+    "file": "gong.svg",
+    "fit": "fill",
+    "source": "Gong's own site icon, https://www.gong.io/marketing-assets/favicon.svg"
+  },
+  "grain": {
+    "name": "Grain",
+    "file": "grain.webp",
+    "fit": "fill",
+    "source": "Grain's own site icon, https://cdn.prod.website-files.com/5f5e90c17e7c9eb95c7acb17/5f7c00be1be3c48c24ce7977_Grain-Web-Clip.png (resized to 96 px)"
+  },
+  "fellow": {
+    "name": "Fellow",
+    "file": "fellow.webp",
+    "fit": "fill",
+    "source": "Fellow's own site icon, https://framerusercontent.com/images/W3zP48ABQ5JvFZqDFzSM0WCWKg.png (resized to 96 px)"
+  },
+  "meetgeek": {
+    "name": "MeetGeek",
+    "file": "meetgeek.webp",
+    "fit": "fill",
+    "source": "MeetGeek's own site icon, https://cdn.prod.website-files.com/63af97f08f22087ab0e44f0a/63bcb98e8eab05a5e0004c20_MeetGeek%20Webclip.png (resized to 96 px)"
+  },
+  "bluedot": {
+    "name": "Bluedot",
+    "file": "bluedot.webp",
+    "fit": "fill",
+    "source": "Bluedot's own site icon, https://cdn.prod.website-files.com/64ba882066506a1a593a0def/6a8856388ab6fc80118e64d7_Dot%2032px.png (resized to 96 px)"
+  },
+  "tactiq": {
+    "name": "Tactiq",
+    "file": "tactiq.webp",
+    "fit": "fill",
+    "source": "Tactiq's own site icon, https://cdn.prod.website-files.com/61120cb2509e011efcf0b1e4/675659f30393924f83fb1f3b_Tactiq%20Webclip%20(1).png (resized to 96 px)"
+  },
+  "docusign": {
+    "name": "Docusign",
+    "file": "docusign.webp",
+    "fit": "fill",
+    "source": "Docusign's own site icon, https://www.docusign.com/assets/images/apple-touch-icon-180x180.png (resized to 96 px)"
+  },
+  "canva": {
+    "name": "Canva",
+    "file": "canva.svg",
+    "fit": "pad",
+    "source": "Iconify “devicon” set (MIT): canva"
+  },
+  "miro": {
+    "name": "Miro",
+    "file": "miro.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): miro-icon"
+  },
+  "figma": {
+    "name": "Figma",
+    "file": "figma.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): figma"
+  },
+  "webflow": {
+    "name": "Webflow",
+    "file": "webflow.svg",
+    "fit": "fill",
+    "source": "Simple Icons (CC0) in the brand colour: webflow, #146EF5"
+  },
+  "gamma": {
+    "name": "Gamma",
+    "file": "gamma.svg",
+    "fit": "pad",
+    "source": "Gamma's own site icon, https://static.gamma.app/favicons/favicon_dark.svg"
+  },
+  "pitch": {
+    "name": "Pitch",
+    "file": "pitch.webp",
+    "fit": "fill",
+    "source": "Pitch's own site icon, https://framerusercontent.com/images/ZDXuG5VMV3iJ6FfqEQHgtZkhnM.png (resized to 96 px)"
+  },
+  "sentry": {
+    "name": "Sentry",
+    "file": "sentry.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): sentry-icon"
+  },
+  "stripe": {
+    "name": "Stripe",
+    "file": "stripe.svg",
+    "fit": "fill",
+    "source": "Simple Icons (CC0) in the brand colour: stripe, #635BFF"
+  },
+  "supabase": {
+    "name": "Supabase",
+    "file": "supabase.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): supabase-icon"
+  },
+  "huggingface": {
+    "name": "Hugging Face",
+    "file": "huggingface.webp",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): hugging-face-icon (rendered to 96 px)"
+  },
+  "zapier": {
+    "name": "Zapier",
+    "file": "zapier.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): zapier-icon"
+  },
+  "vercel": {
+    "name": "Vercel",
+    "file": "vercel.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): vercel-icon"
+  },
+  "netlify": {
+    "name": "Netlify",
+    "file": "netlify.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): netlify-icon"
+  },
+  "cloudflare": {
+    "name": "Cloudflare",
+    "file": "cloudflare.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): cloudflare-icon"
+  },
+  "grafana": {
+    "name": "Grafana",
+    "file": "grafana.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): grafana"
+  },
+  "datadog": {
+    "name": "Datadog",
+    "file": "datadog.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): datadog-icon"
+  },
+  "pagerduty": {
+    "name": "PagerDuty",
+    "file": "pagerduty.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): pagerduty-icon"
+  },
+  "neon": {
+    "name": "Neon",
+    "file": "neon.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): neon-icon"
+  },
+  "postman": {
+    "name": "Postman",
+    "file": "postman.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): postman-icon"
+  },
+  "dropbox": {
+    "name": "Dropbox",
+    "file": "dropbox.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): dropbox"
+  },
+  "box": {
+    "name": "Box",
+    "file": "box.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): box"
+  },
+  "hubspot": {
+    "name": "HubSpot",
+    "file": "hubspot.svg",
+    "fit": "pad",
+    "source": "Simple Icons (CC0) in the brand colour: hubspot, #FF7A59"
+  },
+  "intercom": {
+    "name": "Intercom",
+    "file": "intercom.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): intercom-icon"
+  },
+  "salesforce": {
+    "name": "Salesforce",
+    "file": "salesforce.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): salesforce"
+  },
+  "zendesk": {
+    "name": "Zendesk",
+    "file": "zendesk.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): zendesk-icon"
+  },
+  "front": {
+    "name": "Front",
+    "file": "front.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): frontapp"
+  },
+  "xero": {
+    "name": "Xero",
+    "file": "xero.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): xero"
+  },
+  "quickbooks": {
+    "name": "QuickBooks",
+    "file": "quickbooks.webp",
+    "fit": "fill",
+    "source": "QuickBooks's own site icon, https://quickbooks.intuit.com/cas/dam/IMAGE/A8u8GvpJS/apple-touch-icon-152x152.png (resized to 96 px)"
+  },
+  "paypal": {
+    "name": "PayPal",
+    "file": "paypal.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): paypal"
+  },
+  "shopify": {
+    "name": "Shopify",
+    "file": "shopify.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): shopify"
+  },
+  "square": {
+    "name": "Square",
+    "file": "square.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): square"
+  },
+  "calendly": {
+    "name": "Calendly",
+    "file": "calendly.svg",
+    "fit": "pad",
+    "source": "Calendly's own site icon, https://calendly.com/media/favicon/icon.svg"
+  },
+  "caldotcom": {
+    "name": "Cal.com",
+    "file": "caldotcom.webp",
+    "fit": "fill",
+    "source": "Cal.com's own site icon, https://framerusercontent.com/images/63tSo3fa0ylcjt88Er8WTEPS6Dw.png (resized to 96 px)"
+  },
+  "evernote": {
+    "name": "Evernote",
+    "file": "evernote.svg",
+    "fit": "pad",
+    "source": "Evernote's own site icon, https://evernote.com/images/evernote-logo-icon.svg"
+  },
+  "readwise": {
+    "name": "Readwise",
+    "file": "readwise.webp",
+    "fit": "pad",
+    "source": "Readwise's own site icon, https://d34adp677peecb.cloudfront.net/static/images/favicons/favicon-32x32.8706bd85b82f.png (resized to 96 px)"
+  },
+  "guru": {
+    "name": "Guru",
+    "file": "guru.webp",
+    "fit": "fill",
+    "source": "Guru's own site icon, https://cdn.prod.website-files.com/5d8d029013ffd80bbb91320d/6216a21ee8829c7531435bc8_Guru_G_Black%202256.png (resized to 96 px)"
+  },
+  "pipedrive": {
+    "name": "Pipedrive",
+    "file": "pipedrive.webp",
+    "fit": "fill",
+    "source": "Pipedrive's own site icon, the vendor's website (resized to 96 px)"
+  },
+  "attio": {
+    "name": "Attio",
+    "file": "attio.webp",
+    "fit": "pad",
+    "source": "Attio's own site icon, the vendor's website (resized to 96 px)"
+  },
+  "close": {
+    "name": "Close",
+    "file": "close.webp",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): close (rendered to 96 px)"
+  },
+  "customerio": {
+    "name": "Customer.io",
+    "file": "customerio.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): customerio-icon"
+  },
+  "whatsapp": {
+    "name": "WhatsApp",
+    "file": "whatsapp.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): whatsapp-icon"
+  },
+  "posthog": {
+    "name": "PostHog",
+    "file": "posthog.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): posthog-icon"
+  },
+  "mixpanel": {
+    "name": "Mixpanel",
+    "file": "mixpanel.svg",
+    "fit": "pad",
+    "source": "Simple Icons (CC0) in the brand colour: mixpanel, #7856FF"
+  },
+  "amplitude": {
+    "name": "Amplitude",
+    "file": "amplitude.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): amplitude-icon"
+  },
+  "greenhouse": {
+    "name": "Greenhouse",
+    "file": "greenhouse.webp",
+    "fit": "fill",
+    "source": "Greenhouse's own site icon, https://cdn.prod.website-files.com/6668a687e71e2722fccb8357/679a83f9b21b5caab0c682c9_GH-logo-web.png (resized to 96 px)"
+  },
+  "ashby": {
+    "name": "Ashby",
+    "file": "ashby.webp",
+    "fit": "fill",
+    "source": "Ashby's own site icon, https://www.ashbyhq.com/icon.png (resized to 96 px)"
+  },
+  "supernormal": {
+    "name": "Supernormal",
+    "file": "supernormal.webp",
+    "fit": "fill",
+    "source": "Supernormal's own site icon, the vendor's website (resized to 96 px)"
+  },
+  "snowflake": {
+    "name": "Snowflake",
+    "file": "snowflake.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): snowflake-icon"
+  },
+  "databricks": {
+    "name": "Databricks",
+    "file": "databricks.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): databricks-icon"
+  },
+  "googlecloud": {
+    "name": "Google Cloud",
+    "file": "googlecloud.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): google-cloud"
+  },
+  "context7": {
+    "name": "Context7",
+    "file": "context7.svg",
+    "fit": "pad",
+    "source": "Iconify “vscode-icons” set (MIT): file-type-context7"
+  },
+  "exa": {
+    "name": "Exa",
+    "file": "exa.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): exa-icon"
+  },
+  "perplexity": {
+    "name": "Perplexity",
+    "file": "perplexity.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): perplexity-icon"
+  },
+  "brave": {
+    "name": "Brave Search",
+    "file": "brave.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): brave"
+  },
+  "playwright": {
+    "name": "Playwright",
+    "file": "playwright.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): playwright"
+  },
+  "prisma": {
+    "name": "Prisma",
+    "file": "prisma.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): prisma"
+  },
+  "railway": {
+    "name": "Railway",
+    "file": "railway.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): railway"
+  },
+  "planetscale": {
+    "name": "PlanetScale",
+    "file": "planetscale.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): planetscale"
+  },
+  "resend": {
+    "name": "Resend",
+    "file": "resend.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): resend-icon"
+  },
+  "wix": {
+    "name": "Wix",
+    "file": "wix.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): wix"
+  },
+  "shortcut": {
+    "name": "Shortcut",
+    "file": "shortcut.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): shortcut-icon"
+  },
+  "basecamp": {
+    "name": "Basecamp",
+    "file": "basecamp.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): basecamp-icon"
+  },
+  "typeform": {
+    "name": "Typeform",
+    "file": "typeform.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): typeform-icon"
+  },
+  "heroku": {
+    "name": "Heroku",
+    "file": "heroku.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): heroku-icon"
+  },
+  "productboard": {
+    "name": "Productboard",
+    "file": "productboard.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): productboard-icon"
+  },
+  "firecrawl": {
+    "name": "Firecrawl",
+    "file": "firecrawl.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): firecrawl-icon"
+  },
+  "incidentio": {
+    "name": "incident.io",
+    "file": "incidentio.svg",
+    "fit": "pad",
+    "source": "Iconify “logos” set (SVG Logos by Gil Barbara, CC0): incident-icon"
+  },
+  "smartsheet": {
+    "name": "Smartsheet",
+    "file": "smartsheet.webp",
+    "fit": "fill",
+    "source": "Smartsheet's own site icon, https://www.smartsheet.com/sites/default/files/favicons/apple-touch-icon.png (resized to 96 px)"
+  },
+  "wrike": {
+    "name": "Wrike",
+    "file": "wrike.webp",
+    "fit": "pad",
+    "source": "Wrike's own site icon, the vendor's website (resized to 96 px)"
+  },
+  "klaviyo": {
+    "name": "Klaviyo",
+    "file": "klaviyo.webp",
+    "fit": "fill",
+    "source": "Klaviyo's own site icon, https://www.klaviyo.com/icons/icon-512x512.png (resized to 96 px)"
+  },
+  "deel": {
+    "name": "Deel",
+    "file": "deel.webp",
+    "fit": "fill",
+    "source": "Deel's own site icon, https://www.deel.com/apple-icon.png?d2b410d8d6714d15 (resized to 96 px)"
+  },
+  "mercury": {
+    "name": "Mercury",
+    "file": "mercury.webp",
+    "fit": "fill",
+    "source": "Mercury's own site icon, https://mercury.com/icon.svg?icon.2sq_8nnp61c03.svg (rendered to 96 px)"
+  },
+  "jam": {
+    "name": "Jam",
+    "file": "jam.svg",
+    "fit": "pad",
+    "source": "Jam's own site icon, https://framerusercontent.com/images/3zAY5a6TukbdTWkNAkTDO1Yqpc.svg"
+  },
+  "ramp": {
+    "name": "Ramp",
+    "file": "ramp.webp",
+    "fit": "fill",
+    "source": "Ramp's own site icon, https://ramp.com/apple-touch-icon.png (resized to 96 px)"
+  },
+  "tavily": {
+    "name": "Tavily",
+    "file": "tavily.svg",
+    "fit": "pad",
+    "source": "Tavily's own site icon, https://www.tavily.com/icon.svg?icon.0v6b1ltlljvdd.svg"
+  },
+  "clay": {
+    "name": "Clay",
+    "file": "clay.webp",
+    "fit": "fill",
+    "source": "Clay's own site icon, https://cdn.prod.website-files.com/61477f2c24a826836f969afe/6a3a92ab3c92c9caa6245619_dot-com_favicon_2026_512.png (resized to 96 px)"
+  },
+  "apollo": {
+    "name": "Apollo.io",
+    "file": "apollo.webp",
+    "fit": "fill",
+    "source": "Apollo.io's own site icon, https://www.apollo.io/icon.svg?icon.11df6mby0rn6l.svg (rendered to 96 px)"
+  },
+  "hex": {
+    "name": "Hex",
+    "file": "hex.svg",
+    "fit": "pad",
+    "source": "Hex's own site icon, https://hex.tech/favicon.svg"
+  },
+  "egnyte": {
+    "name": "Egnyte",
+    "file": "egnyte.webp",
+    "fit": "fill",
+    "source": "Egnyte's own site icon, https://www.egnyte.com/sites/default/files/2020-03/iPhone-6-Plus.png (resized to 96 px)"
+  },
+  "render": {
+    "name": "Render",
+    "file": "render.svg",
+    "fit": "pad",
+    "source": "Render's own site icon, https://render.com/icon.svg?icon.00d01gt742wgb.svg?dpl=5f949945db"
+  },
+  "paddle": {
+    "name": "Paddle",
+    "file": "paddle.webp",
+    "fit": "fill",
+    "source": "Paddle's own site icon, https://www.paddle.com/icon4.png?icon4.2505fc7ib2tqc.png?dpl=9147c0483658cb065944c081c2414035e7e78e65c8238da28ba0bfcb68d59191366163393231383831313334613430303038626666313930 (resized to 96 px)"
+  },
+  "brex": {
+    "name": "Brex",
+    "file": "brex.webp",
+    "fit": "pad",
+    "source": "Brex's own site icon, the vendor's website (resized to 96 px)"
+  }
+}

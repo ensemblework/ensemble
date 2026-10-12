@@ -17,7 +17,7 @@ These rules override any Microsoft-only, Dev-Box, or hackathon detail that still
 1. **Source available.** The code is public under [FSL-1.1-MIT](../LICENSE.md). The module docs are implementation guidelines, not a description of a private demo.
 2. **Localhost first.** Local development comes first. The VM deploy scripts are in `infra/deploy/`; the desktop app is in [DESKTOP.md](DESKTOP.md).
    The hosted Hub also accepts public per-user accounts; it is not an invite-only personal instance. Public users bring their own keys, and host execution/credentials are restricted to verified operators. See [02 §16](02_MODULE_INTERACTION_HUB_UI.md#16-accounts-and-public-signup).
-3. **Connectors are pluggable, not Microsoft-shaped.** First wave: **Gmail + Outlook** (mail), **GitHub** (code — **no Azure DevOps**), **Teams** (messages / task context), plus calendar from the mail provider. Later: Notion, Linear, and office suites (Word / PPTX / Excel and Google Docs / Slides / Sheets). What is connected today is in [18](18_WHAT_IS_REAL.md#connectors-read-only).
+3. **Connectors are pluggable, not Microsoft-shaped.** First wave: **Gmail + Outlook** (mail), **GitHub** (code; Azure DevOps connects only for search, attach and updates, [31](31_CONNECTORS_IN_USE.md)), **Teams** (messages / task context), plus calendar from the mail provider. Later: Notion, Linear, and office suites (Word / PPTX / Excel and Google Docs / Slides / Sheets). What is connected today is in [18](18_WHAT_IS_REAL.md#connectors-read-only).
 4. **No M365 Copilot.** The hackathon used a paste/browser path because Teams/transcripts were blocked in that tenant. Ensemble connects sources directly.
 5. **Many model providers.** GitHub Copilot remains one option. Also **Cursor, Gemini, Claude, OpenAI** (and later anything that speaks the same chat/tools contract). Complexity still picks a `{provider, model, effort?}` profile — the engineer is not locked to one vendor.
 6. **UI starts Notion-like.** Pages, properties, and a kanban board. Refine the look as it matures.
@@ -108,7 +108,7 @@ Engineer has a goal → opens chat → types a request (loses 80% of context)
 | **P1 – Should** | **Teams** messages · Hub assistant that operates the app · Coding-workspace "Help me" + sandbox execution · Context Bridge (read-only MCP for VS Code / Cursor / Copilot CLI) | Beyond chat, multi-surface, still local |
 | **P2 – Could** | Notion / Linear import · Google Docs / Sheets / Slides and Word / PPTX / Excel as context · Skill Forge v2 (auto-discover skills) · Multi-agent split (Researcher / Drafter / Reviewer) · Production hosting | Useful for more of the public; still optional |
 
-**Explicitly out of scope for now:** production multi-tenant SaaS, mobile, Azure DevOps, M365 Copilot, Dev Box / remote tunnels, Agent 365.
+**Explicitly out of scope for now:** production multi-tenant SaaS, mobile, Azure DevOps sync and publishing, M365 Copilot, Dev Box / remote tunnels, Agent 365.
 
 ---
 

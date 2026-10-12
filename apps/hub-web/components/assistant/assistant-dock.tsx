@@ -28,6 +28,7 @@ import { useToast } from "../toast";
 import { BrandMorph } from "@/components/motion/brand-morph";
 import { ThinkingStatus } from "@/components/motion/slot";
 import { cx } from "../ui";
+import { AddAppItemToMessage } from "../app-items/add-to-message";
 
 /** 48 px mark in the empty reply. Settles to the mark, then leaves, once tokens arrive. */
 function ReplyMorph({ waiting }: { waiting: boolean }) {
@@ -625,6 +626,12 @@ export function AssistantDock() {
             );
           })}
           </select>
+          <AddAppItemToMessage
+            onInsert={(line) => {
+              setDraft((current) => (current.trim() ? `${current.trimEnd()} ${line} ` : `${line} `));
+              window.setTimeout(() => input.current?.focus(), 30);
+            }}
+          />
           <span>Enter to send · Model presets are configured in Settings</span>
         </div>
       </div>

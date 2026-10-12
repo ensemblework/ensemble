@@ -7,7 +7,25 @@ import type { AccountProvider } from "./accounts.js";
 import { meetingSource } from "./meetings/index.js";
 import { MEETING_VENDORS, MeetingTokenError } from "./meetings/types.js";
 
-export const TOKEN_PROVIDERS = ["github", "slack", "linear", "notion", "atlassian", "trello", "asana", "todoist", "clickup", "monday", ...MEETING_VENDORS] as const;
+export const TOKEN_PROVIDERS = [
+  "github",
+  "slack",
+  "linear",
+  "notion",
+  "atlassian",
+  "trello",
+  "asana",
+  "todoist",
+  "clickup",
+  "monday",
+  "figma",
+  "vercel",
+  "azure_devops",
+  "zendesk",
+  "front",
+  "hubspot",
+  ...MEETING_VENDORS,
+] as const;
 export type TokenProvider = (typeof TOKEN_PROVIDERS)[number];
 
 export const TokenBody = z.object({
@@ -67,6 +85,42 @@ export function atlassianSite(raw: string | undefined): string {
   }
   return host;
 }
+
+/** Azure DevOps organization name from "fieldnote", "https://dev.azure.com/fieldnote/…" or "fieldnote.visualstudio.com". */
+export function azureOrg(raw: string | undefined): string {
+  const value = (raw ?? "").trim().replace(/^https?:\/\//i, "");
+  const match = /^dev\.azure\.com\/([^/?#]+)/i.exec(value) ?? /^([^./?#]+)\.visualstudio\.com/i.exec(value);
+  const org = match ? match[1]! : value.replace(/\/.*$/, "");
+  if (!/^[A-Za-z0-9][A-Za-z0-9-]{0,49}$/.test(org)) throw new TokenRejectedError("Enter your Azure DevOps organization, like fieldnote or https://dev.azure.com/fieldnote.");
+  return org;
+}
+
+/** Zendesk host from "fieldnote", "fieldnote.zendesk.com" or a Zendesk link. Only *.zendesk.com, so the server cannot be pointed anywhere else. */
+export function zendeskHost(raw: string | undefined): string {
+  let host = (raw ?? "")
+    .trim()
+    .replace(/^https?:\/\//i, "")
+    .replace(/[/?#].*$/, "")
+    .toLowerCase();
+  if (host && !host.includes(".")) host = `${host}.zendesk.com`;
+  if (!/^[a-z0-9][a-z0-9-]{0,62}\.zendesk\.com$/.test(host)) throw new TokenRejectedError("Enter your Zendesk subdomain, like fieldnote or fieldnote.zendesk.com.");
+  return host;
+}
+
+/** Figma team id from a team link (…/files/team/123/… or …/files/<org>/team/123/…) or the bare id. Empty means no team. */
+export function figmaTeamId(raw: string | undefined): string | null {
+  const value = (raw ?? "").trim();
+  if (!value) return null;
+  const match = /figma\.com\/files\/(?:[^/?#]+\/)?team\/(\d{3,25})/i.exec(value) ?? /^(\d{3,25})$/.exec(value);
+  if (!match) throw new TokenRejectedError("Paste a Figma team link like https://www.figma.com/files/team/123456/Fieldnote, or leave it empty.");
+  return match[1]!;
+}
+
+/** The vendor's own words for a refusal, without the token if it was echoed back. */
+const said = (detail: unknown, token: string, status: number): string | number =>
+  typeof detail === "string" && detail.trim() ? detail.split(token).join("[token]").slice(0, 200) : status;
+
+const basicAuth = (credentials: string): string => `Basic ${Buffer.from(credentials).toString("base64")}`;
 
 export async function validateToken(provider: TokenProvider, input: TokenBody): Promise<ValidatedToken> {
   const token = input.token;
@@ -167,6 +221,79 @@ export async function validateToken(provider: TokenProvider, input: TokenBody): 
       const body = (res.body ?? {}) as { data?: { me?: { name?: string; email?: string } }; errors?: Array<{ message: string }>; error_message?: string };
       if (!res.ok || !body.data?.me) rejected("monday.com", body.errors?.[0]?.message ?? body.error_message ?? res.status);
       return { secret: token, account: body.data!.me!.email ?? body.data!.me!.name ?? "monday.com", meta: { via: "token" } };
+    }
+    case "figma": {
+      const teamId = figmaTeamId(input.site);
+      const headers = { "X-Figma-Token": token };
+      const res = await call("https://api.figma.com/v1/me", { headers });
+      const refusal = res.body as { err?: string; message?: string } | null;
+      if (!res.ok) rejected("Figma", said(refusal?.err ?? refusal?.message, token, res.status));
+      const me = res.body as { id?: string; email?: string; handle?: string };
+      let teamName: string | null = null;
+      if (teamId) {
+        const team = await call(`https://api.figma.com/v1/teams/${teamId}/projects`, { headers });
+        if (!team.ok) throw new TokenRejectedError(`Figma would not list that team's projects (${team.status}). Check the team link and that the token can read projects.`);
+        teamName = (team.body as { name?: string } | null)?.name ?? null;
+      }
+      return { secret: token, account: me.email ?? me.handle ?? "Figma", meta: { via: "token", figmaUserId: me.id ?? null, teamId, teamName } };
+    }
+    case "vercel": {
+      const headers = { Authorization: `Bearer ${token}`, Accept: "application/json" };
+      const res = await call("https://api.vercel.com/v2/user", { headers });
+      if (!res.ok) rejected("Vercel", said((res.body as { error?: { message?: string } } | null)?.error?.message, token, res.status));
+      const user = (res.body as { user?: { id?: string; email?: string; username?: string; defaultTeamId?: string | null } }).user ?? {};
+      const listed = await call("https://api.vercel.com/v2/teams?limit=20", { headers });
+      const teams = listed.ok ? ((listed.body as { teams?: Array<{ id?: string; slug?: string; name?: string }> } | null)?.teams ?? []) : [];
+      return {
+        secret: token,
+        account: user.username ?? user.email ?? "Vercel",
+        meta: {
+          via: "token",
+          username: user.username ?? null,
+          defaultTeamId: user.defaultTeamId ?? null,
+          teams: teams.filter((team) => team.id).map((team) => ({ id: team.id!, slug: team.slug ?? team.id!, name: team.name ?? team.slug ?? team.id! })),
+        },
+      };
+    }
+    case "azure_devops": {
+      const org = azureOrg(input.site);
+      const headers = { Authorization: basicAuth(`:${token}`), Accept: "application/json" };
+      const res = await call(`https://dev.azure.com/${org}/_apis/projects?$top=1&api-version=7.1`, { headers });
+      // A bad PAT can get a 203 with the HTML sign-in page instead of a 401.
+      if (!res.ok || res.status === 203 || !Array.isArray((res.body as { value?: unknown } | null)?.value)) rejected("Azure DevOps", res.status === 203 ? 401 : res.status);
+      const identity = await call(`https://dev.azure.com/${org}/_apis/connectionData`, { headers });
+      const user = (identity.body as { authenticatedUser?: { id?: string; providerDisplayName?: string; properties?: { Account?: { $value?: string } } } } | null)?.authenticatedUser;
+      const who = user?.properties?.Account?.$value ?? user?.providerDisplayName;
+      return { secret: token, account: who ? `${who} @ ${org}` : org, meta: { via: "token", auth: "basic", org, azureUserId: user?.id ?? null } };
+    }
+    case "zendesk": {
+      if (!input.email) throw new TokenRejectedError("Enter the email address of the Zendesk agent the token belongs to.");
+      const host = zendeskHost(input.site);
+      const credentials = `${input.email}/token:${token}`;
+      const res = await call(`https://${host}/api/v2/users/me.json`, { headers: { Authorization: basicAuth(credentials), Accept: "application/json" } });
+      if (!res.ok) rejected("Zendesk", res.status);
+      const user = (res.body as { user?: { id?: number | null; email?: string | null; role?: string } } | null)?.user;
+      if (!user?.id) throw new TokenRejectedError("Zendesk did not accept that email and token together.");
+      if (user.role === "end-user") throw new TokenRejectedError("That Zendesk login is an end user. Use the email and token of an agent or admin.");
+      return {
+        secret: credentials,
+        account: `${user.email ?? input.email} @ ${host}`,
+        meta: { via: "token", auth: "basic", site: host, email: input.email, zendeskUserId: user.id, role: user.role ?? null },
+      };
+    }
+    case "front": {
+      const res = await call("https://api2.frontapp.com/me", { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } });
+      if (!res.ok) rejected("Front", said((res.body as { _error?: { message?: string } } | null)?._error?.message, token, res.status));
+      const me = res.body as { id?: string; name?: string };
+      return { secret: token, account: me.name ?? "Front", meta: { via: "token", frontCompanyId: me.id ?? null } };
+    }
+    case "hubspot": {
+      const res = await call("https://api.hubapi.com/account-info/v3/details", { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } });
+      if (!res.ok) rejected("HubSpot", said((res.body as { message?: string } | null)?.message, token, res.status));
+      const body = res.body as { portalId?: number; uiDomain?: string };
+      if (!body.portalId) rejected("HubSpot", "no account id");
+      const uiDomain = body.uiDomain && /^app(-[a-z0-9]+)?\.hubspot\.com$/.test(body.uiDomain) ? body.uiDomain : "app.hubspot.com";
+      return { secret: token, account: `HubSpot ${body.portalId}`, meta: { via: "token", portalId: body.portalId, uiDomain } };
     }
   }
   throw new TokenRejectedError("That service does not take a pasted token.");

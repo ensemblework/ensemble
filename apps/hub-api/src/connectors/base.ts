@@ -69,7 +69,7 @@ const ALL: readonly Connector[] = [
     description: "Your DMs and group DMs, plus channels you list. Direct asks become proposed todos.",
     account: "slack",
     connect: "token",
-    setupHint: "Paste a Slack user token (xoxp-…) with channels:history, groups:history, im:history, mpim:history, users:read and users:read.email.",
+    setupHint: "Paste a Slack user token (xoxp-…) with channels:history, groups:history, im:history, mpim:history, channels:read, groups:read, users:read and users:read.email.",
     sync: syncSlack,
   },
   {

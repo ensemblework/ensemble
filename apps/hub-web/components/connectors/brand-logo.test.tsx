@@ -4,7 +4,9 @@ import test from "node:test";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { CONNECTOR_CATALOG } from "@ensemble/shared-types";
-import { BrandLogo, brandKind, initials } from "./brand-logo.js";
+import { BRAND_INDEX } from "./brand-index.generated.js";
+import { BRAND_IMAGES } from "./brand-images.generated.js";
+import { BrandLogo, brandKind, initials, loadBrandImages } from "./brand-logo.js";
 
 async function render(node: React.ReactNode) {
   const host = document.createElement("div");
@@ -20,33 +22,23 @@ async function render(node: React.ReactNode) {
   };
 }
 
-test("simple-icons brands render their real mark with an accessible name", async () => {
-  const view = await render(<BrandLogo id="notion" />);
-  try {
-    const mark = view.host.querySelector('[role="img"]');
-    assert.ok(mark);
-    assert.equal(mark.getAttribute("aria-label"), "Notion");
-    assert.equal(mark.getAttribute("data-brand-kind"), "icon");
-    assert.ok(mark.querySelector("svg path")?.getAttribute("d"));
-  } finally {
-    await view.done();
-  }
-});
-
-test("brands removed from simple-icons get a plain monogram, never a drawn imitation", async () => {
-  for (const [id, text, name] of [
-    ["microsoft", "M", "Microsoft 365"],
-    ["slack", "S", "Slack"],
-    ["aws", "AWS", "Amazon Web Services"],
-    ["azure", "Az", "Microsoft Azure"],
+test("connectors show the vendor's own logo with an accessible name", async () => {
+  await loadBrandImages();
+  for (const [id, name] of [
+    ["notion", "Notion"],
+    ["microsoft", "Microsoft 365"],
+    ["slack", "Slack"],
+    ["granola", "Granola"],
+    ["aws", "Amazon Web Services"],
   ] as const) {
     const view = await render(<BrandLogo id={id} />);
     try {
       const mark = view.host.querySelector('[role="img"]')!;
-      assert.equal(mark.getAttribute("data-brand-kind"), "monogram", id);
-      assert.equal(mark.textContent, text, id);
       assert.equal(mark.getAttribute("aria-label"), name, id);
-      assert.equal(mark.querySelector("svg"), null, `${id} must not draw a logo`);
+      assert.equal(mark.getAttribute("data-brand-kind"), "image", id);
+      const image = mark.querySelector("img");
+      assert.ok(image?.getAttribute("src")?.startsWith("data:image/"), `${id} draws its logo file`);
+      assert.equal(image?.getAttribute("alt"), "");
     } finally {
       await view.done();
     }
@@ -76,8 +68,10 @@ test("unknown keys fall back to initials from the name, and decorative marks are
   assert.equal(initials("365"), "3");
 });
 
-test("every catalog logo key has a mark (icon, monogram or generic)", () => {
+test("every catalog logo key has the vendor's mark, and every mark has an image", () => {
   for (const entry of CONNECTOR_CATALOG) {
-    assert.notEqual(brandKind(entry.logo), "fallback", `${entry.id} uses logo "${entry.logo}"`);
+    if (entry.logo === "csv") continue;
+    assert.equal(brandKind(entry.logo), "image", `${entry.id} uses logo "${entry.logo}"`);
   }
+  for (const key of Object.keys(BRAND_INDEX)) assert.ok(BRAND_IMAGES[key], `${key} has an image`);
 });

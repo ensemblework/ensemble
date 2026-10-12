@@ -481,7 +481,7 @@ test("disconnect revokes, removes the token, switches sources off and can delete
 
   const again = await call(mira, "DELETE", "/api/connectors/google", "/api/connectors/:provider", "happy-path");
   assert.deepEqual(again.json(), { ok: true, revoked: false, deleted: 0 });
-  const bad = await call(mira, "DELETE", "/api/connectors/box", "/api/connectors/:provider", "invalid-input");
+  const bad = await call(mira, "DELETE", "/api/connectors/basecamp", "/api/connectors/:provider", "invalid-input");
   assert.equal(bad.statusCode, 400, bad.body);
 });
 

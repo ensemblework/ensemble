@@ -14,8 +14,9 @@ import { useToast } from "../toast";
 import { Spinner, Tag, Toggle, cx } from "../ui";
 import { BrandLogo } from "./brand-logo";
 import { browser } from "./browser";
-import { entryStatus, oauthReady, statusLabel, usableAuth, type EntryStatus } from "./catalog-view";
+import { connectorUses, entryStatus, oauthReady, statusLabel, usableAuth, type EntryStatus } from "./catalog-view";
 import { McpTokenPrompt, useMcpConnect } from "./mcp-connect";
+import { McpConnectWay } from "./mcp-way";
 import { tokenFields, tokenFormReady, tokenHelp } from "./token-forms";
 import { useRefreshConnections, useSetEntryState } from "./use-connectors";
 
@@ -97,6 +98,7 @@ export function ConnectorDetail({
   const notes = [...(entry.notes ?? []), ...(entry.mcp?.note ? [entry.mcp.note] : [])];
   const mcpKnown = Boolean(mcp || entry.state.mcp);
   const docs = entry.docsUrl ?? entry.mcp?.docs;
+  const uses = connectorUses(entry);
   return (
     <div className="grid gap-6 p-4 sm:p-5 lg:grid-cols-[minmax(0,1fr)_240px]" data-testid="connector-detail" data-connector={entry.id}>
       <div className="min-w-0 space-y-4">
@@ -134,6 +136,7 @@ export function ConnectorDetail({
         )}
       </div>
       <aside className="space-y-4 text-[12.5px] lg:border-l lg:border-line lg:pl-5">
+        {uses.length ? <Facts title="In Ensemble" items={uses} /> : null}
         <Facts title="What it reads" items={entry.reads} empty="Nothing is read until you import." />
         <Facts title="What it can change" items={entry.writes} empty="Nothing. It only reads." note={entry.writes.length ? "Each change waits for your Apply." : undefined} />
         {notes.length ? <Facts title="Good to know" items={notes} /> : null}
@@ -194,7 +197,6 @@ function ConnectPanel({ entry, mcpKnown, onImport }: { entry: CatalogEntry; mcpK
     onSuccess: (result) => browser.assign(result.url),
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
-  const mcpConnect = useMcpConnect({ target: () => ({ serverId: entry.id, returnTo: browser.returnTo(entry.id) }), label: entry.name });
   if (entry.auth.includes("builtin")) {
     return <p className="rounded-xl border border-line px-3 py-2.5 text-[13px] text-muted">Built in and always on.</p>;
   }
@@ -249,30 +251,10 @@ function ConnectPanel({ entry, mcpKnown, onImport }: { entry: CatalogEntry; mcpK
               <Way
                 key={kind}
                 title={`Use ${entry.name}'s own tools`}
-                detail={`Connects ${brand(entry)}'s MCP server. You approve on ${brand(entry)}'s site, then choose which tools the assistant may use. Changes wait for your Apply.`}
-                below={
-                  mcpConnect.problem ? (
-                    mcpConnect.asksForToken ? (
-                      <McpTokenPrompt
-                        label={entry.name}
-                        problem={mcpConnect.problem}
-                        pending={mcpConnect.pending}
-                        onSubmit={(token) => mcpConnect.connect({ token })}
-                        onCancel={mcpConnect.clear}
-                      />
-                    ) : (
-                      <p role="alert" className="mt-2 text-[12.5px] text-danger">
-                        {mcpConnect.problem.message}
-                      </p>
-                    )
-                  ) : null
-                }
+                detail={mcpDetail(entry)}
+                below={<McpConnectWay entry={entry} primary={index === 0} />}
               >
-                {mcpConnect.asksForToken ? null : (
-                  <button type="button" className={primary} disabled={mcpConnect.pending} onClick={() => mcpConnect.connect()}>
-                    {mcpConnect.pending ? <Spinner size={12} /> : <Wrench size={12} />} Connect tools
-                  </button>
-                )}
+                {null}
               </Way>
             );
           }
@@ -293,6 +275,17 @@ function ConnectPanel({ entry, mcpKnown, onImport }: { entry: CatalogEntry; mcpK
       ) : null}
     </section>
   );
+}
+
+/** One line on how this vendor's MCP server signs in. */
+function mcpDetail(entry: CatalogEntry): string {
+  const mcp = entry.mcp!;
+  const who = brand(entry);
+  if (mcp.ownClient) return `Connects ${who}'s MCP server with an app your ${who} admin registers. Changes wait for your Apply.`;
+  if (mcp.connection) return `Gives the assistant ${who}'s own tools through ${who}'s MCP server, signed in with your ${who} connection. Changes wait for your Apply.`;
+  if (mcp.token?.only) return `Connects ${who}'s MCP server with a token you create in ${who}. Choose which tools the assistant may use; changes wait for your Apply.`;
+  if (mcp.fields?.length) return `Connects ${who}'s MCP server for your account. You approve on ${who}'s site, then choose which tools the assistant may use.`;
+  return `Connects ${who}'s MCP server. You approve on ${who}'s site, then choose which tools the assistant may use. Changes wait for your Apply.`;
 }
 
 function Way({ title, detail, children, below }: { title: string; detail: string; children: React.ReactNode; below?: React.ReactNode }) {
@@ -611,7 +604,7 @@ function DisconnectConfirm({ entry, onCancel }: { entry: CatalogEntry; onCancel:
 
 // ── remote MCP tools ───────────────────────────────────────────────────────
 
-export function McpPanel({ entry, connection }: { entry: Pick<CatalogEntry, "id" | "name" | "vendor" | "state">; connection?: McpConnection }) {
+export function McpPanel({ entry, connection }: { entry: Pick<CatalogEntry, "id" | "name" | "vendor" | "state"> & Partial<Pick<CatalogEntry, "mcp" | "auth" | "category" | "logo" | "tagline" | "featured" | "reads" | "writes" | "status">>; connection?: McpConnection }) {
   const toast = useToast();
   const client = useQueryClient();
   const refresh = useRefreshConnections();
@@ -680,8 +673,8 @@ export function McpPanel({ entry, connection }: { entry: Pick<CatalogEntry, "id"
           </div>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-          {(!status || status === "pending" || status === "error") && !add.asksForToken ? (
-            <button type="button" className={status ? "btn" : "btn-primary"} disabled={add.pending} onClick={() => add.connect()}>
+          {(status === "pending" || status === "error") && !add.asksForToken && !entry.mcp?.token?.only ? (
+            <button type="button" className="btn" disabled={add.pending} onClick={() => add.connect(entry.mcp?.connection ? { useConnection: true } : undefined)}>
               {add.pending ? <Spinner size={12} /> : <Plug size={12} />} {status === "pending" ? "Continue sign-in" : status === "error" ? "Reconnect" : "Connect tools"}
             </button>
           ) : null}
@@ -697,6 +690,11 @@ export function McpPanel({ entry, connection }: { entry: Pick<CatalogEntry, "id"
           ) : null}
         </div>
       </div>
+      {entry.mcp && !custom && (!status || ((status === "pending" || status === "error") && entry.mcp.token?.only)) ? (
+        <div className="px-3 pb-3 sm:px-4">
+          <McpConnectWay entry={entry as CatalogEntry} primary={!status} />
+        </div>
+      ) : null}
       {add.problem ? (
         <div className="px-3 pb-3 sm:px-4">
           {add.asksForToken ? (

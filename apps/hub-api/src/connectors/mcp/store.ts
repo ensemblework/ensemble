@@ -14,11 +14,16 @@ import { decrypt, encrypt } from "../../lib/secrets.js";
 export type McpStatus = "pending" | "connected" | "error" | "disabled";
 export const MCP_STATUSES: readonly McpStatus[] = ["pending", "connected", "error", "disabled"];
 
-/** oauth: the MCP authorization flow. bearer: a pasted token sent as Authorization: Bearer. none: the server asks for nothing. */
-export type McpAuthKind = "oauth" | "bearer" | "none";
+/**
+ * oauth: the MCP authorization flow. bearer: a pasted token sent as Authorization: Bearer.
+ * connection: the person's existing connector account for `provider`, read fresh on every call. none: the server asks for nothing.
+ */
+export type McpAuthKind = "oauth" | "bearer" | "connection" | "none";
 
 export type McpClientEnvelope = {
   auth: McpAuthKind;
+  /** For auth "connection": the oauth_tokens provider whose token is sent. */
+  provider?: string;
   client?: OAuthClientInformationMixed;
   /** The person typed in this client's id (and secret); keep it across reconnects. */
   preRegistered?: boolean;
@@ -73,9 +78,10 @@ function openJson<T>(value: string | null | undefined): T | undefined {
 
 export function readEnvelope(row: Pick<McpConnection, "clientInfo">): McpClientEnvelope {
   const stored = openJson<Partial<McpClientEnvelope>>(row.clientInfo);
-  const auth: McpAuthKind = stored?.auth === "bearer" || stored?.auth === "none" ? stored.auth : "oauth";
+  const auth: McpAuthKind = stored?.auth === "bearer" || stored?.auth === "none" || stored?.auth === "connection" ? stored.auth : "oauth";
   return {
     auth,
+    ...(stored?.provider ? { provider: stored.provider } : {}),
     ...(stored?.client ? { client: stored.client } : {}),
     ...(stored?.preRegistered ? { preRegistered: true } : {}),
     ...(stored?.discovery ? { discovery: stored.discovery } : {}),

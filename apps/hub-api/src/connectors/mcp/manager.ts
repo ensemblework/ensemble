@@ -225,9 +225,20 @@ export function plainMessage(error: unknown, max = 300): string {
 }
 
 function reconnectMessage(row: Pick<McpConnection, "name">, envelope: McpClientEnvelope): string {
+  if (envelope.auth === "connection") return `${row.name} no longer accepts your ${envelope.provider ?? "app"} connection. Connect it again in Settings → Connections.`;
   return envelope.auth === "bearer"
     ? `${row.name} refused the saved token. Paste a new one in Settings → Connections.`
     : `Reconnect ${row.name} in Settings → Connections. Its sign-in expired or was revoked.`;
+}
+
+/** The current token of the person's connector account, for MCP servers that sign in with it. */
+async function connectionToken(userId: string, provider: string | undefined): Promise<string> {
+  // Loaded on use: the accounts module opens the database, and most MCP code paths never need it.
+  const [{ isAccountProvider }, { providerAccessToken }] = await Promise.all([import("../accounts.js"), import("../tokens.js")]);
+  if (!provider || !isAccountProvider(provider)) throw new McpReconnectRequired();
+  const token = await providerAccessToken(userId, provider).catch(() => null);
+  if (!token?.token) throw new McpReconnectRequired(`Your ${provider} connection is gone. Connect it again in Settings → Connections.`);
+  return token.token;
 }
 
 /** Maps a failure to what the person sees, and marks the row when it needs a reconnect. */
@@ -286,6 +297,8 @@ async function runWithRow<T>(db: Db, row: McpConnection, fn: (client: Client, ro
     } else if (envelope.auth === "bearer") {
       bearer = readTokens(row)?.access_token;
       if (!bearer) throw new McpReconnectRequired();
+    } else if (envelope.auth === "connection") {
+      bearer = await connectionToken(row.userId, envelope.provider);
     }
     client = await openClient({ url: row.url, transport: transportFor(row.serverId), authProvider: provider, bearer, deps });
     const result = await fn(client, provider?.connection ?? current);
@@ -327,8 +340,10 @@ export type ConnectInput = {
   returnTo?: string;
   /** Personal access token or API key, sent as Authorization: Bearer. */
   token?: string;
-  /** A client the person registered with the vendor themselves. */
+  /** A client registered with the vendor: by the person (their organisation's app) or by whoever runs Ensemble. */
   client?: { clientId: string; clientSecret?: string };
+  /** Sign in with the person's existing connector account for this provider. */
+  connection?: string;
 };
 
 export type ConnectOutcome = { id: string; status: McpStatus; authorizeUrl?: string };
@@ -379,17 +394,18 @@ export async function startConnection(db: Db, userId: string, input: ConnectInpu
   const transport = input.transport ?? transportFor(input.serverId);
   const existing = await db.mcpConnection.findUnique({ where: { userId_serverId: { userId, serverId: input.serverId } } });
 
-  if (input.token) {
+  if (input.token || input.connection) {
     let client: Client | undefined;
     try {
-      client = await openClient({ url, transport, bearer: input.token, deps });
+      const bearer = input.token ?? (await connectionToken(userId, input.connection));
+      client = await openClient({ url, transport, bearer, deps });
       const tools = await listAllTools(client);
       const data = {
         name: input.name,
         url,
         status: "connected",
-        clientInfo: sealJson({ auth: "bearer" } satisfies McpClientEnvelope),
-        tokens: sealJson({ access_token: input.token, token_type: "Bearer" }),
+        clientInfo: sealJson((input.token ? { auth: "bearer" } : { auth: "connection", provider: input.connection }) satisfies McpClientEnvelope),
+        tokens: input.token ? sealJson({ access_token: input.token, token_type: "Bearer" }) : null,
         expiresAt: null,
         ...CLEAR_SIGN_IN,
         returnTo,
@@ -402,6 +418,7 @@ export async function startConnection(db: Db, userId: string, input: ConnectInpu
         : await db.mcpConnection.create({ data: { userId, serverId: input.serverId, ...data } });
       return { id: row.id, status: "connected" };
     } catch (error) {
+      if (error instanceof McpReconnectRequired) throw new McpConnectionError(error.message, 409, "MCP_RECONNECT");
       throw connectFailure(error, input.name, true);
     } finally {
       await client?.close().catch(() => undefined);

@@ -7,6 +7,7 @@ import { api, type PersonRecord } from "@/lib/api";
 import { plural, shortDate } from "@/lib/format";
 import { useToast } from "../toast";
 import { Dialog, Empty, Field, InlineEdit, Spinner } from "../ui";
+import { AddPeopleFromApps } from "../app-items/people-from-apps";
 
 function PersonCard({ person }: { person: PersonRecord }) {
   const client = useQueryClient();
@@ -105,7 +106,7 @@ export function PeopleTab({ initialSearch, who = "" }: { initialSearch: string; 
   });
   return (
     <div>
-      <div className="mb-4 flex items-center gap-3">
+      <div className="mb-4 flex flex-wrap items-center gap-3">
         <span className="text-[13px] font-semibold">{plural(list.length, "person", "people")}</span>
         <div className="flex items-center gap-1.5 rounded-md border border-line bg-panel px-2 py-1">
           <Search size={13} className="text-faint" />
@@ -117,6 +118,7 @@ export function PeopleTab({ initialSearch, who = "" }: { initialSearch: string; 
           />
         </div>
         <div className="flex-1" />
+        <AddPeopleFromApps />
         <button type="button" className="btn" onClick={() => setAdding(true)}>
           <Plus size={13} /> Add person
         </button>

@@ -51,7 +51,8 @@ interface ProviderSpec {
   exchangeScope?: boolean;
   /** Pulls the user token out of a provider-specific response (Slack's authed_user). */
   read?: (body: TokenBody) => TokenBody;
-  profile: (token: string, body: TokenBody) => Promise<Profile>;
+  /** `previous` is the details saved by an earlier connect of this provider, or {}. */
+  profile: (token: string, body: TokenBody, previous: Record<string, unknown>) => Promise<Profile>;
   revoke?: (account: Account, app: OAuthApp) => Promise<Response>;
 }
 
@@ -86,7 +87,7 @@ const microsoftTenant = (): string => {
 const docusignAuthBase = (): string =>
   process.env.DOCUSIGN_ENV?.trim().toLowerCase() === "production" ? "https://account.docusign.com" : "https://account-d.docusign.com";
 
-export const SLACK_USER_SCOPES = ["channels:history", "groups:history", "im:history", "mpim:history", "users:read", "users:read.email"] as const;
+export const SLACK_USER_SCOPES = ["channels:history", "groups:history", "im:history", "mpim:history", "channels:read", "groups:read", "users:read", "users:read.email"] as const;
 
 export const ZOOM_SCOPES = [
   "user:read:user",
@@ -95,6 +96,34 @@ export const ZOOM_SCOPES = [
   "cloud_recording:read:meeting_transcript",
   "meeting:read:summary",
 ] as const;
+
+export const DROPBOX_SCOPES = ["account_info.read", "files.metadata.read", "files.content.read"] as const;
+
+/** Xero apps created since March 2026 only get granular scopes; XERO_SCOPES lets an older app ask for the broad ones. */
+export const XERO_SCOPES = ["openid", "profile", "email", "offline_access", "accounting.invoices.read", "accounting.contacts.read"] as const;
+
+const xeroScopes = (): string[] => {
+  const custom = process.env.XERO_SCOPES?.trim();
+  return custom ? custom.split(/[\s,]+/).filter((scope) => /^[a-z_.]{2,80}$/i.test(scope)) : [...XERO_SCOPES];
+};
+
+/** View Channels and Read Message History, for the bot Discord's install screen adds to a server. */
+export const DISCORD_BOT_PERMISSIONS = String((1 << 10) | (1 << 16));
+
+export interface DiscordGuild {
+  id: string;
+  name: string;
+}
+
+/** Servers this person added the bot to: the one in this install plus earlier ones by the same Discord user. */
+export function discordGuilds(body: TokenBody, previous: Record<string, unknown>, discordUserId: string | null): DiscordGuild[] {
+  const guild = body.guild as { id?: unknown; name?: unknown } | undefined;
+  const fresh = guild && typeof guild.id === "string" && /^\d{5,25}$/.test(guild.id) ? [{ id: guild.id, name: typeof guild.name === "string" ? guild.name : guild.id }] : [];
+  const sameUser = Boolean(discordUserId) && previous.discordUserId === discordUserId;
+  const earlier = sameUser && Array.isArray(previous.guilds) ? (previous.guilds as DiscordGuild[]).filter((row) => typeof row?.id === "string" && /^\d{5,25}$/.test(row.id)) : [];
+  const byId = new Map([...earlier, ...fresh].map((row) => [row.id, { id: row.id, name: String(row.name ?? row.id) }]));
+  return [...byId.values()].slice(-20);
+}
 
 /** Every scope Ensemble may ask Google for. Kept for callers that list them; Connect asks only for the products that are on. */
 export const GOOGLE_SCOPES = ["openid", "email", "profile", ...Object.values(GOOGLE_PRODUCT_SCOPES).flat()];
@@ -177,7 +206,8 @@ function specFor(provider: AccountProvider): ProviderSpec | undefined {
         label: "Linear",
         authorize: "https://linear.app/oauth/authorize",
         token: "https://api.linear.app/oauth/token",
-        scopes: ["read"],
+        // comments:create lets "Post an update" comment on an issue; nothing else is written.
+        scopes: ["read", "comments:create"],
         scopeParam: "scope",
         scopeSeparator: ",",
         pkce: true,
@@ -315,13 +345,125 @@ function specFor(provider: AccountProvider): ProviderSpec | undefined {
         },
       };
     }
+    case "dropbox":
+      return {
+        label: "Dropbox",
+        authorize: "https://www.dropbox.com/oauth2/authorize",
+        token: "https://api.dropboxapi.com/oauth2/token",
+        scopes: DROPBOX_SCOPES,
+        scopeParam: "scope",
+        scopeSeparator: " ",
+        extra: { token_access_type: "offline" },
+        pkce: true,
+        exchange: "form",
+        async profile(token) {
+          // Dropbox RPC endpoints without arguments take the literal JSON null.
+          const response = await fetch(
+            "https://api.dropboxapi.com/2/users/get_current_account",
+            timed({ method: "POST", headers: { ...bearer(token), "Content-Type": "application/json" }, body: "null" }),
+          );
+          const me = response.ok ? await readBody<{ account_id?: string; email?: string; name?: { display_name?: string } }>(response) : null;
+          return { account: me?.email ?? me?.name?.display_name ?? null, meta: me?.account_id ? { dropboxAccountId: me.account_id } : {} };
+        },
+        revoke(account) {
+          return fetch(
+            "https://api.dropboxapi.com/2/auth/token/revoke",
+            timed({ method: "POST", headers: { ...bearer(account.accessToken), "Content-Type": "application/json" }, body: "null" }),
+          );
+        },
+      };
+    case "box":
+      return {
+        label: "Box",
+        authorize: "https://account.box.com/api/oauth2/authorize",
+        token: "https://api.box.com/oauth2/token",
+        scopes: [],
+        scopeParam: null,
+        scopeSeparator: " ",
+        pkce: false,
+        exchange: "form",
+        async profile(token) {
+          const me = await getJson<{ id?: string; login?: string; name?: string }>("https://api.box.com/2.0/users/me?fields=id,login,name", bearer(token));
+          return { account: me?.login ?? me?.name ?? null, meta: me?.id ? { boxUserId: me.id } : {} };
+        },
+        revoke(account, app) {
+          return fetch(
+            "https://api.box.com/oauth2/revoke",
+            timed({
+              method: "POST",
+              headers: { "Content-Type": "application/x-www-form-urlencoded" },
+              body: new URLSearchParams({ client_id: app.clientId, client_secret: app.clientSecret, token: account.refreshToken ?? account.accessToken }),
+            }),
+          );
+        },
+      };
+    case "xero":
+      return {
+        label: "Xero",
+        authorize: "https://login.xero.com/identity/connect/authorize",
+        token: "https://identity.xero.com/connect/token",
+        scopes: xeroScopes(),
+        scopeParam: "scope",
+        scopeSeparator: " ",
+        pkce: false,
+        exchange: "basic-form",
+        async profile(token) {
+          const connections = await getJson<Array<{ id?: string; tenantId?: string; tenantType?: string; tenantName?: string | null; updatedDateUtc?: string }>>(
+            "https://api.xero.com/connections",
+            bearer(token),
+          );
+          // The organisation picked on this consent screen is the most recently updated connection.
+          const tenant = (connections ?? [])
+            .filter((row) => row.tenantType === "ORGANISATION" && row.tenantId)
+            .sort((a, b) => (b.updatedDateUtc ?? "").localeCompare(a.updatedDateUtc ?? ""))[0];
+          if (!tenant) throw new Error("No Xero organisation was shared with Ensemble. Connect again and pick an organisation.");
+          return { account: tenant.tenantName ?? "Xero", meta: { tenantId: tenant.tenantId, tenantName: tenant.tenantName ?? null, connectionId: tenant.id ?? null } };
+        },
+        revoke(account, app) {
+          return fetch(
+            "https://identity.xero.com/connect/revocation",
+            timed({
+              method: "POST",
+              headers: { Authorization: basic(app), "Content-Type": "application/x-www-form-urlencoded" },
+              body: new URLSearchParams({ token: account.refreshToken ?? account.accessToken }),
+            }),
+          );
+        },
+      };
+    case "discord":
+      return {
+        label: "Discord",
+        authorize: "https://discord.com/oauth2/authorize",
+        token: "https://discord.com/api/oauth2/token",
+        scopes: ["identify", "guilds", "bot"],
+        scopeParam: "scope",
+        scopeSeparator: " ",
+        extra: { permissions: DISCORD_BOT_PERMISSIONS },
+        pkce: false,
+        exchange: "form",
+        async profile(token, body, previous) {
+          const me = await getJson<{ id?: string; username?: string; global_name?: string | null }>("https://discord.com/api/v10/users/@me", bearer(token));
+          const discordUserId = me?.id ?? null;
+          return { account: me?.username ?? null, meta: { discordUserId, guilds: discordGuilds(body, previous, discordUserId) } };
+        },
+        revoke(account, app) {
+          return fetch(
+            "https://discord.com/api/oauth2/token/revoke",
+            timed({
+              method: "POST",
+              headers: { "Content-Type": "application/x-www-form-urlencoded" },
+              body: new URLSearchParams({ token: account.refreshToken ?? account.accessToken, client_id: app.clientId, client_secret: app.clientSecret }),
+            }),
+          );
+        },
+      };
     default:
       return undefined;
   }
 }
 
 /** Providers people connect through a browser consent screen. */
-export const OAUTH_PROVIDERS: AccountProvider[] = ["google", "microsoft", "github", "linear", "notion", "atlassian", "slack", "zoom", "docusign"];
+export const OAUTH_PROVIDERS: AccountProvider[] = ["google", "microsoft", "github", "linear", "notion", "atlassian", "slack", "zoom", "docusign", "dropbox", "box", "xero", "discord"];
 
 export const providerLabel = (provider: AccountProvider): string => specFor(provider)?.label ?? provider;
 
@@ -515,7 +657,9 @@ export async function finishOAuth(provider: string, code: string, state: string,
   if (!ok || !body.access_token) {
     throw new Error(body.error_description ?? body.error ?? `${spec.label} did not accept the sign-in (${status}).`);
   }
-  const profile = await spec.profile(body.access_token, body);
+  const saved = await prisma.authToken.findUnique({ where: { userId_provider: { userId: entry.userId, provider: entry.provider } }, select: { meta: true } });
+  const previous = saved?.meta && typeof saved.meta === "object" && !Array.isArray(saved.meta) ? (saved.meta as Record<string, unknown>) : {};
+  const profile = await spec.profile(body.access_token, body, previous);
   const scopes = normalizeScopes(body.scope, entry.scopes);
   await saveAccount(entry.userId, entry.provider, {
     accessToken: body.access_token,

@@ -37,6 +37,7 @@ Keeping these files current is part of every change. See [`AGENTS.md`](../AGENTS
 | 29 | [Sharing](29_SHARING.md) | Sharing a space or one item: contacts, roles, what stays private, runs on your own computer, live presence |
 | 30 | [Engines](30_ENGINES.md) | Who does the work (Ensemble's agent or your own Claude Code), how each tool call is judged by the run's rules, and how Claude Code, Codex, Copilot and Cursor questions reach Needs me |
 | 27 | [Imports](27_IMPORTS.md) | Import from Notion, Linear, Jira, Trello, Asana, Todoist, ClickUp, monday.com, GitHub and spreadsheets; re-runs and undo |
+| 31 | [Connectors in use](31_CONNECTORS_IN_USE.md) | What Ensemble does with each connected app (attach, add as task, post updates, people, repositories for agents, the assistant's tools), how other AI apps use connectors, every connector and how it connects |
 | — | [Context Bridge setup](CONTEXT_BRIDGE.md) | What the bridge runs, and editor config |
 | — | [Demo data](DEMO_DATA.md) | The Branch desk demo and `pnpm seed:demo` |
 
@@ -56,4 +57,4 @@ Keeping these files current is part of every change. See [`AGENTS.md`](../AGENTS
 
 ## Design notes
 
-[`design/`](design/) holds design specs and working notes for larger features (assistant and trash, Context redesign, widgets and templates, marketplace, the Today desk). They record intent at the time they were written; check the code before relying on them.
+[`design/`](design/) holds design specs and working notes for larger features (assistant and trash, Context redesign, widgets and templates, marketplace, the Today desk, what could come next for connectors). They record intent at the time they were written; check the code before relying on them.

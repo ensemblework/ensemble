@@ -1,4 +1,4 @@
-import { CONNECTOR_CATEGORIES, type ConnectorAuthKind, type ConnectorCategory } from "@ensemble/shared-types";
+import { CONNECTOR_CATEGORIES, TASK_LIKE_KINDS, type AppItemKind, type ConnectorAuthKind, type ConnectorCategory } from "@ensemble/shared-types";
 import type { CatalogEntry, McpConnection } from "@/lib/api-connectors";
 
 /** The short list on Settings → Connections, in this order. */
@@ -42,6 +42,57 @@ export function oauthReady(entry: CatalogEntry): boolean {
 /** Auth kinds that work on this server right now. */
 export function usableAuth(entry: CatalogEntry): ConnectorAuthKind[] {
   return entry.auth.filter((kind) => kind !== "oauth" || oauthReady(entry));
+}
+
+const KIND_WORDS: Partial<Record<AppItemKind, string>> = {
+  page: "pages",
+  database: "databases",
+  repo: "repositories",
+  issue: "issues",
+  pull_request: "pull requests",
+  board: "boards",
+  card: "cards",
+  project: "projects",
+  task: "tasks",
+  file: "files",
+  channel: "channels",
+  person: "people",
+  ticket: "tickets",
+  conversation: "conversations",
+  contact: "contacts",
+  company: "companies",
+  deal: "deals",
+  design: "designs",
+  deployment: "deployments",
+  work_item: "work items",
+  invoice: "invoices",
+};
+
+function words(list: readonly string[]): string {
+  return list.length > 1 ? `${list.slice(0, -1).join(", ")} and ${list[list.length - 1]}` : (list[0] ?? "");
+}
+
+/** What Ensemble does with an app once it is connected, in the order people meet it. */
+export function connectorUses(entry: CatalogEntry): string[] {
+  const uses: string[] = [];
+  const brandName = entry.name.split(" ")[0] ?? entry.name;
+  const synced = Object.keys(entry.state.sources ?? {}).length > 0;
+  if (synced) uses.push("Syncs into your context, and asks addressed to you become proposed todos on Today.");
+  if (entry.category === "meetings" && entry.auth.includes("token")) uses.push("Meeting notes arrive in Meetings, matched to your calendar; your action items become proposed todos.");
+  const items = entry.items;
+  if (items) {
+    const kinds = items.kinds.filter((kind) => kind !== "person").map((kind) => KIND_WORDS[kind] ?? kind);
+    if (kinds.length) uses.push(`Attach ${words(kinds)} to a task or project. The assistant and agents working on it read them.`);
+    if (items.kinds.some((kind) => TASK_LIKE_KINDS.has(kind))) uses.push(`Turn ${words(items.kinds.filter((kind) => TASK_LIKE_KINDS.has(kind)).map((kind) => KIND_WORDS[kind] ?? kind))} into tasks, and hand them to an agent.`);
+    if (items.comments) uses.push("Post an update back when the work is done. Nothing is posted until you press Post or Apply.");
+    if (items.people) uses.push("Add its people to People, so mentions, mail and meetings point to the same person.");
+    uses.push(`Ask the assistant: it searches and reads ${entry.name} for you.`);
+  }
+  if (entry.id === "github") uses.push("Agents can clone the repositories you pick, using this connection.");
+  if (entry.import) uses.push(`Import into Ensemble: ${words(entry.import.brings.map((line) => line.charAt(0).toLowerCase() + line.slice(1)))}. Running it again updates instead of duplicating.`);
+  if (entry.mcp) uses.push(`The assistant can use ${brandName}'s own tools. Anything that changes ${brandName} waits for your Apply.`);
+  if (entry.products?.some((product) => product.write)) uses.push(`The assistant can ${words(entry.writes.map((line) => line.charAt(0).toLowerCase() + line.slice(1)))} for you, after your Apply.`);
+  return uses;
 }
 
 export type EntryStatus = "connected" | "attention" | "pending" | "available" | "not_set_up" | "soon";

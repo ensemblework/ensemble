@@ -31,6 +31,8 @@ import { GOOGLE_PRODUCT_SCOPES, productState, sourceToggles, suiteById, suiteFor
 import { TOKEN_PROVIDERS, TokenBody, TokenRejectedError, validateToken } from "../connectors/token-providers.js";
 import { missingScopes } from "../connectors/tokens.js";
 import { appendLedger } from "../lib/ledger.js";
+import { MCP_CLIENT_APPS, mcpClientApp, mcpClientAppView } from "../connectors/mcp/client-apps.js";
+import { mcpRedirectUrl } from "../connectors/mcp/config.js";
 import { loadSettings, saveSettings } from "../lib/settings.js";
 
 const OAuthProvider = z.enum(OAUTH_PROVIDERS as [AccountProvider, ...AccountProvider[]]);
@@ -72,7 +74,7 @@ const APP_HELP: Partial<Record<AccountProvider, { console: string; steps: string
   },
   linear: {
     console: "https://linear.app/settings/api/applications/new",
-    steps: ["Linear → Settings → API → OAuth applications → New.", "Callback URL: the redirect URI below. Scope: read.", "Paste the client ID and secret here."],
+    steps: ["Linear → Settings → API → OAuth applications → New.", "Callback URL: the redirect URI below. Ensemble asks for the scopes read and comments:create.", "Paste the client ID and secret here."],
   },
   notion: {
     console: "https://www.notion.so/profile/integrations",
@@ -90,7 +92,7 @@ const APP_HELP: Partial<Record<AccountProvider, { console: string; steps: string
     console: "https://api.slack.com/apps",
     steps: [
       "Slack API → Create New App → From scratch.",
-      "OAuth & Permissions → Redirect URLs: the redirect URI below. User Token Scopes: channels:history, groups:history, im:history, mpim:history, users:read, users:read.email.",
+      "OAuth & Permissions → Redirect URLs: the redirect URI below. User Token Scopes: channels:history, groups:history, im:history, mpim:history, channels:read, groups:read, users:read, users:read.email.",
       "Turn on public distribution under Manage Distribution, then paste the client ID and secret here.",
     ],
   },
@@ -108,6 +110,42 @@ const APP_HELP: Partial<Record<AccountProvider, { console: string; steps: string
       "Docusign → Apps and Keys → Add App and Integration Key. Authentication: Authorization Code Grant, with a secret key.",
       "Redirect URI: the redirect URI below. Set DOCUSIGN_ENV=production after the key passes go-live review.",
       "Paste the integration key and secret here.",
+    ],
+  },
+  dropbox: {
+    console: "https://www.dropbox.com/developers/apps/create",
+    steps: [
+      "Dropbox App Console → Create app → Scoped access → Full Dropbox.",
+      "Permissions: account_info.read, files.metadata.read and files.content.read, then Submit.",
+      "Settings → OAuth 2 → Redirect URIs: the redirect URI below. Paste the App key and App secret here.",
+      "Up to 50 Dropbox accounts can connect while the app is in development. Apply for production in the App Console before more people connect.",
+    ],
+  },
+  box: {
+    console: "https://app.box.com/developers/console",
+    steps: [
+      "Box Developer Console → Create Platform App → Custom App → User Authentication (OAuth 2.0).",
+      "Configuration → OAuth 2.0 Redirect URIs: the redirect URI below. Application Scopes: Read all files and folders stored in Box.",
+      "Paste the client ID and client secret here.",
+      "Box enterprises that block unpublished apps must allow this one in their Admin Console before their people can connect.",
+    ],
+  },
+  xero: {
+    console: "https://developer.xero.com/app/manage",
+    steps: [
+      "Xero Developer → My Apps → New app → Web app. Redirect URI: the redirect URI below.",
+      "Configuration → Generate a secret. Paste the client ID and secret here.",
+      "Connect asks for openid, profile, email, offline_access, accounting.invoices.read and accounting.contacts.read. An app created before March 2026 without Xero's granular scopes: set XERO_SCOPES to \"openid profile email offline_access accounting.transactions.read accounting.contacts.read\".",
+      "Each person picks one organisation when they connect. Xero caps how many organisations an app can connect on its developer plan; check the app's tier before inviting many people.",
+    ],
+  },
+  discord: {
+    console: "https://discord.com/developers/applications",
+    steps: [
+      "Discord Developer Portal → New Application. OAuth2 → Redirects: the redirect URI below. Paste the client ID and client secret here.",
+      "Bot → Reset Token, and set it as DISCORD_BOT_TOKEN where hub-api runs. Ensemble reads channels as this bot, only in servers a person added it to.",
+      "Bot → Privileged Gateway Intents: turn on Message Content Intent, or messages come back empty. Keep Public Bot on so people can add it to their servers.",
+      "Connect asks for identify, guilds and bot with View Channels and Read Message History. Once the bot is in 100 servers, Discord requires app verification and approval of the Message Content intent.",
     ],
   },
 };
@@ -154,11 +192,22 @@ export async function connectorRoutes(app: FastifyInstance): Promise<void> {
         };
       }),
     );
-    return { apps, canEdit: isHosted() ? await isOperatorUser(request.userId) : accountIdOf(request) === env.ENSEMBLE_DEV_USER_ID };
+    const mcpApps = await Promise.all(
+      MCP_CLIENT_APPS.map(async (row) => {
+        const saved = await oauthApp(row.app);
+        return { ...mcpClientAppView(row), configured: Boolean(saved), source: saved?.source ?? null, clientIdHint: saved ? `${saved.clientId.slice(0, 12)}…` : null };
+      }),
+    );
+    return {
+      apps: [...apps, ...mcpApps],
+      mcpRedirectUri: mcpRedirectUrl(),
+      canEdit: isHosted() ? await isOperatorUser(request.userId) : accountIdOf(request) === env.ENSEMBLE_DEV_USER_ID,
+    };
   });
 
   app.put("/api/connectors/apps/:provider", async (request, reply) => {
-    const provider = OAuthProvider.parse((request.params as { provider: string }).provider);
+    const raw = (request.params as { provider: string }).provider;
+    const provider = mcpClientApp(raw)?.app ?? OAuthProvider.parse(raw);
     if (isHosted()) await requireHostAccess(request.userId, "Connector OAuth app administration");
     else if (accountIdOf(request) !== env.ENSEMBLE_DEV_USER_ID) {
       return reply.code(403).send({ error: "Only the person who runs this Ensemble can set up sign-in apps." });

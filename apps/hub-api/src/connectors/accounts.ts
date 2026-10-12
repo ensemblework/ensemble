@@ -38,6 +38,17 @@ export const ACCOUNT_PROVIDERS = [
   "krisp",
   "jamie",
   "otter",
+  // Searched and read as app items (connectors/items/sources).
+  "figma",
+  "vercel",
+  "azure_devops",
+  "zendesk",
+  "front",
+  "hubspot",
+  "dropbox",
+  "box",
+  "xero",
+  "discord",
 ] as const;
 
 export type AccountProvider = (typeof ACCOUNT_PROVIDERS)[number];
@@ -210,6 +221,15 @@ const APP_ENV: Record<string, { own: [string, string]; signin?: [string, string]
   slack: { own: ["SLACK_CLIENT_ID", "SLACK_CLIENT_SECRET"] },
   zoom: { own: ["ZOOM_CLIENT_ID", "ZOOM_CLIENT_SECRET"] },
   docusign: { own: ["DOCUSIGN_CLIENT_ID", "DOCUSIGN_CLIENT_SECRET"] },
+  dropbox: { own: ["DROPBOX_CLIENT_ID", "DROPBOX_CLIENT_SECRET"] },
+  box: { own: ["BOX_CLIENT_ID", "BOX_CLIENT_SECRET"] },
+  xero: { own: ["XERO_CLIENT_ID", "XERO_CLIENT_SECRET"] },
+  discord: { own: ["DISCORD_CLIENT_ID", "DISCORD_CLIENT_SECRET"] },
+  // Clients registered with vendors whose MCP servers do not let apps register themselves (connectors/mcp/client-apps.ts).
+  hubspot_mcp: { own: ["HUBSPOT_MCP_CLIENT_ID", "HUBSPOT_MCP_CLIENT_SECRET"] },
+  asana_mcp: { own: ["ASANA_MCP_CLIENT_ID", "ASANA_MCP_CLIENT_SECRET"] },
+  slack_mcp: { own: ["SLACK_MCP_CLIENT_ID", "SLACK_MCP_CLIENT_SECRET"] },
+  dropbox_mcp: { own: ["DROPBOX_MCP_CLIENT_ID", "DROPBOX_MCP_CLIENT_SECRET"] },
 };
 
 function envPair(names: [string, string] | undefined): { clientId: string; clientSecret: string } | null {

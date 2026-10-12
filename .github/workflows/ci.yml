@@ -39,6 +39,9 @@ jobs:
 
       - run: pnpm typecheck
 
+      # Connector logos are built from components/connectors/brands; the generated modules must match.
+      - run: node scripts/build-brand-logos.mjs --check
+
       - name: Package tests
         run: |
           pnpm --filter @ensemble/shared-types test
