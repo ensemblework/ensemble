@@ -13,7 +13,8 @@ type Mark = { type: string; attrs?: Record<string, unknown> };
 
 function inline(text: string): PageNode[] {
   const out: PageNode[] = [];
-  const pattern = /(\*\*([^*]+)\*\*|__([^_]+)__|\*([^*\s][^*]*)\*|_([^_\s][^_]*)_|`([^`]+)`|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s)<>]+))/g;
+  // `ensemble://<kind>/<id>` links stay links here; restoreMentionLinks turns them into mentions.
+  const pattern = /(\*\*([^*]+)\*\*|__([^_]+)__|\*([^*\s][^*]*)\*|_([^_\s][^_]*)_|`([^`]+)`|\[([^\]]+)\]\(((?:https?|ensemble):\/\/[^\s)]+)\)|(https?:\/\/[^\s)<>]+))/g;
   let last = 0;
   const push = (value: string, marks?: Mark[]) => {
     if (!value) return;
@@ -160,6 +161,88 @@ function documentText(doc: PageDocument | null, notes: string, forAgents: boolea
       return text;
     })
     .filter(Boolean)
+    .join("\n\n");
+}
+
+/** `[@Label](ensemble://kind/id)`: the form markdownToNodes and restoreMentionLinks read back as a mention. */
+function mentionLink(kind: string, id: string, label: string): string {
+  return `[@${label.replace(/^@+/, "").replace(/[[\]]/g, "") || kind}](ensemble://${kind}/${encodeURIComponent(id)})`;
+}
+
+function inlineMarkdown(nodes: readonly PageNode[] | undefined): string {
+  return (nodes ?? [])
+    .map((node) => {
+      if (node.type === "hardBreak") return "\n";
+      if (node.type === "mention") {
+        const kind = String(node.attrs?.kind ?? "people");
+        const label = String(node.attrs?.label ?? "");
+        return kind === "date" || !node.attrs?.id ? label : mentionLink(kind, String(node.attrs.id), label);
+      }
+      if (node.type !== "text") return inlineMarkdown(node.content);
+      let text = node.text ?? "";
+      const marks = new Set((node.marks ?? []).map((mark) => mark.type));
+      if (marks.has("code")) text = `\`${text}\``;
+      if (marks.has("bold")) text = `**${text}**`;
+      if (marks.has("italic")) text = `*${text}*`;
+      if (marks.has("strike")) text = `~~${text}~~`;
+      const href = node.marks?.find((mark) => mark.type === "link")?.attrs?.href;
+      return typeof href === "string" && href ? `[${text}](${href})` : text;
+    })
+    .join("");
+}
+
+function blockMarkdown(node: PageNode, indent = ""): string {
+  const children = node.content ?? [];
+  const nested = (child: PageNode, prefix: string) => {
+    const [first, ...rest] = child.content ?? [];
+    const head = first ? blockMarkdown(first, `${indent}  `).trimStart() : "";
+    const tail = rest.map((part) => blockMarkdown(part, `${indent}  `)).filter(Boolean);
+    return [`${indent}${prefix}${head}`, ...tail].join("\n");
+  };
+  switch (node.type) {
+    case "paragraph":
+      return `${indent}${inlineMarkdown(children)}`;
+    case "heading":
+      return `${"#".repeat(Math.min(6, Math.max(1, Number(node.attrs?.level ?? 2))))} ${inlineMarkdown(children)}`;
+    case "bulletList":
+      return children.map((item) => nested(item, "- ")).join("\n");
+    case "orderedList":
+      return children.map((item, index) => nested(item, `${index + 1}. `)).join("\n");
+    case "taskList":
+      return children.map((item) => nested(item, item.attrs?.checked ? "- [x] " : "- [ ] ")).join("\n");
+    case "codeBlock":
+      return `\`\`\`${String(node.attrs?.language ?? "")}\n${children.map((child) => child.text ?? "").join("")}\n\`\`\``;
+    case "blockquote":
+      return children.map((child) => blockMarkdown(child)).join("\n\n").split("\n").map((line) => `> ${line}`).join("\n");
+    case "horizontalRule":
+      return "---";
+    case "image":
+      return `![${String(node.attrs?.alt ?? "")}](${String(node.attrs?.src ?? "")})`;
+    case "table": {
+      const rows = children.map((row) => (row.content ?? []).map((cell) => (cell.content ?? []).map((part) => inlineMarkdown(part.content)).join(" ").replace(/\|/g, "\\|").trim()));
+      if (!rows.length) return "";
+      const width = Math.max(...rows.map((row) => row.length));
+      const line = (row: string[]) => `| ${Array.from({ length: width }, (_, index) => row[index] ?? "").join(" | ")} |`;
+      return [line(rows[0]!), `|${" --- |".repeat(width)}`, ...rows.slice(1).map(line)].join("\n");
+    }
+    case "agentBlock":
+      return [`*Earlier agent output${node.attrs?.title ? `: ${String(node.attrs.title)}` : ""}*`, ...children.map((child) => blockMarkdown(child))].join("\n\n");
+    default:
+      if (typeof node.attrs?.fileId === "string" && node.attrs.fileId) return mentionLink("file", node.attrs.fileId, String(node.attrs.label ?? node.attrs.filename ?? "file"));
+      return children.length ? children.map((child) => (child.type === "text" || child.type === "mention" ? inlineMarkdown([child]) : blockMarkdown(child, indent))).join(children.some((child) => child.type === "text") ? "" : "\n\n") : "";
+  }
+}
+
+/**
+ * A page as Markdown for agents that may write it back: lists, checklists, tables and code keep
+ * their shape, and mentions (files, people, diagrams…) come out as `[@Label](ensemble://kind/id)`
+ * so a rewrite keeps them. A task with no page yet reads as its notes.
+ */
+export function pageMarkdown(doc: PageDocument | null, notes: string): string {
+  if (!doc) return notes;
+  return doc.content
+    .map((node) => blockMarkdown(node).replace(/\s+$/, ""))
+    .filter((block) => block.trim())
     .join("\n\n");
 }
 

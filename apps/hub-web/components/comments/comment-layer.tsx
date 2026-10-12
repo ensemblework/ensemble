@@ -6,11 +6,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type PageComment } from "@/lib/api";
 import { MarkdownText } from "../markdown-text";
 import { ensembleNodeRequest } from "./ensemble-prompt";
-import type { PageDocument } from "@ensemble/shared-types";
+import type { PageDocument, PageMention } from "@ensemble/shared-types";
 import { ENTITY_MENTION_KEY } from "../editor/extensions";
 import { retargetEnsembleReply } from "./ensemble-artifacts";
 import { useToast } from "../toast";
 import { streamEnsemble } from "./ensemble-view";
+import { MentionPopover, useMentionMenu } from "../mentions/mention-menu";
 
 function clampBox(top: number, left: number, width: number, height: number) {
   if (typeof window === "undefined") return { top, left };
@@ -41,6 +42,8 @@ export function CommentLayer({
   const [draft, setDraft] = useState("");
   const [active, setActive] = useState<string | null>(null);
   const [pageDraft, setPageDraft] = useState("");
+  const draftMentions = useMentionMenu({ value: draft, onValue: setDraft });
+  const pageMentions = useMentionMenu({ value: pageDraft, onValue: setPageDraft });
   const [hover, setHover] = useState<{ top: number; left: number; from: number; to: number } | null>(null);
   const [frame, setFrame] = useState(0);
   const hoverTimer = useRef(0);
@@ -197,8 +200,8 @@ export function CommentLayer({
   }, [editor, comments.data]);
 
   const create = useMutation({
-    mutationFn: (input: { quote: string; text: string; markId?: string }) =>
-      api.createComment(pageKind, pageId, { markId: input.markId, quote: input.quote, body: { text: input.text } }),
+    mutationFn: (input: { quote: string; text: string; markId?: string; mentions?: PageMention[] }) =>
+      api.createComment(pageKind, pageId, { markId: input.markId, quote: input.quote, body: { text: input.text }, mentions: input.mentions }),
     onSuccess: async (result, input) => {
       const range = rangeRef.current;
       if (editor && input.markId && range) {
@@ -278,14 +281,19 @@ export function CommentLayer({
           onSubmit={(event) => {
             event.preventDefault();
             const markId = crypto.randomUUID();
-            create.mutate({ quote: selection?.text || quoteRef.current, text: draft.trim(), markId });
+            const text = draft.trim();
+            create.mutate({ quote: selection?.text || quoteRef.current, text, markId, mentions: draftMentions.takeMentions(text) });
+            draftMentions.clear();
           }}
         >
           <div className="mb-1 line-clamp-2 text-[12px] text-muted">“{selection.text}”</div>
+          <MentionPopover menu={draftMentions} />
           <textarea
+            ref={draftMentions.ref}
             autoFocus
             value={draft}
-            onChange={(event) => setDraft(event.target.value)}
+            {...draftMentions.inputProps}
+            onKeyDown={draftMentions.onKeyDown}
             aria-label="Comment"
             placeholder="Comment. People can't reply, @ensemble can."
             className="field min-h-16 w-full"
@@ -334,15 +342,20 @@ export function CommentLayer({
               style={{ top: 0 }}
               onSubmit={(event) => {
                 event.preventDefault();
-                if (!pageDraft.trim()) return;
-                create.mutate({ quote: "", text: pageDraft.trim() });
+                const text = pageDraft.trim();
+                if (!text) return;
+                create.mutate({ quote: "", text, mentions: pageMentions.takeMentions(text) });
+                pageMentions.clear();
                 setPageDraft("");
                 setActive(null);
               }}
             >
+              <MentionPopover menu={pageMentions} />
               <textarea
+                ref={pageMentions.ref}
                 value={pageDraft}
-                onChange={(event) => setPageDraft(event.target.value)}
+                {...pageMentions.inputProps}
+                onKeyDown={pageMentions.onKeyDown}
                 aria-label="Page comment"
                 placeholder="A note on the whole page. @ensemble can answer."
                 className="field min-h-16 w-full"
@@ -397,6 +410,8 @@ function Thread({
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(textOf(row.body));
   const [ask, setAsk] = useState("");
+  const editMentions = useMentionMenu({ value: text, onValue: setText });
+  const askMentions = useMentionMenu<HTMLInputElement>({ value: ask, onValue: setAsk });
   const save = useMutation({
     mutationFn: () => api.patchComment(row.id, { body: { text } }),
     onSuccess: () => {
@@ -417,7 +432,10 @@ function Thread({
       {row.quote ? <div className="mb-1 border-l-2 border-line pl-2 text-[12px] text-muted">“{row.quote}”</div> : null}
       {orphan ? <div className="mb-1 text-[12px] text-warn">The highlighted text was removed. “{row.quote}”</div> : null}
       {editing ? (
-        <textarea aria-label="Edit comment" value={text} onChange={(event) => setText(event.target.value)} className="field min-h-16 w-full" />
+        <>
+          <MentionPopover menu={editMentions} />
+          <textarea ref={editMentions.ref} aria-label="Edit comment" value={text} {...editMentions.inputProps} onKeyDown={editMentions.onKeyDown} className="field min-h-16 w-full" />
+        </>
       ) : (
         <MarkdownText text={textOf(row.body)} />
       )}
@@ -454,16 +472,21 @@ function Thread({
           const prompt = String(new FormData(event.currentTarget).get("prompt") ?? ask).trim();
           if (!prompt) return;
           const threadId = crypto.randomUUID();
+          const mentions = askMentions.takeMentions(prompt);
+          askMentions.clear();
           setAsk("");
-          void streamEnsemble({ pageKind, pageId, prompt, threadId, parentId: row.id, quote: row.quote }).then(() =>
+          void streamEnsemble({ pageKind, pageId, prompt, threadId, parentId: row.id, quote: row.quote, mentions }).then(() =>
             client.invalidateQueries({ queryKey: ["comments", pageKind, pageId] }),
           );
         }}
       >
+        <MentionPopover menu={askMentions} />
         <input
+          ref={askMentions.ref}
           name="prompt"
           value={ask}
-          onChange={(event) => setAsk(event.target.value)}
+          {...askMentions.inputProps}
+          onKeyDown={askMentions.onKeyDown}
           aria-label="Ask Ensemble"
           placeholder="@ensemble…"
           className="field flex-1 py-1 text-[12.5px]"

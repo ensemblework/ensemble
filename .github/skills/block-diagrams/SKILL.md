@@ -66,6 +66,8 @@ An ER-ish diagram names entities and relationships. It is not a full schema. Ski
 
 Every block label must appear in that material or in the person’s own words. A box called “Auth service” is allowed only if something you read says so. Prefer fewer true boxes over a plausible architecture.
 
+A well-known system the person names, rather than their own work (the transformer architecture, the OAuth 2.0 authorization code flow, a TCP handshake), is drawn from its standard, textbook design with its standard names. Do not add parts of their own system to it unless they gave them.
+
 If the material is too thin (a repo name and nothing else), draw that one box and say what you could not see. Do not fill the gaps.
 
 ## Names, ids, labels

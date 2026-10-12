@@ -13,6 +13,7 @@ const files = [
   resolve(root, "docs/21_BLOCK_DIAGRAMS_CHEATSHEET.md"),
   resolve(root, "docs/22_BLOCK_DIAGRAMS_FOR_AGENTS.md"),
   resolve(root, ".github/skills/block-diagrams/SKILL.md"),
+  resolve(root, "apps/hub-api/src/assistant/skills/diagrams.md"),
 ];
 
 function fences(source: string, lang: string): string[] {

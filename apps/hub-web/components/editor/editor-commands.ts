@@ -51,19 +51,6 @@ export const BLOCK_COMMANDS: readonly BlockCommand[] = [
   { id: "file", label: "File", detail: "Upload or attach a PDF, image, sheet or any file", aliases: "attach attachment upload pdf image photo picture document", symbol: "⎘" },
 ];
 
-export const MENTION_GROUPS: ReadonlyArray<{ kind: MentionKind; label: string; detail: string }> = [
-  { kind: "people", label: "People", detail: "Mention someone in your workspace" },
-  { kind: "project", label: "Projects", detail: "Link a project" },
-  { kind: "repo", label: "Repositories", detail: "Link a repository" },
-  { kind: "task", label: "Tasks / todos", detail: "Refer to another task" },
-  { kind: "deliverable", label: "Deliverables", detail: "Link an outcome" },
-  { kind: "skill", label: "Skills", detail: "Reference a personal skill" },
-  { kind: "diagram", label: "Diagrams", detail: "Link a block diagram" },
-  { kind: "plot", label: "Plots", detail: "Browse plot spaces, tiles, and data files" },
-  { kind: "file", label: "Files", detail: "Attach a file you uploaded or imported" },
-  { kind: "date", label: "Date & time", detail: "Mention a date without changing the due date" },
-];
-
 export function matchCommands(query: string): BlockCommand[] {
   const needle = query.toLowerCase().replace(/[\s_-]/g, "");
   return BLOCK_COMMANDS.filter((item) =>

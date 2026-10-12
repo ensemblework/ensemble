@@ -10,6 +10,8 @@ function candidates(): string[] {
     resolve(here, "../../../../.github/skills/block-diagrams", FILE),
     resolve(process.cwd(), ".github/skills/block-diagrams", FILE),
     resolve(process.cwd(), "../../.github/skills/block-diagrams", FILE),
+    // The packaged desktop app carries a copy beside the API (scripts/assemble-desktop-sidecar.mjs).
+    resolve(here, "../../skills/block-diagrams", FILE),
   ];
 }
 

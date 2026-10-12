@@ -81,7 +81,7 @@ Each state comes with one plain sentence, short numbered steps and a button to t
 - **Ensemble's agent**: its brief lists the files on the task's page, its project's page and files tagged with the task, with up to 2,000 characters of each (10,000 in total). `read_attachment` reads a file in parts; `save_attachment` (code runs) copies the original into the work folder (`attachments/<name>`).
 - **Claude Code, Codex and Cursor**: the originals are copied for the job and their paths listed in the prompt — to `<workspace>/files/<jobId>/` when the run may read outside its folder, otherwise to `<folder>/.ensemble/attachments/<jobId>/` (git-ignored). Copies are removed when the job ends.
 - **Paired computers**: the claim's task description gets a "Files attached" section with short excerpts.
-- **The assistant**: `hub_list_files` and `hub_read_file`.
+- **The assistant**: `hub_list_files` and `hub_read_file`; `hub_import_app_file` brings a file or attachment in from a connected app the same way as `POST /api/documents/import`, after Apply (its preview says when the app is not ready or the hosted plan's 10 files are used); `hub_create_page` and `hub_update_page` attach a file with a `[@name](ensemble://file/<id>)` link; `hub_import_dataset` with `fileId` makes a Plots dataset from a CSV, TSV or `.xlsx` sheet in Files ([11 §8.4](11_HOW_THE_ASSISTANT_WORKS.md)).
 - **Editors over MCP** (Context Bridge and hosted `/mcp`): search finds files, the brief lists a task's files, and `ensemble_read` reads a file's text in parts. Original bytes are never sent over MCP.
 
 File text is always passed on as information, not instructions.

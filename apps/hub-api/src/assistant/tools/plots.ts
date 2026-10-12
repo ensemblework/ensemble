@@ -1,7 +1,8 @@
 import { z } from "zod";
-import { isWorkspace, plotConfigSchema, workspaceSchema } from "@ensemble/shared-types";
-import { defineTool, inTransaction, toolOk } from "../types.js";
+import { fileFormat, isWorkspace, plotConfigSchema, workspaceSchema } from "@ensemble/shared-types";
+import { defineTool, inTransaction, toolOk, type ToolContext } from "../types.js";
 import { configOf, ingestDataset, loadOwnedTable, ownedPlot } from "../../plots/service.js";
+import { decodeText } from "../../files/extract.js";
 import type { Prisma } from "@prisma/client";
 
 export const plotTools = [
@@ -158,20 +159,88 @@ export const plotTools = [
     name: "hub_import_dataset",
     area: "context",
     description:
-      "Import a small table into Plots from CSV text or rows the person pasted in chat. Do not invent file paths. Pickle is refused. A write waits for Apply.",
+      "Make a Plots dataset from a CSV, TSV or Excel (.xlsx) file in Files (fileId from hub_list_files; sheet picks a workbook tab, default the first), or from CSV text or rows pasted in chat (text, header row first). Do not invent file paths. Pickle is refused. A write waits for Apply.",
     input: z.object({
-      name: z.string().min(1).max(200),
-      text: z.string().min(1).max(200_000),
+      name: z.string().min(1).max(200).optional().describe("The dataset's name. Default: the file name."),
+      text: z.string().min(1).max(200_000).optional().describe("CSV text, header row first."),
+      fileId: z.string().uuid().optional().describe("A CSV, TSV or .xlsx file in Files."),
+      sheet: z.string().min(1).max(200).optional().describe("The workbook tab to use (.xlsx only)."),
     }),
     isWrite: true,
     risk: "low",
-    undoable: true,
-    preview(_ctx, input) {
-      return `Import dataset “${input.name}”`;
+    outsideTransaction: true,
+    async preview(ctx, input) {
+      if (Boolean(input.text) === Boolean(input.fileId)) throw Object.assign(new Error("Send either fileId (a file in Files) or text (pasted CSV)."), { statusCode: 400 });
+      if (input.fileId) {
+        const table = await fileTable(ctx, input.fileId, input.sheet);
+        return `Import dataset “${input.name ?? table.name}” from ${table.filename}${table.sheet ? ` (sheet ${table.sheet})` : ""}`;
+      }
+      return `Import dataset “${input.name ?? "Pasted table"}”`;
     },
     async run(ctx, input) {
-      const dataset = await ingestDataset(ctx.prisma, ctx.userId, { name: input.name, text: input.text, filename: `${input.name}.csv` });
+      if (Boolean(input.text) === Boolean(input.fileId)) throw Object.assign(new Error("Send either fileId (a file in Files) or text (pasted CSV)."), { statusCode: 400 });
+      if (input.fileId) {
+        const table = await fileTable(ctx, input.fileId, input.sheet);
+        const name = input.name ?? table.name;
+        const dataset = await ingestDataset(ctx.prisma, ctx.userId, { name, text: table.text, filename: table.parseAs });
+        const warnings = [...dataset.warnings, ...table.warnings];
+        return toolOk(`Imported “${dataset.name}” (${dataset.rowCount} rows) from ${table.filename}${table.sheet ? `, sheet ${table.sheet}` : ""}.`, {
+          id: dataset.id,
+          name: dataset.name,
+          columns: dataset.columns,
+          rowCount: dataset.rowCount,
+          ...(table.sheets.length > 1 ? { sheet: table.sheet, sheets: table.sheets } : {}),
+          ...(warnings.length ? { warnings } : {}),
+        }, { invalidate: ["plots"] });
+      }
+      const name = input.name ?? "Pasted table";
+      const dataset = await ingestDataset(ctx.prisma, ctx.userId, { name, text: input.text, filename: `${name}.csv` });
       return toolOk(`Imported “${dataset.name}” (${dataset.rowCount} rows).`, dataset, { invalidate: ["plots"] });
     },
   }),
 ];
+
+const TEXT_TABLES = new Set(["csv", "tsv", "txt"]);
+const WORKBOOKS = new Set(["xlsx", "xlsm"]);
+const SHEET_HEADER = /^--- Sheet \d+: (.*) ---$/;
+
+/** The sheets of a workbook as Files read them (`--- Sheet N: name ---` then CSV). */
+function workbookSheets(text: string): Array<{ name: string; csv: string }> {
+  const sheets: Array<{ name: string; lines: string[] }> = [];
+  for (const line of text.split("\n")) {
+    const header = SHEET_HEADER.exec(line);
+    if (header) sheets.push({ name: header[1]!, lines: [] });
+    else sheets.at(-1)?.lines.push(line);
+  }
+  return sheets.map((sheet) => ({ name: sheet.name, csv: sheet.lines.join("\n").trim() }));
+}
+
+/**
+ * A table from a file in Files: CSV and TSV from the original bytes, an .xlsx from the
+ * per-sheet CSV text Files already extracted. Only this space's files.
+ */
+async function fileTable(ctx: ToolContext, fileId: string, sheet?: string): Promise<{ text: string; parseAs: string; name: string; filename: string; sheet: string; sheets: string[]; warnings: string[] }> {
+  const row = await ctx.prisma.document.findFirst({
+    where: { id: fileId, userId: ctx.userId, deletedAt: null },
+    select: { filename: true, original: true, parseStatus: true, warnings: true, artifact: { select: { text: true } } },
+  });
+  if (!row) throw Object.assign(new Error("No file with that id in Files. Call hub_list_files and use an id it returns."), { statusCode: 404 });
+  const format = fileFormat(row.filename).ext;
+  const base = row.filename.replace(/\.[^.]+$/, "") || "Dataset";
+  if (TEXT_TABLES.has(format)) {
+    if (sheet) throw Object.assign(new Error(`${row.filename} has no sheets; leave sheet out.`), { statusCode: 400 });
+    const text = decodeText(row.original);
+    return { text, parseAs: format === "tsv" ? `${base}.tsv` : `${base}.csv`, name: base, filename: row.filename, sheet: "", sheets: [], warnings: [] };
+  }
+  if (!WORKBOOKS.has(format)) {
+    throw Object.assign(new Error(`${row.filename} is not a CSV, TSV or .xlsx file. Make an .xlsx or CSV copy, or upload it on the Plots page.`), { statusCode: 400 });
+  }
+  if (row.parseStatus === "queued" || row.parseStatus === "running") throw Object.assign(new Error("Ensemble is still reading this workbook. Try again in a minute."), { statusCode: 409 });
+  const sheets = workbookSheets(row.artifact?.text ?? "");
+  if (row.parseStatus !== "ready" || !sheets.length) throw Object.assign(new Error(`Ensemble could not read the sheets in ${row.filename}. Upload it on the Plots page instead.`), { statusCode: 400 });
+  const chosen = sheet ? sheets.find((item) => item.name.trim().toLowerCase() === sheet.trim().toLowerCase()) : sheets.find((item) => item.csv);
+  if (!chosen) throw Object.assign(new Error(`${row.filename} has no sheet “${sheet}”. Its sheets: ${sheets.map((item) => item.name).join(", ")}.`), { statusCode: 400 });
+  if (!chosen.csv) throw Object.assign(new Error(`Sheet “${chosen.name}” is empty. Its sheets: ${sheets.map((item) => item.name).join(", ")}.`), { statusCode: 400 });
+  const warnings = row.warnings.filter((warning) => /rows/i.test(warning)).map((warning) => warning.replace(/^Agents can read/, "Plots got"));
+  return { text: chosen.csv, parseAs: `${base}.csv`, name: sheets.length > 1 ? `${base} – ${chosen.name}` : base, filename: row.filename, sheet: chosen.name, sheets: sheets.map((item) => item.name), warnings };
+}

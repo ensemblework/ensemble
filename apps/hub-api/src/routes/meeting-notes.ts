@@ -7,7 +7,7 @@ import type { FastifyInstance } from "fastify";
 import type { Prisma } from "@prisma/client";
 import { isMeetingVendor, VENDOR_LABEL } from "../connectors/meetings/types.js";
 
-const NOTE_SELECT = {
+export const NOTE_SELECT = {
   id: true,
   title: true,
   answer: true,
@@ -24,14 +24,15 @@ const NOTE_SELECT = {
   tasks: { where: { deletedAt: null }, select: { id: true, title: true, status: true }, orderBy: { createdAt: "asc" as const }, take: 50 },
 } satisfies Prisma.MeetingNoteSelect;
 
-type NoteRow = Prisma.MeetingNoteGetPayload<{ select: typeof NOTE_SELECT }>;
+export type NoteRow = Prisma.MeetingNoteGetPayload<{ select: typeof NOTE_SELECT }>;
 
 type Item = { text?: unknown; owner?: { name?: unknown; email?: unknown } | null; mine?: unknown; completed?: unknown; due?: unknown; url?: unknown };
 
 const list = <T>(value: unknown): T[] => (Array.isArray(value) ? (value as T[]) : []);
 const text = (value: unknown): string | null => (typeof value === "string" && value.trim() ? value : null);
 
-function view(row: NoteRow, people: Map<string, string>) {
+/** An imported note as the Meetings page and the assistant show it. */
+export function importedNoteView(row: NoteRow, people: Map<string, string>) {
   const extraction = (row.extraction && typeof row.extraction === "object" ? row.extraction : {}) as Record<string, unknown>;
   const owner = (item: Item) => (item.owner ? { name: text(item.owner.name), email: text(item.owner.email) } : null);
   const vendor = row.externalSource && isMeetingVendor(row.externalSource) ? row.externalSource : null;
@@ -58,7 +59,7 @@ function view(row: NoteRow, people: Map<string, string>) {
   };
 }
 
-async function peopleNames(prisma: FastifyInstance["prisma"], userId: string, rows: NoteRow[]): Promise<Map<string, string>> {
+export async function peopleNames(prisma: FastifyInstance["prisma"], userId: string, rows: NoteRow[]): Promise<Map<string, string>> {
   const ids = [...new Set(rows.flatMap((row) => row.personIds))];
   if (!ids.length) return new Map();
   const people = await prisma.person.findMany({ where: { userId, id: { in: ids }, deletedAt: null }, select: { id: true, name: true } });
@@ -76,13 +77,13 @@ export async function meetingNoteRoutes(app: FastifyInstance): Promise<void> {
       take: 50,
     });
     const people = await peopleNames(prisma, request.userId, rows);
-    return { notes: rows.map((row) => view(row, people)) };
+    return { notes: rows.map((row) => importedNoteView(row, people)) };
   });
 
   app.get("/api/meetings/notes/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
     const row = await prisma.meetingNote.findFirst({ where: { id, userId: request.userId, deletedAt: null }, select: NOTE_SELECT });
     if (!row) return reply.code(404).send({ error: "Meeting note not found." });
-    return { note: view(row, await peopleNames(prisma, request.userId, [row])) };
+    return { note: importedNoteView(row, await peopleNames(prisma, request.userId, [row])) };
   });
 }
