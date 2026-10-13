@@ -47,7 +47,8 @@ type Ids = Record<string, string>;
  * date range. `full` also fills optional ids (filters like taskId); the lean one fills only required ids.
  */
 function inputFor(tool: AnyHubTool, ids: Ids, full: boolean): Record<string, unknown> | null {
-  const schema = tool.input as z.ZodTypeAny;
+  const outer = tool.input as z.ZodTypeAny;
+  const schema = outer instanceof z.ZodEffects ? (outer.innerType() as z.ZodTypeAny) : outer;
   const shape = schema instanceof z.ZodObject ? (schema.shape as Record<string, z.ZodTypeAny>) : null;
   if (!shape) return null;
   const input: Record<string, unknown> = {};

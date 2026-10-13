@@ -71,6 +71,15 @@ test("a remote spec cannot name a path, a private clone, credentials, or another
   assert.equal(isRefusal(branch) && branch.code, "BRANCH_NOT_ALLOWED");
 });
 
+test("a code task with no repository and no shared folder works in a new empty folder on the computer", () => {
+  const plan = planLocalJob(spec({ instructions: "Start a small script" }), settings(), () => null);
+  assert.equal(isRefusal(plan), false);
+  if (isRefusal(plan)) return;
+  assert.equal(plan.assign.folder, undefined);
+  assert.equal(plan.assign.repoUrl, undefined);
+  assert.equal(plan.publicCheck, null);
+});
+
 test("a shared label becomes a local folder, and a public https URL is checked before clone", () => {
   const shared = settings([
     { label: "notes", path: "/work/notes", kind: "folder", access: "read-write" },

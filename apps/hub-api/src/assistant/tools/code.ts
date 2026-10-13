@@ -12,6 +12,7 @@ import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { z } from "zod";
 import { pickRunProfile, type RunProfile } from "@ensemble/shared-types";
 import { readFileText } from "../../files/extract.js";
+import { appendToTaskPage } from "./pages.js";
 import { createTask } from "../../services/tasks.js";
 import { expandHome, GuardError, outsideRefusal, resolveWorkFolder, within } from "../../workspace/guard.js";
 import { Assign, createJob } from "../../workspace/assign.js";
@@ -200,7 +201,7 @@ export const codeTools: readonly AnyHubTool[] = [
       "Do coding work: create a task (or use taskId) and start an agent on it in a folder on this computer, under the person's run profile. The agent (Ensemble's agent, Claude Code, Codex or Cursor's agent) edits, runs commands and commits as the profile allows, inside Ensemble's sandbox and rules; its questions go to the person. Give clear instructions. Returns the job id.",
     input: z.object({
       title: z.string().min(1).max(200).describe("The task's title, as a short imperative."),
-      description: z.string().max(4000).optional(),
+      page: z.string().max(20_000).optional().describe("Markdown for a new task's page: context worth keeping. Not the short description, which is the person's."),
       instructions: z.string().max(8000).default("").describe("What to do, what to check, what done looks like."),
       taskId: z.string().uuid().optional().describe("An existing task instead of a new one."),
       folder: z.string().optional().describe("Default: the folder Ensemble Code was opened in."),
@@ -224,12 +225,16 @@ export const codeTools: readonly AnyHubTool[] = [
         const found = await ctx.prisma.task.findFirst({ where: { id: taskId, userId: ctx.userId, deletedAt: null }, select: { id: true } });
         if (!found) throw new ToolBlockedError("That task does not exist. Leave taskId out to create one.");
       } else {
-        const task = await createTask(
-          ctx.prisma,
-          ctx.userId,
-          { title: input.title, description: input.description ?? "", owner: "agent", status: "todo", sourceRef: ctx.conversationId ? `assistant:${ctx.conversationId}` : "assistant" },
-          "agent",
-        );
+        const task = await ctx.prisma.$transaction(async (tx) => {
+          const row = await createTask(
+            tx,
+            ctx.userId,
+            { title: input.title, owner: "agent", status: "todo", sourceRef: ctx.conversationId ? `assistant:${ctx.conversationId}` : "assistant" },
+            "agent",
+          );
+          if (input.page?.trim()) await appendToTaskPage(tx, ctx.userId, row.id, input.page);
+          return row;
+        });
         taskId = task.id;
       }
       let folder: string | undefined;

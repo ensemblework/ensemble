@@ -64,7 +64,7 @@ const JSON_NULLABLE: Record<UndoModel, readonly string[]> = {
   person: [],
   skill: ["proposedChanges"],
   meetingNote: ["extraction"],
-  meetingSession: [],
+  meetingSession: ["content"],
   repo: [],
   preference: [],
   contextSuppression: [],

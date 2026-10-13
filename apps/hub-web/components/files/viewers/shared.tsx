@@ -20,7 +20,7 @@ export type ViewerProps = {
 /**
  * Present mode on the file's own screen (/files/[id]). The screen owns the full-screen mode
  * (lib/fullscreen.ts) because the browser only grants fullscreen to the click on its button;
- * the PDF and slide viewers draw the presentation into it.
+ * the slide viewer draws the presentation into it.
  */
 export type PresentControl = {
   active: boolean;

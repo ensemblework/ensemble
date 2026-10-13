@@ -53,7 +53,7 @@ const CHAT_TOOLS = [
       type: "object",
       properties: {
         title: { type: "string", description: "A short imperative title." },
-        description: { type: "string", description: "What to do, with any detail worth keeping." },
+        page: { type: "string", description: "The task's page, in Markdown: what to do, with any detail worth keeping." },
         due: { type: "string", description: "Due date, YYYY-MM-DD." },
       },
       required: ["title"],

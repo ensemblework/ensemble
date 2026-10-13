@@ -1,3 +1,5 @@
+import type { QueryClient } from "@tanstack/react-query";
+
 /** Patch the open thread so Apply does not keep showing the old prompt until a reload. */
 
 export type AppliedReply = {
@@ -32,4 +34,19 @@ export function applyNotice(result: { summary?: string; partial?: boolean; faile
   if (!result.partial || !result.failed?.length) return { text: summary || "Applied.", tone: "ok" };
   const missed = result.failed.map((row) => row.error.trim().replace(/^Not applied:\s*/i, "").replace(/[.\s]+$/, "")).join("; ");
   return { text: `${summary ? `${summary} ` : ""}Not applied: ${missed}.`, tone: "error" };
+}
+
+let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * After the assistant changed something during a turn, what other screens show (the board,
+ * Today, a page) is refetched at once instead of waiting for the live stream, which a closed
+ * or dropped connection never delivers. Several writes in one turn become one refetch.
+ * The open thread is left to the dock.
+ */
+export function refreshAfterAssistantWrite(client: QueryClient, wait = 120): void {
+  clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(() => {
+    void client.invalidateQueries({ predicate: (query) => query.queryKey[0] !== "assistant-messages" });
+  }, wait);
 }

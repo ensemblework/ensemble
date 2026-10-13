@@ -257,3 +257,17 @@ export function profileSummary(profile: RunProfile): string {
   const git = profile.delivery === "local" ? "local only" : profile.delivery === "commit" ? "may commit" : "may commit and push";
   return `${mode} · ${git} · sandbox ${profile.sandbox ? "on" : "off"} · internet ${profile.network ? "on" : "off"}`;
 }
+
+export type KeyRow = { provider: string; source?: string | null };
+
+/** The providers with a key: saved on this computer, or (signed in) saved on the Ensemble account. The runtime lists every provider. */
+export function withKeys<T extends KeyRow>(rows: readonly T[]): T[] {
+  return rows.filter((row) => Boolean(row.source) && row.source !== "none");
+}
+
+/** "google (your account), cursor" for /status. */
+export function keyLine(rows: readonly KeyRow[]): string {
+  const keyed = withKeys(rows);
+  if (!keyed.length) return "none (/keys here, or Settings → Models on the web)";
+  return keyed.map((row) => (row.source === "account" ? `${row.provider} (your account)` : row.provider)).join(", ");
+}

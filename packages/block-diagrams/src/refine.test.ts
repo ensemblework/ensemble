@@ -66,3 +66,13 @@ test("templates parse clean and explain in plain language", () => {
     assert.equal(errorCount(parseDiagram(mermaid).diagnostics), 0);
   }
 });
+
+test("one arrow per pair of blocks: add_edge on a joined pair changes it, set_edge styles it", () => {
+  const source = `node a "Alpha" shape rectangle\nnode b "Beta" shape rectangle\n\nedge a > b\n`;
+  const again = applyDiagramEdits(source, [{ op: "add_edge", from: "b", to: "a", label: "back" }]);
+  assert.equal(Object.keys(again.model.edges).length, 1);
+  assert.match(again.source, /edge a > b : "back"/);
+  const styled = applyDiagramEdits(source, [{ op: "set_edge", from: "Alpha", to: "Beta", dashed: true, arrows: "both", width: 3, head: 16, label: "sync" }]);
+  assert.match(styled.source, /edge a <--> b : "sync" width 3 head 16/);
+  assert.throws(() => applyDiagramEdits(source, [{ op: "set_edge", id: "e9" }]), /No arrow “e9”/);
+});

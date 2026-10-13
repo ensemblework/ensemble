@@ -13,6 +13,10 @@ from ensemble_agent import credentials
 from ensemble_agent.main import http_error_for
 from ensemble_agent.models import (
     ModelAuthError,
+    _copilot_endpoint,
+    anthropic_meta,
+    copilot_meta,
+    openrouter_meta,
     _effort,
     _endpoint,
     _from_openai,
@@ -221,19 +225,22 @@ def test_mock_fixture_error_object_raises() -> None:
     assert caught.value.retry_after_seconds == 3
 
 
-def test_effort_minimal_depends_on_gemini_generation() -> None:
+def test_effort_is_sent_as_chosen_never_swapped() -> None:
     assert _effort("google", "minimal", "gemini-3.5-flash") == "minimal"
-    assert _effort("google", "minimal", "gemini-2.5-flash") == "low"
+    assert _effort("google", "low", "gemini-2.5-flash") == "low"
     assert _effort("google", "default", "gemini-3.5-flash") is None
     assert _effort("google", None, "gemini-3.5-flash") is None
-    assert _effort("openai", "minimal", "gpt-4.1-mini") == "minimal"
+    assert _effort("openai", "minimal", "gpt-5-mini") == "minimal"
+    routed = build_chat_payload("anthropic/claude-sonnet-5-5", "openrouter", [], reasoning_effort="xhigh")
+    assert routed["reasoning"] == {"effort": "xhigh"}
+    assert "reasoning_effort" not in routed
 
 
 def test_temperature_omitted_for_gemini_3() -> None:
     gemini3 = build_chat_payload("gemini-3.5-flash", "google", [], temperature=0, reasoning_effort="minimal")
     assert "temperature" not in gemini3
     assert gemini3["reasoning_effort"] == "minimal"
-    older = chat_payload("gemini-2.5-flash", "google", [{"role": "user", "content": "hi"}], temperature=0, reasoning_effort="minimal")
+    older = chat_payload("gemini-2.5-flash", "google", [{"role": "user", "content": "hi"}], temperature=0, reasoning_effort="low")
     assert older["temperature"] == 0
     assert older["reasoning_effort"] == "low"
     assert "temperature" not in build_chat_payload("gemini-3.5-flash", "google", [])
@@ -307,19 +314,30 @@ def test_post_with_retry_does_not_retry_quota_or_plain_400() -> None:
     assert len(seen) == 1
 
 
-def test_post_with_retry_strips_reasoning_effort_only_when_the_error_mentions_it() -> None:
+def test_a_refused_thinking_level_is_the_providers_error_not_a_silent_retry() -> None:
     seen: list[dict] = []
 
     async def send(payload: dict) -> httpx.Response:
         seen.append(dict(payload))
-        if "reasoning_effort" in payload:
-            return httpx.Response(400, text='{"error":{"message":"unknown parameter reasoning_effort"}}')
-        return httpx.Response(200, json={"ok": True})
+        return httpx.Response(400, text='{"error":{"message":"Unsupported value: \'reasoning_effort\' does not support \'minimal\' with this model."}}')
 
-    response = asyncio.run(post_with_retry(send, {"model": "gemini-2.5-flash", "reasoning_effort": "low"}, sleep=_no_sleep))
-    assert response.status_code == 200
-    assert "reasoning_effort" in seen[0]
-    assert "reasoning_effort" not in seen[1]
+    with pytest.raises(ProviderError) as refused:
+        asyncio.run(post_with_retry(send, {"model": "o3", "reasoning_effort": "minimal"}, sleep=_no_sleep))
+    assert "does not support 'minimal'" in str(refused.value)
+    assert len(seen) == 1
+
+
+def test_catalog_meta_keeps_the_levels_providers_list() -> None:
+    rows = [
+        {"id": "claude-opus-5-5", "capabilities": {"effort": {"supported": True, "low": {"supported": True}, "medium": {"supported": True}, "high": {"supported": True}, "xhigh": {"supported": True}, "max": {"supported": True}}}},
+        {"id": "claude-haiku-4-5", "capabilities": {"effort": {"supported": False}}},
+    ]
+    assert anthropic_meta(rows) == {"claude-opus-5-5": {"efforts": ["low", "medium", "high", "xhigh", "max"]}, "claude-haiku-4-5": {"efforts": []}}
+    assert copilot_meta([{"id": "gpt-5.5", "capabilities": {"supports": {"reasoning_effort": ["low", "high"]}}}, {"id": "gpt-4.1", "capabilities": {}}]) == {
+        "gpt-5.5": {"efforts": ["low", "high"]},
+        "gpt-4.1": {"efforts": []},
+    }
+    assert openrouter_meta([{"id": "a/b", "supported_parameters": ["tools", "reasoning"]}, {"id": "c/d", "supported_parameters": []}]) == {"a/b": {"reasoning": True}, "c/d": {"reasoning": False}}
 
 
 def test_tool_call_fixture_parses_and_mock_returns_it_without_network() -> None:
@@ -603,6 +621,16 @@ def test_annotate_models_keeps_high_demand_available() -> None:
     quota_rows = annotate_models(["pro"], [{"model": "pro", "kind": "quota", "detail": "no quota on this key"}])
     assert quota_rows[0]["available"] is False
     assert quota_rows[0]["reason"] == "no quota on this key"
+
+
+def test_copilot_uses_the_github_token_directly_and_refuses_classic_tokens() -> None:
+    base, headers = _copilot_endpoint("github_pat_fine")
+    assert base == "https://api.githubcopilot.com"
+    assert headers["Authorization"] == "Bearer github_pat_fine"
+    assert headers["Copilot-Integration-Id"] == "copilot-developer-cli"
+    with pytest.raises(ModelAuthError, match="classic GitHub token"):
+        _copilot_endpoint("ghp_classic0000")
+    assert "Copilot requests" in friendly_key_error("copilot", 404, "")
 
 
 def test_friendly_key_error_hides_the_url() -> None:

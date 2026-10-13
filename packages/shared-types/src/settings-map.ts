@@ -9,7 +9,7 @@
  * sandbox and run limits, folders, retention and deletion. Light/dark mode, font, text size and motion
  * have no key because they are kept per browser; a server change would not reach the screen.
  */
-import { AppColorTheme, AccentPreset, ActAs, ReasoningEffort } from "./assistant.js";
+import { AppColorTheme, AccentPreset, ReasoningEffort } from "./assistant.js";
 import { OPTIONAL_MODULES, type OptionalModule } from "./modules.js";
 import { FEATURES } from "./features.js";
 
@@ -134,7 +134,6 @@ export const SETTINGS_MAP: readonly SettingsMapEntry[] = [
 
   // ── Assistant ─────────────────────────────────────────────────────────────
   ...group("assistant", "The assistant", [
-    { id: "assistant.field", label: "Your field (assistant tone)", keywords: "field profession tone role act as persona student engineer teacher lawyer researcher manager", about: "Shapes the assistant's tone and suggestions, never what it can do.", href: at("assistant", "jump-assistant-your-field"), key: "assistant.actAs", rule: { type: "enum", values: ActAs.options } },
     { id: "assistant.write-policy", label: "When the assistant wants to change something", keywords: "write policy preview apply immediate needs me approve", about: "Whether its changes wait for Apply. Only you can change this.", href: at("assistant", "jump-assistant-write-policy") },
     { id: "assistant.default-tier", label: "Default model preset", keywords: "default preset tier low medium high max complexity chat model", about: "The tier the chat starts on: easy (Low), medium, high or max.", href: at("assistant", "jump-assistant-default-model-preset"), key: "assistant.defaultTier", rule: { type: "enum", values: ["easy", "medium", "high", "max"] } },
     { id: "assistant.changes", label: "What the assistant may change", keywords: "permissions allowed writes areas connected apps", about: "The areas it may change and whether it may propose changes in connected apps.", href: "/settings?tab=assistant&dialog=changes" },
@@ -146,7 +145,7 @@ export const SETTINGS_MAP: readonly SettingsMapEntry[] = [
       id: `models.${tier}.effort`,
       label: `${name} model thinking`,
       keywords: `thinking reasoning effort ${name.toLowerCase()} tier model`,
-      about: `How hard the ${name} tier's model thinks: default, minimal, low, medium or high.`,
+      about: `How hard the ${name} tier's model thinks, in the levels that model takes (Off to Max).`,
       href: at("assistant", `jump-${slug(`${name} model`)}-thinking`),
       key: `models.${tier}.effort`,
       rule: { type: "enum", values: ReasoningEffort.options } as SettingRule,

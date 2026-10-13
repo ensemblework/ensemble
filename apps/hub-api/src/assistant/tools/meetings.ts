@@ -7,7 +7,7 @@
 import { z } from "zod";
 import type { MeetingNote, MeetingSession, Prisma } from "@prisma/client";
 import { decisionLines, participantNames } from "../../cowork/meetings.js";
-import { endMeetingSession, matchAttendees, saveMeetingNotes } from "../../cowork/service.js";
+import { endMeetingSession, matchAttendees, meetingContent, meetingNotesFields, notesDocument, saveMeetingNotes } from "../../cowork/service.js";
 import { isMeetingVendor, VENDOR_LABEL } from "../../connectors/meetings/types.js";
 import { zonedDateTimeToUtc } from "../../lib/clock.js";
 import { clip } from "../../lib/office/text.js";
@@ -94,7 +94,7 @@ function startOf(timeZone: string, input: { date?: string; time?: string }, fall
 
 /** Session and mirror-note snapshots as one undo step. */
 function pair(before: { session: MeetingSession; note: MeetingNote | null }, after: { session: MeetingSession; note: MeetingNote | null }): UndoOp {
-  const sessionFields = (row: MeetingSession) => ({ title: row.title, notes: row.notes, recap: row.recap, artifactId: row.artifactId, personIds: row.personIds, deletedAt: row.deletedAt, updatedAt: row.updatedAt });
+  const sessionFields = (row: MeetingSession) => ({ title: row.title, notes: row.notes, content: row.content, recap: row.recap, artifactId: row.artifactId, personIds: row.personIds, deletedAt: row.deletedAt, updatedAt: row.updatedAt });
   const noteFields = (row: MeetingNote) => ({ title: row.title, answer: row.answer, artifactId: row.artifactId, personIds: row.personIds, deletedAt: row.deletedAt, updatedAt: row.updatedAt });
   const ops: UndoOp[] = [{ op: "update", model: "meetingSession", id: after.session.id, before: sessionFields(before.session), after: sessionFields(after.session) }];
   if (before.note && after.note) ops.push({ op: "update", model: "meetingNote", id: after.note.id, before: noteFields(before.note), after: noteFields(after.note) });
@@ -270,7 +270,7 @@ export const meetingTools = [
           data: {
             userId: ctx.userId,
             title: (input.title ?? event?.title ?? "Meeting notes").slice(0, 200),
-            notes: input.notes,
+            ...meetingNotesFields({ notes: input.notes }),
             artifactId: event?.id ?? null,
             personIds,
             status: "live",
@@ -333,8 +333,14 @@ export const meetingTools = [
           const personIds = current.personIds.length ? current.personIds : await eventPeople(tx, ctx.userId, event.participants);
           await tx.meetingSession.update({ where: { id: current.id }, data: { artifactId: event.id, personIds } });
         }
-        const notes = input.notes === undefined ? undefined : input.mode === "replace" ? input.notes : [current.notes.trimEnd(), input.notes.trim()].filter(Boolean).join("\n\n");
-        await saveMeetingNotes(tx, ctx.userId, current.id, notes ?? current.notes, input.title);
+        // Append adds blocks after the person's own, so their mentions, cards and Ensemble answers stay as they are.
+        const existing = meetingContent(current)?.content.filter((node) => node.type !== "paragraph" || node.content?.length) ?? [];
+        const change = input.notes === undefined
+          ? {}
+          : input.mode === "replace"
+            ? { notes: input.notes }
+            : { content: { type: "doc", content: [...existing, ...notesDocument(input.notes).content] } };
+        await saveMeetingNotes(tx, ctx.userId, current.id, { ...change, title: input.title });
         const after = await withMirror(tx, await tx.meetingSession.findUniqueOrThrow({ where: { id: current.id } }));
         const op = pair(before, after);
         await recordUndoInTransaction(tx, { userId: ctx.userId, label: `Updated meeting notes “${after.session.title}”`, kind: "update", actor: "agent", subject: "meeting", href: sessionHref(current.id), inverse: op, forward: op });

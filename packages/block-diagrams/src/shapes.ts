@@ -1,4 +1,4 @@
-import { PORTS, type PortName, type ShapeId } from "./model.js";
+import { textStyle, type PortName, type ShapeId, type TextStyle } from "./model.js";
 
 export interface Point {
   x: number;
@@ -311,6 +311,90 @@ function server(w: number, h: number): ShapeGeometry {
   return { outline: body.outline, details, ports: body.ports, filled: true };
 }
 
+/** A cylinder on its side: a message queue or stream. The rim shows at the right end. */
+function queue(w: number, h: number): ShapeGeometry {
+  const rx = Math.max(4, Math.min(16, w * 0.14));
+  const ry = Math.max(4, h / 2 - 1);
+  const cy = h / 2;
+  const top = cy - ry;
+  const bottom = cy + ry;
+  const left = 1 + rx;
+  const right = w - 1 - rx;
+  const outline = [
+    `M ${n(left)} ${n(top)}`,
+    `L ${n(right)} ${n(top)}`,
+    `A ${n(rx)} ${n(ry)} 0 0 1 ${n(right)} ${n(bottom)}`,
+    `L ${n(left)} ${n(bottom)}`,
+    `A ${n(rx)} ${n(ry)} 0 0 1 ${n(left)} ${n(top)}`,
+    "Z",
+  ].join(" ");
+  const details = `M ${n(right)} ${n(top)} A ${n(rx)} ${n(ry)} 0 0 0 ${n(right)} ${n(bottom)}`;
+  const on = (cx: number, deg: number): Point => {
+    const rad = (deg * Math.PI) / 180;
+    return { x: n(cx + rx * Math.cos(rad)), y: n(cy + ry * Math.sin(rad)) };
+  };
+  return {
+    outline,
+    details,
+    filled: true,
+    ports: {
+      n: { x: n(w / 2), y: n(top) },
+      ne: on(right, -45),
+      e: { x: n(w - 1), y: n(cy) },
+      se: on(right, 45),
+      s: { x: n(w / 2), y: n(bottom) },
+      sw: on(left, 135),
+      w: { x: 1, y: n(cy) },
+      nw: on(left, 225),
+    },
+  };
+}
+
+/** Flowchart "predefined process": a box with a bar inside each side. */
+function subroutine(w: number, h: number): ShapeGeometry {
+  const bar = Math.min(10, w * 0.1);
+  const outline = poly([{ x: 1, y: 1 }, { x: w - 1, y: 1 }, { x: w - 1, y: h - 1 }, { x: 1, y: h - 1 }]);
+  const details = `M ${n(1 + bar)} 1 V ${n(h - 1)} M ${n(w - 1 - bar)} 1 V ${n(h - 1)}`;
+  return { outline, details, filled: true, ports: boxPorts(w, h) };
+}
+
+/** A browser window: a web app or site. */
+function browser(w: number, h: number): ShapeGeometry {
+  const body = roundedRect(w, h, 6);
+  const bar = Math.min(16, Math.max(10, h * 0.2));
+  const dot = (cx: number) => `M ${n(cx - 2)} ${n(bar / 2 + 0.5)} A 2 2 0 1 1 ${n(cx + 2)} ${n(bar / 2 + 0.5)} A 2 2 0 1 1 ${n(cx - 2)} ${n(bar / 2 + 0.5)}`;
+  const details = [`M 1 ${n(bar)} H ${n(w - 1)}`, dot(9), dot(16), dot(23)].join(" ");
+  return { outline: body.outline, details, filled: true, ports: body.ports };
+}
+
+/** Flowchart "delay": flat on the left, round on the right. */
+function delay(w: number, h: number): ShapeGeometry {
+  const ry = Math.max(4, h / 2 - 1);
+  const rx = Math.max(4, Math.min(ry, (w - 2) / 2));
+  const cx = w - 1 - rx;
+  const cy = h / 2;
+  const outline = `M 1 1 H ${n(cx)} A ${n(rx)} ${n(ry)} 0 0 1 ${n(cx)} ${n(h - 1)} H 1 Z`;
+  const on = (deg: number): Point => {
+    const rad = (deg * Math.PI) / 180;
+    return { x: n(cx + rx * Math.cos(rad)), y: n(cy + ry * Math.sin(rad)) };
+  };
+  return {
+    outline,
+    details: "",
+    filled: true,
+    ports: {
+      n: { x: n(Math.min(w / 2, cx)), y: 1 },
+      ne: on(-45),
+      e: { x: n(w - 1), y: n(cy) },
+      se: on(45),
+      s: { x: n(Math.min(w / 2, cx)), y: n(h - 1) },
+      sw: { x: 1, y: n(h - 1) },
+      w: { x: 1, y: n(cy) },
+      nw: { x: 1, y: 1 },
+    },
+  };
+}
+
 /** Outline path plus the 8 connection points that sit on that outline. */
 export function shapeGeometry(shape: ShapeId, w: number, h: number): ShapeGeometry {
   const width = Math.max(8, w);
@@ -445,6 +529,14 @@ export function shapeGeometry(shape: ShapeId, w: number, h: number): ShapeGeomet
       return actor(width, height);
     case "note":
       return note(width, height);
+    case "queue":
+      return queue(width, height);
+    case "subroutine":
+      return subroutine(width, height);
+    case "browser":
+      return browser(width, height);
+    case "delay":
+      return delay(width, height);
     default: {
       const _exhaustive: never = shape;
       return _exhaustive;
@@ -476,28 +568,42 @@ export const DEFAULT_SIZE: Record<ShapeId, { w: number; h: number }> = {
   hexagon: { w: 108, h: 64 },
   note: { w: 116, h: 74 },
   trapezoid: { w: 124, h: 48 },
+  queue: { w: 132, h: 52 },
+  subroutine: { w: 132, h: 48 },
+  browser: { w: 140, h: 84 },
+  delay: { w: 112, h: 52 },
 };
 
 /** Average advance of the 13px medium label face. Keeps sizing free of a DOM. */
 const LABEL_CHAR = 7.5;
 const LABEL_LINE = 16;
 const ACTOR_FIGURE = 78;
+/** Default label sizes, px: in a block, in a text box, on a line. */
+export const LABEL_SIZE = { block: 13, text: 12.5, edge: 11 } as const;
+
+/** Advance per character and line height for a label style. Bold runs about 6% wider. */
+export function labelMetrics(font: Partial<TextStyle> | null | undefined, base: number = LABEL_SIZE.block): { size: number; char: number; line: number } {
+  const style = textStyle(font);
+  const size = style.size ?? base;
+  const scale = size / LABEL_SIZE.block;
+  return { size, char: LABEL_CHAR * scale * (style.bold ? 1.06 : 1), line: Math.round(LABEL_LINE * scale * 10) / 10 };
+}
 
 function labelText(label: string): string {
   return label.replace(/\s+/g, " ").trim() || " ";
 }
 
-function textAdvance(line: string): number {
-  return Math.max(1, line.length) * LABEL_CHAR;
+function textAdvance(line: string, char = LABEL_CHAR): number {
+  return Math.max(1, line.length) * char;
 }
 
-function wrapWords(label: string, maxWidth: number): string[] {
+function wrapWords(label: string, maxWidth: number, char = LABEL_CHAR): string[] {
   const words = labelText(label).split(" ");
   const lines: string[] = [];
   let current = "";
   for (const word of words) {
     const next = current ? `${current} ${word}` : word;
-    if (current && textAdvance(next) > maxWidth) {
+    if (current && textAdvance(next, char) > maxWidth) {
       lines.push(current);
       current = word;
     } else current = next;
@@ -506,9 +612,9 @@ function wrapWords(label: string, maxWidth: number): string[] {
   return lines;
 }
 
-/** At most two lines. A single long word stays intact so the block can grow for it. */
-export function wrapLabel(label: string, maxWidth: number): string[] {
-  return wrapWords(label, maxWidth).slice(0, 2);
+/** Wrapped label lines, at most `maxLines`. A single long word stays intact so the block can grow for it. */
+export function wrapLabel(label: string, maxWidth: number, maxLines = 2, font?: Partial<TextStyle> | null): string[] {
+  return wrapWords(label, maxWidth, labelMetrics(font).char).slice(0, Math.max(1, maxLines));
 }
 
 export interface TextFrame {
@@ -547,6 +653,22 @@ export function textFrame(shape: ShapeId, w: number, h: number): TextFrame {
       return { x: 12, y: 8, w: Math.max(24, w - 24), h: Math.max(16, h * 0.58) };
     case "note":
       return { x: 10, y: 10, w: Math.max(24, w - 28), h: Math.max(16, h - 22) };
+    case "queue": {
+      const rx = Math.max(4, Math.min(16, w * 0.14));
+      return { x: rx + 6, y: 6, w: Math.max(24, w - rx * 2 - 16), h: Math.max(16, h - 12) };
+    }
+    case "subroutine": {
+      const bar = Math.min(10, w * 0.1);
+      return { x: bar + 7, y: 7, w: Math.max(24, w - bar * 2 - 14), h: Math.max(16, h - 14) };
+    }
+    case "browser": {
+      const bar = Math.min(16, Math.max(10, h * 0.2));
+      return { x: 10, y: bar + 5, w: Math.max(24, w - 20), h: Math.max(16, h - bar - 11) };
+    }
+    case "delay": {
+      const rx = Math.max(4, Math.min(h / 2 - 1, (w - 2) / 2));
+      return { x: 10, y: 7, w: Math.max(24, w - rx * 0.6 - 16), h: Math.max(16, h - 14) };
+    }
     case "actor": {
       const top = Math.min(ACTOR_FIGURE + 12, Math.max(16, h - LABEL_LINE));
       const hand = Math.max(8, w * 0.14);
@@ -571,35 +693,86 @@ function sizeLimits(shape: ShapeId): { maxW: number; maxH: number } {
   return { maxW: 240, maxH: 150 };
 }
 
-export function nodeSize(shape: ShapeId, label: string): { w: number; h: number } {
+/** The size a new block gets: the default for its shape, grown until the label fits on two lines. */
+export function nodeSize(shape: ShapeId, label: string, font?: Partial<TextStyle> | null): { w: number; h: number } {
   const base = DEFAULT_SIZE[shape];
+  const metrics = labelMetrics(font);
+  const grow = Math.max(1, metrics.size / LABEL_SIZE.block);
   const limits = sizeLimits(shape);
+  const maxW = limits.maxW * grow;
+  const maxH = limits.maxH * grow;
   let w = base.w;
   let h = base.h;
   const text = labelText(label);
-  for (let pass = 0; pass < 16; pass += 1) {
+  for (let pass = 0; pass < 48; pass += 1) {
     const inner = Math.max(20, textFrame(shape, w, h).w);
-    const natural = wrapWords(text, inner);
+    const natural = wrapWords(text, inner, metrics.char);
     const lines = natural.slice(0, 2);
-    const widest = Math.max(...lines.map(textAdvance));
+    const widest = Math.max(...lines.map((line) => textAdvance(line, metrics.char)));
     const frame = textFrame(shape, w, h);
-    const needsWidth = (natural.length > 2 || widest + 4 > frame.w) && w < limits.maxW;
-    const needsHeight = lines.length * LABEL_LINE + 3 > frame.h && h < limits.maxH;
+    const needsWidth = (natural.length > 2 || widest + 4 > frame.w) && w < maxW;
+    const needsHeight = lines.length * metrics.line + 3 > frame.h && h < maxH;
     if (!needsWidth && !needsHeight) break;
-    if (needsWidth) w = Math.min(limits.maxW, w + 12);
-    else h = Math.min(limits.maxH, h + 8);
-    void pass;
+    if (needsWidth) w = Math.min(maxW, w + 12);
+    else h = Math.min(maxH, h + 8);
   }
+  if (shape === "circle") w = h = Math.max(w, h);
   return { w: Math.round(w), h: Math.round(h) };
 }
 
-export function textSize(text: string): { w: number; h: number } {
+/** Lines a label may wrap to before a block is too small for it. */
+const MIN_LINES = 3;
+
+/**
+ * The smallest a block can be resized to: its label on at most three lines, its longest word
+ * unbroken, and never below about half the shape's default (a person keeps room for the figure).
+ */
+export function minNodeSize(shape: ShapeId, label: string, font?: Partial<TextStyle> | null): { w: number; h: number } {
+  const base = DEFAULT_SIZE[shape];
+  const metrics = labelMetrics(font);
+  const floor = { w: Math.round(base.w * 0.5), h: Math.round(shape === "actor" ? 64 + metrics.line : base.h * 0.55) };
+  const text = labelText(label);
+  const longest = Math.max(...text.split(" ").map((word) => textAdvance(word, metrics.char)));
+  const heightFor = (w: number, lines: number): number => {
+    let h = floor.h;
+    while (h < 2000 && textFrame(shape, w, h).h < lines * metrics.line + 2) h += 2;
+    return h;
+  };
+  for (let w = floor.w; w < 2400; w += 2) {
+    const frame = textFrame(shape, w, floor.h);
+    if (frame.w < longest + 2) continue;
+    const lines = wrapWords(text, frame.w, metrics.char).length;
+    if (lines > MIN_LINES) continue;
+    const h = heightFor(w, lines);
+    if (shape === "circle") {
+      const side = Math.max(w, h);
+      return { w: side, h: side };
+    }
+    return { w, h };
+  }
+  return nodeSize(shape, label, font);
+}
+
+/** A text box's size: every line on one row, as typed. */
+export function textSize(text: string, font?: Partial<TextStyle> | null): { w: number; h: number } {
+  const metrics = labelMetrics(font, LABEL_SIZE.text);
   const lines = text.split("\n");
   const longest = lines.reduce((max, line) => Math.max(max, line.length), 1);
+  const scale = metrics.size / LABEL_SIZE.text;
   return {
-    w: Math.min(380, Math.max(96, Math.round(longest * 7.4 + 28))),
-    h: Math.max(40, lines.length * 22 + 16),
+    w: Math.min(380 * Math.max(1, scale), Math.max(96, Math.round(longest * metrics.char + 28))),
+    h: Math.max(40, Math.round(lines.length * 20 * scale + 16)),
   };
+}
+
+/** The smallest a text box can be resized to: its longest word fits, and every wrapped line shows. */
+export function minTextSize(text: string, font?: Partial<TextStyle> | null, width?: number): { w: number; h: number } {
+  const metrics = labelMetrics(font, LABEL_SIZE.text);
+  const words = text.split(/\s+/).filter(Boolean);
+  const w = Math.max(48, Math.round(Math.max(1, ...words.map((word) => word.length)) * metrics.char + 16));
+  const inner = Math.max(w, width ?? w) - 16;
+  const rows = text.split("\n").reduce((sum, line) => sum + Math.max(1, wrapWords(line, inner, metrics.char).length), 0);
+  return { w, h: Math.max(28, Math.round(rows * 20 * (metrics.size / LABEL_SIZE.text) + 12)) };
 }
 
 /** Padding so a label sits inside the outline instead of on the corners. */
@@ -683,6 +856,28 @@ const SHAPE_ALIAS: Record<string, ShapeId> = {
   trapezoid: "trapezoid",
   trap: "trapezoid",
   manual: "trapezoid",
+  queue: "queue",
+  mq: "queue",
+  "message-queue": "queue",
+  messagequeue: "queue",
+  topic: "queue",
+  stream: "queue",
+  kafka: "queue",
+  subroutine: "subroutine",
+  subprocess: "subroutine",
+  "sub-process": "subroutine",
+  predefined: "subroutine",
+  function: "subroutine",
+  browser: "browser",
+  web: "browser",
+  webapp: "browser",
+  website: "browser",
+  window: "browser",
+  frontend: "browser",
+  ui: "browser",
+  delay: "delay",
+  wait: "delay",
+  dshape: "delay",
 };
 
 export const SHAPE_ALIASES: Readonly<Record<string, ShapeId>> = SHAPE_ALIAS;

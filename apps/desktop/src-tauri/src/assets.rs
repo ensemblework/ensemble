@@ -1,8 +1,11 @@
 //! Serves the static export of hub-web on the `ensemble` custom protocol.
 //!
 //! Dynamic routes are one placeholder file (`tasks/_/index.html`). A request
-//! for `/tasks/abc` uses that file. The page then reads the real id from the
-//! address bar. Unknown documents fall through to the in-shell 404.
+//! for `/tasks/abc` uses that file, and Next's route data for it
+//! (`/tasks/abc/index.txt`) uses `tasks/_/index.txt`, so opening a task or a
+//! page switches in place instead of reloading the app. The page then reads
+//! the real id from the address bar. Unknown documents fall through to the
+//! in-shell 404.
 
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
@@ -56,6 +59,12 @@ fn resolve(root: &Path, request_path: &str) -> Option<PathBuf> {
         let placeholder = root.join(parts[0]).join("_").join("index.html");
         if placeholder.is_file() {
             return Some(placeholder);
+        }
+    }
+    if parts.len() == 3 && parts[2] == "index.txt" {
+        let data = root.join(parts[0]).join("_").join("index.txt");
+        if data.is_file() {
+            return Some(data);
         }
     }
     if !rel.contains('.') {
@@ -158,10 +167,13 @@ mod tests {
         fs::create_dir_all(root.join("lost")).unwrap();
         fs::write(root.join("index.html"), "home").unwrap();
         fs::write(root.join("tasks/_/index.html"), "task").unwrap();
+        fs::write(root.join("tasks/_/index.txt"), "task data").unwrap();
         fs::write(root.join("lost/index.html"), "lost").unwrap();
         assert_eq!(resolve(&root, "/").unwrap(), root.join("index.html"));
         assert_eq!(resolve(&root, "/tasks/abc").unwrap(), root.join("tasks/_/index.html"));
         assert_eq!(resolve(&root, "/tasks/abc/").unwrap(), root.join("tasks/_/index.html"));
+        assert_eq!(resolve(&root, "/tasks/abc/index.txt?_rsc=1").unwrap(), root.join("tasks/_/index.txt"));
+        assert!(resolve(&root, "/pages/abc/index.txt").is_none(), "no placeholder, no route data");
         assert_eq!(resolve(&root, "/no/such/page").unwrap(), root.join("lost/index.html"));
         assert!(resolve(&root, "/../secret").is_none());
         assert!(resolve(&root, "/tasks/a/b").is_none() || resolve(&root, "/tasks/a/b").unwrap() == root.join("lost/index.html"));

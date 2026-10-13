@@ -1,4 +1,5 @@
 /** User-facing sentences for model failures. The browser shows these, not vendor JSON. */
+import { inferProvider } from "../runtime/payload.js";
 
 export interface ModelFailure {
   status: number;
@@ -45,7 +46,27 @@ export function parseRuntimeBody(status: number, raw: string): ModelFailure {
   return { status, kind, message, quotaId, retryAfterSeconds };
 }
 
-export function friendlyModelError(failure: ModelFailure): string {
+const VENDOR: Record<string, string> = {
+  google: "Gemini",
+  openai: "OpenAI",
+  anthropic: "Claude",
+  mistral: "Mistral",
+  kimi: "Kimi",
+  qwen: "Qwen",
+  openrouter: "OpenRouter",
+  copilot: "GitHub Copilot",
+  cursor: "Cursor",
+  ollama: "Ollama",
+};
+
+/** Who answered, for a sentence: the provider's name from the model id, or "The provider". */
+export function vendorOf(model: string | null | undefined): string {
+  if (!model || model === "that model") return "The provider";
+  return VENDOR[inferProvider(model)] ?? "The provider";
+}
+
+export function friendlyModelError(failure: ModelFailure, model?: string | null): string {
+  const vendor = vendorOf(model);
   const wait = failure.retryAfterSeconds != null ? Math.max(1, Math.round(failure.retryAfterSeconds)) : null;
   if (failure.kind === "auth" || /no key for/i.test(failure.message)) {
     return failure.message.includes("No key")
@@ -57,8 +78,8 @@ export function friendlyModelError(failure: ModelFailure): string {
   if (failure.kind === "rate_limit") {
     const quota = failure.quotaId ? ` (${failure.quotaId})` : "";
     return wait
-      ? `Gemini is rate-limiting this key${quota}. Wait about ${wait}s and try again.`
-      : `Gemini is rate-limiting this key${quota}. Wait a moment and try again.`;
+      ? `${vendor} is rate-limiting this key${quota}. Wait about ${wait}s and try again.`
+      : `${vendor} is rate-limiting this key${quota}. Wait a moment and try again.`;
   }
   if (failure.kind === "quota") {
     return failure.quotaId
@@ -67,7 +88,7 @@ export function friendlyModelError(failure: ModelFailure): string {
   }
   if (failure.kind === "unavailable") {
     if (/cursor runs delegated|not a completion provider|not a chat provider/i.test(failure.message)) return failure.message;
-    return "Gemini is under high demand for this model. Try again, or switch the tier to a model this key can use.";
+    return `${vendor} is under high demand for this model. Try again, or switch the tier to a model this key can use.`;
   }
   if (failure.kind === "not_found") return "That model is not available to this key.";
   if (failure.kind === "invalid" || failure.status === 400) {

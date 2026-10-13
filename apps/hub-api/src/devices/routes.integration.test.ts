@@ -169,6 +169,15 @@ test("pairing, claim, lease sweep, heartbeat, cancel, and device isolation", asy
     assert.equal(trusted.statusCode, 403);
     assert.match((trusted.json() as { error: string }).error, /Trust this folder on Office Mac first\./);
 
+    const empty = await app.inject({
+      method: "POST",
+      url: "/api/agent/assign",
+      headers: cookie(session),
+      payload: { taskId: task.id, kind: "code", deviceId, instructions: "Start from nothing" },
+    });
+    assert.equal(empty.statusCode, 201, "no repository and no shared folder: a new empty folder on that computer");
+    await prisma.workspaceJob.delete({ where: { id: (empty.json() as { jobId: string }).jobId } });
+
     const assigned = await app.inject({
       method: "POST",
       url: "/api/agent/assign",

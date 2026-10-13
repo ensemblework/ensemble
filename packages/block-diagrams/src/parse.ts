@@ -1,6 +1,11 @@
 import {
+  ARROW_HEAD,
+  FONT_LIMITS,
+  LINE_WIDTH,
+  edgeBetween,
   emptyModel,
   lookupId,
+  mergeEdgeInto,
   nextEdgeId,
   slugId,
   uniqueId,
@@ -11,6 +16,7 @@ import {
   type Direction,
   type ParseResult,
   type PortName,
+  type TextStyle,
 } from "./model.js";
 import { resolveColor, resolvePort, resolveShape, suggestColor } from "./shapes.js";
 import { importMermaid, looksLikeMermaid } from "./mermaid.js";
@@ -211,17 +217,45 @@ interface Props {
   locked: boolean;
   unclosed: boolean;
   unknown: string[];
+  /** `font 16`, `bold`, `italic`, `underline`. */
+  font: Partial<TextStyle>;
+  /** A font size outside 8–48, as written. */
+  fontRaw: string | null;
 }
 
-function takeProps(tokens: Token[]): { props: Props; rest: Token[] } {
+const STYLE_WORDS = new Set(["bold", "italic", "underline"]);
+
+/** `font 16` → 16, kept inside FONT_LIMITS. Null when it is not a number. */
+function fontSize(raw: string): number | null {
+  const value = Number(raw.replace(/px$/i, ""));
+  if (!Number.isFinite(value) || value <= 0) return null;
+  return Math.min(FONT_LIMITS.max, Math.max(FONT_LIMITS.min, Math.round(value * 2) / 2));
+}
+
+/** A number token, joining `12` `.` `5` back into 12.5. Returns how many tokens it used. */
+function numberAt(tokens: Token[], at: number): { raw: string; used: number } | null {
+  const first = tokens[at];
+  if (!first || first.kind !== "word" || !/^-?\d+(px)?$/i.test(first.value)) return null;
+  const dot = tokens[at + 1];
+  const tail = tokens[at + 2];
+  if (dot?.kind === "punct" && dot.value === "." && tail?.kind === "word" && /^\d+(px)?$/i.test(tail.value)) return { raw: `${first.value}.${tail.value}`, used: 3 };
+  return { raw: first.value, used: 1 };
+}
+
+/** `keepFirst`: the first word is the item's id, never a shape, colour or style (`node bold "Bold"`). */
+function takeProps(tokens: Token[], keepFirst = false): { props: Props; rest: Token[] } {
   const rest: Token[] = [];
-  const props: Props = { shapeRaw: null, colorRaw: null, locked: false, unclosed: false, unknown: [] };
+  const props: Props = { shapeRaw: null, colorRaw: null, locked: false, unclosed: false, unknown: [], font: {}, fontRaw: null };
   const absorb = (list: Token[]) => {
     for (const token of list) {
       if (token.kind === "punct") continue;
       const lower = token.value.toLowerCase();
       if (lower === "locked" || lower === "pin" || lower === "pinned") {
         props.locked = true;
+        continue;
+      }
+      if (STYLE_WORDS.has(lower)) {
+        props.font[lower as "bold" | "italic" | "underline"] = true;
         continue;
       }
       if (lower === "shape" || lower === "type") continue;
@@ -239,6 +273,10 @@ function takeProps(tokens: Token[]): { props: Props; rest: Token[] } {
   };
   for (let i = 0; i < tokens.length; i += 1) {
     const token = tokens[i]!;
+    if (keepFirst && i === 0 && token.kind === "word" && isIdent(token.value) && tokens.length > 1) {
+      rest.push(token);
+      continue;
+    }
     if ((token.kind === "word" && (token.value.toLowerCase() === "shape" || token.value.toLowerCase() === "type")) || (token.kind === "punct" && token.value === "=")) {
       const next = tokens[i + 1];
       if (next && next.kind !== "punct") {
@@ -257,6 +295,20 @@ function takeProps(tokens: Token[]): { props: Props; rest: Token[] } {
     }
     if (token.kind === "word" && ["locked", "pin", "pinned"].includes(token.value.toLowerCase())) {
       props.locked = true;
+      continue;
+    }
+    if (token.kind === "word" && /^(font|fontsize|font-size)$/i.test(token.value)) {
+      const number = numberAt(tokens, i + 1);
+      const size = number ? fontSize(number.raw) : null;
+      if (number && size != null) {
+        if (Number(number.raw.replace(/px$/i, "")) !== size) props.fontRaw = number.raw;
+        props.font.size = size;
+        i += number.used;
+        continue;
+      }
+    }
+    if (token.kind === "word" && STYLE_WORDS.has(token.value.toLowerCase())) {
+      props.font[token.value.toLowerCase() as "bold" | "italic" | "underline"] = true;
       continue;
     }
     if (token.kind === "punct" && (token.value === "(" || token.value === "[")) {
@@ -444,20 +496,110 @@ function takeCurve(body: string): { body: string; curve: Curve | null; raw: stri
   return { body: next, curve, raw: curve ? null : match[1]! };
 }
 
-function addEdge(ctx: Context, from: Endpoint, to: Endpoint, style: ArrowStyle, label: string, line: number, curve: Curve | null) {
+interface EdgeLook {
+  width: number | null;
+  head: number | null;
+  bend: number | null;
+  font: Partial<TextStyle>;
+}
+
+const LOOK_LIMITS = {
+  width: { min: LINE_WIDTH.min, max: LINE_WIDTH.max, label: "Line widths" },
+  head: { min: ARROW_HEAD.min, max: ARROW_HEAD.max, label: "Arrowheads" },
+} as const;
+
+/**
+ * Pull `width 2`, `head 14`, `bend -30`, `font 12`, `bold`, `italic` and `underline` off an edge
+ * line. They are read after the last arrow and, when the label is quoted, after it; words in an
+ * unquoted label stay words.
+ */
+function takeLook(ctx: Context, body: string, line: number): { body: string; look: EdgeLook } {
+  const look: EdgeLook = { width: null, head: null, bend: null, font: {} };
+  const masked = body.replace(/"(?:\\.|[^"])*"|'(?:\\.|[^'])*'/g, (quoted) => " ".repeat(quoted.length));
+  const arrows = findArrows(body);
+  const last = arrows.length ? arrows[arrows.length - 1]! : null;
+  let start = last ? last.index + last.token.length : 0;
+  // Skip the target block (or `b, c`), so a block named “bold” stays a block.
+  const target = /^\s*(?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[^\s:,]+)(?:\s*,\s*(?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'|[^\s:,]+))*/.exec(body.slice(start));
+  if (target) start += target[0].length;
+  let end = body.length;
+  const colon = masked.indexOf(":", start);
+  if (colon >= 0) {
+    const label = body.slice(colon + 1).trimStart();
+    if (label.startsWith('"') || label.startsWith("'")) {
+      const quote = label[0]!;
+      const open = body.indexOf(quote, colon);
+      let close = open + 1;
+      while (close < body.length && body[close] !== quote) close += body[close] === "\\" ? 2 : 1;
+      start = close + 1;
+    } else end = colon;
+  }
+  const cuts: Array<[number, number]> = [];
+  const region = masked.slice(start, end);
+  const pattern = /\b(width|head|bend|font)\s+(-?\d+(?:\.\d+)?)(px)?\b|\b(bold|italic|underline)\b/gi;
+  for (const match of region.matchAll(pattern)) {
+    const at = start + (match.index ?? 0);
+    cuts.push([at, at + match[0].length]);
+    if (match[4]) {
+      look.font[match[4].toLowerCase() as "bold" | "italic" | "underline"] = true;
+      continue;
+    }
+    const key = match[1]!.toLowerCase();
+    const value = Number(match[2]);
+    if (key === "bend") look.bend = Math.round(value);
+    else if (key === "font") {
+      const size = fontSize(match[2]!);
+      if (size != null) look.font.size = size;
+      if (size !== value) report(ctx, "info", line, `Text sizes go from ${FONT_LIMITS.min} to ${FONT_LIMITS.max}. I used ${size}.`, { needle: match[0] });
+    } else {
+      const limits = LOOK_LIMITS[key as "width" | "head"];
+      const kept = Math.min(limits.max, Math.max(limits.min, value));
+      if (kept !== value) report(ctx, "info", line, `${limits.label} go from ${limits.min} to ${limits.max}. I used ${kept}.`, { needle: match[0] });
+      look[key as "width" | "head"] = kept;
+    }
+  }
+  let next = body;
+  for (const [from, to] of cuts.reverse()) next = `${next.slice(0, from)} ${next.slice(to)}`;
+  return { body: next.replace(/\s{2,}/g, " ").trim(), look };
+}
+
+/** Adds the line, or folds it into the line already joining the same two blocks. True when folded. */
+function addEdge(ctx: Context, from: Endpoint, to: Endpoint, style: ArrowStyle, label: string, line: number, curve: Curve | null, look: EdgeLook): boolean {
   const source = ensureNode(ctx, from.ref, line);
   const target = ensureNode(ctx, to.ref, line);
-  if (!source || !target) return;
-  const id = nextEdgeId(ctx.model);
-  ctx.model.edges[id] = {
+  if (!source || !target) return false;
+  const edge = {
     from: { node: source, port: from.port },
     to: { node: target, port: to.port },
     label,
     line: style.line,
     arrow: { start: style.start, end: style.end },
     curve: curve ?? ctx.model.meta.curve,
+    ...(look.width != null ? { width: look.width } : {}),
+    ...(look.head != null ? { head: look.head } : {}),
+    ...(look.bend ? { bend: look.bend } : {}),
+    ...(Object.keys(look.font).length ? { font: { ...PLAIN_FONT, ...look.font } } : {}),
   };
+  const existing = edgeBetween(ctx.model, source, target);
+  if (existing) {
+    mergeEdgeInto(ctx.model.edges[existing]!, edge);
+    return true;
+  }
+  const id = nextEdgeId(ctx.model);
+  ctx.model.edges[id] = edge;
   if (!curve) ctx.inheritedEdges.add(id);
+  return false;
+}
+
+/** Two blocks have one line between them. A repeat is folded into the first and noted here. */
+function repeatNotice(ctx: Context, line: number, pairs: Array<[string, string]>, removable: boolean) {
+  if (!pairs.length) return;
+  const named = pairs.map(([a, b]) => `${a} and ${b}`).join("; ");
+  const span = lineSpan(ctx, line);
+  const end = ctx.lineStarts[line] ?? ctx.source.length;
+  report(ctx, "info", line, `${named} ${pairs.length === 1 ? "are" : "were"} already connected, and two blocks have one line between them. I merged this line into the first one.`, {
+    fixes: removable ? [{ title: "Remove this line", from: span.from, to: end, insert: "" }] : [],
+  });
 }
 
 function quoteFix(ctx: Context, line: number): DiagnosticFix {
@@ -477,9 +619,10 @@ function bracketFix(ctx: Context, line: number): DiagnosticFix {
 function defineNode(ctx: Context, body: string, line: number, explicit: boolean) {
   const { tokens, unclosed } = tokenize(body);
   if (unclosed) warn(ctx, line, "A quote is missing its closing mark. The text was still used.", { fixes: [quoteFix(ctx, line)] });
-  const { props, rest } = takeProps(tokens);
+  const { props, rest } = takeProps(tokens, true);
   if (props.unclosed) warn(ctx, line, "A closing ) or ] is missing. The shape was still used.", { fixes: [bracketFix(ctx, line)] });
   for (const extra of props.unknown) warn(ctx, line, `I ignored “${extra}”. It isn’t a shape, colour, or lock.`, { needle: extra });
+  fontNotice(ctx, line, props);
   let id = "";
   let label = "";
   if (explicit) {
@@ -537,6 +680,7 @@ function defineNode(ctx: Context, body: string, line: number, explicit: boolean)
     if (props.shapeRaw) existing.shape = shaped.shape;
     if (color) existing.color = color;
     if (props.locked) existing.locked = true;
+    if (Object.keys(props.font).length) existing.font = { ...PLAIN_FONT, ...existing.font, ...props.font };
     existing.group = currentGroup(ctx) ?? existing.group;
     ctx.declared.add(existingId);
     return;
@@ -547,14 +691,21 @@ function defineNode(ctx: Context, body: string, line: number, explicit: boolean)
     color,
     group: currentGroup(ctx),
     locked: props.locked,
+    ...(Object.keys(props.font).length ? { font: { ...PLAIN_FONT, ...props.font } } : {}),
   };
   ctx.declared.add(id);
+}
+
+const PLAIN_FONT: TextStyle = { size: null, bold: false, italic: false, underline: false };
+
+function fontNotice(ctx: Context, line: number, props: Props) {
+  if (props.fontRaw) report(ctx, "info", line, `Text sizes go from ${FONT_LIMITS.min} to ${FONT_LIMITS.max}. I used ${props.font.size}.`, { needle: props.fontRaw });
 }
 
 function defineText(ctx: Context, body: string, line: number) {
   const { tokens, unclosed } = tokenize(body);
   if (unclosed) warn(ctx, line, "A quote is missing its closing mark. The text was still used.", { fixes: [quoteFix(ctx, line)] });
-  const { props, rest } = takeProps(tokens);
+  const { props, rest } = takeProps(tokens, true);
   let id = "";
   let text = "";
   if (rest[0]?.kind === "word" && isIdent(rest[0].value) && rest.length > 1) {
@@ -575,7 +726,8 @@ function defineText(ctx: Context, body: string, line: number) {
     error(ctx, line, `“${id}” is already used. Pick another name.`, { needle: id, target: id });
     return;
   }
-  ctx.model.texts[id] = { text, group: currentGroup(ctx), locked: props.locked };
+  fontNotice(ctx, line, props);
+  ctx.model.texts[id] = { text, group: currentGroup(ctx), locked: props.locked, ...(Object.keys(props.font).length ? { font: { ...PLAIN_FONT, ...props.font } } : {}) };
 }
 
 function defineGroup(ctx: Context, body: string, line: number, indent: number) {
@@ -583,7 +735,7 @@ function defineGroup(ctx: Context, body: string, line: number, indent: number) {
   const cleaned = body.replace(/{\s*$/, "").trim();
   const { tokens, unclosed } = tokenize(cleaned);
   if (unclosed) warn(ctx, line, "A quote is missing its closing mark. The group name was still used.", { fixes: [quoteFix(ctx, line)] });
-  const { props, rest } = takeProps(tokens);
+  const { props, rest } = takeProps(tokens, true);
   let id = "";
   let label = "";
   if (rest[0]?.kind === "word" && isIdent(rest[0].value)) {
@@ -648,8 +800,16 @@ function parseEdge(ctx: Context, rawBody: string, line: number) {
   if (taken.raw) {
     warn(ctx, line, `I don’t know the curve “${taken.raw}”. I used ${ctx.model.meta.curve}. Try straight, curved, or elbow.`, { needle: taken.raw });
   }
-  const body = taken.body;
+  const styled = takeLook(ctx, taken.body, line);
+  const body = styled.body;
+  const look = styled.look;
   const curve = taken.curve;
+  const repeats: Array<[string, string]> = [];
+  let added = 0;
+  const connect = (from: Endpoint, to: Endpoint, style: ArrowStyle, label: string) => {
+    if (addEdge(ctx, from, to, style, label, line, curve, look)) repeats.push([from.ref, to.ref]);
+    else added += 1;
+  };
   const arrows = findArrows(body);
   if (!arrows.length) {
     const words = body.trim().split(/\s+/).filter(Boolean);
@@ -686,8 +846,9 @@ function parseEdge(ctx: Context, rawBody: string, line: number) {
         error(ctx, line, `I couldn’t read “${target}”. Use a block name, like start or db.w.`, { needle: target });
         continue;
       }
-      addEdge(ctx, source, end, arrowStyle(arrows[0]!.token), label, line, curve);
+      connect(source, end, arrowStyle(arrows[0]!.token), label);
     }
+    repeatNotice(ctx, line, repeats, added === 0);
     return;
   }
   for (let i = 0; i < arrows.length; i += 1) {
@@ -705,8 +866,9 @@ function parseEdge(ctx: Context, rawBody: string, line: number) {
       error(ctx, line, "I couldn’t read the blocks on this line. Use names like start > next.");
       return;
     }
-    addEdge(ctx, source, target, arrowStyle(arrows[i]!.token), label, line, curve);
+    connect(source, target, arrowStyle(arrows[i]!.token), label);
   }
+  repeatNotice(ctx, line, repeats, added === 0);
 }
 
 function parseLayoutEntry(ctx: Context, raw: string, line: number) {

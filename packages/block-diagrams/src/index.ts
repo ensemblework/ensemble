@@ -1,6 +1,10 @@
 export {
+  ARROW_HEAD,
   COLORS,
   CURVES,
+  FONT_LIMITS,
+  LINE_WIDTH,
+  PLAIN_TEXT,
   DIAGRAM_VERSION,
   DIRECTIONS,
   MIN_VIEWPORT,
@@ -9,10 +13,14 @@ export {
   STARTER_SOURCE,
   allIds,
   diagramModelSchema,
+  edgeBetween,
   emptyModel,
+  isPlainText,
   lookupId,
+  mergeEdgeInto,
   nextEdgeId,
   slugId,
+  textStyle,
   uniqueId,
 } from "./model.js";
 export type {
@@ -31,13 +39,18 @@ export type {
   ParseResult,
   PortName,
   ShapeId,
+  TextStyle,
 } from "./model.js";
 
 export {
   DEFAULT_SIZE,
+  LABEL_SIZE,
   SHAPE_ALIASES,
   closestPorts,
+  labelMetrics,
   labelPadding,
+  minNodeSize,
+  minTextSize,
   nodeSize,
   outlineSize,
   resolveColor,
@@ -65,8 +78,28 @@ export { applyDiagramEdits, diagramChanges } from "./refine.js";
 export type { DiagramOp } from "./refine.js";
 export { layoutDiagram, refitGroups } from "./layout.js";
 export type { LayoutFit } from "./layout.js";
-export { DIAGRAM_DOT, DIAGRAM_LINE, DIAGRAM_PAPER, PALETTE, SHAPE_COLOR, paintFor } from "./palette.js";
+export { DIAGRAM_DOT, DIAGRAM_LINE, DIAGRAM_PAPER, PALETTE, SHAPE_COLOR, SWATCHES, paintFor } from "./palette.js";
+export { BEND_SNAP, bendFromPoint, edgeEnds, edgeRoute, portPoint } from "./route.js";
+export type { EdgeRoute, RouteInput } from "./route.js";
 export type { DiagramTheme, Paint } from "./palette.js";
 export { renderDiagramSvg } from "./svg.js";
 export type { SvgOptions } from "./svg.js";
-export { addBlock, addTextBox, connectBlocks, moveItem, removeItems, renameItem, setTitle, toggleLock } from "./edit.js";
+export {
+  addBlock,
+  addTextBox,
+  alignItems,
+  connectBlocks,
+  distributeItems,
+  minItemSize,
+  moveItem,
+  moveItems,
+  removeItems,
+  renameItem,
+  resizeItem,
+  setColor,
+  setEdgeLook,
+  setTextStyle,
+  setTitle,
+  toggleLock,
+} from "./edit.js";
+export type { AlignMode, EdgeLook } from "./edit.js";

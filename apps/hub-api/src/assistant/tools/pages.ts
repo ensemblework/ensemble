@@ -112,6 +112,20 @@ function currentBlocks(content: PageDocument | null, notes: string): PageNode[] 
   return base.filter((node) => !(node.type === "paragraph" && !node.content?.length && base.length === 1));
 }
 
+/**
+ * Adds Markdown to the end of a task's page inside the caller's transaction. Whatever the
+ * assistant writes about a task lands here; the short description stays the person's.
+ */
+export async function appendToTaskPage(tx: Prisma.TransactionClient, userId: string, taskId: string, markdown: string): Promise<{ dropped: string[] }> {
+  if (!markdown.trim()) return { dropped: [] };
+  const added = await keepOwnMentions(tx, userId, markdownPage(markdown));
+  await writePageContent(tx, userId, { taskId }, (current) => ({ content: { type: "doc", content: [...currentBlocks(current.content, current.notes), ...added.doc.content] } }), "agent");
+  sseHub.publish(userId, { event: "page", data: { taskId, action: "save", by: "agent" } });
+  return { dropped: added.dropped };
+}
+
+export { droppedNote };
+
 export const pageTools = [
   defineTool({
     name: "hub_list_pages",

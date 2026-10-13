@@ -123,6 +123,15 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
           for (const queryKey of keys) invalidateSoon(client, queryKey);
         });
       }
+      // A tool also names what it changed (pages, diagrams, plots, meetings…); the list above covers the usual ones.
+      source.addEventListener("assistant.acted", (event) => {
+        try {
+          const data = JSON.parse((event as MessageEvent<string>).data) as { keys?: unknown };
+          for (const key of Array.isArray(data.keys) ? data.keys : []) if (typeof key === "string") invalidateSoon(client, [key]);
+        } catch {
+          // ignore malformed frames
+        }
+      });
       // Pages and tasks listen for saves made elsewhere (another tab, or someone in a shared space).
       source.addEventListener("page", (event) => {
         try {

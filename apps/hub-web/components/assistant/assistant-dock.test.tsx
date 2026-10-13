@@ -241,3 +241,112 @@ test("@ in the box ranks across kinds, Enter writes @people:Name, and Send passe
     window.localStorage.removeItem("ensemble.assistant.conversation");
   }
 });
+
+test("the box grows to eight lines, Recent chats opens an earlier chat, and a change the assistant makes refreshes the board", async () => {
+  if (typeof Element !== "undefined" && typeof Element.prototype.scrollTo !== "function") {
+    Element.prototype.scrollTo = () => undefined;
+  }
+  window.localStorage.setItem("ensemble.assistant.open", "true");
+  window.localStorage.removeItem("ensemble.assistant.conversation");
+  const EARLIER = "22222222-2222-4222-8222-222222222222";
+  const asked: string[] = [];
+  const original = globalThis.fetch;
+  const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    asked.push(url);
+    if (url.includes("/api/settings")) return json(settings);
+    if (url.includes("/api/assistant/conversations?chats=1")) {
+      return json({
+        conversations: [
+          { id: CONVERSATION, title: "Plan my day", updatedAt: new Date().toISOString(), createdAt: new Date().toISOString() },
+          { id: EARLIER, title: "Draft the launch note", updatedAt: new Date(Date.now() - 86_400_000).toISOString(), createdAt: new Date().toISOString() },
+        ],
+      });
+    }
+    if (url.includes(`/conversations/${EARLIER}/messages`)) {
+      return json({ messages: [{ id: "old-user", role: "user", content: "Draft the launch note", toolCalls: [], model: null, createdAt: "2026-10-12T09:00:00.000Z" }] });
+    }
+    if (url.includes("/messages")) return json({ messages: [] });
+    if (url.includes("/api/assistant/turn")) {
+      const frames = [
+        `event: status\ndata: ${JSON.stringify({ conversationId: CONVERSATION })}\n\n`,
+        `event: tool\ndata: ${JSON.stringify({ call: { id: "call-1", name: "hub_create_task", state: "ok", isWrite: true, summary: "Created “Buy milk”." } })}\n\n`,
+        `event: done\ndata: ${JSON.stringify({ conversationId: CONVERSATION })}\n\n`,
+      ];
+      return new Response(new ReadableStream({ start(controller) { for (const frame of frames) controller.enqueue(new TextEncoder().encode(frame)); controller.close(); } }), {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    }
+    return json({});
+  }) as typeof fetch;
+
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } } });
+  client.setQueryData(["tasks"], { tasks: [] });
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root: Root = createRoot(host);
+  const wait = (ms = 20) => act(async () => { await new Promise((resolve) => setTimeout(resolve, ms)); });
+  const button = (label: string) => [...host.querySelectorAll("button")].find((node) => node.getAttribute("aria-label") === label);
+  try {
+    await act(async () => {
+      root.render(
+        <PathnameContext.Provider value="/board">
+          <QueryClientProvider client={client}>
+            <AssistantDock />
+          </QueryClientProvider>
+        </PathnameContext.Provider>,
+      );
+    });
+    for (let attempt = 0; attempt < 20 && !host.querySelector("textarea"); attempt += 1) await wait();
+    const textarea = host.querySelector("textarea")!;
+    let lines = 1;
+    Object.defineProperty(textarea, "scrollHeight", { configurable: true, get: () => lines * 24 });
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")!.set!;
+    const type = async (value: string) => {
+      lines = value.split("\n").length;
+      await act(async () => {
+        setter.call(textarea, value);
+        textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    await type("First line\nSecond line\nThird line");
+    assert.equal(textarea.style.height, "72px", "every line typed so far stays in view");
+    assert.equal(textarea.style.overflowY, "hidden");
+    await type(Array.from({ length: 12 }, (_, index) => `Line ${index + 1}`).join("\n"));
+    assert.equal(textarea.style.height, "192px", "eight lines, then it scrolls");
+    assert.equal(textarea.style.overflowY, "auto");
+
+    await type("Add a todo to buy milk");
+    await act(async () => {
+      button("Send")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    for (let attempt = 0; attempt < 20 && !client.getQueryState(["tasks"])?.isInvalidated; attempt += 1) await wait(40);
+    assert.equal(client.getQueryState(["tasks"])?.isInvalidated, true, "the board's tasks are refetched without the live stream");
+
+    const toggle = button("Recent chats")!;
+    for (let attempt = 0; attempt < 20 && toggle.disabled; attempt += 1) await wait();
+    await act(async () => {
+      toggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    for (let attempt = 0; attempt < 20 && !/Draft the launch note/.test(host.querySelector("[data-chat-history]")?.textContent ?? ""); attempt += 1) await wait();
+    const panel = host.querySelector("[data-chat-history]")!;
+    assert.match(panel.textContent ?? "", /Plan my day.*Draft the launch note/);
+    assert.ok(asked.some((url) => url.includes("/api/assistant/conversations?chats=1")));
+    const earlier = [...panel.querySelectorAll("button")].find((node) => /Draft the launch note/.test(node.textContent ?? ""))!;
+    await act(async () => {
+      earlier.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    for (let attempt = 0; attempt < 20 && !asked.some((url) => url.includes(`/conversations/${EARLIER}/messages`)); attempt += 1) await wait();
+    assert.equal(host.querySelector("[data-chat-history]"), null, "the list closes");
+    assert.equal(JSON.parse(window.localStorage.getItem("ensemble.assistant.conversation") ?? "null"), EARLIER);
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+    globalThis.fetch = original;
+    client.clear();
+    window.localStorage.removeItem("ensemble.assistant.open");
+    window.localStorage.removeItem("ensemble.assistant.conversation");
+  }
+});

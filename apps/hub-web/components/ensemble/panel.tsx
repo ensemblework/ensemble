@@ -12,8 +12,6 @@ import { useToast } from "../toast";
 
 type Citation = { kind: string; id?: string; url?: string; label: string; href?: string };
 
-const ACTS: ActAs[] = ["general", "student", "engineer", "teacher", "lawyer"];
-
 function ProposalCard({ call, onApply }: { call: AssistantToolCallRecord; onApply: () => void }) {
   const toast = useToast();
   const client = useQueryClient();
@@ -94,9 +92,7 @@ export function EnsemblePanel({
   const toast = useToast();
   const client = useQueryClient();
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings, staleTime: 60_000 });
-  const saved = settings.data?.settings.assistant.actAs ?? "general";
-  const [actAs, setActAs] = useState<ActAs | "">("");
-  const effective = (actAs || saved) as ActAs;
+  const actAs: ActAs = settings.data?.settings.assistant.actAs ?? "general";
   const [prompt, setPrompt] = useState("");
   const [text, setText] = useState("");
   const [calls, setCalls] = useState<AssistantToolCallRecord[]>([]);
@@ -189,7 +185,6 @@ export function EnsemblePanel({
           path,
           line,
           projectId,
-          ...(actAs ? { actAs } : {}),
         }),
         signal: controller.signal,
       });
@@ -299,24 +294,12 @@ export function EnsemblePanel({
   };
 
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
-  const suggestions = quickActions(effective, surface, shell.data?.highlights);
+  const suggestions = quickActions(actAs, surface, shell.data?.highlights);
 
   return (
     <div className="rounded-lg border border-line bg-panel p-3 shadow-pop" role="dialog" aria-label="Ensemble answer">
       <div className="mb-2 flex items-center gap-2">
         <div className="text-[13px] font-semibold">Ensemble</div>
-        <select
-          aria-label="Act as"
-          className="field h-7 py-0 text-[12px]"
-          value={effective}
-          onChange={(event) => setActAs(event.target.value as ActAs)}
-        >
-          {ACTS.map((value) => (
-            <option key={value} value={value}>
-              {value}
-            </option>
-          ))}
-        </select>
         <div className="flex-1" />
         <button type="button" className="btn h-7 px-2 text-[12px]" onClick={onClose}>
           Close

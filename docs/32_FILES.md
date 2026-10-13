@@ -10,7 +10,7 @@ The table is `FILE_FORMATS` in `packages/shared-types/src/files.ts`; the format 
 
 | Kind | Formats | Preview | Edit | Becomes a page | Agents read |
 |---|---|---|---|---|---|
-| PDF | pdf | Pages rendered with pdf.js (its legacy build, so Safari and the macOS desktop app work too); Present | Convert to a page first | In the browser; export back to PDF with the original's page size, margins, sizes and colours | Text of the first 300 pages |
+| PDF | pdf | Pages rendered with pdf.js (its legacy build, so Safari and the macOS desktop app work too); Full screen | Convert to a page first | In the browser; export back to PDF with the original's page size, margins, sizes and colours | Text of the first 300 pages |
 | Word | docx | docx-preview | Convert to a page first | In the browser; export back to Word into the original file (its styles, fonts, page setup, headers and footers) | Paragraphs, tables, headers, footers, notes |
 | Slides | pptx | Ensemble's own slide renderer; Present | — | — | Slide text and speaker notes |
 | Spreadsheets | xlsx, xlsm | Grid with sheet tabs | Cells, rows; saved into the original file | — | Each sheet as CSV (2,000 rows per sheet) |
@@ -24,7 +24,7 @@ The table is `FILE_FORMATS` in `packages/shared-types/src/files.ts`; the format 
 
 Every file, previewable or not, can be attached to pages and downloaded.
 
-**Present and Full screen.** On a file's own screen (`components/files/file-screen.tsx`), PDFs and slides have **Present**: one page or slide at a time, fitted to the screen on black (`components/files/viewers/present.tsx`). It starts at the page or slide in view, skips slides marked hidden in PowerPoint, draws the next one ahead, and leaves the viewer where the presentation stopped. → ↓ Space PageDown Enter N go forward; ← ↑ PageUp Backspace P go back; Home and End jump to the first and last; a click on the left third goes back, anywhere else forward; F leaves or re-enters the browser's fullscreen; Esc stops. The controls and the cursor hide after 2 seconds without the mouse moving. Word files, spreadsheets, images, video, text and code have **Full screen** instead: the same viewer, with its zoom and unsaved edits, fills the screen under a bar with the file name and Exit; Esc leaves. Both ask the browser for fullscreen and use an in-page layer where it is refused ([docs/02 §3.10](02_MODULE_INTERACTION_HUB_UI.md#310-files)).
+**Present and Full screen.** On a file's own screen (`components/files/file-screen.tsx`), slides have **Present**: one slide at a time, fitted to the screen on black (`components/files/viewers/present.tsx`). It starts at the slide in view, skips slides marked hidden in PowerPoint, draws the next one ahead, and leaves the viewer where the presentation stopped. → ↓ Space PageDown Enter N go forward; ← ↑ PageUp Backspace P go back; Home and End jump to the first and last; a click on the left third goes back, anywhere else forward; F leaves or re-enters the browser's fullscreen; Esc stops. The controls and the cursor hide after 2 seconds without the mouse moving. PDFs, Word files, spreadsheets, images, video, text and code have **Full screen** instead: the same viewer, with its zoom (− / + and Fit width for PDFs and Word files) and unsaved edits, fills the screen under a bar with the file name and an × that leaves; Esc leaves too. PDFs presented one page at a time until 13 Oct 2026. Both ask the browser for fullscreen and use an in-page layer where it is refused ([docs/02 §3.10](02_MODULE_INTERACTION_HUB_UI.md#310-files)).
 
 ## 2. Where files live
 
@@ -125,7 +125,7 @@ Hosted: a verified email for everything; imports 60 per 10 minutes. Space member
 - `apps/hub-api/src/files/import.integration.test.ts`, `attached.integration.test.ts`, `connectors/items/downloads.test.ts`: import sources and states, downloads per app, attached files for agents, `read_attachment` and `save_attachment`.
 - `apps/hub-api/src/routes/artifacts.integration.test.ts`: From your apps without uploads, paging, one item in full, removal from the list, graph, live tiles and MCP search and read, a later sync and a purged row staying removed, attaching again restoring it, the 409 for uploads, isolation, and a space member refused.
 - Web: `components/editor/file-attach.test.tsx`, `components/files/*.test.tsx` (`from-apps.test.tsx`: the switch, list, chips, search, reader, Remove, paging, empty state, guests), `lib/files/*.test.ts`.
-- Present and Full screen: `components/files/present.test.tsx` runs them on a generated .pptx and a code file (keys, clicks, hidden slides, focus, the in-page layer when the browser has no Fullscreen API, and a browser that grants it). PDFs use the same presenter; that path was read, not run, because pdf.js does not run in the test DOM.
+- Present and Full screen: `components/files/present.test.tsx` runs them on a generated .pptx and a code file (keys, clicks, hidden slides, focus, the × and Esc, the in-page layer when the browser has no Fullscreen API, and a browser that grants it). A PDF in full screen uses the same layer; that path was read, not run, because pdf.js does not run in the test DOM.
 
 ## 11. From your apps
 

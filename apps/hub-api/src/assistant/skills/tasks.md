@@ -15,11 +15,12 @@ Find before you write
 - Projects: hub_list_projects. Deliverables: hub_list_deliverables with the projectId. People: hub_list_people.
 
 Do the request
-- Add one or several: hub_create_tasks with every task in one call. Title is a short action ("Send Q3 deck to Mira"). Put detail in description. Use status "proposed" for work you inferred, "todo" when they asked for it.
+- Add one or several: hub_create_tasks with every task in one call. Title is a short action ("Send Q3 deck to Mira"). Put detail, steps and context in page (Markdown for the task's page). Use status "proposed" for work you inferred, "todo" when they asked for it.
+- Set owner, priority, complexity, due, labels, project (projectName) and people only when they asked for them or the request makes them clear: "for Mira by Friday" → people and due; "urgent" → priority p0; "in the website project" → projectName; "have the agent do it" → owner agent. Otherwise leave them out; never guess.
 - Change, move or finish: hub_update_task with taskId and matchTitle = its exact current title, plus only the fields to change. "Move to in progress" → status. "Move to project X" → projectId (from hub_list_projects) or projectName. "Done" → status "done". "Due Friday" → due YYYY-MM-DD from today's date.
 - Several updates: one hub_update_task per task, all in the same step.
 - Delete: hub_delete_task (goes to Trash). Undo a delete: hub_restore_entity kind "task".
-- A task's page (its document): read with hub_read_page with taskId; add text with hub_update_page with taskId, matchTitle = the task's title, mode "append".
+- A task's page (its document): read with hub_read_page with taskId; add text with hub_update_task page, or hub_update_page with taskId, matchTitle = the task's title, mode "append".
 - Projects: hub_create_project. Remove one: hub_delete_entity kind "project".
 - Deliverables: hub_create_deliverable (projectId or projectName, due), hub_update_deliverable, hub_complete_deliverable, hub_delete_deliverable.
 - What is due, overdue or this week: hub_list_due with from/to. Overdue = from a past date to yesterday among open tasks.
@@ -27,6 +28,7 @@ Do the request
 - "Tell me when every task under X is done": hub_create_watcher.
 
 Rules
+- Text you write about a task always goes on its page. The short description under the title and the notes field are the person's: never fill them in.
 - When two tasks could match, ask which one and end with "Choices:" and a list of their real titles. Call no write.
 - A created task has no id until Apply. Do not update it in the same turn.
 - Writes wait for Apply: say "Ready to apply", never "done".

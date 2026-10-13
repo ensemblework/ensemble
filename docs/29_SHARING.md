@@ -155,7 +155,7 @@ Built 8 Oct 2026; checked with `src/sharing/links.integration.test.ts` and in th
 
 ## 10. Avatars
 
-Everyone can pick a picture avatar in Settings › Account › Avatar: 15 per profession (5 women, 5 men, 5 gender-neutral) for engineers, lawyers, teachers, students, managers and makers. The set for your signup role is shown first, with your profile's gender group first. They are drawn as SVG from their id (`role.gender.n`, `packages/shared-types/src/avatars.ts`, `components/avatars/persona.tsx`), stored on `users.avatar`, and saved with `PATCH /api/auth/me { avatar }`. Without one you keep your initials. Avatars show in the top bar, presence, the share dialog, contacts, comments and board cards.
+Everyone can pick a picture avatar in Settings › Account › Avatar: 15 per profession (5 women, 5 men, 5 gender-neutral) for engineers, lawyers, teachers, students, managers and makers. Settings shows only the set for the role chosen at sign-up, with your profile's gender group first; an avatar picked earlier from another set stays until you change it. They are drawn as SVG from their id (`role.gender.n`, `packages/shared-types/src/avatars.ts`, `components/avatars/persona.tsx`), stored on `users.avatar`, and saved with `PATCH /api/auth/me { avatar }`. Without one you keep your initials. Avatars show in the top bar, presence, the share dialog, contacts, comments and board cards.
 
 ## 11. Not covered
 

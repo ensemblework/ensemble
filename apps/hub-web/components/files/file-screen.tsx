@@ -3,7 +3,7 @@
 /** @jsxImportSource react */
 
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ExternalLink, FilePlus2, Info, Maximize2, Minimize2, Paperclip, Presentation, Trash2 } from "lucide-react";
+import { ArrowLeft, ExternalLink, FilePlus2, Info, Maximize2, Paperclip, Presentation, Trash2, X } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
@@ -23,8 +23,8 @@ import { DeleteFileDialog } from "./delete-file";
 import { useFileRecord } from "./use-file";
 import { DownloadButton, PresentContext, type PresentControl } from "./viewers/shared";
 
-/** Previews that can fill the screen as they are. PDFs and slides present instead; audio has nothing to fill it with. */
-const FULL_SCREEN = new Set<ViewerKind>(["docx", "sheet", "image", "video", "text"]);
+/** Previews that can fill the screen as they are, with their own zoom. Slides present instead; audio has nothing to fill it with. */
+const FULL_SCREEN = new Set<ViewerKind>(["pdf", "docx", "sheet", "image", "video", "text"]);
 
 function countLabel(file: FileRecord): string | null {
   if (file.pageCount === null) return null;
@@ -76,7 +76,7 @@ export function FileScreen({ id }: { id: string }) {
   const way = pageWay(format);
   const keepsFormatting = format.ext === "pdf" || format.ext === "docx";
   const viewer = viewerFor(format);
-  const show = viewer === "pdf" || viewer === "pptx" ? "present" : FULL_SCREEN.has(viewer) ? "full" : null;
+  const show = viewer === "pptx" ? "present" : FULL_SCREEN.has(viewer) ? "full" : null;
   const full = show === "full" && screen.active;
 
   const convert = async () => {
@@ -139,7 +139,7 @@ export function FileScreen({ id }: { id: string }) {
                 className="btn"
                 disabled={!canPresent}
                 onClick={(event) => screen.enter(event.currentTarget)}
-                title={`One ${viewer === "pptx" ? "slide" : "page"} at a time on the whole screen. Arrow keys move, Esc stops.`}
+                title="One slide at a time on the whole screen. Arrow keys move, Esc stops."
               >
                 <Presentation size={13} aria-hidden /> Present
               </button>
@@ -200,8 +200,8 @@ export function FileScreen({ id }: { id: string }) {
               {file.filename}
             </span>
             <span className="text-[12px] text-faint max-sm:hidden">Esc to leave</span>
-            <button type="button" className="btn-ghost" onClick={screen.exit}>
-              <Minimize2 size={13} aria-hidden /> Exit full screen
+            <button type="button" className="icon-btn" aria-label="Exit full screen" title="Exit full screen (Esc)" onClick={screen.exit}>
+              <X size={16} />
             </button>
           </div>
         ) : null}

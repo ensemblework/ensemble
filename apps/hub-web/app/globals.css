@@ -376,6 +376,35 @@ select:focus-visible {
     @apply rounded-lg border border-line bg-raised px-2.5 py-1.5 text-sm text-ink outline-none transition-colors placeholder:text-faint hover:border-line-strong focus:border-accent;
   }
 
+  /* The model and provider pickers in Settings → Models (components/settings/model-picker.tsx). */
+  .picker-trigger {
+    @apply flex h-9 w-full min-w-0 items-center gap-2 rounded-lg border border-line bg-raised px-2.5 text-[13px] text-ink transition-colors hover:border-line-strong focus-visible:border-accent focus-visible:outline-none aria-expanded:border-accent;
+  }
+  .picker-search {
+    @apply mx-1 mt-0.5 flex items-center gap-2 rounded-md border border-line bg-panel px-2 py-1.5 focus-within:border-accent;
+  }
+  .picker-option {
+    @apply flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] text-ink transition-colors hover:bg-hover;
+  }
+  .picker-option.is-active {
+    @apply bg-hover;
+  }
+  .picker-option.is-current {
+    @apply font-medium;
+  }
+  .picker-badge {
+    @apply shrink-0 rounded-full bg-[var(--accent-soft)] px-1.5 py-px text-[10.5px] font-medium text-accent;
+  }
+  .thinking-levels {
+    @apply inline-flex max-w-full flex-wrap gap-0.5 rounded-lg border border-line bg-raised p-0.5;
+  }
+  .thinking-level {
+    @apply rounded-md px-2.5 py-1 text-[12.5px] text-muted transition-colors hover:text-ink;
+  }
+  .thinking-level.is-on {
+    @apply bg-panel font-medium text-ink shadow-sm;
+  }
+
   .btn {
     @apply inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-line bg-raised px-2.5 py-1 text-[13px] text-ink transition-colors hover:border-line-strong hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50;
   }
@@ -1057,13 +1086,6 @@ select:focus-visible {
 .diagram-flow .react-flow__edge-path {
   stroke-linecap: round;
 }
-.diagram-flow .react-flow__edge-text {
-  font-size: 10px;
-  font-weight: 600;
-}
-.diagram-flow .react-flow__edge-textbg {
-  fill: var(--diagram-paper);
-}
 .diagram-shape,
 .diagram-text {
   position: relative;
@@ -1167,6 +1189,173 @@ select:focus-visible {
 .diagram-shape:hover .react-flow__handle.diagram-port::after,
 .diagram-shape.is-selected .react-flow__handle.diagram-port::after {
   opacity: 1;
+}
+/* Labels wrap to as many lines as the block has room for. */
+.diagram-label {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* Resize handles: small squares on the corners, a thin accent frame. */
+.diagram-flow .react-flow__resize-control.handle.diagram-resize-handle {
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  background: var(--diagram-paper);
+}
+.diagram-flow .react-flow__resize-control.line.diagram-resize-line {
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+/* Alignment guides and same-size marks while dragging or resizing. */
+.diagram-guide {
+  position: absolute;
+  pointer-events: none;
+  background: #e5484d;
+  z-index: 10;
+}
+.diagram-guide-size {
+  position: absolute;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 0 solid #e5484d;
+  border-left-style: solid;
+  border-right-style: solid;
+  background: linear-gradient(#e5484d, #e5484d) center / 100% 1px no-repeat;
+  z-index: 10;
+}
+/* A line's label sits on the line. Selected, it (or the dot when there is none) drags to bend the line. */
+.diagram-edge-label {
+  position: absolute;
+  pointer-events: all;
+  border: 1px solid color-mix(in srgb, var(--diagram-line) 25%, transparent);
+  border-radius: 999px;
+  background: var(--diagram-paper);
+  padding: 1px 7px;
+  color: var(--diagram-line);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.diagram-edge-label.is-selected {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+.diagram-edge-label.can-bend,
+.diagram-bend-handle {
+  cursor: grab;
+}
+.diagram-bend-handle {
+  position: absolute;
+  pointer-events: all;
+  width: 11px;
+  height: 11px;
+  border: 1.5px solid var(--accent);
+  border-radius: 99px;
+  background: var(--diagram-paper);
+}
+.diagram-edge-input {
+  min-width: 3ch;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  outline: none;
+  text-align: center;
+}
+/* The format bar floats over the top of the canvas while something is selected. */
+.diagram-format-bar {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  translate: -50% 0;
+  z-index: 20;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  max-width: calc(100% - 24px);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--panel);
+  padding: 4px;
+  box-shadow: 0 8px 24px rgb(28 25 21 / 0.12);
+}
+.diagram-stage.is-focus .diagram-format-bar {
+  top: 62px;
+}
+.diagram-format-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+.diagram-format-group + .diagram-format-group {
+  border-left: 1px solid var(--line);
+  padding-left: 4px;
+}
+.diagram-format-btn {
+  display: inline-flex;
+  height: 26px;
+  min-width: 26px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 7px;
+  color: var(--muted);
+}
+.diagram-format-btn:hover:not(:disabled),
+.diagram-format-text:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+.diagram-format-btn[data-active] {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--ink);
+}
+.diagram-format-btn:disabled {
+  opacity: 0.4;
+}
+.diagram-format-stepper {
+  display: inline-flex;
+  align-items: center;
+}
+.diagram-format-value {
+  min-width: 3.4ch;
+  text-align: center;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+.diagram-format-swatch {
+  width: 20px;
+  height: 20px;
+  border: 1.5px solid transparent;
+  border-radius: 99px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.diagram-format-swatch.is-auto {
+  border-color: var(--line-strong);
+  background: var(--diagram-paper);
+}
+.diagram-format-swatch[data-active] {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.diagram-format-select {
+  height: 26px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel);
+  padding: 0 4px;
+  font-size: 12px;
+  color: var(--ink);
+}
+.diagram-format-text {
+  height: 26px;
+  border-radius: 7px;
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--muted);
 }
 .diagram-swatch {
   display: inline-block;
@@ -2151,6 +2340,13 @@ button.account-avatar:focus-visible {
   box-shadow: 0 10px 28px rgb(0 0 0 / 0.28), 0 1px 0 rgb(255 255 255 / 0.04) inset;
   cursor: grab;
   touch-action: none;
+  /* No transform transition here: it would slide the button in from the corner each time the area is measured. */
+  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+.ask-launcher[hidden] {
+  display: none;
+}
+.ask-launcher[data-nudged="1"] {
   transition: transform 180ms var(--ease), border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
 }
 [data-theme="light"] .ask-launcher {
@@ -2167,6 +2363,20 @@ button.account-avatar:focus-visible {
   cursor: grabbing;
   transition: none;
   border-color: rgb(var(--accent-rgb) / 0.6);
+}
+/* Assign pressed while this field still needs something: a short ring so the eye finds it. */
+[data-assign-field][data-attention="true"] {
+  border-radius: 8px;
+  outline: 2px solid rgb(var(--warn-rgb) / 0.85);
+  outline-offset: 4px;
+  animation: assign-attention 1.4s var(--ease) both;
+}
+@keyframes assign-attention {
+  0%, 60% { outline-color: rgb(var(--warn-rgb) / 0.85); }
+  100% { outline-color: transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-assign-field][data-attention="true"] { animation: none; }
 }
 .assistant-starter {
   border: 1px solid var(--line);

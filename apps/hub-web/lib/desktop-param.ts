@@ -1,5 +1,6 @@
 "use client";
 
+import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 
 type DesktopWindow = Window & { __ENSEMBLE_DESKTOP__?: { apiBase?: string } };
@@ -24,11 +25,24 @@ export function pathParam(fallback: string): string {
   return last ? decodeURIComponent(last) : fallback;
 }
 
+/** The last segment of a path, decoded: `/tasks/abc/` → `abc`. */
+export function lastSegment(pathname: string): string | null {
+  const last = pathname.split("/").filter(Boolean).pop();
+  return last ? decodeURIComponent(last) : null;
+}
+
+/**
+ * The route's id. On the desktop every id shares the one "_" page, and moving from one task
+ * to another happens in place, so the id comes from the address on each render, not once.
+ * The first render returns the baked value, like the static HTML it hydrates.
+ */
 export function useDesktopParam(baked: string | undefined): string {
   const initial = baked ?? "";
-  const [value, setValue] = useState(initial);
+  const pathname = usePathname();
+  const [desktop, setDesktop] = useState(false);
   useEffect(() => {
-    setValue(pathParam(initial));
-  }, [initial]);
-  return value;
+    setDesktop(desktopShell());
+  }, []);
+  if (!desktop) return initial;
+  return (pathname ? lastSegment(pathname) : null) ?? pathParam(initial);
 }

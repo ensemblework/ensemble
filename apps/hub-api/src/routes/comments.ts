@@ -35,6 +35,12 @@ async function assertCommentPage(prisma: Prisma.TransactionClient, userId: strin
     if (!page) throw Object.assign(new Error("Page not found."), { statusCode: 404 });
     return;
   }
+  // Meeting notes take inline @ensemble requests (their editor shows no comments).
+  if (kind === "meeting") {
+    const session = await prisma.meetingSession.findFirst({ where: { id, userId, deletedAt: null }, select: { id: true } });
+    if (!session) throw Object.assign(new Error("Meeting notes not found."), { statusCode: 404 });
+    return;
+  }
   throw Object.assign(new Error("Unsupported comment page kind."), { statusCode: 400 });
 }
 
@@ -50,6 +56,8 @@ async function withCommentPage<T>(
       await tx.$queryRaw`SELECT id FROM task_pages WHERE id = ${id} AND user_id = ${userId} AND task_id IS NULL FOR UPDATE`;
     } else if (kind === "task") {
       await tx.$queryRaw`SELECT id FROM tasks WHERE id = ${id} AND user_id = ${userId} AND deleted_at IS NULL FOR UPDATE`;
+    } else if (kind === "meeting") {
+      await tx.$queryRaw`SELECT id FROM meeting_sessions WHERE id = ${id} AND user_id = ${userId} AND deleted_at IS NULL FOR UPDATE`;
     }
     await assertCommentPage(tx, userId, kind, id);
     return write(tx);
@@ -85,6 +93,10 @@ export async function commentPageText(prisma: FastifyInstance["prisma"], userId:
       .filter((part) => part && part.trim())
       .join("\n")
       .slice(0, 24_000);
+  }
+  if (kind === "meeting") {
+    const session = await prisma.meetingSession.findFirst({ where: { id, userId, deletedAt: null }, select: { title: true, notes: true, recap: true } });
+    return session ? [`Meeting notes: ${session.title}`, live ? text(null, "") : session.notes, session.recap ? `Recap:\n${session.recap}` : ""].filter((part) => part.trim()).join("\n\n").slice(0, 24_000) : "";
   }
   if (kind === "deliverable") {
     const deliverable = await prisma.deliverable.findFirst({ where: { id, userId, deletedAt: null }, select: { title: true, notes: true } });
@@ -302,7 +314,7 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
         modules: request.modules,
         conversationId: conversation.id,
         message: body.prompt,
-        page: { path: `/${kind}s/${id}`, taskId: kind === "task" ? id : undefined, projectId: kind === "project" ? id : undefined, label: "this page" },
+        page: { path: kind === "meeting" ? `/meetings?session=${id}` : `/${kind}s/${id}`, taskId: kind === "task" ? id : undefined, projectId: kind === "project" ? id : undefined, label: kind === "meeting" ? "these meeting notes" : "this page" },
         settings,
         model: tier.model,
         provider: tier.provider,

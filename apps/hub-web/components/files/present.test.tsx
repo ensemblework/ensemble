@@ -277,7 +277,7 @@ test("Full screen shows the same preview over the whole screen, and Esc puts it 
   const view = await mount("t1", { t1: { file: record("t1", "harvest.py", { kind: "code", mediaType: "text/plain", pageCount: null }), bytes: new TextEncoder().encode(code) } });
   try {
     await waitFor(() => Boolean(document.querySelector("[data-file-text]")), "the code");
-    assert.ok(!Array.from(document.querySelectorAll("button")).some((node) => node.textContent?.trim() === "Present"), "only PDFs and slides present");
+    assert.ok(!Array.from(document.querySelectorAll("button")).some((node) => node.textContent?.trim() === "Present"), "only slides present");
     const viewer = document.querySelector("[data-file-text]");
     const open = button(/^Full screen$/);
     await click(open);
@@ -292,6 +292,11 @@ test("Full screen shows the same preview over the whole screen, and Esc puts it 
     assert.equal(document.querySelector('[data-file-full-screen="true"]'), null);
     assert.equal(document.querySelector("[data-file-text]"), viewer);
     assert.equal(document.activeElement, open, "focus is back on Full screen");
+    assert.equal(view.chrome.inert, false);
+    await click(open);
+    assert.ok(document.querySelector('[data-file-full-screen="true"]'));
+    await click(button(/^Exit full screen$/));
+    assert.equal(document.querySelector('[data-file-full-screen="true"]'), null, "the X leaves full screen too");
     assert.equal(view.chrome.inert, false);
   } finally {
     await view.done();

@@ -16,6 +16,7 @@ import { DecryptError, ModelAuthError, ProviderError, statusForProvider } from "
 import { completeWithTools, streamWithTools } from "../runtime/models.js";
 import { useInProcessRuntime } from "../runtime/mode.js";
 import type { Json } from "../runtime/payload.js";
+import { effortToSend } from "./model-meta.js";
 import { keysFor } from "../sharing/context.js";
 
 export const RuntimeTurn = z.object({
@@ -238,7 +239,7 @@ function failureToError(failure: ModelFailure, model: string): RuntimeError {
     return new ModelQuotaError(model, quotaResetInstant(new Date(), retry), retry);
   }
   const httpStatus = failure.status === 503 || failure.status === 400 || failure.status === 429 || failure.status === 404 ? failure.status : 502;
-  return new RuntimeError(friendlyModelError(failure), httpStatus);
+  return new RuntimeError(friendlyModelError(failure, model), httpStatus);
 }
 
 /** Map one runtime SSE error frame. Quota stays 429; other failures keep their status. */
@@ -265,7 +266,7 @@ export function errorFromStreamFrame(
     return new ModelQuotaError(model, quotaResetInstant(now, retry), retry);
   }
   const httpStatus = failure.status === 503 || failure.status === 400 || failure.status === 429 || failure.status === 404 ? failure.status : 502;
-  return new RuntimeError(friendlyModelError(failure), httpStatus);
+  return new RuntimeError(friendlyModelError(failure, data.model ?? model), httpStatus);
 }
 
 export async function askRuntime(args: {
@@ -284,7 +285,7 @@ export async function askRuntime(args: {
   const limit = args.timeoutMs ?? 300_000;
   const timeout = AbortSignal.timeout(limit);
   const signal = args.signal ? AbortSignal.any([args.signal, timeout]) : timeout;
-  const body = chatBody(args);
+  const body = chatBody({ ...args, reasoningEffort: await effortToSend(args.userId, args.provider, args.model, args.reasoningEffort) });
   if (useInProcessRuntime()) {
     try {
       return RuntimeTurn.parse(await completeWithTools(body, { signal }));
@@ -363,7 +364,7 @@ export async function askRuntimeStream(args: Parameters<typeof askRuntime>[0] & 
   const limit = args.timeoutMs ?? 300_000;
   const timeout = AbortSignal.timeout(limit);
   const signal = args.signal ? AbortSignal.any([args.signal, timeout]) : timeout;
-  const body = chatBody({ ...args, stream: true });
+  const body = chatBody({ ...args, reasoningEffort: await effortToSend(args.userId, args.provider, args.model, args.reasoningEffort), stream: true });
   let response: Response;
   try {
     if (useInProcessRuntime()) {

@@ -229,3 +229,40 @@ test("with a model key, Chat stays Ensemble Code", async () => {
     app.unmount();
   }
 });
+
+test("signed in, with a key only on the account: Chat stays Ensemble Code and /status says where the key is", async () => {
+  const { api } = fakeApi({ accountKeys: ["google"], agents: [{ id: "claude", name: "Claude", app: true, cli: "/x/claude" }] });
+  const app = mount(api, { ...DEFAULT_PREFS, tab: "chat" });
+  try {
+    await tick(200);
+    assert.doesNotMatch(app.lastFrame()!, /working with Claude Code/, "the account's key counts as a key");
+    for (const key of "/status") app.stdin.write(key);
+    await tick();
+    app.stdin.write("\r");
+    assert.match(await screenWith(app.lastFrame, /Model keys/), /google \(your account\)/);
+  } finally {
+    app.unmount();
+  }
+});
+
+test("a failed turn shows its error once, not again as the reply", async () => {
+  const message = "No key for Google Gemini. Add one in Settings → Models (in the Ensemble CLI: /keys google), or pick a model whose provider has a key.";
+  const frames: ChatFrame[] = [
+    { type: "status", conversationId: "c1" },
+    { type: "error", message },
+    { type: "done", conversationId: "c1", content: message },
+  ];
+  const { api } = fakeApi({ frames, keys: ["anthropic"] });
+  const app = mount(api, { ...DEFAULT_PREFS, tab: "chat" });
+  try {
+    await tick(100);
+    for (const key of "hi") app.stdin.write(key);
+    await tick();
+    app.stdin.write("\r");
+    const frame = await screenWith(app.lastFrame, /No key for Google Gemini/);
+    await tick(100);
+    assert.equal((app.lastFrame()!.match(/No key for Google Gemini/g) ?? []).length, 1, frame);
+  } finally {
+    app.unmount();
+  }
+});

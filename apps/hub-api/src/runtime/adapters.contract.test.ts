@@ -5,10 +5,10 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { FIXTURE_DIR, buildChatPayload, effortFor, fromAnthropic, fromOpenAi } from "./payload.js";
-import { ProviderError, errorFromRuntimeBody, parseProviderError } from "./errors.js";
+import { FIXTURE_DIR, anthropicPayload, buildChatPayload, effortFor, fromAnthropic, fromOpenAi } from "./payload.js";
+import { ProviderError, errorFromRuntimeBody, friendlyKeyError, parseProviderError } from "./errors.js";
 import { setCredentialResolverForTests, type Credential } from "./credentials.js";
-import { clearCatalogCache, completeText, completeWithTools, listModels, setRuntimeFetchForTests } from "./models.js";
+import { catalog, clearCatalogCache, completeText, completeWithTools, copilotEndpoint, listModels, setRuntimeFetchForTests } from "./models.js";
 import { resetBuckets, setRuntimeSleepForTests } from "./pace.js";
 
 const COMPLETION = {
@@ -60,15 +60,32 @@ test.afterEach(() => {
   setRuntimeSleepForTests(null);
 });
 
-test("gemini 3 omits temperature and keeps minimal effort; older gemini lowers it", () => {
+test("the chosen thinking level is sent as it is, in each provider's own field", () => {
   const gemini3 = buildChatPayload("gemini-3.5-flash", "google", [], { temperature: 0, reasoningEffort: "minimal" });
   assert.equal("temperature" in gemini3, false);
   assert.equal(gemini3.reasoning_effort, "minimal");
-  const older = buildChatPayload("gemini-2.5-flash", "google", [{ role: "user", content: "hi" }], { temperature: 0, reasoningEffort: "minimal" });
+  const older = buildChatPayload("gemini-2.5-flash", "google", [{ role: "user", content: "hi" }], { temperature: 0, reasoningEffort: "low" });
   assert.equal(older.temperature, 0);
-  assert.equal(older.reasoning_effort, "low");
-  assert.equal(effortFor("openai", "minimal", "gpt-4.1-mini"), "minimal");
+  assert.equal(older.reasoning_effort, "low", "never swapped for another level");
+  const routed = buildChatPayload("anthropic/claude-sonnet-5-5", "openrouter", [], { reasoningEffort: "xhigh" });
+  assert.deepEqual(routed.reasoning, { effort: "xhigh" }, "OpenRouter reads its own reasoning object");
+  assert.equal("reasoning_effort" in routed, false);
+  assert.deepEqual(anthropicPayload({ reasoningEffort: "max" }, "claude-opus-5-5", [{ role: "user", content: "hi" }]).output_config, { effort: "max" });
+  assert.equal(effortFor("openai", "minimal", "gpt-5-mini"), "minimal");
   assert.equal(effortFor("google", "default", "gemini-3.5-flash"), null);
+});
+
+test("a level the provider refuses is its error, not a silent retry without it", async () => {
+  const calls = install(() => ({ status: 400, body: { error: { message: "Unsupported value: 'reasoning_effort' does not support 'minimal' with this model. Supported values are: 'low', 'medium', and 'high'." } } }));
+  await assert.rejects(
+    () => completeWithTools({ userId: "user-openai", provider: "openai", model: "o3", reasoningEffort: "minimal", messages: [{ role: "user", content: "hi" }] }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /does not support 'minimal'/);
+      return true;
+    },
+  );
+  assert.equal(calls.length, 1);
 });
 
 test("a provider error object is the sentence, and 429 stays 429", () => {
@@ -110,8 +127,9 @@ for (const spec of OPENAI_COMPAT) {
     assert.equal(calls[0]?.method, "POST");
     assert.equal(calls[0]?.headers.authorization, `Bearer test-key-${spec.provider}`);
     for (const [name, value] of Object.entries(spec.extra)) assert.equal(calls[0]?.headers[name], value);
-    const sent = calls[0]?.body as { model: string; tools: unknown; reasoning_effort: string; temperature?: number };
-    assert.equal(sent.reasoning_effort, "low");
+    const sent = calls[0]?.body as { model: string; tools: unknown; reasoning_effort?: string; reasoning?: { effort: string }; temperature?: number };
+    if (spec.provider === "openrouter") assert.deepEqual(sent.reasoning, { effort: "low" });
+    else assert.equal(sent.reasoning_effort, "low");
     assert.equal(sent.temperature, undefined);
     assert.ok(sent.tools);
     assert.equal(turn.text, "ready");
@@ -164,21 +182,17 @@ test("anthropic uses the Messages API and maps tool_use back to a turn", async (
   assert.equal(fromOpenAi(COMPLETION, "fallback").text, "ready");
 });
 
-test("copilot exchanges a GitHub token for a session, then chats", async () => {
-  const calls = install((url) => {
-    if (url.includes("copilot_internal")) {
-      return { body: { token: "copilot-session", endpoints: { api: "https://api.githubcopilot.com" }, expires_at: Date.now() / 1000 + 600 } };
-    }
-    return { body: COMPLETION };
-  });
+test("copilot sends the person's GitHub token to the Copilot API, and refuses a classic token", async () => {
+  const calls = install(() => ({ body: COMPLETION }));
   const turn = await completeWithTools({ userId: "user-copilot", provider: "copilot", model: "gpt-4.1", messages: [{ role: "user", content: "hi" }] });
-  assert.equal(calls[0]?.url, "https://api.github.com/copilot_internal/v2/token");
-  assert.equal(calls[0]?.headers.authorization, "token test-key-copilot");
-  assert.equal(calls[1]?.url, "https://api.githubcopilot.com/chat/completions");
-  assert.equal(calls[1]?.headers.authorization, "Bearer copilot-session");
-  assert.equal(calls[1]?.headers["editor-version"], "Ensemble/0.1");
-  assert.equal(calls[1]?.headers["copilot-integration-id"], "vscode-chat");
+  assert.equal(calls.length, 1, "no token exchange with GitHub's internal endpoint");
+  assert.equal(calls[0]?.url, "https://api.githubcopilot.com/chat/completions");
+  assert.equal(calls[0]?.headers.authorization, "Bearer test-key-copilot");
+  assert.equal(calls[0]?.headers["copilot-integration-id"], "copilot-developer-cli");
   assert.equal(turn.text, "ready");
+  assert.throws(() => copilotEndpoint("ghp_classic0000"), /classic GitHub token.*Copilot requests/);
+  assert.equal(copilotEndpoint("github_pat_fine").headers.Authorization, "Bearer github_pat_fine");
+  assert.match(friendlyKeyError("copilot", 404), /Copilot requests/);
 });
 
 test("cursor is not a chat provider, and its model list uses HTTP basic auth", async () => {
@@ -269,4 +283,27 @@ test("morning-fetch JSON completions keep a fenced array", async () => {
     temperature: 0,
   });
   assert.deepEqual(result.json, [{ id: "art_priya", title: "Reply to Priya with p95 latency numbers" }]);
+});
+
+test("the catalog keeps the thinking levels Anthropic and Copilot list per model", async () => {
+  install((url) =>
+    url.includes("anthropic.com")
+      ? {
+          body: {
+            data: [
+              { id: "claude-opus-5-5", capabilities: { effort: { supported: true, low: { supported: true }, medium: { supported: true }, high: { supported: true }, xhigh: { supported: true }, max: { supported: true } } } },
+              { id: "claude-haiku-4-5", capabilities: { effort: { supported: false } } },
+            ],
+          },
+        }
+      : { body: { data: [{ id: "claude-opus-5.5", capabilities: { supports: { reasoning_effort: ["low", "medium", "high", "xhigh", "max"] } } }, { id: "gpt-4.1", capabilities: { supports: {} } }] } },
+  );
+  const rows = await catalog("user-meta", null, undefined, ["anthropic", "copilot"]);
+  assert.deepEqual(rows.map((row) => row.provider), ["anthropic", "copilot"], "only the providers asked for");
+  const anthropic = rows.find((row) => row.provider === "anthropic")!;
+  assert.deepEqual((anthropic.meta as Record<string, { efforts: string[] }>)["claude-opus-5-5"]?.efforts, ["low", "medium", "high", "xhigh", "max"]);
+  assert.deepEqual((anthropic.meta as Record<string, { efforts: string[] }>)["claude-haiku-4-5"]?.efforts, []);
+  const copilot = rows.find((row) => row.provider === "copilot")!;
+  assert.deepEqual((copilot.meta as Record<string, { efforts: string[] }>)["claude-opus-5.5"]?.efforts, ["low", "medium", "high", "xhigh", "max"]);
+  assert.deepEqual((copilot.meta as Record<string, { efforts: string[] }>)["gpt-4.1"]?.efforts, []);
 });

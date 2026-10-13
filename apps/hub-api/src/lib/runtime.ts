@@ -17,6 +17,7 @@ import { truncateText } from "./text.js";
 import { RuntimeError } from "./runtime-error.js";
 import { requireHostAccess, requireVerifiedUser } from "./hosted-access.js";
 import { keysFor } from "../sharing/context.js";
+import { effortToSend } from "./model-meta.js";
 
 export { RuntimeError };
 
@@ -103,7 +104,7 @@ export async function complete(args: {
       json: args.json ?? false,
       jsonShape: args.jsonShape,
       ollamaUrl: args.settings.models.ollamaUrl,
-      reasoningEffort: tier.effort !== "default" ? tier.effort : undefined,
+      reasoningEffort: await effortToSend(args.userId, tier.provider, tier.model, tier.effort),
     },
   });
   const model = result.model || tier.model;

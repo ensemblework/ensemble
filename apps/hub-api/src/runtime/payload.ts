@@ -52,9 +52,12 @@ export function inferProvider(model: string): string {
   return process.env.ENSEMBLE_LLM_PROVIDER || "google";
 }
 
-export function effortFor(provider: string, effort: string | null | undefined, model?: string | null): string | null {
+/**
+ * The level as chosen, or none. hub-api has already refused a level the model does not take
+ * (`checkEffort` in shared-types), so nothing here swaps one level for another.
+ */
+export function effortFor(_provider: string, effort: string | null | undefined, _model?: string | null): string | null {
   if (!effort || effort === "default") return null;
-  if (provider === "google" && effort === "minimal" && !String(model ?? "").startsWith("gemini-3")) return "low";
   return effort;
 }
 
@@ -168,7 +171,11 @@ export function buildChatPayload(
     payload.tool_choice = "auto";
   }
   const effort = effortFor(provider, options.reasoningEffort, model);
-  if (effort) payload.reasoning_effort = effort;
+  // OpenRouter reads its own `reasoning` object and maps it to each vendor; the others read reasoning_effort.
+  if (effort) {
+    if (provider === "openrouter") payload.reasoning = { effort };
+    else payload.reasoning_effort = effort;
+  }
   if (options.temperature != null && !model.startsWith("gemini-3")) payload.temperature = options.temperature;
   if (options.jsonMode && JSON_PROVIDERS.has(provider)) payload.response_format = { type: "json_object" };
   if (options.stream) payload.stream = true;
@@ -301,7 +308,7 @@ export function anthropicPayload(body: Json, model: string, messages: Json[]): J
   if (converted.system) payload.system = converted.system;
   if (tools.length) payload.tools = tools;
   const effort = effortFor("anthropic", typeof body.reasoningEffort === "string" ? body.reasoningEffort : null, model);
-  if (effort && effort !== "minimal") payload.output_config = { effort };
+  if (effort) payload.output_config = { effort };
   return payload;
 }
 

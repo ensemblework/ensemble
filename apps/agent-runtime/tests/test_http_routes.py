@@ -91,7 +91,7 @@ def test_health_and_model_routes_preserve_response_shapes(client, monkeypatch):
     async def completion(_body):
         return {"text": "fixture", "toolCalls": [], "model": "fixture", "tokensIn": 2, "tokensOut": 1}
 
-    async def catalog(_user_id, _ollama_url):
+    async def catalog(_user_id, _ollama_url, _only=None):
         return [{"id": "fixture", "models": []}]
 
     async def stream(_body):

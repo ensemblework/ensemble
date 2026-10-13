@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { PageDocument } from "@ensemble/shared-types";
 import {
   actOnNudge,
   askEnsemble,
@@ -73,8 +74,12 @@ export async function coworkRoutes(app: FastifyInstance): Promise<void> {
 
   app.patch("/api/meetings/sessions/:id", async (request) => {
     const { id } = request.params as { id: string };
-    const body = z.object({ notes: z.string().max(100_000).optional(), title: z.string().trim().min(1).max(200).optional() }).strict().refine((value) => value.notes !== undefined || value.title !== undefined, "Supply notes or a title.").parse(request.body);
-    return saveMeetingNotes(db, request.userId, id, body.notes, body.title);
+    const body = z
+      .object({ notes: z.string().max(100_000).optional(), content: PageDocument.optional(), title: z.string().trim().min(1).max(200).optional() })
+      .strict()
+      .refine((value) => value.notes !== undefined || value.content !== undefined || value.title !== undefined, "Supply notes, content or a title.")
+      .parse(request.body);
+    return saveMeetingNotes(db, request.userId, id, body);
   });
 
   app.post("/api/meetings/sessions/:id/end", async (request) => {

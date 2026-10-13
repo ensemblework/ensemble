@@ -1,6 +1,7 @@
-import type { Curve, DiagramModel, LayoutBox, ShapeId } from "./model.js";
+import { textStyle, type DiagramModel, type LayoutBox, type ShapeId, type TextStyle } from "./model.js";
 import { DIAGRAM_DOT, DIAGRAM_LINE, DIAGRAM_PAPER, PALETTE, paintFor, type DiagramTheme } from "./palette.js";
-import { closestPorts, nodeSize, outlineSize, shapeGeometry, textFrame, textSize, wrapLabel } from "./shapes.js";
+import { edgeEnds, edgeRoute } from "./route.js";
+import { LABEL_SIZE, labelMetrics, nodeSize, outlineSize, shapeGeometry, textFrame, textSize, wrapLabel } from "./shapes.js";
 
 function escapeXml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -18,8 +19,8 @@ function boxesFor(model: DiagramModel): Record<string, LayoutBox> {
     layout[id] = { x: 0, y, w: size.w, h: size.h };
     y += size.h + 36;
   };
-  for (const [id, node] of Object.entries(model.nodes)) take(id, nodeSize(node.shape, node.label));
-  for (const [id, text] of Object.entries(model.texts)) take(id, textSize(text.text));
+  for (const [id, node] of Object.entries(model.nodes)) take(id, nodeSize(node.shape, node.label, node.font));
+  for (const [id, text] of Object.entries(model.texts)) take(id, textSize(text.text, text.font));
   for (const [id, group] of Object.entries(model.groups)) {
     if (model.layout[id]) layout[id] = model.layout[id]!;
     else {
@@ -36,40 +37,26 @@ function boxesFor(model: DiagramModel): Record<string, LayoutBox> {
   return layout;
 }
 
-function edgePath(curve: Curve, x1: number, y1: number, x2: number, y2: number): { d: string; label: { x: number; y: number } } {
-  if (curve === "curved") {
-    const dx = x2 - x1;
-    const dy = y2 - y1;
-    const len = Math.hypot(dx, dy) || 1;
-    const bend = Math.min(36, len * 0.22);
-    const cx = (x1 + x2) / 2 + (-dy / len) * bend;
-    const cy = (y1 + y2) / 2 + (dx / len) * bend;
-    return {
-      d: `M ${x1} ${y1} Q ${cx} ${cy} ${x2} ${y2}`,
-      label: { x: 0.25 * x1 + 0.5 * cx + 0.25 * x2, y: 0.25 * y1 + 0.5 * cy + 0.25 * y2 },
-    };
-  }
-  if (curve === "elbow") {
-    if (Math.abs(x2 - x1) >= Math.abs(y2 - y1)) {
-      const midX = (x1 + x2) / 2;
-      return { d: `M ${x1} ${y1} L ${midX} ${y1} L ${midX} ${y2} L ${x2} ${y2}`, label: { x: midX, y: (y1 + y2) / 2 } };
-    }
-    const midY = (y1 + y2) / 2;
-    return { d: `M ${x1} ${y1} L ${x1} ${midY} L ${x2} ${midY} L ${x2} ${y2}`, label: { x: (x1 + x2) / 2, y: midY } };
-  }
-  return { d: `M ${x1} ${y1} L ${x2} ${y2}`, label: { x: (x1 + x2) / 2, y: (y1 + y2) / 2 } };
+/** font-size, weight, italic and underline attributes for a label. */
+function fontAttrs(font: TextStyle | undefined, base: number, weight: number): string {
+  const style = textStyle(font);
+  const parts = [`font-size="${n(style.size ?? base)}"`, `font-weight="${style.bold ? 700 : weight}"`];
+  if (style.italic) parts.push('font-style="italic"');
+  if (style.underline) parts.push('text-decoration="underline"');
+  return parts.join(" ");
 }
 
-function labelBlock(label: string, shape: ShapeId, box: LayoutBox, fill: string): string {
+function labelBlock(label: string, shape: ShapeId, box: LayoutBox, fill: string, font: TextStyle | undefined): string {
   const frame = textFrame(shape, box.w, box.h);
-  const lines = wrapLabel(label, Math.max(20, frame.w));
-  const lineHeight = 16;
+  const metrics = labelMetrics(font);
+  const lines = wrapLabel(label, Math.max(20, frame.w), Math.max(2, Math.floor(frame.h / metrics.line)), font);
+  const lineHeight = metrics.line;
   const x = box.x + frame.x + frame.w / 2;
   const start = box.y + frame.y + frame.h / 2 - ((lines.length - 1) * lineHeight) / 2;
   return lines
     .map(
       (line, index) =>
-        `<text x="${n(x)}" y="${n(start + index * lineHeight)}" text-anchor="middle" dominant-baseline="middle" font-size="13" font-weight="560" fill="${fill}">${escapeXml(line)}</text>`,
+        `<text x="${n(x)}" y="${n(start + index * lineHeight)}" text-anchor="middle" dominant-baseline="middle" ${fontAttrs(font, LABEL_SIZE.block, 560)} fill="${fill}">${escapeXml(line)}</text>`,
     )
     .join("");
 }
@@ -100,7 +87,6 @@ export function renderDiagramSvg(model: DiagramModel, options: SvgOptions = {}):
   parts.push(`<defs>`);
   parts.push(`<pattern id="udl-dots" width="18" height="18" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="0.7" fill="${DIAGRAM_DOT[theme]}" /></pattern>`);
   parts.push(`<filter id="udl-shadow" x="-20%" y="-20%" width="140%" height="140%"><feDropShadow dx="0" dy="1" stdDeviation="1.1" flood-color="${theme === "dark" ? "#000000" : "#1c1915"}" flood-opacity="${theme === "dark" ? "0.35" : "0.12"}" /></filter>`);
-  parts.push(`<marker id="udl-arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="7" markerHeight="7" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M 1 1.6 L 10 6 L 1 10.4 Z" fill="${ink}" /></marker>`);
   parts.push(`</defs>`);
   parts.push(`<rect x="${minX}" y="${minY}" width="${width}" height="${height}" fill="${paper}" />`);
   parts.push(`<rect x="${minX}" y="${minY}" width="${width}" height="${height}" fill="url(#udl-dots)" />`);
@@ -122,30 +108,19 @@ export function renderDiagramSvg(model: DiagramModel, options: SvgOptions = {}):
     const fromNode = model.nodes[edge.from.node];
     const toNode = model.nodes[edge.to.node];
     if (!fromBox || !toBox || !fromNode || !toNode) continue;
-    const picked = closestPorts(
-      { shape: fromNode.shape, x: fromBox.x, y: fromBox.y, w: fromBox.w, h: fromBox.h },
-      { shape: toNode.shape, x: toBox.x, y: toBox.y, w: toBox.w, h: toBox.h },
-    );
-    const fromPort = edge.from.port ?? picked.from;
-    const toPort = edge.to.port ?? picked.to;
-    const a = shapeGeometry(fromNode.shape, fromBox.w, fromBox.h).ports[fromPort];
-    const b = shapeGeometry(toNode.shape, toBox.w, toBox.h).ports[toPort];
-    const x1 = fromBox.x + a.x;
-    const y1 = fromBox.y + a.y;
-    const x2 = toBox.x + b.x;
-    const y2 = toBox.y + b.y;
-    const markerEnd = edge.arrow.end === "arrow" ? ' marker-end="url(#udl-arrow)"' : "";
-    const markerStart = edge.arrow.start === "arrow" ? ' marker-start="url(#udl-arrow)"' : "";
-    const dash = edge.line === "dashed" ? ' stroke-dasharray="5 3"' : "";
-    const drawn = edgePath(edge.curve, x1, y1, x2, y2);
-    parts.push(`<path d="${drawn.d}" fill="none" stroke="${ink}" stroke-width="1.35"${dash}${markerStart}${markerEnd} />`);
+    const ends = edgeEnds({ shape: fromNode.shape, box: fromBox, port: edge.from.port }, { shape: toNode.shape, box: toBox, port: edge.to.port });
+    const route = edgeRoute({ ...ends, curve: edge.curve, bend: edge.bend, width: edge.width, head: edge.head, arrows: edge.arrow });
+    const dash = edge.line === "dashed" ? ` stroke-dasharray="${n(route.width * 3.5)} ${n(route.width * 2.2)}"` : "";
+    parts.push(`<path d="${route.d}" fill="none" stroke="${ink}" stroke-width="${n(route.width)}" stroke-linecap="round" stroke-linejoin="round"${dash} />`);
+    for (const head of route.heads) parts.push(`<path d="${head}" fill="${ink}" stroke="${ink}" stroke-width="1" stroke-linejoin="round" />`);
     if (edge.label) {
-      const midX = drawn.label.x;
-      const midY = drawn.label.y;
-      const pillW = Math.max(28, edge.label.length * 6.1 + 14);
-      const pillH = 16;
-      parts.push(`<rect x="${midX - pillW / 2}" y="${midY - pillH / 2}" width="${pillW}" height="${pillH}" rx="8" fill="${paper}" stroke="${DIAGRAM_DOT[theme]}" stroke-width="1" />`);
-      parts.push(`<text x="${midX}" y="${midY}" text-anchor="middle" dominant-baseline="middle" font-size="10" font-weight="600" fill="${ink}">${escapeXml(edge.label)}</text>`);
+      const metrics = labelMetrics(edge.font, LABEL_SIZE.edge);
+      const midX = route.label.x;
+      const midY = route.label.y;
+      const pillW = Math.max(28, edge.label.length * metrics.char + 14);
+      const pillH = Math.round(metrics.line + 4);
+      parts.push(`<rect x="${n(midX - pillW / 2)}" y="${n(midY - pillH / 2)}" width="${n(pillW)}" height="${pillH}" rx="${n(pillH / 2)}" fill="${paper}" stroke="${DIAGRAM_DOT[theme]}" stroke-width="1" />`);
+      parts.push(`<text x="${midX}" y="${midY}" text-anchor="middle" dominant-baseline="middle" ${fontAttrs(edge.font, LABEL_SIZE.edge, 600)} fill="${ink}">${escapeXml(edge.label)}</text>`);
     }
   }
   for (const [id, node] of Object.entries(model.nodes)) {
@@ -159,7 +134,7 @@ export function renderDiagramSvg(model: DiagramModel, options: SvgOptions = {}):
     parts.push(`<path d="${geometry.outline}" fill="${fill}" stroke="${tone.stroke}" stroke-width="1.35" stroke-linejoin="round" stroke-linecap="round" />`);
     if (geometry.details) parts.push(`<path d="${geometry.details}" fill="none" stroke="${tone.stroke}" stroke-width="1.15" stroke-linecap="round" />`);
     parts.push(`</g>`);
-    parts.push(labelBlock(node.label, node.shape, box, tone.text));
+    parts.push(labelBlock(node.label, node.shape, box, tone.text, node.font));
     if (node.locked) {
       parts.push(`<rect x="${box.x + box.w - 46}" y="${box.y - 8}" width="44" height="14" rx="7" fill="${paper}" stroke="${muted}" stroke-width="1" />`);
       parts.push(`<text x="${box.x + box.w - 24}" y="${box.y - 1}" text-anchor="middle" dominant-baseline="middle" font-size="8" font-weight="700" fill="${muted}">LOCKED</text>`);
@@ -168,7 +143,10 @@ export function renderDiagramSvg(model: DiagramModel, options: SvgOptions = {}):
   for (const [id, text] of Object.entries(model.texts)) {
     const box = layout[id];
     if (!box) continue;
-    parts.push(`<text x="${box.x + 4}" y="${box.y + 16}" font-size="12" font-weight="560" fill="${ink}">${escapeXml(text.text)}</text>`);
+    const metrics = labelMetrics(text.font, LABEL_SIZE.text);
+    const rows = text.text.split("\n").flatMap((row) => wrapLabel(row || " ", Math.max(20, box.w - 16), 99, text.font));
+    const lines = rows.map((row, index) => `<tspan x="${n(box.x + 8)}" dy="${index === 0 ? 0 : n(metrics.line * 1.25)}">${escapeXml(row)}</tspan>`).join("");
+    parts.push(`<text x="${n(box.x + 8)}" y="${n(box.y + 6 + metrics.size)}" ${fontAttrs(text.font, LABEL_SIZE.text, 560)} fill="${ink}">${lines}</text>`);
   }
   return `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="${minX} ${minY} ${width} ${height}" font-family="ui-sans-serif, system-ui, sans-serif">${parts.join("")}</svg>\n`;
 }

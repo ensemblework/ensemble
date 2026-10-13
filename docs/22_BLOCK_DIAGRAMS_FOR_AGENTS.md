@@ -28,7 +28,7 @@ Reads:
 Writes (the person presses Apply; until then say “Ready to apply”, not “I created it”):
 
 - `hub_create_diagram` — `title`, `text`, and optional `links` (`task`, `deliverable`, `project`, `repo`, or `page`, each with an id you already have).
-- `hub_edit_diagram` — semantic edits that keep ids, locks, and layout: `add_node`, `remove_node`, `rename_node`, `add_edge`, `remove_edge`, `move_to_group`, `set_node`, `set_curve`, or one `patch` find/replace. Prefer this when a diagram already exists.
+- `hub_edit_diagram` — semantic edits that keep ids, locks, and layout: `add_node`, `remove_node`, `rename_node`, `add_edge`, `remove_edge`, `move_to_group`, `set_node`, `set_curve`, `set_edge`, or one `patch` find/replace. Prefer this when a diagram already exists.
 - `hub_update_diagram` — replace the whole `text`, or a single unique `find` / `replace`. Keep ids.
 
 If a name is not in `hub_diagram_context`, a repo overview, a file you read, or the person’s message, it is not in the diagram.
@@ -116,6 +116,10 @@ Leave `color` off. The shape already has a colour.
 | hexagon | a check or a gate |
 | note | a note stuck on the diagram |
 | trapezoid | a manual step |
+| queue | a message queue or event stream (Kafka, SQS, a topic) |
+| subroutine | a step defined elsewhere (a predefined process) |
+| browser | a web app or website |
+| delay | a wait |
 
 `text` is a caption, not a block. It cannot take an arrow.
 
@@ -127,7 +131,7 @@ Colour overrides are rare. `color red` on an error step is enough. Do not paint 
 - `edge a --> b` is dashed.
 - `edge a -- b` has no arrowhead. Use it for a lookup or a relationship that is not a step.
 - `edge a > b : "yes"` labels the line. Keep labels to one or two words.
-- One edge, one fact. Do not draw both directions unless both are in the source.
+- Two blocks have one line between them. A second line between the same pair (either way round) is merged into the first, so write a request and its reply as one two-way line: `edge app <> api : "calls / answers"`. Do not draw both directions unless both are in the source.
 - A chain `edge a > b > c` is two edges. Prefer separate lines so each can have a label.
 
 ## Self-check
@@ -146,9 +150,10 @@ Do not call the write twice while it is waiting for Apply.
 
 1. `hub_list_diagrams` if you do not have the id, then `hub_get_diagram`.
 2. Prefer `hub_edit_diagram`. A locked block cannot be removed or moved. Rename and colour changes keep the lock. Ids and layout lines stay.
-3. `add_node` needs `label` and usually `shape`. `add_edge` needs `from` and `to`. `rename_node` needs `id` and `label`. `set_node` sets `shape` or `color`. `set_curve` sets the diagram curve, or one edge when `edge` is set. `patch` is one unique `find` / `replace`.
-4. The Apply card shows the added, removed, and changed blocks. Do not describe a change you did not send.
-5. Validate, then the write. A full `hub_update_diagram` text replace must still contain the layout and locks you did not mean to drop.
+3. `add_node` needs `label` and usually `shape`. `add_edge` needs `from` and `to`; on two blocks already joined it changes that line (its label, its curve) instead of adding one. `rename_node` needs `id` and `label`. `set_node` sets `shape` or `color`. `set_curve` sets the diagram curve, or one edge when `edge` is set. `set_edge` changes one line, by `id` or by `from` and `to`: `label`, `curve`, `dashed`, `arrows` (`end`, `start`, `both`, `none`), `width` (px) and `head` (arrowhead px). `patch` is one unique `find` / `replace`.
+4. Text size and emphasis (`font 16`, `bold`, `italic`, `underline`), line width (`width 2`), arrowhead size (`head 14`) and bends (`bend 30`) are written in the text after the other properties. Use them only when the person asks; a new diagram needs none of them.
+5. The Apply card shows the added, removed, and changed blocks. Do not describe a change you did not send.
+6. Validate, then the write. A full `hub_update_diagram` text replace must still contain the layout and locks you did not mean to drop.
 
 ## Common mistakes
 

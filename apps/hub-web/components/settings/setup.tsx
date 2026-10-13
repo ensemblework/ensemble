@@ -41,7 +41,13 @@ export const KEY_PROVIDERS: Array<{ id: ModelProvider; label: string; where: str
   { id: "kimi", label: "Kimi", where: "platform.moonshot.ai → API keys", url: "https://platform.moonshot.ai/console/api-keys", note: "Moonshot’s API. The cheap model is moonshot-v1-8k." },
   { id: "qwen", label: "Qwen", where: "Alibaba Model Studio → API keys", url: "https://modelstudio.console.alibabacloud.com/", note: "DashScope international endpoint. The cheap model is qwen-flash." },
   { id: "openrouter", label: "OpenRouter", where: "openrouter.ai → Keys", url: "https://openrouter.ai/keys", note: "One key, many vendors." },
-  { id: "copilot", label: "GitHub Copilot", where: "A GitHub token on an account with Copilot", url: "https://github.com/settings/tokens" },
+  {
+    id: "copilot",
+    label: "GitHub Copilot",
+    where: "github.com → Fine-grained token with “Copilot requests”",
+    url: "https://github.com/settings/personal-access-tokens/new?name=Ensemble&description=Ensemble%20chat%20through%20Copilot&user_copilot_requests=read",
+    note: "Needs a Copilot plan. On GitHub, under Account permissions, set Copilot requests. Classic tokens (ghp_…) don’t work.",
+  },
   { id: "cursor", label: "Cursor", where: "cursor.com → Dashboard → Integrations → API keys", url: "https://cursor.com/dashboard?tab=integrations", note: "For Assign to agent later. Cursor does not answer the Hub chat." },
 ];
 
@@ -88,7 +94,15 @@ export function ModelKeysCard({ compact = false }: { compact?: boolean }) {
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2 text-[13.5px] font-medium">
                   {provider.label}
-                  {key?.source === "you" ? <Tag tone="green">your key {key.hint}</Tag> : key?.source === "env" ? <Tag tone="blue">from server ({key.hint})</Tag> : <Tag tone="gray">no key</Tag>}
+                  {key?.source === "you" ? (
+                    <Tag tone="green">your key {key.hint}</Tag>
+                  ) : key?.source === "account" ? (
+                    <Tag tone="green">your account's key {key.hint}</Tag>
+                  ) : key?.source === "env" ? (
+                    <Tag tone="blue">from server ({key.hint})</Tag>
+                  ) : (
+                    <Tag tone="gray">no key</Tag>
+                  )}
                 </div>
                 <div className="text-[12px] text-muted">
                   {provider.note ? `${provider.note} ` : ""}

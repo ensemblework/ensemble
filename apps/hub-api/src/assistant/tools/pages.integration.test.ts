@@ -231,3 +231,29 @@ test("another space of the same account can neither read nor write these pages, 
   assert.equal(walk(linkedDoc.content).filter((node) => node.type === "mention").length, 0, "ids from another space never become cards");
   assert.match(linked.result.summary, /2 link\(s\) did not match anything in this space/);
 });
+
+test("what the assistant writes about a task goes on its page, never in the short description", async () => {
+  const mira = await harness.asUser();
+  const created = await apply(mira.id, "hub_create_tasks", {
+    tasks: [{ title: "Plan the launch", page: "## Steps\n- [ ] Book the room", description: "Kick-off with the team." }],
+  });
+  assert.match(String(created.preview), /Plan the launch, with a page/);
+  const id = (created.result.data as { tasks: Array<{ id: string }> }).tasks[0]!.id;
+  const task = await db.task.findUniqueOrThrow({ where: { id } });
+  assert.equal(task.description, "", "the short description stays the person's");
+  assert.equal(task.notes, "");
+  const page = (await read(mira.id, "hub_read_page", { taskId: id })).data as { text: string };
+  assert.equal(page.text, "## Steps\n\n- [ ] Book the room\n\nKick-off with the team.");
+
+  await apply(mira.id, "hub_update_task", { taskId: id, matchTitle: "Plan the launch", description: "Send the invite.", priority: "p0" });
+  const after = await db.task.findUniqueOrThrow({ where: { id } });
+  assert.equal(after.description, "");
+  assert.equal(after.priority, "p0");
+  assert.match(((await read(mira.id, "hub_read_page", { taskId: id })).data as { text: string }).text, /Kick-off with the team\.\n\nSend the invite\.$/);
+
+  const onlyPage = await apply(mira.id, "hub_update_task", { taskId: id, matchTitle: "Plan the launch", page: "Done when the room is booked." });
+  assert.equal(onlyPage.preview, "Add to the page of “Plan the launch”: Done when the room is booked.");
+  await refused(apply(mira.id, "hub_update_task", { taskId: id, matchTitle: "Another task", page: "x" }), /not “Another task”/);
+  await undoLast(db, mira.id, onlyPage.undoEntryId!);
+  assert.doesNotMatch(((await read(mira.id, "hub_read_page", { taskId: id })).data as { text: string }).text, /room is booked/);
+});

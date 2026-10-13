@@ -20,5 +20,5 @@ export default function PlotPage() {
   const params = useParams<{ id: string }>();
   const id = useDesktopParam(params.id);
   if (isBakedParam(id)) return <PlotLoading />;
-  return <Studio plotId={id} />;
+  return <Studio key={id} plotId={id} />;
 }

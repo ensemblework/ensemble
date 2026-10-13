@@ -49,8 +49,14 @@ export function snapLauncher(point: { x: number; y: number }, bounds: LauncherBo
   return { edge: "bottom", t: clamp01(maxX === minX ? 1 : (point.x - half - minX) / (maxX - minX)) };
 }
 
-export function AskLauncher({ onOpen, title }: { onOpen: () => void; title: string }) {
-  const [stored, setStored] = usePersistentState<LauncherSpot>("ensemble.assistant.launcher", DEFAULT_LAUNCHER_SPOT);
+/**
+ * `hidden` keeps it mounted while the chat or a task is open, so it reappears where it was
+ * instead of being measured again from the corner. It shows once both the work area and the
+ * stored spot are known, and only a keyboard nudge animates it.
+ */
+export function AskLauncher({ onOpen, title, hidden = false }: { onOpen: () => void; title: string; hidden?: boolean }) {
+  const [stored, setStored, loaded] = usePersistentState<LauncherSpot>("ensemble.assistant.launcher", DEFAULT_LAUNCHER_SPOT);
+  const [nudged, setNudged] = useState(false);
   const spot = normalizeSpot(stored);
   const ref = useRef<HTMLButtonElement>(null);
   const [bounds, setBounds] = useState<LauncherBounds | null>(null);
@@ -88,18 +94,32 @@ export function AskLauncher({ onOpen, title }: { onOpen: () => void; title: stri
 
   const nudge = (edge: LauncherSpot["edge"], delta: number) => {
     const current = spot.edge === edge ? spot.t : 1;
+    setNudged(true);
     setStored({ edge, t: clamp01(current + delta) });
   };
 
+  useEffect(() => {
+    if (!nudged) return;
+    const timer = window.setTimeout(() => setNudged(false), 240);
+    return () => window.clearTimeout(timer);
+  }, [nudged, stored]);
+
+  // Hidden, the area can change size (a task opened beside it); measure again before it shows.
+  useLayoutEffect(() => {
+    if (!hidden) measure();
+  }, [hidden, measure]);
+
   const shown = live ?? spot;
-  const position = bounds ? launcherPosition(shown, bounds) : null;
+  const position = bounds && loaded ? launcherPosition(shown, bounds) : null;
   return (
     <button
       ref={ref}
       type="button"
       className="ask-launcher"
-      data-ask-launcher={shown.edge}
+      hidden={hidden}
+      data-ask-launcher={hidden ? undefined : shown.edge}
       data-dragging={live ? "1" : undefined}
+      data-nudged={nudged ? "1" : undefined}
       aria-label="Ask Ensemble"
       aria-expanded={false}
       title={title}

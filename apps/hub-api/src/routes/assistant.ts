@@ -68,11 +68,13 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/assistant/tools", async () => ({ tools: catalog() }));
 
   app.get("/api/assistant/conversations", async (request) => {
+    // `?chats=1`: the dock's chats only. Inline @ensemble answers and comment replies keep conversation rows without messages.
+    const chats = (request.query as { chats?: string } | undefined)?.chats === "1";
     const conversations = await app.prisma.assistantConversation.findMany({
       // Each person's chats are their own, even in a shared space.
-      where: { userId: request.userId, accountId: actorFor(request.userId) },
+      where: { userId: request.userId, accountId: actorFor(request.userId), ...(chats ? { messages: { some: {} } } : {}) },
       orderBy: { updatedAt: "desc" },
-      take: 40,
+      take: chats ? 20 : 40,
       select: { id: true, title: true, updatedAt: true, createdAt: true },
     });
     return { conversations };
@@ -419,7 +421,7 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
         return;
       } else {
         const failure = parseRuntimeBody(error instanceof RuntimeError ? error.statusCode : 502, error instanceof Error ? error.message : String(error));
-        const shown = safePublicError(error, error instanceof RuntimeError ? error.message : friendlyModelError(failure));
+        const shown = safePublicError(error, error instanceof RuntimeError ? error.message : friendlyModelError(failure, modelName));
         if (failure.kind === "not_found" || failure.kind === "quota" || failure.kind === "unavailable") {
           void recordModelProbe(app.prisma, request.userId, tierSetting.provider, modelName, failure.kind, shown).catch(() => undefined);
         }

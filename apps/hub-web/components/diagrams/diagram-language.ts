@@ -21,6 +21,10 @@ const SHAPE_HELP: Record<string, string> = {
   hexagon: "A preparation step.",
   note: "A note with a folded corner.",
   trapezoid: "A manual step.",
+  queue: "A message queue or stream, drawn as a cylinder on its side.",
+  subroutine: "A step defined elsewhere (a predefined process).",
+  browser: "A web app or site, drawn as a browser window.",
+  delay: "A wait or delay.",
 };
 
 const lineCache = new Map<string, DiagramToken[]>();
@@ -55,7 +59,7 @@ function completions(context: CompletionContext, model: DiagramModel | null): Co
   const line = context.state.doc.lineAt(context.pos);
   const before = line.text.slice(0, context.pos - line.from);
   const ids = model ? [...Object.keys(model.nodes), ...Object.keys(model.groups), ...Object.keys(model.texts)] : [];
-  const keywords = ["title", "direction", "curve", "node", "edge", "group", "text", "layout", "shape", "color", "locked"].map(
+  const keywords = ["title", "direction", "curve", "node", "edge", "group", "text", "layout", "shape", "color", "locked", "font", "bold", "italic", "underline", "width", "head", "bend"].map(
     (label) => ({ label, type: "keyword" as const }),
   );
   let options: Completion[] = [];
@@ -117,6 +121,13 @@ function describe(token: DiagramToken, model: DiagramModel | null): string | nul
       shape: "The outline of a block, such as circle or cylinder.",
       color: "A palette colour, such as blue, or a hex colour like #336699.",
       locked: "Keep this block where it is when the diagram is reorganized.",
+      font: "Text size in px, 8 to 48. Example: node a \"A\" font 16",
+      bold: "Bold text, on a block, a text box or a line's label.",
+      italic: "Italic text, on a block, a text box or a line's label.",
+      underline: "Underlined text, on a block, a text box or a line's label.",
+      width: "A line's width in px, 0.5 to 8. Example: edge a > b width 2",
+      head: "How long a line's arrowhead is, in px, 6 to 40. Example: edge a > b head 16",
+      bend: "Pulls the middle of a line sideways, in px. Drag the dot in the middle of a selected line.",
     };
     return help[token.value.toLowerCase()] ?? `Keyword ${token.value}.`;
   }

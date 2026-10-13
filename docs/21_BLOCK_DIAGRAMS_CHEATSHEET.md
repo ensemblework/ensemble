@@ -23,8 +23,8 @@ title NAME
 direction down|up|left|right
 curve straight|curved|elbow
 
-node ID "Label" shape SHAPE [color COLOR] [locked]
-edge ID > ID [: "label"] [curve straight|curved|elbow]
+node ID "Label" shape SHAPE [color COLOR] [locked] [font PX] [bold] [italic] [underline]
+edge ID > ID [: "label"] [curve straight|curved|elbow] [width PX] [head PX] [bend PX] [font PX] [bold]
 edge ID --> ID [: "label"]     dashed arrow
 edge ID -- ID                  line, no arrow
 edge ID .. ID                  dashed line
@@ -36,15 +36,17 @@ group ID "Label" {
   node ...
 }
 
-text ID "Words you can drag"
+text ID "Words you can drag" [font PX] [bold] [italic] [underline]
 
 layout
   ID x y width height [locked]
 ```
 
-Shapes: `rectangle` `rounded` `diamond` `circle` `ellipse` `cylinder` `server` `triangle` `parallelogram` `document` `cloud` `actor` `hexagon` `note` `trapezoid`.
+Shapes: `rectangle` `rounded` `diamond` `circle` `ellipse` `cylinder` `server` `triangle` `parallelogram` `document` `cloud` `actor` `hexagon` `note` `trapezoid` `queue` `subroutine` `browser` `delay`.
 
-Useful aliases: `db` = cylinder, `decision` = diamond, `doc` = document, `person` = actor, `io` = parallelogram, `box` = rectangle.
+Useful aliases: `db` = cylinder, `decision` = diamond, `doc` = document, `person` = actor, `io` = parallelogram, `box` = rectangle, `kafka` = queue, `web` = browser, `wait` = delay.
+
+Two blocks have one line between them. A second line between the same two blocks is merged into the first (a reversed one makes it two-way, `<>`). Text sizes are 8–48 px; line `width` 0.5–8, `head` 6–40.
 
 A bad line is skipped. A missing `)` or `:` is kept, with a warning. An unknown shape becomes a rectangle. A name used only on an arrow becomes a rectangle, so declare blocks first.
 

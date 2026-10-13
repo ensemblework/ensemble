@@ -31,7 +31,7 @@ import httpx
 from ensemble_agent.hosted_access import HostedAccessError, HostedAccessUnavailable, can_use_host_credentials, require_host_access, require_verified_user
 
 from ensemble_agent import credentials
-from ensemble_agent.provider_error import ProviderError, parse_provider_error
+from ensemble_agent.provider_error import COPILOT_CLASSIC_TOKEN, ProviderError, no_key_message, parse_provider_error
 from ensemble_agent.rate_limit import pace, take_token
 from ensemble_agent.reach import ModelUnreachable, classify_connect, is_unreachable_notice, transport_failure
 from ensemble_agent.textutil import chunk_text, truncate_text
@@ -150,25 +150,21 @@ def spec_for(role: ModelRole, model: str | None = None) -> dict[str, Any]:
 
 # ── OpenAI-compatible transport ─────────────────────────────────────────────
 
-_copilot_cache: dict[str, tuple[str, str, float]] = {}
-
-
-async def _copilot_session(github_token: str, *, allow_host_config: bool = False) -> tuple[str, str]:
-    cache_key = f"{'host' if allow_host_config else 'byok'}:{github_token}"
-    cached = _copilot_cache.get(cache_key)
-    if cached and cached[2] > time.time() + 60:
-        return cached[0], cached[1]
-    async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.get(
-            "https://api.github.com/copilot_internal/v2/token",
-            headers={"Authorization": f"token {github_token}", "Accept": "application/json", "User-Agent": "Ensemble"},
-        )
-    if not response.is_success:
-        raise ModelAuthError(f"GitHub did not issue a Copilot token ({response.status_code}). Is Copilot enabled on this account?")
-    body = response.json()
-    base = (body.get("endpoints") or {}).get("api") or (os.environ.get("COPILOT_API_BASE") if allow_host_config else None) or "https://api.githubcopilot.com"
-    _copilot_cache[cache_key] = (body["token"], base.rstrip("/"), float(body.get("expires_at") or time.time() + 600))
-    return body["token"], base.rstrip("/")
+def _copilot_endpoint(github_token: str, *, allow_host_config: bool = False) -> tuple[str, dict[str, str]]:
+    """Copilot takes the person's own GitHub token as a bearer token: a fine-grained token with the
+    account permission "Copilot requests" (GitHub's documented way to make Copilot requests for a
+    user), or an OAuth or GitHub App user token. GitHub refuses classic ``ghp_`` tokens for Copilot.
+    The integration id is the Copilot SDK runtime's default; an operator with their own sets
+    COPILOT_INTEGRATION_ID."""
+    if github_token.startswith("ghp_"):
+        raise ModelAuthError(COPILOT_CLASSIC_TOKEN)
+    base = ((os.environ.get("COPILOT_API_BASE") if allow_host_config else None) or "https://api.githubcopilot.com").rstrip("/")
+    integration = (os.environ.get("COPILOT_INTEGRATION_ID") if allow_host_config else None) or "copilot-developer-cli"
+    return base, {
+        "Authorization": f"Bearer {github_token}",
+        "Editor-Version": "Ensemble/0.1",
+        "Copilot-Integration-Id": integration,
+    }
 
 
 async def _endpoint(provider: str, user_id: str | None, ollama_url: str | None) -> tuple[str, dict[str, str], str]:
@@ -181,16 +177,10 @@ async def _endpoint(provider: str, user_id: str | None, ollama_url: str | None) 
         base = (cred.base_url or ollama_url or os.environ.get("OLLAMA_URL") or "http://127.0.0.1:11434").rstrip("/")
         return f"{base}/v1", {}, "local"
     if not cred.secret:
-        raise ModelAuthError(
-            f"No key for {provider}. Paste one in Settings → Models, or pick a provider that has a key."
-        )
+        raise ModelAuthError(no_key_message(provider))
     if provider == "copilot":
-        token, base = await _copilot_session(cred.secret, allow_host_config=can_use_host_credentials(user_id))
-        return base, {
-            "Authorization": f"Bearer {token}",
-            "Editor-Version": "Ensemble/0.1",
-            "Copilot-Integration-Id": "vscode-chat",
-        }, cred.source
+        base, headers = _copilot_endpoint(cred.secret, allow_host_config=can_use_host_credentials(user_id))
+        return base, headers, cred.source
     if provider not in BASES:
         raise ModelAuthError(f"{provider} is not a chat provider.")
     base = (cred.base_url or BASES[provider]).rstrip("/")
@@ -201,10 +191,11 @@ async def _endpoint(provider: str, user_id: str | None, ollama_url: str | None) 
 
 
 def _effort(provider: str, effort: str | None, model: str | None = None) -> str | None:
+    """The level as chosen, or None. hub-api has already refused a level the model does not take
+    (``checkEffort`` in shared-types), so nothing here swaps one level for another."""
+    del provider, model
     if not effort or effort == "default":
         return None
-    if provider == "google" and effort == "minimal" and not str(model or "").startswith("gemini-3"):
-        return "low"
     return effort
 
 
@@ -318,7 +309,10 @@ def build_chat_payload(
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
     effort = _effort(provider, reasoning_effort, model)
-    if effort:
+    # OpenRouter reads its own ``reasoning`` object and maps it to each vendor; the others read reasoning_effort.
+    if effort and provider == "openrouter":
+        payload["reasoning"] = {"effort": effort}
+    elif effort:
         payload["reasoning_effort"] = effort
     if temperature is not None and not str(model).startswith("gemini-3"):
         payload["temperature"] = temperature
@@ -348,28 +342,17 @@ async def post_with_retry(
 ) -> httpx.Response:
     """POST until success, a non-retriable error, or the attempt budget runs out.
 
-    A 400 is retried once, immediately, only when the error text mentions
-    ``reasoning_effort`` and the payload sent that field. ``sleep`` defaults
-    to ``asyncio.sleep`` and may be sync or async.
+    A thinking level the provider refuses is its error: the call is not sent again without it.
+    ``sleep`` defaults to ``asyncio.sleep`` and may be sync or async.
     """
     pause = sleep or asyncio.sleep
     current = dict(payload)
-    stripped = False
     attempt = 0
     while True:
         response = await send(current)
         if response.is_success:
             return response
         body = _response_text(response)
-        if (
-            not stripped
-            and response.status_code == 400
-            and "reasoning_effort" in body
-            and "reasoning_effort" in current
-        ):
-            current = {key: value for key, value in current.items() if key != "reasoning_effort"}
-            stripped = True
-            continue
         error = parse_provider_error(response.status_code, body, response.headers)
         if not retry:
             raise error
@@ -1116,7 +1099,6 @@ async def _openai_stream_events(
     url = f"{base}/chat/completions"
     current = dict(payload)
     current["stream"] = True
-    stripped = False
     attempt = 0
     while True:
         failure: ProviderError | None = None
@@ -1128,19 +1110,9 @@ async def _openai_stream_events(
                     if not response.is_success:
                         raw = await response.aread()
                         body = raw.decode("utf-8", errors="replace")
-                        if (
-                            not stripped
-                            and response.status_code == 400
-                            and "reasoning_effort" in body
-                            and "reasoning_effort" in current
-                        ):
-                            current = {key: value for key, value in current.items() if key != "reasoning_effort"}
-                            stripped = True
-                            action = "strip"
-                        else:
-                            failure = parse_provider_error(response.status_code, body, response.headers)
-                            delay = None if not retry else retry_plan(failure, attempt)
-                            action = "raise" if delay is None else "sleep"
+                        failure = parse_provider_error(response.status_code, body, response.headers)
+                        delay = None if not retry else retry_plan(failure, attempt)
+                        action = "raise" if delay is None else "sleep"
                     else:
                         async for kind, data in consume_sse_lines(response.aiter_lines(), str(current.get("model") or "")):
                             yield (kind, data)
@@ -1151,8 +1123,6 @@ async def _openai_stream_events(
             raise
         except Exception as exc:
             _reraise_transport(exc, provider=provider, model=str(current.get("model") or ""), url=url)
-        if action == "strip":
-            continue
         if action == "sleep" and delay is not None:
             await asyncio.sleep(delay)
             attempt += 1
@@ -1427,7 +1397,7 @@ def _anthropic_result(data: dict[str, Any], model: str) -> dict[str, Any]:
 async def _anthropic_chat(body: dict[str, Any], model: str, user_id: str | None, timeout: float) -> dict[str, Any]:
     cred = _resolve(user_id, "anthropic")
     if not cred.secret:
-        raise ModelAuthError("No key for anthropic. Paste one in Settings → Models.")
+        raise ModelAuthError(no_key_message("anthropic"))
     system, messages = _to_anthropic(body.get("messages") or [])
     tools = _anthropic_tools(body)
     url = (cred.base_url or "https://api.anthropic.com").rstrip("/") + "/v1/messages"
@@ -1440,7 +1410,7 @@ async def _anthropic_chat(body: dict[str, Any], model: str, user_id: str | None,
         if tools:
             payload["tools"] = tools
         effort = _effort("anthropic", body.get("reasoningEffort"), chosen)
-        if effort and effort != "minimal":
+        if effort:
             payload["output_config"] = {"effort": effort}
         return payload
 
@@ -1905,12 +1875,42 @@ async def stream_with_tools(body: dict[str, Any]):
 
 _SKIP_GEMINI = re.compile(r"tts|image|robotics|computer-use|transcribe|omni|embedding|aqa|banana|lyria|research|antigravity|veo|imagen")
 _catalog_cache: dict[tuple[str, str, str], tuple[float, list[str] | Exception]] = {}
-_catalog_results: dict[tuple[str, str], tuple[float, list[dict[str, Any]]]] = {}
+# What each provider's model list said about its models (thinking levels), next to the cached list.
+_model_meta: dict[tuple[str, str, str], dict[str, dict[str, Any]]] = {}
+
+
+def anthropic_meta(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Anthropic: ``capabilities.effort``, with ``supported`` at each level."""
+    out: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        effort = (row.get("capabilities") or {}).get("effort")
+        if not row.get("id") or not isinstance(effort, dict):
+            continue
+        levels = [level for level in ("low", "medium", "high", "xhigh", "max") if (effort.get(level) or {}).get("supported") is True]
+        out[row["id"]] = {"efforts": levels if effort.get("supported") is not False else []}
+    return out
+
+
+def copilot_meta(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """Copilot: ``capabilities.supports.reasoning_effort``; a model without it has no setting."""
+    out: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if not row.get("id"):
+            continue
+        listed = ((row.get("capabilities") or {}).get("supports") or {}).get("reasoning_effort")
+        out[row["id"]] = {"efforts": [str(level) for level in listed] if isinstance(listed, list) else []}
+    return out
+
+
+def openrouter_meta(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """OpenRouter: whether ``supported_parameters`` has ``reasoning``."""
+    return {row["id"]: {"reasoning": "reasoning" in row["supported_parameters"]} for row in rows if row.get("id") and isinstance(row.get("supported_parameters"), list)}
+_catalog_results: dict[tuple[str, str, str], tuple[float, list[dict[str, Any]]]] = {}
 _RESULT_TTL = 20
 _RESULT_MAX = 32
 
 
-def _remember_catalog(key: tuple[str, str], value: list[dict[str, Any]]) -> None:
+def _remember_catalog(key: tuple[str, str, str], value: list[dict[str, Any]]) -> None:
     now = time.time()
     expired = [item for item, (exp, _) in _catalog_results.items() if exp <= now]
     for item in expired:
@@ -1942,6 +1942,7 @@ async def list_models(
         cred = await asyncio.to_thread(_resolve, user_id, provider)
     key = secret if secret is not None else (cred.secret if cred else "")
     ollama_base = base_url or (cred.base_url if cred else None)
+    meta: dict[str, dict[str, Any]] = {}
     async with httpx.AsyncClient(timeout=15) as client:
         if provider == "google":
             response = await client.get(
@@ -1958,7 +1959,10 @@ async def list_models(
         elif provider in ("openai", "openrouter", "mistral", "kimi", "qwen"):
             response = await client.get(f"{BASES[provider]}/models", headers={"Authorization": f"Bearer {key}"})
             response.raise_for_status()
-            models = sorted(row["id"] for row in response.json().get("data", []))
+            rows = response.json().get("data", [])
+            models = sorted(row["id"] for row in rows)
+            if provider == "openrouter":
+                meta = openrouter_meta(rows)
             if provider == "openai":
                 models = [name for name in models if name.startswith(("gpt", "o1", "o3", "o4"))]
             if provider == "mistral":
@@ -1967,10 +1971,12 @@ async def list_models(
                 models = [name for name in models if "qwen" in name.lower() and "embed" not in name.lower() and "vl" not in name.lower()]
         elif provider == "anthropic":
             response = await client.get(
-                "https://api.anthropic.com/v1/models", headers={"x-api-key": key, "anthropic-version": "2023-06-01"}
+                "https://api.anthropic.com/v1/models?limit=1000", headers={"x-api-key": key, "anthropic-version": "2023-06-01"}
             )
             response.raise_for_status()
-            models = [row["id"] for row in response.json().get("data", [])]
+            rows = response.json().get("data", [])
+            models = [row["id"] for row in rows]
+            meta = anthropic_meta(rows)
         elif provider == "cursor":
             response = await client.get("https://api.cursor.com/v0/models", auth=(key, ""))
             response.raise_for_status()
@@ -1981,22 +1987,23 @@ async def list_models(
             response.raise_for_status()
             models = [row["name"] for row in response.json().get("models", [])]
         elif provider == "copilot":
-            token, base = await _copilot_session(key, allow_host_config=await asyncio.to_thread(can_use_host_credentials, user_id))
-            response = await client.get(
-                f"{base}/models",
-                headers={"Authorization": f"Bearer {token}", "Editor-Version": "Ensemble/0.1", "Copilot-Integration-Id": "vscode-chat"},
-            )
+            base, headers = _copilot_endpoint(key, allow_host_config=await asyncio.to_thread(can_use_host_credentials, user_id))
+            response = await client.get(f"{base}/models", headers=headers)
             response.raise_for_status()
-            models = [row["id"] for row in response.json().get("data", [])]
+            rows = response.json().get("data", [])
+            models = [row["id"] for row in rows]
+            meta = copilot_meta(rows)
         else:
             models = []
     _catalog_cache[cache_key] = (time.time() + 45, models)
+    _model_meta[cache_key] = meta
     return models
 
 
-async def catalog(user_id: str | None, ollama_url: str | None) -> list[dict[str, Any]]:
+async def catalog(user_id: str | None, ollama_url: str | None, only: list[str] | None = None) -> list[dict[str, Any]]:
+    """Each provider's model list (or only the providers in ``only``), with what it says about each model."""
     await asyncio.to_thread(require_verified_user, user_id)
-    key = (user_id or "", ollama_url or "")
+    key = (user_id or "", ollama_url or "", ",".join(only or []))
     cached = _catalog_results.get(key)
     if cached and cached[0] > time.time():
         return cached[1]
@@ -2007,6 +2014,7 @@ async def catalog(user_id: str | None, ollama_url: str | None) -> list[dict[str,
             "available": False,
             "source": "none",
             "models": [],
+            "meta": {},
             "chat": provider != "cursor",
             "cheapest": CHEAPEST.get(provider),
             "error": None,
@@ -2021,17 +2029,20 @@ async def catalog(user_id: str | None, ollama_url: str | None) -> list[dict[str,
             return entry
         try:
             entry["models"] = await list_models(provider, user_id, ollama_url, secret=cred.secret or None, base_url=cred.base_url)
+            entry["meta"] = _model_meta.get((provider, user_id or "", (cred.secret or "")[-6:]), {})
             entry["available"] = bool(entry["models"]) or provider != "ollama"
         except Exception as exc:
             entry["error"] = str(exc)[:200] if provider != "ollama" else None
             _catalog_cache[(provider, user_id or "", (cred.secret or "")[-6:])] = (time.time() + 20, exc)
         return entry
 
-    out = list(await asyncio.gather(*(one(provider) for provider in credentials.PROVIDERS)))
+    wanted = [provider for provider in credentials.PROVIDERS if not only or provider in only]
+    out = list(await asyncio.gather(*(one(provider) for provider in wanted)))
     _remember_catalog(key, out)
     return out
 
 
 def clear_catalog_cache() -> None:
     _catalog_cache.clear()
+    _model_meta.clear()
     _catalog_results.clear()

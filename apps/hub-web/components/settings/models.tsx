@@ -5,13 +5,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound, Zap } from "lucide-react";
 import type { ModelProvider, Settings } from "@ensemble/shared-types";
-import { api, type Complexity } from "@/lib/api";
-import { dateTime } from "@/lib/format";
+import { api, type Complexity, type ModelCatalog } from "@/lib/api";
+import { dateTime, relative } from "@/lib/format";
 import { useQuotaMarks } from "@/lib/model-quota";
 import { FetchGlyph } from "@/components/motion/slot";
 import { useToast } from "../toast";
-import { InfoTip, SectionCard, Tag } from "../ui";
+import { InfoTip, SectionCard, SettingRow, Tag, Toggle } from "../ui";
 import { Modal } from "./modal";
+import { ModelPicker, ProviderPicker, ThinkingPicker, effortFor, type ProviderChoice } from "./model-picker";
 import { GitHubGitCard, KEY_PROVIDERS, ModelKeysCard } from "./setup";
 import { navigateSettings, useSettingsLocation } from "./url-state";
 
@@ -50,11 +51,39 @@ export function keySummary(credentials: ReadonlyArray<{ provider: string; source
   return `${named.slice(0, 2).join(", ")} and ${named.length - 2} more have keys.`;
 }
 
+/** Asks each provider with a key for its model list now, and puts the answer where the page reads it. */
+export function useRefreshModels() {
+  const client = useQueryClient();
+  const toast = useToast();
+  return useMutation({
+    mutationFn: () => api.refreshModels(),
+    onSuccess: (catalog: ModelCatalog) => {
+      client.setQueryData(["models"], catalog);
+      void client.invalidateQueries({ queryKey: ["model-keys"] });
+      void client.invalidateQueries({ queryKey: ["model-catalog"] });
+      const count = catalog.providers.reduce((sum, row) => sum + (row.available ? row.models.length : 0), 0);
+      toast(catalog.runtime ? `Model lists refreshed: ${count} models from your keys.` : (catalog.error ?? "The model runtime is not running."), { tone: catalog.runtime ? "ok" : "error" });
+    },
+    onError: (error) => toast((error as Error).message, { tone: "error" }),
+  });
+}
+
+function providerChoices(catalog: ModelCatalog | undefined): ProviderChoice[] {
+  return PROVIDERS.map((row) => {
+    const entry = catalog?.providers.find((item) => item.provider === row.id);
+    const status: ProviderChoice["status"] =
+      row.id === "ollama" ? "local" : entry?.source === "you" ? "key" : entry?.source === "account" ? "account" : entry?.source === "env" || entry?.source === "cli" ? "server" : "none";
+    return { id: row.id, label: row.label, status, ...(row.id === "ollama" ? { note: entry?.available ? `${entry.models.length} models` : "not running" } : {}) };
+  });
+}
+
 export function ModelsSection({ settings, patch }: Props) {
   const quotas = useQuotaMarks();
   const location = useSettingsLocation();
   const catalog = useQuery({ queryKey: ["models"], queryFn: api.models });
   const keys = useQuery({ queryKey: ["model-keys"], queryFn: api.modelKeys, retry: false });
+  const refresh = useRefreshModels();
+  const choices = providerChoices(catalog.data);
   const available = (catalog.data?.providers ?? []).reduce((sum, row) => sum + (row.available ? row.models.length : 0), 0);
   const runtimeDown = catalog.data && !catalog.data.runtime;
   const noKeys = keys.data && !keys.data.credentials.some((row) => row.source !== "none");
@@ -80,62 +109,71 @@ export function ModelsSection({ settings, patch }: Props) {
           Manage keys
         </button>
       </div>
-      <h3 className="mb-2 mt-5 text-[13px] font-semibold">Which model each tier uses</h3>
-      <div className="space-y-4">
+      <div className="mb-2 mt-5 flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <h3 className="text-[13px] font-semibold">Which model each tier uses</h3>
+          <p className="text-[12px] text-muted" data-testid="models-fetched">
+            {catalog.data?.fetchedAt
+              ? `Model lists from your keys, fetched ${relative(catalog.data.fetchedAt)}. They refresh every week.`
+              : "Model lists come from your keys and refresh every week."}
+          </p>
+        </div>
+        <button type="button" className="btn" onClick={() => refresh.mutate()} disabled={refresh.isPending || !catalog.data?.runtime}>
+          <FetchGlyph active={refresh.isPending} size={12} /> Refresh model lists
+        </button>
+      </div>
+      <div className="space-y-5">
         {TIERS.map((tier) => {
           const value = settings.models[tier.id];
           const provider = catalog.data?.providers.find((row) => row.provider === value.provider);
+          const meta = provider?.meta?.[value.model] ?? null;
+          const providerName = label(value.provider);
           return (
-            <div key={tier.id}>
+            <div key={tier.id} data-tier={tier.id}>
               <div className="flex flex-wrap items-center gap-1.5 text-[13px] font-medium">
                 {tier.label} <InfoTip text={tier.hint} />
-                {provider && !provider.available ? <Tag tone="orange">no key for {label(value.provider)}</Tag> : null}
+                {provider && !provider.available ? <Tag tone="orange">no key for {providerName}</Tag> : null}
                 {provider && !provider.chat ? <Tag tone="orange">Cursor cannot run the chat</Tag> : null}
                 {provider?.available && provider.models.length && !provider.models.includes(value.model) ? <Tag tone="orange">model not offered to your key</Tag> : null}
               </div>
-              <div className="mt-1.5 grid grid-cols-1 gap-2 sm:grid-cols-[150px_minmax(0,1fr)_190px]">
-                <select
+              <div className="mt-1.5 grid grid-cols-1 gap-2 sm:grid-cols-[190px_minmax(0,1fr)]">
+                <ProviderPicker
+                  label={`${tier.label} provider`}
                   value={value.provider}
-                  onChange={(event) => {
-                    const next = catalog.data?.providers.find((row) => row.provider === event.target.value);
-                    patch({ models: { [tier.id]: { provider: event.target.value, ...(next?.cheapest ? { model: next.cheapest } : {}) } } });
+                  choices={choices}
+                  onPick={(next) => {
+                    if (next === value.provider) return;
+                    const entry = catalog.data?.providers.find((row) => row.provider === next);
+                    const model = entry?.cheapest ?? value.model;
+                    patch({ models: { [tier.id]: { provider: next, model, effort: effortFor(next, model, entry?.meta?.[model], value.effort) } } });
                   }}
-                  className="field"
-                  aria-label={`${tier.label} provider`}
-                >
-                  {PROVIDERS.map((row) => (
-                    <option key={row.id} value={row.id}>
-                      {row.label}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  list={`models-${tier.id}`}
-                  key={`${tier.id}-${value.model}`}
-                  defaultValue={value.model}
-                  aria-label={`${tier.label} model`}
-                  onBlur={(event) => {
-                    if (event.target.value.trim() && event.target.value !== value.model) {
-                      patch({ models: { [tier.id]: { model: event.target.value.trim() } } });
-                    }
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") event.currentTarget.blur();
-                  }}
-                  className="field min-w-0"
                 />
-                <datalist id={`models-${tier.id}`}>
-                  {(provider?.models ?? []).map((model) => (
-                    <option key={model} value={model} />
-                  ))}
-                </datalist>
-                <select aria-label={`${tier.label} thinking`} value={value.effort} onChange={(event) => patch({ models: { [tier.id]: { effort: event.target.value } } })} className="field">
-                  <option value="default">Thinking: provider default</option>
-                  <option value="minimal">Thinking: minimal</option>
-                  <option value="low">Thinking: low</option>
-                  <option value="medium">Thinking: medium</option>
-                  <option value="high">Thinking: high</option>
-                </select>
+                <ModelPicker
+                  label={`${tier.label} model`}
+                  value={value.model}
+                  provider={value.provider}
+                  providerLabel={providerName}
+                  models={provider?.models ?? []}
+                  cheapest={provider?.cheapest ?? null}
+                  meta={provider?.meta}
+                  notes={provider?.notes}
+                  hasKey={Boolean(provider?.available)}
+                  onPick={(model) => {
+                    if (model === value.model) return;
+                    patch({ models: { [tier.id]: { model, effort: effortFor(value.provider, model, provider?.meta?.[model], value.effort) } } });
+                  }}
+                />
+              </div>
+              <div className="mt-2">
+                <ThinkingPicker
+                  label={`${tier.label} thinking`}
+                  provider={value.provider}
+                  providerLabel={providerName}
+                  model={value.model}
+                  meta={meta}
+                  value={value.effort}
+                  onChange={(effort) => patch({ models: { [tier.id]: { effort } } })}
+                />
               </div>
               {(() => {
                 const mark = quotas.get(value.model);
@@ -156,8 +194,8 @@ export function ModelsSection({ settings, patch }: Props) {
 }
 
 export function ModelKeysDialog({ open, onClose, settings, patch }: Props & { open: boolean; onClose: () => void }) {
-  const client = useQueryClient();
   const toast = useToast();
+  const refresh = useRefreshModels();
   const catalog = useQuery({ queryKey: ["models"], queryFn: api.models, enabled: open });
   const test = useMutation({
     mutationFn: (tier: Complexity) => api.testModel(tier),
@@ -181,8 +219,8 @@ export function ModelKeysDialog({ open, onClose, settings, patch }: Props & { op
       testId="model-keys-dialog"
       footer={
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <button type="button" className="btn" onClick={() => void client.invalidateQueries({ queryKey: ["models"] })}>
-            <FetchGlyph active={catalog.isFetching} size={12} /> Refresh models
+          <button type="button" className="btn" onClick={() => refresh.mutate()} disabled={refresh.isPending}>
+            <FetchGlyph active={refresh.isPending || catalog.isFetching} size={12} /> Refresh model lists
           </button>
           <button type="button" className="btn-primary" onClick={onClose}>
             Done
@@ -191,6 +229,14 @@ export function ModelKeysDialog({ open, onClose, settings, patch }: Props & { op
       }
     >
       <ModelKeysCard />
+      <div className="mt-4 border-t border-line pt-1">
+        <SettingRow
+          title="Use these keys on my computers"
+          description="The Ensemble CLI and the desktop app, signed in to this account, use these keys for their own model calls. A key added on a computer stays on it and wins there."
+        >
+          <Toggle label="Use these keys on my computers" checked={settings.models.keysOnComputers !== false} onChange={(keysOnComputers) => patch({ models: { keysOnComputers } })} />
+        </SettingRow>
+      </div>
       <div className="mt-5">
         <h3 className="text-[13px] font-semibold">Try each tier</h3>
         <p className="mt-0.5 text-[12.5px] text-muted">Sends a one-word prompt to the model the tier uses and shows how long it took.</p>

@@ -3,19 +3,21 @@
 /** @jsxImportSource react */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, Check, CircleAlert, Clock3, Maximize2, Minimize2, Plus, X } from "lucide-react";
+import { ArrowUp, Check, CircleAlert, Clock3, History, Maximize2, Minimize2, Plus, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Mark } from "../mark";
 import { AskLauncher } from "./ask-launcher";
 import { formatChord, type PageMention } from "@ensemble/shared-types";
 import { isApplePlatform } from "@/lib/platform";
 import { useShortcuts } from "@/lib/shortcut-store";
-import { API, ApiError, api, type AssistantMessageRecord, type AssistantToolCallRecord, type Complexity } from "@/lib/api";
+import { API, ApiError, api, type AssistantMessageRecord, type AssistantToolCallRecord, type Complexity, type ConversationRecord } from "@/lib/api";
 import { isSilentCancellation } from "@/lib/fetch-cancel";
 import { readSse } from "@/lib/sse";
-import { applyNotice, applyRepliesToCache } from "@/lib/assistant-apply";
+import { applyNotice, applyRepliesToCache, refreshAfterAssistantWrite } from "@/lib/assistant-apply";
+import { useAutoGrow } from "@/lib/auto-grow";
+import { relative } from "@/lib/format";
 import { markModelOutOfQuota, quotaMessage, quotaSuffix, useQuotaMarks } from "@/lib/model-quota";
 import { AssistantAnswer, splitCutOffReply } from "./cut-off-notice";
 import { MarkdownText, choiceLines } from "../markdown-text";
@@ -244,6 +246,73 @@ function EmptyAssistant({ pathname, name, onPick }: { pathname: string; name: st
   );
 }
 
+/** Recent chats, newest first. Picking one opens it in the dock. */
+function ChatHistory({
+  chats,
+  loading,
+  current,
+  onPick,
+  onClose,
+}: {
+  chats: ConversationRecord[];
+  loading: boolean;
+  current: string | null;
+  onPick: (id: string) => void;
+  onClose: () => void;
+}) {
+  const panel = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    panel.current?.querySelector<HTMLElement>("[data-chat-current], button")?.focus();
+    const onDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (panel.current?.contains(target) || (target as HTMLElement).closest?.("[data-chat-history-toggle]")) return;
+      onClose();
+    };
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [onClose]);
+  return (
+    <div
+      ref={panel}
+      role="dialog"
+      aria-label="Recent chats"
+      className="absolute right-2 top-12 z-10 flex max-h-[min(360px,60%)] w-[min(320px,calc(100%-16px))] flex-col overflow-hidden rounded-lg border border-line-strong bg-raised shadow-pop"
+      onKeyDown={(event) => {
+        if (event.key !== "Escape") return;
+        event.stopPropagation();
+        onClose();
+      }}
+      data-chat-history
+    >
+      <div className="border-b border-line px-3 py-2 text-[12px] font-medium text-muted">Recent chats</div>
+      <div className="min-h-0 flex-1 overflow-y-auto p-1">
+        {loading ? (
+          <div className="px-2 py-3 text-[12.5px] text-muted">Loading…</div>
+        ) : chats.length === 0 ? (
+          <div className="px-2 py-3 text-[12.5px] text-muted">No earlier chats yet.</div>
+        ) : (
+          chats.map((chat) => (
+            <button
+              key={chat.id}
+              type="button"
+              onClick={() => onPick(chat.id)}
+              aria-current={chat.id === current ? "true" : undefined}
+              data-chat-current={chat.id === current ? "" : undefined}
+              className={cx(
+                "flex w-full items-baseline gap-2 rounded-md px-2 py-1.5 text-left text-[13px] hover:bg-hover focus-visible:bg-hover focus-visible:outline-none",
+                chat.id === current && "bg-hover",
+              )}
+            >
+              <span className="min-w-0 flex-1 truncate">{chat.title || "New chat"}</span>
+              <span className="shrink-0 text-[11.5px] text-faint">{relative(chat.updatedAt)}</span>
+            </button>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function AssistantDock() {
   const pathname = usePathname();
   const client = useQueryClient();
@@ -269,6 +338,9 @@ export function AssistantDock() {
   const scroller = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
   const mention = useMentionMenu({ value: draft, onValue: setDraft, inputRef: input });
+  useAutoGrow(input, open ? draft : "", 8);
+  const [history, setHistory] = useState(false);
+  const closeHistory = useCallback(() => setHistory(false), []);
 
   const quotas = useQuotaMarks();
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings, enabled: open });
@@ -278,6 +350,7 @@ export function AssistantDock() {
   const assistantChord = assistantBinding ? formatChord(isApplePlatform() ? assistantBinding.mac : assistantBinding.other, isApplePlatform()) : "";
   const savedTier = settings.data?.settings.assistant.defaultTier ?? "medium";
   const tier = tierOverride ?? savedTier;
+  const chats = useQuery({ queryKey: ["assistant-chats"], queryFn: api.assistantChats, enabled: open && history, staleTime: 10_000 });
   const messages = useQuery({
     queryKey: ["assistant-messages", conversationId],
     queryFn: () => api.conversationMessages(conversationId!),
@@ -387,6 +460,7 @@ export function AssistantDock() {
         if ((event === "tool" || event === "pending") && frame.call) {
           const call = frame.preview ? { ...frame.call, summary: frame.preview } : frame.call;
           setLiveTools((rows) => [...rows.filter((row) => row.id !== call.id), call]);
+          if (event === "tool" && call.state === "ok" && call.isWrite) refreshAfterAssistantWrite(client);
         }
         if (event === "error") {
           const mark = quotaMessage(frame);
@@ -403,6 +477,7 @@ export function AssistantDock() {
       });
       if (nextId) setConversationId(nextId);
       await client.invalidateQueries({ queryKey: ["assistant-messages", nextId] });
+      void client.invalidateQueries({ queryKey: ["assistant-chats"] });
       const kept = held.reply;
       if (kept && nextId) {
         client.setQueryData(["assistant-messages", nextId], (current: { messages: AssistantMessageRecord[] } | undefined) => {
@@ -488,14 +563,20 @@ export function AssistantDock() {
 
   const tiers = settings.data?.settings.models;
 
-  if (!open) {
-    if (peekId) return null;
-    if (pathname.startsWith("/start")) return null;
-    const chord = assistantChord || (mod === "⌘" ? "⌘J" : "Ctrl+J");
-    return <AskLauncher onOpen={() => setOpen(true)} title={`Ask Ensemble (${chord}). Drag to move it.`} />;
-  }
+  const chord = assistantChord || (mod === "⌘" ? "⌘J" : "Ctrl+J");
+  // Always mounted and only hidden: mounting again after a task closes would measure from the corner and slide back.
+  const launcher = (
+    <AskLauncher
+      hidden={open || Boolean(peekId) || pathname.startsWith("/start")}
+      onOpen={() => setOpen(true)}
+      title={`Ask Ensemble (${chord}). Drag to move it.`}
+    />
+  );
+  if (!open) return launcher;
 
   return (
+    <>
+    {launcher}
     <div
       className={cx(
         "pop-in fixed z-50 flex flex-col overflow-hidden rounded-xl border border-line-strong bg-raised shadow-pop",
@@ -506,7 +587,19 @@ export function AssistantDock() {
         <Mark />
         <span className="flex-1 text-[14px] font-semibold">Assistant</span>
         {working && !pending ? <ThinkingStatus real={working === "Assistant is thinking…" || working === "Working…" ? null : working} active /> : null}
-        <button type="button" className="icon-btn" title="New chat" onClick={() => setConversationId(null)}>
+        <button
+          type="button"
+          className="icon-btn"
+          title={pending ? "Recent chats (after this answer)" : "Recent chats"}
+          aria-label="Recent chats"
+          aria-expanded={history}
+          disabled={pending}
+          onClick={() => setHistory((value) => !value)}
+          data-chat-history-toggle
+        >
+          <History size={15} />
+        </button>
+        <button type="button" className="icon-btn" title="New chat" aria-label="New chat" onClick={() => { setHistory(false); setConversationId(null); }}>
           <Plus size={15} />
         </button>
         <button type="button" className="icon-btn" title={expanded ? "Shrink" : "Expand"} onClick={() => setExpanded(!expanded)}>
@@ -516,6 +609,22 @@ export function AssistantDock() {
           <X size={15} />
         </button>
       </div>
+
+      {history ? (
+        <ChatHistory
+          chats={chats.data?.conversations ?? []}
+          loading={chats.isLoading}
+          current={conversationId}
+          onClose={closeHistory}
+          onPick={(id) => {
+            setHistory(false);
+            setTurnError(null);
+            setOptimistic([]);
+            setConversationId(id);
+            window.setTimeout(() => input.current?.focus(), 30);
+          }}
+        />
+      ) : null}
 
       <div ref={scroller} className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5">
         {all.length === 0 ? (
@@ -563,7 +672,7 @@ export function AssistantDock() {
             ) : null}
           </div>
         ) : null}
-        <div className="tile flex items-center gap-2 rounded-lg bg-panel px-3 py-2 focus-within:border-accent">
+        <div className="tile flex items-end gap-2 rounded-lg bg-panel px-3 py-2 focus-within:border-accent">
           <textarea
             ref={input}
             rows={1}
@@ -577,7 +686,7 @@ export function AssistantDock() {
               }
             }}
             placeholder="Ask, or tell me what to change. @ to mention…"
-            className="box-border h-6 max-h-40 min-h-6 flex-1 resize-none bg-transparent py-0 text-[13.5px] leading-6 outline-none placeholder:text-faint"
+            className="box-border min-h-6 flex-1 resize-none overflow-hidden bg-transparent py-0 text-[13.5px] leading-6 outline-none placeholder:text-faint"
           />
           <button
             type="button"
@@ -612,9 +721,10 @@ export function AssistantDock() {
               window.setTimeout(() => input.current?.focus(), 30);
             }}
           />
-          <span>Enter to send · Model presets are configured in Settings</span>
+          <span>Enter to send · Shift+Enter for a new line · Model presets are in Settings</span>
         </div>
       </div>
     </div>
+    </>
   );
 }

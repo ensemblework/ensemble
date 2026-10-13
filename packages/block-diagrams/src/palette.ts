@@ -57,7 +57,17 @@ export const SHAPE_COLOR: Record<ShapeId, PaletteColor> = {
   cloud: "purple",
   actor: "pink",
   hexagon: "red",
+  queue: "teal",
+  subroutine: "blue",
+  browser: "indigo",
+  delay: "orange",
 };
+
+/**
+ * The colours the canvas offers for a block, besides its shape's own: five that read well on
+ * the dark canvas and have a light twin. The text accepts every PALETTE name and hex colours.
+ */
+export const SWATCHES = ["blue", "green", "amber", "red", "purple"] as const satisfies readonly PaletteColor[];
 
 export const DIAGRAM_PAPER: Record<DiagramTheme, string> = {
   light: "#f6f3ee",

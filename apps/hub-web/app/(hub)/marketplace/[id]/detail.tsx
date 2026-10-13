@@ -34,6 +34,10 @@ type Payload = {
 
 export function MarketplaceDetail({ id: baked }: { id: string }) {
   const id = useDesktopParam(baked);
+  return <TemplateDetail key={id} id={id} />;
+}
+
+function TemplateDetail({ id }: { id: string }) {
   const router = useRouter();
   const toast = emitToast;
   const client = useQueryClient();

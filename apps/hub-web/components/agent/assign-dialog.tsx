@@ -3,10 +3,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Check, ChevronRight, Code2, FileText, FolderOpen, GitBranch, Lock, Monitor, Pencil, ShieldCheck, Star, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { RunProfile } from "@ensemble/shared-types";
+import type { ReasoningEffort, RunProfile } from "@ensemble/shared-types";
 import { api, type AssignInput, type Complexity, type HandoffApp } from "@/lib/api";
 import { useSpaceAccess } from "@/lib/access";
 import { pickFolderNative } from "@/lib/desktop-dialog";
+import { desktopShell } from "@/lib/desktop-param";
 import { computerName, folderPlace, freshCloneHint } from "@/lib/device-copy";
 import { usePersistentState } from "@/lib/prefs";
 import { setFeature } from "@/lib/features";
@@ -15,12 +16,14 @@ import { canAddProfile, defaultProfile, differs, newProfileId, profileChoices, p
 import { useToast } from "../toast";
 import { Dialog, InfoTip, SettingRow, Spinner, Toggle, cx } from "../ui";
 import { RunBranchStatus } from "./run-branch-status";
+import { ThinkingPicker, effortFor } from "../settings/model-picker";
 import { PickGitHubRepo } from "../app-items/github-repo-picker";
 
 type Kind = "research" | "code";
 type Place = "fresh" | "continue" | "folder";
 type Mode = "ask" | "review" | "unattended";
-type Effort = "default" | "low" | "medium" | "high";
+/** "default" or a level the chosen model takes (shared-types model-efforts). */
+type Effort = ReasoningEffort;
 
 const PROVIDER_LABEL: Record<string, string> = {
   google: "Gemini",
@@ -230,6 +233,51 @@ function ProfileBar({
       {!canAddProfile(saved) && !editing ? <div className="text-[11.5px] text-faint">Three profiles saved. Update or rename one to change it.</div> : null}
     </div>
   );
+}
+
+type Blocker = { text: string; field: "task" | "run-on" | "place" | "branch" | "mode" };
+
+function folderProblem(folder: string, check: { ok: boolean; text: string } | null): string {
+  if (check && !check.ok) return check.text;
+  return folder.trim() ? "Checking the folder…" : "Choose the folder it works in.";
+}
+
+/** The first thing that keeps Assign from going ahead, in words, and the field to fix. Null when it can go. */
+export function assignBlocker(form: {
+  taskId: string;
+  kind: Kind;
+  serverRunner: boolean;
+  device: { name: string; folders: number } | null;
+  devices: number;
+  place: Place;
+  continueFrom: string;
+  folder: string;
+  folderCheck: { ok: boolean; text: string } | null;
+  folderLabel: string;
+  branchMode: "as-is" | "existing" | "new";
+  branch: string;
+  needsTrust: boolean;
+  mode: Mode;
+  unattendedNoSandbox: boolean;
+}): Blocker | null {
+  if (!form.taskId) return { text: "Choose a task first.", field: "task" };
+  if (form.kind !== "code") return null;
+  if (!form.serverRunner && !form.device) {
+    return form.devices
+      ? { text: "Choose the computer it runs on.", field: "run-on" }
+      : { text: "Code runs on one of your computers. Pair one in Settings → Devices first.", field: "run-on" };
+  }
+  if (form.place === "continue" && !form.continueFrom) return { text: "Choose the earlier task to continue.", field: "place" };
+  if (form.place === "folder" && form.device && !form.folderLabel) {
+    return form.device.folders
+      ? { text: `Choose a folder ${form.device.name} has shared.`, field: "place" }
+      : { text: `${form.device.name} has not shared a folder yet. Pick “Its own checkout”, or share one there first.`, field: "place" };
+  }
+  if (form.place === "folder" && !form.device && !form.folderCheck?.ok) return { text: folderProblem(form.folder, form.folderCheck), field: "place" };
+  if (form.branchMode !== "as-is" && !form.branch.trim()) return { text: form.branchMode === "new" ? "Name the new branch." : "Name the branch to use.", field: "branch" };
+  if (form.needsTrust) return { text: `${form.mode === "unattended" ? "Run unattended" : "Review only"} needs a folder you trust. Trust this folder, or choose Ask.`, field: "mode" };
+  if (form.unattendedNoSandbox) return { text: "Run unattended needs an OS sandbox, and this computer has none yet. Choose Ask or Review only.", field: "mode" };
+  return null;
 }
 
 export function AssignDialog({
@@ -448,6 +496,14 @@ export function AssignDialog({
       setFolderCheck({ ok: false, text: (error as Error).message });
     }
   };
+  // A typed path is checked once typing pauses, so Assign does not wait for the field to lose focus.
+  const typedFolder = useRef("");
+  useEffect(() => {
+    if (!open || place !== "folder" || selectedDevice || !folder.trim() || folderCheck || typedFolder.current !== folder) return;
+    const timer = window.setTimeout(() => void checkFolder(folder), 500);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, place, selectedDevice, folder, folderCheck]);
 
   const ahead = (board.data?.queued.length ?? 0) + (board.data?.running.length ?? 0);
   const slots = board.data?.maxConcurrent ?? settings.data?.settings.orchestration.maxConcurrentJobs ?? 3;
@@ -466,16 +522,24 @@ export function AssignDialog({
   const needsTrust = kind === "code" && mode !== "ask" && !folderTrusted;
   const outsideAccess = outside ?? orchestration?.outsideAccess ?? "read";
   const unattendedNoSandbox = kind === "code" && mode === "unattended" && askOnly && !selectedDevice;
-  const invalid =
-    !taskId ||
-    needsTrust ||
-    unattendedNoSandbox ||
-    (kind === "code" && !selectedDevice && place === "folder" && !folderCheck?.ok) ||
-    (kind === "code" && selectedDevice && place === "folder" && !folderLabel) ||
-    (kind === "code" && selectedDevice && place === "fresh" && !repo.trim()) ||
-    (kind === "code" && place === "continue" && !continueFrom) ||
-    (kind === "code" && branchMode !== "as-is" && !branch.trim()) ||
-    (kind === "code" && !serverRunner && !selectedDevice);
+  const blocker = assignBlocker({
+    taskId,
+    kind,
+    serverRunner,
+    device: selectedDevice ? { name: computerName(selectedDevice.name), folders: selectedDevice.folders.length } : null,
+    devices: computers.data?.devices.length ?? 0,
+    place,
+    continueFrom,
+    folder,
+    folderCheck,
+    folderLabel,
+    branchMode,
+    branch,
+    needsTrust,
+    mode,
+    unattendedNoSandbox,
+  });
+  const invalid = Boolean(blocker);
 
   const limitValue = (value: number | "", key: keyof typeof LIMITS) => (value === "" ? undefined : Math.min(LIMITS[key].max, Math.max(LIMITS[key].min, value)));
 
@@ -534,7 +598,15 @@ export function AssignDialog({
   const chosenApp: HandoffApp = apps.some((target) => target.id === appTarget) ? appTarget : apps[0]?.id ?? "claude";
   const chosen = apps.find((target) => target.id === chosenApp);
   // An app works on a folder: a folder here, or an earlier task's. Ensemble does not clone for it.
-  const handoffInvalid = (place === "folder" && !folderCheck?.ok) || (place === "continue" && !continueFrom) || (place === "fresh" && Boolean(repo.trim()));
+  const handoffBlocker: Blocker | null = !taskId
+    ? { text: "Choose a task first.", field: "task" }
+    : place === "folder" && !folderCheck?.ok
+      ? { text: folderProblem(folder, folderCheck), field: "place" }
+      : place === "continue" && !continueFrom
+        ? { text: "Choose the earlier task to continue.", field: "place" }
+        : place === "fresh" && repo.trim()
+          ? { text: "An app does not clone. Clear the repository, or choose its folder.", field: "place" }
+          : null;
   const handoff = useMutation({
     mutationFn: () =>
       api.handoff({
@@ -558,6 +630,22 @@ export function AssignDialog({
     },
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
+
+  const body = useRef<HTMLDivElement>(null);
+  const [attention, setAttention] = useState<string | null>(null);
+  useEffect(() => {
+    if (!attention) return;
+    const timer = window.setTimeout(() => setAttention(null), 1600);
+    return () => window.clearTimeout(timer);
+  }, [attention]);
+  /** Assign pressed while something is missing: bring that field into view and focus it. */
+  const reveal = (reason: Blocker) => {
+    const field = body.current?.querySelector<HTMLElement>(`[data-assign-field="${reason.field}"]`);
+    field?.scrollIntoView?.({ block: "center", behavior: "smooth" });
+    field?.querySelector<HTMLElement>("input:not([disabled]), select:not([disabled]), textarea, button:not([disabled])")?.focus({ preventScroll: true });
+    setAttention(reason.field);
+  };
+  const attentionProps = (field: string) => ({ "data-assign-field": field, "data-attention": attention === field ? "true" : undefined });
 
   const summary = useMemo(() => {
     if (kind === "research") return "Reads the web and papers, writes into the task page. Nothing runs on your computer.";
@@ -603,11 +691,11 @@ export function AssignDialog({
 
   return (
     <Dialog open={open} onClose={onClose} title="Assign to agent" width={640}>
-      <div className="space-y-5 text-[13px]">
+      <div ref={body} className="space-y-5 text-[13px]">
         {fixedTaskId ? (
           <div className="-mt-1 truncate text-[14px] font-semibold">{task.data?.task.title ?? "…"}</div>
         ) : (
-          <select value={taskId} onChange={(event) => setTaskId(event.target.value)} className="field w-full">
+          <select {...attentionProps("task")} aria-label="Task" value={taskId} onChange={(event) => setTaskId(event.target.value)} className="field w-full">
             <option value="">Choose a task…</option>
             {candidates.map((row) => (
               <option key={row.id} value={row.id}>
@@ -657,13 +745,13 @@ export function AssignDialog({
           ))}
         </div>
 
-        <div>
+        <div {...attentionProps("run-on")}>
           <Label tip="A task for a computer waits until Ensemble is running there. It does not run on the server instead.">Run on</Label>
           <div className="space-y-1.5">
             {serverRunner ? (
               <button type="button" onClick={() => setRunOn("server")} className={cx("flex w-full items-center gap-2 rounded-md border px-2.5 py-1.5 text-left transition-colors", runOn === "server" ? "border-accent bg-[var(--accent-soft)]" : "border-line bg-raised hover:border-line-strong")}>
                 <span className="h-2 w-2 shrink-0 rounded-full bg-ok" />
-                <span className="font-medium">This server</span>
+                <span className="font-medium">{desktopShell() ? "This computer" : "This server"}</span>
               </button>
             ) : null}
             {(computers.data?.devices ?? []).map((device) => (
@@ -743,10 +831,20 @@ export function AssignDialog({
             </select>
           </div>
         ) : (
-        <div className="grid grid-cols-[minmax(0,1fr)_170px] gap-3">
+        <div className="space-y-3">
           <div>
             <Label tip="By default the task's complexity picks the model from Settings → Models. Pick another here for this attempt only.">Model</Label>
-            <select value={modelChoice} onChange={(event) => setModelChoice(event.target.value)} className="field w-full">
+            <select
+              value={modelChoice}
+              onChange={(event) => {
+                const next = event.target.value;
+                setModelChoice(next);
+                const [nextProvider, nextModel] = next.includes("::") ? (next.split("::") as [string, string]) : [tier?.provider ?? "", tier?.model ?? ""];
+                const meta = (catalog.data?.providers ?? []).find((row) => row.provider === nextProvider)?.meta?.[nextModel];
+                setEffort((current) => effortFor(nextProvider, nextModel, meta, current) as Effort);
+              }}
+              className="field w-full"
+            >
               <option value="">
                 Task tier: {TIER_LABEL[complexity]} · {tier ? `${PROVIDER_LABEL[tier.provider] ?? tier.provider} ${tier.model}` : "…"}
               </option>
@@ -768,20 +866,23 @@ export function AssignDialog({
             </select>
           </div>
           <div>
-            <Label tip="Only some models accept this. Others ignore it.">Thinking</Label>
-            <select value={effort} onChange={(event) => setEffort(event.target.value as Effort)} className="field w-full">
-              <option value="default">{model ? "Provider default" : `Tier default${tier?.effort ? ` (${tier.effort})` : ""}`}</option>
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-            </select>
+            <Label tip="The levels this model takes, as its provider lists or documents them. Default uses the tier's level in Settings → Models, or the model's own default for a model picked here.">Thinking</Label>
+            <ThinkingPicker
+              label="Thinking"
+              provider={model ? provider : (tier?.provider ?? "")}
+              providerLabel={PROVIDER_LABEL[model ? provider : (tier?.provider ?? "")] ?? (model ? provider : (tier?.provider ?? ""))}
+              model={model || (tier?.model ?? "")}
+              meta={(catalog.data?.providers ?? []).find((row) => row.provider === (model ? provider : tier?.provider))?.meta?.[model || (tier?.model ?? "")] ?? null}
+              value={effort}
+              onChange={(value) => setEffort(value as Effort)}
+            />
           </div>
         </div>
         )}
 
         {kind === "code" ? (
           <>
-            <div>
+            <div {...attentionProps("place")}>
               <Label>Where it works</Label>
               <Segmented
                 value={place}
@@ -801,6 +902,7 @@ export function AssignDialog({
                     <div className="flex gap-2">
                       <input
                         list="assign-repos"
+                        aria-label="Repository"
                         value={repo}
                         onChange={(event) => setRepo(event.target.value)}
                         placeholder="https://github.com/owner/repo, owner/repo, or leave empty for an empty folder"
@@ -829,13 +931,17 @@ export function AssignDialog({
                   </>
                 ) : selectedDevice ? (
                   <>
-                    <select value={folderLabel} onChange={(event) => setFolderLabel(event.target.value)} className="field w-full">
-                      <option value="">Choose a folder {computerName(selectedDevice?.name)} has shared…</option>
+                    <select value={folderLabel} onChange={(event) => setFolderLabel(event.target.value)} className="field w-full" disabled={!selectedDevice.folders.length}>
+                      <option value="">{selectedDevice.folders.length ? `Choose a folder ${computerName(selectedDevice?.name)} has shared…` : `${computerName(selectedDevice?.name)} has not shared a folder yet`}</option>
                       {selectedDevice.folders.map((label) => (
                         <option key={label} value={label}>{label}</option>
                       ))}
                     </select>
-                    <div className="mt-1 text-[12px] text-muted">Only names {computerName(selectedDevice?.name)} already published (`ensemble folders add`). A path typed here is refused.</div>
+                    <div className="mt-1 text-[12px] text-muted">
+                      {selectedDevice.folders.length
+                        ? `Only names ${computerName(selectedDevice?.name)} already shared (\`ensemble folders add\`). A path typed here is refused.`
+                        : `To work in a folder there, share it on ${computerName(selectedDevice?.name)} with \`ensemble folders add <path>\`. Or pick “Its own checkout” above.`}
+                    </div>
                   </>
                 ) : (
                   <>
@@ -843,6 +949,7 @@ export function AssignDialog({
                       <input
                         value={folder}
                         onChange={(event) => {
+                          typedFolder.current = event.target.value;
                           setFolder(event.target.value);
                           setFolderCheck(null);
                         }}
@@ -869,7 +976,7 @@ export function AssignDialog({
             {appMode ? null : (
             <>
             <div className="grid grid-cols-2 gap-4">
-              <div>
+              <div {...attentionProps("branch")}>
                 <Label tip="As is: the branch checked out now. Existing: a branch that already exists. New: a branch created first.">
                   <GitBranch size={13} /> Branch
                 </Label>
@@ -884,7 +991,7 @@ export function AssignDialog({
                 />
                 {branchMode !== "as-is" ? (
                   <>
-                    <input list="assign-branches" value={branch} onChange={(event) => setBranch(event.target.value)} placeholder={branchMode === "new" ? "ensemble/fix-tests" : "feature/x"} className="field mt-2 w-full font-mono text-[12.5px]" />
+                    <input list="assign-branches" aria-label="Branch name" value={branch} onChange={(event) => setBranch(event.target.value)} placeholder={branchMode === "new" ? "ensemble/fix-tests" : "feature/x"} className="field mt-2 w-full font-mono text-[12.5px]" />
                     <datalist id="assign-branches">
                       {(branches.data?.branches ?? []).map((name) => (
                         <option key={name} value={name} />
@@ -905,7 +1012,7 @@ export function AssignDialog({
               </div>
             </div>
 
-            <div className="space-y-2 rounded-lg border border-line bg-raised p-3">
+            <div className="space-y-2 rounded-lg border border-line bg-raised p-3" {...attentionProps("mode")}>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="font-medium">Mode</span>
                 <Segmented
@@ -1097,25 +1204,46 @@ export function AssignDialog({
         <div className="flex items-center gap-3 border-t border-line pt-3">
           <div className="min-w-0 flex-1 text-[12px] leading-4 text-muted">
             <div className="truncate">{summary}</div>
-            <div>
-              {selectedDevice
-                ? `Runs on ${selectedDevice.name}, not on the server. It waits there until Ensemble is running.`
-                : board.data?.paused
-                  ? "The agent is paused. It will queue until you resume."
-                  : startsNow
-                    ? `Starts now · up to ${slots} run at once`
-                    : `Queued behind ${ahead} · up to ${slots} run at once`}
-            </div>
+            {(appMode ? handoffBlocker : blocker) ? (
+              <div className="mt-0.5 flex items-start gap-1 text-warn" role="status" data-assign-blocker>
+                <AlertTriangle size={12} className="mt-[2px] shrink-0" aria-hidden />
+                <span>{(appMode ? handoffBlocker : blocker)!.text}</span>
+              </div>
+            ) : (
+              <div>
+                {selectedDevice
+                  ? `Runs on ${selectedDevice.name}, not on the server. It waits there until Ensemble is running.`
+                  : board.data?.paused
+                    ? "The agent is paused. It will queue until you resume."
+                    : startsNow
+                      ? `Starts now · up to ${slots} run at once`
+                      : `Queued behind ${ahead} · up to ${slots} run at once`}
+              </div>
+            )}
           </div>
           <button type="button" className="btn-ghost" onClick={onClose}>
             Cancel
           </button>
           {appMode ? (
-            <button type="button" className="btn-primary" disabled={!taskId || handoffInvalid || handoff.isPending} onClick={() => handoff.mutate()}>
+            <button
+              type="button"
+              className={cx("btn-primary", handoffBlocker && "opacity-60")}
+              aria-disabled={handoffBlocker ? true : undefined}
+              disabled={handoff.isPending}
+              title={handoffBlocker?.text}
+              onClick={() => (handoffBlocker ? reveal(handoffBlocker) : handoff.mutate())}
+            >
               {handoff.isPending ? <Spinner size={12} /> : null} {chosen?.terminal ? "Start in a terminal" : `Open in ${chosen?.name ?? "the app"}`}
             </button>
           ) : (
-            <button type="button" className="btn-primary" disabled={invalid || assign.isPending} onClick={() => assign.mutate()}>
+            <button
+              type="button"
+              className={cx("btn-primary", invalid && "opacity-60")}
+              aria-disabled={invalid || undefined}
+              disabled={assign.isPending}
+              title={blocker?.text}
+              onClick={() => (blocker ? reveal(blocker) : assign.mutate())}
+            >
               {assign.isPending ? <Spinner size={12} /> : null} Assign
             </button>
           )}

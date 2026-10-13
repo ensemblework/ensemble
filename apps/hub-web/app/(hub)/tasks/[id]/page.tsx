@@ -8,5 +8,5 @@ export default function TaskFullPage({ params }: { params: Promise<{ id: string 
   const { id: baked } = use(params);
   const id = useDesktopParam(baked);
   if (isBakedParam(id)) return null;
-  return <TaskPage taskId={id} variant="page" />;
+  return <TaskPage key={id} taskId={id} variant="page" />;
 }

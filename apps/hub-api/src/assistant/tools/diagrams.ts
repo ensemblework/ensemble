@@ -228,13 +228,13 @@ export const diagramTools = [
     name: "hub_edit_diagram",
     area: "context",
     description:
-      "Refine a diagram with a few semantic edits: add_node, remove_node, rename_node, add_edge, remove_edge, move_to_group, set_node (shape and colour), set_curve, or patch (one unique find/replace). Keeps ids, locks, and layout. Re-validates. A locked block cannot be removed or moved. A write waits for Apply.",
+      "Refine a diagram with a few semantic edits: add_node, remove_node, rename_node, add_edge, remove_edge, move_to_group, set_node (shape and colour), set_curve, set_edge (an arrow's label, curve, dashed, arrows, width, head; by id or from/to), or patch (one unique find/replace). Two blocks have one arrow between them: add_edge on a joined pair changes that arrow. Keeps ids, locks, and layout. Re-validates. A locked block cannot be removed or moved. A write waits for Apply.",
     input: z.object({
       diagramId: z.string().uuid(),
       ops: z
         .array(
           z.object({
-            op: z.enum(["add_node", "remove_node", "rename_node", "add_edge", "remove_edge", "move_to_group", "set_node", "set_curve", "patch"]),
+            op: z.enum(["add_node", "remove_node", "rename_node", "add_edge", "remove_edge", "move_to_group", "set_node", "set_curve", "set_edge", "patch"]),
             id: z.string().min(1).max(80).optional(),
             label: z.string().min(1).max(200).optional(),
             shape: z.string().min(1).max(40).optional(),
@@ -244,6 +244,10 @@ export const diagramTools = [
             to: z.string().min(1).max(80).optional(),
             curve: z.enum(["straight", "curved", "elbow"]).optional(),
             edge: z.string().min(1).max(80).optional(),
+            dashed: z.boolean().optional().describe("set_edge: dashed or solid line."),
+            arrows: z.enum(["end", "start", "both", "none"]).optional().describe("set_edge: which ends have an arrowhead."),
+            width: z.number().min(0.5).max(8).nullable().optional().describe("set_edge: line width in px; null is the default."),
+            head: z.number().min(6).max(40).nullable().optional().describe("set_edge: arrowhead length in px; null is the default."),
             find: z.string().min(1).max(20_000).optional(),
             replace: z.string().max(20_000).optional(),
           }),

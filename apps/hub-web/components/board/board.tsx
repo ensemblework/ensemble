@@ -80,6 +80,7 @@ function Column({
   moreHref,
   picked,
   onToggleSelect,
+  onDelete,
 }: {
   id: ColumnId;
   pill: TaskStatus;
@@ -94,6 +95,7 @@ function Column({
   moreHref?: string;
   picked: string[];
   onToggleSelect: (id: string) => void;
+  onDelete?: (id: string) => void;
 }) {
   const { setNodeRef } = useDroppable({ id });
   const label = id === "waiting" ? "Waiting" : STATUS[pill].label;
@@ -127,6 +129,7 @@ function Column({
                 motion={motion}
                 onOpen={onOpen}
                 onToggleSelect={onToggleSelect}
+                onDelete={onDelete}
               />
             ) : null;
           })}
@@ -316,6 +319,42 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
     onSettled: () => {
       void client.invalidateQueries({ queryKey: ["tasks"] });
       void client.invalidateQueries({ queryKey: ["task"] });
+      void client.invalidateQueries({ queryKey: ["shell"] });
+    },
+  });
+
+  // The card's trash button: gone from the board at once, back with Undo, back on failure.
+  const remove = useMutation({
+    mutationFn: (id: string) => api.deleteTask(id),
+    onMutate: async (id) => {
+      await client.cancelQueries({ queryKey: ["tasks"] });
+      const previous = client.getQueryData<{ tasks: TaskRecord[] }>(["tasks"]);
+      if (previous) client.setQueryData(["tasks"], { tasks: previous.tasks.filter((task) => task.id !== id) });
+      setPicked((current) => current.filter((row) => row !== id));
+      if (peek.peekId === id) peek.close();
+      return { previous };
+    },
+    onError: (error, _id, context) => {
+      if (context?.previous) client.setQueryData(["tasks"], context.previous);
+      toast((error as Error).message, { tone: "error" });
+    },
+    onSuccess: (result) => {
+      toast("Moved to Trash.", {
+        action: result?.undoEntryId
+          ? {
+              label: "Undo",
+              run: () => {
+                void api
+                  .undo(result.undoEntryId ?? undefined)
+                  .then(() => client.invalidateQueries())
+                  .catch((error: Error) => toast(error.message, { tone: "error" }));
+              },
+            }
+          : undefined,
+      });
+    },
+    onSettled: () => {
+      void client.invalidateQueries({ queryKey: ["tasks"] });
       void client.invalidateQueries({ queryKey: ["shell"] });
     },
   });
@@ -552,6 +591,7 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
                   moreHref={column.id === "done" ? "/settings#completed" : undefined}
                   picked={picked}
                   onToggleSelect={togglePick}
+                  onDelete={access.ready && access.canEdit ? (id) => remove.mutate(id) : undefined}
                 />
               ))}
             </div>

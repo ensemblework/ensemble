@@ -147,7 +147,8 @@ export const ModelProvider = z.enum([
 ]);
 export type ModelProvider = z.infer<typeof ModelProvider>;
 
-export const ReasoningEffort = z.enum(["default", "minimal", "low", "medium", "high"]);
+/** "default" sends no level. Which of the others a model takes is in model-efforts.ts. */
+export const ReasoningEffort = z.enum(["default", "none", "minimal", "low", "medium", "high", "xhigh", "max"]);
 export type ReasoningEffort = z.infer<typeof ReasoningEffort>;
 
 export const ModelTier = z.object({
@@ -165,6 +166,8 @@ export const ModelSettings = z.object({
   max: ModelTier.default({ model: "gemini-3.5-flash", effort: "high" }),
   embedding: z.string().default("text-embedding-3-large"),
   ollamaUrl: z.string().default("http://127.0.0.1:11434"),
+  /** The person's own paired computers (the CLI, the desktop app) may use these keys for their model calls. */
+  keysOnComputers: z.boolean().default(true),
 });
 export type ModelSettings = z.infer<typeof ModelSettings>;
 
@@ -219,7 +222,7 @@ export const RunProfile = z.object({
   engine: z.enum(["ensemble", "claude-code", "codex", "cursor-agent"]).default("ensemble"),
   /** `provider::model`, or empty for the task's tier. With Claude Code: its model alias, or empty for its default. */
   model: z.string().max(240).default(""),
-  effort: z.enum(["default", "low", "medium", "high"]).default("default"),
+  effort: ReasoningEffort.default("default"),
   branchMode: z.enum(["as-is", "new"]).default("as-is"),
   delivery: z.enum(["local", "commit", "push"]).default("commit"),
   askBeforePublish: z.boolean().default(true),

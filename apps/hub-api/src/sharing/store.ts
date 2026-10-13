@@ -416,6 +416,7 @@ export async function transferSpace(db: PrismaClient, accountId: string, spaceId
     await tx.authToken.deleteMany({ where: { userId: spaceId } });
     await tx.mcpConnection.deleteMany({ where: { userId: spaceId } });
     await tx.modelCredential.deleteMany({ where: { userId: spaceId } });
+    await tx.modelCatalog.deleteMany({ where: { userId: spaceId } });
     await tx.apiToken.updateMany({ where: { userId: spaceId, revokedAt: null }, data: { revokedAt: new Date() } });
     await tx.device.updateMany({ where: { userId: spaceId, revokedAt: null }, data: { revokedAt: new Date() } });
     await tx.preference.deleteMany({ where: { userId: spaceId, OR: [{ key: "hub.settings" }, { key: { startsWith: "ui." } }] } });

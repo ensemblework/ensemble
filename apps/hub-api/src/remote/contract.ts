@@ -24,6 +24,8 @@ export const ROUTES = {
   closeDecision: (decisionId: string) => `/api/devices/self/decisions/${encodeURIComponent(decisionId)}/close`,
   complete: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/complete`,
   events: "/api/devices/self/events",
+  /** The account's model keys, for this computer's own model calls. */
+  modelKeys: "/api/devices/self/model-keys",
 } as const;
 
 const ms = (name: string, fallback: number) => {

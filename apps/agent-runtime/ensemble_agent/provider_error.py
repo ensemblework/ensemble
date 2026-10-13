@@ -73,10 +73,26 @@ def parse_provider_error(status: int, body_text: str, headers: Mapping[str, str]
     )
 
 
+# GitHub's own rule: Copilot requests need a fine-grained token with the "Copilot requests" permission.
+COPILOT_TOKEN_HELP = (
+    "Use a fine-grained GitHub token with the account permission “Copilot requests”, from an account with a Copilot plan. "
+    "Classic tokens (ghp_…) do not work with Copilot."
+)
+COPILOT_CLASSIC_TOKEN = f"This is a classic GitHub token. {COPILOT_TOKEN_HELP}"
+
+
+def no_key_message(provider: str) -> str:
+    """The provider is the one of the model the tier or the chat uses: a Gemini model needs a Google Gemini key."""
+    name = {**_PROVIDER_NAMES, "google": "Google Gemini", "anthropic": "Claude (Anthropic)"}.get(provider, provider)
+    return f"No key for {name}. Add one in Settings → Models (in the Ensemble CLI: /keys {provider}), or pick a model whose provider has a key."
+
+
 def friendly_key_error(provider: str, status: int, body: str) -> str:
     """One line for a failed key check. Never includes the request URL."""
     del body  # provider bodies and httpx errors can embed the URL
     name = _PROVIDER_NAMES.get(provider, provider or "The provider")
+    if provider == "copilot" and status in (400, 401, 403, 404):
+        return f"GitHub did not accept this token for Copilot ({status}). {COPILOT_TOKEN_HELP}"
     if status in (400, 401, 403):
         if provider == "google":
             return "Google rejected this key (check it was copied fully and the Generative Language API is enabled)."

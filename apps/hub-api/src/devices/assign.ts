@@ -72,9 +72,8 @@ export async function deviceAssignment(
     resourceKeys.push(`label:${folderLabel}`);
   } else if (repoUrl) {
     resourceKeys.push(`repo:${repoUrl}`);
-  } else if (input.kind === "code") {
-    throw new GuardError(`Pick a folder ${device.name} has shared, or a repository.`);
   }
+  // A code task with neither works in a new empty folder in that computer's Ensemble workspace, as it does here.
 
   return { deviceId: device.id, name: device.name, folderLabel, repoUrl, continueFrom, resourceKeys };
 }
