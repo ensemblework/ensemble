@@ -310,7 +310,8 @@
 }
 @media (prefers-reduced-motion: reduce) { .guided-tour *, .guided-tour *::before, .guided-tour *::after { transition: none !important; animation: none !important; } }
 
-.guided-tour .film-gallery-preview .tile { min-height: 0; padding: 8px; }
+/* Real desk phone rules reset grid rows; this canvas keeps its measured preview rows. */
+.guided-tour .film-gallery-preview .bento > .tile { grid-row: 1 / -1 !important; grid-column: 1 / -1 !important; min-height: 0; padding: 8px; }
 .guided-tour .film-gallery-preview .th { height: 14px; margin-bottom: 6px; }
 .guided-tour .film-gallery-preview .th .tt { font-size: 10px; }
 .guided-tour .film-gallery-preview .tb { gap: 5px; }
