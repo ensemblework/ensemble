@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync } from "node:fs";
 import { chromium } from "playwright-core";
 
-const API = process.env.HUB_API ?? "http://127.0.0.1:4107";
-const WEB = process.env.HUB_WEB ?? "http://127.0.0.1:3107";
+const API = process.env.HUB_API ?? "http://127.0.0.1:4117";
+const WEB = process.env.HUB_WEB ?? "http://127.0.0.1:3117";
 for (const url of [API, WEB]) assert.ok(["127.0.0.1", "localhost"].includes(new URL(url).hostname), "Use isolated local services; this check creates fictional accounts.");
 const chrome = process.env.CHROME_PATH ?? (existsSync("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome") ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" : "/usr/bin/google-chrome");
 const shots = process.env.TOUR_SCREENSHOTS;
@@ -27,7 +27,7 @@ async function account(role, theme, reduce) {
 }
 
 async function bounds(page) {
-  const result = await page.locator(".tour-card").evaluate((card) => {
+  const result = await page.locator(".walkthrough").evaluate((card) => {
     const rect = card.getBoundingClientRect();
     return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: window.innerWidth, height: window.innerHeight, scroll: document.documentElement.scrollWidth };
   });
@@ -55,8 +55,14 @@ try {
     await page.locator('[data-onboarding-tour="welcome"]').waitFor({ timeout: 30000 });
     assert.equal(await page.locator("html").getAttribute("data-theme"), scenario.theme);
     assert.match(await page.locator("#tour-title").innerText(), /Mira/);
+    await page.locator(".walkthrough").evaluate((node) => Promise.all(node.getAnimations().map((animation) => animation.finished.catch(() => {}))));
     if (shots) await page.screenshot({ path: `${shots}/${scenario.role}-welcome.png` });
     const before = await fixture.request("/api/tasks");
+    const appUrl = page.url();
+    const originalFrame = await page.locator(".walkthrough").boundingBox();
+    const originalButton = await page.locator("[data-tour-next]").boundingBox();
+    assert.equal(await page.locator(".film-app").getAttribute("inert"), "");
+    assert.equal(await page.locator(".film-app button, .film-app a, .film-app input").count(), 0);
     const visited = [];
     let resumed = false;
     while (true) {
@@ -67,7 +73,23 @@ try {
         await Promise.all(document.querySelector(".guided-tour").getAnimations({ subtree: true }).map((animation) => animation.finished.catch(() => {})));
       });
       await bounds(page);
-      if (scenario.reduce) assert.equal(await page.locator(".tour-cursor").count(), 0);
+      assert.equal(page.url(), appUrl, "the walkthrough never navigates the real workspace");
+      const frame = await page.locator(".walkthrough").boundingBox();
+      const button = await page.locator("[data-tour-next]").boundingBox();
+      for (const key of ["x", "y", "width", "height"]) {
+        assert.ok(Math.abs(frame[key] - originalFrame[key]) < 1, `popup ${key} stays fixed on ${step}: ${frame[key]} vs ${originalFrame[key]}`);
+        assert.ok(Math.abs(button[key] - originalButton[key]) < 1, `Next ${key} stays fixed`);
+      }
+      if (step === "today" && !scenario.reduce) {
+        await page.locator('[aria-label="Pause scene"]').click();
+        const paused = await page.locator(".walkthrough-stage").getAttribute("data-playback-ms");
+        await page.waitForTimeout(300);
+        assert.equal(await page.locator(".walkthrough-stage").getAttribute("data-playback-ms"), paused);
+        await page.locator('[aria-label="Restart scene"]').click();
+        await page.waitForFunction(() => Number(document.querySelector(".walkthrough-stage").dataset.playbackMs) >= 12000, null, { timeout: 20000 });
+        assert.equal(await page.locator("[data-onboarding-tour]").getAttribute("data-onboarding-tour"), "today", "scenes hold for the user to advance");
+      }
+      if (scenario.reduce) assert.equal(await page.locator(".film-pointer").count(), 0);
       if (shots && ["today", "board", scenario.stop, "assistant"].includes(step)) await page.screenshot({ path: `${shots}/${scenario.role}-${step}.png` });
       if (step === "board" && !resumed) {
         await page.waitForFunction(() => JSON.parse(localStorage.getItem(Object.keys(localStorage).find((key) => key.startsWith("ensemble.tour:"))))?.step === "board");
@@ -77,6 +99,7 @@ try {
       }
       if (step === "finish") break;
       await page.locator("[data-tour-next]").click();
+      assert.ok(await page.locator("[data-tour-next]").evaluate((node) => node === document.activeElement), "keyboard focus stays on Next through the crossfade");
       await page.waitForFunction((previous) => document.querySelector("[data-onboarding-tour]")?.dataset.onboardingTour !== previous, step);
     }
     assert.ok(visited.includes(scenario.stop), `${scenario.role} gets ${scenario.stop}`);
@@ -93,7 +116,7 @@ try {
     await page.keyboard.press("Escape");
     await page.locator("[data-onboarding-tour]").waitFor({ state: "detached" });
     assert.deepEqual(crashes, []);
-    console.log(`${scenario.role}: setup, ${visited.length} steps, ${scenario.stop}, resume, completion, replay and Escape passed (${scenario.theme}, ${scenario.viewport.width}×${scenario.viewport.height})`);
+    console.log(`${scenario.role}: setup, ${visited.length} simulated chapters, ${scenario.stop}, stable frame/controls, pause, resume, completion and replay passed (${scenario.theme}, ${scenario.viewport.width}×${scenario.viewport.height})`);
     await context.close();
   }
 } finally { await browser.close(); }

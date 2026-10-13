@@ -25,6 +25,7 @@ import { TopBar } from "@/components/shell/topbar";
 import { FeatureGate } from "@/components/features/gate";
 import { FeatureTour } from "@/components/features/tour";
 import dynamic from "next/dynamic";
+import "@/components/desk/desk.css";
 import "@/components/onboarding/tour.css";
 import { CelebrateHost } from "@/components/motion/celebrate";
 import { PageProgress } from "@/components/motion/page-progress";
@@ -127,7 +128,7 @@ function Frame({ children }: { children: React.ReactNode }) {
           />
           <SeasonBanner />
           <VerificationBanner />
-          <main className="relative min-h-0 flex-1 overflow-y-auto" data-tour-anchor="workspace">
+          <main className="relative min-h-0 flex-1 overflow-y-auto">
             <FeatureGate>{children}</FeatureGate>
           </main>
           <AssistantDock />

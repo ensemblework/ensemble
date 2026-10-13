@@ -8,9 +8,6 @@ export type TourStep = {
   title: string;
   body: string;
   tip?: string;
-  href?: string;
-  target?: string;
-  via?: string;
   icon: "today" | "arrange" | "board" | "context" | "files" | "code" | "meetings" | "connections" | "assistant" | "approvals";
 };
 
@@ -30,29 +27,28 @@ export function tourProfile(templateId?: string | null) {
   return { template, role, ...PROFILE[role] };
 }
 
-/** Visits only enabled surfaces and uses the saved template's actual first tile. */
+/** The walkthrough uses fictional scenes for features available to this profile. */
 export function buildTour(templateId?: string | null, modules?: string | null): TourStep[] {
   const profile = tourProfile(templateId);
-  const tile = profile.template?.tiles[0]?.[0];
   const steps: TourStep[] = [
     { id: "welcome", label: "Your space", title: "Make yourself at home", body: profile.line, icon: "today" },
-    { id: "today", label: "Your daily starting point", title: "A day with a little more direction", body: profile.today, tip: profile.template ? `You picked ${profile.template.name}. These are your starting tiles.` : "Your tiles show your own work as you add it.", href: "/today", target: tile ? `[data-desk-key="${tile}"]` : "[data-tour-anchor=desk]", via: '[data-tour-nav="/today"]', icon: "today" },
-    { id: "arrange", label: "Make it yours", title: "Your desk can change with you", body: "Move tiles by their grip, resize from a corner, or hide what you don't need. Add a tile brings useful views back whenever you want.", tip: "Try arranging your desk after the tour. Your layout is saved.", href: "/today", target: "[data-tour-anchor=add-tile]", icon: "arrange" },
-    { id: "board", label: "From idea to done", title: "Give the next step a place", body: profile.board, tip: "Open a task for its notes, dates, attachments, and assignment options.", href: "/board", target: "[data-tour-anchor=new-task]", via: '[data-tour-nav="/board"]', icon: "board" },
-    { id: "context", label: "The bigger picture", title: "Work makes more sense in context", body: profile.context, tip: "Context holds the connections. Pages holds your standalone notes; Files holds your uploads.", href: "/context", target: "[data-tour-anchor=workspace]", via: '[data-tour-nav="/context"]', icon: "context" },
+    { id: "today", label: "Your daily starting point", title: "A day with a little more direction", body: profile.today, tip: profile.template ? `You picked ${profile.template.name}. These are your starting tiles.` : "Your tiles show your own work as you add it.", icon: "today" },
+    { id: "arrange", label: "Make it yours", title: "Your desk can change with you", body: "Move tiles by their grip, resize from a corner, or hide what you don't need. Add a tile brings useful views back whenever you want.", tip: "Try arranging your desk after the tour. Your layout is saved.", icon: "arrange" },
+    { id: "board", label: "From idea to done", title: "Give the next step a place", body: profile.board, tip: "Open a task for its notes, dates, attachments, and assignment options.", icon: "board" },
+    { id: "context", label: "The bigger picture", title: "Work makes more sense in context", body: profile.context, tip: "Context holds the connections. Pages holds your standalone notes; Files holds your uploads.", icon: "context" },
   ];
   if (["engineer", "vibe"].includes(profile.role) && hasModule(modules, "code")) {
-    steps.push({ id: "code", label: "Build and review", title: "Keep a close eye on what changes", body: "Code brings repositories and change reviews together. To run an agent against local files, connect your computer with the Ensemble app or CLI first.", tip: "The web app can coordinate work; your connected computer runs it.", href: "/code", target: "[data-tour-anchor=workspace]", via: '[data-tour-nav="/code"]', icon: "code" });
+    steps.push({ id: "code", label: "Build and review", title: "Keep a close eye on what changes", body: "Code brings repositories and change reviews together. To run an agent against local files, connect your computer with the Ensemble app or CLI first.", tip: "The web app can coordinate work; your connected computer runs it.", icon: "code" });
   } else if (profile.role === "manager") {
-    steps.push({ id: "meetings", label: "Keep the conversation", title: "A meeting can lead to a clear next step", body: "Capture meeting notes, decisions, and follow-ups. Keep them alongside the people and projects you talked about.", tip: "Try a note for your next 1:1 or team check-in.", href: "/meetings", target: "[data-tour-anchor=workspace]", via: '[data-tour-nav="/meetings"]', icon: "meetings" });
+    steps.push({ id: "meetings", label: "Keep the conversation", title: "A meeting can lead to a clear next step", body: "Capture meeting notes, decisions, and follow-ups. Keep them alongside the people and projects you talked about.", tip: "Try a note for your next 1:1 or team check-in.", icon: "meetings" });
   } else {
-    steps.push({ id: "files", label: "Bring your material", title: "Give your sources a home", body: profile.role === "lawyer" ? "Upload drafts and reference documents, preview them, and attach relevant files to your pages. Keep a source close to the work it supports." : profile.role === "teacher" ? "Upload lesson resources, handouts, and reference material. Preview files and attach them to pages so the source stays close to your notes." : "Upload notes, readings, and reference material. Preview files and attach them to pages so the source stays close to your work.", tip: "PDFs, documents, spreadsheets, and slides each have a preview.", href: "/files", target: "[data-tour-anchor=workspace]", via: '[data-tour-nav="/files"]', icon: "files" });
+    steps.push({ id: "files", label: "Bring your material", title: "Give your sources a home", body: profile.role === "lawyer" ? "Upload drafts and reference documents, preview them, and attach relevant files to your pages. Keep a source close to the work it supports." : profile.role === "teacher" ? "Upload lesson resources, handouts, and reference material. Preview files and attach them to pages so the source stays close to your notes." : "Upload notes, readings, and reference material. Preview files and attach them to pages so the source stays close to your work.", tip: "PDFs, documents, spreadsheets, and slides each have a preview.", icon: "files" });
   }
   steps.push(
-    { id: "approvals", label: "You're in control", title: "Know when the next move is yours", body: "Needs me gathers pending approvals and questions. When an agent needs a decision, review it here before the work continues.", tip: "Take a moment to read what is being requested before you approve.", href: "/needs-me", target: "[data-tour-anchor=workspace]", via: '[data-tour-nav="/needs-me"]', icon: "approvals" },
-    { id: "connections", label: "Bring work together", title: "Connect the apps you already use", body: "Choose a connected app to bring relevant work into Ensemble. Each connection explains its setup and what it can read or do.", tip: "Account settings also holds your profile, appearance, spaces, and shortcuts.", href: "/settings?tab=connections", target: "#connections", via: "[data-account-avatar]", icon: "connections" },
-    { id: "assistant", label: "A little help along the way", title: "Start with a question", body: "Open the floating Ensemble button to talk through your work. Ask for a plan, a summary, or a draft. Proposed changes are held for you to apply.", tip: profile.prompt, href: "/today", target: "[data-ask-launcher], [data-tour-anchor=assistant]", via: '[data-tour-nav="/today"]', icon: "assistant" },
-    { id: "finish", label: "Ready when you are", title: "This space is yours now", body: "Start with one real task, bring in a useful source, or ask Ensemble for a little help. You can replay this guide from your account menu anytime.", tip: profile.prompt, icon: "assistant" },
+    { id: "approvals", label: "You're in control", title: "Know when the next move is yours", body: "Needs me gathers pending approvals and questions. When an agent needs a decision, review it here before the work continues.", tip: "Take a moment to read what is being requested before you approve.", icon: "approvals" },
+    { id: "connections", label: "Bring work together", title: "Connect the apps you already use", body: "Choose a connected app to bring relevant work into Ensemble. Each connection explains its setup and what it can read or do.", tip: "Account settings also holds your profile, appearance, spaces, and shortcuts.", icon: "connections" },
+    { id: "assistant", label: "A little help along the way", title: "Start with a question", body: "Open the floating Ensemble button to talk through your work. Ask for a plan, a summary, or a draft. Proposed changes are held for you to apply.", tip: profile.prompt, icon: "assistant" },
+    { id: "finish", label: "Ready when you are", title: "This space is yours now", body: "Start with one real task or a useful source. You can replay this preview from your account menu anytime.", tip: profile.prompt, icon: "assistant" },
   );
   return steps;
 }
