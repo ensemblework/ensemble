@@ -1,3 +1,4 @@
+import { AppColorTheme } from "@ensemble/shared-types";
 import { BadPathError, normalizePath } from "@ensemble/shared-types/modules";
 import { NextResponse, type NextRequest } from "next/server";
 import { isAnonymousAsset } from "@/lib/anonymous-asset";
@@ -47,9 +48,9 @@ function shellNotFound(request: NextRequest, carry?: NextResponse) {
   url.pathname = SHELL_404;
   url.search = "";
   const response = NextResponse.rewrite(url, { status: 404 });
-  const accent = carry?.cookies.get("ensemble_accent");
-  if (accent) {
-    response.cookies.set("ensemble_accent", accent.value, { path: "/", sameSite: "lax", maxAge: 60 * 60 * 24 * 400 });
+  for (const name of ["ensemble_accent", "ensemble_color_theme"]) {
+    const cookie = carry?.cookies.get(name);
+    if (cookie) response.cookies.set(name, cookie.value, { path: "/", sameSite: "lax", maxAge: 60 * 60 * 24 * 400 });
   }
   return response;
 }
@@ -130,7 +131,7 @@ export async function middleware(request: NextRequest) {
         onboardingComplete?: boolean;
         modules?: string | null;
         devTools?: boolean;
-        appearance?: { accent?: string; accentCustom?: string | null; accentAt?: number };
+        appearance?: { accent?: string; accentCustom?: string | null; accentAt?: number; colorTheme?: string };
       };
       devTools = body.devTools === true;
       // A CLI login approval must not be lost to onboarding; the code expires in minutes.
@@ -151,6 +152,8 @@ export async function middleware(request: NextRequest) {
           : typeof accent === "string" && /^[a-z]+$/.test(accent)
             ? accent
             : "";
+      const palette = AppColorTheme.safeParse(body.appearance?.colorTheme);
+      if (palette.success) response.cookies.set("ensemble_color_theme", `${palette.data}@${stamp}`, { path: "/", sameSite: "lax", maxAge: 60 * 60 * 24 * 400 });
       if (value) {
         response.cookies.set("ensemble_accent", `${value}@${stamp}`, { path: "/", sameSite: "lax", maxAge: 60 * 60 * 24 * 400 });
       }

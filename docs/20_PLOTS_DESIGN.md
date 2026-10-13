@@ -129,6 +129,8 @@ Other defaults, chosen because they survive a print reduction:
 - Sequential: viridis. Diverging, when a heatmap crosses zero: ColorBrewer RdBu.
 - The app accent is a palette *option*, not the default. A paper figure should not depend on a user's purple.
 
+The browser chart reads the shell's current surface/text tokens (`apps/hub-web/lib/plots/theme.ts`, `components/plots/chart-view.tsx`). Its observers include `data-color-theme` as well as light/dark mode and accent styles, so selecting a named app palette repaints the chart without resetting the axes. Data colors and the independent Code theme setting are preserved.
+
 PDF and EPS set `pdf.fonttype` and `ps.fonttype` to **42** (TrueType outlines embedded). Type 3 fonts are how a figure gets rejected or looks fuzzy in a proceedings build.
 
 ## 4. What the tab does

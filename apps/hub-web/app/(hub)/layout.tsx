@@ -128,7 +128,7 @@ function Frame({ children }: { children: React.ReactNode }) {
           />
           <SeasonBanner />
           <VerificationBanner />
-          <main className="relative min-h-0 flex-1 overflow-y-auto">
+          <main data-theme-canvas className="relative min-h-0 flex-1 overflow-y-auto">
             <FeatureGate>{children}</FeatureGate>
           </main>
           <AssistantDock />

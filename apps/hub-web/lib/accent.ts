@@ -17,11 +17,11 @@ export type ResolvedAccent = { hex: string; rgb: string; fg: string; hover: stri
  * Fill, foreground, hover, soft, and wash for one accent.
  * Helpers live inside so the boot script can inline this function alone.
  */
-export function resolveAccent(hex: string, theme: "light" | "dark"): ResolvedAccent {
+export function resolveAccent(hex: string, theme: "light" | "dark", surfaces?: string[]): ResolvedAccent {
   type RGB = [number, number, number];
   const INK: RGB = [20, 18, 15];
   const WHITE: RGB = [255, 255, 255];
-  const canvas: RGB = theme === "light" ? [246, 241, 232] : [20, 18, 16];
+  const defaultCanvas: RGB = theme === "light" ? [246, 241, 232] : [20, 18, 16];
   const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
   const parse = (value: string): RGB => {
     const n = parseInt(value.slice(1), 16);
@@ -38,6 +38,10 @@ export function resolveAccent(hex: string, theme: "light" | "dark"): ResolvedAcc
     const lo = Math.min(lum(a), lum(b));
     return (hi + 0.05) / (lo + 0.05);
   };
+  const backgrounds = surfaces?.filter((value) => /^#[0-9a-fA-F]{6}$/.test(value)).map(parse) ?? [];
+  if (!backgrounds.length) backgrounds.push(defaultCanvas);
+  const minimum = surfaces ? 4.65 : 4.5;
+  const surfaceContrast = (color: RGB) => Math.min(...backgrounds.map((background) => contrast(color, background)));
   const toHsl = (rgb: RGB): [number, number, number] => {
     const r = rgb[0] / 255;
     const g = rgb[1] / 255;
@@ -77,11 +81,11 @@ export function resolveAccent(hex: string, theme: "light" | "dark"): ResolvedAcc
   };
   let rgb = parse(hex);
   let hsl = toHsl(rgb);
-  if (contrast(rgb, canvas) < 4.5) {
+  if (surfaceContrast(rgb) < minimum) {
     const dir = theme === "dark" ? 1 : -1;
     for (let i = 1; i <= 28; i += 1) {
       const sample = fromHsl(hsl[0], Math.min(hsl[1], 78), clamp(hsl[2] + dir * i * 2.5, 14, 86));
-      if (contrast(sample, canvas) >= 4.5) {
+      if (surfaceContrast(sample) >= minimum) {
         rgb = sample;
         hsl = toHsl(sample);
         break;
@@ -97,7 +101,7 @@ export function resolveAccent(hex: string, theme: "light" | "dark"): ResolvedAcc
         const sample = fromHsl(hsl[0], Math.min(hsl[1], 80), clamp(hsl[2] + dir * i * 2.5, 10, 90));
         const w = contrast(sample, WHITE);
         const k = contrast(sample, INK);
-        if ((w >= 4.5 || k >= 4.5) && contrast(sample, canvas) >= 4.5) {
+        if ((w >= 4.5 || k >= 4.5) && surfaceContrast(sample) >= minimum) {
           rgb = sample;
           onWhite = w;
           onInk = k;
@@ -151,6 +155,7 @@ function paintStoredAppearance(): void {
   };
   const raw = JSON.parse(localStorage.getItem("ensemble.appearance") || "{}") as {
     theme?: string;
+    colorTheme?: string;
     font?: string;
     textScale?: number;
     reduceMotion?: boolean;
@@ -169,6 +174,14 @@ function paintStoredAppearance(): void {
   const root = document.documentElement;
   const theme = raw.theme === "system" ? (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark") : raw.theme === "light" ? "light" : "dark";
   root.dataset.theme = theme;
+  const palettes = ["ensemble", "graphite", "lagoon", "aurora", "juniper", "blueprint"];
+  const paletteCookie = document.cookie.match(/(?:^|; )ensemble_color_theme=([^;]*)/);
+  let savedPalette = "";
+  try { savedPalette = decodeURIComponent(paletteCookie?.[1] || ""); } catch {}
+  const paletteParts = savedPalette.split("@");
+  const localPalette = palettes.includes(raw.colorTheme || "") ? raw.colorTheme : undefined;
+  const cookiePalette = palettes.includes(paletteParts[0] || "") ? paletteParts[0] : undefined;
+  root.dataset.colorTheme = cookiePalette && (!localPalette || Number(paletteParts[1]) > localAt) ? cookiePalette : localPalette || cookiePalette || "ensemble";
   root.dataset.font = raw.font || "system";
   if (raw.textScale) root.style.fontSize = `${raw.textScale}%`;
   const osReduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -187,7 +200,9 @@ function paintStoredAppearance(): void {
   };
   const pair = presets[accent || "indigo"] ?? presets.indigo!;
   const chosen = accentCustom && /^#[0-9a-fA-F]{6}$/.test(accentCustom) ? accentCustom : theme === "light" ? pair[1] : pair[0];
-  const resolved = resolveAccent(chosen, theme);
+  const css = getComputedStyle(root);
+  const surfaces = root.dataset.colorTheme === "ensemble" ? undefined : ["--bg", "--sidebar", "--panel", "--raised", "--tile"].map((key) => css.getPropertyValue(key).trim());
+  const resolved = resolveAccent(chosen, theme, surfaces);
   root.style.setProperty("--accent", resolved.hex);
   root.style.setProperty("--accent-rgb", resolved.rgb);
   root.style.setProperty("--accent-fg", resolved.fg);

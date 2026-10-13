@@ -551,6 +551,12 @@ export function GraphTab({ compact = false }: { compact?: boolean }) {
   }, [positions, view, fullscreen, cited, selected, hidden]);
 
   useEffect(() => {
+    const observer = new MutationObserver(() => drawRef.current());
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-color-theme", "style"] });
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) return;
     let lastW = wrap.clientWidth;
