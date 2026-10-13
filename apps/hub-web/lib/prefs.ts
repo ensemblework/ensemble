@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { AppearanceSettings, MotionTheme } from "@ensemble/shared-types";
+import { colorTheme, colorThemeSurfaces } from "./color-themes";
 import { accentChoice, resolveAccent } from "@/lib/accent";
 
 const EVENT = "ensemble:pref";
@@ -73,6 +74,7 @@ export const APPEARANCE_KEY = "ensemble.appearance";
 
 export const DEFAULT_APPEARANCE: AppearanceSettings = {
   theme: "dark",
+  colorTheme: "ensemble",
   textScale: 100,
   font: "system",
   motion: "expressive",
@@ -111,7 +113,16 @@ export function accentWriteIsFresh(): boolean {
 export function completeAppearance(value: Partial<AppearanceSettings> | null | undefined): AppearanceSettings {
   const raw = value && typeof value === "object" ? value : {};
   const textScale = typeof raw.textScale === "number" && Number.isFinite(raw.textScale) ? raw.textScale : DEFAULT_APPEARANCE.textScale;
-  return { ...DEFAULT_APPEARANCE, ...raw, textScale };
+  let palette = colorTheme(raw.colorTheme).id;
+  if (typeof document !== "undefined") {
+    try {
+      const cookie = document.cookie.match(/(?:^|; )ensemble_color_theme=([^;]*)/);
+      const [id, stamp] = decodeURIComponent(cookie?.[1] || "").split("@");
+      const at = (raw as { accentAt?: number }).accentAt ?? 0;
+      if (id && colorTheme(id).id === id && (!raw.colorTheme || Number(stamp) > at)) palette = colorTheme(id).id;
+    } catch {}
+  }
+  return { ...DEFAULT_APPEARANCE, ...raw, colorTheme: palette, textScale };
 }
 
 function storedPref<T>(key: string, _fallback: T, stored: T): T {
@@ -131,6 +142,7 @@ export function publishAppearance(next: AppearanceSettings): void {
     const custom = next.accentCustom;
     const value = custom && /^#[0-9a-fA-F]{6}$/.test(custom) ? `c:${custom}` : next.accent;
     document.cookie = `ensemble_accent=${encodeURIComponent(`${value}@${accentAt}`)}; Path=/; Max-Age=34560000; SameSite=Lax`;
+    document.cookie = `ensemble_color_theme=${encodeURIComponent(`${colorTheme(next.colorTheme).id}@${accentAt}`)}; Path=/; Max-Age=34560000; SameSite=Lax`;
     window.dispatchEvent(new CustomEvent(EVENT, { detail: APPEARANCE_KEY }));
   } catch {
     // storage full or disabled
@@ -147,6 +159,7 @@ export function applyAppearance(appearance: AppearanceSettings): void {
         : "dark"
       : appearance.theme;
   root.dataset.theme = theme;
+  root.dataset.colorTheme = colorTheme(appearance.colorTheme).id;
   root.dataset.font = appearance.font;
   const osReduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const reduce = appearance.reduceMotion || osReduce;
@@ -154,7 +167,7 @@ export function applyAppearance(appearance: AppearanceSettings): void {
   root.dataset.motionTheme = resolveMotionTheme(appearance, osReduce);
   const textScale = Number.isFinite(appearance.textScale) ? appearance.textScale : DEFAULT_APPEARANCE.textScale;
   root.style.fontSize = `${textScale}%`;
-  const resolved = resolveAccent(accentChoice(appearance, theme), theme);
+  const resolved = resolveAccent(accentChoice(appearance, theme), theme, colorThemeSurfaces(appearance.colorTheme, theme));
   root.style.setProperty("--accent", resolved.hex);
   root.style.setProperty("--accent-rgb", resolved.rgb);
   root.style.setProperty("--accent-fg", resolved.fg);

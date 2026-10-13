@@ -6,10 +6,10 @@
  * Entries with a `key` are the only settings the assistant may change (hub_update_settings,
  * always held for Apply). Everything else is the person's to change in Settings: secrets and
  * keys, sign-in, sharing and space membership, connections, the assistant's own permissions,
- * sandbox and run limits, folders, retention and deletion. Theme, font, text size and motion
+ * sandbox and run limits, folders, retention and deletion. Light/dark mode, font, text size and motion
  * have no key because they are kept per browser; a server change would not reach the screen.
  */
-import { AccentPreset, ReasoningEffort } from "./assistant.js";
+import { AppColorTheme, AccentPreset, ReasoningEffort } from "./assistant.js";
 import { OPTIONAL_MODULES, type OptionalModule } from "./modules.js";
 import { FEATURES } from "./features.js";
 
@@ -87,6 +87,7 @@ export const SETTINGS_MAP: readonly SettingsMapEntry[] = [
   ]),
   ...group("account", "Appearance", [
     { id: "appearance.theme", label: "Theme (dark, light, system)", keywords: "theme dark light mode system night", about: "Kept in each browser: change it here or with the light/dark switch in the account menu.", href: at("account", "jump-appearance-theme") },
+    { id: "appearance.color-theme", label: "Color theme", keywords: "theme palette atmosphere graphite lagoon aurora juniper blueprint ensemble background patterns doodles", about: "A coordinated light and dark palette. Keeps your accent, font and mode choices.", href: at("account", "jump-appearance-color-theme"), key: "appearance.colorTheme", rule: { type: "enum", values: AppColorTheme.options } },
     { id: "appearance.accent", label: "Accent colour", keywords: "accent colour color palette indigo tide ember rose brass orchid moss sky", about: "The highlight colour, from eight presets.", href: at("account", "jump-appearance-accent"), key: "appearance.accent", rule: { type: "enum", values: AccentPreset.options } },
     { id: "appearance.accent-custom", label: "Custom accent colour", keywords: "custom accent colour color hex", about: "Your own accent as #rrggbb; none goes back to the preset.", href: at("account", "jump-appearance-custom-accent"), key: "appearance.accentCustom", rule: { type: "color" } },
     { id: "appearance.text-size", label: "Text size", keywords: "text size font size zoom scale bigger smaller", about: "Kept in each browser: change it in Appearance.", href: at("account", "jump-appearance-text-size") },

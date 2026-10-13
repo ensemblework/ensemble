@@ -1,0 +1,36 @@
+.color-theme-section { margin-top: 26px; }
+.color-theme-heading { display: flex; align-items: start; justify-content: space-between; gap: 16px; margin-bottom: 13px; }
+.color-theme-heading h3 { font-size: 14px; font-weight: 550; }
+.color-theme-heading p { color: var(--muted); font-size: 12px; margin-top: 3px; }
+.color-theme-heading > span { color: var(--faint); font-size: 10px; white-space: nowrap; padding-top: 4px; }
+.color-theme-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.color-theme-grid > button { overflow: hidden; min-width: 0; border: 1px solid var(--line-strong); border-radius: 11px; background: var(--panel); text-align: left; }
+.color-theme-grid > button:hover { border-color: var(--faint); }
+.color-theme-grid > button[aria-checked="true"] { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.color-theme-grid > button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.color-theme-pair { display: grid; grid-template-columns: 1fr 1fr; height: 88px; pointer-events: none; border-bottom: 1px solid var(--line); }
+.color-theme-miniature { display: flex; min-width: 0; color: var(--ink); background: var(--bg); }
+.color-theme-miniature:first-child { border-right: 1px solid var(--line); }
+.color-theme-miniature aside { width: 22px; flex-shrink: 0; padding: 8px 4px; border-right: 1px solid var(--line); background: var(--sidebar); }
+.color-theme-miniature aside > i { display: block; width: 7px; height: 7px; border-radius: 2px; background: var(--accent); margin-bottom: 10px; }
+.color-theme-miniature aside > span { display: block; height: 2px; background: var(--muted); opacity: .4; border-radius: 2px; margin: 6px 0; }
+.color-theme-miniature aside > span:first-of-type { background: var(--accent); opacity: .8; }
+.color-theme-mini-main { min-width: 0; flex: 1; }
+.color-theme-mini-main > header { height: 14px; display: flex; align-items: center; justify-content: space-between; gap: 5px; padding: 0 5px; border-bottom: 1px solid var(--line); background: var(--bg); }
+.color-theme-mini-main > header > span { width: 32px; height: 3px; border-radius: 2px; background: var(--raised); border: 1px solid var(--line); }
+.color-theme-mini-main > header > i { width: 5px; height: 5px; border-radius: 50%; background: var(--muted); opacity: .5; }
+.color-theme-mini-body { height: 74px; padding: 8px 6px 5px; background-color: var(--bg); background-image: var(--theme-canvas-image); background-size: auto 180%; background-position: right top; background-repeat: no-repeat; background-blend-mode: var(--theme-canvas-blend); }
+.color-theme-mini-body > b { display: block; width: 35px; height: 3px; background: var(--ink); opacity: .65; border-radius: 3px; margin-bottom: 8px; }
+.color-theme-mini-tiles { display: grid; grid-template-columns: 1.2fr 1fr; gap: 4px; }
+.color-theme-mini-tiles > div { min-width: 0; height: 30px; border-radius: 3px; border: 1px solid var(--line); background: var(--tile); padding: 5px; }
+.color-theme-mini-tiles i { display: block; height: 2px; width: 12px; background: var(--ink); opacity: .5; border-radius: 2px; }
+.color-theme-mini-tiles span { display: block; width: 80%; height: 2px; background: var(--muted); opacity: .25; border-radius: 2px; margin-top: 4px; }
+.color-theme-mini-tiles em { display: block; width: 12px; height: 12px; border: 2px solid var(--accent); border-left-color: var(--raised); border-radius: 50%; margin: 2px auto 0; }
+.color-theme-mini-body > small { display: block; margin-top: 5px; text-transform: uppercase; letter-spacing: .07em; font-size: 7px; color: var(--muted); }
+.color-theme-card-copy { padding: 11px 12px 12px; }
+.color-theme-card-copy strong { display: flex; align-items: center; justify-content: space-between; font-size: 13px; font-weight: 550; }
+.color-theme-card-copy strong > svg { color: var(--accent); }
+.color-theme-card-copy > span { display: block; font-size: 11px; color: var(--muted); line-height: 1.55; margin: 5px 0 7px; }
+.color-theme-card-copy > small { color: var(--faint); font-size: 10px; }
+@media (max-width: 1050px) { .color-theme-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .color-theme-heading > span { display: none; } .color-theme-grid { gap: 9px; } .color-theme-card-copy { padding: 10px; } .color-theme-card-copy > span { min-height: 34px; } .color-theme-card-copy > small { display: none; } }

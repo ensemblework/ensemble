@@ -74,3 +74,13 @@ test("a signed-out request for the apple icon is not sent to login", async () =>
   assert.equal(response.headers.get("location"), null);
   assert.equal(response.headers.get("x-middleware-next"), "1");
 });
+
+test("original theme artwork is public, while arbitrary theme paths remain guarded", async () => {
+  for (const name of ["lagoon", "juniper", "blueprint"]) {
+    const url = `/themes/${name}.svg`;
+    assert.equal(isAnonymousAsset(url), true);
+    const response = await middleware(new NextRequest(`http://localhost:3000${url}`));
+    assert.equal(response.headers.get("location"), null);
+  }
+  assert.equal(isAnonymousAsset("/themes/private"), false);
+});

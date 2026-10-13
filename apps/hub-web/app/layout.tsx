@@ -1,9 +1,11 @@
 import type { Metadata, Viewport } from "next";
 import { Figtree, Fraunces, JetBrains_Mono } from "next/font/google";
 import { APPEARANCE_BOOT } from "@/lib/accent";
+import { COLOR_THEME_STYLES } from "@/lib/color-themes";
 import { PAGE_BOOT } from "@/lib/page-width";
 import { publicSiteUrl } from "@/lib/site-url";
 import "./globals.css";
+import "@/components/settings/color-theme-picker.css";
 import "@/components/shell/notifications.css";
 import "@/components/work-surfaces.css";
 import "@/components/motion/suite.css";
@@ -87,10 +89,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html
       lang="en"
       data-theme="dark"
+      data-color-theme="ensemble"
       className={`${sans.variable} ${display.variable} ${mono.variable}`}
       suppressHydrationWarning
     >
       <head>
+        <style id="ensemble-color-themes" dangerouslySetInnerHTML={{ __html: COLOR_THEME_STYLES }} />
         <script dangerouslySetInnerHTML={{ __html: APPEARANCE_BOOT }} />
         <script dangerouslySetInnerHTML={{ __html: PAGE_BOOT }} />
       </head>

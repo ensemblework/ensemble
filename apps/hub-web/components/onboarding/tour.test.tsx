@@ -10,11 +10,12 @@ import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared
 import { PathnameContext } from "next/dist/shared/lib/hooks-client-context.shared-runtime.js";
 import { ONBOARDING_TOUR_KEY, READY_ONBOARDING_TOUR, readTourProgress } from "@ensemble/shared-types";
 import { TEMPLATE_CARDS } from "@ensemble/shared-types/manifest";
-import { moduleForPath } from "@ensemble/shared-types/modules";
 import { api } from "@/lib/api";
 import { OnboardingTour } from "./guided-tour";
 import { buildTour, canAutoStartTour, tourProfile } from "./tour-plan";
-import { fitTourTarget, placeTourCard } from "./tour-position";
+import { demoBeat, CHAPTER_TRANSITION } from "./tour-playback";
+import { renderToStaticMarkup } from "react-dom/server";
+import { demoCursor, previewSize, TourScene } from "./tour-scenes";
 
 (globalThis as { React?: typeof React }).React = React;
 Object.defineProperty(globalThis, "localStorage", { configurable: true, value: window.localStorage });
@@ -23,15 +24,18 @@ Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value:
 Object.defineProperty(window, "matchMedia", { configurable: true, value: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) });
 HTMLElement.prototype.scrollIntoView = () => {};
 
-test("all 36 templates use their own role, first tile and enabled feature stops", () => {
+test("all 36 templates use their own role and enabled fictional scenes without live targets", () => {
   for (const template of TEMPLATE_CARDS) {
     const steps = buildTour(template.id, "code,diagrams");
     assert.equal(tourProfile(template.id).role, template.role);
-    assert.equal(steps.find((step) => step.id === "today")?.target, `[data-desk-key="${template.tiles[0]![0]}"]`);
+    assert.equal(tourProfile(template.id).template?.tiles[0]?.[0], template.tiles[0]![0]);
+    assert.ok(steps.every((step) => !["href", "target", "via"].some((key) => key in step)));
     assert.equal(steps.some((step) => step.id === "code"), template.role === "engineer" || template.role === "vibe");
     assert.equal(steps.some((step) => step.id === "meetings"), template.role === "manager");
     const restricted = buildTour(template.id, "diagrams");
-    assert.ok(restricted.every((step) => !step.href || moduleForPath(step.href) === null));
+    assert.ok(!restricted.some((step) => step.id === "code"));
+    const approval = restricted.find((step) => step.id === "approvals")!;
+    assert.match(renderToStaticMarkup(<TourScene step={approval} profile={tourProfile(template.id, "diagrams")} ms={approval.duration} reduced />), /SEND EMAIL/, "profiles with Code disabled get a relevant outgoing approval");
     assert.equal(new Set(steps.map((step) => step.id)).size, steps.length);
   }
   assert.equal(tourProfile("removed-template").role, "general");
@@ -46,17 +50,58 @@ test("tour eligibility preserves established accounts and setup; progress reject
   for (const value of [null, {}, { ...READY_ONBOARDING_TOUR, v: 2 }, { ...READY_ONBOARDING_TOUR, status: "unknown" }, { ...READY_ONBOARDING_TOUR, updatedAt: NaN }]) assert.equal(readTourProgress(value), null);
 });
 
-test("cards and spotlights stay inside phone, landscape and desktop viewports", () => {
-  for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }, { width: 1440, height: 900 }]) {
-    for (const target of [null, { left: 24, top: 56, width: 600, height: 230 }, { left: viewport.width - 55, top: 8, width: 44, height: 32 }]) {
-      const fitted = target && fitTourTarget(target, viewport);
-      const card = placeTourCard(fitted, viewport, 420);
-      assert.ok(card.left >= 16 && card.top >= 16);
-      assert.ok(card.left + card.width <= viewport.width - 16);
-      assert.ok(card.top + card.height <= viewport.height - 16);
+test("demonstrations are paced, eased, bounded and held at their final frame", () => {
+  const durations = Object.fromEntries(buildTour("branch-desk", "code").map((step) => [step.id, step.duration]));
+  assert.deepEqual(durations, { welcome: 5000, today: 6000, arrange: 5000, board: 5000, pages: 8000, context: 6000, code: 6000, approvals: 10000, connections: 7000, assistant: 10000, finish: 5000 });
+  assert.equal(demoCursor("today", 900).x, 31);
+  assert.equal(demoCursor("today", 2700).x, 31, "pointer holds still for reading after a 400 ms move");
+  assert.equal(demoCursor("arrange", 3250).press, 1, "click coincides with Add to Today");
+  assert.deepEqual(demoCursor("arrange", 3250, { "place-tile": { x: 83, y: 74 } }), { x: 83, y: 74, press: 1 }, "click lands on the measured preview control");
+  assert.ok(CHAPTER_TRANSITION >= 600);
+  assert.equal(demoBeat(500, 1000, 3000), 0);
+  assert.equal(demoBeat(2000, 1000, 3000), .5);
+  assert.equal(demoBeat(14000, 1000, 3000), 1);
+  for (const step of buildTour("branch-desk", "code")) {
+    for (const ms of [0, 2000, 5000, 9000, 12000, 50000]) {
+      const pointer = demoCursor(step.id, ms);
+      assert.ok(pointer.x >= 0 && pointer.x <= 100 && pointer.y >= 0 && pointer.y <= 100);
     }
   }
-  assert.equal(fitTourTarget({ left: -400, top: 20, width: 10, height: 10 }, { width: 390, height: 844 }), null);
+});
+
+test("the complete app canvas fits short windows and zoomed viewports without cropping", () => {
+  assert.equal(previewSize(650, 500).compact, true, "tall preview panes use readable compact app proportions");
+  for (const [width, height] of [[1074, 450], [850, 300], [700, 200], [400, 245], [344, 490], [240, 170]]) {
+    const size = previewSize(width!, height!);
+    assert.ok(size.width * size.scale <= width! + .001);
+    assert.ok(size.height * size.scale <= height! + .001);
+    assert.ok(size.scale > 0);
+  }
+});
+
+test("each profile tells a truthful page-to-Context story and previews supported review controls", () => {
+  const stories = new Set<string>();
+  for (const template of TEMPLATE_CARDS) {
+    const profile = tourProfile(template.id, "code");
+    stories.add(profile.story.page);
+    const steps = buildTour(template.id, "code");
+    const page = steps.findIndex((step) => step.id === "pages");
+    assert.equal(steps[page + 1]?.id, "context", "the saved work is the very next scene");
+    for (const id of ["arrange", "pages", "context", "approvals"]) {
+      const step = steps.find((step) => step.id === id)!;
+      const html = renderToStaticMarkup(<TourScene step={step} profile={profile} ms={step.duration} reduced />);
+      const fragment = document.createElement("div"); fragment.innerHTML = html;
+      const words = fragment.textContent ?? "";
+      assert.doesNotMatch(html, /<button|<a(?:\s|>)|<input|Untitled/);
+      if (id === "pages") {
+        assert.ok(words.includes(profile.story.person) && words.includes(profile.story.project));
+        assert.match(html, /On the board · due Tomorrow/);
+      }
+      if (id === "context") assert.ok(words.includes(profile.story.page));
+      if (id === "approvals") assert.match(html, profile.role === "engineer" || profile.role === "vibe" ? /Allow once/ : /Approve/);
+    }
+  }
+  assert.equal(stories.size, 6, "examples differ across all six role families");
 });
 
 const SHELL = {
@@ -76,9 +121,9 @@ async function until(check: () => boolean) {
 const shown = () => document.querySelector<HTMLElement>("[data-onboarding-tour]");
 async function click(selector: string) { await act(async () => (document.querySelector(selector) as HTMLButtonElement).click()); }
 
-async function mount({ progress = READY_ONBOARDING_TOUR as unknown, shared = false, fail = false, clear = true } = {}) {
+async function mount({ progress = READY_ONBOARDING_TOUR as unknown, shared = false, fail = false, clear = true, reduced = true } = {}) {
   if (clear) localStorage.clear();
-  document.documentElement.dataset.reduceMotion = "true";
+  document.documentElement.dataset.reduceMotion = String(reduced);
   window.history.replaceState(null, "", "/today");
   const realFetch = globalThis.fetch;
   const calls: { url: string; value: unknown }[] = [];
@@ -107,22 +152,29 @@ async function mount({ progress = READY_ONBOARDING_TOUR as unknown, shared = fal
   return { calls, paths, opener, done: async () => { await act(async () => root.unmount()); client.clear(); host.remove(); opener.remove(); globalThis.fetch = realFetch; delete document.documentElement.dataset.reduceMotion; } };
 }
 
-test("new users can navigate, go back, resume, dismiss with Escape and replay with focus contained", async () => {
+test("new users can change scenes, resume and replay while the real app stays on the same page", async () => {
   let view = await mount();
   try {
     await until(() => shown()?.dataset.onboardingTour === "welcome");
     assert.match(document.getElementById("tour-title")!.textContent!, /Mira/);
     assert.equal(view.opener.inert, true);
     assert.ok(shown()!.contains(document.activeElement));
-    assert.equal(document.querySelector(".tour-cursor"), null, "reduced motion has no simulated cursor");
+    assert.equal(document.querySelector(".film-pointer"), null, "reduced motion has no simulated cursor");
+    const button = document.querySelector("[data-tour-next]");
+    const frame = document.querySelector(".walkthrough-stage-frame");
+    assert.ok(document.querySelector<HTMLElement>(".film-app")?.hasAttribute("inert"));
+    assert.equal(document.querySelectorAll(".film-app button, .film-app a, .film-app input").length, 0);
     await click("[data-tour-next]");
     assert.equal(shown()?.dataset.onboardingTour, "today");
+    assert.equal(document.querySelector("[data-tour-next]"), button);
+    assert.equal(document.querySelector(".walkthrough-stage-frame"), frame);
+    assert.equal(window.location.pathname, "/today");
     await click("[data-tour-next]"); await click("[data-tour-next]");
     assert.equal(shown()?.dataset.onboardingTour, "board");
-    assert.equal(view.paths.at(-1), "/board");
-    await click(".tour-secondary");
+    assert.equal(view.paths.length, 0);
+    await click(".walkthrough-back");
     assert.equal(shown()?.dataset.onboardingTour, "arrange");
-    assert.equal(view.paths.at(-1), "/today");
+    assert.equal(view.paths.length, 0);
     await until(() => (view.calls.at(-1)?.value as { step?: string })?.step === "arrange");
     await view.done();
     view = await mount({ clear: false });
@@ -133,7 +185,7 @@ test("new users can navigate, go back, resume, dismiss with Escape and replay wi
     assert.equal(document.activeElement, view.opener);
     await act(async () => window.dispatchEvent(new Event("ensemble:onboarding-tour")));
     assert.equal(shown()?.dataset.onboardingTour, "welcome");
-    await click(".tour-close");
+    await click(".walkthrough-close");
   } finally { await view.done(); }
 });
 
@@ -142,7 +194,7 @@ test("existing and shared accounts stay uninterrupted; manual replay works for e
   try {
     await act(async () => window.dispatchEvent(new Event("ensemble:onboarding-tour")));
     assert.equal(shown()?.dataset.onboardingTour, "welcome");
-    await click(".tour-close");
+    await click(".walkthrough-close");
   } finally { await view.done(); }
   view = await mount({ shared: true });
   try {
@@ -160,7 +212,7 @@ test("appearance or another modal finishes before automatic onboarding opens", a
     assert.equal(shown()?.dataset.onboardingTour ?? null, null);
     await act(async () => modal.remove());
     await until(() => Boolean(shown()));
-    await click(".tour-close");
+    await click(".walkthrough-close");
   } finally { modal.remove(); await view.done(); }
   const blocker = document.createElement("div"); blocker.setAttribute("aria-modal", "true"); document.body.append(blocker);
   const deferred = await mount();
@@ -179,7 +231,7 @@ test("appearance or another modal finishes before automatic onboarding opens", a
 test("offline dismissal is remembered locally and completion only prefills a question", async () => {
   let view = await mount({ fail: true });
   try {
-    await until(() => Boolean(shown())); await click(".tour-close");
+    await until(() => Boolean(shown())); await click(".walkthrough-close");
     await view.done();
     view = await mount({ clear: false });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 750)); });
@@ -191,11 +243,38 @@ test("offline dismissal is remembered locally and completion only prefills a que
   window.addEventListener("ensemble:assistant-prefill", onDraft);
   try {
     await until(() => shown()?.dataset.onboardingTour === "finish");
-    await click(".tour-try-prompt");
+    await click(".walkthrough-ask");
     await until(() => drafts.length > 0);
     assert.equal(shown()?.dataset.onboardingTour ?? null, null);
     assert.match(drafts[0]!, /feature/);
     assert.ok(view.calls.every((call) => call.url.includes("/api/preferences/")), "no task creation, approvals, connections or model calls");
     assert.equal((view.calls.at(-1)?.value as { status?: string })?.status, "completed");
   } finally { window.removeEventListener("ensemble:assistant-prefill", onDraft); await view.done(); }
+});
+
+
+test("pause freezes the preview and chapter transitions keep the same Next button", async () => {
+  const view = await mount({ progress: { ...READY_ONBOARDING_TOUR, status: "active", step: "board" }, reduced: false });
+  try {
+    await until(() => shown()?.dataset.onboardingTour === "board");
+    await until(() => Number(document.querySelector<HTMLElement>(".walkthrough-stage")?.dataset.playbackMs) > 100);
+    await click('[aria-label="Pause scene"]');
+    const paused = document.querySelector<HTMLElement>(".walkthrough-stage")!.dataset.playbackMs;
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 180)); });
+    assert.equal(document.querySelector<HTMLElement>(".walkthrough-stage")!.dataset.playbackMs, paused);
+    const next = document.querySelector<HTMLButtonElement>("[data-tour-next]")!;
+    await click("[data-tour-next]");
+    assert.equal(document.querySelector("[data-tour-next]"), next);
+    assert.equal(next.textContent, "Next");
+    assert.equal(next.getAttribute("aria-disabled"), "true");
+    assert.equal(document.activeElement, next);
+    assert.equal(document.querySelectorAll(".film-layer").length, 2);
+    await until(() => !next.hasAttribute("aria-disabled"));
+    assert.equal(shown()?.dataset.onboardingTour, "pages");
+    assert.equal(document.querySelectorAll(".film-layer").length, 1);
+    assert.equal(view.paths.length, 0);
+    assert.equal(window.location.pathname, "/today");
+    await click('[aria-label="Restart scene"]');
+    assert.ok(Number(document.querySelector<HTMLElement>(".walkthrough-stage")!.dataset.playbackMs) < 100);
+  } finally { await view.done(); }
 });

@@ -3,7 +3,7 @@
 /** @jsxImportSource react */
 
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Keyboard, Layers, LayoutTemplate, LogOut, Moon, MousePointer2, Plug, Settings, Sparkles, Sun, UserRound } from "lucide-react";
+import { Keyboard, Layers, LayoutTemplate, LogOut, Moon, MousePointer2, Palette, Plug, Settings, Sparkles, Sun, UserRound } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import type { AppearanceSettings } from "@ensemble/shared-types";
@@ -46,7 +46,15 @@ export function AccountMenu() {
   const router = useRouter();
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
   const [appearance] = usePersistentState<AppearanceSettings>(APPEARANCE_KEY, DEFAULT_APPEARANCE);
-  const dark = appearance.theme !== "light";
+  const [systemLight, setSystemLight] = useState(false);
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: light)");
+    const read = () => setSystemLight(media.matches);
+    read();
+    media.addEventListener("change", read);
+    return () => media.removeEventListener("change", read);
+  }, []);
+  const dark = appearance.theme === "system" ? !systemLight : appearance.theme === "dark";
   const [remembered, setRemembered] = useState<RememberedUser | null>(null);
   useEffect(() => {
     const me = shell.data;
@@ -110,6 +118,7 @@ export function AccountMenu() {
           </div>
           <div className="my-1 h-px bg-line" />
           <Row icon={UserRound} onSelect={() => go(close, "/settings?tab=account")}>Account settings</Row>
+          <Row icon={Palette} onSelect={() => go(close, "/settings?tab=account#appearance")}>Appearance</Row>
           <Row icon={Layers} onSelect={() => go(close, "/settings?tab=spaces")}>Spaces</Row>
           <Row icon={Sparkles} onSelect={() => go(close, "/settings?tab=assistant")}>Assistant and models</Row>
           <Row icon={Plug} onSelect={() => go(close, "/settings?tab=connections")}>Connected apps</Row>

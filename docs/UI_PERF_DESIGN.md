@@ -297,7 +297,7 @@ Round 1 was a careful Linear-style recolor: near-black canvas, one violet accent
 
 ### Accent setting
 
-Five presets, hand-checked for WCAG AA in both themes: indigo (default), tide, ember, rose, brass. Each preset has a dark-theme hex and a light-theme hex. A custom `#rrggbb` overrides the preset. The choice is written to `appearance.accent` / `appearance.accentCustom` in the user's server settings, and mirrored in `localStorage` under `ensemble.appearance` so the boot script can paint `--accent` before first paint.
+Eight presets are available in both modes: indigo (default), tide, ember, rose, brass, orchid, moss and sky. Each preset has a dark-mode hex and a light-mode hex. A custom `#rrggbb` overrides the preset. The choice is written to `appearance.accent` / `appearance.accentCustom` in the user's server settings, and mirrored in `localStorage` under `ensemble.appearance` so the boot script can paint `--accent` before first paint. Since 13 Oct 2026, five additional named color themes supply independent surfaces; `resolveAccent` checks their canvas, sidebar, panel, raised and tile colors, keeping at least 4.5:1 contrast for accent text and button labels. The existing Ensemble palette retains its original accent behavior.
 
 Shades are derived, not stored: `--accent-fg` is white or `#14120f`, whichever clears 4.5:1 on the fill; if neither does, lightness is walked until one does (and the color still clears the canvas, so links and rings stay readable). `--accent-hover` mixes the fill 14% toward white in dark and toward black in light. Soft fills and the page wash are `color-mix` at 16% and 14%. Charts and `:focus-visible` rings read the same variables.
 
@@ -307,7 +307,7 @@ Shades are derived, not stored: `--accent-fg` is white or `#14120f`, whichever c
 - **Board.** Quieter column headers, "New task" instead of "New page", cards lift on hover and no longer wear a page icon.
 - **Context.** People and projects become entity plates (name, a line of role, chips for links) instead of property tables. Repos keep a row, with a kind dot and project chips.
 - **Graph.** A canvas constellation, lazy-loaded with the existing dynamic import (no graph library). Nodes sit in kind bands in one O(n) pass, so a few hundred stay cheap and the seed graph is readable instead of a hairball. Labels yield when they would collide, and sit on an opaque chip so a thread never cuts a word. Hover keeps every other label and draws non-neighbours at about 30% instead of hiding them. Drag pins a node, drag the background pans, the wheel or a pinch zooms. Arrow keys pan, plus and minus zoom, Escape leaves full screen, and the focused node wears an accent ring. Kind chips expose `aria-pressed`. Pointer moves are drawn once per frame. On a narrow screen the first fit stays large enough to read and aligns to the top left.
-- **Settings.** Theme is a segmented control. Text size is a drawn slider. Fonts are selectable plates without a stock radio. Accent presets and a custom picker live in Appearance.
+- **Settings.** Light/dark/system mode is a segmented control. Named color themes are six keyboard-selectable cards with paired light/dark miniatures, derived from the same palette source as the app. Text size is a drawn slider. Fonts are selectable plates without a stock radio. Accent presets and a custom picker live in Appearance.
 - **Shell.** The live-updates pill folds into the activity control. Undo and redo sit in one quiet group.
 - **Assistant.** The empty state names the page you have open and offers prompts from the entities already in memory. It is not a blank chat.
 - **Metrics.** Bars and the donut use the accent and two mixes, not a separate pastel set.
@@ -387,7 +387,7 @@ An API outage shows “Reconnecting to Ensemble…”, “Waiting for Ensemble t
 
 ## 9. Static routes (re-verification)
 
-`cookies()` in the root layout had forced every route to render dynamically. It is gone. The build marks the same routes static as `main` (`○`), and only `/projects/[id]` and `/tasks/[id]` stay dynamic (`ƒ`). The boot script reads `ensemble_accent` from `document.cookie` before paint and prefers whichever of the cookie and `localStorage` is newer. A custom hex is stored as `c:#rrggbb`. Settings and the theme toggle call `publishAppearance`, so the cookie moves on the same click.
+`cookies()` in the root layout had forced every route to render dynamically. It is gone. The build marks the same routes static as `main` (`○`), and only `/projects/[id]` and `/tasks/[id]` stay dynamic (`ƒ`). The boot script reads `ensemble_accent` and `ensemble_color_theme` from `document.cookie` before paint and prefers whichever of the cookie and `localStorage` is newer. A custom hex is stored as `c:#rrggbb`; a color theme is one of the six validated palette IDs. Settings and the theme toggle call `publishAppearance`, so the cookies move on the same click. Root palette CSS is static, with no data query or animation; decorative SVGs/CSS gradients paint only the main canvas. The mode switch keeps the chosen palette.
 
 Figtree stays preloaded. Fraunces 500 stays `display: swap` with a metric fallback and is not preloaded. A cold visit with the cache disabled still ends on Fraunces for the title and Figtree for the body, with CLS about 0.003.
 

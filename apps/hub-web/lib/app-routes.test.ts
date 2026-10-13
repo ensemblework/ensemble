@@ -83,7 +83,7 @@ test("a signed-in data request for an unknown URL stays in the app", async () =>
 test("a signed-in document for an unknown URL is a 404 inside the hub", async () => {
   const original = globalThis.fetch;
   globalThis.fetch = (async () =>
-    new Response(JSON.stringify({ onboardingComplete: true, appearance: { accent: "violet", accentAt: 1 } }), {
+    new Response(JSON.stringify({ onboardingComplete: true, appearance: { accent: "violet", accentAt: 1, colorTheme: "lagoon" } }), {
       status: 200,
       headers: { "content-type": "application/json" },
     })) as typeof fetch;
@@ -97,6 +97,7 @@ test("a signed-in document for an unknown URL is a 404 inside the hub", async ()
     assert.equal(response.headers.get("location"), null);
     assert.match(response.headers.get("x-middleware-rewrite") ?? "", /\/lost$/);
     assert.match(response.headers.get("set-cookie") ?? "", /ensemble_accent=violet(?:@|%40)1/);
+    assert.match(response.headers.get("set-cookie") ?? "", /ensemble_color_theme=lagoon(?:@|%40)1/);
   } finally {
     globalThis.fetch = original;
   }

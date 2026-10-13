@@ -24,12 +24,12 @@ export function Notifier() {
     const server = value.appearance;
     const local = readAppearance();
     const custom = server.accentCustom ?? null;
-    const differs = (local.accent ?? "indigo") !== server.accent || (local.accentCustom ?? null) !== custom;
+    const differs = (local.accent ?? "indigo") !== server.accent || (local.accentCustom ?? null) !== custom || local.colorTheme !== server.colorTheme;
     if (!differs) return;
-    // The settings save is debounced. A navigation before it lands must not paint the old accent back.
+    // The save is debounced; navigation must not restore a stale accent or color theme.
     const writtenAt = (local as { accentAt?: number }).accentAt ?? 0;
     if (writtenAt && Date.now() - writtenAt < 8000) return;
-    publishAppearance({ ...local, accent: server.accent, accentCustom: custom });
+    publishAppearance({ ...local, colorTheme: server.colorTheme, accent: server.accent, accentCustom: custom });
   }, [settings.data]);
 
   useEffect(() => {

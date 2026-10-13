@@ -52,6 +52,8 @@ By default each space keeps its own settings. `copySettings` copies:
 - model API keys (`model_credentials`), except the paired-device token and the GitHub clone token;
 - `ui.*` preferences, such as keyboard shortcuts, except `ui.onboarding-tour` (each space keeps its own tour progress).
 
+The named color palette (`appearance.colorTheme`) and preset/custom accent are part of `hub.settings`, so copy/sync includes them. The shell applies the active space's palette and accent; light/dark/system mode, font, text size and motion remain that browser's choices (`components/shell/notifier.tsx`).
+
 Connected apps never copy or sync. They bring a space its data, and sharing them would share context.
 
 With sync on, `mirrorSettings` copies the writing space's settings to every other space after `PATCH /api/settings`, `PUT`/`DELETE /api/model-keys/:provider`, and `PUT`/`DELETE /api/preferences/ui.*`. Tour progress never copies or syncs; a progress write does not trigger mirroring. A mirror failure is logged and never fails the write.
@@ -65,7 +67,7 @@ With sync on, `mirrorSettings` copies the writing space's settings to every othe
 - **Switcher** (`components/shell/space-switcher.tsx`): the top of the sidebar shows the open space's icon and name. The menu lists every space with its template, a check on the open one, spaces **shared with you** (with the owner's avatar), **Share ‹space›…**, **New space** and **Manage spaces**. In the collapsed rail it is the icon alone. The command palette has "Switch to ‹space›" and "New space"; the avatar menu has Spaces.
 - **Switching** (`lib/spaces.ts`): calls the switch route, shows the existing splash, and reloads into Today (the board, for a space shared with you) so nothing from the old space stays on screen. Other open tabs hear it on a `BroadcastChannel`, clear their per-tab caches, and reload, because the cookie is shared. Deleting the open space announces the first space the same way. The per-tab module and plots caches are keyed by space.
 - **New space** (`/spaces/new`, full screen like `/start`): name with role-based suggestions and an emoji; a template from the six for the account's signup role, previewed live as Today, Board and Context with the shared picker (`components/onboarding/template-picker.tsx`, also used by `/start`); then settings: bring a copy from another space (default), keep every space in sync, or start fresh. A note lists what always stays separate. Accounts without a signup role pick one there.
-- After the new space opens on Today, its guided tour introduces the template and relevant features. Completion and dismissal belong to that space; owners can replay it from the account menu ([02 §16](02_MODULE_INTERACTION_HUB_UI.md#16-accounts-and-public-signup)).
+- After the new space opens on Today, its contained walkthrough demonstrates the template and relevant features with fictional sample data. It leaves the real space's route and scroll position intact. Completion and dismissal belong to that space; owners can replay it from the account menu ([02 §16](02_MODULE_INTERACTION_HUB_UI.md#16-accounts-and-public-signup)).
 - **Settings → Spaces** (`components/settings/tab-spaces.tsx`): rename in place, change the icon, open, delete (type the name), the sync switch, and a one-time copy into the open space.
 
 ## 7. Limits

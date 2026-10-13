@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="600" viewBox="0 0 900 600" fill="none" stroke="white">
+<defs><pattern id="dots" width="32" height="32" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r=".65" fill="white" fill-opacity=".055" stroke="none"/></pattern></defs>
+<rect width="900" height="600" fill="url(#dots)" stroke="none"/>
+<g stroke-opacity=".045" stroke-width="1"><path d="M621 32v144h200M653 0v144h200M709 67h112v112H709ZM756 225v30m-15-15h30M535 98v20m-10-10h20M866 367h-84v84h-84"/><circle cx="712" cy="480" r="50"/><path d="M646 480h132m-66-66v132"/></g>
+</svg>

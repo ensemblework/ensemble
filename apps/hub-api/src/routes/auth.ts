@@ -185,6 +185,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
         accent: settings.appearance.accent,
         accentCustom: settings.appearance.accentCustom,
         theme: settings.appearance.theme,
+        colorTheme: settings.appearance.colorTheme,
         accentAt: pref?.updatedAt.getTime() ?? 0,
       },
       onboardingComplete: request.authVia === "bypass" || Boolean((space ?? user)?.onboardingCompletedAt),

@@ -93,8 +93,12 @@ export type AccentPreset = z.infer<typeof AccentPreset>;
 export const MotionTheme = z.enum(["expressive", "minimal-quiet", "minimal-dot"]);
 export type MotionTheme = z.infer<typeof MotionTheme>;
 
+export const AppColorTheme = z.enum(["ensemble", "graphite", "lagoon", "aurora", "juniper", "blueprint"]);
+export type AppColorTheme = z.infer<typeof AppColorTheme>;
+
 export const AppearanceSettings = z.object({
   theme: z.enum(["dark", "light", "system"]).default("dark"),
+  colorTheme: AppColorTheme.default("ensemble"),
   textScale: z.number().min(80).max(130).default(100),
   font: AppFont.default("system"),
   /** Expressive is the default. Minimal suites share the same slots. */
