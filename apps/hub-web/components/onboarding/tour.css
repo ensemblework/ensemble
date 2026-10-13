@@ -295,7 +295,7 @@
   .walkthrough-next { height: 44px; width: 114px; }
   .walkthrough-ask { bottom: 108px; right: 20px; }
 }
-@media (max-height: 580px) and (min-width: 640px) {
+@media (max-height: 680px) and (min-width: 640px) {
   .guided-tour { padding: 12px; }
   .walkthrough { height: calc(100dvh - 24px); grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); grid-template-rows: 48px minmax(0, 1fr) 64px; border-radius: 18px; }
   .walkthrough-header, .walkthrough-footer { grid-column: 1 / -1; }

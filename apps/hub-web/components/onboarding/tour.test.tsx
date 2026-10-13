@@ -70,6 +70,7 @@ test("demonstrations are paced, eased, bounded and held at their final frame", (
 });
 
 test("the complete app canvas fits short windows and zoomed viewports without cropping", () => {
+  assert.equal(previewSize(650, 500).compact, true, "tall preview panes use readable compact app proportions");
   for (const [width, height] of [[1074, 450], [850, 300], [700, 200], [400, 245], [344, 490], [240, 170]]) {
     const size = previewSize(width!, height!);
     assert.ok(size.width * size.scale <= width! + .001);

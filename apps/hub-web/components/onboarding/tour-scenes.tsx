@@ -21,7 +21,7 @@ const NAV = [
 ] as const;
 
 export function previewSize(width: number, height: number) {
-  const compact = width < 600;
+  const compact = width < 600 || width / height < 1.6;
   const canvasWidth = compact ? 480 : 1040;
   const canvasHeight = 500;
   return { compact, width: canvasWidth, height: canvasHeight, scale: Math.max(0, Math.min(width / canvasWidth, height / canvasHeight)) };
