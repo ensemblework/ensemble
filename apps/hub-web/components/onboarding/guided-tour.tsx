@@ -12,8 +12,8 @@ import { api } from "@/lib/api";
 import { useModalFocus } from "@/lib/modal-focus";
 import { useToast } from "@/components/toast";
 import { buildTour, canAutoStartTour, tourProfile, type TourStep } from "./tour-plan";
-import { CHAPTER_TRANSITION, SCENE_DURATION, useScenePlayback } from "./tour-playback";
-import { DemoApp, TourScene } from "./tour-scenes";
+import { CHAPTER_TRANSITION, useScenePlayback } from "./tour-playback";
+import { DemoApp, TourScene, FitPreview } from "./tour-scenes";
 
 type Shell = Awaited<ReturnType<typeof api.shell>>;
 function localProgress(key: string) {
@@ -35,7 +35,7 @@ export function TourSession({ shell, scope }: { shell: Shell; scope: string }) {
   const toast = useToast();
   const prefs = useQuery({ queryKey: ["preferences"], queryFn: api.preferences, staleTime: 30_000 });
   const steps = useMemo(() => buildTour(shell.onboardingTemplateId, shell.modules), [shell.onboardingTemplateId, shell.modules]);
-  const profile = useMemo(() => tourProfile(shell.onboardingTemplateId), [shell.onboardingTemplateId]);
+  const profile = useMemo(() => tourProfile(shell.onboardingTemplateId, shell.modules), [shell.onboardingTemplateId, shell.modules]);
   const storageKey = `ensemble.tour:${scope}`;
   const [id, setId] = useState<string | null>(null);
   const [reduced, setReduced] = useState(false);
@@ -138,7 +138,7 @@ function Walkthrough({ layer, steps, index, profile, reduced, name, onSkip, onGo
   const [departing, setDeparting] = useState<{ step: TourStep; ms: number } | null>(null);
   const [transitioning, setTransitioning] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const playback = useScenePlayback(current.id, reduced, transitioning);
+  const playback = useScenePlayback(current.id, current.duration, reduced, transitioning);
   const next = useRef<HTMLButtonElement>(null);
   useEffect(() => { next.current?.focus({ preventScroll: true }); return () => { if (timer.current) clearTimeout(timer.current); }; }, []);
   const go = (to: number) => {
@@ -157,15 +157,15 @@ function Walkthrough({ layer, steps, index, profile, reduced, name, onSkip, onGo
     <div className="walkthrough-scrim" aria-hidden />
     <div className="walkthrough" data-transitioning={transitioning || undefined} role="dialog" aria-modal="true" aria-labelledby="tour-title" aria-describedby="tour-description">
       <header className="walkthrough-header"><div><span className="walkthrough-dot" /><strong>Meet your Ensemble</strong><span className="walkthrough-preview-label">A guided preview</span></div><button type="button" className="walkthrough-close" aria-label="Skip tour" onClick={onSkip}><X size={17} /></button></header>
-      <div className="walkthrough-stage" data-playback-ms={Math.round(playback.ms)}><div className="walkthrough-stage-frame"><DemoApp step={current} chapters={steps}>
+      <div className="walkthrough-stage" data-playback-ms={Math.round(playback.ms)}><div className="walkthrough-stage-frame"><FitPreview><DemoApp step={current} chapters={steps}>
         {departing && <div className="film-layer" data-phase="out"><TourScene step={departing.step} profile={profile} ms={departing.ms} reduced={reduced} /></div>}
         <div key={current.id} className="film-layer" data-phase={transitioning ? "in" : undefined}><TourScene step={current} profile={profile} ms={playback.ms} reduced={reduced} /></div>
-      </DemoApp></div><span className="walkthrough-sample-label">Example workspace</span></div>
+      </DemoApp></FitPreview></div><span className="walkthrough-sample-label">Example workspace</span></div>
       <div className="walkthrough-caption">
         {departing && <div className="walkthrough-copy" data-phase="out" aria-hidden><span className="walkthrough-kicker">{departing.step.label}</span><h2>{departing.step.title}</h2><p>{departing.step.body}</p></div>}
         <div key={current.id} className="walkthrough-copy" data-phase={transitioning ? "in" : undefined}><span className="walkthrough-kicker">{current.label}</span><h2 id="tour-title">{current.id === "welcome" && name && !name.includes("@") && name !== "Local" ? `Welcome in, ${name}.` : current.title}</h2><p id="tour-description">{current.body}</p></div>
       </div>
-      <footer className="walkthrough-footer"><div className="walkthrough-playback"><button type="button" className="walkthrough-player-button" aria-label={playback.ms >= SCENE_DURATION ? "Replay scene" : playback.playing ? "Pause scene" : "Play scene"} disabled={reduced || transitioning} onClick={playback.toggle}>{playback.playing && playback.ms < SCENE_DURATION ? <Pause size={15} /> : <Play size={15} />}</button><button type="button" className="walkthrough-player-button" aria-label="Restart scene" disabled={reduced || transitioning} onClick={playback.restart}><RotateCcw size={14} /></button><div className="walkthrough-player-status"><span>{reduced ? "Reduced motion" : `${seconds(playback.ms)} / 0:12`}</span><div className="walkthrough-scene-progress" role="progressbar" aria-label="Scene playback" aria-valuemin={0} aria-valuemax={12} aria-valuenow={Math.floor(playback.ms / 1000)}><i style={{ width: `${playback.ms / SCENE_DURATION * 100}%` }} /></div></div></div>
+      <footer className="walkthrough-footer"><div className="walkthrough-playback"><button type="button" className="walkthrough-player-button" aria-label={playback.ms >= current.duration ? "Replay scene" : playback.playing ? "Pause scene" : "Play scene"} disabled={reduced || transitioning} onClick={playback.toggle}>{playback.playing && playback.ms < current.duration ? <Pause size={15} /> : <Play size={15} />}</button><button type="button" className="walkthrough-player-button" aria-label="Restart scene" disabled={reduced || transitioning} onClick={playback.restart}><RotateCcw size={14} /></button><div className="walkthrough-player-status"><span>{reduced ? "Reduced motion" : `${seconds(playback.ms)} / ${seconds(current.duration)}`}</span><div className="walkthrough-scene-progress" role="progressbar" aria-label="Scene playback" aria-valuemin={0} aria-valuemax={current.duration / 1000} aria-valuenow={Math.floor(playback.ms / 1000)}><i style={{ width: `${playback.ms / current.duration * 100}%` }} /></div></div></div>
         <div className="walkthrough-chapters" aria-label="Tour chapters">{steps.map((step, i) => <button type="button" key={step.id} aria-label={`Chapter ${i + 1}: ${step.label}`} aria-current={i === index ? "step" : undefined} aria-disabled={transitioning || undefined} onClick={() => go(i)}><span data-complete={i < index || undefined} /></button>)}<small>{String(index + 1).padStart(2, "0")} / {String(steps.length).padStart(2, "0")}</small></div>
         <div className="walkthrough-navigation"><button type="button" className="walkthrough-back" disabled={index === 0} aria-disabled={transitioning || undefined} onClick={() => go(index - 1)}><ArrowLeft size={15} /><span>Back</span></button><button ref={next} type="button" className="walkthrough-next" data-tour-next aria-disabled={transitioning || undefined} onClick={() => { if (!transitioning) { if (final) onFinish(false); else go(index + 1); } }}>{final ? "Done" : "Next"}{final ? <Check size={15} /> : <ArrowRight size={15} />}</button></div>
       </footer>
