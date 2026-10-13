@@ -6,5 +6,5 @@ const ANONYMOUS =
   /^\/(?:icon\.svg|favicon\.ico|robots\.txt|apple-icon(?:\.png)?|apple-touch-icon\.png|manifest\.webmanifest|site\.webmanifest|icon(?:-maskable)?-\d+\.png|brand-icon-\d+\.png|og-image\.png|opengraph-image(?:\.png)?|twitter-image(?:\.png)?|offline\.html|404\.html|500\.html)$/;
 
 export function isAnonymousAsset(pathname: string): boolean {
-  return ANONYMOUS.test(pathname);
+  return ANONYMOUS.test(pathname) || /^\/themes\/(lagoon|juniper|blueprint)\.svg$/.test(pathname);
 }

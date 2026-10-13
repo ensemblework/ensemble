@@ -134,7 +134,7 @@ export function ChartView({
         observer = new ResizeObserver(resize);
         observer.observe(host.current);
         themeObserver = new MutationObserver(() => paint(false));
-        themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "style"] });
+        themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-color-theme", "style"] });
       }).catch(() => {
         if (!disposed && host.current) host.current.dataset.plotChartError = "1";
       });

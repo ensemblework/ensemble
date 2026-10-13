@@ -52,6 +52,8 @@ By default each space keeps its own settings. `copySettings` copies:
 - model API keys (`model_credentials`), except the paired-device token and the GitHub clone token;
 - `ui.*` preferences, such as keyboard shortcuts, except `ui.onboarding-tour` (each space keeps its own tour progress).
 
+The named color palette (`appearance.colorTheme`) and preset/custom accent are part of `hub.settings`, so copy/sync includes them. The shell applies the active space's palette and accent; light/dark/system mode, font, text size and motion remain that browser's choices (`components/shell/notifier.tsx`).
+
 Connected apps never copy or sync. They bring a space its data, and sharing them would share context.
 
 With sync on, `mirrorSettings` copies the writing space's settings to every other space after `PATCH /api/settings`, `PUT`/`DELETE /api/model-keys/:provider`, and `PUT`/`DELETE /api/preferences/ui.*`. Tour progress never copies or syncs; a progress write does not trigger mirroring. A mirror failure is logged and never fails the write.

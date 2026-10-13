@@ -3,6 +3,8 @@
 import { RotateCcw } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { AppearanceSettings, MotionTheme } from "@ensemble/shared-types";
+import { colorThemeSurfaces } from "@/lib/color-themes";
+import { ColorThemePicker } from "./color-theme-picker";
 import { ACCENT_PRESETS, resolveAccent } from "@/lib/accent";
 import { APPEARANCE_KEY, DEFAULT_APPEARANCE, markAccentWrite, publishAppearance, usePersistentState } from "@/lib/prefs";
 import { ThinkingStatus } from "@/components/motion/slot";
@@ -46,7 +48,7 @@ export function AppearanceSection({ patch }: { patch: Patch }) {
     media.addEventListener("change", onChange);
     return () => media.removeEventListener("change", onChange);
   }, [appearance.theme]);
-  const adjusted = custom && /^#[0-9a-fA-F]{6}$/.test(custom) ? resolveAccent(custom, theme) : null;
+  const adjusted = custom && /^#[0-9a-fA-F]{6}$/.test(custom) ? resolveAccent(custom, theme, colorThemeSurfaces(appearance.colorTheme, theme)) : null;
   const [autoNote, setAutoNote] = useState(false);
   useEffect(() => {
     try {
@@ -66,8 +68,8 @@ export function AppearanceSection({ patch }: { patch: Patch }) {
   };
   return (
     <SectionCard title="Appearance" description="Saved with your account and in this browser, so the next page does not flash the default. System follows your device.">
-      <Segmented
-        label="Theme"
+      <div data-jump-label="Theme"><Segmented
+        label="Mode"
         value={appearance.theme}
         onChange={(theme) => update({ theme })}
         options={[
@@ -75,7 +77,8 @@ export function AppearanceSection({ patch }: { patch: Patch }) {
           { id: "dark", label: "Dark" },
           { id: "system", label: "System" },
         ]}
-      />
+      /></div>
+      <ColorThemePicker appearance={appearance} onChange={(colorTheme) => update({ colorTheme })} />
       <div className="mt-6">
         <div data-jump-label="Accent" className="text-[13px] font-medium">Accent</div>
         <p className="mt-0.5 text-[12.5px] text-muted">Indigo is the default. Presets are tuned for dark and light. A custom colour keeps text on it readable.</p>

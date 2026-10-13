@@ -27,7 +27,7 @@ export function usePlotTheme() {
     };
     read();
     const observer = new MutationObserver(read);
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "style", "class", "data-accent"] });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "data-color-theme", "style", "class", "data-accent"] });
     return () => observer.disconnect();
   }, []);
   return theme;

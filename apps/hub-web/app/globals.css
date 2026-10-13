@@ -2387,3 +2387,6 @@ html[data-sidebar="rail"] .app-sidebar:not(.sidebar-mobile) nav.pages-nav { marg
 @media (prefers-reduced-motion: reduce) { .auth-verify { animation: none; } }
 
 ::highlight(ensemble-search) { background: rgb(var(--accent-rgb) / .3); color: var(--ink); }
+
+/* Background artwork is static, original, and painted behind content without an overlay. */
+[data-theme-canvas] { background-color: var(--bg); background-image: var(--theme-canvas-image, none); background-size: var(--theme-canvas-size, 900px 600px); background-position: right top; background-repeat: no-repeat; background-blend-mode: var(--theme-canvas-blend, normal); }
