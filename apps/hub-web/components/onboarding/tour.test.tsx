@@ -13,8 +13,9 @@ import { TEMPLATE_CARDS } from "@ensemble/shared-types/manifest";
 import { api } from "@/lib/api";
 import { OnboardingTour } from "./guided-tour";
 import { buildTour, canAutoStartTour, tourProfile } from "./tour-plan";
-import { demoBeat, SCENE_DURATION, CHAPTER_TRANSITION } from "./tour-playback";
-import { demoCursor } from "./tour-scenes";
+import { demoBeat, CHAPTER_TRANSITION } from "./tour-playback";
+import { renderToStaticMarkup } from "react-dom/server";
+import { demoCursor, previewSize, TourScene } from "./tour-scenes";
 
 (globalThis as { React?: typeof React }).React = React;
 Object.defineProperty(globalThis, "localStorage", { configurable: true, value: window.localStorage });
@@ -33,6 +34,8 @@ test("all 36 templates use their own role and enabled fictional scenes without l
     assert.equal(steps.some((step) => step.id === "meetings"), template.role === "manager");
     const restricted = buildTour(template.id, "diagrams");
     assert.ok(!restricted.some((step) => step.id === "code"));
+    const approval = restricted.find((step) => step.id === "approvals")!;
+    assert.match(renderToStaticMarkup(<TourScene step={approval} profile={tourProfile(template.id, "diagrams")} ms={approval.duration} reduced />), /SEND EMAIL/, "profiles with Code disabled get a relevant outgoing approval");
     assert.equal(new Set(steps.map((step) => step.id)).size, steps.length);
   }
   assert.equal(tourProfile("removed-template").role, "general");
@@ -48,7 +51,12 @@ test("tour eligibility preserves established accounts and setup; progress reject
 });
 
 test("demonstrations are paced, eased, bounded and held at their final frame", () => {
-  assert.equal(SCENE_DURATION, 12000);
+  const durations = Object.fromEntries(buildTour("branch-desk", "code").map((step) => [step.id, step.duration]));
+  assert.deepEqual(durations, { welcome: 5000, today: 6000, arrange: 5000, board: 5000, pages: 8000, context: 6000, code: 6000, approvals: 10000, connections: 7000, assistant: 10000, finish: 5000 });
+  assert.equal(demoCursor("today", 900).x, 31);
+  assert.equal(demoCursor("today", 2700).x, 31, "pointer holds still for reading after a 400 ms move");
+  assert.equal(demoCursor("arrange", 3250).press, 1, "click coincides with Add to Today");
+  assert.deepEqual(demoCursor("arrange", 3250, { "place-tile": { x: 83, y: 74 } }), { x: 83, y: 74, press: 1 }, "click lands on the measured preview control");
   assert.ok(CHAPTER_TRANSITION >= 600);
   assert.equal(demoBeat(500, 1000, 3000), 0);
   assert.equal(demoBeat(2000, 1000, 3000), .5);
@@ -59,6 +67,41 @@ test("demonstrations are paced, eased, bounded and held at their final frame", (
       assert.ok(pointer.x >= 0 && pointer.x <= 100 && pointer.y >= 0 && pointer.y <= 100);
     }
   }
+});
+
+test("the complete app canvas fits short windows and zoomed viewports without cropping", () => {
+  assert.equal(previewSize(650, 500).compact, true, "tall preview panes use readable compact app proportions");
+  for (const [width, height] of [[1074, 450], [850, 300], [700, 200], [400, 245], [344, 490], [240, 170]]) {
+    const size = previewSize(width!, height!);
+    assert.ok(size.width * size.scale <= width! + .001);
+    assert.ok(size.height * size.scale <= height! + .001);
+    assert.ok(size.scale > 0);
+  }
+});
+
+test("each profile tells a truthful page-to-Context story and previews supported review controls", () => {
+  const stories = new Set<string>();
+  for (const template of TEMPLATE_CARDS) {
+    const profile = tourProfile(template.id, "code");
+    stories.add(profile.story.page);
+    const steps = buildTour(template.id, "code");
+    const page = steps.findIndex((step) => step.id === "pages");
+    assert.equal(steps[page + 1]?.id, "context", "the saved work is the very next scene");
+    for (const id of ["arrange", "pages", "context", "approvals"]) {
+      const step = steps.find((step) => step.id === id)!;
+      const html = renderToStaticMarkup(<TourScene step={step} profile={profile} ms={step.duration} reduced />);
+      const fragment = document.createElement("div"); fragment.innerHTML = html;
+      const words = fragment.textContent ?? "";
+      assert.doesNotMatch(html, /<button|<a(?:\s|>)|<input|Untitled/);
+      if (id === "pages") {
+        assert.ok(words.includes(profile.story.person) && words.includes(profile.story.project));
+        assert.match(html, /On the board · due Tomorrow/);
+      }
+      if (id === "context") assert.ok(words.includes(profile.story.page));
+      if (id === "approvals") assert.match(html, profile.role === "engineer" || profile.role === "vibe" ? /Allow once/ : /Approve/);
+    }
+  }
+  assert.equal(stories.size, 6, "examples differ across all six role families");
 });
 
 const SHELL = {
@@ -227,7 +270,7 @@ test("pause freezes the preview and chapter transitions keep the same Next butto
     assert.equal(document.activeElement, next);
     assert.equal(document.querySelectorAll(".film-layer").length, 2);
     await until(() => !next.hasAttribute("aria-disabled"));
-    assert.equal(shown()?.dataset.onboardingTour, "context");
+    assert.equal(shown()?.dataset.onboardingTour, "pages");
     assert.equal(document.querySelectorAll(".film-layer").length, 1);
     assert.equal(view.paths.length, 0);
     assert.equal(window.location.pathname, "/today");
