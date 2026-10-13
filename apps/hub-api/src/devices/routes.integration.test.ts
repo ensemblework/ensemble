@@ -23,6 +23,7 @@ import { agentRoutes } from "../routes/agents.js";
 import { authRoutes } from "../routes/auth.js";
 import { decisionRoutes } from "../routes/decisions.js";
 import "../types.js";
+import { runRoutes } from "../routes/runs.js";
 import { recoverServerJobs, tickServerQueue } from "../workspace/worker.js";
 import { deviceRoutes } from "./routes.js";
 
@@ -1113,6 +1114,117 @@ test("a device cannot post server-only event kinds", async (t) => {
     assert.equal(allowed.statusCode, 200);
     const kinds = (await prisma.workspaceEvent.findMany({ where: { jobId: job.id }, orderBy: { sequence: "asc" } })).map((event) => event.kind);
     assert.deepEqual(kinds, ["prepared", "tool", "command"]);
+  } finally {
+    await app.close();
+    await cleanup(user.id);
+  }
+});
+
+test("a computer's steps and totals become the run's trace, redacted, with the model that answered", async (t) => {
+  if (!(await databaseReady())) return t.skip("Postgres is not reachable");
+  const user = await prisma.user.create({
+    data: { email: `trace-${Date.now()}-${randomBytes(3).toString("hex")}@ensemble.test`, name: "Trace" },
+  });
+  const app = Fastify();
+  app.decorate("prisma", prisma);
+  app.decorate("redis", { get: async () => null, set: async () => "OK", del: async () => 1, sadd: async () => 1 } as unknown as Redis);
+  install(app);
+  await app.register(deviceRoutes);
+  await app.register(runRoutes);
+  const session = await sessionFor(user.id);
+  try {
+    const paired = await app.inject({ method: "POST", url: "/api/devices/pair", headers: cookie(session) });
+    const registered = await app.inject({
+      method: "POST",
+      url: "/api/devices/register",
+      payload: { code: (paired.json() as { code: string }).code, name: "Studio Mac", platform: "macos", capabilities: {} },
+    });
+    const token = (registered.json() as { token: string }).token;
+    const deviceId = (registered.json() as { device: { id: string } }).device.id;
+    const task = await prisma.task.create({ data: { userId: user.id, title: "Summarise rea", createdBy: "me", status: "in_progress", owner: "agent" } });
+    const job = await prisma.workspaceJob.create({
+      data: {
+        userId: user.id,
+        taskId: task.id,
+        deviceId,
+        kind: "code",
+        executionMode: "sandbox",
+        provider: "claude-code",
+        model: "default",
+        status: "running",
+        leaseOwner: deviceId,
+        leaseUntil: new Date(Date.now() + 60_000),
+        leaseToken: "trace",
+      },
+    });
+    const secret = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
+    const progress = await app.inject({
+      method: "POST",
+      url: `/api/devices/self/jobs/${job.id}/progress`,
+      headers: bearer(token),
+      payload: {
+        leaseToken: "trace",
+        status: "running",
+        progress: "Cloning",
+        events: [{ kind: "engine", data: { engine: "claude-code", model: "claude-sonnet-4-6" } }],
+        steps: [
+          { index: 0, title: "Thinking", status: "done", reasoning: "Clone it first.", startedAt: new Date().toISOString(), endedAt: new Date().toISOString() },
+          {
+            index: 1,
+            title: "$ git clone https://github.com/morluto/rea",
+            status: "done",
+            output: `token ${secret}`,
+            toolCalls: [{ id: "toolu_1", name: "Bash", args: `{"command":"echo ${secret}"}`, output: "Done", ok: true, ms: 2400, engine: "claude-code" }],
+          },
+        ],
+      },
+    });
+    assert.equal(progress.statusCode, 200, progress.body);
+    const runId = (await prisma.workspaceJob.findUniqueOrThrow({ where: { id: job.id } })).runId;
+    assert.ok(runId, "the first progress with steps makes the run");
+    const steps = await prisma.runStep.findMany({ where: { runId: runId! }, orderBy: { index: "asc" } });
+    assert.deepEqual(steps.map((step) => step.title), ["Thinking", "$ git clone https://github.com/morluto/rea"]);
+    assert.equal(steps[0]!.reasoning, "Clone it first.");
+    assert.doesNotMatch(JSON.stringify(steps), new RegExp(secret), "secret shapes are redacted on the server too");
+    const tooMany = await app.inject({
+      method: "POST",
+      url: `/api/devices/self/jobs/${job.id}/progress`,
+      headers: bearer(token),
+      payload: { leaseToken: "trace", progress: "x", steps: [{ index: 2, title: "Bad", status: "exploded" }] },
+    });
+    assert.equal(tooMany.statusCode, 400, "a step's shape is checked");
+
+    const done = await app.inject({
+      method: "POST",
+      url: `/api/devices/self/jobs/${job.id}/complete`,
+      headers: bearer(token),
+      payload: {
+        leaseToken: "trace",
+        outcome: "succeeded",
+        summary: "## Summary\nWrote REA_SUMMARY.md",
+        totals: { model: "claude-sonnet-4-6", turns: 7, toolCalls: 12, tokensIn: 5000, tokensOut: 900, costUsd: 0.21, files: [{ path: "REA_SUMMARY.md", added: 40, removed: 0 }] },
+      },
+    });
+    assert.equal(done.statusCode, 200, done.body);
+    const stored = await prisma.workspaceJob.findUniqueOrThrow({ where: { id: job.id } });
+    assert.deepEqual([stored.turns, stored.toolCalls, stored.tokensIn, stored.tokensOut], [7, 12, 5000, 900]);
+    assert.deepEqual(stored.evidence, { files: [{ path: "REA_SUMMARY.md", added: 40, removed: 0 }], model: "claude-sonnet-4-6", costUsd: 0.21 });
+
+    const run = await app.inject({ method: "GET", url: `/api/runs/${runId}`, headers: cookie(session) });
+    assert.equal(run.statusCode, 200, run.body);
+    const body = run.json() as { run: { result: string; steps: unknown[] }; job: { engineName: string; modelUsed: string; where: string; deviceName: string; costUsd: number; files: unknown[]; sandbox: boolean } };
+    assert.equal(body.run.result, "## Summary\nWrote REA_SUMMARY.md");
+    assert.equal(body.run.steps.length, 2);
+    assert.equal(body.job.engineName, "Claude Code");
+    assert.equal(body.job.modelUsed, "claude-sonnet-4-6");
+    assert.equal(body.job.where, "device");
+    assert.equal(body.job.deviceName, "Studio Mac");
+    assert.equal(body.job.costUsd, 0.21);
+    assert.equal(body.job.sandbox, true);
+    assert.equal(body.job.files.length, 1);
+    const list = await app.inject({ method: "GET", url: "/api/runs", headers: cookie(session) });
+    const row = (list.json() as { runs: Array<{ id: string; model: string; engineName: string; costUsd: number }> }).runs.find((item) => item.id === runId);
+    assert.deepEqual([row?.model, row?.engineName, row?.costUsd], ["claude-sonnet-4-6", "Claude Code", 0.21]);
   } finally {
     await app.close();
     await cleanup(user.id);

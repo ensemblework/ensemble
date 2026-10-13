@@ -7,9 +7,21 @@ export function redactRequestUrl(url: string): string {
 
 const BEARER = /(authorization\s*[:=]\s*bearer\s+)\S+/gi;
 const INTERNAL = /(x-ensemble-internal\s*[:=]\s*)\S+/gi;
-const SHAPED = /\b(?:sk-[A-Za-z0-9_-]{8,}|AIza[0-9A-Za-z_-]{20,}|gh[pousr]_[A-Za-z0-9]{10,}|github_pat_[A-Za-z0-9_]{10,}|ens_[A-Za-z0-9_-]{8,}|xox[abprs]-[A-Za-z0-9-]{8,})\b/g;
+const SHAPED =
+  /\b(?:sk-[A-Za-z0-9_-]{8,}|AIza[0-9A-Za-z_-]{20,}|gh[pousr]_[A-Za-z0-9]{10,}|github_pat_[A-Za-z0-9_]{10,}|ens_[A-Za-z0-9_-]{8,}|xox[abprs]-[A-Za-z0-9-]{8,}|(?:AKIA|ASIA)[0-9A-Z]{16}|[sr]k_(?:live|test)_[A-Za-z0-9]{10,}|glpat-[A-Za-z0-9_-]{20,}|npm_[A-Za-z0-9]{30,}|hf_[A-Za-z0-9]{30,}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})\b/g;
+const PRIVATE_KEY = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g;
+/** user:password@ in a URL (git remotes, database URLs). */
+const URL_PASSWORD = /\b([a-z][a-z0-9+.-]*:\/\/[^\s:@/]+:)[^\s@/]+@/gi;
+/** .env-style lines whose name says secret: API_KEY=…, export DB_PASSWORD=…, client_secret: … */
+const SECRET_LINE = /^(\s*(?:export\s+)?[A-Za-z0-9_.-]*(?:secret|token|password|passwd|api_?key|private_?key|access_?key|credential)[A-Za-z0-9_.-]*\s*[=:]\s*)["']?[^\s"']{4,}.*$/gim;
 
 /** Strip known secret shapes from a log line. The surrounding text stays. */
 export function redactText(value: string): string {
-  return redactRequestUrl(value).replace(BEARER, "$1[redacted]").replace(INTERNAL, "$1[redacted]").replace(SHAPED, "[redacted]");
+  return redactRequestUrl(value)
+    .replace(PRIVATE_KEY, "[redacted private key]")
+    .replace(BEARER, "$1[redacted]")
+    .replace(INTERNAL, "$1[redacted]")
+    .replace(URL_PASSWORD, "$1[redacted]@")
+    .replace(SECRET_LINE, "$1[redacted]")
+    .replace(SHAPED, "[redacted]");
 }

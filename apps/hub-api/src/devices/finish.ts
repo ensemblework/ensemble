@@ -9,6 +9,7 @@ import { sseHub } from "../lib/sse.js";
 import { LIVE_DEVICE_STATUSES } from "./constants.js";
 import { expireDeviceDecisions } from "./settle.js";
 import { requireVerifiedUser } from "../lib/hosted-access.js";
+import type { RunTotals } from "../remote/contract.js";
 
 export type DeviceOutcome = "succeeded" | "failed" | "cancelled" | "blocked";
 
@@ -32,10 +33,11 @@ function runOutcomeFor(outcome: DeviceOutcome): "success" | "failed" | "cancelle
 export async function finishDeviceJob(
   prisma: PrismaClient,
   job: WorkspaceJob & { task: { id: string; title: string; status: string; owner: string } },
-  input: { outcome: DeviceOutcome; summary: string; results: DeviceResult[] },
+  input: { outcome: DeviceOutcome; summary: string; results: DeviceResult[]; totals?: RunTotals },
 ): Promise<boolean> {
   await requireVerifiedUser(job.userId);
-  const summary = redactText(input.summary).slice(0, 4000);
+  const summary = redactText(input.summary).slice(0, 20_000);
+  const totals = input.totals;
   const outcome = input.outcome;
   const jobStatus = outcome;
   const now = new Date();
@@ -59,6 +61,16 @@ export async function finishDeviceJob(
         progress,
         results: input.results,
         leaseToken: null,
+        // What the computer reported: counts, the model that answered, its cost estimate, the files changed (names only).
+        ...(totals
+          ? {
+              turns: totals.turns ?? 0,
+              toolCalls: totals.toolCalls ?? 0,
+              tokensIn: totals.tokensIn ?? 0,
+              tokensOut: totals.tokensOut ?? 0,
+              evidence: { files: totals.files.map((file) => ({ ...file, path: redactText(file.path).slice(0, 500) })), model: totals.model ?? null, costUsd: totals.costUsd ?? null } as Prisma.InputJsonValue,
+            }
+          : {}),
       },
     });
     if (updated.count !== 1) return null;

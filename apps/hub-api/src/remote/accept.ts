@@ -48,6 +48,7 @@ export async function acceptClaimed(app: FastifyInstance, client: HostedClient, 
     logBytes: 0,
     logSeq: 0,
     decisions: {},
+    protocol: spec.protocol ?? 1,
   };
   const userId = env.ENSEMBLE_DEV_USER_ID;
   const plan = planLocalJob(spec, loadSettings(), (hostedId) => loadHeld()[hostedId]?.localJobId ?? null);
@@ -70,7 +71,7 @@ export async function acceptClaimed(app: FastifyInstance, client: HostedClient, 
   }
   try {
     const task = await app.prisma.$transaction((tx) =>
-      createTask(tx, userId, { title: resolved.title, description: resolved.description, status: "todo", owner: "agent", sourceKind: "other", sourceRef: "remote" }, "system"),
+      createTask(tx, userId, { title: resolved.title, description: resolved.description, notes: resolved.page, status: "todo", owner: "agent", sourceKind: "other", sourceRef: "remote" }, "system"),
     );
     const created = await createJob(app.prisma, userId, { ...resolved.assign, taskId: task.id }, { context: webContext(spec.id), actor: "system" });
     if (!created) throw new Error("The task could not be queued.");
@@ -123,7 +124,7 @@ async function refuse(app: FastifyInstance, client: HostedClient, userId: string
         kind: spec.kind,
         status: "failed",
         executionMode: "sandbox",
-        model: spec.model || "remote",
+        model: spec.model || "",
         provider: spec.provider ?? null,
         instructions: (spec.instructions ?? "").slice(0, 8000),
         delivery: "local",

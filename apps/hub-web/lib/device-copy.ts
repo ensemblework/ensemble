@@ -111,11 +111,16 @@ export type RerunSource = {
   maxToolCalls?: number;
 };
 
+const ENGINES = new Set(["claude-code", "codex", "cursor-agent"]);
+
 export function rerunAssignInput(job: RerunSource) {
   const branchMode = job.branchMode ?? "as-is";
+  // A Claude Code, Codex or Cursor run stores its engine as the provider; run again with that engine.
+  const engine = (job.provider && ENGINES.has(job.provider) ? job.provider : "ensemble") as "ensemble" | "claude-code" | "codex" | "cursor-agent";
   return {
     taskId: job.taskId,
     kind: job.kind,
+    engine,
     deviceId: job.deviceId ?? undefined,
     continueFromJobId: job.id,
     delivery: job.delivery,

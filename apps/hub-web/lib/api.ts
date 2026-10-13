@@ -29,10 +29,24 @@ export class ApiError extends Error {
   constructor(
     message: string,
     public readonly status: number,
+    /** The API's machine-readable reason, when it gave one (`HOST_ACCESS_DENIED`, `EMAIL_UNVERIFIED`…). */
+    public readonly code: string | null = null,
   ) {
     const off = status === 404 && message === MODULE_DENIED;
     super(off ? MODULE_OFF_MESSAGE : message);
     this.moduleOff = off;
+  }
+}
+
+/** True when the API refused because the route needs this server's own folders (Ensemble on the web, not the operator). */
+export const hostOnly = (error: unknown) => error instanceof ApiError && error.status === 403 && error.code === "HOST_ACCESS_DENIED";
+
+function errorCode(text: string): string | null {
+  try {
+    const body = JSON.parse(text) as { code?: unknown };
+    return typeof body.code === "string" ? body.code : null;
+  } catch {
+    return null;
   }
 }
 
@@ -173,7 +187,7 @@ export async function request<T>(path: string, init?: RequestInit & { json?: unk
   if (!response.ok) {
     const text = await response.text();
     const message = serverErrorMessage(text);
-    if (message) throw new ApiError(message, response.status);
+    if (message) throw new ApiError(message, response.status, errorCode(text));
     if (unreachable(response.status, text)) throw new ApiError(OFFLINE, response.status);
     throw new ApiError(text.trim() || response.statusText, response.status);
   }
@@ -418,33 +432,103 @@ export type RunSummary = {
   worker: string;
   outcome: string | null;
   error: string | null;
+  /** The model that answered when the run reported it, else the one asked for. */
   model: string | null;
   credits: number | null;
+  /** The harness's own cost estimate (agent runs). */
+  costUsd?: number | null;
+  /** Ensemble agent, Claude Code, Codex or Cursor, for agent runs. */
+  engineName?: string | null;
+  where?: RunJob["where"] | null;
+  deviceName?: string | null;
+  jobStatus?: AgentJob["status"] | null;
+  toolCalls?: number | null;
+  tokens?: number | null;
   startedAt: string;
   endedAt: string | null;
   stepCount: number;
 };
 
+/** One tool call inside a run step, as harnesses record them (older rows may carry args as an object). */
+export type RunToolCall = {
+  id?: string;
+  name?: string;
+  args?: unknown;
+  output?: unknown;
+  ok?: boolean;
+  ms?: number;
+  engine?: string;
+  summary?: string;
+};
+
+export type RunStep = {
+  id: string;
+  index: number;
+  title: string;
+  status: string;
+  output: string | null;
+  error: string | null;
+  reasoning?: string | null;
+  reasoningSource?: string | null;
+  model: string | null;
+  tokensIn?: number | null;
+  tokensOut?: number | null;
+  credits: number | null;
+  startedAt?: string | null;
+  endedAt?: string | null;
+  toolCalls: unknown;
+};
+
 export type RunDetail = {
   id: string;
+  taskId?: string;
+  worker?: string;
   outcome: string | null;
   result: string | null;
   error: string | null;
   startedAt: string;
   endedAt: string | null;
   plannerModel: string | null;
+  requestedModel?: string | null;
+  assignmentInstructions?: string | null;
   task: { id: string; title: string };
-  steps: Array<{
-    id: string;
-    index: number;
-    title: string;
-    status: string;
-    output: string | null;
-    error: string | null;
-    model: string | null;
-    credits: number | null;
-    toolCalls: unknown;
-  }>;
+  steps: RunStep[];
+  approvals?: Array<{ id: string; title: string; kind: string; decision: string | null; requestedAt: string; decidedAt: string | null; stepIndex: number | null }>;
+};
+
+/** The agent job behind a run: harness, models, where it ran, its limits and what it cost. */
+export type RunJob = {
+  id: string;
+  kind: "research" | "code";
+  status: AgentJob["status"];
+  engine: "ensemble" | "claude-code" | "codex" | "cursor-agent";
+  engineName: string;
+  provider: string | null;
+  model: string;
+  modelUsed: string | null;
+  reasoningEffort: string | null;
+  where: "device" | "server" | "local";
+  deviceName: string | null;
+  runnerAccountId: string | null;
+  sandbox: boolean;
+  networkAccess: boolean;
+  delivery: AgentJob["delivery"];
+  accessMode: string;
+  unattended: boolean;
+  folder: string | null;
+  repoUrl: string | null;
+  branch: string | null;
+  turns: number;
+  toolCalls: number;
+  tokensIn: number;
+  tokensOut: number;
+  limits: { turns: number; toolCalls: number; minutes: number };
+  costUsd: number | null;
+  files: Array<{ path: string; added: number; removed: number }>;
+  results: Array<{ kind: "pr" | "commit" | "branch"; url: string; sha?: string }>;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
 };
 
 export type AgentJob = {
@@ -497,12 +581,19 @@ export type AgentJob = {
   startedAt: string | null;
   finishedAt: string | null;
   reviewId?: string | null;
+  /** The run this job recorded (its trace on the Runs page). */
+  runId?: string | null;
+  /** When it finished: the model that answered, the harness's cost estimate, files changed (names and line counts). */
+  modelUsed?: string | null;
+  costUsd?: number | null;
+  files?: Array<{ path: string; added: number; removed: number }>;
   /** Set when the job was claimed from Ensemble on the web. */
   origin?: "local" | "web";
 };
 
 export type WorkspaceBoard = {
-  root: string;
+  /** This server's own workspace folder; null on Ensemble on the web, where the work runs on your computers. */
+  root: string | null;
   maxConcurrent: number;
   paused: boolean;
   sandboxAvailable: boolean;
@@ -1118,14 +1209,14 @@ export const api = bindClient({
 
   // runs & workspace
   runs: (take = 20) => get<{ runs: RunSummary[]; total: number }>(`/api/runs${qs({ take })}`),
-  run: (id: string) => get<{ run: RunDetail }>(`/api/runs/${id}`),
+  run: (id: string) => get<{ run: RunDetail; job: RunJob | null }>(`/api/runs/${id}`),
   deleteRun: (id: string) => del(`/api/runs/${id}`),
   workspace: () => get<WorkspaceBoard>("/api/workspace"),
   assign: (data: AssignInput) => post<{ jobId: string }>("/api/agent/assign", data),
   taskJobs: (taskId: string) => get<{ jobs: AgentJob[] }>(`/api/agent/jobs${qs({ taskId })}`),
   job: (id: string) =>
-    get<{ job: AgentJob & { instructions: string; networkAccess: boolean; sandbox?: SandboxCaps & { effective: boolean } }; events: JobEvent[]; log?: string }>(`/api/agent/jobs/${id}`),
-  jobLogs: (id: string, after = 0) => get<{ chunks: Array<{ seqFrom: number; seqTo: number; text: string; bytes: number; at: string }> }>(`/api/agent/jobs/${id}/logs${qs({ after })}`),
+    get<{ job: AgentJob & { instructions: string; networkAccess: boolean; sandbox?: Partial<SandboxCaps> & { effective: boolean; where?: "device" | "server" } }; events: JobEvent[]; log?: string }>(`/api/agent/jobs/${id}`),
+  jobLogs: (id: string, after?: number) => get<{ chunks: Array<{ seqFrom: number; seqTo: number; text: string; bytes: number; at: string }> }>(`/api/agent/jobs/${id}/logs${qs({ after })}`),
   devices: () =>
     get<{
       serverRunner: boolean;

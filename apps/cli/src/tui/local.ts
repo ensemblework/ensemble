@@ -139,7 +139,7 @@ export class LocalApi {
   modelKeys = () => this.json<{ credentials: Array<{ provider: string; source: string; hint?: string | null }> }>("/api/model-keys");
 
   /** One Ensemble Code turn, streamed: each frame as it comes. Resolves when the turn is done. */
-  async chat(body: { conversationId?: string; message: string; model?: string; code: CodeSession }, onFrame: (frame: ChatFrame) => void, signal: AbortSignal): Promise<void> {
+  async chat(body: { conversationId?: string; message: string; model?: string; provider?: string; code: CodeSession }, onFrame: (frame: ChatFrame) => void, signal: AbortSignal): Promise<void> {
     const response = await fetch(this.url("/api/assistant/turn"), {
       method: "POST",
       headers: { authorization: `Bearer ${this.discovery.token}`, "content-type": "application/json", accept: "text/event-stream" },

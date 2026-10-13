@@ -182,11 +182,14 @@ export function runRequest(input: {
       : engine === "ensemble" && profile.model.includes("::")
         ? { provider: profile.model.split("::")[0], model: profile.model.split("::")[1] }
         : { model: profile.model };
+  // The profile's thinking level goes with Ensemble's own agent, as the web's Assign sends it.
+  const effort = engine === "ensemble" && profile.effort && profile.effort !== "default" ? { reasoningEffort: profile.effort } : {};
   return {
     taskId: input.taskId,
     kind: "code",
     engine,
     ...model,
+    ...effort,
     instructions: [profile.instructions, input.instructions].filter(Boolean).join("\n\n"),
     folder: input.folder,
     branchMode: profile.branchMode,

@@ -1,5 +1,5 @@
 /** User-facing sentences for model failures. The browser shows these, not vendor JSON. */
-import { inferProvider } from "../runtime/payload.js";
+import { knownProvider } from "../runtime/payload.js";
 
 export interface ModelFailure {
   status: number;
@@ -59,14 +59,20 @@ const VENDOR: Record<string, string> = {
   ollama: "Ollama",
 };
 
-/** Who answered, for a sentence: the provider's name from the model id, or "The provider". */
-export function vendorOf(model: string | null | undefined): string {
+/**
+ * Who answered, for a sentence: the provider that was called. Without one, a model id with an
+ * unmistakable prefix names its maker; anything else is "The provider", never a guess (an unknown
+ * name once read as Gemini on a Copilot call).
+ */
+export function vendorOf(model: string | null | undefined, provider?: string | null): string {
+  if (provider) return VENDOR[provider] ?? provider;
   if (!model || model === "that model") return "The provider";
-  return VENDOR[inferProvider(model)] ?? "The provider";
+  const known = knownProvider(model);
+  return (known && VENDOR[known]) || "The provider";
 }
 
-export function friendlyModelError(failure: ModelFailure, model?: string | null): string {
-  const vendor = vendorOf(model);
+export function friendlyModelError(failure: ModelFailure, model?: string | null, provider?: string | null): string {
+  const vendor = vendorOf(model, provider);
   const wait = failure.retryAfterSeconds != null ? Math.max(1, Math.round(failure.retryAfterSeconds)) : null;
   if (failure.kind === "auth" || /no key for/i.test(failure.message)) {
     return failure.message.includes("No key")

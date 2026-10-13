@@ -12,6 +12,7 @@ import { truncateText } from "../lib/text.js";
 import { COPILOT_CLASSIC_TOKEN, ModelAuthError, ProviderError, noKeyMessage, parseProviderError } from "./errors.js";
 import { PROVIDERS, resolveCredential, type Credential } from "./credentials.js";
 import { parseModelJson } from "./model-json.js";
+import { apiFor, buildResponsesPayload, cleanItems, itemsFromChat, learn, learnFromListing, otherEndpoint, toolsFor, turnFromResponse, turnFromStream, type Api } from "./responses-api.js";
 import { pace, resetBuckets, runtimeSleep, takeToken } from "./pace.js";
 import {
   BASES,
@@ -23,10 +24,11 @@ import {
   fixtureName,
   fromAnthropic,
   fromOpenAi,
-  inferProvider,
+  providerForCall,
   raiseFixtureError,
   readFixture,
   canCrossModelFallback,
+  effortFor,
   readSseStream,
   retryPlan,
   sse,
@@ -48,8 +50,8 @@ export interface CallOptions {
 
 const catalogCache = new Map<string, { expires: number; models: string[]; meta: ModelMetaMap }>();
 
-/** What a provider's model list says about each model that the settings need: its thinking levels. */
-export type ModelMetaMap = Record<string, { efforts?: string[]; reasoning?: boolean }>;
+/** What a provider's model list says about each model that the settings need: its thinking levels, and Copilot's endpoints. */
+export type ModelMetaMap = Record<string, { efforts?: string[]; reasoning?: boolean; endpoints?: string[] }>;
 
 /** Anthropic: `capabilities.effort`, with `supported` at each level. */
 export function anthropicMeta(rows: Array<{ id?: string; capabilities?: unknown }>): ModelMetaMap {
@@ -63,13 +65,19 @@ export function anthropicMeta(rows: Array<{ id?: string; capabilities?: unknown 
   return out;
 }
 
-/** Copilot: `capabilities.supports.reasoning_effort`, a list per model; a model without it has no setting. */
-export function copilotMeta(rows: Array<{ id?: string; capabilities?: unknown }>): ModelMetaMap {
+/**
+ * Copilot: `capabilities.supports.reasoning_effort`, a list per model; a model without it has no
+ * setting. `supported_endpoints`, where listed, says whether the model answers on /responses only.
+ */
+export function copilotMeta(rows: Array<{ id?: string; capabilities?: unknown; supported_endpoints?: unknown }>): ModelMetaMap {
   const out: ModelMetaMap = {};
   for (const row of rows) {
     if (!row.id) continue;
     const listed = (row.capabilities as { supports?: { reasoning_effort?: unknown } } | undefined)?.supports?.reasoning_effort;
-    out[row.id] = { efforts: Array.isArray(listed) ? listed.map(String) : [] };
+    out[row.id] = {
+      efforts: Array.isArray(listed) ? listed.map(String) : [],
+      ...(Array.isArray(row.supported_endpoints) ? { endpoints: row.supported_endpoints.map(String) } : {}),
+    };
   }
   return out;
 }
@@ -305,6 +313,96 @@ async function collectOpenAiStream(
   return result;
 }
 
+async function* responsesEvents(
+  provider: string,
+  payload: Json,
+  userId: string | null | undefined,
+  ollamaUrl: string | null | undefined,
+  timeoutMs: number,
+  options: { retry?: boolean; signal?: AbortSignal } = {},
+): AsyncGenerator<{ kind: "delta"; text: string } | { kind: "done"; turn: Json }> {
+  const target = await endpoint(provider, userId, ollamaUrl, options.signal);
+  const url = `${target.base}/responses`;
+  const model = String(payload.model ?? "");
+  const where = { provider, model, url };
+  if (!payload.stream) {
+    const response = await postWithRetry((current) => sendJson(url, target.headers, current, timeoutMs, options.signal, where), payload, { retry: options.retry !== false });
+    yield { kind: "done", turn: turnFromResponse(await readJsonObject(response), model) };
+    return;
+  }
+  let attempt = 0;
+  const retry = options.retry !== false;
+  while (true) {
+    const response = await sendJson(url, target.headers, payload, timeoutMs, options.signal, where);
+    if (!response.ok) {
+      const failure = parseProviderError(response.status, await response.text(), response.headers);
+      const delay = retry ? retryPlan(failure, attempt) : null;
+      if (delay == null) throw failure;
+      await runtimeSleep(delay);
+      attempt += 1;
+      continue;
+    }
+    try {
+      yield* turnFromStream(readLines(response), model);
+      return;
+    } catch (error) {
+      if (error instanceof ProviderError) throw error;
+      throw normalizeTransportError(error, where);
+    }
+  }
+}
+
+async function responsesTurn(
+  provider: string,
+  payload: Json,
+  userId: string | null | undefined,
+  ollamaUrl: string | null | undefined,
+  timeoutMs: number,
+  options: { retry?: boolean; signal?: AbortSignal } = {},
+): Promise<Json> {
+  await pace(userId, provider);
+  let result: Json | null = null;
+  for await (const event of responsesEvents(provider, payload, userId, ollamaUrl, timeoutMs, options)) {
+    if (event.kind === "done") result = event.turn;
+  }
+  if (!result) throw new ProviderError(502, "other", "The model stream ended without a completion.");
+  return result;
+}
+
+/** The Responses request for one turn: hub-api's Responses-shaped history when it sent one. */
+function responsesPayload(
+  body: Json,
+  model: string,
+  provider: string,
+  messages: Json[],
+  options: { tools?: Json[] | null; jsonMode?: boolean; stream?: boolean; items?: unknown[] | null; responsesTools?: Json[] | null },
+): Json {
+  const history = options.items?.length ? cleanItems(options.items) : itemsFromChat(messages);
+  const specs = options.responsesTools?.length ? options.responsesTools : options.tools;
+  return buildResponsesPayload(model, history, {
+    tools: specs?.length ? toolsFor(specs) : null,
+    effort: effortFor(provider, typeof body.reasoningEffort === "string" ? body.reasoningEffort : null, model),
+    jsonMode: options.jsonMode,
+    stream: options.stream,
+  });
+}
+
+/** Calls the endpoint this model takes. A refusal that names the other endpoint switches once, and is remembered. */
+async function eitherApi<T>(provider: string, model: string, chat: () => Promise<T>, responses: () => Promise<T>): Promise<T> {
+  const first: Api = apiFor(provider, model);
+  try {
+    return await (first === "responses" ? responses() : chat());
+  } catch (error) {
+    const other = error instanceof ProviderError ? otherEndpoint(error) : null;
+    if (!other || other === first) throw error;
+    learn(provider, model, other);
+    return other === "responses" ? responses() : chat();
+  }
+}
+
+const itemsOf = (body: Json): unknown[] | null => (Array.isArray(body.responsesMessages) && body.responsesMessages.length ? (body.responsesMessages as unknown[]) : null);
+const responsesToolsOf = (body: Json): Json[] | null => (Array.isArray(body.responsesTools) && body.responsesTools.length ? (body.responsesTools as Json[]) : null);
+
 function asMessages(value: unknown): Json[] {
   return Array.isArray(value) ? value.filter((item): item is Json => !!item && typeof item === "object" && !Array.isArray(item)) : [];
 }
@@ -377,22 +475,44 @@ async function openaiTurn(
   provider: string,
   messages: Json[],
   timeoutMs: number,
-  options: { tools?: Json[] | null; temperature?: number | null; jsonMode?: boolean; stream?: boolean; signal?: AbortSignal } = {},
+  options: {
+    tools?: Json[] | null;
+    temperature?: number | null;
+    jsonMode?: boolean;
+    stream?: boolean;
+    signal?: AbortSignal;
+    responsesItems?: unknown[] | null;
+    responsesTools?: Json[] | null;
+  } = {},
 ): Promise<Json> {
-  const call = async (chosen: string, allowRetry: boolean) => {
-    const payload = buildChatPayload(chosen, provider, messages, {
-      tools: options.tools,
-      reasoningEffort: typeof body.reasoningEffort === "string" ? body.reasoningEffort : null,
-      temperature: options.temperature,
-      jsonMode: options.jsonMode,
-      stream: options.stream,
-    });
-    const data = await openaiChat(provider, payload, typeof body.userId === "string" ? body.userId : null, typeof body.ollamaUrl === "string" ? body.ollamaUrl : null, timeoutMs, {
-      retry: allowRetry,
-      signal: options.signal,
-    });
-    return fromOpenAi(data, chosen);
-  };
+  const userId = typeof body.userId === "string" ? body.userId : null;
+  const ollamaUrl = typeof body.ollamaUrl === "string" ? body.ollamaUrl : null;
+  const call = async (chosen: string, allowRetry: boolean) =>
+    eitherApi(
+      provider,
+      chosen,
+      async () => {
+        const payload = buildChatPayload(chosen, provider, messages, {
+          tools: options.tools,
+          reasoningEffort: typeof body.reasoningEffort === "string" ? body.reasoningEffort : null,
+          temperature: options.temperature,
+          jsonMode: options.jsonMode,
+          stream: options.stream,
+        });
+        const data = await openaiChat(provider, payload, userId, ollamaUrl, timeoutMs, { retry: allowRetry, signal: options.signal });
+        return fromOpenAi(data, chosen);
+      },
+      async () => {
+        const payload = responsesPayload(body, chosen, provider, messages, {
+          tools: options.tools,
+          jsonMode: options.jsonMode,
+          stream: options.stream,
+          items: options.responsesItems,
+          responsesTools: options.responsesTools,
+        });
+        return responsesTurn(provider, payload, userId, ollamaUrl, timeoutMs, { retry: allowRetry, signal: options.signal });
+      },
+    );
   return withModelFallback(body, model, call);
 }
 
@@ -403,7 +523,7 @@ function toolsOf(body: Json): Json[] | null {
 export async function completeWithTools(body: Json, options: CallOptions = {}): Promise<Json> {
   await requireVerifiedUser(stringOrNull(body.userId));
   const model = String(body.model || inferProviderModel("coder"));
-  const provider = String(body.provider || inferProvider(model));
+  const provider = providerForCall(body.provider, model);
   if (provider === "mock") return mockTurn(body, model);
   if (provider === "cursor") throw cursorChatError();
   if (provider === "anthropic") return anthropicChat(body, model, stringOrNull(body.userId), 300_000, options.signal);
@@ -411,6 +531,8 @@ export async function completeWithTools(body: Json, options: CallOptions = {}): 
     tools: toolsOf(body),
     stream: Boolean(body.stream),
     signal: options.signal,
+    responsesItems: itemsOf(body),
+    responsesTools: responsesToolsOf(body),
   });
 }
 
@@ -431,7 +553,7 @@ function inferProviderModel(role: string): string {
 export async function completeText(body: Json, options: CallOptions = {}): Promise<Json> {
   await requireVerifiedUser(stringOrNull(body.userId));
   const model = String(body.model || CHEAPEST.google);
-  const provider = String(body.provider || inferProvider(model));
+  const provider = providerForCall(body.provider, model);
   const messages: Json[] = [];
   if (body.system) messages.push({ role: "system", content: body.system });
   messages.push({ role: "user", content: body.prompt ?? "" });
@@ -523,7 +645,7 @@ async function* yieldOpenAiFrames(
 
 async function* chatFrames(body: Json, signal?: AbortSignal): AsyncGenerator<string> {
   const model = String(body.model || inferProviderModel("coder"));
-  const provider = String(body.provider || inferProvider(model));
+  const provider = providerForCall(body.provider, model);
   if (provider === "mock") {
     const result = mockTurn(body, model);
     for (const piece of textChunks(String(result.text ?? ""))) yield sse("delta", { text: piece });
@@ -535,6 +657,10 @@ async function* chatFrames(body: Json, signal?: AbortSignal): AsyncGenerator<str
     const result = await anthropicChat(body, model, stringOrNull(body.userId), 300_000, signal);
     for (const piece of textChunks(String(result.text ?? ""))) yield sse("delta", { text: piece });
     yield sse("turn", result);
+    return;
+  }
+  if (apiFor(provider, model) === "responses") {
+    yield* yieldResponsesFrames(provider, body, model, signal);
     return;
   }
   const payload = buildChatPayload(model, provider, asMessages(body.messages), {
@@ -549,6 +675,11 @@ async function* chatFrames(body: Json, signal?: AbortSignal): AsyncGenerator<str
       yield frame;
     }
   } catch (error) {
+    if (error instanceof ProviderError && !emitted && otherEndpoint(error) === "responses") {
+      learn(provider, model, "responses");
+      yield* yieldResponsesFrames(provider, body, model, signal);
+      return;
+    }
     if (!(error instanceof ProviderError) || emitted || !canFallback(error, body.fallbackModel, model)) throw error;
     const alt = buildChatPayload(String(body.fallbackModel), provider, asMessages(body.messages), {
       tools: toolsOf(body),
@@ -556,6 +687,26 @@ async function* chatFrames(body: Json, signal?: AbortSignal): AsyncGenerator<str
       stream: true,
     });
     yield* yieldOpenAiFrames(provider, alt, body, String(body.fallbackModel), { retry: false, fallbackFrom: model, signal });
+  }
+}
+
+/** The same SSE frames as a chat stream, from a Responses stream. */
+async function* yieldResponsesFrames(provider: string, body: Json, model: string, signal?: AbortSignal): AsyncGenerator<string> {
+  const userId = stringOrNull(body.userId);
+  const payload = responsesPayload(body, model, provider, asMessages(body.messages), {
+    tools: toolsOf(body),
+    stream: true,
+    items: itemsOf(body),
+    responsesTools: responsesToolsOf(body),
+  });
+  const delay = await takeToken(userId, provider);
+  if (delay > 0) {
+    yield sse("status", { text: "Waiting for the rate limit…" });
+    await runtimeSleep(delay);
+  }
+  for await (const event of responsesEvents(provider, payload, userId, typeof body.ollamaUrl === "string" ? body.ollamaUrl : null, 300_000, { retry: true, signal })) {
+    if (event.kind === "delta") yield sse("delta", { text: event.text });
+    else yield sse("turn", event.turn);
   }
 }
 
@@ -641,9 +792,12 @@ export async function listModelsWithMeta(
     const copilot = copilotEndpoint(apiKey, await canUseHostCredentials(userId));
     const response = await vendorFetch(`${copilot.base}/models`, { headers: copilot.headers }, 15_000, signal);
     if (!response.ok) throw await httpFailure(response);
-    const data = (await response.json()) as { data?: Array<{ id?: string; capabilities?: unknown }> };
-    models = (data.data ?? []).map((row) => String(row.id ?? "")).filter(Boolean);
-    meta = copilotMeta(data.data ?? []);
+    const data = (await response.json()) as { data?: Array<{ id?: string; capabilities?: unknown; supported_endpoints?: unknown }> };
+    // Chat models only: Copilot's list also has embedding models, which cannot answer.
+    const rows = (data.data ?? []).filter((row) => row.id && [undefined, null, "chat"].includes((row.capabilities as { type?: string } | undefined)?.type));
+    models = rows.map((row) => String(row.id ?? "")).filter(Boolean);
+    meta = copilotMeta(rows);
+    learnFromListing("copilot", rows);
   }
   catalogCache.set(key, { expires: Date.now() / 1000 + 300, models, meta });
   return { models, meta };

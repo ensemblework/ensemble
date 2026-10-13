@@ -19,7 +19,7 @@ import { liveLogSince } from "../workspace/live-log.js";
 import { interruptJob, stopJob, whenQueueReady } from "../workspace/worker.js";
 import { acceptClaimed, resultLinks } from "./accept.js";
 import { authRejected, deviceRemovedEvent, hostedClient, remoteApiBase, RemoteError, type HostedClient } from "./client.js";
-import { deviceOwnedEvents, LOG_CHUNK_BYTES, LOG_JOB_BYTES, ONLINE_WINDOW_MS, parseAnswer, parseClaim, timing } from "./contract.js";
+import { deviceOwnedEvents, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, ONLINE_WINDOW_MS, parseAnswer, parseClaim, STEP_POST_BYTES, timing, type RunTotals, type UploadedStep } from "./contract.js";
 import { actionHash, decisionOptions, judgeAnswer, publishedFolders, riskOf, scrubOutgoing, type LocalDecision } from "./policy.js";
 import { dropDeviceToken, loadHeld, loadSettings, readDeviceToken, saveHeld, updateSettings, type HeldJob, type RemoteSettings } from "./store.js";
 
@@ -210,7 +210,10 @@ async function session(app: FastifyInstance, base: string, token: string, parent
   let streamUp = false;
   const heartbeat = setInterval(() => void beat(app, client, signal).catch(fail), timing().heartbeatMs);
   // Log batches only. Claim is not on this timer: a 2s claim poll would burn the hosted command budget.
-  const sync = setInterval(() => void mirror(app, client, signal).catch(fail), timing().syncMs);
+  // One mirror at a time: a job's last posts can take longer than the timer, and two at once would send twice.
+  let mirroring: Promise<void> | null = null;
+  const mirrorOnce = () => (mirroring ??= mirror(app, client, signal).finally(() => (mirroring = null)));
+  const sync = setInterval(() => void mirrorOnce().catch(fail), timing().syncMs);
   // Fallback while the event stream is down. The shipped cadence is 15s, not the 2s log sync.
   const poll = setInterval(() => {
     if (!streamUp) void claim().catch(fail);
@@ -218,7 +221,7 @@ async function session(app: FastifyInstance, base: string, token: string, parent
   try {
     await beat(app, client, signal);
     await claim();
-    await mirror(app, client, signal);
+    await mirrorOnce();
     streamUp = true;
     try {
       const onFrame = (event: string, data: unknown) => {
@@ -300,8 +303,11 @@ async function mirror(app: FastifyInstance, client: HostedClient, signal: AbortS
     const local = await app.prisma.workspaceJob.findUnique({ where: { id: job.localJobId } });
     if (!local) continue;
     if (TERMINAL.has(local.status)) {
-      // Send the last events and log text first. A job that ends between two syncs would otherwise post none of them.
-      if (local.status !== "interrupted") await sendProgress(app, client, job, local, true);
+      // Send the last events, log text and steps first. A job that ends between two syncs would otherwise post
+      // none of them, and a long run's remainder can take more than one post.
+      if (local.status !== "interrupted") {
+        for (let round = 0; round < 20; round += 1) if (!(await sendProgress(app, client, job, local, true))) break;
+      }
       await finish(client, job, local);
       continue;
     }
@@ -403,23 +409,28 @@ async function followAnswer(app: FastifyInstance, client: HostedClient, job: Hel
   }
 }
 
-async function sendProgress(app: FastifyInstance, client: HostedClient, job: HeldJob, local: WorkspaceJob, last = false): Promise<void> {
+/** One progress post when anything changed (or the heartbeat is due). True when it posted. */
+async function sendProgress(app: FastifyInstance, client: HostedClient, job: HeldJob, local: WorkspaceJob, last = false): Promise<boolean> {
   // The device route accepts only "running". waiting_approval is set by ask, and sending it is a 400.
-  // On the last send, a job that ended before any sync still reports that it ran.
+  // On the last sends, a job that ended before any sync still reports that it ran, once.
   const status = local.status === "running" || (last && job.sentStatus !== "running") ? "running" : null;
+  const statusChanged = last ? status === "running" : status !== job.sentStatus;
   const progress = scrubOutgoing(local.progress ?? "").slice(0, 200);
   const events = await unreadEvents(app, job, local.id);
   const logs = takeLog(job, local.id);
-  const changed = status !== job.sentStatus || progress !== job.sentProgress || events.rows.length > 0 || Boolean(logs);
-  if (!changed && (last || Date.now() - job.sentAt < timing().heartbeatMs)) return;
+  const steps = await changedSteps(app, job, local.runId);
+  const changed = statusChanged || progress !== job.sentProgress || events.rows.length > 0 || Boolean(logs) || steps.rows.length > 0;
+  if (!changed && (last || Date.now() - job.sentAt < timing().heartbeatMs)) return false;
   await client.progress(job.hostedId, job.leaseToken, {
     ...(status ? { status } : {}),
     progress,
     events: events.rows,
     ...(logs ? { logs: { seqFrom: logs.seqFrom, seqTo: logs.seqTo, text: logs.text } } : {}),
+    ...(steps.rows.length ? { steps: steps.rows } : {}),
   });
   job.eventSeq = events.last;
-  job.sentStatus = status;
+  job.stepsSent = { ...(job.stepsSent ?? {}), ...steps.sent };
+  if (!last || status) job.sentStatus = status;
   job.sentProgress = progress;
   job.sentAt = Date.now();
   job.lastOkAt = Date.now();
@@ -428,19 +439,75 @@ async function sendProgress(app: FastifyInstance, client: HostedClient, job: Hel
     job.logBytes += Buffer.byteLength(logs.text);
     job.logSeq += 1;
   }
+  return changed;
 }
 
+/**
+ * Events after the last one sent, the kinds a computer may post, at most 50 a post. The cursor stops
+ * at the last event sent, so a busy run's events go on later posts instead of being skipped; and it
+ * reads after the cursor, so a run with hundreds of events keeps sending.
+ */
 async function unreadEvents(app: FastifyInstance, job: HeldJob, localId: string): Promise<{ last: string; rows: Array<{ kind: string; data?: Record<string, unknown> }> }> {
-  const rows = await app.prisma.workspaceEvent.findMany({ where: { jobId: localId }, orderBy: { sequence: "asc" }, take: 300 });
+  const rows = await app.prisma.workspaceEvent.findMany({ where: { jobId: localId, sequence: { gt: BigInt(job.eventSeq) } }, orderBy: { sequence: "asc" }, take: 300 });
   const fresh: Array<{ kind: string; data?: Record<string, unknown> }> = [];
   let last = job.eventSeq;
   for (const row of rows) {
-    const seq = row.sequence.toString();
-    if (BigInt(seq) <= BigInt(job.eventSeq)) continue;
-    last = seq;
-    fresh.push(hostedEvent(row.kind, row.data));
+    const event = hostedEvent(row.kind, row.data);
+    if (deviceOwnedEvents([event], job.protocol ?? 1).length) {
+      if (fresh.length >= 50) break;
+      fresh.push(event);
+    }
+    last = row.sequence.toString();
   }
-  return { last, rows: deviceOwnedEvents(fresh) };
+  return { last, rows: fresh };
+}
+
+/** A step's signature: it is sent again only when this changes. */
+const stepSignature = (step: { status: string; title: string; endedAt: Date | null; output: string | null; reasoning: string | null }) =>
+  `${step.status}|${step.title.length}|${step.endedAt?.toISOString() ?? ""}|${step.output?.length ?? 0}|${step.reasoning?.length ?? 0}`;
+
+/** The run's steps that changed since the last post, scrubbed and cut to previews (docs/25 §4.5). */
+async function changedSteps(app: FastifyInstance, job: HeldJob, runId: string | null): Promise<{ rows: UploadedStep[]; sent: Record<string, string> }> {
+  // A server before protocol 2 does not take steps.
+  if (!runId || (job.protocol ?? 1) < 2) return { rows: [], sent: {} };
+  const steps = await app.prisma.runStep.findMany({ where: { runId, index: { lt: MAX_UPLOADED_STEPS } }, orderBy: { index: "asc" } });
+  const rows: UploadedStep[] = [];
+  const sent: Record<string, string> = {};
+  const cut = (value: string | null, max: number) => (value ? scrubOutgoing(value).slice(0, max) : null);
+  let bytes = 0;
+  for (const step of steps) {
+    const signature = stepSignature(step);
+    if (job.stepsSent?.[String(step.index)] === signature) continue;
+    if (rows.length >= 60 || bytes >= STEP_POST_BYTES) break;
+    const calls = (Array.isArray(step.toolCalls) ? step.toolCalls : []) as Array<Record<string, unknown>>;
+    const row: UploadedStep = {
+      index: step.index,
+      title: scrubOutgoing(step.title).slice(0, 300),
+      status: step.status,
+      output: cut(step.output, 4000),
+      reasoning: cut(step.reasoning, 4000),
+      error: cut(step.error, 1000),
+      model: step.model,
+      tokensIn: step.tokensIn,
+      tokensOut: step.tokensOut,
+      toolCalls: calls.slice(0, 10).map((call) => ({
+        ...(typeof call.id === "string" ? { id: call.id.slice(0, 200) } : {}),
+        name: String(call.name ?? "tool").slice(0, 120),
+        ...(call.args !== undefined ? { args: scrubOutgoing(typeof call.args === "string" ? call.args : JSON.stringify(call.args)).slice(0, 2000) } : {}),
+        ...(call.output !== undefined ? { output: scrubOutgoing(typeof call.output === "string" ? call.output : JSON.stringify(call.output)).slice(0, 4000) } : {}),
+        ...(typeof call.ok === "boolean" ? { ok: call.ok } : {}),
+        ...(typeof call.ms === "number" && call.ms >= 0 ? { ms: call.ms } : {}),
+        ...(typeof call.engine === "string" ? { engine: call.engine.slice(0, 40) } : {}),
+        ...(typeof call.summary === "string" && call.summary ? { summary: scrubOutgoing(call.summary).slice(0, 300) } : {}),
+      })),
+      startedAt: step.startedAt?.toISOString() ?? null,
+      endedAt: step.endedAt?.toISOString() ?? null,
+    };
+    rows.push(row);
+    bytes += JSON.stringify(row).length;
+    sent[String(step.index)] = signature;
+  }
+  return { rows, sent };
 }
 
 /** Event data is a record. Anything else is wrapped so the route accepts it. */
@@ -492,14 +559,37 @@ async function finish(client: HostedClient, job: HeldJob, local: WorkspaceJob): 
     return;
   }
   const outcome = local.status === "succeeded" ? "succeeded" : local.status === "cancelled" ? "cancelled" : local.status === "blocked" ? "blocked" : "failed";
-  const summary = scrubOutgoing(local.summary || local.error || "").slice(0, 4000);
+  const current = (job.protocol ?? 1) >= 2;
+  const summary = scrubOutgoing(local.summary || local.error || "").slice(0, current ? 20_000 : LEGACY_SUMMARY_CHARS);
   try {
-    await client.complete(job.hostedId, job.leaseToken, { outcome, summary, results: resultLinks(local) });
+    await client.complete(job.hostedId, job.leaseToken, { outcome, summary, results: resultLinks(local), ...(current ? { totals: runTotals(local) } : {}) });
   } catch (error) {
     if (authRejected(error)) throw error;
     if (!(error instanceof RemoteError) || (error.status !== 409 && error.status !== 410 && error.status !== 404)) throw error;
   }
   job.phase = "done";
+}
+
+/** What the run reports when it ends: counts, the model that answered, its cost estimate, the files changed (names and line counts). */
+function runTotals(local: WorkspaceJob): RunTotals {
+  const evidence = (local.evidence && typeof local.evidence === "object" && !Array.isArray(local.evidence) ? local.evidence : {}) as {
+    files?: Array<{ path?: unknown; added?: unknown; removed?: unknown }>;
+    model?: unknown;
+    costUsd?: unknown;
+  };
+  const files = (Array.isArray(evidence.files) ? evidence.files : [])
+    .filter((file) => typeof file.path === "string")
+    .slice(0, 200)
+    .map((file) => ({ path: scrubOutgoing(String(file.path)).slice(0, 500), added: Math.max(0, Number(file.added) || 0), removed: Math.max(0, Number(file.removed) || 0) }));
+  return {
+    model: typeof evidence.model === "string" ? evidence.model.slice(0, 200) : local.model?.slice(0, 200) ?? null,
+    turns: local.turns,
+    toolCalls: local.toolCalls,
+    tokensIn: local.tokensIn,
+    tokensOut: local.tokensOut,
+    costUsd: typeof evidence.costUsd === "number" && evidence.costUsd >= 0 ? evidence.costUsd : null,
+    files,
+  };
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {

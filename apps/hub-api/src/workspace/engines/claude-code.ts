@@ -32,8 +32,19 @@ import { SECRET_HOME_PATHS, TOOLCHAIN_HOME_READS } from "../sandbox/seatbelt.js"
 import type { JobContext } from "../tools.js";
 import type { OutsideAccess } from "../trust.js";
 import { hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
+import { EngineTrace } from "./trace.js";
 
-export type EngineResult = { text: string; turns: number; toolCalls: number; tokensIn: number; tokensOut: number; model: string | null; costUsd: number | null };
+export type EngineResult = {
+  text: string;
+  turns: number;
+  toolCalls: number;
+  tokensIn: number;
+  tokensOut: number;
+  model: string | null;
+  costUsd: number | null;
+  /** The run's steps as the engine worked (tool calls, thinking, messages); the caller adds the result. */
+  trace?: EngineTrace;
+};
 
 /** Keys that would make `claude -p` bill an API key instead of the person's own sign-in. */
 const KEY_VARIABLES = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"];
@@ -107,7 +118,7 @@ function summarize(name: string, input: Record<string, unknown>): string {
 
 export async function runClaudeCode(
   ctx: JobContext,
-  options: { prompt: string; model?: string | null; maxTurns: number; stopCheck: () => Promise<void>; resume?: string | null; chat?: boolean },
+  options: { prompt: string; model?: string | null; maxTurns: number; stopCheck: () => Promise<void>; resume?: string | null; chat?: boolean; trace?: EngineTrace },
 ): Promise<EngineResult> {
   const claude = await hostExecutable("claude").catch(() => {
     throw new Error("Claude Code is not installed on this computer (the `claude` command was not found). Install it and sign in, or pick another engine.");
@@ -154,7 +165,9 @@ export async function runClaudeCode(
   delete env.ENSEMBLE_DESKTOP_TOKEN;
   delete env.ENSEMBLE_INTERNAL_TOKEN;
   const child = spawn(claude, args, { cwd: ctx.root, env, stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32", windowsHide: true });
-  const result: EngineResult = { text: "", turns: 0, toolCalls: 0, tokensIn: 0, tokensOut: 0, model: null, costUsd: null };
+  // The caller may hold the trace, to close it if the run stops before the engine returns.
+  const trace = options.trace ?? new EngineTrace(ctx, "claude-code");
+  const result: EngineResult = { text: "", turns: 0, toolCalls: 0, tokensIn: 0, tokensOut: 0, model: null, costUsd: null, trace };
   let failure: string | null = null;
   let started = false;
   let stderr = "";
@@ -190,19 +203,39 @@ export async function runClaudeCode(
         await ctx.event("engine", { engine: "claude-code", model: result.model, session: message.session_id ?? null });
         await ctx.progress(`Claude Code started${result.model ? ` (${result.model})` : ""}`);
       } else if (message.type === "assistant") {
-        const body = (message.message ?? {}) as { content?: Array<Record<string, unknown>>; usage?: Record<string, number> };
+        const body = (message.message ?? {}) as { content?: Array<Record<string, unknown>>; usage?: Record<string, number>; model?: string };
+        const usage = body.usage ?? {};
+        const totals = {
+          model: typeof body.model === "string" ? body.model : result.model,
+          tokensIn: (usage.input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0) || null,
+          tokensOut: usage.output_tokens ?? null,
+        };
         for (const part of body.content ?? []) {
-          if (part.type === "text" && typeof part.text === "string" && part.text.trim()) {
+          if (part.type === "thinking" && typeof part.thinking === "string") {
+            await trace.thinking(part.thinking);
+          } else if (part.type === "text" && typeof part.text === "string" && part.text.trim()) {
             appendLive(ctx.job.id, `${part.text.trim()}\n`);
             await ctx.progress(part.text.trim().split("\n")[0]!.slice(0, 160));
+            await trace.message(part.text, totals);
           } else if (part.type === "tool_use") {
             result.toolCalls += 1;
             const summary = summarize(String(part.name ?? "tool"), (part.input ?? {}) as Record<string, unknown>);
             appendLive(ctx.job.id, `· ${summary}\n`);
             await ctx.event("tool", { name: part.name, ok: true, summary, engine: "claude-code" });
+            await trace.toolStart(String(part.id ?? ""), String(part.name ?? "tool"), part.input ?? {}, summary);
           }
         }
         await options.stopCheck();
+      } else if (message.type === "user") {
+        // Tool results come back as the "user" turn: what each call returned, and whether it failed.
+        const body = (message.message ?? {}) as { content?: Array<Record<string, unknown>> | string };
+        for (const part of Array.isArray(body.content) ? body.content : []) {
+          if (part.type !== "tool_result") continue;
+          const content = Array.isArray(part.content)
+            ? (part.content as Array<Record<string, unknown>>).map((piece) => (typeof piece.text === "string" ? piece.text : piece.type === "image" ? "[image]" : "")).join("\n")
+            : part.content;
+          await trace.toolEnd(String(part.tool_use_id ?? ""), content, part.is_error !== true);
+        }
       } else if (message.type === "result") {
         result.text = typeof message.result === "string" ? message.result : "";
         result.turns = typeof message.num_turns === "number" ? message.num_turns : result.turns;

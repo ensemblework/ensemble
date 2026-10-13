@@ -251,6 +251,7 @@ export const codeTools: readonly AnyHubTool[] = [
         kind: "code",
         engine,
         ...(code.runModel ? (engine === "ensemble" ? splitModel(code.runModel) : { model: code.runModel }) : profileModel(profile, engine)),
+        ...(engine === "ensemble" && !code.runModel && profile.effort !== "default" ? { reasoningEffort: profile.effort } : {}),
         instructions: [profile.instructions, input.instructions].filter(Boolean).join("\n\n"),
         ...(folder ? { folder } : { repoUrl: input.repoUrl }),
         branchMode: profile.branchMode,

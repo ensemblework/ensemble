@@ -213,10 +213,13 @@ hub-api posts to agent-runtime, which owns the Copilot credential:
 POST http://127.0.0.1:5000/api/chat/tools
 { "messages": […],
   "responsesMessages": […],
+  "provider": "copilot",
   "model": "gpt-5.4-mini",
   "chatTools": […],
   "responsesTools": […] }
 ```
+
+The provider always travels with the model: the tier's, or the provider the model picker sent with a model chosen for this turn, or the one tier that lists that model; otherwise the turn is refused with a message saying to pick the model from the list (`providerForModel` in `apps/hub-api/src/lib/model-choice.ts`). Only an unmistakable vendor prefix is read from a name (`gemini`/`gemma`, `claude`, `mistral` and its siblings, `moonshot`/`kimi`, `qwen`, `gpt`/`o1`/`o3`/`o4`, or a `vendor/model` id for OpenRouter; `knownProvider`), and the runtime refuses a call with no provider rather than guessing (`providerForCall` in `runtime/payload.ts`, `provider_for_call` in `ensemble_agent/models.py`). Errors name the provider that was called (`vendorOf` in `lib/model-error.ts`). The same message has both shapes because some providers serve a model only on OpenAI's Responses API: GitHub Copilot's gpt-5.4, gpt-5.4-mini and codex models go to `POST /responses` (`input` items, `store: false`, `reasoning.effort`), read back into the same turn (`runtime/responses-api.ts`, `ensemble_agent/responses_api.py`); which endpoint a model takes comes from Copilot's model list (`supported_endpoints`), then from a refusal that names the other endpoint (switched once and remembered), then from the name.
 
 It answers with a **decision, not prose**:
 

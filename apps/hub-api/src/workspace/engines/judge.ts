@@ -12,7 +12,8 @@
  */
 import { resolve } from "node:path";
 import { checkGit, expandHome, GuardError, isNeverProgram, outsideRefusal, within } from "../guard.js";
-import { allowOrRefuse, askPerson, OUTSIDE_TOOL, outsideArgs, readsOnly, realOutside, WRITE_TOOL, type JobContext } from "../tools.js";
+import { gitSubcommand } from "../clone.js";
+import { allowOrRefuse, askPerson, cloneForAgent, OUTSIDE_TOOL, outsideArgs, readsOnly, realOutside, WRITE_TOOL, type JobContext } from "../tools.js";
 
 export type EngineCall = { tool: string; input: Record<string, unknown> };
 export type EngineAnswer = { decision: "allow" | "deny"; message?: string; updatedInput?: Record<string, unknown> };
@@ -66,8 +67,26 @@ export function shellSegments(command: string): string[][] {
     .filter((argv) => argv.length > 0);
 }
 
+/** Ensemble runs a clone for the engine (tools.ts `cloneForAgent`); tests replace it. */
+let cloneRunner: typeof cloneForAgent = cloneForAgent;
+export function setCloneRunnerForTests(runner: typeof cloneForAgent | null): void {
+  cloneRunner = runner ?? cloneForAgent;
+}
+
 async function shell(ctx: JobContext, command: string): Promise<EngineAnswer> {
   const segments = shellSegments(command);
+  // Claude Code's sandbox does not let git write .git/config or hooks anywhere in the run folder, so a
+  // clone there always fails: Ensemble clones for it instead, hooks-free (clone.ts). Only Claude Code:
+  // its hook passes this answer's message to the model, while Codex and Cursor get a bare decline.
+  const cloneAt = ctx.sandboxed && ctx.job.provider === "claude-code" ? segments.findIndex((argv) => gitSubcommand(argv) === "clone") : -1;
+  if (cloneAt > 0) {
+    return { decision: "deny", message: "Run git clone as its own command, with nothing before it: Ensemble does the clone for you, because this run's sandbox does not let git write .git/config or hooks." };
+  }
+  if (cloneAt === 0) {
+    const cloned = await cloneRunner(ctx, segments[0]!, command);
+    const rest = cloned.ok && segments.length > 1 ? " The rest of your command after the clone was not run; run it now as its own command." : "";
+    return { decision: "deny", message: `${cloned.message}${rest}` };
+  }
   for (const argv of segments) {
     const program = argv[0]!;
     if (isNeverProgram(program)) return { decision: "deny", message: `${program} is not allowed in Ensemble runs (privilege, persistence or remote access).` };

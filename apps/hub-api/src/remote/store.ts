@@ -60,6 +60,10 @@ export interface HeldJob {
   logOffset: number;
   logBytes: number;
   logSeq: number;
+  /** Run steps already sent, by index: a signature of what was sent, so a step goes again only when it changed. */
+  stepsSent?: Record<string, string>;
+  /** The server's device protocol from the claim (`PROTOCOL` in contract.ts); absent: 1. */
+  protocol?: number;
   decisions: Record<string, MirroredDecision>;
   /** Set when the Mac refused the spec before a local job existed. */
   refusal?: { code: string; message: string };

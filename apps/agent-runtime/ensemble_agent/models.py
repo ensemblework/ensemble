@@ -30,7 +30,7 @@ from typing import Any, Iterator, Literal
 import httpx
 from ensemble_agent.hosted_access import HostedAccessError, HostedAccessUnavailable, can_use_host_credentials, require_host_access, require_verified_user
 
-from ensemble_agent import credentials
+from ensemble_agent import credentials, responses_api
 from ensemble_agent.provider_error import COPILOT_CLASSIC_TOKEN, ProviderError, no_key_message, parse_provider_error
 from ensemble_agent.rate_limit import pace, take_token
 from ensemble_agent.reach import ModelUnreachable, classify_connect, is_unreachable_notice, transport_failure
@@ -129,6 +129,41 @@ def infer_provider(model: str) -> str:
     if name.startswith(("gpt", "o1", "o3", "o4")):
         return "openai"
     return os.environ.get("ENSEMBLE_LLM_PROVIDER", "google")
+
+
+def known_provider(model: str) -> str | None:
+    """The maker of a model id with an unmistakable vendor prefix (gemini-, claude-, gpt-…), or None.
+    Never a default: the same id is served by several providers (Copilot serves gpt-4.1 and claude)."""
+    name = (model or "").strip().lower()
+    if not name:
+        return None
+    if name.startswith(("gemini", "gemma")):
+        return "google"
+    if name.startswith("claude"):
+        return "anthropic"
+    if name.startswith(("mistral", "ministral", "codestral", "pixtral", "open-mistral")):
+        return "mistral"
+    if name.startswith(("moonshot", "kimi")):
+        return "kimi"
+    if name.startswith("qwen"):
+        return "qwen"
+    if "/" in name:
+        return "openrouter"
+    if name.startswith(("gpt", "o1", "o3", "o4")):
+        return "openai"
+    return None
+
+
+def provider_for_call(provider: Any, model: str) -> str:
+    """The provider a model call goes to: the one the request names, else the maker of an id with a
+    vendor prefix. Anything else is refused: an unknown id once went to Gemini when it was a Copilot model."""
+    named = str(provider or "").strip()
+    if named:
+        return named
+    known = known_provider(model)
+    if known:
+        return known
+    raise ModelAuthError(f"No provider was named for {model or 'this model'}. Pick the model with its provider in Settings → Models.")
 
 
 def spec_for(role: ModelRole, model: str | None = None) -> dict[str, Any]:
@@ -1150,6 +1185,125 @@ async def _collect_openai_stream(
     return result
 
 
+# ── Responses API (models a provider serves only on /responses) ────────────
+
+
+async def _responses_events(
+    provider: str,
+    payload: dict[str, Any],
+    user_id: str | None,
+    ollama_url: str | None,
+    timeout: float,
+    *,
+    retry: bool = True,
+):
+    """``("delta", text)`` while a streamed reply arrives, then ``("done", turn)``."""
+    base, headers, _ = await _endpoint(provider, user_id, ollama_url)
+    url = f"{base}/responses"
+    model = str(payload.get("model") or "")
+    if not payload.get("stream"):
+
+        async def send(current: dict[str, Any]) -> httpx.Response:
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    return await client.post(url, headers=headers, json=current)
+            except Exception as exc:
+                _reraise_transport(exc, provider=provider, model=model, url=url)
+
+        response = await post_with_retry(send, payload, retry=retry)
+        try:
+            data = response.json()
+        except json.JSONDecodeError as exc:
+            raise ProviderError(502, "other", "The model provider returned a non-JSON response.") from exc
+        if not isinstance(data, dict):
+            raise ProviderError(502, "other", "The model provider returned a non-JSON response.")
+        yield ("done", responses_api.turn_from_response(data, model))
+        return
+    attempt = 0
+    while True:
+        failure: ProviderError | None = None
+        delay: float | None = None
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                async with client.stream("POST", url, headers=headers, json=payload) as response:
+                    if not response.is_success:
+                        raw = await response.aread()
+                        failure = parse_provider_error(response.status_code, raw.decode("utf-8", errors="replace"), response.headers)
+                        delay = retry_plan(failure, attempt) if retry else None
+                    else:
+                        async for event in responses_api.turn_from_stream(response.aiter_lines(), model):
+                            yield event
+                        return
+        except asyncio.CancelledError:
+            raise
+        except (ConnectionDropped, ModelUnreachable, ProviderError):
+            raise
+        except Exception as exc:
+            _reraise_transport(exc, provider=provider, model=model, url=url)
+        if failure is None:
+            raise ProviderError(502, "other", "The model provider returned an error.")
+        if delay is None:
+            raise failure
+        await asyncio.sleep(delay)
+        attempt += 1
+
+
+async def _responses_turn(
+    provider: str,
+    payload: dict[str, Any],
+    user_id: str | None,
+    ollama_url: str | None,
+    timeout: float,
+    *,
+    retry: bool = True,
+) -> dict[str, Any]:
+    await pace(user_id, provider)
+    result: dict[str, Any] | None = None
+    async for kind, data in _responses_events(provider, payload, user_id, ollama_url, timeout, retry=retry):
+        if kind == "done":
+            result = data
+    if result is None:
+        raise ProviderError(502, "other", "The model stream ended without a completion.")
+    return result
+
+
+def _responses_payload(
+    body: dict[str, Any],
+    model: str,
+    provider: str,
+    messages: list[dict[str, Any]],
+    *,
+    tools: list[dict[str, Any]] | None,
+    json_mode: bool,
+    stream: bool,
+    items: list[Any] | None = None,
+    responses_tools: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """The Responses request for one turn: hub-api's Responses-shaped history when it sent one."""
+    history = responses_api.clean_items(items) if items else responses_api.items_from_chat(messages)
+    return responses_api.build_payload(
+        model,
+        history,
+        tools=responses_api.tools_for(responses_tools or tools) if (responses_tools or tools) else None,
+        effort=_effort(provider, body.get("reasoningEffort"), model),
+        json_mode=json_mode,
+        stream=stream,
+    )
+
+
+async def _either_api(provider: str, model: str, chat: Callable[[], Awaitable[Any]], responses: Callable[[], Awaitable[Any]]) -> Any:
+    """Call the endpoint this model takes. A refusal that names the other endpoint switches once, and is remembered."""
+    first = responses_api.api_for(provider, model)
+    try:
+        return await (responses() if first == "responses" else chat())
+    except ProviderError as exc:
+        other = responses_api.other_endpoint(exc)
+        if not other or other == first:
+            raise
+        responses_api.learn(provider, model, other)
+        return await (responses() if other == "responses" else chat())
+
+
 # ── mock provider (no network) ──────────────────────────────────────────────
 
 
@@ -1454,20 +1608,31 @@ async def _openai_turn(
     temperature: float | None = None,
     json_mode: bool = False,
     stream: bool = False,
+    responses_items: list[Any] | None = None,
+    responses_tools: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     async def call(chosen: str, allow_retry: bool) -> dict[str, Any]:
-        payload = build_chat_payload(
-            chosen,
-            provider,
-            messages,
-            tools=tools,
-            reasoning_effort=body.get("reasoningEffort"),
-            temperature=temperature,
-            json_mode=json_mode,
-            stream=stream,
-        )
-        data = await _openai_chat(provider, payload, body.get("userId"), body.get("ollamaUrl"), timeout, retry=allow_retry)
-        return _from_openai(data, chosen)
+        async def chat() -> dict[str, Any]:
+            payload = build_chat_payload(
+                chosen,
+                provider,
+                messages,
+                tools=tools,
+                reasoning_effort=body.get("reasoningEffort"),
+                temperature=temperature,
+                json_mode=json_mode,
+                stream=stream,
+            )
+            data = await _openai_chat(provider, payload, body.get("userId"), body.get("ollamaUrl"), timeout, retry=allow_retry)
+            return _from_openai(data, chosen)
+
+        async def responses() -> dict[str, Any]:
+            payload = _responses_payload(
+                body, chosen, provider, messages, tools=tools, json_mode=json_mode, stream=stream, items=responses_items, responses_tools=responses_tools
+            )
+            return await _responses_turn(provider, payload, body.get("userId"), body.get("ollamaUrl"), timeout, retry=allow_retry)
+
+        return await _either_api(provider, chosen, chat, responses)
 
     return await _with_model_fallback(body, model, call)
 
@@ -1476,7 +1641,7 @@ async def complete_with_tools(body: dict[str, Any]) -> dict[str, Any]:
     """One assistant turn. Agent-runtime owns the credential; hub-api owns the tools."""
     await asyncio.to_thread(require_verified_user, body.get("userId"))
     model = str(body.get("model") or spec_for("coder")["model"])
-    provider = str(body.get("provider") or infer_provider(model))
+    provider = provider_for_call(body.get("provider"), model)
     if provider == "mock":
         return _mock_turn(body, model)
     if provider == "cursor":
@@ -1491,6 +1656,8 @@ async def complete_with_tools(body: dict[str, Any]) -> dict[str, Any]:
         300,
         tools=body.get("chatTools") or None,
         stream=bool(body.get("stream")),
+        responses_items=body.get("responsesMessages") or None,
+        responses_tools=body.get("responsesTools") or None,
     )
 
 
@@ -1689,7 +1856,7 @@ async def complete_text(body: dict[str, Any]) -> dict[str, Any]:
     """A single completion without tools. `json: true` parses one JSON object or array."""
     await asyncio.to_thread(require_verified_user, body.get("userId"))
     model = str(body.get("model") or CHEAPEST["google"])
-    provider = str(body.get("provider") or infer_provider(model))
+    provider = provider_for_call(body.get("provider"), model)
     messages: list[dict[str, Any]] = []
     if body.get("system"):
         messages.append({"role": "system", "content": body["system"]})
@@ -1785,7 +1952,7 @@ def _public_failure(exc: Exception) -> dict[str, Any]:
 
 async def _chat_frames(body: dict[str, Any]):
     model = str(body.get("model") or spec_for("coder")["model"])
-    provider = str(body.get("provider") or infer_provider(model))
+    provider = provider_for_call(body.get("provider"), model)
     if provider == "mock":
         result = _mock_turn(body, model)
         wait = _mock_delay_seconds(body)
@@ -1803,6 +1970,10 @@ async def _chat_frames(body: dict[str, Any]):
             yield _sse("delta", {"text": piece})
         yield _sse("turn", result)
         return
+    if responses_api.api_for(provider, model) == "responses":
+        async for frame in _yield_responses_frames(provider, body, model):
+            yield frame
+        return
     payload = build_chat_payload(
         model,
         provider,
@@ -1817,6 +1988,11 @@ async def _chat_frames(body: dict[str, Any]):
             emitted = True
             yield frame
     except ProviderError as exc:
+        if not emitted and responses_api.other_endpoint(exc) == "responses":
+            responses_api.learn(provider, model, "responses")
+            async for frame in _yield_responses_frames(provider, body, model):
+                yield frame
+            return
         fallback = body.get("fallbackModel")
         if emitted or not _can_fallback(exc, fallback, model):
             raise
@@ -1853,6 +2029,30 @@ async def _yield_openai_frames(
             if fallback_from:
                 result["fallbackFrom"] = fallback_from
             yield _sse("turn", result)
+
+
+async def _yield_responses_frames(provider: str, body: dict[str, Any], model: str):
+    """The same SSE frames as a chat stream, from a Responses stream."""
+    payload = _responses_payload(
+        body,
+        model,
+        provider,
+        body.get("messages") or [],
+        tools=body.get("chatTools") or None,
+        json_mode=False,
+        stream=True,
+        items=body.get("responsesMessages") or None,
+        responses_tools=body.get("responsesTools") or None,
+    )
+    delay = await take_token(body.get("userId"), provider)
+    if delay > 0:
+        yield _sse("status", {"text": "Waiting for the rate limit…"})
+        await asyncio.sleep(delay)
+    async for kind, data in _responses_events(provider, payload, body.get("userId"), body.get("ollamaUrl"), 300, retry=True):
+        if kind == "delta":
+            yield _sse("delta", {"text": data})
+        elif kind == "done":
+            yield _sse("turn", data)
 
 
 async def stream_with_tools(body: dict[str, Any]):
@@ -1892,13 +2092,18 @@ def anthropic_meta(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
 
 
 def copilot_meta(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """Copilot: ``capabilities.supports.reasoning_effort``; a model without it has no setting."""
+    """Copilot: ``capabilities.supports.reasoning_effort``; a model without it has no setting.
+    ``supported_endpoints``, where listed, says whether the model answers on /responses only."""
     out: dict[str, dict[str, Any]] = {}
     for row in rows:
         if not row.get("id"):
             continue
         listed = ((row.get("capabilities") or {}).get("supports") or {}).get("reasoning_effort")
-        out[row["id"]] = {"efforts": [str(level) for level in listed] if isinstance(listed, list) else []}
+        entry: dict[str, Any] = {"efforts": [str(level) for level in listed] if isinstance(listed, list) else []}
+        endpoints = row.get("supported_endpoints")
+        if isinstance(endpoints, list):
+            entry["endpoints"] = [str(item) for item in endpoints]
+        out[row["id"]] = entry
     return out
 
 
@@ -1990,9 +2195,11 @@ async def list_models(
             base, headers = _copilot_endpoint(key, allow_host_config=await asyncio.to_thread(can_use_host_credentials, user_id))
             response = await client.get(f"{base}/models", headers=headers)
             response.raise_for_status()
-            rows = response.json().get("data", [])
+            # Chat models only: Copilot's list also has embedding models, which cannot answer.
+            rows = [row for row in response.json().get("data", []) if isinstance(row, dict) and row.get("id") and ((row.get("capabilities") or {}).get("type") in (None, "chat"))]
             models = [row["id"] for row in rows]
             meta = copilot_meta(rows)
+            responses_api.learn_from_listing("copilot", rows)
         else:
             models = []
     _catalog_cache[cache_key] = (time.time() + 45, models)

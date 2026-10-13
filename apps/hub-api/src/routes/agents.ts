@@ -10,7 +10,7 @@ import { isPaused, listActivities, requestCancel } from "../lib/activity.js";
 import { git } from "../lib/git.js";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings } from "../lib/settings.js";
-import { requireHostAccess } from "../lib/hosted-access.js";
+import { canUseHostCredentials, requireHostAccess } from "../lib/hosted-access.js";
 import { declareModule } from "../lib/module-gate.js";
 import { deviceOnline, serverRunnerEnabled } from "../devices/constants.js";
 import { jobOrigin } from "../remote/origin.js";
@@ -47,9 +47,22 @@ async function runnerRefusal(app: FastifyInstance, job: { userId: string; runner
   return `Only ${first && !first.includes("@") ? first : "the person running it"} can do this. It runs on their computer.`;
 }
 
-function card(job: JobRow, position?: number) {
-  const mine = yours(job);
+/** What a finished run reported: the model that answered, its cost estimate, the files it changed (names and line counts). */
+function evidenceOf(job: JobRow): { modelUsed: string | null; costUsd: number | null; files: Array<{ path: string; added: number; removed: number }> } {
+  const evidence = (job.evidence && typeof job.evidence === "object" && !Array.isArray(job.evidence) ? job.evidence : {}) as Record<string, unknown>;
   return {
+    modelUsed: typeof evidence.model === "string" && evidence.model ? evidence.model : null,
+    costUsd: typeof evidence.costUsd === "number" && Number.isFinite(evidence.costUsd) ? evidence.costUsd : null,
+    files: (Array.isArray(evidence.files) ? evidence.files : []).slice(0, 200) as Array<{ path: string; added: number; removed: number }>,
+  };
+}
+
+function card(job: JobRow, position?: number, options: { paths?: boolean } = {}) {
+  const mine = yours(job);
+  // A run on this server keeps its folder path to itself unless the caller may see this server's folders.
+  const paths = options.paths !== false || Boolean(job.deviceId);
+  return {
+    ...evidenceOf(job),
     id: job.id,
     taskId: job.taskId,
     title: job.task.title,
@@ -69,7 +82,8 @@ function card(job: JobRow, position?: number) {
     reasoningEffort: job.reasoningEffort,
     networkAccess: job.networkAccess,
     maxTurns: job.maxTurns,
-    folder: job.folderLabel ?? job.externalRoot ?? job.repoPath ?? "",
+    folder: job.folderLabel ?? (paths ? job.externalRoot ?? job.repoPath ?? "" : ""),
+    runId: job.runId,
     deviceId: mine ? job.deviceId : null,
     deviceName: mine ? (job.device?.name ?? null) : null,
     runnerAccountId: job.runnerAccountId,
@@ -102,7 +116,10 @@ function card(job: JobRow, position?: number) {
 
 export async function agentRoutes(app: FastifyInstance): Promise<void> {
   declareModule(app, "workspace");
+  // The board is the person's own job rows (their paired computers' work included), so it is open to
+  // everyone; the routes under it that read this server's folders, branches and trust stay host-only.
   app.addHook("preHandler", async (request) => {
+    if (request.routeOptions.url === "/api/workspace") return;
     if (request.url.split("?")[0]?.startsWith("/api/workspace")) await requireHostAccess(request.userId, "Host workspace filesystem");
   });
   const { prisma } = app;
@@ -176,6 +193,7 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/workspace", async (request) => {
     const userId = request.userId;
+    const host = await canUseHostCredentials(userId);
     const since = new Date(Date.now() - 14 * 86_400_000);
     const [jobs, settings, paused] = await Promise.all([
       prisma.workspaceJob.findMany({
@@ -193,16 +211,17 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
         .filter((job) => statuses.includes(job.status))
         .sort((a, b) => (b.finishedAt?.getTime() ?? 0) - (a.finishedAt?.getTime() ?? 0))
         .slice(0, 12)
-        .map((job) => card(job));
+        .map((job) => card(job, undefined, { paths: host }));
     return {
-      root: await workspaceRoot(),
+      // This server's own folder and sandbox only for whoever may use them (the operator, or the desktop app).
+      root: host ? await workspaceRoot() : null,
       maxConcurrent: settings.orchestration.maxConcurrentJobs,
       paused,
-      sandboxAvailable: sandboxAvailable(),
+      sandboxAvailable: host && sandboxAvailable(),
       serverRunner: serverRunnerEnabled(),
-      queued: queued.map((job, index) => card(job, index + 1)),
-      running: jobs.filter((job) => job.status === "running" || job.status === "stopping" || job.status === "claimed").map((job) => card(job)),
-      waiting: jobs.filter((job) => job.status === "waiting_approval").map((job) => card(job)),
+      queued: queued.map((job, index) => card(job, index + 1, { paths: host })),
+      running: jobs.filter((job) => job.status === "running" || job.status === "stopping" || job.status === "claimed").map((job) => card(job, undefined, { paths: host })),
+      waiting: jobs.filter((job) => job.status === "waiting_approval").map((job) => card(job, undefined, { paths: host })),
       stopped: recent(["interrupted", "blocked", "failed", "cancelled"]),
       completed: recent(["succeeded"]),
     };
@@ -216,7 +235,8 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
       take: 10,
       include: { task: { select: { id: true, title: true, priority: true, status: true } }, review: { select: { id: true } }, device: { select: { name: true, lastSeenAt: true, revokedAt: true } } },
     });
-    return { jobs: jobs.map((job) => ({ ...card(job), reviewId: job.review?.id ?? null })) };
+    const host = await canUseHostCredentials(request.userId);
+    return { jobs: jobs.map((job) => ({ ...card(job, undefined, { paths: host }), reviewId: job.review?.id ?? null })) };
   });
 
   app.get("/api/agent/jobs/:id", async (request, reply) => {
@@ -227,15 +247,21 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
     });
     if (!job) return reply.code(404).send({ error: "Job not found." });
     const events = await prisma.workspaceEvent.findMany({ where: { jobId: id }, orderBy: { sequence: "desc" }, take: 150 });
+    const host = await canUseHostCredentials(request.userId);
     return {
       job: {
-        ...card(job),
+        ...card(job, undefined, { paths: host }),
         reviewId: job.review?.id ?? null,
         instructions: job.instructions,
         networkAccess: job.networkAccess,
         unattended: job.unattended,
         accessMode: job.accessMode,
-        sandbox: { ...capabilities(), effective: job.executionMode === "sandbox" && sandboxAvailable() },
+        // A paired computer's own sandbox decides there; this server's sandbox says nothing about it.
+        sandbox: job.deviceId
+          ? { effective: job.executionMode === "sandbox", where: "device" as const }
+          : host
+            ? { ...capabilities(), effective: job.executionMode === "sandbox" && sandboxAvailable(), where: "server" as const }
+            : { effective: false, where: "server" as const },
       },
       log: liveLog(job.id),
       events: events.reverse().map((event) => ({ id: event.id, kind: event.kind, data: event.data, at: event.createdAt.toISOString() })),
@@ -253,14 +279,14 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/agent/jobs/:id/logs", async (request, reply) => {
     const { id } = request.params as { id: string };
-    const { after } = z.object({ after: z.coerce.number().int().min(0).default(0) }).parse(request.query);
+    // Without `after`, the latest chunks (a live run shows its tail); with it, the chunks after that one.
+    const { after } = z.object({ after: z.coerce.number().int().min(0).optional() }).parse(request.query);
     const job = await prisma.workspaceJob.findFirst({ where: { id, userId: request.userId }, select: { id: true } });
     if (!job) return reply.code(404).send({ error: "Job not found." });
-    const chunks = await prisma.workspaceLogChunk.findMany({
-      where: { jobId: id, seqFrom: { gt: after } },
-      orderBy: { seqFrom: "asc" },
-      take: 200,
-    });
+    const chunks =
+      after === undefined
+        ? (await prisma.workspaceLogChunk.findMany({ where: { jobId: id }, orderBy: { seqFrom: "desc" }, take: 200 })).reverse()
+        : await prisma.workspaceLogChunk.findMany({ where: { jobId: id, seqFrom: { gt: after } }, orderBy: { seqFrom: "asc" }, take: 200 });
     return {
       chunks: chunks.map((chunk) => ({
         seqFrom: chunk.seqFrom,
@@ -408,12 +434,13 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
       }),
     ]);
     const jobIds = new Set(jobs.map((job) => `job:${job.id}`));
+    const host = await canUseHostCredentials(userId);
     return {
       paused,
       calls: activities.filter((row) => !jobIds.has(row.id)).sort((a, b) => a.startedAt.localeCompare(b.startedAt)),
-      running: jobs.filter((job) => job.status === "running" || job.status === "stopping" || job.status === "claimed").map((job) => card(job)),
-      waiting: jobs.filter((job) => job.status === "waiting_approval").map((job) => card(job)),
-      queued: jobs.filter((job) => job.status === "queued").map((job, index) => card(job, index + 1)),
+      running: jobs.filter((job) => job.status === "running" || job.status === "stopping" || job.status === "claimed").map((job) => card(job, undefined, { paths: host })),
+      waiting: jobs.filter((job) => job.status === "waiting_approval").map((job) => card(job, undefined, { paths: host })),
+      queued: jobs.filter((job) => job.status === "queued").map((job, index) => card(job, index + 1, { paths: host })),
     };
   });
 

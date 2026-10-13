@@ -33,10 +33,15 @@ test("hosted gates preserve core data and paired execution, with durable transac
   process.env.ENSEMBLE_TERMINAL = "on";
 
   await t.test("nonoperator host routes return 403 while notes remain usable unverified", async () => {
-    for (const url of ["/api/code/repos", "/api/workspace", "/api/workspace/branches?path=/tmp", "/api/terminal/status"]) {
+    for (const url of ["/api/code/repos", "/api/workspace/branches?path=/tmp", "/api/terminal/status"]) {
       const response = await member.inject({ method: "GET", url });
       assert.equal(response.statusCode, 403, `${url}: ${response.body}`);
     }
+    // The board is the member's own jobs (their paired computers' work): open, without this server's folder or sandbox.
+    const board = await member.inject({ method: "GET", url: "/api/workspace" });
+    assert.equal(board.statusCode, 200, board.body);
+    assert.equal(board.json<{ root: string | null }>().root, null);
+    assert.equal(board.json<{ sandboxAvailable: boolean }>().sandboxAvailable, false);
     // Connecting your own Google account is open to verified members, never to unverified ones.
     const ownConnector = await member.inject({ method: "GET", url: "/api/connectors/google/start" });
     assert.notEqual(ownConnector.statusCode, 403, ownConnector.body);
