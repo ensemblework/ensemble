@@ -8,6 +8,7 @@ import type { PrismaClient, TaskStatus } from "@prisma/client";
 import { z } from "zod";
 import { searchWorkspace } from "../../cowork/service.js";
 import { createTask } from "../../services/tasks.js";
+import { appendToTaskPage } from "../../assistant/tools/pages.js";
 import type { JobContext } from "../tools.js";
 
 export const CHAT_TOOLS = ["ensemble_list_tasks", "ensemble_create_task", "ensemble_search"] as const;
@@ -16,7 +17,8 @@ export type ChatTool = (typeof CHAT_TOOLS)[number];
 const OPEN: TaskStatus[] = ["proposed", "todo", "in_progress", "waiting_approval", "blocked"];
 
 const ListInput = z.object({ query: z.string().max(200).optional(), include_done: z.boolean().optional() });
-const CreateInput = z.object({ title: z.string().trim().min(1).max(200), description: z.string().max(4000).optional(), due: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() });
+// `description` is what older chat servers sent; either way the text goes on the task's page.
+const CreateInput = z.object({ title: z.string().trim().min(1).max(200), page: z.string().max(20_000).optional(), description: z.string().max(4000).optional(), due: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() });
 const SearchInput = z.object({ query: z.string().trim().min(1).max(200) });
 
 /** Runs one board tool for the person whose chat this is; the text goes back to the agent. */
@@ -41,7 +43,12 @@ export async function runChatTool(ctx: Pick<JobContext, "userId" | "taskId" | "e
   }
   if (name === "ensemble_create_task") {
     const args = CreateInput.parse(input ?? {});
-    const task = await createTask(ctx.prisma, ctx.userId, { title: args.title, description: args.description ?? "", owner: "me", status: "todo", ...(args.due ? { due: args.due } : {}) }, "agent");
+    const page = [args.page, args.description].filter((part) => part?.trim()).join("\n\n");
+    const task = await ctx.prisma.$transaction(async (tx) => {
+      const row = await createTask(tx, ctx.userId, { title: args.title, owner: "me", status: "todo", ...(args.due ? { due: args.due } : {}) }, "agent");
+      if (page) await appendToTaskPage(tx, ctx.userId, row.id, page);
+      return row;
+    });
     await ctx.event("tool", { name, ok: true, summary: `Created the task “${task.title}”` });
     return `Created the task “${task.title}” on the board (id ${task.id}).`;
   }

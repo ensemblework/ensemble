@@ -37,7 +37,8 @@ export function meetingDoc(session: MeetingSessionRecord, people: string[] = [])
   if (people.length) meta.push(["People", people.join(", ")]);
   const blocks: Block[] = [];
   if (session.recap.trim()) blocks.push({ type: "heading", level: 1, runs: [{ text: "Recap" }] }, ...blocksFromMarkdown(session.recap));
-  if (session.notes.trim()) blocks.push({ type: "heading", level: 1, runs: [{ text: "Notes" }] }, ...blocksFromMarkdown(session.notes));
+  const notes = bodyBlocks(session.content, session.notes);
+  if (notes.length) blocks.push({ type: "heading", level: 1, runs: [{ text: "Notes" }] }, ...notes);
   return { title: session.title || "Meeting notes", meta, blocks };
 }
 

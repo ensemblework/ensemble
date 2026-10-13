@@ -1,5 +1,7 @@
 import {
+  edgeBetween,
   emptyModel,
+  mergeEdgeInto,
   nextEdgeId,
   type DiagramModel,
   type Diagnostic,
@@ -30,6 +32,7 @@ function mermaidLabel(id: string, label: string, shape: string): string {
   if (shape === "cylinder") return `${id}[("${text}")]`;
   if (shape === "hexagon") return `${id}{{"${text}"}}`;
   if (shape === "parallelogram") return `${id}[/"${text}"/]`;
+  if (shape === "subroutine") return `${id}[["${text}"]]`;
   return `${id}["${text}"]`;
 }
 
@@ -92,7 +95,7 @@ function readShape(input: string, index: number, id: string): MermaidNode {
   const rest = input.slice(index);
   const wrapped: Array<{ open: string; close: string; shape: ShapeId }> = [
     { open: "([", close: "])", shape: "rounded" },
-    { open: "[[", close: "]]", shape: "rectangle" },
+    { open: "[[", close: "]]", shape: "subroutine" },
     { open: "[(", close: ")]", shape: "cylinder" },
     { open: "((", close: "))", shape: "circle" },
     { open: "{{", close: "}}", shape: "hexagon" },
@@ -145,6 +148,12 @@ function mermaidShapeName(raw: string): ShapeId | null {
     document: "document",
     odd: "triangle",
     triangle: "triangle",
+    subproc: "subroutine",
+    subroutine: "subroutine",
+    "fr-rect": "subroutine",
+    delay: "delay",
+    "h-cyl": "queue",
+    das: "queue",
   };
   return table[key] ?? null;
 }
@@ -195,8 +204,7 @@ function addLink(builder: Builder, from: MermaidNode, to: MermaidNode, token: st
   touchNode(builder, from, 0);
   touchNode(builder, to, 0);
   const style = arrowStyle(token);
-  const id = nextEdgeId(builder.model);
-  builder.model.edges[id] = {
+  const edge = {
     from: { node: from.id, port: null },
     to: { node: to.id, port: null },
     label,
@@ -204,6 +212,13 @@ function addLink(builder: Builder, from: MermaidNode, to: MermaidNode, token: st
     arrow: { start: style.start, end: style.end },
     curve: builder.model.meta.curve,
   };
+  // One line per pair of blocks: a repeated or reversed Mermaid link folds into the first.
+  const existing = edgeBetween(builder.model, from.id, to.id);
+  if (existing) {
+    mergeEdgeInto(builder.model.edges[existing]!, edge);
+    return;
+  }
+  builder.model.edges[nextEdgeId(builder.model)] = edge;
 }
 
 function parseLine(builder: Builder, raw: string, lineNo: number) {

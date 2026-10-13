@@ -32,6 +32,13 @@ const KEYWORDS = new Set([
   "color",
   "colour",
   "curve",
+  "font",
+  "bold",
+  "italic",
+  "underline",
+  "width",
+  "head",
+  "bend",
 ]);
 
 const ARROWS = ["<-->", "<--", "-->", "~~>", "<->", "<>", "->", "=>", "→", "<-", "--", "..>", "..", ">", "<"];

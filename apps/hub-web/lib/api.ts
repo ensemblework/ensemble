@@ -1358,7 +1358,7 @@ export const api = bindClient({
     get<{ session: MeetingSessionRecord; openTasks: Array<{ id: string; title: string; href: string }>; voice: string }>(`/api/meetings/sessions/${id}`),
   startMeeting: (artifactId: string | null, title?: string) =>
     post<{ session: MeetingSessionRecord }>("/api/meetings/sessions", { artifactId, title }),
-  updateMeeting: (id: string, data: { notes: string; title: string }) => request<{ session: MeetingSessionRecord }>(`/api/meetings/sessions/${id}`, { method: "PATCH", json: data, surviveNavigation: true }),
+  updateMeeting: (id: string, data: { notes?: string; content?: PageDocument; title?: string }) => request<{ session: MeetingSessionRecord }>(`/api/meetings/sessions/${id}`, { method: "PATCH", json: data, surviveNavigation: true }),
   deleteMeeting: (id: string) => del<{ deleted: boolean }>(`/api/meetings/sessions/${id}`),
   saveMeetingNotes: (id: string, notes: string) => request<{ session: MeetingSessionRecord }>(`/api/meetings/sessions/${id}`, { method: "PATCH", json: { notes }, surviveNavigation: true }),
   endMeeting: (id: string) => post<{ session: MeetingSessionRecord; askAttach: boolean }>(`/api/meetings/sessions/${id}/end`),
@@ -1668,7 +1668,10 @@ export type MeetingSessionRecord = {
   id: string;
   artifactId: string | null;
   title: string;
+  /** Markdown of `content`. */
   notes: string;
+  /** The notes as a page. Only on one meeting (not the list); null when nothing is written yet. */
+  content?: PageDocument | null;
   recap: string;
   status: string;
   attachState: string;

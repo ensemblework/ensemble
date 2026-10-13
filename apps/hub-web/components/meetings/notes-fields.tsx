@@ -1,15 +1,51 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ComponentType } from "react";
+import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
+import type { PageDocument, PageMention } from "@ensemble/shared-types";
 import { api, type MeetingSessionRecord } from "@/lib/api";
+import { useEntities } from "@/lib/entities";
 import { meetingDoc } from "@/lib/export/items";
+import { blockEditor, warmPeek } from "@/lib/warm";
+import { textToDoc } from "../editor/doc";
+import { mentionHref } from "../editor/editor-commands";
 import { ExportMenu } from "../export-menu";
 import { ShareButton } from "../sharing/share-dialog";
 import { confirmAction } from "../ask-dialog";
 import { useToast } from "../toast";
 
-type Draft = { title: string; notes: string };
+/** The page editor's props this field uses. Tests pass a stand-in; the app loads the block editor. */
+export type NotesEditor = ComponentType<{
+  initial: PageDocument;
+  entities: ReturnType<typeof useEntities>["get"];
+  onChange: (doc: PageDocument) => void;
+  onMentionClick?: (mention: PageMention) => void;
+  placeholder?: string;
+  editable?: boolean;
+  page?: { kind: string; id: string };
+  comments?: boolean;
+  remote?: { doc: PageDocument; stamp: number } | null;
+}>;
+
+function useNotesEditor(given?: NotesEditor): NotesEditor | null {
+  const [Editor, setEditor] = useState<NotesEditor | null>(() => given ?? (blockEditor as NotesEditor | null));
+  useEffect(() => {
+    if (Editor) return;
+    let live = true;
+    void warmPeek().then(() => {
+      if (live && blockEditor) setEditor(() => blockEditor as NotesEditor);
+    });
+    return () => {
+      live = false;
+    };
+  }, [Editor]);
+  return Editor;
+}
+
+const docOf = (session: MeetingSessionRecord): PageDocument => session.content ?? textToDoc(session.notes);
+
+type Draft = { title: string; content: PageDocument };
 // Retain an unsuccessful draft across SPA navigation; only an authorized session renders it.
 const drafts = new Map<string, Draft>();
 const writes = new Map<string, Promise<unknown>>();
@@ -23,10 +59,20 @@ function saveInOrder<T>(id: string, save: () => Promise<T>): Promise<T> {
   return next;
 }
 
-export function MeetingNotesFields({ session, onRemoved }: { session: MeetingSessionRecord; onRemoved: () => void }) {
+/**
+ * A meeting's title and notes. The notes are a page (the block editor): `/` for blocks, `@` to
+ * mention, `@ensemble` to ask in place. No comments. Saves go in order, 600 ms after typing stops.
+ */
+export function MeetingNotesFields({ session, onRemoved, editor }: { session: MeetingSessionRecord; onRemoved: () => void; editor?: NotesEditor }) {
   const client = useQueryClient();
   const toast = useToast();
-  const [draft, setDraft] = useState<Draft>(() => drafts.get(session.id) ?? { title: session.title, notes: session.notes });
+  const router = useRouter();
+  const entities = useEntities();
+  const Editor = useNotesEditor(editor);
+  const [draft, setDraft] = useState<Draft>(() => drafts.get(session.id) ?? { title: session.title, content: docOf(session) });
+  const [initial] = useState(() => draft.content);
+  const known = useRef(JSON.stringify(session.content ?? null));
+  const [remote, setRemote] = useState<{ doc: PageDocument; stamp: number } | null>(null);
   const latest = useRef(draft);
   const pending = useRef(drafts.has(session.id));
   const saving = useRef<Promise<boolean> | null>(null);
@@ -49,6 +95,7 @@ export function MeetingNotesFields({ session, onRemoved }: { session: MeetingSes
       try {
         const result = await saveInOrder(session.id, () => api.updateMeeting(session.id, snapshot));
         savedTitle.current = result.session.title;
+        known.current = JSON.stringify(result.session.content ?? null);
         client.setQueryData<Awaited<ReturnType<typeof api.meetingSession>>>(["meeting-session", session.id], (cached) => cached ? { ...cached, session: result.session } : cached);
         if (drafts.get(session.id) === submitted) drafts.delete(session.id);
         if (mounted.current) setStatus(pending.current ? "Unsaved changes" : "Saved");
@@ -97,6 +144,20 @@ export function MeetingNotesFields({ session, onRemoved }: { session: MeetingSes
     };
   }, []);
 
+  // Notes changed elsewhere (the assistant, another tab) show here when nothing is waiting to save.
+  useEffect(() => {
+    const incoming = JSON.stringify(session.content ?? null);
+    if (incoming === known.current || pending.current || saving.current || !session.content) return;
+    known.current = incoming;
+    latest.current = { ...latest.current, content: session.content };
+    setRemote({ doc: session.content, stamp: Date.now() });
+  }, [session.content]);
+
+  const onMentionClick = useCallback((mention: PageMention) => {
+    const href = mentionHref(mention);
+    if (href) router.push(href);
+  }, [router]);
+
   const remove = async () => {
     if (removing) return;
     if (!(await flushRef.current())) return;
@@ -122,7 +183,7 @@ export function MeetingNotesFields({ session, onRemoved }: { session: MeetingSes
           if (!latest.current.title.trim()) { edit({ ...latest.current, title: savedTitle.current }); toast("A title is required. The previous title was restored."); }
           void flushRef.current();
         }} />
-      <ExportMenu load={() => meetingDoc({ ...session, ...latest.current })} />
+      <ExportMenu load={() => meetingDoc({ ...session, title: latest.current.title, content: latest.current.content })} />
       <ShareButton target={{ kind: "meeting", resourceId: session.id, title: draft.title }} />
       <button type="button" className="btn" disabled={removing} onClick={() => void remove()}>Delete notes</button>
     </div>
@@ -131,10 +192,19 @@ export function MeetingNotesFields({ session, onRemoved }: { session: MeetingSes
       <span className={failed ? "text-danger" : "text-muted"}>{status}</span>
       {failed ? <button type="button" className="btn" onClick={() => void flushRef.current()}>Retry save</button> : null}
     </div>
-    <label className="mt-3 block">
-      <span className="text-[12px] font-medium text-muted">Notes</span>
-      <textarea value={draft.notes} maxLength={100_000} rows={8} className="field mt-1 w-full"
-        onChange={(event) => edit({ ...latest.current, notes: event.target.value })} onBlur={() => { void flushRef.current(); }} />
-    </label>
+    <div className="meeting-notes-page mt-3" data-testid="meeting-notes" onBlur={() => { void flushRef.current(); }}>
+      {Editor ? (
+        <Editor
+          initial={initial}
+          entities={entities.get}
+          onChange={(content) => edit({ ...latest.current, content })}
+          onMentionClick={onMentionClick}
+          placeholder="Type your notes. / for blocks, @ to mention, @ensemble to ask…"
+          page={{ kind: "meeting", id: session.id }}
+          comments={false}
+          remote={remote}
+        />
+      ) : <div className="skeleton h-40 w-full" />}
+    </div>
   </>;
 }

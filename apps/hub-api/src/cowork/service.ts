@@ -5,7 +5,9 @@ import { matchExcerpt } from "../bridge/text.js";
  */
 import { Prisma, type PrismaClient, type TaskStatus } from "@prisma/client";
 import { claimSlot } from "../jobs/claim.js";
-import { moduleDenied } from "@ensemble/shared-types";
+import { PageDocument, moduleDenied, restoreMentionLinks } from "@ensemble/shared-types";
+import { separateLists } from "../imports/markdown.js";
+import { markdownToNodes, pageMarkdown } from "../pages/markdown.js";
 import { isReadKind, readItem, searchHub, todayBriefing } from "../bridge/service.js";
 import { hubUrl } from "../bridge/text.js";
 import { isIsoDate, zonedDateTimeToUtc, zonedParts } from "../lib/clock.js";
@@ -280,23 +282,51 @@ function asRecord(value: unknown): Record<string, unknown> {
   return {};
 }
 
+/** Markdown → the page document the notes editor shows. */
+export function notesDocument(markdown: string): PageDocument {
+  const content = markdown.trim() ? markdownToNodes(separateLists(markdown)) : [];
+  return restoreMentionLinks(PageDocument.parse({ type: "doc", content: content.length ? content : [{ type: "paragraph" }] }));
+}
+
+/** The notes as a page: the saved document, or (for notes typed before 13 Oct 2026) one made from their Markdown. */
+export function meetingContent(row: { content?: unknown; notes: string }): PageDocument | null {
+  const saved = row.content ? PageDocument.safeParse(row.content) : null;
+  if (saved?.success) return saved.data;
+  return row.notes.trim() ? notesDocument(row.notes) : null;
+}
+
+/**
+ * What a save writes: a document from the editor becomes `content` with its Markdown in `notes`;
+ * Markdown alone (the assistant, older clients) becomes both.
+ */
+export function meetingNotesFields(input: { notes?: string; content?: unknown }): { notes: string; content: Prisma.InputJsonValue } | null {
+  if (input.content !== undefined) {
+    const doc = restoreMentionLinks(PageDocument.parse(input.content));
+    return { notes: pageMarkdown(doc, "").slice(0, 100_000), content: doc as Prisma.InputJsonValue };
+  }
+  if (input.notes !== undefined) return { notes: input.notes, content: notesDocument(input.notes) as Prisma.InputJsonValue };
+  return null;
+}
+
 function sessionJson(row: {
   id: string;
   artifactId: string | null;
   title: string;
   notes: string;
+  content?: unknown;
   recap: string;
   status: string;
   attachState: string;
   personIds: string[];
   startedAt: Date;
   endedAt: Date | null;
-}) {
+}, withContent = true) {
   return {
     id: row.id,
     artifactId: row.artifactId,
     title: row.title,
     notes: row.notes,
+    ...(withContent ? { content: meetingContent(row) } : {}),
     recap: row.recap,
     status: row.status,
     attachState: row.attachState,
@@ -460,7 +490,7 @@ export async function listMeetingSessions(db: Db, userId: string) {
     orderBy: { startedAt: "desc" },
     take: 200,
   });
-  return { sessions: rows.map(sessionJson), voice: VOICE_TODO };
+  return { sessions: rows.map((row) => sessionJson(row, false)), voice: VOICE_TODO };
 }
 
 export async function getMeetingSession(db: Db, userId: string, id: string) {
@@ -491,9 +521,9 @@ export async function startMeetingSession(db: Db, userId: string, input: { artif
   return { session: sessionJson(session) };
 }
 
-export async function saveMeetingNotes(db: Tx, userId: string, id: string, notes: string | undefined, title?: string) {
+export async function saveMeetingNotes(db: Tx, userId: string, id: string, change: { notes?: string; content?: unknown; title?: string }) {
   const session = await ownedSession(db, userId, id);
-  await db.meetingSession.update({ where: { id: session.id }, data: { notes, title } });
+  await db.meetingSession.update({ where: { id: session.id }, data: { ...meetingNotesFields(change), title: change.title } });
   if (session.status === "ended") {
     const refreshed = await refreshMeetingRecap(db, userId, id);
     const updated = await ownedSession(db, userId, id);

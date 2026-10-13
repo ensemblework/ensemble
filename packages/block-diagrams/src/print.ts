@@ -1,4 +1,4 @@
-import type { DiagramEdge, DiagramModel, DiagramNode, DiagramText, PortName } from "./model.js";
+import type { DiagramEdge, DiagramModel, DiagramNode, DiagramText, PortName, TextStyle } from "./model.js";
 
 function quote(value: string): string {
   return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
@@ -24,15 +24,35 @@ function endpoint(id: string, port: PortName | null): string {
   return port ? `${id}.${port}` : id;
 }
 
+/** ` font 16 bold italic underline`, or nothing for plain text. */
+function fontWords(font: TextStyle | undefined): string {
+  if (!font) return "";
+  const words: string[] = [];
+  if (font.size != null) words.push(`font ${num(font.size)}`);
+  if (font.bold) words.push("bold");
+  if (font.italic) words.push("italic");
+  if (font.underline) words.push("underline");
+  return words.length ? ` ${words.join(" ")}` : "";
+}
+
 function printNode(id: string, node: DiagramNode, pad: string): string {
   const parts = [`${pad}node ${id} ${quote(node.label)} shape ${node.shape}`];
   if (node.color) parts.push(`color ${node.color}`);
   if (node.locked) parts.push("locked");
-  return parts.join(" ");
+  return parts.join(" ") + fontWords(node.font);
 }
 
 function printText(id: string, text: DiagramText, pad: string): string {
-  return `${pad}text ${id} ${quote(text.text)}${text.locked ? " locked" : ""}`;
+  return `${pad}text ${id} ${quote(text.text)}${text.locked ? " locked" : ""}${fontWords(text.font)}`;
+}
+
+/** ` width 2 head 14 bend -30` for a line that is not drawn the default way. */
+function lookWords(edge: DiagramEdge): string {
+  const words: string[] = [];
+  if (edge.width != null) words.push(`width ${num(edge.width)}`);
+  if (edge.head != null) words.push(`head ${num(edge.head)}`);
+  if (edge.bend) words.push(`bend ${num(edge.bend)}`);
+  return words.length ? ` ${words.join(" ")}` : "";
 }
 
 function printGroup(model: DiagramModel, id: string, depth: number): string[] {
@@ -80,7 +100,7 @@ export function printDiagram(model: DiagramModel): string {
     for (const [, edge] of edges) {
       const label = edge.label ? ` : ${quote(edge.label)}` : "";
       const curve = edge.curve !== model.meta.curve ? ` curve ${edge.curve}` : "";
-      lines.push(`edge ${endpoint(edge.from.node, edge.from.port)} ${arrowToken(edge)} ${endpoint(edge.to.node, edge.to.port)}${label}${curve}`);
+      lines.push(`edge ${endpoint(edge.from.node, edge.from.port)} ${arrowToken(edge)} ${endpoint(edge.to.node, edge.to.port)}${label}${curve}${lookWords(edge)}${fontWords(edge.font)}`);
     }
   }
   const layoutIds = Object.keys(model.layout)

@@ -17,12 +17,14 @@ direction down
 node start "Start" shape circle
 node step "Do the work" shape rectangle
 node ask "Is it done?" shape diamond
+node fix "Fix what is missing" shape rectangle
 node done "Finish" shape circle
 
 edge start > step
 edge step > ask
 edge ask > done : "yes"
-edge ask > step : "no"
+edge ask > fix : "no"
+edge fix > step
 `,
   },
   {
@@ -164,8 +166,7 @@ node app "App" shape rectangle
 node api "Service" shape server
 
 edge person > app : "asks"
-edge app > api : "calls"
-edge api > app : "answers"
+edge app <> api : "calls / answers"
 `,
   },
   {

@@ -62,7 +62,9 @@
 .meeting-paper { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 22px; min-width: 0; }
 .meeting-paper-kicker { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 10px; margin-bottom: 16px; }
 .meeting-paper-kicker > span { margin-left: auto; }
-.meeting-paper textarea { min-height: 250px; line-height: 1.8; background: var(--bg); }
+/* The notes are a page: the block editor, with room to write before the first line. */
+.meeting-notes-page { border-top: 1px solid var(--line); padding-top: 12px; }
+.meeting-notes-page .ProseMirror { min-height: 250px; }
 .meeting-paper input[aria-label="Meeting title"] { background: transparent; border: 0; padding-left: 0; font-family: var(--font-display); font-size: 24px; font-weight: 450; }
 .meeting-recap { border-top: 1px solid var(--line); padding-top: 16px; }
 .meeting-action-list { display: grid; gap: 7px; }

@@ -72,14 +72,15 @@ node       = ( "node" | "block" ) id quoted-label { property }
            | id quoted-label shape-marker
            | label shape-marker
 
-edge       = [ "edge" | "connect" | "link" ] endpoint { arrow endpoint } [ ":" label ] [ "curve" curve-name ]
-           | [ "edge" | "connect" | "link" ] endpoint arrow endpoint { "," endpoint } [ ":" label ] [ "curve" curve-name ]
+edge       = [ "edge" | "connect" | "link" ] endpoint { arrow endpoint } [ ":" label ] [ "curve" curve-name ] { line-look }
+           | [ "edge" | "connect" | "link" ] endpoint arrow endpoint { "," endpoint } [ ":" label ] [ "curve" curve-name ] { line-look }
+line-look  = "width" number | "head" number | "bend" number | text-style
 
 group      = "group" id [quoted-label] ["locked"] "{" { statement } "}"
            | "group" id [quoted-label] ["locked"] newline
                indented statements
 
-text       = ( "text" | "textbox" ) id quoted-label ["locked"]
+text       = ( "text" | "textbox" ) id quoted-label ["locked"] { text-style }
 
 layout     = "layout" [ "{" ] { layout-line } [ "}" ]
 layout-line= id x y [width height] ["locked" | "pinned"]
@@ -90,8 +91,9 @@ arrow      = ">" | "->" | "=>" | "→" | "-->" | "~~>"
            | "--" | ".."
            | "<>" | "<->" | "<-->"
            | "<" | "<-" | "<--"
-property   = "shape" shape | "color" color | "locked" | "pinned"
+property   = "shape" shape | "color" color | "locked" | "pinned" | text-style
            | "(" [shape-list] | "[" [shape-list]
+text-style = "font" number | "bold" | "italic" | "underline"
 shape-list = value { "," value } [missing ")" or "]"]
 shape-marker = property that names a shape
 ```
@@ -102,7 +104,7 @@ Ids are the map keys. Matching is case-insensitive. If a line names a label inst
 
 ## Shapes
 
-Fifteen shapes. The name on the right is what the printer writes.
+Nineteen shapes. The name on the right is what the printer writes.
 
 | Write this | Means | Typical use |
 |---|---|---|
@@ -121,6 +123,10 @@ Fifteen shapes. The name on the right is what the printer writes.
 | `hexagon`, `hex`, `prepare`, `preparation` | hexagon | preparation, or a firewall-style node |
 | `note`, `sticky`, `comment` | note | a note stuck to the diagram |
 | `trapezoid`, `trap`, `manual` | trapezoid | a manual step |
+| `queue`, `mq`, `message-queue`, `topic`, `stream`, `kafka` | queue | a message queue or event stream (a cylinder on its side) |
+| `subroutine`, `subprocess`, `predefined`, `function` | subroutine | a step defined elsewhere (flowchart "predefined process") |
+| `browser`, `web`, `webapp`, `website`, `window`, `frontend`, `ui` | browser | a web app or site (a browser window) |
+| `delay`, `wait`, `dshape` | delay | a wait (flat on the left, round on the right) |
 
 Unknown names become a rectangle, with a warning. A close miss (`dimond`) becomes the nearest shape, with a warning. Names shorter than 4 letters are not guessed, so `box` stays an alias and `red` stays a color.
 
@@ -130,12 +136,12 @@ Leave `color` off and the shape picks its own soft fill, with a stronger border 
 
 | Shape | Default colour | Used for |
 |---|---|---|
-| rectangle, rounded, parallelogram | blue | a step or process |
+| rectangle, rounded, parallelogram, subroutine | blue | a step or process |
 | diamond, document, note | amber | a decision, or paper |
 | circle, ellipse | green | a start or an end |
-| cylinder | teal | a database or store |
-| server | indigo | a service or machine |
-| triangle, trapezoid | orange | a marker or a manual step |
+| cylinder, queue | teal | a database, store or stream |
+| server, browser | indigo | a service, machine or web app |
+| triangle, trapezoid, delay | orange | a marker, a manual step or a wait |
 | cloud | purple | an outside system |
 | actor | pink | a person |
 | hexagon | red | a gate or a check |
@@ -178,6 +184,10 @@ Rectangle points are the midpoints of the four sides and the four corners. Cylin
 | `curve curved` | every line on this diagram is a curve, unless a line says otherwise |
 | `edge a > b curve elbow` | this line turns at right angles |
 | `edge a > b curve straight` | this line stays straight even when the diagram default is curved |
+| `edge a > b width 2.5` | a thicker line, 0.5 to 8 px (default 1.5) |
+| `edge a > b head 16` | a longer arrowhead, 6 to 40 px (default 10) |
+| `edge a > b bend 40` | the middle of the line pulled 40 px to the left of a → b (negative is right); on an elbow line, the middle run moved 40 px |
+| `edge a > b : "yes" font 12 bold` | the label's size and emphasis (see [Text size and emphasis](#text-size-and-emphasis)) |
 
 A chain `edge a > b > c` is two lines. The label, if you add one, belongs to the last hop. A fan `edge a > b, c` is two lines that share the label.
 
@@ -196,7 +206,28 @@ edge api > db
 edge api > cache curve curved : "optional"
 ```
 
-Two lines between the same pair of blocks can still overlap. Prefer different blocks, or name different ports (`a.n > b.s` and `a.s > b.n`), when both directions matter.
+**One line per pair of blocks.** Two blocks have at most one line between them. A second line between the same two blocks (either way round) is folded into the first, with a note in Problems and a *Remove this line* fix: a line the other way round adds its arrowhead, so `a > b` and `b > a` become one two-way arrow, and different labels are kept, joined with ` / `. The canvas does not draw a second line between joined blocks (it says they are already connected), and the assistant's `add_edge` on a joined pair changes the line that is there.
+
+`width`, `head`, `bend` and the text style come after the label (when the label is quoted) and are written by the printer in that order: `edge a > b : "calls" curve curved width 2 head 14 bend -30 font 12 italic`. In an unquoted label, words such as `bold` stay part of the label.
+
+A bend moves with the blocks: it is a distance from the straight line between the two ends, so the line keeps its curve when either block is dragged. On the canvas, select a line and drag its middle (its label, or the dot) to bend it; dragging it back near the straight line snaps it straight.
+
+## Text size and emphasis
+
+Blocks, text boxes and line labels take `font <px>` (8 to 48) and the words `bold`, `italic` and `underline`, after the other properties. Without them the text is plain at its usual size: 13 px in a block, 12.5 in a text box, 11 on a line.
+
+```udl
+title Release
+direction right
+
+node build "Build" shape rectangle font 16 bold
+node ship "Ship it" shape rounded color green italic
+text warn "Freeze on Fridays" font 14 bold underline
+
+edge build > ship : "green CI" font 12 bold width 2 head 14
+```
+
+A size outside 8–48 is kept inside it, with a note. A block that is too small for its text after a style change grows until the text fits.
 
 ## Groups
 
@@ -465,7 +496,7 @@ edge lead > chen
 
 ### Sequence-style flow
 
-Straight lines only, so this is the order of messages, not a UML lifeline.
+Straight lines only, so this is the order of messages, not a UML lifeline. Two blocks have one line between them, so a request and its answer share a two-way arrow (`<>`) with both words on it.
 
 ```udl
 title Place an order
@@ -476,11 +507,9 @@ node shop "Shop" shape rounded
 node pay "Payments" shape rectangle
 node db "Orders" shape cylinder
 
-edge user > shop : "place order"
-edge shop > pay : "charge"
-edge pay > shop : "approved"
+edge user <> shop : "place order / confirmation"
+edge shop <> pay : "charge / approved"
 edge shop > db : "save"
-edge shop > user : "confirmation"
 ```
 
 ### Shapes on one diagram
@@ -544,7 +573,7 @@ Schema version is `1`. Do not author this by hand. It is the contract between th
   "version": 1,
   "meta": { "title": "Login flow", "direction": "down", "curve": "straight" },
   "nodes": {
-    "start": { "label": "Start", "shape": "circle", "color": null, "group": null, "locked": false },
+    "start": { "label": "Start", "shape": "circle", "color": null, "group": null, "locked": false, "font": { "size": 16, "bold": true, "italic": false, "underline": false } },
     "db": { "label": "Users DB", "shape": "cylinder", "color": null, "group": "backend", "locked": false }
   },
   "groups": {
@@ -557,7 +586,10 @@ Schema version is `1`. Do not author this by hand. It is the contract between th
       "label": "lookup",
       "line": "solid",
       "arrow": { "start": "none", "end": "arrow" },
-      "curve": "straight"
+      "curve": "straight",
+      "width": 2,
+      "head": 14,
+      "bend": -30
     }
   },
   "texts": {
@@ -569,7 +601,7 @@ Schema version is `1`. Do not author this by hand. It is the contract between th
 }
 ```
 
-`direction` is `down`, `up`, `left`, or `right`. `curve` is `straight`, `curved`, or `elbow`, on the diagram and on each line. A document saved before curves existed is read as `straight`. `line` is `solid` or `dashed`. `color` is a palette name, a hex color, or `null`. `port` is one of the eight names, or `null`.
+`font` (on nodes, texts and edges), `width`, `head` and `bend` are optional; a document without them is plain text and default lines. `direction` is `down`, `up`, `left`, or `right`. `curve` is `straight`, `curved`, or `elbow`, on the diagram and on each line. A document saved before curves existed is read as `straight`. `line` is `solid` or `dashed`. `color` is a palette name, a hex color, or `null`. `port` is one of the eight names, or `null`.
 
 `direction: down` flows top to bottom. `right` flows left to right.
 
@@ -580,8 +612,14 @@ Schema version is `1`. Do not author this by hand. It is the contract between th
 - **Lock** on the selection, or `locked` in the text, is the same flag.
 - **Add a text box** inserts a `text` statement.
 - **Add a block** inserts a `node` statement.
+- **Resize** a selected block or text box from its corners and sides. It cannot go smaller than its text needs: the label on at most three lines with its longest word unbroken, and about half the shape's default size (`minNodeSize` in `shapes.ts`; a circle stays round). The size is the block's `layout` width and height. Renaming keeps a size you chose unless the new text no longer fits.
+- **Alignment guides.** While you drag one block, its left, centre or right edge snaps to another block's (and its top, middle or bottom), within 6 screen pixels, and a red guide shows the match. While you resize, the edge you drag snaps the same way, and the width or height snaps to another block's, marked on both. Hold Alt to move or resize without snapping. Written for Ensemble (`components/diagrams/snap.ts`) after how Excalidraw (MIT) and draw.io (Apache-2.0) snap; React Flow's helper-lines example is a paid Pro example and is not used.
+- **The format bar** floats over the canvas while something is selected: text size (−/+), **B**, *I*, U for blocks, text boxes and line labels (also ⌘B / ⌘I / ⌘U, Ctrl on Windows and Linux); five colours for blocks (blue, green, amber, red, purple — each with a light and a dark version) and *A* for the shape's own colour; line width, arrowhead size, straight / curved / elbow, dashed, *Straighten* and the label for lines; and align left, centre, right, top, middle, bottom, and space evenly (three or more) for several blocks. Every change is written to the text like any other canvas edit.
+- **Line labels.** Double-click a line (or its label), or use the pen in the format bar, to type its label. Enter keeps it, Esc cancels.
+- **Bend a line** by dragging its middle when it is selected (see [Lines](#lines)).
+- Lines are drawn by `edgeRoute` (`src/route.ts`), shared by the canvas and the SVG export, so a bent or thick line and its arrowhead look the same in both. Each end follows its block live while it is dragged or resized. The stroke stops under the arrowhead, so a thick line never pokes past the tip.
 - Export is PNG, JPG, PDF or SVG of the whole diagram, from the same geometry, in the editor or from the download menu on each row of the Diagrams list (`components/diagrams/download-menu.tsx`). *Settings › Data › Download this space* includes every diagram as PNG, SVG and source text.
 - **Editing requires at least 1024 × 640 CSS pixels.** Smaller windows show only a read-only pan/zoom preview and SVG download; they cannot edit the diagram.
-- On a diagram, Alt+Shift+R reorganizes, Alt+Shift+L locks the selection, Alt+Shift+N adds a text box, Alt+Shift+F shows only the canvas, and Delete removes the selection. Esc leaves the canvas-only view. `g` then `d` opens the diagram list from anywhere.
+- On a diagram, Alt+Shift+R reorganizes, Alt+Shift+L locks the selection, Alt+Shift+N adds a text box, Alt+Shift+F shows only the canvas, ⌘B / ⌘I / ⌘U style the selected text, and Delete removes the selection. Dragging several selected blocks moves them all and saves all of them. Esc leaves the canvas-only view. `g` then `d` opens the diagram list from anywhere.
 
 Package: `packages/block-diagrams`. It has no React and no DOM. The Hub UI is only the renderer and the save buttons.

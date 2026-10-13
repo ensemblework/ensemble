@@ -12,6 +12,7 @@ import { useModuleState } from "@/lib/use-module";
 import { useToast } from "../toast";
 
 const CommentLayer = dynamic(() => import("../comments/comment-layer").then((mod) => mod.CommentLayer), { ssr: false });
+const InlineEnsemble = dynamic(() => import("../comments/inline-ensemble").then((mod) => mod.InlineEnsemble), { ssr: false });
 
 /**
  * The Notion-style page body: `/` for blocks, `@` for linked mentions of
@@ -27,6 +28,7 @@ export function BlockEditor({
   placeholder = "Type / for blocks, @ to mention…",
   editable = true,
   page,
+  comments = true,
   remote,
 }: {
   initial: PageDocument;
@@ -36,6 +38,8 @@ export function BlockEditor({
   placeholder?: string;
   editable?: boolean;
   page?: { kind: string; id: string };
+  /** False: no comments on this page, only inline `@ensemble` requests (meeting notes). */
+  comments?: boolean;
   /** Someone else's saved version. Applied in place (your selection kept), never saved back. */
   remote?: { doc: PageDocument; stamp: number } | null;
 }) {
@@ -146,12 +150,14 @@ export function BlockEditor({
   }, [diagramsOn, editor]);
 
   return (
-    <div className={page ? "comment-host" : undefined}>
-      <div className={page ? "page-with-comments" : undefined}>
+    <div className={page && comments ? "comment-host" : undefined}>
+      <div className={page && comments ? "page-with-comments" : undefined}>
         <EditorContent editor={editor} />
         {live && chooser !== null ? <FileChooser editor={live} pos={chooser} onClose={closeChooser} /> : null}
         {/* Comments name people: never on a public link. */}
-        {page && live && !currentLink() ? <CommentLayer editor={live} pageKind={page.kind} pageId={page.id} /> : null}
+        {page && live && !currentLink() ? (
+          comments ? <CommentLayer editor={live} pageKind={page.kind} pageId={page.id} /> : <InlineEnsemble editor={live} pageKind={page.kind} pageId={page.id} />
+        ) : null}
       </div>
     </div>
   );

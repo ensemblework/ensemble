@@ -5,15 +5,23 @@ import {
   MIN_VIEWPORT,
   addBlock,
   addTextBox,
+  alignItems,
   connectBlocks,
+  distributeItems,
+  edgeBetween,
   errorCount,
   looksLikeMermaid,
-  moveItem,
+  moveItems,
   parseDiagram,
   printDiagram,
   removeItems,
   renameItem,
+  resizeItem,
+  setColor,
+  setEdgeLook,
+  setTextStyle,
   setTitle,
+  textStyle,
   toggleLock,
   type Diagnostic,
   type DiagnosticFix,
@@ -33,6 +41,7 @@ import { isApplePlatform } from "@/lib/platform";
 import { DiagramCanvas, type DiagramCanvasHandle } from "./canvas";
 import type { DiagramCodeHandle } from "./diagram-code";
 import { DiagramMore } from "./diagram-more";
+import { FormatBar, type FormatAction } from "./format-bar";
 import { downloadDiagram, type DiagramExportKind } from "./export-image";
 import { ShapeGlyph } from "./glyph";
 import { layoutInBackground } from "./layout-client";
@@ -61,6 +70,10 @@ const SHAPES: Array<{ shape: ShapeId; label: string }> = [
   { shape: "hexagon", label: "Hexagon" },
   { shape: "note", label: "Note" },
   { shape: "trapezoid", label: "Trapezoid" },
+  { shape: "queue", label: "Queue" },
+  { shape: "subroutine", label: "Subroutine" },
+  { shape: "browser", label: "Web app" },
+  { shape: "delay", label: "Delay" },
 ];
 
 function useRoomy(): { width: number; height: number; ok: boolean } | null {
@@ -349,6 +362,33 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
     setFitTick((value) => value + 1);
   }
 
+  function format(action: FormatAction) {
+    const current = modelRef.current;
+    const pick = selectedRef.current;
+    if (!current) return;
+    if (action.kind === "label") {
+      if (pick.edges[0]) canvasRef.current?.editLabel(pick.edges[0]);
+      return;
+    }
+    if (action.kind === "text") commit(setTextStyle(current, pick.nodes, pick.edges, action.patch));
+    if (action.kind === "color") commit(setColor(current, pick.nodes, action.color));
+    if (action.kind === "line") commit(setEdgeLook(current, pick.edges, action.patch));
+    if (action.kind === "align") commit(alignItems(current, pick.nodes, action.mode));
+    if (action.kind === "distribute") commit(distributeItems(current, pick.nodes, action.axis));
+  }
+
+  /** ⌘B / ⌘I / ⌘U on the canvas: on when any selected text lacks it, off when all have it. */
+  function toggleText(key: "bold" | "italic" | "underline") {
+    const current = modelRef.current;
+    const pick = selectedRef.current;
+    if (!current || (!pick.nodes.length && !pick.edges.length)) return;
+    const styles = [
+      ...pick.nodes.map((nodeId) => current.nodes[nodeId]?.font ?? current.texts[nodeId]?.font),
+      ...pick.edges.map((edgeId) => current.edges[edgeId]?.font),
+    ].map(textStyle);
+    commit(setTextStyle(current, pick.nodes, pick.edges, { [key]: !styles.every((style) => style[key]) }));
+  }
+
   function lockSelection() {
     const current = modelRef.current;
     if (!current || !selectedRef.current.nodes.length) return;
@@ -503,6 +543,9 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
       if (hit.id === "diagram-text") addNote();
       if (hit.id === "diagram-focus") void toggleFocus();
       if (hit.id === "diagram-delete" || hit.id === "diagram-backspace") removeSelection();
+      if (hit.id === "diagram-bold") toggleText("bold");
+      if (hit.id === "diagram-italic") toggleText("italic");
+      if (hit.id === "diagram-underline") toggleText("underline");
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
@@ -760,12 +803,17 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
             fitTick={fitTick}
             onSelection={select}
             onRename={(nodeId, label) => commit(renameItem(model, nodeId, label))}
-            onMove={(nodeId, x, y) => commit(moveItem(model, nodeId, x, y))}
+            onMove={(moves) => commit(moveItems(model, moves))}
+            onResize={(nodeId, box) => commit(resizeItem(model, nodeId, box))}
+            onLabel={(edgeId, label) => commit(setEdgeLook(model, [edgeId], { label }))}
+            onBend={(edgeId, bend) => commit(setEdgeLook(model, [edgeId], { bend }))}
             onConnect={(from: { node: string; port: PortName | null }, to: { node: string; port: PortName | null }) => {
               const next = connectBlocks(model, from, to);
               if (next) commit(next);
+              else if (edgeBetween(model, from.node, to.node)) toast("These blocks are already connected. Select the line to change it.");
             }}
           />
+          {readOnly ? null : <FormatBar model={model} nodes={selected.nodes} edges={selected.edges} onAction={format} />}
           {focus ? (
             <div className="diagram-focus-palette" role="toolbar" aria-label="Blocks">
               {SHAPES.map((item) => (

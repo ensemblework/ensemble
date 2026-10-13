@@ -2,7 +2,7 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useSortable, type AnimateLayoutChanges } from "@dnd-kit/sortable";
-import { Bot, GripVertical } from "lucide-react";
+import { Bot, GripVertical, Trash2 } from "lucide-react";
 import { type TaskRecord } from "@/lib/api";
 import { warmTask } from "@/lib/warm";
 import { dueLabel, plural } from "@/lib/format";
@@ -44,7 +44,8 @@ function OwnerMark({ task }: { task: TaskRecord }) {
   );
 }
 
-export function CardBody({ task }: { task: TaskRecord }) {
+/** The card. `onDelete` adds a trash button that shows on hover; the drag overlay copy has none. */
+export function CardBody({ task, onDelete }: { task: TaskRecord; onDelete?: (id: string) => void }) {
   const due = dueLabel(task.due, task.status === "done");
   return (
     <div className="board-card group text-left" data-priority={task.priority}>
@@ -58,10 +59,28 @@ export function CardBody({ task }: { task: TaskRecord }) {
         {due ? <span className={due.overdue ? "text-[#ffb4ae]" : undefined}>{due.text}</span> : null}
         <LabelChips labels={task.labels} />
       </div>
-      <GripVertical
-        size={14}
-        className="absolute right-1.5 top-2 text-faint opacity-0 transition-opacity group-hover:opacity-100"
-      />
+      {onDelete ? (
+        <button
+          type="button"
+          className="icon-btn absolute right-1 top-1 h-6 w-6 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100"
+          aria-label={`Delete ${task.title || "task"}`}
+          title="Delete"
+          // The card drags on pointer down and opens on click; the button does neither.
+          onPointerDown={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            onDelete(task.id);
+          }}
+        >
+          <Trash2 size={13} />
+        </button>
+      ) : (
+        <GripVertical
+          size={14}
+          className="absolute right-1.5 top-2 text-faint opacity-0 transition-opacity group-hover:opacity-100"
+        />
+      )}
     </div>
   );
 }
@@ -78,6 +97,7 @@ export function SortableCard({
   motion,
   onOpen,
   onToggleSelect,
+  onDelete,
 }: {
   task: TaskRecord;
   active: boolean;
@@ -85,6 +105,7 @@ export function SortableCard({
   motion: BoardCardMotion;
   onOpen: (id: string) => void;
   onToggleSelect?: (id: string) => void;
+  onDelete?: (id: string) => void;
 }) {
   const client = useQueryClient();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -125,7 +146,7 @@ export function SortableCard({
       onFocus={() => warmTask(client, task.id)}
     >
       <div className={cx((active || selected) && "rounded-md ring-1 ring-line-strong")}>
-        <CardBody task={task} />
+        <CardBody task={task} onDelete={onDelete} />
       </div>
     </div>
   );

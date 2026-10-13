@@ -1,9 +1,11 @@
 import { errorCount, parseDiagram } from "./parse.js";
 import { printDiagram } from "./print.js";
+import { setEdgeLook } from "./edit.js";
 import {
   COLORS,
   CURVES,
   SHAPE_IDS,
+  edgeBetween,
   lookupId,
   nextEdgeId,
   uniqueId,
@@ -21,6 +23,18 @@ export type DiagramOp =
   | { op: "move_to_group"; id: string; group: string | null }
   | { op: "set_node"; id: string; shape?: ShapeId; color?: string | null }
   | { op: "set_curve"; curve: Curve; edge?: string }
+  | {
+      op: "set_edge";
+      id?: string;
+      from?: string;
+      to?: string;
+      label?: string;
+      curve?: Curve;
+      dashed?: boolean;
+      arrows?: "end" | "start" | "both" | "none";
+      width?: number | null;
+      head?: number | null;
+    }
   | { op: "patch"; find: string; replace: string };
 
 function clone<T>(value: T): T {
@@ -92,6 +106,14 @@ function applyOp(model: DiagramModel, op: Exclude<DiagramOp, { op: "patch" }>): 
     const from = requireNode(next, op.from);
     const to = requireNode(next, op.to);
     if (op.curve && !(CURVES as readonly string[]).includes(op.curve)) throw new Error(`Unknown curve “${op.curve}”.`);
+    // Two blocks have one line between them: adding it again changes the one there.
+    const existing = edgeBetween(next, from, to);
+    if (existing) {
+      const edge = next.edges[existing]!;
+      if (op.label?.trim()) edge.label = op.label.trim();
+      if (op.curve) edge.curve = op.curve;
+      return next;
+    }
     const id = nextEdgeId(next);
     next.edges[id] = {
       from: { node: from, port: null },
@@ -133,6 +155,23 @@ function applyOp(model: DiagramModel, op: Exclude<DiagramOp, { op: "patch" }>): 
       next.nodes[id]!.color = op.color;
     }
     return next;
+  }
+  if (op.op === "set_edge") {
+    let id = op.id && next.edges[op.id] ? op.id : null;
+    if (!id && op.from && op.to) id = edgeBetween(next, requireNode(next, op.from), requireNode(next, op.to));
+    if (!id) throw new Error(op.id ? `No arrow “${op.id}”.` : "No arrow joins those blocks. Pass its id, or from and to.");
+    if (op.curve && !(CURVES as readonly string[]).includes(op.curve)) throw new Error(`Unknown curve “${op.curve}”.`);
+    const arrow = op.arrows
+      ? { start: op.arrows === "start" || op.arrows === "both" ? ("arrow" as const) : ("none" as const), end: op.arrows === "end" || op.arrows === "both" ? ("arrow" as const) : ("none" as const) }
+      : undefined;
+    return setEdgeLook(next, [id], {
+      label: op.label,
+      curve: op.curve,
+      line: op.dashed === undefined ? undefined : op.dashed ? "dashed" : "solid",
+      arrow,
+      width: op.width,
+      head: op.head,
+    });
   }
   next.meta.curve = op.curve;
   if (op.edge) {

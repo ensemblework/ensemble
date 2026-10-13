@@ -1,8 +1,10 @@
 import { z } from "zod";
 import { Priority, TaskStatus } from "@ensemble/shared-types";
+import { inferComplexity } from "../../lib/complexity.js";
 import { createTask, labelPriority, labelStatus, taskChangePreview, titlesMatch, updateTask } from "../../services/tasks.js";
 import { softDelete } from "../../services/records.js";
 import { defineTool, inTransaction, toolOk, type ToolContext } from "../types.js";
+import { MAX_MARKDOWN, appendToTaskPage, droppedNote } from "./pages.js";
 
 const Due = z
   .string()
@@ -10,11 +12,28 @@ const Due = z
   .nullable()
   .optional();
 
-const TaskDraftInput = z
+/**
+ * The short description and the notes field are the person's to fill in. Anything the assistant
+ * writes about a task goes on its page, so a `description` or `notes` it still sends is moved
+ * there before the input is checked.
+ */
+export function foldIntoPage(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const { description, notes, ...rest } = raw as Record<string, unknown>;
+  const parts = [rest.page, description, notes].filter((part): part is string => typeof part === "string" && part.trim().length > 0);
+  return parts.length ? { ...rest, page: parts.join("\n\n") } : rest;
+}
+
+const PageMarkdown = z
+  .string()
+  .max(MAX_MARKDOWN)
+  .optional()
+  .describe("Markdown for the task's page: detail, steps, context, links as [@Label](ensemble://kind/id). Everything you write about the task goes here.");
+
+const TaskDraftInput = z.preprocess(foldIntoPage, z
   .object({
     title: z.string().min(1),
-    description: z.string().optional(),
-    notes: z.string().optional(),
+    page: PageMarkdown,
     owner: z.enum(["me", "agent", "unassigned"]).optional(),
     status: TaskStatus.optional(),
     priority: Priority.describe("critical = Critical/drop everything, p0 = High/urgent, p1 = Medium, p2 = Low").optional(),
@@ -28,7 +47,7 @@ const TaskDraftInput = z
     skillIds: z.array(z.string()).optional(),
     taskId: z.string().optional(),
   })
-  .strict();
+  .strict());
 
 export const taskTools = [
   defineTool({
@@ -95,7 +114,7 @@ export const taskTools = [
     name: "hub_create_tasks",
     area: "tasks",
     description:
-      "Add one or more todos. Prefer one call with several tasks. Set status to proposed for work you inferred. priority critical is Critical, p0 is High, p1 is Medium, p2 is Low. Use projectName to attach tasks to a project created earlier in this turn.",
+      "Add one or more todos. Prefer one call with several tasks. Write any detail in page (the task's page, Markdown); the short description is the person's and is never set. Set owner, priority, complexity, due, labels, projectName or people only when the person said so or it is clear from what they said; otherwise leave them out. Set status to proposed for work you inferred. priority critical is Critical, p0 is High, p1 is Medium, p2 is Low. Use projectName to attach tasks to a project created earlier in this turn.",
     input: z.object({ tasks: z.array(TaskDraftInput).min(1).max(12) }),
     isWrite: true,
     risk: "low",
@@ -111,28 +130,35 @@ export const taskTools = [
         if (task.projectName) bits.push(`in ${task.projectName}`);
         if (task.labels?.length) bits.push(`tagged ${task.labels.join(", ")}`);
         if (task.owner === "me") bits.push("assigned to you");
+        if (task.page?.trim()) bits.push("with a page");
         return `- ${bits.join(", ")}`;
       });
       return `Add ${input.tasks.length} task(s):\n${lines.join("\n")}`;
     },
     async run(ctx, input) {
+      const dropped: string[] = [];
       const created = await inTransaction(ctx, async (tx) => {
         const rows = [];
         for (const draft of input.tasks) {
-          const { taskId: _ignored, ...fields } = draft;
-          rows.push(
-            await createTask(
-              tx,
-              ctx.userId,
-              { ...fields, due: fields.due ?? undefined, sourceRef: ctx.conversationId ? `assistant:${ctx.conversationId}` : "assistant" },
-              "agent",
-            ),
+          const { taskId: _ignored, page, ...fields } = draft;
+          const row = await createTask(
+            tx,
+            ctx.userId,
+            {
+              ...fields,
+              complexity: fields.complexity ?? inferComplexity({ title: fields.title, description: page }),
+              due: fields.due ?? undefined,
+              sourceRef: ctx.conversationId ? `assistant:${ctx.conversationId}` : "assistant",
+            },
+            "agent",
           );
+          if (page?.trim()) dropped.push(...(await appendToTaskPage(tx, ctx.userId, row.id, page)).dropped);
+          rows.push(row);
         }
         return rows;
       });
       const listed = created.map((row) => `“${row.title}” (${row.id})`).join("; ");
-      return toolOk(`Added ${created.length} task(s): ${listed}.`, { tasks: created.map((row) => ({ id: row.id, title: row.title, projectId: row.projectId })) }, {
+      return toolOk(`Added ${created.length} task(s): ${listed}.${droppedNote(dropped)}`, { tasks: created.map((row) => ({ id: row.id, title: row.title, projectId: row.projectId })) }, {
         invalidate: ["tasks"],
         href: created[0] ? `/tasks/${created[0].id}` : undefined,
       });
@@ -142,14 +168,13 @@ export const taskTools = [
     name: "hub_update_task",
     area: "tasks",
     description:
-      "Update fields on an existing task, including marking it done. taskId must be the exact id from hub_list_tasks (search with query). matchTitle must be that task's current title. The write is refused when they do not match. priority critical is Critical, p0 is High, p1 is Medium, p2 is Low. Do not use this to link a repo or create a person.",
-    input: z
+      "Update fields on an existing task, including marking it done. taskId must be the exact id from hub_list_tasks (search with query). matchTitle must be that task's current title. The write is refused when they do not match. page adds Markdown to the end of the task's page; to rewrite the page use hub_update_page. The short description is the person's and is never set. priority critical is Critical, p0 is High, p1 is Medium, p2 is Low. Do not use this to link a repo or create a person.",
+    input: z.preprocess(foldIntoPage, z
       .object({
         taskId: z.string().uuid(),
         matchTitle: z.string().min(1).describe("The task's current title. Refused when this is not the title of taskId."),
         title: z.string().min(1).optional(),
-        description: z.string().optional(),
-        notes: z.string().optional(),
+        page: PageMarkdown.describe("Markdown added to the end of the task's page."),
         owner: z.enum(["me", "agent", "unassigned"]).optional(),
         status: TaskStatus.optional(),
         priority: Priority.describe("critical = Critical/drop everything, p0 = High/urgent, p1 = Medium, p2 = Low").optional(),
@@ -165,7 +190,7 @@ export const taskTools = [
         todayFocus: z.enum(["auto", "keep", "hidden"]).optional(),
         snoozedUntil: z.string().datetime().nullable().optional(),
       })
-      .strict(),
+      .strict()),
     isWrite: true,
     risk: "low",
     undoable: true,
@@ -182,7 +207,7 @@ export const taskTools = [
           { statusCode: 409 },
         );
       }
-      return taskChangePreview(task.title, {
+      const change = taskChangePreview(task.title, {
         title: task?.title,
         status: task?.status,
         priority: task?.priority,
@@ -197,13 +222,23 @@ export const taskTools = [
         projectName: input.projectName,
         complexity: input.complexity,
       });
+      const first = input.page?.trim().split("\n")[0]?.replace(/^#+\s*/, "").slice(0, 80);
+      if (!first) return change;
+      return change.endsWith(": details") ? `Add to the page of “${task.title}”: ${first}` : `${change}; add to its page: ${first}`;
     },
     async run(ctx, input) {
-      const { taskId, matchTitle, ...patch } = input;
-      const task = await inTransaction(ctx, (tx) =>
-        updateTask(tx, ctx.userId, taskId, { ...patch, matchTitle, due: patch.due ?? undefined }, "agent"),
-      );
-      return toolOk(`Updated “${task.title}”.`, { task: { id: task.id, title: task.title, status: task.status, owner: task.owner, priority: task.priority, due: task.due, completedAt: task.completedAt, projectId: task.projectId } }, {
+      const { taskId, matchTitle, page, ...patch } = input;
+      const fields = Object.values(patch).some((value) => value !== undefined);
+      const { task, dropped } = await inTransaction(ctx, async (tx) => {
+        const row = fields || !page?.trim()
+          ? await updateTask(tx, ctx.userId, taskId, { ...patch, matchTitle, due: patch.due ?? undefined }, "agent")
+          : await tx.task.findFirst({ where: { id: taskId, userId: ctx.userId, deletedAt: null } });
+        if (!row) throw Object.assign(new Error("That task is not on your board."), { statusCode: 404 });
+        if (!fields && page?.trim() && !titlesMatch(matchTitle, row.title)) throw Object.assign(new Error(`That id is “${row.title}”, not “${matchTitle}”.`), { statusCode: 409 });
+        const written = page?.trim() ? await appendToTaskPage(tx, ctx.userId, taskId, page) : { dropped: [] };
+        return { task: row, dropped: written.dropped };
+      });
+      return toolOk(`Updated “${task.title}”.${droppedNote(dropped)}`, { task: { id: task.id, title: task.title, status: task.status, owner: task.owner, priority: task.priority, due: task.due, completedAt: task.completedAt, projectId: task.projectId } }, {
         invalidate: ["tasks"],
         href: `/tasks/${task.id}`,
       });

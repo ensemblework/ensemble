@@ -271,3 +271,40 @@ test("another space of the same account sees none of these events or notes and c
   const recap = await read<{ done: Array<{ title: string }> }>(other, "hub_weekly_recap", {});
   assert.ok(!recap.done.some((row) => row.title === "Primary finished task"));
 });
+
+test("meeting notes are a page: the editor's document is kept, its Markdown mirrors it, and the assistant appends after the person's blocks", async () => {
+  const mira = await harness.asUser();
+  const arjun = await db.person.create({ data: { userId: mira.id, name: "Arjun Rao" } });
+  const started = await mira.inject({ method: "POST", url: "/api/meetings/sessions", payload: { title: "Design review" } });
+  assert.equal(started.statusCode, 201, started.body);
+  const id = (started.json() as { session: { id: string; content: unknown } }).session.id;
+  const content = {
+    type: "doc",
+    content: [
+      { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "Notes" }] },
+      { type: "paragraph", content: [{ type: "text", text: "Asked " }, { type: "mention", attrs: { kind: "people", id: arjun.id, label: "Arjun Rao" } }, { type: "text", text: " for the build." }] },
+      { type: "ensembleReply", attrs: { threadId: randomUUID(), prompt: "summarise", pageKind: "meeting", pageId: id } },
+    ],
+  };
+  const saved = await mira.inject({ method: "PATCH", url: `/api/meetings/sessions/${id}`, payload: { content } });
+  assert.equal(saved.statusCode, 200, saved.body);
+  const row = await db.meetingSession.findUniqueOrThrow({ where: { id } });
+  assert.equal(row.notes, `## Notes\n\nAsked [@Arjun Rao](ensemble://people/${arjun.id}) for the build.`, "notes are the page's Markdown");
+  const detail = (await mira.inject({ method: "GET", url: `/api/meetings/sessions/${id}` })).json() as { session: { content: { content: Array<{ type: string }> } } };
+  assert.deepEqual(detail.session.content.content.map((node) => node.type), ["heading", "paragraph", "ensembleReply"]);
+
+  await apply(mira.id, "hub_update_meeting_note", { meetingId: id, matchTitle: "Design review", notes: "- [ ] Arjun sends the build" });
+  const after = await db.meetingSession.findUniqueOrThrow({ where: { id } });
+  assert.deepEqual((after.content as { content: Array<{ type: string }> }).content.map((node) => node.type), ["heading", "paragraph", "ensembleReply", "taskList"], "the person's blocks stay; the new ones follow");
+  assert.match(after.notes, /for the build\.\n\n- \[ \] Arjun sends the build$/);
+
+  const old = await db.meetingSession.create({ data: { userId: mira.id, title: "Before pages", notes: "## Plan\n\n- One" } });
+  const legacy = (await mira.inject({ method: "GET", url: `/api/meetings/sessions/${old.id}` })).json() as { session: { content: { content: Array<{ type: string }> } } };
+  assert.deepEqual(legacy.session.content.content.map((node) => node.type), ["heading", "bulletList"], "notes typed before pages open as a page");
+  const list = (await mira.inject({ method: "GET", url: "/api/meetings/sessions" })).json() as { sessions: Array<Record<string, unknown>> };
+  assert.equal("content" in list.sessions[0]!, false, "the list stays light");
+
+  assert.equal((await mira.inject({ method: "GET", url: `/api/pages/meeting/${id}/comments` })).statusCode, 200, "inline @ensemble answers are kept on the meeting");
+  const ben = await harness.asUser();
+  assert.equal((await ben.inject({ method: "GET", url: `/api/pages/meeting/${id}/comments` })).statusCode, 404);
+});

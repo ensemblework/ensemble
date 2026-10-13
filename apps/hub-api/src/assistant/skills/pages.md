@@ -15,6 +15,7 @@ Read
 Write
 - New page: hub_create_page with a clear title and Markdown body: `#`/`##` headings, `-` lists, `- [ ]` checklists, `| a | b |` tables, fenced code. Return its link.
 - Add to a page: hub_update_page with pageId (or taskId), matchTitle = its current title (refused when it differs), mode "append" and markdown. Rewrite it: mode "replace". Never replace when they asked to add.
+- Your text always goes in the page body. A task's short description (under its title) is the person's; never write there.
 - Mention things inside Markdown with `[@Label](ensemble://<kind>/<id>)` — kinds: file, people, project, task, diagram, plot, deliverable, repo. A file link becomes a file card.
 - Delete: hub_delete_page with pageId (Trash; Undo in the app bar or [Trash](/trash) brings it back). A task's page goes with its task.
 

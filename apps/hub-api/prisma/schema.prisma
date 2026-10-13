@@ -1024,7 +1024,10 @@ model MeetingSession {
   artifactId    String?   @map("artifact_id")
   meetingNoteId String?   @map("meeting_note_id")
   title         String
+  /// Markdown mirror of `content`, for search, recaps, the assistant and exports.
   notes         String    @default("")
+  /// The notes as a page document (the block editor). Null on notes saved before 13 Oct 2026.
+  content       Json?
   recap         String    @default("")
   /// live | ended
   status        String    @default("live")
