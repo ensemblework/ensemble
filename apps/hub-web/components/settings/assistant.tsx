@@ -3,8 +3,8 @@
 /** @jsxImportSource react */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { ActAs, AssistantToolArea, Settings } from "@ensemble/shared-types";
-import { ActAs as ActAsSchema, ASSISTANT_WRITE_AREAS } from "@ensemble/shared-types";
+import type { AssistantToolArea, Settings } from "@ensemble/shared-types";
+import { ASSISTANT_WRITE_AREAS } from "@ensemble/shared-types";
 import { api } from "@/lib/api";
 import { relative } from "@/lib/format";
 import { useToast } from "../toast";
@@ -15,18 +15,6 @@ import { navigateSettings, useSettingsLocation } from "./url-state";
 
 type Patch = (patch: Record<string, unknown>) => void;
 type Props = { settings: Settings; patch: Patch };
-
-export const ACT_AS_LABELS: Record<ActAs, string> = {
-  general: "Match my sign-up role",
-  student: "Student",
-  engineer: "Software engineer",
-  teacher: "Teacher",
-  lawyer: "Lawyer",
-  researcher: "Researcher",
-  manager: "Manager or team lead",
-  aspirant: "Preparing for an exam",
-  maker: "Product maker",
-};
 
 export const WRITE_AREAS: Array<{ id: AssistantToolArea; label: string; short: string }> = [
   { id: "tasks", label: "Tasks and pages", short: "Tasks" },
@@ -47,19 +35,9 @@ export function changesSummary(assistant: Pick<Settings["assistant"], "allowedWr
 export function AssistantSection({ settings, patch }: Props) {
   const assistant = settings.assistant;
   const location = useSettingsLocation();
-  const field = (ActAsSchema.options as readonly string[]).includes(assistant.actAs) ? assistant.actAs : "general";
   return (
     <SectionCard title="The assistant" description="How the chat in the corner talks to you, and what it may change on its own.">
       <div className="divide-y divide-[var(--line)]">
-        <SettingRow title="Your field" description="Shapes the assistant's tone and the suggestions it offers. It does not change what Ensemble can read or change.">
-          <select aria-label="Your field" value={field} onChange={(event) => patch({ assistant: { actAs: event.target.value } })} className="field max-w-[220px]">
-            {ActAsSchema.options.map((value) => (
-              <option key={value} value={value}>
-                {ACT_AS_LABELS[value]}
-              </option>
-            ))}
-          </select>
-        </SettingRow>
         <SettingRow title="When it wants to change something" description="Preview shows what it wants to change and waits for you to press Apply in the chat.">
           <select aria-label="Write policy" value={assistant.writePolicy} onChange={(event) => patch({ assistant: { writePolicy: event.target.value } })} className="field">
             <option value="preview">Show me a preview first</option>

@@ -31,7 +31,7 @@ import httpx
 from ensemble_agent.hosted_access import HostedAccessError, HostedAccessUnavailable, can_use_host_credentials, require_host_access, require_verified_user
 
 from ensemble_agent import credentials
-from ensemble_agent.provider_error import ProviderError, parse_provider_error
+from ensemble_agent.provider_error import COPILOT_CLASSIC_TOKEN, ProviderError, parse_provider_error
 from ensemble_agent.rate_limit import pace, take_token
 from ensemble_agent.reach import ModelUnreachable, classify_connect, is_unreachable_notice, transport_failure
 from ensemble_agent.textutil import chunk_text, truncate_text
@@ -150,25 +150,21 @@ def spec_for(role: ModelRole, model: str | None = None) -> dict[str, Any]:
 
 # ── OpenAI-compatible transport ─────────────────────────────────────────────
 
-_copilot_cache: dict[str, tuple[str, str, float]] = {}
-
-
-async def _copilot_session(github_token: str, *, allow_host_config: bool = False) -> tuple[str, str]:
-    cache_key = f"{'host' if allow_host_config else 'byok'}:{github_token}"
-    cached = _copilot_cache.get(cache_key)
-    if cached and cached[2] > time.time() + 60:
-        return cached[0], cached[1]
-    async with httpx.AsyncClient(timeout=20) as client:
-        response = await client.get(
-            "https://api.github.com/copilot_internal/v2/token",
-            headers={"Authorization": f"token {github_token}", "Accept": "application/json", "User-Agent": "Ensemble"},
-        )
-    if not response.is_success:
-        raise ModelAuthError(f"GitHub did not issue a Copilot token ({response.status_code}). Is Copilot enabled on this account?")
-    body = response.json()
-    base = (body.get("endpoints") or {}).get("api") or (os.environ.get("COPILOT_API_BASE") if allow_host_config else None) or "https://api.githubcopilot.com"
-    _copilot_cache[cache_key] = (body["token"], base.rstrip("/"), float(body.get("expires_at") or time.time() + 600))
-    return body["token"], base.rstrip("/")
+def _copilot_endpoint(github_token: str, *, allow_host_config: bool = False) -> tuple[str, dict[str, str]]:
+    """Copilot takes the person's own GitHub token as a bearer token: a fine-grained token with the
+    account permission "Copilot requests" (GitHub's documented way to make Copilot requests for a
+    user), or an OAuth or GitHub App user token. GitHub refuses classic ``ghp_`` tokens for Copilot.
+    The integration id is the Copilot SDK runtime's default; an operator with their own sets
+    COPILOT_INTEGRATION_ID."""
+    if github_token.startswith("ghp_"):
+        raise ModelAuthError(COPILOT_CLASSIC_TOKEN)
+    base = ((os.environ.get("COPILOT_API_BASE") if allow_host_config else None) or "https://api.githubcopilot.com").rstrip("/")
+    integration = (os.environ.get("COPILOT_INTEGRATION_ID") if allow_host_config else None) or "copilot-developer-cli"
+    return base, {
+        "Authorization": f"Bearer {github_token}",
+        "Editor-Version": "Ensemble/0.1",
+        "Copilot-Integration-Id": integration,
+    }
 
 
 async def _endpoint(provider: str, user_id: str | None, ollama_url: str | None) -> tuple[str, dict[str, str], str]:
@@ -185,12 +181,8 @@ async def _endpoint(provider: str, user_id: str | None, ollama_url: str | None) 
             f"No key for {provider}. Paste one in Settings → Models, or pick a provider that has a key."
         )
     if provider == "copilot":
-        token, base = await _copilot_session(cred.secret, allow_host_config=can_use_host_credentials(user_id))
-        return base, {
-            "Authorization": f"Bearer {token}",
-            "Editor-Version": "Ensemble/0.1",
-            "Copilot-Integration-Id": "vscode-chat",
-        }, cred.source
+        base, headers = _copilot_endpoint(cred.secret, allow_host_config=can_use_host_credentials(user_id))
+        return base, headers, cred.source
     if provider not in BASES:
         raise ModelAuthError(f"{provider} is not a chat provider.")
     base = (cred.base_url or BASES[provider]).rstrip("/")
@@ -1981,11 +1973,8 @@ async def list_models(
             response.raise_for_status()
             models = [row["name"] for row in response.json().get("models", [])]
         elif provider == "copilot":
-            token, base = await _copilot_session(key, allow_host_config=await asyncio.to_thread(can_use_host_credentials, user_id))
-            response = await client.get(
-                f"{base}/models",
-                headers={"Authorization": f"Bearer {token}", "Editor-Version": "Ensemble/0.1", "Copilot-Integration-Id": "vscode-chat"},
-            )
+            base, headers = _copilot_endpoint(key, allow_host_config=await asyncio.to_thread(can_use_host_credentials, user_id))
+            response = await client.get(f"{base}/models", headers=headers)
             response.raise_for_status()
             models = [row["id"] for row in response.json().get("data", [])]
         else:

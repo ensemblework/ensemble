@@ -3,12 +3,11 @@
 /** @jsxImportSource react */
 
 import { Minus, MoveHorizontal, Plus } from "lucide-react";
-import { useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { loadPdfjs } from "@/lib/files/pdfjs";
 import { Spinner } from "../../ui";
-import { Presenter } from "./present";
-import { PresentContext, Toolbar, ViewerNote, type ViewerProps } from "./shared";
+import { Toolbar, ViewerNote, type ViewerProps } from "./shared";
 
 type Size = { width: number; height: number };
 
@@ -65,19 +64,19 @@ function useWidth<T extends HTMLElement>(): [React.RefObject<T | null>, number] 
   return [ref, width];
 }
 
-/** One page drawn on a canvas when it comes near the visible area, and released when it leaves. `eager` draws it straight away. */
-function PdfPage({ doc, number, scale, size, root, onSize, eager = false }: { doc: PDFDocumentProxy; number: number; scale: number; size: Size; root: HTMLElement | null; onSize?: (number: number, size: Size) => void; eager?: boolean }) {
+/** One page drawn on a canvas when it comes near the visible area, and released when it leaves. */
+function PdfPage({ doc, number, scale, size, root, onSize }: { doc: PDFDocumentProxy; number: number; scale: number; size: Size; root: HTMLElement | null; onSize?: (number: number, size: Size) => void }) {
   const holder = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
-  const [near, setNear] = useState(eager);
+  const [near, setNear] = useState(false);
   const [drawn, setDrawn] = useState(false);
   useEffect(() => {
     const node = holder.current;
-    if (!node || eager) return;
+    if (!node) return;
     const observer = new IntersectionObserver((entries) => setNear(entries.some((entry) => entry.isIntersecting)), { root, rootMargin: "1200px 0px" });
     observer.observe(node);
     return () => observer.disconnect();
-  }, [root, eager]);
+  }, [root]);
   useEffect(() => {
     const target = canvas.current;
     if (!near || !target) {
@@ -136,31 +135,6 @@ export default function PdfViewer({ file, bytes, compact }: ViewerProps) {
   const [current, setCurrent] = useState(1);
   const [draft, setDraft] = useState<string | null>(null);
   const onSize = useCallback((number: number, size: Size) => setSizes((all) => (all[number] ? all : { ...all, [number]: size })), []);
-
-  const context = useContext(PresentContext);
-  const present = compact ? null : context;
-  const presenting = Boolean(present?.active);
-  const loaded = state && "doc" in state ? state.doc : null;
-  const setReady = present?.setReady;
-  useEffect(() => {
-    if (!setReady || !loaded) return;
-    setReady(true);
-    return () => setReady(false);
-  }, [setReady, loaded]);
-  const onPresentMove = useCallback((index: number) => setCurrent(index + 1), []);
-  // Back from presenting: the pages open where the presentation stopped.
-  const presented = useRef(false);
-  useEffect(() => {
-    if (presenting) {
-      presented.current = true;
-      return;
-    }
-    if (!presented.current) return;
-    presented.current = false;
-    const target = scroller?.querySelector<HTMLElement>(`[data-pdf-page="${current}"]`);
-    if (target && scroller) scroller.scrollTo({ top: target.offsetTop - 16 });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [presenting]);
 
   if (state && "error" in state) return <ViewerNote title={state.error} file={file} bytes={bytes} compact={compact} />;
   const doc = state?.doc;
@@ -255,23 +229,6 @@ export default function PdfViewer({ file, bytes, compact }: ViewerProps) {
           )}
         </div>
       </div>
-      {presenting && present && doc && first ? (
-        <Presenter
-          layer={present.layer}
-          label={`Presenting ${file.filename}`}
-          noun="page"
-          count={pages}
-          start={current - 1}
-          onMove={onPresentMove}
-          onExit={present.exit}
-          onToggleNative={present.toggleNative}
-          render={(index, box) => {
-            const size = sizeOf(index + 1);
-            const fitted = Math.min(box.width / size.width, box.height / size.height);
-            return <PdfPage doc={doc} number={index + 1} scale={fitted} size={size} root={null} onSize={onSize} eager />;
-          }}
-        />
-      ) : null}
     </div>
   );
 }

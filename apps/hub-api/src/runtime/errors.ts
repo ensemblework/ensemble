@@ -79,8 +79,16 @@ const PROVIDER_NAMES: Record<string, string> = {
   ollama: "Ollama",
 };
 
+/** GitHub's own rule: Copilot requests need a fine-grained token with the "Copilot requests" permission. */
+export const COPILOT_TOKEN_HELP =
+  "Use a fine-grained GitHub token with the account permission “Copilot requests”, from an account with a Copilot plan. Classic tokens (ghp_…) do not work with Copilot.";
+export const COPILOT_CLASSIC_TOKEN = `This is a classic GitHub token. ${COPILOT_TOKEN_HELP}`;
+
 export function friendlyKeyError(provider: string, status: number): string {
   const name = PROVIDER_NAMES[provider] ?? (provider || "The provider");
+  if (provider === "copilot" && (status === 400 || status === 401 || status === 403 || status === 404)) {
+    return `GitHub did not accept this token for Copilot (${status}). ${COPILOT_TOKEN_HELP}`;
+  }
   if (status === 400 || status === 401 || status === 403) {
     if (provider === "google") {
       return "Google rejected this key (check it was copied fully and the Generative Language API is enabled).";

@@ -161,7 +161,7 @@ test("Model providers & keys opens as a dialog from the Models card, and Escape 
     await settle(2);
     assert.equal(document.querySelector('[data-testid="model-keys-dialog"]'), null);
     assert.equal(new URL(window.location.href).searchParams.get("dialog"), null);
-    assert.match(document.body.textContent ?? "", /Your field/);
+    assert.doesNotMatch(document.body.textContent ?? "", /Your field/, "the role from sign-up is not asked again");
     assert.match(document.querySelector('[data-testid="changes-summary"]')?.textContent ?? "", /Everything inside Ensemble · Connected apps ask first/);
   } finally {
     await view.done();

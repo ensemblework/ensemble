@@ -1230,6 +1230,8 @@ export const api = bindClient({
 
   // assistant
   conversations: () => get<{ conversations: ConversationRecord[] }>("/api/assistant/conversations"),
+  /** The assistant dock's own chats, newest first: conversations that have messages. */
+  assistantChats: () => get<{ conversations: ConversationRecord[] }>("/api/assistant/conversations?chats=1"),
   conversationMessages: (id: string) => get<{ messages: AssistantMessageRecord[] }>(`/api/assistant/conversations/${id}/messages`),
   assistantTurn: (body: {
     conversationId?: string;

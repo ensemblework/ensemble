@@ -33,7 +33,7 @@ const MIME: Record<string, string> = {
   ".ico": "image/x-icon",
 };
 
-/** assets.rs `resolve`: the file, its index.html, the `_` placeholder for a dynamic route, then `lost/`. */
+/** assets.rs `resolve`: the file, its index.html, the `_` placeholder for a dynamic route and its route data, then `lost/`. */
 function resolveAsset(root: string, requestPath: string): string | null {
   let rel = decodeURIComponent(requestPath.split(/[?#]/)[0]!.replace(/^\/+/, ""));
   if (rel.split(/[/\\]/).includes("..")) return null;
@@ -44,6 +44,7 @@ function resolveAsset(root: string, requestPath: string): string | null {
   if (isFile(join(direct, "index.html"))) return join(direct, "index.html");
   const parts = rel.replace(/\/+$/, "").split("/").filter(Boolean);
   if (parts.length === 2 && isFile(join(root, parts[0]!, "_", "index.html"))) return join(root, parts[0]!, "_", "index.html");
+  if (parts.length === 3 && parts[2] === "index.txt" && isFile(join(root, parts[0]!, "_", "index.txt"))) return join(root, parts[0]!, "_", "index.txt");
   if (!rel.includes(".") && isFile(join(root, "lost", "index.html"))) return join(root, "lost", "index.html");
   return null;
 }
@@ -297,6 +298,7 @@ test("a board card opens in the side peek without a reload, then as a full page,
       await peek.getByTitle("Open as full page").click();
       await page.waitForURL((url) => url.pathname.replace(/\/$/, "") === `/tasks/${taskId}` && !url.searchParams.has("peek"), { timeout: 20_000 });
       await waitForTitle(page, "textarea", title);
+      assert.equal(await page.evaluate("window.__boardMarker"), "kept", `${name}: opening the full page reloaded the app`);
       assert.equal(await page.locator('[data-peek-kind="task"]').count(), 0, `${name}: the full page still shows the peek`);
       if (shots) await page.screenshot({ path: join(shots, `${name}-task-page.png`) });
       assert.deepEqual(pageErrors, [], `${name} page errors`);

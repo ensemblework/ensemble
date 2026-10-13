@@ -13,5 +13,5 @@ export default function StandaloneNotePage({ params }: { params: Promise<{ id: s
     setFocusTitle(focus === "title");
   }, [id]);
   if (isBakedParam(id)) return null;
-  return <NotePage pageId={id} focusTitle={focusTitle} />;
+  return <NotePage key={id} pageId={id} focusTitle={focusTitle} />;
 }

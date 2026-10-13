@@ -9,7 +9,7 @@ import { ModelUnreachableError } from "../lib/model-reach.js";
 import { HostedAccessError, canUseHostCredentials, requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
 import { CONNECTION_DROPPED_NOTICE, normalizeTransportError } from "../lib/stream-drop.js";
 import { truncateText } from "../lib/text.js";
-import { ModelAuthError, ProviderError, parseProviderError } from "./errors.js";
+import { COPILOT_CLASSIC_TOKEN, ModelAuthError, ProviderError, parseProviderError } from "./errors.js";
 import { PROVIDERS, resolveCredential, type Credential } from "./credentials.js";
 import { parseModelJson } from "./model-json.js";
 import { pace, resetBuckets, runtimeSleep, takeToken } from "./pace.js";
@@ -46,7 +46,6 @@ export interface CallOptions {
   signal?: AbortSignal;
 }
 
-const copilotCache = new Map<string, { token: string; base: string; expiresAt: number }>();
 const catalogCache = new Map<string, { expires: number; models: string[] }>();
 
 function cacheKey(provider: string, userId: string | null | undefined, secret: string | null | undefined, ollamaUrl: string | null | undefined): string {
@@ -66,33 +65,28 @@ async function vendorFetch(url: string, init: RequestInit, timeoutMs: number, si
   return fetchImpl(url, { ...init, signal: combineSignals(signal, timeoutMs) });
 }
 
-async function copilotSession(githubToken: string, signal?: AbortSignal, allowHostConfig = false): Promise<{ token: string; base: string }> {
-  const key = `${allowHostConfig ? "host" : "byok"}:${githubToken}`;
-  const cached = copilotCache.get(key);
-  if (cached && cached.expiresAt > Date.now() / 1000 + 60) return { token: cached.token, base: cached.base };
-  const response = await vendorFetch(
-    "https://api.github.com/copilot_internal/v2/token",
-    {
-      headers: { Authorization: `token ${githubToken}`, Accept: "application/json", "User-Agent": "Ensemble" },
-    },
-    20_000,
-    signal,
-  );
-  if (!response.ok) {
-    throw new ModelAuthError(`GitHub did not issue a Copilot token (${response.status}). Is Copilot enabled on this account?`);
-  }
-  const body = (await response.json()) as { token?: string; endpoints?: { api?: string }; expires_at?: number };
-  const base = (body.endpoints?.api || (allowHostConfig ? process.env.COPILOT_API_BASE : null) || "https://api.githubcopilot.com").replace(/\/$/, "");
-  if (!body.token) throw new ModelAuthError("GitHub did not issue a Copilot token. Is Copilot enabled on this account?");
-  copilotCache.set(key, { token: body.token, base, expiresAt: Number(body.expires_at ?? Date.now() / 1000 + 600) });
-  return { token: body.token, base };
+/**
+ * Copilot takes the person's own GitHub token as a bearer token: a fine-grained token with the
+ * account permission "Copilot requests" (GitHub's documented way to make Copilot requests for a
+ * user), or an OAuth or GitHub App user token. GitHub refuses classic `ghp_` tokens for Copilot.
+ * The integration id is the Copilot SDK runtime's default; an operator with their own sets
+ * COPILOT_INTEGRATION_ID.
+ */
+export function copilotEndpoint(githubToken: string, allowHostConfig = false): { base: string; headers: Record<string, string> } {
+  if (githubToken.startsWith("ghp_")) throw new ModelAuthError(COPILOT_CLASSIC_TOKEN);
+  const base = ((allowHostConfig ? process.env.COPILOT_API_BASE : null) || "https://api.githubcopilot.com").replace(/\/$/, "");
+  const integration = (allowHostConfig ? process.env.COPILOT_INTEGRATION_ID : null) || "copilot-developer-cli";
+  return {
+    base,
+    headers: { Authorization: `Bearer ${githubToken}`, "Editor-Version": "Ensemble/0.1", "Copilot-Integration-Id": integration },
+  };
 }
 
 export async function endpoint(
   provider: string,
   userId: string | null | undefined,
   ollamaUrl: string | null | undefined,
-  signal?: AbortSignal,
+  _signal?: AbortSignal,
 ): Promise<{ base: string; headers: Record<string, string>; source: string }> {
   await requireVerifiedUser(userId);
   if (provider === "mock") return { base: "mock://local", headers: {}, source: "you" };
@@ -105,18 +99,7 @@ export async function endpoint(
   if (!cred.secret) {
     throw new ModelAuthError(`No key for ${provider}. Paste one in Settings → Models, or pick a provider that has a key.`);
   }
-  if (provider === "copilot") {
-    const session = await copilotSession(cred.secret, signal, await canUseHostCredentials(userId));
-    return {
-      base: session.base,
-      headers: {
-        Authorization: `Bearer ${session.token}`,
-        "Editor-Version": "Ensemble/0.1",
-        "Copilot-Integration-Id": "vscode-chat",
-      },
-      source: cred.source,
-    };
-  }
+  if (provider === "copilot") return { ...copilotEndpoint(cred.secret, await canUseHostCredentials(userId)), source: cred.source };
   if (!BASES[provider]) throw new ModelAuthError(`${provider} is not a chat provider.`);
   const base = (cred.baseUrl || BASES[provider]).replace(/\/$/, "");
   if (cred.baseUrl) await requireHostAccess(userId, "Custom model proxies");
@@ -618,13 +601,8 @@ export async function listModels(
     const data = (await response.json()) as { models?: Array<{ name?: string }> };
     models = (data.models ?? []).map((row) => String(row.name ?? "")).filter(Boolean);
   } else if (provider === "copilot") {
-    const session = await copilotSession(apiKey, signal, await canUseHostCredentials(userId));
-    const response = await vendorFetch(
-      `${session.base}/models`,
-      { headers: { Authorization: `Bearer ${session.token}`, "Editor-Version": "Ensemble/0.1", "Copilot-Integration-Id": "vscode-chat" } },
-      15_000,
-      signal,
-    );
+    const copilot = copilotEndpoint(apiKey, await canUseHostCredentials(userId));
+    const response = await vendorFetch(`${copilot.base}/models`, { headers: copilot.headers }, 15_000, signal);
     if (!response.ok) throw await httpFailure(response);
     const data = (await response.json()) as { data?: Array<{ id?: string }> };
     models = (data.data ?? []).map((row) => String(row.id ?? "")).filter(Boolean);

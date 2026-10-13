@@ -13,6 +13,7 @@ from ensemble_agent import credentials
 from ensemble_agent.main import http_error_for
 from ensemble_agent.models import (
     ModelAuthError,
+    _copilot_endpoint,
     _effort,
     _endpoint,
     _from_openai,
@@ -603,6 +604,16 @@ def test_annotate_models_keeps_high_demand_available() -> None:
     quota_rows = annotate_models(["pro"], [{"model": "pro", "kind": "quota", "detail": "no quota on this key"}])
     assert quota_rows[0]["available"] is False
     assert quota_rows[0]["reason"] == "no quota on this key"
+
+
+def test_copilot_uses_the_github_token_directly_and_refuses_classic_tokens() -> None:
+    base, headers = _copilot_endpoint("github_pat_fine")
+    assert base == "https://api.githubcopilot.com"
+    assert headers["Authorization"] == "Bearer github_pat_fine"
+    assert headers["Copilot-Integration-Id"] == "copilot-developer-cli"
+    with pytest.raises(ModelAuthError, match="classic GitHub token"):
+        _copilot_endpoint("ghp_classic0000")
+    assert "Copilot requests" in friendly_key_error("copilot", 404, "")
 
 
 def test_friendly_key_error_hides_the_url() -> None:

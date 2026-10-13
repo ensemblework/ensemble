@@ -6,9 +6,9 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { FIXTURE_DIR, buildChatPayload, effortFor, fromAnthropic, fromOpenAi } from "./payload.js";
-import { ProviderError, errorFromRuntimeBody, parseProviderError } from "./errors.js";
+import { ProviderError, errorFromRuntimeBody, friendlyKeyError, parseProviderError } from "./errors.js";
 import { setCredentialResolverForTests, type Credential } from "./credentials.js";
-import { clearCatalogCache, completeText, completeWithTools, listModels, setRuntimeFetchForTests } from "./models.js";
+import { clearCatalogCache, completeText, completeWithTools, copilotEndpoint, listModels, setRuntimeFetchForTests } from "./models.js";
 import { resetBuckets, setRuntimeSleepForTests } from "./pace.js";
 
 const COMPLETION = {
@@ -164,21 +164,17 @@ test("anthropic uses the Messages API and maps tool_use back to a turn", async (
   assert.equal(fromOpenAi(COMPLETION, "fallback").text, "ready");
 });
 
-test("copilot exchanges a GitHub token for a session, then chats", async () => {
-  const calls = install((url) => {
-    if (url.includes("copilot_internal")) {
-      return { body: { token: "copilot-session", endpoints: { api: "https://api.githubcopilot.com" }, expires_at: Date.now() / 1000 + 600 } };
-    }
-    return { body: COMPLETION };
-  });
+test("copilot sends the person's GitHub token to the Copilot API, and refuses a classic token", async () => {
+  const calls = install(() => ({ body: COMPLETION }));
   const turn = await completeWithTools({ userId: "user-copilot", provider: "copilot", model: "gpt-4.1", messages: [{ role: "user", content: "hi" }] });
-  assert.equal(calls[0]?.url, "https://api.github.com/copilot_internal/v2/token");
-  assert.equal(calls[0]?.headers.authorization, "token test-key-copilot");
-  assert.equal(calls[1]?.url, "https://api.githubcopilot.com/chat/completions");
-  assert.equal(calls[1]?.headers.authorization, "Bearer copilot-session");
-  assert.equal(calls[1]?.headers["editor-version"], "Ensemble/0.1");
-  assert.equal(calls[1]?.headers["copilot-integration-id"], "vscode-chat");
+  assert.equal(calls.length, 1, "no token exchange with GitHub's internal endpoint");
+  assert.equal(calls[0]?.url, "https://api.githubcopilot.com/chat/completions");
+  assert.equal(calls[0]?.headers.authorization, "Bearer test-key-copilot");
+  assert.equal(calls[0]?.headers["copilot-integration-id"], "copilot-developer-cli");
   assert.equal(turn.text, "ready");
+  assert.throws(() => copilotEndpoint("ghp_classic0000"), /classic GitHub token.*Copilot requests/);
+  assert.equal(copilotEndpoint("github_pat_fine").headers.Authorization, "Bearer github_pat_fine");
+  assert.match(friendlyKeyError("copilot", 404), /Copilot requests/);
 });
 
 test("cursor is not a chat provider, and its model list uses HTTP basic auth", async () => {

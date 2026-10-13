@@ -8,5 +8,5 @@ export default function PublicLinkPage({ params }: { params: Promise<{ token: st
   const { token: baked } = use(params);
   const token = useDesktopParam(baked);
   if (isBakedParam(token)) return null;
-  return <PublicViewer token={token} />;
+  return <PublicViewer key={token} token={token} />;
 }

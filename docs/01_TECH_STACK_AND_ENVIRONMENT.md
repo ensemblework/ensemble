@@ -72,7 +72,7 @@ Delegated Graph permissions (least privilege, P0 set):
 
 Set whichever keys you have. A missing provider is skipped, not fatal.
 
-- GitHub Copilot (`COPILOT_API_KEY` / `GITHUB_TOKEN` / `gh auth token`) — model discovery and effort controls live in that adapter.
+- GitHub Copilot (`COPILOT_API_KEY` / `GITHUB_TOKEN` / `gh auth token`, or a key saved in Settings → Models) — a fine-grained GitHub token with the account permission "Copilot requests", sent as a bearer token to `COPILOT_API_BASE` (default `https://api.githubcopilot.com`) with `Copilot-Integration-Id` set to `COPILOT_INTEGRATION_ID` (default `copilot-developer-cli`, the Copilot SDK runtime's default). Classic `ghp_` tokens are refused. Model discovery and effort controls live in that adapter.
 - OpenAI, Anthropic, Google Gemini, Cursor — OpenAI-compatible or first-party SDKs behind the same complexity → profile mapping ([§6](#6-model-usage-policy)).
 - Embeddings: configure one embedding model or leave retrieval on keyword/tsvector until you do.
 
@@ -104,7 +104,7 @@ The authoritative copy is `.env.example` in the repo root; every variable there 
 | Infra and origins | `DATABASE_URL`, `REDIS_URL`, `HUB_API_HOST`, `HUB_API_PORT`, `HUB_WEB_ORIGIN`, `NEXT_PUBLIC_HUB_API`, `ENSEMBLE_COOKIE_DOMAIN`, `NEXT_PUBLIC_SITE_URL`, `HUB_API_PUBLIC_URL` |
 | Service tokens and secrets | `ENSEMBLE_INTERNAL_TOKEN`, `ENSEMBLE_BRIDGE_TOKEN`, `ENSEMBLE_SECRET_KEY` |
 | Workspace and logs | `ENSEMBLE_WORKSPACE_ROOT`, `ENSEMBLE_WORKSPACE_IMAGE`, `ENSEMBLE_LOG_LEVEL`, `ENSEMBLE_LOG_TO_FILE`, `ENSEMBLE_LOG_RETENTION_DAYS`, `ENSEMBLE_FEATURES` |
-| Models | `ENSEMBLE_LLM_PROVIDER`, `GOOGLE_API_KEY` / `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `CURSOR_API_KEY`, `COPILOT_API_KEY`, `GITHUB_TOKEN`, `ENSEMBLE_MODEL_*`, `ENSEMBLE_EMBEDDING_MODEL` |
+| Models | `ENSEMBLE_LLM_PROVIDER`, `GOOGLE_API_KEY` / `GEMINI_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `CURSOR_API_KEY`, `COPILOT_API_KEY`, `COPILOT_API_BASE`, `COPILOT_INTEGRATION_ID`, `GITHUB_TOKEN`, `ENSEMBLE_MODEL_*`, `ENSEMBLE_EMBEDDING_MODEL` |
 | Connectors | OAuth apps: `GOOGLE_CLIENT_ID/SECRET`, `MICROSOFT_CLIENT_ID/SECRET` (+ optional `MICROSOFT_TENANT_ID`, default `common`), `GITHUB_CLIENT_ID/SECRET` (each falls back to the matching `AUTH_*` sign-in app), `LINEAR_CLIENT_ID/SECRET`, `NOTION_CLIENT_ID/SECRET`, `ATLASSIAN_CLIENT_ID/SECRET`, `SLACK_CLIENT_ID/SECRET`, `ZOOM_CLIENT_ID/SECRET`, `DOCUSIGN_CLIENT_ID/SECRET` with `DOCUSIGN_ENV=demo\|production`, `DROPBOX_CLIENT_ID/SECRET`, `BOX_CLIENT_ID/SECRET`, `XERO_CLIENT_ID/SECRET` (+ optional `XERO_SCOPES` for older apps on the broad scopes), `DISCORD_CLIENT_ID/SECRET` with `DISCORD_BOT_TOKEN` (the bot that reads channels); clients for vendor MCP servers without self-registration `HUBSPOT_MCP_CLIENT_ID/SECRET`, `ASANA_MCP_CLIENT_ID/SECRET`, `SLACK_MCP_CLIENT_ID/SECRET`, `DROPBOX_MCP_CLIENT_ID/SECRET` (redirect URI `HUB_API_PUBLIC_URL/api/mcp-connections/callback`, [31 §3](31_CONNECTORS_IN_USE.md#3-ways-to-connect)); Google Picker `GOOGLE_PICKER_API_KEY`, `GOOGLE_PROJECT_NUMBER`; `ENSEMBLE_SCHEDULED_FETCH` (`off` by default; `on` restores scheduled fetching); `GITHUB_ORG`, `GITHUB_APP_*`; operator/local-only fallbacks `SLACK_USER_TOKEN`, `LINEAR_API_KEY`. Redirect URI `HUB_API_PUBLIC_URL/api/connectors/<provider>/callback` ([03 §2.1](03_MODULE_CONTEXT_ENGINE.md#21-connector-store-oauth-apps-products-and-tokens)) |
 | Limits and health | `ENSEMBLE_PLOT_CONCURRENCY`, `ENSEMBLE_PLOT_MEMORY_MIB` (64-2048, default 2048; Linux address space / Mac sampled resident memory), `ENSEMBLE_RATE_*` (including `ENSEMBLE_RATE_CLI_START_*`, `ENSEMBLE_RATE_CLI_TOKEN_*`, `ENSEMBLE_RATE_CLI_APPROVE_*` and `ENSEMBLE_RATE_MCP_*`), `ENSEMBLE_HEALTH_*` |
 | Sidecar (desktop app and CLI runner) | `ENSEMBLE_DATA_DIR`, `ENSEMBLE_SECRET_KEY_FILE` (defaults to `secret.key` beside the data folder), `ENSEMBLE_REMOTE_STATE_DIR`, `ENSEMBLE_DISCOVERY_FILE`, `ENSEMBLE_REMOTE_LOOP=off` and `ENSEMBLE_AGENT_QUEUE=off` (an admin-only sidecar that never claims hosted work), `ENSEMBLE_SCHEDULER=off` |
@@ -228,7 +228,7 @@ Credits remain **estimates**, separate from measured tokens. Existing four-model
 
 **Embeddings are the one exception to the Copilot-only rule.** None of the four approved chat models produce vectors, so pgvector retrieval requires Azure OpenAI `text-embedding-3-large`. Until `AZURE_OPENAI_*` is configured, `embeddings_configured` is false, `/readyz` reports `embeddings: skipped`, and retrieval features stay dark rather than failing at runtime.
 
-**Credential resolution order:** `COPILOT_API_KEY` → `GITHUB_TOKEN` → `gh auth token`. The `gh` fallback means a developer already signed in with the GitHub CLI needs no extra secret in `.env`.
+**Credential resolution order:** a key the person saved → `COPILOT_API_KEY` → `GITHUB_TOKEN` → `gh auth token` (the last three only for the operator on a hosted server). The token goes straight to the Copilot API as a bearer token; there is no token exchange. GitHub accepts fine-grained tokens with the "Copilot requests" permission and OAuth or GitHub App user tokens, not classic `ghp_` tokens, so a `gh auth token` works only if that sign-in can make Copilot requests.
 
 All prompts live in `packages/prompts/` with version headers; every run records `prompt_version` in the audit ledger.
 

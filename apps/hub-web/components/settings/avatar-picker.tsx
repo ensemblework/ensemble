@@ -2,18 +2,15 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check } from "lucide-react";
-import { useEffect, useState } from "react";
 import {
   AVATAR_GENDER_LABEL,
   AVATAR_GENDERS,
   AVATAR_ROLE_LABEL,
-  AVATAR_ROLES,
   avatarGenderFor,
   avatarIds,
   avatarRoleFor,
   parseAvatar,
   type AvatarGender,
-  type AvatarRole,
 } from "@ensemble/shared-types";
 import { api } from "@/lib/api";
 import { personInitials } from "@/lib/initials";
@@ -21,7 +18,7 @@ import { PersonaAvatar } from "@/components/avatars/persona";
 import { useToast } from "../toast";
 import { SectionCard, cx } from "../ui";
 
-/** Settings → Account: pick a picture avatar for your profession, or keep your initials. */
+/** Settings → Account: pick a picture avatar from the set for the role chosen at sign-up, or keep your initials. */
 export function AvatarPicker() {
   const client = useQueryClient();
   const toast = useToast();
@@ -29,15 +26,8 @@ export function AvatarPicker() {
   const user = me.data?.user;
   const current = user?.avatar ?? null;
   const spaces = useQuery({ queryKey: ["spaces"], queryFn: api.spaces, staleTime: 60_000 });
-  const fromProfile = avatarRoleFor(spaces.data?.account.role, user?.profile?.profession);
-  const [role, setRole] = useState<AvatarRole>(fromProfile);
+  const role = avatarRoleFor(spaces.data?.account.role, user?.profile?.profession);
   const firstGender = avatarGenderFor(user?.profile?.gender);
-  useEffect(() => {
-    const picked = parseAvatar(current);
-    setRole(picked?.role ?? fromProfile);
-    // Only when what is saved changes, not on every render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [current, fromProfile]);
   const save = useMutation({
     mutationFn: (avatar: string | null) => api.updateMe({ avatar }),
     onSuccess: () => {
@@ -58,27 +48,13 @@ export function AvatarPicker() {
         </span>
         <div className="min-w-0 flex-1">
           <div className="text-[13px] font-medium">{current ? `${AVATAR_ROLE_LABEL[parseAvatar(current)!.role]} avatar` : "Your initials"}</div>
-          <div className="mt-0.5 text-2xs text-muted">Pick a set below. Your initials are the fallback.</div>
+          <div className="mt-0.5 text-2xs text-muted">Pick one below. Your initials are the fallback.</div>
         </div>
         <button type="button" className="btn h-7 px-2.5 text-[12.5px]" disabled={!current || save.isPending} onClick={() => save.mutate(null)}>
           Use initials
         </button>
       </div>
-      <div className="mt-4 flex flex-wrap gap-1" role="group" aria-label="Avatar set">
-        {AVATAR_ROLES.map((value) => (
-          <button
-            key={value}
-            type="button"
-            aria-pressed={role === value}
-            onClick={() => setRole(value)}
-            className={cx("rounded-md px-2.5 py-1 text-[12.5px]", role === value ? "bg-hover font-medium text-ink" : "text-muted hover:bg-hover hover:text-ink")}
-          >
-            {AVATAR_ROLE_LABEL[value]}
-            {value === fromProfile ? <span className="ml-1 text-faint">· you</span> : null}
-          </button>
-        ))}
-      </div>
-      <div className="mt-3 space-y-3">
+      <div className="mt-4 space-y-3">
         {genders.map((gender) => (
           <div key={gender}>
             <div className="mb-1.5 text-2xs uppercase tracking-wide text-faint">{AVATAR_GENDER_LABEL[gender]}</div>

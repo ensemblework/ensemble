@@ -8,5 +8,5 @@ export default function DiagramPage() {
   const params = useParams<{ id: string }>();
   const id = useDesktopParam(params.id);
   if (isBakedParam(id)) return null;
-  return <DiagramEditor id={id} />;
+  return <DiagramEditor key={id} id={id} />;
 }

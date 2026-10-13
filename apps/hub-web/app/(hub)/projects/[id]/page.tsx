@@ -31,6 +31,10 @@ type ProjectDetail = {
 export default function ProjectPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: baked } = use(params);
   const id = useDesktopParam(baked);
+  return <ProjectScreen key={id} id={id} />;
+}
+
+function ProjectScreen({ id }: { id: string }) {
   const client = useQueryClient();
   const peek = usePeek();
   const project = useQuery({
