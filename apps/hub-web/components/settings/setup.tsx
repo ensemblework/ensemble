@@ -94,7 +94,15 @@ export function ModelKeysCard({ compact = false }: { compact?: boolean }) {
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2 text-[13.5px] font-medium">
                   {provider.label}
-                  {key?.source === "you" ? <Tag tone="green">your key {key.hint}</Tag> : key?.source === "env" ? <Tag tone="blue">from server ({key.hint})</Tag> : <Tag tone="gray">no key</Tag>}
+                  {key?.source === "you" ? (
+                    <Tag tone="green">your key {key.hint}</Tag>
+                  ) : key?.source === "account" ? (
+                    <Tag tone="green">your account's key {key.hint}</Tag>
+                  ) : key?.source === "env" ? (
+                    <Tag tone="blue">from server ({key.hint})</Tag>
+                  ) : (
+                    <Tag tone="gray">no key</Tag>
+                  )}
                 </div>
                 <div className="text-[12px] text-muted">
                   {provider.note ? `${provider.note} ` : ""}

@@ -144,7 +144,7 @@ export const SETTINGS_MAP: readonly SettingsMapEntry[] = [
       id: `models.${tier}.effort`,
       label: `${name} model thinking`,
       keywords: `thinking reasoning effort ${name.toLowerCase()} tier model`,
-      about: `How hard the ${name} tier's model thinks: default, minimal, low, medium or high.`,
+      about: `How hard the ${name} tier's model thinks, in the levels that model takes (Off to Max).`,
       href: at("assistant", `jump-${slug(`${name} model`)}-thinking`),
       key: `models.${tier}.effort`,
       rule: { type: "enum", values: ReasoningEffort.options } as SettingRule,

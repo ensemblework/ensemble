@@ -421,7 +421,7 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
         return;
       } else {
         const failure = parseRuntimeBody(error instanceof RuntimeError ? error.statusCode : 502, error instanceof Error ? error.message : String(error));
-        const shown = safePublicError(error, error instanceof RuntimeError ? error.message : friendlyModelError(failure));
+        const shown = safePublicError(error, error instanceof RuntimeError ? error.message : friendlyModelError(failure, modelName));
         if (failure.kind === "not_found" || failure.kind === "quota" || failure.kind === "unavailable") {
           void recordModelProbe(app.prisma, request.userId, tierSetting.provider, modelName, failure.kind, shown).catch(() => undefined);
         }

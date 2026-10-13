@@ -13,6 +13,9 @@ import { newApiToken, sha256 } from "../lib/auth.js";
 import { requireVerifiedUser } from "../lib/hosted-access.js";
 import { decisionBus, publicDecision, waitFor } from "../lib/decisions.js";
 import { appendLedger } from "../lib/ledger.js";
+import { loadSettings } from "../lib/settings.js";
+import { decrypt } from "../lib/secrets.js";
+import { PROVIDERS as MODEL_PROVIDERS } from "../runtime/credentials.js";
 import { redactText } from "../lib/redact.js";
 import { sseHandler, sseHub } from "../lib/sse.js";
 import {
@@ -272,6 +275,29 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     if (!device) return;
     await revokePairedDevice(prisma, request.userId, device);
     return reply.code(204).send();
+  });
+
+  // The account's model keys, for this computer's own model calls (docs/26 §4), unless the person
+  // turned that off in Settings → Models. Keys with a custom base URL stay on the server.
+  app.get("/api/devices/self/model-keys", async (request, reply) => {
+    const device = await ownDevice(app, request, reply);
+    if (!device) return;
+    const settings = await loadSettings(prisma, device.userId);
+    if (!settings.models.keysOnComputers) return { shared: false, keys: [] };
+    const rows = await prisma.modelCredential.findMany({ where: { userId: device.userId, provider: { in: [...MODEL_PROVIDERS] }, baseUrl: null } });
+    const keys = rows.flatMap((row) => {
+      try {
+        return [{ provider: row.provider, secret: decrypt(row.secret), hint: row.hint, updatedAt: row.updatedAt.toISOString() }];
+      } catch {
+        return [];
+      }
+    });
+    // Once a day per computer in the ledger: which computer read which providers' keys, never the keys.
+    const day = new Date().toISOString().slice(0, 10);
+    if (keys.length && (await app.redis.set(`device-keys:${device.id}:${day}`, "1", "EX", 86_400, "NX")) === "OK") {
+      await appendLedger({ userId: device.userId, actor: "system", action: "model.keys.device", payload: { deviceId: device.id, name: device.name, providers: keys.map((key) => key.provider) } });
+    }
+    return { shared: true, keys };
   });
 
   app.post("/api/devices/self/heartbeat", async (request, reply) => {

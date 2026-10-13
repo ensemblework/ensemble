@@ -233,6 +233,7 @@ Plain request/response, plus one stream. Each handler is stateless. The stream i
 | `GET /api/devices` | session | Lists devices. `online` means `lastSeenAt` within 90 s. |
 | `DELETE /api/devices/:id` | session | Sets `revokedAt` and revokes the token. Claimed or running jobs become `interrupted`. Queued jobs become `failed` with "Device removed". |
 | `DELETE /api/devices/self` | device | Revokes this device and its token (same effect as `DELETE /api/devices/:id`). The local `POST /api/remote/unpair` calls it best effort before deleting the local token, so `ensemble logout` and desktop unpair remove the computer from the account. |
+| `GET /api/devices/self/model-keys` | device | The account's model keys (decrypted, over TLS), so the CLI and the desktop app use the keys saved on the web (13 Oct 2026). Off when `settings.models.keysOnComputers` is false (Settings → Models → keys → *Use these keys on my computers*); keys with a custom base URL are never sent. The ledger records `model.keys.device` (computer and providers, never keys) once a day per computer. The computer keeps them in memory only and reads them again after 10 minutes (`apps/hub-api/src/remote/account-keys.ts`); a key saved on the computer wins for its provider. |
 | `POST /api/devices/self/heartbeat` | device | Every 30 s. Body: `{runningJobIds, appVersion, capabilities}`. Updates `lastSeenAt`, extends leases on the listed jobs this device holds only while `leaseUntil` is still in the future, and returns `{cancel: jobIds}` from `cancelRequestedAt`. |
 | `POST /api/devices/self/claim` | device | Compare-and-set, same shape as `worker.ts` `claim()`: `updateMany` where `{id, deviceId, status: "queued"}` to `claimed`, `leaseUntil = now + 120s`, and a new `leaseToken`. Returns the job spec, or 204 when there is nothing to claim. |
 | `POST /api/devices/self/jobs/:id/progress` | device + leaseToken | `{status?, progress, events[], logs: {seqFrom, seqTo, text}}`. A duplicate `seqFrom` is ignored. Extends the lease. |
@@ -292,7 +293,7 @@ Reuse `components/ui.tsx` (`Tag`, `Segmented`, `SectionCard`, `SettingRow`, `Spi
 
 ### 4.5 What the server never stores
 
-- Model API keys, base URLs with embedded keys, or provider tokens for device jobs. Device jobs do not read `ModelCredential`. The server does not call `/api/models`, `complete()`, or `/api/chat/tools` for them.
+- Model API keys, base URLs with embedded keys, or provider tokens for device jobs. Device jobs do not read `ModelCredential`, and a job spec carries no key. The server does not call `/api/models`, `complete()`, or `/api/chat/tools` for them. The computer itself may read the account's own keys through `GET /api/devices/self/model-keys` (§4.3) unless the person turned that off.
 - Git credentials. No SSH keys, keychain items, `gh` tokens, or the `github_git` secret. Pushes happen on the Mac. The server stores the resulting URL or SHA.
 - Trust decisions and sandbox profiles. They stay on the device (doc 24 §5.8). The requested mode (Ask, Review only, Run unattended) is stored on the job and sent on the claim; the device checks it against its own trust.
 - File contents, environment variables, or diffs, beyond the capped redacted log chunks and the summary.

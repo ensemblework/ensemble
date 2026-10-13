@@ -8,6 +8,7 @@ import { prisma } from "../lib/prisma.js";
 import { decrypt, encrypt } from "../lib/secrets.js";
 import { DecryptError } from "./errors.js";
 import { canUseHostCredentials, requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
+import { accountKeys } from "../remote/account-keys.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -42,7 +43,8 @@ const ENV_KEYS: Record<string, string[]> = {
 export interface Credential {
   provider: string;
   secret: string;
-  source: "you" | "env" | "cli" | "none";
+  /** you: saved here. account: saved on the person's Ensemble account (a paired computer). env, cli: the host's own. */
+  source: "you" | "account" | "env" | "cli" | "none";
   baseUrl: string | null;
 }
 
@@ -135,6 +137,8 @@ export async function resolveCredential(userId: string | null | undefined, provi
       if (found[1]) await requireHostAccess(userId, "Custom model proxies");
       return { provider, secret: found[0], source: "you", baseUrl: found[1] };
     }
+    const account = (await accountKeys()).get(provider);
+    if (account) return { provider, secret: account.secret, source: "account", baseUrl: null };
   }
   if (!(await canUseHostCredentials(userId))) return { provider, secret: "", source: "none", baseUrl: null };
   for (const name of ENV_KEYS[provider] ?? []) {
@@ -160,12 +164,18 @@ export async function removeCredential(userId: string, provider: string): Promis
 export async function listCredentials(userId: string): Promise<Array<Record<string, unknown>>> {
   const rows = new Map<string, Listed>();
   for (const row of await storeImpl.list(userId)) rows.set(row.provider, row);
+  const account = await accountKeys();
   const allowHostKeys = await canUseHostCredentials(userId);
   const out: Array<Record<string, unknown>> = [];
   for (const provider of PROVIDERS) {
     const row = rows.get(provider);
     if (row) {
       out.push({ provider, source: "you", hint: row.hint, updatedAt: row.updatedAt.toISOString() });
+      continue;
+    }
+    const shared = account.get(provider);
+    if (shared) {
+      out.push({ provider, source: "account", hint: shared.hint, updatedAt: shared.updatedAt || null });
       continue;
     }
     const env = allowHostKeys ? (ENV_KEYS[provider] ?? []).find((name) => (process.env[name] ?? "").trim()) : undefined;

@@ -9,7 +9,7 @@ import { ModelUnreachableError } from "../lib/model-reach.js";
 import { HostedAccessError, canUseHostCredentials, requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
 import { CONNECTION_DROPPED_NOTICE, normalizeTransportError } from "../lib/stream-drop.js";
 import { truncateText } from "../lib/text.js";
-import { COPILOT_CLASSIC_TOKEN, ModelAuthError, ProviderError, parseProviderError } from "./errors.js";
+import { COPILOT_CLASSIC_TOKEN, ModelAuthError, ProviderError, noKeyMessage, parseProviderError } from "./errors.js";
 import { PROVIDERS, resolveCredential, type Credential } from "./credentials.js";
 import { parseModelJson } from "./model-json.js";
 import { pace, resetBuckets, runtimeSleep, takeToken } from "./pace.js";
@@ -46,7 +46,42 @@ export interface CallOptions {
   signal?: AbortSignal;
 }
 
-const catalogCache = new Map<string, { expires: number; models: string[] }>();
+const catalogCache = new Map<string, { expires: number; models: string[]; meta: ModelMetaMap }>();
+
+/** What a provider's model list says about each model that the settings need: its thinking levels. */
+export type ModelMetaMap = Record<string, { efforts?: string[]; reasoning?: boolean }>;
+
+/** Anthropic: `capabilities.effort`, with `supported` at each level. */
+export function anthropicMeta(rows: Array<{ id?: string; capabilities?: unknown }>): ModelMetaMap {
+  const out: ModelMetaMap = {};
+  for (const row of rows) {
+    const effort = (row.capabilities as { effort?: Record<string, { supported?: boolean } | boolean> } | undefined)?.effort;
+    if (!row.id || !effort || typeof effort !== "object") continue;
+    const supported = (effort as { supported?: boolean }).supported !== false;
+    out[row.id] = { efforts: supported ? ["low", "medium", "high", "xhigh", "max"].filter((level) => (effort[level] as { supported?: boolean } | undefined)?.supported === true) : [] };
+  }
+  return out;
+}
+
+/** Copilot: `capabilities.supports.reasoning_effort`, a list per model; a model without it has no setting. */
+export function copilotMeta(rows: Array<{ id?: string; capabilities?: unknown }>): ModelMetaMap {
+  const out: ModelMetaMap = {};
+  for (const row of rows) {
+    if (!row.id) continue;
+    const listed = (row.capabilities as { supports?: { reasoning_effort?: unknown } } | undefined)?.supports?.reasoning_effort;
+    out[row.id] = { efforts: Array.isArray(listed) ? listed.map(String) : [] };
+  }
+  return out;
+}
+
+/** OpenRouter: whether `supported_parameters` has `reasoning`. */
+export function openRouterMeta(rows: Array<{ id?: string; supported_parameters?: unknown }>): ModelMetaMap {
+  const out: ModelMetaMap = {};
+  for (const row of rows) {
+    if (row.id && Array.isArray(row.supported_parameters)) out[row.id] = { reasoning: row.supported_parameters.includes("reasoning") };
+  }
+  return out;
+}
 
 function cacheKey(provider: string, userId: string | null | undefined, secret: string | null | undefined, ollamaUrl: string | null | undefined): string {
   return [provider, userId ?? "", secret ? secret.slice(-6) : "", ollamaUrl ?? ""].join("\0");
@@ -97,7 +132,7 @@ export async function endpoint(
     return { base: `${base}/v1`, headers: {}, source: "local" };
   }
   if (!cred.secret) {
-    throw new ModelAuthError(`No key for ${provider}. Paste one in Settings → Models, or pick a provider that has a key.`);
+    throw new ModelAuthError(noKeyMessage(provider));
   }
   if (provider === "copilot") return { ...copilotEndpoint(cred.secret, await canUseHostCredentials(userId)), source: cred.source };
   if (!BASES[provider]) throw new ModelAuthError(`${provider} is not a chat provider.`);
@@ -131,18 +166,12 @@ export async function postWithRetry(
 ): Promise<Response> {
   const pause = options.sleep ?? runtimeSleep;
   const retry = options.retry !== false;
-  let current = { ...payload };
-  let stripped = false;
+  const current = { ...payload };
   let attempt = 0;
   while (true) {
     const response = await send(current);
     if (response.ok) return response;
     const body = await response.text();
-    if (!stripped && response.status === 400 && body.includes("reasoning_effort") && "reasoning_effort" in current) {
-      current = Object.fromEntries(Object.entries(current).filter(([key]) => key !== "reasoning_effort"));
-      stripped = true;
-      continue;
-    }
     const error = parseProviderError(response.status, body, response.headers);
     if (!retry) throw error;
     const delay = retryPlan(error, attempt);
@@ -231,8 +260,7 @@ async function* openaiStreamEvents(
 ): AsyncGenerator<{ kind: "delta"; text: string } | { kind: "done"; data: Json }> {
   const target = await endpoint(provider, userId, ollamaUrl, options.signal);
   const url = `${target.base}/chat/completions`;
-  let current: Json = { ...payload, stream: true };
-  let stripped = false;
+  const current: Json = { ...payload, stream: true };
   let attempt = 0;
   const retry = options.retry !== false;
   while (true) {
@@ -245,11 +273,6 @@ async function* openaiStreamEvents(
     }
     if (!response.ok) {
       const body = await response.text();
-      if (!stripped && response.status === 400 && body.includes("reasoning_effort") && "reasoning_effort" in current) {
-        current = Object.fromEntries(Object.entries(current).filter(([key]) => key !== "reasoning_effort"));
-        stripped = true;
-        continue;
-      }
       const failure = parseProviderError(response.status, body, response.headers);
       const delay = retry ? retryPlan(failure, attempt) : null;
       if (delay == null) throw failure;
@@ -333,7 +356,7 @@ function cursorChatError(): ModelAuthError {
 
 async function anthropicChat(body: Json, model: string, userId: string | null | undefined, timeoutMs: number, signal?: AbortSignal): Promise<Json> {
   const cred = await resolveCredential(userId, "anthropic");
-  if (!cred.secret) throw new ModelAuthError("No key for anthropic. Paste one in Settings → Models.");
+  if (!cred.secret) throw new ModelAuthError(noKeyMessage("anthropic"));
   const url = `${(cred.baseUrl || "https://api.anthropic.com").replace(/\/$/, "")}/v1/messages`;
   const headers = { "x-api-key": cred.secret, "anthropic-version": "2023-06-01" };
   const messages = asMessages(body.messages);
@@ -551,14 +574,26 @@ export async function listModels(
   secret?: string | null,
   signal?: AbortSignal,
 ): Promise<string[]> {
+  return (await listModelsWithMeta(provider, userId, ollamaUrl, secret ?? null, signal)).models;
+}
+
+/** The provider's model list and what it says about each model. Cached five minutes per key. */
+export async function listModelsWithMeta(
+  provider: string,
+  userId: string | null | undefined,
+  ollamaUrl: string | null | undefined,
+  secret: string | null = null,
+  signal?: AbortSignal,
+): Promise<{ models: string[]; meta: ModelMetaMap }> {
   await requireVerifiedUser(userId);
   if (provider === "ollama") await requireHostAccess(userId, "Host Ollama and custom model proxies");
   const key = cacheKey(provider, userId, secret, ollamaUrl);
   const cached = catalogCache.get(key);
-  if (cached && cached.expires > Date.now() / 1000) return cached.models;
+  if (cached && cached.expires > Date.now() / 1000) return { models: cached.models, meta: cached.meta };
   const cred = await resolveCredential(userId, provider);
   const apiKey = secret || cred.secret || "";
   let models: string[] = [];
+  let meta: ModelMetaMap = {};
   if (provider === "google") {
     const response = await vendorFetch(
       "https://generativelanguage.googleapis.com/v1beta/models?pageSize=200",
@@ -572,18 +607,20 @@ export async function listModels(
   } else if (provider === "openai" || provider === "openrouter" || provider === "mistral" || provider === "kimi" || provider === "qwen") {
     const response = await vendorFetch(`${BASES[provider]}/models`, { headers: { Authorization: `Bearer ${apiKey}` } }, 15_000, signal);
     if (!response.ok) throw await httpFailure(response);
-    const data = (await response.json()) as { data?: Array<{ id?: string }> };
+    const data = (await response.json()) as { data?: Array<{ id?: string; supported_parameters?: unknown }> };
     models = filterCatalogModels(provider, (data.data ?? []).map((row) => String(row.id ?? "")).filter(Boolean).sort());
+    if (provider === "openrouter") meta = openRouterMeta(data.data ?? []);
   } else if (provider === "anthropic") {
     const response = await vendorFetch(
-      "https://api.anthropic.com/v1/models",
+      "https://api.anthropic.com/v1/models?limit=1000",
       { headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" } },
       15_000,
       signal,
     );
     if (!response.ok) throw await httpFailure(response);
-    const data = (await response.json()) as { data?: Array<{ id?: string }> };
+    const data = (await response.json()) as { data?: Array<{ id?: string; capabilities?: unknown }> };
     models = (data.data ?? []).map((row) => String(row.id ?? "")).filter(Boolean);
+    meta = anthropicMeta(data.data ?? []);
   } else if (provider === "cursor") {
     const response = await vendorFetch(
       "https://api.cursor.com/v0/models",
@@ -604,11 +641,12 @@ export async function listModels(
     const copilot = copilotEndpoint(apiKey, await canUseHostCredentials(userId));
     const response = await vendorFetch(`${copilot.base}/models`, { headers: copilot.headers }, 15_000, signal);
     if (!response.ok) throw await httpFailure(response);
-    const data = (await response.json()) as { data?: Array<{ id?: string }> };
+    const data = (await response.json()) as { data?: Array<{ id?: string; capabilities?: unknown }> };
     models = (data.data ?? []).map((row) => String(row.id ?? "")).filter(Boolean);
+    meta = copilotMeta(data.data ?? []);
   }
-  catalogCache.set(key, { expires: Date.now() / 1000 + 300, models });
-  return models;
+  catalogCache.set(key, { expires: Date.now() / 1000 + 300, models, meta });
+  return { models, meta };
 }
 
 async function httpFailure(response: Response): Promise<Error> {
@@ -619,14 +657,17 @@ async function httpFailure(response: Response): Promise<Error> {
   return error;
 }
 
-export async function catalog(userId: string | null | undefined, ollamaUrl: string | null | undefined, signal?: AbortSignal): Promise<Json[]> {
+/** The model list of each provider (or only `only`), with what each provider says about its models. */
+export async function catalog(userId: string | null | undefined, ollamaUrl: string | null | undefined, signal?: AbortSignal, only?: readonly string[] | null): Promise<Json[]> {
   const out: Json[] = [];
   for (const provider of PROVIDERS) {
+    if (only?.length && !only.includes(provider)) continue;
     const entry: Json = {
       provider,
       available: false,
       source: "none",
       models: [],
+      meta: {},
       chat: provider !== "cursor",
       cheapest: CHEAPEST[provider] ?? null,
       error: null,
@@ -646,8 +687,10 @@ export async function catalog(userId: string | null | undefined, ollamaUrl: stri
       continue;
     }
     try {
-      entry.models = await listModels(provider, userId, ollamaUrl, null, signal);
-      entry.available = Boolean((entry.models as string[]).length) || provider !== "ollama";
+      const listed = await listModelsWithMeta(provider, userId, ollamaUrl, null, signal);
+      entry.models = listed.models;
+      entry.meta = listed.meta;
+      entry.available = Boolean(listed.models.length) || provider !== "ollama";
     } catch (error) {
       entry.error = provider === "ollama" ? null : (error instanceof Error ? error.message : String(error)).slice(0, 200);
     }

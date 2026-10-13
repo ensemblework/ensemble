@@ -1,5 +1,5 @@
 import type { IdeTheme, ThemeDirectoryExtension } from "@ensemble/ide-theme";
-import { emptyWorkspace, type PageDocument, type Settings, type TaskPageContent } from "@ensemble/shared-types";
+import { emptyWorkspace, type ModelMeta, type PageDocument, type Settings, type TaskPageContent } from "@ensemble/shared-types";
 import type { LayoutDocument } from "@ensemble/shared-types/widgets";
 
 import { bindClient, currentExternalSignal, isRequestCancelled, RequestCancelledError, trackRequest, isPageUnloading } from "./fetch-cancel";
@@ -770,17 +770,24 @@ export type ModelCatalog = {
     available: boolean;
     models: string[];
     notes?: Record<string, { available: boolean; reason: string | null }>;
-    source: "you" | "env" | "cli" | "none" | "local";
+    /** What the provider's own model list said about each model: its thinking levels. */
+    meta?: Record<string, ModelMeta>;
+    source: "you" | "account" | "env" | "cli" | "none" | "local";
     chat: boolean;
     cheapest: string | null;
     error: string | null;
+    /** When this provider's list was fetched; lists are kept a week. */
+    fetchedAt?: string | null;
   }>;
   runtime: boolean;
   error?: string;
   updatedAt: string;
+  /** The oldest list among the providers with a key. */
+  fetchedAt?: string | null;
 };
 
-export type ModelKey = { provider: string; source: "you" | "env" | "none"; hint: string | null; updatedAt: string | null };
+/** you: saved here. account: on a paired computer, a key saved on the Ensemble account. */
+export type ModelKey = { provider: string; source: "you" | "account" | "env" | "none"; hint: string | null; updatedAt: string | null };
 
 export type Profile = { gender: string | null; profession: string | null; organization: string | null; heardFrom: string | null };
 
@@ -1221,6 +1228,8 @@ export const api = bindClient({
   syncConnection: (id: string) => post<{ ok: boolean; message: string; proposed?: number }>(`/api/connections/${id}/sync`),
   fetchNow: () => post<{ results: Array<{ id: string; ok: boolean; message: string }>; message?: string }>("/api/fetch"),
   models: () => get<ModelCatalog>("/api/models"),
+  /** Asks each provider with a key (or only those named) for its model list now. */
+  refreshModels: (providers?: string[]) => post<ModelCatalog>("/api/models/refresh", providers?.length ? { providers } : {}),
   prompts: () => get<{ prompts: Array<{ id: string; title: string; when: string; purpose: string; body?: string }> }>("/api/prompts"),
   deleted: () => get<{ items: Array<{ kind: string; id: string; label: string; deletedAt: string }> }>("/api/deleted"),
   restoreDeleted: (data: { kind?: string; id?: string } = {}) => post<{ restored: number }>("/api/deleted/restore", data),

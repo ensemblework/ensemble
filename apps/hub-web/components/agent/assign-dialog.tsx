@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Check, ChevronRight, Code2, FileText, FolderOpen, GitBranch, Lock, Monitor, Pencil, ShieldCheck, Star, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { RunProfile } from "@ensemble/shared-types";
+import type { ReasoningEffort, RunProfile } from "@ensemble/shared-types";
 import { api, type AssignInput, type Complexity, type HandoffApp } from "@/lib/api";
 import { useSpaceAccess } from "@/lib/access";
 import { pickFolderNative } from "@/lib/desktop-dialog";
@@ -16,12 +16,14 @@ import { canAddProfile, defaultProfile, differs, newProfileId, profileChoices, p
 import { useToast } from "../toast";
 import { Dialog, InfoTip, SettingRow, Spinner, Toggle, cx } from "../ui";
 import { RunBranchStatus } from "./run-branch-status";
+import { ThinkingPicker, effortFor } from "../settings/model-picker";
 import { PickGitHubRepo } from "../app-items/github-repo-picker";
 
 type Kind = "research" | "code";
 type Place = "fresh" | "continue" | "folder";
 type Mode = "ask" | "review" | "unattended";
-type Effort = "default" | "low" | "medium" | "high";
+/** "default" or a level the chosen model takes (shared-types model-efforts). */
+type Effort = ReasoningEffort;
 
 const PROVIDER_LABEL: Record<string, string> = {
   google: "Gemini",
@@ -829,10 +831,20 @@ export function AssignDialog({
             </select>
           </div>
         ) : (
-        <div className="grid grid-cols-[minmax(0,1fr)_170px] gap-3">
+        <div className="space-y-3">
           <div>
             <Label tip="By default the task's complexity picks the model from Settings → Models. Pick another here for this attempt only.">Model</Label>
-            <select value={modelChoice} onChange={(event) => setModelChoice(event.target.value)} className="field w-full">
+            <select
+              value={modelChoice}
+              onChange={(event) => {
+                const next = event.target.value;
+                setModelChoice(next);
+                const [nextProvider, nextModel] = next.includes("::") ? (next.split("::") as [string, string]) : [tier?.provider ?? "", tier?.model ?? ""];
+                const meta = (catalog.data?.providers ?? []).find((row) => row.provider === nextProvider)?.meta?.[nextModel];
+                setEffort((current) => effortFor(nextProvider, nextModel, meta, current) as Effort);
+              }}
+              className="field w-full"
+            >
               <option value="">
                 Task tier: {TIER_LABEL[complexity]} · {tier ? `${PROVIDER_LABEL[tier.provider] ?? tier.provider} ${tier.model}` : "…"}
               </option>
@@ -854,13 +866,16 @@ export function AssignDialog({
             </select>
           </div>
           <div>
-            <Label tip="Only some models accept this. Others ignore it.">Thinking</Label>
-            <select value={effort} onChange={(event) => setEffort(event.target.value as Effort)} className="field w-full">
-              <option value="default">{model ? "Provider default" : `Tier default${tier?.effort ? ` (${tier.effort})` : ""}`}</option>
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-            </select>
+            <Label tip="The levels this model takes, as its provider lists or documents them. Default uses the tier's level in Settings → Models, or the model's own default for a model picked here.">Thinking</Label>
+            <ThinkingPicker
+              label="Thinking"
+              provider={model ? provider : (tier?.provider ?? "")}
+              providerLabel={PROVIDER_LABEL[model ? provider : (tier?.provider ?? "")] ?? (model ? provider : (tier?.provider ?? ""))}
+              model={model || (tier?.model ?? "")}
+              meta={(catalog.data?.providers ?? []).find((row) => row.provider === (model ? provider : tier?.provider))?.meta?.[model || (tier?.model ?? "")] ?? null}
+              value={effort}
+              onChange={(value) => setEffort(value as Effort)}
+            />
           </div>
         </div>
         )}

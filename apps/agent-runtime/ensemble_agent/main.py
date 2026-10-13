@@ -167,9 +167,12 @@ async def complete(body: dict, x_ensemble_internal: str | None = Header(default=
 
 
 @app.get("/api/models")
-async def models(userId: str | None = None, ollamaUrl: str | None = None, x_ensemble_internal: str | None = Header(default=None)) -> dict:
+async def models(
+    userId: str | None = None, ollamaUrl: str | None = None, providers: str | None = None, x_ensemble_internal: str | None = Header(default=None)
+) -> dict:
     _guard(x_ensemble_internal)
-    return {"providers": await catalog(userId, ollamaUrl)}
+    only = [name.strip() for name in (providers or "").split(",") if name.strip()]
+    return {"providers": await catalog(userId, ollamaUrl, only or None)}
 
 
 @app.get("/api/credentials")

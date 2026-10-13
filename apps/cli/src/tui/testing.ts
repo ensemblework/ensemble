@@ -56,6 +56,8 @@ export function fakeApi(
     runs?: Record<string, RunStep[]>;
     agents?: Array<{ id: string; name: string; app: boolean; cli: string | null }>;
     keys?: string[];
+    /** Keys saved on the Ensemble account, which a paired computer uses. */
+    accountKeys?: string[];
   } = {},
 ) {
   const calls: Array<{ what: string; body?: unknown }> = [];
@@ -100,7 +102,14 @@ export function fakeApi(
     retryJob: async () => ({ jobId: "again" }),
     models: async () => ({ providers: [], runtime: true }),
     agentApps: async () => ({ available: true, agents: input.agents ?? [] }),
-    modelKeys: async () => ({ credentials: (input.keys ?? []).map((provider) => ({ provider })) }),
+    // As the runtime answers: every provider, with "none" where there is no key.
+    modelKeys: async () => ({
+      credentials: ["google", "openai", "anthropic", "mistral", "kimi", "qwen", "openrouter", "copilot", "cursor", "ollama"].map((provider) => ({
+        provider,
+        source: input.keys?.includes(provider) ? "you" : (input.accountKeys?.includes(provider) ? "account" : "none"),
+        hint: null,
+      })),
+    }),
     trust: async (path: string) => ({ id: "r", path }),
   } as unknown as LocalApi;
   /** A decision arrives while the app runs (an agent asks something). */

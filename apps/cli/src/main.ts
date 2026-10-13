@@ -456,8 +456,13 @@ async function commandKeys(args: string[]): Promise<void> {
   if (!(await sidecarAvailable(sidecarDir))) throw new Error(NO_RUNNER);
   if (subcommand === "list") {
     parsed(rest);
-    const keys = await withAdminApi({ sidecarDir, run: listKeys });
-    for (const key of keys ?? []) console.log(`${key.provider}\t${key.source}\t${key.hint ?? ""}`);
+    const keys = (await withAdminApi({ sidecarDir, run: listKeys }) ?? []).filter((key) => key.source && key.source !== "none");
+    if (!keys.length) {
+      console.log("No model keys. Add one on the web (Settings → Models; computers signed in to your account use those keys) or here with `ensemble keys set <provider>`.");
+      return;
+    }
+    const where: Record<string, string> = { you: "this computer", account: "your account", env: "environment", cli: "gh CLI" };
+    for (const key of keys) console.log(`${key.provider}\t${where[key.source ?? ""] ?? key.source}\t${key.hint ?? ""}`);
     return;
   }
   const result = parsed(rest);
@@ -654,7 +659,7 @@ function statusLines(status: Summary): string[] {
       "Folders",
       folders === null ? "start the runner to list" : folders.length ? folders.map((folder) => `${folder.label} → ${folder.path}${folder.access === "review" ? " (read-only)" : ""}`).join("\n" + " ".repeat(13)) : "none (add one with `ensemble folders add <path>`)",
     ),
-    row("Model keys", keys === null ? "start the runner to list" : keys.length ? keys.join(", ") : "none on this computer"),
+    row("Model keys", keys === null ? "start the runner to list" : keys.length ? keys.join(", ") : "none (add one on the web in Settings → Models, or `ensemble keys set <provider>`)"),
     row("Editors", editors.length ? editors.join(", ") : "none configured (run `ensemble mcp setup`)"),
   ];
 }

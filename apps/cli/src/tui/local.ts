@@ -136,7 +136,7 @@ export class LocalApi {
   trusted = () => this.json<{ folders: Array<{ id: string; path: string }> }>("/api/workspace/trust").then((body) => body.folders);
   guard = () => this.json<{ root: string; sandbox: { mechanism: string; osSandbox: boolean; strength: string; reason?: string } }>("/api/workspace/guard");
   agentApps = () => this.json<{ available: boolean; agents: Array<{ id: string; name: string; app: boolean; cli: string | null }> }>("/api/agent/apps");
-  modelKeys = () => this.json<{ credentials: Array<{ provider: string }> }>("/api/model-keys");
+  modelKeys = () => this.json<{ credentials: Array<{ provider: string; source: string; hint?: string | null }> }>("/api/model-keys");
 
   /** One Ensemble Code turn, streamed: each frame as it comes. Resolves when the turn is done. */
   async chat(body: { conversationId?: string; message: string; model?: string; code: CodeSession }, onFrame: (frame: ChatFrame) => void, signal: AbortSignal): Promise<void> {

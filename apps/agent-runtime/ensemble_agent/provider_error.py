@@ -81,6 +81,12 @@ COPILOT_TOKEN_HELP = (
 COPILOT_CLASSIC_TOKEN = f"This is a classic GitHub token. {COPILOT_TOKEN_HELP}"
 
 
+def no_key_message(provider: str) -> str:
+    """The provider is the one of the model the tier or the chat uses: a Gemini model needs a Google Gemini key."""
+    name = {**_PROVIDER_NAMES, "google": "Google Gemini", "anthropic": "Claude (Anthropic)"}.get(provider, provider)
+    return f"No key for {name}. Add one in Settings → Models (in the Ensemble CLI: /keys {provider}), or pick a model whose provider has a key."
+
+
 def friendly_key_error(provider: str, status: int, body: str) -> str:
     """One line for a failed key check. Never includes the request URL."""
     del body  # provider bodies and httpx errors can embed the URL

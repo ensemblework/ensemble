@@ -1451,6 +1451,20 @@ model ModelProbe {
   @@map("model_probes")
 }
 
+/// The models a key reaches, as its provider listed them, kept for a week (lib/model-catalog.ts).
+model ModelCatalog {
+  userId    String   @map("user_id")
+  provider  String
+  /// The runtime's catalog entry: models, cheapest, chat, error, and per model what the provider said about it (`meta`, its thinking levels).
+  entry     Json
+  /// The key's hint when the list was fetched; a different key fetches again.
+  keyHint   String   @default("") @map("key_hint")
+  fetchedAt DateTime @default(now()) @map("fetched_at")
+
+  @@id([userId, provider])
+  @@map("model_catalogs")
+}
+
 /// A condition the scheduler evaluates. Creating one is a proposal; firing writes a notification.
 model Watcher {
   id          String    @id @default(uuid())

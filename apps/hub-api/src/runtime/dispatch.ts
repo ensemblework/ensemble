@@ -50,7 +50,8 @@ async function route(method: string, pathname: string, query: URLSearchParams, b
   if (method === "POST" && pathname === "/api/complete") return completeText(body, { signal });
   if (method === "POST" && pathname === "/api/chat/tools") return completeWithTools(body, { signal });
   if (method === "GET" && pathname === "/api/models") {
-    return { providers: await catalog(query.get("userId"), query.get("ollamaUrl"), signal) };
+    const only = (query.get("providers") ?? "").split(",").map((name) => name.trim()).filter(Boolean);
+    return { providers: await catalog(query.get("userId"), query.get("ollamaUrl"), signal, only) };
   }
   if (method === "GET" && pathname === "/api/credentials") {
     return { credentials: await listCredentials(query.get("userId") ?? "") };

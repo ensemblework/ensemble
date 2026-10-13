@@ -97,6 +97,23 @@ export function deviceRemovedEvent(event: string): boolean {
   return event === "device.removed" || event === "device.revoked" || event === "revoke" || event === "device.revoke";
 }
 
+export type AccountKey = { provider: string; secret: string; hint: string; updatedAt: string };
+
+/** The keys saved on the account, for this computer (docs/26 §4). An older server answers 404: none. */
+export async function fetchAccountKeys(base: string, token: string, signal?: AbortSignal): Promise<{ shared: boolean; keys: AccountKey[] }> {
+  const res = await send(base, token, "GET", ROUTES.modelKeys, undefined, signal ?? AbortSignal.timeout(8_000));
+  if (res.status === 404) return { shared: false, keys: [] };
+  if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "The account's model keys could not be read."));
+  const body = res.body as { shared?: unknown; keys?: unknown } | null;
+  const keys = (Array.isArray(body?.keys) ? body.keys : []).flatMap((row) => {
+    const item = row as Partial<AccountKey>;
+    return typeof item.provider === "string" && typeof item.secret === "string" && item.secret
+      ? [{ provider: item.provider, secret: item.secret, hint: typeof item.hint === "string" ? item.hint : "", updatedAt: typeof item.updatedAt === "string" ? item.updatedAt : "" }]
+      : [];
+  });
+  return { shared: body?.shared !== false, keys };
+}
+
 export function hostedClient(base: string, token: string): HostedClient {
   const call = (method: string, path: string, json?: unknown, signal?: AbortSignal) => send(base, token, method, path, json, signal);
   return {

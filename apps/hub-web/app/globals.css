@@ -376,6 +376,35 @@ select:focus-visible {
     @apply rounded-lg border border-line bg-raised px-2.5 py-1.5 text-sm text-ink outline-none transition-colors placeholder:text-faint hover:border-line-strong focus:border-accent;
   }
 
+  /* The model and provider pickers in Settings → Models (components/settings/model-picker.tsx). */
+  .picker-trigger {
+    @apply flex h-9 w-full min-w-0 items-center gap-2 rounded-lg border border-line bg-raised px-2.5 text-[13px] text-ink transition-colors hover:border-line-strong focus-visible:border-accent focus-visible:outline-none aria-expanded:border-accent;
+  }
+  .picker-search {
+    @apply mx-1 mt-0.5 flex items-center gap-2 rounded-md border border-line bg-panel px-2 py-1.5 focus-within:border-accent;
+  }
+  .picker-option {
+    @apply flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] text-ink transition-colors hover:bg-hover;
+  }
+  .picker-option.is-active {
+    @apply bg-hover;
+  }
+  .picker-option.is-current {
+    @apply font-medium;
+  }
+  .picker-badge {
+    @apply shrink-0 rounded-full bg-[var(--accent-soft)] px-1.5 py-px text-[10.5px] font-medium text-accent;
+  }
+  .thinking-levels {
+    @apply inline-flex max-w-full flex-wrap gap-0.5 rounded-lg border border-line bg-raised p-0.5;
+  }
+  .thinking-level {
+    @apply rounded-md px-2.5 py-1 text-[12.5px] text-muted transition-colors hover:text-ink;
+  }
+  .thinking-level.is-on {
+    @apply bg-panel font-medium text-ink shadow-sm;
+  }
+
   .btn {
     @apply inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-line bg-raised px-2.5 py-1 text-[13px] text-ink transition-colors hover:border-line-strong hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50;
   }

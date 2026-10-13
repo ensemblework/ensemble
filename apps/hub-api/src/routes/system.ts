@@ -16,6 +16,8 @@ import { HostedAccessError, requireVerifiedUser } from "../lib/hosted-access.js"
 import { mirrorSettings, spaceIds } from "../spaces/store.js";
 import { accountIdOf } from "../lib/auth.js";
 import { purgeDeletedStandalonePages } from "../pages/store.js";
+import { forgetCatalog, modelCatalog } from "../lib/model-catalog.js";
+import { forgetAccountKeys } from "../remote/account-keys.js";
 
 const MODEL_CATALOG_TTL_MS = 15_000;
 const MODEL_CATALOG_MAX = 32;
@@ -157,17 +159,11 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
 
   // ── models & prompts ────────────────────────────────────────────────────
 
-  app.get("/api/models", async (request) => {
-    await requireVerifiedUser(request.userId);
-    const cached = readModelCatalog(request.userId);
-    if (cached) return cached;
-    const settings = await loadSettings(prisma, request.userId);
+  const modelsPayload = async (userId: string, refresh?: boolean | string[]) => {
+    const settings = await loadSettings(prisma, userId);
     try {
-      const catalog = await runtime<{ providers: Array<Record<string, unknown>> }>(
-        `/api/models?${new URLSearchParams({ userId: request.userId, ollamaUrl: settings.models.ollamaUrl })}`,
-        { timeoutMs: 30_000 },
-      );
-      const probes = await prisma.modelProbe.findMany({ where: { userId: request.userId } });
+      const catalog = await modelCatalog(userId, settings.models.ollamaUrl, { refresh });
+      const probes = await prisma.modelProbe.findMany({ where: { userId } });
       const providers = catalog.providers.map((row) => {
         const provider = String(row.provider ?? "");
         const models = Array.isArray(row.models) ? row.models.map(String) : [];
@@ -182,8 +178,8 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
         }
         return { ...row, notes };
       });
-      const payload = { providers, runtime: true, updatedAt: new Date().toISOString() };
-      writeModelCatalog(request.userId, payload);
+      const payload = { providers, runtime: true, updatedAt: catalog.refreshedAt ?? new Date().toISOString(), fetchedAt: catalog.fetchedAt };
+      writeModelCatalog(userId, payload);
       return payload;
     } catch (error) {
       if (error instanceof HostedAccessError) throw error;
@@ -192,10 +188,27 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
         runtime: false,
         error: error instanceof Error ? error.message : String(error),
         updatedAt: new Date().toISOString(),
+        fetchedAt: null,
       };
-      writeModelCatalog(request.userId, payload);
+      writeModelCatalog(userId, payload);
       return payload;
     }
+  };
+
+  // Stored lists, each fetched again when a week old or when its key changed (lib/model-catalog.ts).
+  app.get("/api/models", async (request) => {
+    await requireVerifiedUser(request.userId);
+    return readModelCatalog(request.userId) ?? modelsPayload(request.userId);
+  });
+
+  // Refresh: asks each provider that has a key (or only the ones named) for its list now.
+  app.post("/api/models/refresh", async (request) => {
+    await requireVerifiedUser(request.userId);
+    const body = z.object({ providers: z.array(z.string().max(40)).max(20).optional() }).parse(request.body ?? {});
+    modelCatalogCache.delete(request.userId);
+    // On a paired computer, the account's keys are read again too: one may have been added on the web.
+    forgetAccountKeys();
+    return modelsPayload(request.userId, body.providers?.length ? body.providers : true);
   });
 
   /** With settings kept in sync, a key saved in one space is saved in all of them. */
@@ -212,6 +225,7 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
     const { provider } = request.params as { provider: string };
     const body = z.object({ apiKey: z.string().trim().min(8), baseUrl: z.string().url().optional() }).parse(request.body);
     modelCatalogCache.delete(request.userId);
+    await forgetCatalog(request.userId, provider);
     const result = await runtime<{ ok: boolean; models: number }>("/api/credentials", {
       method: "PUT",
       json: { userId: request.userId, provider, apiKey: body.apiKey, baseUrl: body.baseUrl },
@@ -251,6 +265,7 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
     const { provider } = request.params as { provider: string };
     modelCatalogCache.delete(request.userId);
     await runtime(`/api/credentials/${provider}?${new URLSearchParams({ userId: request.userId })}`, { method: "DELETE" });
+    await forgetCatalog(request.userId, provider);
     await appendLedger({ userId: request.userId, actor: "me", action: "model.key.remove", payload: { provider } });
     await mirrorKeys(request.userId, accountIdOf(request));
     return reply.code(204).send();

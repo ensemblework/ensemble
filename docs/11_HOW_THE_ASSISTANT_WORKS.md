@@ -26,7 +26,7 @@ See [02 §13](02_MODULE_INTERACTION_HUB_UI.md#13-document-style-pages) for persi
 
 The floating dock’s first status frame includes `userMessageId` alongside `conversationId`. Its temporary user message adopts that saved ID and is omitted once history contains the same ID. This avoids duplicate prompts during streaming without deduplicating genuine repeated requests. An in-flight controller prevents a second send, and sending clears the composer immediately. A next-turn draft typed during streaming is preserved.
 
-The floating assistant offers Low / Medium / High / Max presets rather than a second independent model configuration. Settings owns each model/thinking/context profile, backed by the account's seven-day Copilot capability cache. A context limit is not presented as a selectable tier unless the transport actually supports that choice. Per-task custom overrides belong to assignment only.
+The floating assistant offers Low / Medium / High / Max presets rather than a second independent model configuration. Settings owns each model and thinking profile, backed by the model lists stored a week per key (`model_catalogs`), and a thinking level the model does not take is refused before the call ([01 §6](01_TECH_STACK_AND_ENVIRONMENT.md#6-model-usage-policy)). A context limit is not presented as a selectable tier unless the transport actually supports that choice. Per-task custom overrides belong to assignment only.
 
 Everything below is the detail of that sentence.
 

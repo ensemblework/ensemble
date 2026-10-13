@@ -27,6 +27,7 @@ import {
   FINISHED,
   GROUP_LABEL,
   installedAgent,
+  keyLine,
   matchCommands,
   parseCommand,
   profileSummary,
@@ -34,6 +35,7 @@ import {
   sourceLabel,
   STATUS_GLYPH,
   titleFrom,
+  withKeys,
   type Action,
   type AgentEngine,
   type Answer,
@@ -278,6 +280,8 @@ export function App(props: { api: LocalApi; folder: string; version: string; acc
           if (last?.kind === "assistant") return [...current.slice(0, -1), { ...last, text: last.text + text }];
           return [...current, entry("assistant", text)];
         });
+      // The turn's error frame is shown once; a "done" that only repeats it adds nothing.
+      let failed: string | null = null;
       const onFrame = (frame: ChatFrame) => {
         if (frame.type === "status" && frame.conversationId) setConversationId(frame.conversationId);
         else if (frame.type === "delta") appendAssistant(frame.text);
@@ -287,9 +291,16 @@ export function App(props: { api: LocalApi; folder: string; version: string; acc
         } else if (frame.type === "pending") {
           setPending((current) => [...current, frame.call]);
           setEntries((current) => [...current, entry("pending", frame.preview || frame.call.summary || frame.call.name), entry("assistant", "")]);
-        } else if (frame.type === "error") setEntries((current) => [...current, entry("error", frame.message ?? frame.error ?? "Something went wrong.")]);
-        else if (frame.type === "done") {
+        } else if (frame.type === "error") {
+          failed = frame.message ?? frame.error ?? "Something went wrong.";
+          const text = failed;
+          setEntries((current) => [...current, entry("error", text)]);
+        } else if (frame.type === "done") {
           setConversationId(frame.conversationId);
+          if (failed && frame.content?.trim() === failed.trim()) {
+            setEntries((current) => current.filter((item, index) => !(item.kind === "assistant" && !item.text.trim() && index === current.length - 1)));
+            return;
+          }
           // The final text replaces what streamed (it may add "press Apply" and the like).
           setEntries((current) => {
             const trimmed = current.filter((item, index) => !(item.kind === "assistant" && !item.text.trim() && index < current.length - 1));
@@ -374,7 +385,7 @@ export function App(props: { api: LocalApi; folder: string; version: string; acc
     if (pickedAgent.current || !settings || prefs.engine !== null || profile.engine !== "ensemble") return;
     pickedAgent.current = true;
     void Promise.all([api.modelKeys().catch(() => null), api.agentApps().catch(() => null)]).then(([keys, apps]) => {
-      if (!keys || keys.credentials.length || !apps) return;
+      if (!keys || withKeys(keys.credentials).length || !apps) return;
       const agent = installedAgent(apps.agents);
       if (!agent) return;
       setPrefs({ engine: agent });
@@ -524,7 +535,12 @@ export function App(props: { api: LocalApi; folder: string; version: string; acc
     const catalog = await api.models().catch(() => null);
     const rows: ModelRow[] = (catalog?.providers ?? []).filter((row) => row.available && row.chat && row.models.length);
     if (!rows.length) {
-      say("No model keys on this computer yet. Add one with /keys, or chat with Claude Code, Codex or Cursor on your own sign-in: /agent.", "error");
+      say(
+        account.email
+          ? "No model keys yet. Add one on the web (Settings → Models, your account's keys work here too) or here with /keys; or chat with Claude Code, Codex or Cursor: /agent."
+          : "No model keys yet. Add one with /keys, or /login to use the keys on your Ensemble account; or chat with Claude Code, Codex or Cursor: /agent.",
+        "error",
+      );
       return;
     }
     const choices = rows.flatMap((row) => row.models.slice(0, 25).map((model) => ({ id: `${row.provider}::${model}`, label: model, detail: `${row.provider}${row.cheapest === model ? " · cheapest" : ""}` })));
@@ -546,7 +562,7 @@ export function App(props: { api: LocalApi; folder: string; version: string; acc
       setOverlay({
         kind: "input",
         title: `${name} key`,
-        hint: "Saved encrypted on this computer; never sent to ensemblework.com. Enter saves, Esc cancels.",
+        hint: "Saved encrypted on this computer only, never sent to ensemblework.com, and used here before your account's key. Enter saves, Esc cancels.",
         secret: true,
         value: "",
         onSubmit: (key) => {
@@ -557,7 +573,7 @@ export function App(props: { api: LocalApi; folder: string; version: string; acc
         },
       });
     if (provider && (PROVIDERS as readonly string[]).includes(provider)) return ask(provider);
-    setOverlay({ kind: "picker", title: "Add a model key", items: PROVIDERS.filter((name) => name !== "copilot" && name !== "cursor").map((name) => ({ id: name, label: name })), index: 0, onPick: ask });
+    setOverlay({ kind: "picker", title: "Add a model key", items: PROVIDERS.filter((name) => name !== "cursor").map((name) => ({ id: name, label: name })), index: 0, onPick: ask });
   };
 
   const showStatus = async () => {
@@ -569,7 +585,7 @@ export function App(props: { api: LocalApi; folder: string; version: string; acc
       [{ text: "Folder      ", dim: true }, { text: folder }],
       [{ text: "Profile     ", dim: true }, { text: `${profile.name}: ${profileSummary(profile)}` }],
       [{ text: "Agent       ", dim: true }, { text: agentChat ? `${ENGINE_LABEL[engine]} (your sign-in) · ${prefs.agentModel ?? "its default model"}` : `Ensemble agent · ${prefs.chatModel ? prefs.chatModel.replace("::", " · ") : "task tier model"}` }],
-      [{ text: "Model keys  ", dim: true }, { text: keys.credentials.length ? keys.credentials.map((row) => row.provider).join(", ") : "none (/keys)" }],
+      [{ text: "Model keys  ", dim: true }, { text: keyLine(keys.credentials) }],
       [{ text: "Version     ", dim: true }, { text: props.version }],
     ];
     setOverlay({ kind: "text", title: "Status", lines });
