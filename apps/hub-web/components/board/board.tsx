@@ -488,7 +488,7 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
             </button>
           )}
           <BoardImport />
-          <button type="button" className="btn-primary" data-tour-anchor="new-task" disabled={create.isPending} onClick={() => createNewTask("todo")}>
+          <button type="button" className="btn-primary" disabled={create.isPending} onClick={() => createNewTask("todo")}>
             <Plus size={14} />
             New task
           </button>

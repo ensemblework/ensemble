@@ -10,11 +10,11 @@ import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared
 import { PathnameContext } from "next/dist/shared/lib/hooks-client-context.shared-runtime.js";
 import { ONBOARDING_TOUR_KEY, READY_ONBOARDING_TOUR, readTourProgress } from "@ensemble/shared-types";
 import { TEMPLATE_CARDS } from "@ensemble/shared-types/manifest";
-import { moduleForPath } from "@ensemble/shared-types/modules";
 import { api } from "@/lib/api";
 import { OnboardingTour } from "./guided-tour";
 import { buildTour, canAutoStartTour, tourProfile } from "./tour-plan";
-import { fitTourTarget, placeTourCard } from "./tour-position";
+import { demoBeat, SCENE_DURATION, CHAPTER_TRANSITION } from "./tour-playback";
+import { demoCursor } from "./tour-scenes";
 
 (globalThis as { React?: typeof React }).React = React;
 Object.defineProperty(globalThis, "localStorage", { configurable: true, value: window.localStorage });
@@ -23,15 +23,16 @@ Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value:
 Object.defineProperty(window, "matchMedia", { configurable: true, value: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) });
 HTMLElement.prototype.scrollIntoView = () => {};
 
-test("all 36 templates use their own role, first tile and enabled feature stops", () => {
+test("all 36 templates use their own role and enabled fictional scenes without live targets", () => {
   for (const template of TEMPLATE_CARDS) {
     const steps = buildTour(template.id, "code,diagrams");
     assert.equal(tourProfile(template.id).role, template.role);
-    assert.equal(steps.find((step) => step.id === "today")?.target, `[data-desk-key="${template.tiles[0]![0]}"]`);
+    assert.equal(tourProfile(template.id).template?.tiles[0]?.[0], template.tiles[0]![0]);
+    assert.ok(steps.every((step) => !["href", "target", "via"].some((key) => key in step)));
     assert.equal(steps.some((step) => step.id === "code"), template.role === "engineer" || template.role === "vibe");
     assert.equal(steps.some((step) => step.id === "meetings"), template.role === "manager");
     const restricted = buildTour(template.id, "diagrams");
-    assert.ok(restricted.every((step) => !step.href || moduleForPath(step.href) === null));
+    assert.ok(!restricted.some((step) => step.id === "code"));
     assert.equal(new Set(steps.map((step) => step.id)).size, steps.length);
   }
   assert.equal(tourProfile("removed-template").role, "general");
@@ -46,17 +47,18 @@ test("tour eligibility preserves established accounts and setup; progress reject
   for (const value of [null, {}, { ...READY_ONBOARDING_TOUR, v: 2 }, { ...READY_ONBOARDING_TOUR, status: "unknown" }, { ...READY_ONBOARDING_TOUR, updatedAt: NaN }]) assert.equal(readTourProgress(value), null);
 });
 
-test("cards and spotlights stay inside phone, landscape and desktop viewports", () => {
-  for (const viewport of [{ width: 390, height: 844 }, { width: 844, height: 390 }, { width: 1440, height: 900 }]) {
-    for (const target of [null, { left: 24, top: 56, width: 600, height: 230 }, { left: viewport.width - 55, top: 8, width: 44, height: 32 }]) {
-      const fitted = target && fitTourTarget(target, viewport);
-      const card = placeTourCard(fitted, viewport, 420);
-      assert.ok(card.left >= 16 && card.top >= 16);
-      assert.ok(card.left + card.width <= viewport.width - 16);
-      assert.ok(card.top + card.height <= viewport.height - 16);
+test("demonstrations are paced, eased, bounded and held at their final frame", () => {
+  assert.equal(SCENE_DURATION, 12000);
+  assert.ok(CHAPTER_TRANSITION >= 600);
+  assert.equal(demoBeat(500, 1000, 3000), 0);
+  assert.equal(demoBeat(2000, 1000, 3000), .5);
+  assert.equal(demoBeat(14000, 1000, 3000), 1);
+  for (const step of buildTour("branch-desk", "code")) {
+    for (const ms of [0, 2000, 5000, 9000, 12000, 50000]) {
+      const pointer = demoCursor(step.id, ms);
+      assert.ok(pointer.x >= 0 && pointer.x <= 100 && pointer.y >= 0 && pointer.y <= 100);
     }
   }
-  assert.equal(fitTourTarget({ left: -400, top: 20, width: 10, height: 10 }, { width: 390, height: 844 }), null);
 });
 
 const SHELL = {
@@ -76,9 +78,9 @@ async function until(check: () => boolean) {
 const shown = () => document.querySelector<HTMLElement>("[data-onboarding-tour]");
 async function click(selector: string) { await act(async () => (document.querySelector(selector) as HTMLButtonElement).click()); }
 
-async function mount({ progress = READY_ONBOARDING_TOUR as unknown, shared = false, fail = false, clear = true } = {}) {
+async function mount({ progress = READY_ONBOARDING_TOUR as unknown, shared = false, fail = false, clear = true, reduced = true } = {}) {
   if (clear) localStorage.clear();
-  document.documentElement.dataset.reduceMotion = "true";
+  document.documentElement.dataset.reduceMotion = String(reduced);
   window.history.replaceState(null, "", "/today");
   const realFetch = globalThis.fetch;
   const calls: { url: string; value: unknown }[] = [];
@@ -107,22 +109,29 @@ async function mount({ progress = READY_ONBOARDING_TOUR as unknown, shared = fal
   return { calls, paths, opener, done: async () => { await act(async () => root.unmount()); client.clear(); host.remove(); opener.remove(); globalThis.fetch = realFetch; delete document.documentElement.dataset.reduceMotion; } };
 }
 
-test("new users can navigate, go back, resume, dismiss with Escape and replay with focus contained", async () => {
+test("new users can change scenes, resume and replay while the real app stays on the same page", async () => {
   let view = await mount();
   try {
     await until(() => shown()?.dataset.onboardingTour === "welcome");
     assert.match(document.getElementById("tour-title")!.textContent!, /Mira/);
     assert.equal(view.opener.inert, true);
     assert.ok(shown()!.contains(document.activeElement));
-    assert.equal(document.querySelector(".tour-cursor"), null, "reduced motion has no simulated cursor");
+    assert.equal(document.querySelector(".film-pointer"), null, "reduced motion has no simulated cursor");
+    const button = document.querySelector("[data-tour-next]");
+    const frame = document.querySelector(".walkthrough-stage-frame");
+    assert.ok(document.querySelector<HTMLElement>(".film-app")?.hasAttribute("inert"));
+    assert.equal(document.querySelectorAll(".film-app button, .film-app a, .film-app input").length, 0);
     await click("[data-tour-next]");
     assert.equal(shown()?.dataset.onboardingTour, "today");
+    assert.equal(document.querySelector("[data-tour-next]"), button);
+    assert.equal(document.querySelector(".walkthrough-stage-frame"), frame);
+    assert.equal(window.location.pathname, "/today");
     await click("[data-tour-next]"); await click("[data-tour-next]");
     assert.equal(shown()?.dataset.onboardingTour, "board");
-    assert.equal(view.paths.at(-1), "/board");
-    await click(".tour-secondary");
+    assert.equal(view.paths.length, 0);
+    await click(".walkthrough-back");
     assert.equal(shown()?.dataset.onboardingTour, "arrange");
-    assert.equal(view.paths.at(-1), "/today");
+    assert.equal(view.paths.length, 0);
     await until(() => (view.calls.at(-1)?.value as { step?: string })?.step === "arrange");
     await view.done();
     view = await mount({ clear: false });
@@ -133,7 +142,7 @@ test("new users can navigate, go back, resume, dismiss with Escape and replay wi
     assert.equal(document.activeElement, view.opener);
     await act(async () => window.dispatchEvent(new Event("ensemble:onboarding-tour")));
     assert.equal(shown()?.dataset.onboardingTour, "welcome");
-    await click(".tour-close");
+    await click(".walkthrough-close");
   } finally { await view.done(); }
 });
 
@@ -142,7 +151,7 @@ test("existing and shared accounts stay uninterrupted; manual replay works for e
   try {
     await act(async () => window.dispatchEvent(new Event("ensemble:onboarding-tour")));
     assert.equal(shown()?.dataset.onboardingTour, "welcome");
-    await click(".tour-close");
+    await click(".walkthrough-close");
   } finally { await view.done(); }
   view = await mount({ shared: true });
   try {
@@ -160,7 +169,7 @@ test("appearance or another modal finishes before automatic onboarding opens", a
     assert.equal(shown()?.dataset.onboardingTour ?? null, null);
     await act(async () => modal.remove());
     await until(() => Boolean(shown()));
-    await click(".tour-close");
+    await click(".walkthrough-close");
   } finally { modal.remove(); await view.done(); }
   const blocker = document.createElement("div"); blocker.setAttribute("aria-modal", "true"); document.body.append(blocker);
   const deferred = await mount();
@@ -179,7 +188,7 @@ test("appearance or another modal finishes before automatic onboarding opens", a
 test("offline dismissal is remembered locally and completion only prefills a question", async () => {
   let view = await mount({ fail: true });
   try {
-    await until(() => Boolean(shown())); await click(".tour-close");
+    await until(() => Boolean(shown())); await click(".walkthrough-close");
     await view.done();
     view = await mount({ clear: false });
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 750)); });
@@ -191,11 +200,38 @@ test("offline dismissal is remembered locally and completion only prefills a que
   window.addEventListener("ensemble:assistant-prefill", onDraft);
   try {
     await until(() => shown()?.dataset.onboardingTour === "finish");
-    await click(".tour-try-prompt");
+    await click(".walkthrough-ask");
     await until(() => drafts.length > 0);
     assert.equal(shown()?.dataset.onboardingTour ?? null, null);
     assert.match(drafts[0]!, /feature/);
     assert.ok(view.calls.every((call) => call.url.includes("/api/preferences/")), "no task creation, approvals, connections or model calls");
     assert.equal((view.calls.at(-1)?.value as { status?: string })?.status, "completed");
   } finally { window.removeEventListener("ensemble:assistant-prefill", onDraft); await view.done(); }
+});
+
+
+test("pause freezes the preview and chapter transitions keep the same Next button", async () => {
+  const view = await mount({ progress: { ...READY_ONBOARDING_TOUR, status: "active", step: "board" }, reduced: false });
+  try {
+    await until(() => shown()?.dataset.onboardingTour === "board");
+    await until(() => Number(document.querySelector<HTMLElement>(".walkthrough-stage")?.dataset.playbackMs) > 100);
+    await click('[aria-label="Pause scene"]');
+    const paused = document.querySelector<HTMLElement>(".walkthrough-stage")!.dataset.playbackMs;
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 180)); });
+    assert.equal(document.querySelector<HTMLElement>(".walkthrough-stage")!.dataset.playbackMs, paused);
+    const next = document.querySelector<HTMLButtonElement>("[data-tour-next]")!;
+    await click("[data-tour-next]");
+    assert.equal(document.querySelector("[data-tour-next]"), next);
+    assert.equal(next.textContent, "Next");
+    assert.equal(next.getAttribute("aria-disabled"), "true");
+    assert.equal(document.activeElement, next);
+    assert.equal(document.querySelectorAll(".film-layer").length, 2);
+    await until(() => !next.hasAttribute("aria-disabled"));
+    assert.equal(shown()?.dataset.onboardingTour, "context");
+    assert.equal(document.querySelectorAll(".film-layer").length, 1);
+    assert.equal(view.paths.length, 0);
+    assert.equal(window.location.pathname, "/today");
+    await click('[aria-label="Restart scene"]');
+    assert.ok(Number(document.querySelector<HTMLElement>(".walkthrough-stage")!.dataset.playbackMs) < 100);
+  } finally { await view.done(); }
 });

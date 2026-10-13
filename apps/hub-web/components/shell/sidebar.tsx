@@ -109,7 +109,6 @@ function NavItem({
       data-active={active || undefined}
       aria-current={active ? "page" : undefined}
       title={label}
-      data-tour-nav={href}
     >
       <Icon size={16} strokeWidth={1.8} className="text-muted" />
       <span className="sidebar-label flex-1">{label}</span>
