@@ -44,9 +44,9 @@ class Refused extends Error {
 }
 
 /** What the web needs before it asks a computer anything. */
-function codeCapable(device: Device): { code: boolean; webEdit: boolean; webTerminal: boolean; browseFiles: boolean } {
-  const caps = (device.capabilities ?? {}) as { code?: unknown; webEdit?: unknown; webTerminal?: unknown; browseFiles?: unknown };
-  return { code: caps.code === true, webEdit: caps.webEdit !== false, webTerminal: caps.webTerminal !== false, browseFiles: caps.browseFiles !== false };
+function codeCapable(device: Device): { code: boolean; codeApi: number; webEdit: boolean; webTerminal: boolean; browseFiles: boolean } {
+  const caps = (device.capabilities ?? {}) as { code?: unknown; codeApi?: unknown; webEdit?: unknown; webTerminal?: unknown; browseFiles?: unknown };
+  return { code: caps.code === true, codeApi: typeof caps.codeApi === "number" ? caps.codeApi : caps.code === true ? 1 : 0, webEdit: caps.webEdit !== false, webTerminal: caps.webTerminal !== false, browseFiles: caps.browseFiles !== false };
 }
 
 async function readRun(redis: Redisish, runId: string): Promise<RunState | null> {
@@ -94,6 +94,7 @@ export async function deviceCodeRoutes(app: FastifyInstance): Promise<void> {
       .parse(request.body);
     const entry = codeCall(body.method, body.path);
     if (!entry) return reply.code(403).send({ error: "That is not a Code call the web may make." });
+    if (entry.since && codeCapable(device).codeApi < entry.since) return reply.code(409).send({ error: `Update Ensemble on ${device.name} to use the full editor from here (the CLI 0.3.9 or the desktop app 0.3.6).` });
     if (entry.write && !codeCapable(device).webEdit) return reply.code(409).send({ error: `Changing code from the web is turned off on ${device.name}. Turn it on there with \`ensemble web edit on\`.` });
     const result = await relay(reply, device, "code.request", { method: body.method, path: body.path, query: body.query, ...(body.body === undefined ? {} : { body: body.body }) }, entry.slow ? SLOW_MS : ASK_MS);
     if (entry.write && result.answered && result.answer.status < 400) {

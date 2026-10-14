@@ -1,6 +1,6 @@
 # 26 · Ensemble CLI: the `ensemble` app in your terminal, a runner, and MCP for editors
 
-CLI 0.3.6 carries Woven Chorus branding and the Satin Gold terminal indicator. CLI 0.3.7 resolves host names inside the macOS sandbox (so a task can `git clone` from GitHub) and shows the files of tasks run here on the web (`ensemble browse`). CLI 0.3.8 lets the web's Code tab work on this computer: review and edit code, Source control, and the terminal after a passkey unlock on the web (`ensemble web`).
+CLI 0.3.6 carries Woven Chorus branding and the Satin Gold terminal indicator. CLI 0.3.7 resolves host names inside the macOS sandbox (so a task can `git clone` from GitHub) and shows the files of tasks run here on the web (`ensemble browse`). CLI 0.3.8 lets the web's Code tab work on this computer: review and edit code, Source control, and the terminal after a passkey unlock on the web (`ensemble web`). CLI 0.3.9 answers the full editor's calls from the web (file versions, the folder tree, find in files, commits of exactly the ticked files, pull requests) and Plots no longer needs this computer on the web.
 
 Type `ensemble` in a project folder and Ensemble opens full-screen in the terminal:
 

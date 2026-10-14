@@ -24,7 +24,7 @@ import { sliceBytes } from "../lib/text.js";
 import { answerCodeRequest } from "./code.js";
 import { answerFileRequest, uploadChangedFiles } from "./files.js";
 import { answerTerminalRequest, stopWebTerminal } from "./terminal.js";
-import { deviceOwnedEvents, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, ONLINE_WINDOW_MS, parseAnswer, parseClaim, STEP_POST_BYTES, timing, type RunTotals, type UploadedStep } from "./contract.js";
+import { CODE_API, deviceOwnedEvents, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, ONLINE_WINDOW_MS, parseAnswer, parseClaim, STEP_POST_BYTES, timing, type RunTotals, type UploadedStep } from "./contract.js";
 import { actionHash, decisionOptions, judgeAnswer, publishedFolders, riskOf, scrubOutgoing, type LocalDecision } from "./policy.js";
 import { dropDeviceToken, loadHeld, loadSettings, readDeviceToken, saveHeld, updateSettings, type HeldJob, type RemoteSettings } from "./store.js";
 
@@ -94,6 +94,7 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     browseFiles: settings.browseFiles,
     // The web's Code tab and terminal work here (protocol 4); each switch is this computer's.
     code: true,
+    codeApi: CODE_API,
     webEdit: settings.webEdit,
     webTerminal: settings.webTerminal,
   };
