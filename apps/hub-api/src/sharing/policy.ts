@@ -60,6 +60,11 @@ const RULES: Rule[] = [
   ["DELETE", "/api/devices/:id", "personal"],
   ["POST", "/api/devices/pair", "personal"],
   ["POST", "/api/devices/register", "personal"],
+  // The Code tab and terminal on the person's own computer (devices/code-routes.ts): theirs, whatever space is open.
+  ["POST", "/api/devices/:id/code", "personal"],
+  ["POST", "/api/devices/:id/terminal", "personal"],
+  ["GET", "/api/devices/:id/terminal/output", "personal"],
+  ["*", "/api/web-terminal/*", "personal"],
 
   ["*", "/api/assistant/*", "assistant"],
   ["POST", "/api/ask", "assistant"],

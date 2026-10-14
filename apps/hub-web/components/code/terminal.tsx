@@ -4,9 +4,10 @@
 
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Fingerprint, Lock, Maximize2, Minimize2, TerminalSquare, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fingerprint, Laptop, Lock, Mail, Maximize2, Minimize2, TerminalSquare, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API, api } from "@/lib/api";
+import type { CodeTarget } from "@/lib/code-target";
 import { TerminalMark, TerminalSvg } from "@/components/motion/terminal-mark";
 import { QueryError, Spinner, cx } from "../ui";
 import { currentTerminalAccess } from "./terminal-address";
@@ -26,6 +27,137 @@ function shortPath(path: string, scope: string): string {
   return `${name}${rest}` || name || path;
 }
 
+type Status = {
+  enabled: boolean;
+  unlocked: boolean;
+  expiresAt: string | null;
+  passkeys: Array<{ id: string; label: string }>;
+  roots: string[];
+  home: string;
+  /** A new passkey is confirmed with the password; without one, with a code mailed to the account. */
+  password: boolean;
+  emailCode: boolean;
+};
+
+type RunResult = { confirm: string } | { locked: true } | { error: string } | { exitCode: string | null };
+
+/**
+ * Where the terminal's commands go. `local`: this Ensemble's own terminal (its page at localhost).
+ * `device`: a paired computer, through Ensemble on the web, unlocked with a passkey on the web.
+ */
+type Backend = {
+  web: boolean;
+  status(): Promise<Status>;
+  enrolOptions(proof: { password?: string; code?: string }): Promise<Record<string, unknown>>;
+  enrolVerify(response: unknown, label: string): Promise<unknown>;
+  unlockOptions(): Promise<Record<string, unknown>>;
+  unlockVerify(response: unknown): Promise<unknown>;
+  lock(): Promise<unknown>;
+  cd(cwd: string, path: string): Promise<{ cwd: string; scope: string }>;
+  kill(): Promise<unknown>;
+  run(cwd: string, line: string, confirmed: boolean, onText: (text: string) => void): Promise<RunResult>;
+};
+
+async function errorText(response: Response): Promise<string> {
+  const text = await response.text();
+  try {
+    return (JSON.parse(text) as { error?: string }).error ?? text;
+  } catch {
+    return text;
+  }
+}
+
+const localBackend: Backend = {
+  web: false,
+  status: async () => ({ ...(await api.terminalStatus()), password: true, emailCode: false }),
+  enrolOptions: (proof) => api.terminalPasskeyOptions(proof.password ?? ""),
+  enrolVerify: (response, label) => api.terminalPasskeyVerify(response, label),
+  unlockOptions: () => api.terminalUnlockOptions(),
+  unlockVerify: (response) => api.terminalUnlockVerify(response),
+  lock: () => api.terminalLock(),
+  cd: (cwd, path) => api.terminalCd(cwd, path),
+  kill: () => api.terminalKill(),
+  async run(cwd, line, confirmed, onText) {
+    const response = await fetch(`${API}/api/terminal/run`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd, line, confirmed }),
+    });
+    if (response.status === 428) return { confirm: ((await response.json()) as { confirm: string }).confirm };
+    if (response.status === 401) return { locked: true };
+    if (!response.ok || !response.body) return { error: await errorText(response) };
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let code: string | null = null;
+    let pending = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      pending += decoder.decode(value, { stream: true });
+      const end = pending.lastIndexOf("\u0000");
+      if (end >= 0) {
+        code = pending.slice(end + 1).trim();
+        pending = pending.slice(0, end);
+      }
+      if (pending) onText(pending);
+      pending = "";
+    }
+    return { exitCode: code };
+  },
+};
+
+function deviceBackend(deviceId: string): Backend {
+  let current: string | null = null;
+  return {
+    web: true,
+    async status() {
+      const lock = await api.webTerminalStatus();
+      const base = { enabled: true, unlocked: lock.unlocked, expiresAt: lock.expiresAt, passkeys: lock.passkeys, password: lock.password, emailCode: lock.emailCode, roots: [] as string[], home: "" };
+      if (!lock.unlocked) return base;
+      const there = await api.deviceTerminal<{ roots: string[]; home: string }>(deviceId, { op: "status" });
+      return { ...base, roots: there.roots, home: there.home };
+    },
+    enrolOptions: (proof) => api.webTerminalPasskeyOptions(proof),
+    enrolVerify: (response, label) => api.webTerminalPasskeyVerify(response, label),
+    unlockOptions: () => api.webTerminalUnlockOptions(),
+    unlockVerify: (response) => api.webTerminalUnlockVerify(response),
+    lock: () => api.webTerminalLock(),
+    cd: (cwd, path) => api.deviceTerminal<{ cwd: string; scope: string }>(deviceId, { op: "cd", cwd, path }),
+    kill: () => (current ? api.deviceTerminal(deviceId, { op: "kill", runId: current }) : Promise.resolve()),
+    async run(cwd, line, confirmed, onText) {
+      const response = await fetch(`${API}/api/devices/${encodeURIComponent(deviceId)}/terminal`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ op: "run", cwd, line, confirmed }),
+      });
+      if (response.status === 428) return { confirm: ((await response.json()) as { confirm: string }).confirm };
+      if (response.status === 401) return { locked: true };
+      if (!response.ok) return { error: await errorText(response) };
+      const { runId } = (await response.json()) as { runId: string };
+      current = runId;
+      let after = -1;
+      try {
+        // Long-polls the output the computer sends, in order, until the command ends.
+        for (;;) {
+          const out = await api.deviceTerminalOutput(deviceId, runId, after);
+          for (const chunk of out.chunks) {
+            if (chunk.text) onText(chunk.text);
+            after = chunk.seq;
+          }
+          if (out.done) return { exitCode: out.exitCode === null ? null : String(out.exitCode) };
+        }
+      } catch (failure) {
+        const status = (failure as { status?: number }).status;
+        return status === 401 ? { locked: true } : { error: (failure as Error).message };
+      } finally {
+        current = null;
+      }
+    },
+  };
+}
+
 function Countdown({ until }: { until: string | null }) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -37,12 +169,19 @@ function Countdown({ until }: { until: string | null }) {
   return <span title="Locks after 30 minutes idle, 8 hours at most">{minutes} min</span>;
 }
 
-export function Terminal({ initialCwd, onClose }: { initialCwd?: string; onClose: () => void }) {
+export function Terminal({ initialCwd, target, onClose }: { initialCwd?: string; target?: CodeTarget; onClose: () => void }) {
   const client = useQueryClient();
   // Inside the desktop app the terminal shows a note instead (see terminal-desktop-note.tsx).
   const desktop = useDesktopShell();
-  const status = useQuery({ queryKey: ["terminal-status"], queryFn: api.terminalStatus, refetchInterval: 60_000, enabled: desktop === false });
+  const deviceId = target?.kind === "device" ? target.deviceId : null;
+  const backend = useMemo(() => (deviceId ? deviceBackend(deviceId) : localBackend), [deviceId]);
+  const statusKey = deviceId ? ["terminal-status", "device", deviceId] : ["terminal-status"];
+  const status = useQuery({ queryKey: statusKey, queryFn: () => backend.status(), refetchInterval: 60_000, enabled: desktop === false, retry: false });
+  const computers = useQuery({ queryKey: ["devices"], queryFn: api.devices, enabled: Boolean(deviceId), staleTime: 60_000 });
+  const computerName = deviceId ? computers.data?.devices.find((row) => row.id === deviceId)?.name ?? "your computer" : null;
   const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
+  const [codeSent, setCodeSent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lines, setLines] = useState<Line[]>([]);
   const [cwd, setCwd] = useState<string>("");
@@ -60,8 +199,8 @@ export function Terminal({ initialCwd, onClose }: { initialCwd?: string; onClose
   useEffect(() => {
     if (!data?.unlocked || cwd) return;
     const start = initialCwd && data.roots.some((root) => initialCwd.startsWith(root)) ? initialCwd : data.home;
-    void api
-      .terminalCd(start, ".")
+    void backend
+      .cd(start, ".")
       .then((result) => {
         setCwd(result.cwd);
         setScope(result.scope);
@@ -70,7 +209,7 @@ export function Terminal({ initialCwd, onClose }: { initialCwd?: string; onClose
         setCwd(data.home);
         setScope(data.home);
       });
-  }, [data?.unlocked, data?.home, data?.roots, initialCwd, cwd]);
+  }, [backend, data?.unlocked, data?.home, data?.roots, initialCwd, cwd]);
 
   useEffect(() => {
     out.current?.scrollTo({ top: out.current.scrollHeight });
@@ -81,23 +220,30 @@ export function Terminal({ initialCwd, onClose }: { initialCwd?: string; onClose
   const enrol = useMutation({
     mutationFn: async () => {
       setError(null);
-      const options = await api.terminalPasskeyOptions(password);
+      const options = await backend.enrolOptions(password ? { password } : { code });
       const response = await startRegistration({ optionsJSON: options as never });
-      await api.terminalPasskeyVerify(response, navigator.platform.includes("Mac") ? "This Mac (Touch ID)" : "This device");
+      await backend.enrolVerify(response, navigator.platform.includes("Mac") ? "This Mac (Touch ID)" : "This device");
     },
     onSuccess: () => {
       setPassword("");
+      setCode("");
       void client.invalidateQueries({ queryKey: ["terminal-status"] });
     },
+    onError: (failure) => setError((failure as Error).message),
+  });
+
+  const sendCode = useMutation({
+    mutationFn: () => api.webTerminalSendCode(),
+    onSuccess: (sent) => setCodeSent(sent.to),
     onError: (failure) => setError((failure as Error).message),
   });
 
   const unlock = useMutation({
     mutationFn: async () => {
       setError(null);
-      const options = await api.terminalUnlockOptions();
+      const options = await backend.unlockOptions();
       const response = await startAuthentication({ optionsJSON: options as never });
-      return api.terminalUnlockVerify(response);
+      return backend.unlockVerify(response);
     },
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: ["terminal-status"] });
@@ -107,7 +253,7 @@ export function Terminal({ initialCwd, onClose }: { initialCwd?: string; onClose
   });
 
   const lock = async () => {
-    await api.terminalLock();
+    await backend.lock();
     setCwd("");
     void client.invalidateQueries({ queryKey: ["terminal-status"] });
   };
@@ -127,7 +273,7 @@ export function Terminal({ initialCwd, onClose }: { initialCwd?: string; onClose
     if (word === "lock" || word === "exit") return void lock();
     if (word === "cd") {
       try {
-        const result = await api.terminalCd(cwd, rest.join(" "));
+        const result = await backend.cd(cwd, rest.join(" "));
         setCwd(result.cwd);
         setScope(result.scope);
       } catch (failure) {
@@ -137,56 +283,29 @@ export function Terminal({ initialCwd, onClose }: { initialCwd?: string; onClose
     }
     setBusy(true);
     try {
-      const response = await fetch(`${API}/api/terminal/run`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cwd, line: trimmed, confirmed }),
-      });
-      if (response.status === 428) {
-        const body = (await response.json()) as { confirm: string };
-        setConfirm({ line: trimmed, message: body.confirm });
-        print({ kind: "info", text: `${body.confirm} Type yes to run it, anything else to cancel.` });
-        return;
-      }
-      if (response.status === 401) {
-        print({ kind: "err", text: "Locked. Unlock with Touch ID." });
-        void client.invalidateQueries({ queryKey: ["terminal-status"] });
-        return;
-      }
-      if (!response.ok || !response.body) {
-        const text = await response.text();
-        let message = text;
-        try {
-          message = (JSON.parse(text) as { error?: string }).error ?? text;
-        } catch {
-          // plain text
-        }
-        print({ kind: "err", text: message });
-        return;
-      }
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
       let buffer = "";
-      let code: string | null = null;
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const end = buffer.lastIndexOf("\u0000");
-        if (end >= 0) {
-          code = buffer.slice(end + 1).trim();
-          buffer = buffer.slice(0, end);
-        }
+      const result = await backend.run(cwd, trimmed, confirmed, (text) => {
+        buffer += text;
         const cut = buffer.lastIndexOf("\n");
         if (cut >= 0) {
           const chunk = buffer.slice(0, cut);
           buffer = buffer.slice(cut + 1);
           if (chunk) print({ kind: "out", text: chunk });
         }
-      }
+      });
       if (buffer.trim()) print({ kind: "out", text: buffer.replace(/\n$/, "") });
-      if (code && code !== "0") print({ kind: "err", text: `exit ${code}` });
+      if ("confirm" in result) {
+        setConfirm({ line: trimmed, message: result.confirm });
+        print({ kind: "info", text: `${result.confirm} Type yes to run it, anything else to cancel.` });
+      } else if ("locked" in result) {
+        print({ kind: "err", text: "Locked. Unlock with your passkey." });
+        setCwd("");
+        void client.invalidateQueries({ queryKey: ["terminal-status"] });
+      } else if ("error" in result) {
+        print({ kind: "err", text: result.error });
+      } else if (result.exitCode && result.exitCode !== "0") {
+        print({ kind: "err", text: `exit ${result.exitCode}` });
+      }
     } catch (failure) {
       print({ kind: "err", text: (failure as Error).message });
     } finally {
@@ -219,7 +338,7 @@ export function Terminal({ initialCwd, onClose }: { initialCwd?: string; onClose
       setInput(cursor.current < 0 ? "" : history.current[cursor.current] ?? "");
     } else if (event.key === "c" && event.ctrlKey) {
       event.preventDefault();
-      if (busy) void api.terminalKill().then(() => print({ kind: "info", text: "^C" }));
+      if (busy) void backend.kill().then(() => print({ kind: "info", text: "^C" }));
       else setInput("");
     } else if (event.key === "l" && event.ctrlKey) {
       event.preventDefault();
@@ -227,14 +346,22 @@ export function Terminal({ initialCwd, onClose }: { initialCwd?: string; onClose
     }
   };
 
-  const access = currentTerminalAccess();
+  // Passkeys on the web work on its own address; the local terminal opens only at localhost.
+  const access = backend.web ? ({ ok: true } as const) : currentTerminalAccess();
 
   return (
     <div className={cx("ide-terminal flex shrink-0 flex-col border-t", big ? "h-[60vh]" : "h-[280px]")}>
       <div className="term-line flex h-8 shrink-0 items-center gap-2 border-b px-3 text-[12px]">
         <TerminalSquare size={13} />
         <span className="font-medium">Terminal</span>
-        <span className="term-faint">· you only · sandboxed</span>
+        <span className="term-faint">
+          · you only · sandboxed
+          {computerName ? (
+            <>
+              {" "}· <Laptop size={11} className="inline" /> {computerName}
+            </>
+          ) : null}
+        </span>
         {data?.unlocked ? <span className="term-dim truncate font-mono">{cwd}</span> : null}
         <div className="flex-1" />
         {data?.unlocked ? (
@@ -275,15 +402,17 @@ export function Terminal({ initialCwd, onClose }: { initialCwd?: string; onClose
           <Fingerprint size={28} className="term-dim" />
           {data.passkeys.length ? (
             <>
-              <div className="term-dim max-w-md text-[13px]">This terminal is for you only. Unlock it with Touch ID; it locks again after 30 minutes idle.</div>
+              <div className="term-dim max-w-md text-[13px]">
+                This terminal is for you only{computerName ? `, on ${computerName}` : ""}. Unlock it with your passkey (Touch ID, Windows Hello, your phone); it locks again after 30 minutes idle, 8 hours at most.
+              </div>
               <button type="button" className="btn-primary" onClick={() => unlock.mutate()} disabled={unlock.isPending}>
-                {unlock.isPending ? <Spinner size={12} /> : <Fingerprint size={14} />} Unlock with Touch ID
+                {unlock.isPending ? <Spinner size={12} /> : <Fingerprint size={14} />} Unlock with passkey
               </button>
             </>
-          ) : (
+          ) : data.password ? (
             <>
               <div className="term-dim max-w-md text-[13px]">
-                Set up Touch ID once. After that only your fingerprint opens this terminal, no agent, script or API token can. Confirm your Ensemble password to start.
+                Set up a passkey once (Touch ID, Windows Hello, your phone). After that only you can open this terminal: no agent, script, API key or the assistant can. Confirm your Ensemble password to start.
               </div>
               <div className="flex gap-2">
                 <input
@@ -295,10 +424,37 @@ export function Terminal({ initialCwd, onClose }: { initialCwd?: string; onClose
                   className="field term-line w-56 bg-transparent"
                 />
                 <button type="button" className="btn-primary" disabled={!password || enrol.isPending} onClick={() => enrol.mutate()}>
-                  {enrol.isPending ? <Spinner size={12} /> : <Fingerprint size={14} />} Set up Touch ID
+                  {enrol.isPending ? <Spinner size={12} /> : <Fingerprint size={14} />} Set up passkey
                 </button>
               </div>
             </>
+          ) : data.emailCode ? (
+            <>
+              <div className="term-dim max-w-md text-[13px]">
+                Set up a passkey once (Touch ID, Windows Hello, your phone). After that only you can open this terminal: no agent, script, API key or the assistant can. Your account has no password, so confirm with a code we email you.
+              </div>
+              {codeSent ? (
+                <div className="flex gap-2">
+                  <input
+                    value={code}
+                    onChange={(event) => setCode(event.target.value.toUpperCase())}
+                    onKeyDown={(event) => event.key === "Enter" && code && enrol.mutate()}
+                    placeholder={`Code sent to ${codeSent}`}
+                    className="field term-line w-56 bg-transparent font-mono"
+                    autoComplete="one-time-code"
+                  />
+                  <button type="button" className="btn-primary" disabled={!code || enrol.isPending} onClick={() => enrol.mutate()}>
+                    {enrol.isPending ? <Spinner size={12} /> : <Fingerprint size={14} />} Set up passkey
+                  </button>
+                </div>
+              ) : (
+                <button type="button" className="btn-primary" disabled={sendCode.isPending} onClick={() => sendCode.mutate()}>
+                  {sendCode.isPending ? <Spinner size={12} /> : <Mail size={14} />} Email me a code
+                </button>
+              )}
+            </>
+          ) : (
+            <div className="term-dim max-w-md text-[13px]">A new passkey is confirmed with your password or a code by email, and this server has neither for your account. Ask whoever runs it to set up email.</div>
           )}
           {error ? <div className="term-err text-[12.5px]">{error}</div> : null}
         </div>

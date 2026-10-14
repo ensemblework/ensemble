@@ -40,7 +40,7 @@ function RemoteMacSettings() {
     onError: fail,
   });
   const save = useMutation({
-    mutationFn: (body: { enabled?: boolean; runBranchPush?: boolean; acceptWebApprovals?: boolean; browseFiles?: boolean }) => api.saveRemote(body),
+    mutationFn: (body: { enabled?: boolean; runBranchPush?: boolean; acceptWebApprovals?: boolean; browseFiles?: boolean; webEdit?: boolean; webTerminal?: boolean }) => api.saveRemote(body),
     onSuccess: (_result, body) => {
       if (body.enabled === true) toast("Remote tasks are on.", { tone: "ok" });
       if (body.enabled === false) toast("Remote tasks are off.");
@@ -143,6 +143,28 @@ function RemoteMacSettings() {
           disabled={!mac?.paired || save.isPending}
           label="Show task files on the web"
           onChange={(browseFiles) => save.mutate({ browseFiles })}
+        />
+      </SettingRow>
+      <SettingRow
+        title="Change code from the web"
+        description="The web's Code tab may change code here: accept or reject an agent's changes, edit files, stage, commit, push and pull, in the folders Code may use. Off: the web can still read the code (with the switch above) but not change it."
+      >
+        <Toggle
+          checked={mac?.webEdit !== false}
+          disabled={!mac?.paired || save.isPending || mac?.browseFiles === false}
+          label="Change code from the web"
+          onChange={(webEdit) => save.mutate({ webEdit })}
+        />
+      </SettingRow>
+      <SettingRow
+        title="Terminal from the web"
+        description="The terminal here may open from the web's Code tab, after you unlock it there with your passkey (it locks after 30 minutes idle, 8 hours at most). The same allow-list as the terminal on this computer: no shells, no network tools, no running repository code."
+      >
+        <Toggle
+          checked={mac?.webTerminal !== false}
+          disabled={!mac?.paired || save.isPending}
+          label="Terminal from the web"
+          onChange={(webTerminal) => save.mutate({ webTerminal })}
         />
       </SettingRow>
       {mac?.paired ? (

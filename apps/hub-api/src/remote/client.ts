@@ -2,7 +2,7 @@
  * The Mac's calls to Ensemble on the web. Doc 25 §4.3, and only those routes.
  * The device token stays in this process; it is never written to a child environment.
  */
-import { ROUTES, type FileAnswer, type Outcome, type ResultLink, type RunTotals, type UploadedFile, type UploadedStep } from "./contract.js";
+import { ROUTES, type CodeAnswer, type FileAnswer, type Outcome, type ResultLink, type RunTotals, type TerminalChunk, type UploadedFile, type UploadedStep } from "./contract.js";
 
 export class RemoteError extends Error {
   readonly expose = true;
@@ -49,6 +49,10 @@ export interface HostedClient {
   uploadFiles(jobId: string, leaseToken: string, files: UploadedFile[]): Promise<void>;
   /** The answer to a `files.request`. */
   answerFiles(requestId: string, answer: FileAnswer): Promise<void>;
+  /** The answer to a `code.request` or `terminal.request` (protocol 4). */
+  answerCode(requestId: string, answer: CodeAnswer): Promise<void>;
+  /** One chunk of a web terminal command's output, in order. False: the web stopped listening. */
+  terminalOutput(runId: string, chunk: TerminalChunk): Promise<boolean>;
   events(onFrame: (event: string, data: unknown) => void, signal: AbortSignal): Promise<void>;
 }
 
@@ -166,6 +170,16 @@ export function hostedClient(base: string, token: string): HostedClient {
       const res = await call("POST", ROUTES.fileAnswer(requestId), answer);
       // The web stopped waiting (410) or never asked this computer (404): nothing to do.
       if (res.status >= 400 && res.status !== 404 && res.status !== 410) throw new RemoteError(res.status, messageOf(res.body, "The answer was refused."));
+    },
+    async answerCode(requestId, answer) {
+      const res = await call("POST", ROUTES.codeAnswer(requestId), answer);
+      if (res.status >= 400 && res.status !== 404 && res.status !== 410) throw new RemoteError(res.status, messageOf(res.body, "The answer was refused."));
+    },
+    async terminalOutput(runId, chunk) {
+      const res = await call("POST", ROUTES.terminalOutput(runId), chunk);
+      if (res.status === 404 || res.status === 410) return false;
+      if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "The output was refused."));
+      return true;
     },
     events(onFrame, signal) {
       return readEvents(base, token, onFrame, signal);

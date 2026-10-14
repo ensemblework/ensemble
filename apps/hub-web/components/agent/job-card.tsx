@@ -260,6 +260,10 @@ export function TaskAgentPanel({ taskId }: { taskId: string }) {
           <Link href={`/code/review?review=${job.reviewId}`} className="text-accent hover:underline">
             Review changes
           </Link>
+        ) : job.deviceId && job.deviceReviewId && job.yours !== false ? (
+          <Link href={`/code/review?device=${encodeURIComponent(job.deviceId)}&review=${encodeURIComponent(job.deviceReviewId)}`} className="text-accent hover:underline" title={`Accept, reject and edit on ${job.deviceName ?? "your computer"}`}>
+            Review changes
+          </Link>
         ) : null}
         {job.yours === false ? <RunnerLock job={job} /> : job.status === "queued" || live ? <StopButton job={job} /> : !job.deviceId && RETRYABLE.has(job.status) ? <RunAgainButton job={job} /> : null}
       </div>

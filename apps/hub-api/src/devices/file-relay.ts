@@ -1,6 +1,7 @@
 /**
  * Asking a paired computer for one folder's entries or one file's text, for the person looking at a
- * task on the web (docs/25 §4.3, protocol 3). The request goes to the computer's event stream as
+ * task on the web (docs/25 §4.3, protocol 3), and, the same way, for one call to its Code API or its
+ * terminal (protocol 4, `devices/code-routes.ts`). The request goes to the computer's event stream as
  * `files.request`; the computer reads its own folder and posts the answer back; the web request that
  * asked waits up to `ASK_MS`. Requests and answers live in Redis for a minute and are then gone: the
  * server keeps no copy of a file read this way.
@@ -25,11 +26,24 @@ export async function askDevice(
   input: { deviceId: string; hostedJobId: string; kind: "tree" | "file"; path: string },
   timeoutMs = ASK_MS,
 ): Promise<FileAnswer | null> {
-  const id = randomUUID();
-  await redis.set(requestKey(id), JSON.stringify({ deviceId: input.deviceId } satisfies Pending), "EX", TTL_SECONDS);
+  const answer = await askDeviceFor(redis, { deviceId: input.deviceId, event: "files.request", data: { jobId: input.hostedJobId, kind: input.kind, path: input.path } }, timeoutMs);
+  return answer as FileAnswer | null;
+}
+
+/**
+ * Sends one request frame to a device's event stream and waits for the answer it posts back
+ * (`files.request`, `code.request`, `terminal.request`). The frame carries `id` plus `data`.
+ */
+export async function askDeviceFor(
+  redis: Pick<Redis, "get" | "set" | "del">,
+  input: { deviceId: string; event: string; data: Record<string, unknown>; id?: string },
+  timeoutMs = ASK_MS,
+): Promise<unknown | null> {
+  const id = input.id ?? randomUUID();
+  await redis.set(requestKey(id), JSON.stringify({ deviceId: input.deviceId } satisfies Pending), "EX", Math.max(TTL_SECONDS, Math.ceil(timeoutMs / 1000) + 5));
   try {
     const answered = waitForAnswer(redis, id, timeoutMs);
-    publishDeviceFrame(input.deviceId, "files.request", { id, jobId: input.hostedJobId, kind: input.kind, path: input.path });
+    publishDeviceFrame(input.deviceId, input.event, { ...input.data, id });
     return await answered;
   } finally {
     await redis.del(requestKey(id)).catch(() => undefined);
@@ -37,13 +51,13 @@ export async function askDevice(
   }
 }
 
-async function waitForAnswer(redis: Pick<Redis, "get">, id: string, timeoutMs: number): Promise<FileAnswer | null> {
+async function waitForAnswer(redis: Pick<Redis, "get">, id: string, timeoutMs: number): Promise<unknown | null> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const raw = await redis.get(answerKey(id));
     if (raw) {
       try {
-        return JSON.parse(raw) as FileAnswer;
+        return JSON.parse(raw) as unknown;
       } catch {
         return { error: "The computer's answer could not be read." };
       }
@@ -63,7 +77,7 @@ async function waitForAnswer(redis: Pick<Redis, "get">, id: string, timeoutMs: n
 }
 
 /** Stores a device's answer for the request it was sent. "unknown": not this device's, or nobody waits any more. */
-export async function storeAnswer(redis: Pick<Redis, "get" | "set">, deviceId: string, id: string, answer: FileAnswer): Promise<"stored" | "unknown"> {
+export async function storeAnswer(redis: Pick<Redis, "get" | "set">, deviceId: string, id: string, answer: unknown): Promise<"stored" | "unknown"> {
   const raw = await redis.get(requestKey(id));
   if (!raw) return "unknown";
   let pending: Pending;

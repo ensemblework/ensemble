@@ -12,6 +12,7 @@ import type { FastifyInstance } from "fastify";
 import type { WorkspaceJob } from "@prisma/client";
 import { env } from "../config.js";
 import { appendLedger } from "../lib/ledger.js";
+import { prisma } from "../lib/prisma.js";
 import { loadSettings as loadHubSettings } from "../lib/settings.js";
 import { applyAnswer } from "../routes/decisions.js";
 import { capabilities } from "../workspace/sandbox/spawn.js";
@@ -20,7 +21,9 @@ import { interruptJob, stopJob, whenQueueReady } from "../workspace/worker.js";
 import { acceptClaimed, resultLinks } from "./accept.js";
 import { authRejected, deviceRemovedEvent, hostedClient, remoteApiBase, RemoteError, type HostedClient } from "./client.js";
 import { sliceBytes } from "../lib/text.js";
+import { answerCodeRequest } from "./code.js";
 import { answerFileRequest, uploadChangedFiles } from "./files.js";
+import { answerTerminalRequest, stopWebTerminal } from "./terminal.js";
 import { deviceOwnedEvents, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, ONLINE_WINDOW_MS, parseAnswer, parseClaim, STEP_POST_BYTES, timing, type RunTotals, type UploadedStep } from "./contract.js";
 import { actionHash, decisionOptions, judgeAnswer, publishedFolders, riskOf, scrubOutgoing, type LocalDecision } from "./policy.js";
 import { dropDeviceToken, loadHeld, loadSettings, readDeviceToken, saveHeld, updateSettings, type HeldJob, type RemoteSettings } from "./store.js";
@@ -89,6 +92,10 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     acceptWebApprovals: settings.acceptWebApprovals,
     // The web offers the task's files only when this computer shows them (protocol 3).
     browseFiles: settings.browseFiles,
+    // The web's Code tab and terminal work here (protocol 4); each switch is this computer's.
+    code: true,
+    webEdit: settings.webEdit,
+    webTerminal: settings.webTerminal,
   };
 }
 
@@ -98,6 +105,7 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
  * still works; a 401 cannot.
  */
 export async function stopRemoteWork(app: FastifyInstance, message: string, report: "cancelled" | "none"): Promise<void> {
+  stopWebTerminal();
   const current = held();
   const settings = loadSettings();
   const token = report === "cancelled" ? await readDeviceToken() : null;
@@ -242,6 +250,9 @@ async function session(app: FastifyInstance, base: string, token: string, parent
         if (event === "job.queued" || event === "job.cancel") void claim().catch(fail);
         // The web opened a file or folder of a task run here. A failure to answer leaves the web to time out.
         if (event === "files.request") void answerFileRequest(app, client, data).catch(() => undefined);
+        // The web's Code tab and terminal on this computer (protocol 4). Each answers once; a lost answer times out on the web.
+        if (event === "code.request") void answerCodeRequest(app, client, data).catch(() => undefined);
+        if (event === "terminal.request") void answerTerminalRequest(app, client, data).catch(() => undefined);
       };
       // The server ends this stream on revoke and answers the next open with
       // 401 or 403. Reconnect immediately so that refusal is not left until
@@ -561,7 +572,7 @@ async function finish(client: HostedClient, job: HeldJob, local: WorkspaceJob): 
     await uploadChangedFiles(client, job, local).catch((error: unknown) => {
       if (authRejected(error)) throw error;
     });
-    await client.complete(job.hostedId, job.leaseToken, { outcome, summary, results: resultLinks(local), ...(current ? { totals: runTotals(local) } : {}) });
+    await client.complete(job.hostedId, job.leaseToken, { outcome, summary, results: resultLinks(local), ...(current ? { totals: await runTotals(local) } : {}) });
   } catch (error) {
     if (authRejected(error)) throw error;
     if (!(error instanceof RemoteError) || (error.status !== 409 && error.status !== 410 && error.status !== 404)) throw error;
@@ -570,7 +581,7 @@ async function finish(client: HostedClient, job: HeldJob, local: WorkspaceJob): 
 }
 
 /** What the run reports when it ends: counts, the model that answered, its cost estimate, the files changed (names and line counts). */
-function runTotals(local: WorkspaceJob): RunTotals {
+async function runTotals(local: WorkspaceJob): Promise<RunTotals> {
   const evidence = (local.evidence && typeof local.evidence === "object" && !Array.isArray(local.evidence) ? local.evidence : {}) as {
     files?: Array<{ path?: unknown; added?: unknown; removed?: unknown; status?: unknown; binary?: unknown }>;
     model?: unknown;
@@ -593,6 +604,7 @@ function runTotals(local: WorkspaceJob): RunTotals {
     tokensIn: local.tokensIn,
     tokensOut: local.tokensOut,
     costUsd: typeof evidence.costUsd === "number" && evidence.costUsd >= 0 ? evidence.costUsd : null,
+    reviewId: (await prisma.codeReview.findUnique({ where: { jobId: local.id }, select: { id: true } }).catch(() => null))?.id ?? null,
     files,
   };
 }

@@ -2,15 +2,17 @@
 
 The **Code** item in the sidebar lists every run that changed files. Opening one gives an IDE-like review of exactly what the agent changed, hunk by hunk, and the tools to finish the job without leaving Ensemble: accept or reject a change, edit anything yourself right there, look at the whole file, commit, push, open a pull request, or use a small terminal for git.
 
-**Hosted public accounts:** host folders, repository filesystem operations and shell execution are operator-only (`lib/hosted-access.ts`). `ENSEMBLE_TERMINAL=off` overrides user settings; hosted production defaults to off even for operators. Notes/context and assigning to a user's paired device remain separate. Desktop/local Code behavior is unchanged.
+**Hosted public accounts:** the hosted server's own folders, repository operations and shell are operator-only (`lib/hosted-access.ts`). `ENSEMBLE_TERMINAL=off` overrides user settings; hosted production defaults to off even for operators. Your own code is on your paired computer, and the Code tab on the web works on it there (below).
 
 Failed review/repository queries display the actual error and Retry; they never claim that no work exists. A denied terminal-status request settles into an error instead of “Opening the terminal…”. Hosted guidance points to a paired computer for local execution/review, not a way to obtain host privileges (`app/(hub)/code/page.tsx`, `components/code/terminal.tsx`).
 
-**On Ensemble on the web** (an account without host access), the tab is **Changes on your computers** (`components/code/device-changes.tsx`): your paired computers (online or not, and the folders each shares), then each code run on them from the last two weeks with its computer, folder label, branch, the files it changed with lines added and removed, pull request or commit links, *Open code*, *View run* and *Open task*. A repository the agent cloned is not counted as a change; what it changed inside one is.
+**On Ensemble on the web** (an account without host access; 14 Oct 2026), the tab works on your paired computers (`components/code/computers-code.tsx`). Each computer shows its **agent changes to review** and its **repositories** (the folders Code may use there and Ensemble's workspace), read from that computer. Opening one gives the same review page as on the computer (`/code/review?device=<id>&review=<id>` or `&repo=<path>`): accept or reject each change, edit any file, the whole file, Source control (stage, commit, push, pull, Actions), the IDE theme, and the **Terminal**, unlocked with your passkey on the web (§5). Every call is made by Ensemble on that computer, through Ensemble on the web (doc [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md) §4.7, `lib/code-target.tsx`): only by you, in your browser (never an API key, an agent or the assistant); never git's own files or secrets files; keys in code hidden, and a file that holds one is read-only from the web; files over 1 MB read-only. The computer's own switches decide what the web may do: *Show task files on the web* (reading), *Change code from the web* (every change) and *Terminal from the web* (Settings → this computer, or `ensemble web`). It needs the CLI 0.3.8 or the desktop app 0.3.5 there, online; otherwise the computer's card says which.
+
+Below, **Runs on your computers** (`components/code/device-changes.tsx`) lists each code run from the last two weeks with its computer, folder label, branch, the files it changed with lines added and removed, pull request or commit links, *Review & edit* (its review on that computer), *Open code*, *View run* and *Open task*. A repository the agent cloned is not counted as a change; what it changed inside one is. The task page's *Review changes* opens the same review.
 
 **Open code** (`components/code/run-code.tsx`, `/code?job=<id>&file=<path>`) shows the run like an editor: on the left the files the agent changed (A, M or D, with line counts), then *Folder on <computer>*, the task's whole folder as a tree; on the right the file, read-only, highlighted by language (CodeMirror). A changed file opens from the copy the computer sent when the run ended (*as the run left it*); *Now* reads it again from the computer. The folder is read from the computer only when you open it, one folder or file at a time (doc [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md) §4.6): never git's own files or secrets files, text only, large files cut, secrets redacted. Full screen fills the window like an IDE (Esc leaves it). Only the person whose computer ran the task sees the files' text (others in a shared space see names and line counts). It needs Ensemble 0.3.7 (CLI) or 0.3.4 (desktop app) on that computer, the computer online for the folder, and *Show task files on the web* on there (`ensemble browse on`); otherwise it says which. Links are followed only to where they really lead inside the folder, and the same rules apply there. The run preview's *Files* and the task page's *Agent output* link here.
 
-The review itself, commits and pushes happen in Ensemble on that computer (the desktop app or `ensemble` in a terminal). With no paired computer, it says how to set one up. The Terminal button and *Local repositories* are not shown there: a terminal opened from a web page onto your computer would let anyone holding your web session run commands on it, so the terminal stays on the computer itself (below).
+With no paired computer, it says how to set one up. The hosted server's own *Local repositories* and terminal are not shown there; each computer's are.
 
 ---
 
@@ -108,20 +110,23 @@ The assign dialog's *Optional information* has *Which branch the agent works on*
 
 ## 5. The terminal — for you only
 
-A small terminal docked under the editor, for the jobs that otherwise send you to a shell: make or switch a branch before assigning, commit and push after reviewing.
+A small terminal docked under the editor, for the jobs that otherwise send you to a shell: make or switch a branch before assigning, install a package, run the tests, commit and push after reviewing. It opens in two places:
+
+- **On the computer itself**, at Ensemble's own page on `localhost` (`routes/terminal.ts`). The desktop app's window cannot run a passkey check yet and says so.
+- **On Ensemble on the web, for a paired computer** (14 Oct 2026): the Terminal button on that computer's card in the Code tab, or in a review of its code. Commands run on that computer, through Ensemble on the web (doc [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md) §4.7, `remote/terminal.ts`).
 
 **It is not a shell:**
 
-- **Who** — it needs a **passkey** (Windows Hello PIN, face or fingerprint) once per session: 30 minutes idle, 8 hours at most. No agent, MCP call or script in Ensemble can produce one, and Ensemble's own service token is refused outright. The same session covers commit/push in the Source control panel.
-- **What** — an allow-list: `git` (hardened: hooks pointed at an emptied folder of Ensemble's own, no `-c` overrides, no exec transports, `--force` refused in favour of `--force-with-lease`, history rewrites and deletions confirmed by typing the branch name or `yes`), `uv`, `python --version` / `-m venv` / `-m pip list`, and built-ins (`cd`, `ls`, `cat`, `head`, `tail`, `find`, `grep`, `mkdir`, `cp`, `mv`, `rm`, `tree`, `pwd`, `which`, `env`, `activate`, `history`, `clear`, `help`). Everything else is refused with a reason. **No PowerShell, no cmd, no network tools, no running repository code.**
-- **Where** — originally `C:\Users\t-sharmaak\ensemble-workspace` and `C:\Users\t-sharmaak\work`, plus folders you add in *Settings → Terminal and commits* (which asks for the passkey). Nothing above them. Windows, Program Files, ProgramData and credential folders are refused whatever you add.
-- **Record** — the ledger records that a command ran (arguments, folder, exit code); **never what it printed**. Output is never stored, indexed or shown to a model.
+- **Who** — it needs a **passkey** (Touch ID, Windows Hello, a phone or a security key, with user verification) once per session: 30 minutes idle, 8 hours at most, *Lock now* any time. No agent, MCP call, API key, script or the assistant can produce one, and every terminal route refuses anything but a signed-in browser on Ensemble's own page. Adding a passkey needs the account password, or, on the web for an account that signs in with Google or GitHub, a code mailed to the account. On the web the passkey covers the terminal only; the review, editing and Source control work with your sign-in, and the computer's *Change code from the web* switch can turn those off.
+- **What** — one program at a time from an allow-list, run by name, never through a shell: no pipes, redirects, `;`, `&&`, `$()` or backticks (`parseCommand`, `checkProgram` in `workspace/guard.ts`). `git` is hardened: the repository's hooks off, no fsmonitor, no `ext::` transports, `--force` refused in favour of `--force-with-lease`. Developer tools (`python`, `pip`, `uv`, `node`, `npm`, `pnpm`, `pytest`, `make`, `cargo`, `go` and similar), file tools (`ls`, `cat`, `grep`, `find`, `mkdir`, `cp`, `mv`, `rm` and similar) and `curl`/`wget`. Shell scripts run only as `sh script.sh` inside the sandbox, never `sh -c`. Never: `sudo`, `ssh`, `docker`, `osascript`, `open`, `launchctl`, `security`, `env`, `kill` and the rest of `NEVER`. Throwing away work (`git reset --hard`, `git clean`, `git restore`, `git checkout --`, deleting a branch, a forced push, `rm -r`) asks you to type `yes` first. Built in: `cd`, `pwd`, `clear`, `help`, `lock`.
+- **Where** — Ensemble's workspace, the folders tasks ran in, and the folders you add in *Settings → Terminal and commits*; never above them, never a system or credential folder (`workspace/terminal-exec.ts`, shared by both terminals). Commands run under the computer's OS sandbox (macOS Seatbelt; bubblewrap or the Windows sandbox where set up): files change only inside the folder, home and app data are not readable. From the web, a computer without its sandbox set up refuses to run commands (`ensemble sandbox setup`). 15 minutes a command; the web shows up to 1 MB of output.
+- **Record** — the computer's ledger records that a command ran (arguments, folder, exit code; `via: "web"` from the web); **never what it printed**. Ensemble on the web records the unlock and that a command ran on which computer, and keeps the output only while you read it (an hour at most, in Redis).
 
-Settings can turn the terminal off, or **off through the tunnel only**.
+Settings can turn the terminal off on the computer (*Settings → Terminal and commits*), and *Terminal from the web* (Settings → this computer, or `ensemble web terminal off`) turns off only the web's.
 
 ### Passkeys and addresses
 
-A passkey belongs to the **site it was made on** and stays on the **computer that made it** (in its TPM). Localhost first: register at `http://localhost:3100` (or whatever port we ship), not `127.0.0.1` — browsers refuse passkeys on a raw IP. The PIN never reaches Ensemble; it only unlocks the passkey on that device. Every passkey is listed (and removable) in Settings.
+A passkey belongs to the **site it was made on** and stays on the device that made it (or your phone or key). On the computer's own page register at `http://localhost:<port>`, not `127.0.0.1`: browsers refuse passkeys on a raw IP. On the web it belongs to the web's own address (`app.ensemblework.com`), so one passkey opens the terminal on each of your paired computers. The fingerprint or PIN never reaches Ensemble; it only unlocks the passkey on that device.
 
 ---
 
@@ -137,14 +142,14 @@ A passkey belongs to the **site it was made on** and stays on the **computer tha
 
 ## 6a. In a space shared with you
 
-Code is view only for anyone the space is shared with ([29](29_SHARING.md)): they can read reviews, files and diffs, but every `/api/code` write (accept, reject, edit, commit, push, discard) and the terminal are the owner's. The review page shows **View only** instead of the terminal and review actions, and the file editor is read-only. A single "code" share opens the list of reviews the same way.
+Code is view only for anyone the space is shared with ([29](29_SHARING.md)): they can read reviews, files and diffs, but every `/api/code` write (accept, reject, edit, commit, push, discard) and the terminal are the owner's. A paired computer's code on the web is only ever its owner's, whichever space is open. The review page shows **View only** instead of the terminal and review actions, and the file editor is read-only. A single "code" share opens the list of reviews the same way.
 
 ## 7. Not in this version
 
 - Side-by-side view and a change overview on the scrollbar (the unified view and the gutter cover the same ground).
 - Autocomplete / IntelliSense, go-to-definition and formatting — this is a review-and-edit surface with syntax highlighting, brackets, indentation, multi-cursor and find/replace, **not a language server**.
 - Files over **1 MB** are shown whole and read-only, with keep / put back.
-- Terminal: package installs that run package code beyond `uv sync` / `add` / `remove` (confirmed), conda, a separate broker process and Windows Job Objects.
+- Terminal: an interactive shell, or programs that wait for typed input (one command at a time, no prompts); a separate broker process and Windows Job Objects.
 - Web Worker diffing for very large runs.
 
 ---
@@ -153,6 +158,7 @@ Code is view only for anyone the space is shared with ([29](29_SHARING.md)): the
 
 - **Native-mode agents run as you.** The terminal adds nothing they can reach, but the OS does not separate them from your account — sandbox mode is the real boundary.
 - A process running as you could register a passkey before you do. Every registration is in the ledger and listed in Settings, so an unexpected one is visible and removable.
-- Allowed programs are powerful by design: `git` follows repository config (hardened, not eliminated), and `uv sync` runs package code (hence the confirmation).
+- Allowed programs are powerful by design: `git` follows repository config (hardened, not eliminated), and `npm install`, `make` or `pytest` run the repository's own code, inside the sandbox.
+- **On the web, Ensemble's server passes the commands.** While you have the terminal unlocked, a compromised Ensemble on the web could send allow-listed commands to your computer, and it can always send Code calls (reading, and changing code unless you turned that off). Your computer still applies its own allow-list, folders, sandbox and switches; turn off *Terminal from the web* or *Change code from the web* there to rule them out.
 
 Jump to searches **Local repositories** and **Code reviews** as section destinations (`/code#local-repositories`, `/code#reviews`), independently of repository or review names.

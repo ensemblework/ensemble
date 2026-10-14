@@ -20,6 +20,8 @@ const settings = (folders: RemoteSettings["folders"] = [], acceptWebApprovals = 
   runBranchPush: false,
   acceptWebApprovals,
   browseFiles: true,
+  webEdit: true,
+  webTerminal: true,
   apiBase: "http://127.0.0.1:9",
   deviceId: "device",
   deviceName: "Test",

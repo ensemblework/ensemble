@@ -1,6 +1,6 @@
 import type { FastifyRequest } from "fastify";
 
-export type RateBucket = "login" | "signup" | "email" | "model" | "token" | "device" | "deviceFiles" | "browse" | "cliStart" | "cliToken" | "cliApprove" | "mcp";
+export type RateBucket = "login" | "signup" | "email" | "model" | "token" | "device" | "deviceFiles" | "deviceTerminal" | "browse" | "code" | "cliStart" | "cliToken" | "cliApprove" | "mcp";
 
 export type RateLimitConfig = Record<RateBucket, { limit: number; windowMs: number; error: string }>;
 
@@ -79,6 +79,16 @@ export function rateLimitConfig(env: NodeJS.ProcessEnv = process.env): RateLimit
       windowMs: intEnv(env, "ENSEMBLE_RATE_DEVICE_FILES_WINDOW_SEC", 60) * 1000,
       error: "Too many file answers from this computer. Wait a moment and try again.",
     },
+    deviceTerminal: {
+      limit: intEnv(env, "ENSEMBLE_RATE_DEVICE_TERMINAL_LIMIT", 600),
+      windowMs: intEnv(env, "ENSEMBLE_RATE_DEVICE_TERMINAL_WINDOW_SEC", 60) * 1000,
+      error: "Too much terminal output from this computer. Wait a moment and try again.",
+    },
+    code: {
+      limit: intEnv(env, "ENSEMBLE_RATE_CODE_LIMIT", 600),
+      windowMs: intEnv(env, "ENSEMBLE_RATE_CODE_WINDOW_SEC", 60) * 1000,
+      error: "Too many Code requests to your computer. Wait a moment and try again.",
+    },
     browse: {
       limit: intEnv(env, "ENSEMBLE_RATE_BROWSE_LIMIT", 120),
       windowMs: intEnv(env, "ENSEMBLE_RATE_BROWSE_WINDOW_SEC", 60) * 1000,
@@ -126,7 +136,18 @@ export function isDeviceWrite(path: string): boolean {
 
 /** A run's changed files and answers to file requests: their own bucket, so browsing never crowds out a run's heartbeat. */
 export function isDeviceFiles(path: string): boolean {
-  return /^\/api\/devices\/self\/file-requests\/[^/]+$/.test(path) || /^\/api\/devices\/self\/jobs\/[^/]+\/files$/.test(path);
+  return /^\/api\/devices\/self\/(file|code)-requests\/[^/]+$/.test(path) || /^\/api\/devices\/self\/jobs\/[^/]+\/files$/.test(path);
+}
+
+/** Output of a terminal command the web started on this computer: its own bucket, apart from file answers and heartbeats. */
+export function isDeviceTerminal(path: string): boolean {
+  return /^\/api\/devices\/self\/terminal-runs\/[^/]+\/output$/.test(path);
+}
+
+/** The web's Code tab and terminal on a paired computer, and the terminal's passkey unlock. */
+export function isCodeRelay(path: string): boolean {
+  if (/^\/api\/devices\/self\//.test(path)) return false;
+  return /^\/api\/devices\/[^/]+\/(code|terminal)(\/output)?$/.test(path) || /^\/api\/web-terminal\//.test(path);
 }
 
 /** A job's files and folders, which may ask a paired computer to read them. */
@@ -150,7 +171,9 @@ export function classifyRateLimit(method: string, path: string): RateBucket | nu
   if (method === "POST" && isTokenMint(path)) return "token";
   if (method === "POST" && isDeviceWrite(path)) return "device";
   if (method === "POST" && isDeviceFiles(path)) return "deviceFiles";
+  if (method === "POST" && isDeviceTerminal(path)) return "deviceTerminal";
   if (isBrowse(method, path)) return "browse";
+  if (isCodeRelay(path)) return "code";
   return null;
 }
 
@@ -162,9 +185,9 @@ export function clientAddress(request: FastifyRequest): string {
 }
 
 export function rateLimitKey(bucket: RateBucket, request: FastifyRequest): string {
-  if ((bucket === "device" || bucket === "deviceFiles") && request.tokenId) return `${bucket}:${request.tokenId}`;
+  if ((bucket === "device" || bucket === "deviceFiles" || bucket === "deviceTerminal") && request.tokenId) return `${bucket}:${request.tokenId}`;
   if ((bucket === "mcp" || bucket === "cliApprove") && request.userId) return `${bucket}:user:${request.userId}`;
-  if ((bucket === "model" || bucket === "token" || bucket === "device" || bucket === "browse") && request.userId) return `${bucket}:user:${request.userId}`;
+  if ((bucket === "model" || bucket === "token" || bucket === "device" || bucket === "browse" || bucket === "code") && request.userId) return `${bucket}:user:${request.userId}`;
   return `${bucket}:ip:${clientAddress(request)}`;
 }
 

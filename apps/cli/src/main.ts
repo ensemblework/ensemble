@@ -1,4 +1,4 @@
-import { answerFor, answerPending, browseFiles, connectedHooks, connectHook, formatPending, HOOK_TOOLS, listPending, listTrusted, trustFolder, trustSharing, untrustFolder, webApprovals, type HookTool, type TrustSharing } from "./approvals.js";
+import { answerFor, answerPending, browseFiles, connectedHooks, webAccess, connectHook, formatPending, HOOK_TOOLS, listPending, listTrusted, trustFolder, trustSharing, untrustFolder, webApprovals, type HookTool, type TrustSharing } from "./approvals.js";
 import type { ChildProcess } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
@@ -76,6 +76,7 @@ Usage:
   ensemble trust [list] | add [path] | remove <path> | share [on|off]
   ensemble approvals [status] | on | off
   ensemble browse [status] | on | off
+  ensemble web [status] | files|edit|terminal on|off
   ensemble hooks [list] | connect <tool> | disconnect <tool>
   ensemble sandbox [status] | setup
   ensemble doctor
@@ -97,6 +98,8 @@ const HELP_BY_COMMAND: Record<string, string> = {
   approvals: "Usage: ensemble approvals [status] | on | off\nOn (default): you can approve anything for this computer from the web or phone, and the mode, internet and limits chosen there apply here.",
   browse:
     "Usage: ensemble browse [status] | on | off\nOn (default): Ensemble on the web shows the files of tasks run here: the text of the files a run changed, sent when it ends, and any file or folder in a task's folder, read from here when you open it. Never git's own files or files of keys and secrets.",
+  web:
+    "Usage: ensemble web [status] | files on|off | edit on|off | terminal on|off\nWhat Ensemble on the web may do on this computer (each on by default):\n  files     show the files of tasks run here, and the code in the Code tab (the same switch as `ensemble browse`)\n  edit      change code from the web's Code tab: accept or reject an agent's changes, edit files, commit, push, pull\n  terminal  open the terminal from the web, after a passkey unlock there (30 minutes idle, 8 hours at most); the same allow-list as here\nNever git's own files or files of keys and secrets.",
   sandbox:
     "Usage: ensemble sandbox [status] | setup\nThis computer's OS sandbox (macOS Seatbelt, Linux bubblewrap or Landlock, Windows sandbox account). No Docker. On Windows, `setup` asks for permission once; the Ensemble app and the CLI share it.",
   doctor: "Usage: ensemble doctor",
@@ -568,6 +571,22 @@ async function commandBrowse(args: string[]): Promise<void> {
   );
 }
 
+async function commandWeb(args: string[]): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) return void console.log(HELP_BY_COMMAND.web);
+  const [what = "status", value] = args;
+  const keys = { files: "browseFiles", edit: "webEdit", terminal: "webTerminal" } as const;
+  if (what !== "status" && (!(what in keys) || !["on", "off"].includes(value ?? ""))) throw new Error(HELP_BY_COMMAND.web);
+  const sidecarDir = resolveSidecarDir(import.meta.url);
+  if (!(await sidecarAvailable(sidecarDir))) throw new Error(NO_RUNNER);
+  const change = what === "status" ? undefined : { [keys[what as keyof typeof keys]]: value === "on" };
+  const access = await withAdminApi({ sidecarDir, run: (discovery) => webAccess(discovery, change) });
+  const word = (on: boolean) => (on ? "on " : "off");
+  console.log(`Ensemble on the web, on this computer:
+  files     ${word(access.browseFiles)}  task files and code in the Code tab
+  edit      ${word(access.webEdit)}  accept/reject, edit, commit, push from the Code tab
+  terminal  ${word(access.webTerminal)}  the terminal, after a passkey unlock on the web`);
+}
+
 async function commandHooks(args: string[]): Promise<void> {
   if (args.includes("--help") || args.includes("-h")) return void console.log(HELP_BY_COMMAND.hooks);
   const subcommand = args[0] ?? "list";
@@ -806,6 +825,8 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
       return commandApprovals(rest);
     case "browse":
       return commandBrowse(rest);
+    case "web":
+      return commandWeb(rest);
     case "hooks":
       return commandHooks(rest);
     case "sandbox":

@@ -103,3 +103,22 @@ export async function sendAccountEmail(prisma: PrismaClient, user: { id: string;
       : `Reset your Ensemble password:\n\n${url}\n\nThis link expires in 30 minutes and can be used once. If you did not request this reset, ignore this email.`,
   });
 }
+
+/**
+ * A one-time code that proves the person reads this account's mail, for adding a passkey to the web
+ * terminal when the account has no password (Google or GitHub sign-in). The caller keeps its hash.
+ */
+export function newPasskeyCode(): string {
+  let code = "";
+  for (let index = 0; index < 6; index += 1) code += VERIFY_CODE_ALPHABET[randomInt(VERIFY_CODE_ALPHABET.length)];
+  return code;
+}
+
+export async function sendPasskeyCode(user: { email: string }, code: string): Promise<void> {
+  requireEmailConfigured();
+  await sendMail({
+    to: user.email,
+    subject: `Your Ensemble code to add a passkey: ${code}`,
+    text: `Someone signed in as you asked to add a passkey for the terminal in Ensemble's Code tab.\n\nThe code is ${code}. It expires in 10 minutes.\n\nIf this was not you, do not enter it anywhere, and change how you sign in to Ensemble.`,
+  });
+}

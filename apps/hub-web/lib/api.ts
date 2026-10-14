@@ -581,6 +581,8 @@ export type AgentJob = {
   startedAt: string | null;
   finishedAt: string | null;
   reviewId?: string | null;
+  /** The run's review on the paired computer that ran it: the Code tab opens it through that computer (protocol 4). */
+  deviceReviewId?: string | null;
   /** The run this job recorded (its trace on the Runs page). */
   runId?: string | null;
   /** When it finished: the model that answered, the harness's cost estimate, files changed (names and line counts). */
@@ -656,6 +658,10 @@ export type RemoteMac = {
   acceptWebApprovals: boolean;
   /** Ensemble on the web may show the files of tasks run here (on by default). */
   browseFiles?: boolean;
+  /** The web's Code tab may change code here: accept/reject, edit, commit, push (on by default). */
+  webEdit?: boolean;
+  /** The terminal may open from the web, after a passkey unlock there (on by default). */
+  webTerminal?: boolean;
   online: boolean;
   lastHeartbeatAt: number | null;
   disconnected: { at: string; reason: string } | null;
@@ -732,6 +738,19 @@ export type TerminalStatus = {
   roots: string[];
   home: string;
 };
+
+/** The web terminal's lock on Ensemble on the web (`/api/web-terminal/status`). */
+export type WebTerminalStatus = {
+  unlocked: boolean;
+  expiresAt: string | null;
+  passkeys: Array<{ id: string; label: string; createdAt: string; lastUsedAt: string | null }>;
+  /** The account has a password to confirm a new passkey with; otherwise a mailed code. */
+  password: boolean;
+  emailCode: boolean;
+};
+
+/** A file as the Code tab opens it. From a paired computer: `readOnly` says why it cannot be edited from the web. */
+export type CodeFile = { path: string; content: string; readOnly?: string; binary?: boolean; truncated?: boolean };
 
 export type ReviewSummary = {
   id: string;
@@ -1280,7 +1299,7 @@ export const api = bindClient({
   branches: (path: string) => get<{ branches: string[] }>(`/api/workspace/branches${qs({ path })}`),
   agentState: () => get<AgentState>("/api/agent/state"),
   remote: () => get<RemoteMac>("/api/remote"),
-  saveRemote: (body: { enabled?: boolean; runBranchPush?: boolean; acceptWebApprovals?: boolean; browseFiles?: boolean; apiBase?: string | null; deviceName?: string }) => put<RemoteMac>("/api/remote", body),
+  saveRemote: (body: { enabled?: boolean; runBranchPush?: boolean; acceptWebApprovals?: boolean; browseFiles?: boolean; webEdit?: boolean; webTerminal?: boolean; apiBase?: string | null; deviceName?: string }) => put<RemoteMac>("/api/remote", body),
   pairRemote: (body: { apiBase: string; code: string; name?: string }) => post<RemoteMac>("/api/remote/pair", body),
   unpairRemote: () => post<RemoteMac>("/api/remote/unpair"),
   pauseAgent: () => post<{ stopped: number; cancelled: number }>("/api/agent/pause"),
@@ -1298,6 +1317,23 @@ export const api = bindClient({
   terminalLock: () => post("/api/terminal/lock"),
   terminalKill: () => post("/api/terminal/kill"),
   terminalCd: (cwd: string, path: string) => post<{ cwd: string; scope: string }>("/api/terminal/cd", { cwd, path }),
+
+  // the web terminal's passkey lock (Ensemble on the web)
+  webTerminalStatus: () => get<WebTerminalStatus>("/api/web-terminal/status"),
+  webTerminalSendCode: () => post<{ sent: boolean; to: string }>("/api/web-terminal/passkeys/code", {}),
+  webTerminalPasskeyOptions: (proof: { password?: string; code?: string }) => post<Record<string, unknown>>("/api/web-terminal/passkeys/options", proof),
+  webTerminalPasskeyVerify: (response: unknown, label: string) => post("/api/web-terminal/passkeys/verify", { response, label }),
+  webTerminalRemovePasskey: (id: string) => del(`/api/web-terminal/passkeys/${id}`),
+  webTerminalUnlockOptions: () => post<Record<string, unknown>>("/api/web-terminal/unlock/options", {}),
+  webTerminalUnlockVerify: (response: unknown) => post<{ unlocked: boolean; expiresAt: string | null }>("/api/web-terminal/unlock/verify", { response }),
+  webTerminalLock: () => post("/api/web-terminal/lock", {}),
+  /** One call to a paired computer's own Code API, passed through Ensemble on the web (protocol 4). */
+  deviceCode: <T>(deviceId: string, method: "GET" | "POST" | "PUT", path: string, query: Record<string, string> = {}, body?: unknown) =>
+    post<T>(`/api/devices/${encodeURIComponent(deviceId)}/code`, { method, path, query, ...(body === undefined ? {} : { body }) }),
+  deviceTerminal: <T>(deviceId: string, body: { op: "status" | "cd" | "kill"; cwd?: string; path?: string; runId?: string }) =>
+    post<T>(`/api/devices/${encodeURIComponent(deviceId)}/terminal`, body),
+  deviceTerminalOutput: (deviceId: string, run: string, after: number) =>
+    get<{ chunks: Array<{ seq: number; text: string }>; done: boolean; exitCode: number | null }>(`/api/devices/${encodeURIComponent(deviceId)}/terminal/output${qs({ run, after })}`),
 
   // code
   codeRepos: () => get<{ repos: string[]; roots: string[] }>("/api/code/repos"),
@@ -1323,7 +1359,7 @@ export const api = bindClient({
   discardReview: (id: string) => post<{ restored: number; keptCommits: boolean }>(`/api/code/reviews/${id}/discard`),
   pushReview: (id: string) => post<{ branch: string; remote: string }>(`/api/code/reviews/${id}/push`),
   codeFile: (source: { review?: string; repo?: string }, path: string) =>
-    get<{ content: string }>(`/api/code/file${qs({ ...source, path })}`),
+    get<CodeFile>(`/api/code/file${qs({ ...source, path })}`),
   saveCodeFile: (source: { review?: string; repo?: string }, path: string, content: string) =>
     put("/api/code/file", { ...source, path, content }),
   searchThemes: (q: string) => get<{ extensions: ThemeDirectoryExtension[] }>(`/api/themes/search${qs({ q })}`),

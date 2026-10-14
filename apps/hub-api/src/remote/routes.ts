@@ -33,6 +33,8 @@ async function status(app: FastifyInstance) {
     runBranchPush: settings.runBranchPush,
     acceptWebApprovals: settings.acceptWebApprovals,
     browseFiles: settings.browseFiles,
+    webEdit: settings.webEdit,
+    webTerminal: settings.webTerminal,
     online: presence.online,
     lastHeartbeatAt: presence.lastHeartbeatAt || null,
     disconnected: settings.disconnected,
@@ -55,6 +57,8 @@ export async function remoteRoutes(app: FastifyInstance): Promise<void> {
         runBranchPush: z.boolean().optional(),
         acceptWebApprovals: z.boolean().optional(),
         browseFiles: z.boolean().optional(),
+        webEdit: z.boolean().optional(),
+        webTerminal: z.boolean().optional(),
         apiBase: z.string().max(300).nullable().optional(),
         deviceName: z.string().min(1).max(60).optional(),
       })
@@ -75,12 +79,14 @@ export async function remoteRoutes(app: FastifyInstance): Promise<void> {
       ...(body.runBranchPush === undefined ? {} : { runBranchPush: body.runBranchPush }),
       ...(body.acceptWebApprovals === undefined ? {} : { acceptWebApprovals: body.acceptWebApprovals }),
       ...(body.browseFiles === undefined ? {} : { browseFiles: body.browseFiles }),
+      ...(body.webEdit === undefined ? {} : { webEdit: body.webEdit }),
+      ...(body.webTerminal === undefined ? {} : { webTerminal: body.webTerminal }),
       ...(body.enabled === true ? { disconnected: null, unreachable: null } : {}),
       ...(body.enabled === false
         ? { disconnected: { at: new Date().toISOString(), reason: REMOTE_NOTICE.switchedOff }, unreachable: null }
         : {}),
     });
-    if (body.enabled === false || body.runBranchPush !== undefined || body.enabled === true || body.acceptWebApprovals !== undefined || body.browseFiles !== undefined) {
+    if (body.enabled === false || body.runBranchPush !== undefined || body.enabled === true || body.acceptWebApprovals !== undefined || body.browseFiles !== undefined || body.webEdit !== undefined || body.webTerminal !== undefined) {
       const action =
         body.enabled === true
           ? "remote.enable"
@@ -90,8 +96,12 @@ export async function remoteRoutes(app: FastifyInstance): Promise<void> {
               ? "remote.web_approvals"
               : body.browseFiles !== undefined
                 ? "remote.browse_files"
-                : "remote.push_setting";
-      await appendLedger({ userId, actor: "me", action, payload: { enabled: next.enabled, runBranchPush: next.runBranchPush, acceptWebApprovals: next.acceptWebApprovals, browseFiles: next.browseFiles } });
+                : body.webEdit !== undefined
+                  ? "remote.web_edit"
+                  : body.webTerminal !== undefined
+                    ? "remote.web_terminal"
+                    : "remote.push_setting";
+      await appendLedger({ userId, actor: "me", action, payload: { enabled: next.enabled, runBranchPush: next.runBranchPush, acceptWebApprovals: next.acceptWebApprovals, browseFiles: next.browseFiles, webEdit: next.webEdit, webTerminal: next.webTerminal } });
     }
     if (body.enabled === false) await stopRemoteWork(app, REMOTE_NOTICE.switchedOff, "cancelled");
     wakeRemote();

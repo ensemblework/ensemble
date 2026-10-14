@@ -17,7 +17,7 @@ import {
   Undo2,
 } from "lucide-react";
 import { useState } from "react";
-import { api } from "@/lib/api";
+import { useCodeApi } from "@/lib/code-target";
 import { relative } from "@/lib/format";
 import { useToast } from "../toast";
 import { Spinner, cx } from "../ui";
@@ -40,13 +40,14 @@ function Group({ title, count, children }: { title: string; count: number; child
 export function SourceControl({ repo, onOpenFile }: { repo: string; onOpenFile: (path: string) => void }) {
   const client = useQueryClient();
   const toast = useToast();
+  const { code, key } = useCodeApi();
   const [message, setMessage] = useState("");
   const [showActions, setShowActions] = useState(true);
-  const scm = useQuery({ queryKey: ["scm", repo], queryFn: () => api.scm(repo), refetchInterval: 15_000 });
-  const actions = useQuery({ queryKey: ["actions", repo], queryFn: () => api.actions(repo), enabled: showActions, refetchInterval: 60_000 });
+  const scm = useQuery({ queryKey: ["scm", key, repo], queryFn: () => code.scm(repo), refetchInterval: 15_000 });
+  const actions = useQuery({ queryKey: ["actions", key, repo], queryFn: () => code.actions(repo), enabled: showActions, refetchInterval: 60_000 });
 
   const refresh = () => {
-    void client.invalidateQueries({ queryKey: ["scm", repo] });
+    void client.invalidateQueries({ queryKey: ["scm", key, repo] });
     void client.invalidateQueries({ queryKey: ["code-source"] });
     void client.invalidateQueries({ queryKey: ["code-diff"] });
   };
@@ -72,10 +73,10 @@ export function SourceControl({ repo, onOpenFile }: { repo: string; onOpenFile: 
         <button type="button" className="icon-btn h-6 w-6" title="Refresh" onClick={refresh}>
           <RefreshCw size={12} />
         </button>
-        <button type="button" className="icon-btn h-6 w-6" title="Pull (fast-forward only)" onClick={() => run.mutate(() => api.pull(repo))}>
+        <button type="button" className="icon-btn h-6 w-6" title="Pull (fast-forward only)" onClick={() => run.mutate(() => code.pull(repo))}>
           <ArrowDown size={13} />
         </button>
-        <button type="button" className="icon-btn h-6 w-6" title="Push to origin" onClick={() => run.mutate(() => api.push(repo).then(() => toast("Pushed.", { tone: "ok" })))}>
+        <button type="button" className="icon-btn h-6 w-6" title="Push to origin" onClick={() => run.mutate(() => code.push(repo).then(() => toast("Pushed.", { tone: "ok" })))}>
           <ArrowUp size={13} />
         </button>
       </div>
@@ -87,7 +88,7 @@ export function SourceControl({ repo, onOpenFile }: { repo: string; onOpenFile: 
         className="field w-full text-[12.5px]"
         onKeyDown={(event) => {
           if ((event.metaKey || event.ctrlKey) && event.key === "Enter" && message.trim()) {
-            run.mutate(() => api.commit(repo, message.trim(), nothingStaged).then(() => setMessage("")));
+            run.mutate(() => code.commit(repo, message.trim(), nothingStaged).then(() => setMessage("")));
           }
         }}
       />
@@ -95,7 +96,7 @@ export function SourceControl({ repo, onOpenFile }: { repo: string; onOpenFile: 
         type="button"
         className="btn-primary w-full justify-center"
         disabled={!message.trim() || run.isPending || (nothingStaged && status.unstaged.length === 0)}
-        onClick={() => run.mutate(() => api.commit(repo, message.trim(), nothingStaged).then(() => setMessage("")))}
+        onClick={() => run.mutate(() => code.commit(repo, message.trim(), nothingStaged).then(() => setMessage("")))}
       >
         <GitCommitHorizontal size={13} />
         {nothingStaged ? "Commit all" : "Commit staged"}
@@ -106,7 +107,7 @@ export function SourceControl({ repo, onOpenFile }: { repo: string; onOpenFile: 
           <div key={`s-${entry.path}`} className="row-tile group flex items-center gap-1 rounded px-1.5 py-0.5">
             <button type="button" className="min-w-0 flex-1 truncate text-left" onClick={() => onOpenFile(entry.path)}>{entry.path}</button>
             <span className="text-2xs text-faint">{entry.index}</span>
-            <button type="button" className="icon-btn h-5 w-5 opacity-0 group-hover:opacity-100" title="Unstage" onClick={() => run.mutate(() => api.unstage(repo, [entry.path]))}>
+            <button type="button" className="icon-btn h-5 w-5 opacity-0 group-hover:opacity-100" title="Unstage" onClick={() => run.mutate(() => code.unstage(repo, [entry.path]))}>
               <Minus size={11} />
             </button>
           </div>
@@ -122,12 +123,12 @@ export function SourceControl({ repo, onOpenFile }: { repo: string; onOpenFile: 
                 type="button"
                 className="icon-btn h-5 w-5 opacity-0 group-hover:opacity-100"
                 title="Discard changes"
-                onClick={() => void confirmAction({ title: "Discard changes?", body: `Your changes to ${entry.path} are thrown away. This cannot be undone.`, confirm: "Discard", danger: true }).then((yes) => yes && run.mutate(() => api.discard(repo, [entry.path])))}
+                onClick={() => void confirmAction({ title: "Discard changes?", body: `Your changes to ${entry.path} are thrown away. This cannot be undone.`, confirm: "Discard", danger: true }).then((yes) => yes && run.mutate(() => code.discard(repo, [entry.path])))}
               >
                 <Undo2 size={11} />
               </button>
             ) : null}
-            <button type="button" className="icon-btn h-5 w-5 opacity-0 group-hover:opacity-100" title="Stage" onClick={() => run.mutate(() => api.stage(repo, [entry.path]))}>
+            <button type="button" className="icon-btn h-5 w-5 opacity-0 group-hover:opacity-100" title="Stage" onClick={() => run.mutate(() => code.stage(repo, [entry.path]))}>
               <Plus size={11} />
             </button>
           </div>

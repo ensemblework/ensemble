@@ -30,6 +30,10 @@ export const ROUTES = {
   files: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/files`,
   /** This computer's answer to a `files.request` from the web: a folder's entries or a file's text. */
   fileAnswer: (requestId: string) => `/api/devices/self/file-requests/${encodeURIComponent(requestId)}`,
+  /** This computer's answer to a `code.request` or `terminal.request` from the web (protocol 4). */
+  codeAnswer: (requestId: string) => `/api/devices/self/code-requests/${encodeURIComponent(requestId)}`,
+  /** Output of a terminal command the web started here, in order (protocol 4). */
+  terminalOutput: (runId: string) => `/api/devices/self/terminal-runs/${encodeURIComponent(runId)}/output`,
 } as const;
 
 const ms = (name: string, fallback: number) => {
@@ -56,9 +60,13 @@ export const LOG_CHUNK_BYTES = 64 * 1024;
  * `steps` and the `engine` and `sandbox` events, and complete `totals` and a 20,000-character summary.
  * 3 (14 Oct 2026): the text of the files a run changed goes to `ROUTES.files` before complete, and the
  * server may ask for a folder's entries or a file's text (`files.request` on the event stream).
+ * 4 (14 Oct 2026): the web's Code tab works on this computer: the server sends `code.request` (one call
+ * to this computer's own `/api/code/*`) and `terminal.request` (the web terminal, after a passkey unlock
+ * on the web); answers go to `ROUTES.codeAnswer`, terminal output to `ROUTES.terminalOutput`. A computer
+ * says it takes them with `capabilities.code`.
  * A computer sends each only to a server that says so: an older one answers them with a 400 or 404.
  */
-export const PROTOCOL = 3;
+export const PROTOCOL = 4;
 /** What a protocol 1 server takes. */
 export const LEGACY_EVENT_KINDS = ["prepared", "tool", "command"] as const;
 export const LEGACY_SUMMARY_CHARS = 8000;
@@ -229,6 +237,8 @@ export const RunTotals = z.object({
   tokensIn: z.number().int().min(0).max(1_000_000_000).optional(),
   tokensOut: z.number().int().min(0).max(1_000_000_000).optional(),
   costUsd: z.number().min(0).max(100_000).nullish(),
+  /** The run's review on this computer (protocol 4): the web opens it in the Code tab through this computer. */
+  reviewId: z.string().uuid().nullish(),
   files: z
     .array(z.object({ path: text(500), added: z.number().int().min(0), removed: z.number().int().min(0), status: z.enum(["added", "modified", "deleted"]).optional(), binary: z.boolean().optional() }))
     .max(200)
@@ -283,3 +293,75 @@ export type FileAnswer = z.infer<typeof FileAnswer>;
 /** Outcomes the device complete route accepts. Interrupted is the lease sweep, not a complete body. */
 export type Outcome = "succeeded" | "failed" | "cancelled" | "blocked";
 export type ResultLink = { kind: "pr" | "commit" | "branch"; url: string; sha?: string };
+
+/**
+ * The calls the web may make to a computer's own Code API (`routes/code.ts`), method and path. Both the
+ * server and the computer check a request against this list; anything else is refused. Settings (the
+ * folders Code can use) stay on the computer.
+ */
+export const CODE_CALLS: ReadonlyArray<{ method: "GET" | "POST" | "PUT"; path: RegExp; write: boolean; slow?: boolean }> = [
+  { method: "GET", path: /^\/api\/code\/(repos|reviews|source|diff|file|scm)$/, write: false },
+  { method: "GET", path: /^\/api\/code\/actions$/, write: false, slow: true },
+  { method: "POST", path: /^\/api\/code\/decide$/, write: true },
+  { method: "POST", path: /^\/api\/code\/reviews\/[0-9a-f-]{36}\/complete$/, write: true },
+  { method: "POST", path: /^\/api\/code\/reviews\/[0-9a-f-]{36}\/(accept|discard)$/, write: true, slow: true },
+  { method: "POST", path: /^\/api\/code\/reviews\/[0-9a-f-]{36}\/push$/, write: true, slow: true },
+  { method: "POST", path: /^\/api\/code\/scm\/(stage|unstage|discard)$/, write: true },
+  { method: "POST", path: /^\/api\/code\/scm\/(commit|push|pull)$/, write: true, slow: true },
+  { method: "PUT", path: /^\/api\/code\/file$/, write: true },
+];
+
+/** The entry for this call, or null when the web may not make it. */
+export function codeCall(method: string, path: string): (typeof CODE_CALLS)[number] | null {
+  return CODE_CALLS.find((call) => call.method === method && call.path.test(path)) ?? null;
+}
+
+/** What one Code answer may carry. Larger answers are refused on the computer with a 413. */
+export const CODE_ANSWER_BYTES = 3 * 1024 * 1024;
+/** A file the web may edit; larger ones open read-only. */
+export const CODE_EDIT_BYTES = 1024 * 1024;
+
+/** `code.request` on the event stream: one call to this computer's Code API, from the web. */
+export const CodeRequest = z.object({
+  id: text(100).min(1),
+  method: z.enum(["GET", "POST", "PUT"]),
+  path: text(300).min(1),
+  query: z.record(z.string().max(100), z.string().max(4096)).default({}),
+  body: z.unknown().optional(),
+});
+export type CodeRequest = z.infer<typeof CodeRequest>;
+
+/** The computer's answer to a `code.request` or `terminal.request`: the status and JSON body its own API gave. */
+export const CodeAnswer = z.object({
+  status: z.number().int().min(100).max(599),
+  body: z.unknown().optional(),
+});
+export type CodeAnswer = z.infer<typeof CodeAnswer>;
+
+/**
+ * `terminal.request` on the event stream: the web terminal, unlocked with a passkey on the web. `status`
+ * gives the folders it may use, `cd` resolves a folder, `run` starts one allow-listed command (its output
+ * goes to `ROUTES.terminalOutput` under the request id), `kill` stops a run.
+ */
+export const TerminalRequest = z.object({
+  id: text(100).min(1),
+  op: z.enum(["status", "cd", "run", "kill"]),
+  cwd: text(4096).optional(),
+  path: text(4096).optional(),
+  line: text(4000).optional(),
+  confirmed: z.boolean().default(false),
+  runId: text(100).optional(),
+});
+export type TerminalRequest = z.infer<typeof TerminalRequest>;
+
+/** Terminal output a computer sends, in order. The last chunk says `done` with the exit code. */
+export const TERMINAL_CHUNK_BYTES = 64 * 1024;
+/** What one web terminal command may print; past this the computer stops sending and says so. */
+export const TERMINAL_OUTPUT_BYTES = 1024 * 1024;
+export const TerminalChunk = z.object({
+  seq: z.number().int().min(0).max(100_000),
+  text: z.string().max(TERMINAL_CHUNK_BYTES),
+  done: z.boolean().default(false),
+  exitCode: z.number().int().min(-1).max(1_000_000).nullish(),
+});
+export type TerminalChunk = z.infer<typeof TerminalChunk>;

@@ -66,6 +66,7 @@ import { peopleIdentityRoutes } from "./routes/people-identity.js";
 import { projectLinkRoutes } from "./routes/project-links.js";
 import { meetingNoteRoutes } from "./routes/meeting-notes.js";
 import { bridgeMethodRejected, deviceTokenRejected, hooksTokenRejected, readOnlyTokenRejected } from "./bridge/auth.js";
+import { deviceCodeRoutes } from "./devices/code-routes.js";
 import { deviceRoutes } from "./devices/routes.js";
 import { remoteRoutes } from "./remote/routes.js";
 import { desktopHostAllowed } from "./lib/desktop-guard.js";
@@ -225,6 +226,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     engineRoutes,
     handoffRoutes,
     deviceRoutes,
+    deviceCodeRoutes,
     terminalRoutes,
     viewRoutes,
     commentRoutes,

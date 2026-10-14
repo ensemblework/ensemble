@@ -79,7 +79,7 @@ test("inside the desktop app the terminal explains why it is not available, inst
       assert.ok(view.host.querySelector('button[title^="Close"]'));
       // No set-up flow that cannot finish, and no terminal API calls.
       assert.equal(view.host.querySelector('input[type="password"]'), null);
-      assert.equal(view.host.textContent?.includes("Set up Touch ID"), false);
+      assert.equal(view.host.textContent?.includes("Set up passkey"), false);
       assert.deepEqual(view.calls, []);
     } finally {
       await view.done();
@@ -89,14 +89,14 @@ test("inside the desktop app the terminal explains why it is not available, inst
   }
 });
 
-test("in a normal browser the terminal still shows the Touch ID set-up, with no desktop note", async () => {
+test("in a normal browser the terminal still shows the passkey set-up, with no desktop note", async () => {
   assert.equal((window as DesktopWindow).__ENSEMBLE_DESKTOP__, undefined);
   const view = await mount();
   try {
     assert.equal(view.host.querySelector('[data-testid="terminal-desktop-note"]'), null);
     assert.equal(view.host.textContent?.includes(TERMINAL_DESKTOP_TITLE), false);
     assert.ok(view.host.querySelector('input[type="password"]'), "password field for passkey set-up");
-    assert.ok(view.host.textContent?.includes("Set up Touch ID"));
+    assert.ok(view.host.textContent?.includes("Set up passkey"));
     assert.ok(view.calls.some((url) => url.endsWith("/api/terminal/status")), `status was fetched: ${view.calls.join(", ")}`);
   } finally {
     await view.done();
@@ -127,11 +127,11 @@ function addressNote(host: HTMLElement): Element | null {
   return host.querySelector('[data-testid="terminal-address-note"]');
 }
 
-test("on localhost (any port) the browser goes on to the Touch ID set-up", async () => {
+test("on localhost (any port) the browser goes on to the passkey set-up", async () => {
   await atUrl("http://localhost:3100/code", (view) => {
     assert.equal(addressNote(view.host), null);
     assert.ok(view.host.querySelector('input[type="password"]'));
-    assert.ok(view.host.textContent?.includes("Set up Touch ID"));
+    assert.ok(view.host.textContent?.includes("Set up passkey"));
   });
 });
 
@@ -144,7 +144,7 @@ test("on an https domain the terminal says it is not available there yet, becaus
     assert.doesNotMatch(note.textContent ?? "", /localhost:3000|IP address/);
     // No passkey set-up that the server would refuse.
     assert.equal(view.host.querySelector('input[type="password"]'), null);
-    assert.equal(view.host.textContent?.includes("Set up Touch ID"), false);
+    assert.equal(view.host.textContent?.includes("Set up passkey"), false);
   });
 });
 
@@ -212,5 +212,73 @@ test("terminalAccess: every address the server refuses gets a message, and none 
     if (says) assert.match(result.message, says, url);
     if (!url.includes(":3000")) assert.doesNotMatch(result.message, /3000/, url);
     if (reason === "ip") assert.doesNotMatch(result.message, /https?:\/\/localhost/, url);
+  }
+});
+
+async function mountDevice(lock: Record<string, unknown>): Promise<{ host: HTMLDivElement; calls: string[]; done: () => Promise<void> }> {
+  const calls: string[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    calls.push(url);
+    const body = url.includes("/api/web-terminal/status")
+      ? { unlocked: false, expiresAt: null, passkeys: [], password: false, emailCode: true, ...lock }
+      : url.endsWith("/api/devices")
+        ? { serverRunner: false, devices: [{ id: "d1", name: "Studio Mac", platform: "darwin", appVersion: "0.3.8", capabilities: { code: true }, folders: [], runBranchPush: false, lastSeenAt: null, createdAt: "2026-10-14T00:00:00Z", online: true }] }
+        : { error: "unexpected" };
+    return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { gcTime: 0 } } });
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(
+      <QueryClientProvider client={client}>
+        <Terminal target={{ kind: "device", deviceId: "d1" }} onClose={() => {}} />
+      </QueryClientProvider>,
+    );
+  });
+  for (let i = 0; i < 5; i += 1) {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+  }
+  return {
+    host,
+    calls,
+    done: async () => {
+      await act(async () => root.unmount());
+      host.remove();
+      client.clear();
+      globalThis.fetch = realFetch;
+    },
+  };
+}
+
+test("on Ensemble on the web, a paired computer's terminal is unlocked with a passkey there, never through the localhost rule", async () => {
+  setTestUrl("https://app.ensemblework.com/code");
+  try {
+    const view = await mountDevice({});
+    try {
+      assert.equal(addressNote(view.host), null, "passkeys work on the web's own address");
+      assert.ok(view.calls.some((url) => url.endsWith("/api/web-terminal/status")));
+      assert.equal(view.calls.some((url) => url.includes("/api/terminal/")), false, "never this server's own terminal");
+      assert.ok(view.host.textContent?.includes("Studio Mac"));
+      // No password on the account: the passkey is confirmed with a mailed code.
+      assert.equal(view.host.querySelector('input[type="password"]'), null);
+      assert.ok(view.host.textContent?.includes("Email me a code"));
+    } finally {
+      await view.done();
+    }
+    const locked = await mountDevice({ passkeys: [{ id: "k", label: "This Mac", createdAt: "2026-10-14T00:00:00Z", lastUsedAt: null }] });
+    try {
+      assert.ok(locked.host.textContent?.includes("Unlock with passkey"));
+      assert.match(locked.host.textContent ?? "", /30 minutes idle/);
+    } finally {
+      await locked.done();
+    }
+  } finally {
+    setTestUrl("http://localhost/");
   }
 });

@@ -5,6 +5,7 @@ import { FolderGit2, TerminalSquare } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { ComputersCode } from "@/components/code/computers-code";
 import { DeviceChanges } from "@/components/code/device-changes";
 import { Terminal } from "@/components/code/terminal";
 import { useSpaceAccess } from "@/lib/access";
@@ -80,7 +81,7 @@ export default function CodePage() {
           access.guest
             ? `What the agents changed in ${access.owner?.split(" ")[0] ?? "this"}'s space. View only: accepting, rejecting, editing and pushing stay with them.`
             : onComputers
-              ? "What the agents changed on your paired computers, run by run. The changes stay on that computer; review, commit and push them in Ensemble there."
+              ? "The code on your paired computers: review what an agent changed (accept keeps it, reject puts the old lines back), edit any file, commit and push, and use the terminal, unlocked with your passkey. The code stays on that computer."
               : "Review what an agent changed, one change at a time: accept keeps it, reject puts the old lines back on disk, and you can write any part yourself. Then commit and push from the same place."
         }
         actions={
@@ -96,7 +97,8 @@ export default function CodePage() {
       />
       {onComputers ? (
         <>
-          <h2 id="reviews" className="mb-1 scroll-mt-4 text-[17px] font-semibold">Changes on your computers</h2>
+          <ComputersCode />
+          <h2 id="reviews" className="mb-1 scroll-mt-4 text-[17px] font-semibold">Runs on your computers</h2>
           <DeviceChanges
             openJobId={params.get("job")}
             openPath={params.get("file")}

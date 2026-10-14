@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { FileCode2, FolderGit2, GitBranch, Laptop, ListTree, SquareArrowOutUpRight } from "lucide-react";
+import { FileCode2, FolderGit2, GitBranch, GitPullRequestArrow, Laptop, ListTree, SquareArrowOutUpRight } from "lucide-react";
 import Link from "next/link";
 import { jobTone } from "@/components/agent/job-card";
 import { RunCode } from "@/components/code/run-code";
@@ -11,10 +11,10 @@ import { api, type AgentJob } from "@/lib/api";
 import { plural, relative } from "@/lib/format";
 
 /**
- * The Code tab on Ensemble on the web. Agents work on your paired computers and their changes stay
- * there (docs/25): this lists each code run, and opens one as code: the files it changed (the text
- * the computer sent when the run ended) and its folder, read from that computer when you open it.
- * Review, commit and push happen in Ensemble on that computer.
+ * The Code tab on Ensemble on the web, run by run. Agents work on your paired computers and their
+ * changes stay there (docs/25): this lists each code run. *Review & edit* opens its review in the editor
+ * through that computer (protocol 4, `computers-code.tsx`); *Open code* shows the files it changed (the
+ * text the computer sent when the run ended) and its folder, read from that computer when you open it.
  */
 export function DeviceChanges({ openJobId, openPath, onOpen }: { openJobId?: string | null; openPath?: string | null; onOpen?: (jobId: string | null) => void }) {
   const peek = usePeek();
@@ -45,8 +45,8 @@ export function DeviceChanges({ openJobId, openPath, onOpen }: { openJobId?: str
         </div>
       ) : null}
       <p className="mb-3 text-[12.5px] text-muted">
-        Open a run to see the files the agent changed and to browse its folder, read from that computer when you open a file. Review, commit and push in Ensemble on that computer (the desktop app, or{" "}
-        <code className="rounded bg-raised px-1 font-mono text-[11.5px]">ensemble</code> in a terminal).
+        <span className="font-medium text-ink">Review &amp; edit</span> opens a run in the editor on that computer: accept or reject each change, edit, commit and push.{" "}
+        <span className="font-medium text-ink">Open code</span> shows the files the agent changed, and the folder, read from that computer when you open a file.
       </p>
       <div className="mb-4 flex flex-wrap gap-2">
         {paired.map((device) => (
@@ -126,6 +126,11 @@ function DeviceJobRow({ job, active, onOpenTask, onOpenCode }: { job: AgentJob; 
         <div className="mt-1.5 text-[12px] text-faint">No file changes reported.</div>
       ) : null}
       <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[12px]">
+        {job.deviceId && job.deviceReviewId ? (
+          <Link href={`/code/review?device=${encodeURIComponent(job.deviceId)}&review=${encodeURIComponent(job.deviceReviewId)}`} className="inline-flex items-center gap-1 font-medium text-accent hover:underline">
+            <GitPullRequestArrow size={12} /> Review &amp; edit
+          </Link>
+        ) : null}
         {onOpenCode ? (
           <button type="button" className="inline-flex items-center gap-1 font-medium text-accent hover:underline" onClick={onOpenCode}>
             <FileCode2 size={12} /> Open code

@@ -29,6 +29,7 @@ import { Terminal } from "@/components/code/terminal";
 import { useToast } from "@/components/toast";
 import { Spinner, cx } from "@/components/ui";
 import { api, type ChangedFile } from "@/lib/api";
+import { CodeTargetProvider, useCodeApi, type CodeTarget } from "@/lib/code-target";
 import { dateTime, languageFor } from "@/lib/format";
 import { fileEditor, useWarmEditors, warmFileEditor } from "@/lib/warm";
 import { usePersistentState } from "@/lib/prefs";
@@ -50,9 +51,24 @@ function useFileEditor() {
   return Editor;
 }
 
+/** `?device=<id>`: a review or repository on a paired computer, opened through Ensemble on the web. */
 export default function ReviewPage() {
   const params = useSearchParams();
+  const device = params.get("device");
+  const target = useMemo<CodeTarget>(() => (device ? { kind: "device", deviceId: device } : { kind: "local" }), [device]);
+  return (
+    <CodeTargetProvider value={target}>
+      <Review />
+    </CodeTargetProvider>
+  );
+}
+
+function Review() {
+  const params = useSearchParams();
   const access = useSpaceAccess();
+  const { code, key, target } = useCodeApi();
+  const computers = useQuery({ queryKey: ["devices"], queryFn: api.devices, enabled: target.kind === "device", staleTime: 60_000 });
+  const computer = target.kind === "device" ? computers.data?.devices.find((row) => row.id === target.deviceId) ?? null : null;
   const client = useQueryClient();
   useWarmEditors("file");
   const toast = useToast();
@@ -82,7 +98,7 @@ export default function ReviewPage() {
   const [cursor, setCursor] = useState({ line: 1, column: 1 });
   const diffRef = useRef<HTMLDivElement>(null);
 
-  const info = useQuery({ queryKey: ["code-source", source], queryFn: () => api.codeSource(source), retry: false });
+  const info = useQuery({ queryKey: ["code-source", key, source], queryFn: () => code.codeSource(source), retry: false });
   const files = info.data?.files ?? [];
   const visibleFiles = files.filter((file) => file.path.toLowerCase().includes(filter.toLowerCase()));
   const file: ChangedFile | undefined = files.find((row) => row.path === path) ?? files[0];
@@ -95,13 +111,13 @@ export default function ReviewPage() {
   }, [info.data]);
 
   const diff = useQuery({
-    queryKey: ["code-diff", source, filePath],
-    queryFn: () => api.codeDiff(source, filePath!, file?.status === "U"),
+    queryKey: ["code-diff", key, source, filePath],
+    queryFn: () => code.codeDiff(source, filePath!, file?.status === "U"),
     enabled: Boolean(filePath) && mode === "changes",
   });
   const fileContent = useQuery({
-    queryKey: ["code-file", source, filePath],
-    queryFn: () => api.codeFile(source, filePath!),
+    queryKey: ["code-file", key, source, filePath],
+    queryFn: () => code.codeFile(source, filePath!),
     enabled: Boolean(filePath) && mode === "file",
   });
 
@@ -126,10 +142,10 @@ export default function ReviewPage() {
 
   const decide = useMutation({
     mutationFn: (input: { key: string; decision: "accepted" | "rejected" }) =>
-      api.decideHunk({ ...source, path: filePath!, key: input.key, untracked: file?.status === "U", decision: input.decision }),
+      code.decideHunk({ ...source, path: filePath!, key: input.key, untracked: file?.status === "U", decision: input.decision }),
     onSuccess: async (_result, input) => {
-      await client.invalidateQueries({ queryKey: ["code-diff", source, filePath] });
-      void client.invalidateQueries({ queryKey: ["code-source", source] });
+      await client.invalidateQueries({ queryKey: ["code-diff", key, source, filePath] });
+      void client.invalidateQueries({ queryKey: ["code-source", key, source] });
       void client.invalidateQueries({ queryKey: ["scm"] });
       if (input.decision === "accepted") setHunk((value) => Math.min(value + 1, Math.max(hunks.length - 1, 0)));
     },
@@ -149,20 +165,20 @@ export default function ReviewPage() {
     if (!pending || !target || text === null) return;
     setSaving("saving");
     try {
-      await api.saveCodeFile(source, target, text);
+      await code.saveCodeFile(source, target, text);
       if (latest.current.path === target && latest.current.content === text) {
         latest.current = { ...latest.current, dirty: false };
         setDirty(false);
       }
       setSaving("saved");
-      void client.invalidateQueries({ queryKey: ["code-source", source] });
+      void client.invalidateQueries({ queryKey: ["code-source", key, source] });
       void client.invalidateQueries({ queryKey: ["code-diff"] });
       void client.invalidateQueries({ queryKey: ["scm"] });
     } catch (error) {
       setSaving("error");
       toast((error as Error).message, { tone: "error" });
     }
-  }, [client, source, toast]);
+  }, [client, code, key, source, toast]);
   const onSave = useCallback(() => void flush(), [flush]);
 
   useEffect(() => () => void flush(), [filePath, mode, flush]);
@@ -179,7 +195,7 @@ export default function ReviewPage() {
   }, [terminal, setTerminal]);
 
   const complete = useMutation({
-    mutationFn: () => api.completeReview(source.review!),
+    mutationFn: () => code.completeReview(source.review!),
     onSuccess: () => {
       toast("Marked reviewed. Commit and push from Source control when you are ready.", { tone: "ok" });
       void client.invalidateQueries({ queryKey: ["reviews"] });
@@ -188,13 +204,13 @@ export default function ReviewPage() {
 
   const afterReview = () => {
     void client.invalidateQueries({ queryKey: ["reviews"] });
-    void client.invalidateQueries({ queryKey: ["code-source", source] });
+    void client.invalidateQueries({ queryKey: ["code-source", key, source] });
     void client.invalidateQueries({ queryKey: ["code-diff"] });
     void client.invalidateQueries({ queryKey: ["scm"] });
     void client.invalidateQueries({ queryKey: ["task-jobs"] });
   };
   const accept = useMutation({
-    mutationFn: () => api.acceptReview(source.review!),
+    mutationFn: () => code.acceptReview(source.review!),
     onSuccess: (result) => {
       toast(
         result.commit
@@ -207,7 +223,7 @@ export default function ReviewPage() {
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
   const discard = useMutation({
-    mutationFn: () => api.discardReview(source.review!),
+    mutationFn: () => code.discardReview(source.review!),
     onSuccess: (result) => {
       toast(
         `Discarded. ${result.restored} ${result.restored === 1 ? "file is" : "files are"} back as the run found them.${result.keptCommits ? " Commits on this branch were kept; undo them in Source control." : ""}`,
@@ -218,7 +234,7 @@ export default function ReviewPage() {
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
   const push = useMutation({
-    mutationFn: () => api.pushReview(source.review!),
+    mutationFn: () => code.pushReview(source.review!),
     onSuccess: (result) => toast(`Pushed ${result.branch} (fast-forward).`, { tone: "ok" }),
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
@@ -324,7 +340,10 @@ export default function ReviewPage() {
           <Link href="/code" className="icon-btn" title="Back to Code"><ArrowLeft size={15} /></Link>
           <button type="button" className="icon-btn" title="Toggle file panel" onClick={() => (narrow ? setSheet((open) => !open) : setPanel(!panel))}><PanelLeft size={15} /></button>
           <span className="truncate font-semibold">{data.title}</span>
-          <span className="truncate text-muted">{data.repo.split("/").slice(-2).join("/")} · {data.branch}</span>
+          <span className="truncate text-muted">
+            {data.repo.split("/").slice(-2).join("/")} · {data.branch}
+            {target.kind === "device" ? ` · on ${computer?.name ?? "your computer"}` : ""}
+          </span>
           <div className="flex-1" />
           <ThemeControl />
           {viewOnly ? (
@@ -421,6 +440,11 @@ export default function ReviewPage() {
           ) : null}
         </div>
 
+        {mode === "file" && fileContent.data?.readOnly ? (
+          <div className="flex shrink-0 items-center gap-1.5 border-b border-line bg-raised px-3 py-1 text-[12px] text-muted">
+            <Lock size={12} /> {fileContent.data.readOnly}
+          </div>
+        ) : null}
         <div className="min-h-0 flex-1 overflow-auto">
           {!filePath ? (
             <div className="p-10 text-[13px] text-muted">No changes to review. Everything on disk matches {data.kind === "review" ? "the tree this run started from" : "HEAD"}.</div>
@@ -454,12 +478,12 @@ export default function ReviewPage() {
               }}
               onCursor={(line, column) => setCursor({ line, column })}
               onSave={onSave}
-              readOnly={viewOnly}
+              readOnly={viewOnly || Boolean(fileContent.data?.readOnly)}
             />
           )}
         </div>
 
-        {terminal && !viewOnly ? <Terminal initialCwd={data.repo} onClose={() => setTerminal(false)} /> : null}
+        {terminal && !viewOnly ? <Terminal initialCwd={data.repo} target={target} onClose={() => setTerminal(false)} /> : null}
 
         <div className="flex h-6 shrink-0 items-center gap-4 overflow-x-auto whitespace-nowrap border-t border-line bg-sidebar px-3 text-[11.5px] text-muted">
           <span>{filePath ? languageFor(filePath) : "-"}</span>

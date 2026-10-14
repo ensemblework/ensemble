@@ -49,12 +49,14 @@ async function runnerRefusal(app: FastifyInstance, job: { userId: string; runner
 }
 
 /** What a finished run reported: the model that answered, its cost estimate, the files it changed (names and line counts). */
-function evidenceOf(job: JobRow): { modelUsed: string | null; costUsd: number | null; files: Array<{ path: string; added: number; removed: number }> } {
+function evidenceOf(job: JobRow): { modelUsed: string | null; costUsd: number | null; files: Array<{ path: string; added: number; removed: number }>; deviceReviewId: string | null } {
   const evidence = (job.evidence && typeof job.evidence === "object" && !Array.isArray(job.evidence) ? job.evidence : {}) as Record<string, unknown>;
   return {
     modelUsed: typeof evidence.model === "string" && evidence.model ? evidence.model : null,
     costUsd: typeof evidence.costUsd === "number" && Number.isFinite(evidence.costUsd) ? evidence.costUsd : null,
     files: (Array.isArray(evidence.files) ? evidence.files : []).slice(0, 200) as Array<{ path: string; added: number; removed: number }>,
+    // The run's review on the computer that ran it (protocol 4): the web's Code tab opens it through that computer.
+    deviceReviewId: job.deviceId && typeof evidence.reviewId === "string" ? evidence.reviewId : null,
   };
 }
 
