@@ -3,7 +3,8 @@
 /** @jsxImportSource react */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckSquare, Trash2 } from "lucide-react";
+import Link from "next/link";
+import { CheckSquare, FileText, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EMPTY_PAGE, type PageDocument, type PageMention } from "@ensemble/shared-types";
@@ -64,6 +65,7 @@ export function NotePage({
     refetchOnWindowFocus: false,
     enabled: !leaving,
   });
+  const family = useQuery({ queryKey: ["pages"], queryFn: api.pages, enabled: !shared });
   const [saveState, setSaveState] = useState<SaveState>("saved");
   const [epoch, setEpoch] = useState(0);
   const revision = useRef(0);
@@ -135,7 +137,7 @@ export function NotePage({
     },
     onSuccess: () => {
       void client.invalidateQueries();
-      toast("Note moved to Trash.", { action: { label: "Undo", run: () => { void api.restoreDeleted({ kind: "page", id: pageId }).then(() => { void client.invalidateQueries(); router.push(`/pages/${pageId}`); }).catch((error: Error) => toast(error.message, { tone: "error" })); } } });
+      toast("Note moved to Trash.", { action: { label: "Undo", run: () => { void api.undo().then(() => { void client.invalidateQueries(); router.push(`/pages/${pageId}`); }).catch((error: Error) => toast(error.message, { tone: "error" })); } } });
       router.push("/today");
     },
     onError: (error: Error) => toast(error.message, { tone: "error" }),
@@ -187,6 +189,28 @@ export function NotePage({
       if (inFlight.current === work) inFlight.current = null;
     }
   }, [client, pageId, toast]);
+
+  const flushForBulk = useRef<(ids: string[]) => void>(() => undefined);
+  flushForBulk.current = (ids) => {
+    void (async () => {
+      if (titleSave.current) await titleSave.current;
+      if (!(await flush())) throw new Error("Save the note before moving these pages to Trash.");
+      await api.deletePages(ids);
+      void client.invalidateQueries();
+      toast("Pages moved to Trash. One Undo restores them all.", { action: { label: "Undo", run: () => { void api.undo().then(() => client.invalidateQueries()); } } });
+      router.push("/today");
+    })().catch((error: Error) => toast(error.message, { tone: "error" }));
+  };
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<{ ids: string[]; affected: string[] }>).detail;
+      if (!detail.affected.includes(pageId)) return;
+      event.preventDefault();
+      flushForBulk.current(detail.ids);
+    };
+    window.addEventListener("ensemble:delete-pages", handler);
+    return () => window.removeEventListener("ensemble:delete-pages", handler);
+  }, [pageId]);
 
   const convert = useMutation({
     onMutate: () => setLeaving(true),
@@ -305,6 +329,7 @@ export function NotePage({
           <h1 className="text-[32px] font-semibold leading-tight tracking-tight">{record.title || "Untitled"}</h1>
         )}
       </div>
+      {!shared && record.parentId ? <Link className="mt-3 inline-flex text-[12px] text-muted hover:text-ink" href={record.parentTaskId ? `/tasks/${record.parentTaskId}` : `/pages/${record.parentId}`}>← {family.data?.pages.find((parent) => parent.id === record.parentId)?.title || (record.parentTaskId ? "Parent task" : "Parent page")}</Link> : null}
       <div className="mt-6 flex items-center justify-between border-t border-line pt-3 text-[12px] text-muted">
         <span className="font-medium">Page content</span>
         <span className={saveState === "error" ? "text-danger" : undefined}>{saveText}</span>
@@ -326,6 +351,10 @@ export function NotePage({
         ) : null}
       </div>
 
+      {!shared && family.data?.pages.some((child) => child.parentId === pageId) ? <nav aria-label="Nested pages" className="mt-6 space-y-1 border-t border-line pt-4">
+        <p className="mb-2 text-[12px] font-medium text-muted">Nested pages</p>
+        {family.data.pages.filter((child) => child.parentId === pageId).map((child) => <Link key={child.id} className="page-link-block" href={`/pages/${child.id}`}><FileText size={15} /> {child.title || "Untitled"}</Link>)}
+      </nav> : null}
     </div>
   );
 }

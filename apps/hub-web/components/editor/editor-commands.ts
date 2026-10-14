@@ -26,6 +26,7 @@ export type BlockCommandId =
   | "table"
   | "quote"
   | "divider"
+  | "toggle"
   | "file";
 
 export interface BlockCommand {
@@ -46,6 +47,7 @@ export const BLOCK_COMMANDS: readonly BlockCommand[] = [
   { id: "check-list", label: "Checklist", detail: "Tick off individual items", aliases: "checklist todo checkbox task", symbol: "☑" },
   { id: "code", label: "Code", detail: "A fenced code block", aliases: "codeblock snippet", symbol: "</>" },
   { id: "table", label: "Table", detail: "A header plus one row of data", aliases: "grid", symbol: "▦" },
+  { id: "toggle", label: "Collapsible block", detail: "A summary with any blocks inside", aliases: "toggle collapse collapsible details disclosure", symbol: "▸" },
   { id: "quote", label: "Quote", detail: "Call out a passage", aliases: "blockquote citation", symbol: "❝" },
   { id: "divider", label: "Divider", detail: "Separate sections", aliases: "hr rule line separator", symbol: "—" },
   { id: "file", label: "File", detail: "Upload or attach a PDF, image, sheet or any file", aliases: "attach attachment upload pdf image photo picture document", symbol: "⎘" },
@@ -89,6 +91,9 @@ export function applyBlock(editor: Editor, range: Range, command: BlockCommandId
       break;
     case "quote":
       chain.clearNodes().toggleBlockquote().run();
+      break;
+    case "toggle":
+      chain.insertContent({ type: "toggleBlock", content: [{ type: "paragraph", content: [{ type: "text", text: "Details" }] }, { type: "paragraph" }] }).run();
       break;
     case "divider":
       chain.setHorizontalRule().run();

@@ -2,7 +2,7 @@
 name: pages
 title: Pages and notes
 when: find, read, write, add to, rewrite or delete pages (standalone notes) and task pages; drafts, outlines and write-ups saved in Ensemble
-tools: hub_list_pages, hub_read_page, hub_create_page, hub_update_page, hub_delete_page, hub_restore_entity, hub_read_task_page, hub_list_tasks, hub_list_files
+tools: hub_list_pages, hub_read_page, hub_create_page, hub_update_page, hub_delete_page, hub_delete_pages, hub_restore_entity, hub_read_task_page, hub_list_tasks, hub_list_files
 match: \b(pages?|notes?|write[- ]?up|draft|outline|document this|jot|notebook|wiki)\b
 paths: /pages
 ---
@@ -17,6 +17,7 @@ Write
 - Add to a page: hub_update_page with pageId (or taskId), matchTitle = its current title (refused when it differs), mode "append" and markdown. Rewrite it: mode "replace". Never replace when they asked to add.
 - Your text always goes in the page body. A task's short description (under its title) is the person's; never write there.
 - Mention things inside Markdown with `[@Label](ensemble://<kind>/<id>)` — kinds: file, people, project, task, diagram, plot, deliverable, repo. A file link becomes a file card.
+- Bulk delete: hub_delete_pages with pageIds from hub_list_pages. All selected pages and descendants share one Undo entry; one click restores the entire batch.
 - Delete: hub_delete_page with pageId (Trash; Undo in the app bar or [Trash](/trash) brings it back). A task's page goes with its task.
 
 Good pages

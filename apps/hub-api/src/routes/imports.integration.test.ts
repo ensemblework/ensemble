@@ -287,7 +287,7 @@ test("Trello JSON export: lists become status, labels and checklists come across
   assert.equal((await tasks(mira)).length, 3);
 });
 
-test("Notion Markdown & CSV zip: databases become projects and tasks with page bodies, pages keep your edits on re-import", async () => {
+test("Notion Markdown & CSV zip: databases become tables and nested row pages, pages keep your edits on re-import", async () => {
   const mira = await harness.asUser();
   const zip = notionZip();
   const response = await uploadFile(mira, "notion", "Export-1b2c3d4e.zip", zip);
@@ -305,34 +305,28 @@ test("Notion Markdown & CSV zip: databases become projects and tasks with page b
   assert.equal(database.parent, "Fieldnote Home");
   const pages = preview.containers.find((container) => container.kind === "page")!;
   assert.equal(pages.count, 2);
-  assert.deepEqual(preview.mapping.tables[0]!.columns.due, ["Due"]);
-  assert.deepEqual(preview.mapping.tables[0]!.columns.labels, ["Tags"]);
+  assert.equal(preview.mapping.tables.length, 0);
+  assert.equal(database.importAs, "pages");
 
   const job = await startJob(mira, { previewId: preview.previewId, containers: [database.id, pages.id] });
   assert.equal(job.status, "done", job.error ?? "");
-  assert.deepEqual(job.counts.tasks, { created: 3, updated: 0, unchanged: 0 });
-  assert.equal(job.counts.pages.created, 2);
-  const rows = await tasks(mira);
-  const draft = rows.find((row) => row.title === "Draft field guide")!;
-  assert.equal(draft.status, "in_progress");
-  assert.equal(draft.due, "2026-10-20T00:00:00.000Z");
-  assert.deepEqual(draft.labels, ["Writing", "Field guide"]);
-  assert.equal(draft.sourceKind, "notion");
-  assert.equal(draft.sourceUrl, "https://www.notion.so/aaaabbbbccccddddeeeeffff00001111");
-  const body = JSON.stringify((await mira.inject({ method: "GET", url: `/api/tasks/${draft.id}/page` })).json());
-  assert.match(body, /Soil basics/);
-  assert.match(body, /taskItem/);
-  assert.doesNotMatch(body, /Assignee: Mira Chen/, "the property block is not repeated in the body");
-  const interview = rows.find((row) => row.title === "Interview growers")!;
-  assert.equal(interview.due, "2026-10-12T00:00:00.000Z");
-  assert.match(JSON.stringify((await mira.inject({ method: "GET", url: `/api/tasks/${interview.id}/page` })).json()), /Budget/);
-  assert.equal(rows.find((row) => row.title === "Ship press kit")!.status, "done");
-  const project = await harness.prisma.project.findFirst({ where: { userId: mira.id, name: "Tasks" } });
-  assert.equal(project?.externalId, "9a8b7c6d5e4f30211203f4e5d6c7b8a9");
-
-  const stored = await harness.prisma.taskPage.findMany({ where: { userId: mira.id, taskId: null }, orderBy: { title: "asc" } });
-  assert.deepEqual(stored.map((page) => page.title), ["Field guide outline", "Fieldnote Home"]);
-  const outline = stored[0]!;
+  assert.deepEqual(job.counts.tasks, { created: 0, updated: 0, unchanged: 0 });
+  assert.equal(job.counts.pages.created, 6);
+  assert.equal((await tasks(mira)).length, 0);
+  assert.equal(await harness.prisma.project.count({ where: { userId: mira.id } }), 0);
+  const stored = await harness.prisma.taskPage.findMany({ where: { userId: mira.id, taskId: null } });
+  const table = stored.find((page) => page.title === "Tasks")!;
+  assert.match(JSON.stringify(table.content), /tableHeader/);
+  assert.match(JSON.stringify(table.content), /October 20, 2026/);
+  assert.match(JSON.stringify(table.content), /Writing/);
+  const draft = stored.find((page) => page.title === "Draft field guide")!;
+  assert.equal(draft.parentId, table.id);
+  assert.match(JSON.stringify(draft.content), /Soil basics/);
+  assert.match(JSON.stringify(draft.content), /taskItem/);
+  const home = stored.find((page) => page.title === "Fieldnote Home")!;
+  assert.equal(table.parentId, home.id);
+  const outline = stored.find((page) => page.title === "Field guide outline")!;
+  assert.equal(outline.parentId, home.id);
   assert.equal(outline.externalId, "11112222333344445555666677778888");
   assert.match(JSON.stringify(outline.content), /Imported from Notion/);
   assert.match(JSON.stringify(outline.content), /in Fieldnote Home/);
@@ -348,8 +342,8 @@ test("Notion Markdown & CSV zip: databases become projects and tasks with page b
   assert.equal(save.statusCode, 200, save.body);
   const again = (await uploadFile(mira, "notion", "Export-1b2c3d4e.zip", zip)).json<{ previewId: string; containers: Array<{ id: string }> }>();
   const second = await startJob(mira, { previewId: again.previewId, containers: again.containers.map((container) => container.id) });
-  assert.deepEqual(second.counts.tasks, { created: 0, updated: 0, unchanged: 3 });
-  assert.deepEqual(second.counts.pages, { created: 0, updated: 0, unchanged: 1, keptEdits: 1 });
+  assert.deepEqual(second.counts.tasks, { created: 0, updated: 0, unchanged: 0 });
+  assert.deepEqual(second.counts.pages, { created: 0, updated: 0, unchanged: 5, keptEdits: 1 });
   const kept = await harness.prisma.taskPage.findUniqueOrThrow({ where: { id: outline.id } });
   assert.match(JSON.stringify(kept.content), /Mira's own outline/);
 

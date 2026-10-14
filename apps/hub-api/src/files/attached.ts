@@ -34,7 +34,7 @@ export interface FileText extends AttachedFile {
   note?: string;
 }
 
-const MAX_FILES = 50;
+const MAX_FILES = 100;
 const NO_TEXT: ReadonlySet<FileKind> = new Set(["image", "audio", "video"]);
 
 const FILE_FIELDS = { id: true, filename: true, byteSize: true, textCharacters: true, pageCount: true, parseStatus: true } satisfies Prisma.DocumentSelect;
@@ -73,12 +73,12 @@ async function filesByIds(db: Db, userId: string, ids: string[]): Promise<Attach
 export async function filesOnTask(db: Db, userId: string, taskId: string): Promise<AttachedFile[]> {
   const task = await db.task.findFirst({
     where: { id: taskId, userId, deletedAt: null },
-    select: { page: { select: { content: true, deletedAt: true } }, project: { select: { content: true, deletedAt: true } } },
+    select: { page: { select: { content: true, deletedAt: true, sourceFileId: true } }, project: { select: { content: true, deletedAt: true } } },
   });
   if (!task) return [];
   const tagged = await db.document.findMany({ where: { userId, deletedAt: null, taskIds: { has: taskId } }, orderBy: { createdAt: "asc" }, take: MAX_FILES, select: { id: true } });
   return filesByIds(db, userId, [
-    ...(task.page && !task.page.deletedAt ? mentionedFileIds(task.page.content) : []),
+    ...(task.page && !task.page.deletedAt ? [...mentionedFileIds(task.page.content), ...(task.page.sourceFileId ? [task.page.sourceFileId] : [])] : []),
     ...(task.project && !task.project.deletedAt ? mentionedFileIds(task.project.content) : []),
     ...tagged.map((row) => row.id),
   ]);
@@ -86,10 +86,10 @@ export async function filesOnTask(db: Db, userId: string, taskId: string): Promi
 
 /** Files on a page: a task's page counts as its task; a standalone page has the files it mentions. */
 export async function filesOnPage(db: Db, userId: string, pageId: string): Promise<AttachedFile[]> {
-  const page = await db.taskPage.findFirst({ where: { id: pageId, userId, deletedAt: null }, select: { taskId: true, content: true } });
+  const page = await db.taskPage.findFirst({ where: { id: pageId, userId, deletedAt: null }, select: { taskId: true, content: true, sourceFileId: true } });
   if (!page) return [];
   if (page.taskId) return filesOnTask(db, userId, page.taskId);
-  return filesByIds(db, userId, mentionedFileIds(page.content));
+  return filesByIds(db, userId, [...mentionedFileIds(page.content), ...(page.sourceFileId ? [page.sourceFileId] : [])]);
 }
 
 /** The person's files, newest first, matched by name or text. */

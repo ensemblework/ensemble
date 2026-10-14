@@ -162,3 +162,5 @@ Everyone can pick a picture avatar in Settings › Account › Avatar: 15 per pr
 - The CLI, `ensemble mcp`, the Context Bridge and the desktop app do not know about sharing. Tokens and service calls always act as the space they belong to, never as a guest.
 - Answering a run's question from a phone (remote answers) works for your own spaces only.
 - Character-level co-editing (§5).
+
+Page bulk deletion (15 Oct 2026): `POST /api/pages/delete-many` is in the existing **shared** space route class (`src/sharing/policy.ts`, `/api/pages*`). It needs space edit access; single-item and public-link grants do not include this route. `pages/store.ts` validates every selected id and scopes descendant traversal to the same space. The batch and descendants share one Undo entry. Device attachment downloads remain in the device route class and require the assigned device and active job lease.

@@ -456,3 +456,13 @@ Recoverable page deletion is immediate with Undo and Trash recovery. Board has o
 **Checked 11 Oct 2026:** 283 Hub checks, 3,948 public API checks (two Postgres-only skips), shared-types and theme package tests, all-package TypeScript checks, and the production Hub build. Browser checks covered 390 × 844 and 844 × 390 tile galleries, one scroll area, mobile Today tiles and OTP entry, direct search landing and automatic highlight removal, and desktop keyboard tile ordering.
 
 **Checked 12 Oct 2026:** expanded Jump to keyword destinations for nested settings, Context People/Graph, Code Local repositories, connector settings and model controls. Local browser checks verified exact Accent scrolling on desktop/phone, People/Graph tab navigation, Code section navigation, multiple diagram results and submitting a unique match before search completion. Regression tests cover catalog ranking/gates, setting scroll targets, cancellation of pending navigation and diagram search isolation/Trash/module filtering.
+
+## Page imports and editing — 15 Oct 2026
+
+- Notion imports and the assistant's page-import tool preserve nested pages, native formatting, collapsible blocks and normal tables with linked row pages. Database imports create pages/tables, with no Ensemble database or board-view concept. Formula/rollup values are snapshots; exported CSV has no column type schema. API media keep source URLs, and exported local image bytes are not copied.
+- Pages have Add block and Drag block controls; moves retain code, nested list content and automatic numbering, with editor Undo. Collapsible blocks can contain ordinary page blocks.
+- Bulk page Trash includes descendants and restores with one top-bar Undo. Imported page hierarchy uses the additive `20261015000000_nested_pages` migration.
+- Assigned tasks include diagram source from their embedded diagrams. Converted documents remain attached. Local engines get file originals; paired computers download task-scoped originals with an active device lease before starting.
+- The assistant has a bounded conversation layout, grouped activity, visible approvals and copy controls. Fetch uses a distinct refresh icon; Sign out sits beside profile details and asks for confirmation.
+
+Checked 15 Oct 2026 with in-memory import/page tests, editor/assistant DOM tests, Context Bridge tests and MCP smoke, and an isolated Chrome browser flow for Add block, drag with nested code, fixed diagram zoom, profile confirmation, bulk Trash/Undo and chat history rendering. Vendor coverage uses mocked Notion responses; no authenticated live Notion import was run.

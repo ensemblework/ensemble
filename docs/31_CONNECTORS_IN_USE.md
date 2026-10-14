@@ -37,7 +37,7 @@ Gmail, Outlook, Teams, Google and Outlook calendars, Slack, GitHub and Linear sy
 - **`hub_search_context` and `hub_read_context`** search what Ensemble already keeps: synced mail, chats, events, pull requests and issues, meeting transcripts, and attached items (`apps/hub-api/src/assistant/tools/context.ts`).
 - **The vendor's own tools** through its remote MCP server (`mcp_<app>_<tool>`), with each tool switchable in the connector's detail page.
 - **`apps_post_update`** posts a comment on the issue, card or ticket a task came from.
-- **`hub_import_app_file`** saves a Drive, OneDrive, Dropbox or Box file, or a Gmail or Outlook attachment, in Files; **`hub_save_app_item_as_page`** saves one item (a Notion or Confluence page, an issue…) as an Ensemble page that says where it came from and links back. Both take `source`, `kind` and `id` from an `apps_search` hit and run after Apply ([11 §8.4](11_HOW_THE_ASSISTANT_WORKS.md)).
+- **`hub_import_app_file`** saves a Drive, OneDrive, Dropbox or Box file, or a Gmail or Outlook attachment, in Files; **`hub_save_app_item_as_page`** saves an item as an Ensemble page that says where it came from and links back. Notion reads retain tables and collapsible Markdown structure; imports use native blocks. For Notion it imports the complete accessible child-page tree with native formatting, and databases become ordinary tables with linked row pages (`imports/api/notion.ts`, `imports/notion-content.ts`). Both take `source`, `kind` and `id` from an `apps_search` hit and run after Apply ([11 §8.4](11_HOW_THE_ASSISTANT_WORKS.md)).
 - Everything that changes an outside app waits for **Apply** and is written to the ledger; app content is passed to the model as information, not instructions.
 
 ### 2.3 Attach items to a task or project
@@ -60,7 +60,7 @@ Code: `apps/hub-api/src/connectors/items/` (one file per app in `sources/`, the 
 
 ### 2.5 Import boards and pages
 
-Imports from Notion, Linear, Jira, Trello, Asana, Todoist, ClickUp, monday.com, GitHub and spreadsheets are unchanged ([27](27_IMPORTS.md)), and now open from the Board (**Import**) and from Pages (**Import from Notion**) as well as Settings. Trello lists, Notion statuses and Jira statuses each map to an Ensemble column in the review step, so differently named columns land where the person chooses.
+Imports from Notion, Linear, Jira, Trello, Asana, Todoist, ClickUp, monday.com, GitHub and spreadsheets are unchanged ([27](27_IMPORTS.md)), and now open from the Board (**Import**) and from Pages (**Import from Notion**) as well as Settings. Trello lists and Jira statuses each map to an Ensemble column in the review step, so differently named columns land where the person chooses.
 
 ### 2.5b Files from apps
 

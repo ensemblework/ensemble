@@ -12,8 +12,9 @@ import {
 } from "@ensemble/shared-types";
 import { markdownToNodes, pageSearchText } from "./markdown.js";
 import { lockUserTransaction } from "../lib/user-lock.js";
-import { recordUndoInTransaction } from "../lib/undo.js";
+import { recordUndoInTransaction, withUndoGroup } from "../lib/undo.js";
 import { createTask } from "../services/tasks.js";
+import { currentScope } from "../sharing/context.js";
 
 export class TaskPageError extends Error {
   constructor(
@@ -30,6 +31,7 @@ type Db = Prisma.TransactionClient;
 const PAGE_INCLUDE = {
   mentions: { orderBy: [{ kind: "asc" as const }, { entityId: "asc" as const }] },
   sourceFile: { select: { id: true, filename: true, format: true, style: true, deletedAt: true } },
+  parent: { select: { userId: true, taskId: true, deletedAt: true, task: { select: { deletedAt: true } } } },
 } satisfies Prisma.TaskPageInclude;
 type StoredPage = Prisma.TaskPageGetPayload<{ include: typeof PAGE_INCLUDE }>;
 
@@ -147,12 +149,15 @@ export async function saveTaskPage(
 }
 
 export type StandalonePageSummary = {
+  parentId: string | null;
   id: string;
   title: string;
   updatedAt: string;
 };
 
 export type StandalonePageContent = {
+  parentId: string | null;
+  parentTaskId: string | null;
   id: string;
   title: string;
   taskId: null;
@@ -168,8 +173,13 @@ export type StandalonePageContent = {
 
 function standaloneDto(page: StoredPage & { title: string }): StandalonePageContent {
   const state = snapshot(page, page.notesSnapshot);
+  const scope = currentScope();
+  const item = scope?.spaceId === page.userId && (scope.access.kind === "share" || scope.access.kind === "link");
+  const parent = !item && page.parent?.userId === page.userId && !page.parent.deletedAt && !page.parent.task?.deletedAt ? page.parent : null;
   return {
     id: page.id,
+    parentId: parent ? page.parentId : null,
+    parentTaskId: parent?.taskId ?? null,
     title: page.title,
     taskId: null,
     revision: page.revision,
@@ -198,9 +208,9 @@ export async function listStandalonePages(prisma: PrismaClient, userId: string):
   const rows = await prisma.taskPage.findMany({
     where: { userId, taskId: null, deletedAt: null },
     orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
-    select: { id: true, title: true, updatedAt: true },
+    select: { id: true, title: true, updatedAt: true, parentId: true },
   });
-  return rows.map((row) => ({ id: row.id, title: row.title || "Untitled", updatedAt: row.updatedAt.toISOString() }));
+  return rows.map((row) => ({ id: row.id, parentId: row.parentId, title: row.title || "Untitled", updatedAt: row.updatedAt.toISOString() }));
 }
 
 /** A new note: empty, or made from a file (`sourceFileId`) or from text with its title and content. */
@@ -226,9 +236,9 @@ export async function createStandalonePage(
       ...(from?.externalSource && from.externalId ? { externalSource: from.externalSource, externalId: from.externalId } : {}),
       ...(mentions.length ? { mentions: { createMany: { data: mentions.map((mention) => ({ kind: mention.kind, entityId: mention.entityId, label: mention.label })) } } } : {}),
     },
-    select: { id: true, title: true, updatedAt: true },
+    select: { id: true, title: true, updatedAt: true, parentId: true },
   });
-  return { id: page.id, title: page.title, updatedAt: page.updatedAt.toISOString() };
+  return { id: page.id, parentId: page.parentId, title: page.title, updatedAt: page.updatedAt.toISOString() };
 }
 
 export async function getStandalonePage(prisma: PrismaClient, userId: string, id: string): Promise<StandalonePageContent> {
@@ -252,9 +262,9 @@ export async function renameStandalonePage(
     const updated = await db.taskPage.update({
       where: { id: page.id },
       data: { title: trimmed, searchText: pageSearchText(trimmed, content, page.notesSnapshot) },
-      select: { id: true, title: true, updatedAt: true },
+      select: { id: true, title: true, updatedAt: true, parentId: true },
     });
-    return { id: updated.id, title: updated.title, updatedAt: updated.updatedAt.toISOString() };
+    return { id: updated.id, parentId: updated.parentId, title: updated.title, updatedAt: updated.updatedAt.toISOString() };
   });
 }
 
@@ -304,15 +314,33 @@ export async function deleteStandalonePage(prisma: PrismaClient, userId: string,
 
 /** Moves a standalone note to Trash inside the caller's transaction, with its undo entry. */
 export async function trashStandalonePage(db: Db, userId: string, id: string, actor: Actor = "me"): Promise<{ title: string }> {
+  const result = await trashStandalonePages(db, userId, [id], actor);
+  return { title: result.pages.find((page) => page.id === id)!.title };
+}
+
+/** Validate every selected page first; the complete set and descendants share one atomic undo entry. */
+export async function trashStandalonePages(db: Db, userId: string, ids: string[], actor: Actor = "me") {
   await lockUserTransaction(db, userId);
-  const page = await ownedStandalone(db, userId, id, true);
-  if (!page) throw new TaskPageError("PAGE_NOT_FOUND", "Page not found.", 404);
-  const updated = await db.taskPage.update({ where: { id }, data: { deletedAt: new Date() } });
-  const before = { deletedAt: page.deletedAt };
-  const after = { deletedAt: updated.deletedAt, updatedAt: updated.updatedAt };
-  const op = { op: "update" as const, model: "taskPage" as const, id, before, after };
-  await recordUndoInTransaction(db, { userId, label: `Deleted “${page.title || "Untitled"}”`, kind: "delete", actor, subject: "page", href: `/pages/${id}`, inverse: op, forward: op });
-  return { title: page.title || "Untitled" };
+  const unique = [...new Set(ids)];
+  const selected = await db.taskPage.findMany({ where: { userId, id: { in: unique }, taskId: null, deletedAt: null } });
+  if (selected.length !== unique.length) throw new TaskPageError("PAGE_NOT_FOUND", "One or more pages are unavailable or belong to a task. List pages again before deleting.", 404);
+  const pages = new Map(selected.map((page) => [page.id, page]));
+  let frontier = unique;
+  while (frontier.length) {
+    const children = await db.taskPage.findMany({ where: { userId, parentId: { in: frontier }, taskId: null, deletedAt: null } });
+    frontier = [];
+    for (const child of children) if (!pages.has(child.id)) { pages.set(child.id, child); frontier.push(child.id); }
+  }
+  const result = await withUndoGroup(db, { userId, actor, subject: "page" }, async () => {
+    const deletedAt = new Date();
+    for (const page of pages.values()) {
+      const updated = await db.taskPage.update({ where: { id: page.id }, data: { deletedAt } });
+      const op = { op: "update" as const, model: "taskPage" as const, id: page.id, before: { deletedAt: page.deletedAt }, after: { deletedAt: updated.deletedAt, updatedAt: updated.updatedAt } };
+      await recordUndoInTransaction(db, { userId, label: `Deleted “${page.title || "Untitled"}”`, kind: "delete", actor, subject: "page", href: `/pages/${page.id}`, inverse: op, forward: op });
+    }
+    return [...pages.values()].map((page) => ({ id: page.id, title: page.title || "Untitled" }));
+  });
+  return { pages: result.result, undoEntryId: result.undoEntryId };
 }
 
 export type PageTarget = { pageId: string } | { taskId: string };

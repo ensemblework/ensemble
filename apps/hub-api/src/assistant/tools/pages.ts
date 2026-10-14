@@ -11,8 +11,10 @@ import { separateLists } from "../../imports/markdown.js";
 import { clip } from "../../lib/office/text.js";
 import { sseHub } from "../../lib/sse.js";
 import { lastUndoId, recordUndoInTransaction } from "../../lib/undo.js";
+import { diagramSources } from "../../pages/agent-context.js";
+import { filesOnPage } from "../../files/attached.js";
 import { markdownToNodes, pageMarkdown } from "../../pages/markdown.js";
-import { createStandalonePage, editablePage, trashStandalonePage, writePageContent, type PageTarget } from "../../pages/store.js";
+import { createStandalonePage, editablePage, trashStandalonePage, trashStandalonePages, writePageContent, type PageTarget } from "../../pages/store.js";
 import { titlesMatch } from "../../services/tasks.js";
 import { defineTool, inTransaction, toolOk, type ToolContext } from "../types.js";
 
@@ -147,10 +149,10 @@ export const pageTools = [
         ...(query ? { OR: [{ title: { contains: query, mode: "insensitive" as const } }, { searchText: { contains: query, mode: "insensitive" as const } }] } : {}),
       };
       const [rows, total] = await Promise.all([
-        ctx.prisma.taskPage.findMany({ where, orderBy: [{ updatedAt: "desc" }, { id: "desc" }], skip: input.offset, take: input.limit, select: { id: true, title: true, updatedAt: true } }),
+        ctx.prisma.taskPage.findMany({ where, orderBy: [{ updatedAt: "desc" }, { id: "desc" }], skip: input.offset, take: input.limit, select: { id: true, title: true, updatedAt: true, parentId: true } }),
         ctx.prisma.taskPage.count({ where }),
       ]);
-      const pages = rows.map((row) => ({ id: row.id, title: row.title || "Untitled", updated: row.updatedAt.toISOString().slice(0, 10) }));
+      const pages = rows.map((row) => ({ id: row.id, parentId: row.parentId, title: row.title || "Untitled", updated: row.updatedAt.toISOString().slice(0, 10) }));
       const next = input.offset + rows.length;
       return toolOk(`Found ${rows.length} of ${total} page(s).`, { pages, total, ...(next < total ? { nextOffset: next } : {}) });
     },
@@ -176,6 +178,7 @@ export const pageTools = [
         title,
         updated: page?.updatedAt.toISOString().slice(0, 10) ?? null,
         text: part.text,
+        ...(input.offset === 0 ? { diagramSources: await diagramSources(ctx.prisma, ctx.userId, doc), files: page ? await filesOnPage(ctx.prisma, ctx.userId, page.id) : [] } : {}),
         offset: part.offset,
         total: part.total,
         ...(part.nextOffset !== undefined ? { nextOffset: part.nextOffset } : {}),
@@ -269,7 +272,7 @@ export const pageTools = [
   defineTool({
     name: "hub_delete_page",
     area: "projects",
-    description: "Move a page (standalone note) to Trash by pageId. It can be restored. A task's page goes with its task (hub_delete_task).",
+    description: "Move a page (standalone note) and its nested pages to Trash by pageId. One Undo restores them together. A task's page goes with its task (hub_delete_task).",
     input: z.object({ pageId: z.string().uuid() }),
     isWrite: true,
     risk: "medium",
@@ -291,6 +294,26 @@ export const pageTools = [
         invalidate: ["pages"],
         ...(result.undoEntryId ? { undoEntryId: result.undoEntryId } : {}),
       });
+    },
+  }),
+  defineTool({
+    name: "hub_delete_pages",
+    area: "projects",
+    description: "Move multiple standalone pages and their nested pages to Trash together. Use pageIds returned by hub_list_pages. One Undo in the top bar restores the entire batch, including nesting and attachments. Task pages are deleted with their tasks.",
+    input: z.object({ pageIds: z.array(z.string().uuid()).min(1).max(100) }),
+    isWrite: true,
+    risk: "medium",
+    undoable: true,
+    async preview(ctx, input) {
+      const ids = [...new Set(input.pageIds)];
+      const pages = await ctx.prisma.taskPage.findMany({ where: { userId: ctx.userId, id: { in: ids }, taskId: null, deletedAt: null }, select: { title: true } });
+      if (pages.length !== ids.length) throw new Error("One or more pages are unavailable. Call hub_list_pages and use the returned ids.");
+      return `Move ${ids.length} pages and their nested pages to Trash: ${pages.map((page) => page.title || "Untitled").join(", ")}. One Undo restores them all.`;
+    },
+    async run(ctx, input) {
+      const result = await inTransaction(ctx, (tx) => trashStandalonePages(tx, ctx.userId, input.pageIds, "agent"));
+      sseHub.publish(ctx.userId, { event: "page", data: { action: "delete", ids: result.pages.map((page) => page.id) } });
+      return toolOk(`Moved ${result.pages.length} pages to Trash. One Undo restores them all.`, { pages: result.pages, restore: "Undo in the top bar restores the whole batch." }, { invalidate: ["pages"], ...(result.undoEntryId ? { undoEntryId: result.undoEntryId } : {}) });
     },
   }),
 ];

@@ -14,7 +14,7 @@ type Mark = { type: string; attrs?: Record<string, unknown> };
 function inline(text: string): PageNode[] {
   const out: PageNode[] = [];
   // `ensemble://<kind>/<id>` links stay links here; restoreMentionLinks turns them into mentions.
-  const pattern = /(\*\*([^*]+)\*\*|__([^_]+)__|\*([^*\s][^*]*)\*|_([^_\s][^_]*)_|`([^`]+)`|\[([^\]]+)\]\(((?:https?|ensemble):\/\/[^\s)]+)\)|(https?:\/\/[^\s)<>]+))/g;
+  const pattern = /(\*\*([^*]+)\*\*|__([^_]+)__|\*([^*\s][^*]*)\*|_([^_\s][^_]*)_|`([^`]+)`|\[([^\]]+)\]\(((?:(?:https?|ensemble|notion-page):\/\/|\/pages\/)[^\s)]+)\)|(https?:\/\/[^\s)<>]+))/g;
   let last = 0;
   const push = (value: string, marks?: Mark[]) => {
     if (!value) return;
@@ -63,7 +63,24 @@ export function markdownToNodes(markdown: string): PageNode[] {
       i += 1;
       continue;
     }
-    const fence = line.match(/^```(\w*)/);
+    if (/^<details(?:\s|>)/i.test(line.trim())) {
+      const body: string[] = [];
+      let depth = 0;
+      do {
+        const current = lines[i++]!;
+        depth += (current.match(/<details(?:\s[^>]*)?>/gi) ?? []).length;
+        depth -= (current.match(/<\/details>/gi) ?? []).length;
+        body.push(current);
+      } while (depth > 0 && i < lines.length);
+      const html = body.join("\n");
+      const summary = /<summary>([\s\S]*?)<\/summary>/i.exec(html)?.[1] ?? "Details";
+      const inner = html.replace(/^\s*<details[^>]*>\s*/i, "").replace(/<summary>[\s\S]*?<\/summary>/i, "").replace(/<\/details>\s*$/i, "");
+      nodes.push({ type: "toggleBlock", attrs: { collapsed: !/^\s*<details[^>]*\bopen\b/i.test(html) }, content: [paragraph(summary), ...markdownToNodes(inner)] });
+      continue;
+    }
+    const image = /^!\[([^\]]*)\]\((https?:\/\/[^)]+)\)\s*$/.exec(line.trim());
+    if (image) { nodes.push({ type: "image", attrs: { alt: image[1], src: image[2] } }); i++; continue; }
+    const fence = line.match(/^```([^\s`]*)/);
     if (fence) {
       const body: string[] = [];
       i += 1;
@@ -85,7 +102,7 @@ export function markdownToNodes(markdown: string): PageNode[] {
     }
     if (line.trim().startsWith("|") && lines[i + 1]?.match(/^\s*\|?\s*:?-{2,}/)) {
       const rows: string[][] = [];
-      const cells = (row: string) => row.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((cell) => cell.trim());
+      const cells = (row: string) => row.trim().replace(/^\|/, "").replace(/\|$/, "").split(/(?<!\\)\|/).map((cell) => cell.trim().replace(/\\\|/g, "|"));
       rows.push(cells(line));
       i += 2;
       while (i < lines.length && lines[i]!.trim().startsWith("|")) rows.push(cells(lines[i++]!));
@@ -99,23 +116,29 @@ export function markdownToNodes(markdown: string): PageNode[] {
       continue;
     }
     if (isList(line)) {
-      const ordered = /^\s*\d+[.)]/.test(line);
-      const checklist = /^\s*[-*+]\s+\[[ xX]\]/.test(line);
+      const first = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(line)!;
+      const base = first[1]!.length;
+      const ordered = /^\d/.test(first[2]!);
+      const checklist = /^\[[ xX]\]/.test(first[3]!);
       const items: PageNode[] = [];
-      while (i < lines.length && isList(lines[i]!) && /^\s*\d+[.)]/.test(lines[i]!) === ordered) {
-        const text = lines[i]!.replace(/^\s*([-*+]|\d+[.)])\s+/, "");
-        const check = text.match(/^\[([ xX])\]\s*(.*)$/);
-        i += 1;
+      while (i < lines.length) {
+        const match = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/.exec(lines[i]!);
+        if (!match || match[1]!.length !== base || /^\d/.test(match[2]!) !== ordered || (!ordered && /^\[[ xX]\]/.test(match[3]!) !== checklist)) break;
+        const check = match[3]!.match(/^\[([ xX])\]\s*(.*)$/);
+        const body = check ? check[2]! : match[3]!;
         const extra: string[] = [];
-        while (i < lines.length && /^\s{2,}\S/.test(lines[i]!) && !isList(lines[i]!)) extra.push(lines[i++]!.trim());
-        const body = [check ? check[2]! : text, ...extra].join(" ");
-        items.push(
-          checklist
-            ? { type: "taskItem", attrs: { checked: Boolean(check && check[1] !== " ") }, content: [paragraph(body)] }
-            : { type: "listItem", content: [paragraph(body)] },
-        );
+        i += 1;
+        while (i < lines.length) {
+          const next = lines[i]!;
+          if (!next.trim() && lines[i + 1] && (lines[i + 1]!.match(/^\s*/)?.[0].length ?? 0) > base) { extra.push(""); i++; continue; }
+          const indent = next.match(/^\s*/)?.[0].length ?? 0;
+          if (!next.trim() || indent <= base) break;
+          extra.push(next.slice(Math.min(base + 2, indent)));
+          i++;
+        }
+        items.push({ type: checklist ? "taskItem" : "listItem", ...(checklist ? { attrs: { checked: Boolean(check && check[1] !== " ") } } : {}), content: [paragraph(body), ...(extra.length ? markdownToNodes(extra.join("\n")) : [])] });
       }
-      nodes.push({ type: checklist ? "taskList" : ordered ? "orderedList" : "bulletList", content: items });
+      nodes.push({ type: checklist ? "taskList" : ordered ? "orderedList" : "bulletList", ...(ordered ? { attrs: { start: Number.parseInt(first[2]!, 10) || 1 } } : {}), content: items });
       continue;
     }
     const body: string[] = [line.trim()];
@@ -207,11 +230,11 @@ function blockMarkdown(node: PageNode, indent = ""): string {
     case "bulletList":
       return children.map((item) => nested(item, "- ")).join("\n");
     case "orderedList":
-      return children.map((item, index) => nested(item, `${index + 1}. `)).join("\n");
+      return children.map((item, index) => nested(item, `${index + Number(node.attrs?.start ?? 1)}. `)).join("\n");
     case "taskList":
       return children.map((item) => nested(item, item.attrs?.checked ? "- [x] " : "- [ ] ")).join("\n");
     case "codeBlock":
-      return `\`\`\`${String(node.attrs?.language ?? "")}\n${children.map((child) => child.text ?? "").join("")}\n\`\`\``;
+      return [`\`\`\`${String(node.attrs?.language ?? "")}`, children.map((child) => child.text ?? "").join(""), "```"].join("\n").split("\n").map((line) => `${indent}${line}`).join("\n");
     case "blockquote":
       return children.map((child) => blockMarkdown(child)).join("\n\n").split("\n").map((line) => `> ${line}`).join("\n");
     case "horizontalRule":
@@ -224,6 +247,12 @@ function blockMarkdown(node: PageNode, indent = ""): string {
       const width = Math.max(...rows.map((row) => row.length));
       const line = (row: string[]) => `| ${Array.from({ length: width }, (_, index) => row[index] ?? "").join(" | ")} |`;
       return [line(rows[0]!), `|${" --- |".repeat(width)}`, ...rows.slice(1).map(line)].join("\n");
+    }
+    case "pageLink":
+      return `[${String(node.attrs?.label ?? "Page")}](${node.attrs?.pageId ? `/pages/${String(node.attrs.pageId)}` : `https://www.notion.so/${String(node.attrs?.externalPageId ?? "")}`})`;
+    case "toggleBlock": {
+      const [summary, ...body] = children;
+      return `<details${node.attrs?.collapsed ? "" : " open"}>\n<summary>${inlineMarkdown(summary?.content)}</summary>\n\n${body.map((child) => blockMarkdown(child)).join("\n\n")}\n</details>`;
     }
     case "agentBlock":
       return [`*Earlier agent output${node.attrs?.title ? `: ${String(node.attrs.title)}` : ""}*`, ...children.map((child) => blockMarkdown(child))].join("\n\n");

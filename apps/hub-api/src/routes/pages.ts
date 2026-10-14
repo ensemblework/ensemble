@@ -5,6 +5,7 @@ import {
   createStandalonePage,
   convertPage,
   deleteStandalonePage,
+  trashStandalonePages,
   getStandalonePage,
   listStandalonePages,
   renameStandalonePage,
@@ -43,6 +44,13 @@ export async function pageRoutes(app: FastifyInstance): Promise<void> {
     const page = await createStandalonePage(prisma, request.userId);
     sseHub.publish(request.userId, { event: "page", data: { id: page.id, action: "create" } });
     return reply.code(201).send({ page });
+  });
+
+  app.post("/api/pages/delete-many", async (request) => {
+    const { pageIds } = z.object({ pageIds: z.array(z.string().uuid()).min(1).max(100) }).parse(request.body);
+    const result = await prisma.$transaction((tx) => trashStandalonePages(tx, request.userId, pageIds));
+    sseHub.publish(request.userId, { event: "page", data: { action: "delete", ids: result.pages.map((page) => page.id) } });
+    return { deleted: result.pages.length, undoEntryId: result.undoEntryId };
   });
 
   app.get("/api/pages/:id", async (request, reply) => {

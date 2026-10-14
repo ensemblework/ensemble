@@ -1,8 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Menu, MoreHorizontal, PanelRight, PanelRightDashed, Redo2, Undo2 } from "lucide-react";
-import { FetchGlyph } from "@/components/motion/slot";
+import { Menu, MoreHorizontal, PanelRight, PanelRightDashed, Redo2, RefreshCw, Undo2 } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useEffect } from "react";
 import { api } from "@/lib/api";
@@ -159,7 +158,7 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
         title="Fetch now: read every switched-on source"
         aria-label="Fetch now"
       >
-        <FetchGlyph active={fetchNow.isPending} size={15} />
+        <RefreshCw className={fetchNow.isPending ? "animate-spin" : undefined} size={15} />
       </button>
       <ActivityControls connected={connected} />
       <button
@@ -185,7 +184,7 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
           <>
             <MenuItem disabled={!canUndo || undo.isPending} onClick={() => { undo.mutate(); close(); }}><Undo2 size={14} /> Undo</MenuItem>
             <MenuItem disabled={!canRedo || redo.isPending} onClick={() => { redo.mutate(); close(); }}><Redo2 size={14} /> Redo</MenuItem>
-            {guest ? null : <MenuItem disabled={fetchNow.isPending} onClick={() => { fetchNow.mutate(); close(); }}><FetchGlyph active={fetchNow.isPending} size={14} /> Fetch now</MenuItem>}
+            {guest ? null : <MenuItem disabled={fetchNow.isPending} onClick={() => { fetchNow.mutate(); close(); }}><RefreshCw size={14} /> Fetch now</MenuItem>}
             <MenuItem onClick={() => { toggleMode(); close(); }}><PanelRight size={14} /> {mode === "side" ? "Open tasks as full pages" : "Open tasks in a side peek"}</MenuItem>
           </>
         )}

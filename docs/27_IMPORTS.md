@@ -11,7 +11,7 @@ Checked 7 Oct 2026 with the tests listed at the end. Vendor APIs were checked ag
 1. **Pick the app** in the import dialog (`ImportDialog`). It opens from Settings → Connections, the Board's **Import** menu (*Import a board…*) and the Pages sidebar (*Import from Notion*, which starts on Notion).
 2. **Connect or upload.** Use the account already connected in Settings → Connections, paste a token, or upload the app's export. A pasted token is kept in server memory for this import only (at most 30 minutes); it is not written to the database or logs.
 3. **Choose** databases, projects, boards, teams, lists or repositories. Counts show where the app reports them cheaply.
-4. **Review.** Status values found (from the file, or a first page sampled from the API) each get an Ensemble status you can change; for spreadsheets, each Ensemble field gets a column you can change; Notion databases and files can come in as tasks or as pages. A sample table shows the first rows as they will land.
+4. **Review.** Status values found (from the file, or a first page sampled from the API) each get an Ensemble status you can change; for spreadsheets, each Ensemble field gets a column you can change; Notion imports become pages and ordinary editable tables; other spreadsheet files can come in as tasks or pages. A sample table shows the first rows as they will land.
 5. **Run.** The import runs in the background on the Hub. You can close the dialog; it shows under Recent imports (`RecentImports`). Cancel stops after the current batch.
 6. **Summary** with counts and links: the board, each project, `#label` searches, the imported pages, and **Undo this import**.
 
@@ -19,7 +19,7 @@ Checked 7 Oct 2026 with the tests listed at the end. Vendor APIs were checked ag
 
 | App | Connect | File export | Becomes | Fields |
 |---|---|---|---|---|
-| Notion | Connected account or internal integration secret (share the pages with the integration) | Markdown & CSV zip, or a database CSV | Databases → projects, rows → tasks (or pages), other pages → pages | Title; first date property (prefer Due/Deadline; a range gives start and due); Status property or a select named Status/State/Stage; select named Priority; every multi-select → labels; people; a checkbox named Done/Complete → done; a text property named Description/Summary/Notes → description; all other properties listed at the top of the page; page body as blocks (headings, lists, to-dos, code, quotes, callouts, toggles, tables, dividers, images and files as links) |
+| Notion | Connected account or internal integration secret (share the pages with the integration) | Markdown & CSV zip, or a database CSV | Databases → ordinary tables in pages; rows → linked child pages; nested pages → nested Ensemble pages | All table columns and values are retained, with property type metadata from the API. Rich text marks, nested lists, checklists, code, quotes/callouts, collapsible blocks, tables, dividers and linked child pages become native page blocks. API images remain images; other media remain source links. No database, board or alternative-view feature is introduced. |
 | Linear | Connected account or personal API key | CSV | Issues → tasks; project → project | Title, description (Markdown), status name and state type, priority, labels, cycle as a label, assignee, due date, link; sub-issues note their parent. Containers: "Issues assigned to me" and each team |
 | Jira Cloud | Connected account (OAuth or email + API token) or email + API token + site | CSV (all fields) | Issues → tasks; Jira project → project | Summary, description (Atlassian Document Format → Markdown), due date, labels, issue type (except Task/Sub-task) as a label, status and status category, priority, assignee, parent/epic noted in the description. Containers: "Issues assigned to me" and each project, with approximate counts |
 | Trello | Connected account or API key + token | Board JSON (free on every plan) | Boards → projects, cards → tasks | Name, description, due and start, "due complete" → done, labels (name, or colour when unnamed), members, list name → status (Done list → done), checklists → a to-do list on the task page. Archived cards and lists are skipped |
@@ -54,8 +54,9 @@ The dialog shows these next to the upload box (`EXPORT_HELP` in `src/imports/sou
 - **Dates:** a date with no time is stored the way Ensemble stores date-only dues, midnight UTC on that day (`parseDue` in `src/lib/clock.ts`). A time with a zone is kept as that instant; a time with no zone keeps its day. Spreadsheet dates may be ISO, `MM/DD/YYYY` (or `DD/MM/YYYY` when the first part is over 12), Jira's `07/Oct/26`, "October 7, 2026" or "7 Oct 2026"; ranges ("start → end") give start and due.
 - **Labels** are trimmed, de-duplicated without regard to case, at most 20 per task and 40 characters each.
 - **Assignees** become the task's people, by name.
-- **Descriptions:** a short single paragraph stays as the task description. Anything longer or structured moves to the task's page, and the task keeps its first paragraph. Notion page bodies, Trello checklists and unmapped Notion properties go to the page too.
-- **Pages:** standalone pages start with an "Imported from Notion · in *Parent* · Open original" line that keeps the hierarchy visible.
+- **Descriptions:** a short single paragraph stays as the task description. Anything longer or structured moves to the task's page, and the task keeps its first paragraph. Trello checklists and unmapped properties go to the page too. Notion row properties stay on their ordinary page.
+- **Pages:** standalone pages start with an import credit and original link. Notion parents are stored in `TaskPage.parentId` and resolved after all batches (`finishPageImport` in `imports/apply.ts`); children fetched before parents still nest correctly. The sidebar indents children and each page lists its child pages. Notion imports never create projects or board tasks.
+- **Notion formatting:** API imports use `imports/notion-content.ts` directly instead of flattening through Markdown. Toggles use `toggleBlock`, retaining every nested block while collapsed. Tables retain column names, values and property types as normal `tableHeader`/`tableCell` attributes; formulas and rollups are snapshots, not live calculations. When Pages and databases are selected together, embedded tables are imported inside their page once rather than copied again as standalone table pages. Database row titles and relation values link to imported pages when available; file values keep their source links. Markdown/CSV exports retain the exported values; their CSV has no type schema. Columns become sequential blocks, and media source URLs can expire. Exported local image bytes are not copied into Files.
 - **Projects** are found by the app's id first, then by name (case-insensitive), so an existing "Launch" project is reused. A project Ensemble created for an earlier import and you since deleted is restored.
 - Tasks are created as yours (`createdBy: me`, owner Me), with `sourceKind` set to the app and a link back in Source.
 
@@ -74,6 +75,7 @@ Ensemble guesses columns from their headers and recognises exports from Notion, 
 ## 5. Limits and safety
 
 - Files up to 50 MB. A zip may unpack to at most 100 MB, counted as real inflated bytes across every entry and Notion's inner zip together (one shared budget; the unzip stops as soon as it is spent), and at most 50,000 entries and 40 million characters of page text. Only `.md` and `.csv` entries are inflated.
+- Notion API imports read at most 5,000 pages and at most 5,000 rows in one table; page/block nesting beyond 32 levels is refused explicitly.
 - Up to 20,000 items per import; for more, import the projects or boards in several runs. One running import per person.
 - Writes go in transactions of 100 items; progress, counts and created ids are saved after each batch.
 - API calls run one at a time with a gap under each vendor's published rate limit (`SOURCE_GAP_MS`), wait on 429 and 503 using `Retry-After`, and retry network errors with backoff. Errors name the app and never include the token.
@@ -95,6 +97,8 @@ Ensemble guesses columns from their headers and recognises exports from Notion, 
 | POST | `/api/imports/:id/undo` | → `{ job }`; 409 when already undone or still running |
 
 Task routes accept and return `labels` (`POST /api/tasks`, `PATCH /api/tasks/:id`, `GET /api/tasks`). The board search matches labels, and `#label` searches labels only (`/board?q=%23label` opens it filtered).
+
+Checked 15 Oct 2026 with mocked Notion API responses and in-memory HTTP tests: nested parent resolution, native toggles and tables, re-import without copies, local edits kept, bulk Trash and one-click Undo. No authenticated live Notion import was run.
 
 ## 7. Tests
 

@@ -355,3 +355,5 @@ Ensemble currently proves its thesis inside one browser tab. The context is real
 This module is what makes the database pay off **everywhere else I work**, and it is unusually cheap because the hard parts — ingestion, the graph, ranking, skills, redaction, soft delete — are already built and tested. It is roughly an adapter and some packaging.
 
 It is also the most honest test of the original claim. If a brief assembled from my own mail, meetings and history measurably improves what Copilot writes in a repository it has never seen before, the thesis holds outside the environment that was built to showcase it. If it does not, that is worth knowing too, and this is the cheapest way to find out.
+
+Page context (15 Oct 2026): `apps/hub-api/src/pages/agent-context.ts` supplies the source of diagrams embedded in saved task and standalone pages to `ensemble_read`, with space ownership checks. Page bodies and diagram source have separate bounds (15,000 and 20,000 characters for the bridge), then use the existing offset/nextOffset pagination. Converted source documents also appear in the page's file citations through `files/attached.ts`.

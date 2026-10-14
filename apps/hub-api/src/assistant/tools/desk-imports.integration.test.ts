@@ -17,9 +17,11 @@ const harness: HttpHarness = await createHttpHarness();
 const db = harness.prisma;
 const { getTool } = await import("../registry.js");
 const { applyHeldCalls } = await import("../apply.js");
-const { undoLast } = await import("../../lib/undo.js");
+const { undoLast, redoLast } = await import("../../lib/undo.js");
 const { saveAccount } = await import("../../connectors/accounts.js");
 const { saveFile } = await import("../../files/store.js");
+const { notionSource } = await import("../../imports/api/notion.js");
+const { createImportHttp } = await import("../../imports/http.js");
 const { fileTextSettled } = await import("../../files/extract.js");
 type ToolContext = import("../types.js").ToolContext;
 type AnyHubTool = import("../types.js").AnyHubTool;
@@ -207,6 +209,59 @@ const ISSUE = {
   updated_at: "2026-10-11T10:00:00Z",
   comments: 0,
 };
+
+test("the assistant imports a complete Notion page tree and database as native page blocks, without copies", async () => {
+  handlers.length = 0;
+  const mira = await verified();
+  await saveAccount(mira.id, "notion", { accessToken: "secret_fixture_notion_token", expiresAt: LATER, scopes: [], account: "Mira", meta: { via: "token" } });
+  const root = "11111111111111111111111111111111";
+  const child = "22222222222222222222222222222222";
+  const database = "33333333333333333333333333333333";
+  const source = "44444444444444444444444444444444";
+  const row = "55555555555555555555555555555555";
+  for (const [id, title] of [[root, "Launch"], [child, "Nested notes"], [row, "First row"]]) mock(`https://api.notion.com/v1/pages/${id}`, () => json({ id, object: "page", url: `https://www.notion.so/${id}`, properties: { Name: { type: "title", title: [{ plain_text: title }] } }, parent: { type: "workspace" } }));
+  mock(`https://api.notion.com/v1/blocks/${root}/children`, () => json({ results: [
+    { id: child, type: "child_page", child_page: { title: "Nested notes" } },
+    { id: database, type: "child_database", child_database: { title: "Tracker" } },
+    { id: "toggle", type: "toggle", has_children: true, toggle: { rich_text: [{ plain_text: "Details", annotations: { bold: true, italic: true } }] } },
+  ] }));
+  mock("https://api.notion.com/v1/blocks/toggle/children", () => json({ results: [{ type: "code", code: { language: "python", rich_text: [{ plain_text: "print('kept')" }] } }] }));
+  for (const id of [child, row]) mock(`https://api.notion.com/v1/blocks/${id}/children`, () => json({ results: [{ type: "paragraph", paragraph: { rich_text: [{ plain_text: "Child body" }] } }] }));
+  mock(`https://api.notion.com/v1/databases/${database}`, () => json({ id: database, data_sources: [{ id: source, name: "Tracker" }] }));
+  mock(`https://api.notion.com/v1/data_sources/${source}`, (url) => json(url.endsWith("/query") ? { results: [{ id: row, object: "page", properties: { Name: { type: "title", title: [{ plain_text: "First row" }] }, Score: { type: "number", number: 12 }, Done: { type: "checkbox", checkbox: true } } }] } : { id: source, properties: { Name: { type: "title" }, Score: { type: "number" }, Done: { type: "checkbox" } } }));
+  mock("https://api.notion.com/v1/search", () => json({ results: [{ id: root, object: "page", parent: { type: "workspace" } }] }));
+  const signal = new AbortController().signal;
+  const importedItems = [];
+  for await (const items of notionSource.fetchItems({ auth: { token: "fixture", via: "token" }, options: {}, signal, http: createImportHttp({ signal, label: "Notion", gapMs: 0, fetchImpl: globalThis.fetch }) }, [
+    { id: "pages", name: "Pages", kind: "page", count: 1, importAs: "pages" },
+    { id: source, name: "Tracker", kind: "database", count: 1, importAs: "pages" },
+  ])) importedItems.push(...items);
+  assert.deepEqual(importedItems.map((item) => item.externalId).sort(), [root, child, row], "an embedded table is not duplicated as a standalone page when both containers are selected");
+  const imported = await apply(mira.id, "hub_save_app_item_as_page", { source: "notion", kind: "page", id: root });
+  const id = (imported.result.data as { id: string }).id;
+  const page = await db.taskPage.findUniqueOrThrow({ where: { id } });
+  const nodes = walk((page.content as unknown as PageDocument).content);
+  assert.ok(nodes.some((node) => node.type === "toggleBlock"));
+  assert.ok(nodes.some((node) => node.type === "codeBlock"));
+  assert.ok(nodes.some((node) => node.type === "tableHeader" && node.attrs?.valueType === "number"));
+  assert.ok(nodes.some((node) => node.type === "text" && node.text === "12"));
+  assert.equal(await db.task.count({ where: { userId: mira.id } }), 0);
+  assert.equal(await db.project.count({ where: { userId: mira.id } }), 0);
+  assert.equal(await db.taskPage.count({ where: { userId: mira.id, parentId: id } }), 2);
+  const again = await apply(mira.id, "hub_save_app_item_as_page", { source: "notion", kind: "page", id: root });
+  assert.equal((again.result.data as { id: string }).id, id);
+  assert.equal(await db.taskPage.count({ where: { userId: mira.id } }), 3);
+  assert.equal((await db.taskPage.findUniqueOrThrow({ where: { id } })).revision, page.revision);
+  await undoLast(db, mira.id, imported.result.undoEntryId!);
+  assert.equal(await db.taskPage.count({ where: { userId: mira.id, deletedAt: null } }), 0);
+  await refused(apply(mira.id, "hub_save_app_item_as_page", { source: "notion", kind: "page", id: root }), /in Trash/);
+  await redoLast(db, mira.id, imported.result.undoEntryId!);
+  const converted = await mira.inject({ method: "POST", url: `/api/pages/page/${id}/convert`, payload: { revision: page.revision } });
+  assert.equal(converted.statusCode, 200, converted.body);
+  const updated = await apply(mira.id, "hub_save_app_item_as_page", { source: "notion", kind: "page", id: root });
+  assert.equal(updated.result.href, `/tasks/${converted.json().id}`, "a re-import links to the task the page became");
+  assert.equal(await db.task.count({ where: { userId: mira.id, deletedAt: null } }), 1);
+});
 
 test("an app item becomes a page with where it came from, once; links inside it never reach another space's rows", async () => {
   handlers.length = 0;

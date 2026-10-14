@@ -7,7 +7,7 @@
 import type { ImportJob, Prisma, PrismaClient, TaskStatus } from "@prisma/client";
 import { appendLedger } from "../lib/ledger.js";
 import { sseHub } from "../lib/sse.js";
-import { CREATED_CAP, newWriterState, writeBatch, type CreatedIds } from "./apply.js";
+import { finishPageImport, CREATED_CAP, newWriterState, writeBatch, type CreatedIds } from "./apply.js";
 import { parseUpload, uploadItems } from "./files/index.js";
 import type { CsvMapping } from "./files/csv.js";
 import { createImportHttp } from "./http.js";
@@ -140,7 +140,7 @@ export async function startImport(prisma: PrismaClient, userId: string, input: S
   const active = await prisma.importJob.count({ where: { userId, status: { in: ACTIVE } } });
   if (active) throw new ImportError("An import is already running. Wait for it to finish or cancel it first.", 409);
   const importAs: Record<string, ImportAs> = {};
-  for (const container of containers) importAs[container.id] = input.importAs[container.id] ?? container.importAs ?? "tasks";
+  for (const container of containers) importAs[container.id] = preview.source === "notion" || preview.upload?.source === "notion" ? "pages" : input.importAs[container.id] ?? container.importAs ?? "tasks";
   const plan = planFor(preview, input.statusMap, importAs);
   const total = containers.every((container) => typeof container.count === "number") ? containers.reduce((sum, container) => sum + (container.count ?? 0), 0) : null;
   const job = await prisma.importJob.create({
@@ -245,7 +245,9 @@ async function runJob(
       }
       await flush();
     }
-    if (!signal.aborted) await flush();
+    if (!signal.aborted) {
+      await flush();
+    }
     if (signal.aborted) status = "cancelled";
   } catch (caught) {
     if (signal.aborted) status = "cancelled";
@@ -255,6 +257,10 @@ async function runJob(
     }
   }
   clearInterval(heartbeat);
+  if (state.parents.size) {
+    try { await prisma.$transaction((tx) => finishPageImport(tx, state)); }
+    catch { status = "failed"; error = "The imported pages were kept, but their nesting could not be saved. Run the import again to finish."; }
+  }
   progress.phase = "finished";
   if (state.created.truncated) progress.note = [progress.note, `More than ${CREATED_CAP} items were created; undo also removes rows this import created by time.`].filter(Boolean).join(" ");
   await save({ status, error, finishedAt: new Date() }).catch(() => undefined);

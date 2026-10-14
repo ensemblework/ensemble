@@ -3,7 +3,26 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { PagesSection, type PageLinkProps } from "./pages-section.js";
+import { PagesSection, pageTreeOrder, type PageLinkProps } from "./pages-section.js";
+
+test("nested pages are ordered under their parent, with safe roots for missing parents and cycles", () => {
+  const ordered = pageTreeOrder([{ id: "child", title: "Child", parentId: "root" }, { id: "orphan", title: "Orphan", parentId: "gone" }, { id: "root", title: "Root" }, { id: "loop", title: "Loop", parentId: "loop" }]);
+  assert.deepEqual(ordered.map((page) => [page.id, page.depth]), [["orphan", 0], ["root", 0], ["child", 1], ["loop", 0]]);
+});
+
+test("select pages sends one bulk deletion request", async () => {
+  const deleted: string[][] = [];
+  const mounted = await render(<PagesSection pages={[{ id: "a", title: "First" }, { id: "b", title: "Second", parentId: "a" }]} pathname="/pages/a" onCreate={() => {}} onRename={() => {}} onDelete={() => {}} onDeleteMany={(ids) => deleted.push(ids)} renderLink={(props) => <Anchor {...props} />} />);
+  try {
+    await act(async () => mounted.host.querySelector<HTMLButtonElement>('[aria-label="Select pages"]')!.click());
+    await act(async () => mounted.host.querySelector<HTMLInputElement>('[aria-label="Select First"]')!.click());
+    await act(async () => mounted.host.querySelector<HTMLInputElement>('[aria-label="Select Second"]')!.click());
+    const remove = [...mounted.host.querySelectorAll("button")].find((button) => button.textContent?.includes("Delete 2 pages"));
+    assert.ok(remove);
+    await act(async () => remove.click());
+    assert.deepEqual(deleted, [["a", "b"]]);
+  } finally { await unmount(mounted); }
+});
 
 function Anchor({ href, className, title, children }: PageLinkProps) {
   return (

@@ -1,5 +1,6 @@
 "use client";
 
+import { MessageSquare } from "lucide-react";
 import type { Editor } from "@tiptap/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -265,7 +266,7 @@ export function CommentLayer({
         <button
           type="button"
           className="comment-block-action"
-          style={{ top: hover.top, left: Math.max(8, hover.left) }}
+          style={{ top: hover.top, left: Math.max(8, hover.left - 58) }}
           aria-label="Comment on this block"
           onMouseEnter={() => window.clearTimeout(hoverTimer.current)}
           onMouseLeave={() => {
@@ -284,7 +285,7 @@ export function CommentLayer({
             setDraft("");
           }}
         >
-          +
+          <MessageSquare size={13} />
         </button>
       ) : null}
       {showMargin ? (

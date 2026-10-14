@@ -23,6 +23,8 @@ import {
   mentionHref,
   type BlockCommandId,
 } from "./editor-commands";
+import { PageLink, PageImage, Underline, NotionColor } from "./imported-blocks";
+import { ToggleBlock } from "./toggle-block";
 import { AgentBlock } from "./agent-block";
 import { CommentMark } from "./comment-mark";
 import { EnsembleReply } from "./ensemble-node";
@@ -220,10 +222,19 @@ export function editorExtensions(
     Link.configure({ openOnClick: false, autolink: true }),
     Table.configure({ resizable: true }),
     TableRow,
-    TableHeader,
-    TableCell,
+    TableHeader.extend({
+      addAttributes() { return { ...this.parent?.(), valueType: { default: "text", renderHTML: (attrs) => ({ "data-value-type": attrs.valueType, title: `Value type: ${attrs.valueType}` }), parseHTML: (element) => element.getAttribute("data-value-type") ?? "text" } }; },
+    }),
+    TableCell.extend({
+      addAttributes() { return { ...this.parent?.(), valueType: { default: "text", renderHTML: (attrs) => ({ "data-value-type": attrs.valueType }), parseHTML: (element) => element.getAttribute("data-value-type") ?? "text" } }; },
+    }),
     TaskList,
     TaskItem.configure({ nested: true }),
+    PageLink,
+    PageImage,
+    Underline,
+    NotionColor,
+    ToggleBlock,
     AgentBlock,
     CommentMark,
     EnsembleReply,

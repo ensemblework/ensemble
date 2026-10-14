@@ -4,6 +4,7 @@
  * in parts, append and replace with the title guard, task pages, Trash and undo, and another
  * space of the same account can neither read nor write them.
  */
+import type { Prisma } from "@prisma/client";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test, { after } from "node:test";
@@ -18,10 +19,149 @@ const { undoLast } = await import("../../lib/undo.js");
 const { saveFile } = await import("../../files/store.js");
 const { fileTextSettled } = await import("../../files/extract.js");
 const { filesOnPage } = await import("../../files/attached.js");
+const { newWriterState, writeBatch, finishPageImport } = await import("../../imports/apply.js");
+const { emptyCounts } = await import("../../imports/types.js");
+const { notionNodes } = await import("../../imports/notion-content.js");
+const { pageAgentText } = await import("../../pages/agent-context.js");
+const { loadOpenPage } = await import("../state.js");
+const { commentPageText } = await import("../../routes/comments.js");
+const { readItem: bridgeReadItem } = await import("../../bridge/service.js");
+const { attachClaimedFiles } = await import("../../remote/accept.js");
+const { makePdf } = await import("../../files/testing.js");
+const { filesOnTask, fileOriginal, fileText } = await import("../../files/attached.js");
+const { markdownToNodes, pageMarkdown } = await import("../../pages/markdown.js");
 type ToolContext = import("../types.js").ToolContext;
 type AnyHubTool = import("../types.js").AnyHubTool;
 
 after(() => harness.close());
+
+test("Notion children resolve across batches; bulk deletion and one Undo restore content, nesting and attachments", async () => {
+  const mira = await harness.asUser();
+  const state = newWriterState(mira.id, { externalSource: "notion", sourceKind: "notion", sourceLabel: "Notion", importAs: {}, statusMap: {} }, emptyCounts());
+  const content: PageDocument = { type: "doc", content: notionNodes([
+    { type: "toggle", toggle: { rich_text: [{ plain_text: "Details", annotations: { bold: true, italic: true, underline: true } }] }, children: [
+      { type: "numbered_list_item", numbered_list_item: { rich_text: [{ plain_text: "Step one" }] }, children: [{ type: "code", code: { language: "python", rich_text: [{ plain_text: "print('inside')" }] } }] },
+    ] },
+    { type: "child_page", id: "child", child_page: { title: "Child" } },
+  ]) };
+  await writeBatch(db, state, [{ kind: "page", externalId: "child", title: "Child", parentRef: "root", pageMarkdown: "Nested text" }]);
+  await writeBatch(db, state, [{ kind: "page", externalId: "root", title: "Root", pageContent: content }]);
+  await db.$transaction((tx) => finishPageImport(tx, state));
+  const root = await db.taskPage.findFirstOrThrow({ where: { userId: mira.id, externalId: "root" } });
+  const child = await db.taskPage.findFirstOrThrow({ where: { userId: mira.id, externalId: "child" } });
+  assert.equal(child.parentId, root.id);
+  const nodes = (root.content as unknown as PageDocument).content;
+  assert.equal(nodes.at(-1)!.attrs!.pageId, child.id);
+  assert.deepEqual(nodes[1]!.content![0]!.content![0]!.marks!.map((mark) => mark.type), ["bold", "italic", "underline"]);
+  const second = await db.taskPage.create({ data: { userId: mira.id, title: "Other selected page" } });
+  const deleted = await apply(mira.id, "hub_delete_pages", { pageIds: [root.id, second.id, root.id] });
+  assert.ok(deleted.undoEntryId);
+  assert.equal(await db.undoEntry.count({ where: { userId: mira.id, undoneAt: null } }), 1);
+  for (const id of [root.id, child.id, second.id]) assert.ok((await db.taskPage.findUniqueOrThrow({ where: { id } })).deletedAt);
+  await undoLast(db, mira.id, deleted.undoEntryId!);
+  const restored = await db.taskPage.findUniqueOrThrow({ where: { id: child.id } });
+  assert.equal(restored.deletedAt, null);
+  assert.equal(restored.parentId, root.id);
+  assert.deepEqual((await db.taskPage.findUniqueOrThrow({ where: { id: root.id } })).content, root.content);
+  const outsider = await harness.asUser();
+  await assert.rejects(apply(outsider.id, "hub_delete_pages", { pageIds: [root.id] }), /unavailable/);
+  const foreign = await db.taskPage.create({ data: { userId: outsider.id, title: "Foreign" } });
+  const response = await mira.inject({ method: "POST", url: "/api/pages/delete-many", payload: { pageIds: [second.id, foreign.id] } });
+  assert.equal(response.statusCode, 404, response.body);
+  assert.equal((await db.taskPage.findUniqueOrThrow({ where: { id: second.id } })).deletedAt, null);
+  const converted = await mira.inject({ method: "POST", url: `/api/pages/page/${root.id}/convert`, payload: { revision: root.revision } });
+  assert.equal(converted.statusCode, 200, converted.body);
+  const nested = await mira.inject({ method: "GET", url: `/api/pages/${child.id}` });
+  assert.equal(nested.json().parentId, root.id);
+  assert.equal(nested.json().parentTaskId, converted.json().id, "children can navigate back after their parent becomes an agent task");
+});
+
+test("page context includes owned diagram source and a converted document's original", async () => {
+  const mira = await harness.asUser();
+  const outsider = await harness.asUser();
+  const own = await db.blockDiagram.create({ data: { userId: mira.id, title: "Transformer", source: "diagram Transformer\nblock attention: Multi-head attention", document: {} } });
+  const foreign = await db.blockDiagram.create({ data: { userId: outsider.id, title: "Private", source: "SECRET", document: {} } });
+  const content: PageDocument = { type: "doc", content: [{ type: "toggleBlock", attrs: { collapsed: true }, content: [{ type: "paragraph", content: [{ type: "text", text: "Architecture" }] }, { type: "paragraph", content: [own, foreign].map((diagram) => ({ type: "mention", attrs: { kind: "diagram", id: diagram.id, label: diagram.title } })) }] }] };
+  const context = await pageAgentText(db, mira.id, content, "");
+  assert.match(context, /Multi-head attention/);
+  assert.doesNotMatch(context, /SECRET/);
+  const file = await saveFile(db, mira.id, { filename: "brief.md", mediaType: "text/markdown", bytes: new TextEncoder().encode("Full document text") }, { summarize: false });
+  const page = await db.taskPage.create({ data: { userId: mira.id, title: "From a file", sourceFileId: file.id, content: content as Prisma.InputJsonValue } });
+  assert.equal((await filesOnPage(db, mira.id, page.id))[0]!.id, file.id);
+  const open = await loadOpenPage(db, mira.id, { path: `/pages/${page.id}` }, "UTC", "2026-10-15", "Thursday");
+  assert.match(open!.open!.diagrams!, /Multi-head attention/);
+  assert.match(open!.open!.files!, /brief.md/);
+  const inline = await commentPageText(db, mira.id, "page", page.id);
+  assert.match(inline, /Multi-head attention/);
+  assert.doesNotMatch(inline, /SECRET/);
+  const bridge = await bridgeReadItem(db, mira.id, "page", page.id, 0, 20_000);
+  assert.match(JSON.stringify(bridge), /Multi-head attention/);
+  assert.doesNotMatch(JSON.stringify(bridge), /SECRET/);
+  const token = await harness.asToken(mira, "device");
+  const device = await db.device.create({ data: { userId: mira.id, tokenId: token.id, name: "Task computer", platform: "macos" } });
+  const task = await db.task.create({ data: { userId: mira.id, title: "Read the source and original", owner: "agent", status: "todo" } });
+  await db.taskPage.update({ where: { id: page.id }, data: { taskId: task.id } });
+  const job = await db.workspaceJob.create({ data: { userId: mira.id, taskId: task.id, deviceId: device.id, executionMode: "auto", model: "fixture", status: "queued" } });
+  const claim = await token.inject({ method: "POST", url: "/api/devices/self/claim", payload: {} });
+  assert.equal(claim.statusCode, 200, claim.body);
+  const spec = claim.json<{ id: string; leaseToken: string; task: { page: string }; attachments: Array<{ id: string }> }>();
+  assert.equal(spec.id, job.id);
+  assert.match(spec.task.page, /Multi-head attention/);
+  assert.doesNotMatch(spec.task.page, /SECRET/);
+  assert.ok(spec.attachments.some((attachment) => attachment.id === file.id));
+  const download = (fileId: string, lease = spec.leaseToken) => token.inject({ method: "GET", url: `/api/devices/self/jobs/${job.id}/attachments/${fileId}`, headers: { "x-ensemble-job-lease": lease } });
+  const original = await download(file.id);
+  assert.equal(original.statusCode, 200, original.body);
+  assert.equal(original.body, "Full document text");
+  const sourceFile = await download(own.id);
+  assert.equal(sourceFile.statusCode, 200, sourceFile.body);
+  assert.equal(sourceFile.body, own.source);
+  assert.equal((await download(file.id, "wrong-lease")).statusCode, 409);
+  assert.equal((await download(randomUUID())).statusCode, 404);
+  const foreignToken = await harness.asToken(outsider, "device");
+  await db.device.create({ data: { userId: outsider.id, tokenId: foreignToken.id, name: "Other computer", platform: "macos" } });
+  const otherDownload = await foreignToken.inject({ method: "GET", url: `/api/devices/self/jobs/${job.id}/attachments/${file.id}`, headers: { "x-ensemble-job-lease": spec.leaseToken } });
+  assert.equal(otherDownload.statusCode, 404);
+  await db.workspaceJob.update({ where: { id: job.id }, data: { leaseUntil: new Date(0) } });
+  assert.equal((await download(file.id)).statusCode, 409);
+});
+
+test("Markdown preserves nested ordered items, code and collapsible blocks on round trips", () => {
+  const source = "<details>\n<summary>Details</summary>\n\n3. First\n  - Nested\n  ```python\n  print('hi')\n  ```\n4. Second\n\n</details>";
+  const doc: PageDocument = { type: "doc", content: markdownToNodes(source) };
+  const toggle = doc.content[0]!;
+  assert.equal(toggle.type, "toggleBlock");
+  assert.equal(toggle.attrs!.collapsed, true);
+  const ordered = toggle.content![1]!;
+  assert.equal(ordered.type, "orderedList");
+  assert.equal(ordered.attrs!.start, 3);
+  assert.deepEqual(ordered.content![0]!.content!.map((node) => node.type), ["paragraph", "bulletList", "codeBlock"]);
+  assert.deepEqual(markdownToNodes(pageMarkdown(doc, "")), doc.content);
+});
+
+test("a paired runner's PDF and full diagram source are readable by the local ids in its task page", async () => {
+  const mira = await harness.asUser();
+  const task = await db.task.create({ data: { userId: mira.id, title: "Use the PDF and diagram" } });
+  const pdfId = randomUUID();
+  const diagramId = randomUUID();
+  const pdf = makePdf(["Read the complete Fieldnote brief"]);
+  const source = new TextEncoder().encode("diagram Training\nblock attention: Multi-head attention");
+  const notes = await attachClaimedFiles(db, mira.id, task.id, randomUUID(), [
+    { attachment: { id: pdfId, filename: "brief.pdf", kind: "file", byteSize: pdf.byteLength }, bytes: pdf },
+    { attachment: { id: diagramId, filename: "Training.ensemble-diagram.txt", kind: "diagram", byteSize: source.byteLength }, bytes: source },
+  ], `[@Brief](ensemble://file/${pdfId})\n[@Training](ensemble://diagram/${diagramId})\nDiagram (diagram id ${diagramId})\n[Source truncated; read the diagram for the rest.]`);
+  const files = await filesOnTask(db, mira.id, task.id);
+  assert.equal(files.length, 2);
+  const localPdf = files.find((file) => file.filename === "brief.pdf")!;
+  const localSource = files.find((file) => file.filename === "Training.ensemble-diagram.txt")!;
+  assert.match(notes, new RegExp(`ensemble://file/${localPdf.id}`));
+  assert.match(notes, new RegExp(`diagram source file id ${localSource.id}`));
+  assert.doesNotMatch(notes, new RegExp(`${pdfId}|${diagramId}`));
+  assert.deepEqual(new Uint8Array((await fileOriginal(db, mira.id, localPdf.id))!.bytes), new Uint8Array(pdf));
+  await fileTextSettled(localPdf.id);
+  assert.match((await fileText(db, mira.id, localPdf.id))!.text, /complete Fieldnote brief/);
+  assert.match((await fileText(db, mira.id, localSource.id))!.text, /Multi-head attention/);
+});
 
 function ctx(userId: string): ToolContext {
   return { app: harness.app, prisma: db, userId, actor: "agent", settings: { ...DEFAULT_SETTINGS, timezone: "UTC" } };

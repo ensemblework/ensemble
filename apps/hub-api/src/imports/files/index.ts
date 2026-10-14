@@ -9,6 +9,7 @@ import { csvItems, detectPreset, parseCsv, PRESET_LABEL, proposeMapping, type Cs
 import { parseNotionExport, readNotionZip } from "./notion-zip.js";
 import { parseTrelloExport, trelloContainer, trelloItems } from "./trello.js";
 import { isZip } from "./zip.js";
+import { notionTable } from "../notion-content.js";
 
 export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
@@ -94,8 +95,8 @@ export function parseUpload(name: string, data: Uint8Array, hint: ImportSourceId
       externalSource: "notion",
       source: "notion",
       containers,
-      tables: exported.databases.map((db) => ({ container: db.container, table: db.table, preset: "notion", mapping: db.mapping, options: db.options })),
-      items: exported.pages,
+      tables: [],
+      items: [...exported.databases.flatMap((db) => db.pages), ...exported.pages],
     };
   }
   const text = decodeText(data);
@@ -117,8 +118,21 @@ export function parseUpload(name: string, data: Uint8Array, hint: ImportSourceId
   const preset = detectPreset(table.headers, hint);
   const title = displayName(name);
   const container: ImportContainer = { id: fileKey(name), name: title, kind: "file", count: table.rows.length, importAs: "tasks" };
-  const projectForFile = preset === "todoist" || preset === "notion";
-  const localIds = preset === "generic" || preset === "notion";
+  if (preset === "notion") {
+    container.importAs = "pages";
+    const rootId = sheetIdNamespace(name, table.headers);
+    const rows = csvItems(table, proposeMapping(table, preset), preset, { containerId: container.id, idNamespace: rootId });
+    const titleColumn = Math.max(0, table.headers.findIndex((header) => /^(name|title)$/i.test(header)));
+    return {
+      format: "csv", formatLabel: "Notion table (CSV)", externalSource: "notion", source: "notion", containers: [container], tables: [],
+      items: [
+        { kind: "page", externalId: rootId, title, containerId: container.id, pageContent: { type: "doc", content: [notionTable(table.headers.map((name) => ({ name })), table.rows.map((row, i) => ({ id: rows[i]!.externalId, values: row.map((value, column) => [{ type: "text", text: value || " ", ...(column === titleColumn ? { marks: [{ type: "link", attrs: { href: `notion-page://${rows[i]!.externalId}` } }] } : {}) }]) })))] } },
+        ...rows.map((row, i) => ({ kind: "page" as const, externalId: row.externalId, title: row.title, parentRef: rootId, containerId: container.id, pageContent: { type: "doc" as const, content: [notionTable([{ name: "Property" }, { name: "Value" }], table.headers.map((name, column) => ({ id: name, values: [[{ type: "text", text: name }], [{ type: "text", text: table.rows[i]![column] || " " }]] })))] } })),
+      ],
+    };
+  }
+  const projectForFile = preset === "todoist";
+  const localIds = preset === "generic";
   return {
     format: "csv",
     formatLabel: PRESET_LABEL[preset],

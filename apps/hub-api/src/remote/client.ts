@@ -45,6 +45,7 @@ export interface HostedClient {
   /** Answered here: the card on the web closes with the same answer. Older servers answer 404. */
   closeDecision(decisionId: string, body: { decision: "allow" | "deny"; reason: string | null }): Promise<void>;
   complete(jobId: string, leaseToken: string, body: { outcome: Outcome; summary: string; results: ResultLink[]; totals?: RunTotals }): Promise<void>;
+  downloadAttachment?(jobId: string, leaseToken: string, fileId: string, maxBytes: number): Promise<Uint8Array>;
   /** The text of files the run changed (protocol 3), before complete. */
   uploadFiles(jobId: string, leaseToken: string, files: UploadedFile[]): Promise<void>;
   /** The answer to a `files.request`. */
@@ -167,6 +168,24 @@ export function hostedClient(base: string, token: string): HostedClient {
     async complete(jobId, leaseToken, body) {
       const res = await call("POST", ROUTES.complete(jobId), { ...body, leaseToken });
       if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "The result was refused."));
+    },
+    async downloadAttachment(jobId, leaseToken, fileId, maxBytes) {
+      const response = await fetch(`${base}${ROUTES.attachment(jobId, fileId)}`, { headers: { authorization: `Bearer ${token}`, "x-ensemble-job-lease": leaseToken }, signal: AbortSignal.timeout(60_000), redirect: "error" });
+      if (!response.ok) throw new RemoteError(response.status, "The attached file could not be downloaded.");
+      const reader = response.body?.getReader();
+      if (!reader) throw new RemoteError(502, "The attached file has no content.");
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          size += value.byteLength;
+          if (size > maxBytes) throw new RemoteError(413, "The attached file exceeds its download limit.");
+          chunks.push(value);
+        }
+      } finally { await reader.cancel().catch(() => undefined); }
+      return new Uint8Array(Buffer.concat(chunks));
     },
     async uploadFiles(jobId, leaseToken, files) {
       const res = await call("POST", ROUTES.files(jobId), { leaseToken, files });

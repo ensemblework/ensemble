@@ -49,6 +49,21 @@ export function PagesNav() {
             })
             .catch((error: Error) => toast(error.message, { tone: "error" }));
         }}
+        onDeleteMany={access.ready && access.canEdit ? (ids) => {
+          const selected = new Set(ids);
+          let changed = true;
+          while (changed) {
+            changed = false;
+            for (const page of pages.data?.pages ?? []) if (page.parentId && selected.has(page.parentId) && !selected.has(page.id)) { selected.add(page.id); changed = true; }
+          }
+          const detail = { ids, affected: [...selected] };
+          if (!window.dispatchEvent(new CustomEvent("ensemble:delete-pages", { detail, cancelable: true }))) return;
+          void api.deletePages(ids).then(() => {
+            void client.invalidateQueries();
+            toast("Pages moved to Trash. One Undo restores them all.", { action: { label: "Undo", run: () => { void api.undo().then(() => client.invalidateQueries()).catch((error: Error) => toast(error.message, { tone: "error" })); } } });
+            if ([...selected].some((id) => pathname === `/pages/${id}`)) router.push("/today");
+          }).catch((error: Error) => toast(error.message, { tone: "error" }));
+        } : undefined}
         onRename={(id, title) => {
           void api
             .renamePage(id, title)
@@ -65,7 +80,7 @@ export function PagesNav() {
             .deletePage(id)
             .then(() => {
               void client.invalidateQueries();
-              toast("Note moved to Trash.", { action: { label: "Undo", run: () => { void api.restoreDeleted({ kind: "page", id }).then(() => { void client.invalidateQueries(); }).catch((error: Error) => toast(error.message, { tone: "error" })); } } });
+              toast("Note moved to Trash.", { action: { label: "Undo", run: () => { void api.undo().then(() => { void client.invalidateQueries(); }).catch((error: Error) => toast(error.message, { tone: "error" })); } } });
               if (pathname === `/pages/${id}` || pathname.startsWith(`/pages/${id}/`)) router.push("/today");
             })
             .catch((error: Error) => toast(error.message, { tone: "error" }));

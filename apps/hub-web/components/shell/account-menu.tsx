@@ -12,7 +12,7 @@ import { personInitials } from "@/lib/initials";
 import { PersonaAvatar } from "@/components/avatars/persona";
 import { APPEARANCE_KEY, DEFAULT_APPEARANCE, publishAppearance, usePersistentState } from "@/lib/prefs";
 import { SHELL_USER_KEY, clearBrowserTabSession } from "@/lib/tab-session";
-import { Popover } from "../ui";
+import { Dialog, Popover } from "../ui";
 
 type RememberedUser = { name: string; email: string; via: string; avatar?: string | null };
 
@@ -47,6 +47,7 @@ export function AccountMenu() {
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
   const [appearance] = usePersistentState<AppearanceSettings>(APPEARANCE_KEY, DEFAULT_APPEARANCE);
   const [systemLight, setSystemLight] = useState(false);
+  const [confirmLogout, setConfirmLogout] = useState(false);
   useEffect(() => {
     const media = window.matchMedia("(prefers-color-scheme: light)");
     const read = () => setSystemLight(media.matches);
@@ -87,9 +88,10 @@ export function AccountMenu() {
     router.push(href);
   };
   return (
+    <>
     <Popover
       align="right"
-      width={260}
+      width={320}
       trigger={(open, toggle) => (
         <button
           type="button"
@@ -111,10 +113,11 @@ export function AccountMenu() {
             <span className="account-avatar account-avatar-lg" aria-hidden>
               {user?.avatar ? <PersonaAvatar id={user.avatar} size={36} /> : initials || <UserRound size={16} />}
             </span>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <div className="truncate text-[13.5px] font-semibold">{name || "Your account"}</div>
               <div className="truncate text-[12px] text-muted">{local ? "No-login mode" : user?.email ?? ""}</div>
             </div>
+            {!local ? <button type="button" role="menuitem" className="icon-btn shrink-0 text-danger" title="Sign out" aria-label="Sign out" onClick={() => { close(); setConfirmLogout(true); }}><LogOut size={17} /></button> : null}
           </div>
           <div className="my-1 h-px bg-line" />
           <Row icon={UserRound} onSelect={() => go(close, "/settings?tab=account")}>Account settings</Row>
@@ -140,13 +143,18 @@ export function AccountMenu() {
           <div className="my-1 h-px bg-line" />
           {local ? (
             <Row icon={UserRound} onSelect={() => go(close, "/signup")}>Create an account</Row>
-          ) : (
-            <Row icon={LogOut} danger onSelect={() => logout.mutate()}>
-              {logout.isPending ? "Signing out…" : "Sign out"}
-            </Row>
-          )}
+          ) : null}
         </div>
       )}
     </Popover>
+    <Dialog open={confirmLogout} title="Sign out of Ensemble?" onClose={() => { if (!logout.isPending) setConfirmLogout(false); }} width={400}>
+      <p className="text-[14px] text-muted">You can sign back in to continue with your pages and work.</p>
+      {logout.error ? <p role="alert" className="mt-3 text-[13px] text-danger">{(logout.error as Error).message}</p> : null}
+      <div className="mt-5 flex justify-end gap-2">
+        <button type="button" className="btn" disabled={logout.isPending} onClick={() => setConfirmLogout(false)}>Cancel</button>
+        <button type="button" className="btn-primary" disabled={logout.isPending} onClick={() => logout.mutate()}>{logout.isPending ? "Signing out…" : "Sign out"}</button>
+      </div>
+    </Dialog>
+    </>
   );
 }

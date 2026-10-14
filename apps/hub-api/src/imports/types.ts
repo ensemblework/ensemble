@@ -1,3 +1,4 @@
+import type { PageDocument } from "@ensemble/shared-types";
 import type { TaskSource, TaskStatus } from "@prisma/client";
 
 export const IMPORT_SOURCES = ["notion", "linear", "jira", "trello", "asana", "todoist", "clickup", "monday", "github", "csv"] as const;
@@ -33,6 +34,8 @@ export interface ImportItem {
   parentTitle?: string | null;
   /** Full page body in Markdown. */
   pageMarkdown?: string | null;
+  /** Native blocks when the source supports richer formatting than Markdown. */
+  pageContent?: PageDocument | null;
   createdAt?: string | null;
   updatedAt?: string | null;
   completedAt?: string | null;
@@ -48,7 +51,7 @@ export interface ImportContainer {
   count: number | null;
   /** Workspace, team or folder the container sits in, for display. */
   parent?: string | null;
-  /** Default for this container. Notion databases default to tasks; plain pages to pages. */
+  /** Default for this container. Notion tables and plain pages default to pages. */
   importAs?: ImportAs;
 }
 

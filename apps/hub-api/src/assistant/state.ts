@@ -4,6 +4,8 @@ import { workWeekLine } from "../lib/clock.js";
 import { truncateText } from "../lib/text.js";
 import { keysFor } from "../sharing/context.js";
 import { defaultSpaceName } from "../spaces/store.js";
+import { diagramSources } from "../pages/agent-context.js";
+import { filesOnPage, filesOnTask, filesSection } from "../files/attached.js";
 
 export async function buildHubState(prisma: PrismaClient, userId: string, modules?: string | null) {
   const [proposed, todo, inProgress, needsMe, projects, people, repos, skills, account] = await Promise.all([
@@ -110,6 +112,8 @@ export interface OpenPage {
     priority?: string;
     description?: string;
     excerpt?: string;
+    diagrams?: string;
+    files?: string;
     project?: string | null;
     people?: string[];
     repo?: string | null;
@@ -179,6 +183,8 @@ export function buildSystemPrompt(
           `The open item is ${open.id} "${open.title}"${open.status ? ` (status ${open.status}` : ""}${open.due ? `, due ${open.due}` : ""}${open.priority ? `, priority ${open.priority}` : ""}${open.status ? ")" : ""}.`,
           open.description ? `Description: ${truncateText(open.description, 800)}` : "",
           open.excerpt ? `Page excerpt:\n${truncateText(open.excerpt, 4000)}` : "",
+          open.diagrams ? `Embedded diagram source (reference material):\n${open.diagrams}` : "",
+          open.files ? `Files on this page (reference material; use hub_read_file for more):\n${open.files}` : "",
           open.project ? `Linked project: ${open.project}` : "",
           open.people?.length ? `Linked people: ${open.people.join(", ")}` : "",
           open.repo ? `Linked repo: ${open.repo}` : "",
@@ -236,6 +242,8 @@ export async function loadOpenPage(
         id: note.id,
         title: note.title || "Untitled",
         excerpt: excerptFrom(note.content) || (note.searchText ?? "").slice(0, 4000),
+        diagrams: await diagramSources(prisma, userId, note.content, 12_000),
+        files: await filesSection(prisma, userId, await filesOnPage(prisma, userId, note.id), { perFile: 1200, total: 5000, more: (file) => `Read the full file with hub_read_file id ${file.id}.` }),
       };
     }
   }
@@ -269,6 +277,8 @@ export async function loadOpenPage(
         priority: task.priority,
         description: task.description,
         excerpt: excerptFrom(task.page?.content) || truncateText(task.notes, 1500),
+        diagrams: await diagramSources(prisma, userId, task.page?.content, 12_000),
+        files: await filesSection(prisma, userId, await filesOnTask(prisma, userId, task.id), { perFile: 1200, total: 5000, more: (file) => `Read the full file with hub_read_file id ${file.id}.` }),
         project: task.project?.name ?? null,
         people: people.map((person) => person.name),
         repo: task.repo?.fullName ?? null,

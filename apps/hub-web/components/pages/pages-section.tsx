@@ -2,7 +2,7 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
-import { ChevronRight, Download, FileText, Pencil, Plus, Trash2 } from "lucide-react";
+import { CheckSquare, ChevronRight, Download, FileText, Pencil, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { setSidebarRail } from "@/lib/sidebar-rail";
 import { cx } from "../ui";
@@ -14,7 +14,24 @@ export type PageLinkProps = {
   children: React.ReactNode;
 };
 
-export type PageListItem = { id: string; title: string };
+export type PageListItem = { id: string; title: string; parentId?: string | null };
+
+export function pageTreeOrder(pages: PageListItem[]): Array<PageListItem & { depth: number }> {
+  const byId = new Map(pages.map((page) => [page.id, page]));
+  const visited = new Set<string>();
+  const ordered: Array<PageListItem & { depth: number }> = [];
+  const children = new Map<string, PageListItem[]>();
+  for (const page of pages) if (page.parentId && byId.has(page.parentId)) children.set(page.parentId, [...(children.get(page.parentId) ?? []), page]);
+  const walk = (page: PageListItem, depth: number) => {
+    if (visited.has(page.id)) return;
+    visited.add(page.id);
+    ordered.push({ ...page, depth });
+    for (const child of children.get(page.id) ?? []) walk(child, depth + 1);
+  };
+  for (const page of pages) if (!page.parentId || !byId.has(page.parentId)) walk(page, 0);
+  for (const page of pages) if (!visited.has(page.id)) walk(page, 0);
+  return ordered;
+}
 
 /**
  * The Pages section in the left nav. The shell passes next/link so each row
@@ -27,6 +44,7 @@ export function PagesSection({
   onRename,
   onDelete,
   onImport,
+  onDeleteMany,
   renderLink,
 }: {
   pages: PageListItem[];
@@ -36,10 +54,13 @@ export function PagesSection({
   onDelete: (id: string) => void;
   /** Opens the Notion import. Left out where imports are not available. */
   onImport?: () => void;
+  onDeleteMany?: (ids: string[]) => void;
   renderLink: (props: PageLinkProps) => React.ReactNode;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<string[]>([]);
   // Collapsed on every load so a long list never pushes the app's nav down. Opening a note shows its row.
   const [expanded, setExpanded] = useState(() => pathname.startsWith("/pages/"));
 
@@ -76,6 +97,7 @@ export function PagesSection({
           <span>Pages</span>
         </button>
         <span className="flex items-center">
+          {onDeleteMany ? <button type="button" className="icon-btn" aria-label="Select pages" title="Select pages for bulk deletion" aria-pressed={selecting} onClick={() => { setSelecting(!selecting); setSelected([]); setExpanded(true); }}><CheckSquare size={13} /></button> : null}
           {onImport ? (
             <button type="button" className="icon-btn" aria-label="Import from Notion" title="Import from Notion…" onClick={onImport}>
               <Download size={13} />
@@ -88,11 +110,13 @@ export function PagesSection({
       </div>
       <div hidden={!expanded} className={expanded ? "flex max-h-48 flex-col gap-0.5 overflow-y-auto" : "hidden"}>
         {pages.length === 0 ? <p className="sidebar-label px-2 py-1 text-[12.5px] text-faint">No pages yet</p> : null}
-        {pages.map((page) => {
+        {selecting && selected.length ? <button type="button" className="btn-ghost text-danger" onClick={() => { onDeleteMany?.(selected); setSelected([]); setSelecting(false); }}><Trash2 size={13} /> Delete {selected.length} pages</button> : null}
+        {pageTreeOrder(pages).map((page) => {
           const href = `/pages/${page.id}`;
           const active = pathname === href || pathname.startsWith(`${href}/`);
           return (
-            <div key={page.id} className={cx("group flex items-center gap-1 rounded-lg pr-1", active && "bg-hover")}>
+            <div key={page.id} style={{ marginLeft: Math.min(page.depth, 8) * 12 }} className={cx("group flex items-center gap-1 rounded-lg pr-1", active && "bg-hover")}>
+              {selecting ? <input type="checkbox" aria-label={`Select ${page.title}`} checked={selected.includes(page.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...current, page.id] : current.filter((id) => id !== page.id))} /> : null}
               {editingId === page.id ? (
                 <input
                   autoFocus
