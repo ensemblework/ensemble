@@ -590,7 +590,13 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
       .parse(request.body);
     const source = await resolveSource(request, body);
     const settings = await loadSettings(prisma, request.userId);
-    const result = await commitPaths(source.repo, request.userId, { paths: body.paths, message: body.message, author: settings.terminal.commitAuthor || null, sign: settings.terminal.signCommits });
+    // Settings' commit author; else git's own; else the Ensemble account, so a computer without a git identity can still commit.
+    let author = settings.terminal.commitAuthor || null;
+    if (!author && !(await git(source.repo, ["config", "user.email"]).catch(() => "")).trim()) {
+      const account = await prisma.user.findUnique({ where: { id: request.userId }, select: { name: true, email: true } });
+      if (account?.email) author = `${account.name || account.email.split("@")[0]} <${account.email}>`;
+    }
+    const result = await commitPaths(source.repo, request.userId, { paths: body.paths, message: body.message, author, sign: settings.terminal.signCommits });
     progressCache.clear();
     await appendLedger({ userId: request.userId, actor: "me", action: "code.commit", payload: { repo: source.repo, commit: result.commit, paths: body.paths.slice(0, 50) } });
     return { ok: true, ...result };
