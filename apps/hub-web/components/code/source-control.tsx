@@ -37,7 +37,7 @@ function Group({ title, count, children }: { title: string; count: number; child
   );
 }
 
-export function SourceControl({ repo, onOpenFile, beforeCommit }: { repo: string; onOpenFile: (path: string) => void; beforeCommit?: () => Promise<unknown> }) {
+export function SourceControl({ repo, onOpenFile, beforeCommit, commitForm = true }: { repo: string; onOpenFile: (path: string) => void; beforeCommit?: () => Promise<unknown>; commitForm?: boolean }) {
   const client = useQueryClient();
   const toast = useToast();
   const { code, key } = useCodeApi();
@@ -80,10 +80,22 @@ export function SourceControl({ repo, onOpenFile, beforeCommit }: { repo: string
         <button type="button" className="icon-btn h-6 w-6" title="Pull (fast-forward only)" onClick={() => run.mutate(() => code.pull(repo))}>
           <ArrowDown size={13} />
         </button>
-        <button type="button" className="icon-btn h-6 w-6" title="Push to origin" onClick={() => run.mutate(() => code.push(repo).then(() => toast("Pushed.", { tone: "ok" })))}>
+        <button
+          type="button"
+          className="icon-btn h-6 w-6"
+          title="Push to origin"
+          onClick={() =>
+            void (status.defaultBranch && status.branch === status.defaultBranch
+              ? confirmAction({ title: `Push straight to ${status.branch}?`, body: `${status.branch} is this repository's default branch. Most changes go on a branch of their own and arrive through a pull request.`, confirm: `Push to ${status.branch}` })
+              : Promise.resolve(true)
+            ).then((yes) => yes && run.mutate(() => code.push(repo).then(() => toast("Pushed.", { tone: "ok" }))))
+          }
+        >
           <ArrowUp size={13} />
         </button>
       </div>
+      {commitForm ? (
+      <>
       <textarea
         value={message}
         onChange={(event) => setMessage(event.target.value)}
@@ -105,6 +117,8 @@ export function SourceControl({ repo, onOpenFile, beforeCommit }: { repo: string
         <GitCommitHorizontal size={13} />
         {nothingStaged ? "Commit all" : "Commit staged"}
       </button>
+      </>
+      ) : null}
 
       <Group title="Staged changes" count={status.staged.length}>
         {status.staged.map((entry) => (

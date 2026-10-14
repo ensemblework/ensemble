@@ -242,7 +242,6 @@ export const SETTINGS_MAP: readonly SettingsMapEntry[] = [
     { id: "terminal.branch-prefix", label: "Branch prefix for agent work", keywords: "branch prefix git agent", about: "The prefix of branches agents create.", href: at("data", "jump-terminal-branch-prefix-for-agent-work"), ownerOnly: true },
     { id: "terminal.author", label: "Commit author", keywords: "commit author git name email", about: "The author on commits made here.", href: at("data", "jump-terminal-commit-author"), ownerOnly: true },
     { id: "terminal.sign", label: "Sign commits", keywords: "sign commits gpg signing", about: "Passes -S to git commit.", href: at("data", "jump-terminal-sign-commits"), ownerOnly: true },
-    { id: "terminal.review-cache", label: "Keep reviewed code on this device", keywords: "review cache code reviews disk", about: "Faster reopening of old reviews, up to 150 MB.", href: at("data", "jump-terminal-keep-reviewed-code-on-this-device"), ownerOnly: true },
   ]),
   ...group("data", "Delete my data", [
     { id: "data.failed", label: "Failed jobs", keywords: "failed jobs errors retry sync background", about: "Syncs and background jobs that gave up, with Retry.", href: at("data", "jump-failed-failed-jobs"), ownerOnly: true },

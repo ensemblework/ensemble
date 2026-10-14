@@ -8,7 +8,7 @@
  * on it unchanged.
  */
 import { createContext, useContext, useMemo } from "react";
-import { api, type ActionsResult, type CodeFile, type CodeProgress, type CodeSearch, type CodeSource, type CodeTree, type CodeVersions, type FileDiff, type ReviewSummary, type ScmStatus } from "./api";
+import { api, type ActionsResult, type CodeFile, type CodeProgress, type CommitPlan, type CodeSearch, type CodeSource, type CodeTree, type CodeVersions, type FileDiff, type ReviewSummary, type ScmStatus } from "./api";
 
 export type CodeTarget = { kind: "local" } | { kind: "device"; deviceId: string };
 
@@ -45,6 +45,9 @@ export type CodeApi = {
   tree(source: Source, path: string): Promise<CodeTree>;
   files(source: Source): Promise<{ files: string[]; truncated: boolean }>;
   search(source: Source, q: string, matchCase: boolean): Promise<CodeSearch>;
+  commitPlan(source: Source): Promise<CommitPlan>;
+  commitPaths(source: Source, paths: string[], message: string): Promise<{ ok: boolean; commit: string; branch: string }>;
+  pullRequest(source: Source, pr: { title: string; body: string; base: string; draft: boolean }): Promise<{ ok: boolean; url: string; number: number }>;
   scm(repo: string): Promise<ScmStatus>;
   stage(repo: string, paths: string[]): Promise<unknown>;
   unstage(repo: string, paths: string[]): Promise<unknown>;
@@ -74,6 +77,9 @@ const localApi: CodeApi = {
   tree: (source, path) => api.codeTree(source, path),
   files: (source) => api.codeFiles(source),
   search: (source, q, matchCase) => api.codeSearch(source, q, matchCase),
+  commitPlan: (source) => api.codeCommitPlan(source),
+  commitPaths: (source, paths, message) => api.codeCommitPaths(source, paths, message),
+  pullRequest: (source, pr) => api.codePullRequest(source, pr),
   scm: (repo) => api.scm(repo),
   stage: (repo, paths) => api.stage(repo, paths),
   unstage: (repo, paths) => api.unstage(repo, paths),
@@ -107,6 +113,9 @@ export function deviceCodeApi(deviceId: string): CodeApi {
     tree: (source, path) => get("/api/code/tree", { ...source, path }),
     files: (source) => get("/api/code/files", { ...source }),
     search: (source, q, matchCase) => get("/api/code/search", { ...source, q, case: matchCase ? "1" : "0" }),
+    commitPlan: (source) => get("/api/code/commit-plan", { ...source }),
+    commitPaths: (source, paths, message) => post("/api/code/commit-paths", { ...source, paths, message }),
+    pullRequest: (source, pr) => post("/api/code/pull-request", { ...source, ...pr }),
     scm: (repo) => get("/api/code/scm", { repo }),
     stage: (repo, paths) => post("/api/code/scm/stage", { repo, paths }),
     unstage: (repo, paths) => post("/api/code/scm/unstage", { repo, paths }),

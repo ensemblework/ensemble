@@ -169,3 +169,93 @@ test("the editor's routes: versions, accept, a guarded save that keeps line endi
     await prisma.user.delete({ where: { id: user.id } }).catch(() => undefined);
   }
 });
+
+test("commit exactly the ticked files with hooks off, open a pull request, and keep the run's snapshots pinned until they expire", async (t) => {
+  if (!(await databaseReady())) return t.skip("Postgres is not reachable");
+  process.env.ENSEMBLE_WORKSPACE_ROOT = base;
+  const { encrypt } = await import("../lib/secrets.js");
+  const { pinReviewSnapshots, unpinReviewSnapshots } = await import("../lib/code-commit.js");
+  const repo = join(base, "runs", "commit-job");
+  mkdirSync(repo, { recursive: true });
+  git(repo, "init", "-q");
+  writeFileSync(join(repo, "a.txt"), "a\n");
+  writeFileSync(join(repo, "notes.md"), "notes\n");
+  git(repo, "add", "-A");
+  git(repo, "commit", "-qm", "start");
+  git(repo, "checkout", "-q", "-b", "ensemble/feature");
+  git(repo, "remote", "add", "origin", "https://github.com/acme/app.git");
+  const initialHead = git(repo, "rev-parse", "HEAD").trim();
+  // Your work before the run: notes.md, not committed.
+  writeFileSync(join(repo, "notes.md"), "notes, mine\n");
+  const startTree = snapshot(repo);
+  // The run: edits a.txt, adds b.txt.
+  writeFileSync(join(repo, "a.txt"), "a, by the agent\n");
+  writeFileSync(join(repo, "b.txt"), "b\n");
+  const endTree = snapshot(repo);
+  // A hook that would leave a mark if it ran.
+  mkdirSync(join(repo, ".git", "hooks"), { recursive: true });
+  for (const hook of ["pre-commit", "commit-msg", "post-commit"]) writeFileSync(join(repo, ".git", "hooks", hook), `#!/bin/sh\ntouch "${join(repo, `hooked-${hook}`)}"\n`, { mode: 0o755 });
+  // Something else you staged stays staged.
+  git(repo, "add", "notes.md");
+
+  const user = await prisma.user.create({ data: { email: `code-commit-${Date.now()}-${randomBytes(3).toString("hex")}@ensemble.test`, name: "Committer" } });
+  const task = await prisma.task.create({ data: { userId: user.id, title: "Agent work", createdBy: "me", status: "todo" } });
+  const job = await prisma.workspaceJob.create({ data: { userId: user.id, taskId: task.id, executionMode: "sandbox", model: "claude-sonnet", repoPath: repo, summary: "The agent's report." } as never });
+  const review = await prisma.codeReview.create({
+    data: { userId: user.id, jobId: job.id, repoPath: repo, initialHead, startTree, endTree, agentPaths: ["a.txt", "b.txt"], expiresAt: new Date(Date.now() - 1000) },
+  });
+  await prisma.modelCredential.create({ data: { userId: user.id, provider: "github_git", secret: encrypt("ghs_testtoken") } });
+  const app = await build(user.id);
+  const realFetch = globalThis.fetch;
+  const sent: Array<{ url: string; body: Record<string, unknown>; auth: string | null }> = [];
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    if (!url.startsWith("https://api.github.com/")) return realFetch(input, init);
+    sent.push({ url, body: JSON.parse(String(init?.body)) as Record<string, unknown>, auth: new Headers(init?.headers).get("authorization") });
+    return new Response(JSON.stringify({ html_url: "https://github.com/acme/app/pull/7", number: 7 }), { status: 201 });
+  }) as typeof fetch;
+  try {
+    const plan = (await app.inject({ method: "GET", url: `/api/code/commit-plan?review=${review.id}` })).json() as { run: string[]; before: string[]; branch: string; github: unknown; proposal: string };
+    assert.deepEqual(plan.run, ["a.txt", "b.txt"]);
+    assert.deepEqual(plan.before, ["notes.md"]);
+    assert.deepEqual(plan.github, { owner: "acme", repo: "app" });
+    assert.equal(plan.proposal, "The agent's report.");
+
+    const committed = await app.inject({ method: "POST", url: "/api/code/commit-paths", payload: { review: review.id, paths: ["a.txt", "b.txt"], message: "Use the agent's change\n\nCo-authored-by: Ensemble agent <agent@ensemble.local>" } });
+    assert.equal(committed.statusCode, 200, committed.body);
+    const commit = (committed.json() as { commit: string }).commit;
+    assert.equal(git(repo, "rev-parse", "HEAD").trim(), commit);
+    assert.deepEqual(git(repo, "show", "--name-only", "--format=", commit).trim().split("\n").sort(), ["a.txt", "b.txt"]);
+    assert.match(git(repo, "log", "-1", "--format=%B"), /Co-authored-by: Ensemble agent/);
+    assert.match(git(repo, "status", "--porcelain"), /^M  notes\.md/m, "what you staged before stays staged, uncommitted");
+    for (const hook of ["pre-commit", "commit-msg", "post-commit"]) assert.equal(execFileSync("ls", [repo]).toString().includes(`hooked-${hook}`), false, `${hook} did not run`);
+    assert.equal((await app.inject({ method: "POST", url: "/api/code/commit-paths", payload: { review: review.id, paths: [".git/config"], message: "x" } })).statusCode, 403);
+
+    const opened = await app.inject({ method: "POST", url: "/api/code/pull-request", payload: { review: review.id, title: "Use the agent's change", body: "Why.", base: "main", draft: true } });
+    assert.equal(opened.statusCode, 200, opened.body);
+    assert.deepEqual(opened.json(), { ok: true, url: "https://github.com/acme/app/pull/7", number: 7 });
+    assert.equal(sent[0]!.url, "https://api.github.com/repos/acme/app/pulls");
+    assert.deepEqual(sent[0]!.body, { title: "Use the agent's change", body: "Why.", head: "ensemble/feature", base: "main", draft: true });
+    assert.equal(sent[0]!.auth, "Bearer ghs_testtoken");
+
+    // Snapshots pinned under refs/ensemble/review, then unpinned when the review expires.
+    const pinned = await pinReviewSnapshots(repo, user.id, job.id, { start: startTree, end: endTree });
+    assert.equal(git(repo, "rev-parse", `refs/ensemble/review/${job.id}/start^{tree}`).trim(), startTree);
+    assert.equal(git(repo, "rev-parse", `refs/ensemble/review/${job.id}/end`).trim(), pinned.end);
+    const { runRetention } = await import("../jobs/retention.js");
+    await runRetention(app as never, user.id, { deletedDays: 30, completedDays: 30 });
+    const after = await prisma.codeReview.findUnique({ where: { id: review.id } });
+    assert.ok(after?.expiredAt, "the expired review is marked");
+    assert.equal(execFileSync("git", ["for-each-ref", "refs/ensemble/review"], { cwd: repo, encoding: "utf8" }).trim(), "", "and its snapshots unpinned");
+    await unpinReviewSnapshots(repo, user.id, job.id);
+  } finally {
+    globalThis.fetch = realFetch;
+    await app.close();
+    await prisma.modelCredential.deleteMany({ where: { userId: user.id } });
+    await prisma.codeReview.deleteMany({ where: { userId: user.id } });
+    await prisma.workspaceJob.deleteMany({ where: { userId: user.id } });
+    await prisma.auditLedger.deleteMany({ where: { userId: user.id } });
+    await prisma.task.deleteMany({ where: { userId: user.id } });
+    await prisma.user.delete({ where: { id: user.id } }).catch(() => undefined);
+  }
+});

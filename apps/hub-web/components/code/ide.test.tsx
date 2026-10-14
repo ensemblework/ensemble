@@ -58,7 +58,7 @@ async function settle(rounds = 8) {
 }
 
 async function mount() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { gcTime: 0 } } });
   const host = document.createElement("div");
   host.style.height = "700px";
   document.body.appendChild(host);

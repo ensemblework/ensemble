@@ -149,7 +149,7 @@ const text = (host: HTMLElement) => host.textContent ?? "";
 
 /** Settings rows that have nothing to do with where the terminal runs stay on every build. */
 function assertCommitSettingsStay(host: HTMLElement, label: string) {
-  for (const row of ["Branch prefix for agent work", "Commit author", "Sign commits", "Keep reviewed code on this device"]) {
+  for (const row of ["Branch prefix for agent work", "Commit author", "Sign commits"]) {
     assert.ok(text(host).includes(row), `${label}: ${row}`);
   }
 }

@@ -47,6 +47,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, 
 import { AskEnsemble } from "@/components/ensemble/ask-button";
 import { IdeSpace, ThemeControl } from "@/components/code/ide-theme";
 import type { ChunkCounts, ReviewEditorHandle, ReviewMode } from "@/components/code/review-editor";
+import { CommitPanel } from "@/components/code/commit-panel";
 import { SourceControl } from "@/components/code/source-control";
 import { Terminal } from "@/components/code/terminal";
 import { useToast } from "@/components/toast";
@@ -497,7 +498,8 @@ export function CodeIde({ source }: { source: Source }) {
             ) : (
               <div className="min-h-0 flex-1 overflow-y-auto">
                 <div className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted">Source control</div>
-                <SourceControl repo={data.repo} onOpenFile={(path) => open(path)} beforeCommit={saveAll} />
+                <CommitPanel source={source} draftKey={source.review ?? `${target.kind === "device" ? `${target.deviceId}:` : ""}${data.repo}`} beforeCommit={saveAll} pending={progress.data?.pending ?? 0} />
+                <SourceControl repo={data.repo} onOpenFile={(path) => open(path)} beforeCommit={saveAll} commitForm={false} />
               </div>
             )}
             <div

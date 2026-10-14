@@ -31,6 +31,7 @@ import { RuntimeError } from "../lib/runtime-error.js";
 import { truncateText } from "../lib/text.js";
 import { isOwnRunBranch, runBranchName, runTrustedGit } from "./git-gate.js";
 import { agentChanges, type ChangedFile } from "./changed-files.js";
+import { pinReviewSnapshots } from "../lib/code-commit.js";
 import { flagPlanted } from "./planted.js";
 import { gitHardening, GuardError, outsideRefusal, resolveWorkFolder, sandboxAvailable, sandboxRefusal, within, workspaceRoot } from "./guard.js";
 import { capabilities, prepareNetwork } from "./sandbox/spawn.js";
@@ -995,6 +996,9 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
             },
           });
           reviewId = review.id;
+          // Both snapshots stay reachable for the review's 14 days (docs/16 §2).
+          const pinned = await pinReviewSnapshots(ctx.root, userId, job.id, { start: startTree, end: endTree }).catch(() => null);
+          if (pinned) await prisma.codeReview.update({ where: { id: review.id }, data: { startCommit: pinned.start, endCommit: pinned.end } });
         }
       }
     } catch (failure) {

@@ -31,7 +31,7 @@ const groups: Array<[SettingsTab, string, string, Array<string | [string, string
   ["data", "retention", "Data retention", [["Trash retention", "purge deleted items days"], ["Completed retention", "purge finished tasks days"], ["Completed visible count", "board completed limit"], ["Context review days", "context retention review"], ["Undo depth", "history undo actions"], ["History retention", "runs retention days"]]],
   ["data", "completed", "Completed", [["Completed", "finished done tasks history"]]],
   ["data", "trash", "Trash", [["Trash", "deleted recover restore empty bin"]]],
-  ["data", "terminal", "Terminal and commits", ["Terminal and commits", "Terminal on", ["Folders Code can use", "local repositories roots folders workspace"], "Terminal folder", ["Passkeys", "touch id fingerprint unlock terminal"], "Branch prefix for agent work", "Commit author", "Sign commits", "Keep reviewed code on this device"]],
+  ["data", "terminal", "Terminal and commits", ["Terminal and commits", "Terminal on", ["Folders Code can use", "local repositories roots folders workspace"], "Terminal folder", ["Passkeys", "touch id fingerprint unlock terminal"], "Branch prefix for agent work", "Commit author", "Sign commits"]],
   ["data", "failed", "Failed jobs", [["Failed jobs", "retry errors background jobs sync"]]],
   ["data", "deleted", "Deleted items", [["Deleted items", "restore trash retention"]]],
   ["data", "danger", "Delete my data", [["Delete my data", "erase account data deletion scope"]]],

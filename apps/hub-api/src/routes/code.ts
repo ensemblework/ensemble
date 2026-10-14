@@ -33,6 +33,8 @@ import {
   writeRepoBytes,
 } from "../lib/git.js";
 import { decode, encode, gitBlob, hashOf, reviewCounts, writeBlob } from "../lib/code-versions.js";
+import { commitPaths, defaultBranch, githubRepoOf, openPullRequest, pullRequestTemplate } from "../lib/code-commit.js";
+import { GITHUB_AUTH_HINT, githubApiToken } from "../lib/git-auth.js";
 import { refusedPath } from "../workspace/folder-read.js";
 import { appendLedger } from "../lib/ledger.js";
 import { declareModule } from "../lib/module-gate.js";
@@ -539,7 +541,76 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/code/scm", async (request) => {
     const { repo } = RepoBody.parse(request.query);
-    return status(await allowedRepo(repo, await roots(request.userId)));
+    const allowed = await allowedRepo(repo, await roots(request.userId));
+    const scm = await status(allowed);
+    // Pushing straight to the default branch asks first (docs/16 §3).
+    return { ...scm, defaultBranch: await defaultBranch(allowed, request.userId).catch(() => null) };
+  });
+
+  /**
+   * What a commit from here would hold (docs/16 §3): in a review, the files this run changed (ticked)
+   * and your own changes from before the run (not ticked); in a checkout, every changed file. Plus
+   * what a pull request starts from: the repository's template, or the agent's own report.
+   */
+  app.get("/api/code/commit-plan", async (request) => {
+    const source = await resolveSource(request, request.query);
+    const scm = await status(source.repo);
+    const changedNow = [...new Set([...scm.staged, ...scm.unstaged, ...scm.untracked].map((entry) => entry.path))].sort();
+    let run: string[] = [];
+    let before: string[] = [];
+    if (source.review) {
+      const review = source.review;
+      const agentPaths = new Set(review.agentPaths);
+      const priorRaw = review.initialHead
+        ? await git(source.repo, ["diff", "--name-only", "--no-renames", review.initialHead, review.startTree]).catch(() => "")
+        : "";
+      const prior = new Set(priorRaw.split("\n").filter(Boolean));
+      run = changedNow.filter((path) => agentPaths.has(path) || (!prior.has(path) && !agentPaths.size));
+      before = changedNow.filter((path) => !run.includes(path));
+    } else {
+      before = changedNow;
+    }
+    const remote = scm.remote ?? "";
+    return {
+      branch: scm.branch,
+      defaultBranch: await defaultBranch(source.repo, request.userId).catch(() => null),
+      github: githubRepoOf(remote),
+      run,
+      before,
+      model: source.review?.job.model ?? null,
+      template: await pullRequestTemplate(source.repo),
+      proposal: source.review?.job.summary?.slice(0, 20_000) ?? null,
+    };
+  });
+
+  /** Commit exactly the ticked files, as they are on disk, in a throwaway index; hooks off. */
+  app.post("/api/code/commit-paths", async (request) => {
+    const body = z
+      .object({ review: z.string().uuid().optional(), repo: z.string().optional(), paths: z.array(z.string().min(1).max(1000)).min(1).max(2000), message: z.string().min(1).max(20_000) })
+      .parse(request.body);
+    const source = await resolveSource(request, body);
+    const settings = await loadSettings(prisma, request.userId);
+    const result = await commitPaths(source.repo, request.userId, { paths: body.paths, message: body.message, author: settings.terminal.commitAuthor || null, sign: settings.terminal.signCommits });
+    progressCache.clear();
+    await appendLedger({ userId: request.userId, actor: "me", action: "code.commit", payload: { repo: source.repo, commit: result.commit, paths: body.paths.slice(0, 50) } });
+    return { ok: true, ...result };
+  });
+
+  /** Open a pull request on GitHub for this checkout's branch (pushed first). */
+  app.post("/api/code/pull-request", async (request) => {
+    const body = z
+      .object({ review: z.string().uuid().optional(), repo: z.string().optional(), title: z.string().min(1).max(256), body: z.string().max(60_000).default(""), base: z.string().min(1).max(255), draft: z.boolean().default(false) })
+      .parse(request.body);
+    const source = await resolveSource(request, body);
+    const scm = await status(source.repo);
+    const github = githubRepoOf(scm.remote ?? "");
+    if (!github) throw new GitError("This repository's origin is not on GitHub.");
+    if (scm.branch === body.base) throw new GitError("Commit on a branch of its own to open a pull request; this is the base branch.");
+    const token = await githubApiToken(prisma, request.userId);
+    if (!token) throw new GitError(GITHUB_AUTH_HINT, 409);
+    const opened = await openPullRequest({ token, owner: github.owner, repo: github.repo, head: scm.branch, base: body.base, title: body.title, body: body.body, draft: body.draft });
+    await appendLedger({ userId: request.userId, actor: "me", action: "code.pull_request", payload: { repo: source.repo, url: opened.url, base: body.base, head: scm.branch } });
+    return { ok: true, ...opened };
   });
 
   app.post("/api/code/scm/stage", async (request) => {

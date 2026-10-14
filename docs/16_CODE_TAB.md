@@ -78,9 +78,9 @@ Every run records **two snapshots** of its folder as git trees, using a throwawa
 - **start** — the folder as the job found it: committed, staged, unstaged and never-added files alike;
 - **end** — as the job left it.
 
-Both are pinned as `refs/ensemble/review/<job>/{start,end}` for **14 days**, so git's own garbage collection cannot take them; a daily sweep drops them after that.
+Both are pinned as `refs/ensemble/review/<job>/{start,end}` for **14 days** (each tree in a commit of its own, `CodeReview.startCommit` and `endCommit`; `pinReviewSnapshots` in `lib/code-commit.ts`), so git's own garbage collection cannot take them; the daily sweep unpins them and marks the review expired (`runRetention`), which *Show expired* lists.
 
-The review is start → end, so work you had **before** the run (your `plan.md`, your own edits) is never shown as the agent's. It is listed separately as *Yours, before the run*. Git-ignored files have no snapshot; if a run changed any, they are listed as *Changed, can't be reviewed*.
+The review is start → end, so work you had **before** the run (your `plan.md`, your own edits) is never shown as the agent's. Source control lists it separately as *Your changes*, not ticked. Git-ignored files have no snapshot; if a run changed any, they are listed as *Changed, can't be reviewed*.
 
 Runs from before snapshots existed are reviewed against the commit they started from, with a banner saying so.
 
@@ -98,9 +98,13 @@ The host may have `core.autocrlf=true` in the system git config, which Ensemble'
 
 ## 3. Commit, push, pull request
 
-The Source control panel groups files exactly like the review: **changes from this run (ticked)** and **your changes from before the run (not ticked)**, so `plan.md` stays out unless you tick it. Subject (with the 50/72 counter), Markdown description with *Write | Preview* (GitHub-flavoured: tables, task lists), `Co-authored-by: Copilot` when agent changes are included, and a pull request section (title, description prefilled from the repository template or the agent's proposal, base branch, draft). Drafts are kept per run.
+*Source control* (`components/code/commit-panel.tsx`, `GET /api/code/commit-plan`) groups files exactly like the review: **changes from this run (ticked)** and **your changes (not ticked)**, so `plan.md` stays out unless you tick it. A subject with the 50/72 guide (the counter turns amber past 50 and red past 72; description lines over 72 are counted), a Markdown description with *Write | Preview*, and `Co-authored-by: Ensemble agent (<model>) <agent@ensemble.local>` when the run's files are included (a box turns it off). Committing the run's files while some of its changes are still undecided asks first. Drafts are kept per run on this device.
 
-The commit is built from **exactly the ticked paths** in a throwaway index — nothing else you had staged rides along — with hooks off. Pushing uses your GitHub sign-in for `github.com` remotes (**https only**), and asks before pushing straight to the default branch. Committing with unreviewed changes asks inline first.
+The commit is built from **exactly the ticked paths** (`POST /api/code/commit-paths`): in a throwaway index from HEAD, each ticked file stored as it is on disk (`hash-object --no-filters`, so no filter program of the repository runs), hooks never run, and HEAD moves only if it is still where it was. What you had staged otherwise stays staged. The author is *Settings → Terminal and commits → Commit author*, or your git config.
+
+*Push* runs `git push -u origin HEAD` with your computer's own git sign-in and the repository's hooks off, and asks before pushing straight to the default branch (origin's HEAD). The *Pull request* section (GitHub remotes) starts from the repository's template (`.github/pull_request_template.md` and the usual places) or the agent's report, with a base branch (the default one first) and *Draft*; it opens the pull request for the current branch through GitHub's API (`POST /api/code/pull-request`) with the GitHub sign-in Ensemble has: the git token saved in Settings, the GitHub connection, or `gh auth token`.
+
+The rest of the panel is the repository's state: staged and unstaged files (stage, unstage, discard), recent commits, pull, and GitHub Actions runs for the branch.
 
 ---
 
@@ -141,7 +145,7 @@ A passkey belongs to the **site it was made on** and stays on the device that ma
 - The list of reviews comes from the database, with each review's file and line counts from git (cached 8 s).
 - A file's versions are read when its tab opens (`GET /api/code/versions`, one call for all four) and kept in the page's query cache; progress counts are cached per file until the file or its accepted text changes.
 - CodeMirror, the merge view and each language parser load only on `/code/review`.
-- Not built yet (designed earlier): the per-device IndexedDB cache of file versions, ETag revalidation, and prebuilt editor states for neighbouring files.
+- Not built yet (designed earlier): the per-device IndexedDB cache of file versions, ETag revalidation, and prebuilt editor states for neighbouring files. Its Settings switch (*Keep reviewed code on this device*) was removed until it exists.
 
 ---
 

@@ -770,6 +770,19 @@ export type CodeVersions = {
   /** From a paired computer: why it cannot be edited from the web. */
   readOnly?: string;
 };
+/** What a commit from the Code tab would hold, and what a pull request starts from (`/api/code/commit-plan`). */
+export type CommitPlan = {
+  branch: string;
+  defaultBranch: string | null;
+  github: { owner: string; repo: string } | null;
+  /** Files this run changed: ticked. */
+  run: string[];
+  /** Your own changes (from before the run, or a checkout's): not ticked. */
+  before: string[];
+  model: string | null;
+  template: string | null;
+  proposal: string | null;
+};
 export type CodeProgress = { files: Array<{ path: string; total: number; pending: number; yours: number }>; total: number; pending: number; filesLeft: number };
 export type CodeTreeEntry = { name: string; kind: "dir" | "file" | "link"; size: number | null; secret?: boolean };
 export type CodeTree = { path: string; entries: CodeTreeEntry[]; truncated: boolean; hidden?: number };
@@ -830,6 +843,8 @@ export type ScmStatus = {
   log: Array<{ sha: string; author: string; when: string; subject: string }>;
   remote: string;
   github: string | null;
+  /** origin's default branch; pushing straight to it asks first. */
+  defaultBranch?: string | null;
 };
 
 export type ActionsResult =
@@ -1394,6 +1409,9 @@ export const api = bindClient({
   codeProgress: (source: { review?: string; repo?: string }) => get<CodeProgress>(`/api/code/progress${qs(source)}`),
   codeTree: (source: { review?: string; repo?: string }, path: string) => get<CodeTree>(`/api/code/tree${qs({ ...source, path })}`),
   codeFiles: (source: { review?: string; repo?: string }) => get<{ files: string[]; truncated: boolean }>(`/api/code/files${qs(source)}`),
+  codeCommitPlan: (source: { review?: string; repo?: string }) => get<CommitPlan>(`/api/code/commit-plan${qs(source)}`),
+  codeCommitPaths: (source: { review?: string; repo?: string }, paths: string[], message: string) => post<{ ok: boolean; commit: string; branch: string }>("/api/code/commit-paths", { ...source, paths, message }),
+  codePullRequest: (source: { review?: string; repo?: string }, pr: { title: string; body: string; base: string; draft: boolean }) => post<{ ok: boolean; url: string; number: number }>("/api/code/pull-request", { ...source, ...pr }),
   codeSearch: (source: { review?: string; repo?: string }, q: string, matchCase: boolean) => get<CodeSearch>(`/api/code/search${qs({ ...source, q, case: matchCase ? "1" : "0" })}`),
   searchThemes: (q: string) => get<{ extensions: ThemeDirectoryExtension[] }>(`/api/themes/search${qs({ q })}`),
   loadOpenVsxTheme: (query: { namespace: string; name: string; version: string; label: string }) =>

@@ -489,9 +489,6 @@ export function TerminalSection({ settings, patch }: Props) {
         <SettingRow title="Sign commits" description="Passes -S to git commit. Requires a signing key in your git config.">
           <Toggle label="Sign commits" checked={terminal.signCommits} onChange={(signCommits) => patch({ terminal: { signCommits } })} />
         </SettingRow>
-        <SettingRow title="Keep reviewed code on this device" description="Faster reopening of old reviews. Capped at 150 MB, cleared as reviews expire.">
-          <Toggle label="Keep review cache" checked={terminal.keepReviewCache} onChange={(keepReviewCache) => patch({ terminal: { keepReviewCache } })} />
-        </SettingRow>
       </div>
     </SectionCard>
   );
