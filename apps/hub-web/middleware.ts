@@ -173,6 +173,6 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    "/((?!api/|health$|_next/static|_next/image|templates/|fonts/|icon\\.svg|favicon\\.ico|robots\\.txt|apple-icon(?:\\.png)?|apple-touch-icon\\.png|manifest\\.webmanifest|site\\.webmanifest|icon(?:-maskable)?-\\d+\\.png|brand-icon-\\d+\\.png|og-image\\.png|opengraph-image|twitter-image|offline\\.html|404\\.html|500\\.html).*)",
+    "/((?!api/|health$|_next/static|_next/image|templates/|fonts/|brand/(?:favicon|mark|apple)-[a-f0-9]{12}\\.(?:ico|png|svg)$|icon\\.svg|favicon\\.ico|robots\\.txt|apple-icon(?:\\.png)?|apple-touch-icon\\.png|manifest\\.webmanifest|site\\.webmanifest|icon(?:-maskable)?-\\d+\\.png|brand-icon-\\d+\\.png|og-image\\.png|opengraph-image|twitter-image|offline\\.html|404\\.html|500\\.html).*)",
   ],
 };

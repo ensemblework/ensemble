@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { icons } from "@ensemble/brand/icons";
 import { Figtree, Fraunces, JetBrains_Mono } from "next/font/google";
 import { JsonLd } from "@/components/json-ld";
 import { organization, website } from "@/lib/schema";
@@ -21,6 +22,7 @@ export const metadata: Metadata = {
   title: { default: site.title, template: "%s | Ensemble" },
   description: site.description,
   applicationName: site.name,
+  icons,
   keywords: [...site.keywords],
   category: "productivity",
   creator: site.name,

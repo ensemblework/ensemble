@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { icons } from "@ensemble/brand/icons";
 import { Figtree, Fraunces, JetBrains_Mono } from "next/font/google";
 import { APPEARANCE_BOOT } from "@/lib/accent";
 import { COLOR_THEME_STYLES } from "@/lib/color-themes";
@@ -54,13 +55,7 @@ export const metadata: Metadata = {
   description: "A shared workspace for you and your agent.",
   applicationName: "Ensemble",
   manifest: "/site.webmanifest",
-  icons: {
-    icon: [
-      { url: "/favicon.ico", sizes: "16x16 32x32 48x48" },
-      { url: "/icon.svg", type: "image/svg+xml" },
-    ],
-    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180" }],
-  },
+  icons,
   openGraph: {
     type: "website",
     siteName: "Ensemble",
