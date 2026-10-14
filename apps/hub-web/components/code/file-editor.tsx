@@ -13,7 +13,7 @@ import { useIdeTheme } from "@/components/code/ide-theme-context";
 import { codeMirrorTheme } from "@/components/code/codemirror-theme";
 import { remeasureOnFontLoad } from "@/lib/editor-font";
 
-function languageExtension(path: string): Extension[] {
+export function languageExtension(path: string): Extension[] {
   const ext = path.split(".").pop()?.toLowerCase() ?? "";
   if (["ts", "tsx", "js", "jsx", "mjs", "cjs"].includes(ext)) return [javascript({ jsx: ext.endsWith("x"), typescript: ext.startsWith("t") })];
   if (ext === "py") return [python()];
@@ -23,12 +23,12 @@ function languageExtension(path: string): Extension[] {
 }
 
 /** Ensemble Default blends the editor into the app. A chosen theme paints its own surface. */
-const blend = EditorView.theme({
+export const blend = EditorView.theme({
   "&": { backgroundColor: "transparent", fontSize: "12.5px", height: "100%" },
   ".cm-gutters": { backgroundColor: "transparent", borderRight: "1px solid var(--line)" },
   ".cm-scroller, .cm-content, .cm-gutters": { fontFamily: "var(--font-mono)" },
 });
-const typeface = EditorView.theme({
+export const typeface = EditorView.theme({
   "&": { fontSize: "12.5px", height: "100%" },
   ".cm-scroller, .cm-content, .cm-gutters": { fontFamily: "var(--font-mono)" },
 });

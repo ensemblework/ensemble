@@ -8,7 +8,7 @@
  * on it unchanged.
  */
 import { createContext, useContext, useMemo } from "react";
-import { api, type ActionsResult, type CodeFile, type CodeSource, type FileDiff, type ReviewSummary, type ScmStatus } from "./api";
+import { api, type ActionsResult, type CodeFile, type CodeProgress, type CodeSearch, type CodeSource, type CodeTree, type CodeVersions, type FileDiff, type ReviewSummary, type ScmStatus } from "./api";
 
 export type CodeTarget = { kind: "local" } | { kind: "device"; deviceId: string };
 
@@ -37,7 +37,14 @@ export type CodeApi = {
   discardReview(id: string): Promise<{ restored: number; keptCommits: boolean }>;
   pushReview(id: string): Promise<{ branch: string; remote: string }>;
   codeFile(source: Source, path: string): Promise<CodeFile>;
-  saveCodeFile(source: Source, path: string, content: string): Promise<unknown>;
+  saveCodeFile(source: Source, path: string, content: string, expectedHash?: string | null): Promise<{ ok: boolean; hash?: string | null }>;
+  versions(source: Source, path: string): Promise<CodeVersions>;
+  acceptContent(source: Source, path: string, content: string): Promise<unknown>;
+  restore(review: string, path: string): Promise<unknown>;
+  progress(source: Source): Promise<CodeProgress>;
+  tree(source: Source, path: string): Promise<CodeTree>;
+  files(source: Source): Promise<{ files: string[]; truncated: boolean }>;
+  search(source: Source, q: string, matchCase: boolean): Promise<CodeSearch>;
   scm(repo: string): Promise<ScmStatus>;
   stage(repo: string, paths: string[]): Promise<unknown>;
   unstage(repo: string, paths: string[]): Promise<unknown>;
@@ -59,7 +66,14 @@ const localApi: CodeApi = {
   discardReview: (id) => api.discardReview(id),
   pushReview: (id) => api.pushReview(id),
   codeFile: (source, path) => api.codeFile(source, path),
-  saveCodeFile: (source, path, content) => api.saveCodeFile(source, path, content),
+  saveCodeFile: (source, path, content, expectedHash) => api.saveCodeFile(source, path, content, expectedHash),
+  versions: (source, path) => api.codeVersions(source, path),
+  acceptContent: (source, path, content) => api.codeAcceptContent(source, path, content),
+  restore: (review, path) => api.codeRestore(review, path),
+  progress: (source) => api.codeProgress(source),
+  tree: (source, path) => api.codeTree(source, path),
+  files: (source) => api.codeFiles(source),
+  search: (source, q, matchCase) => api.codeSearch(source, q, matchCase),
   scm: (repo) => api.scm(repo),
   stage: (repo, paths) => api.stage(repo, paths),
   unstage: (repo, paths) => api.unstage(repo, paths),
@@ -85,7 +99,14 @@ export function deviceCodeApi(deviceId: string): CodeApi {
     discardReview: (id) => post(`/api/code/reviews/${id}/discard`),
     pushReview: (id) => post(`/api/code/reviews/${id}/push`),
     codeFile: (source, path) => get("/api/code/file", { ...source, path }),
-    saveCodeFile: (source, path, content) => api.deviceCode(deviceId, "PUT", "/api/code/file", {}, { ...source, path, content }),
+    saveCodeFile: (source, path, content, expectedHash) => api.deviceCode(deviceId, "PUT", "/api/code/file", {}, { ...source, path, content, ...(expectedHash === undefined ? {} : { expectedHash }) }),
+    versions: (source, path) => get("/api/code/versions", { ...source, path }),
+    acceptContent: (source, path, content) => post("/api/code/accept-content", { ...source, path, content }),
+    restore: (review, path) => post("/api/code/restore", { review, path }),
+    progress: (source) => get("/api/code/progress", { ...source }),
+    tree: (source, path) => get("/api/code/tree", { ...source, path }),
+    files: (source) => get("/api/code/files", { ...source }),
+    search: (source, q, matchCase) => get("/api/code/search", { ...source, q, case: matchCase ? "1" : "0" }),
     scm: (repo) => get("/api/code/scm", { repo }),
     stage: (repo, paths) => post("/api/code/scm/stage", { repo, paths }),
     unstage: (repo, paths) => post("/api/code/scm/unstage", { repo, paths }),

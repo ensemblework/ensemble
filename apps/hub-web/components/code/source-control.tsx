@@ -37,7 +37,7 @@ function Group({ title, count, children }: { title: string; count: number; child
   );
 }
 
-export function SourceControl({ repo, onOpenFile }: { repo: string; onOpenFile: (path: string) => void }) {
+export function SourceControl({ repo, onOpenFile, beforeCommit }: { repo: string; onOpenFile: (path: string) => void; beforeCommit?: () => Promise<unknown> }) {
   const client = useQueryClient();
   const toast = useToast();
   const { code, key } = useCodeApi();
@@ -52,7 +52,11 @@ export function SourceControl({ repo, onOpenFile }: { repo: string; onOpenFile: 
     void client.invalidateQueries({ queryKey: ["code-diff"] });
   };
   const run = useMutation({
-    mutationFn: (fn: () => Promise<unknown>) => fn(),
+    // Unsaved typing is written first, so a commit or push never misses it.
+    mutationFn: async (fn: () => Promise<unknown>) => {
+      await beforeCommit?.();
+      return fn();
+    },
     onSuccess: refresh,
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });

@@ -124,3 +124,29 @@ test("binary and very large files, secrets files in a review, and answers too la
   const big = await codeAnswerFor(app, request("PUT", "/api/code/file", {}, { repo: "/r", path: "a.txt", content: "x".repeat(1024 * 1024 + 1) }));
   assert.equal(big.status, 413);
 });
+
+test("the editor's calls from the web: secrets files are not listed or found, keys hidden in every version, masked text never accepted", async () => {
+  settings({});
+  const key = "ghp_abcdefghijklmnopqrstuvwxyz0123456789";
+  const { app, calls } = fakeApp({
+    "GET /api/code/versions": { body: { path: "src/a.ts", start: `const t = "${key}";\n`, agent: "const t = process.env.T;\n", original: `const t = "${key}";\n`, current: "const t = process.env.T;\n" } },
+    "GET /api/code/tree": { body: { path: "", entries: [{ name: "src", kind: "dir", size: null, secret: false }, { name: ".env", kind: "file", size: 9, secret: true }] } },
+    "GET /api/code/files": { body: { files: ["src/a.ts", "deploy/.env.production", ".aws/credentials"] } },
+    "GET /api/code/search": { body: { results: [{ path: "src/a.ts", line: 1, text: `const t = "${key}";` }, { path: ".env", line: 1, text: "TOKEN=1" }] } },
+    "POST /api/code/accept-content": { body: { ok: true } },
+  });
+  const versions = (await codeAnswerFor(app, request("GET", "/api/code/versions", { review: "r", path: "src/a.ts" }))).body as Record<string, string>;
+  assert.doesNotMatch(JSON.stringify(versions), /ghp_abc/);
+  assert.match(versions.readOnly ?? "", /key/, "a file whose versions hold a key is read-only from the web");
+  const tree = (await codeAnswerFor(app, request("GET", "/api/code/tree", { review: "r", path: "" }))).body as { entries: Array<{ name: string }>; hidden: number };
+  assert.deepEqual(tree.entries.map((entry) => entry.name), ["src"]);
+  assert.equal(tree.hidden, 1);
+  const files = (await codeAnswerFor(app, request("GET", "/api/code/files", { review: "r" }))).body as { files: string[] };
+  assert.deepEqual(files.files, ["src/a.ts"]);
+  const found = (await codeAnswerFor(app, request("GET", "/api/code/search", { review: "r", q: "t" }))).body as { results: Array<{ path: string; text: string }> };
+  assert.deepEqual(found.results.map((row) => row.path), ["src/a.ts"]);
+  assert.doesNotMatch(found.results[0]!.text, /ghp_abc/);
+  const masked = await codeAnswerFor(app, request("POST", "/api/code/accept-content", {}, { review: "r", path: "src/a.ts", content: 'const t = "[redacted]";\n' }));
+  assert.equal(masked.status, 403);
+  assert.equal(calls.some((call) => call.url.startsWith("/api/code/accept-content")), false);
+});

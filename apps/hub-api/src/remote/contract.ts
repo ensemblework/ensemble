@@ -300,9 +300,9 @@ export type ResultLink = { kind: "pr" | "commit" | "branch"; url: string; sha?: 
  * folders Code can use) stay on the computer.
  */
 export const CODE_CALLS: ReadonlyArray<{ method: "GET" | "POST" | "PUT"; path: RegExp; write: boolean; slow?: boolean }> = [
-  { method: "GET", path: /^\/api\/code\/(repos|reviews|source|diff|file|scm)$/, write: false },
-  { method: "GET", path: /^\/api\/code\/actions$/, write: false, slow: true },
-  { method: "POST", path: /^\/api\/code\/decide$/, write: true },
+  { method: "GET", path: /^\/api\/code\/(repos|reviews|source|diff|file|scm|versions|tree|files|progress)$/, write: false },
+  { method: "GET", path: /^\/api\/code\/(actions|search)$/, write: false, slow: true },
+  { method: "POST", path: /^\/api\/code\/(decide|accept-content|restore)$/, write: true },
   { method: "POST", path: /^\/api\/code\/reviews\/[0-9a-f-]{36}\/complete$/, write: true },
   { method: "POST", path: /^\/api\/code\/reviews\/[0-9a-f-]{36}\/(accept|discard)$/, write: true, slow: true },
   { method: "POST", path: /^\/api\/code\/reviews\/[0-9a-f-]{36}\/push$/, write: true, slow: true },
