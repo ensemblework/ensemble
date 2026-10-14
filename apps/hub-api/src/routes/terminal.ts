@@ -11,8 +11,6 @@
  * The ledger records the command, folder and exit code — never the output.
  */
 import { randomBytes } from "node:crypto";
-import { stat } from "node:fs/promises";
-import { isAbsolute, resolve } from "node:path";
 import {
   generateAuthenticationOptions,
   generateRegistrationOptions,
@@ -32,8 +30,10 @@ import { appendLedger } from "../lib/ledger.js";
 import { loadSettings } from "../lib/settings.js";
 import { declareModule } from "../lib/module-gate.js";
 import { humanOnlyRefusal } from "../lib/terminal-human.js";
-import { blockedReason, checkGit, checkProgram, gitHardening, GuardError, jailPath, parseCommand, within, workspaceRoot } from "../workspace/guard.js";
+import { passkeyResponse, RegistrationCredential, UnlockCredential, verifying } from "../lib/passkey-shape.js";
+import { GuardError, workspaceRoot } from "../workspace/guard.js";
 import { killGroup, runCommand } from "../workspace/runner.js";
+import { prepareRun, resolveCd, terminalRoots } from "../workspace/terminal-exec.js";
 
 const COOKIE = "ensemble_terminal";
 const IDLE_MS = 30 * 60_000;
@@ -64,44 +64,6 @@ function rpId(request: FastifyRequest): string {
   return new URL(origin).hostname;
 }
 
-/** A body that is not a passkey response: the caller's mistake, so a 400 with a clear reason, never a 500 from inside the verifier. */
-class BadPasskeyResponse extends Error {
-  readonly statusCode = 400;
-  readonly expose = true;
-}
-
-/** The JSON shape @simplewebauthn/browser posts. Checked before the verifier, which throws plain errors on anything else. */
-function credentialShape<T extends z.ZodRawShape>(response: T) {
-  return z
-    .object({
-      id: z.string().min(1),
-      rawId: z.string().min(1),
-      type: z.literal("public-key"),
-      response: z.object(response).passthrough(),
-      clientExtensionResults: z.record(z.unknown()).default({}),
-    })
-    .passthrough();
-}
-const RegistrationCredential = credentialShape({ clientDataJSON: z.string().min(1), attestationObject: z.string().min(1) });
-const UnlockCredential = credentialShape({ clientDataJSON: z.string().min(1), authenticatorData: z.string().min(1), signature: z.string().min(1) });
-
-function passkeyResponse<T extends z.ZodTypeAny>(schema: T, response: unknown, again: string): z.infer<T> {
-  const parsed = schema.safeParse(response);
-  if (parsed.success) return parsed.data;
-  const issue = parsed.error.issues[0];
-  const where = ["response", ...(issue?.path ?? [])].join(".");
-  throw new BadPasskeyResponse(`That is not a passkey response (${where}: ${issue?.message ?? "invalid"}). ${again}`);
-}
-
-/** The verifier throws (not returns false) on a credential it cannot read or that names the wrong origin or challenge: a bad request too. */
-async function verifying<T>(run: () => Promise<T>, again: string): Promise<T> {
-  try {
-    return await run();
-  } catch (error) {
-    throw new BadPasskeyResponse(`That passkey response is not valid. ${again}`, { cause: error });
-  }
-}
-
 /** Refuses anything that is not a person in the Hub's own browser tab. */
 function humanOnly(request: FastifyRequest): void {
   const refusal = humanOnlyRefusal({ authVia: request.authVia, origin: request.headers.origin, webOrigins: origins() });
@@ -127,32 +89,6 @@ function sessionInfo(token: string | null) {
   return { unlocked: true, expiresAt: new Date(Math.min(session.lastUsed + IDLE_MS, session.created + MAX_MS)).toISOString() };
 }
 
-async function roots(app: FastifyInstance, userId: string): Promise<string[]> {
-  const settings = await loadSettings(app.prisma, userId);
-  const jobs = await app.prisma.workspaceJob.findMany({ where: { userId, externalRoot: { not: null } }, select: { externalRoot: true }, distinct: ["externalRoot"] });
-  const candidates = [...settings.terminal.roots, ...jobs.map((job) => job.externalRoot!)];
-  const allowed = [await workspaceRoot()];
-  for (const candidate of candidates) {
-    if (!isAbsolute(candidate) || blockedReason(candidate)) continue;
-    if (await stat(candidate).then((info) => info.isDirectory()).catch(() => false)) allowed.push(candidate);
-  }
-  return [...new Set(allowed)];
-}
-
-function scopeOf(allowed: string[], path: string): string | null {
-  return allowed.filter((root) => within(root, path)).sort((a, b) => b.length - a.length)[0] ?? null;
-}
-
-const DESTRUCTIVE: Array<[RegExp, string]> = [
-  [/^git reset .*--hard/, "This throws away uncommitted changes."],
-  [/^git clean\b/, "This deletes untracked files."],
-  [/^git push .*--force-with-lease/, "This rewrites the remote branch."],
-  [/^git branch .*(-D|--delete)/, "This deletes a branch."],
-  [/^git checkout -- /, "This discards changes in those files."],
-  [/^git restore (?!--staged)/, "This discards changes in those files."],
-  [/^rm .*-[a-zA-Z]*r/, "This deletes folders recursively."],
-];
-
 export async function terminalRoutes(app: FastifyInstance): Promise<void> {
   declareModule(app, "code");
   app.addHook("preHandler", async (request) => requireHostTerminal(request.userId));
@@ -165,7 +101,7 @@ export async function terminalRoutes(app: FastifyInstance): Promise<void> {
       enabled: settings.terminal.enabled,
       ...sessionInfo(unlocked(request)),
       passkeys: passkeys.map((key) => ({ id: key.id, label: key.label, createdAt: key.createdAt.toISOString(), lastUsedAt: key.lastUsedAt?.toISOString() ?? null })),
-      roots: await roots(app, request.userId),
+      roots: await terminalRoots(prisma, request.userId),
       home: await workspaceRoot(),
     };
   });
@@ -307,20 +243,7 @@ export async function terminalRoutes(app: FastifyInstance): Promise<void> {
     humanOnly(request);
     if (!unlocked(request)) throw new GuardError("The terminal is locked.");
     const body = z.object({ cwd: z.string(), path: z.string().default("") }).parse(request.body);
-    const allowed = await roots(app, request.userId);
-    const scope = scopeOf(allowed, body.cwd);
-    if (!scope) throw new GuardError("That folder is outside what the terminal may use.");
-    const target = body.path.trim() === "" || body.path.trim() === "~" ? scope : body.path.trim();
-    if (isAbsolute(target)) {
-      const next = scopeOf(allowed, resolve(target));
-      if (!next) throw new GuardError(`${target} is outside the folders the terminal may use.`);
-      const real = await jailPath(next, resolve(target), true);
-      if (!(await stat(real)).isDirectory()) throw new GuardError("That is not a folder.");
-      return { cwd: real, scope: next };
-    }
-    const real = await jailPath(scope, resolve(body.cwd, target), true);
-    if (!(await stat(real)).isDirectory()) throw new GuardError("That is not a folder.");
-    return { cwd: real, scope };
+    return resolveCd(await terminalRoots(prisma, request.userId), body.cwd, body.path);
   });
 
   app.post("/api/terminal/run", async (request: FastifyRequest, reply: FastifyReply) => {
@@ -330,19 +253,9 @@ export async function terminalRoutes(app: FastifyInstance): Promise<void> {
     const settings = await loadSettings(prisma, request.userId);
     if (!settings.terminal.enabled) throw new GuardError("The terminal is turned off in Settings.");
     const body = z.object({ cwd: z.string(), line: z.string().min(1).max(4000), confirmed: z.boolean().default(false) }).parse(request.body);
-    const allowed = await roots(app, request.userId);
-    const scope = scopeOf(allowed, body.cwd);
-    if (!scope) throw new GuardError("That folder is outside what the terminal may use.");
-    const cwd = await jailPath(scope, body.cwd, true);
-    const argv = parseCommand(body.line.trim());
-    const program = checkProgram(argv, { who: "human", sandboxed: true, network: true });
-    let full = argv;
-    if (program === "git") {
-      checkGit(argv, { delivery: "push", who: "human" });
-      full = ["git", ...gitHardening(true, settings.terminal.commitAuthor), ...argv.slice(1)];
-    }
-    const warning = DESTRUCTIVE.find(([pattern]) => pattern.test(body.line.trim()))?.[1];
-    if (warning && !body.confirmed) return reply.code(428).send({ confirm: warning });
+    const prepared = await prepareRun({ allowed: await terminalRoots(prisma, request.userId), cwd: body.cwd, line: body.line, confirmed: body.confirmed, commitAuthor: settings.terminal.commitAuthor });
+    if (prepared.kind === "confirm") return reply.code(428).send({ confirm: prepared.message });
+    const { argv, full, cwd, scope, sandboxed } = prepared;
 
     reply.hijack();
     const headers: Record<string, string> = {
@@ -364,7 +277,7 @@ export async function terminalRoutes(app: FastifyInstance): Promise<void> {
         argv: full,
         cwd,
         root: scope,
-        sandboxed: process.platform === "darwin",
+        sandboxed,
         network: true,
         useCredentials: true,
         who: "human",

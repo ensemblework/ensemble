@@ -39,6 +39,17 @@ export interface RemoteSettings {
    * Never git's own files or secrets files. On by default.
    */
   browseFiles: boolean;
+  /**
+   * Ensemble on the web may change code here through the Code tab (protocol 4): accept or reject an
+   * agent's changes, edit files, stage, commit, push and pull, in the folders Code may use. Reading
+   * follows `browseFiles`. On by default.
+   */
+  webEdit: boolean;
+  /**
+   * Ensemble on the web may open the terminal here, after a passkey unlock on the web (30 minutes
+   * idle, 8 hours at most), with the same allow-list as the terminal on this computer. On by default.
+   */
+  webTerminal: boolean;
   apiBase: string | null;
   deviceId: string | null;
   deviceName: string;
@@ -115,6 +126,8 @@ export function loadSettings(): RemoteSettings {
     runBranchPush: saved.runBranchPush === true,
     acceptWebApprovals: saved.acceptWebApprovals !== false,
     browseFiles: saved.browseFiles !== false,
+    webEdit: saved.webEdit !== false,
+    webTerminal: saved.webTerminal !== false,
     apiBase: typeof saved.apiBase === "string" ? saved.apiBase : null,
     deviceId: typeof saved.deviceId === "string" ? saved.deviceId : null,
     deviceName: typeof saved.deviceName === "string" && saved.deviceName ? saved.deviceName : defaultDeviceName(),

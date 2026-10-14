@@ -226,9 +226,23 @@ test("web Settings on localhost: no desktop note, and the toggle, folder list an
   });
 });
 
+test("Ensemble on the web: this server's terminal is not offered; the passkeys for the terminal on your computers are", async () => {
+  await at("https://app.ensemblework.com/settings", false, (view) => {
+    assert.equal(hasDesktopNote(view.host), false);
+    assert.equal(hasAddressNote(view.host), false, "no message that sends you to localhost");
+    const block = view.host.querySelector('[data-testid="web-terminal-passkeys"]');
+    assert.ok(block, "the web terminal's passkeys");
+    assert.match(block.textContent ?? "", /paired computer/);
+    assert.equal(hasToggle(view.host), false, "no Terminal toggle for this server");
+    assert.equal(view.calls.some((call) => call.endsWith("/api/terminal/status")), false);
+    assert.ok(view.calls.some((call) => call.endsWith("/api/web-terminal/status")));
+    assertFolders(view, false, "web");
+    assertCommitSettingsStay(view.host, "web");
+  });
+});
+
 test("web Settings where the terminal cannot open: no desktop note, the Code tab's address message instead of the toggle, folders and set-up", async () => {
   const cases: Array<[string, string, RegExp]> = [
-    ["https://app.ensemblework.com/settings", "named-host", /not available at app\.ensemblework\.com yet/],
     ["http://127.0.0.1:3100/settings", "loopback-ip", /Open Ensemble at http:\/\/localhost:3100 to use the terminal/],
     ["http://192.168.1.20:3000/settings", "ip", /only on the computer running Ensemble/],
   ];

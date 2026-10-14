@@ -68,7 +68,7 @@ export async function finishDeviceJob(
               toolCalls: totals.toolCalls ?? 0,
               tokensIn: totals.tokensIn ?? 0,
               tokensOut: totals.tokensOut ?? 0,
-              evidence: { files: totals.files.map((file) => ({ ...file, path: redactText(file.path).slice(0, 500) })), model: totals.model ?? null, costUsd: totals.costUsd ?? null } as Prisma.InputJsonValue,
+              evidence: { files: totals.files.map((file) => ({ ...file, path: redactText(file.path).slice(0, 500) })), model: totals.model ?? null, costUsd: totals.costUsd ?? null, ...(totals.reviewId ? { reviewId: totals.reviewId } : {}) } as Prisma.InputJsonValue,
             }
           : {}),
       },

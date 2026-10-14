@@ -8,7 +8,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { hostExecutable, isWithin } from "../workspace/policy.js";
 import { dropWhere, readLru, remember } from "./bounded.js";
 
@@ -272,12 +272,44 @@ export async function stageHunk(repo: string, diff: FileDiff, hunk: Hunk): Promi
   await git(repo, ["apply", "--cached", "--recount", "--whitespace=nowarn", "-"], { input: patchFor(diff, hunk) });
 }
 
+/** What the Code tab opens; larger files are refused before they are read. */
+export const REPO_FILE_MAX_BYTES = 5 * 1024 * 1024;
+
+/**
+ * Where `path` really is: inside the repository after links are followed, never in git's own folder.
+ * A link that leads out of the repository is refused, for reading and for writing; a new file is
+ * placed by its folder's real path.
+ */
+async function realInside(repo: string, path: string, forWrite: boolean): Promise<string> {
+  const full = insideRepo(repo, path);
+  if (path.split(/[\\/]/).some((part) => part.toLowerCase().replace(/[. ]+$/, "") === ".git")) {
+    throw new GitError("Git's own files are not opened here.", 403);
+  }
+  const realRepo = await realpath(repo);
+  let target: string;
+  try {
+    target = await realpath(full);
+  } catch (error) {
+    if (!forWrite || (error as NodeJS.ErrnoException).code !== "ENOENT") throw new GitError("That file is not in the repository.", 404);
+    target = join(await realpath(dirname(full)).catch(() => { throw new GitError("That folder is not in the repository.", 404); }), basename(full));
+  }
+  if (!isWithin(realRepo, target)) throw new GitError("That file is a link to somewhere outside the repository.", 403);
+  return target;
+}
+
 export async function readRepoFile(repo: string, path: string): Promise<string> {
-  return readFile(insideRepo(repo, path), "utf8");
+  const target = await realInside(repo, path, false);
+  const info = await stat(target);
+  if (!info.isFile()) throw new GitError("That is not a file.", 422);
+  if (info.size > REPO_FILE_MAX_BYTES) throw new GitError("Files over 5 MB are not opened here.", 413);
+  return readFile(target, "utf8");
 }
 
 export async function writeRepoFile(repo: string, path: string, content: string): Promise<void> {
-  await writeFile(insideRepo(repo, path), content, "utf8");
+  const target = await realInside(repo, path, true);
+  const info = await stat(target).catch(() => null);
+  if (info && !info.isFile()) throw new GitError("That is not a file.", 422);
+  await writeFile(target, content, "utf8");
 }
 
 // ── source control ────────────────────────────────────────────────────────

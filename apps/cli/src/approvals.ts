@@ -140,6 +140,17 @@ export async function browseFiles(discovery: Discovery, on?: boolean): Promise<b
   return body.browseFiles !== false;
 }
 
+/** What Ensemble on the web may do here: read task files and code, change code, open the terminal. */
+export type WebAccess = { browseFiles: boolean; webEdit: boolean; webTerminal: boolean };
+
+export async function webAccess(discovery: Discovery, change?: Partial<WebAccess>): Promise<WebAccess> {
+  const body =
+    change === undefined
+      ? await localJson<Partial<WebAccess>>(discovery, "/api/remote")
+      : await localJson<Partial<WebAccess>>(discovery, "/api/remote", { method: "PUT", body: JSON.stringify(change) });
+  return { browseFiles: body.browseFiles !== false, webEdit: body.webEdit !== false, webTerminal: body.webTerminal !== false };
+}
+
 export async function webApprovals(discovery: Discovery, on?: boolean): Promise<boolean> {
   const body =
     on === undefined

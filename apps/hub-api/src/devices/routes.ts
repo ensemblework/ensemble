@@ -134,7 +134,7 @@ function deviceJson(device: Device, now = Date.now()) {
   };
 }
 
-async function ownDevice(app: FastifyInstance, request: FastifyRequest, reply: FastifyReply): Promise<Device | null> {
+export async function ownDevice(app: FastifyInstance, request: FastifyRequest, reply: FastifyReply): Promise<Device | null> {
   if (request.tokenScope !== "device" || !request.tokenId) {
     await reply.code(403).send({ error: "Only the paired computer can call this." });
     return null;

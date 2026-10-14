@@ -1,6 +1,6 @@
 # 26 · Ensemble CLI: the `ensemble` app in your terminal, a runner, and MCP for editors
 
-CLI 0.3.6 carries Woven Chorus branding and the Satin Gold terminal indicator. CLI 0.3.7 resolves host names inside the macOS sandbox (so a task can `git clone` from GitHub) and shows the files of tasks run here on the web (`ensemble browse`).
+CLI 0.3.6 carries Woven Chorus branding and the Satin Gold terminal indicator. CLI 0.3.7 resolves host names inside the macOS sandbox (so a task can `git clone` from GitHub) and shows the files of tasks run here on the web (`ensemble browse`). CLI 0.3.8 lets the web's Code tab work on this computer: review and edit code, Source control, and the terminal after a passkey unlock on the web (`ensemble web`).
 
 Type `ensemble` in a project folder and Ensemble opens full-screen in the terminal:
 
@@ -70,6 +70,7 @@ Every action is also a plain command for scripts and automation; `ensemble help 
 | `ensemble hooks [list] \| connect <tool> \| disconnect <tool>` | Connects Claude Code (and the Claude app), Codex (CLI and the ChatGPT app), GitHub Copilot CLI or Cursor: permission prompts and questions from tasks Ensemble opens in them reach Needs me, while the tool's own prompt still works. The hook signs in with a `hooks` key that can ask but never answer ([30](30_ENGINES.md) §5). |
 | `ensemble approvals [status] \| on \| off` | Whether the web and phone may approve for this computer (on by default) and whether the mode, internet and limits chosen there apply here ([25 §5.1](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#51-phone-approvals)) |
 | `ensemble browse [status] \| on \| off` | Whether Ensemble on the web shows the files of tasks run here (on by default, 0.3.7): the text of the files a run changed, sent when it ends, and any file or folder in a task's folder, read from here when you open it in the web's Code tab. Never git's own files or secrets files ([25 §4.6](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#46-a-tasks-files-on-the-web-protocol-3-14-oct-2026)) |
+| `ensemble web [status] \| files on\|off \| edit on\|off \| terminal on\|off` | What Ensemble on the web may do on this computer (0.3.8, each on by default): `files` is the same switch as `ensemble browse`, and also lets the web's Code tab read code here; `edit` lets it change code (accept or reject an agent's changes, edit files, commit, push, pull); `terminal` lets it open the terminal here after a passkey unlock on the web. The computer checks each on every request ([25 §4.7](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#47-the-code-tab-and-terminal-on-the-web-protocol-4-14-oct-2026)) |
 | `ensemble mcp` | Read-only MCP server on stdio (editors run this) |
 | `ensemble mcp setup [editor…] [--all] [--print] [--hosted]`, `mcp remove <editor>`, `mcp editors` | Write editor config (§6) |
 | `ensemble update` | Detects how it was installed (Homebrew, Scoop, winget, deb/rpm, script, npm) and prints the upgrade command. A daily check (2-second timeout; a failed check also waits a day) prints a one-line notice for a newer `cli-v*` release; never for `mcp` or `runner`, or when stderr is not a terminal. `ENSEMBLE_NO_UPDATE_CHECK=1` or `CI` turns it off |

@@ -33,7 +33,7 @@ import { declareModule } from "../lib/module-gate.js";
 import { dropWhere, readLru, remember } from "../lib/bounded.js";
 import { loadSettings } from "../lib/settings.js";
 import { resolveCodeFolder, usableCodeRoots } from "../lib/code-folders.js";
-import { expandHome, within } from "../workspace/guard.js";
+import { expandHome, gitHardening, within } from "../workspace/guard.js";
 import { isOwnRunBranch, isRunBranch, runTrustedGit } from "../workspace/git-gate.js";
 import { pushRunBranch } from "../workspace/publish.js";
 import { flagPlanted, type PlantedHit } from "../workspace/planted.js";
@@ -386,7 +386,9 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
     const repo = await allowedRepo(body.repo, await roots(request.userId));
     const settings = await loadSettings(prisma, request.userId);
     const identity = settings.terminal.commitAuthor.match(/^(.+?)\s*<(.+)>$/);
+    // Repository hooks do not run: a commit from the Code tab (here or from the web) runs no code from the folder.
     const args = [
+      ...gitHardening(true),
       ...(identity ? ["-c", `user.name=${identity[1]}`, "-c", `user.email=${identity[2]}`] : []),
       "commit",
       ...(body.all ? ["-a"] : []),
@@ -402,7 +404,7 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/code/scm/push", async (request) => {
     const { repo: raw } = RepoBody.parse(request.body);
     const repo = await allowedRepo(raw, await roots(request.userId));
-    const output = await git(repo, ["push", "-u", "origin", "HEAD"]);
+    const output = await git(repo, [...gitHardening(true), "push", "-u", "origin", "HEAD"]);
     await appendLedger({ userId: request.userId, actor: "me", action: "code.push", payload: { repo } });
     return { ok: true, output };
   });
@@ -410,7 +412,7 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/code/scm/pull", async (request) => {
     const { repo: raw } = RepoBody.parse(request.body);
     const repo = await allowedRepo(raw, await roots(request.userId));
-    const output = await git(repo, ["pull", "--ff-only"]);
+    const output = await git(repo, [...gitHardening(true), "pull", "--ff-only"]);
     return { ok: true, output };
   });
 

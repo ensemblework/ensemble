@@ -25,3 +25,17 @@ export function redactText(value: string): string {
     .replace(SECRET_LINE, "$1[redacted]")
     .replace(SHAPED, "[redacted]");
 }
+
+/**
+ * Only the shapes that are certainly keys: private keys, bearer headers, passwords in URLs and known
+ * token formats. Code shown for editing uses this, not `redactText`, whose `name = value` rule would
+ * also hide ordinary code such as `password: string`.
+ */
+export function redactKeys(value: string): string {
+  return value
+    .replace(PRIVATE_KEY, "[redacted private key]")
+    .replace(BEARER, "$1[redacted]")
+    .replace(INTERNAL, "$1[redacted]")
+    .replace(URL_PASSWORD, "$1[redacted]@")
+    .replace(SHAPED, "[redacted]");
+}

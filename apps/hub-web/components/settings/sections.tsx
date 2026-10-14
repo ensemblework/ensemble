@@ -332,6 +332,53 @@ export function RemindersSection({ settings, patch }: Props) {
   );
 }
 
+/**
+ * On Ensemble on the web: the passkeys that unlock the terminal on your paired computers (Code tab).
+ * Removing one needs the terminal unlocked, like on the computer.
+ */
+function WebPasskeys() {
+  const client = useQueryClient();
+  const status = useQuery({ queryKey: ["terminal-status", "web"], queryFn: api.webTerminalStatus });
+  const [error, setError] = useState<string | null>(null);
+  const remove = useMutation({
+    mutationFn: api.webTerminalRemovePasskey,
+    onSuccess: () => client.invalidateQueries({ queryKey: ["terminal-status"] }),
+    onError: (failure) => setError((failure as Error).message),
+  });
+  const keys = status.data?.passkeys ?? [];
+  return (
+    <div className="mb-3 rounded-md border border-line bg-panel px-3 py-2 text-[12.5px]" data-testid="web-terminal-passkeys">
+      <div className="font-medium">Passkeys for the terminal on your computers</div>
+      <p className="mt-0.5 text-muted">
+        The terminal on a paired computer opens from the Code tab after you unlock it with one of these (Touch ID, Windows Hello, your phone or a security key). It locks after 30 minutes idle, 8 hours at most. Each computer decides whether the web may open it (Settings → this computer there, or <code className="font-mono">ensemble web terminal on|off</code>).
+      </p>
+      <div className="mt-1.5 space-y-1">
+        {status.isLoading ? null : keys.length === 0 ? (
+          <div className="text-muted">None yet. Open the terminal on a computer in the Code tab to add one.</div>
+        ) : (
+          keys.map((key) => (
+            <div key={key.id} className="group flex items-center gap-2">
+              <span>{key.label || "Passkey"}</span>
+              <span className="text-faint">added {new Date(key.createdAt).toLocaleDateString()}{key.lastUsedAt ? ` · last used ${new Date(key.lastUsedAt).toLocaleString()}` : ""}</span>
+              <button
+                type="button"
+                className="icon-btn h-5 w-5 opacity-0 group-hover:opacity-100"
+                title={status.data?.unlocked ? "Remove" : "Unlock the terminal first to remove a passkey"}
+                disabled={!status.data?.unlocked || remove.isPending}
+                onClick={() => remove.mutate(key.id)}
+              >
+                <X size={11} />
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+      {error ? <p className="mt-1 text-[12px] text-danger">{error}</p> : null}
+      <p className="mt-1 text-[12px] text-muted">Every passkey added is recorded in the audit ledger. Remove any you do not recognise.</p>
+    </div>
+  );
+}
+
 export function TerminalSection({ settings, patch }: Props) {
   const client = useQueryClient();
   const codeOn = useModuleOn("code");
@@ -368,6 +415,8 @@ export function TerminalSection({ settings, patch }: Props) {
           <div className="font-medium">{TERMINAL_DESKTOP_TITLE}</div>
           <div className="mt-0.5 text-muted">{TERMINAL_DESKTOP_BODY}</div>
         </div>
+      ) : access && !access.ok && access.reason === "named-host" ? (
+        <WebPasskeys />
       ) : access && !access.ok ? (
         <div role="note" data-testid="terminal-address-note" data-reason={access.reason} className="mb-3 rounded-md border border-warn/50 bg-panel px-3 py-2 text-[12.5px] text-muted">
           {access.message}

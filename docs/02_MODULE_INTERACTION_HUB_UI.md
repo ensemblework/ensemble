@@ -285,6 +285,8 @@ Client calls for the store and MCP routes are in `lib/api-connectors.ts` (the MC
 | POST | `/api/approvals/:id/decide` | `{ decision: 'approved' \| 'edited' \| 'rejected', editedPayload?, reason? }` |
 | POST | `/api/approvals/:id/revise` | `{ note }` |
 | GET | `/api/agent/jobs/:id/files` • `/api/agent/jobs/:id/file?path=&live=` • `/api/agent/jobs/:id/tree?path=` | A job's changed files (status, line counts, whether their text is stored), one file (the copy sent when the run ended, or `live=1` read now) and one folder, read now from the paired computer that ran it or from this server's folder (docs/25 §4.6, docs/16) |
+| POST | `/api/devices/:id/code` • `/api/devices/:id/terminal` • GET `/api/devices/:id/terminal/output?run=&after=` | The Code tab and terminal on a paired computer, from the web: one call to that computer's own Code API (`{method, path, query, body?}`), and the terminal's status, cd, run (output long-polled) and kill. Only the computer's owner in a signed-in browser; the terminal after a passkey unlock (docs/25 §4.7, docs/16) |
+| * | `/api/web-terminal/status` • `/passkeys/code` • `/passkeys/options` • `/passkeys/verify` • `DELETE /passkeys/:id` • `/unlock/options` • `/unlock/verify` • `/lock` | The web terminal's passkey lock: 30 minutes idle, 8 hours at most; a new passkey confirmed with the password or a mailed code (docs/16 §5) |
 | GET | `/api/runs` • `/api/runs/:id` • `/api/runs/:id/export` | List rows add the agent job's harness, model that answered, where, tool calls, tokens and cost. `/api/runs/:id` → `{ run, job }`: the run with its steps and approvals, and the job behind it (harness, models asked for and used, where it ran, sandbox, internet, git permission, limits, counts, cost, files, results; no server paths), or `job: null` |
 | GET | `/api/context/people\|projects\|repos\|preferences` | → graph nodes with evidence |
 | GET | `/api/context/search?q=…` | Read-only literal workspace search, up to 12 deduplicated destinations with snippets; current-space access, no Trash |
@@ -338,17 +340,18 @@ Client calls for the store and MCP routes are in `lib/api-connectors.ts` (the MC
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/api/code/runs` | → runs with changes, review progress (database only) |
-| GET | `/api/code/:jobId/manifest` | → files, blob SHAs, on-disk state, decisions (ETag) |
-| GET | `/api/code/:jobId/blobs?shas=` | → file versions by SHA (this run's only; immutable) |
+| GET | `/api/code/reviews?filter=needs\|reviewed\|all&expired=` | → `{ reviews[], ttlDays }`: agent runs with changes, with files and lines added and removed |
+| GET | `/api/code/repos` | → `{ repos[], roots[] }`: git checkouts in the workspace and the folders Code can use |
+| GET | `/api/code/source?review=\|repo=` | → the review or checkout: branch, files changed (and those that can't be reviewed), files that can run code later, decisions |
+| GET | `/api/code/diff?review=\|repo=&path=&untracked=` | → one file's hunks and the decisions on them |
+| POST | `/api/code/decide` | `{ review\|repo, path, key, untracked, decision }`: accept keeps a change, reject puts the old lines back on disk (in a checkout: stage, or discard) |
+| POST | `/api/code/reviews/:id/complete` • `/accept` • `/discard` • `/push` | Mark reviewed; accept all (commit on the run's branch, hooks off); put the files back as the run found them; push the run branch, fast-forward only |
+| GET \| PUT | `/api/code/file?review=\|repo=&path=` | Read / write one file: inside the repository only (links followed only inside it), never git's own files, up to 5 MB |
 | POST | `/api/code/folders/resolve` | `{ path }` → `{ path }`, the real path, or an error when Code may not use that folder ([docs/16](16_CODE_TAB.md)) |
-| GET \| POST | `/api/code/:jobId/file` | → read / write one file (`expectedHash` guard, EOL kept) |
-| POST | `/api/code/:jobId/revert-file` | |
-| PUT | `/api/code/:jobId/decisions` | |
-| POST | `/api/code/:jobId/restore` | |
-| GET / POST | `/api/code/:jobId/scm` • `POST /api/code/:jobId/commit` | commit/push/PR — passkey session |
-| GET / POST / DELETE | `/api/stepup/status` • `POST /api/stepup/{register,auth}/{options,verify}` • `DELETE /api/stepup/session` | Passkey step-up |
-| GET \| PUT / POST | `/api/terminal/settings` • `POST /api/terminal/sessions` • `GET …/:id/events` (SSE) • `POST …/:id/run\|cancel` | Guarded terminal |
+| GET / POST | `/api/code/scm?repo=` • `POST /api/code/scm/{stage,unstage,discard,commit,push,pull}` • `GET /api/code/actions?repo=` | Source control: status and recent commits; commit, push and pull with the repository's hooks off; GitHub Actions runs for the branch |
+| GET / POST / DELETE | `/api/terminal/status` • `POST /api/terminal/passkeys/{options,verify}` • `DELETE /api/terminal/passkeys/:id` • `POST /api/terminal/unlock/{options,verify}` • `POST /api/terminal/{lock,kill,cd,run}` | The terminal on this computer's page at `localhost`: passkey unlock, then one allow-listed command per `run`, its output streamed back (docs/16 §5) |
+
+On Ensemble on the web the same calls reach a paired computer through `POST /api/devices/:id/code` and its terminal through `/api/devices/:id/terminal` (above; docs/25 §4.7).
 
 ### The Hub assistant (§10)
 
