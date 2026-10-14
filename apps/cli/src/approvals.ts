@@ -131,6 +131,15 @@ export async function trustSharing(discovery: Discovery, on?: boolean): Promise<
     : localJson<TrustSharing>(discovery, "/api/workspace/trust/sharing", { method: "PUT", body: JSON.stringify({ enabled: on }) });
 }
 
+/** Whether Ensemble on the web may show the files of tasks run here (`browseFiles`, on by default). */
+export async function browseFiles(discovery: Discovery, on?: boolean): Promise<boolean> {
+  const body =
+    on === undefined
+      ? await localJson<{ browseFiles?: boolean }>(discovery, "/api/remote")
+      : await localJson<{ browseFiles?: boolean }>(discovery, "/api/remote", { method: "PUT", body: JSON.stringify({ browseFiles: on }) });
+  return body.browseFiles !== false;
+}
+
 export async function webApprovals(discovery: Discovery, on?: boolean): Promise<boolean> {
   const body =
     on === undefined

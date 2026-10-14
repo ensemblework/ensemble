@@ -30,6 +30,7 @@ import { ModelQuotaError } from "../lib/model-quota.js";
 import { RuntimeError } from "../lib/runtime-error.js";
 import { truncateText } from "../lib/text.js";
 import { isOwnRunBranch, runBranchName, runTrustedGit } from "./git-gate.js";
+import { agentChanges, type ChangedFile } from "./changed-files.js";
 import { flagPlanted } from "./planted.js";
 import { gitHardening, GuardError, outsideRefusal, resolveWorkFolder, sandboxAvailable, sandboxRefusal, within, workspaceRoot } from "./guard.js";
 import { capabilities, prepareNetwork } from "./sandbox/spawn.js";
@@ -44,7 +45,7 @@ import { interruptionMessage } from "./lifecycle.js";
 import { appendLive, dropLive } from "./live-log.js";
 import { checkModeTrust, isChatTurn, isFolderTrusted, outsideAccessOf, pathCovers, PATH_RULE_SOURCE, PATH_RULE_TOOL, REVIEW_MESSAGE, rulesForJob, runModeOf, TRUST_TOOL, UNATTENDED_MESSAGE, type SandboxStrength } from "./trust.js";
 import { trustChanged } from "./trust-share.js";
-import { askPerson, chatSpecs, outsideReadAllowed, realOutside, refTips, responsesSpecs, runTool, toolSpecs, undoUnapprovedCommits, type JobContext } from "./tools.js";
+import { askPerson, chatSpecs, outsideReadAllowed, plantedIn, realOutside, refTips, responsesSpecs, runTool, toolSpecs, undoUnapprovedCommits, type JobContext } from "./tools.js";
 
 export interface JobControl {
   signal: AbortSignal;
@@ -63,12 +64,12 @@ function outcomeTone(kind: string) {
 async function gitIn(
   ctx: Pick<JobContext, "userId" | "root" | "sandboxed" | "signal" | "job">,
   args: string[],
-  options: { network?: boolean; credentials?: boolean; env?: Record<string, string>; config?: string[]; timeoutMs?: number } = {},
+  options: { network?: boolean; credentials?: boolean; env?: Record<string, string>; config?: string[]; timeoutMs?: number; cwd?: string } = {},
 ) {
   return runCommand({
     userId: ctx.userId,
     argv: ["git", ...gitHardening(false), ...(options.config ?? []), ...args],
-    cwd: ctx.root,
+    cwd: options.cwd ?? ctx.root,
     root: ctx.root,
     sandboxed: ctx.sandboxed,
     network: options.network ?? false,
@@ -589,7 +590,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
   /** What an engine reported at the end: the model that answered and its own cost estimate. */
   let engineTotals: { model: string | null; costUsd: number | null } | null = null;
   /** Files the run changed, with lines added and removed (no contents): the run's evidence. */
-  let changedFiles: Array<{ path: string; added: number; removed: number }> = [];
+  let changedFiles: ChangedFile[] = [];
   /** An engine run's trace (Claude Code, Codex, Cursor). */
   let engineTrace: EngineTrace | null = null;
   /** Ensemble's own agent: the model that answered last, and the run's cost estimate from its token counts. */
@@ -967,13 +968,15 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
           ...(ctx.plantedInClones ?? []),
         ];
         changes = stat.output.trim();
-        const numstat = await gitIn(wrapCtx, ["diff", "--no-ext-diff", "--no-textconv", "--numstat", startTree, endTree]);
-        changedFiles = numstat.output
-          .split("\n")
-          .map((line) => line.split("\t"))
-          .filter((parts) => parts.length >= 3 && parts[2])
-          .slice(0, 200)
-          .map(([added, removed, path]) => ({ path: path!, added: Number(added) || 0, removed: Number(removed) || 0 }));
+        // What the agent wrote: a repository it cloned is not a change, its edits inside one are (changed-files.ts).
+        const changed = await agentChanges((args, cwd) => gitIn(wrapCtx, args, { cwd }), ctx.root, startTree, endTree);
+        changedFiles = changed.files;
+        // A repository an engine cloned by itself was not checked at the clone (cloneForAgent was): check it now.
+        for (const dir of changed.nested.slice(0, 10)) {
+          if ((ctx.plantedInClones ?? []).some((hit) => hit.path.startsWith(`${dir}/`))) continue;
+          const hits = await plantedIn(wrapCtx, join(ctx.root, dir), dir).catch(() => []);
+          for (const hit of hits) if (!planted.some((known) => known.path === hit.path)) planted.push(hit);
+        }
         if (planted.length) {
           changes += `\n\nFlagged — these can run later, outside the sandbox, when the folder is opened:\n${planted.map((hit) => `- ${hit.path}: ${hit.reason}`).join("\n")}`;
         }

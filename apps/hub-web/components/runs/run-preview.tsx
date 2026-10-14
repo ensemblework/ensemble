@@ -11,6 +11,7 @@ import {
   ChevronRight,
   CircleDashed,
   Copy,
+  FileCode2,
   FileText,
   FolderGit2,
   Globe,
@@ -510,14 +511,26 @@ function Files({ job }: { job: RunJob }) {
   const removed = job.files.reduce((sum, file) => sum + file.removed, 0);
   return (
     <div>
-      <div className="mb-2 text-[12.5px] text-muted">
-        {plural(job.files.length, "file")} changed · <span className="text-ok">+{added}</span> <span className="text-danger">−{removed}</span>
-        {job.where === "device" ? " · the changes stay on that computer" : ""}
+      <div className="mb-2 flex flex-wrap items-center gap-x-2 text-[12.5px] text-muted">
+        <span>
+          {plural(job.files.length, "file")} changed · <span className="text-ok">+{added}</span> <span className="text-danger">−{removed}</span>
+        </span>
+        {job.where === "device" ? (
+          <Link href={`/code?job=${job.id}`} className="inline-flex items-center gap-1 text-accent hover:underline">
+            <FileCode2 size={12} /> Open the code
+          </Link>
+        ) : null}
       </div>
       <div className="divide-y divide-[var(--line)] rounded-md border border-line">
         {job.files.map((file) => (
           <div key={file.path} className="flex items-center gap-3 px-3 py-1.5 text-[12.5px]">
-            <span className="min-w-0 flex-1 truncate font-mono">{file.path}</span>
+            {job.where === "device" ? (
+              <Link href={`/code?job=${job.id}&file=${encodeURIComponent(file.path)}`} className="min-w-0 flex-1 truncate font-mono hover:text-accent hover:underline">
+                {file.path}
+              </Link>
+            ) : (
+              <span className="min-w-0 flex-1 truncate font-mono">{file.path}</span>
+            )}
             <span className="w-12 shrink-0 text-right tabular-nums text-ok">+{file.added}</span>
             <span className="w-12 shrink-0 text-right tabular-nums text-danger">−{file.removed}</span>
             <div className="hidden h-1.5 w-24 shrink-0 overflow-hidden rounded-full bg-raised sm:flex">

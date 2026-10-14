@@ -32,6 +32,7 @@ async function status(app: FastifyInstance) {
     enabled: settings.enabled,
     runBranchPush: settings.runBranchPush,
     acceptWebApprovals: settings.acceptWebApprovals,
+    browseFiles: settings.browseFiles,
     online: presence.online,
     lastHeartbeatAt: presence.lastHeartbeatAt || null,
     disconnected: settings.disconnected,
@@ -53,6 +54,7 @@ export async function remoteRoutes(app: FastifyInstance): Promise<void> {
         enabled: z.boolean().optional(),
         runBranchPush: z.boolean().optional(),
         acceptWebApprovals: z.boolean().optional(),
+        browseFiles: z.boolean().optional(),
         apiBase: z.string().max(300).nullable().optional(),
         deviceName: z.string().min(1).max(60).optional(),
       })
@@ -72,15 +74,24 @@ export async function remoteRoutes(app: FastifyInstance): Promise<void> {
       ...(body.enabled === undefined ? {} : { enabled: body.enabled }),
       ...(body.runBranchPush === undefined ? {} : { runBranchPush: body.runBranchPush }),
       ...(body.acceptWebApprovals === undefined ? {} : { acceptWebApprovals: body.acceptWebApprovals }),
+      ...(body.browseFiles === undefined ? {} : { browseFiles: body.browseFiles }),
       ...(body.enabled === true ? { disconnected: null, unreachable: null } : {}),
       ...(body.enabled === false
         ? { disconnected: { at: new Date().toISOString(), reason: REMOTE_NOTICE.switchedOff }, unreachable: null }
         : {}),
     });
-    if (body.enabled === false || body.runBranchPush !== undefined || body.enabled === true || body.acceptWebApprovals !== undefined) {
+    if (body.enabled === false || body.runBranchPush !== undefined || body.enabled === true || body.acceptWebApprovals !== undefined || body.browseFiles !== undefined) {
       const action =
-        body.enabled === true ? "remote.enable" : body.enabled === false ? "remote.disable" : body.acceptWebApprovals !== undefined ? "remote.web_approvals" : "remote.push_setting";
-      await appendLedger({ userId, actor: "me", action, payload: { enabled: next.enabled, runBranchPush: next.runBranchPush, acceptWebApprovals: next.acceptWebApprovals } });
+        body.enabled === true
+          ? "remote.enable"
+          : body.enabled === false
+            ? "remote.disable"
+            : body.acceptWebApprovals !== undefined
+              ? "remote.web_approvals"
+              : body.browseFiles !== undefined
+                ? "remote.browse_files"
+                : "remote.push_setting";
+      await appendLedger({ userId, actor: "me", action, payload: { enabled: next.enabled, runBranchPush: next.runBranchPush, acceptWebApprovals: next.acceptWebApprovals, browseFiles: next.browseFiles } });
     }
     if (body.enabled === false) await stopRemoteWork(app, REMOTE_NOTICE.switchedOff, "cancelled");
     wakeRemote();

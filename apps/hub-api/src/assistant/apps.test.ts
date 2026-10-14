@@ -264,7 +264,8 @@ async function turn(value: Settings, grants: AppGrant[]) {
   });
 }
 
-const EVENT = { title: "Design review", start: "2026-10-14T15:00", attendees: ["sam@fieldnote.example"] };
+// A weekday-identical date years ahead (Wed 14 Oct 2037), so the preview never says "already in the past".
+const EVENT = { title: "Design review", start: "2037-10-14T15:00", attendees: ["sam@fieldnote.example"] };
 
 test("a turn with writePolicy immediate still holds a calendar invite for Apply and sends nothing", async () => {
   script([{ name: "calendar_create_event", arguments: EVENT }], "Ready to apply: the design review invite.");

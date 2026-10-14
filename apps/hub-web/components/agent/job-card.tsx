@@ -351,7 +351,13 @@ function AgentOutput({ job }: { job: AgentJob }) {
             <div className="mt-2.5 border-t border-line pt-2">
               {files.slice(0, 12).map((file) => (
                 <div key={file.path} className="flex items-center gap-2 font-mono text-[11.5px]">
-                  <span className="min-w-0 flex-1 truncate text-muted">{file.path}</span>
+                  {job.deviceId ? (
+                    <Link href={`/code?job=${job.id}&file=${encodeURIComponent(file.path)}`} className="min-w-0 flex-1 truncate text-muted hover:text-accent hover:underline">
+                      {file.path}
+                    </Link>
+                  ) : (
+                    <span className="min-w-0 flex-1 truncate text-muted">{file.path}</span>
+                  )}
                   <span className="text-ok">+{file.added}</span>
                   <span className="text-danger">−{file.removed}</span>
                 </div>

@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { FolderGit2, TerminalSquare } from "lucide-react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { DeviceChanges } from "@/components/code/device-changes";
 import { Terminal } from "@/components/code/terminal";
@@ -41,6 +42,8 @@ function ReviewRow({ review }: { review: ReviewSummary }) {
 }
 
 export default function CodePage() {
+  const params = useSearchParams();
+  const router = useRouter();
   const [filter, setFilter] = useState<"needs" | "reviewed" | "all">("needs");
   const [expired, setExpired] = useState(false);
   const reviews = useQuery({ queryKey: ["reviews", filter, expired], queryFn: () => api.reviews(filter, expired) });
@@ -94,7 +97,11 @@ export default function CodePage() {
       {onComputers ? (
         <>
           <h2 id="reviews" className="mb-1 scroll-mt-4 text-[17px] font-semibold">Changes on your computers</h2>
-          <DeviceChanges />
+          <DeviceChanges
+            openJobId={params.get("job")}
+            openPath={params.get("file")}
+            onOpen={(jobId) => router.replace(jobId ? `/code?job=${jobId}` : "/code", { scroll: false })}
+          />
         </>
       ) : (
       <>

@@ -2,7 +2,7 @@
  * The Mac's calls to Ensemble on the web. Doc 25 §4.3, and only those routes.
  * The device token stays in this process; it is never written to a child environment.
  */
-import { ROUTES, type Outcome, type ResultLink, type RunTotals, type UploadedStep } from "./contract.js";
+import { ROUTES, type FileAnswer, type Outcome, type ResultLink, type RunTotals, type UploadedFile, type UploadedStep } from "./contract.js";
 
 export class RemoteError extends Error {
   readonly expose = true;
@@ -45,6 +45,10 @@ export interface HostedClient {
   /** Answered here: the card on the web closes with the same answer. Older servers answer 404. */
   closeDecision(decisionId: string, body: { decision: "allow" | "deny"; reason: string | null }): Promise<void>;
   complete(jobId: string, leaseToken: string, body: { outcome: Outcome; summary: string; results: ResultLink[]; totals?: RunTotals }): Promise<void>;
+  /** The text of files the run changed (protocol 3), before complete. */
+  uploadFiles(jobId: string, leaseToken: string, files: UploadedFile[]): Promise<void>;
+  /** The answer to a `files.request`. */
+  answerFiles(requestId: string, answer: FileAnswer): Promise<void>;
   events(onFrame: (event: string, data: unknown) => void, signal: AbortSignal): Promise<void>;
 }
 
@@ -153,6 +157,15 @@ export function hostedClient(base: string, token: string): HostedClient {
     async complete(jobId, leaseToken, body) {
       const res = await call("POST", ROUTES.complete(jobId), { ...body, leaseToken });
       if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "The result was refused."));
+    },
+    async uploadFiles(jobId, leaseToken, files) {
+      const res = await call("POST", ROUTES.files(jobId), { leaseToken, files });
+      if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "The changed files were refused."));
+    },
+    async answerFiles(requestId, answer) {
+      const res = await call("POST", ROUTES.fileAnswer(requestId), answer);
+      // The web stopped waiting (410) or never asked this computer (404): nothing to do.
+      if (res.status >= 400 && res.status !== 404 && res.status !== 410) throw new RemoteError(res.status, messageOf(res.body, "The answer was refused."));
     },
     events(onFrame, signal) {
       return readEvents(base, token, onFrame, signal);

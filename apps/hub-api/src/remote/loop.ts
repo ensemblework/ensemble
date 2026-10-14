@@ -19,6 +19,8 @@ import { liveLogSince } from "../workspace/live-log.js";
 import { interruptJob, stopJob, whenQueueReady } from "../workspace/worker.js";
 import { acceptClaimed, resultLinks } from "./accept.js";
 import { authRejected, deviceRemovedEvent, hostedClient, remoteApiBase, RemoteError, type HostedClient } from "./client.js";
+import { sliceBytes } from "../lib/text.js";
+import { answerFileRequest, uploadChangedFiles } from "./files.js";
 import { deviceOwnedEvents, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, ONLINE_WINDOW_MS, parseAnswer, parseClaim, STEP_POST_BYTES, timing, type RunTotals, type UploadedStep } from "./contract.js";
 import { actionHash, decisionOptions, judgeAnswer, publishedFolders, riskOf, scrubOutgoing, type LocalDecision } from "./policy.js";
 import { dropDeviceToken, loadHeld, loadSettings, readDeviceToken, saveHeld, updateSettings, type HeldJob, type RemoteSettings } from "./store.js";
@@ -85,6 +87,8 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     // The web shows this as a locked pill. Only this Mac can change it.
     runBranchPush: settings.runBranchPush,
     acceptWebApprovals: settings.acceptWebApprovals,
+    // The web offers the task's files only when this computer shows them (protocol 3).
+    browseFiles: settings.browseFiles,
   };
 }
 
@@ -236,6 +240,8 @@ async function session(app: FastifyInstance, base: string, token: string, parent
           if (local) void stopJob(app, userId(), local).catch(fail);
         }
         if (event === "job.queued" || event === "job.cancel") void claim().catch(fail);
+        // The web opened a file or folder of a task run here. A failure to answer leaves the web to time out.
+        if (event === "files.request") void answerFileRequest(app, client, data).catch(() => undefined);
       };
       // The server ends this stream on revoke and answers the next open with
       // 401 or 403. Reconnect immediately so that refusal is not left until
@@ -531,17 +537,6 @@ function takeLog(job: HeldJob, localId: string): { seqFrom: number; seqTo: numbe
   return { seqFrom: job.logSeq, seqTo: job.logSeq + 1, text, end: slice.from + cut.length };
 }
 
-function sliceBytes(text: string, max: number): string {
-  if (Buffer.byteLength(text) <= max) return text;
-  let low = 0;
-  let high = text.length;
-  while (low < high) {
-    const mid = Math.ceil((low + high) / 2);
-    if (Buffer.byteLength(text.slice(0, mid)) <= max) low = mid;
-    else high = mid - 1;
-  }
-  return text.slice(0, low);
-}
 
 function scrubData(data: unknown): unknown {
   if (typeof data === "string") return scrubOutgoing(data).slice(0, 2000);
@@ -562,6 +557,10 @@ async function finish(client: HostedClient, job: HeldJob, local: WorkspaceJob): 
   const current = (job.protocol ?? 1) >= 2;
   const summary = scrubOutgoing(local.summary || local.error || "").slice(0, current ? 20_000 : LEGACY_SUMMARY_CHARS);
   try {
+    // The changed files' text first: the lease ends with complete.
+    await uploadChangedFiles(client, job, local).catch((error: unknown) => {
+      if (authRejected(error)) throw error;
+    });
     await client.complete(job.hostedId, job.leaseToken, { outcome, summary, results: resultLinks(local), ...(current ? { totals: runTotals(local) } : {}) });
   } catch (error) {
     if (authRejected(error)) throw error;
@@ -573,14 +572,20 @@ async function finish(client: HostedClient, job: HeldJob, local: WorkspaceJob): 
 /** What the run reports when it ends: counts, the model that answered, its cost estimate, the files changed (names and line counts). */
 function runTotals(local: WorkspaceJob): RunTotals {
   const evidence = (local.evidence && typeof local.evidence === "object" && !Array.isArray(local.evidence) ? local.evidence : {}) as {
-    files?: Array<{ path?: unknown; added?: unknown; removed?: unknown }>;
+    files?: Array<{ path?: unknown; added?: unknown; removed?: unknown; status?: unknown; binary?: unknown }>;
     model?: unknown;
     costUsd?: unknown;
   };
   const files = (Array.isArray(evidence.files) ? evidence.files : [])
     .filter((file) => typeof file.path === "string")
     .slice(0, 200)
-    .map((file) => ({ path: scrubOutgoing(String(file.path)).slice(0, 500), added: Math.max(0, Number(file.added) || 0), removed: Math.max(0, Number(file.removed) || 0) }));
+    .map((file) => ({
+      path: scrubOutgoing(String(file.path)).slice(0, 500),
+      added: Math.max(0, Number(file.added) || 0),
+      removed: Math.max(0, Number(file.removed) || 0),
+      ...(file.status === "added" || file.status === "modified" || file.status === "deleted" ? { status: file.status as "added" | "modified" | "deleted" } : {}),
+      ...(file.binary === true ? { binary: true } : {}),
+    }));
   return {
     model: typeof evidence.model === "string" ? evidence.model.slice(0, 200) : local.model?.slice(0, 200) ?? null,
     turns: local.turns,

@@ -57,7 +57,7 @@ test("Apply runs connected-app writes after the Hub transaction, ledgers them, a
     assert.ok(event?.isWrite && event.area === "apps");
     respond = () =>
       new Response(JSON.stringify({ id: "evt-int", htmlLink: "https://www.google.com/calendar/event?eid=evt-int" }), { headers: { "content-type": "application/json" } });
-    const input = event.input.parse({ title: "Design review", start: "2026-10-14T15:00", attendees: ["sam@fieldnote.example"] });
+    const input = event.input.parse({ title: "Design review", start: "2037-10-14T15:00", attendees: ["sam@fieldnote.example"] });
     const applied = await applyHeldCalls(app, base(settingsWith()), [{ tool: event, input }]);
     assert.equal(applied.undoEntryId, null, "an outside write has no undo entry");
     assert.equal(applied.partial, false);
@@ -161,7 +161,7 @@ test("a partly failed Apply records what landed, and pressing Apply again never 
   setAppTokenResolverForTests(async () => ({ token: TOKEN, account: "mira@fieldnote.example", scopes: SCOPES }));
   const calls = [
     { id: "call-project", name: "hub_create_project", input: { name: `Launch ${stamp}` }, summary: `Create project “Launch ${stamp}”` },
-    { id: "call-event", name: "calendar_create_event", input: { title: "Design review", start: "2026-10-14T15:00", attendees: ["sam@fieldnote.example"] }, summary: "Create event “Design review”" },
+    { id: "call-event", name: "calendar_create_event", input: { title: "Design review", start: "2037-10-14T15:00", attendees: ["sam@fieldnote.example"] }, summary: "Create event “Design review”" },
     { id: "call-doc", name: "docs_create", input: { title: "Launch brief", markdown: "# Launch" }, summary: "Create Google Doc “Launch brief”" },
   ];
   const message = await prisma.assistantMessage.create({

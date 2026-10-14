@@ -18,6 +18,7 @@ import { sweepExpiredDeviceLeases } from "./lease.js";
 import { runBranchPushEnabled } from "./labels.js";
 import { identify, sha256 } from "../lib/auth.js";
 import { prisma } from "../lib/prisma.js";
+import { memoryRedis } from "../lib/memory-redis.js";
 import { sseHub } from "../lib/sse.js";
 import { agentRoutes } from "../routes/agents.js";
 import { authRoutes } from "../routes/auth.js";
@@ -1226,6 +1227,129 @@ test("a computer's steps and totals become the run's trace, redacted, with the m
     const row = (list.json() as { runs: Array<{ id: string; model: string; engineName: string; costUsd: number }> }).runs.find((item) => item.id === runId);
     assert.deepEqual([row?.model, row?.engineName, row?.costUsd], ["claude-sonnet-4-6", "Claude Code", 0.21]);
   } finally {
+    await app.close();
+    await cleanup(user.id);
+  }
+});
+
+test("a run's changed files are stored and shown; its folder is read live through the computer", async (t) => {
+  if (!(await databaseReady())) return t.skip("Postgres is not reachable");
+  const user = await prisma.user.create({
+    data: { email: `files-${Date.now()}-${randomBytes(3).toString("hex")}@ensemble.test`, name: "Files" },
+  });
+  const app = Fastify();
+  app.decorate("prisma", prisma);
+  app.decorate("redis", memoryRedis() as unknown as Redis);
+  install(app);
+  await app.register(deviceRoutes);
+  await app.register(agentRoutes);
+  const session = await sessionFor(user.id);
+  const stop = sseHub.onFrame(({ userId, frame }) => {
+    if (frame.event !== "files.request" || !userId.startsWith("device:")) return;
+    const request = frame.data as { id: string; kind: string; path: string };
+    // The computer: answers a folder request with its entries.
+    setTimeout(() => {
+      void app.inject({
+        method: "POST",
+        url: `/api/devices/self/file-requests/${request.id}`,
+        headers: bearer(deviceToken),
+        payload: request.kind === "tree" ? { listing: { path: request.path, entries: [{ name: "usage.md", kind: "file", size: 6 }, { name: "rea", kind: "dir", size: null }], truncated: false, hidden: 1 } } : { error: "Not here." },
+      });
+    }, 10);
+  });
+  let deviceToken = "";
+  try {
+    const paired = await app.inject({ method: "POST", url: "/api/devices/pair", headers: cookie(session) });
+    const registered = await app.inject({
+      method: "POST",
+      url: "/api/devices/register",
+      payload: { code: (paired.json() as { code: string }).code, name: "Studio Mac", platform: "macos", capabilities: {} },
+    });
+    deviceToken = (registered.json() as { token: string }).token;
+    const deviceId = (registered.json() as { device: { id: string } }).device.id;
+    const task = await prisma.task.create({ data: { userId: user.id, title: "Write usage", createdBy: "me", status: "in_progress", owner: "agent" } });
+    const job = await prisma.workspaceJob.create({
+      data: { userId: user.id, taskId: task.id, deviceId, kind: "code", executionMode: "sandbox", provider: "cursor-agent", model: "default", status: "running", leaseOwner: deviceId, leaseUntil: new Date(Date.now() + 60_000), leaseToken: "files" },
+    });
+    const beat = (capabilities: Record<string, unknown>) =>
+      app.inject({ method: "POST", url: "/api/devices/self/heartbeat", headers: bearer(deviceToken), payload: { runningJobIds: [job.id], appVersion: "cli-0.3.7", capabilities } });
+    assert.equal((await beat({ browseFiles: true })).statusCode, 200);
+    const uploaded = await app.inject({
+      method: "POST",
+      url: `/api/devices/self/jobs/${job.id}/files`,
+      headers: bearer(deviceToken),
+      payload: {
+        leaseToken: "files",
+        files: [
+          { path: "usage.md", status: "added", size: 30, content: "# Usage\nkey sk-abcdefghijklmnop12345\n" },
+          { path: ".env", status: "added", size: 8, content: null, skipped: "Files that hold keys or secrets are not shown." },
+        ],
+      },
+    });
+    assert.equal(uploaded.statusCode, 200, uploaded.body);
+    const wrongLease = await app.inject({ method: "POST", url: `/api/devices/self/jobs/${job.id}/files`, headers: bearer(deviceToken), payload: { leaseToken: "nope", files: [] } });
+    assert.equal(wrongLease.statusCode, 409);
+    // The server checks the computer's work again: a secrets file's text is never kept, whatever is sent.
+    const sneaky = await app.inject({
+      method: "POST",
+      url: `/api/devices/self/jobs/${job.id}/files`,
+      headers: bearer(deviceToken),
+      payload: { leaseToken: "files", files: [{ path: "deploy/.env.production", status: "added", size: 9, content: "TOKEN=abc" }, { path: ".GIT/config", status: "modified", size: 9, content: "[core]" }] },
+    });
+    assert.equal(sneaky.statusCode, 200, sneaky.body);
+    const kept = await prisma.jobFile.findMany({ where: { jobId: job.id, path: { in: ["deploy/.env.production", ".GIT/config"] } } });
+    assert.deepEqual(kept.map((row) => row.content), [null, null]);
+    assert.ok(kept.every((row) => row.skipped), "kept as names only, with the reason");
+    // At most UPLOAD_FILES_MAX files a run, whatever the computer sends.
+    for (let batch = 0; batch < 5; batch += 1) {
+      await app.inject({
+        method: "POST",
+        url: `/api/devices/self/jobs/${job.id}/files`,
+        headers: bearer(deviceToken),
+        payload: { leaseToken: "files", files: Array.from({ length: 25 }, (_, index) => ({ path: `bulk/${batch}-${index}.txt`, status: "added", size: 1, content: "x" })) },
+      });
+    }
+    assert.equal(await prisma.jobFile.count({ where: { jobId: job.id } }), 100);
+    const done = await app.inject({
+      method: "POST",
+      url: `/api/devices/self/jobs/${job.id}/complete`,
+      headers: bearer(deviceToken),
+      payload: { leaseToken: "files", outcome: "succeeded", summary: "Wrote usage.md", totals: { files: [{ path: "usage.md", added: 2, removed: 0, status: "added" }, { path: ".env", added: 1, removed: 0, status: "added" }] } },
+    });
+    assert.equal(done.statusCode, 200, done.body);
+
+    const list = await app.inject({ method: "GET", url: `/api/agent/jobs/${job.id}/files`, headers: cookie(session) });
+    assert.equal(list.statusCode, 200, list.body);
+    const listed = list.json() as { files: Array<{ path: string; status: string; stored: boolean; skipped: string | null }>; live: { available: boolean } };
+    assert.deepEqual(listed.files.slice(0, 2).map((file) => [file.path, file.status, file.stored]), [["usage.md", "added", true], [".env", "added", false]]);
+    assert.equal(listed.live.available, true);
+    const file = await app.inject({ method: "GET", url: `/api/agent/jobs/${job.id}/file?path=usage.md`, headers: cookie(session) });
+    assert.equal(file.statusCode, 200, file.body);
+    const body = file.json() as { source: string; file: { content: string } };
+    assert.equal(body.source, "stored");
+    assert.match(body.file.content, /# Usage/);
+    assert.doesNotMatch(body.file.content, /sk-abcdefghijklmnop12345/, "redacted on the server too");
+    const secret = await app.inject({ method: "GET", url: `/api/agent/jobs/${job.id}/file?path=.env&live=1`, headers: cookie(session) });
+    assert.equal(secret.statusCode, 403, "a secrets file is never asked for");
+
+    const tree = await app.inject({ method: "GET", url: `/api/agent/jobs/${job.id}/tree`, headers: cookie(session) });
+    assert.equal(tree.statusCode, 200, tree.body);
+    assert.deepEqual((tree.json() as { listing: { entries: Array<{ name: string }> } }).listing.entries.map((entry) => entry.name), ["usage.md", "rea"]);
+    const missing = await app.inject({ method: "GET", url: `/api/agent/jobs/${job.id}/file?path=src/x.ts&live=1`, headers: cookie(session) });
+    assert.equal(missing.statusCode, 422);
+    assert.match(missing.body, /Not here/);
+
+    assert.equal((await beat({ browseFiles: false })).statusCode, 200);
+    const off = await app.inject({ method: "GET", url: `/api/agent/jobs/${job.id}/tree`, headers: cookie(session) });
+    assert.equal(off.statusCode, 409);
+    assert.match(off.body, /turned off on Studio Mac/);
+    const offCopy = await app.inject({ method: "GET", url: `/api/agent/jobs/${job.id}/file?path=usage.md`, headers: cookie(session) });
+    assert.equal(offCopy.statusCode, 409, "turned off hides the copies too");
+    assert.equal((await beat({})).statusCode, 200);
+    const old = await app.inject({ method: "GET", url: `/api/agent/jobs/${job.id}/tree`, headers: cookie(session) });
+    assert.match(old.body, /Update Ensemble on Studio Mac/);
+  } finally {
+    stop();
     await app.close();
     await cleanup(user.id);
   }

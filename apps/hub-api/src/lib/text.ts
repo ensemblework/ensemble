@@ -106,3 +106,16 @@ export async function persistAssistantText(
     return { shown: safeAnswer, saved: GENERIC_SAVE_FAILURE };
   }
 }
+
+/** The first `max` UTF-8 bytes of a text, cut on a character boundary. */
+export function sliceBytes(text: string, max: number): string {
+  if (Buffer.byteLength(text) <= max) return text;
+  let low = 0;
+  let high = text.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (Buffer.byteLength(text.slice(0, mid)) <= max) low = mid;
+    else high = mid - 1;
+  }
+  return text.slice(0, low);
+}

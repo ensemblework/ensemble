@@ -1,20 +1,22 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { FolderGit2, GitBranch, Laptop, ListTree, SquareArrowOutUpRight } from "lucide-react";
+import { FileCode2, FolderGit2, GitBranch, Laptop, ListTree, SquareArrowOutUpRight } from "lucide-react";
 import Link from "next/link";
 import { jobTone } from "@/components/agent/job-card";
+import { RunCode } from "@/components/code/run-code";
 import { usePeek } from "@/components/shell/peek";
 import { Empty, SkeletonRows, Tag } from "@/components/ui";
 import { api, type AgentJob } from "@/lib/api";
 import { plural, relative } from "@/lib/format";
 
 /**
- * The Code tab on Ensemble on the web. Agents work on your paired computers and the changes stay
- * there (docs/25): this lists what each run changed, file by file, with the run and the task. The
- * review itself (accept, reject, commit, push) happens in Ensemble on that computer.
+ * The Code tab on Ensemble on the web. Agents work on your paired computers and their changes stay
+ * there (docs/25): this lists each code run, and opens one as code: the files it changed (the text
+ * the computer sent when the run ended) and its folder, read from that computer when you open it.
+ * Review, commit and push happen in Ensemble on that computer.
  */
-export function DeviceChanges() {
+export function DeviceChanges({ openJobId, openPath, onOpen }: { openJobId?: string | null; openPath?: string | null; onOpen?: (jobId: string | null) => void }) {
   const peek = usePeek();
   const devices = useQuery({ queryKey: ["devices"], queryFn: api.devices, staleTime: 30_000 });
   const board = useQuery({ queryKey: ["workspace"], queryFn: api.workspace, refetchInterval: 15_000 });
@@ -22,6 +24,10 @@ export function DeviceChanges() {
   const jobs = board.data
     ? [...board.data.running, ...board.data.waiting, ...board.data.queued, ...board.data.completed, ...board.data.stopped].filter((job) => job.kind === "code" && job.deviceId)
     : [];
+  const listed = openJobId ? jobs.find((job) => job.id === openJobId) : undefined;
+  // A run older than the board's lists opens from its own record.
+  const single = useQuery({ queryKey: ["job", openJobId], queryFn: () => api.job(openJobId!), enabled: Boolean(openJobId && board.data && !listed) });
+  const open = listed ?? single.data?.job ?? null;
   if (devices.isLoading || board.isLoading) return <SkeletonRows count={3} />;
   if (!paired.length) {
     return (
@@ -33,8 +39,13 @@ export function DeviceChanges() {
   }
   return (
     <div>
+      {open ? (
+        <div className="mb-5">
+          <RunCode key={open.id} job={open} initialPath={openPath} onClose={onOpen ? () => onOpen(null) : undefined} />
+        </div>
+      ) : null}
       <p className="mb-3 text-[12.5px] text-muted">
-        Agents on your computers keep their changes there; only file names and line counts come here. Review, commit and push them in Ensemble on that computer (the desktop app, or{" "}
+        Open a run to see the files the agent changed and to browse its folder, read from that computer when you open a file. Review, commit and push in Ensemble on that computer (the desktop app, or{" "}
         <code className="rounded bg-raised px-1 font-mono text-[11.5px]">ensemble</code> in a terminal).
       </p>
       <div className="mb-4 flex flex-wrap gap-2">
@@ -52,7 +63,7 @@ export function DeviceChanges() {
       ) : (
         <div className="divide-y divide-[var(--line)] rounded-md border border-line">
           {jobs.map((job) => (
-            <DeviceJobRow key={job.id} job={job} onOpenTask={() => peek.open(job.taskId)} />
+            <DeviceJobRow key={job.id} job={job} active={open?.id === job.id} onOpenTask={() => peek.open(job.taskId)} onOpenCode={onOpen ? () => onOpen(job.id) : undefined} />
           ))}
         </div>
       )}
@@ -60,16 +71,22 @@ export function DeviceChanges() {
   );
 }
 
-function DeviceJobRow({ job, onOpenTask }: { job: AgentJob; onOpenTask: () => void }) {
+function DeviceJobRow({ job, active, onOpenTask, onOpenCode }: { job: AgentJob; active: boolean; onOpenTask: () => void; onOpenCode?: () => void }) {
   const state = jobTone(job);
   const files = job.files ?? [];
   const added = files.reduce((sum, file) => sum + file.added, 0);
   const removed = files.reduce((sum, file) => sum + file.removed, 0);
   return (
-    <div className="px-3 py-2.5">
+    <div className={`px-3 py-2.5 ${active ? "bg-[var(--accent-soft)]" : ""}`}>
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[14px] font-semibold">{job.title}</div>
+          {onOpenCode ? (
+            <button type="button" className="block max-w-full truncate text-left text-[14px] font-semibold hover:underline" onClick={onOpenCode}>
+              {job.title}
+            </button>
+          ) : (
+            <div className="truncate text-[14px] font-semibold">{job.title}</div>
+          )}
           <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[12px] text-muted">
             <span className="inline-flex items-center gap-1">
               <Laptop size={11} /> {job.deviceName ?? "Your computer"}
@@ -109,6 +126,11 @@ function DeviceJobRow({ job, onOpenTask }: { job: AgentJob; onOpenTask: () => vo
         <div className="mt-1.5 text-[12px] text-faint">No file changes reported.</div>
       ) : null}
       <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[12px]">
+        {onOpenCode ? (
+          <button type="button" className="inline-flex items-center gap-1 font-medium text-accent hover:underline" onClick={onOpenCode}>
+            <FileCode2 size={12} /> Open code
+          </button>
+        ) : null}
         {job.runId ? (
           <Link href={`/runs?run=${job.runId}`} className="inline-flex items-center gap-1 text-accent hover:underline">
             <ListTree size={12} /> View run

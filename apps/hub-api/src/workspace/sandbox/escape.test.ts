@@ -22,14 +22,14 @@ import { scrubAgentEnv } from "./scrub.js";
 const TOKEN = "ghp_ensemble_escape_token_value";
 const darwin = process.platform === "darwin";
 
-function profile(): string {
+function profile(network: "none" | "loopback" | "outbound" = "none"): string {
   const home = "/Users/person";
   return compileSeatbeltProfile({
     home,
     readWrite: ["/Users/person/ensemble-workspace/runs/job"],
     readOnly: [],
     deny: [desktopDataDir({ platform: "darwin", home })],
-    network: "none",
+    network,
     who: "agent",
     ensembleSource: "/Users/person/src/ensemble",
     askpassPath: "/Users/person/ensemble-workspace/.askpass/git-askpass.sh",
@@ -54,6 +54,15 @@ test("the profile denies open, sockets, home, app data, secrets, and never-binar
   const grantAt = text.indexOf("(allow file-read*");
   assert.ok(homeAt > 0 && grantAt > homeAt, "the workspace allow comes after the home deny");
   assert.doesNotMatch(text, /ENSEMBLE_GIT_TOKEN|ghp_/);
+});
+
+test("with the internet on, names resolve: the system resolver's socket is the one Unix socket allowed", () => {
+  const resolver = '(allow network-outbound (remote unix-socket (subpath "/private/var/run/mDNSResponder")))';
+  const outbound = profile("outbound");
+  assert.ok(outbound.includes(resolver), "git clone and curl need getaddrinfo, which talks to mDNSResponder");
+  assert.ok(outbound.indexOf(resolver) > outbound.indexOf("(deny network-outbound (remote unix-socket))"), "the allow comes after the socket deny, so it wins for that path only");
+  assert.equal(profile("none").includes("mDNSResponder"), false, "no lookups with the internet off");
+  assert.equal(profile("loopback").includes("mDNSResponder"), false);
 });
 
 test("node under the home directory is readable without opening the rest of home", () => {

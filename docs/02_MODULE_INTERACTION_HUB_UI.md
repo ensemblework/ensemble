@@ -284,6 +284,7 @@ Client calls for the store and MCP routes are in `lib/api-connectors.ts` (the MC
 | GET | `/api/approvals?state=pending` | → `{ approvals[], questions[], interrupted[] }` |
 | POST | `/api/approvals/:id/decide` | `{ decision: 'approved' \| 'edited' \| 'rejected', editedPayload?, reason? }` |
 | POST | `/api/approvals/:id/revise` | `{ note }` |
+| GET | `/api/agent/jobs/:id/files` • `/api/agent/jobs/:id/file?path=&live=` • `/api/agent/jobs/:id/tree?path=` | A job's changed files (status, line counts, whether their text is stored), one file (the copy sent when the run ended, or `live=1` read now) and one folder, read now from the paired computer that ran it or from this server's folder (docs/25 §4.6, docs/16) |
 | GET | `/api/runs` • `/api/runs/:id` • `/api/runs/:id/export` | List rows add the agent job's harness, model that answered, where, tool calls, tokens and cost. `/api/runs/:id` → `{ run, job }`: the run with its steps and approvals, and the job behind it (harness, models asked for and used, where it ran, sandbox, internet, git permission, limits, counts, cost, files, results; no server paths), or `job: null` |
 | GET | `/api/context/people\|projects\|repos\|preferences` | → graph nodes with evidence |
 | GET | `/api/context/search?q=…` | Read-only literal workspace search, up to 12 deduplicated destinations with snippets; current-space access, no Trash |

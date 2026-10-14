@@ -149,7 +149,7 @@ test("outlook_calendar_list_events asks Graph for UTC instants and shows them in
 });
 
 test("outlook_calendar_create_event previews the invite, then posts it with a Teams meeting", async () => {
-  const input = { title: "Design review", start: "2026-10-14T15:00", end: "2026-10-14T15:45", attendees: ["sam@fieldnote.example"], teamsMeeting: true, location: "Room 4" };
+  const input = { title: "Design review", start: "2037-10-14T15:00", end: "2037-10-14T15:45", attendees: ["sam@fieldnote.example"], teamsMeeting: true, location: "Room 4" };
   const text = await preview("outlook_calendar_create_event", input);
   assert.equal(
     text,
@@ -161,8 +161,8 @@ test("outlook_calendar_create_event previews the invite, then posts it with a Te
   assert.equal(seen[0]!.url, `${GRAPH}/me/events`);
   assert.deepEqual(seen[0]!.body, {
     subject: "Design review",
-    start: { dateTime: "2026-10-14T15:00:00", timeZone: "Asia/Kolkata" },
-    end: { dateTime: "2026-10-14T15:45:00", timeZone: "Asia/Kolkata" },
+    start: { dateTime: "2037-10-14T15:00:00", timeZone: "Asia/Kolkata" },
+    end: { dateTime: "2037-10-14T15:45:00", timeZone: "Asia/Kolkata" },
     isAllDay: false,
     location: { displayName: "Room 4" },
     attendees: [{ emailAddress: { address: "sam@fieldnote.example" }, type: "required" }],

@@ -196,6 +196,11 @@ export function compileSeatbeltProfile(policy: SeatbeltPolicy): string {
     ";; (remote ip) does not match a Unix socket. Docker, ssh-agent, gpg-agent, 1Password.",
     "(deny network-outbound (remote unix-socket))",
     network,
+    // Every host name lookup on macOS goes through mDNSResponder's socket: without it, "internet on"
+    // reaches IP addresses but resolves no name (git clone: "Could not resolve host").
+    ...(policy.network === "outbound"
+      ? [";; Name lookups (getaddrinfo) with the internet on.", '(allow network-outbound (remote unix-socket (subpath "/private/var/run/mDNSResponder")))']
+      : []),
   ];
   for (const root of policy.readWrite) {
     const hooks = join(root, ".git", "hooks").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

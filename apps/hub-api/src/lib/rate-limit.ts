@@ -1,6 +1,6 @@
 import type { FastifyRequest } from "fastify";
 
-export type RateBucket = "login" | "signup" | "email" | "model" | "token" | "device" | "cliStart" | "cliToken" | "cliApprove" | "mcp";
+export type RateBucket = "login" | "signup" | "email" | "model" | "token" | "device" | "deviceFiles" | "browse" | "cliStart" | "cliToken" | "cliApprove" | "mcp";
 
 export type RateLimitConfig = Record<RateBucket, { limit: number; windowMs: number; error: string }>;
 
@@ -74,6 +74,16 @@ export function rateLimitConfig(env: NodeJS.ProcessEnv = process.env): RateLimit
       windowMs: intEnv(env, "ENSEMBLE_RATE_DEVICE_WINDOW_SEC", 60) * 1000,
       error: "Too many updates from this computer. Wait a moment and try again.",
     },
+    deviceFiles: {
+      limit: intEnv(env, "ENSEMBLE_RATE_DEVICE_FILES_LIMIT", 300),
+      windowMs: intEnv(env, "ENSEMBLE_RATE_DEVICE_FILES_WINDOW_SEC", 60) * 1000,
+      error: "Too many file answers from this computer. Wait a moment and try again.",
+    },
+    browse: {
+      limit: intEnv(env, "ENSEMBLE_RATE_BROWSE_LIMIT", 120),
+      windowMs: intEnv(env, "ENSEMBLE_RATE_BROWSE_WINDOW_SEC", 60) * 1000,
+      error: "Too many file requests. Wait a moment and try again.",
+    },
     cliStart: {
       limit: intEnv(env, "ENSEMBLE_RATE_CLI_START_LIMIT", 10),
       windowMs: intEnv(env, "ENSEMBLE_RATE_CLI_START_WINDOW_SEC", 600) * 1000,
@@ -114,6 +124,16 @@ export function isDeviceWrite(path: string): boolean {
   return /^\/api\/devices\/self\/jobs\/[^/]+\/progress$/.test(path);
 }
 
+/** A run's changed files and answers to file requests: their own bucket, so browsing never crowds out a run's heartbeat. */
+export function isDeviceFiles(path: string): boolean {
+  return /^\/api\/devices\/self\/file-requests\/[^/]+$/.test(path) || /^\/api\/devices\/self\/jobs\/[^/]+\/files$/.test(path);
+}
+
+/** A job's files and folders, which may ask a paired computer to read them. */
+export function isBrowse(method: string, path: string): boolean {
+  return method === "GET" && /^\/api\/agent\/jobs\/[^/]+\/(tree|file)$/.test(path);
+}
+
 export function classifyRateLimit(method: string, path: string): RateBucket | null {
   if (method === "POST" && (path === "/api/auth/login" || path === "/api/auth/reset" || path === "/api/auth/verify-email")) return "login";
   if (method === "GET" && /^\/api\/auth\/oauth\/[^/]+\/start$/.test(path)) return "login";
@@ -129,6 +149,8 @@ export function classifyRateLimit(method: string, path: string): RateBucket | nu
   if (method === "PUT" && /^\/api\/model-keys\/[^/]+$/.test(path)) return "model";
   if (method === "POST" && isTokenMint(path)) return "token";
   if (method === "POST" && isDeviceWrite(path)) return "device";
+  if (method === "POST" && isDeviceFiles(path)) return "deviceFiles";
+  if (isBrowse(method, path)) return "browse";
   return null;
 }
 
@@ -140,9 +162,9 @@ export function clientAddress(request: FastifyRequest): string {
 }
 
 export function rateLimitKey(bucket: RateBucket, request: FastifyRequest): string {
-  if (bucket === "device" && request.tokenId) return `device:${request.tokenId}`;
+  if ((bucket === "device" || bucket === "deviceFiles") && request.tokenId) return `${bucket}:${request.tokenId}`;
   if ((bucket === "mcp" || bucket === "cliApprove") && request.userId) return `${bucket}:user:${request.userId}`;
-  if ((bucket === "model" || bucket === "token" || bucket === "device") && request.userId) return `${bucket}:user:${request.userId}`;
+  if ((bucket === "model" || bucket === "token" || bucket === "device" || bucket === "browse") && request.userId) return `${bucket}:user:${request.userId}`;
   return `${bucket}:ip:${clientAddress(request)}`;
 }
 
