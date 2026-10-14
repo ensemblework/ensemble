@@ -9,7 +9,7 @@ const groups: Array<[SettingsTab, string, string, Array<string | [string, string
   ["account", "features", "Features", [["Features", "modules enable disable code workspace runs metrics skills diagrams plots"], ["Desk extras", "optional tiles deadlines learning"]]],
   ["account", "this-mac", "This computer", [["Allow remote tasks", "mac computer device runner"], ["Push to the run branch", "remote git push"], "Accept approvals from the web and phone"]],
   ["assistant", "assistant", "The assistant", [["Write policy", "preview apply changes permissions", "When it wants to change something"], ["Default model preset", "default complexity tier low medium high max"], ["What it may change", "allowed write areas permissions"]]],
-  ["assistant", "models", "Models", [["Models", "model presets thinking provider tier low medium high max"], "Which model each tier uses"]],
+  ["assistant", "models", "Models", [["Models", "model presets thinking provider tier low medium high max"], ["Your AI subscriptions", "subscription plan claude chatgpt codex cursor copilot pro max plus sign in computer app"], "Which model each tier uses"]],
   ["assistant", "watchers", "Watching for you", [["Watching for you", "watchers monitor follow up tell me when"]]],
   ["assistant", "autonomy", "Autonomy", [["Autonomy level", "ask review only unattended"], "Daily high-risk write limit", ["Network for sandboxed commands", "internet sandbox network"], ["Run commands in the Ensemble workspace without asking", "run without asking auto approval"], ["Place new tasks by priority", "board ordering priority"]]],
   ["assistant", "orchestration", "Orchestration", [["Tasks that run at once", "parallel concurrency job limit"], ["Model turns per task", "turn limit agent"], ["Minutes per task", "timeout duration time limit"], ["Sandbox by default", "execution native isolation"], ["Internet for agent commands by default", "network sandbox"]]],
@@ -43,7 +43,7 @@ export const SETTINGS_DESTINATIONS: SettingsDestination[] = groups.flatMap(([tab
   return { id: `jump-${section}-${slug(label!)}`, tab, section, heading, label: label!, target: target!, keywords: `${heading} ${keywords}`, ownerOnly: tab === "connections" || tab === "data" || section === "features" || section === "this-mac" };
 }));
 SETTINGS_DESTINATIONS.push(
-  { id: "jump-model-keys", tab:"assistant", section:"models", label:"Model providers & keys", target:"Model providers & keys", keywords:"api keys credentials anthropic openai google gemini github copilot ollama provider", dialog:"keys" },
+  { id: "jump-model-keys", tab:"assistant", section:"models", label:"API keys", target:"API keys", keywords:"api keys model providers credentials anthropic openai google gemini github copilot ollama provider", dialog:"keys" },
   { id: "jump-assistant-changes", tab:"assistant", section:"assistant", label:"What the assistant may change", target:"What the assistant may change", keywords:"allowed writes permissions connected apps tasks pages projects", dialog:"changes" },
 );
 for (const tier of ["Low model", "Medium model", "High model", "Max model"]) {

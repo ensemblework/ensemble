@@ -18,6 +18,26 @@ Object.defineProperty(window, "matchMedia", {
 
 const SETTINGS = Settings.parse({ email: "mira@fieldnote.example", timezone: "Europe/London" });
 
+const SUBSCRIPTIONS = {
+  preferred: null,
+  computers: [
+    {
+      id: "device-1",
+      name: "Studio Mac",
+      platform: "macos",
+      local: false,
+      online: true,
+      lastSeenAt: "2026-10-15T09:00:00.000Z",
+      appVersion: "cli-0.3.10",
+      ready: true,
+      agents: [
+        { id: "claude-code", via: "app", version: "2.1.293", signedIn: true, plan: "max", models: [{ id: "default", label: "Your plan's default", isDefault: true }, { id: "haiku", label: "Haiku (latest)" }], typedModels: true, efforts: ["low", "medium", "high"], checkedAt: "2026-10-15T09:00:00.000Z" },
+        { id: "codex", via: "app", version: "0.162.0", signedIn: false, plan: null, models: [{ id: "gpt-6-luna", label: "GPT-6 Luna", isDefault: true }], typedModels: true, checkedAt: "2026-10-15T09:00:00.000Z" },
+      ],
+    },
+  ],
+};
+
 function json(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
 }
@@ -43,10 +63,14 @@ async function mount(url: string) {
   setTestUrl(url);
   const realFetch = globalThis.fetch;
   const calls: string[] = [];
-  globalThis.fetch = (async (input: RequestInfo | URL) => {
+  const bodies: Array<{ path: string; method: string; body: unknown }> = [];
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input);
     calls.push(path);
+    if (init?.method && init.method !== "GET") bodies.push({ path, method: init.method, body: init.body ? JSON.parse(String(init.body)) : null });
     if (path === "/api/settings") return json({ settings: SETTINGS });
+    if (path === "/api/subscriptions") return json(SUBSCRIPTIONS);
+    if (path === "/api/subscriptions/sign-in") return json({ message: "A sign-in window is opening on Studio Mac. Finish signing in there." }, 202);
     if (path === "/api/connectors/catalog") return json({ entries: catalogWith({ github: { connected: true, account: "mira-chen" } }) });
     if (path === "/api/model-keys") return json({ credentials: [{ provider: "google", source: "you", hint: "…a1b2", updatedAt: null }] });
     if (path === "/api/models") return json({ providers: [], runtime: true, updatedAt: "2026-10-07T00:00:00.000Z" });
@@ -69,6 +93,7 @@ async function mount(url: string) {
   return {
     host,
     calls,
+    bodies,
     selected: () => host.querySelector('[role="tab"][aria-selected="true"]')?.textContent ?? "",
     done: async () => {
       await act(async () => root.unmount());
@@ -139,13 +164,53 @@ test("Connections shows the five featured apps, and a connector link opens the s
   }
 });
 
-test("Model providers & keys opens as a dialog from the Models card, and Escape closes it", async () => {
+test("Your AI subscriptions lead the Models card: what each computer has, sign-in, and one click to use a plan", async () => {
+  const view = await mount("http://localhost/settings?tab=assistant");
+  try {
+    await until(() => Boolean(document.querySelector('[data-testid="subscriptions-grid"]')), "the subscriptions");
+    const tile = (id: string) => document.querySelector<HTMLElement>(`[data-subscription="${id}"]`)!;
+    assert.match(document.querySelector('[data-testid="subscriptions-card"]')!.textContent ?? "", /Studio Maconline/);
+    assert.match(tile("claude-code").textContent ?? "", /Signed in · max/);
+    assert.match(tile("claude-code").textContent ?? "", /via the Claude app 2\.1\.293/);
+    assert.match(tile("codex").textContent ?? "", /Not signed in/);
+    assert.equal(tile("cursor-agent").dataset.state, "missing");
+    assert.match(tile("cursor-agent").textContent ?? "", /Install Cursor's agent/);
+    assert.match(tile("gemini").textContent ?? "", /Not offered by Google/);
+
+    const button = (root: HTMLElement, text: string) => Array.from(root.querySelectorAll("button")).find((node) => node.textContent?.trim() === text)!;
+    await act(async () => {
+      button(tile("claude-code"), "Haiku (latest)").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await act(async () => {
+      button(tile("claude-code"), "Use for everything").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    assert.match(tile("claude-code").textContent ?? "", /In use: Low, Medium, High, Max/, "the draft shows it at once");
+    // Settings are saved half a second after the last change.
+    await settle(45);
+    const patch = view.bodies.find((row) => row.path === "/api/settings" && row.method === "PATCH");
+    assert.ok(patch, "the tiers are saved");
+    const models = (patch.body as { models: Record<string, { provider: string; model: string }> }).models;
+    assert.deepEqual(Object.keys(models), ["easy", "medium", "high", "max"]);
+    assert.ok(Object.values(models).every((tier) => tier.provider === "claude-code" && tier.model === "haiku"));
+
+    await act(async () => {
+      button(tile("codex"), "Sign in").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await settle(3);
+    assert.deepEqual(view.bodies.find((row) => row.path === "/api/subscriptions/sign-in")?.body, { deviceId: "device-1", agent: "codex" });
+    assert.match(document.getElementById("models")!.textContent ?? "", /Claude \(your plan\)|Which model each tier uses/);
+  } finally {
+    await view.done();
+  }
+});
+
+test("API keys open as a page of their own from the Models card, and Escape closes it", async () => {
   const view = await mount("http://localhost/settings?tab=assistant");
   try {
     await until(() => Boolean(document.querySelector('[data-testid="model-keys-row"]')), "the keys row");
     assert.match(document.querySelector('[data-testid="model-keys-row"]')!.textContent ?? "", /Google Gemini has a key/);
     assert.equal(document.querySelector('[data-testid="model-keys-dialog"]'), null);
-    const open = Array.from(document.querySelectorAll("button")).find((node) => node.textContent?.trim() === "Manage keys")!;
+    const open = Array.from(document.querySelectorAll("button")).find((node) => node.textContent?.trim() === "Manage API keys")!;
     await act(async () => {
       open.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
@@ -154,6 +219,19 @@ test("Model providers & keys opens as a dialog from the Models card, and Escape 
     assert.ok(dialog);
     assert.equal(new URL(window.location.href).searchParams.get("dialog"), "keys");
     assert.match(dialog.textContent ?? "", /OpenRouter/);
+    assert.equal(dialog.querySelector('[data-pane]')?.getAttribute("data-pane"), "google", "Gemini first: the cheapest to start");
+    const openrouter = dialog.querySelector<HTMLElement>('[data-provider="openrouter"]')!;
+    await act(async () => {
+      openrouter.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await settle(2);
+    assert.equal(dialog.querySelector('[data-pane]')?.getAttribute("data-pane"), "openrouter");
+    assert.ok(dialog.querySelector('input[aria-label="OpenRouter API key"]'), "the key field");
+    const more = Array.from(dialog.querySelectorAll("button")).find((node) => node.textContent?.trim() === "Other settings")!;
+    await act(async () => {
+      more.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await settle(2);
     assert.match(dialog.textContent ?? "", /Ollama URL/);
     await act(async () => {
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));

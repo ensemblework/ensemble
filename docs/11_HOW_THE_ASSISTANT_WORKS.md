@@ -231,6 +231,8 @@ It answers with a **decision, not prose**:
 }] }
 ```
 
+**On the person's own subscription** (15 Oct 2026). When the tier's provider is one of the person's AI subscriptions (`claude-code`, `codex`, `cursor-agent`, `copilot-cli`), there is no call to agent-runtime. The same system prompt, playbooks, history and tools go to that vendor's own agent on the person's computer (`runSubscriptionTurn` in `subscriptions/turn.ts`): this computer on the desktop app, a paired one on the web ([25 §4.9](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)). The agent runs its own loop with only Ensemble's tools (an MCP server), and every call it makes comes back to `runOne` below, so the space, the write policy, Apply and the ledger are exactly as here; at most 24 calls a turn. Its reply streams into the chat; the model it reports is saved on the message. `complete()` (triage, summaries, a tier's Test) does the same with no tools. Which agents a computer has, how each is kept to Ensemble's tools and how sign-in works are in [30 §8](30_ENGINES.md).
+
 This is **function calling** — a first-class provider feature. The model is not writing code or SQL. It is choosing a name from a list you gave it and filling in a form you defined. Everything it can express is something you already decided was allowed.
 
 ### 4.5 The server runs it

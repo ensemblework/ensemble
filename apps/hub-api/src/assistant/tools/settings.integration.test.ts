@@ -71,7 +71,7 @@ test("hub_find_setting gives the link, and the key and current value when the as
 
   const keys = await call("hub_find_setting", ctx(mira.id), { query: "api key" });
   const first = (keys.data as { settings: Array<{ label: string; link: string; change: unknown }> }).settings[0]!;
-  assert.equal(first.label, "Model providers & keys");
+  assert.equal(first.label, "API keys");
   assert.equal(first.link, "/settings?tab=assistant&dialog=keys");
   assert.match(String(first.change), /Only the person/);
 
@@ -126,7 +126,7 @@ test("unsafe, unknown and malformed changes are refused with the link instead", 
   };
   await refuse("assistant.write-policy", "immediate", /for the person to change in Settings → Assistant → The assistant: give them this link: \/settings\?tab=assistant#jump-assistant-write-policy/);
   await refuse("Email", "attacker@example.test", /for the person to change/);
-  await refuse("Model providers & keys", "sk-123", /dialog=keys/);
+  await refuse("API keys", "sk-123", /dialog=keys/);
   await refuse("orchestration.sandbox", false, /for the person to change/);
   await refuse("data.delete", true, /for the person to change/);
   await refuse("assistant.writePolicy", "immediate", /no such setting/);

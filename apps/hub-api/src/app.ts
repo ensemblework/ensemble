@@ -68,6 +68,7 @@ import { meetingNoteRoutes } from "./routes/meeting-notes.js";
 import { bridgeMethodRejected, deviceTokenRejected, hooksTokenRejected, readOnlyTokenRejected } from "./bridge/auth.js";
 import { deviceCodeRoutes } from "./devices/code-routes.js";
 import { deviceRoutes } from "./devices/routes.js";
+import { subscriptionRoutes } from "./subscriptions/routes.js";
 import { remoteRoutes } from "./remote/routes.js";
 import { desktopHostAllowed } from "./lib/desktop-guard.js";
 
@@ -75,8 +76,17 @@ const PUBLIC_PATHS = new Set(["/health", "/health/ready", "/api/events", "/api/d
 const ADDITIONAL_MODEL_STREAM_ROUTES = new Set(["/api/pages/:kind/:id/ensemble", "/api/ensemble/invoke"]);
 
 export function bypassesGlobalAuth(path: string): boolean {
-  // /api/engine/ask and /api/engine/tool authenticate with their run's own secret (workspace/engines/registry.ts).
-  return PUBLIC_PATHS.has(path) || isPublicAuthPath(path) || /^\/api\/connectors\/[a-z_]+\/callback$/.test(path) || path === "/api/engine/ask" || path === "/api/engine/tool";
+  // /api/engine/ask and /api/engine/tool authenticate with their run's own secret (workspace/engines/registry.ts),
+  // /api/engine/assistant/* with the assistant turn's (subscriptions/bridge.ts).
+  return (
+    PUBLIC_PATHS.has(path) ||
+    isPublicAuthPath(path) ||
+    /^\/api\/connectors\/[a-z_]+\/callback$/.test(path) ||
+    path === "/api/engine/ask" ||
+    path === "/api/engine/tool" ||
+    path === "/api/engine/assistant/tools" ||
+    path === "/api/engine/assistant/tool"
+  );
 }
 
 export type BuildAppOptions = {
@@ -227,6 +237,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     handoffRoutes,
     deviceRoutes,
     deviceCodeRoutes,
+    subscriptionRoutes,
     terminalRoutes,
     viewRoutes,
     commentRoutes,

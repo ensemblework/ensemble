@@ -24,6 +24,10 @@ import { sliceBytes } from "../lib/text.js";
 import { answerCodeRequest } from "./code.js";
 import { answerFileRequest, uploadChangedFiles } from "./files.js";
 import { answerTerminalRequest, stopWebTerminal } from "./terminal.js";
+import { answerAssistantTurn, stopAllAssistantTurns, stopAssistantTurn } from "./assistant.js";
+import { ASSISTANT_TURNS_API, SUBSCRIPTION_PROVIDERS, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
+import { cachedAgents, detectAgents } from "../subscriptions/detect.js";
+import { startSignIn } from "../subscriptions/signin.js";
 import { CODE_API, deviceOwnedEvents, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, ONLINE_WINDOW_MS, parseAnswer, parseClaim, STEP_POST_BYTES, timing, type RunTotals, type UploadedStep } from "./contract.js";
 import { actionHash, decisionOptions, judgeAnswer, publishedFolders, riskOf, scrubOutgoing, type LocalDecision } from "./policy.js";
 import { dropDeviceToken, loadHeld, loadSettings, readDeviceToken, saveHeld, updateSettings, type HeldJob, type RemoteSettings } from "./store.js";
@@ -97,7 +101,17 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     codeApi: CODE_API,
     webEdit: settings.webEdit,
     webTerminal: settings.webTerminal,
+    // The person's own AI subscriptions here, for the assistant on the web (docs/30 §8).
+    assistantTurns: ASSISTANT_TURNS_API,
+    agents: await agentsNow(),
   };
+}
+
+/** The last check of this computer's agents; the first heartbeat waits a little for one. */
+async function agentsNow(): Promise<SubscriptionAgent[]> {
+  const cached = cachedAgents();
+  if (cached) return cached;
+  return Promise.race([detectAgents().catch(() => []), new Promise<SubscriptionAgent[]>((resolve) => setTimeout(() => resolve([]), 12_000).unref())]);
 }
 
 /**
@@ -107,6 +121,7 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
  */
 export async function stopRemoteWork(app: FastifyInstance, message: string, report: "cancelled" | "none"): Promise<void> {
   stopWebTerminal();
+  stopAllAssistantTurns();
   const current = held();
   const settings = loadSettings();
   const token = report === "cancelled" ? await readDeviceToken() : null;
@@ -254,6 +269,16 @@ async function session(app: FastifyInstance, base: string, token: string, parent
         // The web's Code tab and terminal on this computer (protocol 4). Each answers once; a lost answer times out on the web.
         if (event === "code.request") void answerCodeRequest(app, client, data).catch(() => undefined);
         if (event === "terminal.request") void answerTerminalRequest(app, client, data).catch(() => undefined);
+        // The assistant on the web, on one of the person's own subscriptions here (docs/25 §4.9).
+        if (event === "assistant.turn") void answerAssistantTurn(client, data).catch(fail);
+        if (event === "assistant.stop") stopAssistantTurn(data);
+        if (event === "agents.refresh") void detectAgents({ force: true }).then(() => beat(app, client, signal)).catch(fail);
+        if (event === "agents.signin") {
+          const agent = typeof data === "object" && data !== null ? (data as { agent?: unknown }).agent : null;
+          if (SUBSCRIPTION_PROVIDERS.includes(agent as SubscriptionProvider)) {
+            void startSignIn(agent as SubscriptionProvider, () => void beat(app, client, signal).catch(fail)).catch((error: unknown) => app.log.warn({ err: error }, "sign-in could not start"));
+          }
+        }
       };
       // The server ends this stream on revoke and answers the next open with
       // 401 or 403. Reconnect immediately so that refusal is not left until

@@ -9,7 +9,7 @@ import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Mark } from "../mark";
 import { AskLauncher } from "./ask-launcher";
-import { formatChord, type PageMention } from "@ensemble/shared-types";
+import { formatChord, isSubscriptionProvider, SUBSCRIPTION_INFO, type PageMention } from "@ensemble/shared-types";
 import { isApplePlatform } from "@/lib/platform";
 import { useShortcuts } from "@/lib/shortcut-store";
 import { API, ApiError, api, type AssistantMessageRecord, type AssistantToolCallRecord, type Complexity, type ConversationRecord } from "@/lib/api";
@@ -708,9 +708,13 @@ export function AssistantDock() {
           >
             {(Object.keys(TIER_LABEL) as Complexity[]).map((key) => {
             const model = tiers?.[key].model;
+            const provider = tiers?.[key].provider;
+            // A subscription tier names the plan: "Claude · haiku", run on the person's computer.
+            const plan = provider && isSubscriptionProvider(provider) ? `${SUBSCRIPTION_INFO[provider].label} · ` : "";
             return (
               <option key={key} value={key}>
-                {TIER_LABEL[key]} · {model ?? "…"}
+                {TIER_LABEL[key]} · {plan}
+                {model ?? "…"}
                 {quotaSuffix(model, quotas)}
               </option>
             );

@@ -1,6 +1,6 @@
 import type { FastifyRequest } from "fastify";
 
-export type RateBucket = "login" | "signup" | "email" | "model" | "token" | "device" | "deviceFiles" | "deviceTerminal" | "browse" | "code" | "cliStart" | "cliToken" | "cliApprove" | "mcp";
+export type RateBucket = "login" | "signup" | "email" | "model" | "token" | "device" | "deviceFiles" | "deviceTerminal" | "deviceAssistant" | "browse" | "code" | "cliStart" | "cliToken" | "cliApprove" | "mcp";
 
 export type RateLimitConfig = Record<RateBucket, { limit: number; windowMs: number; error: string }>;
 
@@ -84,6 +84,11 @@ export function rateLimitConfig(env: NodeJS.ProcessEnv = process.env): RateLimit
       windowMs: intEnv(env, "ENSEMBLE_RATE_DEVICE_TERMINAL_WINDOW_SEC", 60) * 1000,
       error: "Too much terminal output from this computer. Wait a moment and try again.",
     },
+    deviceAssistant: {
+      limit: intEnv(env, "ENSEMBLE_RATE_DEVICE_ASSISTANT_LIMIT", 600),
+      windowMs: intEnv(env, "ENSEMBLE_RATE_DEVICE_ASSISTANT_WINDOW_SEC", 60) * 1000,
+      error: "Too many assistant updates from this computer. Wait a moment and try again.",
+    },
     code: {
       limit: intEnv(env, "ENSEMBLE_RATE_CODE_LIMIT", 600),
       windowMs: intEnv(env, "ENSEMBLE_RATE_CODE_WINDOW_SEC", 60) * 1000,
@@ -144,6 +149,11 @@ export function isDeviceTerminal(path: string): boolean {
   return /^\/api\/devices\/self\/terminal-runs\/[^/]+\/output$/.test(path);
 }
 
+/** An assistant turn run on the person's own subscription: its tool calls, reply text and end (subscriptions/routes.ts). */
+export function isDeviceAssistant(path: string): boolean {
+  return /^\/api\/devices\/self\/assistant-turns\/[^/]+\/(tool|stream|done)$/.test(path);
+}
+
 /** The web's Code tab and terminal on a paired computer, and the terminal's passkey unlock. */
 export function isCodeRelay(path: string): boolean {
   if (/^\/api\/devices\/self\//.test(path)) return false;
@@ -172,6 +182,7 @@ export function classifyRateLimit(method: string, path: string): RateBucket | nu
   if (method === "POST" && isDeviceWrite(path)) return "device";
   if (method === "POST" && isDeviceFiles(path)) return "deviceFiles";
   if (method === "POST" && isDeviceTerminal(path)) return "deviceTerminal";
+  if (method === "POST" && isDeviceAssistant(path)) return "deviceAssistant";
   if (isBrowse(method, path)) return "browse";
   if (isCodeRelay(path)) return "code";
   return null;

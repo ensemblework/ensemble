@@ -3,7 +3,7 @@
  * The desktop sidecar runs the same calls in this process (ENSEMBLE_INPROCESS_RUNTIME,
  * on by default when ENSEMBLE_DESKTOP=1). Keys stay out of the web UI either way.
  */
-import type { Settings } from "@ensemble/shared-types";
+import { isSubscriptionProvider, type Settings } from "@ensemble/shared-types";
 import { env } from "../config.js";
 import { dispatchRuntime, DispatchError } from "../runtime/dispatch.js";
 import { useInProcessRuntime } from "../runtime/mode.js";
@@ -18,6 +18,7 @@ import { RuntimeError } from "./runtime-error.js";
 import { requireHostAccess, requireVerifiedUser } from "./hosted-access.js";
 import { keysFor } from "../sharing/context.js";
 import { effortToSend } from "./model-meta.js";
+import { jsonFrom, runSubscriptionTurn } from "../subscriptions/turn.js";
 
 export { RuntimeError };
 
@@ -93,6 +94,7 @@ export async function complete(args: {
   if (await isPaused(redis, args.userId)) {
     throw new RuntimeError("The agent is paused. Resume it from the top bar to allow model calls.", 409);
   }
+  if (isSubscriptionProvider(tier.provider)) return completeOnSubscription({ ...args, provider: tier.provider, model: tier.model, effort: tier.effort });
   const result = await runtime<{ text: string; json?: unknown; model: string; tokensIn: number | null; tokensOut: number | null }>("/api/complete", {
     method: "POST",
     json: {
@@ -122,4 +124,34 @@ export async function complete(args: {
     },
   }).catch(() => undefined);
   return result;
+}
+
+/** The same completion on the person's own subscription (docs/30 §8): a turn with no tools. */
+async function completeOnSubscription(args: Parameters<typeof complete>[0] & { provider: Parameters<typeof runSubscriptionTurn>[0]["agent"]; model: string; effort: string }): ReturnType<typeof complete> {
+  const system = [
+    args.system?.trim() || "Answer the request below directly.",
+    args.json ? "Reply with one JSON value and nothing else: no prose, no code fence." : "",
+    "You have no tools in this request. Answer from the text you are given.",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  const done = await runSubscriptionTurn({
+    userId: args.userId,
+    settings: args.settings,
+    agent: args.provider,
+    model: args.model,
+    effort: args.effort,
+    system,
+    prompt: args.prompt,
+    tools: [],
+    maxTurns: 2,
+    call: async () => ({ text: "There are no tools in this request.", isError: true }),
+  });
+  const json = args.json ? jsonFrom(done.text) : undefined;
+  await recordMetric(prisma, {
+    userId: args.userId,
+    kind: "model.call",
+    meta: { provider: args.provider, model: done.model || args.model, purpose: args.purpose ?? "Other", tokensIn: done.tokensIn, tokensOut: done.tokensOut, estimatedUsd: 0, computer: done.computer, title: truncateText(args.prompt, 80) },
+  }).catch(() => undefined);
+  return { text: done.text, ...(json === undefined ? {} : { json }), model: done.model || args.model, tokensIn: done.tokensIn, tokensOut: done.tokensOut };
 }

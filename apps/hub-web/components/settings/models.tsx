@@ -3,17 +3,18 @@
 /** @jsxImportSource react */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { KeyRound, Zap } from "lucide-react";
-import type { ModelProvider, Settings } from "@ensemble/shared-types";
+import { KeyRound } from "lucide-react";
+import { isSubscriptionProvider, SUBSCRIPTION_INFO, SUBSCRIPTION_PROVIDERS, type ModelMeta, type ModelProvider, type Settings, type SubscriptionAgent } from "@ensemble/shared-types";
 import { api, type Complexity, type ModelCatalog } from "@/lib/api";
-import { dateTime, relative } from "@/lib/format";
+import { relative } from "@/lib/format";
 import { useQuotaMarks } from "@/lib/model-quota";
 import { FetchGlyph } from "@/components/motion/slot";
 import { useToast } from "../toast";
-import { InfoTip, SectionCard, SettingRow, Tag, Toggle } from "../ui";
-import { Modal } from "./modal";
+import { InfoTip, SectionCard, Tag } from "../ui";
 import { ModelPicker, ProviderPicker, ThinkingPicker, effortFor, type ProviderChoice } from "./model-picker";
-import { GitHubGitCard, KEY_PROVIDERS, ModelKeysCard } from "./setup";
+import { KEY_PROVIDERS } from "./setup";
+import { ApiKeysDialog } from "./api-keys-dialog";
+import { activeComputer, SubscriptionsCard, useSubscriptions } from "./subscriptions";
 import { navigateSettings, useSettingsLocation } from "./url-state";
 
 type Patch = (patch: Record<string, unknown>) => void;
@@ -39,7 +40,19 @@ const PROVIDERS: Array<{ id: ModelProvider; label: string }> = [
   { id: "ollama", label: "Ollama (local)" },
 ];
 
-const label = (id: string) => KEY_PROVIDERS.find((row) => row.id === id)?.label ?? PROVIDERS.find((row) => row.id === id)?.label ?? id;
+const label = (id: string) =>
+  isSubscriptionProvider(id) ? `${SUBSCRIPTION_INFO[id].label} (your plan)` : (KEY_PROVIDERS.find((row) => row.id === id)?.label ?? PROVIDERS.find((row) => row.id === id)?.label ?? id);
+
+/** A subscription's models as the tier pickers take them: ids, and each model's thinking levels. */
+export function subscriptionModels(agent: SubscriptionAgent | null): { models: string[]; meta: Record<string, ModelMeta>; cheapest: string | null } {
+  if (!agent) return { models: [], meta: {}, cheapest: null };
+  const meta: Record<string, ModelMeta> = {};
+  for (const model of agent.models) {
+    const efforts = model.efforts ?? agent.efforts;
+    if (efforts?.length) meta[model.id] = { efforts };
+  }
+  return { models: agent.models.map((model) => model.id), meta, cheapest: agent.models.find((model) => model.isDefault)?.id ?? agent.models[0]?.id ?? null };
+}
 
 /** "Gemini and Claude have keys" — the one line the Models card shows instead of the whole key list. */
 export function keySummary(credentials: ReadonlyArray<{ provider: string; source: string }> | undefined): string {
@@ -68,7 +81,21 @@ export function useRefreshModels() {
   });
 }
 
-function providerChoices(catalog: ModelCatalog | undefined): ProviderChoice[] {
+function providerChoices(catalog: ModelCatalog | undefined, agents: SubscriptionAgent[] | null, computerName: string | null): ProviderChoice[] {
+  const plans: ProviderChoice[] = SUBSCRIPTION_PROVIDERS.map((id) => {
+    const agent = agents?.find((row) => row.id === id) ?? null;
+    const ready = Boolean(agent && agent.signedIn !== false && !agent.problem);
+    return {
+      id,
+      label: `${SUBSCRIPTION_INFO[id].label} (your plan)`,
+      status: ready ? "plan" : "plan-missing",
+      note: !agent ? "not on your computer" : agent.signedIn === false ? "not signed in" : computerName ? `on ${computerName}` : "your plan",
+    };
+  });
+  return [...plans, ...providerKeyChoices(catalog)];
+}
+
+function providerKeyChoices(catalog: ModelCatalog | undefined): ProviderChoice[] {
   return PROVIDERS.map((row) => {
     const entry = catalog?.providers.find((item) => item.provider === row.id);
     const status: ProviderChoice["status"] =
@@ -83,21 +110,25 @@ export function ModelsSection({ settings, patch }: Props) {
   const catalog = useQuery({ queryKey: ["models"], queryFn: api.models });
   const keys = useQuery({ queryKey: ["model-keys"], queryFn: api.modelKeys, retry: false });
   const refresh = useRefreshModels();
-  const choices = providerChoices(catalog.data);
+  const subscriptions = useSubscriptions();
+  const computer = activeComputer(subscriptions.data);
+  const agents = computer?.agents ?? null;
+  const choices = providerChoices(catalog.data, agents, computer?.name ?? null);
   const available = (catalog.data?.providers ?? []).reduce((sum, row) => sum + (row.available ? row.models.length : 0), 0);
   const runtimeDown = catalog.data && !catalog.data.runtime;
   const noKeys = keys.data && !keys.data.credentials.some((row) => row.source !== "none");
   return (
     <SectionCard
       title="Models"
-      info="Keys are held by the model runtime, never by the web app. A task's complexity picks the model; a provider without a key is skipped with a clear error, never swapped for another vendor."
-      description="Which model each tier uses. A task's complexity picks the tier, and the chat starts on the default preset above."
+      info="A subscription runs on your own computer with your own sign-in. API keys are held by the model runtime, never by the web app. A provider that cannot answer is said, never swapped for another vendor."
+      description="Power the assistant with the AI plan you already have, or with API keys. A task's complexity picks the tier, and the chat starts on the default preset above."
     >
-      <div className="row-tile flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-raised px-3 py-2.5" data-testid="model-keys-row">
+      <SubscriptionsCard settings={settings} patch={patch} />
+      <div className="row-tile mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-raised px-3 py-2.5" data-testid="model-keys-row">
         <div className="flex min-w-0 items-start gap-2.5">
           <KeyRound size={15} className="mt-0.5 shrink-0 text-muted" aria-hidden />
           <div className="min-w-0">
-            <div className="text-[13.5px] font-medium">Model providers & keys</div>
+            <div className="text-[13.5px] font-medium">API keys</div>
             <div className={`text-[12.5px] ${noKeys || runtimeDown ? "text-warn" : "text-muted"}`}>
               {runtimeDown
                 ? (catalog.data?.error ?? "The model runtime is not running.")
@@ -106,7 +137,7 @@ export function ModelsSection({ settings, patch }: Props) {
           </div>
         </div>
         <button type="button" className="btn shrink-0" aria-haspopup="dialog" onClick={() => navigateSettings({ dialog: "keys" })}>
-          Manage keys
+          Manage API keys
         </button>
       </div>
       <div className="mb-2 mt-5 flex flex-wrap items-end justify-between gap-2">
@@ -125,8 +156,11 @@ export function ModelsSection({ settings, patch }: Props) {
       <div className="space-y-5">
         {TIERS.map((tier) => {
           const value = settings.models[tier.id];
-          const provider = catalog.data?.providers.find((row) => row.provider === value.provider);
-          const meta = provider?.meta?.[value.model] ?? null;
+          const plan = isSubscriptionProvider(value.provider);
+          const agent = plan ? (agents?.find((row) => row.id === value.provider) ?? null) : null;
+          const planModels = subscriptionModels(agent);
+          const provider = plan ? undefined : catalog.data?.providers.find((row) => row.provider === value.provider);
+          const meta = plan ? (planModels.meta[value.model] ?? null) : (provider?.meta?.[value.model] ?? null);
           const providerName = label(value.provider);
           return (
             <div key={tier.id} data-tier={tier.id}>
@@ -135,6 +169,9 @@ export function ModelsSection({ settings, patch }: Props) {
                 {provider && !provider.available ? <Tag tone="orange">no key for {providerName}</Tag> : null}
                 {provider && !provider.chat ? <Tag tone="orange">Cursor cannot run the chat</Tag> : null}
                 {provider?.available && provider.models.length && !provider.models.includes(value.model) ? <Tag tone="orange">model not offered to your key</Tag> : null}
+                {plan && subscriptions.data && !agent ? <Tag tone="orange">{computer ? `not on ${computer.name}` : "no computer paired"}</Tag> : null}
+                {plan && agent?.signedIn === false ? <Tag tone="orange">not signed in</Tag> : null}
+                {plan && computer && !computer.online ? <Tag tone="orange">{computer.name} is offline</Tag> : null}
               </div>
               <div className="mt-1.5 grid grid-cols-1 gap-2 sm:grid-cols-[190px_minmax(0,1fr)]">
                 <ProviderPicker
@@ -143,6 +180,11 @@ export function ModelsSection({ settings, patch }: Props) {
                   choices={choices}
                   onPick={(next) => {
                     if (next === value.provider) return;
+                    if (isSubscriptionProvider(next)) {
+                      const nextAgent = agents?.find((row) => row.id === next) ?? null;
+                      patch({ models: { [tier.id]: { provider: next, model: subscriptionModels(nextAgent).cheapest ?? "default", effort: "default" } } });
+                      return;
+                    }
                     const entry = catalog.data?.providers.find((row) => row.provider === next);
                     const model = entry?.cheapest ?? value.model;
                     patch({ models: { [tier.id]: { provider: next, model, effort: effortFor(next, model, entry?.meta?.[model], value.effort) } } });
@@ -153,14 +195,15 @@ export function ModelsSection({ settings, patch }: Props) {
                   value={value.model}
                   provider={value.provider}
                   providerLabel={providerName}
-                  models={provider?.models ?? []}
-                  cheapest={provider?.cheapest ?? null}
-                  meta={provider?.meta}
-                  notes={provider?.notes}
-                  hasKey={Boolean(provider?.available)}
+                  models={plan ? planModels.models : (provider?.models ?? [])}
+                  cheapest={plan ? planModels.cheapest : (provider?.cheapest ?? null)}
+                  meta={plan ? planModels.meta : provider?.meta}
+                  notes={plan ? undefined : provider?.notes}
+                  hasKey={plan ? Boolean(agent) : Boolean(provider?.available)}
                   onPick={(model) => {
                     if (model === value.model) return;
-                    patch({ models: { [tier.id]: { model, effort: effortFor(value.provider, model, provider?.meta?.[model], value.effort) } } });
+                    const modelMeta = plan ? planModels.meta[model] : provider?.meta?.[model];
+                    patch({ models: { [tier.id]: { model, effort: effortFor(value.provider, model, modelMeta, value.effort) } } });
                   }}
                 />
               </div>
@@ -188,73 +231,7 @@ export function ModelsSection({ settings, patch }: Props) {
           );
         })}
       </div>
-      <ModelKeysDialog open={location.dialog === "keys"} onClose={() => navigateSettings({ dialog: null })} settings={settings} patch={patch} />
+      <ApiKeysDialog open={location.dialog === "keys"} onClose={() => navigateSettings({ dialog: null })} settings={settings} patch={patch} />
     </SectionCard>
-  );
-}
-
-export function ModelKeysDialog({ open, onClose, settings, patch }: Props & { open: boolean; onClose: () => void }) {
-  const toast = useToast();
-  const refresh = useRefreshModels();
-  const catalog = useQuery({ queryKey: ["models"], queryFn: api.models, enabled: open });
-  const test = useMutation({
-    mutationFn: (tier: Complexity) => api.testModel(tier),
-    onSuccess: (result) => toast(`${result.model} answered “${result.text}” in ${result.ms} ms (${result.tokensIn ?? "?"} in / ${result.tokensOut ?? "?"} out tokens).`, { tone: "ok" }),
-    onError: (error) => toast((error as Error).message, { tone: "error" }),
-  });
-  const available = (catalog.data?.providers ?? []).reduce((sum, row) => sum + (row.available ? row.models.length : 0), 0);
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title="Model providers & keys"
-      description={
-        catalog.data
-          ? catalog.data.runtime
-            ? `${available} models available from your keys · Updated ${dateTime(catalog.data.updatedAt)}`
-            : (catalog.data.error ?? "The model runtime is not running.")
-          : "Checking providers…"
-      }
-      width={720}
-      testId="model-keys-dialog"
-      footer={
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <button type="button" className="btn" onClick={() => refresh.mutate()} disabled={refresh.isPending}>
-            <FetchGlyph active={refresh.isPending || catalog.isFetching} size={12} /> Refresh model lists
-          </button>
-          <button type="button" className="btn-primary" onClick={onClose}>
-            Done
-          </button>
-        </div>
-      }
-    >
-      <ModelKeysCard />
-      <div className="mt-4 border-t border-line pt-1">
-        <SettingRow
-          title="Use these keys on my computers"
-          description="The Ensemble CLI and the desktop app, signed in to this account, use these keys for their own model calls. A key added on a computer stays on it and wins there."
-        >
-          <Toggle label="Use these keys on my computers" checked={settings.models.keysOnComputers !== false} onChange={(keysOnComputers) => patch({ models: { keysOnComputers } })} />
-        </SettingRow>
-      </div>
-      <div className="mt-5">
-        <h3 className="text-[13px] font-semibold">Try each tier</h3>
-        <p className="mt-0.5 text-[12.5px] text-muted">Sends a one-word prompt to the model the tier uses and shows how long it took.</p>
-        <div className="mt-2 flex flex-wrap gap-2">
-          {TIERS.map((tier) => (
-            <button key={tier.id} type="button" className="btn" disabled={test.isPending} onClick={() => test.mutate(tier.id)}>
-              <Zap size={11} /> Test {tier.label.replace(" model", "")}
-              {test.isPending && test.variables === tier.id ? "…" : ""}
-            </button>
-          ))}
-        </div>
-      </div>
-      <label className="mt-5 block text-[13px] font-medium">
-        Ollama URL
-        <span className="block text-[12px] font-normal text-muted">Where a local Ollama answers, for the Ollama provider.</span>
-        <input value={settings.models.ollamaUrl} onChange={(event) => patch({ models: { ollamaUrl: event.target.value } })} className="field mt-1.5 w-full" />
-      </label>
-      <GitHubGitCard />
-    </Modal>
   );
 }

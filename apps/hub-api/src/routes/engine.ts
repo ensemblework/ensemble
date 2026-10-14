@@ -6,6 +6,7 @@
  */
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
+import { bridgeFor, callThroughBridge } from "../subscriptions/bridge.js";
 import { CHAT_TOOLS, runChatTool } from "../workspace/engines/chat-tools.js";
 import { engineRunFor, judge } from "../workspace/engines/registry.js";
 import { isChatTurn } from "../workspace/trust.js";
@@ -24,6 +25,31 @@ export async function engineRoutes(app: FastifyInstance): Promise<void> {
       if (error instanceof DOMException && error.name === "AbortError") return { decision: "deny", message: "The run was stopped." };
       request.log.error({ err: error }, "engine call could not be judged");
       return { decision: "deny", message: "Ensemble could not check this call, so it was not run." };
+    }
+  });
+
+  // An assistant turn on the person's own subscription (subscriptions/agents.ts): its tools, by the turn's own secret.
+  const turnBridge = (request: { ip: string; headers: Record<string, string | string[] | undefined> }) => {
+    const host = request.ip.replace(/^::ffff:/, "");
+    if (process.env.ENSEMBLE_DESKTOP !== "1" || (host !== "127.0.0.1" && host !== "::1")) return { ok: false as const, status: 403, error: "Assistant turns are local." };
+    const header = request.headers["x-ensemble-turn"];
+    const bridge = bridgeFor(Array.isArray(header) ? header[0] : header);
+    return bridge ? { ok: true as const, bridge } : { ok: false as const, status: 401, error: "This turn has ended." };
+  };
+  app.get("/api/engine/assistant/tools", async (request, reply) => {
+    const found = turnBridge(request);
+    if (!found.ok) return reply.code(found.status).send({ error: found.error });
+    return { tools: found.bridge.tools };
+  });
+  app.post("/api/engine/assistant/tool", async (request, reply) => {
+    const found = turnBridge(request);
+    if (!found.ok) return reply.code(found.status).send({ text: found.error, isError: true });
+    const body = z.object({ name: z.string().min(1).max(200), input: z.unknown().default({}) }).parse(request.body);
+    try {
+      return await callThroughBridge(found.bridge, body.name, body.input);
+    } catch (error) {
+      request.log.warn({ err: error }, "assistant tool call failed");
+      return { text: error instanceof Error ? error.message : "The tool failed.", isError: true };
     }
   });
 

@@ -26,7 +26,7 @@ import { createInterface } from "node:readline";
 import { desktopDataDir } from "@ensemble/shared-types/desktop-discovery";
 import { askpassPath, cacheDir, ENSEMBLE_SOURCE } from "../guard.js";
 import { appendLive } from "../live-log.js";
-import { hostExecutable } from "../policy.js";
+import { claudeBinary } from "../../subscriptions/detect.js";
 import { LINUX_TOOLCHAIN_HOME } from "../sandbox/linux.js";
 import { SECRET_HOME_PATHS, TOOLCHAIN_HOME_READS } from "../sandbox/seatbelt.js";
 import type { JobContext } from "../tools.js";
@@ -51,7 +51,8 @@ const KEY_VARIABLES = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE
 
 export async function detectClaudeCode(): Promise<{ path: string; version: string } | null> {
   try {
-    const path = await hostExecutable("claude");
+    const path = (await claudeBinary())?.path;
+    if (!path) return null;
     const result = spawnSync(path, ["--version"], { encoding: "utf8", timeout: 10_000 });
     if (result.status !== 0) return null;
     return { path, version: result.stdout.trim().split(/\s+/)[0] ?? "" };
@@ -120,9 +121,10 @@ export async function runClaudeCode(
   ctx: JobContext,
   options: { prompt: string; model?: string | null; maxTurns: number; stopCheck: () => Promise<void>; resume?: string | null; chat?: boolean; trace?: EngineTrace },
 ): Promise<EngineResult> {
-  const claude = await hostExecutable("claude").catch(() => {
-    throw new Error("Claude Code is not installed on this computer (the `claude` command was not found). Install it and sign in, or pick another engine.");
-  });
+  // The `claude` command, else the Claude Code the Claude app keeps for its Code tab (subscriptions/detect.ts).
+  const found = await claudeBinary();
+  if (!found) throw new Error("Claude Code is not on this computer: neither the Claude app nor the `claude` command was found. Install the Claude app and sign in, or pick another engine.");
+  const claude = found.path;
   const credential = registerEngineRun(ctx);
   const hookCommand = `"${process.execPath}" "${hookScriptPath()}" --source claude --engine`;
   const home = homedir();

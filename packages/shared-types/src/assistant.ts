@@ -143,6 +143,11 @@ export const ModelProvider = z.enum([
   "cursor",
   "ollama",
   "openrouter",
+  // The person's own AI subscription, run by that vendor's agent on their paired computer (subscriptions.ts).
+  "claude-code",
+  "codex",
+  "cursor-agent",
+  "copilot-cli",
   "mock",
 ]);
 export type ModelProvider = z.infer<typeof ModelProvider>;
@@ -168,6 +173,11 @@ export const ModelSettings = z.object({
   ollamaUrl: z.string().default("http://127.0.0.1:11434"),
   /** The person's own paired computers (the CLI, the desktop app) may use these keys for their model calls. */
   keysOnComputers: z.boolean().default(true),
+  /**
+   * The paired computer that runs tiers set to a subscription (claude-code, codex, …). Null: the
+   * computer seen most recently that has that agent.
+   */
+  computer: z.string().max(80).nullable().default(null),
 });
 export type ModelSettings = z.infer<typeof ModelSettings>;
 

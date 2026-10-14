@@ -13,6 +13,11 @@
  * In Chat with the person's own agent (ENSEMBLE_CHAT=1) it also offers their
  * Ensemble board: ensemble_list_tasks, ensemble_create_task and
  * ensemble_search, answered by /api/engine/tool for that chat's run only.
+ *
+ * For an assistant turn run on the person's own subscription
+ * (ENSEMBLE_ASSISTANT_TURN set, docs/30 §8) it offers that turn's Ensemble
+ * tools instead, listed and called through /api/engine/assistant/*; when a
+ * call changes the list (a playbook loaded) it tells the agent to list again.
  */
 import { request as httpRequest } from "node:http";
 import { resolve } from "node:path";
@@ -93,16 +98,18 @@ function ask(input) {
   return post("/api/engine/ask", { tool_name: "AskUserQuestion", tool_input: input }, (message) => ({ decision: "deny", message }));
 }
 
-/** One request to this computer's Ensemble with the run's secret; `failed` shapes the answer when it cannot be reached. */
-function post(path, payload, failed) {
+/** One request to this computer's Ensemble with the run's (or the turn's) secret; `failed` shapes the answer when it cannot be reached. */
+function post(path, payload, failed, method = "POST") {
   const base = process.env.ENSEMBLE_ENGINE_URL;
+  const turn = process.env.ENSEMBLE_ASSISTANT_TURN;
   const run = process.env.ENSEMBLE_RUN;
-  if (!base || !run) return Promise.resolve(failed("Ensemble is not reachable from this run."));
-  const body = JSON.stringify(payload);
+  if (!base || !(turn || run)) return Promise.resolve(failed("Ensemble is not reachable from this run."));
+  const body = payload === undefined ? "" : JSON.stringify(payload);
+  const secret = turn ? { "x-ensemble-turn": turn } : { "x-ensemble-run": run };
   return new Promise((done) => {
     const req = httpRequest(
       new URL(path, base),
-      { method: "POST", headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body), "x-ensemble-run": run } },
+      { method, headers: { ...(body ? { "content-type": "application/json", "content-length": Buffer.byteLength(body) } : {}), ...secret } },
       (res) => {
         let text = "";
         res.setEncoding("utf8");
@@ -117,8 +124,38 @@ function post(path, payload, failed) {
       },
     );
     req.on("error", (error) => done(failed(`Ensemble could not be reached (${error.message}).`)));
-    req.end(body);
+    req.end(body || undefined);
   });
+}
+
+/** The assistant turn's tools, as Ensemble last listed them. */
+let turnTools = null;
+
+async function assistantTools() {
+  if (turnTools) return turnTools;
+  const answer = await post("/api/engine/assistant/tools", undefined, (error) => ({ error }), "GET");
+  turnTools = Array.isArray(answer?.tools) ? answer.tools : [];
+  return turnTools;
+}
+
+async function handleAssistant(message) {
+  if (message.method === "initialize") {
+    send({ id: message.id, result: { protocolVersion: message.params?.protocolVersion ?? "2025-06-18", capabilities: { tools: { listChanged: true } }, serverInfo: { name: "ensemble", version: "1" } } });
+  } else if (message.method === "tools/list") {
+    send({ id: message.id, result: { tools: await assistantTools() } });
+  } else if (message.method === "tools/call") {
+    const answer = await post("/api/engine/assistant/tool", { name: message.params?.name, input: message.params?.arguments ?? {} }, (error) => ({ text: error, isError: true }));
+    const text = typeof answer?.text === "string" ? answer.text : String(answer?.error ?? "The tool failed.");
+    send({ id: message.id, result: { content: [{ type: "text", text }], ...(answer?.isError || typeof answer?.text !== "string" ? { isError: true } : {}) } });
+    if (Array.isArray(answer?.tools)) {
+      turnTools = answer.tools;
+      send({ method: "notifications/tools/list_changed" });
+    }
+  } else if (message.method === "ping") {
+    send({ id: message.id, result: {} });
+  } else if (message.id !== undefined) {
+    send({ id: message.id, error: { code: -32601, message: `Method not found: ${message.method}` } });
+  }
 }
 
 export function answerText(input, verdict) {
@@ -159,7 +196,8 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
   for await (const line of createInterface({ input: process.stdin })) {
     if (!line.trim()) continue;
     try {
-      void handle(JSON.parse(line));
+      const message = JSON.parse(line);
+      void (process.env.ENSEMBLE_ASSISTANT_TURN ? handleAssistant(message) : handle(message));
     } catch {
       // not JSON: ignore, as MCP clients only send JSON-RPC lines
     }
