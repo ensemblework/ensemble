@@ -15,7 +15,8 @@ mkdirSync(join(workspace, "repo"));
 process.env.ENSEMBLE_REMOTE_STATE_DIR = state;
 process.env.ENSEMBLE_WORKSPACE_ROOT = workspace;
 process.env.REDIS_URL ??= "memory://local";
-const { terminalAnswerFor } = await import("./terminal.js");
+const { terminalAnswerFor, NO_SANDBOX } = await import("./terminal.js");
+const { sandboxAvailable } = await import("../workspace/guard.js");
 
 function settings(change: Record<string, unknown>): void {
   writeFileSync(join(state, "remote.json"), JSON.stringify({ version: 1, enabled: true, ...change }));
@@ -44,11 +45,16 @@ test("the web terminal answers with this computer's folders and moves only insid
   assert.equal((await terminalAnswerFor(fakeApp(), client, request("cd", { cwd: workspace, path: "/etc" }))).status, 422);
 });
 
-test("destructive commands ask first, refused ones say why, and neither starts", async () => {
+test("refused commands say why; destructive ones ask first; without the OS sandbox nothing runs from the web; none starts here", async () => {
   settings({});
   const reset = await terminalAnswerFor(fakeApp(), client, request("run", { cwd: workspace, line: "git reset --hard HEAD" }));
-  assert.equal(reset.status, 428);
-  assert.match(String((reset.body as { confirm: string }).confirm), /uncommitted/);
+  if (sandboxAvailable()) {
+    assert.equal(reset.status, 428);
+    assert.match(String((reset.body as { confirm: string }).confirm), /uncommitted/);
+  } else {
+    assert.equal(reset.status, 409);
+    assert.equal((reset.body as { error: string }).error, NO_SANDBOX);
+  }
   for (const line of ["ssh example.com", "ls | sh", "sudo ls"]) {
     const refused = await terminalAnswerFor(fakeApp(), client, request("run", { cwd: workspace, line }));
     assert.equal(refused.status, 422, line);

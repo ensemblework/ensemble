@@ -27,6 +27,8 @@ const running = new Map<string, AbortController>();
 
 const answer = (status: number, body: unknown): CodeAnswer => ({ status, body });
 
+export const NO_SANDBOX = "The terminal from the web runs commands only inside this computer's sandbox, and it is not set up here. Run `ensemble sandbox setup` on the computer.";
+
 async function refusal(app: App): Promise<CodeAnswer | null> {
   if (!loadSettings().webTerminal) return answer(409, { error: "The terminal from the web is turned off on this computer. Turn it on there with `ensemble web terminal on`." });
   const hub = await loadHubSettings(app.prisma, userId());
@@ -118,10 +120,10 @@ export async function terminalAnswerFor(app: App, client: HostedClient, request:
     const home = await workspaceRoot();
     if (request.op === "status") return answer(200, { roots: allowed, home, sandboxed: webTerminalSandboxed() });
     if (request.op === "cd") return answer(200, await resolveCd(allowed, request.cwd || home, request.path ?? ""));
-    // From the web, commands run only under this computer's OS sandbox: files change only inside the folder.
-    if (!webTerminalSandboxed()) return answer(409, { error: "The terminal from the web runs commands only inside this computer's sandbox, and it is not set up here. Run `ensemble sandbox setup` on the computer." });
     const hub = await loadHubSettings(app.prisma, userId());
     const prepared = await prepareRun({ allowed, cwd: request.cwd || home, line: request.line ?? "", confirmed: request.confirmed, commitAuthor: hub.terminal.commitAuthor, sandboxed: true });
+    // From the web, commands run only under this computer's OS sandbox: files change only inside the folder.
+    if (!webTerminalSandboxed()) return answer(409, { error: NO_SANDBOX });
     if (prepared.kind === "confirm") return answer(428, { confirm: prepared.message });
     start(app, client, request.id, prepared);
     return answer(202, { runId: request.id });
