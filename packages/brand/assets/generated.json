@@ -1,6 +1,6 @@
 {
   "sources": {
-    "scripts/build-ensemble-brand.mjs": "5b69f50894bfad3a95c3fddfb2bdd597d9dea0c63f3c197ec359d9868c29493a",
+    "scripts/build-ensemble-brand.mjs": "8b16c51b04f1e0c6f2efdcb9d24e3f082bb0c6a62a68d721773dfa9c2765ab04",
     "packages/brand/artwork.json": "d5dc618b453797f82a1ed4ce70fd4a6799a20485a327882de4fa03068854b762",
     "packages/brand/assets/woven-satin.svg": "fa035b3bc4ae34b42c1108fe54a04d6af9e9079a5c6b5f9f124e4e369c1a3eaa",
     "packages/brand/assets/woven-micro.svg": "fd5467afbacfcdc3e3a1bb2b48bcded54dbc99a7aec6a147bd882e7075ae279e",
@@ -12,12 +12,21 @@
     "apps/hub-web/components/brand/brand-pages.css": "d07989895bc48e8cf089f91ca9765807ca81aec84aeff280d4590b60edaae8b8"
   },
   "outputs": {
+    "packages/brand/icons.js": "7090c1673699a8a4389d936d3d0959ed08014b13c0ee3f58433c7d9473f69ff8",
     "apps/hub-web/app/icon.svg": "1260dfe48ef21c9628e424e969e0601277727c45c0c4e7815981373e25a10c57",
-    "apps/hub-web/app/favicon.ico": "518f6632318a57f3299e4db691e4d1f059be417235222309f3026e8b64a0364d",
     "apps/hub-web/app/apple-icon.png": "480070d989c12c3de54ef6d1ce8429edf5a32ea55bb42b5d6506d7809dfe9381",
+    "apps/hub-web/public/favicon.ico": "518f6632318a57f3299e4db691e4d1f059be417235222309f3026e8b64a0364d",
+    "apps/hub-web/public/brand/favicon-518f6632318a.ico": "518f6632318a57f3299e4db691e4d1f059be417235222309f3026e8b64a0364d",
+    "apps/hub-web/public/brand/favicon-5c0d8634a56a.png": "5c0d8634a56a8d5427df9f63559db577c90d612a84e2dd230f2e6e8900098c16",
+    "apps/hub-web/public/brand/mark-1260dfe48ef2.svg": "1260dfe48ef21c9628e424e969e0601277727c45c0c4e7815981373e25a10c57",
+    "apps/hub-web/public/brand/apple-480070d989c1.png": "480070d989c12c3de54ef6d1ce8429edf5a32ea55bb42b5d6506d7809dfe9381",
     "apps/landing/app/icon.svg": "1260dfe48ef21c9628e424e969e0601277727c45c0c4e7815981373e25a10c57",
-    "apps/landing/app/favicon.ico": "518f6632318a57f3299e4db691e4d1f059be417235222309f3026e8b64a0364d",
     "apps/landing/app/apple-icon.png": "480070d989c12c3de54ef6d1ce8429edf5a32ea55bb42b5d6506d7809dfe9381",
+    "apps/landing/public/favicon.ico": "518f6632318a57f3299e4db691e4d1f059be417235222309f3026e8b64a0364d",
+    "apps/landing/public/brand/favicon-518f6632318a.ico": "518f6632318a57f3299e4db691e4d1f059be417235222309f3026e8b64a0364d",
+    "apps/landing/public/brand/favicon-5c0d8634a56a.png": "5c0d8634a56a8d5427df9f63559db577c90d612a84e2dd230f2e6e8900098c16",
+    "apps/landing/public/brand/mark-1260dfe48ef2.svg": "1260dfe48ef21c9628e424e969e0601277727c45c0c4e7815981373e25a10c57",
+    "apps/landing/public/brand/apple-480070d989c1.png": "480070d989c12c3de54ef6d1ce8429edf5a32ea55bb42b5d6506d7809dfe9381",
     "apps/desktop/src-tauri/icons/32x32.png": "ff496dacbe574151338be5e9078d20d7d920349984b7fd5366abf43e7c37e8ab",
     "apps/desktop/src-tauri/icons/128x128.png": "56d2a902a81be53a48db5aa99d83b723cde3b5db1d8f509a7d7772679ac27788",
     "apps/desktop/src-tauri/icons/128x128@2x.png": "823af31de7890e9c9083fc689499c63942bf169d03b0f86a963594217caebaa9",
@@ -90,8 +99,8 @@
     "apps/quick-capture/ui/ensemble-morph.js": "d1974ee10938765dd261232899270c97db00a7fd8167e568a7886ebca81e1281",
     "apps/quick-capture/ui/morph.css": "78d5c534ad75a2c148e698101539ded973fb8b9f044b16f49b12a10e3b9a0887",
     "apps/quick-capture/ui/woven-satin.svg": "b00d9e2f04078d9b60c260eea9911f75d2ff3cae77f56074d19845edbf7b5a52",
-    "apps/hub-web/public/404.html": "fc047233341ff46b60b22e22ffa81a5733457fc1eb91e815f822a3a5f98b7f40",
-    "apps/hub-web/public/500.html": "9f840e7002c5bfb0028b2893d10f1eae2b8d1d6d8a040e221d8d99a07addf155",
-    "apps/hub-web/public/offline.html": "664941c786e9496672d51bbbcdca38fd79c4f04f61f79fb3a543d81d3dc1f035"
+    "apps/hub-web/public/404.html": "b8a5d6bb8f2774832d046f87424f7af88fbcfb5b1bb6f8f7b7a29adebfe57061",
+    "apps/hub-web/public/500.html": "32c0c67918360c52132c95508f4f4811a4148925c61f99c44a1ff46537165863",
+    "apps/hub-web/public/offline.html": "2fc86019cb5b2c4c1f40104a6694792ca530c131d9447d004c20849a8904c5d5"
   }
 }

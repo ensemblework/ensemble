@@ -17,6 +17,10 @@
     "./cli": {
       "types": "./cli.d.ts",
       "default": "./cli.js"
+    },
+    "./icons": {
+      "types": "./icons.d.ts",
+      "default": "./icons.js"
     }
   },
   "scripts": {

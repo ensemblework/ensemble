@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { icons } from "@ensemble/brand/icons";
 import { NextRequest } from "next/server";
 import { isAnonymousAsset } from "./anonymous-asset";
 import { middleware, config } from "../middleware";
 
 const ASSETS = [
+  ...icons.icon.map(icon => icon.url),
+  ...icons.apple.map(icon => icon.url),
   "/icon.svg",
   "/favicon.ico",
   "/robots.txt",
@@ -83,4 +86,13 @@ test("original theme artwork is public, while arbitrary theme paths remain guard
     assert.equal(response.headers.get("location"), null);
   }
   assert.equal(isAnonymousAsset("/themes/private"), false);
+});
+
+test("hashed icons work before login without allowing arbitrary brand routes", async () => {
+  for (const path of [...icons.icon, ...icons.apple].map(icon => icon.url)) {
+    const response = await middleware(new NextRequest(`https://app.example.test${path}`));
+    assert.equal(response.headers.get("location"), null);
+    assert.equal(response.headers.get("x-middleware-next"), "1");
+  }
+  for (const path of ["/brand/private", "/brand/favicon-notahash.ico", "/brand/mark-0123456789ab.svg.bak"]) assert.equal(isAnonymousAsset(path), false);
 });
