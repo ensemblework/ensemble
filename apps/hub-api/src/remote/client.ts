@@ -2,7 +2,7 @@
  * The Mac's calls to Ensemble on the web. Doc 25 §4.3, and only those routes.
  * The device token stays in this process; it is never written to a child environment.
  */
-import { ROUTES, type Outcome, type ResultLink } from "./contract.js";
+import { ROUTES, type Outcome, type ResultLink, type RunTotals, type UploadedStep } from "./contract.js";
 
 export class RemoteError extends Error {
   readonly expose = true;
@@ -39,12 +39,12 @@ export interface HostedClient {
   unpairSelf(): Promise<void>;
   heartbeat(body: { runningJobIds: string[]; appVersion: string; capabilities: unknown }): Promise<{ cancel: string[] }>;
   claim(): Promise<{ status: number; body: unknown }>;
-  progress(jobId: string, leaseToken: string, body: { status?: string; progress: string; events: unknown[]; logs?: { seqFrom: number; seqTo: number; text: string } }): Promise<void>;
+  progress(jobId: string, leaseToken: string, body: { status?: string; progress: string; events: unknown[]; logs?: { seqFrom: number; seqTo: number; text: string }; steps?: UploadedStep[] }): Promise<void>;
   ask(jobId: string, leaseToken: string, body: Record<string, unknown>): Promise<{ decisionId: string }>;
   decision(decisionId: string, timeoutSeconds: number, signal: AbortSignal): Promise<unknown>;
   /** Answered here: the card on the web closes with the same answer. Older servers answer 404. */
   closeDecision(decisionId: string, body: { decision: "allow" | "deny"; reason: string | null }): Promise<void>;
-  complete(jobId: string, leaseToken: string, body: { outcome: Outcome; summary: string; results: ResultLink[] }): Promise<void>;
+  complete(jobId: string, leaseToken: string, body: { outcome: Outcome; summary: string; results: ResultLink[]; totals?: RunTotals }): Promise<void>;
   events(onFrame: (event: string, data: unknown) => void, signal: AbortSignal): Promise<void>;
 }
 

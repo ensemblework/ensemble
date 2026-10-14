@@ -14,6 +14,7 @@ import { loadSettings } from "../lib/settings.js";
 import { HostedAccessError, requireHostAccess } from "../lib/hosted-access.js";
 import { sseHub } from "../lib/sse.js";
 import { publishDevice } from "../devices/publish.js";
+import { endOpenRuns } from "../devices/settle.js";
 import { executeJob } from "./agent.js";
 import { INTERRUPTED_MESSAGE, Interruption, SHUTDOWN } from "./lifecycle.js";
 import { killGroup } from "./runner.js";
@@ -213,6 +214,7 @@ async function markInterrupted(app: FastifyInstance, job: { id: string; taskId: 
   });
   await app.prisma.task.updateMany({ where: { id: job.taskId, status: "in_progress", owner: "agent" }, data: { status: "blocked" } });
   await app.prisma.agentDecision.updateMany({ where: { sessionId: job.id, status: "pending" }, data: { status: "expired" } });
+  await endOpenRuns(app.prisma, [job.id], message);
 }
 
 /**

@@ -14,6 +14,8 @@ import { RunMark } from "@/components/motion/slot";
 import { useDelayedFlag } from "@/lib/motion/use-delayed-flag";
 import { useModuleOn } from "@/lib/use-module";
 import { PriorityTag, Spinner, Tag, cx } from "../ui";
+import { MarkdownText } from "../markdown-text";
+import { sameModel, usd } from "@/lib/run-trace";
 
 export const JOB_STATE: Record<AgentJob["status"], { label: string; tone: "green" | "red" | "yellow" | "gray" | "blue" | "orange" }> = {
   queued: { label: "Queued", tone: "gray" },
@@ -52,7 +54,8 @@ function resultLabel(kind: string, url: string, sha?: string): string {
 
 const DELIVERY: Record<AgentJob["delivery"], string> = { local: "local only", commit: "may commit", push: "may push" };
 
-export function useElapsed(since: string | null, running: boolean): string {
+/** Time since `since` while running; once it ended, the time it took (`until`), not the time since it began. */
+export function useElapsed(since: string | null, running: boolean, until?: string | null): string {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
     if (!running) return;
@@ -60,7 +63,9 @@ export function useElapsed(since: string | null, running: boolean): string {
     return () => window.clearInterval(timer);
   }, [running]);
   if (!since) return "";
-  const seconds = Math.max(0, Math.round(((running ? now : Date.now()) - new Date(since).getTime()) / 1000));
+  const end = running ? now : until ? new Date(until).getTime() : null;
+  if (end == null) return "";
+  const seconds = Math.max(0, Math.round((end - new Date(since).getTime()) / 1000));
   return seconds < 60 ? `${seconds}s` : seconds < 3600 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
 }
 
@@ -147,7 +152,7 @@ export function JobCard({ job, wide }: { job: AgentJob; wide?: boolean }) {
   const peek = usePeek();
   const live = job.status === "claimed" || job.status === "running" || job.status === "stopping" || job.status === "waiting_approval";
   const showProgress = useDelayedFlag(Boolean(live && job.progress));
-  const elapsed = useElapsed(job.startedAt, live);
+  const elapsed = useElapsed(job.startedAt, live, job.finishedAt);
   const state = jobTone(job);
   const Icon = job.kind === "code" ? Code2 : FileText;
   return (
@@ -198,7 +203,7 @@ export function JobCard({ job, wide }: { job: AgentJob; wide?: boolean }) {
         <span className="truncate">
           {job.model}
           {job.turns ? ` · ${plural(job.turns, "turn")} · ${plural(job.toolCalls, "tool")}` : ""}
-          {elapsed ? ` · ${elapsed}` : job.finishedAt ? ` · ${relative(job.finishedAt)}` : ""}
+          {live && elapsed ? ` · ${elapsed}` : job.finishedAt ? ` · ${relative(job.finishedAt)}` : ""}
         </span>
         {job.yours === false ? <RunnerLock job={job} compact /> : job.status === "queued" || live ? <StopButton job={job} compact /> : !job.deviceId && RETRYABLE.has(job.status) ? <RunAgainButton job={job} compact /> : null}
       </div>
@@ -230,9 +235,10 @@ export function TaskAgentPanel({ taskId }: { taskId: string }) {
   const detail = useQuery({ queryKey: ["job", job?.id], queryFn: () => api.job(job!.id), enabled: (open || live) && Boolean(job), refetchInterval: job && live ? 2000 : false });
   const logs = useQuery({ queryKey: ["job-logs", job?.id], queryFn: () => api.jobLogs(job!.id), enabled: open && Boolean(job), refetchInterval: open && job && ["claimed", "running", "waiting_approval"].includes(job.status) ? 2500 : false });
   const showProgress = useDelayedFlag(Boolean(live && job?.progress));
-  const elapsed = useElapsed(job?.startedAt ?? null, live);
+  const elapsed = useElapsed(job?.startedAt ?? null, live, job?.finishedAt ?? null);
   if (!job) return null;
   const state = jobTone(job);
+  const answeredBy = job.modelUsed && !sameModel(job.model, job.modelUsed) ? job.modelUsed : null;
   return (
     <div className={cx("mt-4 rounded-lg border px-3 py-2.5 text-[12.5px]", live ? "border-[rgb(var(--accent-rgb)/0.45)] bg-[var(--accent-soft)]" : "border-line bg-raised")}>
       <div className="flex flex-wrap items-center gap-2">
@@ -240,9 +246,16 @@ export function TaskAgentPanel({ taskId }: { taskId: string }) {
         {job.origin === "web" ? <Tag tone="blue">from web</Tag> : null}
         {job.position ? <span className="text-muted">#{job.position} in the queue</span> : null}
         <span className="text-muted">{job.kind === "code" ? "Code" : "Research"} · {job.model}</span>
+        {answeredBy ? <span className="text-warn" title="The model the provider reported for this run">answered by {answeredBy}</span> : null}
         {job.turns ? <span className="text-faint">{job.turns} turns · {job.toolCalls} tools · {(job.tokensIn + job.tokensOut).toLocaleString()} tokens</span> : null}
-        {elapsed ? <span className="text-faint">{elapsed}</span> : null}
+        {elapsed ? <span className="text-faint">{live ? elapsed : `took ${elapsed}`}</span> : null}
+        {job.costUsd != null ? <span className="text-faint">{usd(job.costUsd)}</span> : null}
         <div className="flex-1" />
+        {job.runId ? (
+          <Link href={`/runs?run=${job.runId}`} className="text-accent hover:underline" title="Every step and tool call, with timings">
+            View run
+          </Link>
+        ) : null}
         {job.reviewId ? (
           <Link href={`/code/review?review=${job.reviewId}`} className="text-accent hover:underline">
             Review changes
@@ -263,6 +276,7 @@ export function TaskAgentPanel({ taskId }: { taskId: string }) {
         </div>
       ) : null}
       {!live && job.error ? <div className="mt-1.5 text-muted">{job.error}</div> : null}
+      {!live && job.summary && job.summary !== job.error ? <AgentOutput key={job.id} job={job} /> : null}
       {live && detail.data?.log ? (
         <pre data-testid="job-live-log" className="mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap rounded border border-line bg-panel p-2 font-mono text-[11px] leading-4 text-muted">
           {detail.data.log.slice(-4000)}
@@ -303,6 +317,48 @@ export function TaskAgentPanel({ taskId }: { taskId: string }) {
               {chunk.text}
             </pre>
           ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** What the agent wrote at the end, on the task page: its answer or report, formatted, and the files it changed. */
+function AgentOutput({ job }: { job: AgentJob }) {
+  const [open, setOpen] = useState(true);
+  const [full, setFull] = useState(false);
+  const files = job.files ?? [];
+  const long = (job.summary ?? "").length > 1800;
+  return (
+    <div className="mt-2 rounded-md border border-line bg-panel">
+      <button type="button" onClick={() => setOpen(!open)} className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-[12.5px] font-medium" aria-expanded={open}>
+        <ChevronRight size={12} className={cx("shrink-0 text-faint transition-transform", open && "rotate-90")} />
+        Agent output
+        {files.length ? <span className="font-normal text-faint">· {plural(files.length, "file")} changed</span> : null}
+      </button>
+      {open ? (
+        <div className="border-t border-line px-3 py-2.5">
+          <div className={cx("relative", long && !full && "max-h-[420px] overflow-hidden")}>
+            <MarkdownText text={job.summary ?? ""} className="space-y-2 text-[13px] leading-[1.6]" />
+            {long && !full ? <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-panel to-transparent" /> : null}
+          </div>
+          {long ? (
+            <button type="button" className="mt-1 text-[12px] text-accent hover:underline" onClick={() => setFull(!full)}>
+              {full ? "Show less" : "Show all"}
+            </button>
+          ) : null}
+          {files.length ? (
+            <div className="mt-2.5 border-t border-line pt-2">
+              {files.slice(0, 12).map((file) => (
+                <div key={file.path} className="flex items-center gap-2 font-mono text-[11.5px]">
+                  <span className="min-w-0 flex-1 truncate text-muted">{file.path}</span>
+                  <span className="text-ok">+{file.added}</span>
+                  <span className="text-danger">−{file.removed}</span>
+                </div>
+              ))}
+              {files.length > 12 ? <div className="text-[11.5px] text-faint">and {files.length - 12} more</div> : null}
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

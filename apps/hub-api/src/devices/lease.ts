@@ -15,7 +15,7 @@ import { appendLedger } from "../lib/ledger.js";
 import { sseHub } from "../lib/sse.js";
 import { INTERRUPTED_ERROR } from "./constants.js";
 import { publishBrowserDevice } from "./publish.js";
-import { blockInProgressTasks, expireDeviceDecisions } from "./settle.js";
+import { blockInProgressTasks, endOpenRuns, expireDeviceDecisions } from "./settle.js";
 
 type ExpiredRow = { id: string; user_id: string; device_id: string; task_id: string };
 
@@ -39,6 +39,7 @@ export async function sweepExpiredDeviceLeases(app: FastifyInstance): Promise<nu
   `;
   for (const row of rows) {
     await expireDeviceDecisions(app.prisma, [row.id]);
+    await endOpenRuns(app.prisma, [row.id], INTERRUPTED_ERROR);
     await blockInProgressTasks(app.prisma, [row.task_id]);
     await app.prisma.workspaceEvent.create({ data: { jobId: row.id, kind: "interrupted", data: { reason: "lease_expired" } } });
     await appendLedger({

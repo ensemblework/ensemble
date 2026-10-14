@@ -4,7 +4,8 @@
  * the decision long-poll, complete, and the event stream.
  */
 import { randomBytes, randomUUID } from "node:crypto";
-import { DEVICE_EVENT_KINDS } from "./contract.js";
+import { z } from "zod";
+import { DEVICE_EVENT_KINDS, PROTOCOL, RunTotals, UploadedStep } from "./contract.js";
 import http, { type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -19,7 +20,9 @@ type Job = {
   logs: string;
   events: Array<{ kind: string }>;
   seenSeq: Set<number>;
-  complete: { outcome: string; summary: string } | null;
+  /** The run's steps as the device sent them, by index (the last version of each). */
+  steps: Map<number, UploadedStep>;
+  complete: { outcome: string; summary: string; totals: RunTotals | null } | null;
   cancel: boolean;
 };
 
@@ -199,7 +202,7 @@ export async function startFakeHost(options: { leaseMs?: number; sweepMs?: numbe
       next.status = "claimed";
       next.leaseToken = randomBytes(16).toString("hex");
       next.leaseUntil = Date.now() + leaseMs;
-      return send(res, 200, { ...next.spec, id: next.id, leaseToken: next.leaseToken });
+      return send(res, 200, { protocol: PROTOCOL, ...next.spec, id: next.id, leaseToken: next.leaseToken });
     }
 
     const progress = /^\/api\/devices\/self\/jobs\/([^/]+)\/progress$/.exec(path);
@@ -216,6 +219,10 @@ export async function startFakeHost(options: { leaseMs?: number; sweepMs?: numbe
       if (body.events !== undefined && !validEvents(body.events)) return send(res, 400, { error: "events must be records." });
       const logs = body.logs as { seqFrom?: number; text?: string } | undefined;
       if (logs && typeof logs.text === "string" && Buffer.byteLength(logs.text) > 64 * 1024) return send(res, 413, { error: "log chunk is over 64 KB." });
+      // The same schema the real server applies to steps.
+      const steps = body.steps === undefined ? { success: true as const, data: [] } : z.array(UploadedStep).max(60).safeParse(body.steps);
+      if (!steps.success) return send(res, 400, { error: "steps are not valid.", issues: steps.error.issues.slice(0, 3) });
+      for (const step of steps.data) job.steps.set(step.index, step);
       if (body.status === "running") job.status = "running";
       if (typeof body.progress === "string") job.progress = body.progress;
       if (Array.isArray(body.events)) {
@@ -284,8 +291,10 @@ export async function startFakeHost(options: { leaseMs?: number; sweepMs?: numbe
       if (outcome !== "succeeded" && outcome !== "failed" && outcome !== "cancelled" && outcome !== "blocked") return send(res, 400, { error: "outcome is not valid." });
       const links = Array.isArray(body.results) ? (body.results as Array<{ url?: unknown }>) : [];
       if (links.some((link) => typeof link.url !== "string" || !link.url.startsWith("https://"))) return send(res, 400, { error: "Result links must be https." });
+      const totals = body.totals === undefined ? { success: true as const, data: null } : RunTotals.safeParse(body.totals);
+      if (!totals.success) return send(res, 400, { error: "totals are not valid.", issues: totals.error.issues.slice(0, 3) });
       job.status = outcome;
-      job.complete = { outcome, summary: typeof body.summary === "string" ? body.summary : "" };
+      job.complete = { outcome, summary: typeof body.summary === "string" ? body.summary : "", totals: totals.data };
       return send(res, 204);
     }
 
@@ -314,6 +323,7 @@ export async function startFakeHost(options: { leaseMs?: number; sweepMs?: numbe
         logs: "",
         events: [],
         seenSeq: new Set(),
+        steps: new Map(),
         complete: null,
         cancel: false,
       });

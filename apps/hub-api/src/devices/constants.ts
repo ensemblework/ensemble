@@ -18,8 +18,8 @@ export const INTERRUPTED_ERROR = "Interrupted: your computer went offline.";
 
 export const LIVE_DEVICE_STATUSES = ["claimed", "running", "waiting_approval"] as const;
 
-/** Milestones a computer may write. `needs_me` and `interrupted` are server-only. */
-export const DEVICE_EVENT_KINDS = ["prepared", "tool", "command"] as const;
+/** Milestones a computer may write (one list with the computer's side). `needs_me` and `interrupted` are server-only. */
+export { DEVICE_EVENT_KINDS } from "../remote/contract.js";
 
 export function serverRunnerEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.ENSEMBLE_SERVER_RUNNER !== "off";

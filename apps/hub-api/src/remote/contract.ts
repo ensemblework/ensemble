@@ -46,6 +46,28 @@ export const timing = () => ({
 });
 
 export const LOG_CHUNK_BYTES = 64 * 1024;
+
+/**
+ * The device protocol this server speaks, sent on every claim. 2 (14 Oct 2026): progress may carry
+ * `steps` and the `engine` and `sandbox` events, and complete `totals` and a 20,000-character summary.
+ * A computer sends those only to a server that says 2: an older one answers them with a 400.
+ */
+export const PROTOCOL = 2;
+/** What a protocol 1 server takes. */
+export const LEGACY_EVENT_KINDS = ["prepared", "tool", "command"] as const;
+export const LEGACY_SUMMARY_CHARS = 8000;
+
+/** The heading the task page goes under inside `task.description`, for computers that do not read `task.page`. */
+export const PAGE_HEADING = "## The task page (what the person wrote; the task itself)";
+
+/** A description with the page section the server added taken out, for a computer that reads `task.page` itself. */
+export function withoutPageSection(description: string, page: string): string {
+  const section = `${PAGE_HEADING}\n${page}`;
+  const at = description.indexOf(section);
+  if (at < 0) return description;
+  return `${description.slice(0, at)}${description.slice(at + section.length)}`.replace(/\n{3,}/g, "\n\n").trim();
+}
+
 export const LOG_JOB_BYTES = 2 * 1024 * 1024;
 /** §4.3 `GET /api/devices`: online means a heartbeat in the last 90 s. */
 export const ONLINE_WINDOW_MS = 90_000;
@@ -59,7 +81,12 @@ export const JobSpec = z
     leaseToken: text(500).min(1),
     kind: z.enum(["code", "research"]).default("code"),
     title: text(500).nullish(),
-    task: z.object({ title: text(500).nullish(), description: text(20_000).nullish() }).partial().nullish(),
+    /**
+     * `page` is the task page as Markdown (what the person wrote there, the main content of the
+     * task). Servers since 14 Oct 2026 send it, and also inside `description` under
+     * `PAGE_HEADING` for computers that predate the field.
+     */
+    task: z.object({ title: text(500).nullish(), description: text(40_000).nullish(), page: text(20_000).nullish() }).partial().nullish(),
     instructions: text(8000).nullish(),
     repoUrl: text(500).nullish(),
     folder: text(200).nullish(),
@@ -92,6 +119,8 @@ export const JobSpec = z
     branch: text(200).nullish(),
     continueFromJobId: text(100).nullish(),
     leaseUntil: text(64).nullish(),
+    /** The server's device protocol (`PROTOCOL`); servers before 14 Oct 2026 omit it (1). */
+    protocol: z.number().int().min(1).max(1000).optional(),
   })
   .passthrough();
 export type JobSpec = z.infer<typeof JobSpec>;
@@ -142,12 +171,61 @@ export function parseRegistered(body: unknown): { token: string; deviceId: strin
  * Kinds a device may post on progress. The server writes `needs_me`,
  * `interrupted`, and every other kind itself, and rejects them from a computer.
  */
-export const DEVICE_EVENT_KINDS = ["prepared", "tool", "command"] as const;
+export const DEVICE_EVENT_KINDS = ["prepared", "tool", "command", "engine", "sandbox"] as const;
 const DEVICE_EVENT_KIND = new Set<string>(DEVICE_EVENT_KINDS);
 
-export function deviceOwnedEvents<T extends { kind: string }>(rows: T[]): T[] {
-  return rows.filter((row) => DEVICE_EVENT_KIND.has(row.kind)).slice(0, 50);
+export function deviceOwnedEvents<T extends { kind: string }>(rows: T[], protocol = PROTOCOL): T[] {
+  const kinds: ReadonlySet<string> = protocol >= 2 ? DEVICE_EVENT_KIND : new Set<string>(LEGACY_EVENT_KINDS);
+  return rows.filter((row) => kinds.has(row.kind)).slice(0, 50);
 }
+
+/** A run step as a computer sends it: previews only, already scrubbed there (docs/25 §4.5). */
+export const UploadedStep = z.object({
+  index: z.number().int().min(0).max(5000),
+  title: text(300),
+  status: z.enum(["pending", "running", "done", "failed", "needs_approval", "skipped"]),
+  output: text(4000).nullish(),
+  reasoning: text(4000).nullish(),
+  error: text(1000).nullish(),
+  model: text(200).nullish(),
+  tokensIn: z.number().int().min(0).max(1_000_000_000).nullish(),
+  tokensOut: z.number().int().min(0).max(1_000_000_000).nullish(),
+  toolCalls: z
+    .array(
+      z.object({
+        id: text(200).optional(),
+        name: text(120),
+        args: text(2000).optional(),
+        output: text(4000).optional(),
+        ok: z.boolean().optional(),
+        ms: z.number().min(0).max(864_000_000).optional(),
+        engine: text(40).optional(),
+        summary: text(300).optional(),
+      }),
+    )
+    .max(10)
+    .default([]),
+  startedAt: z.string().datetime().nullish(),
+  endedAt: z.string().datetime().nullish(),
+});
+export type UploadedStep = z.infer<typeof UploadedStep>;
+
+/** Steps a run keeps on the server. */
+export const MAX_UPLOADED_STEPS = 800;
+/** About how much step text one progress post carries; the rest goes on the next post. */
+export const STEP_POST_BYTES = 1_000_000;
+
+/** What a computer reports when a run ends: the model that answered, counts, its cost estimate, files changed (names and line counts only). */
+export const RunTotals = z.object({
+  model: text(200).nullish(),
+  turns: z.number().int().min(0).max(1_000_000).optional(),
+  toolCalls: z.number().int().min(0).max(1_000_000).optional(),
+  tokensIn: z.number().int().min(0).max(1_000_000_000).optional(),
+  tokensOut: z.number().int().min(0).max(1_000_000_000).optional(),
+  costUsd: z.number().min(0).max(100_000).nullish(),
+  files: z.array(z.object({ path: text(500), added: z.number().int().min(0), removed: z.number().int().min(0) })).max(200).default([]),
+});
+export type RunTotals = z.infer<typeof RunTotals>;
 
 /** Outcomes the device complete route accepts. Interrupted is the lease sweep, not a complete body. */
 export type Outcome = "succeeded" | "failed" | "cancelled" | "blocked";

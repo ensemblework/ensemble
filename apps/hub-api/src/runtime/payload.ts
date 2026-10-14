@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chunkText } from "../lib/text.js";
 import { CONNECTION_DROPPED_NOTICE, isAbortError, isTransportDrop } from "../lib/stream-drop.js";
-import { ProviderError } from "./errors.js";
+import { ProviderError, ModelAuthError } from "./errors.js";
 
 export const CHEAPEST: Record<string, string> = {
   google: "gemini-3.5-flash-lite",
@@ -40,16 +40,34 @@ export const FIXTURE_DIR = join(dirname(fileURLToPath(import.meta.url)), "../../
 
 export type Json = Record<string, unknown>;
 
-export function inferProvider(model: string): string {
-  const name = model.toLowerCase();
+/**
+ * The maker of a model id with an unmistakable vendor prefix (gemini-, claude-, gpt-…), or null.
+ * Never a default: the same id is served by several providers (Copilot serves gpt-4.1 and
+ * claude-sonnet), so a request names its provider and this is only for ids that say theirs.
+ */
+export function knownProvider(model: string): string | null {
+  const name = model.trim().toLowerCase();
+  if (!name) return null;
   if (name.startsWith("gemini") || name.startsWith("gemma")) return "google";
   if (name.startsWith("claude")) return "anthropic";
   if (["mistral", "ministral", "codestral", "pixtral", "open-mistral"].some((prefix) => name.startsWith(prefix))) return "mistral";
   if (name.startsWith("moonshot") || name.startsWith("kimi")) return "kimi";
   if (name.startsWith("qwen")) return "qwen";
   if (name.includes("/")) return "openrouter";
-  if (name.startsWith("gpt") || name.startsWith("o1") || name.startsWith("o3") || name.startsWith("o4")) return "openai";
-  return process.env.ENSEMBLE_LLM_PROVIDER || "google";
+  if (/^(gpt|o1|o3|o4)/.test(name)) return "openai";
+  return null;
+}
+
+/**
+ * The provider a model call goes to: the one the request names, else the maker of an id with a
+ * vendor prefix. Anything else is refused: an unknown id once went to Gemini when it was a Copilot model.
+ */
+export function providerForCall(provider: unknown, model: string): string {
+  const named = typeof provider === "string" ? provider.trim() : "";
+  if (named) return named;
+  const known = knownProvider(model);
+  if (known) return known;
+  throw new ModelAuthError(`No provider was named for ${model || "this model"}. Pick the model with its provider in Settings → Models.`);
 }
 
 /**

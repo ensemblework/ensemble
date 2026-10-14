@@ -5,8 +5,121 @@ import { appendLedger } from "../lib/ledger.js";
 import { estimateUsd, providerFor } from "../lib/pricing.js";
 import { loadSettings } from "../lib/settings.js";
 import { sseHub } from "../lib/sse.js";
+import { isHosted } from "../lib/hosted-access.js";
+import { actorFor } from "../sharing/context.js";
 
 const DAY = 24 * 60 * 60 * 1000;
+
+const JOB_FACTS = {
+  id: true,
+  kind: true,
+  status: true,
+  userId: true,
+  runnerAccountId: true,
+  provider: true,
+  model: true,
+  reasoningEffort: true,
+  executionMode: true,
+  networkAccess: true,
+  delivery: true,
+  accessMode: true,
+  unattended: true,
+  folderLabel: true,
+  repoUrl: true,
+  branch: true,
+  turns: true,
+  toolCalls: true,
+  tokensIn: true,
+  tokensOut: true,
+  maxTurns: true,
+  maxToolCalls: true,
+  maxMinutes: true,
+  evidence: true,
+  results: true,
+  deviceId: true,
+  device: { select: { name: true } },
+  createdAt: true,
+  startedAt: true,
+  finishedAt: true,
+} as const;
+
+type JobFactsRow = {
+  id: string;
+  kind: string;
+  status: string;
+  userId: string;
+  runnerAccountId: string | null;
+  provider: string | null;
+  model: string;
+  reasoningEffort: string | null;
+  executionMode: string;
+  networkAccess: boolean;
+  delivery: string;
+  accessMode: string;
+  unattended: boolean;
+  folderLabel: string | null;
+  repoUrl: string | null;
+  branch: string;
+  turns: number;
+  toolCalls: number;
+  tokensIn: number;
+  tokensOut: number;
+  maxTurns: number;
+  maxToolCalls: number;
+  maxMinutes: number;
+  evidence: unknown;
+  results: unknown;
+  deviceId: string | null;
+  device: { name: string } | null;
+  createdAt: Date;
+  startedAt: Date | null;
+  finishedAt: Date | null;
+};
+
+const ENGINES: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex", "cursor-agent": "Cursor" };
+
+/**
+ * The agent job behind a run, as the run page shows it: which harness ran it, the model asked for and
+ * the one that answered, where it ran and under what limits, and what it cost. No paths on this server.
+ */
+function jobFacts(job: JobFactsRow) {
+  const evidence = (job.evidence && typeof job.evidence === "object" && !Array.isArray(job.evidence) ? job.evidence : {}) as Record<string, unknown>;
+  const engine = job.kind === "code" && job.provider && ENGINES[job.provider] ? job.provider : "ensemble";
+  const mine = (job.runnerAccountId ?? null) === actorFor(job.userId);
+  return {
+    id: job.id,
+    kind: job.kind,
+    status: job.status,
+    engine,
+    engineName: ENGINES[engine] ?? "Ensemble agent",
+    provider: engine === "ensemble" ? job.provider : null,
+    model: job.model,
+    modelUsed: typeof evidence.model === "string" && evidence.model ? evidence.model : null,
+    reasoningEffort: job.reasoningEffort,
+    where: job.deviceId ? "device" : isHosted() ? "server" : "local",
+    deviceName: job.deviceId && mine ? (job.device?.name ?? null) : null,
+    runnerAccountId: job.runnerAccountId,
+    sandbox: job.executionMode === "sandbox",
+    networkAccess: job.networkAccess,
+    delivery: job.delivery,
+    accessMode: job.accessMode,
+    unattended: job.unattended,
+    folder: job.folderLabel,
+    repoUrl: job.repoUrl,
+    branch: job.branch || null,
+    turns: job.turns,
+    toolCalls: job.toolCalls,
+    tokensIn: job.tokensIn,
+    tokensOut: job.tokensOut,
+    limits: { turns: job.maxTurns, toolCalls: job.maxToolCalls, minutes: job.maxMinutes },
+    costUsd: typeof evidence.costUsd === "number" && Number.isFinite(evidence.costUsd) ? evidence.costUsd : null,
+    files: (Array.isArray(evidence.files) ? evidence.files : []).slice(0, 200) as Array<{ path: string; added: number; removed: number }>,
+    results: Array.isArray(job.results) ? job.results : [],
+    createdAt: job.createdAt.toISOString(),
+    startedAt: job.startedAt?.toISOString() ?? null,
+    finishedAt: job.finishedAt?.toISOString() ?? null,
+  };
+}
 
 function median(values: number[]): number | null {
   if (!values.length) return null;
@@ -33,6 +146,7 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
       include: {
         task: { select: { id: true, title: true } },
         steps: { select: { model: true, credits: true, status: true } },
+        workspaceJob: { select: JOB_FACTS },
       },
     });
     const total = await prisma.run.count({ where: { userId: request.userId, deletedAt: null } });
@@ -43,6 +157,7 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
           (sum, step) => (sum === null || step.credits === null ? null : sum + step.credits),
           run.plannerCredits,
         );
+        const job = run.workspaceJob ? jobFacts(run.workspaceJob) : null;
         return {
           id: run.id,
           taskId: run.taskId,
@@ -50,8 +165,15 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
           worker: run.worker,
           outcome: run.outcome,
           error: run.error,
-          model: run.requestedModel ?? run.plannerModel ?? run.steps.find((step) => step.model)?.model ?? null,
+          model: job?.modelUsed ?? run.requestedModel ?? run.plannerModel ?? run.steps.find((step) => step.model)?.model ?? null,
           credits,
+          costUsd: job?.costUsd ?? null,
+          engineName: job?.engineName ?? null,
+          where: job?.where ?? null,
+          deviceName: job?.deviceName ?? null,
+          jobStatus: job?.status ?? null,
+          toolCalls: job?.toolCalls ?? null,
+          tokens: job ? job.tokensIn + job.tokensOut : null,
           startedAt: run.startedAt.toISOString(),
           endedAt: run.endedAt?.toISOString() ?? null,
           stepCount: run.steps.length,
@@ -68,10 +190,12 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
         task: { select: { id: true, title: true } },
         steps: { orderBy: { index: "asc" } },
         approvals: { orderBy: { requestedAt: "asc" } },
+        workspaceJob: { select: JOB_FACTS },
       },
     });
     if (!run) return reply.code(404).send({ error: "Run not found." });
-    return { run };
+    const { workspaceJob, ...rest } = run;
+    return { run: rest, job: workspaceJob ? jobFacts(workspaceJob) : null };
   });
 
   app.delete("/api/runs/:id", async (request, reply) => {

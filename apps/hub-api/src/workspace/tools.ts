@@ -12,6 +12,8 @@ import { pageText, writeAgentBlock } from "../pages/markdown.js";
 import { PageDocument } from "@ensemble/shared-types";
 import { describeFile, diskName, fileOriginal, filesOnTask, fileText, findFile } from "../files/attached.js";
 import { githubCloneAuth } from "../lib/git-auth.js";
+import { parseClone } from "./clone.js";
+import { flagPlanted, type PlantedHit } from "./planted.js";
 import { checkGit, checkProgram, expandHome, gitHardening, GuardError, jailPath, outsideRefusal, parseCommand, relativeTo, within } from "./guard.js";
 import { pushRefused, runTrustedGit } from "./git-gate.js";
 import { appendLive } from "./live-log.js";
@@ -62,6 +64,8 @@ export interface JobContext {
   refreshTrust?: () => Promise<void>;
   /** Questions an unattended run answered itself. Listed on the task summary. */
   decisions?: Array<{ question: string; options: string[]; recommended: string | null }>;
+  /** Files in repositories cloned during the run that can run code when the folder is opened (`cloneForAgent`). */
+  plantedInClones?: PlantedHit[];
   /** Working time left before the minutes limit, so one command cannot run past it. */
   remainingMs?: () => number;
 }
@@ -664,6 +668,121 @@ export function credentialGitRefusal(args: string[]): string | null {
   return null;
 }
 
+type CloneDone = { ok: boolean; result: unknown; summary: string; message: string };
+
+function cloneRefused(error: string): CloneDone {
+  return { ok: false, result: { error, refused: true }, summary: "Clone refused", message: error };
+}
+
+/**
+ * `git clone` for an agent, run by Ensemble (clone.ts): a public https repository into a new folder
+ * inside the run folder, without credentials or hooks, under this run's sandbox. Claude Code's
+ * sandbox cannot do it (git may not write .git/config or hooks there); Ensemble's own agent comes
+ * here too, so both clone the same way. `cwd` is the agent's folder inside the run folder; `asked`
+ * means the run's mode already allowed this command.
+ */
+export async function cloneForAgent(ctx: JobContext, argv: string[], line: string, options: { cwd?: string; asked?: boolean } = {}): Promise<CloneDone> {
+  const plan = parseClone(argv);
+  if ("error" in plan) return cloneRefused(plan.error);
+  if (!ctx.network) return cloneRefused("The internet is off for this run, so nothing can be cloned.");
+  if (ctx.accessMode === "review") return cloneRefused("This run is read-only: nothing can be cloned.");
+  let target: string;
+  try {
+    const base = await jailPath(ctx.root, options.cwd || ".", true);
+    target = await jailPath(ctx.root, resolve(base, expandHome(plan.dest)));
+  } catch (error) {
+    if (error instanceof GuardError) return cloneRefused(error.message);
+    throw error;
+  }
+  const rel = relativeTo(ctx.root, target);
+  if (target === ctx.root || !rel || rel === ".") return cloneRefused("Clone into a new folder inside the run folder: git clone <https URL> <folder>.");
+  if (rel.split(/[\\/]/).includes(".git")) return cloneRefused("Not into .git: clone into a new folder.");
+  const existing = await readdir(target).catch((error: NodeJS.ErrnoException) => (error.code === "ENOENT" ? null : ["?"]));
+  if (existing?.length) return cloneRefused(`${rel} already exists. Clone into a new folder, or work in that one.`);
+  if (!options.asked) {
+    const held = await allowOrRefuse(ctx, "command", true, { toolName: "git", title: `Clone ${plan.url}`, command: line });
+    if (held) {
+      const body = held.result as { error?: string; note?: string };
+      return { ...held, message: [body.error, body.note].filter(Boolean).join(" ") || "Not allowed in this run." };
+    }
+  }
+  await ctx.progress(`Cloning ${plan.url}`);
+  const result = await runCommand({
+    userId: ctx.userId,
+    onChunk: (text) => appendLive(ctx.job.id, text),
+    // No hooks (--template=), no credentials, https only.
+    argv: ["git", ...gitHardening(false), "-c", "protocol.allow=never", "-c", "protocol.https.allow=always", "-c", "protocol.file.allow=never", "clone", "--template=", ...plan.flags, "--", plan.url, target],
+    cwd: ctx.root,
+    root: ctx.root,
+    sandboxed: ctx.sandboxed,
+    network: true,
+    useCredentials: false,
+    who: "agent",
+    readWrite: [ctx.root],
+    timeoutMs: 10 * 60_000,
+    signal: ctx.signal,
+    group: ctx.job.id,
+  });
+  if (result.killed || ctx.signal.aborted) throw new DOMException("Stopped", "AbortError");
+  await ctx.event("command", { command: line, cwd: ".", exitCode: result.exitCode, ms: result.ms, timedOut: result.timedOut, tail: result.output.slice(-3000), by: "app" });
+  if (result.exitCode !== 0) {
+    const tail = result.output.trim().split("\n").slice(-6).join("\n");
+    return {
+      ok: false,
+      result: { exitCode: result.exitCode, output: result.output.slice(-6000) },
+      summary: `clone ${plan.url} → exit ${result.exitCode}`,
+      message: `git clone of ${plan.url} failed (exit ${result.exitCode}${result.timedOut ? ", timed out" : ""}). Ensemble clones public repositories only, without a sign-in.\n${tail}`,
+    };
+  }
+  // The clone is a repository of its own, so the end-of-run review sees only its folder: flag what in it
+  // can run code later (a folderOpen task, .envrc, husky hooks, install scripts, a Makefile) now.
+  const planted = await plantedIn(ctx, target, rel);
+  if (planted.length) {
+    ctx.plantedInClones = [...(ctx.plantedInClones ?? []), ...planted].slice(0, 50);
+    await ctx.event("planted", { folder: rel, files: planted.map((hit) => hit.path).slice(0, 20) });
+  }
+  const flagged = planted.length ? ` It has files that can run code when the folder is opened or built: ${planted.slice(0, 5).map((hit) => hit.path).join(", ")}; do not run them.` : "";
+  return {
+    ok: true,
+    result: { exitCode: 0, folder: rel, note: `Cloned without hooks. Work in ${rel}/.`, ...(planted.length ? { flagged: planted.map((hit) => `${hit.path}: ${hit.reason}`) } : {}) },
+    summary: `cloned ${plan.url} into ${rel}/`,
+    message:
+      `Done: Ensemble cloned ${plan.url} into ${rel}/ in the run folder (${target}). ` +
+      `It ran the clone itself because this run's sandbox does not let git write .git/config or hooks; your command was not run. ` +
+      `Work in ${rel}/ (cd ${rel} && git …; git -C is not allowed). That repository's git config and hooks stay read-only in this run.${flagged}`,
+  };
+}
+
+/** Files in a cloned repository that run code later (planted.ts), as paths in the run folder. */
+async function plantedIn(ctx: JobContext, target: string, rel: string): Promise<PlantedHit[]> {
+  const listed = await runCommand({
+    userId: ctx.userId,
+    argv: ["git", ...gitHardening(false), "ls-files", "-z"],
+    cwd: target,
+    root: ctx.root,
+    sandboxed: ctx.sandboxed,
+    network: false,
+    useCredentials: false,
+    who: "agent",
+    readWrite: [ctx.root],
+    timeoutMs: 30_000,
+    signal: ctx.signal,
+    group: ctx.job.id,
+  }).catch(() => null);
+  if (!listed || listed.exitCode !== 0) return [];
+  const candidates = listed.output
+    .split("\0")
+    .filter((path) => /(^|\/)(\.vscode\/tasks\.json|\.envrc|package\.json|[Mm]akefile|GNUmakefile)$|(^|\/)\.husky\//.test(path))
+    .slice(0, 400);
+  const files = await Promise.all(
+    candidates.map(async (path) => ({
+      path: `${rel}/${path}`,
+      text: /\.json$/.test(path) ? await readFile(join(target, path), "utf8").catch(() => undefined) : undefined,
+    })),
+  );
+  return flagPlanted(files);
+}
+
 /** Branch and tag tips, for spotting commits a script made behind the run's back. Null when the folder is not a repository. */
 export async function refTips(ctx: JobContext): Promise<Map<string, string> | null> {
   if (!(await stat(join(ctx.root, ".git")).then(() => true).catch(() => false))) return null;
@@ -821,6 +940,10 @@ async function command(ctx: JobContext, line: string, cwdInput: string, timeoutS
       });
       await ctx.event("command", { command: line, exitCode: ran.exitCode, tail: ran.output.slice(-3000), by: "app" });
       return { ok: ran.exitCode === 0, result: { exitCode: ran.exitCode, output: ran.output }, summary: `${line.slice(0, 80)} → exit ${ran.exitCode}` };
+    }
+    if (sub === "clone") {
+      const cloned = await cloneForAgent(ctx, argv, line, { cwd: cwdInput, asked: true });
+      return { ok: cloned.ok, result: cloned.result, summary: cloned.summary };
     }
     full = ["git", ...gitHardening(false, ctx.commitAuthor || "Ensemble Agent <agent@ensemble.local>"), ...argv.slice(1)];
   } else {

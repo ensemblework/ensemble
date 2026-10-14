@@ -2119,6 +2119,9 @@ select:focus-visible {
   from { transform: translateX(12px); opacity: 0.6; }
   to { transform: none; opacity: 1; }
 }
+@media (prefers-reduced-motion: no-preference) {
+  .run-sheet { animation: peek-in 160ms ease; }
+}
 .board-card {
   position: relative;
   border-radius: 6px;

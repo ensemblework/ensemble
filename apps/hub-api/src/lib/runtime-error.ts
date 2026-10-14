@@ -11,6 +11,8 @@ export class RuntimeError extends Error {
     public readonly statusCode = 502,
     /** True when hosted hub-api could not reach the Python runtime at all. */
     public readonly unreachable = false,
+    /** What failed, for code that decides whether to retry: rate_limit, unavailable, auth, quota… */
+    public readonly kind: string | null = null,
   ) {
     super(message);
   }

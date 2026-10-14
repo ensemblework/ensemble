@@ -11,7 +11,7 @@ import { redactText } from "../lib/redact.js";
 import type { AssignInput } from "../workspace/assign.js";
 import { OUTSIDE_TOOL } from "../workspace/tools.js";
 import { TRUST_TOOL } from "../workspace/trust.js";
-import type { HostedAnswer, JobSpec } from "./contract.js";
+import { withoutPageSection, type HostedAnswer, type JobSpec } from "./contract.js";
 import { GIT_GATE_CLONE, GIT_GATE_CODE } from "./origin.js";
 import type { RemoteSettings, SharedFolder } from "./store.js";
 
@@ -22,6 +22,8 @@ export type Refusal = { code: string; message: string };
 export type LocalPlan = {
   title: string;
   description: string;
+  /** The task page as Markdown: the local task's notes, which the agent's brief reads as the page. */
+  page: string;
   assign: Omit<AssignInput, "taskId">;
   /** An https URL the Mac must confirm is public (cloned without any credential) before the job is created. */
   publicCheck: string | null;
@@ -55,7 +57,9 @@ function httpsRepo(value: string): string | null {
  */
 export function planLocalJob(spec: JobSpec, settings: RemoteSettings, continueFrom: (hostedId: string) => string | null): LocalPlan | Refusal {
   const title = (spec.task?.title ?? spec.title ?? "").trim() || "Task from Ensemble on the web";
-  const description = (spec.task?.description ?? "").trim();
+  const page = (spec.task?.page ?? "").trim();
+  // A server that sends the page also puts it in the description for older computers; it is read once, as the page.
+  const description = page ? withoutPageSection((spec.task?.description ?? "").trim(), page) : (spec.task?.description ?? "").trim();
   if (spec.useCredentials) return { code: GIT_GATE_CODE, message: GIT_GATE_CLONE };
   if ((spec.branchMode && spec.branchMode !== "as-is") || spec.branch?.trim()) {
     return {
@@ -119,7 +123,7 @@ export function planLocalJob(spec: JobSpec, settings: RemoteSettings, continueFr
       publicCheck = url;
     }
   }
-  return { title, description, assign, publicCheck };
+  return { title, description, page, assign, publicCheck };
 }
 
 export function isRefusal(value: LocalPlan | Refusal): value is Refusal {

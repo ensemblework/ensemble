@@ -22,6 +22,7 @@ import { requestCancel } from "../lib/activity.js";
 import { sseHub } from "../lib/sse.js";
 import { replyAfterApply, type ReplyCall } from "../assistant/reply.js";
 import { friendlyModelError, parseRuntimeBody } from "../lib/model-error.js";
+import { ModelChoiceError, providerForModel } from "../lib/model-choice.js";
 import { ModelQuotaError } from "../lib/model-quota.js";
 import { ModelUnreachableError } from "../lib/model-reach.js";
 import { recordModelProbe } from "../lib/probes.js";
@@ -368,14 +369,27 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
     const tierName = body.tier ?? settings.assistant.defaultTier;
     const tierSetting = settings.models[tierName];
     const explicitModel = body.model && body.model !== "auto" ? body.model : null;
-    const modelName = explicitModel ?? (tierSetting.model || envDefaultModel());
+    // A model picked here keeps its own provider; a tier without a model is said, never filled with a Gemini default.
+    let callProvider: string = tierSetting.provider;
+    let refused: string | null = null;
+    try {
+      if (explicitModel) callProvider = providerForModel(settings, explicitModel, body.provider);
+    } catch (error) {
+      if (!(error instanceof ModelChoiceError)) throw error;
+      refused = error.message;
+    }
+    const modelName = explicitModel ?? tierSetting.model;
+    if (!refused && !modelName) refused = `No model is set for the ${tierName} tier. Pick one in Settings → Models.`;
     // `@people:Mira Chen` typed without an id (by hand, pasted, from the terminal app) gets one when it names one record here.
     const mentions = await resolveTypedMentions(app.prisma, request.userId, request.modules, message, body.mentions);
 
     let result: AssistantTurnResult;
-    try {
+    if (refused) {
+      result = { content: refused, toolCalls: [], model: modelName, credits: null, mutated: false };
+      send("error", { message: refused, status: 400 });
+    } else try {
       result = await runAssistantTurn({
-        provider: explicitModel ? body.provider : tierSetting.provider,
+        provider: callProvider,
         app,
         userId: request.userId,
         modules: request.modules,
@@ -409,7 +423,7 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
         };
         send("status", { text: "Stopped." });
       } else if (error instanceof ModelQuotaError) {
-        void recordModelProbe(app.prisma, request.userId, tierSetting.provider, modelName, "quota", error.message).catch(() => undefined);
+        void recordModelProbe(app.prisma, request.userId, callProvider, modelName, "quota", error.message).catch(() => undefined);
         if (!streamed) return reply.code(429).send(error.toJSON());
         send("error", error.toJSON());
         finish();
@@ -421,9 +435,9 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
         return;
       } else {
         const failure = parseRuntimeBody(error instanceof RuntimeError ? error.statusCode : 502, error instanceof Error ? error.message : String(error));
-        const shown = safePublicError(error, error instanceof RuntimeError ? error.message : friendlyModelError(failure, modelName));
+        const shown = safePublicError(error, error instanceof RuntimeError ? error.message : friendlyModelError(failure, modelName, callProvider));
         if (failure.kind === "not_found" || failure.kind === "quota" || failure.kind === "unavailable") {
-          void recordModelProbe(app.prisma, request.userId, tierSetting.provider, modelName, failure.kind, shown).catch(() => undefined);
+          void recordModelProbe(app.prisma, request.userId, callProvider, modelName, failure.kind, shown).catch(() => undefined);
         }
         if (failure.kind === "quota") {
           const quota = { code: "model_quota_exceeded" as const, error: shown, message: shown, model: modelName, status: 429 as const };
@@ -496,10 +510,6 @@ async function saveAssistantReply(
     (error) => app.log.error({ err: error }, "Could not save the assistant reply"),
   );
   return { id, shown: persisted.shown, saveFailed: persisted.saved !== persisted.shown };
-}
-
-function envDefaultModel(): string {
-  return process.env.ENSEMBLE_MODEL_CODER ?? process.env.ENSEMBLE_MODEL_PLANNER ?? "gemini-3.5-flash-lite";
 }
 
 type AppliedPiece =

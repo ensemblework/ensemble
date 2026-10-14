@@ -82,12 +82,13 @@ def http_error_for(exc: Exception) -> HTTPException:
     """Map a model failure onto a JSON-serializable HTTPException."""
     if isinstance(exc, HostedAccessError):
         return HTTPException(status_code=403, detail=str(exc))
+    # A 503 with a plain string reads as "the provider is under high demand" in hub-api; these say what happened.
     if isinstance(exc, HostedAccessUnavailable):
-        return HTTPException(status_code=503, detail=str(exc))
+        return HTTPException(status_code=503, detail={"message": str(exc), "kind": "other"})
     if isinstance(exc, ModelUnreachable):
         return HTTPException(status_code=503, detail=exc.to_dict())
     if isinstance(exc, ConnectionDropped):
-        return HTTPException(status_code=503, detail=CONNECTION_DROPPED_NOTICE)
+        return HTTPException(status_code=503, detail={"message": CONNECTION_DROPPED_NOTICE, "kind": "other"})
     if isinstance(exc, ProviderError):
         status = exc.status if exc.status in (429, 503, 400, 404) else 502
         return HTTPException(
@@ -100,9 +101,9 @@ def http_error_for(exc: Exception) -> HTTPException:
             },
         )
     if isinstance(exc, credentials.DecryptError):
-        return HTTPException(status_code=409, detail=str(exc))
+        return HTTPException(status_code=409, detail={"message": str(exc), "kind": "auth"})
     if isinstance(exc, ModelAuthError):
-        return HTTPException(status_code=503, detail=str(exc))
+        return HTTPException(status_code=503, detail={"message": str(exc), "kind": "auth"})
     return HTTPException(status_code=502, detail=str(exc)[:500])
 
 

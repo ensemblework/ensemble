@@ -51,7 +51,9 @@ export default function WorkspacePage() {
         title="Workspace"
         description={
           <>
-            The agent&apos;s queue. Up to {data?.maxConcurrent ?? 3} tasks run at once; the rest wait here in order. Tasks on the same folder, and steps that continue an earlier task, wait their turn.
+            {data && data.root === null
+              ? "The agent's queue. Tasks run on your paired computers, each within its own limits; the rest wait here in order. Tasks on the same folder, and steps that continue an earlier task, wait their turn."
+              : `The agent's queue. Up to ${data?.maxConcurrent ?? 3} tasks run at once; the rest wait here in order. Tasks on the same folder, and steps that continue an earlier task, wait their turn.`}
             {data?.root ? <div className="mt-1 font-mono text-[12px] text-faint">{data.root}</div> : null}
           </>
         }

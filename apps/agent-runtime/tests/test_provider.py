@@ -652,12 +652,13 @@ def test_http_error_for_provider_and_decrypt() -> None:
     assert http.detail["quotaId"] is None
     assert http_error_for(ProviderError(500, "other", "boom")).status_code == 502
     assert http_error_for(ProviderError(404, "not_found", "gone")).status_code == 404
+    # A key problem says so ("auth"), so hub-api never words it as "under high demand".
     auth = http_error_for(ModelAuthError("No key for google."))
     assert auth.status_code == 503
-    assert auth.detail == "No key for google."
+    assert auth.detail == {"message": "No key for google.", "kind": "auth"}
     decrypt = http_error_for(credentials.DecryptError())
     assert decrypt.status_code == 409
-    assert decrypt.detail == credentials.DECRYPT_MESSAGE
+    assert decrypt.detail == {"message": credentials.DECRYPT_MESSAGE, "kind": "auth"}
 
 
 def test_resolve_mock_does_not_touch_the_database(monkeypatch: pytest.MonkeyPatch) -> None:

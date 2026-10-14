@@ -194,3 +194,18 @@ test("pushes, outside paths and trust grants are high risk; an ordinary question
   assert.equal(riskOf({ toolName: "trust" }), "high");
   assert.equal(riskOf(question({ detail: { options: ["Trust the input data", "Validate it first"], allowCustom: false } })), "ordinary");
 });
+
+test("the task page from the web becomes the local task's page, read once, whatever the server's age", async () => {
+  const { PAGE_HEADING } = await import("./contract.js");
+  const page = "lets clone this repo:\nhttps://github.com/morluto/rea\n\nand summarise what it does.";
+  const description = `Short note\n\n${PAGE_HEADING}\n${page}\n\nThis task came from github: https://example.test/1`;
+  const plan = planLocalJob(spec({ task: { title: "Clone a repo", description, page } }), settings(), () => null);
+  assert.ok(!isRefusal(plan));
+  if (isRefusal(plan)) return;
+  assert.equal(plan.page, page, "the page is the local task's page");
+  assert.equal(plan.description, "Short note\n\nThis task came from github: https://example.test/1", "and is not also in the description");
+  const older = planLocalJob(spec({ task: { title: "Clone a repo", description } }), settings(), () => null);
+  if (isRefusal(older)) return assert.fail("refused");
+  assert.equal(older.page, "");
+  assert.match(older.description, /morluto\/rea/, "a spec without the field still carries the page in its description");
+});

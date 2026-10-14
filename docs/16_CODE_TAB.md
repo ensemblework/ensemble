@@ -6,6 +6,8 @@ The **Code** item in the sidebar lists every run that changed files. Opening one
 
 Failed review/repository queries display the actual error and Retry; they never claim that no work exists. A denied terminal-status request settles into an error instead of “Opening the terminal…”. Hosted guidance points to a paired computer for local execution/review, not a way to obtain host privileges (`app/(hub)/code/page.tsx`, `components/code/terminal.tsx`).
 
+**On Ensemble on the web** (an account without host access), the tab is **Changes on your computers** (`components/code/device-changes.tsx`): your paired computers (online or not, and the folders each shares), then each code run on them from the last two weeks with its computer, folder label, branch, the files it changed with lines added and removed (reported by the computer when the run ends; no contents leave it), pull request or commit links, *View run* and *Open task*. The review itself, commits and pushes happen in Ensemble on that computer (the desktop app or `ensemble` in a terminal). With no paired computer, it says how to set one up. The Terminal button and *Local repositories* are not shown there.
+
 ---
 
 ## 1. Using it
@@ -109,7 +111,7 @@ A small terminal docked under the editor, for the jobs that otherwise send you t
 - **Who** — it needs a **passkey** (Windows Hello PIN, face or fingerprint) once per session: 30 minutes idle, 8 hours at most. No agent, MCP call or script in Ensemble can produce one, and Ensemble's own service token is refused outright. The same session covers commit/push in the Source control panel.
 - **What** — an allow-list: `git` (hardened: hooks pointed at an emptied folder of Ensemble's own, no `-c` overrides, no exec transports, `--force` refused in favour of `--force-with-lease`, history rewrites and deletions confirmed by typing the branch name or `yes`), `uv`, `python --version` / `-m venv` / `-m pip list`, and built-ins (`cd`, `ls`, `cat`, `head`, `tail`, `find`, `grep`, `mkdir`, `cp`, `mv`, `rm`, `tree`, `pwd`, `which`, `env`, `activate`, `history`, `clear`, `help`). Everything else is refused with a reason. **No PowerShell, no cmd, no network tools, no running repository code.**
 - **Where** — originally `C:\Users\t-sharmaak\ensemble-workspace` and `C:\Users\t-sharmaak\work`, plus folders you add in *Settings → Terminal and commits* (which asks for the passkey). Nothing above them. Windows, Program Files, ProgramData and credential folders are refused whatever you add.
-- **Record** — the ledger records that a command ran (arguments, folder, exit code); **never what it printed**. Output is never stored, indexed or shown to a model. If a run changed a folder's `.git/config` since you last looked, git commands that change anything wait until you trust it.
+- **Record** — the ledger records that a command ran (arguments, folder, exit code); **never what it printed**. Output is never stored, indexed or shown to a model.
 
 Settings can turn the terminal off, or **off through the tunnel only**.
 

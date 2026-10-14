@@ -198,7 +198,7 @@ function chatBody(args: {
   };
 }
 
-function inProcessChatError(error: unknown, model: string): RuntimeError {
+function inProcessChatError(error: unknown, model: string, provider?: string): RuntimeError {
   if (error instanceof ModelUnreachableError) return error;
   if (error instanceof ModelQuotaError) return error;
   if (error instanceof ProviderError) {
@@ -206,10 +206,11 @@ function inProcessChatError(error: unknown, model: string): RuntimeError {
     const raw = JSON.stringify({
       detail: { message: error.message, kind: error.kind, retryAfterSeconds: error.retryAfterSeconds, quotaId: error.quotaId },
     });
-    return runtimeFailureFromBody(status, raw, model);
+    return runtimeFailureFromBody(status, raw, model, provider);
   }
   if (error instanceof DecryptError) return new RuntimeError(error.message, 409);
-  if (error instanceof ModelAuthError) return runtimeFailureFromBody(503, JSON.stringify({ detail: error.message }));
+  // A key problem (none, refused, a classic GitHub token) is said as it is, never as "under high demand".
+  if (error instanceof ModelAuthError) return runtimeFailureFromBody(503, JSON.stringify({ detail: { message: error.message, kind: "auth" } }), model, provider);
   const text = error instanceof Error ? error.message : String(error);
   return new RuntimeError(text.includes("://") ? "The model provider could not be reached." : truncateText(text, 500), 502);
 }
@@ -226,20 +227,20 @@ function unreachableFromRaw(raw: string, model: string): ModelUnreachableError |
   }
 }
 
-export function runtimeFailureFromBody(status: number, raw: string, model = "that model"): RuntimeError {
+export function runtimeFailureFromBody(status: number, raw: string, model = "that model", provider?: string | null): RuntimeError {
   const unreachable = unreachableFromRaw(raw, model);
   if (unreachable) return unreachable;
   const failure = parseRuntimeBody(status, truncateText(raw, 2000));
-  return failureToError(failure, model);
+  return failureToError(failure, model, provider);
 }
 
-function failureToError(failure: ModelFailure, model: string): RuntimeError {
+function failureToError(failure: ModelFailure, model: string, provider?: string | null): RuntimeError {
   if (isQuotaFailure(failure)) {
     const retry = failure.retryAfterSeconds != null && failure.retryAfterSeconds > 0 ? failure.retryAfterSeconds : null;
     return new ModelQuotaError(model, quotaResetInstant(new Date(), retry), retry);
   }
   const httpStatus = failure.status === 503 || failure.status === 400 || failure.status === 429 || failure.status === 404 ? failure.status : 502;
-  return new RuntimeError(friendlyModelError(failure, model), httpStatus);
+  return new RuntimeError(friendlyModelError(failure, model, provider), httpStatus, false, failure.kind);
 }
 
 /** Map one runtime SSE error frame. Quota stays 429; other failures keep their status. */
@@ -258,6 +259,7 @@ export function errorFromStreamFrame(
   },
   model: string,
   now = new Date(),
+  provider?: string | null,
 ): RuntimeError {
   if (data.code === MODEL_UNREACHABLE) return unreachableFromFrame(data, model);
   const failure = parseRuntimeBody(typeof data.status === "number" ? data.status : 502, JSON.stringify({ detail: data }));
@@ -266,7 +268,7 @@ export function errorFromStreamFrame(
     return new ModelQuotaError(model, quotaResetInstant(now, retry), retry);
   }
   const httpStatus = failure.status === 503 || failure.status === 400 || failure.status === 429 || failure.status === 404 ? failure.status : 502;
-  return new RuntimeError(friendlyModelError(failure, data.model ?? model), httpStatus);
+  return new RuntimeError(friendlyModelError(failure, data.model ?? model, data.provider ?? provider), httpStatus, false, failure.kind);
 }
 
 export async function askRuntime(args: {
@@ -296,7 +298,7 @@ export async function askRuntime(args: {
           `The model request timed out after ${Math.round(limit / 60_000) || 1} minute${limit >= 120_000 ? "s" : ""}.`,
         );
       }
-      throw inProcessChatError(error, args.model);
+      throw inProcessChatError(error, args.model, args.provider);
     }
   }
   let response: Response;
@@ -320,14 +322,14 @@ export async function askRuntime(args: {
       503,
     );
   }
-  if (!response.ok) throw await runtimeFailure(response, args.model);
+  if (!response.ok) throw await runtimeFailure(response, args.model, args.provider);
   return RuntimeTurn.parse(await response.json());
 }
 
-export async function runtimeFailure(response: Response, model = "that model"): Promise<RuntimeError> {
+export async function runtimeFailure(response: Response, model = "that model", provider?: string | null): Promise<RuntimeError> {
   const raw = await response.text();
   if (raw.includes("MODEL_STOPPED")) return new RuntimeError("Stopped.", 499);
-  return runtimeFailureFromBody(response.status, raw, model);
+  return runtimeFailureFromBody(response.status, raw, model, provider);
 }
 
 export interface StreamTurnHandlers {
@@ -382,7 +384,7 @@ export async function askRuntimeStream(args: Parameters<typeof askRuntime>[0] & 
     return askRuntime(args);
   }
   if (!response.ok || !response.body) {
-    if (!response.ok) throw await runtimeFailure(response, args.model);
+    if (!response.ok) throw await runtimeFailure(response, args.model, args.provider);
     return askRuntime(args);
   }
   const reader = response.body.getReader();
@@ -404,7 +406,7 @@ export async function askRuntimeStream(args: Parameters<typeof askRuntime>[0] & 
       const data = JSON.parse(dataLine) as { text?: string; message?: string; kind?: string; status?: number; retryAfterSeconds?: number; quotaId?: string };
       if (event === "delta" && data.text) args.onDelta?.(data.text);
       if (event === "status" && data.text) args.onStatus?.(data.text);
-      if (event === "error") streamError = errorFromStreamFrame(data, args.model);
+      if (event === "error") streamError = errorFromStreamFrame(data, args.model, new Date(), args.provider);
       if (event === "turn") turn = RuntimeTurn.parse(data);
     }
   }

@@ -8,7 +8,7 @@ import { sseHub } from "../lib/sse.js";
 import { DEVICE_REMOVED, LIVE_DEVICE_STATUSES } from "./constants.js";
 import { publishBrowserDevice } from "./publish.js";
 import { publishDeviceRevoked } from "./revoke-notify.js";
-import { blockInProgressTasks, expireDeviceDecisions } from "./settle.js";
+import { blockInProgressTasks, endOpenRuns, expireDeviceDecisions } from "./settle.js";
 
 export async function revokePairedDevice(prisma: PrismaClient, userId: string, device: Device): Promise<void> {
   const now = new Date();
@@ -28,6 +28,7 @@ export async function revokePairedDevice(prisma: PrismaClient, userId: string, d
     data: { status: "failed", finishedAt: now, progress: "Failed", error: DEVICE_REMOVED },
   });
   await expireDeviceDecisions(prisma, affected.map((job) => job.id));
+  await endOpenRuns(prisma, affected.map((job) => job.id), DEVICE_REMOVED);
   await blockInProgressTasks(prisma, affected.map((job) => job.taskId));
   await appendLedger({ userId, actor: "me", action: "device.revoke", payload: { deviceId: device.id } });
   publishBrowserDevice(userId, device.id);

@@ -12,6 +12,7 @@ import { publishBrowserDevice, publishDevice } from "../devices/publish.js";
 import { appendLedger } from "../lib/ledger.js";
 import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
 import { createCappedJob } from "../lib/hosted-limits.js";
+import { ModelChoiceError, providerForModel } from "../lib/model-choice.js";
 import { loadSettings } from "../lib/settings.js";
 import { sseHub } from "../lib/sse.js";
 import { GuardError, resolveWorkFolder, sandboxAvailable, sandboxRefusal, within, workspaceRoot } from "./guard.js";
@@ -203,7 +204,14 @@ export async function createJob(prisma: PrismaClient, userId: string, body: Assi
   if (claudeCode && body.kind !== "code") throw new GuardError(`${engineName} works on code tasks. Pick Ensemble's agent for research.`);
   if (body.chat && !claudeCode) throw new GuardError("Chat runs with Claude Code, Codex or Cursor's agent on your own sign-in. Ensemble's agent chats in Ensemble Code with a model key.");
   // The engine is stored as the run's provider; its model is the engine's own name for one, or its default.
-  const provider = claudeCode ? body.engine : body.model ? body.provider ?? tier.provider : tier.provider;
+  // A model named here keeps its own provider (never the tier's): see lib/model-choice.ts.
+  let provider: string;
+  try {
+    provider = claudeCode ? body.engine : body.model ? providerForModel(settings, body.model, body.provider) : tier.provider;
+  } catch (error) {
+    if (error instanceof ModelChoiceError) throw new GuardError(error.message);
+    throw error;
+  }
   const model = claudeCode ? body.model?.trim() || "default" : body.model || tier.model;
   if (body.deviceId) return createDeviceJob(prisma, userId, task, body, provider, model, tier.effort, settings.orchestration, options);
   // This server's runner belongs to the space's owner. Someone it is shared with runs on their own computer.

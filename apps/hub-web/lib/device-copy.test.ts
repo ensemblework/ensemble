@@ -56,6 +56,8 @@ test("run again copies every setting from the original job", () => {
   assert.equal(input.network, false);
   assert.equal(input.continueFromJobId, "job-1");
   assert.equal(input.folderLabel, "Desk");
+  assert.equal(input.engine, "ensemble");
+  assert.equal(rerunAssignInput({ id: "job-2", taskId: "task-1", kind: "code", delivery: "local", provider: "claude-code", model: "default" }).engine, "claude-code", "a Claude Code run runs again with Claude Code");
 });
 
 test("only a real GitHub pull request is labelled as one", () => {

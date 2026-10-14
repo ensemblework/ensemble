@@ -17,6 +17,7 @@ import { askPerson, type JobContext } from "../tools.js";
 import type { EngineResult } from "./claude-code.js";
 import { judgeEngineCall, type EngineAnswer } from "./judge.js";
 import { hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
+import { EngineTrace } from "./trace.js";
 import { RpcConnection } from "./rpc.js";
 
 /** Keys in Ensemble's own environment that must not stand in for the person's Cursor sign-in. */
@@ -114,7 +115,7 @@ export async function answerCursor(
 
 export async function runCursor(
   ctx: JobContext,
-  options: { prompt: string; model?: string | null; stopCheck: () => Promise<void>; resume?: string | null; chat?: boolean },
+  options: { prompt: string; model?: string | null; stopCheck: () => Promise<void>; resume?: string | null; chat?: boolean; trace?: EngineTrace },
 ): Promise<EngineResult> {
   const agent = await cursorAgentBinary();
   if (!agent) throw new Error("Cursor's agent is not on this computer (the `cursor-agent` command). Install it (curl https://cursor.com/install -fsS | bash), run `agent login`, and Run again.");
@@ -133,7 +134,17 @@ export async function runCursor(
     },
     { jsonrpc: true },
   );
-  const result: EngineResult = { text: "", turns: 0, toolCalls: 0, tokensIn: 0, tokensOut: 0, model: options.model && options.model !== "default" ? options.model : null, costUsd: null };
+  // The caller may hold the trace, to close it if the run stops before the engine returns.
+  const trace = options.trace ?? new EngineTrace(ctx, "cursor");
+  const result: EngineResult = { text: "", turns: 0, toolCalls: 0, tokensIn: 0, tokensOut: 0, model: options.model && options.model !== "default" ? options.model : null, costUsd: null, trace };
+  // Cursor streams its thinking in chunks: kept until the next tool call or message, then one step.
+  let thought = "";
+  const flushThought = async () => {
+    if (!thought.trim()) return;
+    const text = thought;
+    thought = "";
+    await trace.thinking(text);
+  };
   let reply = "";
   let stderr = "";
   let sessionId: string | null = null;
@@ -142,17 +153,38 @@ export async function runCursor(
   rpc.onRequest = (method, params) => answerCursor(ctx, method, params);
   rpc.onNotification = (method, params) => {
     if (method !== "session/update" || replaying) return;
-    const update = (params.update ?? {}) as { sessionUpdate?: string; content?: { type?: string; text?: string }; title?: string; kind?: string; toolCallId?: string };
+    const update = (params.update ?? {}) as {
+      sessionUpdate?: string;
+      content?: { type?: string; text?: string } | Array<{ content?: { type?: string; text?: string } }>;
+      title?: string;
+      kind?: string;
+      toolCallId?: string;
+      status?: string;
+      rawInput?: unknown;
+      rawOutput?: unknown;
+    };
+    const single = Array.isArray(update.content) ? undefined : update.content;
     void (async () => {
-      if (update.sessionUpdate === "agent_message_chunk" && update.content?.type === "text" && update.content.text) {
-        reply += update.content.text;
-        appendLive(ctx.job.id, update.content.text);
+      if (update.sessionUpdate === "agent_message_chunk" && single?.type === "text" && single.text) {
+        await flushThought();
+        reply += single.text;
+        appendLive(ctx.job.id, single.text);
+      } else if (update.sessionUpdate === "agent_thought_chunk" && single?.type === "text" && single.text) {
+        thought += single.text;
       } else if (update.sessionUpdate === "tool_call") {
+        // Trace first, before any await: updates are handled concurrently, and this call's
+        // completion may be handled while the event below is still being written.
+        const flushed = flushThought();
         result.toolCalls += 1;
         const summary = (update.title ?? update.kind ?? "tool").slice(0, 160);
+        const started = trace.toolStart(update.toolCallId ?? "", update.kind ?? "tool", update.rawInput ?? {}, summary);
         appendLive(ctx.job.id, `\n· ${summary}\n`);
         await ctx.event("tool", { name: update.kind ?? "tool", ok: true, summary, engine: "cursor" });
         await ctx.progress(summary);
+        await Promise.all([flushed, started]);
+      } else if (update.sessionUpdate === "tool_call_update" && (update.status === "completed" || update.status === "failed")) {
+        const text = Array.isArray(update.content) ? update.content.map((part) => part.content?.text ?? "").filter(Boolean).join("\n") : "";
+        await trace.toolEnd(update.toolCallId ?? "", update.rawOutput ?? text, update.status === "completed");
       }
     })().catch(() => undefined);
   };
@@ -220,6 +252,7 @@ export async function runCursor(
     await options.stopCheck();
     if (ctx.signal.aborted || done.stopReason === "cancelled") throw new DOMException("Stopped", "AbortError");
     if (done.stopReason === "refusal") throw new Error("Cursor's agent refused the task.");
+    await flushThought();
     result.text = reply.trim();
     return result;
   } catch (error) {

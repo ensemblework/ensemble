@@ -4,11 +4,12 @@ import { useQuery } from "@tanstack/react-query";
 import { FolderGit2, TerminalSquare } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import { DeviceChanges } from "@/components/code/device-changes";
 import { Terminal } from "@/components/code/terminal";
 import { useSpaceAccess } from "@/lib/access";
 import { ShareButton } from "@/components/sharing/share-dialog";
 import { Empty, PageHeader, QueryError, SkeletonRows, Tag } from "@/components/ui";
-import { ApiError, api, type ReviewSummary } from "@/lib/api";
+import { ApiError, api, hostOnly, type ReviewSummary } from "@/lib/api";
 import { dateTime } from "@/lib/format";
 
 function ReviewRow({ review }: { review: ReviewSummary }) {
@@ -54,6 +55,8 @@ export default function CodePage() {
   }, [reviews.isPending, repos.isPending]);
   const access = useSpaceAccess();
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
+  // Ensemble on the web: this server's folders belong to its operator; your agents' changes are on your computers.
+  const onComputers = hostOnly(reviews.error);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.ctrlKey && event.key === "`" && !access.guest) {
@@ -73,10 +76,12 @@ export default function CodePage() {
         description={
           access.guest
             ? `What the agents changed in ${access.owner?.split(" ")[0] ?? "this"}'s space. View only: accepting, rejecting, editing and pushing stay with them.`
-            : "Review what an agent changed, one change at a time: accept keeps it, reject puts the old lines back on disk, and you can write any part yourself. Then commit and push from the same place."
+            : onComputers
+              ? "What the agents changed on your paired computers, run by run. The changes stay on that computer; review, commit and push them in Ensemble there."
+              : "Review what an agent changed, one change at a time: accept keeps it, reject puts the old lines back on disk, and you can write any part yourself. Then commit and push from the same place."
         }
         actions={
-          access.guest ? null : (
+          access.guest || onComputers ? null : (
             <span className="flex items-center gap-2">
               {shell.data?.space ? <ShareButton target={{ kind: "code", resourceId: shell.data.space.id, title: "Code" }} /> : null}
               <button type="button" className="btn" onClick={() => setTerminal(!terminal)} title="Ctrl+`">
@@ -86,6 +91,13 @@ export default function CodePage() {
           )
         }
       />
+      {onComputers ? (
+        <>
+          <h2 id="reviews" className="mb-1 scroll-mt-4 text-[17px] font-semibold">Changes on your computers</h2>
+          <DeviceChanges />
+        </>
+      ) : (
+      <>
       <div id="reviews" className="mb-3 flex scroll-mt-4 items-center gap-3 text-[13px]">
         <select value={filter} onChange={(event) => setFilter(event.target.value as typeof filter)} className="field py-1">
           <option value="needs">Needs review</option>
@@ -108,7 +120,11 @@ export default function CodePage() {
       ) : (
         <div>{reviews.data!.reviews.map((review) => <ReviewRow key={review.id} review={review} />)}</div>
       )}
+      </>
+      )}
 
+      {hostOnly(repos.error) ? null : (
+      <>
       <h2 id="local-repositories" className="mb-1 mt-10 scroll-mt-4 text-[17px] font-semibold">Local repositories</h2>
       <p className="mb-3 text-[12.5px] text-muted">
         Checkouts inside the Ensemble workspace and the folders in{" "}
@@ -138,9 +154,11 @@ export default function CodePage() {
           ))}
         </div>
       )}
+      </>
+      )}
     </div>
     </div>
-    {terminal && !access.guest ? <Terminal onClose={() => setTerminal(false)} /> : null}
+    {terminal && !access.guest && !onComputers ? <Terminal onClose={() => setTerminal(false)} /> : null}
     </div>
   );
 }

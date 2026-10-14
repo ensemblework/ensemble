@@ -28,6 +28,7 @@ import { claudeFilesystem, type EngineResult } from "./claude-code.js";
 import { judgeEngineCall, type EngineAnswer } from "./judge.js";
 import { RpcConnection } from "./rpc.js";
 import { hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
+import { EngineTrace } from "./trace.js";
 
 /** Keys in Ensemble's own environment that must not stand in for the person's Codex sign-in. */
 const KEY_VARIABLES = ["OPENAI_API_KEY", "CODEX_API_KEY", "CODEX_ACCESS_TOKEN"];
@@ -150,7 +151,7 @@ export function codexApprovalPolicy(ctx: Pick<JobContext, "accessMode" | "truste
 
 export async function runCodex(
   ctx: JobContext,
-  options: { prompt: string; model?: string | null; stopCheck: () => Promise<void>; resume?: string | null; chat?: boolean },
+  options: { prompt: string; model?: string | null; stopCheck: () => Promise<void>; resume?: string | null; chat?: boolean; trace?: EngineTrace },
 ): Promise<EngineResult> {
   const codex = await codexBinary();
   if (!codex) throw new Error("Codex is not on this computer. Install the ChatGPT app or the Codex CLI, sign in, and Run again.");
@@ -166,7 +167,9 @@ export async function runCodex(
   const server = new RpcConnection((line) => {
     if (child.stdin.writable) child.stdin.write(line);
   });
-  const result: EngineResult = { text: "", turns: 0, toolCalls: 0, tokensIn: 0, tokensOut: 0, model: null, costUsd: null };
+  // The caller may hold the trace, to close it if the run stops before the engine returns.
+  const trace = options.trace ?? new EngineTrace(ctx, "codex");
+  const result: EngineResult = { text: "", turns: 0, toolCalls: 0, tokensIn: 0, tokensOut: 0, model: null, costUsd: null, trace };
   const files = new Map<string, string[]>();
   let stderr = "";
   let threadId: string | null = null;
@@ -178,14 +181,40 @@ export async function runCodex(
   server.onNotification = (method, params) => {
     void (async () => {
       if (method === "item/started" || method === "item/completed") {
-        const item = (params.item ?? {}) as { type?: string; id?: string; command?: string; text?: string; changes?: Array<{ path: string }>; phase?: string | null };
+        const item = (params.item ?? {}) as {
+          type?: string;
+          id?: string;
+          command?: string;
+          text?: string;
+          changes?: Array<{ path: string }>;
+          phase?: string | null;
+          aggregatedOutput?: string | null;
+          exitCode?: number | null;
+          status?: string;
+          summary?: string[];
+          tool?: string;
+          arguments?: unknown;
+        };
         if (item.type === "fileChange" && item.id) files.set(item.id, (item.changes ?? []).map((change) => change.path));
-        if (method === "item/started" && (item.type === "commandExecution" || item.type === "fileChange" || item.type === "mcpToolCall")) {
+        const isTool = item.type === "commandExecution" || item.type === "fileChange" || item.type === "mcpToolCall";
+        // Trace calls come first, before any await: these handlers run concurrently, and a call's
+        // completion can be handled while its start is still waiting on the event write.
+        const traced: Array<Promise<void>> = [];
+        if (method === "item/started" && isTool) {
           result.toolCalls += 1;
-          const summary = item.type === "commandExecution" ? `Run ${String(item.command ?? "").slice(0, 160)}` : item.type === "fileChange" ? `Change ${(item.changes ?? []).map((change) => change.path).join(", ").slice(0, 160)}` : "Use a tool";
+          const summary = item.type === "commandExecution" ? `Run ${String(item.command ?? "").slice(0, 160)}` : item.type === "fileChange" ? `Change ${(item.changes ?? []).map((change) => change.path).join(", ").slice(0, 160)}` : `Use ${item.tool ?? "a tool"}`;
+          const input = item.type === "commandExecution" ? { command: item.command } : item.type === "fileChange" ? { files: (item.changes ?? []).map((change) => change.path) } : { tool: item.tool, arguments: item.arguments };
+          traced.push(trace.toolStart(item.id ?? "", item.type ?? "tool", input, summary));
           appendLive(ctx.job.id, `· ${summary}\n`);
           await ctx.event("tool", { name: item.type, ok: true, summary, engine: "codex" });
         }
+        if (method === "item/completed" && isTool) {
+          const failed = item.status === "failed" || item.status === "declined" || (typeof item.exitCode === "number" && item.exitCode !== 0);
+          traced.push(trace.toolEnd(item.id ?? "", item.aggregatedOutput ?? (typeof item.exitCode === "number" ? `exit ${item.exitCode}` : item.status ?? ""), !failed));
+        }
+        if (method === "item/completed" && item.type === "reasoning") traced.push(trace.thinking([item.text ?? "", ...(item.summary ?? [])].filter(Boolean).join("\n")));
+        if (method === "item/completed" && item.type === "agentMessage" && item.phase && item.phase !== "final_answer" && item.text?.trim()) traced.push(trace.message(item.text));
+        await Promise.all(traced);
         if (method === "item/completed" && item.type === "agentMessage" && item.text?.trim()) {
           appendLive(ctx.job.id, `${item.text.trim()}\n`);
           await ctx.progress(item.text.trim().split("\n")[0]!.slice(0, 160));

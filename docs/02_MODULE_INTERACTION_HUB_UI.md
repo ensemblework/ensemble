@@ -29,7 +29,7 @@
 Two surfaces are deliberately **not** in the rail, because they are reached from the thing they belong to rather than browsed:
 
 - `/tasks/<id>`, `/projects/<id>` — document pages, opened from the board, a mention, or a search result. §13.
-- `/runs/<id>` — one run's timeline, opened from Runs or from a task.
+- `/runs?run=<id>` — one run's preview over the Runs list, opened from Runs, from a task page (*View run*) or from the Code tab.
 
 Prompt transparency is the expandable **Prompts** section at `/settings?tab=assistant#prompts` ("Open prompts"), backed by `GET /api/prompts`. There is no standalone `/prompts` page.
 
@@ -109,6 +109,8 @@ Metrics come from the same tasks fetched for the board, narrowed by the current 
 
 **From your apps** (`components/app-items/attached-items.tsx`, after the description on the task page and after the properties on a project page): items attached from connected apps with Open, Refresh and Remove, and *Add from apps…* which opens the picker (`components/app-items/app-item-picker.tsx`: search box first, app chips with "All apps", a kind filter, Preview of the first 800 characters, arrow keys and Enter; apps that failed are listed under the results; with nothing connected it links to Settings → Connections). **Post an update to …** (`components/app-items/post-update.tsx`) appears when the task has an issue, card or ticket to comment on (`GET /api/app-items/update-target`), prefilled from the last successful agent run; Post is the approval. Both are hidden on shared tasks ([31](31_CONNECTORS_IN_USE.md)).
 
+**Agent on the task page** (`TaskAgentPanel` in `components/agent/job-card.tsx`): the latest job for the task, live while it runs (progress line, live log, Stop). When it has finished: its state, the model (and *answered by …* when the provider reported a different one), turns, tool calls and tokens, how long it **took**, the cost estimate, *View run* (the run preview above) and *Review changes* for a server review. **Agent output** is a collapsible section, open by default, with the job's summary rendered as Markdown (long output fades with *Show all*) and the files it changed with lines added and removed. *What it did* lists the job's events and its log.
+
 **Current task page:** drag its left edge to resize, use full-width mode, or open `/tasks/<id>`. Width/sidebar preferences are local; task data is in Postgres. Title, description, notes, priority, date, labels (chips; Enter or a comma adds one, Backspace removes the last), project, people, repo, deliverable and explicit skills are editable. Changes **autosave after a short typing pause**; **Ctrl+S** flushes immediately. Failed/conflicting saves retain the draft rather than overwriting another tab. Notes retain Markdown whitespace. Peeks with unsaved changes require confirmation before leaving. The board API omits note bodies; opening a page loads them on demand.
 
 ### 3.3 Needs Me (Approval Queue)
@@ -121,20 +123,15 @@ All review cards use neutral borders and small status labels, with no colored ed
 
 ### 3.4 Runs (Agent Timeline / Trace)
 
-The overview shows **the latest 10 runs and nothing else**. Below them, **Show all runs** opens `/runs/all` in a new tab — a new tab because the recent list is usually read beside work in progress, and navigating away from it and back is the annoyance a separate archive should not introduce.
+As built 14 Oct 2026 (`app/(hub)/runs/page.tsx`, `components/runs/run-preview.tsx`, `lib/run-trace.ts`). The page lists the latest 10 runs; **Show all runs** loads up to 200 in place. Each row shows the task, when it started and how long it took, the harness for an agent run (Ensemble agent, Claude Code, Codex or Cursor), the model (the one that answered when the run reported it, else the one asked for), where it ran (a paired computer by name, the Ensemble server, or this computer), its tool calls (or steps), and its cost (the harness's estimate in dollars, or credits). The list refreshes while a run is still going. Hover a row to delete it (a soft delete).
 
-The archive lists every run, newest first, including failed and cancelled ones, paging 50 at a time. It is also **the only place a run can be deleted**: throwing away a record is a deliberate visit, not something to fat-finger next to the run you are watching. Deleting is a **soft delete** — the run leaves both lists and its detail page answers 404, and it waits in *Deleted items* for the retention window, restorable intact. The append-only audit ledger records that the run happened, and that it was deleted, either way.
+**Clicking a run opens its preview**, a sheet over the list (`?run=<id>` keeps it in the address; Esc or × closes it). *Open task* on a row opens the task in the side peek instead; *Open task* in the preview goes to the task page. The preview shows:
 
-- A run that has not finished, or that is waiting on an approval or a question, **cannot be deleted**: resolve or stop it first, so an answer never arrives for a row that is gone.
-- A run whose workspace job ended *blocked* **is** deletable — it has already stopped, and it is exactly the failed run worth clearing.
+- **Facts:** harness (and the provider for Ensemble's agent), the model asked for and its thinking level, the model that **answered** (flagged when it is not the one asked for; `sameModel` treats dated ids such as `claude-sonnet-4-6-20260101` as the same model), where it ran, guardrails (sandbox, internet, git permission), folder and branch, turns and tool calls (limits on hover), tokens in and out, and cost.
+- **Trace:** time per tool (calls, total time, failures, as bars), then every step in order: thinking, messages, each tool call with its input and output (copyable), its time, its status, and a bar placing it on the run's timeline. Filters (All, Tool calls, Thinking, Messages) and Expand all. A failed step and the result open by default. A live run refreshes every 3 s.
+- **Result:** the run's result as Markdown. **Files:** the files changed with lines added and removed, and any pull request or commit. **Activity:** the job's events (folder ready, sandbox, engine and session, commands, decisions) and approvals. **Log:** the job's log output.
 
-**Details** put questions, approval previews and interruption recovery before the trace. Usage/technical metadata and verbose step outputs are collapsed; the model-request/tool trace is mounted only when expanded. Missing timing/token data is labelled as unreported. Activity dates show *Today*, *Yesterday* or the older date, with the exact timestamp available on hover.
-
-- Left: list of runs (live first). Right: vertical timeline of steps with tool calls (`graph.mail.get`, `github.pr.create`), inputs/outputs collapsed, durations, tokens, model, prompt version, skill versions, approvals. Failed steps show retry history.
-- "Replay with different skill version" (P2).
-- Export run as JSON (feeds audit).
-
-> Note: 05 §13 says the Runs overview is limited to **eight** recent attempts plus a disclosure for the previous ten; this section says 10. Check `apps/hub-web/app/(hub)/runs` for the current number.
+The steps are what each harness recorded (doc [06](06_MODULE_WORKSPACE_AND_SURFACES.md), [30](30_ENGINES.md)); a paired computer sends previews of them (doc [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md) §4.3). A run from a computer with Ensemble older than 0.3.5 has only its result. The preview reads `GET /api/runs/:id`, which returns `{ run, job }`. Markdown here and in the assistant renders headings, lists (numbered, nested, task lists), fenced code with a Copy button, tables, quotes, rules, bold, italics, strikethrough, inline code and links; links open only for `http(s)` and app paths (`components/markdown-text.tsx`).
 
 ### 3.5 Context (Engineer Graph explorer)
 
@@ -287,7 +284,7 @@ Client calls for the store and MCP routes are in `lib/api-connectors.ts` (the MC
 | GET | `/api/approvals?state=pending` | → `{ approvals[], questions[], interrupted[] }` |
 | POST | `/api/approvals/:id/decide` | `{ decision: 'approved' \| 'edited' \| 'rejected', editedPayload?, reason? }` |
 | POST | `/api/approvals/:id/revise` | `{ note }` |
-| GET | `/api/runs` • `/api/runs/:id` • `/api/runs/:id/export` | |
+| GET | `/api/runs` • `/api/runs/:id` • `/api/runs/:id/export` | List rows add the agent job's harness, model that answered, where, tool calls, tokens and cost. `/api/runs/:id` → `{ run, job }`: the run with its steps and approvals, and the job behind it (harness, models asked for and used, where it ran, sandbox, internet, git permission, limits, counts, cost, files, results; no server paths), or `job: null` |
 | GET | `/api/context/people\|projects\|repos\|preferences` | → graph nodes with evidence |
 | GET | `/api/context/search?q=…` | Read-only literal workspace search, up to 12 deduplicated destinations with snippets; current-space access, no Trash |
 | POST | `/api/context/corrections` | `{ nodeId, nodeKind, field, value, note }` |

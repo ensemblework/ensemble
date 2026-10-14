@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { DEVICE_EVENT_KINDS, deviceOwnedEvents } from "./contract.js";
 
-test("a device posts prepared, tool, and command, and not kinds the server writes", () => {
-  assert.deepEqual([...DEVICE_EVENT_KINDS], ["prepared", "tool", "command"]);
+test("a device posts prepared, tool, command, engine and sandbox, and not kinds the server writes", () => {
+  assert.deepEqual([...DEVICE_EVENT_KINDS], ["prepared", "tool", "command", "engine", "sandbox"]);
   const posted = deviceOwnedEvents([
     { kind: "prepared", data: { branch: "ensemble/1" } },
     { kind: "needs_me", data: { title: "Which greeting?" } },
@@ -13,9 +13,27 @@ test("a device posts prepared, tool, and command, and not kinds the server write
     { kind: "scrubbed" },
     { kind: "unattended" },
     { kind: "command", data: { command: "git status" } },
+    { kind: "engine", data: { name: "Claude Code" } },
+    { kind: "sandbox", data: { name: "macOS sandbox" } },
   ]);
   assert.deepEqual(
     posted.map((row) => row.kind),
-    ["prepared", "tool", "command"],
+    ["prepared", "tool", "command", "engine", "sandbox"],
+  );
+});
+
+test("to a server before protocol 2, a device posts only the kinds that server takes", () => {
+  const posted = deviceOwnedEvents(
+    [
+      { kind: "prepared" },
+      { kind: "engine", data: { engine: "claude-code" } },
+      { kind: "sandbox" },
+      { kind: "command", data: { command: "git status" } },
+    ],
+    1,
+  );
+  assert.deepEqual(
+    posted.map((row) => row.kind),
+    ["prepared", "command"],
   );
 });

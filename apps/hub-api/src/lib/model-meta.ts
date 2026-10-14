@@ -3,7 +3,7 @@
  * (`model-catalog.ts`), and the check every model call makes with it before anything is sent.
  */
 import { checkEffort, type ModelMeta } from "@ensemble/shared-types";
-import { inferProvider } from "../runtime/payload.js";
+import { knownProvider } from "../runtime/payload.js";
 import { keysFor } from "../sharing/context.js";
 import { prisma } from "./prisma.js";
 import { RuntimeError } from "./runtime-error.js";
@@ -36,7 +36,9 @@ async function metaFor(owner: string, provider: string): Promise<Record<string, 
  */
 export async function effortToSend(userId: string, provider: string | null | undefined, model: string, effort: string | null | undefined): Promise<string | undefined> {
   if (!effort || effort === "default" || !model) return undefined;
-  const vendor = provider || inferProvider(model);
+  const vendor = provider || knownProvider(model);
+  // A model whose provider is not known has no thinking table to check; the call itself is refused for that.
+  if (!vendor) return effort;
   const meta = (await metaFor(keysFor(userId), vendor))[model] ?? null;
   const verdict = checkEffort(vendor, model, effort, meta);
   if (!verdict.ok) throw new RuntimeError(verdict.message, 400);

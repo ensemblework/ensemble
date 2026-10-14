@@ -45,3 +45,13 @@ test("a Cursor chat refusal is not rewritten as Gemini being busy", () => {
   assert.match(friendlyModelError(parsed), /Cursor runs delegated/);
   assert.equal(friendlyModelError(parsed).includes("Gemini"), false);
 });
+
+test("the sentence names the provider that was called, never one guessed from the model's name", () => {
+  const busy = parseRuntimeBody(503, JSON.stringify({ detail: { message: "busy", kind: "unavailable" } }));
+  assert.equal(friendlyModelError(busy, "mai-code-1.1-flash", "copilot"), "GitHub Copilot is under high demand for this model. Try again, or switch the tier to a model this key can use.");
+  assert.match(friendlyModelError(busy, "mai-code-1.1-flash"), /^The provider is under high demand/, "an unknown id is not Gemini");
+  assert.match(friendlyModelError(busy, "gpt-4.1", "copilot"), /^GitHub Copilot/, "a Copilot gpt model is Copilot, not OpenAI");
+  assert.match(friendlyModelError(busy, "gemini-3.5-flash"), /^Gemini/, "an id with a vendor prefix still names it");
+  const key = parseRuntimeBody(503, JSON.stringify({ detail: { message: "This is a classic GitHub token. Use a fine-grained token.", kind: "auth" } }));
+  assert.equal(friendlyModelError(key, "mai-code-1.1-flash", "copilot"), "This is a classic GitHub token. Use a fine-grained token.", "a key problem is said as it is");
+});

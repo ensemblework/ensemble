@@ -154,7 +154,13 @@ test("remote tasks: pair, run, refuse a server overreach, disconnect, and do not
     const posted = host.job(editHosted).events.map((event) => event.kind);
     assert.ok(posted.includes("tool"), posted.join(","));
     assert.equal(posted.some((kind) => kind === "needs_me" || kind === "interrupted"), false, posted.join(","));
-    assert.ok(posted.every((kind) => kind === "prepared" || kind === "tool" || kind === "command"), posted.join(","));
+    assert.ok(posted.every((kind) => ["prepared", "tool", "command", "engine", "sandbox"].includes(kind)), posted.join(","));
+    // The run's trace and totals reach the web: each turn's tool calls, the counts, and the files changed.
+    const trace = [...host.job(editHosted).steps.values()];
+    assert.ok(trace.some((step) => step.toolCalls.some((call) => call.name === "edit_file" && typeof call.ms === "number")), JSON.stringify(trace).slice(0, 3000));
+    const totals = host.job(editHosted).complete?.totals;
+    assert.ok(totals && (totals.turns ?? 0) >= 1 && (totals.toolCalls ?? 0) >= 1, JSON.stringify(totals));
+    assert.ok(totals.files.some((file) => file.path === "hello.txt" && file.added >= 1), JSON.stringify(totals));
     assert.equal(git(source, "show", "main:hello.txt"), "hello", "the source repository is not pushed");
 
     const rogueTitle = "[edit] Do not trust the server";

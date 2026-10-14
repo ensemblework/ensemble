@@ -185,8 +185,8 @@ export function App(props: { api: LocalApi; folder: string; version: string; acc
     : prefs.chatModel
       ? prefs.chatModel.split("::")[1]!
       : tierModel
-        ? `${tierModel} (tier)`
-        : "tier model";
+        ? `${tierModel} (default)`
+        : "chat default model";
   const needs = items.filter((item) => item.group === "needs").length;
 
   // ── chat ──────────────────────────────────────────────────────────────────────────────────
@@ -548,11 +548,12 @@ export function App(props: { api: LocalApi; folder: string; version: string; acc
       kind: "picker",
       title: "Ensemble Code's model",
       hint: "The model that chats and plans. Coding runs use the run profile's model.",
-      items: [{ id: "", label: "Task tier default", detail: settings ? `${settings.models.medium?.provider ?? ""} ${settings.models.medium?.model ?? ""}` : "", active: !prefs.chatModel }, ...choices.map((choice) => ({ ...choice, active: prefs.chatModel === choice.id }))],
+      // The chat's own default is the assistant's default tier, not the medium task tier.
+      items: [{ id: "", label: "Chat default", detail: settings ? `${settings.models[settings.assistant.defaultTier ?? "medium"]?.provider ?? ""} ${settings.models[settings.assistant.defaultTier ?? "medium"]?.model ?? ""}` : "", active: !prefs.chatModel }, ...choices.map((choice) => ({ ...choice, active: prefs.chatModel === choice.id }))],
       index: Math.max(0, choices.findIndex((choice) => choice.id === prefs.chatModel) + 1),
       onPick: (id) => {
         setPrefs({ chatModel: id || null });
-        say(`Ensemble Code chats with ${id ? id.split("::")[1] : "the task tier's model"}.`, "ok");
+        say(`Ensemble Code chats with ${id ? `${id.split("::")[1]} (${id.split("::")[0]})` : "the chat default model"}.`, "ok");
       },
     });
   };
@@ -584,7 +585,7 @@ export function App(props: { api: LocalApi; folder: string; version: string; acc
       [{ text: "Sandbox     ", dim: true }, { text: sandbox || "unknown" }],
       [{ text: "Folder      ", dim: true }, { text: folder }],
       [{ text: "Profile     ", dim: true }, { text: `${profile.name}: ${profileSummary(profile)}` }],
-      [{ text: "Agent       ", dim: true }, { text: agentChat ? `${ENGINE_LABEL[engine]} (your sign-in) · ${prefs.agentModel ?? "its default model"}` : `Ensemble agent · ${prefs.chatModel ? prefs.chatModel.replace("::", " · ") : "task tier model"}` }],
+      [{ text: "Agent       ", dim: true }, { text: agentChat ? `${ENGINE_LABEL[engine]} (your sign-in) · ${prefs.agentModel ?? "its default model"}` : `Ensemble agent · ${prefs.chatModel ? prefs.chatModel.replace("::", " · ") : "chat default model"}` }],
       [{ text: "Model keys  ", dim: true }, { text: keyLine(keys.credentials) }],
       [{ text: "Version     ", dim: true }, { text: props.version }],
     ];
