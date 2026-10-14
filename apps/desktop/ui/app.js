@@ -10,7 +10,7 @@ const sourceNote = document.querySelector("#source");
 const button = document.querySelector("#connect");
 const loader = document.querySelector("#loader");
 
-const THEMES = { expressive: true, "minimal-quiet": true, "minimal-dot": true };
+
 
 function invoke(command, args) {
   const call = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
@@ -28,9 +28,8 @@ function reducedMotion() {
   return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 }
 
-function applyMotionTheme(theme) {
-  if (THEMES[theme]) document.documentElement.setAttribute("data-motion-theme", theme);
-  else document.documentElement.removeAttribute("data-motion-theme");
+function applyMotionTheme() {
+  document.documentElement.setAttribute("data-motion-theme", "expressive");
 }
 
 function showSource(state) {
@@ -82,20 +81,10 @@ function showLoading() {
   offline.hidden = true;
   loading.hidden = false;
   if (!window.EnsembleMorph) return;
+  loader.__morph?.destroy();
   const morph = window.EnsembleMorph.mount(loader);
-  if (reducedMotion()) {
-    loader.classList.add("is-held");
-    window.setTimeout(() => {
-      if (loading.hidden) return;
-      loader.classList.remove("is-held");
-      loader.removeAttribute("data-loader");
-      morph.idle();
-    }, loaderDelay());
-    return;
-  }
-  loader.classList.remove("is-held");
-  if (!loader.hasAttribute("data-loader")) loader.setAttribute("data-loader", "");
-  morph.loop();
+  loader.__morph = morph;
+  morph.loop({ delay: loaderDelay() });
 }
 
 async function connect(url, save) {

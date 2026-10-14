@@ -1,6 +1,6 @@
 {
   "name": "ensemblework",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "Ensemble CLI: run tasks assigned from ensemblework.com on your computer, and connect your editor to Ensemble over MCP.",
   "license": "FSL-1.1-MIT",
   "homepage": "https://ensemblework.com/download",
@@ -41,6 +41,7 @@
     "react": "^19.3.0",
     "tsx": "^4.20.6",
     "typescript": "^5.8.2",
-    "zod": "^3.25.76"
+    "zod": "^3.25.76",
+    "@ensemble/brand": "workspace:*"
   }
 }

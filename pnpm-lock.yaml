@@ -174,6 +174,9 @@ importers:
 
   apps/cli:
     devDependencies:
+      '@ensemble/brand':
+        specifier: workspace:*
+        version: link:../../packages/brand
       '@ensemble/context-bridge':
         specifier: workspace:*
         version: link:../context-bridge
@@ -392,6 +395,9 @@ importers:
       '@ensemble/block-diagrams':
         specifier: workspace:*
         version: link:../../packages/block-diagrams
+      '@ensemble/brand':
+        specifier: workspace:*
+        version: link:../../packages/brand
       '@ensemble/ide-theme':
         specifier: workspace:*
         version: link:../../packages/ide-theme
@@ -525,6 +531,9 @@ importers:
 
   apps/landing:
     dependencies:
+      '@ensemble/brand':
+        specifier: workspace:*
+        version: link:../../packages/brand
       next:
         specifier: ^15.5.4
         version: 15.5.26(@types/node@22.20.4)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
@@ -566,6 +575,15 @@ importers:
       typescript:
         specifier: ^5.8.2
         version: 5.9.3
+
+  packages/brand:
+    devDependencies:
+      esbuild:
+        specifier: ^0.28.2
+        version: 0.28.2
+      sharp:
+        specifier: ^0.35.4
+        version: 0.35.4(@types/node@26.6.4)
 
   packages/ide-theme:
     devDependencies:
@@ -4090,8 +4108,7 @@ snapshots:
     dependencies:
       hono: 4.13.9
 
-  '@img/colour@1.1.0':
-    optional: true
+  '@img/colour@1.1.0': {}
 
   '@img/sharp-darwin-arm64@0.35.4':
     optionalDependencies:
@@ -5346,8 +5363,7 @@ snapshots:
 
   destr@2.0.5: {}
 
-  detect-libc@2.1.2:
-    optional: true
+  detect-libc@2.1.2: {}
 
   didyoumean@1.2.2: {}
 
@@ -6610,6 +6626,39 @@ snapshots:
       '@img/sharp-win32-x64': 0.35.4
       '@types/node': 22.20.4
     optional: true
+
+  sharp@0.35.4(@types/node@26.6.4):
+    dependencies:
+      '@img/colour': 1.1.0
+      detect-libc: 2.1.2
+      semver: 7.8.5
+    optionalDependencies:
+      '@img/sharp-darwin-arm64': 0.35.4
+      '@img/sharp-darwin-x64': 0.35.4
+      '@img/sharp-freebsd-wasm32': 0.35.4
+      '@img/sharp-libvips-darwin-arm64': 1.3.3
+      '@img/sharp-libvips-darwin-x64': 1.3.3
+      '@img/sharp-libvips-linux-arm': 1.3.3
+      '@img/sharp-libvips-linux-arm64': 1.3.3
+      '@img/sharp-libvips-linux-ppc64': 1.3.3
+      '@img/sharp-libvips-linux-riscv64': 1.3.3
+      '@img/sharp-libvips-linux-s390x': 1.3.3
+      '@img/sharp-libvips-linux-x64': 1.3.3
+      '@img/sharp-libvips-linuxmusl-arm64': 1.3.3
+      '@img/sharp-libvips-linuxmusl-x64': 1.3.3
+      '@img/sharp-linux-arm': 0.35.4
+      '@img/sharp-linux-arm64': 0.35.4
+      '@img/sharp-linux-ppc64': 0.35.4
+      '@img/sharp-linux-riscv64': 0.35.4
+      '@img/sharp-linux-s390x': 0.35.4
+      '@img/sharp-linux-x64': 0.35.4
+      '@img/sharp-linuxmusl-arm64': 0.35.4
+      '@img/sharp-linuxmusl-x64': 0.35.4
+      '@img/sharp-webcontainers-wasm32': 0.35.4
+      '@img/sharp-win32-arm64': 0.35.4
+      '@img/sharp-win32-ia32': 0.35.4
+      '@img/sharp-win32-x64': 0.35.4
+      '@types/node': 26.6.4
 
   shebang-command@2.0.0:
     dependencies:

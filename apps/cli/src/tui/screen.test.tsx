@@ -65,9 +65,9 @@ class Keys extends EventEmitter {
 /** The app on the screen: the tabs on the first row, one status line on the last row it uses. */
 function assertWhole(lines: string[]) {
   const shown = lines.join("\n");
-  assert.match(lines[0]!, /◆ Ensemble\s+Tasks\s+Chat/, shown);
-  assert.equal(lines.filter((line) => line.includes("◆ Quick")).length, 1, shown);
-  assert.match(lines.at(-2)!, /◆ Quick/, shown);
+  assert.match(lines[0]!, /\[e\] Ensemble\s+Tasks\s+Chat/, shown);
+  assert.equal(lines.filter((line) => line.includes("[e] Quick")).length, 1, shown);
+  assert.match(lines.at(-2)!, /\[e\] Quick/, shown);
 }
 
 test("in a real terminal the tabs stay on the first row while the screen updates and the window resizes", async () => {
@@ -112,5 +112,5 @@ test("a terminal narrower than it says (a resize the program has not heard of ye
   const lines = await screen.lines();
   app.unmount();
   giveBack();
-  assert.match(lines[0]!, /◆ Ensemble\s+Tasks\s+Chat/, lines.join("\n"));
+  assert.match(lines[0]!, /\[e\] Ensemble\s+Tasks\s+Chat/, lines.join("\n"));
 });

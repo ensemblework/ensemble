@@ -1,4 +1,5 @@
 "use client";
+import { BrandMorph } from "@/components/motion/brand-morph";
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
@@ -348,7 +349,7 @@ function Trace({ entries, live }: { entries: TraceEntry[]; live: boolean }) {
 }
 
 function StatusMark({ status, ok }: { status: string; ok?: boolean | null }) {
-  if (status === "running" || ok === null) return <CircleDashed size={14} className="shrink-0 animate-spin text-accent [animation-duration:2.4s]" />;
+  if (status === "running" || ok === null) return <BrandMorph size={18} kind="relay" state="loop" />;
   if (status === "failed" || ok === false) return <XCircle size={14} className="shrink-0 text-danger" />;
   return <CheckCircle2 size={14} className="shrink-0 text-ok" />;
 }

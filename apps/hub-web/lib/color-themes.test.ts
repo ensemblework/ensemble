@@ -14,11 +14,10 @@ function contrast(a: string, b: string) {
 }
 Object.defineProperty(window, "matchMedia", { configurable: true, value: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }) });
 
-test("five new palettes have coordinated modes, readable surfaces, and no accent overrides", () => {
-  assert.equal(COLOR_THEMES.length, 6);
+test("the Ensemble palettes have coordinated modes, readable surfaces, and no accent overrides", () => {
+  assert.equal(COLOR_THEMES.length, 7);
   for (const theme of COLOR_THEMES) for (const mode of ["dark", "light"] as const) {
     const p = theme[mode];
-    if (theme.id === "ensemble") continue;
     for (const surface of [p.bg, p.sidebar, p.panel, p.raised, p.tile]) for (const text of [p.ink, p.muted, p.faint]) assert.ok(contrast(text, surface) >= 4.5, `${theme.id} ${mode}: ${text} on ${surface}`);
     assert.ok(COLOR_THEME_STYLES.includes(`data-color-theme="${theme.id}"`));
   }
@@ -61,4 +60,14 @@ test("boot and hydration honor a newer account palette cookie without changing t
   assert.equal(root.dataset.theme, "light");
   document.cookie = "ensemble_color_theme=; Max-Age=0; Path=/";
   css.remove(); window.localStorage.clear();
+});
+
+test("legacy motion choices normalize to Expressive without disabling accessibility", () => {
+  for (const motion of ["minimal-quiet", "minimal-dot", "expressive"]) {
+    const parsed = AppearanceSettings.parse({ motion, reduceMotion: true });
+    assert.equal(parsed.motion, "expressive");
+    assert.equal(parsed.reduceMotion, true);
+    assert.equal(completeAppearance({ motion } as never).motion, "expressive");
+  }
+  assert.equal(AppearanceSettings.parse({}).accent, "gold");
 });

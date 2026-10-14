@@ -186,7 +186,7 @@ pub fn run() {
             app.manage(Mutex::new(load_settings(dir)));
 
             #[cfg(target_os = "macos")]
-            app.set_activation_policy(tauri::ActivationPolicy::Accessory)?;
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
             let open = MenuItem::with_id(app, "open", "Quick capture", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -251,10 +251,7 @@ fn taskbar_is_dark(app: &tauri::App) -> bool {
 }
 
 fn tray_icon(dark: bool) -> tauri::image::Image<'static> {
-    // Round-4 tray PNGs, decoded to straight RGBA. macOS gets the 16pt @2x
-    // template (black + alpha). Windows and Linux get the accent mark: #9d8fff
-    // on a dark taskbar, #7c6af7 on a light one. Animated tray SVGs are not
-    // played here; a native tray image is a single bitmap.
+    // macOS uses a template; other systems receive a mark for the taskbar surface.
     #[cfg(target_os = "macos")]
     {
         let _ = dark;
@@ -264,9 +261,9 @@ fn tray_icon(dark: bool) -> tauri::image::Image<'static> {
     #[cfg(not(target_os = "macos"))]
     {
         let bytes: &[u8] = if dark {
-            include_bytes!("../icons/tray-accent-light.rgba")
-        } else {
             include_bytes!("../icons/tray-accent.rgba")
+        } else {
+            include_bytes!("../icons/tray-accent-light.rgba")
         };
         tauri::image::Image::new_owned(bytes.to_vec(), 44, 44)
     }

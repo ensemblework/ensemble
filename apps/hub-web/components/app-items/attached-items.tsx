@@ -1,4 +1,5 @@
 "use client";
+import { BrandMorph } from "@/components/motion/brand-morph";
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
@@ -98,7 +99,7 @@ export function AttachedItems({ taskId, projectId, className }: { taskId?: strin
                       disabled={refreshing}
                       onClick={() => refresh.mutate(item)}
                     >
-                      <RefreshCw size={13} className={refreshing ? "animate-spin" : undefined} />
+                      {refreshing ? <BrandMorph size={14} kind="beacon" state="loop" /> : <RefreshCw size={13} />}
                     </button>
                     <button
                       type="button"

@@ -1,25 +1,11 @@
 "use client";
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
-/**
- * brand.morph for React / Next. The still, hinted mark is the server render, so
- * there is no layout shift before hydration. The morph only runs for a real
- * event: a home navigation (`once`) or a load that is still going (`loop`).
- *
- *   <BrandMorph size={20} state={working ? "loop" : "idle"} />
- *   <BrandMorph size={40} loader state={slow ? "loop" : "idle"} />
- *   <HomeLogoLink href="/today" size={16} railSize={20} />
- *
- * state="idle" while it is moving means settle: it eases back to the mark in
- * MORPH_SETTLE_MS, from wherever it is. It does not wait for the loop to finish.
- * Every motion style plays this one Expressive ribbon. motionStyle is only a
- * data attribute. Reduced motion stays on the still mark.
- */
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
 import * as morphNamespace from "./ensemble-morph";
-import type { MorphController, MorphState, MorphStyle } from "./ensemble-morph";
+import type { MorphController, MorphState, MorphStyle, MorphKind } from "./ensemble-morph";
 
 type MorphApi = typeof import("./ensemble-morph");
 
@@ -29,9 +15,9 @@ function morphApi(): MorphApi {
 }
 
 export const MORPH_DELAY_MS = 180;
-export const MORPH_ONCE_MS = 1500;
-export const MORPH_LOOP_MS = 2700;
-export const MORPH_SETTLE_MS = 380;
+export const MORPH_ONCE_MS = morphApi().BASE.once * 1000;
+export const MORPH_LOOP_MS = morphApi().BASE.loop * 1000;
+export const MORPH_SETTLE_MS = morphApi().BASE.settle * 1000;
 
 export function BrandMorph({
   size = 20,
@@ -41,6 +27,8 @@ export function BrandMorph({
   style,
   className,
   motionStyle,
+  kind = "infinity",
+  flat = false,
   onIdle,
 }: {
   size?: number;
@@ -50,8 +38,11 @@ export function BrandMorph({
   style?: CSSProperties;
   className?: string;
   motionStyle?: MorphStyle;
+  kind?: MorphKind;
+  flat?: boolean;
   onIdle?: () => void;
 }) {
+  const id = useId();
   const ref = useRef<HTMLSpanElement>(null);
   const ctl = useRef<MorphController | null>(null);
   const onIdleRef = useRef(onIdle);
@@ -59,7 +50,7 @@ export function BrandMorph({
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    ctl.current = morphApi().mount(el, { size });
+    ctl.current = morphApi().mount(el, { size, kind, flat });
     const onRest = () => onIdleRef.current?.();
     el.addEventListener("ensemble:morph-idle", onRest);
     return () => {
@@ -67,12 +58,12 @@ export function BrandMorph({
       ctl.current?.destroy();
       ctl.current = null;
     };
-  }, [size]);
+  }, [size, kind, flat]);
   useEffect(() => {
     const apply = () => {
       const m = ctl.current;
       if (!m) return;
-      if (state === "loop") m.loop({ delay: loader ? MORPH_DELAY_MS : 0 });
+      if (state === "loop") m.loop({ delay: loader ? MORPH_DELAY_MS : 0, kind });
       else if (state === "once") void m.once();
       else void m.settle();
     };
@@ -80,13 +71,13 @@ export function BrandMorph({
     const root = document.documentElement;
     const observer = new MutationObserver(apply);
     observer.observe(root, { attributes: true, attributeFilter: ["data-reduce-motion"] });
-    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
-    media.addEventListener("change", apply);
+    const media = window.matchMedia?.("(prefers-reduced-motion: reduce)");
+    media?.addEventListener("change", apply);
     return () => {
       observer.disconnect();
-      media.removeEventListener("change", apply);
+      media?.removeEventListener("change", apply);
     };
-  }, [state, loader]);
+  }, [state, loader, size, kind, flat]);
   return (
     <span
       ref={ref}
@@ -96,9 +87,12 @@ export function BrandMorph({
       data-style={motionStyle}
       data-loader={loader ? "" : undefined}
       data-label={label}
-      style={style}
+      data-flat={flat ? "true" : undefined}
+      role={label ? "img" : undefined}
+      aria-label={label}
+      style={{ width: flat ? "100%" : size, height: flat ? 8 : size, ...style }}
       suppressHydrationWarning
-      dangerouslySetInnerHTML={{ __html: morphApi().staticSVG(size, { label }) }}
+      dangerouslySetInnerHTML={{ __html: morphApi().staticSVG(size, { id, label, tone: "auto" }) }}
     />
   );
 }
@@ -106,7 +100,7 @@ export function BrandMorph({
 /**
  * Sidebar logo. One mark → ∞ → mark only on a real navigation home.
  * Modified clicks and clicks that are already home stay still.
- * `railSize` paints the hinted rail mark; CSS shows one size at a time
+ * `railSize` paints the compact rail mark; CSS shows one size at a time
  * so the collapse does not need React state.
  */
 export function HomeLogoLink({

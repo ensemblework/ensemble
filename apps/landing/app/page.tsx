@@ -1,3 +1,4 @@
+import { HeroChorus } from "@/components/hero-chorus";
 import { Icon, type IconName } from "@/components/icon";
 import { JsonLd } from "@/components/json-ld";
 import { LiveBoard } from "@/components/live-board";
@@ -140,6 +141,7 @@ export default function Home() {
         <section className="hero">
           <div className="glow" aria-hidden="true" />
           <div className="hero-copy">
+            <HeroChorus />
             <p className="eyebrow reveal">AI notes app · plan your day · work with agents</p>
             <h1 className="reveal" style={{ animationDelay: "80ms" }}>
               <span className="line">Notes and AI agents,</span>
@@ -318,7 +320,7 @@ export default function Home() {
                 <code>
                   {[
                     "$ cd ~/code/shop-api && ensemble",
-                    " ◆ Ensemble   Tasks · 1 needs you   Chat",
+                    " [e] Ensemble   Tasks · 1 needs you   Chat",
                     "",
                     " ◆ Add a README too?        Claude Code asks",
                     "",

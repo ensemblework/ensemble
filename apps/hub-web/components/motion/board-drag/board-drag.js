@@ -1,8 +1,8 @@
 /* board.drag · Ensemble motion slot (round 6). Vanilla JS, no dependencies. UMD → window.EnsembleBoardDrag / module.exports.
  *
- * The Board's drag and drop, where the three motion styles really differ. Builds on round 2's "09 Board handoff".
+ * Expressive board drag and drop.
  *   States (root data-state): idle · hover · pressed · pickup · dragging · over · reorder · drop · invalid · cancel · agent · done · keyboard
- *   Style: nearest [data-motion-theme] (expressive | minimal-quiet | minimal-dot), read at every pickup.
+ *   Style: nearest [data-motion-theme] (expressive), read at every pickup.
  *   Reduced motion: [data-reduce-motion="true"] on an ancestor, or the OS setting → instant moves with a ≤150 ms crossfade.
  *
  * Rules this file keeps:
@@ -35,20 +35,6 @@
       shadow: 1, tether: true, placeholder: 'stitch',
       flip: { spring: [300, 26] }, drop: { spring: [260, 22] }, cancel: { spring: [240, 18] },
       glide: { spring: [150, 21] }, agent: 'crane', done: 'hop', owner: 'spin', countPop: true, sparks: true, land: true,
-    },
-    'minimal-quiet': {
-      tilt: { cap: 1.5, perPxS: 0.003, k: 120, c: 22 },        // critically damped: no wobble
-      lift: { scale: 1.01, opacity: 1, k: 200, c: 28.3 },
-      shadow: 0.6, tether: false, placeholder: 'hairline',
-      flip: { ms: 300, ease: CALM }, drop: { ms: 280, ease: CALM }, cancel: { ms: 360, ease: CALM },
-      glide: { ms: 640, ease: CALM }, agent: 'glide', done: 'glide', owner: 'fade', countPop: false, sparks: false, land: false,
-    },
-    'minimal-dot': {
-      tilt: { cap: 0, perPxS: 0, k: 120, c: 22 },              // no tilt at all
-      lift: { scale: 1.01, opacity: 0.92, k: 200, c: 28.3 },
-      shadow: 0.4, tether: false, placeholder: 'dot',
-      flip: { ms: 280, ease: CALM }, drop: { ms: 260, ease: CALM }, cancel: { ms: 340, ease: CALM },
-      glide: { ms: 720, ease: CALM }, agent: 'dot', done: 'dot', owner: 'fade', countPop: false, sparks: false, land: false,
     },
   };
   const TOUCH = { delay: 380, tolerance: 9 };   // long-press to lift; moving more than this first means "scroll"

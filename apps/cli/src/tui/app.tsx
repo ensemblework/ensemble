@@ -10,6 +10,8 @@
  * One input router handles keys, the mouse and the slash-command menu. The layout is fixed rows
  * (tabs, main, actions, composer, status), so every click maps to a region computed here.
  */
+import { terminalBrand } from "@ensemble/brand/cli";
+import { WorkingMark } from "./brand.js";
 import { Box, Text, useApp, useInput, useStdout, type Key } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { pickRunProfile, type RunProfile } from "@ensemble/shared-types";
@@ -44,7 +46,7 @@ import {
 import { ENGINE_LABEL, type Engine, type Prefs } from "./prefs.js";
 import { cellWidth, markdown, pad, plain, truncate, wrapLine, type Line, type Segment } from "./text.js";
 
-const ACCENT = "#a78bfa";
+const ACCENT = terminalBrand(process.env, Boolean(process.stdout.isTTY)).color;
 const MUTED = "gray";
 
 export type Account = { email: string | null; paired: boolean; apiBase: string };
@@ -779,7 +781,7 @@ export function App(props: { api: LocalApi; folder: string; version: string; acc
   const regions: Region[] = [];
 
   // Tabs.
-  const tabLine: Line = [{ text: " ◆ ", color: ACCENT, bold: true }, { text: "Ensemble ", bold: true }, { text: " " }];
+  const tabLine: Line = [{ text: " [e] ", color: ACCENT, bold: true }, { text: "Ensemble ", bold: true }, { text: " " }];
   let x = cellWidth(tabLine.map((segment) => segment.text).join(""));
   for (const [id, label] of [
     ["tasks", needs ? ` Tasks · ${needs} need${needs === 1 ? "s" : ""} you ` : " Tasks "],
@@ -933,7 +935,7 @@ export function App(props: { api: LocalApi; folder: string; version: string; acc
 
   // Status bar.
   const leftStatus: Segment[] = [
-    { text: " ◆ ", color: ACCENT },
+    { text: "[e] ", color: ACCENT, brandWorking: !offline && (streaming || workspace?.running.some(job => job.status === "running") === true) },
     { text: profile.name, bold: true },
     { text: ` · ${ENGINE_LABEL[engine]}`, dim: false },
     { text: ` · ${chatModelLabel}`, dim: true },
@@ -1331,7 +1333,7 @@ function Row({ line, width }: { line: Line; width: number }) {
             underline={segment.underline}
             inverse={segment.inverse}
           >
-            {segment.text}
+            {segment.brandWorking ? <WorkingMark /> : segment.text}
           </Text>
         ))
       ) : (

@@ -1,11 +1,10 @@
 /**
  * One policy for every working or loading state.
- * Show nothing until the work has lasted past the delay, then keep the
- * indicator up long enough that it cannot flash off.
- * Content that was never covered by an indicator is not held.
+ * Show nothing until the work has lasted past the delay.
+ * Completed work is revealed immediately; no artificial minimum hold.
  */
 export const MOTION_SHOW_DELAY_MS = 180;
-export const MOTION_MIN_VISIBLE_MS = 300;
+export const MOTION_MIN_VISIBLE_MS = 0;
 
 export type DelayPhase = "idle" | "waiting" | "visible" | "holding";
 

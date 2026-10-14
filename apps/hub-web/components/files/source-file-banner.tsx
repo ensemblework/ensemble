@@ -1,9 +1,10 @@
 "use client";
+import { BrandMorph } from "@/components/motion/brand-morph";
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
 import { useState } from "react";
-import { FileOutput, Loader2 } from "lucide-react";
+import { FileOutput } from "lucide-react";
 import { fileFormat, type PageDocument } from "@ensemble/shared-types";
 import { inItemView, type PageSourceFile } from "@/lib/api";
 import { exportBack, exportBackFormats, type ExportBackFormat } from "@/lib/files/export-back";
@@ -67,7 +68,7 @@ export function SourceFileBanner({ source, page, run = exportBack }: { source: P
                 title={`Export back as ${FORMAT[format].label} with the original's formatting`}
                 onClick={() => void exportAs(format)}
               >
-                {busy === format ? <Loader2 size={12} className="animate-spin" /> : <FileOutput size={12} />}
+                {busy === format ? <BrandMorph size={12} kind="beacon" loader state="loop" /> : <FileOutput size={12} />}
                 Export back as {FORMAT[format].label}
               </button>
             ))}

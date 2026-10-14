@@ -1,5 +1,7 @@
 # 26 · Ensemble CLI: the `ensemble` app in your terminal, a runner, and MCP for editors
 
+CLI 0.3.6 carries Woven Chorus branding and the Satin Gold terminal indicator.
+
 Type `ensemble` in a project folder and Ensemble opens full-screen in the terminal:
 
 1. **Tasks** (the default tab): agent runs on this computer (needs you, running, queued, stopped, done) and every question or permission waiting on you, answered right there.
@@ -156,3 +158,7 @@ Checked 6 Oct 2026 on macOS (Apple Silicon) against a local hub-api and Hub with
 Released and checked 6 Oct 2026: `cli-v0.1.0` was built by `cli-release.yml` for all five targets (each archive smoke-tested on its own runner, Windows included), and the workflow pushed the formula to `ensemblework/homebrew-tap` and the manifest to `ensemblework/scoop-bucket`. On this Mac, `brew install ensemblework/tap/ensemble` and `curl -fsSL https://ensemblework.com/install.sh | sh` both installed 0.1.0. Against production, `ensemble login` through `app.ensemblework.com/link` paired the Mac, hosted `/mcp` and local `ensemble mcp` both returned the account's Today data (17 tools), and the runner reported online with a fresh heartbeat. The arm64 `.deb` and `.rpm` were installed on Ubuntu 22.04 and Fedora 41 in containers, where `runner start`, `status` and `stop` worked and removal was clean.
 
 Not run yet: `install.ps1` and Scoop on a real Windows machine (Windows PowerShell 5.1 included), the x64 Linux packages on real hardware, `runner install` against the real service managers (the generated plist passed `plutil -lint`), a task executed end to end on a production-paired computer with a real model key, and real editors other than the MCP SDK client.
+
+## Shared identity and motion
+
+The terminal identity is `[e] Ensemble` with Satin Gold accents. The status row uses a four-cell braille infinity while a chat or task is running (`apps/cli/src/tui/brand.tsx`, `packages/brand/cli.js`), at 8 fps without rerendering the whole React app. Idle has no timer. Redirected output and `TERM=dumb` use a still ASCII marker; `NO_COLOR` suppresses brand color; truecolor terminals use `#D7B56F`, others ANSI yellow. Set `ENSEMBLE_REDUCE_MOTION=1` to keep the marker still. Errors, queued work and human decisions retain explicit text.

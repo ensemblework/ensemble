@@ -291,13 +291,13 @@ Round 1 was a careful Linear-style recolor: near-black canvas, one violet accent
 
 **The thread.** The mark is three nodes on a curve, not three bars. The same curve shows up as the at-a-glance strip on Today, as edges in the graph, and as the line that ties deliverables. It is the signature: work is a set of connections.
 
-**Motion.** 120–180 ms, opacity and transform, the existing ease. `prefers-reduced-motion` and the Settings toggle still set `data-reduce-motion` and now also cancel the hover lift. Nothing loops except the existing working dot.
+**Motion.** 120–180 ms, opacity and transform, the existing ease. `prefers-reduced-motion` and the Settings toggle still set `data-reduce-motion` and now also cancel the hover lift. Working indicators use the five Woven Chorus roles in `packages/brand`; idle branding stays still. One 30 fps scheduler serves visible active indicators, with hidden/offscreen and reduced-motion guards.
 
 **Iconography.** Lucide stays (already shipped). Board cards drop the Notion page icon. Kind is a dot. The graph draws circles, not database rows.
 
 ### Accent setting
 
-Eight presets are available in both modes: indigo (default), tide, ember, rose, brass, orchid, moss and sky. Each preset has a dark-mode hex and a light-mode hex. A custom `#rrggbb` overrides the preset. The choice is written to `appearance.accent` / `appearance.accentCustom` in the user's server settings, and mirrored in `localStorage` under `ensemble.appearance` so the boot script can paint `--accent` before first paint. Since 13 Oct 2026, five additional named color themes supply independent surfaces; `resolveAccent` checks their canvas, sidebar, panel, raised and tile colors, keeping at least 4.5:1 contrast for accent text and button labels. The existing Ensemble palette retains its original accent behavior.
+Nine presets are available in both modes: Satin Gold (default), indigo, tide, ember, rose, brass, orchid, moss and sky. Each preset has a dark-mode hex and a light-mode hex. A custom `#rrggbb` overrides the preset. The choice is written to `appearance.accent` / `appearance.accentCustom` in the user's server settings, and mirrored in `localStorage` under `ensemble.appearance` so the boot script can paint `--accent` before first paint. Since 13 Oct 2026, five additional named color themes supply independent surfaces; `resolveAccent` checks their canvas, sidebar, panel, raised and tile colors, keeping at least 4.5:1 contrast for accent text and button labels. The Ensemble palette now uses Deep Petrol, and Smoked Aubergine is an additional option; contrast adjustment covers all five surfaces in every palette.
 
 Shades are derived, not stored: `--accent-fg` is white or `#14120f`, whichever clears 4.5:1 on the fill; if neither does, lightness is walked until one does (and the color still clears the canvas, so links and rings stay readable). `--accent-hover` mixes the fill 14% toward white in dark and toward black in light. Soft fills and the page wash are `color-mix` at 16% and 14%. Charts and `:focus-visible` rings read the same variables.
 

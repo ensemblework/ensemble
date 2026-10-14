@@ -12,23 +12,20 @@ test("a fast load never shows the indicator", () => {
   assert.equal(delayIsShown(cancelled.snapshot), false);
 });
 
-test("a slow load appears after the delay and then holds", () => {
+test("a slow load appears after the delay and stops as soon as work completes", () => {
   const started = stepDelay(initialDelay(), true, 0);
   const shown = stepDelay(started.snapshot, true, MOTION_SHOW_DELAY_MS);
-  assert.equal(shown.snapshot.phase, "visible");
   assert.equal(delayIsShown(shown.snapshot), true);
-  const early = stepDelay(shown.snapshot, false, MOTION_SHOW_DELAY_MS + 40);
-  assert.equal(early.snapshot.phase, "holding");
-  assert.equal(early.wait, MOTION_MIN_VISIBLE_MS - 40);
-  assert.equal(delayIsShown(early.snapshot), true);
-  const done = stepDelay(early.snapshot, false, MOTION_SHOW_DELAY_MS + MOTION_MIN_VISIBLE_MS);
+  const done = stepDelay(shown.snapshot, false, MOTION_SHOW_DELAY_MS + 1);
   assert.equal(done.snapshot.phase, "idle");
+  assert.equal(done.wait, null);
+  assert.equal(MOTION_MIN_VISIBLE_MS, 0);
 });
 
-test("work that resumes during the hold stays visible", () => {
+test("a later request starts its own delay", () => {
   const shown = stepDelay(stepDelay(initialDelay(), true, 0).snapshot, true, MOTION_SHOW_DELAY_MS);
-  const holding = stepDelay(shown.snapshot, false, MOTION_SHOW_DELAY_MS + 20);
-  const again = stepDelay(holding.snapshot, true, MOTION_SHOW_DELAY_MS + 40);
-  assert.equal(again.snapshot.phase, "visible");
-  assert.equal(delayIsShown(again.snapshot), true);
+  const done = stepDelay(shown.snapshot, false, MOTION_SHOW_DELAY_MS + 1);
+  const again = stepDelay(done.snapshot, true, MOTION_SHOW_DELAY_MS + 40);
+  assert.equal(again.snapshot.phase, "waiting");
+  assert.equal(delayIsShown(again.snapshot), false);
 });

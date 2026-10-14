@@ -2,6 +2,8 @@ const invoke = window.__TAURI__.core.invoke;
 const status = document.querySelector("#status");
 const tokenForm = document.querySelector("#token-form");
 const captureForm = document.querySelector("#capture-form");
+const saveMotion = document.querySelector("#save-motion");
+const beacon = window.EnsembleMorph.mount(saveMotion, { size: 20, kind: "beacon" });
 
 function setStatus(message) {
   status.textContent = message;
@@ -36,6 +38,8 @@ captureForm.addEventListener("submit", async (event) => {
   const text = document.querySelector("#text").value.trim();
   if (!text) return;
   setStatus("Saving…");
+  saveMotion.hidden = false;
+  beacon.loop({ delay: 180 });
   try {
     const saved = await invoke("submit_capture", { text });
     const people = saved.people.length ? ` · ${saved.people.join(", ")}` : "";
@@ -45,6 +49,9 @@ captureForm.addEventListener("submit", async (event) => {
     window.setTimeout(() => invoke("hide_capture"), 700);
   } catch (error) {
     setStatus(String(error));
+  } finally {
+    beacon.idle();
+    saveMotion.hidden = true;
   }
 });
 

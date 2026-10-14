@@ -53,6 +53,7 @@ Keeping these files current is part of every change. See [`AGENTS.md`](../AGENTS
 | 26 | [Ensemble CLI](26_CLI.md) | `ensemble`: install channels, runner, `ensemble mcp`, hosted `/mcp`, editor setup, releases |
 | — | [Desktop app](DESKTOP.md) | How to run and build `apps/desktop` |
 | — | [Mac checklist](desktop/MAC_CHECKLIST.md) | Hand test for the unsigned `.dmg` |
+| — | [Brand and motion](BRAND.md) | Woven Chorus, Satin Gold palettes, shared motions and icon generation |
 | — | [UI and performance](UI_PERF_DESIGN.md) | Measured baseline and the perf design |
 | — | [Caching](CACHING.md) | Which caches exist, and which deliberately do not |
 

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AccentPreset } from "@ensemble/shared-types";
 import { OPTIONAL_MODULES } from "@ensemble/shared-types/modules";
 import { MARKETPLACE, textSafe, type MarketTemplate } from "@ensemble/shared-types/marketplace";
 import { validateLayout } from "@ensemble/shared-types/widgets";
@@ -71,7 +72,7 @@ export const MarketplaceTemplate = z
     persona: z.enum(["student", "teacher", "lawyer", "researcher", "manager", "aspirant", "maker", "engineer"]),
     name: plain(40),
     blurb: plain(140),
-    accent: z.enum(["indigo", "tide", "ember", "rose", "brass", "orchid", "moss", "sky"]).optional(),
+    accent: AccentPreset.optional(),
     actAs: z.enum(["general", "student", "engineer", "teacher", "lawyer", "researcher", "manager", "aspirant", "maker"]),
     highlights: z.array(plain(80)).max(4),
     modules: z.array(z.enum(OPTIONAL_MODULES)).max(OPTIONAL_MODULES.length),

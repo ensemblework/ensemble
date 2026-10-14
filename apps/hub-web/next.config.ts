@@ -30,7 +30,7 @@ const nextConfig: NextConfig = {
         images: { unoptimized: true },
       }
     : {}),
-  transpilePackages: ["@ensemble/shared-types", "@ensemble/ide-theme", "@ensemble/block-diagrams"],
+  transpilePackages: ["@ensemble/brand", "@ensemble/shared-types", "@ensemble/ide-theme", "@ensemble/block-diagrams"],
   onDemandEntries: {
     maxInactiveAge: 15 * 60 * 1000,
     pagesBufferLength: 12,

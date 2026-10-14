@@ -50,3 +50,7 @@ macOS will ask for Accessibility permission the first time the shortcut is regis
 - It does not change the shortcut from Settings. Edit `packages/shared-types/src/capture-chord.json`.
 - It does not capture the microphone.
 - It does not write to Google or Outlook.
+
+## Shared identity and motion
+
+Quick capture uses the generated Woven Chorus/Satin Gold app icon, header and tray mark. macOS uses a monochrome template; other systems select gold on dark taskbars and ink on light ones. The Save task request drives a compact Beacon after 180 ms, stopped on success or error. Assets come from `pnpm brand:build`, shared with the main desktop app.

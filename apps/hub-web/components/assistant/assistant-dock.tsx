@@ -568,6 +568,7 @@ export function AssistantDock() {
   const launcher = (
     <AskLauncher
       hidden={open || Boolean(peekId) || pathname.startsWith("/start")}
+      working={pending}
       onOpen={() => setOpen(true)}
       title={`Ask Ensemble (${chord}). Drag to move it.`}
     />
@@ -584,7 +585,7 @@ export function AssistantDock() {
       )}
     >
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-line px-3">
-        <Mark />
+        <BrandMorph size={24} state="once" kind="unfurl" />
         <span className="flex-1 text-[14px] font-semibold">Assistant</span>
         {working && !pending ? <ThinkingStatus real={working === "Assistant is thinking…" || working === "Working…" ? null : working} active /> : null}
         <button

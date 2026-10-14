@@ -4,7 +4,7 @@ Every desk uses the same shell. A Chambers account and a Bench account differ by
 
 ## Mark
 
-The logo is concept B, "Two voices", from `design/icons`. The outer strand is the agent and the inner strand is you. It is the sidebar mark (`components/mark.tsx`), the login mark, and `app/icon.svg` (the favicon and the app icon). The constellation on the login panel is decoration behind the form, not a second logo.
+The logo is Woven Chorus / Satin Gold from `packages/brand`, expressing humans and agents working from shared context. It is the sidebar mark (`components/mark.tsx`), the login mark, and `app/icon.svg` (the favicon and the app icon). The constellation on the login panel is decoration behind the form, not a second logo.
 
 Native `.ico` and `.icns` files live under `design/icons` for a later shell. This web app does not branch on Windows, macOS, or Linux.
 

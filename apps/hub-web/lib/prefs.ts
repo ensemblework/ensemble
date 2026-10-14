@@ -65,11 +65,7 @@ export function usePersistentState<T>(key: string, fallback: T): [T, (value: T |
   return [value, update, ready];
 }
 
-/**
- * localStorage key for this browser's appearance. The motion style is the
- * `motion` field: "expressive" | "minimal-quiet" | "minimal-dot".
- * Desktop and the static error pages must read this key, not ensemble:motion-theme.
- */
+/** Shared appearance store for the Hub, native shell and fallback pages. */
 export const APPEARANCE_KEY = "ensemble.appearance";
 
 export const DEFAULT_APPEARANCE: AppearanceSettings = {
@@ -79,25 +75,12 @@ export const DEFAULT_APPEARANCE: AppearanceSettings = {
   font: "system",
   motion: "expressive",
   reduceMotion: false,
-  accent: "indigo",
+  accent: "gold",
   accentCustom: null,
 };
 
-export function storedMotionChosen(): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    const raw = JSON.parse(window.localStorage.getItem(APPEARANCE_KEY) || "null") as { motion?: string } | null;
-    return !!raw && typeof raw === "object" && (raw.motion === "expressive" || raw.motion === "minimal-quiet" || raw.motion === "minimal-dot");
-  } catch {
-    return false;
-  }
-}
-
-/** First visit on a device that asks for reduced motion starts on Minimal · Dot. */
-export function resolveMotionTheme(appearance: AppearanceSettings, osReduce: boolean): MotionTheme {
-  if (storedMotionChosen()) return appearance.motion ?? "expressive";
-  if (osReduce) return "minimal-dot";
-  return appearance.motion ?? "expressive";
+export function resolveMotionTheme(_appearance: AppearanceSettings, _osReduce: boolean): MotionTheme {
+  return "expressive";
 }
 
 /** Skip a server echo that would clobber an accent the user just picked. */
@@ -122,7 +105,7 @@ export function completeAppearance(value: Partial<AppearanceSettings> | null | u
       if (id && colorTheme(id).id === id && (!raw.colorTheme || Number(stamp) > at)) palette = colorTheme(id).id;
     } catch {}
   }
-  return { ...DEFAULT_APPEARANCE, ...raw, colorTheme: palette, textScale };
+  return { ...DEFAULT_APPEARANCE, ...raw, colorTheme: palette, textScale, motion: "expressive" };
 }
 
 function storedPref<T>(key: string, _fallback: T, stored: T): T {

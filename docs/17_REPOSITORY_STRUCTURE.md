@@ -19,6 +19,7 @@ ensemble/
 │   ├── quick-capture/     Tauri tray app with a global capture shortcut
 │   └── skill-forge/       Skill Forge Python package (stub, docs/04)
 ├── packages/              Code shared by applications
+│   ├── brand/             Woven Chorus artwork, motion and CLI identity (docs/BRAND)
 │   ├── shared-types/      Zod domain types, settings, plots, modules, shortcuts
 │   ├── block-diagrams/    Diagram DSL: parse, layout, SVG, Mermaid (docs/21)
 │   ├── ide-theme/         VS Code theme conversion and built-in themes for the Code tab
@@ -161,3 +162,7 @@ apps/skill-forge/             pyproject.toml + ensemble_forge/__init__.py; miner
 | Product behaviour documentation | `docs/` — in the same change, see [AGENTS.md](../AGENTS.md) |
 
 Folders such as `node_modules/`, `.next/`, `dist/`, `.venv/`, `__pycache__/`, `*.egg-info/`, `.turbo/`, `target/`, test caches, `docs/screenshots/` and `.ensemble/` are outputs or local state. They are git-ignored and should not become homes for source code.
+
+### Shared brand assets
+
+`packages/brand` owns Woven Chorus artwork, Satin Gold, the Expressive SVG motion controller and terminal frames. Web, landing, native startup, Quick capture and CLI consume this source. `scripts/build-ensemble-brand.mjs` exports packaged icons, social previews and standalone fallback pages. Run `pnpm brand:build` after changing a master; `pnpm brand:check` checks source/output hashes. Details: [Brand and motion](BRAND.md).

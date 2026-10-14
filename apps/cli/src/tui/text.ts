@@ -4,7 +4,7 @@
  */
 
 export type Style = { color?: string; bold?: boolean; dim?: boolean; italic?: boolean; inverse?: boolean; backgroundColor?: string; underline?: boolean };
-export type Segment = { text: string } & Style;
+export type Segment = { text: string; brandWorking?: boolean } & Style;
 export type Line = Segment[];
 
 /** Display width of a string: wide East Asian characters and most emoji take two cells. */

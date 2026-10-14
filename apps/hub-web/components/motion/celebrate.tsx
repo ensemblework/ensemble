@@ -1,5 +1,6 @@
 "use client";
 
+import { BrandMorph } from "./brand-morph";
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import {
@@ -86,19 +87,7 @@ export function CelebrateHost() {
           </span>
         ))}
       </span>
-      <span className="m-celebrate-quiet" aria-hidden>
-        <span className="m-ce-u">
-          <svg viewBox="296 280 432 476" width="28" height="32" aria-hidden>
-            <path d="M316 300 V540 A196 196 0 0 0 708 540 V300" />
-            <path className="a" d="M426 300 V540 A86 86 0 0 0 598 540 V300" />
-          </svg>
-          <i className="m-ce-ring" />
-        </span>
-        <span className="m-ce-dots">
-          <i className="dot" />
-          <i className="dot ag" />
-        </span>
-      </span>
+      <BrandMorph size={36} state="once" kind="unfurl" />
       <p>{line}</p>
     </div>
   );

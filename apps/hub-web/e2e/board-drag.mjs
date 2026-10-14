@@ -268,7 +268,7 @@ async function main() {
 
     const agentVar = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--bdg-agent").trim().toLowerCase());
     const accentVar = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--accent").trim().toLowerCase());
-    assert.equal(agentVar, "#9d8fff", `agent violet drifted to ${agentVar}`);
+    assert.equal(agentVar, "#d7b56f", `agent violet drifted to ${agentVar}`);
     assert.equal(accentVar, "#f0a0b8", `rose accent did not apply (${accentVar})`);
     const touchAction = await page.locator("[data-bdg-card]").first().evaluate((el) => getComputedStyle(el).touchAction);
     assert.equal(touchAction, "pan-y");
@@ -376,8 +376,6 @@ async function main() {
 
     const styles = [
       ["expressive", titles.expressive, { borderStyle: "dashed" }],
-      ["minimal-quiet", titles.quiet, { borderStyle: "solid", borderWidth: "1px" }],
-      ["minimal-dot", titles.dot, { width: "7px", height: "7px" }],
     ];
     for (const [motion, title, expectPh] of styles) {
       await page.evaluate((motion) => {
@@ -386,7 +384,7 @@ async function main() {
       }, motion);
       await page.reload({ waitUntil: "domcontentloaded" });
       await page.waitForFunction((theme) => document.documentElement.dataset.motionTheme === theme, motion);
-      assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--bdg-agent").trim().toLowerCase()), "#9d8fff");
+      assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--bdg-agent").trim().toLowerCase()), "#d7b56f");
       const handle = await card(page, title);
       await assertHoverLift(page, handle, motion);
       const start = await centerOf(handle);

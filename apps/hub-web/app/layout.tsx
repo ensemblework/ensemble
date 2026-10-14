@@ -11,7 +11,6 @@ import "@/components/work-surfaces.css";
 import "@/components/motion/suite.css";
 import "@/components/motion/springs.css";
 import "@/components/motion/search-query.css";
-import "@/components/motion/terminal-working.css";
 import "@/components/motion/morph.css";
 import "@/components/motion/board-drag/board-drag.css";
 import "@/components/motion/board-drag/board-drag.app.css";
@@ -73,13 +72,13 @@ export const metadata: Metadata = {
     card: "summary_large_image",
     title: "Ensemble",
     description: "A shared workspace for you and your agent.",
-    images: [{ url: "/twitter-image.png", width: 1200, height: 600, alt: "Ensemble: a shared workspace for you and your agent." }],
+    images: [{ url: "/twitter-image.png", width: 1200, height: 630, alt: "Ensemble: a shared workspace for you and your agent." }],
   },
 };
 
 export const viewport: Viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: dark)", color: "#141210" },
+    { media: "(prefers-color-scheme: dark)", color: "#10282b" },
     { media: "(prefers-color-scheme: light)", color: "#faf7f2" },
   ],
 };

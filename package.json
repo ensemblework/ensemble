@@ -33,7 +33,9 @@
     "desktop:sidecar": "node scripts/assemble-desktop-sidecar.mjs",
     "desktop:build": "pnpm --filter @ensemble/desktop bundle",
     "desktop:dmg": "bash scripts/build-mac-dmg.sh",
-    "desktop:e2e": "pnpm desktop:export && pnpm --filter @ensemble/hub-api test:desktop-ui"
+    "desktop:e2e": "pnpm desktop:export && pnpm --filter @ensemble/hub-api test:desktop-ui",
+    "brand:build": "node scripts/build-ensemble-brand.mjs",
+    "brand:check": "node scripts/build-ensemble-brand.mjs --check"
   },
   "devDependencies": {
     "playwright-core": "^1.63.0"

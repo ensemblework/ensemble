@@ -1,5 +1,7 @@
 # Desktop app
 
+Desktop 0.3.3 carries the Woven Chorus icons, shared Hub themes and Expressive motion.
+
 `apps/desktop` is a [Tauri 2](https://v2.tauri.app/) window that runs Ensemble on this computer. It serves a static export of `apps/hub-web` and starts one Node sidecar (hub-api, the worker, and the scheduler) against an embedded PGlite database. There is no Docker, no hosted server, and no Postgres install.
 
 `pnpm dev` and `pnpm --filter @ensemble/hub-web build` are unchanged. The export is a separate target (`ENSEMBLE_DESKTOP_EXPORT=1`). Set `ENSEMBLE_SITE_URL` to open a hosted site instead of the local bundle.
@@ -57,11 +59,13 @@ The key that encrypts saved model keys and the device token lives beside the dat
 
 `ENSEMBLE_SITE_URL` still opens a hosted origin instead of the local bundle. The packaged default does not.
 
-## Motion style
+## Logo and motion
 
-The shell reads `localStorage["ensemble.appearance"]` and uses the `motion` field (`expressive`, `minimal-quiet`, or `minimal-dot`). It does not read or write `ensemble:motion-theme`. The probe calls `localStorage.getItem`, parses that JSON, and does not call `setItem`. A known value is copied to `motion.json`. An empty or unknown value does not clear a theme already saved. The offline page reads that copy from `shell_state`. With no copy, or when the system asks for reduced motion, the page shows the still Two-voices mark. A saved theme uses the dotted mark from the brand offline page.
+The native shell and exported Hub use **Woven Chorus / Satin Gold**. `packages/brand` owns the approved artwork, five Expressive motions and the shared controller. `pnpm brand:build` generates `apps/desktop/ui/ensemble-morph.js`, `morph.css`, the static fallback and packaged icons. The default dark surface is Deep Petrol; the Hub also offers Smoked Aubergine and light mode.
 
-The mark shown while the first connection is slow is brand.morph (`apps/desktop/ui/ensemble-morph.js` and `morph.css`), the single Expressive ribbon for every style. Motion style does not change that morph. Its durations live on `EnsembleMorph.BASE`. The wait before it appears is the slot's `data-delay` attribute, which the script reads; the shell does not keep a second copy of that number. Reduced motion shows the still mark after the same wait. The probe reports the theme through a `motion` URI the shell handles. The hosted page is not given Tauri commands. There is no tray.
+The first connection uses Infinity after its slot's 180 ms delay. Failure stops the loop and shows the still logo with retry guidance. The OS reduced-motion preference shows the still mark. In the Hub, the separate account/browser Reduce motion setting is also honored. Native startup does not synchronize that toggle from the hosted origin; it follows the OS. Reconnecting replaces and destroys the previous controller.
+
+Expressive is the single motion system. For compatibility, the read-only probe still reads `localStorage["ensemble.appearance"].motion` and stores a normalized `expressive` value in `motion.json`; legacy Quiet/Dot values map to Expressive. Unknown values are ignored. The hosted page receives no Tauri commands. The desktop app has no tray; Quick capture's tray uses the generated monochrome/contrast-aware mark.
 
 Config directories, from the identifier `com.ensemblework.desktop`:
 
@@ -91,7 +95,7 @@ The hosted site will be `https://app.ensemblework.com`. Until it is live, leave 
 
 ## Icon
 
-The mark is **Two voices**. Raster files in `apps/desktop/src-tauri/icons/` are the recommended full-bleed set from `design/icons/app-icon/png/recommended/` (`ensemble-fullbleed-32.png`, `128`, `256` as `128x128@2x.png`, `1024` as `icon.png`, plus `ensemble.ico` and `ensemble.icns`). The SVG sources are `apps/desktop/src-tauri/icons/source/`, copied from `design/icons/app-icon/svg/ensemble-b-two-voices.svg` and `ensemble-b-two-voices-fullbleed.svg`. See `icons/SOURCE.txt` for the file map. Do not copy `tray-accent.png` or `tray-template.png`. Replace the rasters in place when a new export arrives. `tauri.conf.json` already points at those names.
+The mark is **Woven Chorus** on a Deep Petrol tile. `scripts/build-ensemble-brand.mjs` generates PNG (32, 128, 256, 512), multi-size ICO and ICNS assets from `packages/brand`; ICNS uses the inset macOS tile. SVG sources are `icons/source/woven-chorus.svg` and `woven-chorus-macos.svg`. `tauri.conf.json` references the generated filenames. Run `pnpm brand:build`, `pnpm brand:check` and `node scripts/check-icons.mjs` after an identity change. The OS launcher icon remains static.
 
 ## Known limits
 
@@ -101,7 +105,7 @@ The mark is **Two voices**. Raster files in `apps/desktop/src-tauri/icons/` are 
 - Terminal passkeys and the code sandbox stay as they are on the server. This shell does not change them.
 - macOS and Windows bundles are produced by CI and have not been launched here. Linux is the runtime that was exercised.
 - The updater (`tauri-plugin-updater`) only installs signed updates, so CI builds without `TAURI_SIGNING_PRIVATE_KEY` cannot self-update. No code signing, no tray, no global shortcut. Quick capture remains `apps/quick-capture`.
-- If the hosted site later sends a Content-Security-Policy that blocks the `motion` image, the shell stops receiving theme updates. The offline page keeps the last saved theme, or the still mark when nothing was saved.
+- If the hosted site later sends a Content-Security-Policy that blocks the `motion` image, the shell stops receiving theme updates. The offline page still shows Woven Chorus; Expressive is the only supported motion system.
 
 ## Phase 1b and mobile
 

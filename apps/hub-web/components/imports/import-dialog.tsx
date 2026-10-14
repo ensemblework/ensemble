@@ -1,7 +1,8 @@
 "use client";
+import { BrandMorph } from "@/components/motion/brand-morph";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Check, FileUp, Loader2 } from "lucide-react";
+import { ArrowLeft, Check, FileUp } from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { ApiError, type TaskStatus } from "@/lib/api";
 import {
@@ -306,7 +307,7 @@ function SourceStep({ sources, onPick }: { sources: ImportSourceInfo[] | null; o
       </p>
       {!sources ? (
         <p className="flex items-center gap-2 text-muted" role="status">
-          <Loader2 size={14} className="animate-spin" aria-hidden /> Loading sources…
+          <BrandMorph size={14} kind="beacon" loader state="loop" /> Loading sources…
         </p>
       ) : (
         <ul className="grid grid-cols-2 gap-2 sm:grid-cols-3" aria-label="Apps you can import from">
@@ -357,7 +358,7 @@ function ConnectStep({
         <div className="card flex flex-wrap items-center justify-between gap-2 p-3">
           <span>Your {source.name} account is connected.</span>
           <button type="button" className="btn-primary" disabled={busy} onClick={() => onConnect()}>
-            {busy ? <Loader2 size={13} className="animate-spin" aria-hidden /> : null} Use connected account
+            {busy ? <BrandMorph size={13} kind="beacon" loader state="loop" /> : null} Use connected account
           </button>
         </div>
       ) : null}
@@ -432,7 +433,7 @@ function ConnectStep({
               if (file && !busy) onUpload(file);
             }}
           >
-            {busy ? <Loader2 size={18} className="animate-spin" aria-hidden /> : <FileUp size={18} aria-hidden />}
+            {busy ? <BrandMorph size={18} kind="beacon" loader state="loop" /> : <FileUp size={18} aria-hidden />}
             <span>{busy ? "Reading the file…" : `Drop the ${source.files.map((format) => `.${format}`).join(" or ")} file here, or choose it`}</span>
             <span className="text-[11.5px] text-faint">Up to 50 MB</span>
           </label>
@@ -514,7 +515,7 @@ function ChooseStep({
       ) : null}
       <div className="flex justify-end">
         <button type="button" className="btn-primary" disabled={busy || !selected.length} onClick={onNext}>
-          {busy ? <Loader2 size={13} className="animate-spin" aria-hidden /> : null} Review
+          {busy ? <BrandMorph size={13} kind="beacon" loader state="loop" /> : null} Review
         </button>
       </div>
     </div>
@@ -685,7 +686,7 @@ function ReviewStep({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-[12px] text-faint">Running this again later updates these items instead of adding copies.</span>
         <button type="button" className="btn-primary" disabled={busy || !selected.length} onClick={onStart}>
-          {busy ? <Loader2 size={13} className="animate-spin" aria-hidden /> : <Check size={13} aria-hidden />}
+          {busy ? <BrandMorph size={13} kind="beacon" loader state="loop" /> : <Check size={13} aria-hidden />}
           {total !== null ? `Import ${plural(total, "item")}` : "Start import"}
         </button>
       </div>
