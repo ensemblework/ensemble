@@ -1,6 +1,3 @@
-/* Motion suite tokens. Values match design/motion/round3-minimal/components/core/motion-themes.json.
-   Components read --m-* only. Switching suites is data-motion-theme on <html>. */
-
 :root,
 [data-motion-theme="expressive"] {
   --m-ease-enter: cubic-bezier(0.22, 1, 0.36, 1);
@@ -19,44 +16,6 @@
   --m-ornament: 1;
   --m-particles: 1;
   --m-color-mode: duo;
-}
-
-[data-motion-theme="minimal-quiet"] {
-  --m-ease-enter: cubic-bezier(0.25, 0.1, 0.25, 1);
-  --m-ease-move: cubic-bezier(0.33, 0, 0.2, 1);
-  --m-ease-exit: cubic-bezier(0.4, 0, 0.6, 1);
-  --m-ease-loop: cubic-bezier(0.45, 0, 0.55, 1);
-  --m-spring: none;
-  --m-dur-micro: 200ms;
-  --m-dur-ui: 420ms;
-  --m-dur-move: 640ms;
-  --m-dur-loop: 3200ms;
-  --m-amp: 4px;
-  --m-scale-press: 0.985;
-  --m-overshoot: 0;
-  --m-stroke: 1.5px;
-  --m-ornament: 0;
-  --m-particles: 0;
-  --m-color-mode: mono;
-}
-
-[data-motion-theme="minimal-dot"] {
-  --m-ease-enter: cubic-bezier(0.25, 0.1, 0.25, 1);
-  --m-ease-move: cubic-bezier(0.33, 0, 0.2, 1);
-  --m-ease-exit: cubic-bezier(0.4, 0, 0.6, 1);
-  --m-ease-loop: cubic-bezier(0.45, 0, 0.55, 1);
-  --m-spring: none;
-  --m-dur-micro: 200ms;
-  --m-dur-ui: 480ms;
-  --m-dur-move: 720ms;
-  --m-dur-loop: 2800ms;
-  --m-amp: 3px;
-  --m-scale-press: 0.99;
-  --m-overshoot: 0;
-  --m-stroke: 1px;
-  --m-ornament: 0;
-  --m-particles: 0;
-  --m-color-mode: mono;
 }
 
 [data-reduce-motion="true"] {
@@ -141,7 +100,7 @@
   top: 0;
   left: 0;
   right: 0;
-  height: 3px;
+  height: 8px;
   pointer-events: none;
   overflow: hidden;
 }
@@ -160,16 +119,6 @@
   opacity: 0.55;
   animation: m-braid var(--m-dur-loop) var(--m-ease-loop) infinite;
   animation-delay: calc(var(--m-dur-micro) * -1);
-}
-[data-motion-theme="minimal-dot"] .m-progress i.b,
-[data-motion-theme="minimal-quiet"] .m-progress i.b { opacity: 0; }
-[data-motion-theme="minimal-dot"] .m-progress { height: 2px; }
-[data-motion-theme="minimal-dot"] .m-progress i.a {
-  width: 8px;
-  height: 8px;
-  top: -3px;
-  border-radius: 50%;
-  animation-name: m-dot-run;
 }
 @keyframes m-braid {
   0% { transform: translateX(-120%); }
@@ -206,18 +155,6 @@
 .desk .sk[data-visible="0"] { background: transparent; }
 .skeleton[data-visible="0"]::after,
 .desk .sk[data-visible="0"]::after { display: none; }
-[data-motion-theme="minimal-quiet"] .skeleton:not([data-visible="0"])::after,
-[data-motion-theme="minimal-quiet"] .desk .sk:not([data-visible="0"])::after,
-[data-motion-theme="minimal-dot"] .skeleton:not([data-visible="0"])::after,
-[data-motion-theme="minimal-dot"] .desk .sk:not([data-visible="0"])::after {
-  background: none;
-  animation-name: m-breathe;
-}
-[data-motion-theme="minimal-dot"] .skeleton:not([data-visible="0"]),
-[data-motion-theme="minimal-dot"] .desk .sk:not([data-visible="0"]) {
-  background: transparent;
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 18%, transparent);
-}
 @keyframes m-sweep {
   0% { transform: translateX(-100%); }
   60%, 100% { transform: translateX(100%); }
@@ -262,8 +199,6 @@ html[data-motion-enter="1"] .page-head h1 { animation: m-rise var(--m-dur-ui) va
 .m-duet i + i { background: var(--ink); }
 .m-duet.m-loop i { animation: m-duet-a var(--m-dur-loop) var(--m-ease-loop) infinite; }
 .m-duet.m-loop i + i { animation-name: m-duet-b; }
-[data-motion-theme="minimal-quiet"] .m-duet i + i { opacity: 0.45; }
-[data-motion-theme="minimal-dot"] .m-duet { animation: m-duet-turn var(--m-dur-loop) linear infinite; }
 @keyframes m-duet-a {
   0%, 100% { transform: translateX(calc(var(--s) * -0.32)); }
   50% { transform: translateX(0); }
@@ -281,8 +216,6 @@ html[data-motion-enter="1"] .page-head h1 { animation: m-rise var(--m-dur-ui) va
 .m-dots { display: none; gap: 3px; }
 .m-dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--ink); opacity: 0.7; }
 .m-dots i.ag { background: var(--accent); opacity: 1; }
-[data-motion-theme="minimal-dot"] .m-quiet { display: none; }
-[data-motion-theme="minimal-dot"] .m-dots { display: inline-flex; }
 [data-motion-theme="expressive"] .m-think-art:has(.u-glyph) .m-quiet { display: none; }
 .m-quiet .seg {
   stroke: var(--accent);
@@ -317,12 +250,6 @@ html[data-motion-enter="1"] .page-head h1 { animation: m-rise var(--m-dur-ui) va
   background: var(--accent);
   opacity: calc(0.45 + var(--m-ornament) * 0.55);
 }
-[data-motion-theme="minimal-dot"] .m-stream[data-state="streaming"] { box-shadow: none; }
-[data-motion-theme="minimal-dot"] .m-stream[data-state="streaming"]::after {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-}
 
 /* ── tool / run / needs / approve / error ──────────────────────────────── */
 .m-tool { border-radius: 8px; box-shadow: inset 0 0 0 1px var(--line); }
@@ -353,7 +280,6 @@ html[data-motion-enter="1"] .page-head h1 { animation: m-rise var(--m-dur-ui) va
 .m-fetch[data-state="syncing"] .a { animation: m-reel var(--m-dur-move) linear infinite; }
 .m-fetch[data-state="fetching"] .b,
 .m-fetch[data-state="syncing"] .b { animation: m-reel calc(var(--m-dur-move) * 1.5) linear infinite; }
-[data-motion-theme="minimal-dot"] .m-fetch .b { opacity: 0; }
 @keyframes m-reel { to { transform: rotate(360deg); } }
 
 /* ── ask / search rim. Chase only while ornament is on. ───────────────── */
@@ -364,8 +290,6 @@ html[data-motion-enter="1"] .page-head h1 { animation: m-rise var(--m-dur-ui) va
     conic-gradient(from var(--m-angle, 0deg), transparent 0 8%, var(--accent) 22%, transparent 30% 55%, color-mix(in srgb, var(--ink) 80%, transparent) 70%, transparent 78%) border-box;
   animation: m-rim var(--m-dur-loop) linear infinite;
 }
-[data-motion-theme="minimal-quiet"] .m-ask[data-state="searching"],
-[data-motion-theme="minimal-dot"] .m-ask[data-state="searching"],
 [data-reduce-motion="true"] .m-ask[data-state="searching"] {
   animation: none;
   border-color: var(--accent);
@@ -408,8 +332,8 @@ html[data-motion-enter="1"] .page-head h1 { animation: m-rise var(--m-dur-ui) va
   display: grid;
   place-items: center;
   background: #141210;
-  --brand-agent: #9d8fff;
-  --brand-you: #f3eee6;
+  --brand-agent: #D7B56F;
+  --brand-you: #F2F0E9;
 }
 .m-route-mark {
   position: absolute;
@@ -438,8 +362,6 @@ html[data-motion-enter="1"] .page-head h1 { animation: m-rise var(--m-dur-ui) va
 .m-graph[data-visible="0"] svg { opacity: 0; }
 .m-graph[data-visible="1"] .edge { stroke-dasharray: 1; animation: m-edge var(--m-dur-loop) var(--m-ease-loop) infinite; }
 @keyframes m-edge { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
-
-/* moment.celebrate — particles (expressive) or one quiet mark. Reduced motion is the still pose. */
 .m-celebrate {
   position: fixed;
   left: 50%;
@@ -487,8 +409,8 @@ html[data-motion-enter="1"] .page-head h1 { animation: m-rise var(--m-dur-ui) va
 .m-ce-u, .m-ce-dots { display: none; }
 .m-ce-u { position: relative; width: 28px; height: 32px; }
 .m-ce-u svg { display: block; width: 28px; height: 32px; overflow: visible; }
-.m-ce-u path { fill: none; stroke: var(--brand-agent, #9d8fff); stroke-width: var(--m-stroke); stroke-linecap: round; stroke-dasharray: 1; stroke-dashoffset: 0; }
-.m-ce-u path.a { stroke: var(--brand-you, #f3eee6); }
+.m-ce-u path { fill: none; stroke: var(--brand-agent, #D7B56F); stroke-width: var(--m-stroke); stroke-linecap: round; stroke-dasharray: 1; stroke-dashoffset: 0; }
+.m-ce-u path.a { stroke: var(--brand-you, #F2F0E9); }
 .m-ce-ring {
   position: absolute;
   inset: -8px;
@@ -510,12 +432,6 @@ html[data-motion-enter="1"] .page-head h1 { animation: m-rise var(--m-dur-ui) va
 .m-ce-dots .dot.ag { left: 12px; background: var(--accent); }
 .m-celebrate.on .m-ce-dots .dot:first-child { transform: translateX(5.5px); opacity: 0; }
 .m-celebrate.on .m-ce-dots .dot.ag { transform: translateX(-5.5px) scale(1.15); }
-[data-motion-theme="minimal-quiet"] .m-celebrate-quiet,
-[data-motion-theme="minimal-dot"] .m-celebrate-quiet { display: grid; }
-[data-motion-theme="minimal-quiet"] .m-ce-u { display: block; }
-[data-motion-theme="minimal-quiet"] .m-ce-u path { animation: m-draw var(--m-dur-move) var(--m-ease-move) both; }
-[data-motion-theme="minimal-quiet"] .m-celebrate.on .m-ce-ring { animation: m-ce-ring var(--m-dur-move) var(--m-ease-move) forwards; }
-[data-motion-theme="minimal-dot"] .m-ce-dots { display: block; }
 @keyframes m-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
 @keyframes m-ce-ring {
   0% { opacity: 0; transform: scale(0.6); }

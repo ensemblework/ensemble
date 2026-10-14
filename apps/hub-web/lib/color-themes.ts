@@ -5,9 +5,12 @@ export type SurfacePalette = { bg: string; sidebar: string; panel: string; raise
 type ColorTheme = { id: AppColorTheme; name: string; description: string; detail: string; light: SurfacePalette; dark: SurfacePalette; artwork?: string; colorful?: boolean };
 
 export const COLOR_THEMES: readonly ColorTheme[] = [
-  { id: "ensemble", name: "Ensemble", description: "The original, warm and familiar.", detail: "Warm paper / soft charcoal",
+  { id: "ensemble", name: "Ensemble · Deep Petrol", description: "Satin Gold on deep, cool colour.", detail: "Warm paper / deep petrol",
     light: { bg: "#f4f1ea", sidebar: "#ebe6dc", panel: "#fffcf7", raised: "#f7f3ec", tile: "#fffdf9", ink: "#1c1915", muted: "#5a534c", faint: "#3f3a34" },
-    dark: { bg: "#141210", sidebar: "#1b1815", panel: "#221e1a", raised: "#2b261f", tile: "#1e1a16", ink: "#f3eee6", muted: "#b7ae9f", faint: "#8f877b" } },
+    dark: { bg: "#10282b", sidebar: "#0d2225", panel: "#173236", raised: "#213e42", tile: "#163034", ink: "#f2f0e9", muted: "#aec3bf", faint: "#91b1ae" } },
+  { id: "aubergine", name: "Smoked Aubergine", description: "A warmer setting for Satin Gold.", detail: "Soft parchment / smoked aubergine",
+    light: { bg: "#f4f1ea", sidebar: "#ebe6dc", panel: "#fffcf7", raised: "#f7f3ec", tile: "#fffdf9", ink: "#1c1915", muted: "#5a534c", faint: "#62594e" },
+    dark: { bg: "#231b2a", sidebar: "#1d1624", panel: "#2d2335", raised: "#392d40", tile: "#291f31", ink: "#f4eee9", muted: "#c1b0c5", faint: "#b29cba" } },
   { id: "graphite", name: "Graphite", description: "Clear lines. A quiet place to focus.", detail: "Porcelain / graphite",
     light: { bg: "#f4f6f8", sidebar: "#e9edf2", panel: "#ffffff", raised: "#edf0f4", tile: "#ffffff", ink: "#18212f", muted: "#48556a", faint: "#596477" },
     dark: { bg: "#11151b", sidebar: "#171c24", panel: "#202630", raised: "#292f39", tile: "#1b212a", ink: "#f2f4f8", muted: "#b0bac9", faint: "#92a0b2" } },
@@ -28,7 +31,6 @@ export const COLOR_THEMES: readonly ColorTheme[] = [
 export function colorTheme(id: unknown): ColorTheme { return COLOR_THEMES.find((theme) => theme.id === id) ?? COLOR_THEMES[0]!; }
 export function colorThemeSurfaces(id: unknown, mode: ColorMode): string[] | undefined {
   const theme = colorTheme(id);
-  if (theme.id === "ensemble") return undefined;
   const palette = theme[mode];
   return [palette.bg, palette.sidebar, palette.panel, palette.raised, palette.tile];
 }
@@ -60,4 +62,4 @@ export function colorThemeTokens(theme: ColorTheme, mode: ColorMode): Record<str
 }
 
 /** Static CSS at the document root also paints a saved palette before hydration. */
-export const COLOR_THEME_STYLES = COLOR_THEMES.filter((theme) => theme.id !== "ensemble").flatMap((theme) => (["dark", "light"] as const).map((mode) => `:root[data-color-theme="${theme.id}"][data-theme="${mode}"]{${Object.entries(colorThemeTokens(theme, mode)).map(([key, value]) => `${key}:${value}`).join(";")}}`)).join("\n");
+export const COLOR_THEME_STYLES = COLOR_THEMES.flatMap((theme) => (["dark", "light"] as const).map((mode) => `:root[data-color-theme="${theme.id}"][data-theme="${mode}"]{${Object.entries(colorThemeTokens(theme, mode)).map(([key, value]) => `${key}:${value}`).join(";")}}`)).join("\n");

@@ -664,3 +664,7 @@ If you take one thing from this: **the agent's power came from constraining it, 
 It cannot write SQL. It cannot click. It cannot name a function you did not write. It can only choose from a list you defined, with arguments you validated, behind a gate you configured, recorded in a ledger and a journal you can walk back.
 
 And that constraint is precisely what let it be given real authority over real data — because every question you would want to ask of it (*"what did it do?"*, *"why?"*, *"can I take it back?"*) has an answer that does not depend on trusting the model.
+
+## Shared identity and motion
+
+The assistant uses the shared Woven Chorus motions (`components/motion/brand-morph.tsx`, `packages/brand`). Opening plays Unfurl once. Pending/streaming work uses Infinity, and `ask-launcher.tsx` keeps that indicator active when the panel is minimized. Completion, cancellation and failure settle to the still logo. Status text comes from the real lifecycle; reduced motion shows a still mark. There is no motion-style picker.

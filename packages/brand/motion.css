@@ -1,0 +1,17 @@
+/* Fixed slots prevent movement of surrounding content during a transformation. */
+.u-morph { position: relative; display: inline-block; flex: none; vertical-align: middle; line-height: 0; }
+.u-morph > svg, .u-morph .wm-rest, .u-morph .wm-live { display: block; width: 100%; height: 100%; }
+.u-morph .wm-live { position: absolute; inset: 0; overflow: visible; }
+.u-morph .wm-rest svg { display: block; width: 100%; height: 100%; }
+.u-morph[data-loader]:not([data-running="true"]) { visibility: hidden; }
+.u-morph[data-flat="true"] { width: 100%; height: 8px; }
+.u-morph[data-flat="true"] .wm-rest { display: none; }
+.u-morph[data-flat="true"][data-reduced="true"] { background: color-mix(in srgb, #D7B56F 35%, transparent); height: 2px; }
+@media (prefers-reduced-motion: reduce) { .u-morph .wm-live { visibility: hidden; } }
+
+.u-morph[hidden] { display:none; }
+
+[data-theme="light"] svg[data-brand-tone="auto"] path,
+[data-theme="light"] .u-morph[data-tone="auto"] .wm-a,
+[data-theme="light"] .u-morph[data-tone="auto"] .wm-b,
+[data-theme="light"] .u-morph[data-tone="auto"] .wm-spark { stroke:#1C1915; }

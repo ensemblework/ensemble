@@ -87,13 +87,13 @@ export type AssistantSettings = z.infer<typeof AssistantSettings>;
 export const AppFont = z.enum(["system", "inter", "plex", "georgia", "mono"]);
 export type AppFont = z.infer<typeof AppFont>;
 
-export const AccentPreset = z.enum(["indigo", "tide", "ember", "rose", "brass", "orchid", "moss", "sky"]);
+export const AccentPreset = z.enum(["gold", "indigo", "tide", "ember", "rose", "brass", "orchid", "moss", "sky"]);
 export type AccentPreset = z.infer<typeof AccentPreset>;
 
-export const MotionTheme = z.enum(["expressive", "minimal-quiet", "minimal-dot"]);
+export const MotionTheme = z.enum(["expressive", "minimal-quiet", "minimal-dot"]).transform(() => "expressive" as const);
 export type MotionTheme = z.infer<typeof MotionTheme>;
 
-export const AppColorTheme = z.enum(["ensemble", "graphite", "lagoon", "aurora", "juniper", "blueprint"]);
+export const AppColorTheme = z.enum(["ensemble", "aubergine", "graphite", "lagoon", "aurora", "juniper", "blueprint"]);
 export type AppColorTheme = z.infer<typeof AppColorTheme>;
 
 export const AppearanceSettings = z.object({
@@ -101,11 +101,11 @@ export const AppearanceSettings = z.object({
   colorTheme: AppColorTheme.default("ensemble"),
   textScale: z.number().min(80).max(130).default(100),
   font: AppFont.default("system"),
-  /** Expressive is the default. Minimal suites share the same slots. */
+  /** Legacy motion choices normalize to the single Expressive system. */
   motion: MotionTheme.default("expressive"),
   reduceMotion: z.boolean().default(false),
   /** Curated accent. Ignored while accentCustom is set. */
-  accent: AccentPreset.default("indigo"),
+  accent: AccentPreset.default("gold"),
   /** User-picked #rrggbb. Null means the preset is in use. */
   accentCustom: z
     .string()

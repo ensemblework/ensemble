@@ -286,7 +286,7 @@ export function Splash({ active }: { active: boolean }) {
   return (
     <div className="m-splash" data-motion-slot="brand.splash" data-state="reveal" data-motion-loading="1" aria-hidden>
       <span className="m-splash-tile">
-        <BrandMorph size={56} state={active ? "loop" : "idle"} />
+        <BrandMorph size={56} kind="threadline" state={active ? "loop" : "idle"} />
       </span>
     </div>
   );

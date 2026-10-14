@@ -1,6 +1,7 @@
 import type { AccentPreset, AppearanceSettings } from "@ensemble/shared-types";
 
 export const ACCENT_PRESETS: Array<{ id: AccentPreset; label: string; dark: string; light: string }> = [
+  { id: "gold", label: "Satin Gold", dark: "#D7B56F", light: "#876324" },
   { id: "indigo", label: "Indigo", dark: "#7c6af7", light: "#5346d6" },
   { id: "tide", label: "Tide", dark: "#5dcec6", light: "#0f766e" },
   { id: "ember", label: "Ember", dark: "#f0a36a", light: "#c2410c" },
@@ -174,7 +175,7 @@ function paintStoredAppearance(): void {
   const root = document.documentElement;
   const theme = raw.theme === "system" ? (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark") : raw.theme === "light" ? "light" : "dark";
   root.dataset.theme = theme;
-  const palettes = ["ensemble", "graphite", "lagoon", "aurora", "juniper", "blueprint"];
+  const palettes = ["ensemble", "aubergine", "graphite", "lagoon", "aurora", "juniper", "blueprint"];
   const paletteCookie = document.cookie.match(/(?:^|; )ensemble_color_theme=([^;]*)/);
   let savedPalette = "";
   try { savedPalette = decodeURIComponent(paletteCookie?.[1] || ""); } catch {}
@@ -185,10 +186,10 @@ function paintStoredAppearance(): void {
   root.dataset.font = raw.font || "system";
   if (raw.textScale) root.style.fontSize = `${raw.textScale}%`;
   const osReduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
-  const named = raw.motion === "expressive" || raw.motion === "minimal-quiet" || raw.motion === "minimal-dot";
-  root.dataset.motionTheme = named ? raw.motion : osReduce ? "minimal-dot" : "expressive";
+  root.dataset.motionTheme = "expressive";
   root.dataset.reduceMotion = String(!!raw.reduceMotion || osReduce);
   const presets: Record<string, [string, string]> = {
+    gold: ["#D7B56F", "#876324"],
     indigo: ["#7c6af7", "#5346d6"],
     tide: ["#5dcec6", "#0f766e"],
     ember: ["#f0a36a", "#c2410c"],
@@ -198,10 +199,10 @@ function paintStoredAppearance(): void {
     moss: ["#a9cc7e", "#3f6b24"],
     sky: ["#82b3f5", "#1d4f91"],
   };
-  const pair = presets[accent || "indigo"] ?? presets.indigo!;
+  const pair = presets[accent || "gold"] ?? presets.gold!;
   const chosen = accentCustom && /^#[0-9a-fA-F]{6}$/.test(accentCustom) ? accentCustom : theme === "light" ? pair[1] : pair[0];
   const css = getComputedStyle(root);
-  const surfaces = root.dataset.colorTheme === "ensemble" ? undefined : ["--bg", "--sidebar", "--panel", "--raised", "--tile"].map((key) => css.getPropertyValue(key).trim());
+  const surfaces = ["--bg", "--sidebar", "--panel", "--raised", "--tile"].map((key) => css.getPropertyValue(key).trim());
   const resolved = resolveAccent(chosen, theme, surfaces);
   root.style.setProperty("--accent", resolved.hex);
   root.style.setProperty("--accent-rgb", resolved.rgb);

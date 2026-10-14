@@ -4,28 +4,10 @@ import { useLayoutEffect, useRef, useState, type CSSProperties, type FormEvent, 
 import { createPortal } from "react-dom";
 import { searchPhase, type SearchPhase } from "@/lib/motion/search-phase";
 import { useDelayedFlag } from "@/lib/motion/use-delayed-flag";
+import { BrandMorph } from "./brand-morph";
 import { cx } from "@/components/ui";
 
-function EmptyMark() {
-  return (
-    <span className="sq-empty-mark" aria-hidden>
-      <svg width="40" height="28" viewBox="0 0 40 28">
-        <g className="em-x">
-          <path d="M14 4V14A6 6 0 0 0 26 14V4" />
-          <path className="thread" d="M18 4V12C18 16 21 17 22 21C22.6 23.5 21.6 25.5 20.5 26.5" />
-        </g>
-        <g className="em-q">
-          <path d="M14 4V14A6 6 0 0 0 26 14V4" />
-          <path className="a" d="M18 4V14A2 2 0 0 0 22 14V4" />
-        </g>
-        <g className="em-d">
-          <circle cx="14" cy="14" r="2.6" />
-          <circle className="a" cx="26" cy="14" r="2.6" />
-        </g>
-      </svg>
-    </span>
-  );
-}
+function EmptyMark() { return <BrandMorph size={32} />; }
 
 export function SearchQuery({
   value,
@@ -160,7 +142,7 @@ export function SearchQuery({
             onBlur={() => setFocused(false)}
             onKeyDown={onKeyDown}
           />
-          <span className="sq-pip" aria-hidden />
+          {phase === "searching" ? <BrandMorph size={18} kind="beacon" state="loop" /> : null}
           <span className="sq-trk" aria-hidden>
             <i />
           </span>

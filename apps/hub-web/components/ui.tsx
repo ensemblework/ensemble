@@ -1,4 +1,5 @@
 "use client";
+import { BrandMorph } from "./motion/brand-morph";
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
@@ -132,12 +133,7 @@ export function Toggle({
 export function Spinner({ size = 14, active = true }: { size?: number; active?: boolean }) {
   const shown = useDelayedFlag(active);
   if (!shown) return null;
-  return (
-    <span className="m-duet m-loop" style={{ ["--s" as string]: `${size}px` }} data-motion-slot="control.spinner" data-state="running" data-motion-loading="1" aria-hidden>
-      <i />
-      <i />
-    </span>
-  );
+  return <span data-motion-slot="control.spinner" data-state="running" data-motion-loading="1" aria-hidden><BrandMorph size={size} kind="beacon" state="loop" /></span>;
 }
 
 export function InfoTip({ text }: { text: string }) {
@@ -151,10 +147,7 @@ export function InfoTip({ text }: { text: string }) {
 export function Empty({ children, title }: { children: React.ReactNode; title?: string }) {
   return (
     <div className="empty-state" data-motion-slot="state.empty" data-state="idle">
-      <svg className="m-loose m-loop mb-2" width="36" height="28" viewBox="0 0 36 28" aria-hidden>
-        <path d="M4 8c6 0 8 12 14 12s6-10 14-8" fill="none" stroke="var(--accent)" strokeWidth="1.5" strokeLinecap="round" />
-        <circle cx="30" cy="12" r="2" fill="var(--ink)" />
-      </svg>
+      <BrandMorph size={32} className="mb-2" />
       {title ? <div className="mb-1 font-medium text-ink">{title}</div> : null}
       {children}
     </div>

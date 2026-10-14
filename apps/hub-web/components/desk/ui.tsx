@@ -18,6 +18,7 @@ export function DeskPreviewProvider({ children }: { children: ReactNode }) {
 export type WP = { c?: number; r?: number; state?: State; mobile?: boolean; hover?: boolean; style?: CSSProperties; plots?: boolean };
 
 export const ACCENTS = {
+  gold: { hex: "#D7B56F", rgb: "215 181 111", label: "Satin Gold" },
   indigo: { hex: "#7c6af7", rgb: "124 106 247", label: "Indigo" },
   orchid: { hex: "#cf9cf2", rgb: "207 156 242", label: "Orchid" },
   rose: { hex: "#f0a0b8", rgb: "240 160 184", label: "Rose" },

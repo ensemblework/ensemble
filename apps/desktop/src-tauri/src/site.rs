@@ -133,13 +133,13 @@ fn nonempty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
 
-/// Accept only the three brand styles. Anything else is ignored so a page cannot
+/// Normalize legacy brand styles to Expressive. Anything else is ignored so a page cannot
 /// store an arbitrary string in the shell.
 pub fn parse_motion_theme(raw: Option<&str>) -> Option<&'static str> {
     match raw.map(str::trim) {
         Some("expressive") => Some("expressive"),
-        Some("minimal-quiet") => Some("minimal-quiet"),
-        Some("minimal-dot") => Some("minimal-dot"),
+        Some("minimal-quiet") => Some("expressive"),
+        Some("minimal-dot") => Some("expressive"),
         _ => None,
     }
 }
@@ -157,7 +157,7 @@ pub fn motion_probe_script(report_prefix: &str) -> String {
     let key = serde_json::to_string(MOTION_THEME_KEY).expect("key");
     let prefix = serde_json::to_string(report_prefix).expect("prefix");
     format!(
-        r#"(function(){{var key={key};var prefix={prefix};var allowed={{expressive:1,"minimal-quiet":1,"minimal-dot":1}};function report(){{var raw;try{{raw=localStorage.getItem(key);}}catch(e){{return;}}var motion;try{{motion=JSON.parse(raw).motion;}}catch(e){{return;}}if(!allowed[motion])return;var img=new Image();img.src=prefix+encodeURIComponent(motion)+"?t="+Date.now();}}report();setTimeout(report,1000);setInterval(report,3000);}})();"#
+        r#"(function(){{var key={key};var prefix={prefix};var allowed={{expressive:1,"minimal-quiet":1,"minimal-dot":1}};function report(){{var raw;try{{raw=localStorage.getItem(key);}}catch(e){{return;}}var motion;try{{motion=JSON.parse(raw).motion;}}catch(e){{return;}}if(!allowed[motion])return;var img=new Image();img.src=prefix+"expressive"+"?t="+Date.now();}}report();setTimeout(report,1000);setInterval(report,3000);}})();"#
     )
 }
 
@@ -344,9 +344,9 @@ mod tests {
         assert_eq!(parse_motion_theme(Some(" expressive ")), Some("expressive"));
         assert_eq!(
             parse_motion_theme(Some("minimal-quiet")),
-            Some("minimal-quiet")
+            Some("expressive")
         );
-        assert_eq!(parse_motion_theme(Some("minimal-dot")), Some("minimal-dot"));
+        assert_eq!(parse_motion_theme(Some("minimal-dot")), Some("expressive"));
         assert_eq!(parse_motion_theme(Some("expressive;")), None);
         assert_eq!(parse_motion_theme(None), None);
         assert_eq!(parse_motion_theme(Some("")), None);
@@ -373,10 +373,10 @@ mod tests {
         assert!(blanks.contains("preventDefault"));
         assert!(!blanks.contains("setItem"));
         assert!(!blanks.contains("localStorage"));
-        assert_eq!(theme_from_motion_path("/minimal-dot"), Some("minimal-dot"));
+        assert_eq!(theme_from_motion_path("/minimal-dot"), Some("expressive"));
         assert_eq!(
             theme_from_motion_path("/minimal-dot?t=1"),
-            Some("minimal-dot")
+            Some("expressive")
         );
         assert_eq!(theme_from_motion_path("/nope"), None);
         assert_eq!(theme_from_motion_path("/%2e%2e/expressive"), None);

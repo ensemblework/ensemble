@@ -80,15 +80,14 @@ export function PageProgress() {
 
   const bar = visible ? (
     <div className="m-progress" data-motion-slot="page.progress" data-state="loading" data-motion-loading="1" aria-hidden>
-      <i className="a m-loop" />
-      <i className="b m-loop" />
+      <BrandMorph kind="threadline" flat state="loop" size={32} />
     </div>
   ) : null;
   const mark =
     pending && bareMain
       ? createPortal(
           <div className="m-route-mark" aria-hidden>
-            <BrandMorph size={40} loader state="loop" />
+            <BrandMorph size={40} kind="threadline" loader state="loop" />
           </div>,
           bareMain,
         )

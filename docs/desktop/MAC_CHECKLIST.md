@@ -15,8 +15,8 @@ The app shell is universal, but the local API inside it uses this Mac's Node and
   macOS 14 and earlier: right-click the app, then Open, then Open again.
   macOS 15 and later: double-click it once, then System Settings > Privacy & Security > Open Anyway.
 
-- [ ] The app window and the Two voices icon.
-  The window opens. The Dock icon is the Two voices mark.
+- [ ] The app window and the Woven Chorus icon.
+  The window opens. The Dock icon is the Satin Gold Woven Chorus mark on its Deep Petrol tile.
 
 - [ ] Enter a Gemini key and run a simple agent task.
   Settings → Assistant → Models → Manage keys → Google Gemini. Paste a key from [Google AI Studio](https://aistudio.google.com/apikey).
@@ -46,3 +46,5 @@ The app shell is universal, but the local API inside it uses this Mac's Node and
 - [ ] Remove the Mac in web Settings and confirm it stops.
   In the browser: Settings → Devices → Revoke on that Mac.
   Within a couple of seconds the desktop status says: "Removed from Ensemble on the web. Pair again to keep running remote tasks."
+
+Brand checks: run `pnpm brand:check` and `node scripts/check-icons.mjs`. Verify the startup mark, Finder/Dock icon, light/dark Hub, assistant minimized while active, and OS reduced motion.

@@ -1,17 +1,10 @@
-export function Mark({ size = 28 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden="true" focusable="false">
-      <path fill="var(--agent)" d="M4 3H8V17A8 8 0 0 0 24 17V3H28V17A12 12 0 0 1 4 17Z" />
-      <path fill="var(--ink)" d="M10 3H14V17A2 2 0 0 0 18 17V3H22V17A6 6 0 0 1 10 17Z" />
-    </svg>
-  );
+"use client";
+import { useId } from "react";
+import { svgBody } from "@ensemble/brand";
+
+export function Mark({ size = 32 }: { size?: number }) {
+  const id = useId();
+  return <svg width={size} height={size} viewBox="0 0 320 320" aria-hidden="true" focusable="false" dangerouslySetInnerHTML={{ __html: svgBody({ id, micro: size <= 20 }) }} />;
 }
 
-export function Wordmark() {
-  return (
-    <span className="wordmark">
-      <Mark />
-      <span>Ensemble</span>
-    </span>
-  );
-}
+export function Wordmark() { return <span className="wordmark"><Mark /><span>Ensemble</span></span>; }

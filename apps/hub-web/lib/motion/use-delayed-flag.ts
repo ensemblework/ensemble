@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { MOTION_MIN_VISIBLE_MS, MOTION_SHOW_DELAY_MS, delayIsShown, initialDelay, stepDelay, type DelaySnapshot } from "./delay";
 
-/** True only after `active` has lasted past the show delay, then for the minimum hold. */
+/** True only after `active` has lasted past the show delay, and stops when the work ends. */
 export function useDelayedFlag(active: boolean, delay = MOTION_SHOW_DELAY_MS, minVisible = MOTION_MIN_VISIBLE_MS): boolean {
   const [snapshot, setSnapshot] = useState<DelaySnapshot>(initialDelay);
 

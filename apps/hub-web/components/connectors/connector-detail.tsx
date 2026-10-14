@@ -1,4 +1,5 @@
 "use client";
+import { BrandMorph } from "@/components/motion/brand-morph";
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
@@ -536,7 +537,7 @@ function ConnectedPanel({ entry, settings, patch }: { entry: CatalogEntry; setti
                     onClick={() => sync.mutate(id)}
                     aria-label={`Sync ${sourceName(entry, id)} now`}
                   >
-                    <RefreshCw size={11} className={cx(sync.isPending && sync.variables === id && "animate-spin")} /> Sync now
+                    {sync.isPending && sync.variables === id ? <BrandMorph size={14} kind="beacon" state="loop" /> : <RefreshCw size={11} />} Sync now
                   </button>
                   {!products.length && patch ? (
                     <Toggle
@@ -680,7 +681,7 @@ export function McpPanel({ entry, connection }: { entry: Pick<CatalogEntry, "id"
           ) : null}
           {status === "connected" && connection ? (
             <button type="button" className="btn-ghost text-[12.5px]" disabled={reload.isPending} onClick={() => reload.mutate()}>
-              <RefreshCw size={11} className={cx(reload.isPending && "animate-spin")} /> Refresh tools
+              {reload.isPending ? <BrandMorph size={14} kind="beacon" state="loop" /> : <RefreshCw size={11} />} Refresh tools
             </button>
           ) : null}
           {connection && !confirming ? (

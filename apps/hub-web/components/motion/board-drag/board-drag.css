@@ -2,22 +2,18 @@
    Every animated property is transform or opacity. Placeholder, hover and over-column looks live on pseudo-elements
    whose opacity is what changes. Style = nearest [data-motion-theme]; reduce = [data-reduce-motion="true"] / OS. */
 .bdg {
-  --bdg-agent: #9d8fff; --bdg-agent-hi: #b4a9ff; --bdg-you: var(--you, #f3eee6); --bdg-ok: var(--ok, #a3c4ab); --bdg-err: var(--err, #d98c82);
-  --bdg-card: var(--raise, #211d19); --bdg-col: color-mix(in srgb, var(--ink, #f3eee6) 3%, transparent); --bdg-line: var(--line); --bdg-hair: var(--hair);
+  --bdg-agent: #D7B56F; --bdg-agent-hi: #F5DFA5; --bdg-you: var(--you, #F2F0E9); --bdg-ok: var(--ok, #a3c4ab); --bdg-err: var(--err, #d98c82);
+  --bdg-card: var(--raise, #211d19); --bdg-col: color-mix(in srgb, var(--ink, #F2F0E9) 3%, transparent); --bdg-line: var(--line); --bdg-hair: var(--hair);
   --bdg-radius: 12px; --bdg-gap: 8px;
   --bdg-shadow: 0 22px 44px -14px rgba(0,0,0,.6), 0 6px 14px -6px rgba(0,0,0,.4);
   --bdg-hover-shadow: 0 8px 18px -10px rgba(0,0,0,.6);
   position: relative; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(220px, 1fr); gap: 12px; overflow-x: auto;
 }
 [data-theme="light"] .bdg {
-  --bdg-agent: #7c6af7; --bdg-agent-hi: #9d8fff;
+  --bdg-agent: #876324; --bdg-agent-hi: #D7B56F;
   --bdg-shadow: 0 22px 40px -16px rgba(28,25,21,.32), 0 6px 12px -6px rgba(28,25,21,.18);
   --bdg-hover-shadow: 0 8px 18px -10px rgba(28,25,21,.25);
 }
-[data-motion-theme="minimal-quiet"] .bdg { --bdg-shadow: 0 10px 22px -12px rgba(0,0,0,.55); }
-[data-motion-theme="minimal-dot"] .bdg { --bdg-shadow: 0 6px 14px -8px rgba(0,0,0,.5); }
-[data-theme="light"][data-motion-theme="minimal-quiet"] .bdg, [data-theme="light"] [data-motion-theme="minimal-quiet"] .bdg { --bdg-shadow: 0 10px 22px -12px rgba(28,25,21,.25); }
-[data-theme="light"][data-motion-theme="minimal-dot"] .bdg, [data-theme="light"] [data-motion-theme="minimal-dot"] .bdg { --bdg-shadow: 0 6px 14px -8px rgba(28,25,21,.22); }
 
 /* ---------- columns ---------- */
 .bdg-col { isolation: isolate; position: relative; display: flex; flex-direction: column; min-height: 0; border-radius: 14px; background: var(--bdg-col); border: 1px solid var(--bdg-line); }
@@ -27,17 +23,9 @@
 /* Drop targets keep a neutral outline. */
 .bdg-col::after { background: color-mix(in srgb, var(--ink) 3%, transparent); box-shadow: inset 0 0 0 1px var(--bdg-hair); }
 .bdg-col[data-over="deny"]::after { background: color-mix(in srgb, var(--ink) 3%, transparent); box-shadow: inset 0 0 0 1px var(--bdg-hair); }
-/* Quiet: hairline rim only */
-[data-motion-theme="minimal-quiet"] .bdg-col::after { background: none; box-shadow: inset 0 0 0 1px var(--bdg-hair); }
-[data-motion-theme="minimal-quiet"] .bdg-col[data-over="deny"]::after { box-shadow: inset 0 0 0 1px var(--bdg-hair); }
-/* Dot: nothing on the column, a dot by the header count instead */
-[data-motion-theme="minimal-dot"] .bdg-col::after { display: none; }
 .bdg-ch { position: relative; display: flex; align-items: center; gap: 8px; padding: 11px 12px 9px; font-weight: 600; font-size: 13px; }
 .bdg-n { margin-left: auto; font: 500 11px var(--font-mono); color: var(--faint); display: inline-block; }
 .bdg-ch::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--bdg-agent); opacity: 0; transform: scale(.4); transition: opacity .2s, transform .2s; display: none; }
-[data-motion-theme="minimal-dot"] .bdg-ch::after { display: block; }
-[data-motion-theme="minimal-dot"] .bdg-col[data-over="yes"] .bdg-ch::after { opacity: 1; transform: none; }
-[data-motion-theme="minimal-dot"] .bdg-col[data-over="deny"] .bdg-ch::after { opacity: 1; transform: none; background: var(--bdg-err); }
 .bdg-list { position: relative; display: flex; flex-direction: column; gap: var(--bdg-gap); padding: 2px 10px 10px; flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
 .bdg-foot { font-size: 12.5px; color: var(--faint); padding: 4px 6px; }
 
@@ -58,15 +46,12 @@
 .bdg-card.is-done .bdg-t { color: var(--muted); }
 .bdg-grip { position: absolute; left: 3px; top: 50%; width: 6px; height: 14px; margin-top: -7px; opacity: 0; transition: opacity .18s;
   background: radial-gradient(circle, var(--faint) 1px, transparent 1.4px) 0 0 / 3px 4.5px; }
-[data-motion-theme="minimal-dot"] .bdg-grip { width: 5px; height: 5px; margin-top: -2.5px; left: 4px; border-radius: 50%; background: var(--bdg-agent); }
 /* hover / grab affordance */
 @media (hover: hover) {
   .bdg:not([data-dragging]) .bdg-card:hover .bdg-grip { opacity: 1; }
   .bdg:not([data-dragging]) .bdg-card:hover::after { opacity: 1; }
   /* 1px lift on the card only. translate, never transform, so it does not replace dnd-kit or popup centering. */
   [data-motion-theme="expressive"] .bdg:not([data-dragging]) .bdg-card:hover, .bdg:not([data-dragging]) .bdg-card:hover:where(:not([data-motion-theme] *)) { translate: 0 -1px; }
-  [data-motion-theme="minimal-quiet"] .bdg-card::after { box-shadow: inset 0 0 0 1px var(--bdg-hair); }
-  [data-motion-theme="minimal-dot"] .bdg-card::after { display: none; }
 }
 .bdg-card[data-press] { transform: scale(var(--m-scale-press, .97)); }
 .bdg-card:focus-visible { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--bdg-agent); }
@@ -79,11 +64,6 @@
 .bdg-card.is-ph.is-landing::before { opacity: 0; }
 /* A neutral stitched gap marks the original position. */
 .bdg-card::before { border: 1.5px dashed var(--bdg-hair); background: color-mix(in srgb, var(--ink) 3%, transparent); }
-/* Quiet: hairline outline */
-[data-motion-theme="minimal-quiet"] .bdg-card::before { border: 1px solid var(--bdg-hair); background: none; }
-/* Dot: one violet dot marks where it lands, plus one faint line */
-[data-motion-theme="minimal-dot"] .bdg-card::before { inset: 50% auto auto 2px; width: 7px; height: 7px; margin-top: -3.5px; border: 0; border-radius: 50%; background: var(--bdg-agent); }
-[data-motion-theme="minimal-dot"] .bdg-card.is-ph { background: linear-gradient(var(--bdg-hair), var(--bdg-hair)) 16px 50% / calc(100% - 22px) 1px no-repeat; }
 
 /* ---------- overlay ---------- */
 .bdg-layer { position: fixed; inset: 0; pointer-events: none; z-index: 60; overflow: hidden; }
@@ -93,7 +73,6 @@
 .bdg-float .bdg-card { height: 100%; box-sizing: border-box; cursor: grabbing; transition: opacity .15s; }
 .bdg-float .bdg-card::after, .bdg-float .bdg-grip { opacity: 0; }
 [data-motion-theme="expressive"] .bdg-float .bdg-card, .bdg-float .bdg-card:where(:not([data-motion-theme] *)) { border-color: var(--bdg-hair); }
-[data-motion-theme="minimal-quiet"] .bdg-float .bdg-card { border-color: var(--bdg-hair); }
 .bdg-float[data-intent="cancel"] .bdg-card { opacity: .72; }
 .bdg-float[data-intent="deny"] .bdg-card { opacity: .8; }
 [data-motion-theme="expressive"] .bdg-float[data-intent="deny"] .bdg-card { border-color: var(--bdg-hair); }
@@ -104,7 +83,6 @@
 .bdg-rope { position: absolute; left: 0; top: 0; width: 2px; height: 1600px; border-radius: 1px; background: linear-gradient(transparent, var(--bdg-agent) 40%, var(--bdg-agent-hi)); transform-origin: 50% 100%; will-change: transform; }
 .bdg-hook { position: absolute; left: 0; top: 0; width: 10px; height: 10px; box-sizing: border-box; border-radius: 50%; border: 2px solid var(--bdg-agent-hi); background: var(--bdg-card); will-change: transform; }
 .bdg-spark { position: absolute; left: 0; top: 0; width: 4px; height: 4px; border-radius: 50%; background: var(--bdg-agent-hi); }
-/* Dot: the agent's violet dot */
 .bdg-adot { position: absolute; left: 0; top: 0; width: 8px; height: 8px; border-radius: 50%; background: var(--bdg-agent); will-change: transform, opacity; }
 
 /* ---------- owner marks ---------- */

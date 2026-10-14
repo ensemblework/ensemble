@@ -1,6 +1,6 @@
 [package]
 name = "ensemble-desktop"
-version = "0.3.2"
+version = "0.3.3"
 description = "Cross-platform shell that opens the hosted Ensemble site"
 edition = "2021"
 rust-version = "1.87"

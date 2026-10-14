@@ -1,13 +1,10 @@
 {
   "version": 1,
-  "fallback": {
-    "minimal-dot": "minimal-quiet",
-    "minimal-quiet": "expressive"
-  },
+  "fallback": {},
   "themes": {
     "expressive": {
       "label": "Expressive",
-      "source": "rounds 1-2",
+      "source": "packages/brand",
       "ease-enter": "cubic-bezier(.22,1,.36,1)",
       "ease-move": "cubic-bezier(.34,1.3,.64,1)",
       "ease-exit": "cubic-bezier(.4,0,1,1)",
@@ -25,69 +22,6 @@
       "particles": 1,
       "color-mode": "duo",
       "note": "Springs with overshoot, braids, sparks, confetti. The default."
-    },
-    "minimal-quiet": {
-      "label": "Minimal · Quiet",
-      "source": "round 3",
-      "ease-enter": "cubic-bezier(.25,.1,.25,1)",
-      "ease-move": "cubic-bezier(.33,0,.2,1)",
-      "ease-exit": "cubic-bezier(.4,0,.6,1)",
-      "ease-loop": "cubic-bezier(.45,0,.55,1)",
-      "spring": "none",
-      "dur-micro": 200,
-      "dur-ui": 420,
-      "dur-move": 640,
-      "dur-loop": 3200,
-      "amp": 4,
-      "scale-press": 0.985,
-      "overshoot": 0,
-      "stroke": 1.5,
-      "ornament": 0,
-      "particles": 0,
-      "color-mode": "mono+accent",
-      "note": "Hairline strokes, one violet accent, slow sine drift. Nothing overshoots."
-    },
-    "minimal-dot": {
-      "label": "Minimal · Dot",
-      "source": "round 3",
-      "ease-enter": "cubic-bezier(.25,.1,.25,1)",
-      "ease-move": "cubic-bezier(.33,0,.2,1)",
-      "ease-exit": "cubic-bezier(.4,0,.6,1)",
-      "ease-loop": "cubic-bezier(.45,0,.55,1)",
-      "spring": "none",
-      "dur-micro": 200,
-      "dur-ui": 480,
-      "dur-move": 720,
-      "dur-loop": 2800,
-      "amp": 3,
-      "scale-press": 0.99,
-      "overshoot": 0,
-      "stroke": 1,
-      "ornament": 0,
-      "particles": 0,
-      "color-mode": "mono+accent",
-      "note": "Only two dots (you + agent) and at most one line. States are told by fill, ring and position."
-    },
-    "reduced": {
-      "label": "Reduced (overlay)",
-      "source": "OS / app setting",
-      "ease-enter": "linear",
-      "ease-move": "linear",
-      "ease-exit": "linear",
-      "ease-loop": "linear",
-      "spring": "none",
-      "dur-micro": 0,
-      "dur-ui": 150,
-      "dur-move": 0,
-      "dur-loop": 0,
-      "amp": 0,
-      "scale-press": 1,
-      "overshoot": 0,
-      "stroke": 1.5,
-      "ornament": 0,
-      "particles": 0,
-      "color-mode": "inherit",
-      "note": "Not a style: an overlay on any style. Crossfades of 150 ms or less, loops become still poses."
     }
   },
   "slots": {
@@ -197,7 +131,7 @@
         "off",
         "focus"
       ],
-      "expressive": "r2 Button · Toggle · Checkbox, Tabs · Bell · Focus rim"
+      "expressive": "r2 Button \u00b7 Toggle \u00b7 Checkbox, Tabs \u00b7 Bell \u00b7 Focus rim"
     },
     "moment.celebrate": {
       "states": [

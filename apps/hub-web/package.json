@@ -57,7 +57,8 @@
     "pdfjs-dist": "^6.4.299",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
-    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
+    "@ensemble/brand": "workspace:*"
   },
   "devDependencies": {
     "@types/jsdom": "^30.0.0",

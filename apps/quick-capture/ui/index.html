@@ -4,11 +4,12 @@
     <meta charset="utf-8" />
     <title>Quick capture</title>
     <link rel="stylesheet" href="app.css" />
+    <link rel="stylesheet" href="morph.css" />
   </head>
   <body>
     <main>
       <header>
-        <img src="ensemble-lockup-16-dark.svg" width="90" height="16" alt="Ensemble" />
+        <img src="ensemble-lockup-16-dark.svg" width="112" height="24" alt="Ensemble" />
         <h1>Quick capture</h1>
         <span id="chord" class="kbd"></span>
       </header>
@@ -29,8 +30,10 @@
           <button type="submit">Save task</button>
         </div>
       </form>
+      <span id="save-motion" hidden aria-hidden="true"></span>
       <p id="status" role="status"></p>
     </main>
+    <script src="ensemble-morph.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

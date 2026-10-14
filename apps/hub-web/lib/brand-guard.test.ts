@@ -10,7 +10,7 @@ const TEXT = new Set([".ts", ".tsx", ".js", ".jsx", ".css", ".svg", ".py", ".htm
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
-    if (name === "node_modules" || name === ".next" || name === "dist") continue;
+    if (name === "node_modules" || name.startsWith(".next") || name === "dist" || name === "target" || name === "out" || name === "resources" || name === ".venv") continue;
     const path = join(dir, name);
     const stat = statSync(path);
     if (stat.isDirectory()) walk(path, out);
@@ -26,8 +26,8 @@ function pngHeader(path: string) {
 }
 
 test("the old mark and the login constellation stay gone", () => {
-  const roots = [join(ROOT, "apps"), join(ROOT, "design/icons")];
-  const banned = [/function Constellation\b/, /M36 310C80 250/, /C7\.4 17/];
+  const roots = [join(ROOT, "apps"), join(ROOT, "packages/brand"), join(ROOT, "design/brand")];
+  const banned = [/function Constellation\b/, /M36 310C80 250/, /C7\.4 17/, /M316 300 V540/, /M2 1H5V10A5/, /M4 3H8V17A8/, /M3 2\.5V7\.5A4/];
   const hits: string[] = [];
   for (const root of roots) {
     for (const file of walk(root)) {
@@ -39,7 +39,7 @@ test("the old mark and the login constellation stay gone", () => {
   }
   assert.deepEqual(hits, []);
   const ensemble = readFileSync(join(ROOT, "design/icons/ui-icons/svg/ensemble.svg"), "utf8");
-  assert.match(ensemble, /M3 2H6V13/);
+  assert.match(ensemble, /viewBox="0 0 320 320"/);
   const slot = readFileSync(join(ROOT, "apps/hub-web/components/motion/slot.tsx"), "utf8");
   assert.doesNotMatch(slot, /296 280 432 476/);
 });
@@ -65,10 +65,9 @@ test("metadataBase comes from the public site url and is never invented", () => 
   assert.equal(publicSiteUrl("https://ensemble.duckdns.org")?.origin, "https://ensemble.duckdns.org");
 });
 
-test("the apple icon is an opaque 180px tile and quiet celebration uses the brand pair", () => {
+test("the apple icon is opaque and celebration uses the shared brand motion", () => {
   const apple = pngHeader(join(ROOT, "apps/hub-web/app/apple-icon.png"));
   assert.deepEqual(apple, { width: 180, height: 180, colorType: 2 });
-  const css = readFileSync(join(ROOT, "apps/hub-web/components/motion/suite.css"), "utf8");
-  assert.match(css, /\.m-ce-u path \{[^}]*stroke: var\(--brand-agent/);
-  assert.match(css, /\.m-ce-u path\.a \{ stroke: var\(--brand-you/);
+  const source = readFileSync(join(ROOT, "apps/hub-web/components/motion/celebrate.tsx"), "utf8");
+  assert.match(source, /<BrandMorph/);
 });

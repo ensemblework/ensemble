@@ -1,8 +1,8 @@
 :root {
   color-scheme: light dark;
   font-family: system-ui, sans-serif;
-  background: #101114;
-  color: #f4f4f5;
+  background: #10282b;
+  color: #f2f0e9;
 }
 
 body {
@@ -30,14 +30,14 @@ p {
   margin: 8px 0 0;
   font-size: 12.5px;
   line-height: 1.4;
-  color: #a1a1aa;
+  color: #aec3bf;
 }
 
 label {
   display: block;
   margin-top: 10px;
   font-size: 12px;
-  color: #a1a1aa;
+  color: #aec3bf;
 }
 
 input,
@@ -45,9 +45,9 @@ textarea {
   box-sizing: border-box;
   width: 100%;
   margin-top: 4px;
-  border: 1px solid #3f3f46;
+  border: 1px solid #2d4b4d;
   border-radius: 8px;
-  background: #18181b;
+  background: #173236;
   color: inherit;
   font: inherit;
   padding: 8px 10px;
@@ -67,8 +67,8 @@ textarea {
 button {
   border: 0;
   border-radius: 8px;
-  background: #1f6feb;
-  color: white;
+  background: #d7b56f;
+  color: #212819;
   font: inherit;
   padding: 7px 12px;
   cursor: pointer;
@@ -81,7 +81,7 @@ button#cancel {
 
 .kbd {
   font-size: 11px;
-  color: #a1a1aa;
+  color: #aec3bf;
 }
 
 #status {

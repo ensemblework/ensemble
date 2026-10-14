@@ -3,6 +3,7 @@ import { Figtree, Fraunces, JetBrains_Mono } from "next/font/google";
 import { JsonLd } from "@/components/json-ld";
 import { organization, website } from "@/lib/schema";
 import { site } from "@/lib/site";
+import "@ensemble/brand/motion.css";
 import "./globals.css";
 
 const sans = Figtree({ subsets: ["latin"], display: "swap", variable: "--font-sans" });
@@ -37,7 +38,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#141210",
+  themeColor: "#10282b",
   colorScheme: "dark",
 };
 

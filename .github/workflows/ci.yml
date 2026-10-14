@@ -42,6 +42,12 @@ jobs:
       # Connector logos are built from components/connectors/brands; the generated modules must match.
       - run: node scripts/build-brand-logos.mjs --check
 
+      - name: Verify Ensemble brand assets
+        run: |
+          pnpm brand:check
+          node scripts/check-icons.mjs
+          pnpm --filter @ensemble/brand test
+
       - name: Package tests
         run: |
           pnpm --filter @ensemble/shared-types test

@@ -9,7 +9,7 @@ import { AskHost } from "@/components/ask-dialog";
 import { ApiError, api } from "@/lib/api";
 import { isRequestCancelled } from "@/lib/fetch-cancel";
 import { FetchGuards } from "@/lib/use-fetch-guards";
-import { APPEARANCE_KEY, DEFAULT_APPEARANCE, applyAppearance, publishAppearance, resolveMotionTheme, storedMotionChosen, usePersistentState } from "@/lib/prefs";
+import { APPEARANCE_KEY, DEFAULT_APPEARANCE, applyAppearance, resolveMotionTheme, usePersistentState } from "@/lib/prefs";
 
 function Appearance({ children }: { children: React.ReactNode }) {
   const [appearance, , ready] = usePersistentState<AppearanceSettings>(APPEARANCE_KEY, DEFAULT_APPEARANCE);
@@ -33,28 +33,6 @@ function Appearance({ children }: { children: React.ReactNode }) {
     color.addEventListener("change", onChange);
     return () => color.removeEventListener("change", onChange);
   }, [appearance, ready, osReduce]);
-  useEffect(() => {
-    if (!ready || storedMotionChosen()) return;
-    if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    const next = { ...appearance, motion: "minimal-dot" as const, reduceMotion: true };
-    if (window.localStorage.getItem(APPEARANCE_KEY) === null && /(?:^|; )ensemble_accent=/.test(document.cookie)) {
-      document.documentElement.dataset.motionTheme = "minimal-dot";
-      document.documentElement.dataset.reduceMotion = "true";
-      try {
-        sessionStorage.setItem("ensemble.motion.auto", "1");
-      } catch {
-        // private mode
-      }
-      return;
-    }
-    publishAppearance(next);
-    try {
-      sessionStorage.setItem("ensemble.motion.auto", "1");
-    } catch {
-      // private mode
-    }
-    void api.saveSettings({ appearance: { motion: "minimal-dot", reduceMotion: true } }).catch(() => {});
-  }, [appearance, ready]);
   const theme = resolveMotionTheme(appearance, osReduce);
   const reduce = appearance.reduceMotion || osReduce;
   return <MotionContextProvider value={{ theme, reduce }}>{children}</MotionContextProvider>;

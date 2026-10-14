@@ -275,7 +275,7 @@ Where each hard feature lives in this tree. Built-or-not status per feature is i
 | Audit ledger (hash-chained, INSERT-only) | 07 §3 | `apps/hub-api/src/lib/ledger.ts`, `apps/agent-runtime/ensemble_agent/audit/ledger.py` |
 | Scheduled fetching at set times plus a button | 05 §2 | `apps/hub-api/src/jobs/scheduler.ts`, `apps/hub-api/src/connectors/sync.ts` |
 | Capability-aware model/thinking presets | 01 §6, 02 §13 | `apps/hub-api/src/lib/complexity.ts`, `apps/hub-api/src/runtime/models.ts`, `packages/shared-types/src/assistant.ts` |
-| Waiting animations and motion styles | 02 §15 | `apps/hub-web/components/motion/`, `design/motion/` |
+| Waiting animations and reduced motion | 02 §15 | `apps/hub-web/components/motion/`, `packages/brand/` |
 | GitHub via existing CLI login | 03 §10 | `apps/hub-api/src/connectors/accounts.ts` (`gh auth token`), `apps/hub-api/src/lib/git-auth.ts` |
 | Plots | [20](20_PLOTS_DESIGN.md) | `apps/hub-web/app/(hub)/plots/`, `apps/hub-api/src/plots/`, `apps/agent-runtime/ensemble_agent/plots/` |
 | Block diagrams | [21](21_BLOCK_DIAGRAMS_DSL.md), [22](22_BLOCK_DIAGRAMS_FOR_AGENTS.md) | `packages/block-diagrams/`, `apps/hub-web/app/(hub)/diagrams/`, `apps/hub-api/src/diagrams/` |

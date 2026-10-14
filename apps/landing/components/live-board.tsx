@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { WorkingMark } from "./working-mark";
 
 type Column = "proposed" | "you" | "agent" | "needs" | "done";
 type Card = { id: string; title: string; source: string };
@@ -39,14 +40,23 @@ export function LiveBoard() {
 
   useEffect(() => {
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)");
-    if (reduce.matches) return;
-    setAnimate(true);
-    setFrame(0);
-    const timer = window.setInterval(() => {
-      if (document.hidden) return;
-      setFrame((f) => (f + 1) % FRAMES.length);
-    }, BEAT_MS);
-    return () => window.clearInterval(timer);
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const sync = () => {
+      clearInterval(timer);
+      setAnimate(!reduce.matches);
+      setFrame(reduce.matches ? STILL_FRAME : 0);
+      if (reduce.matches) return;
+      let beat = 0;
+      timer = setInterval(() => {
+        if (document.hidden) return;
+        beat += 1;
+        setFrame(beat);
+        if (beat === FRAMES.length - 1) clearInterval(timer);
+      }, BEAT_MS);
+    };
+    sync();
+    reduce.addEventListener("change", sync);
+    return () => { clearInterval(timer); reduce.removeEventListener("change", sync); };
   }, []);
 
   const state = FRAMES[frame];
@@ -102,7 +112,7 @@ export function LiveBoard() {
                   <div className="card-title">{card.title}</div>
                   {status && (
                     <div key={status} className={`status status-${at} fade`}>
-                      {at === "agent" && <span className="spinner" />}
+                      {at === "agent" && <WorkingMark />}
                       {at === "done" && <span className="check">✓</span>}
                       {status}
                     </div>

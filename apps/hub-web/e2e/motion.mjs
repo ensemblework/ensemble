@@ -1,7 +1,7 @@
 /**
- * Motion suites switch live, reduced motion stops loops, and a fast cached
+ * Expressive remains the sole motion system, reduced motion stops loops, and a fast cached
  * page does not flash a loader. The slow path must wait out the show delay
- * and the minimum hold.
+ * with no artificial minimum hold.
  *
  * Run: node apps/hub-web/e2e/motion.mjs
  */
@@ -12,7 +12,7 @@ const API = process.env.HUB_API ?? "http://127.0.0.1:4000";
 const WEB = process.env.HUB_WEB ?? "http://127.0.0.1:3000";
 const CHROME = process.env.CHROME ?? "/usr/bin/google-chrome";
 const SHOW_DELAY = 180;
-const MIN_VISIBLE = 300;
+const MIN_VISIBLE = 0;
 
 function cookieHeader(setCookie) {
   const list = Array.isArray(setCookie) ? setCookie : [setCookie ?? ""];
@@ -64,32 +64,11 @@ try {
   const { context, page } = await openHub(browser, session, false);
   await page.goto(`${WEB}/settings#appearance`, { waitUntil: "domcontentloaded" });
   await page.getByRole("heading", { name: "Settings" }).waitFor();
-  await page.getByRole("radio", { name: /Expressive/ }).waitFor();
+  assert.equal(await page.getByRole("radiogroup", { name: "Motion", exact: true }).count(), 0);
   assert.equal(await theme(page), "expressive");
-
-  await page.getByRole("radio", { name: /Minimal · Quiet/ }).click();
-  assert.equal(await theme(page), "minimal-quiet");
-  await page.getByRole("radio", { name: /Minimal · Dot/ }).click();
-  assert.equal(await theme(page), "minimal-dot");
-  await page.getByRole("radio", { name: /Expressive/ }).click();
-  assert.equal(await theme(page), "expressive");
-  assert.equal(new URL(page.url()).pathname, "/settings");
-
-  const morph = page.locator("[data-motion-slot='agent.thinking'] .u-morph").first();
-  await morph.waitFor({ state: "attached", timeout: 3000 });
-  await page.waitForFunction(() => {
-    const el = document.querySelector("[data-motion-slot='agent.thinking'] .u-morph");
-    const path = el?.querySelector(".u-mo")?.getAttribute("d") ?? "";
-    return el?.hasAttribute("data-running") && path.includes("L");
-  });
-
   await page.getByRole("switch", { name: "Reduce motion" }).click();
   await page.waitForFunction(() => document.documentElement.dataset.reduceMotion === "true");
-  await page.waitForFunction(() => {
-    const el = document.querySelector("[data-motion-slot='agent.thinking'] .u-morph");
-    const path = el?.querySelector(".u-mo")?.getAttribute("d") ?? "";
-    return el && !el.hasAttribute("data-running") && path.includes("A");
-  });
+  assert.equal(await theme(page), "expressive");
   await context.close();
 
   const reducedSession = await signup("os");
@@ -97,8 +76,7 @@ try {
   await reduced.page.goto(`${WEB}/settings#appearance`, { waitUntil: "domcontentloaded" });
   await reduced.page.getByRole("heading", { name: "Settings" }).waitFor();
   await reduced.page.waitForFunction(() => document.documentElement.dataset.reduceMotion === "true");
-  assert.equal(await theme(reduced.page), "minimal-dot");
-  await reduced.page.getByText("this device asked for it").waitFor();
+  assert.equal(await theme(reduced.page), "expressive");
   await reduced.context.close();
 
   const cached = await signup("cache");

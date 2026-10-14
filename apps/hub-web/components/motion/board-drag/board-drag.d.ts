@@ -1,4 +1,4 @@
-export type MotionTheme = "expressive" | "minimal-quiet" | "minimal-dot";
+export type MotionTheme = "expressive";
 export type BoardDragState = "idle" | "hover" | "pressed" | "pickup" | "dragging" | "over" | "reorder" | "drop" | "invalid" | "cancel" | "agent" | "done" | "keyboard";
 export type HapticKind = "lift" | "drop" | "cancel" | "invalid";
 type Timing = { spring?: [number, number]; ms?: number; ease?: string };

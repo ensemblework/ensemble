@@ -85,3 +85,7 @@ test("new act-as values stay tone, and highlights stay at four", () => {
   const lines = quickActions("maker", "today", ["One", "Two", "Three", "Four", "Five"]);
   assert.equal(lines.length, 4);
 });
+
+test("templates accept the shared Satin Gold accent", () => {
+  assert.equal(MarketplaceTemplate.parse({ ...CATALOG[0], accent: "gold" }).accent, "gold");
+});

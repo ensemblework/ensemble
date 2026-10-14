@@ -139,8 +139,17 @@ test("streaming reconciles the saved user message by id, keeps real repeats, and
     for (let i = 0; i < 20 && (host.textContent?.match(/Hello from a new chat/g) ?? []).length !== 2; i++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 15)); });
     assert.equal(textarea.value, "");
     assert.equal((host.textContent?.match(/Hello from a new chat/g) ?? []).length, 2);
+    const close = host.querySelector<HTMLButtonElement>('button[aria-label="Close"]');
+    assert.ok(close);
+    await act(async () => { close.click(); });
+    const launcher = host.querySelector<HTMLButtonElement>('button[aria-label="Ask Ensemble"]');
+    assert.ok(launcher);
+    assert.equal(launcher.querySelector('.u-morph')?.getAttribute('data-state'), 'loop', 'minimized assistant keeps the real pending work visible');
+    await act(async () => { launcher.click(); });
+    const reopenedStop = host.querySelector<HTMLButtonElement>('button[aria-label="Stop"]');
+    assert.ok(reopenedStop);
     await act(async () => {
-      stop.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      reopenedStop.click();
       await new Promise((resolve) => setTimeout(resolve, 40));
     });
     assert.equal(stops.length, 1);

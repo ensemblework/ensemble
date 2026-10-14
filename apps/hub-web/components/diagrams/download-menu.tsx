@@ -1,7 +1,8 @@
 "use client";
+import { BrandMorph } from "@/components/motion/brand-morph";
 
 import { useState } from "react";
-import { Download, FileImage, FileText, Image as ImageIcon, Loader2, Shapes } from "lucide-react";
+import { Download, FileImage, FileText, Image as ImageIcon, Shapes } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { parseDiagram } from "@ensemble/block-diagrams";
 
@@ -54,7 +55,7 @@ export function DiagramDownloadMenu({ id }: { id: string }) {
               onClick={() => void run(kind.id, close)}
               className="row-tile flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-[13px] disabled:opacity-50"
             >
-              {busy === kind.id ? <Loader2 size={14} className="animate-spin text-muted" /> : <kind.icon size={14} className="text-muted" />}
+              {busy === kind.id ? <BrandMorph size={14} kind="beacon" loader state="loop" /> : <kind.icon size={14} className="text-muted" />}
               {kind.label}
             </button>
           ))}

@@ -3,7 +3,7 @@
 /** @jsxImportSource react */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Mark } from "../mark";
+import { BrandMorph } from "../motion/brand-morph";
 import { usePersistentState } from "@/lib/prefs";
 
 export type LauncherSpot = { edge: "bottom" | "right"; t: number };
@@ -54,7 +54,7 @@ export function snapLauncher(point: { x: number; y: number }, bounds: LauncherBo
  * instead of being measured again from the corner. It shows once both the work area and the
  * stored spot are known, and only a keyboard nudge animates it.
  */
-export function AskLauncher({ onOpen, title, hidden = false }: { onOpen: () => void; title: string; hidden?: boolean }) {
+export function AskLauncher({ onOpen, title, hidden = false, working = false }: { onOpen: () => void; title: string; hidden?: boolean; working?: boolean }) {
   const [stored, setStored, loaded] = usePersistentState<LauncherSpot>("ensemble.assistant.launcher", DEFAULT_LAUNCHER_SPOT);
   const [nudged, setNudged] = useState(false);
   const spot = normalizeSpot(stored);
@@ -168,7 +168,7 @@ export function AskLauncher({ onOpen, title, hidden = false }: { onOpen: () => v
         event.preventDefault();
       }}
     >
-      <Mark />
+      <BrandMorph size={30} kind="infinity" state={working ? "loop" : "idle"} />
     </button>
   );
 }

@@ -17,13 +17,13 @@ async function api(path, method = "GET", body) {
 await api('/api/onboarding', 'POST', { role: 'engineer', templateId: 'branch-desk' });
 await api('/api/preferences/ui.onboarding-tour', 'PUT', { value: { v: 1, status: 'completed', step: 'finish', updatedAt: Date.now() } });
 await api('/api/preferences/desk.sample', 'PUT', { value: true });
-await api('/api/settings', 'PATCH', { appearance: { theme: 'dark', colorTheme: 'ensemble', accent: 'rose', accentCustom: null, motion: 'minimal-dot', reduceMotion: true } });
+await api('/api/settings', 'PATCH', { appearance: { theme: 'dark', colorTheme: 'ensemble', accent: 'rose', accentCustom: null, motion: 'expressive', reduceMotion: true } });
 const chrome = process.env.CHROME_PATH ?? (existsSync('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome') ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : '/usr/bin/google-chrome');
 const browser = await chromium.launch({ headless: true, executablePath: chrome });
 const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
 await context.addCookies([{ name: 'ensemble_session', value: session, url: WEB }]);
 const page = await context.newPage(); const crashes = []; page.on('pageerror', (e) => crashes.push(e.message));
-const themes = ['ensemble', 'graphite', 'lagoon', 'aurora', 'juniper', 'blueprint'];
+const themes = ['ensemble', 'aubergine', 'graphite', 'lagoon', 'aurora', 'juniper', 'blueprint'];
 async function settle() { await page.getByText('All settings saved', { exact: true }).waitFor({ timeout: 12000 }); }
 async function palette(id, mode) { await page.waitForFunction(({ id, mode }) => document.documentElement.dataset.colorTheme === id && document.documentElement.dataset.theme === mode, { id, mode }); }
 try {
@@ -52,7 +52,7 @@ try {
       await page.locator(`[data-color-theme-option="${id}"][aria-checked="true"]`).waitFor();
     }
   }
-  assert.equal(colors.size, 12, 'each theme has its own light and dark canvas');
+  assert.equal(colors.size, 13, 'the two gold palettes share warm paper in light mode');
   assert.ok(Math.max(...paints) <= 200, `theme paints exceed the 200 ms budget: ${paints.join(', ')}`);
   if (shots) await page.locator('.color-theme-section').screenshot({ path: `${shots}/picker-desktop.png` });
   await page.locator('[aria-label="Custom accent"]').fill('#ff00aa'); await settle();

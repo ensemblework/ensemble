@@ -2,19 +2,12 @@
 
 import { RotateCcw } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { AppearanceSettings, MotionTheme } from "@ensemble/shared-types";
+import type { AppearanceSettings } from "@ensemble/shared-types";
 import { colorThemeSurfaces } from "@/lib/color-themes";
 import { ColorThemePicker } from "./color-theme-picker";
 import { ACCENT_PRESETS, resolveAccent } from "@/lib/accent";
 import { APPEARANCE_KEY, DEFAULT_APPEARANCE, markAccentWrite, publishAppearance, usePersistentState } from "@/lib/prefs";
-import { ThinkingStatus } from "@/components/motion/slot";
 import { Range, SectionCard, Segmented, SettingRow, Toggle, cx } from "../ui";
-
-const MOTION_CHOICES: Array<{ id: MotionTheme; label: string; detail: string }> = [
-  { id: "expressive", label: "Expressive", detail: "Springs, braids and the Ensemble glyph. The default." },
-  { id: "minimal-quiet", label: "Minimal · Quiet", detail: "Hairline strokes and one accent. Nothing overshoots." },
-  { id: "minimal-dot", label: "Minimal · Dot", detail: "Two dots and at most one line." },
-];
 
 type Patch = (patch: Record<string, unknown>) => void;
 
@@ -49,23 +42,6 @@ export function AppearanceSection({ patch }: { patch: Patch }) {
     return () => media.removeEventListener("change", onChange);
   }, [appearance.theme]);
   const adjusted = custom && /^#[0-9a-fA-F]{6}$/.test(custom) ? resolveAccent(custom, theme, colorThemeSurfaces(appearance.colorTheme, theme)) : null;
-  const [autoNote, setAutoNote] = useState(false);
-  useEffect(() => {
-    try {
-      setAutoNote(sessionStorage.getItem("ensemble.motion.auto") === "1");
-    } catch {
-      setAutoNote(false);
-    }
-  }, [appearance.motion, appearance.reduceMotion]);
-  const chooseMotion = (motion: MotionTheme) => {
-    try {
-      sessionStorage.removeItem("ensemble.motion.auto");
-    } catch {
-      // private mode
-    }
-    setAutoNote(false);
-    update({ motion });
-  };
   return (
     <SectionCard title="Appearance" description="Saved with your account and in this browser, so the next page does not flash the default. System follows your device.">
       <div data-jump-label="Theme"><Segmented
@@ -81,7 +57,7 @@ export function AppearanceSection({ patch }: { patch: Patch }) {
       <ColorThemePicker appearance={appearance} onChange={(colorTheme) => update({ colorTheme })} />
       <div className="mt-6">
         <div data-jump-label="Accent" className="text-[13px] font-medium">Accent</div>
-        <p className="mt-0.5 text-[12.5px] text-muted">Indigo is the default. Presets are tuned for dark and light. A custom colour keeps text on it readable.</p>
+        <p className="mt-0.5 text-[12.5px] text-muted">Satin Gold is the default. Presets are tuned for dark and light. A custom colour keeps text on it readable.</p>
         <div className="mt-2 flex flex-wrap items-center gap-2">
           {ACCENT_PRESETS.map((preset) => {
             const on = !custom && appearance.accent === preset.id;
@@ -146,50 +122,13 @@ export function AppearanceSection({ patch }: { patch: Patch }) {
           </button>
         ))}
       </div>
-      <div className="mt-6">
-        <div className="text-[13px] font-medium">Motion</div>
-        <p className="mt-0.5 text-[12.5px] text-muted">The same moments, three ways. The choice is saved with your account and applies immediately.</p>
-        <div className="mt-2 grid gap-2" role="radiogroup" aria-label="Motion">
-          {MOTION_CHOICES.map((choice) => {
-            const on = (appearance.motion ?? "expressive") === choice.id;
-            return (
-              <button
-                key={choice.id}
-                type="button"
-                role="radio"
-                aria-checked={on}
-                onClick={() => chooseMotion(choice.id)}
-                data-active={on || undefined}
-                className="tile rounded-md bg-raised px-3 py-2 text-left"
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="text-[13.5px] font-medium">{choice.label}</div>
-                    <div className="text-[12px] text-muted">{choice.detail}</div>
-                  </div>
-                  {on ? <ThinkingStatus real={null} active /> : null}
-                </div>
-              </button>
-            );
-          })}
-        </div>
-        {autoNote ? <p className="mt-2 text-[12.5px] text-muted">Reduced motion is on because this device asked for it. You can change it here.</p> : null}
-      </div>
       <SettingRow title="Reduce motion" description="Match system follows this device. Turn this on to keep motion still even when the device does not ask.">
         <div className="flex items-center gap-2">
           <span className="text-[12px] text-muted">{appearance.reduceMotion ? "Always" : "Match system"}</span>
           <Toggle
             label="Reduce motion"
             checked={appearance.reduceMotion}
-            onChange={(reduceMotion) => {
-              try {
-                sessionStorage.removeItem("ensemble.motion.auto");
-              } catch {
-                // private mode
-              }
-              setAutoNote(false);
-              update({ reduceMotion });
-            }}
+            onChange={(reduceMotion) => update({ reduceMotion })}
           />
         </div>
       </SettingRow>

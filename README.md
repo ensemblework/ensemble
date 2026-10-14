@@ -155,6 +155,7 @@ apps/context-bridge     read-only MCP server (stdio + loopback Streamable HTTP);
 apps/cli                the `ensemble` terminal app, runner and `ensemble mcp` (npm name ensemblework)
 apps/quick-capture      Tauri tray + global shortcut (macOS, Windows, Linux)
 apps/desktop            Tauri desktop app with a local API sidecar (macOS, Windows, Linux)
+packages/brand          Woven Chorus artwork, motion and terminal identity
 packages/shared-types   Zod domain types
 packages/block-diagrams diagram DSL: parse, layout, SVG
 packages/ide-theme      VS Code color themes for the code space
@@ -173,3 +174,7 @@ Every pull request runs `.github/workflows/ci.yml`: typecheck, the TypeScript an
 ## License
 
 [FSL-1.1-MIT](LICENSE.md) (Functional Source License, MIT future license). You may use, change and redistribute Ensemble for any purpose, including at work, except to offer a product or service that competes with it. Each release becomes available under the MIT license two years after it is published.
+
+### Shared brand assets
+
+`packages/brand` owns Woven Chorus artwork, Satin Gold, the Expressive SVG motion controller and terminal frames. Web, landing, native startup, Quick capture and CLI consume this source. `scripts/build-ensemble-brand.mjs` exports packaged icons, social previews and standalone fallback pages. Run `pnpm brand:build` after changing a master; `pnpm brand:check` checks source/output hashes. Details: [Brand and motion](docs/BRAND.md).

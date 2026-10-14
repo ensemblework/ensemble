@@ -1,0 +1,29 @@
+{
+  "name": "@ensemble/brand",
+  "version": "0.1.0",
+  "private": true,
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./motion": {
+      "types": "./motion.d.ts",
+      "default": "./motion.js"
+    },
+    "./motion.css": "./motion.css",
+    "./cli": {
+      "types": "./cli.d.ts",
+      "default": "./cli.js"
+    }
+  },
+  "scripts": {
+    "test": "node --test *.test.cjs"
+  },
+  "devDependencies": {
+    "sharp": "^0.35.4",
+    "esbuild": "^0.28.2"
+  }
+}
