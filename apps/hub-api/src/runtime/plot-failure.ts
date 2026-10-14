@@ -52,14 +52,16 @@ export function tableParseFailure(error: unknown): PlotFailureBody {
   return { error: message };
 }
 
-export function datasetErrorReply(error: unknown): { statusCode: number; error: string; retry?: boolean } {
+export function datasetErrorReply(error: unknown): { statusCode: number; error: string; retry?: boolean; code?: string } {
   if (error instanceof RuntimeError) {
     return { statusCode: error.statusCode, ...tableParseFailure(error) };
   }
   const statusCode = typeof (error as { statusCode?: unknown }).statusCode === "number" ? (error as { statusCode: number }).statusCode : 400;
   const message = error instanceof Error ? error.message : "Could not read that file.";
   const retry = (error as { retry?: boolean }).retry;
-  return retry === undefined ? { statusCode, error: message } : { statusCode, error: message, retry };
+  // HOST_ACCESS_DENIED: this server reads such files only for its operator; the web reads them in the browser instead.
+  const code = typeof (error as { code?: unknown }).code === "string" ? (error as { code: string }).code : undefined;
+  return { statusCode, error: message, ...(retry === undefined ? {} : { retry }), ...(code ? { code } : {}) };
 }
 
 function missingLocalPlots(error: unknown): boolean {

@@ -5,6 +5,8 @@ import { chartFrame, matplotlibPanels, type LinkChoice, type PoolDataset, type W
 import { PlotDialog } from "@/components/plots/plot-dialog";
 import { Toggle } from "@/components/ui";
 import { api } from "@/lib/api";
+import { renderPlot } from "@/lib/plots/render";
+import { usePythonStatus } from "@/lib/plots/browser-python";
 import { usePlotTheme } from "@/lib/plots/theme";
 import { figureBytes } from "@/lib/plots/figure-file";
 import { useToast } from "@/components/toast";
@@ -37,6 +39,7 @@ export function ExportDialog({
   const [errorText, setErrorText] = useState("");
   const [attempt, setAttempt] = useState(0);
   const [busy, setBusy] = useState(false);
+  const python = usePythonStatus();
 
   useEffect(() => {
     if (!open) return;
@@ -86,7 +89,7 @@ export function ExportDialog({
     let live = true;
     setErrorText("");
     const timer = window.setTimeout(() => {
-      void api.renderPlot(workspaceId, { format: "png", code }).then((result) => {
+      void renderPlot(workspaceId, { format: "png", code }).then((result) => {
         if (!live) return;
         setPreview(`data:image/png;base64,${result.data}`);
         setErrorText("");
@@ -106,7 +109,7 @@ export function ExportDialog({
     if (!workspaceId) return;
     setBusy(true);
     try {
-      const result = await api.renderPlot(workspaceId, { format, code });
+      const result = await renderPlot(workspaceId, { format, code });
       const blob = figureBytes(format, result.data);
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -142,7 +145,7 @@ export function ExportDialog({
               <p className="text-[13px] text-danger">{errorText}</p>
               <button type="button" className="btn mt-3" onClick={() => setAttempt((value) => value + 1)}>Retry</button>
             </div>
-          ) : <p className="px-4 py-8 text-center text-[13px] text-muted">{panels.length ? "Rendering the preview…" : "Add a tile with columns first."}</p>}
+          ) : <p className="px-4 py-8 text-center text-[13px] text-muted">{panels.length ? (python === "loading" ? "Starting Python in your browser for the preview (the first time only, about 30 MB)…" : "Rendering the preview…") : "Add a tile with columns first."}</p>}
         </div>
         <div className="space-y-3 text-[13px]">
           <p className="text-[12px] text-muted">Matplotlib export. Size is in inches.</p>

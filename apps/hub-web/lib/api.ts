@@ -1626,8 +1626,14 @@ export const api = bindClient({
     get<{ dataset: { id: string; name: string; format: string; columns: Array<{ name: string; type: "number" | "date" | "category" | "text" }>; rowCount: number; sheet: string; sheets: string[]; rows: Array<Array<string | number | null>> } }>(`/api/plots/datasets/${id}?rows=${rows ? "1" : "0"}`),
   updatePlotDataset: (id: string, body: { columns: Array<{ name: string; type: string }> }) => patch(`/api/plots/datasets/${id}`, body),
   plotSheet: (id: string, sheet: string) => post(`/api/plots/datasets/${id}/sheet`, { sheet }),
-  renderPlot: (id: string, body: { format: "png" | "svg" | "pdf" | "eps"; code?: string; dpi?: number }) =>
+  /** Use `renderPlot` from lib/plots/render.ts: it runs the script in the browser where the server does not. */
+  renderPlotOnServer: (id: string, body: { format: "png" | "svg" | "pdf" | "eps"; code?: string; dpi?: number }) =>
     post<{ format: string; data: string; stdout: string; stderr: string }>(`/api/plots/${id}/render`, body),
+  /** Whether this server runs plot Python for this account. */
+  plotRuntime: () => get<{ serverPython: boolean }>("/api/plots/runtime"),
+  /** The datasets and code a render runs, for running it in the browser. */
+  plotRenderInput: (id: string, accent?: string) =>
+    get<{ code: string; datasets: Array<{ name: string; columns: string[]; rows: Array<Array<string | number | null>> }> }>(`/api/plots/${id}/render-input${qs({ accent })}`),
   plotWorkspace: (id?: string) =>
     get<{ workspace: { id: string; title: string; config: unknown; code: string; updatedAt: string } }>(`/api/plots/workspace${qs({ id })}`),
   savePlotWorkspace: (body: { id?: string; config: unknown; code?: string; title?: string }) =>

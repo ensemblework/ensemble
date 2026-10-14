@@ -113,6 +113,15 @@ test("plots and datasets stay on the owner's account", async (t) => {
     assert.match(code.json().code as string, /twinx/);
     assert.match(code.json().code as string, /load\("sales"\)/);
 
+    // What a render runs, for the browser (Ensemble on the web): the datasets as the runtime receives them, and the code.
+    const input = await own.inject({ method: "GET", url: `/api/plots/${id}/render-input` });
+    assert.equal(input.statusCode, 200, input.body);
+    const runs = input.json() as { code: string; datasets: Array<{ name: string; columns: string[]; rows: unknown[][] }> };
+    assert.deepEqual(runs.datasets.map((row) => [row.name, row.columns, row.rows.length]), [["sales", ["month", "revenue", "cost"], 2]]);
+    assert.match(runs.code, /load\("sales"\)/);
+    assert.equal((await theirs.inject({ method: "GET", url: `/api/plots/${id}/render-input` })).statusCode, 404, "not someone else's");
+    assert.deepEqual((await own.inject({ method: "GET", url: "/api/plots/runtime" })).json(), { serverPython: true }, "this server (not hosted) runs plot Python");
+
     const csv = await own.inject({ method: "POST", url: `/api/plots/${id}/export.csv` });
     assert.equal(csv.statusCode, 200);
     assert.match(csv.json().csv as string, /revenue/);

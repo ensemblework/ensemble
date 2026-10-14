@@ -2,7 +2,7 @@
 
 Plots is Ensemble's one-stop 2D chart tab. It is for someone who already knows what a figure should do: an analyst, a data scientist, or an ML researcher. The defaults follow publication practice. Decoration that makes a value harder to read is left out.
 
-Hosted arbitrary Python plot execution requires a verified operator (`lib/hosted-access.ts`, `runtime/plot-run.ts`, Python `plots/sandbox.py`). Public users are not allowed to run Python on the shared server. Dataset imports are account-scoped and subject to hosted storage limits. Desktop/local execution retains its existing behavior.
+Hosted arbitrary Python plot execution requires a verified operator (`lib/hosted-access.ts`, `runtime/plot-run.ts`, Python `plots/sandbox.py`). Public users are not allowed to run Python on the shared server. **On Ensemble on the web, plot Python runs in the person's own browser instead** (14 Oct 2026, §5a): rendering, exports and reading spreadsheets and Arrow files. Dataset imports are account-scoped and subject to hosted storage limits. Desktop/local execution retains its existing behavior.
 
 Caching below follows [CACHING.md](CACHING.md) and [UI_PERF_DESIGN.md](UI_PERF_DESIGN.md): measure first, keep any cache small, and invalidate it when the bytes change.
 
@@ -61,6 +61,8 @@ A dataset is an account object: id, name, column list, row count, content hash. 
 | Google Sheets, Google Drive, OneDrive, SharePoint | hub-api fetches, then the parser for the bytes | Public or export links only |
 
 The browser parses text so a CSV preview appears before an upload finishes. The server parses the same text on the way in, so a client cannot skip type checks by posting a lie as "already parsed" without us also accepting an explicit table (the agent tools post a table). Binary formats need the runtime. If the runtime is down, the UI says so and still accepts CSV, TSV, TXT, JSON, JSONL, and paste.
+
+On Ensemble on the web, where the server reads binary formats only for its operator (403 `HOST_ACCESS_DENIED`), the upload dialog reads xlsx, xlsm, xls, ODS, Parquet and Feather in the browser with the plot runtime's own `parse_table.py` under Pyodide (§5a), asks which sheet when a workbook has several, and posts the result as an explicit table (strict, below). Apple Numbers needs a native library Pyodide does not have: export it to Excel or CSV. A spreadsheet *link* cannot be fetched by the browser (cross-origin), so it says to download the file and add it.
 
 `POST /api/plots/:id/export.csv` uses `tableToCsv` in `packages/shared-types/src/plots-parse.ts`, shared with sample tables. Headers and string cells containing commas, quotes, or CR/LF are CSV-escaped, not JSON-escaped; the parser preserves quoted multiline records. Export/re-import regressions check the actual column names and values.
 
@@ -181,6 +183,16 @@ On Mac, the Python runtime launches the Node/tsx loader directly into the shared
 Stale-directory cleanup keeps directories still used as process working folders. When process inspection is unavailable, it emits a warning and leaves old folders alone rather than risk deleting active work.
 
 This is a process sandbox, not a VM. It is the same idea as the Code tab's guarded terminal: allow the job, refuse the rest. It does not depend on Docker, so it runs on a developer Mac, a Windows PC, and Linux.
+
+## 5a. In the browser (Ensemble on the web)
+
+The server says whether it runs plot Python for the account (`GET /api/plots/runtime` → `{serverPython}`); when it does not, or answers a render with 403 `HOST_ACCESS_DENIED`, the page runs the same script in the browser (`lib/plots/render.ts`, `lib/plots/browser-python.ts`):
+
+- `GET /api/plots/:id/render-input` gives exactly what the server's render would run: the datasets (`{name, columns, rows}`, duplicate names numbered) and the code (the plot's own, or the generated one). Nothing runs on the server.
+- Python is Pyodide (v314.0.7, from jsDelivr): numpy, pandas, matplotlib and what the script imports (`loadPackagesFromImports`; seaborn from PyPI with micropip). The first use downloads about 30 MB, which the browser keeps; the page says so while it starts.
+- The script runs with the plot runtime's own `ensemble_plots` module and the same steps as `worker.py` (a temp folder, `datasets.json`, `user_script.py`, `PLOTS_FORMAT` / `PLOTS_DPI`, the Agg backend, the figure read back from `out/`), and the result has the server's shape (`{format, data, stdout, stderr}`; a failure gives the message and the line). `lib/plots/python-sources.ts` holds copies of `worker.py`'s `HELPER` and `parse_table.py`; a test keeps them byte for byte equal, and the driver itself is tested under CPython.
+- **Isolation.** It runs in a Web Worker. Before the script runs, the worker removes `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `importScripts`, `Worker`, IndexedDB and the cache storage from its scope and every prototype that defines them, and stays that way; a script that imports a package the worker did not load gets a fresh worker. So a plot script, including one someone else wrote, has no network and no storage: it cannot send your data anywhere or call Ensemble as you. It has no page or cookies either (a worker has none). A run is stopped after a minute (three minutes for the first start).
+- Readers of spreadsheets run in a second worker that runs only Ensemble's own code.
 
 ## 6. Caching
 
