@@ -18,25 +18,29 @@ With no paired computer, it says how to set one up. The hosted server's own *Loc
 
 ## 1. Using it
 
+The review opens as an IDE (`components/code/ide.tsx`, 14 Oct 2026): an activity bar (Explorer, Find in files, Source control, Terminal), the side panel, tabs for the files you open, the editor, the terminal under it and a status bar (branch with ahead/behind, the review's progress, the computer it is on, line and column, language, line endings, the save state, code size). The editor is CodeMirror's merge view (`components/code/review-editor.tsx`, `@codemirror/merge`).
+
 | You want to… | Do this |
 |---|---|
-| See what a run changed | Code → click the run (or *Review code* on the run / task page) |
+| See what a run changed | Code → click the run (or *Review changes* on the task page, *Review & edit* on a run on your computer) |
 | Keep an agent change | *Accept* on it, or Alt+Y with the cursor in it. Nothing on disk changes — it is already there |
-| Undo an agent change | *Reject*, or Alt+N. The old lines go back on disk; Ctrl+Z (or *Undo* on the note) brings the change back |
+| Undo an agent change | *Reject*, or Alt+N. The old lines go back on disk; Ctrl+Z brings the change back |
 | Change something yourself | Just type, in either view. Your edits show in **blue** with *Revert* (Alt+N) |
 | Put a file back as the run left it | *Restore the run's version* in the file bar (drops your edits and rejects in that file) |
-| Read / edit the whole file | *File*, or F4 — folding, change bars in the gutter, same document as the Changes view |
-| Move around | F7 / Shift+F7 next/previous change (crosses files), Alt+→ / Alt+← next/previous file |
-| Find / replace | Ctrl+F |
+| Read / edit the whole file | *File*, or F4 — folding, change bars in the gutter, same document as the Changes view. A file with nothing to review opens whole |
+| Open any file | The explorer's *Folder* tree, or *Go to file* at its top (tracked and new files) |
+| Find text in the files | *Find in files* in the activity bar (fixed text, match case optional; up to 500 results) |
+| Move around | F7 / Shift+F7 next/previous change (past the last, the next file), Alt+→ / Alt+← next/previous changed file |
+| Find / replace in the file | Ctrl+F |
 | Focus | Full screen button (Esc leaves), Ctrl+B explorer, `?` shortcuts (outside the editor) |
 | Resize the explorer | Drag its right edge (up to half the width; double-click resets; arrow keys when focused) |
-| Code text size | Zoom buttons, or Ctrl+Shift+= / Ctrl+Shift+- / Ctrl+Shift+0 (10–24 px, editor and terminal only) |
-| Commit / push / PR | Source control at the bottom of the explorer |
-| Run git yourself | Terminal button or Ctrl+` |
+| Code text size | The size in the status bar, or Ctrl+Shift+= / Ctrl+Shift+- / Ctrl+Shift+0 (10–24 px, editor and terminal only) |
+| Commit / push | *Source control* in the activity bar |
+| Run git yourself | The terminal button in the activity bar, or Ctrl+` |
 
-It is an **editor first**. Type anywhere — in the Changes view or the whole-file view — and it is saved automatically (0.7 s after you stop, on Ctrl+S, when you switch file or view, and before a commit). The status bar shows `• Unsaved` → `Saving…` → `Saved`.
+It is an **editor first**. Type anywhere — in the Changes view or the whole-file view — and it is saved automatically (0.7 s after you stop, on Ctrl+S, when you switch file or view, and before a commit or push). The status bar and the tab show `• Unsaved` → `Saving…` → `Saved`. A save names the version of the file the editor read (`expectedHash`); if something else wrote the file meanwhile, nothing is overwritten (below). Saves keep the file's own line endings and byte-order mark (`lib/code-versions.ts`).
 
-**No shortcut is a bare letter or an editing key:** Ctrl+Backspace deletes a word, Ctrl+Enter is left to the editor, and every letter types.
+**No shortcut is a bare letter or an editing key:** every letter types.
 
 ### Folders Code can use
 
@@ -49,17 +53,19 @@ The Code tab has its own folder list, **Settings → Folders Code can use** (`se
 
 ### What the Changes view shows
 
-The diff is the file **now** against **before the run**, plus the agent changes you accepted. So it always shows what is still worth looking at:
+The file **now**, against **before the run** plus the agent changes you accepted (`GET /api/code/versions`: `start`, `agent`, `original`, `current`; accepting stores the accepted text as a blob in the repository, `POST /api/code/accept-content`). So it always shows what is still worth looking at:
 
 - **Green / red** with *Accept · Reject* — an agent change, exactly as the agent made it, not decided yet.
 - **Blue** with *"Your edit" · Revert* — anything else that differs: lines you added, or an agent change you typed over (made here, in VS Code, or in the terminal — git cannot tell who typed, so anything that is not *exactly* the agent's is shown as yours). Your edits never need reviewing.
 - Accepted changes and rejected ones **disappear from the diff**; a file with nothing left shows *Reviewed — edit freely* and is not folded.
 
-Whether an agent change is decided is read from the **text itself**: type over it and it counts as edited; reject it and it is rejected; Ctrl+Z either, and it is pending again.
+Whether an agent change is decided is read from the **text itself**: type over it and it counts as edited; reject it and it is rejected; Ctrl+Z either, and it is pending again. Changes on neighbouring lines (or separated only by an empty line) are one change, so typing right next to an agent change makes the pair yours.
 
-Progress shows as *"17 / 23 — 2 files left"*, a ring per file, and a badge in the list.
+Progress shows as *"17 / 23 — 2 files left"* in the status bar, a ring per file, and a badge in the list with the changes left (`GET /api/code/progress`). The file bar counts the open file's changes, or says *Reviewed — edit freely*.
 
-If something else writes the file while you have unsaved typing (VS Code, the terminal), **nothing is overwritten silently**: a bar offers *Keep mine (overwrite)* or *Use the version on disk*, and your text stays on screen until you choose.
+If something else writes the file while you have unsaved typing (VS Code, the terminal), **nothing is overwritten silently**: a bar offers *Keep mine (overwrite)* or *Use the version on disk*, and your text stays on screen until you choose. A file changed on disk while you have nothing unsaved simply reloads (it is read again every 10 seconds and when the window regains focus).
+
+In a checkout (Local repositories) the same editor compares the file with the index: *Stage* (Alt+Y) stages that change exactly as shown, *Discard* (Alt+N) puts the staged lines back.
 
 The editor has a shared theme picker with plot code panes (`components/code/ide-theme.tsx`). Built-in and Open VSX color themes persist in account settings; compatible Marketplace VSIX packages and JSON/JSONC color files can be imported locally. Imports read only bounded color data, never extension scripts; included files resolve within the package. Imported files stay on that browser/device and must be imported again on another device. Code is always in a coding font (Cascadia Code → Consolas, ligatures off) at its own size, whatever font and text size *Settings → Appearance* sets for the rest of Ensemble.
 
@@ -72,9 +78,9 @@ Every run records **two snapshots** of its folder as git trees, using a throwawa
 - **start** — the folder as the job found it: committed, staged, unstaged and never-added files alike;
 - **end** — as the job left it.
 
-Both are pinned as `refs/ensemble/review/<job>/{start,end}` for **14 days**, so git's own garbage collection cannot take them; a daily sweep drops them after that.
+Both are pinned as `refs/ensemble/review/<job>/{start,end}` for **14 days** (each tree in a commit of its own, `CodeReview.startCommit` and `endCommit`; `pinReviewSnapshots` in `lib/code-commit.ts`), so git's own garbage collection cannot take them; the daily sweep unpins them and marks the review expired (`runRetention`), which *Show expired* lists.
 
-The review is start → end, so work you had **before** the run (your `plan.md`, your own edits) is never shown as the agent's. It is listed separately as *Yours, before the run*. Git-ignored files have no snapshot; if a run changed any, they are listed as *Changed, can't be reviewed*.
+The review is start → end, so work you had **before** the run (your `plan.md`, your own edits) is never shown as the agent's. Source control lists it separately as *Your changes*, not ticked. Git-ignored files have no snapshot; if a run changed any, they are listed as *Changed, can't be reviewed*.
 
 Runs from before snapshots existed are reviewed against the commit they started from, with a banner saying so.
 
@@ -92,9 +98,13 @@ The host may have `core.autocrlf=true` in the system git config, which Ensemble'
 
 ## 3. Commit, push, pull request
 
-The Source control panel groups files exactly like the review: **changes from this run (ticked)** and **your changes from before the run (not ticked)**, so `plan.md` stays out unless you tick it. Subject (with the 50/72 counter), Markdown description with *Write | Preview* (GitHub-flavoured: tables, task lists), `Co-authored-by: Copilot` when agent changes are included, and a pull request section (title, description prefilled from the repository template or the agent's proposal, base branch, draft). Drafts are kept per run.
+*Source control* (`components/code/commit-panel.tsx`, `GET /api/code/commit-plan`) groups files exactly like the review: **changes from this run (ticked)** and **your changes (not ticked)**, so `plan.md` stays out unless you tick it. A subject with the 50/72 guide (the counter turns amber past 50 and red past 72; description lines over 72 are counted), a Markdown description with *Write | Preview*, and `Co-authored-by: Ensemble agent (<model>) <agent@ensemble.local>` when the run's files are included (a box turns it off). Committing the run's files while some of its changes are still undecided asks first. Drafts are kept per run on this device.
 
-The commit is built from **exactly the ticked paths** in a throwaway index — nothing else you had staged rides along — with hooks off. Pushing uses your GitHub sign-in for `github.com` remotes (**https only**), and asks before pushing straight to the default branch. Committing with unreviewed changes asks inline first.
+The commit is built from **exactly the ticked paths** (`POST /api/code/commit-paths`): in a throwaway index from HEAD, each ticked file stored as it is on disk (`hash-object --no-filters`, so no filter program of the repository runs), hooks never run, and HEAD moves only if it is still where it was. What you had staged otherwise stays staged. The author is *Settings → Terminal and commits → Commit author*, or your git config, or, on a computer where git has no identity, your Ensemble account's name and email.
+
+*Push* runs `git push -u origin HEAD` with your computer's own git sign-in and the repository's hooks off, and asks before pushing straight to the default branch (origin's HEAD). The *Pull request* section (GitHub remotes) starts from the repository's template (`.github/pull_request_template.md` and the usual places) or the agent's report, with a base branch (the default one first) and *Draft*; it opens the pull request for the current branch through GitHub's API (`POST /api/code/pull-request`) with the GitHub sign-in Ensemble has: the git token saved in Settings, the GitHub connection, or `gh auth token`.
+
+The rest of the panel is the repository's state: staged and unstaged files (stage, unstage, discard), recent commits, pull, and GitHub Actions runs for the branch.
 
 ---
 
@@ -132,11 +142,10 @@ A passkey belongs to the **site it was made on** and stays on the device that ma
 
 ## 6. Speed
 
-- The list is **database-only**. Hovering a run starts loading its review.
-- File contents are fetched once by blob SHA — **immutable**, so cached forever and never invalidated: memory (~48 MB LRU), this device's IndexedDB (150 MB cap or 10% of quota; reference-counted per review, expired reviews and unreferenced blobs swept hourly, never the open review), and the browser's HTTP cache. *Keep reviewed code on this device* is **off by default through the tunnel**; *Clear* is in Settings.
-- One editor, one prebuilt state per file (neighbours built at idle), swapped on back/next: no re-highlighting, no teardown.
-- Manifests revalidate with ETag (a 304 when nothing changed); blob and manifest responses are brotli-compressed.
-- CodeMirror, the diff and each language parser load only on `/code/*`.
+- The list of reviews comes from the database, with each review's file and line counts from git (cached 8 s).
+- A file's versions are read when its tab opens (`GET /api/code/versions`, one call for all four) and kept in the page's query cache; progress counts are cached per file until the file or its accepted text changes.
+- CodeMirror, the merge view and each language parser load only on `/code/review`.
+- Not built yet (designed earlier): the per-device IndexedDB cache of file versions, ETag revalidation, and prebuilt editor states for neighbouring files. Its Settings switch (*Keep reviewed code on this device*) was removed until it exists.
 
 ---
 

@@ -22,12 +22,20 @@ import {
   GitError,
   INDEX,
   githubActions,
+  insideRepo,
+  listRepoFolder,
+  readRepoBytes,
   readRepoFile,
+  removeRepoFile,
   revertHunk,
   stageHunk,
   status,
-  writeRepoFile,
+  writeRepoBytes,
 } from "../lib/git.js";
+import { decode, encode, gitBlob, hashOf, reviewCounts, writeBlob } from "../lib/code-versions.js";
+import { commitPaths, defaultBranch, githubRepoOf, openPullRequest, pullRequestTemplate } from "../lib/code-commit.js";
+import { GITHUB_AUTH_HINT, githubApiToken } from "../lib/git-auth.js";
+import { refusedPath } from "../workspace/folder-read.js";
 import { appendLedger } from "../lib/ledger.js";
 import { declareModule } from "../lib/module-gate.js";
 import { dropWhere, readLru, remember } from "../lib/bounded.js";
@@ -39,6 +47,9 @@ import { pushRunBranch } from "../workspace/publish.js";
 import { flagPlanted, type PlantedHit } from "../workspace/planted.js";
 
 const REVIEW_TTL_DAYS = 14;
+/** The decision row that keeps a file's accepted changes: `blob:<sha>` of the text they add up to. */
+const BASELINE = "baseline";
+const progressCache = new Map<string, { at: number; counts: { total: number; pending: number; yours: number } }>();
 const fileStatCache = new Map<string, { at: number; files: Awaited<ReturnType<typeof changedFiles>> }>();
 const FILE_STAT_TTL_MS = 8_000;
 const FILE_STAT_MAX = 200;
@@ -334,20 +345,194 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
     return { ok: true, branch, remote: pushed.remote };
   });
 
+  /** The accepted-changes blob for a file of a review, if any. */
+  function baselineSha(source: Awaited<ReturnType<typeof resolveSource>>, path: string): string | null {
+    const row = source.review?.decisions.find((decision) => decision.path === path && decision.chunkKey === BASELINE);
+    return row?.decision.startsWith("blob:") ? row.decision.slice(5) : null;
+  }
+
+  /**
+   * The versions of one file the editor works from: before the run (`start`; for a checkout, the
+   * index), the run's own (`agent`), what to compare against (`original`: before the run plus the
+   * changes accepted so far; for a checkout, the index) and the file now (`current`). LF text.
+   */
+  app.get("/api/code/versions", async (request) => {
+    const { path } = z.object({ path: z.string().min(1).max(1000) }).parse(request.query);
+    const source = await resolveSource(request, request.query);
+    const currentBytes = await readRepoBytes(source.repo, path).catch((error: unknown) => {
+      if (error instanceof GitError && error.statusCode === 413) return Buffer.alloc(6 * 1024 * 1024);
+      throw error;
+    });
+    const current = decode(currentBytes);
+    let start = null;
+    let agent = null;
+    let original = null;
+    if (source.review) {
+      start = decode(await gitBlob(source.repo, `${source.review.startTree}:${path}`));
+      agent = decode(await gitBlob(source.repo, `${source.review.endTree}:${path}`));
+      const sha = baselineSha(source, path);
+      original = sha ? decode(await gitBlob(source.repo, sha)) ?? start : start;
+    } else {
+      start = decode((await gitBlob(source.repo, `:${path}`)) ?? (await gitBlob(source.repo, `HEAD:${path}`)));
+      original = start;
+    }
+    const all = [start, agent, original, current];
+    return {
+      path,
+      kind: source.kind,
+      start: start?.text ?? null,
+      agent: agent?.text ?? null,
+      original: original?.text ?? null,
+      current: current?.text ?? null,
+      exists: { start: Boolean(start), agent: Boolean(agent), current: Boolean(currentBytes) },
+      binary: all.some((row) => row?.binary),
+      tooLarge: all.some((row) => row?.tooLarge),
+      eol: current?.eol ?? start?.eol ?? "lf",
+      bom: current?.bom ?? false,
+      hash: current?.tooLarge ? null : hashOf(currentBytes),
+    };
+  });
+
+  /**
+   * Keep changes. In a review the text they add up to becomes the file's new "compared against" (the
+   * file on disk does not change); in a checkout it is staged, exactly as given.
+   */
+  app.post("/api/code/accept-content", async (request) => {
+    const body = z
+      .object({ review: z.string().uuid().optional(), repo: z.string().optional(), path: z.string().min(1).max(1000), content: z.string().max(5 * 1024 * 1024) })
+      .parse(request.body);
+    const source = await resolveSource(request, body);
+    insideRepo(source.repo, body.path);
+    if (source.review) {
+      const sha = await writeBlob(source.repo, Buffer.from(body.content, "utf8"));
+      await prisma.codeReviewDecision.upsert({
+        where: { reviewId_path_chunkKey: { reviewId: source.review.id, path: body.path, chunkKey: BASELINE } },
+        create: { reviewId: source.review.id, path: body.path, chunkKey: BASELINE, decision: `blob:${sha}` },
+        update: { decision: `blob:${sha}`, at: new Date() },
+      });
+    } else {
+      const like = decode(await readRepoBytes(source.repo, body.path));
+      const sha = await writeBlob(source.repo, encode(body.content, like));
+      const entry = (await git(source.repo, ["ls-files", "-s", "--", body.path]).catch(() => "")).trim();
+      const mode = /^(\d{6}) /.exec(entry)?.[1] ?? "100644";
+      await git(source.repo, ["update-index", "--add", "--cacheinfo", `${mode},${sha},${body.path}`]);
+    }
+    progressCache.clear();
+    await appendLedger({ userId: request.userId, actor: "me", action: "code.accepted", payload: { repo: source.repo, path: body.path, review: source.review?.id ?? null } });
+    return { ok: true };
+  });
+
+  /** Put one file back as the run left it: your edits and rejects in that file are dropped. */
+  app.post("/api/code/restore", async (request) => {
+    const body = z.object({ review: z.string().uuid(), path: z.string().min(1).max(1000) }).parse(request.body);
+    const source = await resolveSource(request, body);
+    if (!source.review) throw new GitError("Only a review has a run's version.");
+    const bytes = await gitBlob(source.repo, `${source.review.endTree}:${body.path}`);
+    if (bytes) await writeRepoBytes(source.repo, body.path, bytes);
+    else await removeRepoFile(source.repo, body.path);
+    await prisma.codeReviewDecision.deleteMany({ where: { reviewId: source.review.id, path: body.path } });
+    progressCache.clear();
+    await appendLedger({ userId: request.userId, actor: "me", action: "code.restore", payload: { repo: source.repo, path: body.path, review: source.review.id } });
+    return { ok: true };
+  });
+
+  /** For each file of a review: the run's changes, those still to decide, and your own edits. */
+  app.get("/api/code/progress", async (request) => {
+    const source = await resolveSource(request, request.query);
+    if (!source.review) return { files: [], total: 0, pending: 0, filesLeft: 0 };
+    const review = source.review;
+    const changed = await cachedChangedFiles(source.repo, review.startTree);
+    const paths = [...new Set([...(review.agentPaths.length ? review.agentPaths : changed.map((file) => file.path))])].slice(0, 200);
+    const files: Array<{ path: string; total: number; pending: number; yours: number }> = [];
+    for (let index = 0; index < paths.length; index += 8) {
+      const batch = await Promise.all(
+        paths.slice(index, index + 8).map(async (path) => {
+          const currentBytes = await readRepoBytes(source.repo, path).catch(() => null);
+          const sha = baselineSha(source, path);
+          const key = `${review.id}\0${path}\0${hashOf(currentBytes)}\0${sha ?? ""}`;
+          const hit = readLru(progressCache, key);
+          if (hit) return { path, ...hit.counts };
+          const [start, end, baseline] = await Promise.all([
+            gitBlob(source.repo, `${review.startTree}:${path}`),
+            gitBlob(source.repo, `${review.endTree}:${path}`),
+            sha ? gitBlob(source.repo, sha) : Promise.resolve(null),
+          ]);
+          const texts = [decode(start), decode(end), decode(baseline), decode(currentBytes)];
+          const counts = texts.some((row) => row?.binary || row?.tooLarge)
+            ? { total: 0, pending: 0, yours: 0 }
+            : reviewCounts({ start: texts[0]?.text ?? null, end: texts[1]?.text ?? null, baseline: texts[2]?.text ?? null, current: texts[3]?.text ?? null });
+          remember(progressCache, key, { at: Date.now(), counts }, 500);
+          return { path, ...counts };
+        }),
+      );
+      files.push(...batch);
+    }
+    const total = files.reduce((sum, file) => sum + file.total, 0);
+    const pending = files.reduce((sum, file) => sum + file.pending, 0);
+    return { files, total, pending, filesLeft: files.filter((file) => file.pending > 0).length };
+  });
+
+  /** One folder of the repository, for the explorer. Files of keys and secrets are flagged. */
+  app.get("/api/code/tree", async (request) => {
+    const query = z.object({ path: z.string().max(1000).default("") }).parse(request.query);
+    const source = await resolveSource(request, request.query);
+    const path = query.path.replace(/^\/+|\/+$/g, "");
+    const listing = await listRepoFolder(source.repo, path);
+    return {
+      path,
+      entries: listing.entries.map((entry) => ({ ...entry, secret: refusedPath(path ? `${path}/${entry.name}` : entry.name) !== null })),
+      truncated: listing.truncated,
+    };
+  });
+
+  /** Every file git knows here (tracked, and new ones not ignored), for "go to file". */
+  app.get("/api/code/files", async (request) => {
+    const source = await resolveSource(request, request.query);
+    const raw = await git(source.repo, ["-c", "core.fsmonitor=false", "ls-files", "-z", "--cached", "--others", "--exclude-standard"]);
+    const all = [...new Set(raw.split("\0").filter(Boolean))];
+    return { files: all.slice(0, 20_000), truncated: all.length > 20_000 };
+  });
+
+  /** Find text in the repository's files (git grep: fixed text, tracked and new files, no binaries). */
+  app.get("/api/code/search", async (request) => {
+    const query = z.object({ q: z.string().min(1).max(200), case: z.enum(["0", "1"]).default("0") }).parse(request.query);
+    const source = await resolveSource(request, request.query);
+    const raw = await git(source.repo, ["-c", "core.fsmonitor=false", "grep", "-n", "-I", "--no-color", "-F", "--untracked", "-m", "20", ...(query.case === "1" ? [] : ["-i"]), "-e", query.q], { okCodes: [1] });
+    const results: Array<{ path: string; line: number; text: string }> = [];
+    for (const row of raw.split("\n")) {
+      const match = /^(.*?):(\d+):(.*)$/.exec(row);
+      if (!match) continue;
+      results.push({ path: match[1]!, line: Number(match[2]), text: match[3]!.slice(0, 300) });
+      if (results.length >= 500) break;
+    }
+    return { results, truncated: results.length >= 500 };
+  });
+
   app.get("/api/code/file", async (request) => {
     const { path } = z.object({ path: z.string().min(1) }).parse(request.query);
     const source = await resolveSource(request, request.query);
     return { path, content: await readRepoFile(source.repo, path) };
   });
 
-  app.put("/api/code/file", async (request) => {
+  /**
+   * Save one file, keeping its own line endings and byte-order mark. With `expectedHash` (the file as
+   * the editor last read it), a file that something else changed meanwhile is not overwritten: 409
+   * with `conflict`, so the editor can offer to keep yours or use the one on disk.
+   */
+  app.put("/api/code/file", async (request, reply) => {
     const body = z
-      .object({ review: z.string().uuid().optional(), repo: z.string().optional(), path: z.string().min(1), content: z.string() })
+      .object({ review: z.string().uuid().optional(), repo: z.string().optional(), path: z.string().min(1), content: z.string(), expectedHash: z.string().nullable().optional() })
       .parse(request.body);
     const source = await resolveSource(request, body);
-    await writeRepoFile(source.repo, body.path, body.content);
+    const before = await readRepoBytes(source.repo, body.path);
+    if (body.expectedHash !== undefined && hashOf(before) !== body.expectedHash) {
+      return reply.code(409).send({ error: "The file changed on disk since you opened it.", conflict: true, hash: hashOf(before) });
+    }
+    const bytes = encode(body.content, decode(before));
+    await writeRepoBytes(source.repo, body.path, bytes);
+    progressCache.clear();
     await appendLedger({ userId: request.userId, actor: "me", action: "code.edit", payload: { repo: source.repo, path: body.path } });
-    return { ok: true };
+    return { ok: true, hash: hashOf(bytes) };
   });
 
   // ── source control ──────────────────────────────────────────────────────
@@ -356,7 +541,82 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/code/scm", async (request) => {
     const { repo } = RepoBody.parse(request.query);
-    return status(await allowedRepo(repo, await roots(request.userId)));
+    const allowed = await allowedRepo(repo, await roots(request.userId));
+    const scm = await status(allowed);
+    // Pushing straight to the default branch asks first (docs/16 §3).
+    return { ...scm, defaultBranch: await defaultBranch(allowed, request.userId).catch(() => null) };
+  });
+
+  /**
+   * What a commit from here would hold (docs/16 §3): in a review, the files this run changed (ticked)
+   * and your own changes from before the run (not ticked); in a checkout, every changed file. Plus
+   * what a pull request starts from: the repository's template, or the agent's own report.
+   */
+  app.get("/api/code/commit-plan", async (request) => {
+    const source = await resolveSource(request, request.query);
+    const scm = await status(source.repo);
+    const changedNow = [...new Set([...scm.staged, ...scm.unstaged, ...scm.untracked].map((entry) => entry.path))].sort();
+    let run: string[] = [];
+    let before: string[] = [];
+    if (source.review) {
+      const review = source.review;
+      const agentPaths = new Set(review.agentPaths);
+      const priorRaw = review.initialHead
+        ? await git(source.repo, ["diff", "--name-only", "--no-renames", review.initialHead, review.startTree]).catch(() => "")
+        : "";
+      const prior = new Set(priorRaw.split("\n").filter(Boolean));
+      run = changedNow.filter((path) => agentPaths.has(path) || (!prior.has(path) && !agentPaths.size));
+      before = changedNow.filter((path) => !run.includes(path));
+    } else {
+      before = changedNow;
+    }
+    const remote = scm.remote ?? "";
+    return {
+      branch: scm.branch,
+      defaultBranch: await defaultBranch(source.repo, request.userId).catch(() => null),
+      github: githubRepoOf(remote),
+      run,
+      before,
+      model: source.review?.job.model ?? null,
+      template: await pullRequestTemplate(source.repo),
+      proposal: source.review?.job.summary?.slice(0, 20_000) ?? null,
+    };
+  });
+
+  /** Commit exactly the ticked files, as they are on disk, in a throwaway index; hooks off. */
+  app.post("/api/code/commit-paths", async (request) => {
+    const body = z
+      .object({ review: z.string().uuid().optional(), repo: z.string().optional(), paths: z.array(z.string().min(1).max(1000)).min(1).max(2000), message: z.string().min(1).max(20_000) })
+      .parse(request.body);
+    const source = await resolveSource(request, body);
+    const settings = await loadSettings(prisma, request.userId);
+    // Settings' commit author; else git's own; else the Ensemble account, so a computer without a git identity can still commit.
+    let author = settings.terminal.commitAuthor || null;
+    if (!author && !(await git(source.repo, ["config", "user.email"]).catch(() => "")).trim()) {
+      const account = await prisma.user.findUnique({ where: { id: request.userId }, select: { name: true, email: true } });
+      if (account?.email) author = `${account.name || account.email.split("@")[0]} <${account.email}>`;
+    }
+    const result = await commitPaths(source.repo, request.userId, { paths: body.paths, message: body.message, author, sign: settings.terminal.signCommits });
+    progressCache.clear();
+    await appendLedger({ userId: request.userId, actor: "me", action: "code.commit", payload: { repo: source.repo, commit: result.commit, paths: body.paths.slice(0, 50) } });
+    return { ok: true, ...result };
+  });
+
+  /** Open a pull request on GitHub for this checkout's branch (pushed first). */
+  app.post("/api/code/pull-request", async (request) => {
+    const body = z
+      .object({ review: z.string().uuid().optional(), repo: z.string().optional(), title: z.string().min(1).max(256), body: z.string().max(60_000).default(""), base: z.string().min(1).max(255), draft: z.boolean().default(false) })
+      .parse(request.body);
+    const source = await resolveSource(request, body);
+    const scm = await status(source.repo);
+    const github = githubRepoOf(scm.remote ?? "");
+    if (!github) throw new GitError("This repository's origin is not on GitHub.");
+    if (scm.branch === body.base) throw new GitError("Commit on a branch of its own to open a pull request; this is the base branch.");
+    const token = await githubApiToken(prisma, request.userId);
+    if (!token) throw new GitError(GITHUB_AUTH_HINT, 409);
+    const opened = await openPullRequest({ token, owner: github.owner, repo: github.repo, head: scm.branch, base: body.base, title: body.title, body: body.body, draft: body.draft });
+    await appendLedger({ userId: request.userId, actor: "me", action: "code.pull_request", payload: { repo: source.repo, url: opened.url, base: body.base, head: scm.branch } });
+    return { ok: true, ...opened };
   });
 
   app.post("/api/code/scm/stage", async (request) => {

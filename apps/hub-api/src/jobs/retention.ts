@@ -5,6 +5,7 @@
 import type { FastifyInstance } from "fastify";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { appendLedger } from "../lib/ledger.js";
+import { unpinReviewSnapshots } from "../lib/code-commit.js";
 import { purgeDeletedStandalonePages } from "../pages/store.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
@@ -16,6 +17,7 @@ export interface RetentionCounts {
   historyPurged: number;
   logChunksPurged: number;
   jobFilesPurged?: number;
+  reviewsExpired?: number;
 }
 
 /** Remote-task log chunks. Fixed, not a per-user setting. See docs/25 §3.3. */
@@ -147,6 +149,13 @@ export async function runRetention(
   counts.logChunksPurged = await deleteOldLogChunks(app.prisma, userId, logCutoff, options.logChunkBatchSize);
   // The text of files device runs changed (docs/25 §4.3) is kept as long as their logs.
   counts.jobFilesPurged = (await app.prisma.jobFile.deleteMany({ where: { createdAt: { lt: logCutoff }, job: { userId } } })).count;
+  // Code reviews past their 14 days: their snapshots are unpinned and they move to "expired" (docs/16 §2).
+  const expired = await app.prisma.codeReview.findMany({ where: { userId, expiredAt: null, expiresAt: { lt: now } }, select: { id: true, jobId: true, repoPath: true }, take: 200 });
+  for (const review of expired) {
+    await unpinReviewSnapshots(review.repoPath, userId, review.jobId).catch(() => undefined);
+    await app.prisma.codeReview.update({ where: { id: review.id }, data: { expiredAt: now } });
+  }
+  counts.reviewsExpired = expired.length;
   await appendLedger({
     userId,
     actor: "system",

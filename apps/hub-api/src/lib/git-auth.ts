@@ -85,5 +85,21 @@ export async function githubCloneAuth(
   return { config: [], env: { GIT_TERMINAL_PROMPT: "0" }, missing: true };
 }
 
+/**
+ * A token for GitHub's API (opening a pull request): the git token saved in Settings, the GitHub
+ * connection, or `gh auth token` on a computer whose owner signed in to the GitHub CLI.
+ */
+export async function githubApiToken(prisma: PrismaClient, userId: string): Promise<string | null> {
+  const saved = (await githubToken(prisma, userId)) ?? (await connectorGithubToken(userId));
+  if (saved) return saved;
+  if (!(await canUseHostCredentials(userId))) return null;
+  try {
+    const { stdout } = await exec("gh", ["auth", "token"], { timeout: 4000 });
+    return stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 export const GITHUB_AUTH_HINT =
   "Git has no credentials for github.com. Connect GitHub in Settings → Connections, save a GitHub token in Settings, or run `gh auth setup-git`.";

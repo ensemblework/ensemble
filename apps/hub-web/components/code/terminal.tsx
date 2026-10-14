@@ -169,7 +169,7 @@ function Countdown({ until }: { until: string | null }) {
   return <span title="Locks after 30 minutes idle, 8 hours at most">{minutes} min</span>;
 }
 
-export function Terminal({ initialCwd, target, onClose }: { initialCwd?: string; target?: CodeTarget; onClose: () => void }) {
+export function Terminal({ initialCwd, target, fontSize, onClose }: { initialCwd?: string; target?: CodeTarget; fontSize?: number; onClose: () => void }) {
   const client = useQueryClient();
   // Inside the desktop app the terminal shows a note instead (see terminal-desktop-note.tsx).
   const desktop = useDesktopShell();
@@ -459,7 +459,7 @@ export function Terminal({ initialCwd, target, onClose }: { initialCwd?: string;
           {error ? <div className="term-err text-[12.5px]">{error}</div> : null}
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col font-mono text-[12.5px] leading-[1.55]" onClick={() => field.current?.focus()}>
+        <div className="flex min-h-0 flex-1 flex-col font-mono text-[12.5px] leading-[1.55]" style={fontSize ? { fontSize: `${fontSize}px` } : undefined} onClick={() => field.current?.focus()}>
           <div ref={out} className="min-h-0 flex-1 overflow-y-auto px-3 py-2">
             {lines.length === 0 ? <div className="term-faint">Type help to see what is allowed. Commands run in the folder shown above.</div> : null}
             {lines.map((line, index) => (

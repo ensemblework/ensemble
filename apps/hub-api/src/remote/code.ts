@@ -89,6 +89,36 @@ function outgoing(request: CodeRequest, body: unknown): unknown {
       },
     };
   }
+  if (request.path === "/api/code/versions") {
+    // Every version of the file, keys hidden; if anything was hidden the file is read-only from the web.
+    const versions = body as Record<string, unknown>;
+    let hidden = false;
+    const out: Record<string, unknown> = { ...versions };
+    for (const key of ["start", "agent", "original", "current"]) {
+      const text = versions[key];
+      if (typeof text !== "string") continue;
+      const result = masked(text);
+      hidden ||= result.hidden;
+      out[key] = result.text;
+    }
+    const big = typeof versions.current === "string" && Buffer.byteLength(versions.current) > CODE_EDIT_BYTES;
+    return hidden ? { ...out, readOnly: KEY_READ_ONLY } : big ? { ...out, readOnly: "Files over 1 MB open read-only from the web." } : out;
+  }
+  if (request.path === "/api/code/tree") {
+    // Files of keys and secrets are not listed on the web at all.
+    const listing = body as { entries?: Array<{ name: string; secret?: boolean }> };
+    if (!Array.isArray(listing.entries)) return body;
+    return { ...listing, entries: listing.entries.filter((entry) => !entry.secret).map(({ secret: _secret, ...entry }) => entry), hidden: listing.entries.filter((entry) => entry.secret).length };
+  }
+  if (request.path === "/api/code/files") {
+    const list = body as { files?: string[] };
+    return Array.isArray(list.files) ? { ...list, files: list.files.filter((path) => !refusedPath(path)) } : body;
+  }
+  if (request.path === "/api/code/search") {
+    const found = body as { results?: Array<{ path: string; text: string }> };
+    if (!Array.isArray(found.results)) return body;
+    return { ...found, results: found.results.filter((row) => !refusedPath(row.path)).map((row) => ({ ...row, text: redactKeys(row.text) })) };
+  }
   if (request.path === "/api/code/source") {
     // A changed secrets file is named, never opened: it moves to "Changed, can't be reviewed".
     const source = body as { files?: Array<{ path: string }>; unreviewable?: Array<{ path: string }> };
@@ -111,10 +141,12 @@ export async function codeAnswerFor(app: Injector, request: CodeRequest): Promis
     const refused = refusedPath(path);
     if (refused) return refuse(403, refused);
   }
-  if (request.method === "PUT") {
+  if (request.method === "PUT" || request.path === "/api/code/accept-content") {
     const body = (request.body ?? {}) as { content?: unknown; path?: unknown };
     if (typeof body.content !== "string") return refuse(400, "Nothing to save.");
     if (Buffer.byteLength(body.content) > CODE_EDIT_BYTES) return refuse(413, "Files over 1 MB are edited on the computer.");
+    // Text the web was shown with a key hidden never comes back as the file's text.
+    if (/\[redacted(?: private key)?\]/.test(body.content)) return refuse(403, KEY_READ_ONLY);
     // The web had this file read-only if it holds a key; refuse a save that would write the mask back.
     const { review, repo } = body as { review?: string; repo?: string };
     const current = await call(app, "GET", "/api/code/file", { path: String(body.path ?? ""), ...(review ? { review } : {}), ...(repo ? { repo } : {}) });

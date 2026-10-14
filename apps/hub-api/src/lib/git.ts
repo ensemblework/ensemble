@@ -7,7 +7,7 @@
  */
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { readdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { hostExecutable, isWithin } from "../workspace/policy.js";
 import { dropWhere, readLru, remember } from "./bounded.js";
@@ -306,10 +306,62 @@ export async function readRepoFile(repo: string, path: string): Promise<string> 
 }
 
 export async function writeRepoFile(repo: string, path: string, content: string): Promise<void> {
+  await writeRepoBytes(repo, path, Buffer.from(content, "utf8"));
+}
+
+/** The file's bytes, or null when it is not there (deleted). Same rules as `readRepoFile`. */
+export async function readRepoBytes(repo: string, path: string): Promise<Buffer | null> {
+  let target: string;
+  try {
+    target = await realInside(repo, path, false);
+  } catch (error) {
+    if (error instanceof GitError && error.statusCode === 404) return null;
+    throw error;
+  }
+  const info = await stat(target);
+  if (!info.isFile()) throw new GitError("That is not a file.", 422);
+  if (info.size > REPO_FILE_MAX_BYTES) throw new GitError("Files over 5 MB are not opened here.", 413);
+  return readFile(target);
+}
+
+export async function writeRepoBytes(repo: string, path: string, bytes: Buffer): Promise<void> {
   const target = await realInside(repo, path, true);
   const info = await stat(target).catch(() => null);
   if (info && !info.isFile()) throw new GitError("That is not a file.", 422);
-  await writeFile(target, content, "utf8");
+  await writeFile(target, bytes);
+}
+
+export async function removeRepoFile(repo: string, path: string): Promise<void> {
+  const target = await realInside(repo, path, true);
+  await rm(target, { force: true });
+}
+
+export type RepoEntry = { name: string; kind: "dir" | "file" | "link"; size: number | null };
+
+/**
+ * One folder of the repository for the explorer: folders first, then files, by name; never `.git`.
+ * A link is listed as a link and opened only where it really leads inside the repository.
+ */
+export async function listRepoFolder(repo: string, path: string, max = 2000): Promise<{ entries: RepoEntry[]; truncated: boolean }> {
+  const target = path ? await realInside(repo, path, false) : await realpath(repo);
+  if (!(await stat(target)).isDirectory()) throw new GitError("That is not a folder.", 422);
+  const dirents = await readdir(target, { withFileTypes: true });
+  const entries: RepoEntry[] = [];
+  for (const dirent of dirents) {
+    if (dirent.name.toLowerCase().replace(/[. ]+$/, "") === ".git") continue;
+    const full = join(target, dirent.name);
+    if (dirent.isSymbolicLink()) {
+      const real = await realpath(full).catch(() => null);
+      const inside = real && isWithin(await realpath(repo), real);
+      const info = inside ? await stat(real!).catch(() => null) : null;
+      entries.push({ name: dirent.name, kind: info?.isDirectory() ? "dir" : info?.isFile() ? "file" : "link", size: info?.isFile() ? info.size : null });
+      continue;
+    }
+    const size = dirent.isFile() ? await stat(full).then((info) => info.size, () => null) : null;
+    entries.push({ name: dirent.name, kind: dirent.isDirectory() ? "dir" : "file", size });
+  }
+  entries.sort((a, b) => ((a.kind === "dir") === (b.kind === "dir") ? a.name.localeCompare(b.name) : a.kind === "dir" ? -1 : 1));
+  return { entries: entries.slice(0, max), truncated: entries.length > max };
 }
 
 // ── source control ────────────────────────────────────────────────────────
