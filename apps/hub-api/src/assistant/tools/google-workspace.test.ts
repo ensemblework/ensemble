@@ -185,7 +185,7 @@ test("calendar_list_events turns local dates into instants in the person's zone"
 test("calendar_create_event previews exactly what happens, then creates it with invites and a Meet link", async () => {
   const input = {
     title: "Design review",
-    start: "2026-10-14T15:00",
+    start: "2037-10-14T15:00",
     attendees: ["sam@fieldnote.example"],
     googleMeet: true,
     description: "Walk through the new store",
@@ -208,8 +208,8 @@ test("calendar_create_event previews exactly what happens, then creates it with 
   assert.equal(url.searchParams.get("conferenceDataVersion"), "1");
   const body = request.body as Record<string, any>;
   assert.equal(body.summary, "Design review");
-  assert.deepEqual(body.start, { dateTime: "2026-10-14T15:00:00", timeZone: "Asia/Kolkata" });
-  assert.deepEqual(body.end, { dateTime: "2026-10-14T15:30:00", timeZone: "Asia/Kolkata" });
+  assert.deepEqual(body.start, { dateTime: "2037-10-14T15:00:00", timeZone: "Asia/Kolkata" });
+  assert.deepEqual(body.end, { dateTime: "2037-10-14T15:30:00", timeZone: "Asia/Kolkata" });
   assert.deepEqual(body.attendees, [{ email: "sam@fieldnote.example" }]);
   assert.equal(body.conferenceData.createRequest.conferenceSolutionKey.type, "hangoutsMeet");
   assert.ok(body.conferenceData.createRequest.requestId);
@@ -218,12 +218,12 @@ test("calendar_create_event previews exactly what happens, then creates it with 
 
   seen = [];
   respond = () => json({ id: "evt2", htmlLink: "https://calendar.google.com/evt2" });
-  await run("calendar_create_event", { title: "Offsite", start: "2026-10-20", end: "2026-10-21" });
+  await run("calendar_create_event", { title: "Offsite", start: "2037-10-20", end: "2037-10-21" });
   const allDay = seen[0]!;
   assert.equal(new URL(allDay.url).searchParams.get("sendUpdates"), "none");
-  assert.deepEqual((allDay.body as Record<string, unknown>).start, { date: "2026-10-20" });
-  assert.deepEqual((allDay.body as Record<string, unknown>).end, { date: "2026-10-22" }, "Google's all-day end is exclusive");
-  await assert.rejects(() => preview("calendar_create_event", { title: "x", start: "2026-10-14T15:00", end: "2026-10-14T14:00" }), /ends before it starts/);
+  assert.deepEqual((allDay.body as Record<string, unknown>).start, { date: "2037-10-20" });
+  assert.deepEqual((allDay.body as Record<string, unknown>).end, { date: "2037-10-22" }, "Google's all-day end is exclusive");
+  await assert.rejects(() => preview("calendar_create_event", { title: "x", start: "2037-10-14T15:00", end: "2037-10-14T14:00" }), /ends before it starts/);
   assert.throws(() => tool("calendar_create_event").input.parse({ title: "x", start: "next Tuesday" }));
 });
 
@@ -231,12 +231,12 @@ test("calendar_update_event keeps the length when only the start moves and merge
   const current = {
     id: "evt1",
     summary: "Design review",
-    start: { dateTime: "2026-10-14T15:00:00+05:30", timeZone: "Asia/Kolkata" },
-    end: { dateTime: "2026-10-14T16:00:00+05:30", timeZone: "Asia/Kolkata" },
+    start: { dateTime: "2037-10-14T15:00:00+05:30", timeZone: "Asia/Kolkata" },
+    end: { dateTime: "2037-10-14T16:00:00+05:30", timeZone: "Asia/Kolkata" },
     attendees: [{ email: "sam@fieldnote.example" }, { email: "lee@fieldnote.example" }],
   };
   respond = ({ method }) => (method === "GET" ? json(current) : json({ ...current, htmlLink: "https://calendar.google.com/evt1" }));
-  const input = { eventId: "evt1", start: "2026-10-15T11:00", addAttendees: ["ana@fieldnote.example"], removeAttendees: ["lee@fieldnote.example"] };
+  const input = { eventId: "evt1", start: "2037-10-15T11:00", addAttendees: ["ana@fieldnote.example"], removeAttendees: ["lee@fieldnote.example"] };
   const text = await preview("calendar_update_event", input);
   assert.match(text, /^Update “Design review” \(Wed 14 Oct 15:00\) in Mira's calendar \(mira@fieldnote.example\): move it to Thu 15 Oct 11:00–12:00 IST; add ana@fieldnote.example; remove lee@fieldnote.example\. Google emails the update to the guests\./);
   seen = [];
@@ -244,8 +244,8 @@ test("calendar_update_event keeps the length when only the start moves and merge
   const patch = seen.find((request) => request.method === "PATCH")!;
   assert.equal(new URL(patch.url).searchParams.get("sendUpdates"), "all");
   const body = patch.body as Record<string, unknown>;
-  assert.deepEqual(body.start, { dateTime: "2026-10-15T11:00:00", timeZone: "Asia/Kolkata" });
-  assert.deepEqual(body.end, { dateTime: "2026-10-15T12:00:00", timeZone: "Asia/Kolkata" });
+  assert.deepEqual(body.start, { dateTime: "2037-10-15T11:00:00", timeZone: "Asia/Kolkata" });
+  assert.deepEqual(body.end, { dateTime: "2037-10-15T12:00:00", timeZone: "Asia/Kolkata" });
   assert.deepEqual(body.attendees, [{ email: "sam@fieldnote.example" }, { email: "ana@fieldnote.example" }]);
   assert.equal(result.href, "https://calendar.google.com/evt1");
   assert.throws(() => tool("calendar_update_event").input.parse({ eventId: "evt1" }), /Say what to change/);

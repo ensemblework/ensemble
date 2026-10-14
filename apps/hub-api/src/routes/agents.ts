@@ -22,6 +22,7 @@ import { outsideAccessOf, PATH_RULE_SOURCE, PATH_RULE_TOOL } from "../workspace/
 import { installedTrustTools, loadSharedTrust, setSharedTrust, TRUST_TOOLS, trustChanged, type SharedTrustState } from "../workspace/trust-share.js";
 import { resume, stopEverything, stopJob } from "../workspace/worker.js";
 import { actorFor } from "../sharing/context.js";
+import { jobFileRoutes } from "./job-files.js";
 
 const run = promisify(execFile);
 
@@ -123,6 +124,8 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
     if (request.url.split("?")[0]?.startsWith("/api/workspace")) await requireHostAccess(request.userId, "Host workspace filesystem");
   });
   const { prisma } = app;
+  // A job's changed files and its folder, read live (job-files.ts).
+  await jobFileRoutes(app);
 
   app.post("/api/agent/assign", async (request, reply) => {
     if (request.body && typeof request.body === "object" && "runBranchPush" in request.body) {

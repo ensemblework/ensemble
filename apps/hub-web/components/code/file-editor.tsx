@@ -1,4 +1,6 @@
 "use client";
+/** @jsxRuntime automatic */
+/** @jsxImportSource react */
 
 import { javascript } from "@codemirror/lang-javascript";
 import { json } from "@codemirror/lang-json";

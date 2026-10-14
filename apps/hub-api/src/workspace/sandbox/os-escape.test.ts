@@ -165,6 +165,29 @@ test("Windows: the internet goes out only through the sandbox's proxy", { timeou
   }
 });
 
+test("with the internet on, a sandboxed command resolves host names", { timeout: 60_000 }, async (t) => {
+  const caps = await sandboxHere();
+  if (!caps.osSandbox || process.platform === "win32") {
+    t.skip(process.platform === "win32" ? "Windows sends traffic through the sandbox proxy; covered by the proxy test" : `no OS sandbox here: ${caps.reason}`);
+    return;
+  }
+  await prepareNetwork();
+  const parent = mkdtempSync(join(home, "ensemble-escape-dns-"));
+  try {
+    // getaddrinfo, as git and curl use it. On macOS it goes through mDNSResponder's Unix socket.
+    const script = `require("dns").lookup("github.com",(e,a)=>{if(e){console.error(e.code);process.exit(3)}console.log(a);process.exit(0)})`;
+    const online = await run(base(parent, { network: "outbound" }), script);
+    assert.equal(online.code, 0, `name lookup failed with the internet on: ${online.output}`);
+    if (caps.mechanism === "seatbelt") {
+      // Landlock filters TCP only, so a UDP lookup there is not a test of the internet setting.
+      const offline = await run(base(parent, { network: "none" }), script);
+      assert.notEqual(offline.code, 0, "no name lookups with the internet off");
+    }
+  } finally {
+    rmSync(parent, { recursive: true, force: true });
+  }
+});
+
 test("a run with the internet on can reach the network stack", { timeout: 60_000 }, async (t) => {
   const caps = await sandboxHere();
   if (!caps.osSandbox || process.platform === "win32") {

@@ -591,6 +591,28 @@ export type AgentJob = {
   origin?: "local" | "web";
 };
 
+/** A file a job's run changed (`GET /api/agent/jobs/:id/files`); `stored`: its text was sent when the run ended. */
+export type JobFileEntry = {
+  path: string;
+  status: "added" | "modified" | "deleted";
+  added: number;
+  removed: number;
+  binary: boolean;
+  stored: boolean;
+  truncated: boolean;
+  skipped: string | null;
+};
+export type JobFiles = {
+  files: JobFileEntry[];
+  /** Whether you may see the files' text (a device job's runner, with sharing on there). */
+  text?: { available: boolean; reason: string | null };
+  live: { available: boolean; reason: string | null };
+  where: "device" | "server";
+};
+export type FolderEntry = { name: string; kind: "dir" | "file" | "link"; size: number | null };
+export type FolderListing = { path: string; entries: FolderEntry[]; truncated: boolean; hidden: number };
+export type FolderFile = { path: string; size: number; content: string | null; binary: boolean; truncated: boolean };
+
 export type WorkspaceBoard = {
   /** This server's own workspace folder; null on Ensemble on the web, where the work runs on your computers. */
   root: string | null;
@@ -632,6 +654,8 @@ export type RemoteMac = {
   runBranchPush: boolean;
   /** Approvals and run settings from the web and phone apply on this computer. */
   acceptWebApprovals: boolean;
+  /** Ensemble on the web may show the files of tasks run here (on by default). */
+  browseFiles?: boolean;
   online: boolean;
   lastHeartbeatAt: number | null;
   disconnected: { at: string; reason: string } | null;
@@ -1216,6 +1240,12 @@ export const api = bindClient({
   taskJobs: (taskId: string) => get<{ jobs: AgentJob[] }>(`/api/agent/jobs${qs({ taskId })}`),
   job: (id: string) =>
     get<{ job: AgentJob & { instructions: string; networkAccess: boolean; sandbox?: Partial<SandboxCaps> & { effective: boolean; where?: "device" | "server" } }; events: JobEvent[]; log?: string }>(`/api/agent/jobs/${id}`),
+  jobFiles: (id: string) => get<JobFiles>(`/api/agent/jobs/${id}/files`),
+  /** A changed file's copy from when the run ended, or (live) read now from the task's folder. */
+  jobFile: (id: string, path: string, live = false) =>
+    get<{ source: "stored" | "live"; file: FolderFile; status?: string; at?: string }>(`/api/agent/jobs/${id}/file${qs({ path, live: live ? 1 : undefined })}`),
+  /** One folder of the task's folder, read now (from the computer that ran it). */
+  jobTree: (id: string, path = "") => get<{ listing: FolderListing }>(`/api/agent/jobs/${id}/tree${qs({ path })}`),
   jobLogs: (id: string, after?: number) => get<{ chunks: Array<{ seqFrom: number; seqTo: number; text: string; bytes: number; at: string }> }>(`/api/agent/jobs/${id}/logs${qs({ after })}`),
   devices: () =>
     get<{
@@ -1250,7 +1280,7 @@ export const api = bindClient({
   branches: (path: string) => get<{ branches: string[] }>(`/api/workspace/branches${qs({ path })}`),
   agentState: () => get<AgentState>("/api/agent/state"),
   remote: () => get<RemoteMac>("/api/remote"),
-  saveRemote: (body: { enabled?: boolean; runBranchPush?: boolean; acceptWebApprovals?: boolean; apiBase?: string | null; deviceName?: string }) => put<RemoteMac>("/api/remote", body),
+  saveRemote: (body: { enabled?: boolean; runBranchPush?: boolean; acceptWebApprovals?: boolean; browseFiles?: boolean; apiBase?: string | null; deviceName?: string }) => put<RemoteMac>("/api/remote", body),
   pairRemote: (body: { apiBase: string; code: string; name?: string }) => post<RemoteMac>("/api/remote/pair", body),
   unpairRemote: () => post<RemoteMac>("/api/remote/unpair"),
   pauseAgent: () => post<{ stopped: number; cancelled: number }>("/api/agent/pause"),

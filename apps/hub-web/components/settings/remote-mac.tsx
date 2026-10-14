@@ -40,7 +40,7 @@ function RemoteMacSettings() {
     onError: fail,
   });
   const save = useMutation({
-    mutationFn: (body: { enabled?: boolean; runBranchPush?: boolean; acceptWebApprovals?: boolean }) => api.saveRemote(body),
+    mutationFn: (body: { enabled?: boolean; runBranchPush?: boolean; acceptWebApprovals?: boolean; browseFiles?: boolean }) => api.saveRemote(body),
     onSuccess: (_result, body) => {
       if (body.enabled === true) toast("Remote tasks are on.", { tone: "ok" });
       if (body.enabled === false) toast("Remote tasks are off.");
@@ -132,6 +132,17 @@ function RemoteMacSettings() {
           disabled={!mac?.paired || save.isPending}
           label="Accept approvals from the web and phone"
           onChange={(acceptWebApprovals) => save.mutate({ acceptWebApprovals })}
+        />
+      </SettingRow>
+      <SettingRow
+        title="Show task files on the web"
+        description="Ensemble on the web shows the files tasks here changed (their text is sent when a run ends) and opens any file or folder in a task's folder, read from here when you open it. Never git's own files or files of keys and secrets. Off: only file names and line counts."
+      >
+        <Toggle
+          checked={mac?.browseFiles !== false}
+          disabled={!mac?.paired || save.isPending}
+          label="Show task files on the web"
+          onChange={(browseFiles) => save.mutate({ browseFiles })}
         />
       </SettingRow>
       {mac?.paired ? (

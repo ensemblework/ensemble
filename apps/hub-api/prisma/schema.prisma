@@ -537,6 +537,7 @@ model WorkspaceJob {
   device               Device?             @relation(fields: [deviceId], references: [id], onDelete: SetNull)
   events               WorkspaceEvent[]
   logChunks            WorkspaceLogChunk[]
+  files                JobFile[]
   review               CodeReview?
 
   @@index([status, sequence])
@@ -585,6 +586,27 @@ model DevicePairing {
 
 /// Redacted run output a device uploaded, in batches. 64 KB per chunk, 2 MB per job.
 /// Retention deletes chunks by `createdAt`; WorkspaceEvent stays the place for milestones.
+/// The text of a file a device run changed, sent when the run ended (docs/25 §4.3). Kept 30 days.
+model JobFile {
+  id        String       @id @default(uuid())
+  jobId     String       @map("job_id")
+  path      String
+  /// added | modified | deleted
+  status    String
+  content   String?
+  size      Int          @default(0)
+  binary    Boolean      @default(false)
+  truncated Boolean      @default(false)
+  /// Why the text was not sent (a secrets file, too large, unreadable).
+  skipped   String?
+  createdAt DateTime     @default(now()) @map("created_at")
+  job       WorkspaceJob @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, path])
+  @@index([createdAt])
+  @@map("job_files")
+}
+
 model WorkspaceLogChunk {
   id        String       @id @default(uuid())
   jobId     String       @map("job_id")

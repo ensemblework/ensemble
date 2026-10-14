@@ -15,6 +15,7 @@ export interface RetentionCounts {
   purged: number;
   historyPurged: number;
   logChunksPurged: number;
+  jobFilesPurged?: number;
 }
 
 /** Remote-task log chunks. Fixed, not a per-user setting. See docs/25 §3.3. */
@@ -144,6 +145,8 @@ export async function runRetention(
   }
   const logCutoff = new Date(now.getTime() - LOG_CHUNK_RETENTION_DAYS * 86_400_000);
   counts.logChunksPurged = await deleteOldLogChunks(app.prisma, userId, logCutoff, options.logChunkBatchSize);
+  // The text of files device runs changed (docs/25 §4.3) is kept as long as their logs.
+  counts.jobFilesPurged = (await app.prisma.jobFile.deleteMany({ where: { createdAt: { lt: logCutoff }, job: { userId } } })).count;
   await appendLedger({
     userId,
     actor: "system",

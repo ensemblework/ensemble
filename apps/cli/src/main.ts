@@ -1,4 +1,4 @@
-import { answerFor, answerPending, connectedHooks, connectHook, formatPending, HOOK_TOOLS, listPending, listTrusted, trustFolder, trustSharing, untrustFolder, webApprovals, type HookTool, type TrustSharing } from "./approvals.js";
+import { answerFor, answerPending, browseFiles, connectedHooks, connectHook, formatPending, HOOK_TOOLS, listPending, listTrusted, trustFolder, trustSharing, untrustFolder, webApprovals, type HookTool, type TrustSharing } from "./approvals.js";
 import type { ChildProcess } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
@@ -75,6 +75,7 @@ Usage:
   ensemble needs [list] | answer <n> <allow|deny|option number|"answer">
   ensemble trust [list] | add [path] | remove <path> | share [on|off]
   ensemble approvals [status] | on | off
+  ensemble browse [status] | on | off
   ensemble hooks [list] | connect <tool> | disconnect <tool>
   ensemble sandbox [status] | setup
   ensemble doctor
@@ -94,6 +95,8 @@ const HELP_BY_COMMAND: Record<string, string> = {
   hooks:
     "Usage: ensemble hooks [list] | connect <claude|codex|copilot-cli|cursor> | disconnect <tool>\nSends permission prompts and questions from tasks Ensemble opens in these tools to Needs me, while the tool's own prompt still works. The hook signs in with a key that can ask Ensemble but never answer.",
   approvals: "Usage: ensemble approvals [status] | on | off\nOn (default): you can approve anything for this computer from the web or phone, and the mode, internet and limits chosen there apply here.",
+  browse:
+    "Usage: ensemble browse [status] | on | off\nOn (default): Ensemble on the web shows the files of tasks run here: the text of the files a run changed, sent when it ends, and any file or folder in a task's folder, read from here when you open it. Never git's own files or files of keys and secrets.",
   sandbox:
     "Usage: ensemble sandbox [status] | setup\nThis computer's OS sandbox (macOS Seatbelt, Linux bubblewrap or Landlock, Windows sandbox account). No Docker. On Windows, `setup` asks for permission once; the Ensemble app and the CLI share it.",
   doctor: "Usage: ensemble doctor",
@@ -551,6 +554,20 @@ async function commandApprovals(args: string[]): Promise<void> {
   );
 }
 
+async function commandBrowse(args: string[]): Promise<void> {
+  if (args.includes("--help") || args.includes("-h")) return void console.log(HELP_BY_COMMAND.browse);
+  const subcommand = args[0] ?? "status";
+  if (!["status", "on", "off"].includes(subcommand)) throw new Error(HELP_BY_COMMAND.browse);
+  const sidecarDir = resolveSidecarDir(import.meta.url);
+  if (!(await sidecarAvailable(sidecarDir))) throw new Error(NO_RUNNER);
+  const on = await withAdminApi({ sidecarDir, run: (discovery) => browseFiles(discovery, subcommand === "status" ? undefined : subcommand === "on") });
+  console.log(
+    on
+      ? "Task files on the web: on. Ensemble on the web shows the files tasks here changed, and files in a task's folder when you open them there. Never git's own files or secrets files."
+      : "Task files on the web: off. The web shows only file names and line counts for tasks run here.",
+  );
+}
+
 async function commandHooks(args: string[]): Promise<void> {
   if (args.includes("--help") || args.includes("-h")) return void console.log(HELP_BY_COMMAND.hooks);
   const subcommand = args[0] ?? "list";
@@ -787,6 +804,8 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
       return commandTrust(rest);
     case "approvals":
       return commandApprovals(rest);
+    case "browse":
+      return commandBrowse(rest);
     case "hooks":
       return commandHooks(rest);
     case "sandbox":

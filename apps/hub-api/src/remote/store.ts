@@ -33,6 +33,12 @@ export interface RemoteSettings {
    * Off: those answers only on this computer, and web settings only narrow.
    */
   acceptWebApprovals: boolean;
+  /**
+   * Ensemble on the web may show the files of tasks run here: the text of the files a run changed,
+   * sent when it ends, and any file or folder in a task's folder, read when the person opens it.
+   * Never git's own files or secrets files. On by default.
+   */
+  browseFiles: boolean;
   apiBase: string | null;
   deviceId: string | null;
   deviceName: string;
@@ -108,6 +114,7 @@ export function loadSettings(): RemoteSettings {
     enabled: saved.enabled === true,
     runBranchPush: saved.runBranchPush === true,
     acceptWebApprovals: saved.acceptWebApprovals !== false,
+    browseFiles: saved.browseFiles !== false,
     apiBase: typeof saved.apiBase === "string" ? saved.apiBase : null,
     deviceId: typeof saved.deviceId === "string" ? saved.deviceId : null,
     deviceName: typeof saved.deviceName === "string" && saved.deviceName ? saved.deviceName : defaultDeviceName(),

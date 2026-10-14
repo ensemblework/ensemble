@@ -1,6 +1,6 @@
 # 26 · Ensemble CLI: the `ensemble` app in your terminal, a runner, and MCP for editors
 
-CLI 0.3.6 carries Woven Chorus branding and the Satin Gold terminal indicator.
+CLI 0.3.6 carries Woven Chorus branding and the Satin Gold terminal indicator. CLI 0.3.7 resolves host names inside the macOS sandbox (so a task can `git clone` from GitHub) and shows the files of tasks run here on the web (`ensemble browse`).
 
 Type `ensemble` in a project folder and Ensemble opens full-screen in the terminal:
 
@@ -69,6 +69,7 @@ Every action is also a plain command for scripts and automation; `ensemble help 
 | `ensemble trust [list] \| add [path] \| remove <path> \| share [on\|off]` | Trusted folders on this computer (default: the current folder). `share` shows or sets whether they are also trusted in Claude Code, Codex, GitHub Copilot CLI, Cursor and Gemini CLI (on by default; [doc 24 §5.8](24_DESKTOP_SANDBOXING.md)). Review only and Run unattended need one; Ensemble's own workspace is always trusted. System folders, the home folder and Ensemble's source are refused |
 | `ensemble hooks [list] \| connect <tool> \| disconnect <tool>` | Connects Claude Code (and the Claude app), Codex (CLI and the ChatGPT app), GitHub Copilot CLI or Cursor: permission prompts and questions from tasks Ensemble opens in them reach Needs me, while the tool's own prompt still works. The hook signs in with a `hooks` key that can ask but never answer ([30](30_ENGINES.md) §5). |
 | `ensemble approvals [status] \| on \| off` | Whether the web and phone may approve for this computer (on by default) and whether the mode, internet and limits chosen there apply here ([25 §5.1](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#51-phone-approvals)) |
+| `ensemble browse [status] \| on \| off` | Whether Ensemble on the web shows the files of tasks run here (on by default, 0.3.7): the text of the files a run changed, sent when it ends, and any file or folder in a task's folder, read from here when you open it in the web's Code tab. Never git's own files or secrets files ([25 §4.6](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#46-a-tasks-files-on-the-web-protocol-3-14-oct-2026)) |
 | `ensemble mcp` | Read-only MCP server on stdio (editors run this) |
 | `ensemble mcp setup [editor…] [--all] [--print] [--hosted]`, `mcp remove <editor>`, `mcp editors` | Write editor config (§6) |
 | `ensemble update` | Detects how it was installed (Homebrew, Scoop, winget, deb/rpm, script, npm) and prints the upgrade command. A daily check (2-second timeout; a failed check also waits a day) prints a one-line notice for a newer `cli-v*` release; never for `mcp` or `runner`, or when stderr is not a terminal. `ENSEMBLE_NO_UPDATE_CHECK=1` or `CI` turns it off |

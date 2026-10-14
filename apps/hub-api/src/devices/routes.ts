@@ -17,6 +17,7 @@ import { loadSettings } from "../lib/settings.js";
 import { decrypt } from "../lib/secrets.js";
 import { PROVIDERS as MODEL_PROVIDERS } from "../runtime/credentials.js";
 import { redactText } from "../lib/redact.js";
+import { sliceBytes } from "../lib/text.js";
 import { sseHandler, sseHub } from "../lib/sse.js";
 import {
   DEVICE_EVENT_KINDS,
@@ -39,7 +40,9 @@ import { outsideAccessOf } from "../workspace/trust.js";
 import { contextForPrompt } from "../connectors/items/index.js";
 import { filesOnTask, filesSection } from "../files/attached.js";
 import { pageMarkdown } from "../pages/markdown.js";
-import { MAX_UPLOADED_STEPS, PAGE_HEADING, PROTOCOL, RunTotals, UploadedStep } from "../remote/contract.js";
+import { FileAnswer, MAX_UPLOADED_STEPS, PAGE_HEADING, PROTOCOL, RunTotals, UPLOAD_FILE_BYTES, UPLOAD_FILES_MAX, UPLOAD_TOTAL_BYTES, UploadedFile, UploadedStep } from "../remote/contract.js";
+import { folderPath, refusedPath } from "../workspace/folder-read.js";
+import { storeAnswer } from "./file-relay.js";
 import { PageDocument } from "@ensemble/shared-types";
 
 const Register = z.object({
@@ -104,6 +107,8 @@ const Result = z.object({
   url: z.string().min(1).max(2000).refine(httpsResult, "Result links must be https."),
   sha: z.string().max(80).optional(),
 });
+
+const Files = z.object({ leaseToken: z.string().min(1).max(500), files: z.array(UploadedFile).max(25) });
 
 const Complete = z.object({
   leaseToken: z.string().min(1).max(200),
@@ -631,6 +636,64 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     const ok = await finishDeviceJob(prisma, held.job, { outcome: body.outcome, summary: body.summary, results, totals: body.totals });
     if (!ok) return reply.code(409).send({ error: LEASE_REJECTED });
     return { status: body.outcome };
+  });
+
+  // The text of the files a run changed (protocol 3), sent before complete while the lease is held.
+  app.post("/api/devices/self/jobs/:id/files", async (request, reply) => {
+    const device = await ownDevice(app, request, reply);
+    if (!device) return;
+    const { id } = request.params as { id: string };
+    const body = Files.parse(request.body);
+    const held = await holdLease(app, device, id, body.leaseToken);
+    if (!held.ok) return reply.code(held.status).send({ error: held.message });
+    // The computer's limits are checked again here: files and bytes per run, and which paths may be kept.
+    const kept = await prisma.jobFile.findMany({ where: { jobId: held.job.id }, select: { path: true, content: true } });
+    const bytesOf = (text: string | null) => (text ? Buffer.byteLength(text) : 0);
+    let count = kept.length;
+    let bytes = kept.reduce((sum, row) => sum + bytesOf(row.content), 0);
+    const paths = new Set(kept.map((row) => row.path));
+    let stored = 0;
+    for (const file of body.files) {
+      // Redacted again here, like every text a computer sends.
+      const path = folderPath(redactText(file.path)).slice(0, 500);
+      if (!path) continue;
+      if (!paths.has(path) && count >= UPLOAD_FILES_MAX) break;
+      const refused = refusedPath(path);
+      let content = refused || file.content == null ? null : redactText(file.content);
+      let truncated = file.truncated;
+      if (content != null && bytesOf(content) > UPLOAD_FILE_BYTES) {
+        content = sliceBytes(content, UPLOAD_FILE_BYTES);
+        truncated = true;
+      }
+      if (content != null && bytes + bytesOf(content) > UPLOAD_TOTAL_BYTES) content = null;
+      const data = {
+        status: file.status,
+        content,
+        size: file.size,
+        binary: file.binary,
+        truncated,
+        skipped: refused ?? (content == null && file.content != null ? "Past what one run keeps." : file.skipped ? redactText(file.skipped).slice(0, 200) : null),
+      };
+      await prisma.jobFile.upsert({ where: { jobId_path: { jobId: held.job.id, path } }, create: { jobId: held.job.id, path, ...data }, update: data });
+      if (!paths.has(path)) {
+        paths.add(path);
+        count += 1;
+      }
+      bytes += bytesOf(content);
+      stored += 1;
+    }
+    return { stored };
+  });
+
+  // This computer's answer to a files.request the web sent it (protocol 3).
+  app.post("/api/devices/self/file-requests/:id", async (request, reply) => {
+    const device = await ownDevice(app, request, reply);
+    if (!device) return;
+    const { id } = request.params as { id: string };
+    const answer = FileAnswer.parse(request.body);
+    const stored = await storeAnswer(app.redis, device.id, id, answer);
+    if (stored === "unknown") return reply.code(410).send({ error: "Nobody is waiting for this answer." });
+    return { ok: true };
   });
 
   app.get("/api/devices/self/events", async (request, reply) => {

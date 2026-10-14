@@ -754,7 +754,7 @@ export async function cloneForAgent(ctx: JobContext, argv: string[], line: strin
 }
 
 /** Files in a cloned repository that run code later (planted.ts), as paths in the run folder. */
-async function plantedIn(ctx: JobContext, target: string, rel: string): Promise<PlantedHit[]> {
+export async function plantedIn(ctx: JobContext, target: string, rel: string): Promise<PlantedHit[]> {
   const listed = await runCommand({
     userId: ctx.userId,
     argv: ["git", ...gitHardening(false), "ls-files", "-z"],

@@ -26,6 +26,10 @@ export const ROUTES = {
   events: "/api/devices/self/events",
   /** The account's model keys, for this computer's own model calls. */
   modelKeys: "/api/devices/self/model-keys",
+  /** The text of the files a run changed, sent before complete (protocol 3). */
+  files: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/files`,
+  /** This computer's answer to a `files.request` from the web: a folder's entries or a file's text. */
+  fileAnswer: (requestId: string) => `/api/devices/self/file-requests/${encodeURIComponent(requestId)}`,
 } as const;
 
 const ms = (name: string, fallback: number) => {
@@ -50,9 +54,11 @@ export const LOG_CHUNK_BYTES = 64 * 1024;
 /**
  * The device protocol this server speaks, sent on every claim. 2 (14 Oct 2026): progress may carry
  * `steps` and the `engine` and `sandbox` events, and complete `totals` and a 20,000-character summary.
- * A computer sends those only to a server that says 2: an older one answers them with a 400.
+ * 3 (14 Oct 2026): the text of the files a run changed goes to `ROUTES.files` before complete, and the
+ * server may ask for a folder's entries or a file's text (`files.request` on the event stream).
+ * A computer sends each only to a server that says so: an older one answers them with a 400 or 404.
  */
-export const PROTOCOL = 2;
+export const PROTOCOL = 3;
 /** What a protocol 1 server takes. */
 export const LEGACY_EVENT_KINDS = ["prepared", "tool", "command"] as const;
 export const LEGACY_SUMMARY_CHARS = 8000;
@@ -223,9 +229,56 @@ export const RunTotals = z.object({
   tokensIn: z.number().int().min(0).max(1_000_000_000).optional(),
   tokensOut: z.number().int().min(0).max(1_000_000_000).optional(),
   costUsd: z.number().min(0).max(100_000).nullish(),
-  files: z.array(z.object({ path: text(500), added: z.number().int().min(0), removed: z.number().int().min(0) })).max(200).default([]),
+  files: z
+    .array(z.object({ path: text(500), added: z.number().int().min(0), removed: z.number().int().min(0), status: z.enum(["added", "modified", "deleted"]).optional(), binary: z.boolean().optional() }))
+    .max(200)
+    .default([]),
 });
 export type RunTotals = z.infer<typeof RunTotals>;
+
+/** Changed files a computer sends with their text: at most this many, each and in all. */
+export const UPLOAD_FILES_MAX = 100;
+export const UPLOAD_FILE_BYTES = 256 * 1024;
+export const UPLOAD_TOTAL_BYTES = 3 * 1024 * 1024;
+
+/** One changed file as a computer sends it: its text when it is text and not a secrets file, cut to `UPLOAD_FILE_BYTES`. */
+export const UploadedFile = z.object({
+  path: text(500).min(1),
+  status: z.enum(["added", "modified", "deleted"]),
+  size: z.number().int().min(0).max(2_147_483_647),
+  content: z.string().max(UPLOAD_FILE_BYTES).nullish(),
+  binary: z.boolean().default(false),
+  truncated: z.boolean().default(false),
+  /** Why the text was not sent (a secrets file, too large, unreadable). */
+  skipped: text(200).nullish(),
+});
+export type UploadedFile = z.infer<typeof UploadedFile>;
+
+/** `files.request` on the event stream: the web asks for one folder's entries or one file's text in a job's folder. */
+export const FileRequest = z.object({
+  id: text(100).min(1),
+  jobId: text(100).min(1),
+  kind: z.enum(["tree", "file"]),
+  path: text(1000).default(""),
+});
+export type FileRequest = z.infer<typeof FileRequest>;
+
+/** The computer's answer: entries, a file, or why not. */
+export const FileAnswer = z.object({
+  listing: z
+    .object({
+      path: text(1000),
+      entries: z.array(z.object({ name: text(500), kind: z.enum(["dir", "file", "link"]), size: z.number().int().min(0).nullable() })).max(1000),
+      truncated: z.boolean(),
+      hidden: z.number().int().min(0),
+    })
+    .optional(),
+  file: z
+    .object({ path: text(1000), size: z.number().int().min(0).max(2_147_483_647), content: z.string().max(600 * 1024).nullable(), binary: z.boolean(), truncated: z.boolean() })
+    .optional(),
+  error: text(500).optional(),
+});
+export type FileAnswer = z.infer<typeof FileAnswer>;
 
 /** Outcomes the device complete route accepts. Interrupted is the lease sweep, not a complete body. */
 export type Outcome = "succeeded" | "failed" | "cancelled" | "blocked";
