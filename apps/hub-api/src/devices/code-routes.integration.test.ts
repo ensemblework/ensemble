@@ -197,6 +197,15 @@ test("the web's Code tab and terminal reach the owner's computer only, through i
     assert.equal(saved.statusCode, 200);
     assert.ok(await prisma.auditLedger.findFirst({ where: { userId: user.id, action: "code.web" } }), "a change from the web is in the ledger");
 
+    // A computer from before the IDE's calls (0.3.8) is asked to update for them; its first calls still work.
+    await prisma.device.update({ where: { id: device.id }, data: { capabilities: { code: true, browseFiles: true, webEdit: true, webTerminal: true } } });
+    const older = await code(browser(), { method: "GET", path: "/api/code/versions", query: { repo: "/work/r", path: "a.ts" } });
+    assert.equal(older.statusCode, 409);
+    assert.match(older.body, /CLI 0\.3\.9/);
+    assert.equal((await code(browser(), { method: "GET", path: "/api/code/reviews" })).statusCode, 200);
+    await prisma.device.update({ where: { id: device.id }, data: { capabilities: { code: true, codeApi: 2, browseFiles: true, webEdit: true, webTerminal: true } } });
+    assert.equal((await code(browser(), { method: "GET", path: "/api/code/versions", query: { repo: "/work/r", path: "a.ts" } })).statusCode, 200);
+
     // Offline: a clear refusal, nothing sent.
     await prisma.device.update({ where: { id: device.id }, data: { lastSeenAt: new Date(Date.now() - 3_600_000) } });
     assert.match((await code(browser(), { method: "GET", path: "/api/code/reviews" })).body, /offline/);

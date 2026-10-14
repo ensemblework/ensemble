@@ -4,7 +4,7 @@ import { z } from "zod";
 import { buildSeries, defaultPlotConfig, emptyWorkspace, isWorkspace, lttb, plotConfigSchema, plottedRows, tableToCsv, workspaceBoilerplate, workspaceSchema } from "@ensemble/shared-types";
 import { declareModule } from "../lib/module-gate.js";
 import { runtime } from "../lib/runtime.js";
-import { requireHostAccess } from "../lib/hosted-access.js";
+import { canUseHostCredentials, requireHostAccess } from "../lib/hosted-access.js";
 import { datasetErrorReply, plotExportErrorReply, plotRenderFailure } from "../runtime/plot-failure.js";
 import { fetchHostedPlotRun, PLOT_QUEUE_LIMIT_MS, PLOT_RUN_LIMIT_MS } from "../runtime/plot-run.js";
 import { useInProcessRuntime } from "../runtime/mode.js";
@@ -13,10 +13,10 @@ import { configOf, deleteDataset, ingestDataset, loadOwnedTable, ownedPlot, repa
 
 const limit = { bodyLimit: 34 * 1024 * 1024 };
 
-function datasetPayload(error: unknown, empty = "Could not read that file."): { statusCode: number; body: { error: string; retry?: boolean } } {
+function datasetPayload(error: unknown, empty = "Could not read that file."): { statusCode: number; body: { error: string; retry?: boolean; code?: string } } {
   const failure = datasetErrorReply(error);
   const message = error instanceof Error ? failure.error : empty;
-  const body = failure.retry === undefined ? { error: message } : { error: message, retry: failure.retry };
+  const body = { error: message, ...(failure.retry === undefined ? {} : { retry: failure.retry }), ...(failure.code ? { code: failure.code } : {}) };
   return { statusCode: failure.statusCode, body };
 }
 
@@ -294,6 +294,47 @@ export async function plotRoutes(app: FastifyInstance): Promise<void> {
     return { code };
   });
 
+  /**
+   * What a render runs: the plot's datasets (as the plot runtime receives them) and its code. Shared
+   * by the server's render and the browser's (Ensemble on the web, where this server runs Python only
+   * for its operator: the page runs the same code with Pyodide, docs/02 Plots).
+   */
+  async function renderInput(userId: string, id: string, input: { code?: string; accent?: string }) {
+    const plot = await ownedPlot(db, userId, id);
+    const workspace = workspaceSchema.safeParse(plot.config);
+    const datasets: Array<{ name: string; columns: string[]; rows: Array<Array<string | number | null>> }> = [];
+    if (workspace.success) {
+      const used = new Map<string, number>();
+      for (const datasetId of workspace.data.datasetIds) {
+        const loaded = await loadOwnedTable(db, userId, datasetId);
+        const seen = used.get(loaded.name) ?? 0;
+        used.set(loaded.name, seen + 1);
+        const name = seen === 0 ? loaded.name : `${loaded.name} ${seen + 1}`;
+        datasets.push({ name, columns: loaded.table.columns.map((column) => column.name), rows: loaded.table.rows });
+      }
+    } else if (plot.datasetId) {
+      const loaded = await loadOwnedTable(db, userId, plot.datasetId);
+      datasets.push({ name: loaded.name, columns: loaded.table.columns.map((column) => column.name), rows: loaded.table.rows });
+    }
+    if (!datasets.length) return { datasets, code: "" };
+    const code = input.code ?? (plot.code || (workspace.success
+      ? workspaceBoilerplate(datasets.map((dataset) => dataset.name))
+      : matplotlibSource({ datasetName: datasets[0]!.name, columns: datasets[0]!.columns.map((name) => ({ name, type: "number" as const })), config: configOf(plot.config), accent: input.accent })));
+    return { datasets, code };
+  }
+
+  /** Whether this server runs plot Python for this account; when it does not, the web runs it in the browser. */
+  app.get("/api/plots/runtime", async (request) => ({ serverPython: await canUseHostCredentials(request.userId) }));
+
+  /** The datasets and code a render would run, without running them (the browser runs them). */
+  app.get("/api/plots/:id/render-input", async (request, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const query = z.object({ accent: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional() }).parse(request.query ?? {});
+    const input = await renderInput(request.userId, id, { accent: query.accent });
+    if (!input.datasets.length) return reply.code(400).send({ error: "This plot has no dataset." });
+    return input;
+  });
+
   app.post("/api/plots/:id/render", { ...limit }, async (request, reply) => {
     await requireHostAccess(request.userId, "Python plots");
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
@@ -303,26 +344,8 @@ export async function plotRoutes(app: FastifyInstance): Promise<void> {
       dpi: z.number().min(72).max(600).optional(),
       accent: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
     }).parse(request.body ?? {});
-    const plot = await ownedPlot(db, request.userId, id);
-    const workspace = workspaceSchema.safeParse(plot.config);
-    const datasets: Array<{ name: string; columns: string[]; rows: Array<Array<string | number | null>> }> = [];
-    if (workspace.success) {
-      const used = new Map<string, number>();
-      for (const datasetId of workspace.data.datasetIds) {
-        const loaded = await loadOwnedTable(db, request.userId, datasetId);
-        const seen = used.get(loaded.name) ?? 0;
-        used.set(loaded.name, seen + 1);
-        const name = seen === 0 ? loaded.name : `${loaded.name} ${seen + 1}`;
-        datasets.push({ name, columns: loaded.table.columns.map((column) => column.name), rows: loaded.table.rows });
-      }
-    } else if (plot.datasetId) {
-      const loaded = await loadOwnedTable(db, request.userId, plot.datasetId);
-      datasets.push({ name: loaded.name, columns: loaded.table.columns.map((column) => column.name), rows: loaded.table.rows });
-    }
+    const { datasets, code } = await renderInput(request.userId, id, { code: body.code, accent: body.accent });
     if (!datasets.length) return reply.code(400).send({ error: "This plot has no dataset." });
-    const code = body.code ?? (plot.code || (workspace.success
-      ? workspaceBoilerplate(datasets.map((dataset) => dataset.name))
-      : matplotlibSource({ datasetName: datasets[0]!.name, columns: datasets[0]!.columns.map((name) => ({ name, type: "number" as const })), config: configOf(plot.config), accent: body.accent })));
     try {
       const json = { userId: request.userId, code, datasets, format: body.format, dpi: body.dpi };
       // In process, the worker client starts its clock on `started`. The abort

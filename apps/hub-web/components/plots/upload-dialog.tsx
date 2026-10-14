@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { stagePercent, type LinkChoice } from "@ensemble/shared-types";
 import { API, ApiError, api } from "@/lib/api";
+import { parseTableInBrowser, usePythonStatus } from "@/lib/plots/browser-python";
+import { plotsRunOnServer } from "@/lib/plots/render";
 import { PlotDialog } from "@/components/plots/plot-dialog";
 
 type Dataset = {
@@ -63,13 +65,15 @@ function postDataset(body: unknown, onProgress: (percent: number, label: string)
         return;
       }
       let message = "Could not read that file.";
+      let code: string | undefined;
       try {
-        const parsed = JSON.parse(text) as { error?: string };
+        const parsed = JSON.parse(text) as { error?: string; code?: string };
         if (parsed.error) message = parsed.error;
+        code = parsed.code;
       } catch {
         // the body was not JSON
       }
-      reject(new ApiError(message, xhr.status));
+      reject(new ApiError(message, xhr.status, code));
     };
     xhr.send(payload);
   });
@@ -109,6 +113,9 @@ export function UploadDialog({
   const [paste, setPaste] = useState("");
   const [pending, setPending] = useState<Dataset | null>(null);
   const [links, setLinks] = useState<Record<string, LinkChoice>>({});
+  // A workbook read in the browser with more than one sheet: which one to add.
+  const [choose, setChoose] = useState<{ file: File; bytes: Uint8Array; sheets: string[]; sheet: string } | null>(null);
+  const python = usePythonStatus();
 
   const report = (next: number, text: string) => {
     setPercent(next);
@@ -119,6 +126,7 @@ export function UploadDialog({
     setBusy(false);
     setError("");
     setPending(null);
+    setChoose(null);
     setPercent(0);
     setLabel("Ready");
     setLinks({});
@@ -135,6 +143,25 @@ export function UploadDialog({
     report(100, "Done");
   };
 
+  /**
+   * Ensemble on the web reads spreadsheets and Arrow files in the browser (the server runs Python only
+   * for its operator): the plot runtime's own reader, then the table is saved as columns and rows.
+   */
+  const addInBrowser = async (file: File, bytes: Uint8Array, sheet = "") => {
+    setBusy(true);
+    setChoose(null);
+    report(stagePercent("scan", 0.3), "Reading in your browser");
+    const table = await parseTableInBrowser(file.name, bytes, sheet);
+    if (!sheet && table.sheets.length > 1) {
+      setChoose({ file, bytes, sheets: table.sheets, sheet: table.sheet });
+      setBusy(false);
+      return;
+    }
+    if (!table.columns.length) throw new Error("That sheet has no table.");
+    const dataset = await postDataset({ name: file.name.replace(/\.[^.]+$/, ""), columns: table.columns, rows: table.rows }, report);
+    finish({ ...dataset, warnings: [...table.warnings, ...dataset.warnings] });
+  };
+
   const sendFile = async (file: File) => {
     setBusy(true);
     setError("");
@@ -147,11 +174,17 @@ export function UploadDialog({
         await scanText(text, report);
         finish(await postDataset({ name: file.name.replace(/\.[^.]+$/, ""), filename: file.name, text }, report));
       } else {
+        if (!(await plotsRunOnServer())) return await addInBrowser(file, bytes);
         report(stagePercent("scan", 1), "Reading columns");
         let binary = "";
         const chunk = 0x8000;
         for (let index = 0; index < bytes.length; index += chunk) binary += String.fromCharCode(...bytes.subarray(index, index + chunk));
-        finish(await postDataset({ filename: file.name, fileBase64: btoa(binary) }, report));
+        try {
+          finish(await postDataset({ filename: file.name, fileBase64: btoa(binary) }, report));
+        } catch (reason) {
+          if (!(reason instanceof ApiError && reason.status === 403 && reason.code === "HOST_ACCESS_DENIED")) throw reason;
+          await addInBrowser(file, bytes);
+        }
       }
     } catch (reason) {
       setBusy(false);
@@ -213,10 +246,32 @@ export function UploadDialog({
             <button type="button" className="btn-primary" onClick={() => { onAccept(pending, links); reset(); onClose(); }}>OK</button>
           </div>
         </div>
+      ) : choose ? (
+        <div className="space-y-3" data-sheet-choice>
+          <p className="text-[13px]">{choose.file.name} has {choose.sheets.length} sheets. Which one?</p>
+          <select className="field w-full" aria-label="Sheet" value={choose.sheet} onChange={(event) => setChoose({ ...choose, sheet: event.target.value })}>
+            {choose.sheets.map((sheet) => <option key={sheet} value={sheet}>{sheet}</option>)}
+          </select>
+          <div className="flex justify-end gap-2">
+            <button type="button" className="btn" onClick={reset}>Cancel</button>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={() => void addInBrowser(choose.file, choose.bytes, choose.sheet).catch((reason: unknown) => {
+                setBusy(false);
+                setError(reason instanceof Error ? reason.message : "Could not read that file.");
+              })}
+            >
+              Use this sheet
+            </button>
+          </div>
+        </div>
       ) : busy ? (
         <div className="py-6" data-upload-busy>
           <Bar percent={percent} label={label} />
-          <p className="mt-3 text-[12px] text-muted">Parsing finishes when the bar reaches 100. Nothing here spins.</p>
+          <p className="mt-3 text-[12px] text-muted">
+            {python === "loading" ? "Starting Python in your browser to read this file (the first time only, about 30 MB)." : "Parsing finishes when the bar reaches 100. Nothing here spins."}
+          </p>
         </div>
       ) : (
         <div className="space-y-3" data-upload-start>
@@ -249,6 +304,11 @@ export function UploadDialog({
               report(stagePercent("upload", 0), "Fetching the link");
               void postDataset({ url: url.trim() }, report).then(finish).catch((reason: unknown) => {
                 setBusy(false);
+                // On Ensemble on the web the server does not read spreadsheets; the browser can, from a file.
+                if (reason instanceof ApiError && reason.status === 403 && reason.code === "HOST_ACCESS_DENIED") {
+                  setError("That link is a spreadsheet. Download it (as Excel or CSV) and add the file here: it is read in your browser.");
+                  return;
+                }
                 setError(reason instanceof Error ? reason.message : "Could not fetch that link.");
               });
             }}

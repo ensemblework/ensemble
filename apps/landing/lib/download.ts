@@ -7,7 +7,7 @@ export const NPM_PUBLISHED = false;
 export const AUR_AVAILABLE = false;
 
 /** The desktop app's released version (apps/desktop/src-tauri/tauri.conf.json; a test keeps them equal). */
-export const DESKTOP_VERSION = "0.3.5";
+export const DESKTOP_VERSION = "0.3.6";
 
 export type DesktopFile = { label: string; file: string; note: string; primary?: boolean };
 

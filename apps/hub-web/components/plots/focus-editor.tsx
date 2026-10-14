@@ -10,6 +10,7 @@ import { StyleTab } from "@/components/plots/studio";
 import { useModalFocus } from "@/lib/modal-focus";
 import { ModalScope, Toggle } from "@/components/ui";
 import { api } from "@/lib/api";
+import { renderPlot } from "@/lib/plots/render";
 import { usePlotTheme } from "@/lib/plots/theme";
 import { useToast } from "@/components/toast";
 
@@ -273,7 +274,7 @@ function TileExport({ workspaceId, code, toast }: { workspaceId: string | null; 
   const run = async (format: "png" | "svg" | "pdf" | "eps") => {
     if (!workspaceId) return;
     try {
-      const result = await api.renderPlot(workspaceId, { format, code });
+      const result = await renderPlot(workspaceId, { format, code });
       const blob = figureBytes(format, result.data);
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");

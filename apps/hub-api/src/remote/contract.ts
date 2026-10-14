@@ -299,18 +299,27 @@ export type ResultLink = { kind: "pr" | "commit" | "branch"; url: string; sha?: 
  * server and the computer check a request against this list; anything else is refused. Settings (the
  * folders Code can use) stay on the computer.
  */
-export const CODE_CALLS: ReadonlyArray<{ method: "GET" | "POST" | "PUT"; path: RegExp; write: boolean; slow?: boolean }> = [
-  { method: "GET", path: /^\/api\/code\/(repos|reviews|source|diff|file|scm|versions|tree|files|progress|commit-plan)$/, write: false },
-  { method: "GET", path: /^\/api\/code\/(actions|search)$/, write: false, slow: true },
-  { method: "POST", path: /^\/api\/code\/(decide|accept-content|restore)$/, write: true },
+export const CODE_CALLS: ReadonlyArray<{ method: "GET" | "POST" | "PUT"; path: RegExp; write: boolean; slow?: boolean; since?: number }> = [
+  { method: "GET", path: /^\/api\/code\/(repos|reviews|source|diff|file|scm)$/, write: false },
+  { method: "GET", path: /^\/api\/code\/(versions|tree|files|progress|commit-plan)$/, write: false, since: 2 },
+  { method: "GET", path: /^\/api\/code\/actions$/, write: false, slow: true },
+  { method: "GET", path: /^\/api\/code\/search$/, write: false, slow: true, since: 2 },
+  { method: "POST", path: /^\/api\/code\/decide$/, write: true },
+  { method: "POST", path: /^\/api\/code\/(accept-content|restore)$/, write: true, since: 2 },
   { method: "POST", path: /^\/api\/code\/reviews\/[0-9a-f-]{36}\/complete$/, write: true },
   { method: "POST", path: /^\/api\/code\/reviews\/[0-9a-f-]{36}\/(accept|discard)$/, write: true, slow: true },
   { method: "POST", path: /^\/api\/code\/reviews\/[0-9a-f-]{36}\/push$/, write: true, slow: true },
   { method: "POST", path: /^\/api\/code\/scm\/(stage|unstage|discard)$/, write: true },
   { method: "POST", path: /^\/api\/code\/scm\/(commit|push|pull)$/, write: true, slow: true },
-  { method: "POST", path: /^\/api\/code\/(commit-paths|pull-request)$/, write: true, slow: true },
+  { method: "POST", path: /^\/api\/code\/(commit-paths|pull-request)$/, write: true, slow: true, since: 2 },
   { method: "PUT", path: /^\/api\/code\/file$/, write: true },
 ];
+
+/**
+ * The Code calls a computer answers (`capabilities.codeApi`): 1 is the first relay (0.3.8); 2 adds the
+ * IDE's calls (`since: 2`: versions, tree, files, search, progress, accept, restore, commit, pull request).
+ */
+export const CODE_API = 2;
 
 /** The entry for this call, or null when the web may not make it. */
 export function codeCall(method: string, path: string): (typeof CODE_CALLS)[number] | null {

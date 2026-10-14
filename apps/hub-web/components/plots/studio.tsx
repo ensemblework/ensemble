@@ -24,6 +24,8 @@ import { ChartView, exportChartPng, exportChartSvg, usePlotTheme } from "@/compo
 import { ColumnSelect } from "@/components/plots/column-select";
 import { useDelayedFlag } from "@/lib/motion/use-delayed-flag";
 import { api } from "@/lib/api";
+import { renderPlot } from "@/lib/plots/render";
+import { usePythonStatus } from "@/lib/plots/browser-python";
 import { figureBytes } from "@/lib/plots/figure-file";
 import { plottedCsv } from "@/lib/plots/option";
 import { seriesSwatchColor } from "@/lib/plots/theme";
@@ -115,6 +117,7 @@ export function PlotStudio({ plotId }: { plotId: string }) {
   const [tab, setTab] = useState<(typeof TABS)[number]>("Data");
   const [dataset, setDataset] = useState<Dataset | null>(null);
   const [busy, setBusy] = useState("");
+  const python = usePythonStatus();
   const [paste, setPaste] = useState("");
   const [url, setUrl] = useState("");
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -224,7 +227,7 @@ export function PlotStudio({ plotId }: { plotId: string }) {
       <div className="mb-3 flex flex-wrap items-center gap-3">
         <Link href="/plots" className="text-[12.5px] text-muted hover:text-ink">Plots</Link>
         <InlineEdit value={title} placeholder="Untitled plot" onSave={setTitle} className="display min-w-0 flex-1 text-[28px] leading-none" />
-        <span className="text-[12px] text-faint">{busy || (dataset ? "Saved" : "New")}</span>
+        <span className="text-[12px] text-faint">{busy && python === "loading" ? "Starting Python in your browser (the first time only, about 30 MB)" : busy || (dataset ? "Saved" : "New")}</span>
         <button type="button" className="btn" onClick={() => duplicate.mutate()}>Duplicate</button>
       </div>
       <div className="mb-2 flex gap-1 overflow-x-auto" role="tablist">
@@ -243,7 +246,7 @@ export function PlotStudio({ plotId }: { plotId: string }) {
             setBusy("Running the script");
             setErrorText("");
             try {
-              const result = await api.renderPlot(plotId, { format: "png", code: code || boilerplate(dataset?.name || "data") });
+              const result = await renderPlot(plotId, { format: "png", code: code || boilerplate(dataset?.name || "data") });
               if (renderUrl) URL.revokeObjectURL(renderUrl);
               const blob = await (await fetch(`data:image/png;base64,${result.data}`)).blob();
               setRenderUrl(URL.createObjectURL(blob));
@@ -256,7 +259,7 @@ export function PlotStudio({ plotId }: { plotId: string }) {
           onExport={async (format) => {
             setBusy("Rendering");
             try {
-              const result = await api.renderPlot(plotId, { format, code: code || boilerplate(dataset?.name || "data") });
+              const result = await renderPlot(plotId, { format, code: code || boilerplate(dataset?.name || "data") });
               const blob = figureBytes(format, result.data);
               download(`${title || "plot"}.${format}`, blob);
             } catch (error) {
@@ -318,7 +321,7 @@ export function PlotStudio({ plotId }: { plotId: string }) {
                 onServer={async (format, source) => {
                   setBusy("Rendering");
                   try {
-                    const result = await api.renderPlot(plotId, { format, code: source });
+                    const result = await renderPlot(plotId, { format, code: source });
                     const blob = figureBytes(format, result.data);
                     download(`${title || "plot"}.${format}`, blob);
                   } catch (error) {
