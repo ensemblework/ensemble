@@ -172,7 +172,7 @@ export default function SettingsPage() {
           />
           {access.guest ? (
             <div className="mb-5 rounded-lg border border-line bg-panel px-4 py-3 text-[12.5px] leading-5 text-muted">
-              You&apos;re in {access.owner?.split(" ")[0] ?? "someone"}&apos;s space. Settings here are your own: your theme, models, keys, notifications and
+              You&apos;re in {access.owner ?? "someone"}&apos;s space. Settings here are your own: your theme, models, keys, notifications and
               shortcuts. Connected apps and the space&apos;s data belong to them; switch to one of your spaces to manage yours.
             </div>
           ) : null}

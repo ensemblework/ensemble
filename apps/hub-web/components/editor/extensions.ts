@@ -217,7 +217,8 @@ export function editorExtensions(
   return [
     StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
     Placeholder.configure({
-      placeholder: ({ node }) => (node.type.name === "heading" ? "Heading" : placeholder),
+      // A collapsible block's summary has its own placeholder (toggle-block.ts).
+      placeholder: ({ node }) => (node.type.name === "heading" ? "Heading" : node.type.name === "toggleBlock" ? "" : placeholder),
     }),
     Link.configure({ openOnClick: false, autolink: true }),
     Table.configure({ resizable: true }),

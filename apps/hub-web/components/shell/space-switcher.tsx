@@ -8,7 +8,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { TEMPLATE_CARDS } from "@ensemble/shared-types/manifest";
 import { api, type SpaceSummary } from "@/lib/api";
-import { followSpaceSwitches, spaceInitial, switchSpace } from "@/lib/spaces";
+import { followSpaceSwitches, spaceInitial, spaceLabel, switchSpace } from "@/lib/spaces";
 import { Splash } from "@/components/motion/skeletons";
 import { useToast } from "../toast";
 import { Popover, cx } from "../ui";
@@ -69,7 +69,7 @@ function SpaceMenu({ shell, onPick, close, onShare }: { shell: Shell | undefined
           >
             <SpaceIcon space={space} size={26} />
             <span className="min-w-0 flex-1">
-              <span className="block truncate text-[13px] font-medium text-ink">{space.name}</span>
+              <span className="block truncate text-[13px] font-medium text-ink">{spaceLabel(space)}</span>
               {sub ? <span className="block truncate text-[11.5px] text-faint">{sub}</span> : null}
             </span>
             {active ? <Check size={14} className="shrink-0 text-ink" /> : null}
@@ -100,7 +100,7 @@ function SpaceMenu({ shell, onPick, close, onShare }: { shell: Shell | undefined
                 <SharedMark space={space} owner={space.owner} />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1.5">
-                    <span className="truncate text-[13px] font-medium text-ink">{space.name}</span>
+                    <span className="truncate text-[13px] font-medium text-ink">{spaceLabel(space)}</span>
                     <span className="shrink-0 rounded border border-line px-1 text-[10px] leading-4 text-faint">Shared</span>
                   </span>
                   <span className="block truncate text-[11.5px] text-faint">
@@ -177,7 +177,7 @@ export function SpaceSwitcher() {
           >
             {current ? <SpaceIcon space={current} /> : <span className="space-icon skeleton" style={{ width: 22, height: 22 }} />}
             <span className="sidebar-label min-w-0 flex-1 truncate text-left text-[13.5px] font-semibold text-ink">
-              {label}
+              {current ? spaceLabel(current) : ""}
               {current?.shared ? <span className="ml-1 font-normal text-faint">(shared)</span> : null}
             </span>
             <ChevronsUpDown size={13} className="sidebar-label shrink-0 text-faint" />

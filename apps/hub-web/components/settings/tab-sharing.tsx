@@ -7,6 +7,7 @@ import { ArrowRightLeft, Check, ExternalLink, Globe, Link2, LogOut, Share2, Tras
 import Link from "next/link";
 import { useState } from "react";
 import { api, publicLinkUrl, type ShareKind, type SharingContact, type SharingOverview } from "@/lib/api";
+import { distinctInitials } from "@/lib/initials";
 import { colorFor } from "@/lib/presence";
 import { switchSpace } from "@/lib/spaces";
 import { SpaceIcon } from "../shell/space-switcher";
@@ -51,13 +52,13 @@ function RemoveContact({ contact, onClose }: { contact: SharingContact; onClose:
       <p className="text-[13px] leading-5 text-muted">
         {shared ? (
           <>
-            This takes back <strong className="text-ink">everything</strong> you shared with {contact.name.split(" ")[0]}, at once:
+            This takes back <strong className="text-ink">everything</strong> you shared with {contact.name}, at once:
             {contact.spaces ? ` ${contact.spaces} space${contact.spaces === 1 ? "" : "s"}` : ""}
             {contact.spaces && contact.items ? " and" : ""}
             {contact.items ? ` ${contact.items} item${contact.items === 1 ? "" : "s"}` : ""}. Their own work stays theirs.
           </>
         ) : (
-          <>Nothing is shared with {contact.name.split(" ")[0]} right now. Removing frees a contact slot.</>
+          <>Nothing is shared with {contact.name} right now. Removing frees a contact slot.</>
         )}
       </p>
       <div className="mt-4 flex justify-end gap-2">
@@ -219,10 +220,11 @@ export function SharingTab() {
                   {space.transferredAt ? " · changed owner once" : ""}
                 </div>
               </div>
-              <div className="flex -space-x-1.5">
-                {space.members.map((member) => (
-                  <Avatar key={member.id} person={member} color={colorFor(member.id)} size={24} title={`${member.name} · ${member.role === "editor" ? "can edit" : "can view"}`} />
-                ))}
+              <div className="flex -space-x-0.5">
+                {distinctInitials(space.members).map((initials, index) => {
+                  const member = space.members[index]!;
+                  return <Avatar key={member.id} person={{ ...member, initials }} color={colorFor(member.id)} size={24} stacked title={`${member.name} · ${member.role === "editor" ? "can edit" : "can view"}`} />;
+                })}
               </div>
               <button type="button" className="btn h-7 gap-1.5 px-2.5 text-[12.5px]" onClick={() => setSharingSpace(space)}>
                 <Share2 size={12} /> Share
@@ -244,9 +246,11 @@ export function SharingTab() {
               <div key={item.id} className="flex items-center gap-3 py-2">
                 <span className="shrink-0 text-2xs uppercase tracking-wide text-faint sm:w-24">{KIND_NAMES[item.kind]}</span>
                 <span className="min-w-0 flex-1 truncate text-[13px]">{item.title}</span>
-                <span className="flex items-center gap-1.5 text-2xs text-muted">
+                <span className="flex min-w-0 max-w-[45%] items-center gap-1.5 text-2xs text-muted">
                   <Avatar person={item.person} color={colorFor(item.person.id)} size={18} />
-                  {item.person.name.split(" ")[0]} · {item.role === "edit" ? "can edit" : "can view"}
+                  <span className="truncate" title={`${item.person.name} · ${item.role === "edit" ? "can edit" : "can view"}`}>
+                    {item.person.name} · {item.role === "edit" ? "can edit" : "can view"}
+                  </span>
                 </span>
                 <button type="button" className="icon-btn" title="Stop sharing" aria-label={`Stop sharing ${item.title} with ${item.person.name}`} onClick={() => unshare.mutate(item.id)}>
                   <Trash2 size={13} />
@@ -290,7 +294,7 @@ export function SharingTab() {
                   {item.title}
                   {!item.openedAt ? <span className="ml-1.5 rounded bg-accent-soft px-1 text-[10px] text-ink">New</span> : null}
                 </span>
-                <span className="text-2xs text-muted">from {item.owner.name.split(" ")[0]}</span>
+                <span className="min-w-0 max-w-[35%] truncate text-2xs text-muted">from {item.owner.name}</span>
                 <Link href={`/shared/${item.id}`} className="btn h-7 gap-1.5 px-2.5 text-[12.5px]">
                   <ExternalLink size={12} /> Open
                 </Link>

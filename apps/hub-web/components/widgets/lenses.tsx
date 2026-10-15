@@ -6,6 +6,7 @@ import { useState } from "react";
 import { WIDGET_REGISTRY, type TileConfig, type WidgetId } from "@ensemble/shared-types/widgets";
 import { api } from "@/lib/api";
 import { shortDate } from "@/lib/format";
+import { personInitials } from "@/lib/initials";
 
 type Feed = Awaited<ReturnType<typeof api.widgetFeed>>;
 type Task = Feed["tasks"][number];
@@ -286,7 +287,7 @@ export function LensTile({ type, config }: { type: WidgetId; config?: TileConfig
       <ul className="space-y-1.5">
         {named.map((row) => (
           <li key={row.name} className="flex items-center gap-2">
-            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent/15 text-[9px] font-medium text-accent">{initials(row.name)}</span>
+            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent/15 text-[9px] font-medium text-accent">{personInitials(row.name)}</span>
             <span className="w-16 shrink-0 truncate text-[12.5px]">{row.name}</span>
             <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-line">
               <span className="block h-full bg-accent" style={{ width: `${Math.round((row.count / max) * 100)}%` }} />

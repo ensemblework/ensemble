@@ -191,7 +191,7 @@ export function ActivityControls({ connected = true }: { connected?: boolean }) 
           </div>
           {shell.data?.space?.shared ? (
             <div className="mt-1 border-t border-line px-2 pb-0.5 pt-1.5 text-[11px] leading-4 text-faint">
-              The kill switch here is {shell.data.space.shared.owner.name.split(" ")[0]}'s. Stop your own runs from their cards; they run on your computer.
+              The kill switch here is {shell.data.space.shared.owner.name}'s. Stop your own runs from their cards; they run on your computer.
             </div>
           ) : (
           <>

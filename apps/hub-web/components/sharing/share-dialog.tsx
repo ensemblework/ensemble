@@ -10,6 +10,7 @@ import {
   type ShareKind,
   type SharingPerson,
 } from "@/lib/api";
+import { personInitials } from "@/lib/initials";
 import { colorFor } from "@/lib/presence";
 import { publicLinkUrl } from "@/lib/api";
 import { Dialog } from "@/components/ui";
@@ -60,12 +61,27 @@ export function Meter({ label, used, limit }: { label: string; used: number; lim
   );
 }
 
-export function RoleSelect<T extends string>({ value, options, onChange, disabled }: { value: T; options: Array<[T, string]>; onChange: (next: T) => void; disabled?: boolean }) {
+export function RoleSelect<T extends string>({
+  value,
+  options,
+  onChange,
+  disabled,
+  label,
+}: {
+  value: T;
+  options: Array<[T, string]>;
+  onChange: (next: T) => void;
+  disabled?: boolean;
+  /** What the choice is about, for screen readers ("Access for Mira Chen"). */
+  label: string;
+}) {
   return (
     <span className="relative inline-flex items-center">
       <select
         value={value}
         disabled={disabled}
+        aria-label={label}
+        title={label}
         onChange={(event) => onChange(event.target.value as T)}
         className="appearance-none rounded-md border border-line bg-transparent py-1 pl-2 pr-6 text-[12px] text-ink hover:bg-hover disabled:opacity-60"
       >
@@ -178,7 +194,6 @@ export function ShareDialog({ open, onClose, target }: { open: boolean; onClose:
   const contacts = useQuery({ queryKey: ["sharing", "contacts"], queryFn: api.contacts, enabled: open });
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
   const me = shell.data?.user;
-  const myInitials = (me?.name ?? "You").trim().split(/\s+/).map((word) => word[0]).filter(Boolean).slice(0, 2).join("").toUpperCase() || "Y";
   const members = useQuery({
     queryKey: ["space-members", space ? target.spaceId : ""],
     queryFn: () => api.spaceMembers((target as { spaceId: string }).spaceId),
@@ -260,7 +275,7 @@ export function ShareDialog({ open, onClose, target }: { open: boolean; onClose:
               <div className="truncate text-[13px] font-medium">{pending.name}</div>
               <div className="truncate text-2xs text-muted">{pending.email}</div>
             </div>
-            <RoleSelect value={role} options={roleOptions} onChange={setRole} disabled={viewOnly} />
+            <RoleSelect value={role} options={roleOptions} onChange={setRole} disabled={viewOnly} label={`Access for ${pending.name}`} />
             <button type="button" className="icon-btn" aria-label="Pick someone else" onClick={() => setPending(null)}>
               <X size={14} />
             </button>
@@ -295,7 +310,7 @@ export function ShareDialog({ open, onClose, target }: { open: boolean; onClose:
           </div>
           <div className="divide-y divide-line rounded-lg border border-line">
             <div className="flex items-center gap-2.5 px-3 py-2">
-              <Avatar person={{ name: me?.name ?? "You", initials: myInitials, avatar: me?.avatar ?? null }} color={me ? colorFor(me.id) : undefined} size={28} />
+              <Avatar person={{ name: me?.name ?? "You", initials: personInitials(me?.name, me?.email) || "Y", avatar: me?.avatar ?? null }} color={me ? colorFor(me.id) : undefined} size={28} />
               <div className="min-w-0 flex-1 text-[13px]">
                 {me?.name ?? "You"} <span className="text-muted">(you)</span>
               </div>
@@ -324,7 +339,13 @@ export function ShareDialog({ open, onClose, target }: { open: boolean; onClose:
                     {copied === row.shareId ? <Check size={14} /> : <Link2 size={14} />}
                   </button>
                 ) : null}
-                <RoleSelect value={row.role} options={roleOptions} disabled={viewOnly || changeRole.isPending} onChange={(next) => changeRole.mutate({ row, next })} />
+                <RoleSelect
+                  value={row.role}
+                  options={roleOptions}
+                  disabled={viewOnly || changeRole.isPending}
+                  onChange={(next) => changeRole.mutate({ row, next })}
+                  label={`Access for ${row.person.name}`}
+                />
                 <button type="button" className="icon-btn" title="Remove access" aria-label={`Remove ${row.person.name}`} onClick={() => remove.mutate(row)} disabled={remove.isPending}>
                   <X size={14} />
                 </button>
@@ -446,6 +467,7 @@ function GeneralAccess({ target }: { target: ShareTarget }) {
           <RoleSelect
             value={link ? "anyone" : "restricted"}
             options={[["restricted", "Only people you add"], ["anyone", "Anyone with the link"]]}
+            label="Who can open it"
             disabled={state.isLoading || setLink.isPending || remove.isPending || (full && !link)}
             onChange={(next) => (next === "anyone" ? setLink.mutate("view") : link ? remove.mutate(link.id) : undefined)}
           />
@@ -464,6 +486,7 @@ function GeneralAccess({ target }: { target: ShareTarget }) {
               options={viewOnly ? [["view", "Can view"]] : [["view", "Can view"], ["edit", "Can edit"]]}
               disabled={viewOnly || setLink.isPending}
               onChange={(next) => setLink.mutate(next as ItemRole)}
+              label="What anyone with the link can do"
             />
             <button type="button" className="icon-btn" title="Make a new link (the old one stops working)" aria-label="Make a new link" onClick={() => rotate.mutate(link.id)} disabled={rotate.isPending}>
               <RefreshCw size={13} />

@@ -31,6 +31,9 @@ const nextConfig: NextConfig = {
       }
     : {}),
   transpilePackages: ["@ensemble/brand", "@ensemble/shared-types", "@ensemble/ide-theme", "@ensemble/block-diagrams"],
+  // Every corner of the hub holds a control (Settings, the Ask launcher, the avatar menu, the
+  // home link), so the dev badge would cover one. Build and runtime errors still open the overlay.
+  devIndicators: false,
   onDemandEntries: {
     maxInactiveAge: 15 * 60 * 1000,
     pagesBufferLength: 12,

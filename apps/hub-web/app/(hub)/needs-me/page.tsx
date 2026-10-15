@@ -116,7 +116,7 @@ function ApprovalCard({ approval }: { approval: ApprovalRecord }) {
       />
       {access.guest ? (
         <div className="mt-3 flex items-center gap-1.5 text-[12px] text-faint">
-          <Lock size={12} /> Only {access.owner?.split(" ")[0] ?? "the owner"} can approve this. It runs on their resources.
+          <Lock size={12} /> Only {access.owner ?? "the owner"} can approve this. It runs on their resources.
         </div>
       ) : (
       <div className="mt-3 flex items-center gap-2">

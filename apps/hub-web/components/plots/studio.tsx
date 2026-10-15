@@ -248,8 +248,7 @@ export function PlotStudio({ plotId }: { plotId: string }) {
             try {
               const result = await renderPlot(plotId, { format: "png", code: code || boilerplate(dataset?.name || "data") });
               if (renderUrl) URL.revokeObjectURL(renderUrl);
-              const blob = await (await fetch(`data:image/png;base64,${result.data}`)).blob();
-              setRenderUrl(URL.createObjectURL(blob));
+              setRenderUrl(URL.createObjectURL(figureBytes("png", result.data)));
             } catch (error) {
               setErrorText(error instanceof Error ? error.message : "The script failed.");
             } finally {
@@ -693,16 +692,16 @@ export function LinesTab({ config, update }: { config: PlotConfig; update: (patc
 
 function CodeTab({ code, onChange, onRun, onExport, preview, errorText, datasetName }: { code: string; onChange: (value: string) => void; onRun: () => void; onExport: (format: "png" | "pdf") => void; preview: string | null; errorText: string; datasetName?: string }) {
   return (
-    <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-2" data-plot-code>
-      <div className="flex min-h-0 flex-col gap-2 rounded-xl border border-line bg-panel p-3">
+    <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-2" data-plot-code>
+      <div className="flex min-h-0 min-w-0 flex-col gap-2 rounded-xl border border-line bg-panel p-3">
         <p className="shrink-0 text-[12px] text-muted">load({datasetName ? `"${datasetName}"` : '"name"'}) reads the dataset on this plot. No file path is shown. save() or plt.show() captures the figure.</p>
         <div className="min-h-[280px] flex-1">
-          <CodePane value={code} onChange={onChange} />
+          <CodePane value={code} onChange={onChange} onRun={onRun} />
         </div>
         <button type="button" className="btn-primary shrink-0 self-start" onClick={onRun}>Run</button>
         {errorText ? <pre className="shrink-0 whitespace-pre-wrap text-[12px] text-danger">{errorText}</pre> : null}
       </div>
-      <div className="flex min-h-0 flex-col gap-2 rounded-xl border border-line bg-panel p-3">
+      <div className="flex min-h-0 min-w-0 flex-col gap-2 rounded-xl border border-line bg-panel p-3">
         <div className="flex items-center justify-between gap-2">
           <span className="text-[13px] font-medium">Figure</span>
           <div className="flex gap-1">

@@ -74,9 +74,10 @@
 .desk .tile.hero { padding: 18px 20px; }
 .desk .th { display: flex; align-items: center; gap: 8px; height: 20px; margin-bottom: 10px; flex-shrink: 0; position: relative; z-index: 1; }
 .desk .th .ti { width: 20px; height: 20px; display: grid; place-items: center; color: var(--muted); }
-.desk .th .tt { font-size: 13px; font-weight: 600; color: var(--ink-2); letter-spacing: -0.005em; white-space: nowrap; }
-.desk .th .tm { font-size: 12px; color: var(--faint); white-space: nowrap; }
-.desk .th .tacts { margin-left: auto; display: flex; gap: 2px; opacity: 0; transition: opacity var(--dur-fast) var(--ease); }
+.desk .th .tt { font-size: 13px; font-weight: 600; color: var(--ink-2); letter-spacing: -0.005em; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.desk .th .tm { font-size: 12px; color: var(--faint); white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; flex-shrink: 3; }
+.desk .th .ti { flex-shrink: 0; }
+.desk .th .tacts { margin-left: auto; display: flex; gap: 2px; flex-shrink: 0; opacity: 0; transition: opacity var(--dur-fast) var(--ease); }
 .desk .tile.hover .th .tacts, .desk .tile:hover .th .tacts { opacity: 1; }
 .desk .th .tacts span { width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; color: var(--muted); background: rgba(255,248,236,0.05); border: 1px solid var(--line); }
 .desk .th .tright { margin-left: auto; font-size: 12px; color: var(--faint); display: flex; align-items: center; gap: 6px; }
@@ -321,6 +322,15 @@ body[data-desk-moving="1"], body[data-desk-moving="1"] * { cursor: grabbing !imp
 .desk .visual-legend-row i, .desk .visual-score-pills i, .desk .visual-checks i { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 .desk .visual-legend-row span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .desk .visual-legend-row b { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* A narrow tile keeps the ring beside its legend, smaller, so every row stays in view. */
+@container (max-width: 300px) {
+  .desk .visual-donut { flex-wrap: nowrap; gap: 12px; justify-content: flex-start; }
+  .desk .visual-ring { width: 40%; max-width: 104px; }
+  .desk .visual-ring-value { gap: 2px; }
+  .desk .visual-ring-value strong { font-size: 22px; }
+  .desk .visual-legend { min-width: 0; gap: 1px; }
+  .desk .visual-legend-row { padding: 3px 2px; gap: 6px; }
+}
 .desk .visual-columns { display: flex; gap: 12px; flex: 1; min-height: 115px; max-height: 180px; padding: 0 4px; }
 .desk .visual-column { display: flex; flex: 1; min-width: 0; flex-direction: column; align-items: center; gap: 7px; }
 .desk .visual-column b { font-size: 12px; font-weight: 500; }
@@ -531,6 +541,11 @@ body[data-desk-moving="1"], body[data-desk-moving="1"] * { cursor: grabbing !imp
   .tile-gallery-detail footer { align-items: flex-start; flex-direction: column; }
   .tile-gallery-detail footer button { width: 100%; min-height: 44px; }
   .tile-gallery-stage .visual-body { overflow: visible; }
+}
+/* Tablet widths: a third of the 12 columns is too narrow for a tile, so tiles under half a row take half and wider ones take the row. */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .desk:not([data-phone="1"]) .bento > :is([data-span="3"], [data-span="4"], [data-span="5"]) { grid-column: span 6 !important; }
+  .desk:not([data-phone="1"]) .bento > :is([data-span="7"], [data-span="8"], [data-span="9"], [data-span="10"], [data-span="11"]) { grid-column: span 12 !important; }
 }
 @media (max-width: 767px) {
   .desk .bento { grid-auto-rows: auto; }

@@ -12,6 +12,7 @@ import { announceSpace, enterSpace, SPACE_ICONS, spaceInitial, switchSpace } fro
 import { SpaceIcon } from "../shell/space-switcher";
 import { useToast } from "../toast";
 import { Dialog, Popover, SectionCard, SettingRow, Toggle } from "../ui";
+import { navigateSettings } from "./url-state";
 
 const templateName = (id: string | null) => TEMPLATE_CARDS.find((card) => card.id === id)?.name ?? null;
 
@@ -154,7 +155,20 @@ export function SpacesTab() {
     <div className="space-y-4" data-settings-spaces>
       <SectionCard
         title="Spaces"
-        description="Separate lines of work. Each space has its own tasks, pages, people, files, connected apps, assistant history and settings. Nothing is shared between them."
+        description={
+          <>
+            Separate lines of work. Each space has its own tasks, pages, people, files, connected apps, assistant history and settings, and your spaces never mix. A
+            space stays yours alone until you share it, whole or one item at a time, with other people in{" "}
+            <button
+              type="button"
+              className="font-medium text-ink underline underline-offset-2 hover:text-accent"
+              onClick={() => navigateSettings({ tab: "sharing", anchor: "jump-sharing-spaces-you-share", connector: null, store: null, dialog: null }, "push")}
+            >
+              Settings › Sharing
+            </button>
+            .
+          </>
+        }
         actions={
           <Link href="/spaces/new" className="btn">
             <Plus size={13} />

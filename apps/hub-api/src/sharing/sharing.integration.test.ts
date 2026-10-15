@@ -520,3 +520,77 @@ test("tasks in a shared space: assign to a member, 'me' is whoever acts, outside
   assert.equal(toAgent.task.owner, "agent");
   assert.equal(toAgent.task.assigneeAccountId, null, "handing to the agent clears the person");
 });
+
+test("co-editing a shared page: saves announce their revision, a stale save is refused, a removed share says so", async () => {
+  const { sseHub } = await import("../lib/sse.js");
+  const mira = await person("Mira Chen");
+  const cara = await person("Cara Diaz");
+  const dev = await person("Dev Patel");
+  const page = await ok<{ page: { id: string } }>(as(mira, { method: "POST", url: "/api/pages" }), 201);
+  const created = await ok<{ shares: Array<{ id: string }> }>(
+    as(mira, { method: "POST", url: "/api/sharing/items", payload: { kind: "page", resourceId: page.page.id, personId: cara.id, role: "edit" } }),
+    201,
+  );
+  const share = created.shares[0]!.id;
+
+  const wrong = await as(cara, { method: "GET", url: `/api/sharing/open/${page.page.id}` });
+  assert.equal(wrong.statusCode, 404);
+  assert.equal((wrong.json() as { code?: string }).code, "SHARE_NOT_FOUND", "a page id is not a share address");
+  const notYours = await as(dev, { method: "GET", url: `/api/sharing/open/${share}` });
+  assert.equal((notYours.json() as { code?: string }).code, "SHARE_NOT_YOURS");
+
+  const frames: Array<{ event: string; data: { id?: string; taskId?: string; action?: string; revision?: number } }> = [];
+  const stop = sseHub.onFrame(({ frame }) => frames.push(frame as (typeof frames)[number]));
+  try {
+    const doc = (text: string) => ({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] });
+    const start = await ok<{ revision: number }>(as(cara, { method: "GET", url: `/api/pages/${page.page.id}` }, { share }));
+    const saved = await ok<{ revision: number }>(as(cara, { method: "PUT", url: `/api/pages/${page.page.id}`, payload: { revision: start.revision, content: doc("Cara") } }, { share }));
+    assert.equal(saved.revision, start.revision + 1);
+    assert.ok(frames.some((frame) => frame.event === "page" && frame.data.id === page.page.id && frame.data.action === "save" && frame.data.revision === saved.revision), "the page event names the new revision");
+    const stale = await as(mira, { method: "PUT", url: `/api/pages/${page.page.id}`, payload: { revision: start.revision, content: doc("Mira") } });
+    assert.equal(stale.statusCode, 409, "a save from an older revision is refused; the editor merges and saves again");
+
+    const task = await ok<{ task: { id: string } }>(as(mira, { method: "POST", url: "/api/tasks", payload: { title: "Plan" } }), 201);
+    const taskPage = await ok<{ revision: number }>(as(mira, { method: "GET", url: `/api/tasks/${task.task.id}/page` }));
+    const taskSaved = await ok<{ revision: number }>(as(mira, { method: "PUT", url: `/api/tasks/${task.task.id}/page`, payload: { revision: taskPage.revision, content: doc("Steps") } }));
+    assert.ok(frames.some((frame) => frame.event === "page" && frame.data.taskId === task.task.id && frame.data.action === "save" && frame.data.revision === taskSaved.revision));
+  } finally {
+    stop();
+  }
+
+  await ok(as(mira, { method: "DELETE", url: `/api/sharing/items/${share}` }), 204);
+  const late = await as(cara, { method: "PUT", url: `/api/pages/${page.page.id}`, payload: { revision: 2, content: { type: "doc", content: [] } } }, { share });
+  assert.equal(late.statusCode, 404);
+  assert.equal((late.json() as { code?: string }).code, "SHARE_GONE", "the editor keeps the text and offers a copy");
+  const reopened = await as(cara, { method: "GET", url: `/api/sharing/open/${share}` });
+  assert.equal((reopened.json() as { code?: string }).code, "SHARE_NOT_FOUND");
+});
+
+test("presence carries a text caret: kept between typing pulses, dropped on the next item", async () => {
+  const mira = await person("Mira Chen");
+  const cara = await person("Cara Diaz");
+  const page = await ok<{ page: { id: string } }>(as(mira, { method: "POST", url: "/api/pages" }), 201);
+  const share = (await ok<{ shares: Array<{ id: string }> }>(as(mira, { method: "POST", url: "/api/sharing/items", payload: { kind: "page", resourceId: page.page.id, personId: cara.id, role: "edit" } }), 201)).shares[0]!.id;
+  // Posts from one tab closer than 40 ms apart are dropped.
+  const pause = () => new Promise((resolve) => setTimeout(resolve, 60));
+  type Row = { accountId: string; caret: { anchor: number; head: number } | null; typing: boolean; resource: { id: string } | null };
+
+  await ok(as(cara, { method: "POST", url: "/api/presence", payload: { tabId: "cara-caret", typing: true } }, { share }), 204);
+  await pause();
+  await ok(as(cara, { method: "POST", url: "/api/presence", payload: { tabId: "cara-caret", caret: { anchor: 3, head: 7 } } }, { share }), 204);
+  const seen = await ok<{ people: Row[] }>(as(mira, { method: "GET", url: "/api/presence" }));
+  const caraRow = seen.people.find((row) => row.accountId === cara.id);
+  assert.deepEqual(caraRow?.caret, { anchor: 3, head: 7 });
+  assert.equal(caraRow?.typing, true, "a caret move does not end the typing pulse");
+
+  await ok(as(mira, { method: "POST", url: "/api/presence", payload: { tabId: "mira-caret", route: `/pages/${page.page.id}`, resource: { kind: "page", id: page.page.id } } }), 204);
+  await pause();
+  await ok(as(mira, { method: "POST", url: "/api/presence", payload: { tabId: "mira-caret", caret: { anchor: 1, head: 1 } } }), 204);
+  await pause();
+  await ok(as(mira, { method: "POST", url: "/api/presence", payload: { tabId: "mira-caret", route: "/board", resource: null } }), 204);
+  const after = await ok<{ people: Row[] }>(as(mira, { method: "GET", url: "/api/presence" }));
+  assert.equal(after.people.find((row) => row.accountId === mira.id)?.caret, null, "a caret does not follow you to the next item");
+
+  const bad = await as(cara, { method: "POST", url: "/api/presence", payload: { tabId: "cara-caret", caret: { anchor: -1, head: 2 } } }, { share });
+  assert.equal(bad.statusCode, 400);
+});

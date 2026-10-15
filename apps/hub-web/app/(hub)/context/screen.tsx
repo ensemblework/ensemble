@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect } from "react";
 import { ContextDesk } from "@/components/context/desk";
+import { ContextRouteSkeleton } from "@/components/motion/skeletons";
 import { ContextLens } from "@/components/desk/context-lens";
 import { contextTabs, tabKey } from "@/components/desk/context-tabs";
 import { deskIdFromTemplate } from "@/components/desk/desks";
@@ -32,7 +33,11 @@ export function ContextScreen({ initialLayout, initialBoard }: { initialLayout: 
   // board, grid, list, and graph force that view. desk opens the old surface and keeps the saved view.
   if (view === "board" || view === "grid" || view === "list" || view === "graph" || view === "desk") return <ContextDesk initial={initialBoard} />;
   if (requested === "preferences" || requested === "sources") return <Utility tab={requested} />;
+  // The template picks the lens or the desk, and a preference picks the lens's sample state.
+  // Before they load, any choice is a guess that flashes the wrong layout on a cold load.
+  if (shell.isPending) return <ContextRouteSkeleton />;
   const deskId = deskIdFromTemplate(shell.data?.activeTemplateId);
+  if (deskId && prefs.isPending) return <ContextRouteSkeleton />;
   const sample = prefs.data?.preferences.some((row) => row.key === "desk.sample" && row.value === true) === true;
   if (deskId && (!requested || contextTabs(deskId, true).some((label) => tabKey(label) === requested))) {
     return <ContextLens deskId={deskId} state={sample ? "populated" : "empty"} initialTab={requested} search={params.get("search") ?? ""} who={params.get("who") ?? ""} ids={params.get("ids") ?? ""} />;

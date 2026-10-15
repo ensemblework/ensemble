@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { prepareSeries, type Frame, type PlotConfig } from "@ensemble/shared-types";
 import { chartOption, type PlotTheme } from "@/lib/plots/option";
 import { readPlotTheme } from "@/lib/plots/theme";
+import { figureBytes } from "@/lib/plots/figure-file";
 
 export { readPlotTheme, usePlotTheme } from "@/lib/plots/theme";
 
@@ -192,8 +193,7 @@ export async function exportChartPng(frame: Frame, config: PlotConfig, pixelRati
   const url = instance.getDataURL({ type: "png", pixelRatio, backgroundColor: readPlotTheme().dark ? "#141210" : "#fffcf7" });
   instance.dispose();
   node.remove();
-  const response = await fetch(url);
-  return response.blob();
+  return figureBytes("png", url.slice(url.indexOf(",") + 1));
 }
 
 export async function exportChartSvg(frame: Frame, config: PlotConfig): Promise<string> {

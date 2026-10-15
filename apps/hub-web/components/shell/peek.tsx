@@ -91,8 +91,15 @@ export function PeekProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!peekId) return;
     const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
       const target = event.target as HTMLElement;
-      if (event.key === "Escape" && !target.closest(".ProseMirror, input, textarea, [role=dialog]")) close();
+      // A title field saves when it loses focus, so Esc there keeps the edit and closes the panel.
+      if (!event.defaultPrevented && target.closest("[data-peek-escape]") && (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)) {
+        target.blur();
+        close();
+        return;
+      }
+      if (!target.closest(".ProseMirror, input, textarea, [role=dialog]")) close();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

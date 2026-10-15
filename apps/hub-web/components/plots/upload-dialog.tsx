@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { UploadCloud } from "lucide-react";
+import { useRef, useState } from "react";
 import { stagePercent, type LinkChoice } from "@ensemble/shared-types";
 import { API, ApiError, api } from "@/lib/api";
 import { parseTableInBrowser, usePythonStatus } from "@/lib/plots/browser-python";
@@ -17,6 +18,7 @@ type Dataset = {
 
 const TYPES = ["number", "date", "category", "text"] as const;
 const FORMATS = ["CSV", "TSV", "JSON", "Excel", "Numbers", "Parquet", "Feather"];
+const ACCEPT = ".csv,.tsv,.txt,.json,.jsonl,.xlsx,.xls,.xlsm,.ods,.numbers,.parquet,.feather,.arrow,.pkl,.pickle";
 
 async function readBytes(file: File, onProgress: (percent: number, label: string) => void): Promise<Uint8Array> {
   const reader = file.stream().getReader();
@@ -116,6 +118,8 @@ export function UploadDialog({
   // A workbook read in the browser with more than one sheet: which one to add.
   const [choose, setChoose] = useState<{ file: File; bytes: Uint8Array; sheets: string[]; sheet: string } | null>(null);
   const python = usePythonStatus();
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
 
   const report = (next: number, text: string) => {
     setPercent(next);
@@ -275,22 +279,47 @@ export function UploadDialog({
         </div>
       ) : (
         <div className="space-y-3" data-upload-start>
-          <label className="block rounded-xl border border-dashed border-line px-4 py-8 text-center" data-plot-drop>
-            <span className="block text-[14px] font-medium">Drop a file, or choose one</span>
-            <span className="mt-2 flex flex-wrap justify-center gap-1">
+          <div
+            className={`flex flex-col items-center gap-2 rounded-xl border border-dashed px-4 py-7 text-center transition-colors ${dragging ? "border-accent bg-accent-soft" : "border-line"}`}
+            data-plot-drop
+            data-dragging={dragging ? "1" : undefined}
+            onDragOver={(event) => {
+              if (!Array.from(event.dataTransfer.types).includes("Files")) return;
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "copy";
+              setDragging(true);
+            }}
+            onDragLeave={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragging(false);
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              setDragging(false);
+              const file = event.dataTransfer.files[0];
+              if (file) void sendFile(file);
+            }}
+          >
+            <UploadCloud size={22} className="text-muted" aria-hidden />
+            <span className="block text-[14px] font-medium">Drop a file here</span>
+            <button type="button" className="btn-primary" onClick={() => fileInput.current?.click()}>Choose a file</button>
+            <span className="flex flex-wrap justify-center gap-1">
               {FORMATS.map((format) => <span key={format} className="rounded-full border border-line px-2 py-0.5 text-[11px] text-muted">{format}</span>)}
             </span>
             <input
-              className="mt-3 block w-full text-[12px]"
+              ref={fileInput}
+              className="sr-only"
               type="file"
+              accept={ACCEPT}
+              tabIndex={-1}
               data-plot-file
               aria-label="Upload file"
               onChange={(event) => {
                 const file = event.target.files?.[0];
+                event.target.value = "";
                 if (file) void sendFile(file);
               }}
             />
-          </label>
+          </div>
           <label className="block text-[12px] text-muted">Public link
             <input className="field mt-1 w-full" aria-label="Sheet link" value={url} placeholder="Google Sheets, Drive, OneDrive, or SharePoint" onChange={(event) => setUrl(event.target.value)} />
           </label>

@@ -80,7 +80,7 @@ export async function pageRoutes(app: FastifyInstance): Promise<void> {
     const { id } = request.params as { id: string };
     try {
       const page = await saveStandalonePage(prisma, request.userId, id, request.body);
-      sseHub.publish(request.userId, { event: "page", data: { id, action: "save" } });
+      sseHub.publish(request.userId, { event: "page", data: { id, action: "save", revision: page.revision } });
       return page;
     } catch (error) {
       if (error instanceof TaskPageError) return reply.code(error.statusCode).send({ error: error.message });

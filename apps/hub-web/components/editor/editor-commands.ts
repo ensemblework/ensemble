@@ -3,7 +3,10 @@
  * The mention helpers live in shared-types so hub-api's page store restores
  * `ensemble://` links with exactly the same rules the editor writes them with.
  */
-import type { Editor, Range } from "@tiptap/core";
+import type { ChainedCommands, Editor, Range } from "@tiptap/core";
+import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import type { Transaction } from "@tiptap/pm/state";
+import { liftTarget } from "@tiptap/pm/transform";
 import {
   dateMention,
   isEntityKind,
@@ -13,6 +16,7 @@ import {
   type MentionKind,
   type PageMention,
 } from "@ensemble/shared-types";
+import { unwrapToggle, wrapInToggle } from "./toggle-block";
 
 export type BlockCommandId =
   | "text"
@@ -62,38 +66,66 @@ export function matchCommands(query: string): BlockCommand[] {
     .sort((a, b) => Number(b.id.replace(/-/g, "") === needle) - Number(a.id.replace(/-/g, "") === needle));
 }
 
+// Lists and quotes are styles a line can leave. A collapsible block or a table cell keeps its lines.
+const STYLE_WRAPPERS = new Set(["bulletList", "orderedList", "taskList", "listItem", "taskItem", "blockquote"]);
+const SUMMARY_KINDS = new Set<BlockCommandId>(["text", "h1", "h2", "h3"]);
+
+function liftOutOfStyles(tr: Transaction): void {
+  for (;;) {
+    const range = tr.selection.$from.blockRange(tr.selection.$to);
+    if (!range || !STYLE_WRAPPERS.has(range.parent.type.name)) return;
+    const target = liftTarget(range);
+    if (target === null) return;
+    tr.lift(range, target);
+  }
+}
+
+function setTextblocks(name: string, attrs?: Record<string, unknown>) {
+  return ({ tr }: { tr: Transaction }) => {
+    const type = tr.doc.type.schema.nodes[name];
+    if (!type) return false;
+    tr.setBlockType(tr.selection.from, tr.selection.to, type, attrs);
+    return true;
+  };
+}
+
+/** Changes the selected lines in place. A summary that cannot stay one (a list, a quote, code) leaves its collapsible block first. */
+function convert(chain: ChainedCommands, command: BlockCommandId): boolean {
+  const lifted = chain.command(({ tr }) => {
+    const { $from } = tr.selection;
+    if (!SUMMARY_KINDS.has(command) && $from.depth >= 2 && $from.node(-1).type.name === "toggleBlock" && $from.index(-1) === 0) unwrapToggle(tr, $from.before(-1));
+    liftOutOfStyles(tr);
+    return true;
+  });
+  switch (command) {
+    case "text":
+      return lifted.command(setTextblocks("paragraph")).run();
+    case "h1":
+      return lifted.command(setTextblocks("heading", { level: 1 })).run();
+    case "h2":
+      return lifted.command(setTextblocks("heading", { level: 2 })).run();
+    case "h3":
+      return lifted.command(setTextblocks("heading", { level: 3 })).run();
+    case "code":
+      return lifted.command(setTextblocks("codeBlock")).run();
+    case "bullet-list":
+      return lifted.toggleBulletList().run();
+    case "list":
+      return lifted.toggleOrderedList().run();
+    case "check-list":
+      return lifted.toggleTaskList().run();
+    case "quote":
+      return lifted.toggleBlockquote().run();
+    default:
+      return false;
+  }
+}
+
 export function applyBlock(editor: Editor, range: Range, command: BlockCommandId): void {
   const chain = editor.chain().focus().deleteRange(range);
   switch (command) {
-    case "text":
-      chain.clearNodes().setParagraph().run();
-      break;
-    case "h1":
-      chain.clearNodes().setHeading({ level: 1 }).run();
-      break;
-    case "h2":
-      chain.clearNodes().setHeading({ level: 2 }).run();
-      break;
-    case "h3":
-      chain.clearNodes().setHeading({ level: 3 }).run();
-      break;
-    case "code":
-      chain.clearNodes().setCodeBlock().run();
-      break;
-    case "bullet-list":
-      chain.clearNodes().toggleBulletList().run();
-      break;
-    case "list":
-      chain.clearNodes().toggleOrderedList().run();
-      break;
-    case "check-list":
-      chain.clearNodes().toggleTaskList().run();
-      break;
-    case "quote":
-      chain.clearNodes().toggleBlockquote().run();
-      break;
     case "toggle":
-      chain.insertContent({ type: "toggleBlock", content: [{ type: "paragraph", content: [{ type: "text", text: "Details" }] }, { type: "paragraph" }] }).run();
+      chain.insertContent({ type: "toggleBlock", content: [{ type: "paragraph" }] }).run();
       break;
     case "divider":
       chain.setHorizontalRule().run();
@@ -107,7 +139,67 @@ export function applyBlock(editor: Editor, range: Range, command: BlockCommandId
       chain.run();
       editor.commands.chooseFile(range.from);
       break;
+    default:
+      convert(chain, command);
   }
+}
+
+/** The kinds a block's handle menu offers under Turn into, in menu order. */
+const TURN_INTO: readonly BlockCommandId[] = ["text", "h1", "h2", "h3", "bullet-list", "list", "check-list", "quote", "code", "toggle"];
+
+const TURNABLE = new Set(["paragraph", "heading", "codeBlock", "blockquote", "listItem", "taskItem", "toggleBlock"]);
+
+/** What the block at `pos` is, in Turn into terms, or null when Turn into does not apply to it (tables, files, dividers). */
+export function blockKind(doc: ProseMirrorNode, pos: number): BlockCommandId | null {
+  const node = doc.nodeAt(pos);
+  if (!node || !TURNABLE.has(node.type.name)) return null;
+  switch (node.type.name) {
+    case "heading":
+      return `h${Math.min(Math.max(Number(node.attrs.level) || 1, 1), 3)}` as BlockCommandId;
+    case "codeBlock":
+      return "code";
+    case "blockquote":
+      return "quote";
+    case "taskItem":
+      return "check-list";
+    case "listItem":
+      return doc.resolve(pos).parent.type.name === "orderedList" ? "list" : "bullet-list";
+    case "toggleBlock":
+      return "toggle";
+    default:
+      return "text";
+  }
+}
+
+/** Only a single line can become the summary of a collapsible block. */
+export function turnIntoChoices(kind: BlockCommandId | null): BlockCommandId[] {
+  if (!kind) return [];
+  return TURN_INTO.filter((id) => id !== "toggle" || kind === "toggle" || SUMMARY_KINDS.has(kind));
+}
+
+/**
+ * Turn into, from a block's handle menu: every line in the block changes. A collapsible block
+ * becomes its summary, turned into the new kind, followed by its body.
+ */
+export function turnBlockInto(editor: Editor, pos: number, command: BlockCommandId): boolean {
+  const kind = blockKind(editor.state.doc, pos);
+  const node = editor.state.doc.nodeAt(pos);
+  if (!node || !kind || kind === command || !turnIntoChoices(kind).includes(command)) return false;
+  if (command === "toggle") return editor.chain().focus().command(({ tr }) => wrapInToggle(tr, pos)).run();
+  if (kind === "toggle") {
+    const size = node.firstChild?.content.size ?? 0;
+    return convert(editor.chain().focus().command(({ tr }) => unwrapToggle(tr, pos)).setTextSelection({ from: pos + 1, to: pos + 1 + size }), command);
+  }
+  let from = -1;
+  let to = -1;
+  editor.state.doc.nodesBetween(pos, pos + node.nodeSize, (line, at) => {
+    if (!line.isTextblock) return true;
+    if (from < 0) from = at + 1;
+    to = at + 1 + line.content.size;
+    return false;
+  });
+  if (from < 0) return false;
+  return convert(editor.chain().focus().setTextSelection({ from, to }), command);
 }
 
 export { dateMention, isEntityKind, mentionHref, mentionQuery, restoreMentionLinks };

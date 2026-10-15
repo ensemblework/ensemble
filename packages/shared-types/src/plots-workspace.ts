@@ -16,6 +16,8 @@ export const tileSchema = plotConfigSchema.extend({
   errorRef: z.string().max(300).nullable().default(null),
   /** When set, the tile averages this column's groups and shades the standard deviation. */
   seedRef: z.string().max(300).nullable().default(null),
+  /** The tile's matplotlib script once someone edits it. Null means the script follows the tile's settings. */
+  code: z.string().max(40_000).nullable().default(null),
 });
 export type WorkspaceTile = z.infer<typeof tileSchema>;
 

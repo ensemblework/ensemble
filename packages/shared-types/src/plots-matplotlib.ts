@@ -39,6 +39,8 @@ export function matplotlibSource(args: {
   rowColumns?: string[];
   /** Rebuild seed means in the script so a derived series is not read off the raw file. */
   summary?: SeedSummary | null;
+  /** Write `rows` into the script instead of loading the dataset: a table joined from several files has no name to load. */
+  inline?: boolean;
 }): string {
   const { config } = args;
   const inches = figureInches(config.preset, config.figure, config);
@@ -46,6 +48,8 @@ export function matplotlibSource(args: {
   const drawn = config.series.length;
   const font = config.fontFamily === "sans" ? "DejaVu Sans" : "Liberation Serif";
   const family = config.fontFamily === "sans" ? "sans-serif" : "serif";
+  const names = args.rowColumns?.length ? args.rowColumns : args.columns.map((column) => column.name);
+  const grouped = config.chart === "box" || config.chart === "violin";
   const lines: string[] = [
     "from ensemble_plots import load, save, apply_style",
     "import matplotlib.pyplot as plt",
@@ -116,7 +120,7 @@ export function matplotlibSource(args: {
     "",
     `apply_style(${py(font)}, ${py(family)}, ${num(config.fontSize)})`,
     "plt.rcParams[\"axes.unicode_minus\"] = False",
-    `df = load(${py(args.datasetName)})`,
+    ...(args.inline && args.rows?.length ? inlineFrame("df", names, args.rows) : [`df = load(${py(args.datasetName)})`]),
     `df = _arrange(df, ${config.x ? py(config.x) : "None"}, ${py(config.sort)})`,
     `fig, ax = plt.subplots(figsize=(${num(inches.widthIn)}, ${num(inches.heightIn)}), layout=\"constrained\")`,
   ];
@@ -129,10 +133,10 @@ export function matplotlibSource(args: {
     lines.push("ax_right.spines['top'].set_visible(False)");
   }
   const x = config.x;
-  if (config.chart === "box" && config.series[0]) {
+  if (grouped && config.series[0]) {
     const y = config.series[0].y;
     const group = x ? py(x) : "None";
-    lines.push(`# Box plot. Points ≤ 0 are dropped when an axis is logarithmic.`);
+    lines.push(`# ${config.chart === "box" ? "Box plot" : "Violin plot"}. Points ≤ 0 are dropped when an axis is logarithmic.`);
     lines.push(`_y = pd.to_numeric(df[${py(y)}], errors="coerce")`);
     lines.push(x ? `_g = df[${group}].astype(str)` : `_g = pd.Series(["all"] * len(df), index=df.index)`);
     if (config.yLogLeft) lines.push(`_y = _y.where(_y > 0)`);
@@ -140,12 +144,25 @@ export function matplotlibSource(args: {
     if (config.yLogLeft || config.xLog) lines.push(`# ${y} values ≤ 0 are hidden on the log axis`);
     lines.push("_order = list(dict.fromkeys(str(item) for item in _g.dropna()))");
     lines.push("_data = [ _y[_g == name].dropna().to_numpy() for name in _order ]");
-    lines.push(`_drawn = ax.boxplot(_data, tick_labels=_order, notch=${config.boxNotch ? "True" : "False"}, whis=${num(config.boxWhisker)}, showfliers=${config.boxOutliers ? "True" : "False"})`);
-    lines.push("for _box in _drawn['boxes']:");
-    lines.push("    _box.set_linewidth(1)");
-    lines.push(`    _box.set_color(${py(colors[0]!)})`);
-    paintBox(lines, Boolean(args.dark));
-    if (config.boxJitter) {
+    if (config.chart === "violin") {
+      const color = colors[0]!;
+      lines.push("_pairs = [(name, values) for name, values in zip(_order, _data) if len(values)]");
+      lines.push("_drawn = ax.violinplot([values for _, values in _pairs], showmedians=True)");
+      lines.push("ax.set_xticks(range(1, len(_pairs) + 1), [name for name, _ in _pairs])");
+      lines.push("for _body in _drawn['bodies']:");
+      lines.push(`    _body.set_facecolor(${py(color)})`);
+      lines.push(`    _body.set_edgecolor(${py(color)})`);
+      lines.push("    _body.set_alpha(0.35)");
+      lines.push("for _part in ('cbars', 'cmins', 'cmaxes', 'cmedians'):");
+      lines.push(`    _drawn[_part].set_color(${py(args.dark ? INK_DARK : color)})`);
+    } else {
+      lines.push(`_drawn = ax.boxplot(_data, tick_labels=_order, notch=${config.boxNotch ? "True" : "False"}, whis=${num(config.boxWhisker)}, showfliers=${config.boxOutliers ? "True" : "False"})`);
+      lines.push("for _box in _drawn['boxes']:");
+      lines.push("    _box.set_linewidth(1)");
+      lines.push(`    _box.set_color(${py(colors[0]!)})`);
+      paintBox(lines, Boolean(args.dark));
+    }
+    if (config.boxJitter && config.chart === "box") {
       lines.push("import numpy as np");
       lines.push("_rng = np.random.default_rng(0)");
       lines.push("for _i, _vals in enumerate(_data, start=1):");
@@ -155,8 +172,10 @@ export function matplotlibSource(args: {
       lines.push(`    ax.scatter(_jx, _vals, s=10, color=${py(colors[0]!)}, alpha=0.55, zorder=3, linewidths=0)`);
     }
   }
+  const heatmap = config.chart === "heatmap" && Boolean(x) && config.series.length >= 2;
+  if (heatmap) emitHeatmap(lines, "ax", "df", x!, config.series[0]!.y, config.series[1]!.y);
   config.series.forEach((series, index) => {
-    if (config.chart === "box") return;
+    if (grouped || heatmap) return;
     const color = seriesColor({
       palette: config.palette,
       accent: args.accent,
@@ -253,21 +272,24 @@ export function matplotlibSource(args: {
   if (config.yTitleLeft || config.series[0]) lines.push(`ax.set_ylabel(${py(config.yTitleLeft || config.series.find((series) => series.axis !== "right")?.y || "")})`);
   if (right) lines.push(`ax_right.set_ylabel(${py(config.yTitleRight || config.series.find((series) => series.axis === "right")?.y || "")})`);
   const dark = Boolean(args.dark);
-  const names = args.rowColumns?.length ? args.rowColumns : args.columns.map((column) => column.name);
-  const cartesian = config.chart !== "pie" && config.chart !== "donut";
+  const cartesian = config.chart !== "pie" && config.chart !== "donut" && !heatmap;
   const horizontal = config.chart === "bar-horizontal" || config.chart === "stacked-bar-horizontal";
-  const xPlan = cartesian && !horizontal ? axisPlanFor(config, "x", names, args.columns, args.rows, config.xLog, null, null) : null;
-  const yPlan = cartesian && !horizontal ? axisPlanFor(config, "y", names, args.columns, args.rows, config.yLogLeft, config.yMinLeft, config.yMaxLeft) : null;
-  const yPlanRight = cartesian && !horizontal ? axisPlanFor(config, "y", names, args.columns, args.rows, config.yLogRight, config.yMinRight, config.yMaxRight, "right") : null;
+  // Box and violin groups sit at 1..n and a histogram's y axis counts rows, so those axes do not take the data's tick plan.
+  const planned = cartesian && !horizontal && config.chart !== "histogram";
+  const xPlan = planned && !grouped ? axisPlanFor(config, "x", names, args.columns, args.rows, config.xLog, null, null) : null;
+  const yPlan = planned ? axisPlanFor(config, "y", names, args.columns, args.rows, config.yLogLeft, config.yMinLeft, config.yMaxLeft) : null;
+  const yPlanRight = planned ? axisPlanFor(config, "y", names, args.columns, args.rows, config.yLogRight, config.yMinRight, config.yMaxRight, "right") : null;
   if (cartesian) {
-    emitScale(lines, "ax", xPlan, "x", config.xLog);
+    if (!grouped) emitScale(lines, "ax", xPlan, "x", config.xLog);
     emitScale(lines, "ax", yPlan, "y", config.yLogLeft);
     if (right) emitScale(lines, "ax_right", yPlanRight, "y", config.yLogRight);
-    emitTicks(lines, "ax.xaxis", "x", config, xPlan, xColumnNumeric(args.columns, x) || !x || config.xLog, config.xLog);
+    if (!grouped) emitTicks(lines, "ax.xaxis", "x", config, xPlan, xColumnNumeric(args.columns, x) || !x || config.xLog, config.xLog);
     emitTicks(lines, "ax.yaxis", "y", config, yPlan, true, config.yLogLeft);
     if (right) emitTicks(lines, "ax_right.yaxis", "y", config, yPlanRight, true, config.yLogRight);
     emitGrid(lines, "ax", config, dark);
     paintFigure(lines, dark, right ? ["ax", "ax_right"] : ["ax"]);
+  } else if (heatmap) {
+    paintFigure(lines, dark, ["ax"]);
   }
   const zeroMark = (mark: string) => ["bar", "stacked-bar", "stacked-bar-100", "bar-horizontal", "stacked-bar-horizontal", "area", "stacked-area", "waterfall"].includes(mark);
   const zeroLeft = config.chart === "combo"
@@ -557,6 +579,107 @@ function legendInk(dark: boolean): string {
   return dark ? `, labelcolor=${py(INK_DARK)}` : "";
 }
 
+/** The plotted rows written into the script, one column per line. */
+function inlineFrame(name: string, columns: string[], rows: Array<Array<string | number | null>>): string[] {
+  return [
+    `${name} = pd.DataFrame({`,
+    ...columns.map((column, index) => `    ${py(column)}: [${rows.map((row) => pyCell(row[index] ?? null)).join(", ")}],`),
+    "})",
+  ];
+}
+
+/** Class against class: the value column as a colour matrix with its count in each cell. */
+function emitHeatmap(lines: string[], axis: string, frame: string, x: string, y: string, value: string): void {
+  lines.push(`_classes = list(dict.fromkeys([str(item) for item in ${frame}[${py(x)}]] + [str(item) for item in ${frame}[${py(y)}]]))`);
+  lines.push(`_mat = ${frame}.pivot(index=${py(y)}, columns=${py(x)}, values=${py(value)})`);
+  lines.push("_mat.index = _mat.index.map(str)");
+  lines.push("_mat.columns = _mat.columns.map(str)");
+  lines.push("_mat = _mat.reindex(index=_classes, columns=_classes)");
+  lines.push(`${axis}.imshow(_mat.to_numpy(dtype=float), cmap="viridis", aspect="equal")`);
+  lines.push(`${axis}.set_box_aspect(1)`);
+  lines.push(`${axis}.set_xticks(range(_mat.shape[1]))`);
+  lines.push(`${axis}.set_xticklabels([str(item) for item in _mat.columns], fontsize=8)`);
+  lines.push(`for _label in ${axis}.get_xticklabels():`);
+  lines.push("    _label.set_rotation(70)");
+  lines.push("    _label.set_ha('right')");
+  lines.push("    _label.set_rotation_mode('anchor')");
+  lines.push(`${axis}.set_yticks(range(_mat.shape[0]))`);
+  lines.push(`${axis}.set_yticklabels([str(item) for item in _mat.index], fontsize=8)`);
+  lines.push("_vals = _mat.to_numpy(dtype=float)");
+  lines.push("_flat = [float(item) for item in _vals.ravel() if item == item]");
+  lines.push("_lo = min(_flat) if _flat else 0.0");
+  lines.push("_hi = max(_flat) if _flat else 1.0");
+  lines.push('_cmap = plt.get_cmap("viridis")');
+  lines.push("for _r in range(_vals.shape[0]):");
+  lines.push("    for _c in range(_vals.shape[1]):");
+  lines.push("        _v = _vals[_r, _c]");
+  lines.push("        if _v == _v:");
+  lines.push("            _t = 0.0 if _hi <= _lo else (_v - _lo) / (_hi - _lo)");
+  lines.push("            _rgba = _cmap(_t)");
+  lines.push("            _lum = 0.2126 * _rgba[0] + 0.7152 * _rgba[1] + 0.0722 * _rgba[2]");
+  lines.push(`            ${axis}.text(_c, _r, f"{int(round(_v))}", ha="center", va="center", fontsize=9, color=("black" if _lum >= 0.55 else "white"))`);
+  lines.push(`${axis}.set_xlabel(${py(x)})`);
+  lines.push(`${axis}.set_ylabel(${py(y)})`);
+}
+
+/**
+ * Top-level imports of edited tile scripts, repeated at the top of the figure script. The browser
+ * loads the packages a script imports before it runs it, and a tile's script is only a string here.
+ */
+function scriptImports(sources: string[]): string[] {
+  const modules = new Set<string>();
+  for (const source of sources) {
+    for (const raw of source.split("\n")) {
+      const line = raw.replace(/#.*$/, "").trimEnd();
+      const from = /^from\s+([A-Za-z_][\w.]*)\s+import\b/.exec(line);
+      const plain = /^import\s+(.+)$/.exec(line);
+      const names = from ? [from[1]!] : plain ? plain[1]!.split(",").map((part) => part.trim().split(/\s+as\s+/)[0]!.trim()) : [];
+      for (const name of names) {
+        if (/^[A-Za-z_][\w.]*$/.test(name) && name.split(".")[0] !== "ensemble_plots" && name !== "__future__") modules.add(name);
+      }
+    }
+  }
+  return [...modules].sort().map((name) => `import ${name}`);
+}
+
+/**
+ * `_tile_image(code, label)` runs a tile's own script, catches the figure it saves, and returns it as
+ * an image for one panel. Style changes the script makes are undone afterwards. A failure exits with a
+ * message naming the panel and its line, not a traceback into this helper.
+ */
+function tileImageHelper(sources: string[], dpi?: number): string[] {
+  return [
+    ...scriptImports(sources),
+    "import io, os, sys, traceback",
+    "import ensemble_plots",
+    "",
+    "def _tile_image(source, label):",
+    "    shots = []",
+    "    real_save = ensemble_plots.save",
+    "    ensemble_plots.save = lambda fig=None: shots.append(fig if fig is not None else plt.gcf())",
+    "    buffer = io.BytesIO()",
+    "    try:",
+    "        with plt.rc_context():",
+    "            try:",
+    "                exec(compile(source, f\"<{label}>\", \"exec\"), {\"__name__\": \"__main__\"})",
+    "            except Exception as error:",
+    "                rows = [frame.lineno for frame in traceback.extract_tb(error.__traceback__) if frame.filename == f\"<{label}>\"]",
+    "                where = f\" at line {rows[-1]}\" if rows else \"\"",
+    "                print(f\"The code for {label} failed{where}: {type(error).__name__}: {error}\", file=sys.stderr)",
+    "                raise SystemExit(1)",
+    "            if not shots:",
+    "                print(f\"The code for {label} drew nothing. End it with save(fig).\", file=sys.stderr)",
+    "                raise SystemExit(1)",
+    `            shots[-1].savefig(buffer, format="png", dpi=int(os.environ.get("PLOTS_DPI") or ${Math.round(dpi ?? 200)}))`,
+    "    finally:",
+    "        ensemble_plots.save = real_save",
+    "        for shot in shots:",
+    "            plt.close(shot)",
+    "    buffer.seek(0)",
+    "    return plt.imread(buffer)",
+  ];
+}
+
 /** The seed summary the canvas built, so the script can derive the same columns from the raw file. */
 export function seedSummaryFor(args: {
   columns: Array<{ name: string; type: string }>;
@@ -607,8 +730,14 @@ import matplotlib.pyplot as plt
 apply_style("Liberation Serif", "serif")
 frames = {}
 ${loads}
-# Every dataset on this workspace is loaded by the name shown in the column pool.
+# Every dataset on this canvas loads by the name shown in the column pool.
+df = frames[${JSON.stringify(names[0] ?? "data")}]
 fig, ax = plt.subplots(figsize=(6.75, 2.6), layout="constrained")
+# A first look: the first column against the second. Change these to the columns you want.
+ax.plot(df.iloc[:, 0], df.iloc[:, 1] if df.shape[1] > 1 else df.iloc[:, 0], linewidth=1.25)
+ax.set_xlabel(str(df.columns[0]))
+if df.shape[1] > 1:
+    ax.set_ylabel(str(df.columns[1]))
 save(fig)
 `;
 }
@@ -632,8 +761,10 @@ function columnNumbers(
   });
 }
 
+export type FigurePanel = { title: string; datasetName: string; x: string; ys: string[]; yTitle?: string; chart: string; palette?: PaletteId; xLog?: boolean; yLog?: boolean; columns?: string[]; rows?: Array<Array<string | number | null>>; error?: string; errorKind?: "bar" | "band"; series?: Array<{ y: string; color?: string; error?: string; errorKind?: "bar" | "band" }>; boxNotch?: boolean; boxOutliers?: boolean; boxWhisker?: number; /** A tile's own edited script: the panel is that script's figure. */ code?: string };
+
 export function matplotlibPanels(
-  panels: Array<{ title: string; datasetName: string; x: string; ys: string[]; yTitle?: string; chart: string; palette?: PaletteId; xLog?: boolean; yLog?: boolean; columns?: string[]; rows?: Array<Array<string | number | null>>; error?: string; errorKind?: "bar" | "band"; series?: Array<{ y: string; color?: string; error?: string; errorKind?: "bar" | "band" }>; boxNotch?: boolean; boxOutliers?: boolean; boxWhisker?: number }>,
+  panels: FigurePanel[],
   options?: { preset?: string; width?: "single" | "double"; columns?: number; legend?: boolean; widthIn?: number; heightIn?: number; dpi?: number; fontSize?: number; accent?: string; dark?: boolean },
 ): string {
   const n = Math.max(panels.length, 1);
@@ -643,11 +774,13 @@ export function matplotlibPanels(
   const figureWidth = options?.widthIn && options.widthIn > 0 ? options.widthIn : options?.width === "single" ? 3.5 : 7;
   const figureHeight = options?.heightIn && options.heightIn > 0 ? options.heightIn : figureWidth * 0.3 * rows;
   const fontSize = options?.fontSize && options.fontSize > 0 ? options.fontSize : 9;
+  const scripted = panels.filter((panel) => panel.code);
   const lines = [
     "from ensemble_plots import load, save, apply_style",
     "import matplotlib.pyplot as plt",
     "import pandas as pd",
     "from matplotlib.ticker import FixedLocator, LogFormatterMathtext, NullLocator",
+    ...(scripted.length ? tileImageHelper(scripted.map((panel) => panel.code!), options?.dpi) : []),
     "",
     `apply_style("Liberation Serif", "serif", ${num(fontSize)})`,
     "plt.rcParams[\"axes.unicode_minus\"] = False",
@@ -658,6 +791,15 @@ export function matplotlibPanels(
   ];
   panels.forEach((panel, index) => {
     const letter = String.fromCharCode(97 + index);
+    if (panel.code) {
+      const label = panel.title ? `(${letter}) ${panel.title}` : `(${letter})`;
+      lines.push(`_ax = axes[${index}]`);
+      lines.push(`# (${letter}) is drawn by that tile's own edited code.`);
+      lines.push(`_ax.imshow(_tile_image(${py(panel.code)}, ${py(label)}))`);
+      lines.push("_ax.set_axis_off()");
+      lines.push(`_ax.set_title(${py(`(${letter})`)}, fontsize=9, loc="left", pad=10${options?.dark ? `, color=${py(INK_DARK)}` : ""})`);
+      return;
+    }
     if (panel.rows && panel.columns?.length) {
       const fields = panel.columns.map((name, index) => `${py(name)}: [${panel.rows!.map((row) => pyCell(row[index] ?? null)).join(", ")}]`);
       lines.push(`_df = pd.DataFrame({${fields.join(", ")}})`);
@@ -670,39 +812,9 @@ export function matplotlibPanels(
     lines.push(`_ax.set_title(${py(heading)}, fontsize=9, loc="left", pad=10${options?.dark ? `, color=${py(INK_DARK)}` : ""})`);
     if (panel.chart === "heatmap" && panel.ys.length >= 2) {
       const yName = panel.ys[0]!;
-      const valueName = panel.ys[1]!;
-      lines.push(`_classes = list(dict.fromkeys([str(item) for item in _df[${py(panel.x)}]] + [str(item) for item in _df[${py(yName)}]]))`);
-      lines.push(`_mat = _df.pivot(index=${py(yName)}, columns=${py(panel.x)}, values=${py(valueName)})`);
-      lines.push("_mat.index = _mat.index.map(str)");
-      lines.push("_mat.columns = _mat.columns.map(str)");
-      lines.push("_mat = _mat.reindex(index=_classes, columns=_classes)");
-      lines.push(`_ax.imshow(_mat.to_numpy(dtype=float), cmap="viridis", aspect="equal")`);
-      lines.push("_ax.set_box_aspect(1)");
-      lines.push("_ax.set_xticks(range(_mat.shape[1]))");
-      lines.push("_ax.set_xticklabels([str(item) for item in _mat.columns], fontsize=8)");
-      lines.push("for _label in _ax.get_xticklabels():");
-      lines.push("    _label.set_rotation(70)");
-      lines.push("    _label.set_ha('right')");
-      lines.push("    _label.set_rotation_mode('anchor')");
-      lines.push("_ax.set_yticks(range(_mat.shape[0]))");
-      lines.push("_ax.set_yticklabels([str(item) for item in _mat.index], fontsize=8)");
-      lines.push("_vals = _mat.to_numpy(dtype=float)");
-      lines.push("_flat = [float(item) for item in _vals.ravel() if item == item]");
-      lines.push("_lo = min(_flat) if _flat else 0.0");
-      lines.push("_hi = max(_flat) if _flat else 1.0");
-      lines.push('_cmap = plt.get_cmap("viridis")');
-      lines.push("for _r in range(_vals.shape[0]):");
-      lines.push("    for _c in range(_vals.shape[1]):");
-      lines.push("        _v = _vals[_r, _c]");
-      lines.push("        if _v == _v:");
-      lines.push("            _t = 0.0 if _hi <= _lo else (_v - _lo) / (_hi - _lo)");
-      lines.push("            _rgba = _cmap(_t)");
-      lines.push("            _lum = 0.2126 * _rgba[0] + 0.7152 * _rgba[1] + 0.0722 * _rgba[2]");
-      lines.push('            _ax.text(_c, _r, f"{int(round(_v))}", ha="center", va="center", fontsize=9, color=("black" if _lum >= 0.55 else "white"))');
-      lines.push(`_ax.set_xlabel(${py(panel.x)})`);
-      lines.push(`_ax.set_ylabel(${py(yName)})`);
+      emitHeatmap(lines, "_ax", "_df", panel.x, yName, panel.ys[1]!);
       paintFigure(lines, Boolean(options?.dark), ["_ax"]);
-    } else if (panel.chart === "box" && panel.ys[0]) {
+    } else if ((panel.chart === "box" || panel.chart === "violin") && panel.ys[0]) {
       const y = panel.ys[0];
       const whisker = typeof panel.boxWhisker === "number" ? panel.boxWhisker : 1.5;
       lines.push(`_y = pd.to_numeric(_df[${py(y)}], errors="coerce")`);
@@ -713,12 +825,24 @@ export function matplotlibPanels(
       }
       lines.push("_order = list(dict.fromkeys(str(item) for item in _g.dropna()))");
       lines.push("_data = [_y[_g == name].dropna().to_numpy() for name in _order]");
-      lines.push(`_drawn = _ax.boxplot(_data, tick_labels=_order, notch=${panel.boxNotch ? "True" : "False"}, whis=${num(whisker)}, showfliers=${panel.boxOutliers === false ? "False" : "True"})`);
       const boxColor = paletteColors(panel.palette ?? "okabe-ito", options?.accent, false)[0] ?? "#0072B2";
-      lines.push("for _box in _drawn['boxes']:");
-      lines.push("    _box.set_linewidth(1)");
-      lines.push(`    _box.set_color(${py(boxColor)})`);
-      paintBox(lines, Boolean(options?.dark));
+      if (panel.chart === "violin") {
+        lines.push("_pairs = [(name, values) for name, values in zip(_order, _data) if len(values)]");
+        lines.push("_drawn = _ax.violinplot([values for _, values in _pairs], showmedians=True)");
+        lines.push("_ax.set_xticks(range(1, len(_pairs) + 1), [name for name, _ in _pairs])");
+        lines.push("for _body in _drawn['bodies']:");
+        lines.push(`    _body.set_facecolor(${py(boxColor)})`);
+        lines.push(`    _body.set_edgecolor(${py(boxColor)})`);
+        lines.push("    _body.set_alpha(0.35)");
+        lines.push("for _part in ('cbars', 'cmins', 'cmaxes', 'cmedians'):");
+        lines.push(`    _drawn[_part].set_color(${py(options?.dark ? INK_DARK : boxColor)})`);
+      } else {
+        lines.push(`_drawn = _ax.boxplot(_data, tick_labels=_order, notch=${panel.boxNotch ? "True" : "False"}, whis=${num(whisker)}, showfliers=${panel.boxOutliers === false ? "False" : "True"})`);
+        lines.push("for _box in _drawn['boxes']:");
+        lines.push("    _box.set_linewidth(1)");
+        lines.push(`    _box.set_color(${py(boxColor)})`);
+        paintBox(lines, Boolean(options?.dark));
+      }
       lines.push(`_ax.set_xlabel(${py(panel.x)})`);
       lines.push(`_ax.set_ylabel(${py(y)})`);
       if (panel.yLog) emitLogAxis(lines, "_ax", "y", columnNumbers(panel, y), false);

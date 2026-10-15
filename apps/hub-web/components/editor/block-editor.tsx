@@ -3,12 +3,14 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { EditorContent, useEditor, type Editor, type JSONContent } from "@tiptap/react";
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useState, useRef, type MutableRefObject } from "react";
 import type { PageDocument, PageMention } from "@ensemble/shared-types";
 import { api, currentLink, inItemView } from "@/lib/api";
 import { diagramMentionIds, editorExtensions, type EntitySource } from "./extensions";
 import { BlockControls } from "./block-controls";
 import { FileChooser } from "./file-chooser";
+import { acceptsDocument, replaceDocument, type EditorControl } from "./replace-doc";
+import { RemoteCarets } from "./remote-carets";
 import { useModuleState } from "@/lib/use-module";
 import { useToast } from "../toast";
 
@@ -31,6 +33,7 @@ export function BlockEditor({
   page,
   comments = true,
   remote,
+  control,
 }: {
   initial: PageDocument;
   entities: EntitySource;
@@ -43,6 +46,8 @@ export function BlockEditor({
   comments?: boolean;
   /** Someone else's saved version. Applied in place (your selection kept), never saved back. */
   remote?: { doc: PageDocument; stamp: number } | null;
+  /** Set while the editor is up, for merging someone else's save into what you are typing. */
+  control?: MutableRefObject<EditorControl | null>;
 }) {
   const toast = useToast();
   const client = useQueryClient();
@@ -130,19 +135,27 @@ export function BlockEditor({
 
   useEffect(() => {
     if (!editor || !remote || editor.isDestroyed) return;
-    const next = JSON.stringify(remote.doc);
-    if (next === baseline.current) return;
-    const { from, to } = editor.state.selection;
-    editor.commands.setContent(remote.doc as JSONContent, false);
-    baseline.current = JSON.stringify(editor.getJSON());
-    const size = editor.state.doc.content.size;
-    try {
-      editor.commands.setTextSelection({ from: Math.min(from, size), to: Math.min(to, size) });
-    } catch {
-      // The old position no longer exists; the cursor stays where setContent put it.
-    }
+    if (JSON.stringify(remote.doc) === baseline.current) return;
+    if (replaceDocument(editor, remote.doc)) baseline.current = JSON.stringify(editor.getJSON());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor, remote?.stamp]);
+
+  useEffect(() => {
+    if (!control || !editor) return;
+    const handle: EditorControl = {
+      read: () => editor.getJSON() as PageDocument,
+      accepts: (doc) => acceptsDocument(editor, doc),
+      replace: (doc) => {
+        if (editor.isDestroyed || !replaceDocument(editor, doc)) return false;
+        baseline.current = JSON.stringify(editor.getJSON());
+        return true;
+      },
+    };
+    control.current = handle;
+    return () => {
+      if (control.current === handle) control.current = null;
+    };
+  }, [editor, control]);
 
   useEffect(() => {
     // The shell can load after the editor. Reconcile links once the diagrams module is known to be on.
@@ -158,6 +171,7 @@ export function BlockEditor({
           {live && editable ? <BlockControls editor={live} /> : null}
         </div>
         {live && chooser !== null ? <FileChooser editor={live} pos={chooser} onClose={closeChooser} /> : null}
+        {live && page ? <RemoteCarets editor={live} page={page} /> : null}
         {/* Comments name people: never on a public link. */}
         {page && live && !currentLink() ? (
           comments ? <CommentLayer editor={live} pageKind={page.kind} pageId={page.id} /> : <InlineEnsemble editor={live} pageKind={page.kind} pageId={page.id} />

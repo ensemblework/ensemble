@@ -4,6 +4,7 @@
  * them in one place.
  */
 import type { Prisma, PrismaClient } from "@prisma/client";
+import { personInitials } from "@ensemble/shared-types";
 import { isHosted } from "../lib/hosted-access.js";
 import { copySettings, MAX_SPACES } from "../spaces/store.js";
 import { PRIVATE_ARTIFACT_KINDS, SHARE_KINDS, type ShareKind } from "./context.js";
@@ -18,7 +19,12 @@ const SPACE_EMAIL = "@spaces.ensemble.invalid";
 const ACTIVE_JOBS = ["running", "claimed", "stopping", "waiting_approval"] as const;
 
 export class SharingError extends Error {
-  constructor(message: string, readonly statusCode: 400 | 403 | 404 | 409 | 429 = 400) {
+  constructor(
+    message: string,
+    readonly statusCode: 400 | 403 | 404 | 409 | 429 = 400,
+    /** Sent as the response's `code`. */
+    readonly code?: string,
+  ) {
     super(message);
     this.name = "SharingError";
   }
@@ -26,11 +32,9 @@ export class SharingError extends Error {
 
 export type Person = { id: string; name: string; initials: string; avatar: string | null; email: string; exact: boolean; contact: boolean };
 
+/** The rule the Hub draws with, so a person's initials match everywhere. */
 export function initialsOf(name: string, email: string): string {
-  const words = name.trim().split(/\s+/).filter(Boolean);
-  if (words.length >= 2) return `${words[0]![0]}${words[words.length - 1]![0]}`.toUpperCase();
-  if (words.length === 1) return words[0]!.slice(0, 2).toUpperCase();
-  return (email.split("@")[0] ?? "?").slice(0, 2).toUpperCase();
+  return personInitials(name, email);
 }
 
 /**

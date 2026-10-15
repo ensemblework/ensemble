@@ -2,34 +2,39 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
-import { useEffect, useRef } from "react";
-import { Eye, LocateFixed, Users } from "lucide-react";
+import { useEffect, useRef, type ReactNode, type RefObject } from "react";
+import { Eye, Info, LocateFixed, Users } from "lucide-react";
 import { api, type PresenceEntry, type SharingPerson } from "@/lib/api";
 import { followStore, useFollowing } from "@/lib/follow";
-import { people, usePresence } from "@/lib/presence";
+import { distinctInitials, personInitials } from "@/lib/initials";
+import { hrefOf, people, placeOf, usePresence } from "@/lib/presence";
 import { Popover } from "@/components/ui";
 import { useToast } from "@/components/toast";
 import { PersonaAvatar } from "@/components/avatars/persona";
 
 /**
  * A person: their picture avatar, an anonymous visitor's creature, or initials in their colour.
- * `ring` marks someone live right now.
+ * `ring` marks someone live right now. `stacked` draws a gap in the page colour, so circles that
+ * overlap in a row keep their initials readable.
  */
 export function Avatar({
   person,
   color,
   size = 24,
   ring = false,
+  stacked = false,
   title,
 }: {
-  person: Pick<SharingPerson, "name" | "initials"> & { avatar?: string | null; emoji?: string | null };
+  person: Pick<SharingPerson, "name"> & { initials?: string; avatar?: string | null; emoji?: string | null };
   color?: string;
   size?: number;
   ring?: boolean;
+  stacked?: boolean;
   title?: string;
 }) {
   const tint = color ?? "var(--ink)";
-  const shadow = ring ? `0 0 0 2px var(--bg), 0 0 0 3.5px ${tint}` : undefined;
+  const gap = stacked ? "0 0 0 1.5px var(--bg)" : undefined;
+  const shadow = ring ? `0 0 0 2px var(--bg), 0 0 0 3.5px ${tint}` : gap;
   if (person.avatar) {
     return (
       <span title={title ?? person.name} aria-label={person.name} className="inline-flex shrink-0 rounded-full" style={{ width: size, height: size, boxShadow: shadow }}>
@@ -43,12 +48,19 @@ export function Avatar({
         title={title ?? person.name}
         aria-label={person.name}
         className="inline-flex shrink-0 select-none items-center justify-center rounded-full leading-none"
-        style={{ width: size, height: size, fontSize: Math.round(size * 0.58), background: `color-mix(in srgb, ${tint} 22%, var(--raised))`, boxShadow: shadow ?? `inset 0 0 0 1.5px ${tint}` }}
+        style={{
+          width: size,
+          height: size,
+          fontSize: Math.round(size * 0.58),
+          background: `color-mix(in srgb, ${tint} 22%, var(--raised))`,
+          boxShadow: ring ? shadow : [gap, `inset 0 0 0 1.5px ${tint}`].filter(Boolean).join(", "),
+        }}
       >
         {person.emoji}
       </span>
     );
   }
+  const initials = person.initials || personInitials(person.name);
   return (
     <span
       title={title ?? person.name}
@@ -57,129 +69,200 @@ export function Avatar({
       style={{
         width: size,
         height: size,
-        fontSize: Math.max(9, Math.round(size * 0.4)),
+        fontSize: initials.length > 2 ? Math.max(8, Math.round(size * 0.34)) : Math.max(9, Math.round(size * 0.4)),
         background: color ? tint : "color-mix(in srgb, var(--ink) 45%, var(--bg))",
-        boxShadow: ring ? `0 0 0 2px var(--bg), 0 0 0 3.5px ${tint}` : undefined,
+        boxShadow: shadow,
       }}
     >
-      {person.initials}
+      {initials}
     </span>
   );
 }
 
-const PLACES: Array<[RegExp, string]> = [
-  [/^\/board/, "the board"],
-  [/^\/pages\//, "a page"],
-  [/^\/tasks\//, "a task"],
-  [/^\/diagrams\/./, "a diagram"],
-  [/^\/diagrams/, "diagrams"],
-  [/^\/plots\/./, "a plot space"],
-  [/^\/plots/, "plots"],
-  [/^\/context/, "Context"],
-  [/^\/needs-me/, "Needs me"],
-  [/^\/runs/, "runs"],
-  [/^\/workspace/, "the workspace"],
-  [/^\/code/, "code"],
-  [/^\/skills/, "skills"],
-  [/^\/meetings/, "meetings"],
-  [/^\/recap/, "the weekly recap"],
-  [/^\/projects/, "projects"],
-];
+const STACK_MAX = 4;
 
-export function placeOf(entry: Pick<PresenceEntry, "route" | "resource">): string {
-  if (!entry.route) return entry.resource ? `the shared ${entry.resource.kind.replace("_", " ")}` : "this space";
-  const path = entry.route.split("?")[0] ?? "";
-  if (entry.route.includes("peek=task:")) return "a task";
-  return PLACES.find(([pattern]) => pattern.test(path))?.[1] ?? "this space";
+/**
+ * Up to four live avatars, then "+N" for the rest, as the top bar and item headers show them.
+ * Each circle names its person on hover, and the chip names the people it stands for.
+ */
+export function PresenceStack({
+  entries,
+  size,
+  ringed,
+  describe,
+}: {
+  entries: PresenceEntry[];
+  size: number;
+  ringed: (entry: PresenceEntry) => boolean;
+  describe: (entry: PresenceEntry) => string;
+}) {
+  const shown = entries.slice(0, STACK_MAX);
+  const hidden = entries.slice(STACK_MAX);
+  const initials = distinctInitials(shown);
+  return (
+    <>
+      <span className="flex -space-x-0.5">
+        {shown.map((entry, index) => (
+          <span key={entry.accountId} className="relative">
+            <Avatar person={{ ...entry, initials: initials[index] }} color={entry.color} size={size} ring={ringed(entry)} stacked title={describe(entry)} />
+            {entry.typing ? <span className="absolute -bottom-0.5 -right-0.5 h-2 w-2 animate-pulse rounded-full border border-bg" style={{ background: entry.color }} /> : null}
+          </span>
+        ))}
+      </span>
+      {hidden.length ? (
+        <span className="ml-1 text-2xs text-muted" title={hidden.map(describe).join("\n")}>
+          +{hidden.length}
+        </span>
+      ) : null}
+    </>
+  );
 }
 
-/** Who else is in this shared space right now. Click someone to follow them or jump to them. */
+const FOCUSABLE = "button:not([disabled]), a[href]";
+
+/**
+ * The inside of a people popover. Focus moves in when it opens, the arrow keys and Tab move
+ * between its buttons, and focus returns to the chip that opened it when it closes (the popover
+ * itself closes on Esc and outside clicks).
+ */
+export function PeoplePanel({ label, opener, children }: { label: string; opener: RefObject<HTMLElement | null>; children: ReactNode }) {
+  const panel = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const node = panel.current;
+    // The popover is placed, and only then visible, in the render after this one.
+    const frame = window.requestAnimationFrame(() => (node?.querySelector<HTMLElement>(FOCUSABLE) ?? node)?.focus());
+    return () => {
+      window.cancelAnimationFrame(frame);
+      const active = document.activeElement;
+      if (!active || active === document.body || node?.contains(active)) opener.current?.focus();
+    };
+  }, [opener]);
+  const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!["ArrowDown", "ArrowUp", "Home", "End", "Tab"].includes(event.key)) return;
+    event.preventDefault();
+    const items = Array.from(panel.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? []);
+    if (!items.length) return;
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    const back = event.key === "ArrowUp" || (event.key === "Tab" && event.shiftKey);
+    const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1 : back ? (at <= 0 ? items.length - 1 : at - 1) : (at + 1) % items.length;
+    items[next]!.focus();
+  };
+  return (
+    <div ref={panel} role="dialog" aria-label={label} tabIndex={-1} onKeyDown={onKeyDown} className="py-1 outline-none">
+      {children}
+    </div>
+  );
+}
+
+/** One person in Here now: go to them, follow them, or, for someone on one shared item, why there is no Follow. */
+function HereRow({ entry, followed, onGo, close }: { entry: PresenceEntry; followed: boolean; onGo: (href: string) => void; close: () => void }) {
+  const href = hrefOf(entry);
+  const place = `${entry.typing ? "Editing" : "On"} ${placeOf(entry)}`;
+  const person = (
+    <>
+      <Avatar person={entry} color={entry.color} size={26} />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[13px] font-medium">{entry.name}</span>
+        <span className="block truncate text-2xs text-muted">{place}</span>
+      </span>
+    </>
+  );
+  const noFollow = `Follow is for people working in this space. ${entry.name} has only ${placeOf(entry)} open${href ? ", and Go to opens it" : ""}.`;
+  return (
+    <div className="flex items-center gap-1 px-1">
+      {href ? (
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1 py-1.5 text-left hover:bg-hover focus-visible:bg-hover"
+          title={`Go to ${entry.name}`}
+          aria-label={`Go to ${entry.name}. ${place}`}
+          onClick={() => {
+            onGo(href);
+            close();
+          }}
+        >
+          {person}
+          <span className="flex shrink-0 items-center gap-1 text-2xs text-muted" aria-hidden>
+            <LocateFixed size={12} /> Go to
+          </span>
+        </button>
+      ) : (
+        <div className="flex min-w-0 flex-1 items-center gap-2 px-1 py-1.5">{person}</div>
+      )}
+      {entry.route ? (
+        <button
+          type="button"
+          className="shrink-0 rounded-md border border-line px-2 py-0.5 text-2xs font-medium hover:bg-hover"
+          style={followed ? { borderColor: entry.color, color: entry.color } : undefined}
+          aria-pressed={followed}
+          aria-label={followed ? `Stop following ${entry.name}` : `Follow ${entry.name}`}
+          title={followed ? `Stop following ${entry.name}` : `Follow ${entry.name} wherever they go in this space`}
+          onClick={() => {
+            if (followed) followStore.stop();
+            else followStore.start({ accountId: entry.accountId, name: entry.name, color: entry.color });
+            close();
+          }}
+        >
+          {followed ? "Following" : "Follow"}
+        </button>
+      ) : (
+        <span className="grid size-6 shrink-0 place-items-center text-faint" title={noFollow}>
+          <Info size={13} aria-hidden />
+          <span className="sr-only">{noFollow}</span>
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** Who else is in this shared space right now. Click someone to go to them or follow them. */
 export function SpacePeople() {
   const router = useRouter();
   const here = people(usePresence());
   const following = useFollowing();
+  const chip = useRef<HTMLButtonElement>(null);
   if (!here.length) return null;
-  const shown = here.slice(0, 4);
-  const more = here.length - shown.length;
   return (
     <Popover
       align="right"
-      width={280}
+      width={300}
       trigger={(open, toggle) => (
         <button
+          ref={chip}
           type="button"
           onClick={toggle}
           aria-expanded={open}
-          aria-label={`${here.length} ${here.length === 1 ? "person" : "people"} here now`}
+          aria-haspopup="dialog"
+          aria-label={`Here now: ${here.map((entry) => entry.name).join(", ")}`}
           className="mr-1 flex items-center rounded-md px-1 py-0.5 hover:bg-hover"
         >
-          <span className="flex -space-x-1.5">
-            {shown.map((entry) => (
-              <span key={entry.accountId} className="relative">
-                <Avatar person={entry} color={entry.color} size={22} ring={following?.accountId === entry.accountId} title={`${entry.name}, on ${placeOf(entry)}`} />
-                {entry.typing ? <span className="absolute -bottom-0.5 -right-0.5 h-2 w-2 animate-pulse rounded-full border border-bg" style={{ background: entry.color }} /> : null}
-              </span>
-            ))}
-          </span>
-          {more > 0 ? <span className="ml-1 text-2xs text-muted">+{more}</span> : null}
+          <PresenceStack
+            entries={here}
+            size={22}
+            ringed={(entry) => following?.accountId === entry.accountId}
+            describe={(entry) => `${entry.name}, ${entry.typing ? "editing" : "on"} ${placeOf(entry)}`}
+          />
         </button>
       )}
     >
       {(close) => (
-        <div className="py-1">
+        <PeoplePanel label="Here now" opener={chip}>
           <div className="flex items-center gap-1.5 px-2 pb-1.5 pt-0.5 text-2xs font-medium uppercase tracking-wide text-faint">
             <Users size={11} /> Here now
           </div>
-          {here.map((entry) => {
-            const isFollowed = following?.accountId === entry.accountId;
-            return (
-              <div key={entry.accountId} className="flex items-center gap-2 rounded-md px-2 py-1.5 hover:bg-hover">
-                <Avatar person={entry} color={entry.color} size={26} />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-[13px] font-medium">{entry.name}</div>
-                  <div className="truncate text-2xs text-muted">
-                    {entry.typing ? "Editing " : "On "}
-                    {placeOf(entry)}
-                  </div>
-                </div>
-                {entry.route ? (
-                  <button
-                    type="button"
-                    className="icon-btn"
-                    title={`Go to ${entry.name}`}
-                    aria-label={`Go to ${entry.name}`}
-                    onClick={() => {
-                      router.push(entry.route!);
-                      close();
-                    }}
-                  >
-                    <LocateFixed size={14} />
-                  </button>
-                ) : null}
-                {entry.route ? (
-                  <button
-                    type="button"
-                    className="rounded-md border border-line px-2 py-0.5 text-2xs font-medium hover:bg-hover"
-                    style={isFollowed ? { borderColor: entry.color, color: entry.color } : undefined}
-                    onClick={() => {
-                      if (isFollowed) followStore.stop();
-                      else followStore.start({ accountId: entry.accountId, name: entry.name, color: entry.color });
-                      close();
-                    }}
-                  >
-                    {isFollowed ? "Following" : "Follow"}
-                  </button>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
+          {here.map((entry) => (
+            <HereRow key={entry.accountId} entry={entry} followed={following?.accountId === entry.accountId} onGo={(href) => router.push(href)} close={close} />
+          ))}
+        </PeoplePanel>
       )}
     </Popover>
   );
 }
 
-/** "Shared by Mira · can edit", in the top bar of a space someone shared with you. */
+/**
+ * "Shared by Mira Chen · Can edit", in the top bar of a space someone shared with you. Text rather
+ * than another avatar: the owner's live avatar can sit in the same bar.
+ */
 export function SharedBadge() {
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
   const shared = shell.data?.space?.shared;
@@ -189,8 +272,9 @@ export function SharedBadge() {
       className="hidden shrink-0 items-center gap-1.5 rounded-md border border-line bg-panel px-1.5 py-0.5 text-2xs text-muted md:inline-flex"
       title={`${shared.owner.name} shared this space with you. You ${shared.role === "editor" ? "can edit" : "can view"} it. Your settings, keys and metrics stay your own.`}
     >
-      <Avatar person={shared.owner} size={14} />
-      <span className="max-w-[140px] truncate">Shared by {shared.owner.name.split(" ")[0]}</span>
+      <span className="max-w-[180px] truncate">
+        Shared by <span className="text-ink">{shared.owner.name}</span>
+      </span>
       <span className="text-faint">·</span>
       <span>{shared.role === "editor" ? "Can edit" : "Can view"}</span>
     </span>
@@ -255,8 +339,8 @@ export function FollowHost() {
     <>
       <div className="pointer-events-none fixed inset-0 z-[60] rounded-[3px]" style={{ boxShadow: `inset 0 0 0 2px ${following.color}` }} aria-hidden />
       <div className="fixed left-1/2 top-[52px] z-[61] flex -translate-x-1/2 items-center gap-2 rounded-full px-3 py-1 text-[12px] font-medium text-white shadow-pop" style={{ background: following.color }}>
-        <Eye size={13} />
-        Following {following.name.split(" ")[0]}
+        <Eye size={13} aria-hidden />
+        <span className="max-w-[240px] truncate">Following {following.name}</span>
         <button type="button" className="rounded-full bg-white/20 px-2 py-0.5 text-2xs hover:bg-white/30" onClick={() => followStore.stop()}>
           Stop · Esc
         </button>

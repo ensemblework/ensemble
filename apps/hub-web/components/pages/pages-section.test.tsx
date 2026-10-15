@@ -159,3 +159,31 @@ test("delete moves a recoverable page to Trash immediately", async () => {
     await unmount(mounted);
   }
 });
+
+test("the page count reads as a count of one or many, and + is off while a page is being made", async () => {
+  const one = await render(<PagesSection pages={[{ id: "only", title: "Only page" }]} pathname="/pages" creating onCreate={() => undefined} onRename={() => undefined} onDelete={() => undefined} renderLink={(props) => <Anchor {...props} />} />);
+  try {
+    const nav = one.host.querySelector("nav[aria-label='Page tree']");
+    assert.match(nav?.textContent ?? "", /^1 page(?!s)/);
+    const create = one.host.querySelector<HTMLButtonElement>("[aria-label='New page']");
+    assert.equal(create?.disabled, true);
+  } finally { await unmount(one); }
+  const none = await render(<PagesSection pages={[]} pathname="/pages" onCreate={() => undefined} onRename={() => undefined} onDelete={() => undefined} renderLink={(props) => <Anchor {...props} />} />);
+  try {
+    assert.match(none.host.textContent ?? "", /^0 pages/);
+    assert.equal(none.host.querySelector<HTMLButtonElement>("[aria-label='New page']")?.disabled, false);
+  } finally { await unmount(none); }
+});
+
+test("the second click of a double click on + does not make a second page", async () => {
+  let created = 0;
+  const mounted = await render(<PagesSection pages={pages} pathname="/pages" onCreate={() => { created += 1; }} onRename={() => undefined} onDelete={() => undefined} renderLink={(props) => <Anchor {...props} />} />);
+  try {
+    const create = mounted.host.querySelector<HTMLButtonElement>("[aria-label='New page']")!;
+    await act(async () => {
+      create.dispatchEvent(new window.MouseEvent("click", { bubbles: true, detail: 1 }));
+      create.dispatchEvent(new window.MouseEvent("click", { bubbles: true, detail: 2 }));
+    });
+    assert.equal(created, 1);
+  } finally { await unmount(mounted); }
+});

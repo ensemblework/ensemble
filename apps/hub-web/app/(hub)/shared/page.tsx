@@ -106,7 +106,7 @@ export default function SharedWithYouPage() {
                   <span className="mt-auto flex items-center gap-1.5 pt-3 text-2xs text-muted">
                     <Avatar person={item.owner} size={16} />
                     <span className="truncate">
-                      {item.owner.name.split(" ")[0]} · {item.role === "edit" ? "can edit" : "view only"} · {since(item.since)}
+                      {item.owner.name} · {item.role === "edit" ? "can edit" : "view only"} · {since(item.since)}
                     </span>
                   </span>
                 </Link>

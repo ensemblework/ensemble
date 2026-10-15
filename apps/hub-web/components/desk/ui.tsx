@@ -51,6 +51,7 @@ export function Tile(props: {
       data-widget={widget || undefined}
       data-desk-key={props.deskKey}
       data-desk-tile={ghost ? "ghost" : "live"}
+      data-span={c}
       className={`tile${hero ? " hero" : ""}${hover ? " hover" : ""}${skel ? " skel" : ""}${className ? " " + className : ""}`}
       style={{ gridColumn: `span ${c}`, gridRow: `span ${r}`, ...(pad ? { padding: pad } : {}), ...style }}
     >

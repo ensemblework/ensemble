@@ -46,6 +46,19 @@ test("the middleware route list matches the pages on disk", () => {
   assert.equal(isAppRoute("/code/nope"), false);
 });
 
+test("the index of a section without its own list sends you to where that list lives", () => {
+  const targets: Array<[string, string]> = [
+    ["/tasks", "/board"],
+    ["/spaces", "/settings?tab=spaces"],
+    ["/projects", "/context?tab=projects"],
+  ];
+  for (const [route, target] of targets) {
+    assert.equal(isAppRoute(route), true, route);
+    const page = readFileSync(join(APP, `(hub)${route}/page.tsx`), "utf8");
+    assert.match(page, new RegExp(`redirect\\("${target.replace(/[?]/g, "\\$&")}"\\)`), route);
+  }
+});
+
 test("a signed-out unknown URL is the standalone 404, and a real page still asks for login", async () => {
   const unknown = await middleware(new NextRequest("http://localhost:3000/no-such-page"));
   assert.equal(unknown.status, 404);

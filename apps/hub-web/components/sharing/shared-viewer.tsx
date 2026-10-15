@@ -5,7 +5,7 @@ import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useEffect, useLayoutEffect, useState } from "react";
 import { ArrowLeft, Columns3, FileText, FolderGit2, LineChart, BookOpen, CalendarCheck, Briefcase, Workflow, CheckSquare, ShieldOff, X } from "lucide-react";
-import { ApiError, HUB_API, api, setOpenLink, setOpenShare, withLink, withShare, type OpenedShare, type ShareKind, type TaskRecord, type TaskStatus } from "@/lib/api";
+import { ApiError, HUB_API, SHARE_GONE_EVENT, api, setOpenLink, setOpenShare, withLink, withShare, type OpenedShare, type ShareKind, type TaskRecord, type TaskStatus } from "@/lib/api";
 import { eventSourceInit, eventsStreamUrl } from "@/lib/events";
 import { invalidateSoon } from "@/lib/invalidate";
 import { presenceStore, tabId } from "@/lib/presence";
@@ -33,13 +33,18 @@ const KIND: Record<ShareKind, { label: string; icon: typeof FileText }> = {
   code: { label: "Code", icon: FolderGit2 },
 };
 
-/** The live stream for one share: saves and presence on the shared item only. */
-function useShareLive(shareId: string, link = false) {
+/**
+ * The live stream for one share: saves and presence on the shared item only. Off once the share
+ * is gone; a stream the server closes, or a ticket it refuses, makes the viewer check.
+ */
+function useShareLive(shareId: string, link: boolean, active: boolean) {
   const client = useQueryClient();
   useEffect(() => {
+    if (!active) return;
     let source: EventSource | null = null;
     let retry: number | undefined;
     let closed = false;
+    let opened = false;
     const connect = async () => {
       try {
         const { ticket } = await api.eventsTicket();
@@ -68,14 +73,21 @@ function useShareLive(shareId: string, link = false) {
             // ignore malformed frames
           }
         });
-        source.addEventListener("sharing.changed", () => void client.invalidateQueries({ queryKey: ["shared-open"] }));
+        source.addEventListener("sharing.changed", () => void client.invalidateQueries({ queryKey: [link ? "public-open" : "shared-open"] }));
+        // Back after a drop: read again what changed meanwhile.
+        source.onopen = () => {
+          if (opened) void client.invalidateQueries();
+          opened = true;
+        };
         source.onerror = () => {
           source?.close();
           source = null;
           if (!closed) retry = window.setTimeout(() => void connect(), 4000);
         };
-      } catch {
-        if (!closed) retry = window.setTimeout(() => void connect(), 8000);
+      } catch (error) {
+        if (closed) return;
+        if (error instanceof ApiError && (error.status === 404 || error.status === 403)) window.dispatchEvent(new CustomEvent(SHARE_GONE_EVENT));
+        else retry = window.setTimeout(() => void connect(), 8000);
       }
     };
     void connect();
@@ -96,7 +108,29 @@ function useShareLive(shareId: string, link = false) {
       void (link ? withLink(shareId, leave) : withShare(shareId, leave)).catch(() => undefined);
       presenceStore.clear();
     };
-  }, [client, shareId, link]);
+  }, [client, shareId, link, active]);
+}
+
+/** Asks again what the share opens when something says it is gone. */
+function useRecheck(queryKey: string, id: string) {
+  const client = useQueryClient();
+  useEffect(() => {
+    const check = () => void client.invalidateQueries({ queryKey: [queryKey, id] });
+    window.addEventListener(SHARE_GONE_EVENT, check);
+    return () => window.removeEventListener(SHARE_GONE_EVENT, check);
+  }, [client, queryKey, id]);
+}
+
+/** Opened, then refused: the owner stopped sharing it (or turned the link off) while it was open. */
+const refused = (query: { data?: unknown; error: unknown }) => Boolean(query.data) && query.error instanceof ApiError && (query.error.status === 404 || query.error.status === 403);
+
+function GoneBanner({ children }: { children: React.ReactNode }) {
+  return (
+    <div role="status" className="flex shrink-0 items-center gap-2 border-b border-line bg-panel px-4 py-2 text-[12.5px] text-ink">
+      <ShieldOff size={14} className="shrink-0 text-faint" />
+      <span>{children}</span>
+    </div>
+  );
 }
 
 function SharedBoard({ role }: { role: "view" | "edit" }) {
@@ -315,13 +349,13 @@ function SharedPlot({ id }: { id: string }) {
   );
 }
 
-function Body({ share, link = false }: { share: Pick<OpenedShare, "kind" | "resourceId" | "role">; link?: boolean }) {
-  const role = share.role;
+function Body({ share, link = false, gone = false }: { share: Pick<OpenedShare, "kind" | "resourceId" | "role">; link?: boolean; gone?: boolean }) {
+  const role = gone ? "view" : share.role;
   switch (share.kind) {
     case "page":
-      return <NotePage pageId={share.resourceId} shared={{ role, link }} />;
+      return <NotePage pageId={share.resourceId} shared={{ role, link, gone }} />;
     case "task":
-      return <TaskPage taskId={share.resourceId} variant="page" shared={{ role, link }} />;
+      return <TaskPage taskId={share.resourceId} variant="page" shared={{ role, link, gone }} />;
     case "diagram":
       return <DiagramEditor id={share.resourceId} shared={{ role }} />;
     case "plot_space":
@@ -341,8 +375,8 @@ function Body({ share, link = false }: { share: Pick<OpenedShare, "kind" | "reso
   }
 }
 
-function Opened({ share }: { share: OpenedShare }) {
-  useShareLive(share.id);
+function Opened({ share, gone }: { share: OpenedShare; gone: boolean }) {
+  useShareLive(share.id, false, !gone);
   const kind = KIND[share.kind];
   const Icon = kind.icon;
   return (
@@ -357,14 +391,14 @@ function Opened({ share }: { share: OpenedShare }) {
         <span className="min-w-0 truncate text-[14px] font-medium">{share.title}</span>
         <span className="ml-auto flex items-center gap-3">
           <PagePeople kind={share.kind} id={share.resourceId} />
-          <span className="hidden items-center gap-1.5 text-2xs text-muted sm:flex" title={`${share.owner.name} shared this with you`}>
-            <Avatar person={share.owner} size={18} />
-            Shared by {share.owner.name.split(" ")[0]} · {share.role === "edit" ? "can edit" : "view only"}
+          <span className="hidden max-w-[260px] truncate text-2xs text-muted sm:block" title={`${share.owner.name} shared this with you`}>
+            Shared by <span className="text-ink">{share.owner.name}</span> · {share.role === "edit" ? "can edit" : "view only"}
           </span>
         </span>
       </header>
+      {gone ? <GoneBanner>{share.owner.name} stopped sharing this with you. It stays on screen until you leave, and nothing you change here is saved.</GoneBanner> : null}
       <main className="min-h-0 flex-1 overflow-y-auto">
-        <Body share={share} />
+        <Body share={share} gone={gone} />
       </main>
     </div>
   );
@@ -385,16 +419,24 @@ export function SharedViewer({ shareId }: { shareId: string }) {
     enabled: ready,
     retry: false,
   });
+  useRecheck("shared-open", shareId);
   if (!ready || opened.isLoading) return <div className="grid h-dvh place-items-center text-[13px] text-muted">Opening…</div>;
   if (!opened.data) {
-    const gone = opened.error instanceof ApiError && (opened.error.status === 404 || opened.error.status === 403);
+    const error = opened.error instanceof ApiError ? opened.error : null;
+    const notYours = error?.code === "SHARE_NOT_YOURS";
+    // A removed share leaves no row behind, so a wrong address and a removed share read the same.
+    const missing = Boolean(error && (error.status === 404 || error.status === 403));
     return (
       <div className="grid h-dvh place-items-center px-6">
         <div className="max-w-sm text-center">
           <ShieldOff size={28} className="mx-auto text-faint" />
-          <h1 className="mt-3 text-[18px] font-semibold">{gone ? "This isn't shared with you anymore" : "Couldn't open this"}</h1>
+          <h1 className="mt-3 text-[18px] font-semibold">{notYours ? "This was shared with someone else" : missing ? "Nothing is shared at this link" : "Couldn't open this"}</h1>
           <p className="mt-1.5 text-[13px] leading-5 text-muted">
-            {gone ? "The owner stopped sharing it, or the link belongs to someone else. Links only open for the person they were shared with." : (opened.error as Error | null)?.message}
+            {notYours
+              ? "Links only open for the person they were shared with. If that's you, sign in with that account."
+              : missing
+                ? "Check the link you were given. If it opened before, the owner has stopped sharing it with you."
+                : (opened.error as Error | null)?.message}
           </p>
           <Link href="/shared" className="btn mt-4 inline-flex">
             Shared with you
@@ -403,7 +445,7 @@ export function SharedViewer({ shareId }: { shareId: string }) {
       </div>
     );
   }
-  return <Opened share={opened.data} />;
+  return <Opened share={opened.data} gone={refused(opened)} />;
 }
 
 /**
@@ -418,14 +460,15 @@ export function PublicViewer({ token }: { token: string }) {
     return () => setOpenLink(null);
   }, [token]);
   const opened = useQuery({ queryKey: ["public-open", token], queryFn: api.openPublicLink, enabled: ready, retry: false });
+  useRecheck("public-open", token);
   if (!ready || opened.isLoading) return <div className="grid h-dvh place-items-center bg-bg text-[13px] text-muted">Opening…</div>;
   if (!opened.data) {
     return (
       <div className="grid h-dvh place-items-center bg-bg px-6 text-ink">
         <div className="max-w-sm text-center">
           <ShieldOff size={28} className="mx-auto text-faint" />
-          <h1 className="mt-3 text-[18px] font-semibold">This link doesn't work anymore</h1>
-          <p className="mt-1.5 text-[13px] leading-5 text-muted">Its owner turned it off or made a new one. Ask them for the current link.</p>
+          <h1 className="mt-3 text-[18px] font-semibold">This link doesn't open anything</h1>
+          <p className="mt-1.5 text-[13px] leading-5 text-muted">Check the address. If it worked before, its owner turned it off or made a new one; ask them for the current link.</p>
           <a href="/" className="btn mt-4 inline-flex">
             Go to Ensemble
           </a>
@@ -433,11 +476,11 @@ export function PublicViewer({ token }: { token: string }) {
       </div>
     );
   }
-  return <PublicOpened token={token} link={opened.data} />;
+  return <PublicOpened token={token} link={opened.data} gone={refused(opened)} />;
 }
 
-function PublicOpened({ token, link }: { token: string; link: NonNullable<Awaited<ReturnType<typeof api.openPublicLink>>> }) {
-  useShareLive(token, true);
+function PublicOpened({ token, link, gone }: { token: string; link: NonNullable<Awaited<ReturnType<typeof api.openPublicLink>>>; gone: boolean }) {
+  useShareLive(token, true, !gone);
   const kind = KIND[link.kind];
   const Icon = kind.icon;
   return (
@@ -458,12 +501,11 @@ function PublicOpened({ token, link }: { token: string; link: NonNullable<Awaite
             className="hidden items-center gap-1.5 rounded-full border border-line px-2 py-0.5 text-2xs text-muted md:inline-flex"
             title={link.you.signedIn ? "You're signed in, so others see your name." : "Others on this page see you by this name. Sign in to show your own."}
           >
-            <Avatar person={{ name: link.you.name, initials: link.you.name.slice(0, 2), emoji: link.you.emoji }} color={link.you.color} size={18} />
+            <Avatar person={{ name: link.you.name, emoji: link.you.emoji }} color={link.you.color} size={18} />
             {link.you.signedIn ? link.you.name : `You're ${link.you.name}`}
           </span>
-          <span className="hidden items-center gap-1.5 text-2xs text-muted lg:flex" title={`${link.owner.name} made this link`}>
-            <Avatar person={link.owner} size={18} />
-            {link.owner.name.split(" ")[0]} · {link.role === "edit" ? "anyone with the link can edit" : "view only"}
+          <span className="hidden max-w-[300px] truncate text-2xs text-muted lg:block" title={`${link.owner.name} made this link`}>
+            Shared by <span className="text-ink">{link.owner.name}</span> · {link.role === "edit" ? "anyone with the link can edit" : "view only"}
           </span>
           {link.you.signedIn ? null : (
             <a href="/signup" className="btn btn-primary h-7 px-2.5 text-[12.5px]">
@@ -472,8 +514,9 @@ function PublicOpened({ token, link }: { token: string; link: NonNullable<Awaite
           )}
         </span>
       </header>
+      {gone ? <GoneBanner>The owner turned this link off. What's here stays on screen until you leave, and nothing you change here is saved.</GoneBanner> : null}
       <main className="min-h-0 flex-1 overflow-y-auto">
-        <Body share={link} link />
+        <Body share={link} link gone={gone} />
       </main>
     </div>
   );

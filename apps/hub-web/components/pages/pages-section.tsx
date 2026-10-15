@@ -4,6 +4,7 @@
 
 import { CheckSquare, ChevronRight, Import, FileText, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
+import { plural } from "@/lib/format";
 import { cx } from "../ui";
 
 export type PageLinkProps = {
@@ -40,6 +41,7 @@ export function PagesSection({
   pages,
   pathname,
   onCreate,
+  creating = false,
   onRename,
   onDelete,
   onImport,
@@ -49,6 +51,8 @@ export function PagesSection({
   pages: PageListItem[];
   pathname: string;
   onCreate: () => void;
+  /** A new page is on its way: + stays disabled until it opens. */
+  creating?: boolean;
   onRename: (id: string, title: string) => void;
   onDelete: (id: string) => void;
   /** Opens the Notion import. Left out where imports are not available. */
@@ -85,7 +89,7 @@ export function PagesSection({
   return (
     <nav className="pages-browser flex min-h-0 flex-1 flex-col px-3 pb-3" aria-label="Page tree">
       <div className="mb-3 flex items-center justify-between">
-        <span className="text-[12px] font-medium text-muted">{pages.length} pages</span>
+        <span className="text-[12px] font-medium text-muted">{plural(pages.length, "page")}</span>
         <span className="flex items-center">
           {onDeleteMany ? <button type="button" className="icon-btn" aria-label="Select pages" title="Select pages for bulk deletion" aria-pressed={selecting} onClick={() => { setSelecting(!selecting); setSelected([]); }}><CheckSquare size={13} /></button> : null}
           {onImport ? (
@@ -93,7 +97,7 @@ export function PagesSection({
               <Import size={14} />
             </button>
           ) : null}
-          <button type="button" className="icon-btn" aria-label="New page" title="New page" onClick={() => { onCreate(); }}>
+          <button type="button" className="icon-btn disabled:opacity-40" aria-label="New page" title="New page" disabled={creating} aria-busy={creating || undefined} onClick={(event) => { if (event.detail < 2) onCreate(); }}>
             <Plus size={14} />
           </button>
         </span>
@@ -102,7 +106,7 @@ export function PagesSection({
       <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
         {pages.length > 0 && visible.length === 0 ? <p className="py-4 text-[13px] text-muted">No matching pages</p> : null}
         {pages.length === 0 ? <p className="px-2 py-1 text-[12.5px] text-faint">No pages yet</p> : null}
-        {selecting && selected.length ? <button type="button" className="btn-ghost text-danger" onClick={() => { onDeleteMany?.(selected); setSelected([]); setSelecting(false); }}><Trash2 size={13} /> Delete {selected.length} pages</button> : null}
+        {selecting && selected.length ? <button type="button" className="btn-ghost text-danger" onClick={() => { onDeleteMany?.(selected); setSelected([]); setSelecting(false); }}><Trash2 size={13} /> Delete {plural(selected.length, "page")}</button> : null}
         {visible.map((page) => {
           const href = `/pages/${page.id}`;
           const active = pathname === href || pathname.startsWith(`${href}/`);

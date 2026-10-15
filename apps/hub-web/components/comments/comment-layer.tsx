@@ -2,6 +2,7 @@
 
 import { MessageSquare } from "lucide-react";
 import type { Editor } from "@tiptap/react";
+import type { Transaction } from "@tiptap/pm/state";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type PageComment } from "@/lib/api";
@@ -23,6 +24,25 @@ function clampBox(top: number, left: number, width: number, height: number) {
 function textOf(body: PageComment["body"]): string {
   if (typeof body?.text === "string") return body.text;
   return "";
+}
+
+/** The text inside a top-level block element, or null for a block with no text or one that is no longer in the document. */
+function blockRange(editor: Editor, block: Element): { from: number; to: number } | null {
+  const pos = editor.view.posAtDOM(block, 0);
+  if (pos < 0 || pos > editor.state.doc.content.size) return null;
+  const resolved = editor.state.doc.resolve(pos);
+  if (resolved.depth === 0) return null;
+  return { from: resolved.start(), to: resolved.end() };
+}
+
+/** Viewport coordinates of a document position, or null when the position does not exist (any more). */
+function coordsAt(editor: Editor, pos: number): { top: number; left: number } | null {
+  if (pos < 0 || pos > editor.state.doc.content.size) return null;
+  try {
+    return editor.view.coordsAtPos(pos);
+  } catch {
+    return null;
+  }
 }
 
 export function CommentLayer({
@@ -74,14 +94,24 @@ export function CommentLayer({
         setSelection((current) => (activeRef.current === "new" ? current : null));
         return;
       }
-      const coords = editor.view.coordsAtPos(from);
+      const coords = coordsAt(editor, from);
+      if (!coords) return;
       rangeRef.current = { from, to };
       quoteRef.current = text;
       setSelection({ text, top: coords.top, left: coords.left });
     };
+    // The comment form can stay open while the page changes (typing elsewhere, someone else's save),
+    // so the range it will highlight follows those edits.
+    const follow = ({ transaction }: { transaction: Transaction }) => {
+      const range = rangeRef.current;
+      if (!range || !transaction.docChanged) return;
+      rangeRef.current = { from: transaction.mapping.map(range.from, 1), to: transaction.mapping.map(range.to, -1) };
+    };
     editor.on("selectionUpdate", refresh);
+    editor.on("transaction", follow);
     return () => {
       editor.off("selectionUpdate", refresh);
+      editor.off("transaction", follow);
     };
   }, [editor]);
 
@@ -109,6 +139,10 @@ export function CommentLayer({
   useEffect(() => {
     if (!editor) return;
     const dom = editor.view.dom;
+    // Positions in `hover` describe this document; any edit makes them stale.
+    const reset = ({ transaction }: { transaction: Transaction }) => {
+      if (transaction.docChanged) setHover(null);
+    };
     const clearSoon = () => {
       window.clearTimeout(hoverTimer.current);
       hoverTimer.current = window.setTimeout(() => setHover(null), 400);
@@ -120,24 +154,29 @@ export function CommentLayer({
         return;
       }
       window.clearTimeout(hoverTimer.current);
+      let range: { from: number; to: number } | null = null;
       try {
-        const pos = editor.view.posAtDOM(block, 0);
-        const resolved = editor.state.doc.resolve(Math.min(pos, editor.state.doc.content.size));
-        const from = resolved.depth > 0 ? resolved.start() : pos;
-        const to = resolved.depth > 0 ? resolved.end() : pos;
-        const box = block.getBoundingClientRect();
-        const next = { top: box.top + 4, left: box.left - 28, from, to };
-        setHover((current) => (current && current.from === from && current.to === to ? current : next));
+        range = blockRange(editor, block);
       } catch {
-        clearSoon();
+        range = null;
       }
+      if (!range) {
+        clearSoon();
+        return;
+      }
+      const { from, to } = range;
+      const box = block.getBoundingClientRect();
+      const next = { top: box.top + 4, left: box.left - 28, from, to };
+      setHover((current) => (current && current.from === from && current.to === to ? current : next));
     };
     dom.addEventListener("mousemove", move);
     dom.addEventListener("mouseleave", clearSoon);
+    editor.on("transaction", reset);
     return () => {
       window.clearTimeout(hoverTimer.current);
       dom.removeEventListener("mousemove", move);
       dom.removeEventListener("mouseleave", clearSoon);
+      editor.off("transaction", reset);
     };
   }, [editor]);
 
@@ -158,7 +197,7 @@ export function CommentLayer({
       api.createComment(pageKind, pageId, { markId: input.markId, quote: input.quote, body: { text: input.text }, mentions: input.mentions }),
     onSuccess: async (result, input) => {
       const range = rangeRef.current;
-      if (editor && input.markId && range) {
+      if (editor && input.markId && range && range.from < range.to && range.to <= editor.state.doc.content.size) {
         editor
           .chain()
           .focus()
@@ -256,7 +295,7 @@ export function CommentLayer({
             <button type="submit" className="btn-primary" disabled={!draft.trim() || create.isPending}>
               Comment
             </button>
-            <button type="button" className="btn" onClick={() => setActive(null)}>
+            <button type="button" className="btn" onClick={() => { setActive(null); setSelection(null); }}>
               Cancel
             </button>
           </div>
@@ -274,12 +313,12 @@ export function CommentLayer({
           }}
           onMouseDown={(event) => {
             event.preventDefault();
-            if (!editor) return;
+            if (!editor || hover.from >= hover.to || hover.to > editor.state.doc.content.size) return;
             const text = editor.state.doc.textBetween(hover.from, hover.to, " ").trim();
             if (!text) return;
             rangeRef.current = { from: hover.from, to: hover.to };
             quoteRef.current = text;
-            const coords = editor.view.coordsAtPos(hover.from);
+            const coords = coordsAt(editor, hover.from) ?? { top: hover.top, left: hover.left + 28 };
             setSelection({ text, top: coords.top, left: coords.left });
             setActive("new");
             setDraft("");

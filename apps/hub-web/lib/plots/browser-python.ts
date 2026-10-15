@@ -124,20 +124,27 @@ def parse(filename, data, sheet):
 
 /** The worker's own code: boots Pyodide, and for plot jobs locks the network away before running them. */
 const WORKER_JS = String.raw`
-let pyodide = null;
+let booting = null;
 let locked = false;
+let queue = Promise.resolve();
 const NETWORK = ["fetch", "XMLHttpRequest", "WebSocket", "EventSource", "importScripts", "Worker", "SharedWorker", "indexedDB", "caches", "BroadcastChannel", "WebTransport"];
 const PURE = ["seaborn"];
 
-async function boot(index, driver, parseTable) {
-  if (pyodide) return pyodide;
-  importScripts(index + "pyodide.js");
-  pyodide = await loadPyodide({ indexURL: index });
-  pyodide.FS.mkdirTree("/ensemble");
-  pyodide.FS.writeFile("/ensemble/ensemble_driver.py", driver);
-  pyodide.FS.writeFile("/ensemble/ensemble_parse_table.py", parseTable);
-  pyodide.runPython("import sys\nsys.path.insert(0, '/ensemble')");
-  return pyodide;
+// One start, shared by every request that arrives while Python is still downloading.
+function boot(index, driver, parseTable) {
+  if (!booting) {
+    booting = (async () => {
+      importScripts(index + "pyodide.js");
+      const py = await loadPyodide({ indexURL: index });
+      py.FS.mkdirTree("/ensemble");
+      py.FS.writeFile("/ensemble/ensemble_driver.py", driver);
+      py.FS.writeFile("/ensemble/ensemble_parse_table.py", parseTable);
+      py.runPython("import sys\nsys.path.insert(0, '/ensemble')");
+      return py;
+    })();
+    booting.catch(() => { booting = null; });
+  }
+  return booting;
 }
 
 // Gone for good from this worker: own properties and every prototype that defines them.
@@ -155,7 +162,12 @@ function lockdown() {
   locked = true;
 }
 
-self.onmessage = async (event) => {
+// One request at a time: a plot locks the network away, which must not happen while another request is still loading packages.
+self.onmessage = (event) => {
+  queue = queue.then(() => handle(event));
+};
+
+async function handle(event) {
   const msg = event.data;
   const reply = (body) => self.postMessage(Object.assign({ id: msg.id }, body));
   try {
@@ -187,7 +199,7 @@ self.onmessage = async (event) => {
   } catch (error) {
     reply({ error: String(error && error.message ? error.message : error).slice(-2000) });
   }
-};
+}
 `;
 
 type Status = "idle" | "loading" | "ready";
@@ -211,7 +223,8 @@ export function usePythonStatus(): Status {
   );
 }
 
-type Slot = { worker: Worker; used: boolean };
+/** `ready` once the worker has answered: until then every request waits on the download, which gets the longer limit. */
+type Slot = { worker: Worker; used: boolean; ready: boolean };
 const slots: Partial<Record<"plot" | "parse", Slot>> = {};
 let nextId = 0;
 
@@ -219,7 +232,7 @@ function slot(kind: "plot" | "parse"): Slot {
   let current = slots[kind];
   if (!current) {
     const url = URL.createObjectURL(new Blob([WORKER_JS], { type: "text/javascript" }));
-    current = { worker: new Worker(url), used: false };
+    current = { worker: new Worker(url), used: false, ready: false };
     slots[kind] = current;
   }
   return current;
@@ -234,19 +247,20 @@ type Reply = { result?: unknown; fresh?: boolean; error?: string };
 
 function call(kind: "plot" | "parse", message: Record<string, unknown>): Promise<Reply> {
   const current = slot(kind);
-  const first = !current.used;
+  const starting = !current.ready;
+  if (!current.used) setStatus("loading");
   current.used = true;
-  if (first) setStatus("loading");
   const id = ++nextId;
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       cleanup();
       drop(kind);
-      reject(new Error(first ? "Python took too long to start in this browser. Try again." : "The script ran longer than a minute."));
-    }, first ? FIRST_MS : RUN_MS);
+      reject(new Error(starting ? "Python took too long to start in this browser. Try again." : "The script ran longer than a minute."));
+    }, starting ? FIRST_MS : RUN_MS);
     const onMessage = (event: MessageEvent<Reply & { id: number }>) => {
       if (event.data.id !== id) return;
       cleanup();
+      current.ready = true;
       setStatus("ready");
       resolve(event.data);
     };
@@ -266,6 +280,16 @@ function call(kind: "plot" | "parse", message: Record<string, unknown>): Promise
   });
 }
 
+/**
+ * The worker's own failures are downloading or starting Python (a script's errors come back in its
+ * result). A blocked download reads as a bare network or CORS error, so say where it came from.
+ */
+export function pythonFailure(message: string): string {
+  const text = message.trim();
+  if (!/CORS|cross-origin|NetworkError|Failed to fetch|Load failed|importScripts|network/i.test(text)) return text;
+  return `Python for Plots could not be downloaded from cdn.jsdelivr.net in this browser. A content blocker, a network filter or a browser setting may be blocking it. The browser said: ${text.split("\n").filter(Boolean).pop() ?? text}`;
+}
+
 export type PlotJob = { code: string; datasets: Array<{ name: string; columns: string[]; rows: Array<Array<string | number | null>> }>; format: "png" | "svg" | "pdf" | "eps"; dpi?: number };
 export type PlotResult = { format: PlotJob["format"]; data: string | null; stdout: string; stderr: string; line: number | null; error?: string };
 
@@ -277,7 +301,7 @@ export async function runPlotInBrowser(job: PlotJob): Promise<PlotResult> {
     drop("plot");
     reply = await call("plot", { type: "plot", job: { ...job, dpi: job.dpi ?? 200 } });
   }
-  if (reply.error) throw new Error(reply.error);
+  if (reply.error) throw new Error(pythonFailure(reply.error));
   return reply.result as PlotResult;
 }
 
@@ -287,6 +311,6 @@ export type ParsedTable = { columns: Array<{ name: string; type: string }>; rows
 export async function parseTableInBrowser(filename: string, bytes: Uint8Array, sheet = ""): Promise<ParsedTable> {
   if (/\.numbers$/i.test(filename)) throw new Error("Numbers files cannot be read in the browser. In Numbers, choose File → Export To → Excel or CSV, and add that file.");
   const reply = await call("parse", { type: "parse", filename, bytes, sheet });
-  if (reply.error) throw new Error(reply.error.split("\n").filter(Boolean).pop() ?? "Could not read that file.");
+  if (reply.error) throw new Error(pythonFailure(reply.error.split("\n").filter(Boolean).pop() ?? "Could not read that file."));
   return reply.result as ParsedTable;
 }

@@ -1,16 +1,17 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useRef, useId, useState } from "react";
-import { matplotlibSource, parseRef, seedSummaryFor, tileSchema, type Frame, type PlotConfig, type PoolColumn, type WorkspaceTile } from "@ensemble/shared-types";
+import { useMemo, useRef, useId, useState } from "react";
+import { tileSchema, type Frame, type LinkChoice, type PlotConfig, type PoolColumn, type PoolDataset, type WorkspaceTile } from "@ensemble/shared-types";
 import { ChartView } from "@/components/plots/chart-view";
+import { FigureOutput, RunButton, useFigureRun } from "@/components/plots/figure-run";
 import { figureBytes } from "@/lib/plots/figure-file";
 import { ColumnSelect } from "@/components/plots/column-select";
 import { StyleTab } from "@/components/plots/studio";
 import { useModalFocus } from "@/lib/modal-focus";
 import { ModalScope, Toggle } from "@/components/ui";
-import { api } from "@/lib/api";
 import { renderPlot } from "@/lib/plots/render";
+import { storedTileCode, tileScript, tileSource } from "@/lib/plots/tile-code";
 import { usePlotTheme } from "@/lib/plots/theme";
 import { useToast } from "@/components/toast";
 
@@ -36,11 +37,10 @@ export function FocusEditor({
   frame,
   config,
   warnings = [],
-  code: _code,
+  datasets,
+  links,
   workspaceId,
-  datasetName,
   onChange,
-  onCode,
   onClose,
 }: {
   tile: WorkspaceTile;
@@ -48,11 +48,10 @@ export function FocusEditor({
   frame: Frame;
   config: PlotConfig;
   warnings?: string[];
-  code: string;
+  datasets: PoolDataset[];
+  links: Record<string, LinkChoice>;
   workspaceId: string | null;
-  datasetName: string;
   onChange: (tile: WorkspaceTile) => void;
-  onCode: (code: string) => void;
   onClose: () => void;
 }) {
   const toast = useToast();
@@ -65,35 +64,27 @@ export function FocusEditor({
 
 
   const theme = usePlotTheme();
-  const generated = useMemo(() => {
-    const typed = [
-      ...(config.x ? [{ name: config.x, type: (columns.find((column) => column.name === config.x)?.type ?? "number") as "number" | "category" | "date" | "text" }] : []),
-      ...config.series.map((series) => ({
-        name: series.y,
-        type: (columns.find((column) => column.name === series.y)?.type ?? "number") as "number" | "category" | "date" | "text",
-      })),
-    ];
-    const yPart = tile.yRefs[0] ? parseRef(tile.yRefs[0]) : null;
-    const summary = tile.seedRef && yPart
-      ? seedSummaryFor({
-          columns: columns.filter((column) => !yPart.datasetId || column.datasetId === yPart.datasetId),
-          x: config.x,
-          y: yPart.name,
-          seed: parseRef(tile.seedRef).name,
-          series: config.series,
-        })
-      : null;
-    return matplotlibSource({
-      datasetName,
-      columns: typed,
-      config,
-      accent: theme.accent,
-      dark: theme.dark,
-      rows: frame.rows,
-      rowColumns: frame.columns.map((column) => column.name),
-      summary,
-    });
-  }, [columns, config, datasetName, frame.columns, frame.rows, theme.accent, theme.dark, tile.seedRef, tile.yRefs]);
+  // Typing in the Code tab changes only `tile.code`, which does not change the generated script.
+  const settings = JSON.stringify({ ...tile, code: null });
+  const generated = useMemo(
+    () => tileSource(JSON.parse(settings) as WorkspaceTile, { datasets, links, accent: theme.accent, dark: theme.dark }),
+    [settings, datasets, links, theme.accent, theme.dark],
+  );
+  const script = tileScript(tile, generated);
+  const figure = useFigureRun(workspaceId);
+  const [preview, setPreview] = useState<"chart" | "output">("output");
+  const showOutput = tab === "Code" && preview === "output";
+  const runCode = () => {
+    setPreview("output");
+    void figure.run(script.code);
+  };
+  const editCode = (value: string) => {
+    if (value.length > 40_000) {
+      toast("A tile's code can be up to 40,000 characters. Use the canvas Code view for a longer script.", { tone: "error" });
+      return;
+    }
+    onChange(tileSchema.parse({ ...tile, code: storedTileCode(value, generated) }));
+  };
 
   const apply = (patch: Partial<PlotConfig>) => {
     const series = patch.series
@@ -119,10 +110,23 @@ export function FocusEditor({
         <div className={`plot-focus-preview min-w-0 flex-1 flex-col ${fullScreen ? "hidden" : "flex"}`}>
           <div className="flex items-center gap-2 border-b border-line px-3 py-2">
             <button type="button" className="btn" onClick={close}>Back</button>
-            <span className="min-w-0 truncate text-[14px] font-medium">{tile.title || "Tile"}</span>
+            <span className="min-w-0 flex-1 truncate text-[14px] font-medium">{tile.title || "Tile"}</span>
+            {tab === "Code" ? (
+              <div className="flex shrink-0 gap-0.5 rounded-md bg-raised p-0.5 text-[12px]" role="radiogroup" aria-label="Preview">
+                {([["output", "Code output"], ["chart", "Chart"]] as const).map(([value, label]) => (
+                  <button key={value} type="button" role="radio" aria-checked={preview === value} className={`rounded px-2 py-0.5 ${preview === value ? "bg-panel text-ink shadow-sm" : "text-muted"}`} onClick={() => setPreview(value)}>{label}</button>
+                ))}
+              </div>
+            ) : null}
           </div>
           <div className="relative min-h-0 flex-1">
-            <ChartView frame={frame} config={config} variant="focus" />
+            {showOutput ? (
+              <div className="absolute inset-0 p-3" data-plot-code-preview>
+                <FigureOutput state={figure.state} placeholder="Run the code to draw its figure here." />
+              </div>
+            ) : (
+              <ChartView frame={frame} config={config} variant="focus" />
+            )}
           </div>
         </div>
         <aside
@@ -194,14 +198,45 @@ export function FocusEditor({
             </button>
           </div>
           <div id={`${modalId}-panel`} role="tabpanel" aria-label={tab} className={`min-h-0 flex-1 ${tab === "Code" ? "flex flex-col overflow-hidden p-3" : "overflow-auto p-3"}`}>
+            {script.edited && (tab === "Encode" || tab === "Style") ? (
+              <p className="mb-3 rounded-md border border-line px-2 py-1.5 text-[12px] leading-4 text-muted" data-plot-code-note>
+                This tile&rsquo;s code is edited, so exports draw the code. Changes here show on the canvas only until you reset the code.
+              </p>
+            ) : null}
             {tab === "Encode" ? <Encode columns={columns} tile={tile} warnings={warnings} onChange={onChange} /> : null}
             {tab === "Style" ? <StyleTab config={config} update={apply} /> : null}
             {tab === "Code" ? (
-              <div className="flex min-h-0 flex-1 flex-col" data-plot-code>
-                <Code value={generated} onChange={onCode} />
+              <div className={`flex min-h-0 flex-1 gap-3 ${fullScreen ? "flex-col lg:flex-row" : "flex-col"}`} data-plot-code data-code-edited={script.edited ? "1" : "0"}>
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
+                  <p className="shrink-0 text-[12px] leading-4 text-muted">
+                    {script.edited
+                      ? "Edited. Export draws this code, and changes in Encode and Style no longer reach it."
+                      : "Made from Encode and Style. Once you edit it, export draws your code instead."}
+                  </p>
+                  <div className="min-h-0 flex-1">
+                    <Code
+                      value={script.code}
+                      onChange={editCode}
+                      onRun={runCode}
+                      errorLine={figure.state.line}
+                      errorText={figure.state.error}
+                      actions={
+                        <>
+                          <RunButton running={figure.state.status === "running"} disabled={!workspaceId} onRun={runCode} />
+                          {script.edited ? <button type="button" className="btn px-2 py-0.5 text-[12px]" data-plot-code-reset onClick={() => onChange(tileSchema.parse({ ...tile, code: null }))}>Reset to generated</button> : null}
+                        </>
+                      }
+                    />
+                  </div>
+                </div>
+                {fullScreen ? (
+                  <div className="flex min-h-[220px] min-w-0 flex-1 flex-col rounded-lg border border-line p-2">
+                    <FigureOutput state={figure.state} placeholder="Run the code to draw its figure here." />
+                  </div>
+                ) : null}
               </div>
             ) : null}
-            {tab === "Export" ? <TileExport workspaceId={workspaceId} code={generated} toast={toast} /> : null}
+            {tab === "Export" ? <TileExport workspaceId={workspaceId} code={script.code} edited={script.edited} toast={toast} /> : null}
           </div>
         </aside>
       </div>
@@ -270,7 +305,7 @@ function Encode({ columns, tile, warnings, onChange }: { columns: PoolColumn[]; 
   );
 }
 
-function TileExport({ workspaceId, code, toast }: { workspaceId: string | null; code: string; toast: (text: string, opts?: { tone?: "error" }) => void }) {
+function TileExport({ workspaceId, code, edited, toast }: { workspaceId: string | null; code: string; edited: boolean; toast: (text: string, opts?: { tone?: "error" }) => void }) {
   const run = async (format: "png" | "svg" | "pdf" | "eps") => {
     if (!workspaceId) return;
     try {
@@ -288,7 +323,7 @@ function TileExport({ workspaceId, code, toast }: { workspaceId: string | null; 
   };
   return (
     <div className="space-y-2" data-plot-export>
-      <p className="text-[12px] text-muted">Download this tile. Export figure on the canvas saves every tile in one file.</p>
+      <p className="text-[12px] text-muted">Download this tile{edited ? ", drawn by its edited code" : ""}. Export figure on the canvas saves every tile in one file.</p>
       <div className="flex flex-wrap gap-1">
         {(["png", "svg", "pdf", "eps"] as const).map((format) => (
           <button key={format} type="button" className="btn" onClick={() => void run(format)}>{format.toUpperCase()}</button>

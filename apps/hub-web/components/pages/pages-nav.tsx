@@ -6,7 +6,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { FileText } from "lucide-react";
 import { api } from "@/lib/api";
 import { useSpaceAccess } from "@/lib/access";
@@ -38,6 +38,8 @@ export function PagesBrowser() {
   const pages = useQuery({ queryKey: ["pages"], queryFn: api.pages });
   const access = useSpaceAccess();
   const [importing, setImporting] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const createPending = useRef(false);
 
   return (
     <>
@@ -46,14 +48,22 @@ export function PagesBrowser() {
         pathname={pathname}
         renderLink={(props) => <PageLink {...props} />}
         onImport={access.guest ? undefined : () => setImporting(true)}
+        creating={creating}
         onCreate={() => {
+          if (createPending.current) return;
+          createPending.current = true;
+          setCreating(true);
           void api
             .createPage()
             .then(({ page }) => {
               void client.invalidateQueries({ queryKey: ["pages"] });
               router.push(standalonePageHref(page.id, true));
             })
-            .catch((error: Error) => toast(error.message, { tone: "error" }));
+            .catch((error: Error) => toast(error.message, { tone: "error" }))
+            .finally(() => {
+              createPending.current = false;
+              setCreating(false);
+            });
         }}
         onDeleteMany={access.ready && access.canEdit ? (ids) => {
           const selected = new Set(ids);
@@ -65,7 +75,7 @@ export function PagesBrowser() {
           const detail = { ids, affected: [...selected] };
           if (!window.dispatchEvent(new CustomEvent("ensemble:delete-pages", { detail, cancelable: true }))) return;
           void api.deletePages(ids).then(() => {
-            void client.invalidateQueries();
+            void client.invalidateQueries({ predicate: (query) => !query.queryKey.some((part) => typeof part === "string" && selected.has(part)) });
             toast("Pages moved to Trash. One Undo restores them all.", { action: { label: "Undo", run: () => { void api.undo().then(() => client.invalidateQueries()).catch((error: Error) => toast(error.message, { tone: "error" })); } } });
             if ([...selected].some((id) => pathname === `/pages/${id}`)) router.push("/pages");
           }).catch((error: Error) => toast(error.message, { tone: "error" }));
@@ -85,11 +95,12 @@ export function PagesBrowser() {
           void api
             .deletePage(id)
             .then(() => {
-              void client.invalidateQueries();
-              toast("Note moved to Trash.", { action: { label: "Undo", run: () => { void api.undo().then(() => { void client.invalidateQueries(); }).catch((error: Error) => toast(error.message, { tone: "error" })); } } });
               const removed = new Set([id]);
               let changed = true;
               while (changed) { changed = false; for (const page of pages.data?.pages ?? []) if (page.parentId && removed.has(page.parentId) && !removed.has(page.id)) { removed.add(page.id); changed = true; } }
+              // An open child of the deleted page must not refetch itself into a 404 before Pages opens.
+              void client.invalidateQueries({ predicate: (query) => !query.queryKey.some((part) => typeof part === "string" && removed.has(part)) });
+              toast("Page moved to Trash.", { action: { label: "Undo", run: () => { void api.undo().then(() => { void client.invalidateQueries(); }).catch((error: Error) => toast(error.message, { tone: "error" })); } } });
               if ([...removed].some((pageId) => pathname === `/pages/${pageId}`)) router.push("/pages");
             })
             .catch((error: Error) => toast(error.message, { tone: "error" }));
