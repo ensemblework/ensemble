@@ -3,7 +3,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Editor } from "@tiptap/core";
-import { Check, Copy, GripVertical, Plus, Trash2 } from "lucide-react";
+import { Check, Copy, GripVertical, MessageSquare, Plus, Trash2 } from "lucide-react";
 import { placeAnchoredPanel } from "@/lib/place-layer";
 import { deleteBlock, duplicateBlock, moveBlock } from "./block-move";
 import { BLOCK_COMMANDS, blockKind, turnBlockInto, turnIntoChoices, type BlockCommandId } from "./editor-commands";
@@ -14,7 +14,15 @@ type Menu = { pos: number; kind: BlockCommandId | null };
 /** Pointer travel (px) after pressing the handle before it counts as a drag rather than a click. */
 const DRAG_SLOP = 4;
 
-export function BlockControls({ editor }: { editor: Editor }) {
+/** Asks the page's comment layer to start a comment on this text range (see comment-layer.tsx). */
+export const COMMENT_BLOCK_EVENT = "ensemble:comment-block";
+
+/**
+ * The hover controls beside a block: + and the drag handle on the left, and (when the page has
+ * comments) a comment button on the right. All of them stand for one block position, found from
+ * what the pointer is over and found again when the page scrolls.
+ */
+export function BlockControls({ editor, comment = false }: { editor: Editor; comment?: boolean }) {
   const host = useRef<HTMLDivElement>(null);
   const handle = useRef<HTMLButtonElement>(null);
   const [block, setBlock] = useState<Block | null>(null);
@@ -26,26 +34,52 @@ export function BlockControls({ editor }: { editor: Editor }) {
   const moved = useRef(false);
   useEffect(() => {
     const root = editor.view.dom;
+    /** The document position of a block's element, or null when the element is not a block the view knows. */
+    const blockPos = (element: HTMLElement): number | null => {
+      try {
+        const { doc } = editor.state;
+        const raw = editor.view.posAtDOM(element, 0);
+        if (raw < 0 || raw > doc.content.size) return null;
+        if (editor.view.nodeDOM(raw) === element) return raw;
+        const resolved = doc.resolve(raw);
+        for (let depth = resolved.depth; depth > 0; depth--) {
+          if (editor.view.nodeDOM(resolved.before(depth)) === element) return resolved.before(depth);
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    };
     const find = (target: EventTarget | null): Block | null => {
-      let element = target instanceof HTMLElement ? target : null;
-      if (!element || !root.contains(element)) return null;
+      let element = target instanceof HTMLElement ? target : target instanceof Node ? target.parentElement : null;
+      // The gaps between blocks are the editor itself: no block there.
+      if (!element || element === root || !root.contains(element)) return null;
       const li = element.closest("li");
       if (li && root.contains(li)) element = li;
       else while (element.parentElement && element.parentElement !== root && !element.parentElement.classList.contains("toggle-block-content")) element = element.parentElement;
       // A summary line stands for its whole collapsible block.
       if (element.parentElement?.classList.contains("toggle-block-content") && !element.previousElementSibling && element.parentElement.parentElement) element = element.parentElement.parentElement;
-      if (element === root) return null;
-      const raw = editor.view.posAtDOM(element, 0);
-      if (raw < 0) return null;
-      const resolved = editor.state.doc.resolve(raw);
-      let pos = raw;
-      for (let depth = resolved.depth; depth > 0; depth--) {
-        if (editor.view.nodeDOM(resolved.before(depth)) === element) { pos = resolved.before(depth); break; }
-      }
-      return { pos, element, top: element.getBoundingClientRect().top - root.getBoundingClientRect().top };
+      const pos = blockPos(element);
+      if (pos === null) return null;
+      const frame = (host.current?.offsetParent as HTMLElement | null) ?? root;
+      return { pos, element, top: element.getBoundingClientRect().top - frame.getBoundingClientRect().top };
     };
+    let pointer: { x: number; y: number } | null = null;
+    let frameId = 0;
+    // Scrolling moves blocks under a still pointer; the controls follow whatever is under it now.
+    const rescan = () => {
+      cancelAnimationFrame(frameId);
+      frameId = requestAnimationFrame(() => {
+        if (dragged.current !== null || menuOpen.current || !pointer) return;
+        show(find(document.elementFromPoint(pointer.x, pointer.y)));
+      });
+    };
+    const show = (next: Block | null) => setBlock((current) => (current && next && current.pos === next.pos && current.top === next.top && current.element === next.element ? current : next));
     const hover = (event: PointerEvent) => {
-      if (dragged.current === null && !menuOpen.current) setBlock(find(event.target));
+      if (dragged.current !== null || menuOpen.current) return;
+      // Between blocks the controls stay where they are, so they can be reached.
+      const next = find(event.target);
+      if (next) show(next);
     };
     let target: { block: Block; after: boolean } | null = null;
     const clear = () => {
@@ -54,6 +88,7 @@ export function BlockControls({ editor }: { editor: Editor }) {
       root.querySelectorAll(".block-drop-before, .block-drop-after").forEach((el) => el.classList.remove("block-drop-before", "block-drop-after"));
     };
     const move = (event: PointerEvent) => {
+      pointer = { x: event.clientX, y: event.clientY };
       if (dragged.current === null) return;
       if (!moved.current) {
         const origin = pressedAt.current;
@@ -86,15 +121,23 @@ export function BlockControls({ editor }: { editor: Editor }) {
       setMenu(null);
     };
     root.addEventListener("pointermove", hover);
+    // A tap has no hover: touching a block shows its controls.
+    root.addEventListener("pointerdown", hover);
     document.addEventListener("pointermove", move);
     document.addEventListener("pointerup", drop);
     document.addEventListener("pointercancel", clear);
+    window.addEventListener("scroll", rescan, true);
+    window.addEventListener("resize", rescan);
     editor.on("transaction", transaction);
     return () => {
+      cancelAnimationFrame(frameId);
       root.removeEventListener("pointermove", hover);
+      root.removeEventListener("pointerdown", hover);
       document.removeEventListener("pointermove", move);
       document.removeEventListener("pointerup", drop);
       document.removeEventListener("pointercancel", clear);
+      window.removeEventListener("scroll", rescan, true);
+      window.removeEventListener("resize", rescan);
       editor.off("transaction", transaction);
     };
   }, [editor]);
@@ -123,7 +166,13 @@ export function BlockControls({ editor }: { editor: Editor }) {
     setMenu(null);
     work();
   };
-  return <div ref={host} className="block-controls" style={{ top: block?.top ?? 0 }}>
+  const node = block ? editor.state.doc.nodeAt(block.pos) : null;
+  const commentable = comment && block && node && !node.isLeaf && node.textContent.trim() ? { from: block.pos + 1, to: block.pos + node.nodeSize - 1 } : null;
+  return <>
+  {commentable ? <button type="button" className="block-comment-action" style={{ top: block!.top }} aria-label="Comment on this block" title="Comment on this block" onMouseDown={(event) => event.preventDefault()} onClick={() => {
+    editor.view.dom.dispatchEvent(new window.CustomEvent(COMMENT_BLOCK_EVENT, { detail: commentable }));
+  }}><MessageSquare size={13} /></button> : null}
+  <div ref={host} className="block-controls" data-idle={block ? undefined : ""} style={{ top: block?.top ?? 0 }}>
     <button type="button" aria-label="Add block" title="Add a block" onMouseDown={(event) => event.preventDefault()} onClick={add}><Plus size={15} /></button>
     {block ? <button ref={handle} type="button" data-block-position={block.pos} aria-label="Block actions" aria-haspopup="menu" aria-expanded={menu !== null} title="Click for actions · Drag to reorder · Arrow up/down to move" onPointerDown={(event) => {
       if (event.button !== 0) return;
@@ -170,7 +219,8 @@ export function BlockControls({ editor }: { editor: Editor }) {
         if (!turnBlockInto(editor, menu.pos, kind)) editor.view.focus();
       })}
     /> : null}
-  </div>;
+  </div>
+  </>;
 }
 
 const MENU_WIDTH = 232;

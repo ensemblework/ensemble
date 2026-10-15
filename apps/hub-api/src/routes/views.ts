@@ -11,11 +11,11 @@ import { templateById } from "@ensemble/shared-types/templates";
 import { templateByMarketId } from "@ensemble/shared-types/marketplace";
 import { envDevTools } from "../lib/dev-tools.js";
 import { loadSettings } from "../lib/settings.js";
+import { undoState } from "../lib/undo.js";
 import { serializeTask } from "./tasks.js";
 import { isHosted } from "../lib/hosted-access.js";
 import { defaultSpaceName } from "../spaces/store.js";
 import { accountIdOf, ownsOpenSpace } from "../lib/auth.js";
-import { actorFor } from "../sharing/context.js";
 import { displayName, initialsOf } from "../sharing/store.js";
 
 async function countOrZero(query: Promise<number>): Promise<number> {
@@ -31,15 +31,13 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/shell", async (request, reply) => {
     const userId = request.userId;
-    const actorAccountId = actorFor(userId);
-    const [user, approvals, decisions, settings, sync, undoable, redoable, members, recipients] = await Promise.all([
+    const [user, approvals, decisions, settings, sync, undo, members, recipients] = await Promise.all([
       prisma.user.findUnique({ where: { id: userId } }),
       countOrZero(prisma.approval.count({ where: { userId, decision: null } })),
       countOrZero(prisma.agentDecision.count({ where: { userId, status: "pending" } })),
       loadSettings(prisma, userId),
       prisma.syncState.findMany({ where: { userId } }),
-      countOrZero(prisma.undoEntry.count({ where: { userId, actorAccountId, undoneAt: null } })),
-      countOrZero(prisma.undoEntry.count({ where: { userId, actorAccountId, undoneAt: { not: null } } })),
+      undoState(prisma, userId).catch(() => ({ canUndo: false, canRedo: false, undoLabel: null, redoLabel: null })),
       countOrZero(prisma.spaceMember.count({ where: { spaceId: userId } })),
       prisma.share.findMany({ where: { spaceId: userId }, distinct: ["recipientId"], select: { recipientId: true } }).catch(() => []),
     ]);
@@ -89,8 +87,11 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
       approvals,
       decisions,
       attention: owner ? flags.filter(Boolean).length : 0,
-      canUndo: undoable > 0,
-      canRedo: redoable > 0,
+      canUndo: undo.canUndo,
+      canRedo: undo.canRedo,
+      /** What Undo and Redo in the top bar would do: the most recent action from the last few minutes. */
+      undoLabel: undo.undoLabel,
+      redoLabel: undo.redoLabel,
       onboardingComplete: request.authVia === "bypass" || Boolean(user?.onboardingCompletedAt),
       highlights: user?.onboardingTemplateId ? [...(templateById(user.onboardingTemplateId)?.highlights ?? [])] : [],
       modules: request.modules,

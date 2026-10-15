@@ -52,6 +52,11 @@ function errorCode(text: string): string | null {
 
 const OFFLINE = "Ensemble can't reach its server right now.";
 
+/** The request never got an answer from hub-api (no network, or the proxy could not connect). A 500 is not this. */
+export function isUnreachable(error: unknown): boolean {
+  return error instanceof ApiError && error.message === OFFLINE;
+}
+
 /** A JSON error body the server meant the person to read. */
 function serverErrorMessage(text: string): string | null {
   const trimmed = text.trim();
@@ -274,6 +279,9 @@ export type StandalonePageSummary = {
   id: string;
   title: string;
   updatedAt: string;
+  createdAt?: string;
+  /** Set on search results: the page's words around the match. */
+  snippet?: string;
 };
 
 export type StandalonePageRecord = {
@@ -1121,6 +1129,9 @@ export const api = bindClient({
       attention: number;
       canUndo: boolean;
       canRedo: boolean;
+      /** The action the top bar's Undo would reverse: the latest from the last few minutes. */
+      undoLabel?: string | null;
+      redoLabel?: string | null;
       onboardingComplete: boolean;
       verificationRequired?: boolean;
       highlights: string[];
@@ -1172,6 +1183,8 @@ export const api = bindClient({
   savePage: (id: string, data: { revision: number; content: unknown; notes?: string }) =>
     put<PageRecord>(`/api/tasks/${id}/page`, data),
   pages: () => get<{ pages: StandalonePageSummary[] }>("/api/pages"),
+  /** Pages whose title or text contains `query`, each with a snippet. */
+  searchPages: (query: string) => get<{ pages: StandalonePageSummary[] }>(`/api/pages${qs({ q: query })}`),
   deletePages: (pageIds: string[]) => post<{ deleted: number; undoEntryId: string | null }>("/api/pages/delete-many", { pageIds }),
   createPage: () => post<{ page: StandalonePageSummary }>("/api/pages", {}),
   convertPage: (kind: "page" | "task", id: string, revision: number) =>
@@ -1179,6 +1192,8 @@ export const api = bindClient({
   renamePage: (id: string, title: string) => patch<{ page: StandalonePageSummary }>(`/api/pages/${id}`, { title }),
   deletePage: (id: string) => del<void>(`/api/pages/${id}`),
   standalonePage: (id: string) => get<StandalonePageRecord>(`/api/pages/${id}`),
+  /** A page in Trash, to read before restoring it. The owner only. */
+  trashedPage: (id: string) => get<StandalonePageRecord & { deletedAt: string }>(`/api/pages/${id}?trashed=1`),
   saveStandalonePage: (id: string, data: { revision: number; content: unknown; notes?: string }) =>
     put<StandalonePageRecord>(`/api/pages/${id}`, data),
   undo: (entryId?: string) => post<{ label: string; entryId: string } | undefined>("/api/undo", entryId ? { entryId } : {}),
@@ -1465,7 +1480,11 @@ export const api = bindClient({
   /** Asks each provider with a key (or only those named) for its model list now. */
   refreshModels: (providers?: string[]) => post<ModelCatalog>("/api/models/refresh", providers?.length ? { providers } : {}),
   prompts: () => get<{ prompts: Array<{ id: string; title: string; when: string; purpose: string; body?: string }> }>("/api/prompts"),
-  deleted: () => get<{ items: Array<{ kind: string; id: string; label: string; deletedAt: string }> }>("/api/deleted"),
+  deleted: () =>
+    get<{
+      /** `detail`: for a comment, the page it was on. `href`: where the item opens once restored. */
+      items: Array<{ kind: string; id: string; label: string; detail?: string | null; href?: string | null; deletedAt: string }>;
+    }>("/api/deleted"),
   restoreDeleted: (data: { kind?: string; id?: string } = {}) => post<{ restored: number }>("/api/deleted/restore", data),
   emptyDeleted: () => post<{ removed: number }>("/api/deleted/empty"),
   deleteMyData: (scope: "context" | "everything", confirm: string) => post("/api/data/delete", { scope, confirm }),
@@ -1880,7 +1899,8 @@ export type DeskLive = {
   deliverables: Array<{ id: string; title: string; due: string | null; status: string }>;
   people: Array<{ id: string; name: string; role: string | null; capacityHours: number | null; oneOnOneDays: number | null; lastInteraction: string | null }>;
   meetings: Array<{ id: string; title: string }>;
-  artifacts: Array<{ id: string; title: string; kind: string; url: string | null; ts: string; source: string }>;
+  /** `format` and `fileType` say what a file is: an uploaded file's extension, or the media type or type name its app gave. */
+  artifacts: Array<{ id: string; title: string; kind: string; url: string | null; ts: string; source: string; format?: string | null; fileType?: string | null }>;
   reminders: Array<{ id: string; title: string; dueDate: string }>;
   slots: Array<{ id: string; title: string; weekday: number; startMin: number; endMin: number; course: string }>;
   holidays: Array<{ id: string; day: string; name: string }>;

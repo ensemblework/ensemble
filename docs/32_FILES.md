@@ -20,7 +20,7 @@ The table is `FILE_FORMATS` in `packages/shared-types/src/files.ts`; the format 
 | Text | txt, md, log | Text | — | Server: Markdown keeps its structure; text as paragraphs | The text |
 | Code | json, yaml, toml, xml, html, css, js/ts, py, java, go, rust, sql, shell and more | Code with line numbers | — | Server: one code block in its language | The text |
 | Audio, video | mp3, wav, m4a, ogg, flac, mp4, mov, webm | The browser's own player | — | — | No text |
-| Not previewable | doc, odt, rtf, ppt, odp, key, heic, tiff, anything else | Details, a note on how to make it previewable, Download | — | — | No (a warning says which format to save as) |
+| Not previewable | doc, odt, rtf, ppt, odp, key, heic, tiff, anything else except programs and raw binaries, which are refused (§3) | Details, a note on how to make it previewable, Download | — | — | No (a warning says which format to save as) |
 
 Every file, previewable or not, can be attached to pages and downloaded.
 
@@ -45,7 +45,11 @@ Code: `apps/hub-api/src/files/` (store, extract and its worker, page, import, at
 | Combined size | 50 MB (`ENSEMBLE_MAX_DOCUMENT_BYTES`) | No limit |
 | One file | 25 MB | 100 MB |
 
-Removed files do not count. Messages say what to do ("You can keep 10 files on the hosted plan. Remove one to add another."). A server-wide guard, `ENSEMBLE_FILES_TOTAL_MAX_BYTES` (10 GiB by default, counting every stored original including removed ones not yet purged), protects the server's disk and answers 507 "File storage on this server is full right now." Uploads, imports and edits all check the caps (`lib/hosted-limits.ts`, `files/store.ts`).
+Removed files do not count. Every upload and import also refuses an empty file (400 "This file is empty, so there is nothing to keep.") and programs and raw binaries (415; `.exe`, `.msi`, `.dll`, `.bin`, `.dmg`, `.pkg`, `.apk`, `.jar`, `.iso` and the rest of `fileTypeProblem` in `packages/shared-types/src/files.ts`), and a replacement cannot rename a file to one of them (`assertNewFile` in `files/store.ts`). Other formats Ensemble cannot show, such as `.zip`, are still kept. Copies of files already kept (a paired computer's task attachments) are not checked again.
+
+The file travels as base64 inside JSON, so a request is about 4/3 of the file. `POST /api/documents` and `PUT /api/documents/:id/content` take a body that fits the one-file limit (`uploadLimit()` in `routes/files.ts`); a larger one is refused from its `Content-Length` before it is read, with 413 and the same "Files can be up to … MB" message. In front of the API, the Hub's `/api` rewrite passes bodies through Next.js, which cuts them off past `experimental.middlewareClientMaxBodySize` (10 MB unless set), leaving the API waiting for the rest; `apps/hub-web/next.config.ts` sets it to 140 MB, above the largest body the API reads. The Files screen checks the same things before sending (`checkUploads` and `fileRefusal` in `components/files/use-uploads.ts`): a refused file stays in the upload list with its reason, and so does a server refusal.
+
+Messages say what to do ("You can keep 10 files on the hosted plan. Remove one to add another."). A server-wide guard, `ENSEMBLE_FILES_TOTAL_MAX_BYTES` (10 GiB by default, counting every stored original including removed ones not yet purged), protects the server's disk and answers 507 "File storage on this server is full right now." Uploads, imports and edits all check the caps (`lib/hosted-limits.ts`, `files/store.ts`).
 
 ## 4. Keeping the server light
 
@@ -95,7 +99,7 @@ File text is always passed on as information, not instructions.
 | Method | Path | Body → Response |
 |---|---|---|
 | GET | `/api/documents?q=` | → `{ files: FileRecord[], usage: FileUsage }` |
-| POST | `/api/documents` | `{ filename, mediaType, dataBase64, summarize?, tags? }` → 201 `{ file, document }` |
+| POST | `/api/documents` | `{ filename, mediaType, dataBase64, summarize?, tags? }` → 201 `{ file, document }`; 400 empty, 413 over the size limit, 415 a program (§3) |
 | GET | `/api/documents/:id` | → `{ file }` |
 | GET | `/api/documents/:id/original` | Bytes; Content-Type from the format table (HTML as text/plain, unknown as octet-stream), `nosniff`, a sandbox CSP, `attachment` with `filename*`, `ETag`/304, ranges |
 | GET | `/api/documents/:id/text?offset=&limit=` | → `{ text, offset, total, nextOffset? }` (6,000 by default, at most 20,000) |
@@ -124,11 +128,11 @@ Hosted: a verified email for everything; imports 60 per 10 minutes. Space member
 
 ## 10. Tests
 
-- `apps/hub-api/src/routes/files.integration.test.ts`: upload, list and usage, hosted caps (count, bytes, per-file, removed files free room, server guard), original headers (nosniff, ETag/304, HTML as text), text paging, replace, cell edits that keep another cell's formatting, pages from Markdown, code, CSV and browser content with a style, `sourceFile` on page reads, delete hides the text, isolation, and the shared-page rule.
+- `apps/hub-api/src/routes/files.integration.test.ts`: upload, list and usage, hosted caps (count, bytes, per-file, removed files free room, server guard), empty files and programs refused (a `.zip` kept), a body over the limit refused by its Content-Length with the size message, original headers (nosniff, ETag/304, HTML as text), text paging, replace, cell edits that keep another cell's formatting, pages from Markdown, code, CSV and browser content with a style, `sourceFile` on page reads, delete hides the text, isolation, and the shared-page rule.
 - `apps/hub-api/src/files/extract.test.ts`: extraction per format and its limits.
 - `apps/hub-api/src/files/import.integration.test.ts`, `attached.integration.test.ts`, `connectors/items/downloads.test.ts`: import sources and states, downloads per app, attached files for agents, `read_attachment` and `save_attachment`.
 - `apps/hub-api/src/routes/artifacts.integration.test.ts`: From your apps without uploads, paging, one item in full, removal from the list, graph, live tiles and MCP search and read, a later sync and a purged row staying removed, attaching again restoring it, the 409 for uploads, isolation, and a space member refused.
-- Web: `components/editor/file-attach.test.tsx`, `components/files/*.test.tsx` (`from-apps.test.tsx`: the switch, list, chips, search, reader, Remove, paging, empty state, guests; `files-page.test.tsx`: duplicates by content and by name, Skip sending nothing, Replace sending the new bytes to the existing file), `lib/files/*.test.ts`.
+- Web: `components/editor/file-attach.test.tsx`, `components/files/*.test.tsx` (`from-apps.test.tsx`: the switch, list, chips, search, reader, Remove, paging, empty state, guests; `files-page.test.tsx`: duplicates by content and by name, Skip sending nothing, Replace sending the new bytes to the existing file, empty files and programs refused with a reason on their rows, search keeping the kind filter, the list's error with Retry), `lib/files/*.test.ts`.
 - Present and Full screen: `components/files/present.test.tsx` runs them on a generated .pptx and a code file (keys, clicks, hidden slides, focus, the × and Esc, the in-page layer when the browser has no Fullscreen API, and a browser that grants it). A PDF in full screen uses the same layer; that path was read, not run, because pdf.js does not run in the test DOM.
 
 ## 11. Connected items opened explicitly

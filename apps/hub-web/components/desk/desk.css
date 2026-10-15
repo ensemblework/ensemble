@@ -410,6 +410,21 @@ body[data-desk-moving="1"], body[data-desk-moving="1"] * { cursor: grabbing !imp
 .desk .visual-work section { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1; font-size: 12px; }
 .desk .visual-work > div > svg, .desk .visual-work > a > svg { color: var(--faint); flex-shrink: 0; }
 .desk .visual-meetings .visual-work-marker { border-radius: 50%; }
+/* Long one-word titles must not run into the next card: clamp or ellipsis, full title on hover. */
+.desk .visual-document { min-width: 0; }
+.desk .visual-document strong { overflow-wrap: anywhere; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.desk .visual-document-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.desk .visual-work section strong,
+.desk .visual-timeline strong,
+.desk .visual-phase section strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.desk .visual-timeline strong { flex: 1; min-width: 0; }
+.desk .visual-phase section { min-width: 0; }
+.desk .visual-work section small { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+[data-theme="light"] .desk .visual-tag[data-urgent="true"] { color: var(--tag-red-fg); }
+.desk .field[aria-invalid="true"] { border-color: rgb(var(--danger-rgb)); }
+.desk .desk-field-error { font-size: 12px; color: var(--tag-red-fg); }
+.desk .desk-form-note { font-size: 12px; color: var(--muted); }
+.desk .desk-form-note a { color: var(--ink); text-decoration: underline; }
 @container (max-width: 420px) {
   .desk .visual-people, .desk .visual-documents { grid-template-columns: 1fr; }
   .desk .visual-document { min-height: 0; gap: 8px; padding: 11px; }

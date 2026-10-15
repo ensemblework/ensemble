@@ -34,3 +34,15 @@ test("people in one row keep their initials unless two different names would rea
   assert.deepEqual(distinctInitials([{ name: "Test", initials: "TE" }, { name: "Tess" }]), ["TE", "TE"]);
   assert.deepEqual(distinctInitials([{ name: "mira.chen", initials: "MC" }, { name: "Max Cole" }]), ["MC", "MCo"]);
 });
+
+test("a name that starts with an emoji never shows half of it", () => {
+  const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+  assert.equal(personInitials("🙂 Vera Smith"), "VS");
+  assert.equal(personInitials("🙂Vera"), "VE");
+  assert.equal(personInitials("👩🏽‍💻 Ada Lovelace 🚀"), "AL");
+  assert.equal(personInitials("🇮🇳 Priya"), "PR");
+  assert.equal(personInitials("E\u0301mile Zola"), "ÉZ", "a decomposed accent stays on its letter");
+  assert.equal(personInitials("🙂🙂", "vera.smith@example.com"), "VS");
+  assert.equal(personInitials("𝒜da Lovelace").length > 0, true);
+  for (const name of ["🙂 Vera", "😀😀 Ben", "𝒜da Lovelace", "𠀀𠀁 Chen", "🧑‍🚀"]) assert.doesNotMatch(personInitials(name), lone, name);
+});

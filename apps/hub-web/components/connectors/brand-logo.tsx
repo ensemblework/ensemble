@@ -84,7 +84,7 @@ export function initials(name: string): string {
   const lettered = words.filter((word) => /^\p{L}/u.test(word));
   return (lettered.length ? lettered : words)
     .slice(0, 2)
-    .map((word) => word[0]!.toUpperCase())
+    .map((word) => Array.from(word)[0]!.toUpperCase())
     .join("");
 }
 

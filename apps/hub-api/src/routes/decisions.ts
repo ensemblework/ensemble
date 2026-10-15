@@ -333,7 +333,7 @@ class AnswerError extends Error {
 }
 
 /**
- * A Ensemble job's answer. "For this run" is a rule only this job reads.
+ * An Ensemble job's answer. "For this run" is a rule only this job reads.
  * "Always" trusts the job's folder, and only a folder `resolveWorkFolder`
  * accepts; it never turns a command or a path into a folder rule. A push and
  * a path outside the folder are confirmed each time.

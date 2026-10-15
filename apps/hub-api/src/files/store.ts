@@ -4,7 +4,7 @@
  * Every way a file arrives (upload, import from an app) goes through saveFile.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { fileFormat, type FileRecord, type FileStyleProfile, type FileTextStatus, type FileUsage } from "@ensemble/shared-types";
+import { fileFormat, fileTypeProblem, type FileRecord, type FileStyleProfile, type FileTextStatus, type FileUsage } from "@ensemble/shared-types";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { isHosted } from "../lib/hosted-access.js";
 import { assertFileRoom, createCappedDocument, hostedLimits, quotaScope, sizeLabel, withHostedUserLock } from "../lib/hosted-limits.js";
@@ -147,10 +147,25 @@ export function mediaTypeFor(filename: string, given: string | undefined): strin
   return /^[a-z0-9][a-z0-9!#$&^_.+-]{0,63}\/[a-z0-9][a-z0-9!#$&^_.+-]{0,63}$/.test(value) ? value : "application/octet-stream";
 }
 
-function assertSize(bytes: number): void {
+/** The refusal for a file over the size limit, also sent when an upload's body is too large to read. */
+export function fileTooLarge(): FileError {
   const max = maxFileBytes();
-  if (bytes <= max) return;
-  throw new FileError(isHosted() ? `Files can be up to ${sizeLabel(max)} on the hosted plan.` : `Files can be up to ${sizeLabel(max)}.`, 413);
+  return new FileError(isHosted() ? `Files can be up to ${sizeLabel(max)} on the hosted plan.` : `Files can be up to ${sizeLabel(max)}.`, 413);
+}
+
+function assertSize(bytes: number): void {
+  if (bytes > maxFileBytes()) throw fileTooLarge();
+}
+
+/**
+ * A file someone brings in (an upload, a drop, an import from an app) must have something in it
+ * and must not be a program. Copies of files already kept, such as a paired computer's task
+ * attachments, are not asked again.
+ */
+export function assertNewFile(filename: string, bytes: number): void {
+  const kind = fileTypeProblem(filename);
+  if (kind) throw new FileError(kind, 415);
+  if (bytes === 0) throw new FileError("This file is empty, so there is nothing to keep.", 400);
 }
 
 const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");

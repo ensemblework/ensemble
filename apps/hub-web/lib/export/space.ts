@@ -9,10 +9,11 @@
 import { parseDiagram } from "@ensemble/block-diagrams";
 
 import { api, type TaskRecord } from "../api";
-import { OWNER_LABEL, PRIORITY, STATUS } from "../format";
+import { OWNER_LABEL, PRIORITY, STATUS, plural } from "../format";
 import { toMarkdown } from "./document";
 import { fileSlug } from "./formats";
-import { meetingDoc, pageDoc, skillDoc, taskDoc } from "./items";
+import { meetingDoc, pageDoc, skillDoc, taskDoc, type WriteTime } from "./items";
+import { exportTimeZone, isoInZone } from "./when";
 
 export type SpaceSection = "pages" | "tasks" | "context" | "meetings" | "skills" | "diagrams" | "plots";
 
@@ -63,15 +64,18 @@ function collectDatasetIds(value: unknown, into: Set<string>): void {
   }
 }
 
-const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
-
 export async function exportSpace(options: {
   spaceName: string;
   /** Names of the space's owner and members, to say who a task is with. */
   people?: { ownerId: string | null; names: Map<string, string> };
   sections: SpaceSection[];
+  /** The person's time zone from Settings; every time in the CSV and Markdown files is written in it. */
+  timeZone?: string | null;
   onProgress?: (progress: ExportProgress) => void;
 }): Promise<{ blob: Blob; name: string; skipped: string[] }> {
+  const zone = exportTimeZone(options.timeZone);
+  const at = (value: string | null | undefined) => isoInZone(value, zone);
+  const when: WriteTime = (value) => at(value);
   const files: Files = {};
   const used = new Set<string>();
   const skipped: string[] = [];
@@ -88,7 +92,7 @@ export async function exportSpace(options: {
     await eachLimited(pages, 5, async (summary, index) => {
       try {
         const page = await api.standalonePage(summary.id);
-        put(uniqueName(used, "pages", page.title || "untitled", "md"), toMarkdown(pageDoc(page)));
+        put(uniqueName(used, "pages", page.title || "untitled", "md"), toMarkdown(pageDoc(page, when)));
       } catch {
         skipped.push(`Page "${summary.title}"`);
       }
@@ -107,7 +111,7 @@ export async function exportSpace(options: {
     };
     await eachLimited(tasks, 5, async (task, index) => {
       const page = await api.page(task.id).catch(() => null);
-      put(uniqueName(used, `tasks/${task.status}`, task.title || "untitled", "md"), toMarkdown(taskDoc(task, page, ownerText(task))));
+      put(uniqueName(used, `tasks/${task.status}`, task.title || "untitled", "md"), toMarkdown(taskDoc(task, page, ownerText(task), when)));
       report("tasks", index + 1, tasks.length, "Tasks");
     });
     put(
@@ -120,11 +124,11 @@ export async function exportSpace(options: {
           STATUS[task.status]?.label ?? task.status,
           PRIORITY[task.priority]?.label ?? task.priority,
           ownerText(task),
-          task.due,
+          at(task.due),
           task.labels ?? [],
           task.sourceUrl,
-          task.createdAt,
-          task.completedAt,
+          at(task.createdAt),
+          at(task.completedAt),
         ]),
       ),
     );
@@ -141,7 +145,7 @@ export async function exportSpace(options: {
       api.deliverables(true).catch(() => null),
     ]);
     if (people) {
-      put("context/people.csv", toCsv(["name", "email", "role", "team", "last interaction", "projects"], people.people.map((row) => [row.name, row.email, row.role, row.team, row.lastInteraction, row.projects.map((p) => p.name)])));
+      put("context/people.csv", toCsv(["name", "email", "role", "team", "last interaction", "projects"], people.people.map((row) => [row.name, row.email, row.role, row.team, at(row.lastInteraction), row.projects.map((p) => p.name)])));
       put("context/people.json", JSON.stringify(people.people, null, 2));
     } else skipped.push("People");
     if (projects) {
@@ -153,22 +157,22 @@ export async function exportSpace(options: {
       put("context/repos.json", JSON.stringify(repos.repos, null, 2));
     } else skipped.push("Repos");
     if (deliverables) {
-      put("context/deliverables.csv", toCsv(["title", "status", "due", "project"], deliverables.deliverables.map((row) => [row.title, row.status, row.due, row.project.name])));
+      put("context/deliverables.csv", toCsv(["title", "status", "due", "project"], deliverables.deliverables.map((row) => [row.title, row.status, at(row.due), row.project.name])));
       put("context/deliverables.json", JSON.stringify(deliverables.deliverables, null, 2));
     } else skipped.push("Deliverables");
     report("context", 4, 4, "Context");
-    counts.push(`${plural(people?.people.length ?? 0, "person").replace(/persons$/, "people")}, ${plural(projects?.projects.length ?? 0, "project")}`);
+    counts.push(`${plural(people?.people.length ?? 0, "person")}, ${plural(projects?.projects.length ?? 0, "project")}`);
   }
 
   if (want.has("meetings")) {
     report("meetings", 0, 1, "Reading meeting notes");
     const [sessions, imported] = await Promise.all([api.meetingSessions().catch(() => null), api.importedMeetings().catch(() => null)]);
-    for (const session of sessions?.sessions ?? []) put(uniqueName(used, "meetings", session.title || "meeting", "md"), toMarkdown(meetingDoc(session)));
+    for (const session of sessions?.sessions ?? []) put(uniqueName(used, "meetings", session.title || "meeting", "md"), toMarkdown(meetingDoc(session, [], when)));
     for (const note of imported?.notes ?? []) {
       const markdown = [
         `# ${note.title}`,
         "",
-        `- **When:** ${new Date(note.occurredAt).toLocaleString()}`,
+        `- **When:** ${at(note.occurredAt)}`,
         `- **From:** ${note.sourceLabel}`,
         ...(note.people.length ? [`- **People:** ${note.people.map((person) => person.name).join(", ")}`] : []),
         "",
@@ -223,7 +227,7 @@ export async function exportSpace(options: {
     for (const plot of list?.plots ?? []) {
       if (plot.datasetId) datasets.add(plot.datasetId);
       collectDatasetIds(plot.config, datasets);
-      put(uniqueName(used, "plots", plot.title || "plot", "json"), JSON.stringify({ title: plot.title, dataset: plot.datasetName, updatedAt: plot.updatedAt, config: plot.config }, null, 2));
+      put(uniqueName(used, "plots", plot.title || "plot", "json"), JSON.stringify({ title: plot.title, dataset: plot.datasetName, updatedAt: at(plot.updatedAt), config: plot.config }, null, 2));
     }
     const ids = [...datasets];
     await eachLimited(ids, 3, async (id, index) => {
@@ -238,15 +242,18 @@ export async function exportSpace(options: {
     counts.push(`${plural(list?.plots.length ?? 0, "plot space")}, ${plural(ids.length, "data file")}`);
   }
 
-  const stamp = new Date().toISOString().slice(0, 10);
+  const now = at(new Date().toISOString());
+  const stamp = now.slice(0, 10);
   put(
     "README.md",
     [
       `# ${options.spaceName}`,
       "",
-      `Exported from Ensemble on ${new Date().toLocaleString()}.`,
+      `Exported from Ensemble at ${now}.`,
       "",
       ...counts.map((line) => `- ${line}`),
+      "",
+      `Times in the CSV and Markdown files are ISO 8601 in ${zone}, with the UTC offset written out (for example ${now}). The JSON files are Ensemble's own records, in UTC.`,
       "",
       "Markdown files open in any editor, Obsidian or Notion (Import › Markdown). CSV files open in Excel, Numbers or Google Sheets.",
       "To get a plot as a PDF figure, open it in Plots and use Export figure.",

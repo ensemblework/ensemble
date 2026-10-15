@@ -9,6 +9,15 @@ test("a due date that is not a real day is a client error", () => {
   assert.throws(() => parseDue("2026-02-31T00:00:00.000Z"), (error: unknown) => (error as { statusCode?: number }).statusCode === 400);
 });
 
+test("a due date outside 1900-2200 is a typing slip, not a date", () => {
+  const slip = (error: unknown) => (error as { statusCode?: number }).statusCode === 400 && /between 1900 and 2200/.test((error as Error).message);
+  assert.throws(() => parseDue("0201-10-16"), slip);
+  assert.throws(() => parseDue("0201-10-16T11:30:00.000Z"), slip);
+  assert.throws(() => parseDue("2201-01-01"), slip);
+  assert.equal(parseDue("1900-01-01")?.toISOString(), "1900-01-01T00:00:00.000Z");
+  assert.equal(parseDue("2200-12-31T17:00:00.000Z")?.toISOString(), "2200-12-31T17:00:00.000Z");
+});
+
 test("iso dates reject calendar nonsense", () => {
   assert.equal(isIsoDate("2026-09-29"), true);
   assert.equal(isIsoDate("tomorrow"), false);

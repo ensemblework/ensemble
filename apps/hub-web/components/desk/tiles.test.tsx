@@ -12,7 +12,8 @@ import { ROLES } from "../onboarding/roles";
 import { AddTileDialog } from "./add-tile";
 import { PreviewTiles, specPool } from "./live-board";
 import { deskRole, tileFitsRole } from "./tile-catalog";
-import { datedItems, mockScores, ratio, taskSegments, timeSegments } from "./tile-data";
+import { byUrgency, datedItems, dayLabel, isLate, mockScores, ratio, taskSegments, timeSegments, weekAhead } from "./tile-data";
+import { TileVisuals } from "./tile-visuals";
 
 (globalThis as { React?: typeof React }).React = React;
 const date = new Date("2026-10-11T09:00:00Z");
@@ -77,6 +78,39 @@ test("calendar deduplicates a countdown of an existing task, sorts dates and omi
   live.countdowns = [{ id: "a", title: "Release", due: "2026-10-14", days: 3 }];
   live.deliverables = []; live.reminders = [];
   assert.deepEqual(datedItems(live).map((r) => r.title), ["Release"]);
+});
+
+test("Today counts overdue work, dates it with a year when needed, and marks it overdue", () => {
+  const live = sampleLive("student", null, date);
+  live.today = "2026-10-11";
+  const base = live.tasks[0]!;
+  live.tasks = [
+    { ...base, id: "late", title: "Essay draft", status: "todo", taskType: "task", due: "2026-01-01" },
+    { ...base, id: "old", title: "Lab write-up", status: "in_progress", taskType: "task", due: "2025-12-01" },
+    { ...base, id: "soon", title: "Problem set", status: "todo", taskType: "task", due: "2026-10-13" },
+    { ...base, id: "done", title: "Finished", status: "done", taskType: "task", due: "2026-01-02" },
+    { ...base, id: "loose", title: "Undated", status: "todo", taskType: "task", due: null },
+  ];
+  live.deliverables = []; live.reminders = []; live.countdowns = [];
+  const week = weekAhead(live);
+  assert.equal(week.overdue, 2);
+  assert.equal(week.days.reduce((sum, day) => sum + day.value, 0), 1);
+  assert.equal(dayLabel("2026-01-01", live.today), "1 Jan");
+  assert.equal(dayLabel("2025-12-01", live.today), "1 Dec 2025");
+  assert.equal(isLate(live.tasks[0]!, live.today), true);
+  assert.equal(isLate(live.tasks[3]!, live.today), false, "done work is not overdue");
+  assert.deepEqual(byUrgency(live.tasks).map((task) => task.id), ["old", "late", "done", "soon", "loose"]);
+  const weekHtml = renderToStaticMarkup(<TileVisuals spec={specPool().get("due-week")!} live={live} />);
+  assert.match(weekHtml, /due or overdue/);
+  assert.match(weekHtml, /2 overdue/);
+  const plan = specPool().get("plan")!;
+  const planHtml = renderToStaticMarkup(<TileVisuals spec={plan} live={live} />);
+  assert.match(planHtml, /1 Dec 2025/);
+  assert.match(planHtml, /Overdue/);
+  assert.match(planHtml, /title="Lab write-up"/, "long titles have a full-title hover");
+  live.tasks = [{ ...base, id: "read", title: "Pneumonoultramicroscopicsilicovolcanoconiosis", status: "todo", taskType: "reading", due: "2026-10-20" }];
+  const readingHtml = renderToStaticMarkup(<TileVisuals spec={specPool().get("reading")!} live={live} />);
+  assert.match(readingHtml, /20 Oct/, "the reading card shows its date");
 });
 
 test("the gallery previews without writes, adds once, and keeps failures recoverable", async () => {

@@ -1,0 +1,33 @@
+import "../ui-test-dom.js";
+import assert from "node:assert/strict";
+import test from "node:test";
+import type { DeskLive } from "@/lib/api";
+import { contextTabs, tabKey } from "./context-tabs";
+import { DESK_IDS } from "./desks";
+import { lensSections, tileFilled } from "./live-board";
+
+function live(attendance: DeskLive["attendance"]): DeskLive {
+  return {
+    today: "2026-10-16", tasks: [], deliverables: [], people: [], meetings: [], artifacts: [], reminders: [], slots: [], holidays: [],
+    attendance, objectives: [], deploys: [], parts: [], tests: [], citations: [], grading: [], repos: [], projects: [], limitation: [], countdowns: [],
+  };
+}
+
+test("Context's Attendance tile reads the same marks as Today's", () => {
+  let seen = 0;
+  for (const desk of DESK_IDS) {
+    for (const label of contextTabs(desk, true)) {
+      for (const marked of [true, false]) {
+        const data = live(marked ? { present: 6, absent: 0 } : { present: 0, absent: 0 });
+        for (const section of lensSections(desk, tabKey(label), data)) {
+          if (section.kind !== "attendance") continue;
+          seen += 1;
+          assert.equal(section.rows.length, 0, "attendance is a count, not rows");
+          assert.equal(section.filled, marked, `${desk} › ${label}`);
+          assert.equal(section.filled, tileFilled(section.spec, data), "the same check Today uses");
+        }
+      }
+    }
+  }
+  assert.ok(seen > 0, "some Context tab shows attendance");
+});

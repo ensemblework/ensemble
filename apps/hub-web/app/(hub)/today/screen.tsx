@@ -435,9 +435,9 @@ export function TodayScreen({
                       <span className="h-4 w-4 shrink-0" />
                     )}
                     <PriorityTag priority={task.priority} />
-                    <span className="flex-1 truncate text-[14px] font-medium">{task.title}</span>
+                    <span className="flex-1 truncate text-[14px] font-medium" title={task.title}>{task.title}</span>
                     {task.taskType ? <span className="text-[11px] uppercase tracking-wide text-faint">{task.taskType}</span> : null}
-                    {due ? <span className={cx("text-[12px]", due.overdue ? "text-[#ffb4ae]" : "text-muted")}>{due.text}</span> : null}
+                    {due ? <span className={cx("text-[12px]", due.overdue ? "text-[color:var(--tag-red-fg)]" : "text-muted")}>{due.text}</span> : null}
                     <button
                       type="button"
                       className="btn-ghost py-0 text-[12px] opacity-0 group-hover:opacity-100"

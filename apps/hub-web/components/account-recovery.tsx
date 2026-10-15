@@ -3,11 +3,13 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { PASSWORD_RULE, passwordProblem } from "@ensemble/shared-types";
 import { api } from "@/lib/api";
 import { safeLoginNext } from "@/lib/signup-ui";
 import { ArrowRight, MailCheck } from "lucide-react";
 import { AuthBackdrop } from "./auth-backdrop";
 import { EnsembleLogo } from "./brand/Logo";
+import { PasswordField } from "./password-field";
 
 export function AccountRecovery({ mode }: { mode: "forgot" | "reset" | "verify" }) {
   if (mode === "verify") return <EmailCodeVerification />;
@@ -22,6 +24,7 @@ function PasswordRecovery({ mode }: { mode: "forgot" | "reset" }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [token, setToken] = useState("");
+  const [passwordError, setPasswordError] = useState<string | null>(null);
   useEffect(() => {
     const fragment = new URLSearchParams(window.location.hash.slice(1));
     setToken(fragment.get("token") ?? "");
@@ -38,7 +41,16 @@ function PasswordRecovery({ mode }: { mode: "forgot" | "reset" }) {
     : "Password updated. Sign in with your new password.";
   return (
     <main className="flex min-h-screen items-center justify-center bg-bg px-4">
-      <form className="w-full max-w-md rounded-2xl border border-line bg-panel p-8" onSubmit={(event) => { event.preventDefault(); action.mutate(); }}>
+      <form
+        className="w-full max-w-md rounded-2xl border border-line bg-panel p-8"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (action.isPending) return;
+          const problem = mode === "reset" ? passwordProblem(password) : null;
+          setPasswordError(problem);
+          if (!problem) action.mutate();
+        }}
+      >
         <EnsembleLogo size={24} />
         <h1 className="mt-6 text-[22px] font-semibold">{title}</h1>
         {action.isSuccess ? <p role="status" className="mt-4 text-[13px]">{message}</p> : (
@@ -49,9 +61,22 @@ function PasswordRecovery({ mode }: { mode: "forgot" | "reset" }) {
               </label>
             ) : !token ? <p role="alert" className="mt-4 text-[13px] text-muted">Open the full link from your email. If it expired, request a new one.</p> : null}
             {mode === "reset" ? (
-              <label className="mt-4 block text-[13px]">New password
-                <input type="password" required minLength={8} maxLength={256} autoComplete="new-password" className="field mt-1 w-full" value={password} onChange={(event) => setPassword(event.target.value)} />
-              </label>
+              <PasswordField
+                className="mt-4"
+                label="New password"
+                required
+                minLength={8}
+                maxLength={256}
+                autoComplete="new-password"
+                value={password}
+                onChange={(value) => {
+                  setPassword(value);
+                  setPasswordError(null);
+                }}
+                rule={PASSWORD_RULE}
+                error={passwordError}
+                errorClassName="text-[#ffb4ae]"
+              />
             ) : null}
             {action.error ? <p role="alert" className="mt-4 text-[13px] text-[#ffb4ae]">{action.error.message}</p> : null}
             <button type="submit" className="btn-primary mt-5 w-full justify-center" disabled={action.isPending || (mode !== "forgot" && !token)}>

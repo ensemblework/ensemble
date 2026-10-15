@@ -8,6 +8,7 @@ import { api, type ProjectRecord } from "@/lib/api";
 import { plural } from "@/lib/format";
 import { useToast } from "../toast";
 import { Dialog, Empty, Field, Spinner, Tag } from "../ui";
+import { LoadError } from "../load-error";
 
 function ProjectCard({ project }: { project: ProjectRecord }) {
   const client = useQueryClient();
@@ -30,8 +31,8 @@ function ProjectCard({ project }: { project: ProjectRecord }) {
       >
         <Trash2 size={13} />
       </button>
-      <button type="button" className="flex items-center gap-2 pr-6 text-left text-[15px] font-semibold leading-5 hover:underline" onClick={() => peek.open(project.id, "project")}>
-        {project.name}
+      <button type="button" title={project.name} className="flex min-w-0 items-center gap-2 pr-6 text-left text-[15px] font-semibold leading-5 hover:underline" onClick={() => peek.open(project.id, "project")}>
+        <span className="min-w-0 truncate" data-project-name>{project.name}</span>
         {project.status === "done" ? <Tag tone="green">done</Tag> : null}
       </button>
       <p className="mt-2 line-clamp-3 text-[12.5px] leading-[18px] text-muted">{project.summary || "No summary yet."}</p>
@@ -57,6 +58,7 @@ function ProjectCard({ project }: { project: ProjectRecord }) {
 export function ProjectsTab({ ids = "" }: { ids?: string }) {
   const client = useQueryClient();
   const projects = useQuery({ queryKey: ["projects"], queryFn: api.projects });
+  const toast = useToast();
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [summary, setSummary] = useState("");
@@ -68,6 +70,7 @@ export function ProjectsTab({ ids = "" }: { ids?: string }) {
       setSummary("");
       void client.invalidateQueries({ queryKey: ["projects"] });
     },
+    onError: (error: Error) => toast(error.message, { tone: "error" }),
   });
   const allow = ids ? new Set(ids.split(",").filter(Boolean)) : null;
   const list = (projects.data?.projects ?? []).filter((project) => !allow || allow.has(project.id));
@@ -79,8 +82,10 @@ export function ProjectsTab({ ids = "" }: { ids?: string }) {
           <Plus size={13} /> New project
         </button>
       </div>
-      {projects.isLoading ? (
+      {projects.isPending ? (
         <Spinner />
+      ) : projects.isError && !projects.data ? (
+        <LoadError error={projects.error} onRetry={() => void projects.refetch()} retrying={projects.isFetching} what="your projects" />
       ) : list.length === 0 ? (
         <Empty>
           {allow ? "No projects on today's work." : "No projects yet. They are inferred from recurring threads and repos, or you can create one."}

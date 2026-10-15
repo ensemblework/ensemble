@@ -30,3 +30,14 @@ test("filtering is read-only; marking read is explicit and errors do not look em
     assert.match(host.querySelector('[role="alert"]')!.textContent!, /Offline/); assert.doesNotMatch(host.textContent!, /You're all caught up/);
   } finally { await act(async () => root.unmount()); host.remove(); }
 });
+test("marking a notification read keeps keyboard focus on the next one", async () => {
+  const host = document.createElement("div"); document.body.append(host); const root = createRoot(host); const read: string[] = [];
+  try {
+    await act(async () => root.render(<NotificationContent rows={rows} loading={false} busy={false} onRead={(id) => read.push(id)} onReadAll={() => {}} onRetry={() => {}} onClose={() => {}} />));
+    const first = host.querySelector('[aria-label=\'Mark "Update a" as read\']') as HTMLButtonElement;
+    first.focus();
+    await act(async () => first.click());
+    assert.deepEqual(read, ["a"]);
+    assert.equal(document.activeElement?.getAttribute("aria-label"), 'Mark "Update b" as read');
+  } finally { await act(async () => root.unmount()); host.remove(); }
+});

@@ -37,7 +37,8 @@ export async function pageRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.get("/api/pages", async (request) => {
-    return { pages: await listStandalonePages(prisma, request.userId) };
+    const { q } = z.object({ q: z.string().max(200).optional() }).parse(request.query ?? {});
+    return { pages: await listStandalonePages(prisma, request.userId, q ?? "") };
   });
 
   app.post("/api/pages", async (request, reply) => {
@@ -55,10 +56,12 @@ export async function pageRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/pages/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
+    // `?trashed=1`: a page in Trash, to read before restoring it.
+    const { trashed } = z.object({ trashed: z.enum(["1", "true"]).optional() }).parse(request.query ?? {});
     try {
-      return await getStandalonePage(prisma, request.userId, id);
+      return await getStandalonePage(prisma, request.userId, id, { trashed: Boolean(trashed) });
     } catch (error) {
-      if (error instanceof TaskPageError) return reply.code(error.statusCode).send({ error: error.message });
+      if (error instanceof TaskPageError) return reply.code(error.statusCode).send({ error: error.message, code: error.code });
       throw error;
     }
   });

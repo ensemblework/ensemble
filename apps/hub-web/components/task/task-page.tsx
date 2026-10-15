@@ -22,9 +22,9 @@ import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { createContext, useContext, useId, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PageDocument, PageMention } from "@ensemble/shared-types";
-import { api, currentLink, currentShare, withLink, withShare, type TaskRecord, type TaskStatus } from "@/lib/api";
+import { ApiError, api, currentLink, currentShare, withLink, withShare, type TaskRecord, type TaskStatus } from "@/lib/api";
 import { useEntities } from "@/lib/entities";
-import { COMPLEXITY_LABEL, OWNER_LABEL, PRIORITY, PRIORITY_ORDER, STATUS, dateTime, isoDate } from "@/lib/format";
+import { COMPLEXITY_LABEL, OWNER_LABEL, PRIORITY, PRIORITY_ORDER, STATUS, dateTime } from "@/lib/format";
 import { MakeDiagramButton, taskDiagramPrompt } from "../diagrams/make-diagram";
 import { HumanDescription } from "../pages/human-description";
 import { useQuickAssign } from "../agent/use-quick-assign";
@@ -41,8 +41,11 @@ import { useDelayedFlag } from "@/lib/motion/use-delayed-flag";
 import { useModuleOn } from "@/lib/use-module";
 import { MenuItem, Popover, PriorityTag, Tag, cx } from "../ui";
 import { PageTitleField } from "../pages/title-field";
+import { PageLoadFailure, inTrash } from "../pages/page-load";
+import { TrashedTask } from "../pages/trashed-page";
 import { isPageEnsembleBusy } from "../comments/ensemble-bus";
 import { LabelEditor } from "./labels";
+import { DueDateField } from "./due-date-field";
 import { FromMeeting } from "../meetings/from-meeting";
 import { AttachedItems } from "../app-items/attached-items";
 import { PostUpdate } from "../app-items/post-update";
@@ -311,7 +314,11 @@ export function TaskPage({
   if (taskPending || taskHold) {
     return <TaskSkeleton peek={variant === "peek"} />;
   }
-  if (!task.data) return <div className="p-10 text-muted">This task no longer exists.</div>;
+  if (!task.data) {
+    if (!shared && inTrash(task.error)) return <TrashedTask taskId={taskId} onRestored={() => { void task.refetch(); void page.refetch(); }} />;
+    const missing = task.error instanceof ApiError && task.error.status === 404;
+    return <PageLoadFailure kind="task" missing={missing} links={!shared} error={task.error} retrying={task.isFetching} onRetry={() => void task.refetch()} />;
+  }
 
   const record = task.data.task;
   const project = projects.data?.projects.find((row) => row.id === record.projectId);
@@ -344,7 +351,7 @@ export function TaskPage({
     >
       {focusMode.active ? <PageFocusBar status={saveText} error={saveState === "error"} onExit={focusMode.exit} /> : null}
       {variant === "page" ? (
-        <div className="-mb-1 flex justify-end gap-1">
+        <div className="-mb-1 flex flex-wrap justify-end gap-1">
           <PageFocusButton onEnter={focusMode.enter} />
           <TaskExportMenu taskId={taskId} extra={exportBackItems(source, pageNow)} />
           {shared ? null : <ShareButton compact target={{ kind: "task", resourceId: taskId, title: record.title }} />}
@@ -546,18 +553,7 @@ export function TaskPage({
         </PropertyRow>
 
         <PropertyRow icon={Calendar} label="Due date">
-          <input
-            type="date"
-            aria-label="Due date"
-            value={record.due ? isoDate(new Date(record.due)) : ""}
-            onChange={(event) =>
-              update.mutate({ due: event.target.value ? new Date(`${event.target.value}T17:00:00`).toISOString() : null })
-            }
-            className={cx(
-              "row-tile -mx-1.5 rounded bg-transparent px-1.5 py-0.5 text-[13.5px] outline-none",
-              !record.due && "text-faint",
-            )}
-          />
+          <DueDateField due={record.due} onSave={(due) => update.mutate({ due })} />
         </PropertyRow>
 
         <PropertyRow icon={TagIcon} label="Labels">

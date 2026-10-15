@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { ContextDesk } from "@/components/context/desk";
 import { ContextRouteSkeleton } from "@/components/motion/skeletons";
 import { ContextLens } from "@/components/desk/context-lens";
@@ -12,6 +12,13 @@ import { deskIdFromTemplate } from "@/components/desk/desks";
 import { filesHref } from "@/lib/files/links";
 import { api, type BoardPayload } from "@/lib/api";
 import type { LayoutPayload } from "@/lib/server-layout";
+
+const noSubscribe = () => () => undefined;
+
+/** False on the server and while hydrating, true after. */
+function useHydrated(): boolean {
+  return useSyncExternalStore(noSubscribe, () => true, () => false);
+}
 
 const WidgetLayout = dynamic(() => import("./widgets-screen").then((mod) => mod.WidgetLayout));
 const Utility = dynamic(() => import("./widgets-screen").then((mod) => mod.Utility));
@@ -23,6 +30,7 @@ export function ContextScreen({ initialLayout, initialBoard }: { initialLayout: 
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
   const prefs = useQuery({ queryKey: ["preferences"], queryFn: api.preferences, staleTime: 15_000 });
   const router = useRouter();
+  const hydrated = useHydrated();
   // Links to the artifacts tab open Files → From your apps.
   const moved = requested === "artifacts";
   useEffect(() => {
@@ -35,7 +43,9 @@ export function ContextScreen({ initialLayout, initialBoard }: { initialLayout: 
   if (requested === "preferences" || requested === "sources") return <Utility tab={requested} />;
   // The template picks the lens or the desk, and a preference picks the lens's sample state.
   // Before they load, any choice is a guess that flashes the wrong layout on a cold load.
-  if (shell.isPending) return <ContextRouteSkeleton />;
+  // The server always renders the skeleton here. This boundary can hydrate after the shell
+  // query has answered (the page streams in behind the layout), so hydrate the skeleton too.
+  if (!hydrated || shell.isPending) return <ContextRouteSkeleton />;
   const deskId = deskIdFromTemplate(shell.data?.activeTemplateId);
   if (deskId && prefs.isPending) return <ContextRouteSkeleton />;
   const sample = prefs.data?.preferences.some((row) => row.key === "desk.sample" && row.value === true) === true;

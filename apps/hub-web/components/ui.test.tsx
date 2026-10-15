@@ -84,6 +84,23 @@ test("a modal's portalled popover stays interactive and Escape dismisses it firs
   } finally { await unmount(mounted); }
 });
 
+test("a popover takes focus when it opens and gives it back to its trigger when it closes", async () => {
+  const mounted = await render(<div><button>Before</button><Popover trigger={(_, toggle) => <button onClick={toggle}>Menu</button>}>{(close) => <><button onClick={close}>First</button><button>Second</button></>}</Popover></div>);
+  try {
+    const trigger = [...mounted.host.querySelectorAll("button")].find((node) => node.textContent === "Menu")!;
+    trigger.focus();
+    await act(async () => trigger.click());
+    assert.equal(document.activeElement?.textContent, "First");
+    await act(async () => document.activeElement!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+    assert.equal(document.querySelector("[data-popover]"), null);
+    assert.equal(document.activeElement, trigger);
+    await act(async () => trigger.click());
+    await act(async () => (document.activeElement as HTMLButtonElement).click());
+    assert.equal(document.querySelector("[data-popover]"), null);
+    assert.equal(document.activeElement, trigger, "picking an item returns focus to the trigger");
+  } finally { await unmount(mounted); }
+});
+
 test("tabs use one tab stop, wrap with arrows, and support Home and End", async () => {
   function Harness() {
     const [value, setValue] = useState("a");

@@ -18,13 +18,6 @@ function colorFor(name: string) {
   for (const ch of name) hash = (hash * 33 + ch.charCodeAt(0)) >>> 0;
   return PALETTE[hash % PALETTE.length]!;
 }
-function initials(name: string) {
-  return name
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase() ?? "")
-    .join("");
-}
 function addDays(iso: string, days: number) {
   const date = new Date(`${iso.slice(0, 10)}T00:00:00Z`);
   date.setUTCDate(date.getUTCDate() + days);
@@ -290,7 +283,7 @@ function Reviews({ rows }: { rows: Row[] }) {
       <div className="col">
         {shown.map((row) => (
           <div key={row.id} className="row gap10" style={{ padding: "7px 0", borderTop: "1px solid color-mix(in srgb, var(--ink) 8%, transparent)" }}>
-            <span className="av" style={{ background: colorFor(row.title) }}>{initials(row.title) || "PR"}</span>
+            <span className="av" style={{ background: colorFor(row.title) }}>{personInitials(row.title) || "PR"}</span>
             <span className="trunc grow" style={{ fontSize: 13, fontWeight: 600 }}>{row.title}</span>
             <span className="pill a">{row.meta || "Review"}</span>
           </div>

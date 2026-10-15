@@ -2,13 +2,16 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { LogOut } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { PASSWORD_RULE, passwordProblem } from "@ensemble/shared-types";
 import { DESK_IDS, DESKS, MARKET_ID } from "@/components/desk/desks";
+import { PasswordField } from "@/components/password-field";
 import { ProfileForm } from "@/components/profile-form";
 import { useToast } from "@/components/toast";
 import { api, HUB_API } from "@/lib/api";
 import { clearBrowserTabSession } from "@/lib/tab-session";
 import { SectionCard } from "../ui";
+import { hasUnsaved, markUnsaved } from "./unsaved";
 
 export function AccountSection() {
   const toast = useToast();
@@ -53,7 +56,29 @@ export function AccountSection() {
   });
   const [current, setCurrent] = useState("");
   const [password, setPassword] = useState("");
+  const [repeat, setRepeat] = useState("");
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const [repeatError, setRepeatError] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState("");
+  // Mutation state reaches the button a render later; these refuse a second click in between.
+  const profileBusy = useRef(false);
+  const passwordBusy = useRef(false);
+  const profileDirty = useCallback((dirty: boolean) => markUnsaved("profile", dirty), []);
+  useEffect(() => markUnsaved("password", Boolean(password || repeat)), [password, repeat]);
+  useEffect(
+    () => () => {
+      markUnsaved("profile", false);
+      markUnsaved("password", false);
+    },
+    [],
+  );
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => {
+      if (hasUnsaved()) event.preventDefault();
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, []);
   const profileSave = useMutation({
     mutationFn: api.updateProfile,
     onSuccess: async () => {
@@ -66,13 +91,25 @@ export function AccountSection() {
   const save = useMutation({
     mutationFn: (data: { name?: string; password?: string; current?: string }) => api.updateMe(data),
     onSuccess: async () => {
-      toast("Saved.", { tone: "ok" });
+      toast("Password saved.", { tone: "ok" });
       setCurrent("");
       setPassword("");
+      setRepeat("");
       await client.invalidateQueries({ queryKey: ["me"] });
     },
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
+  const needsCurrent = me.data?.user.hasPassword !== false;
+  const changePassword = () => {
+    if (passwordBusy.current) return;
+    const problem = passwordProblem(password);
+    const mismatch = !problem && repeat !== password ? "The two passwords don't match." : null;
+    setPasswordError(problem);
+    setRepeatError(mismatch);
+    if (problem || mismatch || (needsCurrent && !current)) return;
+    passwordBusy.current = true;
+    save.mutate({ password, current: current || undefined }, { onSettled: () => { passwordBusy.current = false; } });
+  };
   const logout = useMutation({
     mutationFn: api.logout,
     onSuccess: () => {
@@ -185,20 +222,60 @@ export function AccountSection() {
                 initial={{ name: me.data.user.name, profile: me.data.user.profile }}
                 submitLabel="Save profile"
                 pending={profileSave.isPending}
-                onSubmit={(values) => profileSave.mutate(values)}
+                requireChange
+                onDirtyChange={profileDirty}
+                onSubmit={(values) => {
+                  if (profileBusy.current) return;
+                  profileBusy.current = true;
+                  profileSave.mutate(values, { onSettled: () => { profileBusy.current = false; } });
+                }}
               />
             </div>
           </div>
-          <div className="text-[13px] font-medium">
-            {me.data.user.hasPassword === false ? "Add a password" : "Change password"}
-            <div className="mt-1.5 flex gap-2">
-              {me.data.user.hasPassword !== false ? <input aria-label="Current password" type="password" autoComplete="current-password" value={current} onChange={(event) => setCurrent(event.target.value)} placeholder="Current" className="field w-full" /> : null}
-              <input aria-label="New password" type="password" autoComplete="new-password" maxLength={256} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="New (8+)" className="field w-full" />
-              <button type="button" className="btn" disabled={save.isPending || password.length < 8 || (me.data.user.hasPassword !== false && !current)} onClick={() => save.mutate({ password, current: current || undefined })}>
-                Save
-              </button>
+          <form
+            className="rounded-xl border border-line p-3"
+            data-password-form
+            onSubmit={(event) => {
+              event.preventDefault();
+              changePassword();
+            }}
+          >
+            <h3 className="text-[13px] font-medium">{needsCurrent ? "Change password" : "Add a password"}</h3>
+            <p className="mt-1 text-[12px] text-muted">{PASSWORD_RULE} Other devices are signed out when it changes.</p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              {needsCurrent ? (
+                <PasswordField className="sm:col-span-2" label="Current password" autoComplete="current-password" maxLength={256} value={current} onChange={setCurrent} />
+              ) : null}
+              <PasswordField
+                label="New password"
+                autoComplete="new-password"
+                maxLength={256}
+                value={password}
+                onChange={(value) => {
+                  setPassword(value);
+                  setPasswordError(null);
+                  if (repeatError && value === repeat) setRepeatError(null);
+                }}
+                onBlur={() => setPasswordError(password ? passwordProblem(password) : null)}
+                error={passwordError}
+              />
+              <PasswordField
+                label="Confirm new password"
+                autoComplete="new-password"
+                maxLength={256}
+                value={repeat}
+                onChange={(value) => {
+                  setRepeat(value);
+                  setRepeatError(null);
+                }}
+                onBlur={() => setRepeatError(repeat && repeat !== password ? "The two passwords don't match." : null)}
+                error={repeatError}
+              />
             </div>
-          </div>
+            <button type="submit" className="btn mt-3" disabled={save.isPending || !password || !repeat || (needsCurrent && !current)}>
+              {save.isPending ? "Saving..." : "Save password"}
+            </button>
+          </form>
         </div>
       )}
       {!local ? (

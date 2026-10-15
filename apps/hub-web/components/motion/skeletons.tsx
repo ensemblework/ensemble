@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { Skeleton } from "@/components/ui";
 import { useDelayedFlag } from "@/lib/motion/use-delayed-flag";
 import { BrandMorph } from "./brand-morph";
@@ -170,11 +170,20 @@ function DeskShell({ id, children }: { id: string; children: ReactNode }) {
   );
 }
 
-function Bento({ spans }: { spans: Array<[number, number]> }) {
+/**
+ * A skeleton block CSS reveals after the usual delay. Skeleton waits for scripts, so a
+ * server-rendered page on a slow connection would show nothing until they load.
+ */
+function Painted({ className, index = 0, style }: { className: string; index?: number; style?: CSSProperties }) {
+  return <div className={`skeleton ${className}`} style={{ ...style, ["--i" as string]: index }} data-paint="css" data-motion-slot="content.skeleton" data-state="loading" aria-hidden />;
+}
+
+function Bento({ spans, painted = false }: { spans: Array<[number, number]>; painted?: boolean }) {
+  const Block = painted ? Painted : Skeleton;
   return (
     <div className="grid grid-cols-12 gap-3" style={{ gridAutoRows: "72px" }}>
       {spans.map(([columns, rows], index) => (
-        <Skeleton key={index} index={index} className="rounded-[14px]" style={{ gridColumn: `span ${columns}`, gridRow: `span ${rows}` }} />
+        <Block key={index} index={index} className="rounded-[14px]" style={{ gridColumn: `span ${columns}`, gridRow: `span ${rows}` }} />
       ))}
     </div>
   );
@@ -200,23 +209,23 @@ export function TodayRouteSkeleton() {
   );
 }
 
-/** Context lens: same desk page, tab row, then the bento. */
+/** Context lens: same desk page, tab row, then the bento. The server paints it, visible before scripts load. */
 export function ContextRouteSkeleton() {
   return (
     <DeskShell id="context">
       <div className="mb-[18px]">
         <div className="mb-1 flex items-center gap-2">
-          <Skeleton className="h-5 w-28 rounded-full" />
+          <Painted className="h-5 w-28 rounded-full" />
         </div>
-        <Skeleton className="h-9 w-36" />
-        <Skeleton className="mt-1.5 h-4 w-[min(520px,72vw)]" />
+        <Painted className="h-9 w-36" />
+        <Painted className="mt-1.5 h-4 w-[min(520px,72vw)]" />
       </div>
       <div className="mb-4 flex w-fit gap-1 rounded-[10px] border border-line p-[3px]">
         {Array.from({ length: 4 }, (_, index) => (
-          <Skeleton key={index} index={index} className="h-7 w-[4.5rem] rounded-md" />
+          <Painted key={index} index={index} className="h-7 w-[4.5rem] rounded-md" />
         ))}
       </div>
-      <Bento spans={[[8, 3], [4, 3], [6, 3], [6, 3]]} />
+      <Bento painted spans={[[8, 3], [4, 3], [6, 3], [6, 3]]} />
     </DeskShell>
   );
 }

@@ -1,4 +1,5 @@
 /** Timezone helpers. "Today" and reminder instants follow the user's zone, not the server. */
+import { DUE_YEAR_MAX, DUE_YEAR_MESSAGE, DUE_YEAR_MIN } from "@ensemble/shared-types";
 
 const DATE_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const TIME_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
@@ -117,11 +118,12 @@ export function parseDue(value: string | null | undefined): Date | null | undefi
   if (leading && !isIsoDate(leading[1]!)) {
     throw Object.assign(new Error("due must be a real YYYY-MM-DD date."), { statusCode: 400 });
   }
-  if (leading && value === leading[1]) return new Date(`${value}T00:00:00.000Z`);
-  const date = new Date(value);
+  const date = leading && value === leading[1] ? new Date(`${value}T00:00:00.000Z`) : new Date(value);
   if (Number.isNaN(date.getTime())) {
     throw Object.assign(new Error("due must be YYYY-MM-DD or an ISO datetime."), { statusCode: 400 });
   }
+  const year = date.getUTCFullYear();
+  if (year < DUE_YEAR_MIN || year > DUE_YEAR_MAX) throw Object.assign(new Error(DUE_YEAR_MESSAGE), { statusCode: 400 });
   return date;
 }
 

@@ -14,7 +14,7 @@ import { markdownToNodes, pageSearchText } from "./markdown.js";
 import { lockUserTransaction } from "../lib/user-lock.js";
 import { recordUndoInTransaction, withUndoGroup } from "../lib/undo.js";
 import { createTask } from "../services/tasks.js";
-import { currentScope } from "../sharing/context.js";
+import { currentScope, isGuestIn } from "../sharing/context.js";
 
 export class TaskPageError extends Error {
   constructor(
@@ -153,6 +153,9 @@ export type StandalonePageSummary = {
   id: string;
   title: string;
   updatedAt: string;
+  createdAt?: string;
+  /** With a search: the words around the first match in the page's text. */
+  snippet?: string;
 };
 
 export type StandalonePageContent = {
@@ -204,13 +207,36 @@ async function ownedStandalone(db: Db, userId: string, id: string, lock = false)
   return db.taskPage.findFirst({ where: { id, userId, taskId: null, deletedAt: null }, include: PAGE_INCLUDE });
 }
 
-export async function listStandalonePages(prisma: PrismaClient, userId: string): Promise<StandalonePageSummary[]> {
+export async function listStandalonePages(prisma: PrismaClient, userId: string, query = ""): Promise<StandalonePageSummary[]> {
+  const words = query.trim().slice(0, 200);
   const rows = await prisma.taskPage.findMany({
-    where: { userId, taskId: null, deletedAt: null },
+    where: { userId, taskId: null, deletedAt: null, ...(words ? { searchText: { contains: words, mode: "insensitive" as const } } : {}) },
     orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
-    select: { id: true, title: true, updatedAt: true, parentId: true },
+    select: { id: true, title: true, updatedAt: true, createdAt: true, parentId: true, ...(words ? { searchText: true } : {}) },
+    ...(words ? { take: 200 } : {}),
   });
-  return rows.map((row) => ({ id: row.id, parentId: row.parentId, title: row.title || "Untitled", updatedAt: row.updatedAt.toISOString() }));
+  return rows.map((row) => ({
+    id: row.id,
+    parentId: row.parentId,
+    title: row.title || "Untitled",
+    updatedAt: row.updatedAt.toISOString(),
+    createdAt: row.createdAt.toISOString(),
+    ...(words ? { snippet: searchSnippet((row as { searchText?: string | null }).searchText ?? "", row.title, words) } : {}),
+  }));
+}
+
+/** About 120 characters of the page's text around the first match, title left out. */
+export function searchSnippet(text: string, title: string, query: string): string {
+  const body = text.startsWith(title.trim()) ? text.slice(title.trim().length) : text;
+  const flat = body.replace(/\s+/g, " ").trim();
+  const at = flat.toLowerCase().indexOf(query.toLowerCase());
+  if (at < 0) return "";
+  let start = Math.max(0, at - 50);
+  let end = Math.min(flat.length, at + query.length + 70);
+  // Whole words only at the cut ends.
+  if (start > 0) start = Math.min(at, flat.indexOf(" ", start) + 1 || at);
+  if (end < flat.length) end = Math.max(at + query.length, flat.lastIndexOf(" ", end));
+  return `${start > 0 ? "…" : ""}${flat.slice(start, end).trim()}${end < flat.length ? "…" : ""}`;
 }
 
 /** A new note: empty, or made from a file (`sourceFileId`) or from text with its title and content. */
@@ -241,10 +267,24 @@ export async function createStandalonePage(
   return { id: page.id, parentId: page.parentId, title: page.title, updatedAt: page.updatedAt.toISOString() };
 }
 
-export async function getStandalonePage(prisma: PrismaClient, userId: string, id: string): Promise<StandalonePageContent> {
+/**
+ * A page to open. A page in Trash answers 404 `PAGE_IN_TRASH` to the space owner, so the
+ * Hub can offer Restore; with `trashed`, the owner gets it to read, with `deletedAt` set.
+ */
+export async function getStandalonePage(
+  prisma: PrismaClient,
+  userId: string,
+  id: string,
+  options: { trashed?: boolean } = {},
+): Promise<StandalonePageContent & { deletedAt?: string }> {
   const page = await ownedStandalone(prisma, userId, id);
-  if (!page) throw new TaskPageError("PAGE_NOT_FOUND", "Page not found.", 404);
-  return standaloneDto(page);
+  if (page) return standaloneDto(page);
+  const binned = isGuestIn(userId)
+    ? null
+    : await prisma.taskPage.findFirst({ where: { id, userId, taskId: null, deletedAt: { not: null } }, include: PAGE_INCLUDE });
+  if (binned?.deletedAt && options.trashed) return { ...standaloneDto(binned), deletedAt: binned.deletedAt.toISOString() };
+  if (binned) throw new TaskPageError("PAGE_IN_TRASH", "This page is in Trash.", 404);
+  throw new TaskPageError("PAGE_NOT_FOUND", "Page not found.", 404);
 }
 
 export async function renameStandalonePage(

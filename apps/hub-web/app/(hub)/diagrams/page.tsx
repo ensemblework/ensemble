@@ -3,9 +3,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { DIAGRAM_TEMPLATES } from "@ensemble/block-diagrams/templates";
-import { PageHeader } from "@/components/ui";
+import { LoadError } from "@/components/load-error";
+import { PageHeader, SkeletonRows } from "@/components/ui";
 import { useToast } from "@/components/toast";
 import { api } from "@/lib/api";
 import { relative } from "@/lib/format";
@@ -19,14 +20,28 @@ export default function DiagramsPage() {
   const [pending, setPending] = useState<string | null>(null);
   const [gallery, setGallery] = useState(false);
   const [filter, setFilter] = useState("");
+  const creating = useRef(false);
   const create = useMutation({
     mutationFn: (source?: string) => api.createDiagram(source),
     onSuccess: (result) => {
       void client.invalidateQueries({ queryKey: ["diagrams"] });
       router.push(`/diagrams/${result.diagram.id}`);
     },
-    onError: (error) => toast(error instanceof Error ? error.message : "Couldn't create a diagram.", { tone: "error" }),
+    onError: (error) => {
+      creating.current = false;
+      toast(error instanceof Error ? error.message : "Couldn't create a diagram.", { tone: "error" });
+    },
   });
+  // A double click lands both clicks before isPending disables the buttons; one diagram per choice.
+  // The guard stays up after success, while the editor opens.
+  const start = (source?: string) => {
+    if (creating.current) return;
+    creating.current = true;
+    create.mutate(source);
+  };
+  const failure = list.data ? null : (list.error ?? list.failureReason);
+  // refetch() waits for a retry that is sleeping out its delay; cancel it so Retry asks now.
+  const retry = () => void client.cancelQueries({ queryKey: ["diagrams"], exact: true }).then(() => list.refetch());
   const remove = useMutation({
     mutationFn: (id: string) => api.deleteDiagram(id),
     onSuccess: () => {
@@ -60,7 +75,7 @@ export default function DiagramsPage() {
         <div className="mb-4 rounded-xl border border-line bg-panel p-3" role="dialog" aria-label="New diagram">
           <div className="mb-2 text-[13px] font-medium">Start from</div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-            <button type="button" className="tile rounded-lg px-3 py-2 text-left" disabled={create.isPending} onClick={() => create.mutate(undefined)}>
+            <button type="button" className="tile rounded-lg px-3 py-2 text-left" disabled={create.isPending} onClick={() => start()}>
               <div className="text-[13.5px] font-medium">Blank</div>
               <div className="mt-0.5 text-[12px] text-muted">An empty canvas</div>
             </button>
@@ -70,7 +85,7 @@ export default function DiagramsPage() {
                 type="button"
                 className="tile rounded-lg px-3 py-2 text-left"
                 disabled={create.isPending}
-                onClick={() => create.mutate(template.source)}
+                onClick={() => start(template.source)}
               >
                 <div className="text-[13.5px] font-medium">{template.name}</div>
                 <div className="mt-0.5 text-[12px] text-muted">{template.blurb}</div>
@@ -86,11 +101,15 @@ export default function DiagramsPage() {
         placeholder="Search diagrams"
         className="field mb-3 w-full px-3 py-2 text-[13.5px]"
       />
-      {list.isError ? <p className="text-[14px] text-danger">{list.error instanceof Error ? list.error.message : "Couldn't load diagrams."}</p> : null}
-      {!list.isLoading && !diagrams.length ? (
+      {failure ? (
+        <LoadError error={failure} what="your diagrams" onRetry={retry} />
+      ) : list.isPending ? (
+        <SkeletonRows count={3} rowClassName="h-16" />
+      ) : !diagrams.length ? (
         <div className="empty-state">No diagrams yet. Create one and describe the blocks, or paste a Mermaid flowchart into the text.</div>
+      ) : !shown.length ? (
+        <p className="text-[13.5px] text-muted">No diagrams match that search.</p>
       ) : null}
-      {!list.isLoading && diagrams.length > 0 && !shown.length ? <p className="text-[13.5px] text-muted">No diagrams match that search.</p> : null}
       <ul className="space-y-2">
         {shown.map((diagram) => (
           <li key={diagram.id} className="tile flex items-center gap-3 rounded-xl bg-panel px-4 py-3">

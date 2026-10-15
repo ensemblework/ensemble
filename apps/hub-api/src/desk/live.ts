@@ -4,11 +4,30 @@ import { zonedParts } from "../lib/clock.js";
 import { isLimitationRule, limitationDue, daysBetween, type LimitationRule } from "./limitation.js";
 import { TASK_SELECT } from "./entries.js";
 import { isListedArtifact } from "./artifacts.js";
+import { artifactOrigin } from "../context/artifacts.js";
 import { isGuestIn, visibleArtifacts } from "../sharing/context.js";
 
 const TASKS = 48;
 const MATTERS = 24;
 const LISTS = 12;
+/** Open tasks due before the end of next week, kept in the payload however long ago they were touched. */
+const DATED = 16;
+const OPEN = ["proposed", "todo", "in_progress", "blocked", "waiting_approval"] as const;
+
+/**
+ * The recent tasks, with any dated open task that is not among them swapped in for the least
+ * recently touched undated ones. Overdue work stays on Today even when nobody has opened it.
+ */
+export function withDated<T extends { id: string; due: Date | null }>(recent: T[], dated: T[], cap: number): T[] {
+  const have = new Set(recent.map((row) => row.id));
+  const extra = dated.filter((row) => !have.has(row.id));
+  if (!extra.length) return recent.slice(0, cap);
+  const out = [...recent];
+  for (let index = out.length - 1; index >= 0 && out.length + extra.length > cap; index--) {
+    if (!out[index]!.due) out.splice(index, 1);
+  }
+  return [...out, ...extra].slice(0, cap);
+}
 
 function iso(value: Date | null): string | null {
   return value ? value.toISOString().slice(0, 10) : null;
@@ -18,12 +37,27 @@ function stamp(value: Date | null): string | null {
   return value ? value.toISOString() : null;
 }
 
-function artifactSource(metadata: unknown, kind: string): string {
-  if (metadata && typeof metadata === "object" && "source" in metadata) {
-    const source = (metadata as { source?: unknown }).source;
-    if (typeof source === "string" && source.trim()) return source.trim();
-  }
-  return kind.replaceAll("_", " ");
+function metaOf(metadata: unknown): Record<string, unknown> {
+  return metadata && typeof metadata === "object" && !Array.isArray(metadata) ? (metadata as Record<string, unknown>) : {};
+}
+
+function text(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+/** Where an item came from, as a name: "Gmail", "Google Drive". Uploaded files are in the person's own Files. */
+function artifactSource(row: { kind: string; externalId: string; url: string | null; metadata: unknown }): string {
+  const origin = artifactOrigin(row);
+  if (origin) return origin.label;
+  if (row.kind === "file" && row.externalId.startsWith("file:")) return "Your files";
+  return text(metaOf(row.metadata).source) ?? row.kind.replaceAll("_", " ");
+}
+
+/** What a file is, as its source said: an uploaded file's extension, or the media type or type name an app gave. */
+function fileHints(metadata: unknown): { format: string | null; fileType: string | null } {
+  const meta = metaOf(metadata);
+  const facts = metaOf(meta.facts);
+  return { format: text(meta.format), fileType: text(meta.mimeType) ?? text(facts.Type) };
 }
 
 export async function loadDeskLive(db: PrismaClient, userId: string, now = new Date()) {
@@ -31,9 +65,16 @@ export async function loadDeskLive(db: PrismaClient, userId: string, now = new D
   const today = zonedParts(settings.timezone, now).date;
   const holidayFrom = new Date(now.getTime() - 400 * 86_400_000);
   const holidayTo = new Date(now.getTime() + 500 * 86_400_000);
-  const [tasks, matters, deliverables, people, meetings, artifacts, reminders, slots, holidays, present, absent, objectives, deploys, parts, tests, citations, grading, repos, projects] =
+  const datedBefore = new Date(Date.parse(`${today}T00:00:00.000Z`) + 8 * 86_400_000);
+  const [recent, dated, matters, deliverables, people, meetings, artifacts, reminders, slots, holidays, present, absent, objectives, deploys, parts, tests, citations, grading, repos, projects] =
     await Promise.all([
       db.task.findMany({ where: { userId, deletedAt: null }, orderBy: { updatedAt: "desc" }, take: TASKS, select: TASK_SELECT }),
+      db.task.findMany({
+        where: { userId, deletedAt: null, status: { in: [...OPEN] }, due: { not: null, lt: datedBefore } },
+        orderBy: { due: "asc" },
+        take: DATED,
+        select: TASK_SELECT,
+      }),
       db.task.findMany({
         where: { userId, deletedAt: null, orderDate: { not: null } },
         orderBy: { orderDate: "asc" },
@@ -62,7 +103,7 @@ export async function loadDeskLive(db: PrismaClient, userId: string, now = new D
         where: { userId, deletedAt: null, AND: [visibleArtifacts(userId)] },
         orderBy: { ts: "desc" },
         take: 8,
-        select: { id: true, title: true, kind: true, url: true, ts: true, metadata: true },
+        select: { id: true, title: true, kind: true, url: true, ts: true, metadata: true, externalId: true },
       }),
       // Reminders are private to the space's owner.
       isGuestIn(userId)
@@ -92,6 +133,7 @@ export async function loadDeskLive(db: PrismaClient, userId: string, now = new D
       db.project.findMany({ where: { userId, deletedAt: null }, orderBy: { name: "asc" }, take: 12, select: { id: true, name: true } }),
     ]);
 
+  const tasks = withDated(recent, dated, TASKS);
   const byId = new Map(tasks.map((row) => [row.id, row]));
   for (const row of matters) if (!byId.has(row.id)) byId.set(row.id, row);
   const merged = [...byId.values()];
@@ -148,7 +190,8 @@ export async function loadDeskLive(db: PrismaClient, userId: string, now = new D
       kind: row.kind,
       url: row.url,
       ts: row.ts.toISOString(),
-      source: artifactSource(row.metadata, row.kind),
+      source: artifactSource(row),
+      ...fileHints(row.metadata),
     })),
     reminders: reminders.map((row) => ({ id: row.id, title: row.title, dueDate: row.dueDate })),
     slots: slots.map((row) => ({ id: row.id, title: row.title, weekday: row.weekday, startMin: row.startMin, endMin: row.endMin, course: row.course })),

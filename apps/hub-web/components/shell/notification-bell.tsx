@@ -38,16 +38,28 @@ export function NotificationContent({ rows, loading, error, busy, onRead, onRead
   const unread = rows.filter((r) => !r.readAt).length;
   const requests = rows.filter((r) => !r.readAt && r.kind === "decision").length;
   const shown = filterNotifications(rows, filter);
+  const feed = useRef<HTMLDivElement>(null);
+  // The read button goes away once the row is read: keep keyboard focus in the list, on the next row.
+  const markRead = (id: string, button: HTMLElement) => {
+    if (busy) return;
+    const items = [...(feed.current?.querySelectorAll<HTMLLIElement>("li[data-note-id]") ?? [])];
+    const at = items.findIndex((item) => item.contains(button));
+    const next = [...items.slice(at + 1), ...items.slice(0, Math.max(0, at)).reverse()]
+      .map((item) => item.querySelector<HTMLElement>(".notification-read, a.notification-entry"))
+      .find(Boolean);
+    (next ?? feed.current?.closest(".notification-center")?.querySelector<HTMLElement>("footer button:not(:disabled), .notification-heading button"))?.focus();
+    onRead(id);
+  };
   return <div className="notification-center">
     <header className="notification-heading"><div><span className="notification-eyebrow">YOUR WORK, IN THE LOOP</span><h2>Notifications</h2></div><button type="button" className="icon-btn" aria-label="Close notifications" onClick={onClose}><X size={16} /></button></header>
     <div className="notification-summary"><button type="button" aria-pressed={filter === "unread"} onClick={() => setFilter("unread")}><span className="notification-summary-icon"><Bell size={16} /></span><span><strong>{loading ? "—" : unread}</strong><small>unread updates</small></span></button><button type="button" aria-pressed={filter === "requests"} onClick={() => setFilter("requests")}><span className="notification-summary-icon request"><CircleAlert size={16} /></span><span><strong>{loading ? "—" : requests}</strong><small>unread requests</small></span></button></div>
     <div className="notification-filters" aria-label="Notification filters">{FILTERS.map(([key, label]) => <button key={key} type="button" aria-pressed={filter === key} onClick={() => setFilter(key)}>{label}</button>)}</div>
-    <div className="notification-feed">
+    <div ref={feed} className="notification-feed">
       {loading ? <div className="p-4"><SkeletonRows count={3} rowClassName="h-16" /></div> : error ? <div className="notification-empty" role="alert"><CircleAlert size={24} /><strong>Couldn't load your updates</strong><p>{error}</p><button type="button" className="btn" onClick={onRetry}>Try again</button></div> : !shown.length ? <div className="notification-empty"><span><BellOff size={24} /></span><strong>{filter === "unread" ? "You're all caught up" : rows.length ? "Nothing in this view" : "A little quiet is a good thing"}</strong><p>{rows.length ? "Try another filter to see more activity." : "Agent updates, requests, reminders, and shared work will arrive here."}</p></div> : groupNotifications(shown).map((group) => <section key={group.label}><h3>{group.label}<span>{group.rows.length}</span></h3><ul>{group.rows.map((row) => {
         const kind = KIND[row.kind] ?? KIND.default!;
         const Icon = kind.icon;
         const content = <><span className="notification-kind-icon" data-tone={row.urgent && !row.readAt ? "amber" : kind.tone}><Icon size={16} /></span><span className="notification-message"><span className="notification-meta"><span>{kind.label}{row.urgent && !row.readAt ? " · Priority" : ""}</span><time dateTime={row.createdAt} title={new Date(row.createdAt).toLocaleString()}>{relative(row.createdAt)}</time></span><strong>{row.title}</strong>{row.body && <span className="notification-body">{row.body}</span>}{row.url && <small>Open<ArrowUpRight size={11} /></small>}</span></>;
-        return <li key={row.id} data-unread={!row.readAt || undefined}>{row.url ? <Link href={row.url} className="notification-entry" onClick={() => { if (!row.readAt && !busy) onRead(row.id); onClose(); }}>{content}</Link> : <div className="notification-entry">{content}</div>}{!row.readAt && <button type="button" className="notification-read" disabled={busy} aria-label={`Mark "${row.title}" as read`} onClick={() => onRead(row.id)}><Check size={13} /></button>}</li>;
+        return <li key={row.id} data-note-id={row.id} data-unread={!row.readAt || undefined}>{row.url ? <Link href={row.url} className="notification-entry" onClick={() => { if (!row.readAt && !busy) onRead(row.id); onClose(); }}>{content}</Link> : <div className="notification-entry">{content}</div>}{!row.readAt && <button type="button" className="notification-read" aria-disabled={busy || undefined} aria-label={`Mark "${row.title}" as read`} onClick={(event) => markRead(row.id, event.currentTarget)}><Check size={13} /></button>}</li>;
       })}</ul></section>)}
     </div>
     <footer><span>{unread ? `${unread} unread` : "All read"}</span><button type="button" disabled={!unread || busy || loading} onClick={onReadAll}><CheckCheck size={14} />Mark all as read</button></footer>

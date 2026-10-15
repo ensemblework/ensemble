@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, RotateCcw, Trash2, X } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Settings } from "@ensemble/shared-types";
 import { SHORTCUTS, formatBinding } from "@ensemble/shared-types";
 import { api } from "@/lib/api";
@@ -16,6 +16,10 @@ import { currentTerminalAccess } from "../code/terminal-address";
 import { pickFolderNative } from "@/lib/desktop-dialog";
 import { InfoTip, SectionCard, SettingRow, Spinner, Tag, Toggle, cx } from "../ui";
 import { confirmAction } from "@/components/ask-dialog";
+import { isEmailAddress, timeZoneName } from "@ensemble/shared-types";
+import { sameTimeZone, timeZoneLabel, timeZoneOptions } from "@/lib/time-zones";
+import { NumberField } from "./number-field";
+import { askNotificationPermission, notificationNote, readNotificationState, type NotificationState } from "./reminders";
 
 export type Patch = (patch: Record<string, unknown>) => void;
 type Props = { settings: Settings; patch: Patch };
@@ -37,15 +41,7 @@ export function AutonomySection({ settings, patch }: Props) {
       </p>
       <div className="mt-2 divide-y divide-[var(--line)]">
         <SettingRow title="Daily high-risk write limit" description="Beyond this, unattended sends fall back to asking you, the runaway brake.">
-          <input
-            aria-label="Daily high-risk write limit"
-            type="number"
-            min={0}
-            max={500}
-            value={orchestration.dailyHighRiskLimit}
-            onChange={(event) => set({ dailyHighRiskLimit: Number(event.target.value) })}
-            className="field w-20 text-right"
-          />
+          <NumberField label="Daily high-risk write limit" min={0} max={500} value={orchestration.dailyHighRiskLimit} onChange={(dailyHighRiskLimit) => set({ dailyHighRiskLimit })} />
         </SettingRow>
         <SettingRow
           title="Network for sandboxed commands"
@@ -92,14 +88,12 @@ export function OrchestrationSection({ settings, patch }: Props) {
   const orchestration = settings.orchestration;
   const set = (value: Partial<Settings["orchestration"]>) => patch({ orchestration: value });
   const number = (key: "maxConcurrentJobs" | "maxTurns" | "maxMinutes", min: number, max: number) => (
-    <input
-      aria-label={{ maxConcurrentJobs: "Tasks that run at once", maxTurns: "Model turns per task", maxMinutes: "Minutes per task" }[key]}
-      type="number"
+    <NumberField
+      label={{ maxConcurrentJobs: "Tasks that run at once", maxTurns: "Model turns per task", maxMinutes: "Minutes per task" }[key]}
       min={min}
       max={max}
       value={orchestration[key]}
-      onChange={(event) => set({ [key]: Math.min(max, Math.max(min, Number(event.target.value))) })}
-      className="field w-20 text-right"
+      onChange={(value) => set({ [key]: value })}
     />
   );
   return (
@@ -247,55 +241,19 @@ export function RetentionSection({ settings, patch }: Props) {
           </select>
           on the board
         </label>
-        <label className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           Keep finished tasks on the Context graph for
-          <input
-            type="number"
-            min={0}
-            max={365}
-            aria-label="Context review days"
-            value={settings.contextReviewDays}
-            onChange={(event) => {
-              const value = Number(event.target.value);
-              if (value >= 0 && value <= 365) patch({ contextReviewDays: value });
-            }}
-            className="field w-16"
-          />
-          days
-        </label>
+          <NumberField label="Context review days" min={0} max={365} unit="days" width="w-16" value={settings.contextReviewDays} onChange={(contextReviewDays) => patch({ contextReviewDays })} />
+        </div>
         <p className="text-[12.5px] text-muted">Zero hides them until All completed is ticked on the graph. Completed and Trash live further down this page.</p>
-        <label className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           Undo history
-          <input
-            type="number"
-            min={3}
-            max={20}
-            aria-label="Undo depth"
-            value={settings.undoDepth}
-            onChange={(event) => {
-              const value = Number(event.target.value);
-              if (value >= 3 && value <= 20) patch({ undoDepth: value });
-            }}
-            className="field w-16"
-          />
-          actions
-        </label>
-        <label className="flex items-center gap-3">
+          <NumberField label="Undo depth" min={3} max={20} unit="actions" width="w-16" value={settings.undoDepth} onChange={(undoDepth) => patch({ undoDepth })} />
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
           Keep the audit log and status history
-          <input
-            type="number"
-            min={30}
-            max={365}
-            aria-label="History retention"
-            value={settings.historyRetentionDays}
-            onChange={(event) => {
-              const value = Number(event.target.value);
-              if (value >= 30 && value <= 365) patch({ historyRetentionDays: value });
-            }}
-            className="field w-20"
-          />
-          days
-        </label>
+          <NumberField label="History retention" min={30} max={365} unit="days" value={settings.historyRetentionDays} onChange={(historyRetentionDays) => patch({ historyRetentionDays })} />
+        </div>
       </div>
       <p className="mt-2 text-[12.5px] text-muted">
         Deleted items stay in Trash until the trash window. Completed tasks and deliverables stay visible, then move to Trash after their own window. Undo keeps the last few actions (3–20, default 5) and is never unlimited. The audit log and status history use their own clock, separate from Trash, default 90 days. Active work is never purged.
@@ -306,28 +264,65 @@ export function RetentionSection({ settings, patch }: Props) {
 
 export function RemindersSection({ settings, patch }: Props) {
   const toast = useToast();
-  const [permission, setPermission] = useState(typeof Notification === "undefined" ? "unsupported" : Notification.permission);
+  const [permission, setPermission] = useState<NotificationState>(() => readNotificationState());
+  useEffect(() => {
+    // Allowing or blocking from the address bar while this page is open updates the note.
+    let status: PermissionStatus | null = null;
+    const update = () => setPermission(readNotificationState());
+    void navigator.permissions
+      ?.query({ name: "notifications" })
+      .then((result) => {
+        status = result;
+        result.addEventListener("change", update);
+      })
+      .catch(() => undefined);
+    return () => status?.removeEventListener("change", update);
+  }, []);
+  const test = () => new Notification("Ensemble", { body: "Reminders will appear like this." });
+  const enable = async () => {
+    const result = await askNotificationPermission();
+    setPermission(result);
+    if (result !== "granted") return;
+    patch({ desktopReminders: true });
+    test();
+  };
+  // The setting is per account; whether this browser may show it is not. Off here unless both say yes.
+  const on = settings.desktopReminders && permission === "granted";
+  const blocked = permission === "denied" || permission === "unsupported";
   return (
     <SectionCard
       title="Desktop reminders"
       info="Uses your browser's notifications. Your OS focus and notification settings still apply."
-      description="Reminders pop up on this computer while a Ensemble tab is open."
+      description="Reminders pop up on this computer while an Ensemble tab is open."
     >
-      <SettingRow title="Show reminders as desktop notifications" description={`Browser permission: ${permission}`}>
-        <Toggle label="Desktop reminders" checked={settings.desktopReminders} onChange={(desktopReminders) => patch({ desktopReminders })} />
+      <SettingRow title="Show reminders as desktop notifications" description={notificationNote(permission)}>
+        <Toggle label="Desktop reminders" checked={on} disabled={blocked} onChange={(next) => (next ? void enable() : patch({ desktopReminders: false }))} />
       </SettingRow>
-      <button
-        type="button"
-        className="btn"
-        onClick={async () => {
-          if (typeof Notification === "undefined") return toast("This browser does not support notifications.", { tone: "error" });
-          const result = await Notification.requestPermission();
-          setPermission(result);
-          if (result === "granted") new Notification("Ensemble", { body: "Reminders will appear like this." });
-        }}
-      >
-        Set up desktop reminders
-      </button>
+      {settings.desktopReminders && blocked ? (
+        <p role="alert" className="mb-2 text-[12.5px] text-danger">
+          Desktop reminders are switched on for your account, but this browser can&apos;t show them.{" "}
+          <button type="button" className="font-medium underline underline-offset-2" onClick={() => patch({ desktopReminders: false })}>
+            Switch them off
+          </button>
+        </p>
+      ) : null}
+      {permission === "granted" ? (
+        <button type="button" className="btn" onClick={() => (on ? test() : void enable())}>
+          {on ? "Send a test notification" : "Turn on and send a test"}
+        </button>
+      ) : permission === "default" ? (
+        <button type="button" className="btn" onClick={() => void enable()}>
+          Allow notifications
+        </button>
+      ) : permission === "denied" ? (
+        <button type="button" className="btn" onClick={() => {
+          const now = readNotificationState();
+          setPermission(now);
+          if (now === "denied") toast("Still blocked. Allow notifications in the site settings, then reload this page.", { tone: "error" });
+        }}>
+          Check again
+        </button>
+      ) : null}
     </SectionCard>
   );
 }
@@ -585,17 +580,67 @@ function CodeFolders({ settings, patch, workspace, desktop }: Props & { workspac
 }
 
 export function IdentitySection({ settings, patch }: Props) {
+  const [email, setEmail] = useState(settings.email);
+  const [left, setLeft] = useState(false);
+  useEffect(() => setEmail(settings.email), [settings.email]);
+  const emailError = left && !isEmailAddress(email) ? "Enter an email address like name@example.com." : null;
+  const zones = useMemo(() => timeZoneOptions(settings.timezone), [settings.timezone]);
+  const known = timeZoneName(settings.timezone);
+  const device = typeof Intl === "undefined" ? null : timeZoneName(Intl.DateTimeFormat().resolvedOptions().timeZone);
   return (
     <SectionCard title="You" description="Used for scheduling, quiet hours and to confirm destructive actions.">
-      <div className="grid grid-cols-2 gap-3">
-        <label className="text-[13px] font-medium">
-          Email
-          <input value={settings.email} onChange={(event) => patch({ email: event.target.value })} className="field mt-1.5 w-full" />
-        </label>
-        <label className="text-[13px] font-medium">
-          Time zone
-          <input value={settings.timezone} onChange={(event) => patch({ timezone: event.target.value })} className="field mt-1.5 w-full" />
-        </label>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="text-[13px] font-medium">
+          <label htmlFor="settings-email">Email</label>
+          <input
+            id="settings-email"
+            type="email"
+            autoComplete="email"
+            value={email}
+            onChange={(event) => {
+              setEmail(event.target.value);
+              // Saved once it is a whole address; until then the last good one stays.
+              if (isEmailAddress(event.target.value)) patch({ email: event.target.value.trim() });
+            }}
+            onBlur={() => setLeft(true)}
+            aria-invalid={emailError ? true : undefined}
+            aria-describedby={emailError ? "settings-email-error" : undefined}
+            className="field mt-1.5 w-full"
+          />
+          {emailError ? (
+            <span id="settings-email-error" role="alert" className="mt-1 block text-[12px] font-normal text-danger">
+              {emailError}
+            </span>
+          ) : null}
+        </div>
+        <div className="text-[13px] font-medium">
+          <label htmlFor="settings-timezone">Time zone</label>
+          <select
+            id="settings-timezone"
+            value={known ?? settings.timezone}
+            onChange={(event) => patch({ timezone: event.target.value })}
+            aria-invalid={known ? undefined : true}
+            aria-describedby={known ? undefined : "settings-timezone-error"}
+            className="field mt-1.5 w-full"
+          >
+            {known ? null : <option value={settings.timezone}>{settings.timezone || "None"} (not a time zone)</option>}
+            {zones.map((zone) => (
+              <option key={zone} value={zone}>
+                {timeZoneLabel(zone)}
+              </option>
+            ))}
+          </select>
+          {known ? null : (
+            <span id="settings-timezone-error" role="alert" className="mt-1 block text-[12px] font-normal text-danger">
+              Pick your time zone from the list.
+            </span>
+          )}
+          {device && !sameTimeZone(device, known) ? (
+            <button type="button" className="mt-1 block text-[12px] font-normal text-accent hover:underline" onClick={() => patch({ timezone: device })}>
+              Use this computer&apos;s, {device.replace(/_/g, " ")}
+            </button>
+          ) : null}
+        </div>
       </div>
     </SectionCard>
   );
@@ -765,22 +810,10 @@ export function StaleSection({ settings, patch }: Props) {
       <SettingRow title="Ask when work goes quiet">
         <Toggle label="Quiet nudges" checked={settings.staleNudge.enabled} onChange={(enabled) => patch({ staleNudge: { enabled } })} />
       </SettingRow>
-      <label className="mt-3 flex items-center gap-3 text-[13px]">
+      <div className="mt-3 flex flex-wrap items-center gap-3 text-[13px]">
         Untouched for
-        <input
-          type="number"
-          min={1}
-          max={180}
-          aria-label="Days before a quiet nudge"
-          value={settings.staleNudge.untouchedDays}
-          onChange={(event) => {
-            const value = Number(event.target.value);
-            if (value >= 1 && value <= 180) patch({ staleNudge: { untouchedDays: value } });
-          }}
-          className="field w-20"
-        />
-        days
-      </label>
+        <NumberField label="Days before a quiet nudge" min={1} max={180} unit="days" value={settings.staleNudge.untouchedDays} onChange={(untouchedDays) => patch({ staleNudge: { untouchedDays } })} />
+      </div>
     </SectionCard>
   );
 }
@@ -800,7 +833,7 @@ export function QuickCaptureSection() {
         This computer: <span className="kbd">{chord}</span>
       </p>
       <p className="mt-2 text-[12.5px] text-muted">
-        The other shortcut is <span className="kbd">{other}</span>. Inside Ensemble you can also press C when you are not typing. The companion and why it exists are in docs/20_QUICK_CAPTURE.md.
+        The other shortcut is <span className="kbd">{other}</span>. Inside Ensemble you can also press C when you are not typing.
       </p>
     </SectionCard>
   );

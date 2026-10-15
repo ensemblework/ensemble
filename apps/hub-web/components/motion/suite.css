@@ -155,6 +155,9 @@
 .desk .sk[data-visible="0"] { background: transparent; }
 .skeleton[data-visible="0"]::after,
 .desk .sk[data-visible="0"]::after { display: none; }
+/* Server-painted skeletons: the same show delay, kept by CSS so they appear before scripts load. */
+.skeleton[data-paint="css"] { animation: m-paint-in 0s linear 180ms both; }
+@keyframes m-paint-in { from { visibility: hidden; } }
 @keyframes m-sweep {
   0% { transform: translateX(-100%); }
   60%, 100% { transform: translateX(100%); }

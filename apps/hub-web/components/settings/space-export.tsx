@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Archive, BookOpen, CheckSquare, FileText, LineChart, Mic, Network, Shapes, type LucideIcon } from "lucide-react";
 
 import { api } from "@/lib/api";
+import { plural } from "@/lib/format";
 import { hasModule, type OptionalModule } from "@ensemble/shared-types/modules";
 import type { ExportProgress, SpaceSection } from "@/lib/export/space";
 import { saveBlob } from "@/lib/export/formats";
@@ -44,6 +45,7 @@ export function SpaceExportSection() {
 export function SpaceExportDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const toast = useToast();
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
+  const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings, staleTime: 60_000 });
   const space = useSpacePeople();
   const available = SECTIONS.filter((section) => !section.feature || hasModule(shell.data?.modules, section.feature));
   const [picked, setPicked] = useState<Set<SpaceSection>>(() => new Set(available.map((section) => section.id)));
@@ -75,13 +77,14 @@ export function SpaceExportDialog({ open, onClose }: { open: boolean; onClose: (
         spaceName,
         people: { ownerId: space.ownerId, names: new Map(space.people.map((person) => [person.id, person.name])) },
         sections: available.filter((section) => picked.has(section.id)).map((section) => section.id),
+        timeZone: settings.data?.settings.timezone,
         onProgress: (value) => {
           if (!cancelled.current) setProgress(value);
         },
       });
       if (cancelled.current) return;
       saveBlob(result.blob, result.name);
-      toast(result.skipped.length ? `Downloaded. ${result.skipped.length} item${result.skipped.length === 1 ? "" : "s"} could not be read; the README lists them.` : "Downloaded.", { tone: "ok" });
+      toast(result.skipped.length ? `Downloaded. ${plural(result.skipped.length, "item")} could not be read; the README lists them.` : "Downloaded.", { tone: "ok" });
       onClose();
     } catch (error) {
       toast(error instanceof Error ? `Download failed: ${error.message}` : "Download failed", { tone: "error" });

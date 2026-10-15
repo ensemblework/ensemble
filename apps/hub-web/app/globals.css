@@ -542,6 +542,11 @@ select:focus-visible {
 .block-controls button { display: flex; align-items: center; justify-content: center; width: 23px; height: 25px; color: var(--faint); border-radius: 5px; background: var(--panel); }
 .block-controls button:hover, .block-controls button:focus-visible { color: var(--ink); background: var(--hover); }
 .block-controls button[data-block-position] { cursor: grab; touch-action: none; }
+/* No block under the pointer: the controls stay reachable by keyboard but out of sight. */
+.block-controls[data-idle]:not(:focus-within) { opacity: 0; pointer-events: none; }
+.block-comment-action { position: absolute; right: -30px; margin-top: 3px; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 6px; border: 1px solid var(--line); background: var(--raised); color: var(--muted); }
+.block-comment-action:hover, .block-comment-action:focus-visible { color: var(--ink); border-color: var(--line-strong); }
+@media (max-width: 640px), (hover: none) { .block-comment-action { display: none; } }
 .block-drop-before { box-shadow: 0 -2px var(--accent); }
 .block-drop-after { box-shadow: 0 2px var(--accent); }
 .toggle-block { position: relative; padding: 4px 0 4px 26px; }
@@ -553,6 +558,8 @@ select:focus-visible {
 .page-link-block { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 7px; color: var(--ink); text-decoration: none; background: color-mix(in srgb, var(--raised) 50%, transparent); }
 .page-link-block:hover { background: var(--hover); }
 .page-image { max-width: 100%; height: auto; border-radius: 8px; }
+.page-image-broken { display: flex; flex-direction: column; justify-content: center; gap: 2px; min-height: 64px; padding: 10px 12px; border: 1px dashed var(--line-strong); border-radius: 8px; color: var(--muted); font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
+.page-image-broken a { color: var(--faint); text-decoration: underline; }
 .notion-fg-gray { color: var(--muted); }
 .notion-fg-brown, .notion-fg-orange { color: var(--tag-orange-fg, #c18b58); }
 .notion-fg-yellow { color: var(--tag-yellow-fg, #c6a254); }
@@ -616,7 +623,7 @@ select:focus-visible {
   margin-top: 0.35em;
 }
 .ProseMirror p.is-editor-empty:first-child::before,
-.ProseMirror .is-empty::before {
+.ProseMirror .is-empty:not([data-placeholder=""])::before {
   content: attr(data-placeholder);
   float: left;
   color: var(--faint);
@@ -670,7 +677,8 @@ select:focus-visible {
   width: 15px;
   height: 15px;
 }
-.ProseMirror ul[data-type="taskList"] li[data-checked="true"] > div {
+/* Only the ticked item's own line: the items nested under it keep their own state. */
+.ProseMirror ul[data-type="taskList"] li[data-checked="true"] > div > p {
   color: var(--muted);
   text-decoration: line-through;
 }
@@ -731,7 +739,7 @@ select:focus-visible {
 .ProseMirror th {
   background: var(--raised);
   font-weight: 600;
-  text-align: left;
+  text-align: start;
 }
 .ProseMirror td:hover,
 .ProseMirror th:hover {
@@ -909,7 +917,8 @@ select:focus-visible {
   min-width: 0;
 }
 .comment-host.has-comments .page-with-comments {
-  padding-right: 248px;
+  /* The comment margin (232px) plus room for a block's comment button beside the text. */
+  padding-right: 268px;
 }
 /* A page in focus mode (components/pages/page-focus.tsx): the title and the body in a reading column, nothing else. */
 .page-focus > * {
@@ -940,23 +949,20 @@ select:focus-visible {
   padding: 8px;
   box-shadow: 0 10px 24px -16px rgba(20, 16, 12, 0.45);
 }
-.comment-block-action {
-  position: fixed;
-  z-index: 30;
+/* The selection's comment button (comment-layer.tsx places it beside or under the selection). */
+.comment-selection-action {
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  border: 1px solid var(--line);
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  border: 1px solid var(--line-strong);
   background: var(--raised);
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1;
-}
-.comment-block-action:hover {
   color: var(--ink);
-  border-color: var(--line-strong);
+  box-shadow: 0 6px 16px -10px rgba(20, 16, 12, 0.5);
+}
+.comment-selection-action:hover {
+  background: var(--hover);
 }
 .board-frame {
   container-type: inline-size;
@@ -2707,3 +2713,39 @@ html[data-theme="light"] .vendor-signin-monochrome { filter: none; }
 
 .human-description:empty::before { content: "Write a short description…"; color: var(--faint); pointer-events: none; }
 .human-description:focus { box-shadow: 0 1px 0 var(--line-strong); }
+
+/* Forced colors (Windows contrast themes) drop backgrounds and accent colors, which is how
+   the selected nav item, settings tab, theme and page are shown. Outline them instead. */
+@media (forced-colors: active) {
+  :is([aria-current="page"], [aria-selected="true"], [aria-checked="true"][role="radio"], [aria-pressed="true"], .nav-link[data-active]) {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+  button:disabled { color: GrayText; }
+}
+
+/* Printing (and the browser's Save as PDF): only what is in #main-content, on white, flowing
+   across sheets. On a page or task that is its title and body, the same parts focus mode keeps. */
+@media print {
+  @page { margin: 16mm; }
+  :root, [data-theme] {
+    --bg: #fff !important; --panel: #fff !important; --raised: #f6f4ef !important; --tile: #fff !important;
+    --ink: #111 !important; --muted: #555 !important; --faint: #666 !important;
+    --line: #ddd !important; --line-strong: #bbb !important; --hover: transparent !important;
+    color-scheme: light;
+  }
+  html, body { height: auto !important; overflow: visible !important; background: #fff !important; color: #111 !important; }
+  body *:has(#main-content), #main-content { display: block !important; height: auto !important; min-height: 0 !important; overflow: visible !important; position: static !important; }
+  body:has(#main-content) > :not(:has(#main-content)), body *:has(#main-content) > :not(:has(#main-content)):not(#main-content) { display: none !important; }
+  [data-theme-canvas] { background: #fff !important; }
+  .page-focus { position: static !important; overflow: visible !important; }
+  #main-content *:has(> [data-focus-keep]) > :not([data-focus-keep]) { display: none !important; }
+  .block-controls, .block-comment-action, .comment-selection-action, .comment-margin, .toggle-block-trigger, .embed-resize { display: none !important; }
+  .comment-host.has-comments .page-with-comments { padding-right: 0 !important; }
+  .ProseMirror { min-height: 0; }
+  .ProseMirror .mention { color: #111 !important; background: none !important; border-color: #ccc !important; }
+  .ProseMirror code { color: #8a2c17; }
+  h1, h2, h3, .ProseMirror h1, .ProseMirror h2, .ProseMirror h3 { break-after: avoid; }
+  .ProseMirror pre, .ProseMirror table, .ProseMirror li, .ProseMirror blockquote, .ProseMirror img, .toggle-block { break-inside: avoid; }
+  textarea { resize: none; }
+}

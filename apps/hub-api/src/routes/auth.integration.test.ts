@@ -264,6 +264,25 @@ test("account validation, signup kill switches and password changes have explici
   } finally {
     process.env.ENSEMBLE_SIGNUP_MODE = "open";
   }
+  for (const weak of ["        ", "  abc   "]) {
+    const refused = await harness.app.inject({ method: "POST", url: "/api/auth/signup", payload: { email: address(), password: weak, turnstileToken: "test-challenge" } });
+    assert.equal(refused.statusCode, 400, weak);
+    assert.match(refused.json().error, /spaces/);
+    const change = await owner.inject({ method: "PATCH", url: "/api/auth/me", payload: { password: weak, current: password } });
+    assert.equal(change.statusCode, 400, weak);
+  }
+  const { hashPassword } = await import("../lib/auth.js");
+  const older = await harness.asUser();
+  await harness.prisma.user.update({ where: { id: older.id }, data: { passwordHash: await hashPassword("        ") } });
+  assert.equal((await harness.app.inject({ method: "POST", url: "/api/auth/login", payload: { email: older.email, password: "        " } })).statusCode, 200, "an account made under the old rule can still sign in to change it");
+  for (const payload of [{ email: "mira@" }, { email: "" }, { timezone: "Mars/Olympus_1" }, { timezone: "+05:30" }]) {
+    const refused = await owner.inject({ method: "PATCH", url: "/api/settings", payload });
+    assert.equal(refused.statusCode, 400, JSON.stringify(payload));
+  }
+  const identity = await owner.inject({ method: "PATCH", url: "/api/settings", payload: { email: " mira@fieldnote.example ", timezone: "europe/london" } });
+  assert.equal(identity.statusCode, 200, identity.body);
+  assert.equal(identity.json().settings.email, "mira@fieldnote.example");
+  assert.equal(identity.json().settings.timezone, "Europe/London");
   assert.equal((await owner.inject({ method: "PATCH", url: "/api/auth/me", payload: { password: "new-password-123", current: "wrong" } })).statusCode, 400);
   const changed = await owner.inject({ method: "PATCH", url: "/api/auth/me", payload: { name: "Updated Mira", password: "new-password-123", current: password } });
   assert.equal(changed.statusCode, 200, changed.body);
@@ -329,6 +348,7 @@ test("password recovery is single-use, revokes sessions and removes unverified p
   const unknown = await harness.app.inject({ method: "POST", url: "/api/auth/forgot", payload: { email: address() } });
   assert.deepEqual(known.json(), unknown.json());
   const token = mailToken(user.email);
+  assert.equal((await harness.app.inject({ method: "POST", url: "/api/auth/reset", payload: { token, password: "        " } })).statusCode, 400);
   const reset = () => harness.app.inject({ method: "POST", url: "/api/auth/reset", payload: { token, password: "replacement-password-123" } });
   assert.equal((await reset()).statusCode, 200);
   assert.equal((await reset()).statusCode, 400);

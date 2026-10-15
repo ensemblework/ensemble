@@ -372,7 +372,7 @@ async function prepareFolder(app: FastifyInstance, ctx: JobContext): Promise<{ r
       throw new GuardError("The earlier task's folder no longer exists.");
     });
     const git = await isGitRepo(root);
-    // A Ensemble folder created before the empty-commit fix has a repo and no HEAD.
+    // An Ensemble folder created before the empty-commit fix has a repo and no HEAD.
     // User-attached folders and clones (anything with a remote or an existing commit) stay as they are.
     if (git && !previous?.externalRoot) {
       const remote = await gitIn({ ...ctx, root }, ["remote"]);

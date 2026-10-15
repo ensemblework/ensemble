@@ -49,14 +49,14 @@ export function CardBody({ task, onDelete }: { task: TaskRecord; onDelete?: (id:
   const due = dueLabel(task.due, task.status === "done");
   return (
     <div className="board-card group text-left" data-priority={task.priority}>
-      <div className="flex items-start gap-2 pr-4">
-        <span className="card-title">{task.title}</span>
+      <div className="flex min-w-0 items-start gap-2 pr-4">
+        <span className="card-title min-w-0 [overflow-wrap:anywhere]" title={task.title}>{task.title}</span>
       </div>
       <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-[12px] text-muted">
         <PriorityTag priority={task.priority} />
         <OwnerMark task={task} />
         {task.people.length ? <span>{plural(task.people.length, "person", "people")}</span> : null}
-        {due ? <span className={due.overdue ? "text-[#ffb4ae]" : undefined}>{due.text}</span> : null}
+        {due ? <span className={due.overdue ? "text-[color:var(--tag-red-fg)]" : undefined}>{due.text}</span> : null}
         <LabelChips labels={task.labels} />
       </div>
       {onDelete ? (

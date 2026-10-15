@@ -5,6 +5,22 @@ import { checkCodeRootsPatch } from "../lib/code-folders.js";
 import { setOwnModule } from "../lib/own-modules.js";
 import { connectionState, listConnectors } from "../connectors/base.js";
 import { mirrorSettings } from "../spaces/store.js";
+import { isEmailAddress, timeZoneName } from "@ensemble/shared-types";
+
+/** Settings › Account › You. Refused with a reason instead of saved, so a typo never becomes the stored value. */
+export function checkIdentityPatch(body: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...body };
+  if ("email" in body) {
+    if (typeof body.email !== "string" || !isEmailAddress(body.email)) throw Object.assign(new Error("Enter an email address like name@example.com."), { statusCode: 400 });
+    next.email = body.email.trim();
+  }
+  if ("timezone" in body) {
+    const zone = typeof body.timezone === "string" ? timeZoneName(body.timezone) : null;
+    if (!zone) throw Object.assign(new Error("Pick a time zone from the list, such as Europe/London."), { statusCode: 400 });
+    next.timezone = zone;
+  }
+  return next;
+}
 
 export async function settingsRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/settings", async (request) => {
@@ -21,7 +37,7 @@ export async function settingsRoutes(app: FastifyInstance): Promise<void> {
 
   app.patch("/api/settings", async (request) => {
     // Code folders added through a plain settings save get the same checks as POST /api/code/folders.
-    const body = z.record(z.unknown()).parse(request.body);
+    const body = checkIdentityPatch(z.record(z.unknown()).parse(request.body));
     const current = await loadSettings(app.prisma, request.userId);
     const patch = await checkCodeRootsPatch(current, body, request.userId);
     const settings = await saveSettings(app.prisma, request.userId, patch);

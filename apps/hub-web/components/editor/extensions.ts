@@ -11,7 +11,6 @@ import Table from "@tiptap/extension-table";
 import TableCell from "@tiptap/extension-table-cell";
 import TableHeader from "@tiptap/extension-table-header";
 import TableRow from "@tiptap/extension-table-row";
-import TaskItem from "@tiptap/extension-task-item";
 import TaskList from "@tiptap/extension-task-list";
 import { PluginKey } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
@@ -19,6 +18,7 @@ import Suggestion from "@tiptap/suggestion";
 import type { PageDocument, PageMention, PageNode } from "@ensemble/shared-types";
 import {
   applyBlock,
+  inTable,
   matchCommands,
   mentionHref,
   type BlockCommandId,
@@ -29,6 +29,9 @@ import { AgentBlock } from "./agent-block";
 import { CommentMark } from "./comment-mark";
 import { EnsembleReply } from "./ensemble-node";
 import { FileAttach, type FileAttachOptions } from "./file-attach";
+import { PageClipboard } from "./clipboard";
+import { CodeIndent } from "./code-indent";
+import { ChecklistItem } from "./check-item";
 import { menuRenderer, type MenuItem } from "./suggestion-menu";
 import { mentionItems, type EntitySource } from "@/lib/mentions/menu";
 export type { EntitySource } from "@/lib/mentions/menu";
@@ -42,8 +45,9 @@ const SlashCommand = Extension.create({
         editor: this.editor,
         pluginKey: new PluginKey("slashCommand"),
         char: "/",
-        items: ({ query }) =>
-          matchCommands(query).map((command) => ({
+        // A table cannot go inside a table cell.
+        items: ({ query, editor }) =>
+          matchCommands(query).filter((command) => command.id !== "table" || !inTable(editor.state.selection.$from)).map((command) => ({
             type: "block" as const,
             id: command.id,
             label: command.label,
@@ -215,10 +219,13 @@ export function editorExtensions(
   files: Partial<FileAttachOptions> = {},
 ) {
   return [
-    StarterKit.configure({ heading: { levels: [1, 2, 3] } }),
+    // dir="auto" lets each line of Arabic, Hebrew or Persian run right to left on its own. It is
+    // only how lines render, not part of the saved page. Lists, quotes, cells and summaries hold these lines.
+    StarterKit.configure({ heading: { levels: [1, 2, 3], HTMLAttributes: { dir: "auto" } }, paragraph: { HTMLAttributes: { dir: "auto" } } }),
     Placeholder.configure({
-      // A collapsible block's summary has its own placeholder (toggle-block.ts).
-      placeholder: ({ node }) => (node.type.name === "heading" ? "Heading" : node.type.name === "toggleBlock" ? "" : placeholder),
+      // Only an empty line shows a hint. A collapsible block's summary has its own (toggle-block.ts);
+      // an empty table, list or quote is not an empty line.
+      placeholder: ({ node }) => (!node.isTextblock ? "" : node.type.name === "heading" ? "Heading" : placeholder),
     }),
     Link.configure({ openOnClick: false, autolink: true }),
     Table.configure({ resizable: true }),
@@ -230,7 +237,7 @@ export function editorExtensions(
       addAttributes() { return { ...this.parent?.(), valueType: { default: "text", renderHTML: (attrs) => ({ "data-value-type": attrs.valueType }), parseHTML: (element) => element.getAttribute("data-value-type") ?? "text" } }; },
     }),
     TaskList,
-    TaskItem.configure({ nested: true }),
+    ChecklistItem.configure({ nested: true }),
     PageLink,
     PageImage,
     Underline,
@@ -240,6 +247,8 @@ export function editorExtensions(
     CommentMark,
     EnsembleReply,
     SlashCommand,
+    PageClipboard,
+    CodeIndent,
     FileAttach.configure(files),
     EntityMention.configure({
       diagramsOn,

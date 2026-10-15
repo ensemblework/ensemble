@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
+import { Fragment } from "react";
 import dynamic from "next/dynamic";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
@@ -27,11 +27,14 @@ import {
 } from "lucide-react";
 import type { DeskId } from "./desks";
 import { DESKS } from "./desks";
-import { accentVars, Av, Tile, type State } from "./ui";
+import { accentVars, Av, Sk, Tile, type State } from "./ui";
 import { Drafts } from "./widgets/legal";
 import { CiteGraph } from "./widgets/research";
 import "./desk.css";
 import { contextTabs, tabKey } from "./context-tabs";
+import { useLensTab } from "./lens-tab";
+import { ARTIFACT_KIND_LABEL, artifactLine } from "./artifact-label";
+import { LoadError } from "@/components/load-error";
 import { filesHref } from "@/lib/files/links";
 import { useLayoutPreference, useTileControls, type Arrangeable, type TileControls } from "./arrange";
 import { arrange, hiddenTilesFor, isDefaultLayout, showTile } from "./layout";
@@ -208,18 +211,7 @@ export function ContextLens({ deskId, state, initialTab = null, search = "", who
   const extras = resolveExtras(deskId, prefs.data?.preferences.find((row) => row.key === "desk.extras")?.value);
   const router = useRouter();
   const tabs = contextTabs(deskId, extras.has("learning"));
-  const [tab, setTab] = useState(() => tabs.find((label) => tabKey(label) === initialTab) ?? "Overview");
-  // Links inside the lens (a graph node, a mention) change ?tab= without remounting it.
-  const wanted = tabs.find((label) => tabKey(label) === (initialTab ?? "overview"));
-  useEffect(() => {
-    if (wanted) setTab(wanted);
-  }, [wanted]);
-  const active = tabs.includes(tab) ? tab : tabs[0]!;
-  const choose = (label: string) => {
-    setTab(label);
-    const key = tabKey(label);
-    router.replace(key === "overview" ? "/context" : `/context?tab=${key}`, { scroll: false });
-  };
+  const [active, choose] = useLensTab(tabs, initialTab);
   const shared = ["people", "projects", "graph"].includes(tabKey(active));
   const rich = state === "populated" && (deskId === "chambers" || deskId === "literature") && active === "Overview";
   const live = useQuery({ queryKey: ["desk-live"], queryFn: api.deskLive, enabled: state !== "populated", staleTime: 15_000 });
@@ -278,16 +270,20 @@ export function ContextLens({ deskId, state, initialTab = null, search = "", who
         {rich && deskId === "literature" ? <Literature state={state} /> : null}
         {!rich && state === "populated" ? <SamplePanel deskId={deskId} tab={tabKey(active)} /> : null}
         {!rich && state !== "populated" ? (
-          <ArrangedLens
-            deskId={deskId}
-            tab={tabKey(active)}
-            sections={sections}
-            live={live.data}
-            ready={live.isFetched}
-            onPeople={() => choose("People")}
-            onArtifact={(id) => router.push(filesHref("apps", id))}
-            onSection={(kind) => router.push(`/today?form=${encodeURIComponent(kind)}`)}
-          />
+          live.isError && !live.data ? (
+            <LoadError className="col-span-full" error={live.error} onRetry={() => void live.refetch()} retrying={live.isFetching} what="your context" />
+          ) : (
+            <ArrangedLens
+              deskId={deskId}
+              tab={tabKey(active)}
+              sections={sections}
+              live={live.data}
+              ready={live.isSuccess}
+              onPeople={() => choose("People")}
+              onArtifact={(id) => router.push(filesHref("apps", id))}
+              onSection={(kind) => router.push(`/today?form=${encodeURIComponent(kind)}`)}
+            />
+          )
         ) : null}
       </div>
       )}
@@ -318,6 +314,17 @@ function personActivity(person: { openTasks?: number; recentTitle?: string | nul
 
 type Placed = { size: { c: number; r: number }; control: TileControls };
 
+/** A tile whose data is still on its way: no count, no empty-state invitation. */
+function TileLoading({ rows = 3 }: { rows?: number }) {
+  return (
+    <div className="col" style={{ gap: 10 }} data-tile-loading aria-busy="true">
+      {Array.from({ length: rows }, (_, index) => (
+        <Sk key={index} h={14} w={`${92 - index * 14}%`} />
+      ))}
+    </div>
+  );
+}
+
 function LivePeople({ onOpen, size, control }: { onOpen: () => void } & Placed) {
   const people = useQuery({ queryKey: ["people"], queryFn: api.people, staleTime: 15_000 });
   const rows = people.data?.people ?? [];
@@ -328,16 +335,18 @@ function LivePeople({ onOpen, size, control }: { onOpen: () => void } & Placed) 
       c={size.c}
       r={size.r}
       {...control}
-      meta={people.isFetched ? String(rows.length) : undefined}
+      meta={people.isSuccess ? String(rows.length) : undefined}
       onAdd={onOpen}
-      ghost={people.isFetched && rows.length === 0 ? { label: "Add the people you work with", sub: "Teammates, clients, advisors, or classmates. They link to tasks, pages, and the graph.", action: "Add a person", kind: "person", onAction: onOpen } : false}
+      ghost={people.isSuccess && rows.length === 0 ? { label: "Add the people you work with", sub: "Teammates, clients, advisors, or classmates. They link to tasks, pages, and the graph.", action: "Add a person", kind: "person", onAction: onOpen } : false}
     >
+      {people.isPending ? <TileLoading /> : null}
+      {people.isError && !people.data ? <LoadError compact error={people.error} onRetry={() => void people.refetch()} retrying={people.isFetching} what="your people" /> : null}
       {rows.length ? <div className="visual-body"><div className="visual-people" data-lens-people>
         {rows.map((person) => (
           <button type="button" onClick={onOpen} key={person.id} className="visual-person text-left" data-person={person.id} data-person-name={person.name}>
             <Av n={person.name} s={28} />
             <div className="col" style={{ minWidth: 0, flex: 1, gap: 1 }}>
-              <span className="trunc" style={{ fontSize: 13, fontWeight: 600 }}>{person.name}</span>
+              <span className="trunc" style={{ fontSize: 13, fontWeight: 600 }} title={person.name}>{person.name}</span>
               {person.role ? <span className="trunc faint" style={{ fontSize: 11.5 }}>{person.role}{person.team ? ` · ${person.team}` : ""}</span> : null}
               <span className="trunc" style={{ fontSize: 11.5, color: "var(--muted)" }}>{personActivity(person)}</span>
             </div>
@@ -347,21 +356,6 @@ function LivePeople({ onOpen, size, control }: { onOpen: () => void } & Placed) 
     </Tile>
   );
 }
-
-const KIND_LABEL: Record<string, string> = {
-  email: "Email",
-  chat_msg: "Chat",
-  channel_msg: "Channel",
-  event: "Event",
-  transcript: "Transcript",
-  transcript_segment: "Transcript",
-  file: "File",
-  pr: "Pull request",
-  pr_comment: "Review",
-  commit: "Commit",
-  issue: "Issue",
-  meeting_note: "Note",
-};
 
 /** Items from connected apps. Each opens in Files → From your apps. */
 function LiveArtifacts({ rows, ready, size, control, onOpen }: { rows: DeskLive["artifacts"]; ready: boolean; onOpen: (id: string) => void } & Placed) {
@@ -376,8 +370,9 @@ function LiveArtifacts({ rows, ready, size, control, onOpen }: { rows: DeskLive[
       meta={ready ? String(rows.length) : undefined}
       ghost={ready && rows.length === 0 ? { label: "No files or links yet", sub: "Documents, mail, and pull requests from connected apps land here.", ...(guest ? {} : { action: "Connect an app", onAction: () => window.location.assign("/settings?tab=connections") }) } : false}
     >
+      {ready ? null : <TileLoading />}
       {rows.length ? <div className="visual-body"><div className="context-file-grid" data-lens-artifacts>
-        {rows.filter((row) => row.kind in KIND_LABEL && row.title.trim()).slice(0, 6).map((row) => <button type="button" onClick={() => onOpen(row.id)} key={row.id} className="context-file-card" data-artifact={row.id}><FileText size={19} /><strong>{row.title}</strong><small>{KIND_LABEL[row.kind] ?? row.kind} · {row.source}</small><span>{shortWhen(row.ts)}</span></button>)}
+        {rows.filter((row) => row.kind in ARTIFACT_KIND_LABEL && row.title.trim()).slice(0, 6).map((row) => <button type="button" onClick={() => onOpen(row.id)} key={row.id} className="context-file-card" data-artifact={row.id} title={row.title}><FileText size={19} /><strong>{row.title}</strong><small data-artifact-type>{artifactLine(row)}</small><span>{shortWhen(row.ts)}</span></button>)}
       </div></div> : null}
     </Tile>
   );
@@ -412,9 +407,10 @@ function ArrangedLens({ deskId, tab, sections, live, ready, onPeople, onArtifact
         if (spec.key === "artifacts") return <LiveArtifacts key={spec.key} rows={live?.artifacts ?? []} ready={ready} size={size} control={control} onOpen={onArtifact} />;
         const section = byKey.get(spec.key);
         if (!section) return null;
+        const count = live && section.filled ? (section.spec.count?.(live) ?? section.rows.length) : 0;
         return (
-          <Tile key={spec.key} title={section.title} icon={section.icon} c={size.c} r={size.r} {...control} meta={section.rows.length ? String(section.rows.length) : undefined} ghost={section.rows.length ? false : { label: `Nothing in ${section.title.toLowerCase()} yet`, ...(guest ? {} : { action: "Add it on Today", kind: section.kind, onAction: () => onSection(section.kind) }) }}>
-            {section.rows.length && live ? <TileBody spec={{ ...section.spec, c: size.c, r: size.r, hero: false }} live={live} /> : null}
+          <Tile key={spec.key} title={section.title} icon={section.icon} c={size.c} r={size.r} {...control} meta={count ? String(count) : undefined} ghost={!ready || section.filled ? false : { label: `Nothing in ${section.title.toLowerCase()} yet`, ...(guest ? {} : { action: "Add it on Today", kind: section.kind, onAction: () => onSection(section.kind) }) }}>
+            {!ready ? <TileLoading /> : section.filled && live ? <TileBody spec={{ ...section.spec, c: size.c, r: size.r, hero: false }} live={live} /> : null}
           </Tile>
         );
       })}

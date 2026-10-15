@@ -3,6 +3,7 @@
 import { createContext, useContext, useId, type CSSProperties, type ReactNode } from "react";
 import { ArrowUpRight, EyeOff, Plus, type LucideIcon } from "lucide-react";
 import Link from "next/link";
+import { personInitials } from "@/lib/initials";
 
 export type State = "populated" | "skeleton" | "empty";
 
@@ -222,8 +223,7 @@ export function makeHeat(weeks: number, seed: number, bias = 0.5, lastDay = 6): 
 /* ── Avatars ──────────────────────────────────────────────────────────── */
 const AV = ["#e7a08a", "#7eb8c9", "#8fbf9f", "#e0b15a", "#c9a4e0", "#d4c07a", "#f0a0b8", "#9fb4e8", "#b8c98f"];
 export function initials(n: string) {
-  const p = n.replace(/^(Dr\.|Ms\.|Mr\.|Prof\.|Adv\.)\s*/, "").split(/\s+/);
-  return ((p[0]?.[0] ?? "") + (p[1]?.[0] ?? "")).toUpperCase();
+  return personInitials(n.replace(/^(Dr\.|Ms\.|Mr\.|Prof\.|Adv\.)\s*/, ""));
 }
 export function Av({ n, s = 26, ring }: { n: string; s?: number; ring?: string }) {
   let h = 0; for (const ch of n) h = (h * 31 + ch.charCodeAt(0)) % 997;

@@ -3,7 +3,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, Check, Lock, X } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type SpaceSettingsMode } from "@/lib/api";
 import { announceSpace, enterSpace, SPACE_ICONS, spaceInitial } from "@/lib/spaces";
 import { useToast } from "@/components/toast";
@@ -46,6 +46,9 @@ export default function NewSpacePage() {
   const [mode, setMode] = useState<SpaceSettingsMode>("copy");
   const [from, setFrom] = useState<string | null>(null);
   const sync = spaces.data?.account.sync === true;
+  const creating = useRef(false);
+  const sameName = (a: string, b: string) => a.normalize("NFC").trim().replace(/\s+/g, " ").toLowerCase() === b.normalize("NFC").trim().replace(/\s+/g, " ").toLowerCase();
+  const taken = name.trim() ? spaces.data?.spaces.find((row) => sameName(row.name, name)) : undefined;
 
   const cards = useQuery({
     queryKey: ["onboarding-templates", role],
@@ -71,16 +74,24 @@ export default function NewSpacePage() {
       announceSpace(result.activeId);
       enterSpace("/today");
     },
-    onError: (error) => toast((error as Error).message, { tone: "error" }),
+    onError: (error) => {
+      creating.current = false;
+      toast((error as Error).message, { tone: "error" });
+    },
   });
 
   const index = STEPS.findIndex(([id]) => id === step);
-  const canNext = step === "name" ? name.trim().length > 0 : step === "template" ? Boolean(selected) : true;
+  const canNext = step === "name" ? name.trim().length > 0 && !taken : step === "template" ? Boolean(selected) : true;
+  // After success the page is still here until the browser leaves for the new space, so a second click must not count.
+  const busy = create.isPending || create.isSuccess;
   const next = () => {
-    if (!canNext || create.isPending) return;
+    if (!canNext || busy || creating.current) return;
     if (step === "name") setStep("template");
     else if (step === "template") setStep("settings");
-    else create.mutate();
+    else {
+      creating.current = true;
+      create.mutate();
+    }
   };
   const ideas = IDEAS[role ?? "engineer"];
   const roleLabel = ROLES.find((item) => item.id === role)?.label.toLowerCase();
@@ -120,9 +131,25 @@ export default function NewSpacePage() {
                 <SpaceIcon space={{ name: name || "S", icon }} size={42} />
                 <label className="onboard-field min-w-0 flex-1">
                   <span>Name</span>
-                  <input autoFocus required maxLength={60} className="field" value={name} onChange={(event) => setName(event.target.value)} placeholder={ideas[0]} data-space-name />
+                  <input
+                    autoFocus
+                    required
+                    maxLength={60}
+                    className="field"
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                    placeholder={ideas[0]}
+                    aria-invalid={taken ? true : undefined}
+                    aria-describedby={taken ? "space-name-taken" : undefined}
+                    data-space-name
+                  />
                 </label>
               </div>
+              {taken ? (
+                <p id="space-name-taken" role="alert" className="-mt-2 text-[12.5px] text-danger">
+                  You already have a space called {taken.name}. Pick another name.
+                </p>
+              ) : null}
               <div className="onboard-chips -mt-2" aria-label="Ideas">
                 {ideas.map((idea) => (
                   <button key={idea} type="button" aria-pressed={name === idea} onClick={() => setName(idea)}>
@@ -219,8 +246,8 @@ export default function NewSpacePage() {
             ) : (
               <span />
             )}
-            <button type="submit" className="btn-primary" data-space-next disabled={!canNext || create.isPending}>
-              {step === "settings" ? (create.isPending ? "Creating…" : `Create ${name.trim()}`) : "Continue"}
+            <button type="submit" className="btn-primary" data-space-next disabled={!canNext || busy}>
+              {step === "settings" ? (busy ? "Creating…" : `Create ${name.trim()}`) : "Continue"}
               <ArrowRight size={14} />
             </button>
           </div>

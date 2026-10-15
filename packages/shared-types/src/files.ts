@@ -143,6 +143,19 @@ export function fileFormat(filename: string): FileFormat {
   return BY_EXT.get(ext) ?? { ...OTHER, ext };
 }
 
+/** Programs, installers, disk images and raw binaries. Other formats Ensemble cannot show are still kept. */
+const REFUSED_EXTENSIONS = new Set([
+  "exe", "msi", "msix", "msp", "com", "scr", "pif", "cpl", "dll", "sys", "drv", "ocx", "bat", "cmd", "vbs", "vbe", "wsf", "wsh", "hta", "lnk", "reg",
+  "bin", "so", "dylib", "elf", "run", "appimage", "app", "dmg", "pkg", "mpkg", "deb", "rpm", "apk", "aab", "ipa", "xapk", "jar", "iso",
+]);
+
+/** Why Ensemble will not keep a file of this kind, or null when it will. Uploads, drops and imports all ask. */
+export function fileTypeProblem(filename: string): string | null {
+  const ext = fileExtension(filename);
+  if (!REFUSED_EXTENSIONS.has(ext)) return null;
+  return `.${ext} files are programs or raw binary data, which Files does not keep.`;
+}
+
 export const FILE_KIND_LABEL: Readonly<Record<FileKind, string>> = {
   pdf: "PDF",
   document: "Document",

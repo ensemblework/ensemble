@@ -5,7 +5,7 @@ import { GripVertical } from "lucide-react";
 import { useCallback, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { api } from "@/lib/api";
 import { useToast } from "@/components/toast";
-import { hideTile, moveTile, readLayout, resizeTile, showTile, sizeFromDrag, stepTile, tileLimits, type DeskLayout, type TileSize } from "./layout";
+import { hideTile, moveAnnouncement, moveTile, readLayout, resizeTile, showTile, sizeFromDrag, stepTile, tileLimits, type DeskLayout, type TileSize } from "./layout";
 import { useSpaceAccess } from "@/lib/access";
 
 /**
@@ -14,6 +14,25 @@ import { useSpaceAccess } from "@/lib/access";
  */
 
 export type Arrangeable = { key: string; title: string; c: number; r: number; hero?: boolean };
+
+/**
+ * Keyboard moves reorder the grid without a visible cue for screen readers, so the new
+ * position is spoken from one polite region on the page. It outlives the tile that moved.
+ */
+function announce(text: string) {
+  if (!text || typeof document === "undefined") return;
+  let region = document.getElementById("desk-arrange-status");
+  if (!region) {
+    region = document.createElement("div");
+    region.id = "desk-arrange-status";
+    region.setAttribute("role", "status");
+    region.setAttribute("aria-live", "polite");
+    region.className = "sr-only";
+    document.body.append(region);
+  }
+  // The same words twice in a row would not be read again.
+  region.textContent = region.textContent === text ? `${text}\u00a0` : text;
+}
 type Prefs = Awaited<ReturnType<typeof api.preferences>>;
 
 /** A layout preference with an optimistic write and a rollback on failure. */
@@ -118,7 +137,10 @@ export function useTileControls<S extends Arrangeable>({
     const step = { ArrowRight: [1, 0], ArrowLeft: [-1, 0], ArrowDown: [0, 1], ArrowUp: [0, -1] }[event.key];
     if (!step) return;
     event.preventDefault();
-    void save(resizeTile(arranged, spec.key, { c: spec.c + step[0]!, r: spec.r + step[1]! }));
+    const next = resizeTile(arranged, spec.key, { c: spec.c + step[0]!, r: spec.r + step[1]! });
+    const size = next.tiles.find((tile) => tile.key === spec.key);
+    if (size) announce(`${spec.title} is ${size.c} columns by ${size.r} rows.`);
+    void save(next);
   }
 
   function startMove(event: ReactPointerEvent<HTMLElement>, spec: S) {
@@ -168,6 +190,7 @@ export function useTileControls<S extends Arrangeable>({
     if (!delta) return;
     event.preventDefault();
     refocus.current = spec.key;
+    announce(moveAnnouncement(spec.title, shown.map((item) => item.key), spec.key, delta));
     void save(stepTile(arranged, spec.key, delta));
   }
 

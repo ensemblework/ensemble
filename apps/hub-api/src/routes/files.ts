@@ -4,7 +4,7 @@
  */
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
-import { fileFormat, PageDocument, type FileStyleProfile } from "@ensemble/shared-types";
+import { fileFormat, fileTypeProblem, PageDocument, type FileStyleProfile } from "@ensemble/shared-types";
 import { Prisma } from "@prisma/client";
 import { enrichDocument } from "../context/enrich-documents.js";
 import { clip } from "../lib/office/text.js";
@@ -14,7 +14,7 @@ import { createStandalonePage } from "../pages/store.js";
 import { assertOwned } from "../services/records.js";
 import { configureFileText, fileTextRunning, patchWorkbook, queueFileText } from "../files/extract.js";
 import { pageFromFile, pageTitle, serverPageFormat } from "../files/page.js";
-import { FILE_SELECT, fileRecord, fileStyle, fileUsage, filenameProblem, maxFileBytes, replaceFileBytes, saveFile, type FileRow } from "../files/store.js";
+import { assertNewFile, FILE_SELECT, FileError, fileRecord, fileStyle, fileTooLarge, fileUsage, filenameProblem, maxFileBytes, replaceFileBytes, saveFile, type FileRow } from "../files/store.js";
 
 const TEXT_DEFAULT = 6000;
 const TEXT_MAX = 20_000;
@@ -119,6 +119,11 @@ export async function fileRoutes(app: FastifyInstance): Promise<void> {
     onError: (error, id) => app.log.error({ err: error, documentId: id }, "file text extraction failed"),
   });
 
+  // Fastify refuses a body over the route's limit by its Content-Length, before reading it; say so as a file size.
+  app.setErrorHandler((error) => {
+    throw (error as { code?: string }).code === "FST_ERR_CTP_BODY_TOO_LARGE" ? fileTooLarge() : error;
+  });
+
   const owned = (id: string, userId: string) => ({ id, userId, deletedAt: null });
 
   /** A file whose text was queued by a process that has since stopped gets read again. */
@@ -140,11 +145,13 @@ export async function fileRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/documents", { bodyLimit: uploadLimit() }, async (request, reply) => {
     const body = Upload.parse(request.body);
     checkName(body.filename);
+    const bytes = decode(body.dataBase64);
+    assertNewFile(body.filename, bytes.byteLength);
     await assertDocumentTags(prisma, request.userId, body.tags);
     const file = await saveFile(
       prisma,
       request.userId,
-      { filename: body.filename, mediaType: body.mediaType, bytes: decode(body.dataBase64) },
+      { filename: body.filename, mediaType: body.mediaType, bytes },
       { summarize: body.summarize, tags: body.tags },
     );
     return reply.code(201).send({ file, document: { id: file.id, filename: file.filename, parseStatus: file.textStatus } });
@@ -200,7 +207,11 @@ export async function fileRoutes(app: FastifyInstance): Promise<void> {
   app.put("/api/documents/:id/content", { bodyLimit: uploadLimit() }, async (request, reply) => {
     const { id } = request.params as { id: string };
     const body = Replace.parse(request.body);
-    if (body.filename !== undefined) checkName(body.filename);
+    if (body.filename !== undefined) {
+      checkName(body.filename);
+      const kind = fileTypeProblem(body.filename);
+      if (kind) throw new FileError(kind, 415);
+    }
     const file = await replaceFileBytes(prisma, request.userId, id, { bytes: decode(body.dataBase64), filename: body.filename, mediaType: body.mediaType });
     if (!file) return notFound(reply);
     return { file };

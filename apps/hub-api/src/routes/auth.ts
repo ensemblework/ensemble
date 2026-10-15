@@ -15,12 +15,17 @@ import { deleteAccountData, exportAccountData } from "../lib/account-data.js";
 import { revokePairedDevice } from "../devices/revoke.js";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings, saveSettings } from "../lib/settings.js";
-import { isAvatarId } from "@ensemble/shared-types";
+import { isAvatarId, passwordProblem } from "@ensemble/shared-types";
 import { forgetPerson } from "../sharing/presence.js";
 
 const Credentials = z.object({
   email: z.string().trim().toLowerCase().email("Enter a valid email address."),
   password: z.string().min(8, "Use at least 8 characters.").max(256, "Use at most 256 characters."),
+});
+/** Sign-up, reset and change. Sign-in keeps the older rule above, so an account made before this one can still sign in and change it. */
+const NewPassword = z.string().superRefine((value, context) => {
+  const problem = passwordProblem(value);
+  if (problem) context.addIssue({ code: z.ZodIssueCode.custom, message: problem });
 });
 const VerifyCode = z.object({ code: z.string().min(1).max(16) });
 const OptionalProfileText = (max: number) => z.preprocess((value) => (value === null ? undefined : value), z.string().trim().max(max).optional());
@@ -100,7 +105,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.post("/api/auth/signup", async (request, reply) => {
-    const body = Credentials.extend({ name: z.string().trim().max(80).default(""), turnstileToken: z.string().max(2048).optional() }).parse(request.body);
+    const body = Credentials.extend({ password: NewPassword, name: z.string().trim().max(80).default(""), turnstileToken: z.string().max(2048).optional() }).parse(request.body);
     const hasAccounts = (await realAccounts()) > 0;
     if (
       !signupPermitted({
@@ -198,7 +203,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     const body = z
       .object({
         name: z.string().trim().max(80).optional(),
-        password: Credentials.shape.password.optional(),
+        password: NewPassword.optional(),
         current: z.string().max(256).optional(),
         /** A picture avatar id, or null for initials. */
         avatar: z.string().max(40).refine(isAvatarId, "Pick one of the avatars.").nullable().optional(),
@@ -301,7 +306,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.post("/api/auth/reset", async (request) => {
-    const { token, password } = Token.extend({ password: Credentials.shape.password }).parse(request.body);
+    const { token, password } = Token.extend({ password: NewPassword }).parse(request.body);
     const passwordHash = await hashPassword(password);
     await prisma.$transaction(async (tx) => {
       const row = await tx.emailToken.findFirst({ where: { id: sha256(token), kind: "reset", expiresAt: { gt: new Date() } } });

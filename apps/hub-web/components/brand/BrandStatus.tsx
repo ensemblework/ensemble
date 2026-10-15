@@ -27,6 +27,12 @@ const COPY: Record<BrandStatusKind, { code: string; h: string; p: string; art: s
   }
 };
 
+/** A tab opened straight on a bad link has nothing to go back to: go home instead of to a blank page. */
+function goBack() {
+  if (window.history.length > 1) window.history.back();
+  else window.location.assign("/");
+}
+
 function Art({ kind }: { kind: BrandStatusKind }) {
   return <div className="ub-art" data-status={kind}><EnsembleMark size={160} title="Ensemble" /></div>;
 }
@@ -40,7 +46,7 @@ export function BrandStatus({ kind, reset, shell = false }: { kind: BrandStatusK
       <h1 className="ub-h">{c.h}</h1>
       <p className="ub-p">{c.p}</p>
       <div className="ub-act">
-        {kind === "404" ? (<><Link className="ub-btn pri" href="/today">Go to Today</Link><button type="button" className="ub-btn" onClick={() => history.back()}>Go back</button></>) : null}
+        {kind === "404" ? (<><Link className="ub-btn pri" href="/today">Go to Today</Link><button type="button" className="ub-btn" onClick={goBack}>Go back</button></>) : null}
         {kind === "500" ? (<><button type="button" className="ub-btn pri" onClick={() => (reset ? reset() : location.reload())}>Try again</button><Link className="ub-btn" href="/today">Go to Today</Link></>) : null}
         {kind === "offline" ? <button type="button" className="ub-btn pri" onClick={() => location.reload()}>Try again</button> : null}
       </div>

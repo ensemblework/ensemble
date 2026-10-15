@@ -2,10 +2,10 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { CornerDownLeft } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { formatBinding } from "@ensemble/shared-types";
 import { useShortcuts } from "@/lib/shortcut-store";
+import { shortcutHelp } from "@/lib/shortcut-help";
 import { hasModule } from "@ensemble/shared-types/modules";
 import { DESK_IDS, DESKS, MARKET_ID } from "@/components/desk/desks";
 import { api } from "@/lib/api";
@@ -186,29 +186,29 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
 
 export function ShortcutSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { bindings } = useShortcuts();
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  const pathname = usePathname();
+  const dialog = useRef<HTMLDivElement>(null);
+  useModalFocus(dialog, open, onClose);
+  const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, enabled: open, staleTime: 30_000 });
+  const groups = useMemo(
+    () => shortcutHelp(bindings, { apple: isApplePlatform(), modules: shell.data?.modules, pathname }),
+    [bindings, shell.data?.modules, pathname],
+  );
 
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-[70] flex items-start justify-center bg-black/45 px-4 pt-[18vh]" onMouseDown={onClose}>
+    <div className="fixed inset-0 z-[70] flex items-start justify-center bg-black/45 px-4 pt-[18vh]" data-modal-layer="shortcuts" onMouseDown={onClose}>
       <div
+        ref={dialog}
         role="dialog"
-        aria-label="Keyboard shortcuts"
+        aria-modal="true"
+        aria-labelledby="shortcut-sheet-title"
+        tabIndex={-1}
         className="pop-in max-h-[70vh] w-full max-w-[460px] overflow-y-auto rounded-xl border border-line-strong bg-panel p-4 shadow-pop"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-[15px] font-semibold">Shortcuts</h2>
+          <h2 id="shortcut-sheet-title" className="text-[15px] font-semibold">Shortcuts</h2>
           <span className="flex items-center gap-1">
             <a href="/settings?tab=shortcuts" className="btn-ghost" onClick={onClose}>
               Change
@@ -218,14 +218,26 @@ export function ShortcutSheet({ open, onClose }: { open: boolean; onClose: () =>
             </button>
           </span>
         </div>
-        <ul className="space-y-1.5">
-          {bindings.map((binding) => (
-            <li key={binding.id} className="flex items-center justify-between gap-4 text-[13px]">
-              <span className="text-muted">{binding.label}</span>
-              <span className="kbd">{formatBinding(binding, isApplePlatform())}</span>
-            </li>
-          ))}
-        </ul>
+        {groups.map((group) => (
+          <section key={group.title} className="mb-3 last:mb-0" aria-labelledby={`shortcut-group-${group.title}`}>
+            <h3 id={`shortcut-group-${group.title}`} className="mb-1.5 text-[11.5px] font-medium uppercase tracking-[0.06em] text-faint">{group.title}</h3>
+            <ul className="space-y-1.5">
+              {group.rows.map((row) => (
+                <li key={row.label} className="flex items-center justify-between gap-4 text-[13px]">
+                  <span className="text-muted">{row.label}</span>
+                  <span className="flex shrink-0 items-center gap-1 text-[12px] text-faint">
+                    {row.keys.map((keys, index) => (
+                      <span key={keys} className="flex items-center gap-1">
+                        {index ? "or" : null}
+                        <kbd className="kbd">{keys}</kbd>
+                      </span>
+                    ))}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))}
       </div>
     </div>
   );

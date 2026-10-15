@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { Prisma } from "@prisma/client";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { templateById } from "@ensemble/shared-types/templates";
 import { requireBrowserSession } from "../bridge/auth.js";
@@ -10,6 +11,7 @@ import { copySettings, createSpaceUser, listSpaces, mirrorSettings, openableSpac
 import { accountIdOf, ownsOpenSpace, settingsUserOf } from "../lib/auth.js";
 import { sharedWithMe } from "../sharing/store.js";
 import { sseHub } from "../lib/sse.js";
+import { lockUserTransaction } from "../lib/user-lock.js";
 
 /** Not a UUID check: the local and desktop account id is "local". Ownership is checked by `mine`. */
 const Id = z.string().trim().min(1).max(64);
@@ -31,6 +33,15 @@ const CreateBody = z.object({
     .object({ mode: z.enum(["fresh", "copy", "sync"]), from: Id.optional() })
     .default({ mode: "copy" }),
 });
+
+const nameKey = (name: string) => name.normalize("NFC").trim().replace(/\s+/g, " ").toLowerCase();
+
+/** Two spaces with one name could not be told apart in the switcher or in Settings › Spaces. */
+async function refuseTakenName(db: Prisma.TransactionClient, accountId: string, name: string, except?: string): Promise<void> {
+  const { spaces } = await listSpaces(db, accountId);
+  const taken = spaces.find((row) => row.id !== except && nameKey(row.name) === nameKey(name));
+  if (taken) throw Object.assign(new Error(`You already have a space called ${taken.name}. Pick another name.`), { statusCode: 409 });
+}
 
 function browserOnly(request: FastifyRequest): void {
   requireBrowserSession(request);
@@ -71,7 +82,12 @@ export async function spacesRoutes(app: FastifyInstance): Promise<void> {
     const from = body.settings.mode === "fresh" ? here : (body.settings.from ?? here);
     await mine(request, from);
 
-    const spaceId = await createSpaceUser(prisma, accountIdOf(request), { name: body.name, icon: body.icon ?? null });
+    // The account row lock makes a second identical request (a double click) wait, then see the first space's name.
+    const spaceId = await prisma.$transaction(async (tx) => {
+      await lockUserTransaction(tx, accountIdOf(request));
+      await refuseTakenName(tx, accountIdOf(request), body.name);
+      return createSpaceUser(tx, accountIdOf(request), { name: body.name, icon: body.icon ?? null });
+    });
     try {
       // Settings first, so the template's assistant tone (applied next) is the one that stays.
       if (body.settings.mode !== "fresh" || account.spaceSettingsSync) await copySettings(prisma, from, spaceId);
@@ -108,9 +124,13 @@ export async function spacesRoutes(app: FastifyInstance): Promise<void> {
     const id = Id.parse((request.params as { id: string }).id);
     const body = z.object({ name: Name.optional(), icon: Icon }).parse(request.body);
     await mine(request, id);
-    await prisma.user.update({
-      where: { id },
-      data: { ...(body.name !== undefined ? { spaceName: body.name } : {}), ...(body.icon !== undefined ? { spaceIcon: body.icon } : {}) },
+    await prisma.$transaction(async (tx) => {
+      await lockUserTransaction(tx, accountIdOf(request));
+      if (body.name !== undefined) await refuseTakenName(tx, accountIdOf(request), body.name, id);
+      await tx.user.update({
+        where: { id },
+        data: { ...(body.name !== undefined ? { spaceName: body.name } : {}), ...(body.icon !== undefined ? { spaceIcon: body.icon } : {}) },
+      });
     });
     const listed = await listSpaces(prisma, accountIdOf(request));
     return { space: listed.spaces.find((row) => row.id === id) };

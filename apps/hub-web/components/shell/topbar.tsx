@@ -3,9 +3,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Menu, MoreHorizontal, PanelRight, PanelRightDashed, Redo2, RefreshCw, Undo2 } from "lucide-react";
 import { usePathname } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useModKey } from "@/lib/platform";
+import { editingText, undoButtonLabel } from "@/lib/undo-ui";
 import { useLive } from "../live";
 import { useToast } from "../toast";
 import { HomeLogoLink } from "../motion/brand-morph";
@@ -53,7 +54,7 @@ export function useUndoRedo() {
   const undo = useMutation({
     mutationFn: api.undo,
     onSuccess: (result) => {
-      toast(result ? `Undid: ${result.label}` : "Nothing to undo.", {
+      toast(result ? `Undid: ${result.label}` : "Nothing to undo from the last few minutes.", {
         action: result ? { label: "Redo", run: () => redo.mutate() } : undefined,
       });
       announce(result, "undo");
@@ -71,16 +72,40 @@ export function useUndoRedo() {
   return { undo, redo };
 }
 
-export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
+/** Whether the sidebar is showing: the drawer on a phone, the full (not rail) sidebar otherwise. */
+function useSidebarExpanded(drawerOpen: boolean): boolean {
+  const [state, setState] = useState({ narrow: false, rail: false });
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 767px)");
+    const read = () => setState({ narrow: media.matches, rail: document.documentElement.dataset.sidebar === "rail" });
+    read();
+    media.addEventListener("change", read);
+    const observer = new MutationObserver(read);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-sidebar"] });
+    return () => {
+      media.removeEventListener("change", read);
+      observer.disconnect();
+    };
+  }, []);
+  return state.narrow ? drawerOpen : !state.rail;
+}
+
+export function TopBar({ onToggleSidebar, drawerOpen = false }: { onToggleSidebar: () => void; drawerOpen?: boolean }) {
   const pathname = usePathname();
   const client = useQueryClient();
   const toast = useToast();
-  const { connected, working } = useLive();
+  const { connected, serverError } = useLive();
   const { mode, setMode } = usePeek();
+  const sidebarExpanded = useSidebarExpanded(drawerOpen);
   const { undo, redo } = useUndoRedo();
+  const mod = useModKey();
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell });
   const canUndo = shell.data?.canUndo === true;
   const canRedo = shell.data?.canRedo === true;
+  const undoKeys = mod === "⌘" ? "⌘Z" : "Ctrl+Z";
+  const redoKeys = mod === "⌘" ? "⇧⌘Z" : "Ctrl+Shift+Z";
+  const undoName = canUndo ? undoButtonLabel("Undo", shell.data?.undoLabel) : "Nothing recent to undo";
+  const redoName = canRedo ? undoButtonLabel("Redo", shell.data?.redoLabel) : "Nothing to redo";
   // Connected apps are the owner's: someone a space is shared with does not fetch them.
   const guest = Boolean(shell.data?.space?.shared);
   const title = TITLES.find(([prefix]) => pathname.startsWith(prefix))?.[1] ?? "Ensemble";
@@ -105,8 +130,8 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement;
-      if (target.closest("input, textarea, [contenteditable=true], .cm-editor, [data-diagram-editor]")) return;
+      // In a text field or editor, Ctrl/Cmd+Z is that editor's own undo of your typing.
+      if (editingText(event.target)) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
         event.preventDefault();
         const latest = client.getQueryData<{ canUndo?: boolean; canRedo?: boolean }>(["shell"]);
@@ -119,7 +144,6 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [undo, redo, client]);
 
-  const mod = useModKey();
   const toggleMode = () => {
     const next = mode === "side" ? "page" : "side";
     setMode(next);
@@ -129,7 +153,7 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
   return (
     <header className="topbar relative grid h-11 shrink-0 grid-cols-[minmax(max-content,1fr)_minmax(0,560px)_minmax(max-content,1fr)] items-center gap-3 border-b border-line px-3 max-md:grid-cols-[auto_minmax(0,1fr)_auto]">
       <div className="flex min-w-0 items-center gap-2">
-        <button type="button" className="icon-btn" onClick={onToggleSidebar} aria-label="Toggle sidebar">
+        <button type="button" className="icon-btn" onClick={onToggleSidebar} aria-label="Toggle sidebar" aria-expanded={sidebarExpanded}>
           <Menu size={16} />
         </button>
         <HomeLogoLink size={24} wordmark={false} className="md:hidden" />
@@ -143,10 +167,10 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
       <SpacePeople />
       <NotificationBell />
       <div className="hidden items-center lg:flex">
-        <button type="button" className="icon-btn disabled:pointer-events-none disabled:opacity-30" title={`Undo (${mod === "⌘" ? "⌘Z" : "Ctrl+Z"})`} aria-label="Undo" onClick={() => undo.mutate()} disabled={!canUndo}>
+        <button type="button" className="icon-btn disabled:pointer-events-none disabled:opacity-70" title={`${undoName} (${undoKeys})`} aria-label={undoName} onClick={() => undo.mutate()} disabled={!canUndo || undo.isPending}>
           <Undo2 size={15} />
         </button>
-        <button type="button" className="icon-btn disabled:pointer-events-none disabled:opacity-30" title={`Redo (${mod === "⌘" ? "⇧⌘Z" : "Ctrl+Shift+Z"})`} aria-label="Redo" onClick={() => redo.mutate()} disabled={!canRedo}>
+        <button type="button" className="icon-btn disabled:pointer-events-none disabled:opacity-70" title={`${redoName} (${redoKeys})`} aria-label={redoName} onClick={() => redo.mutate()} disabled={!canRedo || redo.isPending}>
           <Redo2 size={15} />
         </button>
       </div>
@@ -161,7 +185,7 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
       >
         <RefreshCw className={fetchNow.isPending ? "animate-spin" : undefined} size={15} />
       </button>
-      <ActivityControls connected={connected} />
+      <ActivityControls connected={connected} serverError={serverError} />
       <button
         type="button"
         className="icon-btn hidden lg:inline-flex"
@@ -183,8 +207,8 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
       >
         {(close) => (
           <>
-            <MenuItem disabled={!canUndo || undo.isPending} onClick={() => { undo.mutate(); close(); }}><Undo2 size={14} /> Undo</MenuItem>
-            <MenuItem disabled={!canRedo || redo.isPending} onClick={() => { redo.mutate(); close(); }}><Redo2 size={14} /> Redo</MenuItem>
+            <MenuItem disabled={!canUndo || undo.isPending} onClick={() => { undo.mutate(); close(); }}><Undo2 size={14} /> <span className="min-w-0 truncate">{canUndo ? undoName : "Undo"}</span></MenuItem>
+            <MenuItem disabled={!canRedo || redo.isPending} onClick={() => { redo.mutate(); close(); }}><Redo2 size={14} /> <span className="min-w-0 truncate">{canRedo ? redoName : "Redo"}</span></MenuItem>
             {guest ? null : <MenuItem disabled={fetchNow.isPending} onClick={() => { fetchNow.mutate(); close(); }}><RefreshCw size={14} /> Fetch now</MenuItem>}
             <MenuItem onClick={() => { toggleMode(); close(); }}><PanelRight size={14} /> {mode === "side" ? "Open tasks as full pages" : "Open tasks in a side peek"}</MenuItem>
           </>

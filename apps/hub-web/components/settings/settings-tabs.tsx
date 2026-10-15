@@ -2,7 +2,7 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { cx } from "../ui";
 import { SETTINGS_TABS, type SettingsTab } from "./url-state";
 
@@ -13,7 +13,18 @@ import { SETTINGS_TABS, type SettingsTab } from "./url-state";
  */
 export function SettingsTabs({ value, onChange, hidden = [] }: { value: SettingsTab; onChange: (tab: SettingsTab) => void; hidden?: SettingsTab[] }) {
   const refs = useRef<Partial<Record<SettingsTab, HTMLAnchorElement | null>>>({});
+  const list = useRef<HTMLDivElement>(null);
   const tabs = SETTINGS_TABS.filter((tab) => !hidden.includes(tab.id));
+  useEffect(() => {
+    // On a narrow screen the tabs are one scrolling row; bring the open tab into it. Only sideways, so the page stays put.
+    const row = list.current;
+    const node = refs.current[value];
+    if (!row || !node || row.scrollWidth <= row.clientWidth) return;
+    const box = row.getBoundingClientRect();
+    const tab = node.getBoundingClientRect();
+    if (tab.left < box.left) row.scrollLeft -= box.left - tab.left + 12;
+    else if (tab.right > box.right) row.scrollLeft += tab.right - box.right + 12;
+  }, [value]);
   const move = (event: React.KeyboardEvent) => {
     const index = tabs.findIndex((tab) => tab.id === value);
     const last = tabs.length - 1;
@@ -41,6 +52,7 @@ export function SettingsTabs({ value, onChange, hidden = [] }: { value: Settings
   };
   return (
     <div
+      ref={list}
       role="tablist"
       aria-label="Settings sections"
       onKeyDown={move}

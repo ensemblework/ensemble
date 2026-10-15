@@ -14,7 +14,8 @@ import { useEntities } from "@/lib/entities";
 import { blockEditor, warmPeek } from "@/lib/warm";
 import { mentionHref } from "../editor/editor-commands";
 import { useToast } from "../toast";
-import { PageLoadFailure } from "./page-load";
+import { PageLoadFailure, inTrash } from "./page-load";
+import { TrashedPage } from "./trashed-page";
 import { PageTitleField } from "./title-field";
 import { isPageEnsembleBusy } from "../comments/ensemble-bus";
 import { announceTyping, onResource, tabId, usePresence } from "@/lib/presence";
@@ -243,8 +244,9 @@ export function NotePage({
 
   if (page.isLoading) return <div className="p-10 text-muted">Loading…</div>;
   if (!page.data) {
+    if (!shared && inTrash(page.error)) return <TrashedPage pageId={pageId} onRestored={() => void page.refetch()} />;
     const missing = page.error instanceof ApiError && page.error.status === 404;
-    return <PageLoadFailure missing={missing} onRetry={() => void page.refetch()} />;
+    return <PageLoadFailure missing={missing} links={!shared} error={page.error} retrying={page.isFetching} onRetry={() => void page.refetch()} />;
   }
 
   const record = page.data;
@@ -264,7 +266,7 @@ export function NotePage({
       data-page-focus={focusMode.active ? "true" : undefined}
     >
       {focusMode.active ? <PageFocusBar status={saveText} error={saveState === "error"} onExit={focusMode.exit} /> : null}
-      <div className="mb-3 flex items-center justify-between text-[12.5px] text-muted">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 text-[12.5px] text-muted">
         <span>
           {shared?.link
             ? gone
@@ -282,7 +284,7 @@ export function NotePage({
                 ? "Pages"
                 : "Pages · view only"}
         </span>
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-x-2 gap-y-1">
           <PagePeople kind="page" id={pageId} />
           {shared || !canEdit ? (
             <>
@@ -291,10 +293,10 @@ export function NotePage({
             </>
           ) : (
             <>
-              <button type="button" className="btn-ghost" disabled={convert.isPending} onClick={() => convert.mutate(false)}>
-                <CheckSquare size={13} /> Add to board
+              <button type="button" className="btn-ghost" disabled={convert.isPending} aria-label="Add to board" title="Add to board" onClick={() => convert.mutate(false)}>
+                <CheckSquare size={13} /> <span className="max-sm:hidden">Add to board</span>
               </button>
-              <button type="button" className="btn-ghost text-accent" disabled={convert.isPending} title="Add to the board and use your default run profile" onClick={() => convert.mutate(true)}><Orbit size={13} /> Quick assign</button>
+              <button type="button" className="btn-ghost text-accent" disabled={convert.isPending} aria-label="Quick assign" title="Add to the board and use your default run profile" onClick={() => convert.mutate(true)}><Orbit size={13} /> <span className="max-sm:hidden">Quick assign</span></button>
               <button type="button" className="icon-btn" title="Delete" aria-label="Delete page" disabled={remove.isPending} onClick={() => remove.mutate()}>
                 <Trash2 size={14} />
               </button>

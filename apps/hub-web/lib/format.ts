@@ -41,7 +41,7 @@ export function startOfDay(date = new Date()): Date {
 }
 
 export function isoDate(date: Date): string {
-  const y = date.getFullYear();
+  const y = String(date.getFullYear()).padStart(4, "0");
   const m = String(date.getMonth() + 1).padStart(2, "0");
   const d = String(date.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
@@ -143,9 +143,21 @@ export function relative(value: string | null | undefined): string {
   return days < 14 ? (days === 1 ? "1 day ago" : `${days} days ago`) : shortDate(value);
 }
 
-/** "1 person", "2 people", "3 steps". `many` covers irregulars; otherwise the word gains an s. */
+const IRREGULAR: Record<string, string> = { person: "people", child: "children" };
+
+/** The plural of an English noun (the last word of a phrase): class → classes, reply → replies, person → people. */
+export function pluralWord(one: string): string {
+  const word = /[A-Za-z]+$/.exec(one)?.[0] ?? "";
+  const irregular = IRREGULAR[word];
+  if (irregular) return one.slice(0, one.length - word.length) + irregular;
+  if (/(s|x|z|ch|sh)$/i.test(word)) return `${one}es`;
+  if (/[^aeiou]y$/i.test(word)) return `${one.slice(0, -1)}ies`;
+  return `${one}s`;
+}
+
+/** "1 person", "2 people", "3 classes". `many` covers anything the English rules get wrong. */
 export function plural(count: number, one: string, many?: string): string {
-  return `${count} ${count === 1 ? one : (many ?? `${one}s`)}`;
+  return `${count} ${count === 1 ? one : (many ?? pluralWord(one))}`;
 }
 
 export function bytes(size: number): string {

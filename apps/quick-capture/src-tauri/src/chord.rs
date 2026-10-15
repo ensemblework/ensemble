@@ -44,7 +44,7 @@ pub fn modifiers_for(os: &str) -> Result<Modifiers, String> {
                 return Err("mod means Command and is only valid on macOS. Windows and Linux list ctrl explicitly.".into());
             }
             "meta" | "super" => {
-                return Err("The Super key is reserved and is not a Ensemble shortcut.".into());
+                return Err("The Super key is reserved and is not an Ensemble shortcut.".into());
             }
             other => return Err(format!("Unknown modifier {other} in capture-chord.json")),
         }

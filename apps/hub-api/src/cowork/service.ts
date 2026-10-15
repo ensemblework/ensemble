@@ -30,7 +30,7 @@ import {
   type MeetingPhase,
 } from "./meetings.js";
 import { nudgeQuestion, nudgeReasons, pathToDone, OPEN_STATUSES, type NudgeReason } from "./nudges.js";
-import { clipSummary, renderWeeklyRecap } from "./recap.js";
+import { clipSummary, renderWeeklyRecap, slippedLinks } from "./recap.js";
 import { isGuestIn } from "../sharing/context.js";
 
 type Db = PrismaClient;
@@ -773,12 +773,6 @@ export async function askEnsemble(db: Db, userId: string, question: string) {
   return { question: asked, answer, sources: composed.sources };
 }
 
-function inDates(value: Date | null, start: string, end: string): boolean {
-  if (!value) return false;
-  const key = value.toISOString().slice(0, 10);
-  return key >= start && key < end;
-}
-
 export async function weeklyRecap(db: Db, userId: string, anchor?: string) {
   const settings = await loadSettings(db, userId);
   const clock = zonedParts(settings.timezone);
@@ -790,11 +784,18 @@ export async function weeklyRecap(db: Db, userId: string, anchor?: string) {
   const bounds = weekBounds(date, weekday);
   const startUtc = dayStart(bounds.start, settings.timezone);
   const endUtc = dayStart(bounds.end, settings.timezone);
-  const [tasks, deliverables, sessions, approvals, decisions] = await Promise.all([
+  const cutoff = bounds.end < clock.date ? bounds.end : clock.date;
+  const [tasks, overdue, deliverables, sessions, approvals, decisions] = await Promise.all([
     db.task.findMany({
       where: { userId, deletedAt: null },
       select: { id: true, title: true, status: true, due: true, completedAt: true },
       take: 400,
+    }),
+    db.task.findMany({
+      where: { userId, deletedAt: null, status: { in: [...OPEN_STATUSES] }, due: { lt: new Date(`${cutoff}T00:00:00.000Z`) } },
+      orderBy: { due: "asc" },
+      select: { id: true, title: true, status: true, due: true },
+      take: 100,
     }),
     db.deliverable.findMany({
       where: { userId, deletedAt: null, status: "completed", completedAt: { gte: startUtc, lt: endUtc } },
@@ -822,9 +823,7 @@ export async function weeklyRecap(db: Db, userId: string, anchor?: string) {
       .map((task) => ({ title: task.title, href: `/tasks/${task.id}`, detail: "Done" })),
     ...deliverables.map((row) => ({ title: row.title, href: `/projects/${row.projectId}`, detail: "Deliverable" })),
   ];
-  const slipped = tasks
-    .filter((task) => task.status !== "done" && task.status !== "dropped" && inDates(task.due, bounds.start, bounds.end) && task.due!.toISOString().slice(0, 10) < clock.date)
-    .map((task) => ({ title: task.title, href: `/tasks/${task.id}`, detail: task.due ? calendarLabel(task.due.toISOString().slice(0, 10)) : undefined }));
+  const slipped = slippedLinks(overdue, cutoff, clock.date);
   const decided = [
     ...sessions.flatMap((session) =>
       decisionLines(`${session.notes}\n${session.recap}`).map((text) => ({ title: text, href: `/meetings?session=${session.id}` })),

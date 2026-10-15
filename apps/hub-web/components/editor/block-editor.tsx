@@ -3,11 +3,14 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { EditorContent, useEditor, type Editor, type JSONContent } from "@tiptap/react";
 import dynamic from "next/dynamic";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, useRef, type MutableRefObject } from "react";
 import type { PageDocument, PageMention } from "@ensemble/shared-types";
 import { api, currentLink, inItemView } from "@/lib/api";
 import { diagramMentionIds, editorExtensions, type EntitySource } from "./extensions";
 import { BlockControls } from "./block-controls";
+import { LinkPopover } from "./link-popover";
+import { PAGE_BODY_ATTRIBUTE } from "./page-body";
 import { FileChooser } from "./file-chooser";
 import { acceptsDocument, replaceDocument, type EditorControl } from "./replace-doc";
 import { RemoteCarets } from "./remote-carets";
@@ -50,6 +53,7 @@ export function BlockEditor({
   control?: MutableRefObject<EditorControl | null>;
 }) {
   const toast = useToast();
+  const router = useRouter();
   const client = useQueryClient();
   const clientRef = useRef(client);
   clientRef.current = client;
@@ -84,7 +88,7 @@ export function BlockEditor({
     }),
     content: initial as JSONContent,
     editorProps: {
-      attributes: { class: "ProseMirror", spellcheck: "true" },
+      attributes: { class: "ProseMirror", spellcheck: "true", role: "textbox", "aria-multiline": "true", "aria-label": "Page content", [PAGE_BODY_ATTRIBUTE]: "" },
       handleClick(_view, _pos, event) {
         const anchor = (event.target as HTMLElement).closest("a.mention") as HTMLAnchorElement | null;
         if (!anchor) return false;
@@ -168,13 +172,14 @@ export function BlockEditor({
       <div className={page && comments ? "page-with-comments" : undefined}>
         <div className="block-editor-body">
           <EditorContent editor={editor} />
-          {live && editable ? <BlockControls editor={live} /> : null}
+          {live && editable ? <BlockControls editor={live} comment={Boolean(page && comments && !currentLink())} /> : null}
         </div>
+        {live && editable ? <LinkPopover editor={live} navigate={router.push} /> : null}
         {live && chooser !== null ? <FileChooser editor={live} pos={chooser} onClose={closeChooser} /> : null}
         {live && page ? <RemoteCarets editor={live} page={page} /> : null}
         {/* Comments name people: never on a public link. */}
         {page && live && !currentLink() ? (
-          comments ? <CommentLayer editor={live} pageKind={page.kind} pageId={page.id} /> : <InlineEnsemble editor={live} pageKind={page.kind} pageId={page.id} />
+          comments ? <CommentLayer editor={live} pageKind={page.kind} pageId={page.id} canComment={editable} /> : <InlineEnsemble editor={live} pageKind={page.kind} pageId={page.id} />
         ) : null}
       </div>
     </div>

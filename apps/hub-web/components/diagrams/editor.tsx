@@ -518,8 +518,11 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
       }
       if (typingTarget(event.target)) return;
       const apple = isApplePlatform();
+      // Cmd/Ctrl with + (Shift and =, or the keypad) zooms in, as it does for the page.
+      const plus = event.key === "+" && (apple ? event.metaKey : event.ctrlKey) && !event.altKey;
       const hit = SHORTCUTS.find((binding) => {
         if (binding.scope !== "diagrams" || !binding.mac) return false;
+        if (binding.id === "diagram-zoom-in" && plus) return true;
         return eventMatchesChord(event, apple ? binding.mac : binding.other!, apple);
       });
       if (!hit) return;
@@ -546,6 +549,9 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
       if (hit.id === "diagram-bold") toggleText("bold");
       if (hit.id === "diagram-italic") toggleText("italic");
       if (hit.id === "diagram-underline") toggleText("underline");
+      if (hit.id === "diagram-zoom-in") canvasRef.current?.zoomIn();
+      if (hit.id === "diagram-zoom-out") canvasRef.current?.zoomOut();
+      if (hit.id === "diagram-zoom-fit") canvasRef.current?.fit();
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
@@ -639,6 +645,10 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
     );
   }
 
+  // aria-disabled rather than disabled, so the reason shows on hover and focus.
+  const lockTitle = selected.nodes.length
+    ? "Lock or unlock the selection, so it cannot be moved (Alt+Shift+L)"
+    : "Select blocks or text boxes first, then lock them in place (Alt+Shift+L)";
   const problemCount = diagnostics.length;
   const problemLabel = problemCount === 0 ? "No problems" : problemCount === 1 ? "1 problem" : `${problemCount} problems`;
   const markedId = activeProblem == null ? null : diagnostics[activeProblem]?.target ?? null;
@@ -673,7 +683,7 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
           <button type="button" className="btn" disabled={busy} onClick={() => void reorganize("horizontal")}>
             Fit horizontally
           </button>
-          <button type="button" className="btn" disabled={!selected.nodes.length} onClick={lockSelection}>
+          <button type="button" className="btn aria-disabled:cursor-not-allowed aria-disabled:opacity-50" aria-disabled={!selected.nodes.length} title={lockTitle} onClick={lockSelection}>
             Lock
           </button>
           <button type="button" className="btn" onClick={addNote}>
@@ -824,7 +834,7 @@ export function DiagramEditor({ id, shared }: { id: string; shared?: { role: "vi
               <button type="button" aria-label="Add text box" title="Text box" onClick={addNote}>
                 <Type size={16} />
               </button>
-              <button type="button" aria-label="Lock selection" title="Lock" disabled={!selected.nodes.length} onClick={lockSelection}>
+              <button type="button" className="aria-disabled:cursor-not-allowed aria-disabled:opacity-40" aria-label="Lock selection" aria-disabled={!selected.nodes.length} title={lockTitle} onClick={lockSelection}>
                 <Lock size={16} />
               </button>
             </div>

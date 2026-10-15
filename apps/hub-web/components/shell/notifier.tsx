@@ -8,7 +8,7 @@ import { safeDate } from "@/lib/safe-date";
 import { notify, setNotifyConfig } from "@/lib/notify";
 import { accentWriteIsFresh, publishAppearance, readAppearance } from "@/lib/prefs";
 
-/** Fires reminder notifications while a Ensemble tab is open (docs/02 §14). */
+/** Fires reminder notifications while an Ensemble tab is open (docs/02 §14). */
 export function Notifier() {
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
   // Reminders are the space owner's own: none to fire in a space shared with you.

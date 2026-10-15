@@ -41,7 +41,7 @@ export function ProposalsWidget() {
   const busy = quick.isPending || decide.isPending;
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || busy || options || peek.peekId || document.querySelector("[data-modal-layer], [data-layout-editing]")) return;
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || busy || options || peek.peekId || document.querySelector("[data-modal-layer], [data-layout-editing], [data-desk-form]")) return;
       if ((event.target as HTMLElement).closest("input, textarea, select, [contenteditable=true]")) return;
       const task = proposals[Math.min(selected, proposals.length - 1)];
       if (!task) return;

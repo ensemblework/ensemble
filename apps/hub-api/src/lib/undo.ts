@@ -17,6 +17,7 @@ import { sseHub } from "./sse.js";
 import { lockUserTransaction } from "./user-lock.js";
 import { actorFor, isVisitor } from "../sharing/context.js";
 import { syncFileText } from "../files/visibility.js";
+import { tidyUndoLabel } from "./undo-label.js";
 
 export type UndoModel =
   | "task"
@@ -106,10 +107,32 @@ const TRASHABLE = new Set<UndoModel>([
   "document",
 ]);
 
+/**
+ * Undo and redo without an entry id (the top bar, Ctrl/Cmd+Z) reach back this far, so a click
+ * never brings back something deleted days ago. A toast's or an assistant card's Undo names its
+ * entry and still works while the entry is on the stack.
+ */
+export const UNDO_WINDOW_MS = 10 * 60_000;
+
+function windowStart(now = Date.now()): Date {
+  return new Date(now - UNDO_WINDOW_MS);
+}
+
+/** What the top bar's Undo and Redo would do now, for this person. */
+export async function undoState(db: Db, userId: string): Promise<{ canUndo: boolean; canRedo: boolean; undoLabel: string | null; redoLabel: string | null }> {
+  const actorAccountId = actorFor(userId);
+  const since = windowStart();
+  const [undo, redo] = await Promise.all([
+    db.undoEntry.findFirst({ where: { userId, actorAccountId, undoneAt: null, createdAt: { gte: since } }, orderBy: { seq: "desc" }, select: { label: true } }),
+    db.undoEntry.findFirst({ where: { userId, actorAccountId, undoneAt: { gte: since } }, orderBy: { undoneAt: "desc" }, select: { label: true } }),
+  ]);
+  return { canUndo: Boolean(undo), canRedo: Boolean(redo), undoLabel: undo?.label ?? null, redoLabel: redo?.label ?? null };
+}
+
 export class UndoConflict extends Error {
   readonly statusCode = 409;
   constructor(label: string) {
-    super(`“${label}” was changed since; undo skipped`);
+    super(`${tidyUndoLabel(label)}: changed since, so undo skipped it`);
     this.name = "UndoConflict";
   }
 }
@@ -236,7 +259,7 @@ async function writeEntry(
       userId: input.userId,
       actorAccountId,
       seq,
-      label: input.label.slice(0, 240),
+      label: tidyUndoLabel(input.label),
       kind: input.patches.length > 1 ? "batch" : input.kind,
       actor: input.actor ?? "me",
       subject: input.subject,
@@ -425,8 +448,8 @@ async function runEntry(db: PrismaClient, userId: string, entryId: string | unde
   const entry = entryId
     ? await db.undoEntry.findFirst({ where: { id: entryId, userId, actorAccountId } })
     : direction === "undo"
-      ? await db.undoEntry.findFirst({ where: { userId, actorAccountId, undoneAt: null }, orderBy: { seq: "desc" } })
-      : await db.undoEntry.findFirst({ where: { userId, actorAccountId, undoneAt: { not: null } }, orderBy: { undoneAt: "desc" } });
+      ? await db.undoEntry.findFirst({ where: { userId, actorAccountId, undoneAt: null, createdAt: { gte: windowStart() } }, orderBy: { seq: "desc" } })
+      : await db.undoEntry.findFirst({ where: { userId, actorAccountId, undoneAt: { gte: windowStart() } }, orderBy: { undoneAt: "desc" } });
   if (!entry) throw Object.assign(new Error(direction === "undo" ? "Nothing to undo." : "Nothing to redo."), { statusCode: 204 });
   if (direction === "undo" && entry.undoneAt) throw new UndoConflict(entry.label);
   if (direction === "redo" && !entry.undoneAt) throw new UndoConflict(entry.label);
@@ -466,13 +489,10 @@ async function runEntry(db: PrismaClient, userId: string, entryId: string | unde
   }
   await flipStoredCalls(db, userId, entry.id, direction);
   await appendLedger({ userId, actor: entry.actor, action: direction, payload: { id: entry.id, label: entry.label } });
-  const [undoable, redoable] = await Promise.all([
-    db.undoEntry.count({ where: { userId, actorAccountId, undoneAt: null } }),
-    db.undoEntry.count({ where: { userId, actorAccountId, undoneAt: { not: null } } }),
-  ]);
+  const state = await undoState(db, userId);
   sseHub.publish(userId, {
     event: "undo.changed",
-    data: { entryId: entry.id, direction, label: entry.label, canUndo: undoable > 0, canRedo: redoable > 0 },
+    data: { entryId: entry.id, direction, label: entry.label, canUndo: state.canUndo, canRedo: state.canRedo },
   });
   return { label: entry.label, entryId: entry.id };
 }

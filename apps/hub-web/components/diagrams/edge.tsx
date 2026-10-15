@@ -113,6 +113,9 @@ export function DiagramEdgeView({ id, source, target, selected, data }: EdgeProp
             ].filter(Boolean).join(" ")}
             style={{
               transform: `translate(-50%, -50%) translate(${route.label.x}px, ${route.label.y}px)`,
+              // React Flow draws labels under the blocks. Above blocks (z 1–2), below a selected
+              // block (z 1000+) unless this line is selected or its label is being typed.
+              zIndex: selected || data.editing ? 1500 : 10,
               ...(showPill ? fontCss(edge.font, LABEL_SIZE.edge, 600) : {}),
             }}
             title={canBend ? "Drag to bend the line. Double-click to edit its label." : undefined}

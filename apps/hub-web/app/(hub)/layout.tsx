@@ -35,6 +35,7 @@ import { PageProgress } from "@/components/motion/page-progress";
 import { Splash } from "@/components/motion/skeletons";
 import { ModalScope, Skeleton, cx } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
+import { loadFailureKind } from "@/lib/load-failure";
 import { clearBrowserTabSession } from "@/lib/tab-session";
 import { switchSpace } from "@/lib/spaces";
 import { ShellLabelsProvider } from "@/lib/shell-labels";
@@ -156,6 +157,7 @@ function Frame({ children }: { children: React.ReactNode }) {
       <div ref={area} className="relative flex min-w-0 flex-1">
         <div className={cx("relative flex min-w-0 flex-1 flex-col", peeking && fullscreen && "hidden")}>
           <TopBar
+            drawerOpen={drawer}
             onToggleSidebar={() => {
               if (window.matchMedia("(max-width: 767px)").matches) setDrawer((open) => !open);
               else toggleSidebarRail();
@@ -284,16 +286,28 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     }
   }, [shell.data, pathname]);
   if (unauthorized) return null;
-  const offline = shell.isError || shell.failureCount > 0;
+  const trouble = shell.isError || shell.failureCount > 0;
+  // A 500 is the server failing, not the network: say so, and let the person retry.
+  const serverError = trouble && loadFailureKind(shell.error ?? shell.failureReason) === "server";
   return (
     <>
-      <Splash active={shell.isLoading && !shell.data && !offline} />
-      {offline ? (
-        <div className="fixed left-1/2 top-3 z-[80] -translate-x-1/2 rounded-full border border-line bg-panel px-3 py-1.5 text-[13px] text-ink shadow-pop" data-motion-slot="net.connection" data-state="reconnecting">
-          Reconnecting to Ensemble…
+      <Splash active={shell.isLoading && !shell.data && !trouble} />
+      <ShellLabelsProvider labels={shell.data?.labels}>{children}</ShellLabelsProvider>
+      {/* After the page in the DOM, so Skip to content stays the first stop for Tab. */}
+      {trouble ? (
+        <div role="status" className="fixed left-1/2 top-3 z-[80] flex -translate-x-1/2 items-center gap-2 rounded-full border border-line bg-panel px-3 py-1.5 text-[13px] text-ink shadow-pop" data-motion-slot="net.connection" data-state={serverError ? "server-error" : "reconnecting"}>
+          {serverError ? (
+            <>
+              Ensemble&apos;s server hit an error.
+              <button type="button" className="font-medium text-accent hover:underline disabled:opacity-60" disabled={shell.isFetching} onClick={() => void shell.refetch()}>
+                {shell.isFetching ? "Retrying…" : "Retry"}
+              </button>
+            </>
+          ) : (
+            "Reconnecting to Ensemble…"
+          )}
         </div>
       ) : null}
-      <ShellLabelsProvider labels={shell.data?.labels}>{children}</ShellLabelsProvider>
       {shell.data ? <CelebrateHost /> : null}
     </>
   );
