@@ -1,14 +1,15 @@
 /**
  * Three-way merge of two edits to one page (ProseMirror JSON): the version both started from
- * (`base`, the last one this editor saved or loaded), the editor's own (`mine`), and what
- * someone else saved since (`theirs`).
+ * (`base`), one side's edit (`mine`) and the other's (`theirs`). The collab authority in hub-api
+ * uses it when a write from elsewhere cannot be mapped through the steps typed meanwhile, and the
+ * editor when it re-proposes unsent typing after the authority restarted or a session expired.
  *
  * Edits in different places all land. Text is compared word by word, then letter by letter
  * where both people changed the same words. Two people typing at the same spot both keep
  * their text (theirs first). Where both rewrote the same words, or one deleted a block the
  * other edited, nothing is dropped: both versions, or the edited one, stay.
  */
-import type { PageDocument, PageNode } from "@ensemble/shared-types";
+import type { PageDocument, PageNode } from "./domain.js";
 
 type Mark = NonNullable<PageNode["marks"]>[number];
 

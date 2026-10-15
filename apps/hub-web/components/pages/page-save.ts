@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { EMPTY_PAGE, type PageDocument } from "@ensemble/shared-types";
 import { ApiError, SHARE_GONE_EVENT } from "@/lib/api";
-import { mergeDocs, sameDoc } from "@/lib/page-merge";
+import { mergeDocs, sameDoc } from "@ensemble/shared-types/page-merge";
 import type { EditorControl } from "../editor/replace-doc";
 
 export type SaveState = "saved" | "saving" | "dirty" | "error";
@@ -26,7 +26,7 @@ export function lostAccess(error: unknown): error is ApiError {
  * Saving a block-editor page together with whoever else has it open. Saves are debounced and
  * strictly one at a time. Each save names the revision it was edited from; when someone saved
  * first (409), or their save arrives over the event stream while you have unsaved typing,
- * their version is merged into yours in place (`lib/page-merge.ts`) and the merge is saved.
+ * their version is merged into yours in place (`page-merge.ts` in shared-types) and the merge is saved.
  * Your text is never thrown away: when a merge cannot be made, or the page can no longer be
  * saved, it stays in the editor and `stuck`/`onLost` let the page offer a copy.
  */
