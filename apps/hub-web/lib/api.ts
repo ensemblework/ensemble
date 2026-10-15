@@ -1,5 +1,5 @@
 import type { IdeTheme, ThemeDirectoryExtension } from "@ensemble/ide-theme";
-import { emptyWorkspace, type ModelMeta, type PageDocument, type Settings, type TaskPageContent } from "@ensemble/shared-types";
+import { emptyWorkspace, type ModelMeta, type PageDocument, type Settings, type SubscriptionAgent, type SubscriptionProvider, type TaskPageContent } from "@ensemble/shared-types";
 import type { LayoutDocument } from "@ensemble/shared-types/widgets";
 
 import { bindClient, currentExternalSignal, isRequestCancelled, RequestCancelledError, trackRequest, isPageUnloading } from "./fetch-cancel";
@@ -939,6 +939,22 @@ export type AssistantMessageRecord = {
   createdAt: string;
 };
 
+/** A computer the person's AI subscriptions run on, and the agents it found. */
+export type SubscriptionComputer = {
+  id: string;
+  name: string;
+  platform: string | null;
+  local: boolean;
+  online: boolean;
+  lastSeenAt: string | null;
+  appVersion: string | null;
+  /** New enough to run assistant turns. */
+  ready: boolean;
+  agents: SubscriptionAgent[];
+};
+
+export type SubscriptionsView = { computers: SubscriptionComputer[]; preferred: string | null };
+
 export type ModelCatalog = {
   providers: Array<{
     provider: string;
@@ -1323,6 +1339,10 @@ export const api = bindClient({
         online: boolean;
       }>;
     }>("/api/devices"),
+  /** The person's AI subscriptions on their computers (docs/30 §8). */
+  subscriptions: () => get<SubscriptionsView>("/api/subscriptions"),
+  checkSubscriptions: (deviceId: string) => post<{ sent?: boolean; agents?: SubscriptionAgent[] }>("/api/subscriptions/check", { deviceId }),
+  signInSubscription: (deviceId: string, agent: SubscriptionProvider) => post<{ message: string }>("/api/subscriptions/sign-in", { deviceId, agent }),
   pairDevice: () => post<{ code: string; expiresAt: string }>("/api/devices/pair", {}),
   revokeDevice: (id: string) => del<void>(`/api/devices/${id}`),
   stopJob: (id: string) => post(`/api/agent/jobs/${id}/stop`),

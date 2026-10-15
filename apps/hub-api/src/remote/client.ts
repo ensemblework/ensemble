@@ -54,6 +54,12 @@ export interface HostedClient {
   /** One chunk of a web terminal command's output, in order. False: the web stopped listening. */
   terminalOutput(runId: string, chunk: TerminalChunk): Promise<boolean>;
   events(onFrame: (event: string, data: unknown) => void, signal: AbortSignal): Promise<void>;
+  /** An assistant turn the web handed this computer; null when it has already ended. */
+  assistantTurn(turnId: string): Promise<unknown | null>;
+  assistantTool(turnId: string, body: { name: string; input: unknown }): Promise<unknown>;
+  /** Reply text in order. `stop`: the person stopped the turn, or it ended. */
+  assistantStream(turnId: string, body: { seq: number; text: string }): Promise<{ stop: boolean }>;
+  assistantDone(turnId: string, body: unknown): Promise<void>;
 }
 
 async function send(base: string, token: string, method: string, path: string, json?: unknown, signal?: AbortSignal): Promise<{ status: number; body: unknown }> {
@@ -183,6 +189,28 @@ export function hostedClient(base: string, token: string): HostedClient {
     },
     events(onFrame, signal) {
       return readEvents(base, token, onFrame, signal);
+    },
+    async assistantTurn(turnId) {
+      const res = await call("GET", ROUTES.assistantTurn(turnId));
+      if (res.status === 404 || res.status === 410) return null;
+      if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "The turn could not be read."));
+      return res.body;
+    },
+    async assistantTool(turnId, body) {
+      const res = await call("POST", ROUTES.assistantTool(turnId), body);
+      if (res.status === 404 || res.status === 410) return { text: "This turn has ended.", isError: true };
+      if (res.status >= 400) return { text: messageOf(res.body, `Ensemble refused the tool call (${res.status}).`), isError: true };
+      return res.body;
+    },
+    async assistantStream(turnId, body) {
+      const res = await call("POST", ROUTES.assistantStream(turnId), body);
+      if (res.status === 404 || res.status === 410) return { stop: true };
+      if (res.status >= 400) throw new RemoteError(res.status, messageOf(res.body, "The reply was refused."));
+      return { stop: (res.body as { stop?: unknown } | null)?.stop === true };
+    },
+    async assistantDone(turnId, body) {
+      const res = await call("POST", ROUTES.assistantDone(turnId), body);
+      if (res.status >= 400 && res.status !== 404 && res.status !== 410) throw new RemoteError(res.status, messageOf(res.body, "The answer was refused."));
     },
   };
 }

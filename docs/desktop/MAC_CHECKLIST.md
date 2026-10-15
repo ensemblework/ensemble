@@ -19,7 +19,7 @@ The app shell is universal, but the local API inside it uses this Mac's Node and
   The window opens. The Dock icon is the Satin Gold Woven Chorus mark on its Deep Petrol tile.
 
 - [ ] Enter a Gemini key and run a simple agent task.
-  Settings → Assistant → Models → Manage keys → Google Gemini. Paste a key from [Google AI Studio](https://aistudio.google.com/apikey).
+  Settings → Assistant → Models → Manage API keys → Google Gemini. Paste a key from [Google AI Studio](https://aistudio.google.com/apikey).
   Workspace → Assign task → Research & writing. Ask for one sentence. The task finishes in the window.
 
 - [ ] The folder picker.

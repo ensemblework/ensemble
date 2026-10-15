@@ -34,6 +34,11 @@ export const ROUTES = {
   codeAnswer: (requestId: string) => `/api/devices/self/code-requests/${encodeURIComponent(requestId)}`,
   /** Output of a terminal command the web started here, in order (protocol 4). */
   terminalOutput: (runId: string) => `/api/devices/self/terminal-runs/${encodeURIComponent(runId)}/output`,
+  /** An assistant turn the web handed this computer's agent (capabilities `assistantTurns`): read it, call its tools, stream, finish. */
+  assistantTurn: (turnId: string) => `/api/devices/self/assistant-turns/${encodeURIComponent(turnId)}`,
+  assistantTool: (turnId: string) => `/api/devices/self/assistant-turns/${encodeURIComponent(turnId)}/tool`,
+  assistantStream: (turnId: string) => `/api/devices/self/assistant-turns/${encodeURIComponent(turnId)}/stream`,
+  assistantDone: (turnId: string) => `/api/devices/self/assistant-turns/${encodeURIComponent(turnId)}/done`,
 } as const;
 
 const ms = (name: string, fallback: number) => {

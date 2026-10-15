@@ -245,6 +245,17 @@ export const connectedDataRouteCoverage: Readonly<Record<string, readonly RouteC
   "GET /api/meetings/notes/:id": ["happy-path", "isolation", "unknown-id"],
 };
 
+/** The person's own AI subscriptions and their relayed assistant turns. Owned by src/subscriptions/routes.ts; checked in src/subscriptions/subscriptions.integration.test.ts. */
+export const subscriptionRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
+  "GET /api/subscriptions": ["happy-path", "isolation"],
+  "POST /api/subscriptions/check": ["happy-path"],
+  "POST /api/subscriptions/sign-in": ["happy-path", "isolation", "invalid-input"],
+  "GET /api/devices/self/assistant-turns/:id": ["happy-path", "isolation"],
+  "POST /api/devices/self/assistant-turns/:id/tool": ["happy-path", "isolation"],
+  "POST /api/devices/self/assistant-turns/:id/stream": ["happy-path"],
+  "POST /api/devices/self/assistant-turns/:id/done": ["happy-path"],
+};
+
 /** Ensemble spaces. Owned by src/spaces/routes.ts; checked in src/spaces/spaces.integration.test.ts. */
 export const spacesRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
   "GET /api/spaces": ["happy-path", "isolation"],
@@ -321,6 +332,7 @@ export const routeCoverage = {
   ...fileImportRouteCoverage,
   ...connectedDataRouteCoverage,
   ...spacesRouteCoverage,
+  ...subscriptionRouteCoverage,
   ...sharingRouteCoverage,
   ...linksRouteCoverage,
   ...fileRouteCoverage,

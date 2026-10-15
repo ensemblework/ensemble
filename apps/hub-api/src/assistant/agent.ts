@@ -47,7 +47,9 @@ import { toolAllowedFor, chatToolSpecs, responsesToolSpecs } from "./registry.js
 import { appsPrompt, ensureAppAccess, loadAppGrants, toolsForTurn, writeRefusal } from "./apps.js";
 import { diagramGuidance } from "./diagram-skill.js";
 import { advertisedTools, appMap, findPlaybook, playbookIndex, playbooksFor, routePlaybooks, type Playbook } from "./skills/index.js";
-import { hasModule } from "@ensemble/shared-types";
+import { hasModule, isSubscriptionProvider } from "@ensemble/shared-types";
+import type { ToolAnswer } from "../subscriptions/bridge.js";
+import { agentConversation, runSubscriptionTurn, USE_TOOL } from "../subscriptions/turn.js";
 import { pastScheduleWarning, withPastScheduleWarning } from "./schedule.js";
 import { cutOffReply, historyEntries, replyAfterStreamFailure } from "./cutoff.js";
 import { buildHubState, buildSystemPrompt, loadOpenPage } from "./state.js";
@@ -70,6 +72,8 @@ export const MAX_STEPS = 8;
 export const MAX_CODE_STEPS = 16;
 /** Bodies handed back to the model, so one long note cannot eat the window. */
 export const MAX_TOOL_RESULT_CHARS = 6000;
+/** Tool calls an agent on the person's own subscription may make in one turn (it runs its own loop). */
+export const MAX_COMPUTER_CALLS = 24;
 
 /**
  * Stop requested?
@@ -286,7 +290,87 @@ async function drive(
   let text = "";
   let nudged = false;
 
-  const maxSteps = args.code ? MAX_CODE_STEPS : MAX_STEPS;
+  const maxSteps = isSubscriptionProvider(args.provider) ? 0 : args.code ? MAX_CODE_STEPS : MAX_STEPS;
+  if (isSubscriptionProvider(args.provider)) {
+    // The person's own agent runs the loop on their computer; each tool it calls runs here, as below.
+    const agent = args.provider;
+    const toolSpecs = () => [
+      ...chatToolSpecs(shown()).map((spec) => {
+        const fn = spec.function as { name: string; description: string; parameters: Record<string, unknown> };
+        return { name: fn.name, description: fn.description, inputSchema: fn.parameters };
+      }),
+      USE_TOOL,
+    ];
+    const conversation = agentConversation(messages, agent);
+    const pendingProjectNames: string[] = [];
+    let used = 0;
+    const call = async (name: string, input: unknown): Promise<ToolAnswer> => {
+      if (stop.signal.aborted) return { text: JSON.stringify({ error: "The person stopped this turn." }), isError: true };
+      const inner = name === USE_TOOL.name ? ((input ?? {}) as { name?: unknown; input?: unknown }) : null;
+      const requested = { id: `call_${randomUUID()}`, name: inner ? String(inner.name ?? "") : name, arguments: JSON.stringify((inner ? inner.input : input) ?? {}) };
+      used += 1;
+      if (used > MAX_COMPUTER_CALLS) {
+        return { text: JSON.stringify({ error: "This turn's tool budget is used up. Answer the person now from what you already have." }), isError: true };
+      }
+      args.emit({ type: "status", text: statusFor([requested]) });
+      await updateActivity(app.redis, userId, activityId, { label: "Assistant is working", detail: requested.name });
+      const outcome = await runOne({ ...ctx, pendingProjectNames: [...pendingProjectNames] }, args, requested, byName);
+      const proposed = proposedProjectName(outcome.call);
+      if (proposed) pendingProjectNames.push(proposed);
+      const [settled] = settleWriteBatch([outcome]);
+      if (settled!.call.state === "awaiting_approval") args.emit({ type: "pending", call: settled!.call, preview: settled!.call.summary ?? "" });
+      else args.emit({ type: "tool", call: settled!.call });
+      calls.push(settled!.call);
+      if (settled!.call.state === "ok" && settled!.call.isWrite) mutated = true;
+      const playbook = settled!.call.name === "hub_how_to" && settled!.call.state === "ok" ? findPlaybook(String(settled!.call.input?.name ?? ""), args.modules) : undefined;
+      const loaded = Boolean(playbook && !active.has(playbook.name));
+      if (playbook && loaded) active.set(playbook.name, playbook);
+      return { text: JSON.stringify(settled!.forModel), ...(settled!.call.state === "failed" ? { isError: true } : {}), ...(loaded ? { tools: toolSpecs() } : {}) };
+    };
+    try {
+      const done = await runSubscriptionTurn({
+        userId,
+        settings,
+        agent,
+        model: args.model,
+        effort: args.reasoningEffort ?? null,
+        system: conversation.system,
+        prompt: conversation.prompt,
+        tools: toolSpecs(),
+        maxTurns: MAX_COMPUTER_CALLS + 4,
+        call,
+        signal: stop.signal,
+        onDelta(piece) {
+          args.emit({ type: "delta", text: piece });
+        },
+        onStatus(text) {
+          args.emit({ type: "status", text });
+        },
+      });
+      text = done.text.trim();
+      answered = done.model || args.model;
+      credits = null;
+      await recordMetric(app.prisma, {
+        userId,
+        kind: "model.call",
+        meta: {
+          provider: agent,
+          model: answered,
+          purpose: "Hub chat",
+          tokensIn: done.tokensIn,
+          tokensOut: done.tokensOut,
+          // The person's own plan pays; nothing is billed through Ensemble.
+          estimatedUsd: 0,
+          computer: done.computer,
+          title: truncateText(args.message, 80),
+        },
+      }).catch((error: unknown) => app.log.error({ err: error }, "Could not record the model call"));
+    } catch (error) {
+      const cancelled = stop.signal.aborted || (error instanceof Error && error.name === "AbortError");
+      if (!cancelled) throw error;
+      stop.abort();
+    }
+  }
   for (let step = 0; step < maxSteps; step += 1) {
     // Checked before spending anything. Between steps is the natural checkpoint.
     if (stop.signal.aborted || (await stopRequested(app.redis, userId, activityId))) {

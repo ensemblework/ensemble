@@ -7,7 +7,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { EFFORT_LABEL, effortList, modelEfforts, type EffortLevel, type ModelMeta } from "@ensemble/shared-types";
 import { Popover, cx } from "../ui";
 
-export type ProviderChoice = { id: string; label: string; status: "key" | "account" | "server" | "none" | "local"; note?: string };
+/** "plan": the person's own subscription, found on their computer; "plan-missing": not found or not signed in there. */
+export type ProviderChoice = { id: string; label: string; status: "key" | "account" | "server" | "none" | "local" | "plan" | "plan-missing"; note?: string };
 
 const STATUS_DOT: Record<ProviderChoice["status"], string> = {
   key: "bg-ok",
@@ -15,6 +16,8 @@ const STATUS_DOT: Record<ProviderChoice["status"], string> = {
   server: "bg-accent",
   local: "bg-muted",
   none: "bg-line-strong",
+  plan: "bg-ok",
+  "plan-missing": "bg-warn",
 };
 
 const STATUS_TEXT: Record<ProviderChoice["status"], string> = {
@@ -23,6 +26,8 @@ const STATUS_TEXT: Record<ProviderChoice["status"], string> = {
   server: "server key",
   local: "on this computer",
   none: "no key",
+  plan: "your plan",
+  "plan-missing": "not on your computer",
 };
 
 /** The provider of a tier: a menu with whether each one has a key. */
