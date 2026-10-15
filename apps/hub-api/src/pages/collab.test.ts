@@ -3,7 +3,8 @@ import test from "node:test";
 import { Mapping, Step, Transform } from "prosemirror-transform";
 import type { Node } from "prosemirror-model";
 import type { PageDocument } from "@ensemble/shared-types";
-import { Authority, CollabError, diffStep, LIMITS, type StepBatch } from "./collab-core.js";
+import { Authority, CollabError, LIMITS, type StepBatch } from "./collab-core.js";
+import { diffSteps } from "./page-diff.js";
 import { CollabHub, STEPS_EVENT, type CollabStore, type DocKey, type StoredDoc } from "./collab.js";
 import { pageDoc, pageSchema } from "./schema.js";
 
@@ -94,12 +95,24 @@ test("gaps are filled from the log; versions from the future, another epoch, or 
   assert.throws(() => authority.receive(9, [], "tab"), (error) => code(error) === "COLLAB_RESET");
 });
 
-test("diffStep turns one document into another with a single step", () => {
+test("diffSteps turns one document into another with small steps", () => {
   const from = pageDoc(p("One", "Two"));
-  const to = pageDoc(p("One", "Two and a half", "Three"));
-  const step = diffStep(from, to)!;
-  assert.ok(step.apply(from).doc!.eq(to));
-  assert.equal(diffStep(from, pageDoc(p("One", "Two"))), null);
+  const to = pageDoc(p("One!", "Two and a half", "Three"));
+  const steps = diffSteps(from, to);
+  let doc = from;
+  for (const step of steps) doc = step.apply(doc).doc!;
+  assert.ok(doc.eq(to));
+  assert.ok(steps.length >= 3, "each change is its own step");
+  assert.deepEqual(diffSteps(from, pageDoc(p("One", "Two"))), []);
+});
+
+test("a write from elsewhere that changes two places keeps what was typed between them", () => {
+  const start = pageDoc(p("Title", "Middle", "End"));
+  const authority = new Authority(pageSchema, { doc: start, revision: 1, raw: p("Title", "Middle", "End") });
+  authority.receive(0, typing(start, endOf(start, 1), " typed live").steps, "mira");
+  const theirs = p("Title (renamed)", "Middle", "End", "Appended");
+  authority.absorb(theirs, 2, pageDoc(theirs));
+  assert.deepEqual(lines(authority.doc), ["Title (renamed)", "Middle typed live", "End", "Appended"]);
 });
 
 test("a write from elsewhere is mapped through the steps typed since the copy it was based on", () => {

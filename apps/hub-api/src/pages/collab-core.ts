@@ -10,9 +10,10 @@
  */
 import { randomUUID } from "node:crypto";
 import type { Node, Schema } from "prosemirror-model";
-import { Mapping, ReplaceStep, Step } from "prosemirror-transform";
+import { Step } from "prosemirror-transform";
 import type { PageDocument } from "@ensemble/shared-types";
 import { mergeDocs } from "@ensemble/shared-types/page-merge";
+import { diffSteps, rebaseSteps } from "./page-diff.js";
 
 export type ClientID = string | number;
 /** The client id on steps the server made (writes from elsewhere). */
@@ -45,32 +46,15 @@ export class CollabError extends Error {
 
 const RESET = "This page was reloaded on the server. Load it again.";
 
-/** One step that turns `from` into `to`, or null when they are the same document. */
-export function diffStep(from: Node, to: Node): Step | null {
-  const start = from.content.findDiffStart(to.content);
-  if (start === null) return null;
-  const end = from.content.findDiffEnd(to.content)!;
-  let endA = end.a;
-  let endB = end.b;
-  const overlap = start - Math.min(endA, endB);
-  if (overlap > 0) {
-    endA += overlap;
-    endB += overlap;
-  }
-  const step = new ReplaceStep(start, endA, to.slice(start, endB));
-  if (step.apply(from).doc?.eq(to)) return step;
-  return new ReplaceStep(0, from.content.size, to.slice(0, to.content.size));
-}
-
-/** What the stored copy holds, and how its positions map onto the live document. */
+/** What the stored copy holds. */
 type Known = {
   revision: number;
   raw: unknown;
   doc: Node;
-  /** The live version `doc` corresponds to. */
+  /** The live version this copy was written from, or last compared with. */
   version: number;
-  /** From positions in `doc` to positions in the live document at `version`; null when unknown. */
-  mapping: Mapping | null;
+  /** `doc` is the live document as it was at `version`, so the steps since apply to it. */
+  exact: boolean;
 };
 
 export class Authority {
@@ -88,7 +72,7 @@ export class Authority {
     private readonly limits = LIMITS,
   ) {
     this.doc = start.doc;
-    this.known = { revision: start.revision, raw: start.raw, doc: start.doc, version: 0, mapping: new Mapping() };
+    this.known = { revision: start.revision, raw: start.raw, doc: start.doc, version: 0, exact: true };
   }
 
   private get first(): number {
@@ -147,46 +131,39 @@ export class Authority {
 
   /** The stored copy now holds the live document as it was at `version`. */
   persisted(revision: number, raw: unknown, doc: Node, version: number): void {
-    this.known = { revision, raw, doc, version, mapping: new Mapping() };
+    this.known = { revision, raw, doc, version, exact: true };
   }
 
   /**
    * The stored copy changed under the authority (it now holds `theirs`): takes the change in as
-   * one server step and returns it to broadcast, or null when the live document is unchanged.
+   * server steps and returns them to broadcast, or null when the live document is unchanged.
    */
   absorb(raw: unknown, revision: number, theirs: Node): StepBatch | null {
     const known = this.known;
     const from = this.version;
-    const change = diffStep(known.doc, theirs);
-    if (!change) {
+    const change = diffSteps(known.doc, theirs);
+    if (!change.length) {
       this.known = { ...known, revision, raw };
       return null;
     }
-    let step: Step | null = null;
-    let mapping: Mapping | null = null;
-    if (known.mapping && known.version >= this.first) {
-      const through = new Mapping();
-      through.appendMapping(known.mapping);
-      for (const done of this.log.slice(known.version - this.first)) through.appendMap(done.getMap());
-      const mapped = change.map(through);
-      if (mapped?.apply(this.doc).doc) {
-        step = mapped;
-        // Positions in `theirs`, back to the copy it was made from, forward to the live document.
-        mapping = new Mapping();
-        mapping.appendMap(change.invert(known.doc).getMap());
-        mapping.appendMapping(through);
-        mapping.appendMap(mapped.getMap(), 0);
-      }
+    let steps: Step[] | null = null;
+    if (known.exact && known.version >= this.first) steps = rebaseSteps(known.doc, change, this.log.slice(known.version - this.first));
+    steps ??= this.merged(known.doc, theirs);
+    let doc = this.doc;
+    const applied: Step[] = [];
+    for (const step of steps) {
+      const result = step.apply(doc);
+      if (!result.doc) break;
+      doc = result.doc;
+      applied.push(step);
     }
-    step ??= this.merged(known.doc, theirs);
-    const result = step?.apply(this.doc);
-    if (step && result?.doc) this.commit([step], SERVER_CLIENT, result.doc);
-    this.known = { revision, raw, doc: theirs, version: this.version, mapping };
+    if (applied.length) this.commit(applied, SERVER_CLIENT, doc);
+    this.known = { revision, raw, doc: theirs, version: this.version, exact: this.doc.eq(theirs) };
     return this.version > from ? this.since(from) : null;
   }
 
   /** Three-way merge of the stored copy's change into the live document, when mapping cannot place it. */
-  private merged(base: Node, theirs: Node): Step | null {
+  private merged(base: Node, theirs: Node): Step[] {
     const json = (doc: Node) => doc.toJSON() as PageDocument;
     const attempt = (doc: PageDocument, check: boolean): Node | null => {
       try {
@@ -199,6 +176,6 @@ export class Authority {
     };
     const deep = mergeDocs(json(base), json(this.doc), json(theirs)).doc;
     const result = attempt(deep, true) ?? attempt(mergeDocs(json(base), json(this.doc), json(theirs), { deep: false }).doc, true) ?? attempt(deep, false) ?? theirs;
-    return diffStep(this.doc, result);
+    return diffSteps(this.doc, result);
   }
 }
