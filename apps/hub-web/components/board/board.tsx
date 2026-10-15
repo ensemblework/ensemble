@@ -100,7 +100,7 @@ function Column({
   const { setNodeRef } = useDroppable({ id });
   const label = id === "waiting" ? "Waiting" : STATUS[pill].label;
   return (
-    <div className="board-column-slot relative shrink-0 self-start" data-column={id} aria-label={label}>
+    <div className="relative w-[272px] shrink-0 self-start" data-column={id} aria-label={label}>
     <div className="board-column flex flex-col rounded-lg bg-panel/70 p-2" data-empty={ids.length === 0}>
       <div className="mb-2 flex items-center justify-between px-1">
         <div className="flex items-center gap-2">
@@ -543,7 +543,7 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
         fallback={
         <div className="flex gap-3 px-5" aria-hidden>
           {Array.from({ length: 5 }, (_, index) => (
-            <div key={index} className="board-column-slot shrink-0 space-y-2">
+            <div key={index} className="w-[272px] shrink-0 space-y-2">
               <Skeleton className="h-6 w-24" />
               <Skeleton className="h-20 w-full" />
               <Skeleton className="h-20 w-full" />

@@ -87,7 +87,7 @@ Checked 11 Oct 2026: all 36 starting layouts rendered without tile-body overflow
 
 ### 3.2 Board (Kanban)
 
-**Columns:** Proposed • To do • In progress • Waiting • Done. Each card shows its owner. The previous owner swimlanes are replaced by **one ordered list per column** so arranging work cannot accidentally delegate it. Columns are 272 px wide when the board has room; between 1,128 and 1,448 px of board all five shrink to fit, and narrower than that whole columns fill the board (208 px at least) and the next shows a 32 px edge to scroll to, so no column is cut in half (`.board-column-slot` in `components/board/insights.css`).
+**Columns:** Proposed • To do • In progress • Waiting • Done. Each card shows its owner. The previous owner swimlanes are replaced by **one ordered list per column** so arranging work cannot accidentally delegate it. Columns are a fixed 272 px; a board narrower than the five columns scrolls sideways.
 
 **Current Hub controls:**
 
