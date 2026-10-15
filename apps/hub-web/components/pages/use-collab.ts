@@ -161,7 +161,7 @@ export function useCollab(options: {
     /** What the editor holds now, saved or not. */
     latest: useCallback((): PageDocument | null => session?.latest() ?? null, [session]),
     /** Waits until everything typed is saved; false when it cannot be now. */
-    flush: useCallback(() => (session ? session.flush() : Promise.resolve(false)), [session]),
+    flush: useCallback(() => (session ? session.flush() : Promise.resolve(true)), [session]),
     /** The stored revision after the last flush (for converting the page). */
     revision: useCallback(() => session?.revision ?? 0, [session]),
   };

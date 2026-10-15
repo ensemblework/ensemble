@@ -474,7 +474,9 @@ export class CollabSession {
       if (this.resetting) await this.resetting;
       await this.pump();
       const editor = this.editor;
-      if (!editor || this.stopped) return false;
+      if (this.stopped) return false;
+      // No editor yet: nothing has been typed here.
+      if (!editor) return true;
       if (sendableSteps(editor.state)) {
         if (this.status === "offline" || this.status === "error") return false;
         continue;
