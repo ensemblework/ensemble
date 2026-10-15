@@ -32,6 +32,8 @@ export type PresenceEntry = {
   cursor: { x: number; y: number } | null;
   /** Where the person is looking on a diagram: the centre of their view (diagram coordinates) and zoom. */
   viewport: { x: number; y: number; zoom: number } | null;
+  /** Their text cursor on a page or task page: ProseMirror positions in their copy of the document. */
+  caret: { anchor: number; head: number } | null;
   typing: boolean;
   at: number;
 };
@@ -78,6 +80,7 @@ export type PresenceUpdate = {
   resource?: PresenceResource | null;
   cursor?: { x: number; y: number } | null;
   viewport?: { x: number; y: number; zoom: number } | null;
+  caret?: { anchor: number; head: number } | null;
   typing?: boolean;
   leave?: boolean;
 };
@@ -104,6 +107,8 @@ export async function updatePresence(db: PrismaClient, spaceId: string, accountI
   }
   const previous = room.get(key);
   const person = known ?? (await who(db, accountId));
+  const resource = update.resource === undefined ? (previous?.resource ?? null) : update.resource;
+  const sameItem = Boolean(previous?.resource && resource && previous.resource.kind === resource.kind && previous.resource.id === resource.id);
   const entry: PresenceEntry = {
     accountId,
     tabId: update.tabId,
@@ -114,10 +119,13 @@ export async function updatePresence(db: PrismaClient, spaceId: string, accountI
     emoji: person.emoji,
     signedIn: person.signedIn,
     route: update.route === undefined ? (previous?.route ?? null) : update.route,
-    resource: update.resource === undefined ? (previous?.resource ?? null) : update.resource,
+    resource,
     cursor: update.cursor === undefined ? (previous?.cursor ?? null) : update.cursor,
     viewport: update.viewport === undefined ? (previous?.viewport ?? null) : update.viewport,
-    typing: update.typing ?? false,
+    // A caret belongs to one document: it does not follow you to the next item.
+    caret: update.caret === undefined ? (sameItem ? (previous?.caret ?? null) : null) : update.caret,
+    // A caret move between typing pulses must not end the "is editing" pulse.
+    typing: update.typing ?? (update.caret !== undefined && sameItem ? (previous?.typing ?? false) : false),
     at: now,
   };
   room.set(key, entry);

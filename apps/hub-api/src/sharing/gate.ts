@@ -71,7 +71,7 @@ export async function sharingGate(request: FastifyRequest, reply: FastifyReply):
   const access = request.access;
   if (!access || access.kind === "owner" || !request.userId) return;
   const url = request.routeOptions.url ?? "";
-  if (access.kind === "gone") return reply.code(404).send({ error: "This share was removed, or it is not yours." });
+  if (access.kind === "gone") return reply.code(404).send({ error: "This share was removed, or it is not yours.", code: "SHARE_GONE" });
 
   if (access.kind === "link") {
     const params = (request.params ?? {}) as Record<string, string | undefined>;

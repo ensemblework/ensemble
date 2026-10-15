@@ -48,10 +48,24 @@ export function followSpaceSwitches(current: () => string | undefined): () => vo
   return () => channel.close();
 }
 
-/** The first letter of a space's name, for spaces without an emoji. */
+/** One emoji at the start of a name: a flag, a keycap, or a pictograph with its modifiers and joined parts. */
+const LEADING_EMOJI = /^(?:\p{Regional_Indicator}{2}|[#*0-9]\uFE0F?\u20E3|\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})*(?:\u200D\p{Extended_Pictographic}(?:\uFE0F|\p{Emoji_Modifier})*)*)/u;
+
+/** The first letter or digit of a space's name, for spaces without an emoji. A name of only emoji uses its first. */
 export function spaceInitial(name: string): string {
-  const letter = Array.from(name.trim())[0] ?? "S";
-  return letter.toUpperCase();
+  const letter = /[\p{L}\p{N}]/u.exec(name)?.[0];
+  if (letter) return letter.toUpperCase();
+  return LEADING_EMOJI.exec(name.trim())?.[0] ?? "S";
+}
+
+/** The name shown beside a space's icon. An emoji the icon already shows is not repeated. */
+export function spaceLabel(space: { name: string; icon?: string | null }): string {
+  const name = space.name.trim();
+  const lead = LEADING_EMOJI.exec(name)?.[0];
+  if (!lead) return name;
+  const icon = space.icon || spaceInitial(name);
+  if (icon.replace(/\uFE0F/g, "") !== lead.replace(/\uFE0F/g, "")) return name;
+  return name.slice(lead.length).trim() || name;
 }
 
 /** Emoji offered for a space icon. Kept short on purpose: an icon is a cue, not a picker. */

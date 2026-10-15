@@ -25,8 +25,8 @@ import { ExportMenu } from "../export-menu";
 import { pageDoc } from "@/lib/export/items";
 import { SourceFileBanner, exportBackItems } from "../files/source-file-banner";
 import { PAGE_FOCUS_CLASS, PageFocusBar, PageFocusButton, usePageFocus } from "./page-focus";
-
-type SaveState = "saved" | "saving" | "dirty" | "error";
+import { usePageSave, type PageEvent } from "./page-save";
+import { KeptEdits } from "./kept-edits";
 
 function useBlockEditor() {
   const [Editor, setEditor] = useState(() => blockEditor);
@@ -51,8 +51,8 @@ export function NotePage({
 }: {
   pageId: string;
   focusTitle?: boolean;
-  /** Opened from a share link: no board or delete actions, and read-only unless it may be edited. */
-  shared?: { role: "view" | "edit"; link?: boolean };
+  /** Opened from a share link: no board or delete actions, and read-only unless it may be edited. `gone`: the owner stopped sharing it while it was open. */
+  shared?: { role: "view" | "edit"; link?: boolean; gone?: boolean };
 }) {
   const client = useQueryClient();
   const router = useRouter();
@@ -67,59 +67,55 @@ export function NotePage({
     enabled: !leaving,
   });
   const family = useQuery({ queryKey: ["pages"], queryFn: api.pages, enabled: !shared });
-  const [saveState, setSaveState] = useState<SaveState>("saved");
   const [epoch, setEpoch] = useState(0);
-  const revision = useRef(0);
-  const pending = useRef<PageDocument | null>(null);
-  // What the editor holds now, saved or not: exporting back to the original's format reads it.
-  const latest = useRef<PageDocument | null>(null);
-  const timer = useRef<number | undefined>(undefined);
-  const inFlight = useRef<Promise<boolean> | null>(null);
   const titleSave = useRef<Promise<unknown> | null>(null);
-  // The share (or none) this page was opened under. The last save on leaving must go there.
+  // The share (or none) this page was opened under. Its saves, the last one on leaving too, go there.
   const openedAs = useRef(currentShare());
   const openedLink = useRef(currentLink());
   const loaded = Boolean(page.data);
   const access = useSpaceAccess();
-  const canEdit = shared ? shared.role === "edit" : access.canEdit;
+  // "gone": the share was removed; "view": you may still open it but no longer edit it.
+  const [lost, setLost] = useState<"gone" | "view" | null>(null);
+  const gone = Boolean(shared?.gone) || lost === "gone";
+  const locked = gone || lost === "view";
+  const canEdit = !locked && (shared ? shared.role === "edit" : access.canEdit);
   const others = onResource(usePresence(), "page", pageId);
   const watching = Boolean(shared) || others.length > 0;
-  const [remote, setRemote] = useState<{ doc: PageDocument; stamp: number } | null>(null);
   const watchingRef = useRef(watching);
   watchingRef.current = watching;
   const focusMode = usePageFocus();
-
-  // Someone else saved: take their version when you have nothing unsaved. Your own saves
-  // come back with the revision you already hold and change nothing.
-  useEffect(() => {
-    if (!watching) return;
-    const onSaved = (event: Event) => {
-      const detail = (event as CustomEvent<{ id?: string; pageId?: string; action?: string }>).detail;
-      if ((detail?.id ?? detail?.pageId) !== pageId) return;
-      if (pending.current || inFlight.current) return;
-      void api
-        .standalonePage(pageId)
-        .then((fresh) => {
-          if (pending.current || inFlight.current || fresh.revision === revision.current) return;
-          revision.current = fresh.revision;
-          client.setQueryData(["standalone-page", pageId], fresh);
-          latest.current = fresh.content ?? EMPTY_PAGE;
-          setRemote({ doc: latest.current, stamp: Date.now() });
-        })
-        .catch(() => undefined);
-    };
-    window.addEventListener("ensemble:page", onSaved);
-    return () => window.removeEventListener("ensemble:page", onSaved);
-  }, [watching, pageId, client]);
+  const saver = usePageSave({
+    load: async () => {
+      const fresh = await withLink(openedLink.current, () => withShare(openedAs.current, () => api.standalonePage(pageId)));
+      client.setQueryData(["standalone-page", pageId], fresh);
+      return { revision: fresh.revision, content: fresh.content ?? EMPTY_PAGE };
+    },
+    save: async (revision, content) => {
+      const saved = await withLink(openedLink.current, () => withShare(openedAs.current, () => api.saveStandalonePage(pageId, { revision, content })));
+      return { revision: saved.revision, content: saved.content ?? content };
+    },
+    matches: (event: PageEvent) => (event.id ?? event.pageId) === pageId,
+    live: others.length > 0,
+    frozen: locked,
+    onError: (message) => toast(message, { tone: "error" }),
+    onKept: () => toast("You and someone else changed the same words at once. Both versions are on the page."),
+    onLost: (error) => setLost(error.code === "SHARE_GONE" ? "gone" : "view"),
+  });
+  const { flush, edit } = saver;
 
   const initialDoc = useMemo(() => {
     if (!page.data) return null;
-    revision.current = page.data.revision;
-    latest.current = page.data.content ?? EMPTY_PAGE;
-    return latest.current;
-    // The editor owns the document after the first load. See the task page.
+    const doc = page.data.content ?? EMPTY_PAGE;
+    saver.adopt({ revision: page.data.revision, content: doc });
+    return doc;
+    // The editor owns the document after the first load; others' saves are merged into it in place.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageId, loaded, epoch]);
+  // A refetch (after the live stream reconnects, say) can bring a newer version than the editor has.
+  const offer = saver.offer;
+  useEffect(() => {
+    if (page.data) offer({ revision: page.data.revision, content: page.data.content ?? EMPTY_PAGE });
+  }, [page.data, offer]);
 
   const rename = useMutation({
     mutationFn: (title: string) => api.renamePage(pageId, title),
@@ -130,18 +126,39 @@ export function NotePage({
     onError: (error: Error) => toast(error.message, { tone: "error" }),
   });
 
+  // A page in Trash answers 404. Its own queries (the page, its comments) stay as they are
+  // while the route changes, so nothing refetches it, and are dropped once this page unmounts.
+  const trashed = useRef<Set<string> | null>(null);
+  const leaveTrashed = (ids: Iterable<string>) => {
+    const removed = new Set([pageId, ...ids]);
+    trashed.current = removed;
+    const about = (key: readonly unknown[]) => key.some((part) => typeof part === "string" && removed.has(part));
+    setLeaving(true);
+    void client.cancelQueries({ predicate: (query) => about(query.queryKey) });
+    void client.invalidateQueries({ predicate: (query) => !about(query.queryKey) });
+    router.push("/pages");
+  };
+  useEffect(() => () => {
+    const removed = trashed.current;
+    if (removed) client.removeQueries({ predicate: (query) => query.queryKey.some((part) => typeof part === "string" && removed.has(part)) });
+  }, [client]);
+
   const remove = useMutation({
+    // Nothing typed after the last save may reach a page that is going to Trash.
+    onMutate: () => setLeaving(true),
     mutationFn: async () => {
       if (titleSave.current) await titleSave.current;
-      if (!(await flush())) throw new Error("Save the note before moving it to Trash.");
+      if (!(await flush())) throw new Error("Save the page before moving it to Trash.");
       return api.deletePage(pageId);
     },
     onSuccess: () => {
-      void client.invalidateQueries();
-      toast("Note moved to Trash.", { action: { label: "Undo", run: () => { void api.undo().then(() => { void client.invalidateQueries(); router.push(`/pages/${pageId}`); }).catch((error: Error) => toast(error.message, { tone: "error" })); } } });
-      router.push("/today");
+      toast("Page moved to Trash.", { action: { label: "Undo", run: () => { void api.undo().then(() => { void client.invalidateQueries(); router.push(`/pages/${pageId}`); }).catch((error: Error) => toast(error.message, { tone: "error" })); } } });
+      leaveTrashed([]);
     },
-    onError: (error: Error) => toast(error.message, { tone: "error" }),
+    onError: (error: Error) => {
+      setLeaving(false);
+      toast(error.message, { tone: "error" });
+    },
   });
 
   const deleteFromSidebar = useRef(() => remove.mutate());
@@ -156,51 +173,19 @@ export function NotePage({
     return () => window.removeEventListener("ensemble:delete-page", handle);
   }, [pageId]);
 
-  const flush = useCallback(async () => {
-    while (inFlight.current) {
-      if (!(await inFlight.current)) return false;
-    }
-    const doc = pending.current;
-    if (!doc) return true;
-    pending.current = null;
-    setSaveState("saving");
-    const work = (async () => {
-      try {
-        const saved = await withLink(openedLink.current, () => withShare(openedAs.current, () => api.saveStandalonePage(pageId, { revision: revision.current, content: doc })));
-        revision.current = saved.revision;
-        setSaveState(pending.current ? "dirty" : "saved");
-        return true;
-      } catch (error) {
-        if (error instanceof ApiError && error.status === 409) {
-          toast("This page changed elsewhere (another tab, or someone you share it with). Reloaded the latest version.", { tone: "error" });
-          await client.refetchQueries({ queryKey: ["standalone-page", pageId] });
-          setEpoch((value) => value + 1);
-        } else {
-          pending.current ??= doc;
-          toast((error as Error).message, { tone: "error" });
-        }
-        setSaveState("error");
-        return false;
-      }
-    })();
-    inFlight.current = work;
-    try {
-      return await work;
-    } finally {
-      if (inFlight.current === work) inFlight.current = null;
-    }
-  }, [client, pageId, toast]);
-
   const flushForBulk = useRef<(ids: string[]) => void>(() => undefined);
   flushForBulk.current = (ids) => {
+    setLeaving(true);
     void (async () => {
       if (titleSave.current) await titleSave.current;
-      if (!(await flush())) throw new Error("Save the note before moving these pages to Trash.");
+      if (!(await flush())) throw new Error("Save the page before moving these pages to Trash.");
       await api.deletePages(ids);
-      void client.invalidateQueries();
       toast("Pages moved to Trash. One Undo restores them all.", { action: { label: "Undo", run: () => { void api.undo().then(() => client.invalidateQueries()); } } });
-      router.push("/today");
-    })().catch((error: Error) => toast(error.message, { tone: "error" }));
+      leaveTrashed(ids);
+    })().catch((error: Error) => {
+      setLeaving(false);
+      toast(error.message, { tone: "error" });
+    });
   };
   useEffect(() => {
     const handler = (event: Event) => {
@@ -217,10 +202,10 @@ export function NotePage({
     onMutate: () => setLeaving(true),
     mutationFn: async (quick: boolean = false) => {
       if (isPageEnsembleBusy("page", pageId)) throw new Error("Wait for Ensemble to finish before adding this page to the board.");
-      window.clearTimeout(timer.current);
+      saver.cancel();
       if (titleSave.current) await titleSave.current;
       if (!(await flush())) throw new Error("Save the page before adding it to the board.");
-      const result = await api.convertPage("page", pageId, revision.current);
+      const result = await api.convertPage("page", pageId, saver.revision.current);
       return { ...result, quick };
     },
     onSuccess: async (result) => {
@@ -235,29 +220,17 @@ export function NotePage({
     },
     onError: (error: Error) => {
       setLeaving(false);
-      if (pending.current) timer.current = window.setTimeout(() => void flush(), 700);
+      if (saver.pending.current) saver.schedule();
       toast(error.message, { tone: "error" });
     },
   });
 
   const onChange = useCallback(
     (doc: PageDocument) => {
-      pending.current = doc;
-      latest.current = doc;
-      setSaveState("dirty");
+      edit(doc);
       if (watchingRef.current) announceTyping((typing) => api.sendPresence({ tabId: tabId(), typing }));
-      window.clearTimeout(timer.current);
-      timer.current = window.setTimeout(() => void flush(), 700);
     },
-    [flush],
-  );
-
-  useEffect(
-    () => () => {
-      window.clearTimeout(timer.current);
-      void flush();
-    },
-    [flush],
+    [edit],
   );
 
   const onMentionClick = useCallback(
@@ -276,10 +249,12 @@ export function NotePage({
 
   const record = page.data;
   const source = record.sourceFile ?? null;
-  const pageNow = () => ({ title: record.title || "Untitled", doc: latest.current ?? record.content ?? EMPTY_PAGE });
+  const pageNow = () => ({ title: record.title || "Untitled", doc: saver.latest.current ?? record.content ?? EMPTY_PAGE });
   const exportExtra = exportBackItems(source, pageNow);
+  const saveState = saver.state;
+  const unsaved = saveState === "dirty" || saveState === "error";
   const saveText =
-    saveState === "saved" ? "All changes saved" : saveState === "saving" ? "Saving…" : saveState === "dirty" ? "Unsaved changes" : "Could not save. Retry on the next edit.";
+    locked && unsaved ? "Not saved" : saveState === "saved" ? "All changes saved" : saveState === "saving" ? "Saving…" : saveState === "dirty" ? "Unsaved changes" : "Could not save. Retry on the next edit.";
   return (
     <div
       ref={focusMode.layer}
@@ -292,11 +267,15 @@ export function NotePage({
       <div className="mb-3 flex items-center justify-between text-[12.5px] text-muted">
         <span>
           {shared?.link
-            ? canEdit
-              ? "Public link · anyone with it can edit"
-              : "Public link · view only"
+            ? gone
+              ? "Public link · turned off"
+              : canEdit
+                ? "Public link · anyone with it can edit"
+                : "Public link · view only"
             : shared
-              ? canEdit
+              ? gone
+                ? "Not shared with you anymore"
+                : canEdit
                 ? "Shared with you · can edit"
                 : "Shared with you · view only"
               : canEdit
@@ -316,7 +295,7 @@ export function NotePage({
                 <CheckSquare size={13} /> Add to board
               </button>
               <button type="button" className="btn-ghost text-accent" disabled={convert.isPending} title="Add to the board and use your default run profile" onClick={() => convert.mutate(true)}><Orbit size={13} /> Quick assign</button>
-              <button type="button" className="icon-btn" title="Delete" aria-label="Delete page" onClick={() => remove.mutate()}>
+              <button type="button" className="icon-btn" title="Delete" aria-label="Delete page" disabled={remove.isPending} onClick={() => remove.mutate()}>
                 <Trash2 size={14} />
               </button>
               <span className="mx-0.5 h-4 w-px bg-line" aria-hidden />
@@ -343,6 +322,25 @@ export function NotePage({
         <span className="font-medium">Page content</span>
         <span className={saveState === "error" ? "text-danger" : undefined}>{saveText}</span>
       </div>
+      {locked && unsaved ? (
+        <KeptEdits
+          message={gone ? "This page isn't shared with you anymore, so your last changes weren't saved. They're still on screen." : "You can't edit this page anymore, so your last changes weren't saved. They're still on screen."}
+          title={record.title}
+          read={() => saver.latest.current}
+          ownCopy={Boolean(shared && !shared.link)}
+        />
+      ) : saver.stuck ? (
+        <KeptEdits
+          message="Someone else saved a version of this page that can't be combined with yours. Your text is still here and isn't saved."
+          title={record.title}
+          read={() => saver.latest.current}
+          ownCopy={false}
+          onTheirs={() => {
+            saver.discard();
+            void page.refetch().then(() => setEpoch((value) => value + 1));
+          }}
+        />
+      ) : null}
       <div className="mt-4" data-focus-keep>
         {initialDoc && Editor ? (
           <Editor
@@ -353,7 +351,7 @@ export function NotePage({
             onMentionClick={onMentionClick}
             page={{ kind: "page", id: pageId }}
             editable={!leaving && canEdit}
-            remote={remote}
+            control={saver.control}
           />
         ) : initialDoc ? (
           <div className="skeleton mt-4 h-64 w-full" />

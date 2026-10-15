@@ -50,7 +50,13 @@ export async function renderPlot(id: string, body: { format: Format; code?: stri
   }
   const input = await api.plotRenderInput(id, body.accent);
   const result = await runner({ code: body.code ?? input.code, datasets: input.datasets, format: body.format, dpi: body.dpi });
-  if (result.error) throw new PlotScriptError(result.error, result.line, result.stderr);
+  if (result.error) throw new PlotScriptError(result.line ? `Line ${result.line}: ${result.error}` : result.error, result.line, result.stderr);
   if (!result.data) throw new PlotScriptError("The script finished without a figure. Call save() or plt.show().", null, result.stderr);
   return { format: result.format, data: result.data, stdout: result.stdout, stderr: result.stderr };
+}
+
+/** The script line a failed run names ("Line 12: NameError: …"), from this browser or the server. */
+export function scriptErrorLine(message: string): number | null {
+  const match = /^Line (\d+):/.exec(message);
+  return match ? Number(match[1]) : null;
 }

@@ -42,11 +42,11 @@ export function notionNodes(blocks: NotionBlock[]): PageNode[] {
       case "paragraph": out.push(paragraph(content), ...children); break;
       case "heading_1": case "heading_2": case "heading_3": {
         const heading: PageNode = { type: "heading", attrs: { level: Number(block.type.at(-1)) }, content };
-        if (data.is_toggleable) out.push({ type: "toggleBlock", attrs: { collapsed: true }, content: [heading, ...(children.length ? children : [paragraph()])] });
+        if (data.is_toggleable) out.push({ type: "toggleBlock", attrs: { collapsed: true }, content: [heading, ...children] });
         else out.push(heading, ...children);
         break;
       }
-      case "toggle": out.push({ type: "toggleBlock", attrs: { collapsed: true }, content: [paragraph(content.length ? content : [{ type: "text", text: "Details" }]), ...(children.length ? children : [paragraph()])] }); break;
+      case "toggle": out.push({ type: "toggleBlock", attrs: { collapsed: true }, content: [paragraph(content), ...children] }); break;
       case "quote": case "callout": {
         const emoji = (data.icon as Json | undefined)?.emoji;
         out.push({ type: "blockquote", content: [paragraph([...(typeof emoji === "string" ? [{ type: "text", text: `${emoji} ` }] : []), ...content]), ...children] });

@@ -43,6 +43,7 @@ function MeetingsBody() {
     mutationFn: () => api.summarizeMeetings(question),
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
+  const starting = useRef(false);
   const start = useMutation({
     mutationFn: () => api.startMeeting(null, "Meeting notes"),
     onSuccess: (result) => {
@@ -50,7 +51,15 @@ function MeetingsBody() {
       void client.invalidateQueries({ queryKey: ["meeting-sessions"] });
     },
     onError: (error) => toast((error as Error).message, { tone: "error" }),
+    onSettled: () => { starting.current = false; },
   });
+  // The second click of a double click (detail 2) is not a second note. The ref covers the tick
+  // before isPending renders the button disabled.
+  const startNotes = (event: React.MouseEvent) => {
+    if (event.detail > 1 || starting.current) return;
+    starting.current = true;
+    start.mutate();
+  };
   const end = useMutation({
     mutationFn: () => api.endMeeting(active),
     onSuccess: () => {
@@ -91,7 +100,7 @@ function MeetingsBody() {
         title="Meeting notes"
         description="Conversations become context. Keep the notes, decisions, and next steps together."
         actions={
-          <button type="button" className="btn-primary" disabled={start.isPending} onClick={() => start.mutate()}>
+          <button type="button" className="btn-primary" disabled={start.isPending} onClick={startNotes}>
             <Plus size={14} /> New notes
           </button>
         }
@@ -137,7 +146,7 @@ function MeetingsBody() {
         <div className="empty-panel">
           <h2 className="text-[18px] font-semibold">A page for your next conversation</h2>
           <p className="mt-1 max-w-[42ch] text-[14px] leading-5 text-muted">Start a page for the meeting you are in. The notes stay here, and you can ask across them later.</p>
-          <button type="button" className="btn-primary mt-4" onClick={() => start.mutate()} disabled={start.isPending}>
+          <button type="button" className="btn-primary mt-4" onClick={startNotes} disabled={start.isPending}>
             Start notes
           </button>
         </div>

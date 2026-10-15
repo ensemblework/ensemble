@@ -767,7 +767,7 @@ export function chartOption(frame: Frame, config: PlotConfig, theme: PlotTheme, 
     ],
     brush: compact ? { toolbox: [] as string[], xAxisIndex: 0 } : { toolbox: ["lineX", "clear"], xAxisIndex: 0, brushStyle: { color: "rgba(83,70,214,0.08)", borderColor: theme.accent } },
     legend: compact && config.legend !== "none"
-      ? { ...base.legend, top: 0, right: 4, left: undefined, bottom: undefined }
+      ? { ...base.legend, top: 0, right: 14, left: undefined, bottom: undefined }
       : base.legend,
     xAxis,
     yAxis,

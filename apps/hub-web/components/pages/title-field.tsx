@@ -4,7 +4,15 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 
-/** The page title. A newly created note focuses this field and selects the text. */
+/**
+ * The title new pages and tasks are created with (hub-api stores it). The field shows it as its
+ * placeholder rather than as text, so typing a title does not append to it.
+ */
+const UNTITLED = "Untitled";
+
+const shown = (value: string) => (value === UNTITLED ? "" : value);
+
+/** The page title. A newly created note focuses this field, empty under its "Untitled" placeholder. */
 export function PageTitleField({
   value,
   onSave,
@@ -16,10 +24,10 @@ export function PageTitleField({
 }) {
   const errorId = useId();
   const [error, setError] = useState("");
-  const [draft, setDraft] = useState(value);
+  const [draft, setDraft] = useState(shown(value));
   const ref = useRef<HTMLTextAreaElement>(null);
   const focused = useRef(false);
-  useEffect(() => setDraft(value), [value]);
+  useEffect(() => setDraft(shown(value)), [value]);
   useEffect(() => {
     const element = ref.current;
     if (!element) return;
@@ -45,7 +53,12 @@ export function PageTitleField({
       onChange={(event) => { setError(""); setDraft(event.target.value.replace(/\n/g, "")); }}
       onBlur={() => {
         const title = draft.trim();
-        if (!title) { setDraft(value); setError("A title is required. The previous title was restored."); return; }
+        if (!title) {
+          setDraft(shown(value));
+          // Still untitled: nothing was lost, so there is nothing to explain.
+          if (shown(value)) setError("A title is required. The previous title was restored.");
+          return;
+        }
         setDraft(title);
         if (title !== value) onSave(title);
       }}
@@ -55,7 +68,7 @@ export function PageTitleField({
           (event.target as HTMLTextAreaElement).blur();
         }
       }}
-      placeholder="Untitled"
+      placeholder={UNTITLED}
       className="w-full resize-none overflow-hidden bg-transparent text-[34px] font-bold leading-tight tracking-tight outline-none placeholder:text-faint"
     />
     {error ? <p id={errorId} role="status" className="mt-1 text-[13px] text-danger">{error}</p> : null}

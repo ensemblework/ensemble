@@ -11,7 +11,6 @@ import {
   poolColumns,
   resizeItem,
   tileSchema,
-  workspaceBoilerplate,
   workspaceSchema,
   emptyWorkspace,
   isWorkspace,
@@ -24,6 +23,8 @@ import {
 import { AddTileDialog } from "@/components/plots/add-tile";
 import { UploadDialog } from "@/components/plots/upload-dialog";
 import { ExportDialog } from "@/components/plots/export-dialog";
+import { FigureOutput, RunButton, useFigureRun } from "@/components/plots/figure-run";
+import { canvasSource } from "@/lib/plots/tile-code";
 import { InlineEdit, Popover } from "@/components/ui";
 import { seriesSwatchColor, usePlotTheme } from "@/lib/plots/theme";
 import { api } from "@/lib/api";
@@ -52,6 +53,8 @@ function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
   });
 }
 
+/** `PUT /api/plots/workspace` refuses a longer script, and the whole canvas would stop saving. */
+const MAX_CANVAS_CODE = 100_000;
 const ROW = 78;
 const GUTTER = 12;
 
@@ -247,11 +250,23 @@ function PlotWorkspaceInner({ shared }: { shared?: SharedPlots }) {
   const groups = useMemo(() => duplicateGroups(datasets), [datasets]);
   const columns = useMemo(() => poolColumns(datasets, config?.links ?? {}), [datasets, config?.links]);
   const focused = config?.tiles.find((tile) => tile.id === focus) ?? null;
+  // Keyed on the tile without its code, so typing in its Code tab does not rebuild the chart's table.
+  const focusedSettings = focused ? JSON.stringify({ ...focused, code: null }) : null;
+  const canvasLinks = config?.links;
   const focusedView = useMemo(
-    () => (focused && config ? chartFrame(datasets, focused, config.links) : null),
-    [focused, datasets, config],
+    () => (focusedSettings && canvasLinks ? chartFrame(datasets, JSON.parse(focusedSettings) as WorkspaceTile, canvasLinks) : null),
+    [focusedSettings, datasets, canvasLinks],
   );
   tilesRef.current = config?.tiles ?? [];
+  const theme = usePlotTheme();
+  const canvasRun = useFigureRun(workspaceId);
+  // Only while the Code view or the export is open: the script embeds every tile's table.
+  const canvasDefault = useMemo(
+    () => (config && (codeOpen || exportOpen) ? canvasSource(config.tiles, { datasets, links: config.links, accent: theme.accent, dark: theme.dark }) : ""),
+    [config, codeOpen, exportOpen, datasets, theme.accent, theme.dark],
+  );
+  const canvasEdited = code !== "" && code !== canvasDefault;
+  const canvasCode = code || canvasDefault;
 
   const update = (patch: Partial<WorkspaceConfig>) => setConfig((current) => (current ? { ...current, ...patch } : current));
 
@@ -426,11 +441,38 @@ function PlotWorkspaceInner({ shared }: { shared?: SharedPlots }) {
         <button type="button" className="btn-primary" onClick={() => setExportOpen(true)} data-export-figure>Export figure</button>
       </div>
       {codeOpen ? (
-        <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-2" data-plot-code>
-          <div className="min-h-0 rounded-xl border border-line bg-panel p-3">
-            <CodePane value={code || workspaceBoilerplate(datasets.map((dataset) => dataset.name))} onChange={setCode} />
+        <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-auto lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:overflow-hidden" data-plot-code data-code-edited={canvasEdited ? "1" : "0"}>
+          <div className="flex min-h-[320px] min-w-0 flex-col gap-2 rounded-xl border border-line bg-panel p-3">
+            <p className="shrink-0 text-[12px] leading-4 text-muted">
+              {canvasEdited
+                ? "Edited. Export figure offers this script or the tiles."
+                : "Every tile as a panel of one figure. load(\"name\") reads any dataset on this canvas by the name in the column pool, and save() captures the figure."}
+            </p>
+            <div className="min-h-0 flex-1">
+              <CodePane
+                value={canvasCode}
+                onChange={(value) => {
+                  if (value !== canvasDefault && value.length > MAX_CANVAS_CODE) {
+                    toast("The canvas script can be up to 100,000 characters. Shorten it, or edit tiles' code on the tiles.", { tone: "error" });
+                    return;
+                  }
+                  setCode(value === canvasDefault ? "" : value);
+                }}
+                onRun={() => void canvasRun.run(canvasCode)}
+                errorLine={canvasRun.state.line}
+                errorText={canvasRun.state.error}
+                actions={
+                  <>
+                    <RunButton running={canvasRun.state.status === "running"} disabled={!workspaceId} onRun={() => void canvasRun.run(canvasCode)} />
+                    {canvasEdited ? <button type="button" className="btn px-2 py-0.5 text-[12px]" data-plot-code-reset onClick={() => setCode("")}>Reset to generated</button> : null}
+                  </>
+                }
+              />
+            </div>
           </div>
-          <p className="text-[13px] text-muted">load(&quot;name&quot;) reads any dataset on this canvas. save() captures the figure.</p>
+          <div className="flex min-h-[260px] min-w-0 flex-col rounded-xl border border-line bg-panel p-3" data-plot-code-preview>
+            <FigureOutput state={canvasRun.state} placeholder="Run the script to draw the figure here." />
+          </div>
         </div>
       ) : (
         <div ref={canvasRef} className="relative min-h-0 flex-1 overflow-auto rounded-xl border border-line bg-bg" style={{ minHeight: height }} data-packing={preview ? "1" : undefined}>
@@ -491,16 +533,16 @@ function PlotWorkspaceInner({ shared }: { shared?: SharedPlots }) {
       )}
       {focused && focusedView ? (
         <FocusEditor
+          key={focused.id}
           tile={focused}
           columns={columns}
           frame={focusedView.frame}
           config={focusedView.config}
           warnings={focusedView.warnings}
-          code={code}
+          datasets={datasets}
+          links={config.links}
           workspaceId={workspaceId}
-          datasetName={datasets.find((dataset) => focused.yRefs[0]?.startsWith(dataset.id))?.name ?? datasets[0]?.name ?? "data"}
           onChange={(next) => setConfig((current) => (current ? { ...current, tiles: current.tiles.map((item) => (item.id === next.id ? next : item)) } : current))}
-          onCode={setCode}
           onClose={() => setFocus(null)}
         />
       ) : null}
@@ -515,7 +557,7 @@ function PlotWorkspaceInner({ shared }: { shared?: SharedPlots }) {
         }}
       />
       <AddTileDialog open={addOpen} columns={columns} onClose={() => setAddOpen(false)} onAdd={addTile} />
-      <ExportDialog open={exportOpen} workspaceId={workspaceId} tiles={config.tiles} datasets={datasets} links={config.links} onClose={() => setExportOpen(false)} />
+      <ExportDialog open={exportOpen} workspaceId={workspaceId} tiles={config.tiles} datasets={datasets} links={config.links} canvasCode={canvasEdited ? code : null} onClose={() => setExportOpen(false)} />
     </div>
   );
 }
@@ -529,15 +571,17 @@ export function PlotWorkspace({ shared }: { shared?: SharedPlots } = {}) {
 }
 
 function TileChart({ tile, datasets, links, onOpen }: { tile: WorkspaceTile; datasets: PoolDataset[]; links: WorkspaceConfig["links"]; onOpen: () => void }) {
+  const settings = JSON.stringify({ ...tile, code: null });
   const view = useMemo(() => {
-    const next = chartFrame(datasets, tile, links);
+    const drawn = JSON.parse(settings) as WorkspaceTile;
+    const next = chartFrame(datasets, drawn, links);
     next.config.series = next.config.series.map((series, index) => ({
       ...series,
-      color: tile.series[index]?.color ?? series.color,
-      lineStyle: tile.series[index]?.lineStyle ?? series.lineStyle,
+      color: drawn.series[index]?.color ?? series.color,
+      lineStyle: drawn.series[index]?.lineStyle ?? series.lineStyle,
     }));
     return next;
-  }, [tile, datasets, links]);
+  }, [settings, datasets, links]);
   if (!view.frame.columns.length) return <p className="p-4 text-[13px] text-muted">Pick columns for this tile.</p>;
   const hidden = view.warnings.length;
   return (
@@ -636,6 +680,7 @@ function Tile({
     >
       <header className="flex shrink-0 cursor-grab items-center gap-2 px-2 py-1" onPointerDown={(event) => onGesture(tile.id, "move", event)}>
         <span className="min-w-0 flex-1 truncate text-[12px] font-medium">{tile.title || tile.chart}</span>
+        {tile.code !== null ? <span className="shrink-0 rounded border border-line px-1 text-[10px] leading-4 text-muted" title="Exports draw this tile's edited code" data-tile-code-edited>Code</span> : null}
         <span className="tile-tools flex items-center gap-1">
           <button type="button" className="btn px-2 py-0.5 text-[12px]" onClick={onOpen}>Open</button>
           <button type="button" className="btn px-2 py-0.5 text-[12px]" onClick={onDelete}>Delete</button>

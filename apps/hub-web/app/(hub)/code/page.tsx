@@ -79,7 +79,7 @@ export default function CodePage() {
         title="Code"
         description={
           access.guest
-            ? `What the agents changed in ${access.owner?.split(" ")[0] ?? "this"}'s space. View only: accepting, rejecting, editing and pushing stay with them.`
+            ? `What the agents changed in ${access.owner ?? "this"}'s space. View only: accepting, rejecting, editing and pushing stay with them.`
             : onComputers
               ? "The code on your paired computers: review what an agent changed (accept keeps it, reject puts the old lines back), edit any file, commit and push, and use the terminal, unlocked with your passkey. The code stays on that computer."
               : "Review what an agent changed, one change at a time: accept keeps it, reject puts the old lines back on disk, and you can write any part yourself. Then commit and push from the same place."

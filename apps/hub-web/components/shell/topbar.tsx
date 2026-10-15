@@ -127,7 +127,7 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar: () => void }) {
   };
 
   return (
-    <header className="topbar grid h-11 shrink-0 grid-cols-[minmax(max-content,1fr)_minmax(0,560px)_minmax(max-content,1fr)] items-center gap-3 border-b border-line px-3 max-md:grid-cols-[auto_minmax(0,1fr)_auto]">
+    <header className="topbar relative grid h-11 shrink-0 grid-cols-[minmax(max-content,1fr)_minmax(0,560px)_minmax(max-content,1fr)] items-center gap-3 border-b border-line px-3 max-md:grid-cols-[auto_minmax(0,1fr)_auto]">
       <div className="flex min-w-0 items-center gap-2">
         <button type="button" className="icon-btn" onClick={onToggleSidebar} aria-label="Toggle sidebar">
           <Menu size={16} />

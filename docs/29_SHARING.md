@@ -27,6 +27,8 @@ Never shared, even with a whole-space member: Today, metrics, settings, model ke
 
 **Losing access takes effect at once** (`sharing/revoke.ts`): their open event streams on the space close, a ticket made before cannot open a new one, they leave the presence room, and runs they queued on their computer there are cancelled. Their computer can no longer claim or report on runs in a space they left (`stillMember` in `devices/routes.ts`). Every stream on a space closes after a transfer, so everyone reconnects under their new role.
 
+Someone with the item open sees it straight away. The closed stream (its last frame is `sharing.changed`), a refused ticket, or a save answered with 404 `SHARE_GONE` or 403 makes `/shared/[id]` (or `/p/[token]`) ask again what the share opens (`useShareLive` and `useRecheck` in `components/sharing/shared-viewer.tsx`). When it is gone, the item stays on screen read-only under "‹owner› stopped sharing this with you…", the stream and presence heartbeat stop, and nothing more is saved. Text typed since the last save stays in the editor with **Copy my text** (Markdown) and, for a signed-in recipient, **Save as my own page**, which makes a new page in their own space (`components/pages/kept-edits.tsx`). Checked 15 Oct 2026 with `components/pages/page-save.test.tsx` and the "co-editing a shared page" HTTP test; not walked through in a browser.
+
 The limits are constants in `apps/hub-api/src/sharing/store.ts` (`MAX_CONTACTS`, `MAX_MEMBERS`, `MAX_TRANSFERS`).
 
 ## 2. How access works
@@ -38,7 +40,7 @@ A space is a `users` row (docs/28), and every record is scoped by that row's id.
 | `owner` | your own spaces (default) | No restriction |
 | `member` | the `ensemble_space` cookie naming a space in `space_members` for you | `role` viewer or editor |
 | `share` | the `x-ensemble-share: <shareId>` header, for a share whose recipient is you | One item, `role` view or edit |
-| `gone` | a share header that is not yours or no longer exists | Every request gets 404 |
+| `gone` | a share header that is not yours or no longer exists | Every request gets 404 with `code: "SHARE_GONE"` |
 
 `identify()` and `inSpace()` in `apps/hub-api/src/lib/auth.ts` resolve this; `openableSpace()` in `spaces/store.ts` checks the cookie. Tokens, CLI keys and service calls never read the cookie or the header.
 
@@ -83,7 +85,7 @@ A member who assigns a task to the agent runs it **on their own computer**:
 
 - The assign dialog lists only their own paired computers (`GET /api/devices` is personal). The server's runner is the owner's and is refused for members (`workspace/assign.ts`).
 - The job lives in the shared space (`workspace_jobs.user_id`) and records the runner (`runner_account_id`). Their computer claims it (`devices/routes.ts`, `runsOn`), and it counts against their daily quota (`createCappedJob`).
-- Everyone in the space sees the run, its log and its code. Only the runner sees which computer it is: others get `deviceName: null`, `yours: false`, and the Hub shows "Ben's computer" (`components/agent/job-card.tsx`).
+- Everyone in the space sees the run, its log and its code. Only the runner sees which computer it is: others get `deviceName: null`, `yours: false`, and the Hub shows "Ben Ito's computer", with the runner's full name (`lib/runner.ts`, `components/agent/job-card.tsx`).
 - Only the runner can stop it, run it again, or answer its questions in Needs me. The owner sees the question with a lock. The runner gets the notification, and its link opens the shared space (`?openSpace=`). The owner's kill switch and stop-all skip runs on other people's computers.
 - Code stays view-only for everyone but the owner: all `/api/code` writes, the terminal, and approving hosted runs are owner-only.
 
@@ -93,14 +95,20 @@ In a space with members, a task whose owner is `me` can be with any one person: 
 
 ## 5. Live presence
 
-`POST /api/presence` (heartbeat every 15 s, on every route change, and while typing or moving on a diagram) and `GET /api/presence` keep an in-memory room per space (`sharing/presence.ts`). Production runs one API process, like the event stream. Entries expire after 45 s; closing a tab sends a `leave`. Each person has a fixed colour. Presence is only sent when the space has collaborators (`shell.space.collaborators`).
+`POST /api/presence` (heartbeat every 15 s, on every route change, and while typing, moving on a diagram, or moving the text cursor on a page someone else has open) and `GET /api/presence` keep an in-memory room per space (`sharing/presence.ts`). Production runs one API process, like the event stream. Entries expire after 45 s; closing a tab sends a `leave`. Each person has a fixed colour. Presence is only sent when the space has collaborators (`shell.space.collaborators`).
 
-- **Top bar**: avatars of who is here; open the list to see where each person is, go there, or **Follow** them (`components/sharing/people.tsx`). Following frames the window in their colour, goes wherever they go and, on a diagram, centres on what they look at. It stops on Esc, when you navigate yourself, or 10 s after they leave. It only follows them inside this space: someone working in their own space is not here.
-- **Pages, tasks, diagrams, the board**: avatars of the people on that item, with "‹name› is editing…" while they type (`page-people.tsx`).
-- **Diagrams**: everyone's cursor, live, in diagram coordinates (`live-cursors.tsx`).
-- **Content**: when someone saves a page, task page or diagram you have open and you have nothing unsaved, their version is applied in place and your cursor is kept (`BlockEditor` `remote`, `DiagramEditor`). Diagram saves now publish a `diagram` event.
+- **Top bar**: up to four avatars of who is here, then a "+N" chip whose hover text names the rest (`PresenceStack` in `components/sharing/people.tsx`). Clicking them opens **Here now**: focus moves into the list, the arrow keys and Tab move between its buttons, and Esc closes it and puts focus back on the avatars. Each row says where the person is; clicking the row (it reads *Go to*) takes you there, and **Follow** keeps you with them. Following frames the window in their colour, shows "Following ‹full name› · Stop · Esc", goes wherever they go and, on a diagram, centres on what they look at. It stops on Esc, when you navigate yourself, or 10 s after they leave. It only follows people working inside this space: someone who opened one shared item (or a public link) sends only that item, never a route, so their row says "On the shared page", *Go to* opens that item in this space (`hrefOf` in `lib/presence.ts`), and an info mark explains why there is no Follow. Someone working in their own space is not here at all.
+- **Pages, tasks, diagrams, the board**: the same avatars and "+N" chip for the people on that item, with "‹full name› is editing…" while they type ("‹name› and ‹name› are editing…" for two). Clicking the avatars lists everyone on the item, with the same keyboard handling (`page-people.tsx`).
+- **Diagrams**: everyone's cursor, live, in diagram coordinates, labelled with their full name (`live-cursors.tsx`).
+- **Names and initials**: people are named in full wherever they are named (presence, "Shared by", Settings › Sharing, `/shared`), because first names alone are often the same. Initials follow one rule in the API and the Hub, `personInitials` in `packages/shared-types/src/avatars.ts`: the first letter or digit of the first and last words ("Test Five" → TF, "Test 3" → T3), or the first two of a one-word name. In a row of avatars, two different names that would read the same get one more letter of the last word (`distinctInitials`: "Test Two" TTw, "Test Three" TTh). Overlapping avatars keep a gap in the page colour so initials stay readable. Checked 15 Oct 2026 with `lib/initials.test.ts`, `lib/presence.test.ts` and `components/sharing/page-people.test.tsx`; not walked through in a browser.
+- **Pages and task pages, saving together** (`usePageSave` in `components/pages/page-save.ts`): a page saves 0.7 s after you stop typing, and at least every 1.5 s while someone else is on it. Saves go one at a time and each names the revision it was edited from; the `page` event carries the new `revision`, so your own save coming back over the stream costs no request. When someone else saves, their version goes into your editor at once: as it is when you have nothing unsaved, otherwise merged with your unsaved text and the merge saved. A save that loses the race (409) is merged the same way and sent again, up to three times; after that your text stays and saves with your next edit. Nothing you typed is thrown away.
+- **The merge** (`mergeDocs` in `lib/page-merge.ts`) is three-way: the version you both started from, yours, and theirs, compared block by block, then word by word, then letter by letter inside one word. Edits in different places all land. Two people typing at the same spot both keep their text, theirs first. Where both rewrote the same words, both versions stay side by side and a toast says so. A block one person deleted and the other edited stays, with the edit. Identical edits are not doubled. If the merged page does not fit the editor's schema, blocks both changed are kept twice instead of merged; if even that cannot be shown, your text stays unsaved with **Copy my text** and **Show their version**.
+- **In place**: only the part of the document that changed is replaced (`replaceDocument` in `components/editor/replace-doc.ts`), outside the undo history. Your caret keeps its place in the text around it, text that arrives at your caret goes after it, and Undo takes back your typing, never theirs. Diagrams apply someone else's save in place when you have nothing unsaved (`DiagramEditor`); diagram saves publish a `diagram` event.
+- **Carets**: on pages and task pages, the other people's text cursors and selections show in their colour with their full name (`RemoteCarets` in `components/editor/remote-carets.tsx`). Presence carries `caret: { anchor, head }`, sent at most every 0.3 s and only while someone else is on the page. Positions are in the sender's copy, so a caret can sit a few characters off until both saves land. A caret is dropped when its person moves to another item, and moving it does not end their "is editing…" pulse.
 
-**Not built yet:** character-level co-editing. Two people typing in the same page at the same moment still conflict: the second save gets the existing 409 and reloads the latest version. Pages save every 0.7 s, so typing in turns works well.
+Checked 15 Oct 2026 with `lib/page-merge.test.ts` (including 1,500 random pairs of concurrent edits that must keep every word either side typed), `components/editor/replace-doc.test.ts`, `components/pages/page-save.test.tsx`, `components/editor/remote-carets.test.tsx` and the presence and co-editing HTTP tests; not walked through in a browser.
+
+**Not built:** real-time co-editing (an operation log or CRDT). Changes travel as whole-page saves, so the other person sees your typing after your next save plus a round trip. Meeting notes save without a revision, so there the last save wins (`notes-fields.tsx`, read in the code).
 
 ## 6. Routes
 
@@ -120,8 +128,8 @@ All under browser sessions only (`requireBrowserSession`); tokens get 403.
 | GET | `/api/sharing/items?kind=&resourceId=` | Who has one item (owner of the open space) |
 | POST | `/api/sharing/items` | `{ kind, resourceId, personId, role }` from the open space |
 | PATCH/DELETE | `/api/sharing/items/:id` | Owner changes or removes; the recipient may remove it from their list |
-| GET | `/api/sharing/open/:id` | What a share opens, for its recipient; marks it opened |
-| GET/POST | `/api/presence` | §5 |
+| GET | `/api/sharing/open/:id` | What a share opens, for its recipient; marks it opened. 404 `SHARE_NOT_YOURS` when the share is another account's, `SHARE_NOT_FOUND` when there is none at that address. A removed share's row is deleted, so a wrong address and a removed share get the same answer. The Hub sends this without the share header |
+| GET/POST | `/api/presence` | §5. POST takes `tabId` and optional `route`, `resource`, `cursor`, `viewport`, `caret`, `typing`, `leave` |
 
 Adding someone sends them a notification and a live `sharing.changed` frame. Removing them, or deleting a space, sends the frame too: their open tab returns them to their own space with a message.
 
@@ -130,11 +138,12 @@ Also new: `GET /api/skills/:id`.
 ## 7. The Hub
 
 - **Share** buttons: pages, tasks, diagrams, plot spaces, skills, meeting notes, the board, the workspace tab and Code. On a task peek the Share icon sits in the header next to close; on full pages it is at the top right. The space itself is shared from the space switcher (**Share ‹space›…**) and Settings › Sharing. The dialog (`share-dialog.tsx`) searches people as you type, sets the role, lists who has access with each person's own link, shows the "1 of 2 members" and "3 of 5 contacts" meters, and explains what they get and what stays private.
-- **Space switcher**: a **Shared with you** section with the owner's avatar; the open shared space reads "‹name› (shared)", and the top bar says "Shared by Mira · Can edit".
+- **Space switcher**: a **Shared with you** section with the owner's avatar; the open shared space reads "‹name› (shared)", and the top bar says "Shared by Mira Chen · Can edit" in text, without a second avatar of the owner next to their live one (`SharedBadge`).
 - **In a space shared with you**: no Today, Metrics, Fetch now, layout editing, kill switch, Connections or Data settings; the board is home. Viewers get read-only pages, tasks, diagrams and plots. Settings acts on your own account and says so.
 - **`/shared`**: everything shared with you, with a "New" mark until opened. The sidebar link appears when there is something.
-- **`/shared/[id]`** (outside the Hub shell): the shared item on its own, using the same editors with a `shared` role. Every request from the page carries the share header (`setOpenShare` in `lib/api.ts`), and it opens its own event stream scoped to the share. Page and task editors remember the share they opened under (`withShare`), so the last save on leaving goes to the right place.
-- **Settings › Sharing**: contacts (5 slots), spaces you share and their members, hand-over, items you shared, and shared with you (open, leave, remove).
+- **`/shared/[id]`** (outside the Hub shell): the shared item on its own, using the same editors with a `shared` role. Its header shows who is on the item and "Shared by ‹full name› · can edit" as text. Every request from the page carries the share header (`setOpenShare` in `lib/api.ts`), and it opens its own event stream scoped to the share; after the stream drops and comes back, it reads everything again. Page and task editors remember the share they opened under (`withShare`), so the last save on leaving goes to the right place. An address that opens nothing says "Nothing is shared at this link" (check the link; if it opened before, the owner stopped sharing it), or "This was shared with someone else" for another account's share. A share removed while open is §1's "Losing access".
+- **Settings › Sharing**: contacts (5 slots), spaces you share and their members, hand-over, items you shared ("Ben Ito · can edit"), and shared with you (open, leave, remove). Settings › Spaces points here: spaces never share anything with each other, and a space is shared with people only from here, the space switcher or a Share button.
+- **Share dialog** role menus have accessible names ("Access for ‹name›", "Who can open it", "What anyone with the link can do"; `RoleSelect`).
 
 ## 8. Data
 
@@ -155,12 +164,12 @@ Built 8 Oct 2026; checked with `src/sharing/links.integration.test.ts` and in th
 
 ## 10. Avatars
 
-Everyone can pick a picture avatar in Settings › Account › Avatar: 15 per profession (5 women, 5 men, 5 gender-neutral) for engineers, lawyers, teachers, students, managers and makers. Settings shows only the set for the role chosen at sign-up, with your profile's gender group first; an avatar picked earlier from another set stays until you change it. They are drawn as SVG from their id (`role.gender.n`, `packages/shared-types/src/avatars.ts`, `components/avatars/persona.tsx`), stored on `users.avatar`, and saved with `PATCH /api/auth/me { avatar }`. Without one you keep your initials. Avatars show in the top bar, presence, the share dialog, contacts, comments and board cards.
+Everyone can pick a picture avatar in Settings › Account › Avatar: 15 per profession (5 women, 5 men, 5 gender-neutral) for engineers, lawyers, teachers, students, managers and makers. Settings shows only the set for the role chosen at sign-up, with your profile's gender group first; an avatar picked earlier from another set stays until you change it. They are drawn as SVG from their id (`role.gender.n`, `packages/shared-types/src/avatars.ts`, `components/avatars/persona.tsx`), stored on `users.avatar`, and saved with `PATCH /api/auth/me { avatar }`. Without one you keep your initials, made by the one rule in §5 (`personInitials`). Avatars show in the top bar, presence, the share dialog, contacts, comments and board cards.
 
 ## 11. Not covered
 
 - The CLI, `ensemble mcp`, the Context Bridge and the desktop app do not know about sharing. Tokens and service calls always act as the space they belong to, never as a guest.
 - Answering a run's question from a phone (remote answers) works for your own spaces only.
-- Character-level co-editing (§5).
+- Real-time co-editing: changes travel as page saves (§5).
 
 Page bulk deletion (15 Oct 2026): `POST /api/pages/delete-many` is in the existing **shared** space route class (`src/sharing/policy.ts`, `/api/pages*`). It needs space edit access; single-item and public-link grants do not include this route. `pages/store.ts` validates every selected id and scopes descendant traversal to the same space. The batch and descendants share one Undo entry. Device attachment downloads remain in the device route class and require the assigned device and active job lease.

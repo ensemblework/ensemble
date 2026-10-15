@@ -6,9 +6,10 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { FileImportSource, FileRecord, FileUsage } from "@ensemble/shared-types";
 import { bindToast } from "@/lib/toast-bus";
-import { FilesScreen, usageLine } from "./files-screen.js";
+import { createHash } from "node:crypto";
+import { FilesScreen, shortFileName, usageLine } from "./files-screen.js";
 import { ImportFromApps } from "./import-from-apps.js";
-import { checkUploads } from "./use-uploads.js";
+import { checkUploads, findDuplicates } from "./use-uploads.js";
 
 Object.defineProperty(globalThis, "self", { configurable: true, value: window });
 
@@ -259,6 +260,63 @@ test("upload checks keep within the count and space a hosted account has left", 
   const desktop = checkUploads(files, { count: 400, bytes: 9e9, maxCount: null, maxBytes: null, maxFileBytes: 500 * MB });
   assert.equal(desktop.accepted.length, 3);
   assert.equal(desktop.problem, null);
+});
+
+test("a picked file is a duplicate by its content first, then by its name, and twice in one batch counts once", () => {
+  const existing = [record("f1", "Report.pdf", { sha256: "aaa", byteSize: 10 }), record("f2", "Notes.txt", { sha256: "bbb", byteSize: 20 })];
+  const picked = [
+    { name: "Report copy.pdf", size: 10, sha256: "aaa" },
+    { name: "notes.TXT", size: 25, sha256: null },
+    { name: "Notes.txt", size: 20, sha256: null },
+    { name: "New.csv", size: 5, sha256: "ccc" },
+    { name: "New again.csv", size: 5, sha256: "ccc" },
+  ];
+  const { fresh, duplicates } = findDuplicates(picked, existing);
+  assert.deepEqual(fresh.map((item) => item.name), ["New.csv"]);
+  assert.deepEqual(duplicates.map((row) => [row.item.name, row.match?.id ?? null, row.same]), [
+    ["Report copy.pdf", "f1", "content"],
+    ["notes.TXT", "f2", "name"],
+    ["Notes.txt", "f2", "content"],
+    ["New again.csv", null, "content"],
+  ]);
+});
+
+test("a long file name keeps its start and its extension", () => {
+  assert.equal(shortFileName("Plan.txt"), "Plan.txt");
+  const long = shortFileName("Quarterly planning notes for the field team, second draft with comments.docx", 40);
+  assert.equal(long.length, 40);
+  assert.match(long, /^Quarterly planning.*…comments\.docx$/);
+});
+
+test("uploading a file that is already in Files asks first: Skip sends nothing, Replace puts the new version in its place", async () => {
+  const sha = createHash("sha256").update("Planting dates").digest("hex");
+  const listed = [record("f7", "Plan.txt", { kind: "text", mediaType: "text/plain", byteSize: 14, sha256: sha }), ...FILES];
+  const view = await mount(<FilesScreen />, (call) => {
+    if (call.url.pathname === "/api/documents/f3/content" && call.method === "PUT") return { file: record("f3", "Field notes.txt", { kind: "text", byteSize: 9 }) };
+    if (call.url.pathname !== "/api/documents") return undefined;
+    if (call.method === "POST") return json({ file: record("f9", "x.txt") }, 201);
+    return { files: listed, usage: { ...HOSTED, count: 4 } };
+  });
+  try {
+    await waitFor(() => Boolean(document.querySelector('[data-file-row="f7"]')), "the files");
+    await choose([new File(["Planting dates"], "Plan copy.txt", { type: "text/plain" })]);
+    await waitFor(() => Boolean(document.querySelector('[data-testid="file-duplicates"]')), "the duplicate question");
+    assert.match(document.querySelector('[role="dialog"]')?.textContent ?? "", /You already have Plan\.txt.*Plan copy\.txt is the same file as Plan\.txt/);
+    assert.equal(Array.from(document.querySelectorAll('[role="dialog"] button')).some((node) => node.textContent?.trim() === "Replace"), false, "an exact copy has nothing to replace");
+    await click(button(/^Skip it$/));
+    assert.ok(!view.calls.some((call) => call.method === "POST"), "Skip uploads nothing");
+    assert.match(view.toasts.at(-1)?.text ?? "", /Skipped Plan copy\.txt: it is already in Files\./);
+
+    await choose([new File(["New notes"], "Field notes.txt", { type: "text/plain" })]);
+    await waitFor(() => Boolean(document.querySelector('[data-duplicate="name"]')), "the same-name question");
+    await click(button(/^Replace$/));
+    await waitFor(() => view.toasts.some((toast) => toast.text === "Replaced 1 file."), "the replacement");
+    const put = view.calls.find((call) => call.method === "PUT")!;
+    assert.deepEqual(put.body, { dataBase64: Buffer.from("New notes").toString("base64"), filename: "Field notes.txt", mediaType: "text/plain" });
+    assert.ok(!view.calls.some((call) => call.method === "POST"), "a replacement is not a new file");
+  } finally {
+    await view.done();
+  }
 });
 
 const SOURCES: FileImportSource[] = [

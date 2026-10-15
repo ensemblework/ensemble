@@ -52,6 +52,46 @@ export function avatarRoleFor(role: string | null | undefined, profession?: stri
   return "engineer";
 }
 
+/** Each word's letters and digits: "Mary-Jane O'Neil" reads as MaryJane, ONeil. Code points, so an accent or emoji is never split. */
+function nameWords(text: string): string[][] {
+  return text
+    .trim()
+    .split(/\s+/)
+    .map((word) => Array.from(word.replace(/[^\p{L}\p{N}]/gu, "")))
+    .filter((chars) => chars.length > 0);
+}
+
+/**
+ * Initials for a person without a picture avatar. The API and the Hub both use this, so a person
+ * reads the same everywhere: the first letter or digit of the first and last words ("Test Five" →
+ * TF, "Test 3" → T3), the first two of a one-word name, else from the email's local part.
+ */
+export function personInitials(name?: string | null, email?: string | null): string {
+  const words = nameWords(name ?? "");
+  if (words.length >= 2) return `${words[0]![0]}${words[words.length - 1]![0]}`.toUpperCase();
+  if (words.length === 1) return words[0]!.slice(0, 2).join("").toUpperCase();
+  const local = ((email ?? "").split("@")[0] ?? "").split("+")[0]!.replace(/[._-]+/g, " ");
+  const parts = nameWords(local).filter((chars) => chars.some((char) => /\p{L}/u.test(char)));
+  if (parts.length >= 2) return `${parts[0]![0]}${parts[parts.length - 1]![0]}`.toUpperCase();
+  return (parts[0] ?? []).slice(0, 2).join("").toUpperCase();
+}
+
+/**
+ * Initials for people shown side by side. Two different names that would read the same ("Test
+ * Two", "Test Three": TT) each get the next letter of their last word (TTw, TTh).
+ */
+export function distinctInitials(people: ReadonlyArray<{ name: string; initials?: string | null }>): string[] {
+  const base = people.map((person) => person.initials || personInitials(person.name));
+  return base.map((value, index) => {
+    const name = people[index]!.name;
+    if (!base.some((other, at) => at !== index && other === value && people[at]!.name !== name)) return value;
+    const words = nameWords(name);
+    const last = words[words.length - 1];
+    if (words.length < 2 || !last || last.length < 2) return value;
+    return `${words[0]![0]!.toUpperCase()}${last[0]!.toUpperCase()}${last[1]!.toLowerCase()}`;
+  });
+}
+
 /** The gender group shown first, from the profile's gender answer. */
 export function avatarGenderFor(gender: string | null | undefined): AvatarGender {
   if (gender === "Woman") return "f";

@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "./api";
 
 /**
- * Names the person whose computer runs a job in a shared space ("Ben"), from the space's
+ * Names the person whose computer runs a job in a shared space ("Ben Ito"), from the space's
  * members. Null runner means the space's owner. Never names the computer itself.
  */
 export function useRunnerName(): (runnerAccountId: string | null | undefined) => string {
@@ -20,7 +20,6 @@ export function useRunnerName(): (runnerAccountId: string | null | undefined) =>
   return (runner) => {
     const owner = members.data?.owner;
     const person = runner ? members.data?.members.find((row) => row.id === runner) : owner;
-    const first = person?.name.split(" ")[0];
-    return first || (runner ? "Someone" : "The owner");
+    return person?.name || (runner ? "Someone" : "The owner");
   };
 }

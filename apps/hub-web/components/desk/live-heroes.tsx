@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 import type { DeskLive } from "@/lib/api";
+import { personInitials } from "@/lib/initials";
 import { Num, Ring } from "./ui";
 
 type Row = { id: string; title: string; meta?: string };
@@ -264,7 +265,7 @@ function Team({ live }: { live: DeskLive }) {
     </div>
     <div className="col" style={{ gap: 5 }}>
       {people.slice(0, 5).map((person) => <div key={person.id} className="row gap10" style={{ minHeight: 28 }}>
-        <span className="av" style={{ background: colorFor(person.name) }}>{initials(person.name)}</span>
+        <span className="av" style={{ background: colorFor(person.name) }}>{personInitials(person.name)}</span>
         <span className="trunc" style={{ width: 132, fontSize: 12, fontWeight: 550 }}>{person.name}</span>
         <div className="bar grow" style={{ height: 8 }}><i style={{ width: `${Math.max(0, (person.capacityHours ?? 0) / maximum * 100)}%`, background: colorFor(person.name) }} /></div>
         <span style={{ width: 38, textAlign: "right", fontSize: 12 }}>{person.capacityHours == null ? "–" : `${person.capacityHours}h`}</span>

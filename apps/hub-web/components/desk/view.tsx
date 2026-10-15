@@ -151,7 +151,7 @@ export function DeskView({
       ) : null}
       <div className={`bento${apply ? " applying" : ""}`} data-enter={enter ? "1" : undefined} data-widget-grid="desk">
         {sample && ready ? <SampleTiles deskId={deskId} mobile={phone} live={sampleData} /> : !sample && ready && liveData ? <LiveBoard deskId={deskId} live={liveData} mobile={phone} plots={plots} formKind={form} /> : spans.map((span, index) => (
-          <div key={index} className="tile skel sk" data-visible={showSkeleton ? "1" : "0"} data-motion-loading={showSkeleton ? "1" : "0"} data-motion-slot="content.skeleton" data-state={showSkeleton ? "loading" : "ready"} style={{ gridColumn: `span ${span.c}`, gridRow: `span ${span.r}`, ["--i" as string]: index }} />
+          <div key={index} className="tile skel sk" data-span={span.c} data-visible={showSkeleton ? "1" : "0"} data-motion-loading={showSkeleton ? "1" : "0"} data-motion-slot="content.skeleton" data-state={showSkeleton ? "loading" : "ready"} style={{ gridColumn: `span ${span.c}`, gridRow: `span ${span.r}`, ["--i" as string]: index }} />
         ))}
       </div>
       <AddedTiles />

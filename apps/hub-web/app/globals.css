@@ -256,11 +256,20 @@ select:focus-visible {
 /* Bordered fields and tile composers use that edge. The control must not draw a second ring. */
 .field:focus,
 .field:focus-visible,
-.tile :is(input, textarea):focus,
-.tile :is(input, textarea):focus-visible {
+.tile :is(input:not([type="checkbox"], [type="radio"], .field), textarea:not(.field)):focus,
+.tile :is(input:not([type="checkbox"], [type="radio"], .field), textarea:not(.field)):focus-visible {
   outline: none !important;
   outline-offset: 0 !important;
   box-shadow: none !important;
+}
+/* The edge has to be visible: the border turns accent and a 1px ring next to it makes it 2px. */
+.field:focus-visible {
+  border-color: rgb(var(--accent-rgb)) !important;
+  box-shadow: 0 0 0 1px rgb(var(--accent-rgb)) !important;
+}
+.tile:not(.assistant-composer):has(:is(input:not([type="checkbox"], [type="radio"], .field), textarea:not(.field)):focus-visible) {
+  border-color: rgb(var(--accent-rgb));
+  box-shadow: 0 0 0 1px rgb(var(--accent-rgb));
 }
 #command-list [role="option"] {
   scroll-margin-block: 8px;
@@ -961,7 +970,6 @@ select:focus-visible {
   overflow-anchor: none;
 }
 /* One outer edge on search fields. .sq-input's own rule lives with the search slot (main). */
-.field:focus-visible,
 .search-line:focus,
 .search-line:focus-visible {
   outline: none !important;

@@ -16,7 +16,7 @@ function Pointer({ color, name, zoom, emoji }: { color: string; name: string; zo
         <path d="M2 1.5 L15.5 9.2 L9.4 10.6 L6.4 17.6 Z" fill={color} stroke="white" strokeWidth="1.4" strokeLinejoin="round" />
       </svg>
       <span className="ml-3 -mt-1 inline-block whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium leading-4 text-white shadow-sm" style={{ background: color }}>
-        {emoji ? `${emoji} ${name}` : name.split(" ")[0]}
+        {emoji ? `${emoji} ${name}` : name}
       </span>
     </div>
   );

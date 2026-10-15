@@ -21,10 +21,10 @@
 /* The field is the only focus edge. The global input:focus-visible outline would draw a second ring inside it. */
 .sq-input:focus,
 .sq-input:focus-visible { outline: none !important; outline-offset: 0 !important; box-shadow: none !important; border-radius: 0; }
-/* One focus edge, on the container, including keyboard focus inside the field. */
-.sq[data-motion-slot="search.query"]:focus-within:has(:focus-visible) .sq-field {
-  border-color: color-mix(in srgb, var(--sq-accent) 70%, transparent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--sq-accent) 16%, transparent);
+/* One focus edge, on the container, including keyboard focus inside the field. While searching, the rim is that edge. */
+.sq[data-motion-slot="search.query"]:not([data-state="searching"]):focus-within:has(:focus-visible) .sq-field {
+  border-color: var(--sq-accent);
+  box-shadow: 0 0 0 1px var(--sq-accent), 0 0 0 4px color-mix(in srgb, var(--sq-accent) 16%, transparent);
 }
 .sq-input::placeholder { color: var(--sq-faint); }
 .sq-input::-webkit-search-cancel-button { display: none; }

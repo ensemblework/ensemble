@@ -33,6 +33,8 @@ Every file, previewable or not, can be attached to pages and downloaded.
 - **Pages made from a file** keep the link in `task_pages.source_file_id` (migration `20261012130000_files`), and page reads return `sourceFile: { id, filename, format, hasStyle }`.
 - **Attachments in pages** are mention nodes `{ type: "mention", attrs: { kind: "file", id, label, height } }`. They render as preview cards; `pageText` shows them to agents as `[file: <name> (id <id>)]`.
 
+**Uploading a file that is already here.** Before sending, the Files screen compares each picked or dropped file with the files it has (`findDuplicates` in `apps/hub-web/components/files/use-uploads.ts`): the same content by SHA-256 (hashed in the browser, only for files the size of one already kept), else the same name. A file picked twice in one batch is added once. When any match, nothing is sent until the person chooses, for all of them (`DuplicateDialog` in `files-screen.tsx`): **Skip** (the default), **Keep both** (upload them as new files), or, when a name matches with different content, **Replace**, which puts the new bytes into the existing file (`PUT /api/documents/:id/content`) so pages it is attached to show the new version; an exact copy is skipped. Long names on the cards wrap to two lines and are shortened in the middle, keeping the extension; the full name is the tooltip.
+
 Code: `apps/hub-api/src/files/` (store, extract and its worker, page, import, attached), routes `apps/hub-api/src/routes/files.ts` and `routes/file-imports.ts`, web `apps/hub-web/components/files/`, `apps/hub-web/lib/files/`, `apps/hub-web/lib/api-files.ts`, `app/(hub)/files`.
 
 ## 3. Limits
@@ -126,7 +128,7 @@ Hosted: a verified email for everything; imports 60 per 10 minutes. Space member
 - `apps/hub-api/src/files/extract.test.ts`: extraction per format and its limits.
 - `apps/hub-api/src/files/import.integration.test.ts`, `attached.integration.test.ts`, `connectors/items/downloads.test.ts`: import sources and states, downloads per app, attached files for agents, `read_attachment` and `save_attachment`.
 - `apps/hub-api/src/routes/artifacts.integration.test.ts`: From your apps without uploads, paging, one item in full, removal from the list, graph, live tiles and MCP search and read, a later sync and a purged row staying removed, attaching again restoring it, the 409 for uploads, isolation, and a space member refused.
-- Web: `components/editor/file-attach.test.tsx`, `components/files/*.test.tsx` (`from-apps.test.tsx`: the switch, list, chips, search, reader, Remove, paging, empty state, guests), `lib/files/*.test.ts`.
+- Web: `components/editor/file-attach.test.tsx`, `components/files/*.test.tsx` (`from-apps.test.tsx`: the switch, list, chips, search, reader, Remove, paging, empty state, guests; `files-page.test.tsx`: duplicates by content and by name, Skip sending nothing, Replace sending the new bytes to the existing file), `lib/files/*.test.ts`.
 - Present and Full screen: `components/files/present.test.tsx` runs them on a generated .pptx and a code file (keys, clicks, hidden slides, focus, the × and Esc, the in-page layer when the browser has no Fullscreen API, and a browser that grants it). A PDF in full screen uses the same layer; that path was read, not run, because pdf.js does not run in the test DOM.
 
 ## 11. Connected items opened explicitly

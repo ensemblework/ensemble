@@ -13,13 +13,13 @@ import { type FilesView } from "@/lib/files/links";
 import { useSpaceAccess } from "@/lib/access";
 import { relative } from "@/lib/format";
 import { BrandLogo, brandName } from "../connectors/brand-logo";
-import { Empty, PageHeader, QueryError, SkeletonRows, cx } from "../ui";
+import { Dialog, Empty, PageHeader, QueryError, SkeletonRows, cx } from "../ui";
 import { DeleteFileDialog } from "./delete-file";
 import { FileIcon } from "./file-icon";
 import { FromApps } from "./from-apps";
 import { ImportFromApps } from "./import-from-apps";
 import { useBlobUrl, useFileBytes } from "./use-file";
-import { useFileUploads, type UploadItem } from "./use-uploads";
+import { useFileUploads, type Duplicate, type DuplicateChoice, type UploadItem } from "./use-uploads";
 
 const KIND_ORDER: FileKind[] = ["pdf", "document", "slides", "sheet", "image", "text", "code", "audio", "video", "other"];
 const THUMB_MAX = 4 * 1024 * 1024;
@@ -90,6 +90,17 @@ function Preview({ file }: { file: FileRecord }) {
   return <FileIcon kind={file.kind ?? format.kind} size={40} />;
 }
 
+/** A long name shortened in the middle, so the start and the extension both stay in view. The full name is the tooltip. */
+export function shortFileName(filename: string, max = 56): string {
+  if (filename.length <= max) return filename;
+  const dot = filename.lastIndexOf(".");
+  const ext = dot > 0 && filename.length - dot <= 8 ? filename.slice(dot) : "";
+  const stem = filename.slice(0, filename.length - ext.length);
+  const tail = Math.min(8, Math.floor(stem.length / 4));
+  const head = Math.max(1, max - ext.length - tail - 1);
+  return `${stem.slice(0, head)}…${stem.slice(stem.length - tail)}${ext}`;
+}
+
 function meta(file: FileRecord): string {
   const format = fileFormat(file.filename);
   return [format.ext ? format.label : FILE_KIND_LABEL.other, formatBytes(file.byteSize), relative(file.createdAt)].filter(Boolean).join(" · ");
@@ -121,8 +132,8 @@ function FileCard({ file, onRemove }: { file: FileRecord; onRemove?: () => void 
           <Preview file={file} />
         </span>
         <span className="min-w-0 space-y-0.5 px-3 py-2.5">
-          <span className="block truncate text-[13.5px] font-medium text-ink" title={file.filename}>
-            {file.filename}
+          <span className="line-clamp-2 text-[13.5px] font-medium leading-5 text-ink [overflow-wrap:anywhere]" title={file.filename}>
+            {shortFileName(file.filename)}
           </span>
           <span className="block truncate text-[12px] text-muted">{meta(file)}</span>
           <Source file={file} />
@@ -145,7 +156,7 @@ function FileLine({ file, onRemove }: { file: FileRecord; onRemove?: () => void 
       <Link href={`/files/${file.id}`} prefetch={false} className="row-tile flex min-w-0 flex-1 items-center gap-3 rounded-lg px-2 py-2" data-file-row={file.id}>
         <FileIcon kind={file.kind ?? fileFormat(file.filename).kind} size={30} />
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[13.5px] font-medium text-ink">{file.filename}</span>
+          <span className="block truncate text-[13.5px] font-medium text-ink" title={file.filename}>{shortFileName(file.filename, 96)}</span>
           <span className="block truncate text-[12px] text-muted">{meta(file)}</span>
         </span>
         <Source file={file} />
@@ -191,6 +202,47 @@ export function Uploads({ items, onDismiss }: { items: UploadItem[]; onDismiss: 
         </li>
       ))}
     </ul>
+  );
+}
+
+/** Files picked again that are already in Files: skip them, keep both, or put the new version in the old one's place. */
+export function DuplicateDialog({ duplicates, onChoose }: { duplicates: Duplicate[] | null; onChoose: (choice: DuplicateChoice | "cancel") => void }) {
+  const rows = duplicates ?? [];
+  const versions = rows.filter((row) => row.same === "name").length;
+  const title = rows.length === 1 ? `You already have ${shortFileName(rows[0]!.match.filename, 40)}` : `${rows.length} of these are already in Files`;
+  return (
+    <Dialog open={duplicates !== null} onClose={() => onChoose("cancel")} title={title} width={480}>
+      <div className="space-y-3 text-[13px] leading-5" data-testid="file-duplicates">
+        <ul className="max-h-48 space-y-1.5 overflow-y-auto">
+          {rows.map((row, index) => (
+            <li key={`${row.file.name}-${index}`} data-duplicate={row.same}>
+              <span className="font-medium [overflow-wrap:anywhere]">{row.file.name}</span>{" "}
+              <span className="text-muted">
+                {row.same === "content"
+                  ? row.match.filename === row.file.name
+                    ? `is already in Files, uploaded ${relative(row.match.createdAt)}.`
+                    : `is the same file as ${row.match.filename}.`
+                  : `has the name of a file uploaded ${relative(row.match.createdAt)}, with different content.`}
+              </span>
+            </li>
+          ))}
+        </ul>
+        {versions ? <p className="text-[12px] text-muted">Replace puts the new version in the old file&rsquo;s place, so pages it is attached to show the new one. A file that is an exact copy is skipped.</p> : null}
+        <div className="flex flex-wrap justify-end gap-2">
+          <button type="button" className="btn-ghost" onClick={() => onChoose("keep")}>
+            Keep both
+          </button>
+          {versions ? (
+            <button type="button" className="btn" onClick={() => onChoose("replace")}>
+              Replace
+            </button>
+          ) : null}
+          <button type="button" className="btn-primary" onClick={() => onChoose("skip")}>
+            Skip {rows.length === 1 ? "it" : "them"}
+          </button>
+        </div>
+      </div>
+    </Dialog>
   );
 }
 
@@ -410,6 +462,7 @@ function YourFiles() {
       </div>
       <ImportFromApps open={importing} onClose={() => setImporting(false)} />
       <DeleteFileDialog file={removing} onClose={() => setRemoving(null)} />
+      <DuplicateDialog duplicates={uploads.review?.duplicates ?? null} onChoose={uploads.resolve} />
     </>
   );
 }

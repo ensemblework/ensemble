@@ -28,6 +28,7 @@ const EXACT = new Set([
   "/connect",
   "/settings",
   "/start",
+  "/spaces",
   "/spaces/new",
   "/shared",
   "/welcome",
@@ -38,6 +39,7 @@ const EXACT = new Set([
   "/pages",
   "/marketplace",
   "/projects",
+  "/tasks",
   "/lost",
 ]);
 

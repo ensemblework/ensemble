@@ -767,7 +767,7 @@ export function AssignDialog({
           </div>
           {access.guest ? (
             <p className="mt-2 rounded-md bg-panel px-2.5 py-2 text-[12px] leading-[18px] text-muted">
-              This is {access.owner?.split(" ")[0] ?? "someone"}'s space, so the agent runs on one of your computers. They see that it runs on your computer, never which one,
+              This is {access.owner ?? "someone"}'s space, so the agent runs on one of your computers. They see that it runs on your computer, never which one,
               and they can follow its log. Only you can answer its questions or stop it.
             </p>
           ) : null}

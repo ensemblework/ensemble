@@ -122,6 +122,8 @@ function visitorId(): string {
   }
   return visitor;
 }
+/** Dispatched on `window` when the open share or public link turns out to be gone (a save or a ticket refused). */
+export const SHARE_GONE_EVENT = "ensemble:share-gone";
 export function setOpenShare(id: string | null): void {
   openShare = id;
 }
@@ -1711,7 +1713,8 @@ export const api = bindClient({
     post<{ viewOnly: boolean; shares: ItemShare[] }>("/api/sharing/items", data),
   setShareRole: (id: string, role: ItemRole) => patch<{ updated: boolean }>(`/api/sharing/items/${id}`, { role }),
   removeShare: (id: string) => del<void>(`/api/sharing/items/${id}`),
-  openShare: (id: string) => get<OpenedShare>(`/api/sharing/open/${id}`),
+  /** Sent without the share header, so a wrong or removed share gets its own answer rather than the header's 404. */
+  openShare: (id: string) => withShare(null, () => get<OpenedShare>(`/api/sharing/open/${id}`)),
   presence: () => get<{ you: string; people: PresenceEntry[] }>("/api/presence"),
   sendPresence: (data: PresenceUpdate, keepalive = false) => request<void>("/api/presence", { method: "POST", json: data, keepalive }),
   publicLinks: () => get<{ limit: number; links: PublicLink[] }>("/api/links"),
@@ -1805,6 +1808,8 @@ export type PresenceEntry = {
   resource: { kind: ShareKind; id: string } | null;
   cursor: { x: number; y: number } | null;
   viewport: { x: number; y: number; zoom: number } | null;
+  /** Their text cursor on a page: positions in their copy of the document. */
+  caret?: { anchor: number; head: number } | null;
   typing: boolean;
   at: number;
   gone?: boolean;
@@ -1829,6 +1834,7 @@ export type PresenceUpdate = {
   resource?: { kind: ShareKind; id: string } | null;
   cursor?: { x: number; y: number } | null;
   viewport?: { x: number; y: number; zoom: number } | null;
+  caret?: { anchor: number; head: number } | null;
   typing?: boolean;
   leave?: boolean;
 };

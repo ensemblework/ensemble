@@ -45,6 +45,7 @@ const Presence = z.object({
   resource: z.object({ kind: Kind, id: Id }).nullable().optional(),
   cursor: Point.nullable().optional(),
   viewport: Point.extend({ zoom: z.number().finite().min(0.01).max(20) }).nullable().optional(),
+  caret: z.object({ anchor: z.number().int().min(0).max(50_000_000), head: z.number().int().min(0).max(50_000_000) }).nullable().optional(),
   typing: z.boolean().optional(),
   leave: z.boolean().optional(),
 });
@@ -274,7 +275,7 @@ export async function sharingRoutes(app: FastifyInstance): Promise<void> {
       access?.kind === "link" && !access.visitor.signedIn
         ? {
             name: access.visitor.name,
-            initials: access.visitor.name.split(" ").map((word) => word[0]).join("").slice(0, 2).toUpperCase(),
+            initials: initialsOf(access.visitor.name, ""),
             avatar: null,
             emoji: access.visitor.emoji,
             color: access.visitor.color,
@@ -368,7 +369,12 @@ export async function sharingRoutes(app: FastifyInstance): Promise<void> {
         space: { select: { id: true, name: true, email: true, spaceName: true, ownerId: true } },
       },
     });
-    if (!share || !(SHARE_KINDS as readonly string[]).includes(share.kind)) throw new SharingError("This share was removed, or it is not yours.", 404);
+    if (!share || !(SHARE_KINDS as readonly string[]).includes(share.kind)) {
+      // A removed share's row is deleted, so a wrong address and a removed share look the same here.
+      const elsewhere = share ? null : await prisma.share.findUnique({ where: { id }, select: { id: true } });
+      if (elsewhere) throw new SharingError("This was shared with a different account. Links only open for the person they were shared with.", 404, "SHARE_NOT_YOURS");
+      throw new SharingError("Nothing is shared with you at this address. Check the link; if it opened before, the owner has stopped sharing it.", 404, "SHARE_NOT_FOUND");
+    }
     if (!share.openedAt) await prisma.share.update({ where: { id }, data: { openedAt: new Date() } });
     const ownerId = share.space.ownerId ?? share.space.id;
     const owner = await prisma.user.findUniqueOrThrow({ where: { id: ownerId }, select: { id: true, name: true, email: true, avatar: true } });

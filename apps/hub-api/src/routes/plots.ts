@@ -366,7 +366,7 @@ export async function plotRoutes(app: FastifyInstance): Promise<void> {
       if (result.error) {
         const failure = plotExportErrorReply(result.error, result.retry);
         if (failure.statusCode === 503) return reply.code(503).send({ error: failure.error, retry: true });
-        return reply.code(400).send({ error: result.error, line: result.line, stderr: result.stderr, stdout: result.stdout });
+        return reply.code(400).send({ error: result.line ? `Line ${result.line}: ${result.error}` : result.error, line: result.line, stderr: result.stderr, stdout: result.stdout });
       }
       const file = result[body.format];
       if (!file) return reply.code(400).send({ error: "The script finished without a figure. Call save() or plt.show().", stderr: result.stderr });

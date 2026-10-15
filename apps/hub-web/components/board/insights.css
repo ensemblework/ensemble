@@ -83,3 +83,16 @@
   .board-insight-slot { min-width: 0; max-width: none; }
   .board-insight > header button { min-height: 32px; min-width: 32px; }
 }
+
+/*
+ * Board columns. Between 1128 and 1448 px of board all five shrink to fit. Narrower, whole columns
+ * fill the board and the next one shows a 32 px edge, so the sideways scroll is visible and no
+ * column is cut in half. 20 px is the left padding and 12 px the gap.
+ */
+.board-column-slot { width: 272px; }
+.board-column-slot > .board-column { width: auto; }
+@container (max-width: 1447px) { .board-column-slot { width: clamp(208px, calc((100cqi - 88px) / 5), 272px); } }
+@container (max-width: 1127px) { .board-column-slot { width: clamp(208px, calc((100cqi - 100px) / 4), 280px); } }
+@container (max-width: 931px) { .board-column-slot { width: clamp(208px, calc((100cqi - 88px) / 3), 288px); } }
+@container (max-width: 711px) { .board-column-slot { width: clamp(208px, calc((100cqi - 76px) / 2), 320px); } }
+@container (max-width: 491px) { .board-column-slot { width: clamp(208px, calc(100cqi - 64px), 360px); } }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
-import type { PresenceEntry } from "./api";
+import type { PresenceEntry, ShareKind } from "./api";
 
 /**
  * Who else is in this space right now, fed by the event stream (`presence` frames) and the
@@ -73,6 +73,62 @@ export function people(list: PresenceEntry[]): PresenceEntry[] {
 /** The people on one item (a page, a diagram). */
 export function onResource(list: PresenceEntry[], kind: string, id: string): PresenceEntry[] {
   return people(list.filter((entry) => entry.resource?.kind === kind && entry.resource.id === id));
+}
+
+const PLACES: Array<[RegExp, string]> = [
+  [/^\/board/, "the board"],
+  [/^\/pages\//, "a page"],
+  [/^\/tasks\//, "a task"],
+  [/^\/diagrams\/./, "a diagram"],
+  [/^\/diagrams/, "diagrams"],
+  [/^\/plots\/./, "a plot space"],
+  [/^\/plots/, "plots"],
+  [/^\/context/, "Context"],
+  [/^\/needs-me/, "Needs me"],
+  [/^\/runs/, "runs"],
+  [/^\/workspace/, "the workspace"],
+  [/^\/code/, "code"],
+  [/^\/skills/, "skills"],
+  [/^\/meetings/, "meetings"],
+  [/^\/recap/, "the weekly recap"],
+  [/^\/projects/, "projects"],
+];
+
+/** Where someone is, in words: "a page", "the board", or "the shared page" for someone who opened one shared item. */
+export function placeOf(entry: Pick<PresenceEntry, "route" | "resource">): string {
+  if (!entry.route) return entry.resource ? `the shared ${entry.resource.kind.replace("_", " ")}` : "this space";
+  const path = entry.route.split("?")[0] ?? "";
+  if (entry.route.includes("peek=task:")) return "a task";
+  return PLACES.find(([pattern]) => pattern.test(path))?.[1] ?? "this space";
+}
+
+const ITEM_ROUTES: Partial<Record<ShareKind, (id: string) => string>> = {
+  page: (id) => `/pages/${id}`,
+  task: (id) => `/tasks/${id}`,
+  diagram: (id) => `/diagrams/${id}`,
+  plot_space: (id) => `/plots/${id}`,
+  board: () => "/board",
+  meeting: () => "/meetings",
+  skill: (id) => `/skills?skill=${id}`,
+  workspace: () => "/workspace",
+  code: () => "/code",
+};
+
+/**
+ * Where "Go to" takes you. Someone on one shared item or a public link never sends a route,
+ * only the item, so for them it is that item's address in this space.
+ */
+export function hrefOf(entry: Pick<PresenceEntry, "route" | "resource">): string | null {
+  if (entry.route) return entry.route;
+  const to = entry.resource ? ITEM_ROUTES[entry.resource.kind] : undefined;
+  return to && entry.resource ? to(encodeURIComponent(entry.resource.id)) : null;
+}
+
+/** "Mira Chen is editing…", "Mira Chen and Ben Ito are editing…", "Mira Chen and 2 others are editing…". */
+export function editingLine(names: string[]): string {
+  if (names.length === 1) return `${names[0]} is editing…`;
+  if (names.length === 2) return `${names[0]} and ${names[1]} are editing…`;
+  return `${names[0]} and ${names.length - 1} others are editing…`;
 }
 
 let tab: string | null = null;

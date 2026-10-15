@@ -135,6 +135,17 @@ function Frame({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-dvh overflow-hidden bg-bg">
+      <a
+        href="#main-content"
+        onClick={(event) => {
+          // Settings and Code read the address hash as a section, so focus without writing one.
+          event.preventDefault();
+          document.getElementById("main-content")?.focus();
+        }}
+        className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-2 focus:z-[90] focus:rounded-lg focus:border focus:border-line-strong focus:bg-panel focus:px-3 focus:py-1.5 focus:text-[13px] focus:font-medium focus:text-ink focus:shadow-pop"
+      >
+        Skip to content
+      </a>
       <PageProgress />
       <SearchLanding />
       <div className="main-sidebar-slot h-full shrink-0 max-md:hidden">
@@ -152,7 +163,7 @@ function Frame({ children }: { children: React.ReactNode }) {
           />
           <SeasonBanner />
           <VerificationBanner />
-          <main data-theme-canvas className="relative min-h-0 flex-1 overflow-y-auto">
+          <main id="main-content" tabIndex={-1} data-theme-canvas className="relative min-h-0 flex-1 overflow-y-auto focus:outline-none">
             <FeatureGate>{children}</FeatureGate>
           </main>
           <AssistantDock />

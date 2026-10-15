@@ -95,6 +95,7 @@ function DeliverablePeek({ row, onOpenProject }: { row: DeliverableRecord | unde
   return (
     <div className="mx-auto max-w-[720px] px-6 py-8">
       <input
+        data-peek-escape
         aria-label="Deliverable title"
         defaultValue={row.title}
         key={row.title}
@@ -141,6 +142,7 @@ function ProjectPeek({
   return (
     <div className="mx-auto max-w-[720px] px-6 py-8">
       <input
+        data-peek-escape
         aria-label="Project name"
         defaultValue={project.name}
         key={project.name}

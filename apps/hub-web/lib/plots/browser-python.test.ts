@@ -11,9 +11,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { ApiError, api } from "@/lib/api";
-import { DRIVER_PY } from "./browser-python";
+import { DRIVER_PY, pythonFailure } from "./browser-python";
 import { PARSE_TABLE_PY, PLOT_HELPER } from "./python-sources";
-import { forgetPlotRuntime, PlotScriptError, renderPlot } from "./render";
+import { forgetPlotRuntime, PlotScriptError, renderPlot, scriptErrorLine } from "./render";
 
 const runtime = join(process.cwd(), "..", "agent-runtime");
 
@@ -60,13 +60,21 @@ test("a render runs on the server where it may, and in the browser exactly when 
     forgetPlotRuntime();
     api.plotRuntime = async () => ({ serverPython: false });
     const failing = async () => ({ format: "png" as const, data: null, stdout: "", stderr: 'File "user_script.py", line 3\nNameError: x', line: 3, error: "NameError: x" });
-    await assert.rejects(renderPlot("p", { format: "png", code: "x" }, failing as never), (error: unknown) => error instanceof PlotScriptError && error.line === 3 && /NameError/.test(error.message));
+    await assert.rejects(renderPlot("p", { format: "png", code: "x" }, failing as never), (error: unknown) => error instanceof PlotScriptError && error.line === 3 && /^Line 3: NameError/.test(error.message));
+    assert.equal(scriptErrorLine("Line 3: NameError: x"), 3, "the server's 400 says the line the same way");
+    assert.equal(scriptErrorLine("The script hit the CPU limit."), null);
   } finally {
     api.plotRuntime = original.runtime;
     api.renderPlotOnServer = original.render;
     api.plotRenderInput = original.input;
     forgetPlotRuntime();
   }
+});
+
+test("a blocked Python download says where Python comes from; other failures pass through", () => {
+  assert.match(pythonFailure("TypeError: Network response is CORS-cross-origin"), /could not be downloaded from cdn\.jsdelivr\.net.*CORS-cross-origin$/);
+  assert.match(pythonFailure("NetworkError: Failed to execute 'importScripts' on 'WorkerGlobalScope'"), /cdn\.jsdelivr\.net/);
+  assert.equal(pythonFailure("Unknown request."), "Unknown request.");
 });
 
 const python = join(runtime, ".venv", "bin", "python");
