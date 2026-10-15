@@ -83,6 +83,8 @@ export function useCollab(options: {
       },
       clientID: `${tabId()}-${Math.random().toString(36).slice(2, 8)}`,
       live: () => props.current.live,
+      // Public links are rate limited per address (`ENSEMBLE_RATE_LINK_WRITE_LIMIT`, 120 a minute).
+      delays: link ? { live: 1000, alone: 1000 } : undefined,
       drafts: browserDrafts(`ensemble.draft:${account}:${kind}:${id}`),
       onStatus: setStatus,
       onLost: (error) => {

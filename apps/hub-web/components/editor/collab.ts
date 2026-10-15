@@ -71,7 +71,7 @@ const DELAYS = {
 const KEEP_MAPS = 500;
 const DRAFT_EVERY_MS = 1000;
 
-type Failure = "behind" | "reset" | "lost" | "signedOut" | "offline" | "failed";
+type Failure = "behind" | "reset" | "lost" | "signedOut" | "offline" | "busy" | "failed";
 
 function failure(error: unknown): { kind: Failure; data: unknown; message: string } {
   const { status, code, data, message } = (error ?? {}) as { status?: number; code?: string | null; data?: unknown; message?: string };
@@ -81,6 +81,7 @@ function failure(error: unknown): { kind: Failure; data: unknown; message: strin
   if (status === 401) return { kind: "signedOut", data, message: text };
   if (code === "SHARE_GONE" || status === 403 || status === 404) return { kind: "lost", data, message: text };
   if (!status || status >= 500) return { kind: "offline", data, message: text };
+  if (status === 429) return { kind: "busy", data, message: text };
   return { kind: "failed", data, message: text };
 }
 
@@ -319,7 +320,7 @@ export class CollabSession {
         return false;
       default: {
         this.failures += 1;
-        this.setStatus(kind === "offline" ? "offline" : "error");
+        this.setStatus(kind === "offline" ? "offline" : kind === "busy" ? "saving" : "error");
         if (kind === "failed" && this.failures === 1) this.options.onError?.(message);
         this.keepDraft();
         const wait = Math.min(this.delays.maxRetry, this.delays.retry * 2 ** (this.failures - 1));
