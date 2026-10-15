@@ -6,7 +6,9 @@
  */
 import assert from "node:assert/strict";
 import test, { after, before } from "node:test";
+import type { Prisma } from "@prisma/client";
 import { createHttpHarness, type HttpHarness, type HttpUser } from "../test/http.js";
+import { subscriptionRouteCoverage, type RouteCheck } from "../test/route-coverage.js";
 
 let harness: HttpHarness;
 // Loaded after the harness: it reads the configuration, and the harness sets Redis to memory first.
@@ -17,8 +19,21 @@ before(async () => {
   ({ sseHub } = await import("../lib/sse.js"));
 });
 
+const covered = new Map<string, Set<RouteCheck>>();
+function claim(route: string, ...checks: RouteCheck[]): void {
+  const set = covered.get(route) ?? new Set<RouteCheck>();
+  for (const check of checks) set.add(check);
+  covered.set(route, set);
+}
+
 after(async () => {
-  await harness?.close();
+  try {
+    for (const [route, checks] of Object.entries(subscriptionRouteCoverage)) {
+      for (const check of checks) assert.ok(covered.get(route)?.has(check), `Unexecuted coverage claim: ${check} ${route}`);
+    }
+  } finally {
+    await harness?.close();
+  }
 });
 
 const CLAUDE = { id: "claude-code", via: "app", version: "2.1.293", signedIn: true, plan: "max", models: [{ id: "haiku", label: "Haiku (latest)" }], typedModels: true, checkedAt: new Date().toISOString() };
@@ -26,7 +41,7 @@ const CLAUDE = { id: "claude-code", via: "app", version: "2.1.293", signedIn: tr
 async function pairedComputer(user: HttpUser, name: string, capabilities: Record<string, unknown>) {
   await harness.prisma.user.update({ where: { id: user.id }, data: { emailVerifiedAt: new Date() } });
   const key = await harness.asToken(user, "device");
-  const device = await harness.prisma.device.create({ data: { userId: user.id, name, platform: "macos", appVersion: "cli-0.3.10", tokenId: key.id, lastSeenAt: new Date(), capabilities } });
+  const device = await harness.prisma.device.create({ data: { userId: user.id, name, platform: "macos", appVersion: "cli-0.3.10", tokenId: key.id, lastSeenAt: new Date(), capabilities: capabilities as Prisma.InputJsonValue } });
   return { key, device };
 }
 
@@ -56,11 +71,13 @@ test("a chat turn on the person's Claude plan runs on their computer; the tools 
     const id = String(data.id);
     const read = await key.inject({ method: "GET", url: `/api/devices/self/assistant-turns/${id}` });
     assert.equal(read.statusCode, 200, read.body);
+    claim("GET /api/devices/self/assistant-turns/:id", "happy-path");
     const spec = (read.json() as { spec: { agent: string; model: string; system: string; prompt: string; tools: Array<{ name: string; inputSchema: unknown }> } }).spec;
     seen.spec = spec;
     const tool = async (name: string, input: unknown) => {
       const response = await key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/tool`, payload: { name, input } });
       assert.equal(response.statusCode, 200, response.body);
+      claim("POST /api/devices/self/assistant-turns/:id/tool", "happy-path");
       return response.json() as { text: string; isError?: boolean; tools?: unknown[] };
     };
     seen.list = await tool("hub_list_tasks", {});
@@ -70,8 +87,10 @@ test("a chat turn on the person's Claude plan runs on their computer; the tools 
       const streamed = await key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/stream`, payload: { seq, text } });
       assert.equal(streamed.statusCode, 200);
     }
+    claim("POST /api/devices/self/assistant-turns/:id/stream", "happy-path");
     const done = await key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${id}/done`, payload: { result: { text: "Proposed the task Buy oat milk.", model: "claude-haiku-5-5", tokensIn: 120, tokensOut: 30, costUsd: null } } });
     assert.equal(done.statusCode, 200, done.body);
+    claim("POST /api/devices/self/assistant-turns/:id/done", "happy-path");
   });
   try {
     const turn = await person.inject({ method: "POST", url: "/api/assistant/turn", payload: { message: "Add buy oat milk to my list" } });
@@ -140,6 +159,8 @@ test("a turn reaches only the person's own computer, and says why when it cannot
     assert.equal(stolen.statusCode, 410);
     const forged = await theirs.key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${turnId}/tool`, payload: { name: "hub_list_tasks", input: {} } });
     assert.equal(forged.statusCode, 410);
+    claim("GET /api/devices/self/assistant-turns/:id", "isolation");
+    claim("POST /api/devices/self/assistant-turns/:id/tool", "isolation");
     await old.key.inject({ method: "GET", url: `/api/devices/self/assistant-turns/${turnId}` });
     await old.key.inject({ method: "POST", url: `/api/devices/self/assistant-turns/${turnId}/done`, payload: { error: { problem: "signed_out", message: "Claude is not signed in on this computer." } } });
   });
@@ -169,19 +190,24 @@ test("the web lists the person's computers and their subscriptions, and asks a c
     [["Studio Mac", true, true, "claude-code"]],
     "a row that does not parse is left out; another person's computer is not listed",
   );
+  claim("GET /api/subscriptions", "happy-path", "isolation");
   const frames = computer(mine.device.id, async () => undefined);
   try {
     const check = await person.inject({ method: "POST", url: "/api/subscriptions/check", payload: { deviceId: mine.device.id } });
     assert.equal(check.statusCode, 202, check.body);
+    claim("POST /api/subscriptions/check", "happy-path");
     const signIn = await person.inject({ method: "POST", url: "/api/subscriptions/sign-in", payload: { deviceId: mine.device.id, agent: "codex" } });
     assert.equal(signIn.statusCode, 202, signIn.body);
     assert.match(signIn.body, /sign-in window is opening on Studio Mac/);
+    claim("POST /api/subscriptions/sign-in", "happy-path");
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.deepEqual(frames.heard, ["agents.refresh", "agents.signin"]);
     const foreign = await person.inject({ method: "POST", url: "/api/subscriptions/sign-in", payload: { deviceId: theirs.device.id, agent: "codex" } });
     assert.equal(foreign.statusCode, 404);
+    claim("POST /api/subscriptions/sign-in", "isolation");
     const wrong = await person.inject({ method: "POST", url: "/api/subscriptions/sign-in", payload: { deviceId: mine.device.id, agent: "gemini" } });
     assert.equal(wrong.statusCode, 400);
+    claim("POST /api/subscriptions/sign-in", "invalid-input");
   } finally {
     frames.stop();
   }
