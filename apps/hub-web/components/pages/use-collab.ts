@@ -104,8 +104,9 @@ export function useCollab(options: {
         .catch((error: unknown) => {
           if (!alive) return;
           if (lostAccess(error)) return props.current.onLost(error);
-          if (error instanceof ApiError && error.status > 0 && error.status < 500) return setFailure(error);
-          setStatus("offline");
+          // A missing page also fails to load as a page; a 404 here can be an API not yet updated.
+          if (error instanceof ApiError && error.status > 0 && error.status < 500 && error.status !== 404) return setFailure(error);
+          if (!(error instanceof ApiError) || error.status === 0 || error.status >= 500) setStatus("offline");
           retry = window.setTimeout(() => join(attempt + 1), Math.min(30_000, 1000 * 2 ** attempt));
         });
     };

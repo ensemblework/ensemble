@@ -183,6 +183,7 @@ export class CollabSession {
   /** The editor was created from the joined document with `CollabSync` at its version. */
   attach(editor: Editor): () => void {
     this.editor = editor;
+    this.finished = false;
     (editor.storage as { collabSync?: { session: CollabSession | null } }).collabSync!.session = this;
     this.serverDoc = editor.state.doc;
     const onTransaction = () => this.changed();
@@ -285,6 +286,12 @@ export class CollabSession {
         if (!(await this.failed(error))) return;
       }
     }
+    // Still refused after many rounds: try again in a moment rather than spin.
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
+      void this.pump();
+    }, this.delays.retry);
   }
 
   /** Handles a refused or failed request. True: try again now. */

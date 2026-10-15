@@ -305,7 +305,7 @@ export function NotePage({
       ) : null}
       <div className="mt-4" data-focus-keep>
         {sync.failure ? (
-          <PageLoadFailure missing={sync.failure.status === 404} onRetry={() => window.location.reload()} />
+          <PageLoadFailure missing={false} onRetry={() => window.location.reload()} />
         ) : initialDoc && Editor ? (
           <Editor
             key={pageId}
