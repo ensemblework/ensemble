@@ -14,6 +14,7 @@ import { PAGE_BODY_ATTRIBUTE } from "./page-body";
 import { FileChooser } from "./file-chooser";
 import { acceptsDocument, replaceDocument, type EditorControl } from "./replace-doc";
 import { RemoteCarets } from "./remote-carets";
+import { CollabSync, type CollabBinding } from "./collab";
 import { useModuleState } from "@/lib/use-module";
 import { useToast } from "../toast";
 
@@ -37,6 +38,7 @@ export function BlockEditor({
   comments = true,
   remote,
   control,
+  collab,
 }: {
   initial: PageDocument;
   entities: EntitySource;
@@ -51,6 +53,8 @@ export function BlockEditor({
   remote?: { doc: PageDocument; stamp: number } | null;
   /** Set while the editor is up, for merging someone else's save into what you are typing. */
   control?: MutableRefObject<EditorControl | null>;
+  /** Live co-editing (`components/pages/use-collab.ts`): `initial` is the live document at `collab.version`. */
+  collab?: CollabBinding | null;
 }) {
   const toast = useToast();
   const router = useRouter();
@@ -82,10 +86,13 @@ export function BlockEditor({
   const editor = useEditor({
     immediatelyRender: false,
     editable,
-    extensions: editorExtensions(entities, placeholder, () => diagramsStateRef.current, () => plotsStateRef.current, {
-      client: () => clientRef.current,
-      choose: (_editor, pos) => setChooser(pos),
-    }),
+    extensions: [
+      ...editorExtensions(entities, placeholder, () => diagramsStateRef.current, () => plotsStateRef.current, {
+        client: () => clientRef.current,
+        choose: (_editor, pos) => setChooser(pos),
+      }),
+      ...(collab ? [CollabSync.configure({ version: collab.version, clientID: collab.clientID })] : []),
+    ],
     content: initial as JSONContent,
     editorProps: {
       attributes: { class: "ProseMirror", spellcheck: "true", role: "textbox", "aria-multiline": "true", "aria-label": "Page content", [PAGE_BODY_ATTRIBUTE]: "" },
@@ -136,6 +143,11 @@ export function BlockEditor({
   useEffect(() => {
     editor?.setEditable(editable);
   }, [editor, editable]);
+
+  useEffect(() => {
+    if (!editor || !collab || editor.isDestroyed) return;
+    return collab.attach(editor);
+  }, [editor, collab]);
 
   useEffect(() => {
     if (!editor || !remote || editor.isDestroyed) return;

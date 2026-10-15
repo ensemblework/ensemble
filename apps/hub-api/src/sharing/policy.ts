@@ -182,6 +182,9 @@ const PAGE: ShareRule[] = [
   { method: "GET", url: "/api/pages/:id", role: "view", bind: { param: "id" } },
   { method: "PUT", url: "/api/pages/:id", role: "edit", bind: { param: "id" } },
   { method: "PATCH", url: "/api/pages/:id", role: "edit", bind: { param: "id" } },
+  // Live co-editing: viewers join and follow along, editors send steps.
+  { method: "GET", url: "/api/pages/:id/collab", role: "view", bind: { param: "id" } },
+  { method: "POST", url: "/api/pages/:id/collab", role: "edit", bind: { param: "id" } },
   { method: "GET", url: "/api/pages/:kind/:id/comments", role: "view", bind: { param: "id", kind: "page" } },
   { method: "POST", url: "/api/pages/:kind/:id/comments", role: "edit", bind: { param: "id", kind: "page" } },
   // Your own comments on it. The handler checks the comment belongs to the shared item.
@@ -194,6 +197,8 @@ const TASK: ShareRule[] = [
   { method: "PATCH", url: "/api/tasks/:id", role: "edit", bind: { param: "id" } },
   { method: "GET", url: "/api/tasks/:id/page", role: "view", bind: { param: "id" } },
   { method: "PUT", url: "/api/tasks/:id/page", role: "edit", bind: { param: "id" } },
+  { method: "GET", url: "/api/tasks/:id/page/collab", role: "view", bind: { param: "id" } },
+  { method: "POST", url: "/api/tasks/:id/page/collab", role: "edit", bind: { param: "id" } },
   { method: "GET", url: "/api/tasks/:id/runs", role: "view", bind: { param: "id" } },
   { method: "GET", url: "/api/tasks/:id/transitions", role: "view", bind: { param: "id" } },
   { method: "GET", url: "/api/pages/:kind/:id/comments", role: "view", bind: { param: "id", kind: "task" } },
@@ -213,6 +218,8 @@ const SHARE_RULES: Record<ShareKind, ShareRule[]> = {
     { method: "PATCH", url: "/api/tasks/:id", role: "edit" },
     { method: "POST", url: "/api/tasks/:id/move", role: "edit" },
     { method: "PUT", url: "/api/tasks/:id/page", role: "edit" },
+    { method: "GET", url: "/api/tasks/:id/page/collab", role: "view" },
+    { method: "POST", url: "/api/tasks/:id/page/collab", role: "edit" },
   ],
   diagram: [
     { method: "GET", url: "/api/diagrams/:id", role: "view", bind: { param: "id" } },
@@ -301,11 +308,15 @@ const LINK_RULES: Record<PublicKind, ShareRule[]> = {
     { method: "GET", url: "/api/pages/:id", role: "view", bind: { param: "id" } },
     { method: "PUT", url: "/api/pages/:id", role: "edit", bind: { param: "id" } },
     { method: "PATCH", url: "/api/pages/:id", role: "edit", bind: { param: "id" } },
+    { method: "GET", url: "/api/pages/:id/collab", role: "view", bind: { param: "id" } },
+    { method: "POST", url: "/api/pages/:id/collab", role: "edit", bind: { param: "id" } },
   ],
   task: [
     { method: "GET", url: "/api/tasks/:id", role: "view", bind: { param: "id" } },
     { method: "GET", url: "/api/tasks/:id/page", role: "view", bind: { param: "id" } },
     { method: "PUT", url: "/api/tasks/:id/page", role: "edit", bind: { param: "id" } },
+    { method: "GET", url: "/api/tasks/:id/page/collab", role: "view", bind: { param: "id" } },
+    { method: "POST", url: "/api/tasks/:id/page/collab", role: "edit", bind: { param: "id" } },
   ],
   diagram: [
     { method: "GET", url: "/api/diagrams/:id", role: "view", bind: { param: "id" } },

@@ -337,6 +337,8 @@ function readPatches(entry: { ops: unknown; forward: unknown }): UndoPatch[] {
 }
 
 async function loadRow(db: Db, patch: UndoPatch): Promise<Record<string, unknown> | null> {
+  // A page open for live editing is written back from memory (pages/collab.ts) under this lock.
+  if (patch.model === "taskPage") await db.$queryRaw`SELECT id FROM task_pages WHERE id = ${patch.id} FOR UPDATE`;
   return delegate(db, patch.model).findFirst({ where: { id: patch.id } });
 }
 
@@ -386,7 +388,10 @@ async function applyPatch(db: Db, userId: string, patch: UndoPatch, direction: "
     data[key] = direction === "undo" ? pair.before : pair.after;
   }
   data.updatedAt = now;
-  await rowDelegate.update({ where: { id: patch.id }, data: decodeSnapshot(patch.model, data) });
+  const decoded = decodeSnapshot(patch.model, data);
+  // Content put back is a new revision, so open editors and live pages see it changed.
+  if (patch.model === "taskPage" && "content" in patch.fields) decoded.revision = { increment: 1 };
+  await rowDelegate.update({ where: { id: patch.id }, data: decoded });
   if (patch.model === "document" && "deletedAt" in patch.fields) await syncFileText(db, patch.id);
   const status = patch.fields.status;
   const owner = patch.fields.owner;

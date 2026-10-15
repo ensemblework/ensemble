@@ -550,4 +550,68 @@ export async function convertPage(
   });
 }
 
+export type CollabTarget = { pageId: string } | { taskId: string };
+/** A page's stored copy for live editing (`collab.ts`). `fallback` is shown while `content` is null. */
+export type CollabRow = { revision: number; content: unknown; fallback: PageDocument };
+
+/** A task's plain notes as paragraphs, the way its page shows them before it is first written. */
+export function notesDoc(notes: string): PageDocument {
+  return { type: "doc", content: notes.split("\n").map((line) => (line ? { type: "paragraph", content: [{ type: "text", text: line }] } : { type: "paragraph" })) };
+}
+
+async function collabRow(db: Db, userId: string, target: CollabTarget, lock: boolean) {
+  if ("taskId" in target) {
+    let task: Task;
+    try {
+      task = await taskForPage(db, userId, target.taskId, lock);
+    } catch (error) {
+      if (error instanceof TaskPageError) return null;
+      throw error;
+    }
+    if (lock) await db.$queryRaw`SELECT id FROM task_pages WHERE user_id = ${userId} AND task_id = ${task.id} FOR UPDATE`;
+    const page = await readPage(db, userId, task.id);
+    const row: CollabRow = { revision: page?.revision ?? 0, content: page?.content ?? null, fallback: notesDoc(task.notes) };
+    return { task, page, row };
+  }
+  const page = await ownedStandalone(db, userId, target.pageId, lock);
+  if (!page) return null;
+  const row: CollabRow = { revision: page.revision, content: page.content, fallback: EMPTY_PAGE };
+  return { task: null, page, row };
+}
+
+export async function readCollabPage(prisma: PrismaClient, userId: string, target: CollabTarget): Promise<CollabRow | null> {
+  return (await collabRow(prisma, userId, target, false))?.row ?? null;
+}
+
+/**
+ * The live document's write-back. Locks the page (and its task) like the other writers, shows the
+ * stored copy to `decide`, and saves what it returns as the next revision with its mention index
+ * and search text. No undo entry: typing is undone in the editor.
+ */
+export async function writeCollabPage(
+  prisma: PrismaClient,
+  userId: string,
+  target: CollabTarget,
+  decide: (row: CollabRow) => PageDocument | null,
+): Promise<{ revision: number; wrote: boolean } | null> {
+  return prisma.$transaction(async (db) => {
+    const found = await collabRow(db, userId, target, true);
+    if (!found) return null;
+    const content = decide(found.row);
+    if (!content) return { revision: found.row.revision, wrote: false };
+    const { task, page } = found;
+    const revision = found.row.revision + 1;
+    const searchText = task ? pageSearchText(page?.title || task.title, content, task.notes) : pageSearchText(page!.title, content, page!.notesSnapshot);
+    const saved = page
+      ? await db.taskPage.update({ where: { id: page.id }, data: { revision, content: content as Prisma.InputJsonValue, searchText } })
+      : await db.taskPage.create({ data: { userId, taskId: task!.id, revision, content: content as Prisma.InputJsonValue, notesSnapshot: task!.notes, searchText } });
+    await db.taskPageMention.deleteMany({ where: { pageId: saved.id } });
+    const mentions = collectMentions(content);
+    if (mentions.length) {
+      await db.taskPageMention.createMany({ data: mentions.map((mention) => ({ pageId: saved.id, kind: mention.kind, entityId: mention.entityId, label: mention.label })) });
+    }
+    return { revision, wrote: true };
+  });
+}
+
 export { EMPTY_PAGE };

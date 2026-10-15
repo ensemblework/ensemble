@@ -5,7 +5,7 @@ import { createContext, useContext, useEffect, useState } from "react";
 import { HUB_API, api } from "@/lib/api";
 import { loadFailureKind } from "@/lib/load-failure";
 import { isSilentCancellation } from "@/lib/fetch-cancel";
-import { eventSourceInit, eventsStreamUrl } from "@/lib/events";
+import { LIVE_REOPENED_EVENT, PAGE_STEPS_EVENT, eventSourceInit, eventsStreamUrl } from "@/lib/events";
 import { invalidateSoon } from "@/lib/invalidate";
 import { notify, notifyDecision } from "@/lib/notify";
 import { presenceStore } from "@/lib/presence";
@@ -101,7 +101,11 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
         setConnected(true);
         setDropped(false);
         setServerError(false);
-        if (opened || sawError) void client.invalidateQueries();
+        if (opened || sawError) {
+          void client.invalidateQueries();
+          // Live pages fetch the steps they missed while the stream was down.
+          window.dispatchEvent(new CustomEvent(LIVE_REOPENED_EVENT));
+        }
         opened = true;
         sawError = false;
       };
@@ -142,6 +146,14 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
       source.addEventListener("page", (event) => {
         try {
           window.dispatchEvent(new CustomEvent("ensemble:page", { detail: JSON.parse((event as MessageEvent<string>).data) }));
+        } catch {
+          // ignore malformed frames
+        }
+      });
+      // Live co-editing steps on a page or task page (components/pages/use-collab.ts).
+      source.addEventListener("page.steps", (event) => {
+        try {
+          window.dispatchEvent(new CustomEvent(PAGE_STEPS_EVENT, { detail: JSON.parse((event as MessageEvent<string>).data) }));
         } catch {
           // ignore malformed frames
         }

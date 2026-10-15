@@ -7,6 +7,7 @@ import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { useEffect } from "react";
 import { api, type PresenceEntry } from "@/lib/api";
 import { tabId, usePresence } from "@/lib/presence";
+import { sessionOf } from "./collab";
 
 /** Caret moves go out at most this often, and only while someone else is on the page. */
 const SEND_EVERY_MS = 300;
@@ -41,29 +42,36 @@ function caretElement(entry: PresenceEntry): HTMLElement {
   return caret;
 }
 
-/** Other people's carets and selections. Their positions are in their copy of the page, so they are clamped to ours. */
-export function caretDecorations(doc: ProseNode, entries: PresenceEntry[]): DecorationSet {
+type Caret = NonNullable<PresenceEntry["caret"]>;
+
+/**
+ * Other people's carets and selections. On a live page `place` maps a caret from the version it
+ * was sent at to this document; otherwise its positions are clamped to ours.
+ */
+export function caretDecorations(doc: ProseNode, entries: PresenceEntry[], place?: (caret: Caret) => { anchor: number; head: number } | null): DecorationSet {
   const size = doc.content.size;
   const clamp = (pos: number) => Math.max(0, Math.min(size, pos));
   const list: Decoration[] = [];
   for (const entry of entries) {
     if (!entry.caret) continue;
-    const anchor = clamp(entry.caret.anchor);
-    const head = clamp(entry.caret.head);
+    const placed = place?.(entry.caret);
+    const anchor = clamp(placed?.anchor ?? entry.caret.anchor);
+    const head = clamp(placed?.head ?? entry.caret.head);
     if (anchor !== head) list.push(Decoration.inline(Math.min(anchor, head), Math.max(anchor, head), { style: `background-color: ${entry.color}33` }));
     list.push(Decoration.widget(head, () => caretElement(entry), { key: `${entry.accountId}:${entry.tabId}:${entry.color}:${entry.name}`, side: -1, ignoreSelection: true }));
   }
   return DecorationSet.create(doc, list);
 }
 
-function caretPlugin(): Plugin<DecorationSet> {
+function caretPlugin(editor: Editor): Plugin<DecorationSet> {
+  const place = (caret: Caret) => sessionOf(editor)?.place(caret) ?? null;
   return new Plugin<DecorationSet>({
     key: carets,
     state: {
       init: () => DecorationSet.empty,
       apply(tr, set) {
         const entries = tr.getMeta(carets) as PresenceEntry[] | undefined;
-        return entries ? caretDecorations(tr.doc, entries) : set.map(tr.mapping, tr.doc);
+        return entries ? caretDecorations(tr.doc, entries, place) : set.map(tr.mapping, tr.doc);
       },
     },
     props: { decorations: (state) => carets.getState(state) },
@@ -82,7 +90,7 @@ export function RemoteCarets({ editor, page }: { editor: Editor; page: { kind: s
 
   useEffect(() => {
     if (editor.isDestroyed) return;
-    editor.registerPlugin(caretPlugin());
+    editor.registerPlugin(caretPlugin(editor));
     return () => {
       if (!editor.isDestroyed) editor.unregisterPlugin(carets);
     };
@@ -102,8 +110,15 @@ export function RemoteCarets({ editor, page }: { editor: Editor; page: { kind: s
     let sent = "";
     const send = () => {
       if (editor.isDestroyed) return;
+      // On a live page, positions are sent once your typing is on the server, with its version.
+      const session = sessionOf(editor);
+      const version = session?.caretVersion();
+      if (session && version === null) {
+        schedule(SEND_EVERY_MS);
+        return;
+      }
       const { anchor, head } = editor.state.selection;
-      const caret = editor.isFocused && editor.isEditable ? { anchor, head } : null;
+      const caret = editor.isFocused && editor.isEditable ? { anchor, head, ...(typeof version === "number" ? { version } : {}) } : null;
       const value = JSON.stringify(caret);
       if (value === sent) return;
       sent = value;

@@ -26,6 +26,7 @@ import { connectorRoutes } from "./routes/connectors.js";
 import { decisionRoutes } from "./routes/decisions.js";
 import { taskRoutes } from "./routes/tasks.js";
 import { pageRoutes } from "./routes/pages.js";
+import { collabRoutes } from "./routes/collab.js";
 import { miscRoutes } from "./routes/misc.js";
 import { assistantRoutes } from "./routes/assistant.js";
 import { internalRoutes } from "./routes/internal.js";
@@ -223,6 +224,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     miscRoutes,
     taskRoutes,
     pageRoutes,
+    collabRoutes,
     boardRoutes,
     assistantRoutes,
     internalRoutes,

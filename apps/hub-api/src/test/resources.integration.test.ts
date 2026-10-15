@@ -86,6 +86,29 @@ test("task CRUD, page, board and nested histories are private and preserve owner
   await check(a, "GET", `/api/tasks/${id}`, 404, "unknown-id");
 });
 
+test("live page editing: joining, steps, catching up and flushing stay inside the page's space", async () => {
+  const pageId = await created("/api/pages", "page");
+  const taskId = await created("/api/tasks", "task", { title: "Live task", notes: "Notes" });
+  for (const path of [`/api/pages/${pageId}/collab`, `/api/tasks/${taskId}/page/collab`]) {
+    const joined = await check(a, "GET", path, 200, "happy-path");
+    assert.equal(joined.version, 0);
+    await hidden("GET", path);
+    await hidden("GET", `${path}?epoch=${joined.epoch}&version=0`);
+    await check(a, "GET", `${path}?epoch=${joined.epoch}&version=-1`, 400, "invalid-input");
+    const steps = [{ stepType: "replace", from: 1, to: 1, slice: { content: [{ type: "text", text: "Hi " }] } }];
+    const body = { epoch: joined.epoch, version: 0, clientID: "tab", steps };
+    await hidden("POST", path, body);
+    const posted = await check(a, "POST", path, 200, "happy-path", { ...body, flush: true });
+    assert.equal(posted.version, 1);
+    assert.equal(typeof posted.revision, "number");
+    assert.deepEqual((await check(a, "GET", `${path}?epoch=${joined.epoch}&version=0`, 200, "happy-path")).clientIDs, ["tab"]);
+    await check(a, "POST", path, 400, "invalid-input", { ...body, version: "bad" });
+    await check(a, "POST", path, 400, "invalid-input", { ...body, version: 1, steps: [{ stepType: "replace", from: 999, to: 999 }] });
+  }
+  assert.match(JSON.stringify((await check(a, "GET", `/api/pages/${pageId}`, 200, "happy-path")).content), /Hi /);
+  assert.match(JSON.stringify((await check(a, "GET", `/api/tasks/${taskId}/page`, 200, "happy-path")).content), /Hi Notes/);
+});
+
 test("page/task conversion keeps the document, mentions, discussions, and diagram links", async () => {
   const id = await created("/api/pages", "page");
   await check(a, "PATCH", `/api/pages/${id}`, 200, "happy-path", { title: "Research note" });

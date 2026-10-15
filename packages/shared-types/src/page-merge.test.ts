@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { PageDocument, PageNode } from "@ensemble/shared-types";
-import { mergeDocs, sameDoc } from "./page-merge";
+import type { PageDocument, PageNode } from "./domain.js";
+import { mergeDocs, sameDoc } from "./page-merge.js";
 
 type Part = string | PageNode;
 const inline = (parts: Part[]): PageNode[] => parts.filter((part) => part !== "").map((part) => (typeof part === "string" ? { type: "text", text: part } : part));
