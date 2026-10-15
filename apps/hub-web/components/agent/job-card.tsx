@@ -1,5 +1,6 @@
 "use client";
 
+import { ModelLogo } from "../connectors/provider-logo";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, Code2, FileText, GitBranch, Lock, Monitor, RotateCcw, ShieldAlert, ShieldCheck, Square } from "lucide-react";
 import { useRunnerName } from "@/lib/runner";
@@ -201,7 +202,7 @@ export function JobCard({ job, wide }: { job: AgentJob; wide?: boolean }) {
       {job.status === "interrupted" && job.deviceId && !job.deviceRevoked && job.yours !== false ? <RunAgain job={job} /> : null}
       <div className="flex items-center justify-between gap-2 pt-0.5 text-[11.5px] text-faint">
         <span className="truncate">
-          {job.model}
+          <ModelLogo model={job.model} /> {job.model}
           {job.turns ? ` · ${plural(job.turns, "turn")} · ${plural(job.toolCalls, "tool")}` : ""}
           {live && elapsed ? ` · ${elapsed}` : job.finishedAt ? ` · ${relative(job.finishedAt)}` : ""}
         </span>
@@ -245,7 +246,7 @@ export function TaskAgentPanel({ taskId }: { taskId: string }) {
         <Tag tone={state.tone}>{state.label}</Tag>
         {job.origin === "web" ? <Tag tone="blue">from web</Tag> : null}
         {job.position ? <span className="text-muted">#{job.position} in the queue</span> : null}
-        <span className="text-muted">{job.kind === "code" ? "Code" : "Research"} · {job.model}</span>
+        <span className="text-muted">{job.kind === "code" ? "Code" : "Research"} · <ModelLogo model={job.model} /> {job.model}</span>
         {answeredBy ? <span className="text-warn" title="The model the provider reported for this run">answered by {answeredBy}</span> : null}
         {job.turns ? <span className="text-faint">{job.turns} turns · {job.toolCalls} tools · {(job.tokensIn + job.tokensOut).toLocaleString()} tokens</span> : null}
         {elapsed ? <span className="text-faint">{live ? elapsed : `took ${elapsed}`}</span> : null}

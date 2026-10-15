@@ -245,7 +245,9 @@ export function useBoardMoveMotion(boardRef: RefObject<HTMLElement | null>, drag
       // Where this card would sit, at the current scroll, if it had not moved in content space.
       const from = { left: box.left - (now.x - was.x), top: box.top - (now.y - was.y), width: was.w, height: was.h };
       const shifted = Math.abs(from.left - box.left) >= 0.5 || Math.abs(from.top - box.top) >= 0.5;
-      if (was.col !== now.col) void engine.current?.play(el, from, now.col === "done" ? "done" : "agent");
+      if (was.col !== now.col) {
+        if (now.col === "done") void engine.current?.play(el, from, "done");
+      }
       else if (sameCards && shifted) BD.flipFrom(el, from, theme, reduced);
     }
     prev.current = next; skip.current = false;

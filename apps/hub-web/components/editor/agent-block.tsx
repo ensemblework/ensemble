@@ -2,7 +2,7 @@
 
 import { Node, mergeAttributes } from "@tiptap/core";
 import { NodeViewContent, NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from "@tiptap/react";
-import { Bot, Check, Trash2 } from "lucide-react";
+import { Orbit, Check, Trash2 } from "lucide-react";
 import { relative } from "@/lib/format";
 
 /** Same fingerprint the server stamps on the block, so "edited" survives reloads without a write on open. */
@@ -32,7 +32,7 @@ function AgentBlockView({ node, editor, getPos, deleteNode }: NodeViewProps) {
   return (
     <NodeViewWrapper className="agent-block" data-edited={edited || undefined}>
       <div contentEditable={false} className="agent-block-bar">
-        <Bot size={12} />
+        <Orbit size={12} />
         <span className="font-medium">{attrs.title || "Written by the agent"}</span>
         {attrs.model ? <span>· {attrs.model}</span> : null}
         {attrs.at ? <span>· {relative(attrs.at)}</span> : null}

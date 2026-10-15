@@ -3,7 +3,7 @@
 /** @jsxImportSource react */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, Check, ExternalLink, Hexagon, Laptop, LogIn, MousePointer2, RefreshCw, Sparkle, Sparkles } from "lucide-react";
+import { Check, ExternalLink, Laptop, LogIn, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { SUBSCRIPTION_INFO, SUBSCRIPTION_PROVIDERS, type Settings, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
 import { api, type SubscriptionComputer, type SubscriptionsView } from "@/lib/api";
@@ -11,28 +11,14 @@ import { relative } from "@/lib/format";
 import { useToast } from "../toast";
 import { cx, Tag } from "../ui";
 import { navigateSettings } from "./url-state";
+import { ProviderLogo } from "../connectors/provider-logo";
 
 type Patch = (patch: Record<string, unknown>) => void;
 const TIER_IDS = ["easy", "medium", "high", "max"] as const;
 const TIER_NAMES: Record<(typeof TIER_IDS)[number], string> = { easy: "Low", medium: "Medium", high: "High", max: "Max" };
 
-/** Each subscription's tile: a plain glyph in the vendor's colour, not its logo. */
-const MARKS: Record<SubscriptionProvider | "gemini", { icon: typeof Sparkle; tone: string }> = {
-  "claude-code": { icon: Sparkle, tone: "bg-[#D97757] text-white" },
-  codex: { icon: Hexagon, tone: "bg-[#10A37F] text-white" },
-  "cursor-agent": { icon: MousePointer2, tone: "bg-[#1f1f1f] text-white ring-1 ring-white/15" },
-  "copilot-cli": { icon: Bot, tone: "bg-[#6E40C9] text-white" },
-  gemini: { icon: Sparkles, tone: "bg-[#4285F4] text-white" },
-};
-
-export function SubscriptionMark({ id, size = 34 }: { id: SubscriptionProvider | "gemini"; size?: number }) {
-  const mark = MARKS[id];
-  const Icon = mark.icon;
-  return (
-    <span className={cx("inline-flex shrink-0 items-center justify-center rounded-xl shadow-sm", mark.tone)} style={{ width: size, height: size }} aria-hidden>
-      <Icon size={Math.round(size * 0.5)} strokeWidth={2.2} />
-    </span>
-  );
+export function SubscriptionMark({ id, size = 34 }: { id: SubscriptionProvider; size?: number }) {
+  return <span className="inline-flex shrink-0 items-center justify-center rounded-xl border border-line bg-panel" style={{ width: size, height: size }}><ProviderLogo id={id} size={Math.round(size * .65)} /></span>;
 }
 
 /** While a check or a sign-in is under way, ask more often; otherwise a calm refresh. */
@@ -270,24 +256,6 @@ export function SubscriptionsCard({ settings, patch }: { settings: Settings; pat
                 onSignIn={() => signIn.mutate(id)}
               />
             ))}
-            <div className="tile flex min-w-0 flex-col gap-2 rounded-xl bg-raised p-3.5" data-subscription="gemini">
-              <div className="flex items-start gap-3">
-                <SubscriptionMark id="gemini" />
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="text-[14px] font-semibold">Gemini</span>
-                    <Tag tone="gray">Not offered by Google</Tag>
-                  </div>
-                  <div className="mt-0.5 text-[12px] text-muted">Google does not let other apps use a Gemini plan's sign-in.</div>
-                </div>
-              </div>
-              <p className="text-[12px] text-muted">A Gemini API key from Google AI Studio has a free tier and works here.</p>
-              <div className="mt-auto flex justify-end">
-                <button type="button" className="btn py-0.5 text-[12px]" onClick={() => navigateSettings({ dialog: "keys" })}>
-                  Add a Gemini key
-                </button>
-              </div>
-            </div>
           </div>
         </>
       ) : null}

@@ -39,3 +39,27 @@ test("the summary names the mode and git permission", () => {
   assert.equal(profileSummary(quick), "Code · Ask · may commit (asks before each commit)");
   assert.equal(profileSummary({ ...quick, mode: "unattended", delivery: "push" }), "Code · Run unattended · may commit and push");
 });
+
+import { quickAssignInput } from "./quick-assign.js";
+
+test("quick assignment preserves the default profile's permissions and exact provider", () => {
+  const input = quickAssignInput("task-12345678", { ...quick, id: "careful", name: "Careful", branchMode: "new", deviceId: "studio", model: "anthropic::claude-sonnet-5-5", effort: "high", mode: "review", delivery: "local", askBeforePublish: true, useCredentials: false, network: false, sandbox: true, maxMinutes: 12 });
+  assert.equal(input.provider, "anthropic");
+  assert.equal(input.model, "claude-sonnet-5-5");
+  assert.equal(input.deviceId, "studio");
+  assert.equal(input.mode, "review");
+  assert.equal(input.delivery, "local");
+  assert.equal(input.network, false);
+  assert.equal(input.sandbox, true);
+  assert.equal(input.reasoningEffort, "high");
+  assert.equal(input.maxMinutes, 12);
+  assert.match(input.branch ?? "", /^ensemble\/task-/);
+});
+
+test("subscription engines keep their model string and omit API effort", () => {
+  const input = quickAssignInput("task", { ...quick, engine: "claude-code", model: "sonnet", effort: "high" });
+  assert.equal(input.engine, "claude-code");
+  assert.equal(input.model, "sonnet");
+  assert.equal(input.provider, undefined);
+  assert.equal(input.reasoningEffort, undefined);
+});

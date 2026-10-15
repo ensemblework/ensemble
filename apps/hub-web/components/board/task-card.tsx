@@ -2,7 +2,7 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useSortable, type AnimateLayoutChanges } from "@dnd-kit/sortable";
-import { Bot, GripVertical, Trash2 } from "lucide-react";
+import { Orbit, GripVertical, Trash2 } from "lucide-react";
 import { type TaskRecord } from "@/lib/api";
 import { warmTask } from "@/lib/warm";
 import { dueLabel, plural } from "@/lib/format";
@@ -20,7 +20,7 @@ function OwnerMark({ task }: { task: TaskRecord }) {
   if (task.owner === "agent") {
     return (
       <span title="The agent does it" className="inline-flex h-[18px] items-center gap-1 rounded-full bg-ink/10 px-1.5 text-[11px] font-medium leading-none text-ink">
-        <Bot size={11} aria-hidden /> Agent
+        <Orbit size={11} aria-hidden /> Agent
       </span>
     );
   }

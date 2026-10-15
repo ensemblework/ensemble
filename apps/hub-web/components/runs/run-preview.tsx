@@ -1,4 +1,5 @@
 "use client";
+import { ModelLogo } from "../connectors/provider-logo";
 import { BrandMorph } from "@/components/motion/brand-morph";
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
@@ -194,7 +195,7 @@ function Facts({ run, job, entries }: { run: RunDetail; job: RunJob | null; entr
         {job?.engine === "ensemble" && job.provider ? <span className="text-muted"> · {job.provider}</span> : null}
       </Fact>
       <Fact label="Model asked for" hint={job?.reasoningEffort ? `Thinking: ${job.reasoningEffort}` : undefined}>
-        <span className="font-mono text-[12.5px]">{asked ?? "—"}</span>
+        <span className="inline-flex items-center gap-1.5 font-mono text-[12.5px]"><ModelLogo model={asked} provider={job?.provider} />{asked ?? "—"}</span>
         {job?.reasoningEffort && job.reasoningEffort !== "default" ? <span className="text-muted"> · {job.reasoningEffort}</span> : null}
       </Fact>
       <Fact label="Answered by" hint={seen.length > 1 ? `Models seen: ${seen.join(", ")}` : "The model the provider reported"}>

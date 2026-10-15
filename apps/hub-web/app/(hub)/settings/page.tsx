@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Settings } from "@ensemble/shared-types";
 import { findSettingsTarget, SETTINGS_DESTINATION_BY_ID } from "@/components/settings/navigation";
+import { AppearanceSection } from "@/components/settings/appearance";
 import { AccountTab } from "@/components/settings/tab-account";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
 import { navigateSettings, useSettingsLocation, type SettingsTab } from "@/components/settings/url-state";
@@ -188,6 +189,8 @@ export default function SettingsPage() {
             >
               {!props ? (
                 <SkeletonRows count={6} />
+              ) : location.tab === "appearance" ? (
+                <div id="appearance" className="scroll-mt-6"><AppearanceSection patch={patch} /></div>
               ) : location.tab === "assistant" ? (
                 <AssistantTab {...props} />
               ) : location.tab === "connections" ? (

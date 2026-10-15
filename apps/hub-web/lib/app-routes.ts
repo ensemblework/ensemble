@@ -35,6 +35,7 @@ const EXACT = new Set([
   "/diagrams",
   "/plots",
   "/files",
+  "/pages",
   "/marketplace",
   "/projects",
   "/lost",

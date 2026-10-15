@@ -9,11 +9,11 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { FILE_KIND_LABEL, fileFormat, type FileKind, type FileRecord, type FileUsage } from "@ensemble/shared-types";
 import { FILE_QUERY, filesApi, formatBytes } from "@/lib/api-files";
 import { FILE_ACCEPT } from "@/lib/files/formats";
-import { filesHref, type FilesView } from "@/lib/files/links";
+import { type FilesView } from "@/lib/files/links";
 import { useSpaceAccess } from "@/lib/access";
 import { relative } from "@/lib/format";
 import { BrandLogo, brandName } from "../connectors/brand-logo";
-import { Empty, PageHeader, QueryError, SkeletonRows, Tabs, cx } from "../ui";
+import { Empty, PageHeader, QueryError, SkeletonRows, cx } from "../ui";
 import { DeleteFileDialog } from "./delete-file";
 import { FileIcon } from "./file-icon";
 import { FromApps } from "./from-apps";
@@ -240,42 +240,16 @@ function useDropAnywhere(onFiles: (files: File[]) => void): boolean {
   return over;
 }
 
-/**
- * The Files screen. "Your files": upload, bring files in from apps, find, open and delete them.
- * "From your apps": what Ensemble synced or attached from connected apps (./from-apps.tsx).
- * `navigate` changes the address (app/(hub)/files/page.tsx), so each view and item has a link.
- */
+/** The library shows only files people uploaded or explicitly imported. */
 export function FilesScreen({ view = "files", item = null, navigate = () => undefined }: { view?: FilesView; item?: string | null; navigate?: (href: string) => void }) {
-  const tabs = (
-    <Tabs
-      label="What Files shows"
-      panelId="files-panel"
-      tabs={[
-        { id: "files", label: "Your files" },
-        { id: "apps", label: "From your apps" },
-      ]}
-      value={view}
-      onChange={(next) => navigate(filesHref(next))}
-    />
-  );
   return (
     <div className="mx-auto max-w-[1080px] px-4 pb-24 pt-8 sm:px-10" data-testid="files-screen">
-      {view === "apps" ? (
-        <>
-          <PageHeader title="Files" description="Mail, events, messages, docs and pull requests Ensemble keeps from your connected apps. The assistant, agents and your editors read them here too." />
-          {tabs}
-          <div id="files-panel" role="tabpanel" aria-label="From your apps">
-            <FromApps item={item} onItem={(id) => navigate(filesHref("apps", id))} onOpenFile={(id) => navigate(`/files/${encodeURIComponent(id)}`)} />
-          </div>
-        </>
-      ) : (
-        <YourFiles tabs={tabs} />
-      )}
+      {view === "apps" ? <><PageHeader title="Connected items" description="Items opened explicitly from a connected app or an assistant link." /><FromApps item={item} onItem={(id) => navigate(`/files?view=apps${id ? `&item=${encodeURIComponent(id)}` : ""}`)} onOpenFile={(id) => navigate(`/files/${encodeURIComponent(id)}`)} /></> : <YourFiles />}
     </div>
   );
 }
 
-function YourFiles({ tabs }: { tabs: ReactNode }) {
+function YourFiles() {
   const { canEdit } = useSpaceAccess();
   const [removing, setRemoving] = useState<FileRecord | null>(null);
   const [text, setText] = useState("");
@@ -343,7 +317,6 @@ function YourFiles({ tabs }: { tabs: ReactNode }) {
           </>
         }
       />
-      {tabs}
       <div id="files-panel" role="tabpanel" aria-label="Your files">
         {usage ? <UsageMeter usage={usage} /> : null}
         <Uploads items={uploads.items} onDismiss={uploads.dismiss} />

@@ -121,7 +121,7 @@ export function AccountMenu() {
           </div>
           <div className="my-1 h-px bg-line" />
           <Row icon={UserRound} onSelect={() => go(close, "/settings?tab=account")}>Account settings</Row>
-          <Row icon={Palette} onSelect={() => go(close, "/settings?tab=account#appearance")}>Appearance</Row>
+          <Row icon={Palette} onSelect={() => go(close, "/settings?tab=appearance#appearance")}>Appearance</Row>
           <Row icon={Layers} onSelect={() => go(close, "/settings?tab=spaces")}>Spaces</Row>
           <Row icon={Sparkles} onSelect={() => go(close, "/settings?tab=assistant")}>Assistant and models</Row>
           <Row icon={Plug} onSelect={() => go(close, "/settings?tab=connections")}>Connected apps</Row>

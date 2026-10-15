@@ -1,7 +1,8 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Clock3, Cpu, PanelRightOpen, SquareArrowOutUpRight, Trash2, Wrench } from "lucide-react";
+import { ModelLogo } from "@/components/connectors/provider-logo";
+import { Clock3, PanelRightOpen, SquareArrowOutUpRight, Trash2, Wrench } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { usePeek } from "@/components/shell/peek";
@@ -60,7 +61,7 @@ function RunRow({ run, onOpen }: { run: RunSummary; onOpen: () => void }) {
             ) : null}
             <span>·</span>
             <span className="inline-flex items-center gap-1">
-              <Cpu size={12} /> {run.model ?? "model unknown"}
+              <ModelLogo model={run.model} /> {run.model ?? "model unknown"}
             </span>
             {run.where ? (
               <>

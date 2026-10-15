@@ -19,6 +19,7 @@ import { SharedBadge, SpacePeople } from "../sharing/people";
 
 const TITLES: Array<[string, string]> = [
   ["/today", "Today"],
+  ["/pages", "Pages"],
   ["/shared", "Shared with you"],
   ["/board", "Task board"],
   ["/needs-me", "Needs me"],

@@ -24,12 +24,12 @@ export function Notifier() {
     const server = value.appearance;
     const local = readAppearance();
     const custom = server.accentCustom ?? null;
-    const differs = (local.accent ?? "indigo") !== server.accent || (local.accentCustom ?? null) !== custom || local.colorTheme !== server.colorTheme;
+    const differs = (local.accent ?? "indigo") !== server.accent || (local.accentCustom ?? null) !== custom || local.colorTheme !== server.colorTheme || local.sidebarAutoCollapse !== server.sidebarAutoCollapse || local.pagesPanelSide !== server.pagesPanelSide;
     if (!differs) return;
     // The save is debounced; navigation must not restore a stale accent or color theme.
     const writtenAt = (local as { accentAt?: number }).accentAt ?? 0;
     if (writtenAt && Date.now() - writtenAt < 8000) return;
-    publishAppearance({ ...local, colorTheme: server.colorTheme, accent: server.accent, accentCustom: custom });
+    publishAppearance({ ...local, colorTheme: server.colorTheme, accent: server.accent, accentCustom: custom, sidebarAutoCollapse: server.sidebarAutoCollapse, pagesPanelSide: server.pagesPanelSide });
   }, [settings.data]);
 
   useEffect(() => {

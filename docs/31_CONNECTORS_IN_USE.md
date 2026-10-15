@@ -42,7 +42,7 @@ Gmail, Outlook, Teams, Google and Outlook calendars, Slack, GitHub and Linear sy
 
 ### 2.3 Attach items to a task or project
 
-**From your apps** on a task page and a project page opens a picker: choose an app (or all of them), search, and attach. Ensemble reads the item once and keeps its text (up to 20,000 characters) as an `Artifact` linked to the task or project (`metadata.via = "app-item"`), with a link back. **Refresh** reads it again; **Remove** unlinks it. Attached items are also listed in Files → From your apps; removing one there takes it off every task and project, and attaching it again brings it back ([32 §11](32_FILES.md#11-from-your-apps)).
+**From your apps** on a task page and a project page opens a picker: choose an app (or all of them), search, and attach. Ensemble reads the item once and keeps its text (up to 20,000 characters) as an `Artifact` linked to the task or project (`metadata.via = "app-item"`), with a link back. **Refresh** reads it again; **Remove** unlinks it. Attached items are also listed in Files → From your apps; removing one there takes it off every task and project, and attaching it again brings it back ([32 §11](32_FILES.md#11-connected-items-opened-explicitly)).
 
 Who reads attached items:
 - the assistant (`hub_search_context`, and on the task's page);
@@ -321,3 +321,5 @@ All routes need a verified email on hosted servers, act only on the person's own
 - `apps/hub-api/src/connectors/items/work-sources.test.ts` and `more-sources.test.ts`: each app's search, read, comment and people calls against recorded vendor shapes.
 - `apps/hub-web/components/connectors/brand-logo.test.tsx`, `catalog-view.test.ts`: every catalog entry has its vendor's logo and a way in, and says what Ensemble does with it.
 - `apps/hub-web/components/app-items/*.test.tsx`: the picker and the attached list.
+
+Sign-in and AI provider/model marks share `components/connectors/provider-logo.tsx`; assets and their source attribution are in `apps/hub-web/public/providers/manifest.json`. Model marks identify the originating vendor even when a subscription or reseller supplies the model. Files home shows only stored documents; **Add from your apps** and the assistant provide explicit search/import.

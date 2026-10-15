@@ -2,6 +2,7 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
+import { ModelLogo } from "../connectors/provider-logo";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUp, Check, ChevronDown, CircleAlert, Copy, Clock3, History, Maximize2, Minimize2, Plus, X } from "lucide-react";
 import Link from "next/link";
@@ -245,7 +246,7 @@ export function Message({
           ))
         : null}
       <div className="assistant-message-footer">
-        {message.model ? <span>{message.model}</span> : null}
+        {message.model ? <span className="inline-flex items-center gap-1.5"><ModelLogo model={message.model} size={11} />{message.model}</span> : null}
         <CopyReply content={message.content} />
       </div>
     </article>

@@ -75,3 +75,13 @@ test("every catalog logo key has the vendor's mark, and every mark has an image"
   }
   for (const key of Object.keys(BRAND_INDEX)) assert.ok(BRAND_IMAGES[key], `${key} has an image`);
 });
+
+import { modelBrand } from "./provider-logo.js";
+
+test("model ownership wins over the subscription or reseller harness", () => {
+  assert.equal(modelBrand("mai-code-1.1-flash", "copilot-cli"), "microsoft");
+  assert.equal(modelBrand("claude-sonnet-5-5", "cursor-agent"), "claude");
+  assert.equal(modelBrand("gpt-6-luna", "copilot-cli"), "openai");
+  assert.equal(modelBrand("default", "codex"), "openai");
+  assert.equal(modelBrand("unknown", "unknown"), null);
+});

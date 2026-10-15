@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, Bell, BellOff, Bot, CalendarClock, Check, CheckCheck, CircleAlert, Eye, Share2, Sun, Timer, X, type LucideIcon } from "lucide-react";
+import { ArrowUpRight, Bell, BellOff, Orbit, CalendarClock, Check, CheckCheck, CircleAlert, Eye, Share2, Sun, Timer, X, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -12,7 +12,7 @@ import { useModalFocus } from "@/lib/modal-focus";
 import { SkeletonRows } from "../ui";
 
 const KIND: Record<string, { icon: LucideIcon; label: string; tone: string }> = {
-  agent: { icon: Bot, label: "Agent", tone: "violet" }, decision: { icon: CircleAlert, label: "Needs you", tone: "amber" },
+  agent: { icon: Orbit, label: "Agent", tone: "violet" }, decision: { icon: CircleAlert, label: "Needs you", tone: "amber" },
   morning_brief: { icon: Sun, label: "Morning brief", tone: "teal" }, stale_nudge: { icon: Timer, label: "Nudge", tone: "amber" },
   reminder: { icon: CalendarClock, label: "Reminder", tone: "blue" }, share: { icon: Share2, label: "Sharing", tone: "teal" },
   watcher: { icon: Eye, label: "Watcher", tone: "blue" }, default: { icon: Bell, label: "Ensemble", tone: "blue" },

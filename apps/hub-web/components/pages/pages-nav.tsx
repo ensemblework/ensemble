@@ -7,6 +7,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useState } from "react";
+import { FileText } from "lucide-react";
 import { api } from "@/lib/api";
 import { useSpaceAccess } from "@/lib/access";
 import { useToast } from "../toast";
@@ -23,8 +24,13 @@ function PageLink({ href, className, title, children }: PageLinkProps) {
   );
 }
 
-/** Loads standalone notes into the sidebar and opens a new one in the page editor. */
+/** Pages is one navigation destination; its tree lives in the separate browser. */
 export function PagesNav() {
+  const pathname = usePathname();
+  return <nav className="mt-1 px-2" aria-label="Pages"><Link href="/pages" title="Pages" aria-current={pathname.startsWith("/pages") ? "page" : undefined} data-active={pathname.startsWith("/pages") || undefined} onClick={() => window.dispatchEvent(new CustomEvent("ensemble:pages-open"))} className="nav-link row-tile flex items-center gap-2.5 rounded-lg px-2 py-[6px] text-[13.5px] text-ink/80"><FileText size={16} strokeWidth={1.8} className="text-muted" /><span className="sidebar-label flex-1">Pages</span></Link></nav>;
+}
+
+export function PagesBrowser() {
   const router = useRouter();
   const pathname = usePathname();
   const client = useQueryClient();
@@ -61,7 +67,7 @@ export function PagesNav() {
           void api.deletePages(ids).then(() => {
             void client.invalidateQueries();
             toast("Pages moved to Trash. One Undo restores them all.", { action: { label: "Undo", run: () => { void api.undo().then(() => client.invalidateQueries()).catch((error: Error) => toast(error.message, { tone: "error" })); } } });
-            if ([...selected].some((id) => pathname === `/pages/${id}`)) router.push("/today");
+            if ([...selected].some((id) => pathname === `/pages/${id}`)) router.push("/pages");
           }).catch((error: Error) => toast(error.message, { tone: "error" }));
         } : undefined}
         onRename={(id, title) => {
@@ -81,7 +87,10 @@ export function PagesNav() {
             .then(() => {
               void client.invalidateQueries();
               toast("Note moved to Trash.", { action: { label: "Undo", run: () => { void api.undo().then(() => { void client.invalidateQueries(); }).catch((error: Error) => toast(error.message, { tone: "error" })); } } });
-              if (pathname === `/pages/${id}` || pathname.startsWith(`/pages/${id}/`)) router.push("/today");
+              const removed = new Set([id]);
+              let changed = true;
+              while (changed) { changed = false; for (const page of pages.data?.pages ?? []) if (page.parentId && removed.has(page.parentId) && !removed.has(page.id)) { removed.add(page.id); changed = true; } }
+              if ([...removed].some((pageId) => pathname === `/pages/${pageId}`)) router.push("/pages");
             })
             .catch((error: Error) => toast(error.message, { tone: "error" }));
         }}

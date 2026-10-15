@@ -127,17 +127,17 @@ test("tabs switch by click and arrow keys, and every tab is a real link", async 
     const tabs = Array.from(view.host.querySelectorAll<HTMLAnchorElement>('[role="tab"]'));
     assert.deepEqual(
       tabs.map((tab) => tab.querySelector("span")?.textContent),
-      ["Account", "Spaces", "Sharing", "Assistant", "Connections", "Notifications", "Shortcuts", "Data"],
+      ["Account", "Appearance", "Spaces", "Sharing", "Assistant", "Connections", "Notifications", "Shortcuts", "Data"],
     );
-    assert.equal(tabs[7]!.getAttribute("href"), "?tab=data");
+    assert.equal(tabs[8]!.getAttribute("href"), "?tab=data");
     await act(async () => {
-      tabs[7]!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+      tabs[8]!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
     await settle(2);
     assert.match(view.selected(), /^Data/);
     assert.equal(new URL(window.location.href).searchParams.get("tab"), "data");
     await act(async () => {
-      tabs[7]!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+      tabs[8]!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
     });
     await settle(2);
     assert.match(view.selected(), /^Account/, "wraps around");
@@ -172,10 +172,11 @@ test("Your AI subscriptions lead the Models card: what each computer has, sign-i
     assert.match(document.querySelector('[data-testid="subscriptions-card"]')!.textContent ?? "", /Studio Maconline/);
     assert.match(tile("claude-code").textContent ?? "", /Signed in · max/);
     assert.match(tile("claude-code").textContent ?? "", /via the Claude app 2\.1\.293/);
+    assert.equal(document.querySelector('[data-subscription="gemini"]'), null);
+    assert.equal(tile("claude-code").querySelector('[data-provider-logo="claude"]') !== null, true);
     assert.match(tile("codex").textContent ?? "", /Not signed in/);
     assert.equal(tile("cursor-agent").dataset.state, "missing");
     assert.match(tile("cursor-agent").textContent ?? "", /Install Cursor's agent/);
-    assert.match(tile("gemini").textContent ?? "", /Not offered by Google/);
 
     const button = (root: HTMLElement, text: string) => Array.from(root.querySelectorAll("button")).find((node) => node.textContent?.trim() === text)!;
     await act(async () => {
@@ -246,14 +247,14 @@ test("API keys open as a page of their own from the Models card, and Escape clos
   }
 });
 
-test("an Accent deep link selects Account and scrolls to the control rather than Appearance", async()=>{
+test("an old Accent deep link selects Appearance and scrolls to the control", async()=>{
   const previous=HTMLElement.prototype.scrollIntoView;
   const scrolled:HTMLElement[]=[];
   HTMLElement.prototype.scrollIntoView=function(){scrolled.push(this);};
   const view=await mount("http://localhost/settings?tab=account#jump-appearance-accent");
   try {
     await until(()=>scrolled.some(node=>node.dataset.jumpLabel==="Accent"),"Accent control scroll");
-    assert.match(view.selected(),/^Account/);
+    assert.match(view.selected(),/^Appearance/);
     assert.equal(scrolled.at(-1)?.dataset.jumpLabel,"Accent");
   } finally {await view.done();HTMLElement.prototype.scrollIntoView=previous;}
 });

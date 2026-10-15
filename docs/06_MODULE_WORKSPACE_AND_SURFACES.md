@@ -222,3 +222,5 @@ Deliverable titles in Today and project pages open the same editable deliverable
 | Surface assist | *removed* | Deleted. Composing a Teams reply belongs in Teams; the Hub assistant covers the same ground from any page |
 | VS Code stub | `apps/vscode-ext/` | *Help me here*, status bar, `@ensemble` participant |
 | Teams manifest | `apps/teams-app/manifest.json` | Message-extension entry for the compose sidecar (the surface itself is gone) |
+
+Quick assignment (`apps/hub-web/lib/quick-assign.ts`) uses the saved default run profile with the same `/api/agent/assign` endpoint and trust checks as the full dialog. It preserves model, engine, effort, delivery, sandbox, network and limits; a new-branch profile gets a generated `ensemble/task-…` branch. Missing setup opens Assign. Task pages expose Cmd/Ctrl+Shift+A; Today proposals use A.

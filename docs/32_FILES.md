@@ -105,7 +105,7 @@ File text is always passed on as information, not instructions.
 | DELETE | `/api/documents/:id` | → 204; the file and its text go to Trash together |
 | GET | `/api/documents/import-sources` | → `{ sources: FileImportSource[] }` |
 | POST | `/api/documents/import` | `{ source, kind: "file" \| "attachment", id }` → 201 `{ file }` (200 when already kept) |
-| GET | `/api/artifacts?exclude=uploads&kind=&q=&before=` | From your apps (§11): → `{ artifacts[], counts[], sync[], nextCursor }` |
+| GET | `/api/artifacts?exclude=uploads&kind=&q=&before=` | Explicit connected-item browser (§11): → `{ artifacts[], counts[], sync[], nextCursor }` |
 | GET | `/api/artifacts/:id` | → `{ artifact }` with `text`, `participants`, `origin`, `documentId` |
 | DELETE | `/api/artifacts/:id` | Owner only → 204; 409 `{ error, documentId }` for an uploaded file's text |
 
@@ -129,9 +129,9 @@ Hosted: a verified email for everything; imports 60 per 10 minutes. Space member
 - Web: `components/editor/file-attach.test.tsx`, `components/files/*.test.tsx` (`from-apps.test.tsx`: the switch, list, chips, search, reader, Remove, paging, empty state, guests), `lib/files/*.test.ts`.
 - Present and Full screen: `components/files/present.test.tsx` runs them on a generated .pptx and a code file (keys, clicks, hidden slides, focus, the × and Esc, the in-page layer when the browser has no Fullscreen API, and a browser that grants it). A PDF in full screen uses the same layer; that path was read, not run, because pdf.js does not run in the test DOM.
 
-## 11. From your apps
+## 11. Connected items opened explicitly
 
-`/files?view=apps` (`apps/hub-web/components/files/from-apps.tsx`) lists the items Ensemble keeps from connected apps: synced mail, events, chats, channel messages, transcripts, pull requests and issues, and items attached to a task or project from an app. It reads `GET /api/artifacts?exclude=uploads`, which leaves out uploaded files' text Artifacts (a Document is linked, or `externalId` starts with `file:`). `origin` says which app each item came from (`apps/hub-api/src/context/artifacts.ts`: `metadata.source`, the attached item's app, or the link). The reader is `GET /api/artifacts/:id`; for an uploaded file's text it returns `documentId` and Files opens the file. Space members see the shared kinds only: never the owner's mail, chats or calendar (`visibleArtifacts`).
+The Files home (`components/files/files-screen.tsx`) shows only uploaded or explicitly imported documents and makes no connected-item list request. **Add from your apps** opens an explicit search/import picker. Existing direct links to `/files?view=apps` or `&item=…` (`apps/hub-web/components/files/from-apps.tsx`) open the items Ensemble keeps from connected apps: synced mail, events, chats, channel messages, transcripts, pull requests and issues, and items attached to a task or project from an app. It reads `GET /api/artifacts?exclude=uploads`, which leaves out uploaded files' text Artifacts (a Document is linked, or `externalId` starts with `file:`). `origin` says which app each item came from (`apps/hub-api/src/context/artifacts.ts`: `metadata.source`, the attached item's app, or the link). The reader is `GET /api/artifacts/:id`; for an uploaded file's text it returns `documentId` and Files opens the file. Space members see the shared kinds only: never the owner's mail, chats or calendar (`visibleArtifacts`).
 
 **Remove** (`DELETE /api/artifacts/:id`, owner only; members get 403):
 

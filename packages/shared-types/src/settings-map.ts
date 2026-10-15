@@ -13,10 +13,11 @@ import { AppColorTheme, AccentPreset, ReasoningEffort } from "./assistant.js";
 import { OPTIONAL_MODULES, type OptionalModule } from "./modules.js";
 import { FEATURES } from "./features.js";
 
-export type SettingsMapTab = "account" | "spaces" | "sharing" | "assistant" | "connections" | "notifications" | "shortcuts" | "data";
+export type SettingsMapTab = "account" | "appearance" | "spaces" | "sharing" | "assistant" | "connections" | "notifications" | "shortcuts" | "data";
 
 export const SETTINGS_MAP_TABS: Readonly<Record<SettingsMapTab, string>> = {
   account: "Account",
+  appearance: "Appearance",
   spaces: "Spaces",
   sharing: "Sharing",
   assistant: "Assistant",
@@ -85,14 +86,14 @@ export const SETTINGS_MAP: readonly SettingsMapEntry[] = [
     { id: "account.email", label: "Email", keywords: "email address identity confirm", about: "Your address: recognises your own mail and confirms destructive actions.", href: at("account", "jump-you-email") },
     { id: "account.timezone", label: "Time zone", keywords: "timezone time zone local time scheduling clock", about: "Used for due times, reminders, quiet hours and the morning brief.", href: at("account", "jump-you-time-zone"), key: "timezone", rule: { type: "timezone" } },
   ]),
-  ...group("account", "Appearance", [
-    { id: "appearance.theme", label: "Theme (dark, light, system)", keywords: "theme dark light mode system night", about: "Kept in each browser: change it here or with the light/dark switch in the account menu.", href: at("account", "jump-appearance-theme") },
-    { id: "appearance.color-theme", label: "Color theme", keywords: "theme palette atmosphere petrol aubergine graphite lagoon aurora juniper blueprint ensemble background patterns doodles", about: "A coordinated light and dark palette. Keeps your accent, font and mode choices.", href: at("account", "jump-appearance-color-theme"), key: "appearance.colorTheme", rule: { type: "enum", values: AppColorTheme.options } },
-    { id: "appearance.accent", label: "Accent colour", keywords: "accent colour color palette gold satin indigo tide ember rose brass orchid moss sky", about: "The highlight colour, from nine presets, with Satin Gold as the default.", href: at("account", "jump-appearance-accent"), key: "appearance.accent", rule: { type: "enum", values: AccentPreset.options } },
-    { id: "appearance.accent-custom", label: "Custom accent colour", keywords: "custom accent colour color hex", about: "Your own accent as #rrggbb; none goes back to the preset.", href: at("account", "jump-appearance-custom-accent"), key: "appearance.accentCustom", rule: { type: "color" } },
-    { id: "appearance.text-size", label: "Text size", keywords: "text size font size zoom scale bigger smaller", about: "Kept in each browser: change it in Appearance.", href: at("account", "jump-appearance-text-size") },
-    { id: "appearance.font", label: "App font", keywords: "font typeface inter plex georgia monospace", about: "Kept in each browser: change it in Appearance.", href: at("account", "jump-appearance-app-font") },
-    { id: "appearance.reduce-motion", label: "Reduce motion", keywords: "reduce motion animations accessibility", about: "Kept in each browser: change it in Appearance.", href: at("account", "jump-appearance-reduce-motion") },
+  ...group("appearance", "Appearance", [
+    { id: "appearance.theme", label: "Theme (dark, light, system)", keywords: "theme dark light mode system night", about: "Kept in each browser: change it here or with the light/dark switch in the account menu.", href: at("appearance", "jump-appearance-theme") },
+    { id: "appearance.color-theme", label: "Color theme", keywords: "theme palette atmosphere petrol aubergine graphite lagoon aurora juniper blueprint ensemble background patterns doodles", about: "A coordinated light and dark palette. Keeps your accent, font and mode choices.", href: at("appearance", "jump-appearance-color-theme"), key: "appearance.colorTheme", rule: { type: "enum", values: AppColorTheme.options } },
+    { id: "appearance.accent", label: "Accent colour", keywords: "accent colour color palette gold satin indigo tide ember rose brass orchid moss sky", about: "The highlight colour, from nine presets, with Satin Gold as the default.", href: at("appearance", "jump-appearance-accent"), key: "appearance.accent", rule: { type: "enum", values: AccentPreset.options } },
+    { id: "appearance.accent-custom", label: "Custom accent colour", keywords: "custom accent colour color hex", about: "Your own accent as #rrggbb; none goes back to the preset.", href: at("appearance", "jump-appearance-custom-accent"), key: "appearance.accentCustom", rule: { type: "color" } },
+    { id: "appearance.text-size", label: "Text size", keywords: "text size font size zoom scale bigger smaller", about: "Kept in each browser: change it in Appearance.", href: at("appearance", "jump-appearance-text-size") },
+    { id: "appearance.font", label: "App font", keywords: "font typeface inter plex georgia monospace", about: "Kept in each browser: change it in Appearance.", href: at("appearance", "jump-appearance-app-font") },
+    { id: "appearance.reduce-motion", label: "Reduce motion", keywords: "reduce motion animations accessibility", about: "Kept in each browser: change it in Appearance.", href: at("appearance", "jump-appearance-reduce-motion") },
   ]),
   ...group(
     "account",

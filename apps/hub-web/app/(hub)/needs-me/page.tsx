@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, Bot, Check, CheckCheck, CircleHelp, Clock3, Lock, Pencil, ShieldCheck, X } from "lucide-react";
+import { ArrowUpRight, Orbit, Check, CheckCheck, CircleHelp, Clock3, Lock, Pencil, ShieldCheck, X } from "lucide-react";
 import { useSpaceAccess } from "@/lib/access";
 import { useState } from "react";
 import { EditorDecisions } from "@/components/needs-me/editor-decisions";
@@ -159,7 +159,7 @@ export default function NeedsMePage() {
   return <div className="page-read review-page mx-auto max-w-[980px] px-6 pb-24 pt-8">
     <PageHeader title="Needs me" description="Decisions to make, questions to answer, and work ready for a next step." actions={<AskEnsemble surface="needs_me" anchorKey="needs_me" label="Ask Ensemble about needs me" />} />
     <div className="review-overview">
-      {[{ id: "requests", label: "Agent & editor requests", n: requests.length, icon: Bot, tone: "violet", note: "Questions and permissions" }, { id: "approvals", label: "Outgoing approvals", n: pendingApprovals.length, icon: ShieldCheck, tone: "amber", note: "Review before anything is sent" }, { id: "waiting", label: "Waiting tasks", n: blocked.length, icon: Clock3, tone: "blue", note: "Find what will move work forward" }].map((item) => <button key={item.id} type="button" data-tone={item.tone} aria-pressed={view === item.id} onClick={() => setView(view === item.id ? "all" : item.id as typeof view)}><span className="review-overview-icon"><item.icon size={18} /></span><div><strong>{ready ? item.n : "—"}</strong><span>{item.label}</span><small>{item.note}</small></div><ArrowUpRight size={14} /></button>)}
+      {[{ id: "requests", label: "Agent & editor requests", n: requests.length, icon: Orbit, tone: "violet", note: "Questions and permissions" }, { id: "approvals", label: "Outgoing approvals", n: pendingApprovals.length, icon: ShieldCheck, tone: "amber", note: "Review before anything is sent" }, { id: "waiting", label: "Waiting tasks", n: blocked.length, icon: Clock3, tone: "blue", note: "Find what will move work forward" }].map((item) => <button key={item.id} type="button" data-tone={item.tone} aria-pressed={view === item.id} onClick={() => setView(view === item.id ? "all" : item.id as typeof view)}><span className="review-overview-icon"><item.icon size={18} /></span><div><strong>{ready ? item.n : "—"}</strong><span>{item.label}</span><small>{item.note}</small></div><ArrowUpRight size={14} /></button>)}
     </div>
     <div className="work-view-tabs" aria-label="Review queues">{([ ["all", "Everything"], ["requests", "Requests"], ["approvals", "Approvals"], ["waiting", "Waiting tasks"] ] as const).map(([id, label]) => <button key={id} type="button" aria-pressed={view === id} onClick={() => setView(id)}>{label}</button>)}</div>
     {failed && <div className="work-load-error" role="alert">Some of your review queue could not load.<button className="btn" type="button" onClick={() => { void approvals.refetch(); void decisions.refetch(); void tasks.refetch(); }}>Try again</button></div>}

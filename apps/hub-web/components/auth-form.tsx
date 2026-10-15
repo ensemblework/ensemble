@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { api, HUB_API } from "@/lib/api";
 import { clearBrowserTabSession } from "@/lib/tab-session";
 import { INVITE_ONLY, safeLoginNext, showInviteNote, signupPanel } from "@/lib/signup-ui";
+import { SignInLogo } from "./connectors/provider-logo";
 import { EnsembleLogo } from "./brand/Logo";
 import { Spinner } from "./ui";
 import { AuthTurnstile } from "./auth-turnstile";
@@ -81,7 +82,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
           <div className="mt-5 space-y-2">
             {status.data.providers.map((provider) => (
               <a key={provider} href={`${HUB_API}/api/auth/oauth/${provider}/start`} className="btn flex w-full justify-center py-2">
-                Continue with {provider === "github" ? "GitHub" : provider === "google" ? "Google" : "Microsoft"}
+                <SignInLogo provider={provider} /> Continue with {provider === "github" ? "GitHub" : provider === "google" ? "Google" : "Microsoft"}
               </a>
             ))}
             {emailAvailable ? <p className="py-2 text-center text-[12px] text-muted">or continue with email</p> : null}

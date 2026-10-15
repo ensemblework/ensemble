@@ -8,7 +8,7 @@ import { parseSettingsLocation } from "../settings/url-state.js";
 const options = {modules:"code,workspace,runs,metrics,skills,diagrams,plots",template:"mkt.branch-desk"};
 test("Jump to ranks deep controls and app sections ahead of their parent views",()=>{
   for (const [query, label, path] of [
-    ["Accent","Accent","/settings?tab=account#jump-appearance-accent"],
+    ["Accent","Accent","/settings?tab=appearance#jump-appearance-accent"],
     ["people","People","/context?tab=people"],
     ["graph","Graph","/context?tab=graph"],
     ["Local repositories","Local repositories","/code#local-repositories"],
@@ -25,7 +25,7 @@ test("Jump to ranks deep controls and app sections ahead of their parent views",
   assert.ok(navigationDestinations("Google Calendar",options).some(row=>row.href.includes("connector=google_workspace")));
   assert.ok(navigationDestinations("color",options).some(row=>row.label==="Accent"));
   const synced=navigationDestinations("artifacts",options); assert.equal(synced[0]?.href,"/files?view=apps"); assert.ok(!synced.some(row=>row.href.includes("tab=artifacts")));
-  assert.equal(navigationScore("appearance colour","Accent","Settings › Account › Appearance","color"),20);
+  assert.equal(navigationScore("appearance colour","Accent","Settings › Appearance","color"),20);
 });
 test("Jump to has no record-name lookup and respects optional modules and shared-space access",()=>{
   assert.deepEqual(navigationDestinations("ML Model to Classifier",options),[]);

@@ -4,11 +4,12 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { CheckSquare, FileText, Trash2 } from "lucide-react";
+import { Orbit, CheckSquare, FileText, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { EMPTY_PAGE, type PageDocument, type PageMention } from "@ensemble/shared-types";
 import { ApiError, api, currentLink, currentShare, withLink, withShare } from "@/lib/api";
+import { quickAssignTask } from "@/lib/quick-assign";
 import { useEntities } from "@/lib/entities";
 import { blockEditor, warmPeek } from "@/lib/warm";
 import { mentionHref } from "../editor/editor-commands";
@@ -214,16 +215,23 @@ export function NotePage({
 
   const convert = useMutation({
     onMutate: () => setLeaving(true),
-    mutationFn: async () => {
+    mutationFn: async (quick: boolean = false) => {
       if (isPageEnsembleBusy("page", pageId)) throw new Error("Wait for Ensemble to finish before adding this page to the board.");
       window.clearTimeout(timer.current);
       if (titleSave.current) await titleSave.current;
       if (!(await flush())) throw new Error("Save the page before adding it to the board.");
-      return api.convertPage("page", pageId, revision.current);
+      const result = await api.convertPage("page", pageId, revision.current);
+      return { ...result, quick };
     },
-    onSuccess: (result) => {
+    onSuccess: async (result) => {
       void client.invalidateQueries();
-      router.push(`/tasks/${result.id}`);
+      let needsOptions = false;
+      if (result.quick) {
+        try { const run = await quickAssignTask(result.id); toast(`Assigned with ${run.profile}.`, { tone: "ok" }); }
+        catch (error) { needsOptions = true; toast((error as Error).message, { tone: "error" }); }
+        void client.invalidateQueries();
+      }
+      router.push(`/tasks/${result.id}${needsOptions ? "?assign=1" : ""}`);
     },
     onError: (error: Error) => {
       setLeaving(false);
@@ -304,9 +312,10 @@ export function NotePage({
             </>
           ) : (
             <>
-              <button type="button" className="btn-ghost" disabled={convert.isPending} onClick={() => convert.mutate()}>
+              <button type="button" className="btn-ghost" disabled={convert.isPending} onClick={() => convert.mutate(false)}>
                 <CheckSquare size={13} /> Add to board
               </button>
+              <button type="button" className="btn-ghost text-accent" disabled={convert.isPending} title="Add to the board and use your default run profile" onClick={() => convert.mutate(true)}><Orbit size={13} /> Quick assign</button>
               <button type="button" className="icon-btn" title="Delete" aria-label="Delete page" onClick={() => remove.mutate()}>
                 <Trash2 size={14} />
               </button>

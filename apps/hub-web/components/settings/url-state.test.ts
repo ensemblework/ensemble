@@ -27,7 +27,7 @@ test("old one-page hashes land on the tab that now holds the section", () => {
     ["#capture", "notifications"],
     ["#account", "account"],
     ["#features", "account"],
-    ["#appearance", "account"],
+    ["#appearance", "appearance"],
     ["#you", "account"],
     ["#this-mac", "account"],
   ];
@@ -79,4 +79,9 @@ test("every link in the shared settings map opens its tab and lands on a known c
     const destination = SETTINGS_DESTINATION_BY_ID.get(anchor);
     assert.equal(destination?.tab ?? SECTION_TAB[anchor], entry.tab, `${entry.id}: #${anchor}`);
   }
+});
+
+test("old explicit Account appearance bookmarks now select Appearance", () => {
+  assert.equal(parseSettingsLocation("?tab=account", "#appearance").tab, "appearance");
+  assert.equal(parseSettingsLocation("?tab=account", "#jump-appearance-accent").tab, "appearance");
 });

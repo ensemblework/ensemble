@@ -397,3 +397,15 @@ test("what the assistant writes about a task goes on its page, never in the shor
   await undoLast(db, mira.id, onlyPage.undoEntryId!);
   assert.doesNotMatch(((await read(mira.id, "hub_read_page", { taskId: id })).data as { text: string }).text, /room is booked/);
 });
+
+test("automatic task creation keeps context on the page and cannot replace a human description", async () => {
+  const { createTask, updateTask } = await import("../../services/tasks.js");
+  const person = await harness.asUser("human-description@fieldnote.example");
+  const task = await db.$transaction((tx) => createTask(tx, person.id, { title: "Plan a review", description: "## Context\nRead the checklist." }, "agent"));
+  assert.equal(task.description, "");
+  const page = await db.taskPage.findUniqueOrThrow({ where: { taskId: task.id } });
+  assert.match(pageMarkdown(page.content as unknown as PageDocument, ""), /Context.*Read the checklist/s);
+  await db.$transaction((tx) => updateTask(tx, person.id, task.id, { description: "Written by a person." }, "me"));
+  await assert.rejects(db.$transaction((tx) => updateTask(tx, person.id, task.id, { description: "Automated replacement" }, "agent")), /short description is for people/);
+  assert.equal((await db.task.findUniqueOrThrow({ where: { id: task.id } })).description, "Written by a person.");
+});

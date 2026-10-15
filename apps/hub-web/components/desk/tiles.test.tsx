@@ -120,3 +120,43 @@ test("the gallery previews without writes, adds once, and keeps failures recover
     await act(async () => root.unmount()); host.remove(); client.clear(); api.putPreference = oldPut; api.preferences = oldPrefs;
   }
 });
+
+import { ProposalsWidget } from "../today/proposals-widget";
+import { Settings } from "@ensemble/shared-types";
+import type { TaskRecord } from "@/lib/api";
+
+test("the live Today proposal inbox handles M/A/L/D and uses the saved default profile", async () => {
+  const task = { id: "proposal", title: "Review the proposed roadmap", status: "proposed", snoozedUntil: null, rationale: "A review was requested." } as TaskRecord;
+  const settings = Settings.parse({ runProfiles: [{ id: "writing", name: "Writing", kind: "research", engine: "ensemble", model: "anthropic::claude-sonnet-5-5", network: false }], defaultRunProfileId: "writing" });
+  const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = new URL(String(input), "http://localhost").pathname;
+    const body = init?.body ? JSON.parse(String(init.body)) : {};
+    calls.push({ path, body });
+    const result = path === "/api/settings" ? { settings } : path === "/api/devices" ? { devices: [], serverRunner: true } : path === "/api/tasks" ? { tasks: [task] } : { jobId: "job", undoEntryId: "undo-proposal" };
+    return new Response(JSON.stringify(result), { headers: { "Content-Type": "application/json" } });
+  }) as typeof fetch;
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } } });
+  client.setQueryData(["tasks"], { tasks: [task] });
+  const host = document.createElement("div"); document.body.appendChild(host);
+  const root = createRoot(host);
+  const press = async (key: string) => { await act(async () => { document.body.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true })); await new Promise((resolve) => setTimeout(resolve, 30)); }); };
+  try {
+    await act(async () => root.render(<QueryClientProvider client={client}><ProposalsWidget /></QueryClientProvider>));
+    await press("m");
+    assert.ok(calls.some((call) => call.path === "/api/tasks/proposal" && call.body.owner === "me" && call.body.status === "todo"));
+    await press("l");
+    const later = calls.find((call) => call.path === "/api/tasks/proposal" && call.body.snoozedUntil)?.body.snoozedUntil;
+    assert.ok(typeof later === "string" && new Date(later).getTime() > Date.now());
+    await press("d");
+    assert.ok(calls.some((call) => call.body.status === "dropped"));
+    await press("a");
+    const assigned = calls.find((call) => call.path === "/api/agent/assign")?.body;
+    assert.equal(assigned?.model, "claude-sonnet-5-5");
+    assert.equal(assigned?.provider, "anthropic");
+    assert.equal(assigned?.network, false);
+    const modal = document.createElement("div"); modal.dataset.modalLayer = "test"; document.body.appendChild(modal);
+    const count = calls.length; await press("m"); assert.equal(calls.length, count); modal.remove();
+  } finally { await act(async () => root.unmount()); client.clear(); host.remove(); globalThis.fetch = realFetch; }
+});
