@@ -29,6 +29,14 @@ function random(seed: number): () => number {
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function until(check: () => boolean, label: string, ms = 5000): Promise<void> {
+  const end = Date.now() + ms;
+  while (!check()) {
+    if (Date.now() > end) throw new Error(`timed out waiting for ${label}`);
+    await sleep(5);
+  }
+}
 const HTTP: Record<string, number> = { COLLAB_BEHIND: 409, COLLAB_RESET: 410, COLLAB_REJECTED: 400, COLLAB_TOO_LARGE: 413 };
 const asHttp = (error: unknown) => (error instanceof CollabError ? { status: HTTP[error.code], code: error.code, data: error.batch, message: error.message } : error);
 
@@ -313,8 +321,7 @@ test("a tab that goes offline keeps its typing, says so, and catches up when it 
       typeWord(op % 2 ? a : b, rand, typed);
       await sleep(1);
     }
-    await sleep(40);
-    assert.equal(b.status(), "offline");
+    await until(() => b.status() === "offline", "the offline status");
     assert.ok(b.drafts.value, "unsent typing is kept as a draft while offline");
     server.offline.delete("b");
     b.session.retryNow();
@@ -379,8 +386,7 @@ test("a session that expires mid-edit keeps the typing as a draft and puts it ba
   try {
     server.signedOut.add("me");
     tab.editor.chain().setTextSelection(1).insertContent("Unsent words ").run();
-    await sleep(30);
-    assert.equal(tab.status(), "error");
+    await until(() => tab.status() === "error", "the refused session");
     assert.ok(drafts.value, "the draft is written before the app goes to sign in");
     tab.close();
     other.editor.chain().setTextSelection(boundaries(other.editor).at(-1)!).insertContent("Meanwhile ").run();

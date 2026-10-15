@@ -301,7 +301,8 @@ test("undo and events that name nothing re-read every open page in the space", a
   store.external("t1", () => p("task notes", "agent block"));
   hub.changed(SPACE, "undo.changed", { entryId: "e" });
   hub.changed("another-space", "undo.changed", {});
-  await sleep(30);
+  const now = async (kind: "page" | "task", id: string) => lines((await hub.join({ space: SPACE, kind, id }))!.doc).join("|");
+  for (let tries = 0; tries < 200 && ((await now("page", "p1")) !== "One|restored" || (await now("task", "t1")) !== "task notes|agent block"); tries += 1) await sleep(5);
   assert.deepEqual(lines((await hub.join({ space: SPACE, kind: "page", id: "p1" }))!.doc), ["One", "restored"]);
   assert.deepEqual(lines((await hub.join({ space: SPACE, kind: "task", id: "t1" }))!.doc), ["task notes", "agent block"]);
   assert.equal(page.epoch, (await hub.join({ space: SPACE, kind: "page", id: "p1" }))!.epoch);
@@ -323,7 +324,7 @@ test("a deleted page is forgotten; other epochs reload; idle pages are written b
   assert.notEqual(fresh.epoch, joined.epoch, "a reloaded page is a new epoch");
   store.rows.delete("p1");
   hub.changed(SPACE, "page", { id: "p1", action: "delete" });
-  await sleep(10);
+  await until(() => hub.size === 0);
   assert.equal(hub.size, 0);
   assert.equal(await hub.join(key), null);
   assert.equal(await hub.post(key, { epoch: fresh.epoch, version: 0, steps: [], clientID: "tab" }), null);
