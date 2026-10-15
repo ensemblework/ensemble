@@ -325,6 +325,12 @@ importers:
       pptxgenjs:
         specifier: ^4.0.1
         version: 4.0.1
+      prosemirror-model:
+        specifier: 1.25.12
+        version: 1.25.12
+      prosemirror-transform:
+        specifier: 1.12.2
+        version: 1.12.2
       zod:
         specifier: ^3.24.2
         version: 3.25.76
