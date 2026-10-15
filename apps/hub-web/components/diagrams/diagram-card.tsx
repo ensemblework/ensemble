@@ -81,7 +81,11 @@ export function mountDiagramCard(host: HTMLElement, id: string, label: string, o
 
   let explicit = storedEmbedHeight(options.height, DIAGRAM_MIN_HEIGHT);
   let natural: { width: number; height: number } | null = null;
-  const fitted = () => clampEmbedHeight(Math.min(DIAGRAM_FIT_MAX, (natural?.height ?? 216) + 24), DIAGRAM_MIN_HEIGHT);
+  const fitted = () => {
+    const width = stage.clientWidth || host.clientWidth || natural?.width || 600;
+    const fitScale = natural ? Math.min(1.5, (width - 32) / natural.width) : 1;
+    return clampEmbedHeight(Math.min(DIAGRAM_FIT_MAX, (natural?.height ?? 216) * fitScale + 32), DIAGRAM_MIN_HEIGHT);
+  };
   let height = explicit ?? 240;
   const applyHeight = (next: number) => {
     height = next;
@@ -98,7 +102,7 @@ export function mountDiagramCard(host: HTMLElement, id: string, label: string, o
   const fitView = () => {
     if (!natural) return;
     const width = stage.clientWidth || host.clientWidth || natural.width;
-    scale = Math.min(1, (width - 24) / natural.width, (height - 24) / natural.height);
+    scale = Math.min(1.5, (width - 32) / natural.width, (height - 32) / natural.height);
     if (!Number.isFinite(scale) || scale <= 0) scale = 1;
     ox = Math.max(12, (width - natural.width * scale) / 2);
     oy = Math.max(12, (height - natural.height * scale) / 2);
@@ -106,8 +110,15 @@ export function mountDiagramCard(host: HTMLElement, id: string, label: string, o
   };
   fit.addEventListener("click", fitView);
   const onWheel = (event: WheelEvent) => {
+    if (!event.ctrlKey && !event.metaKey) return;
     event.preventDefault();
-    scale = Math.min(2.5, Math.max(0.2, scale * (event.deltaY > 0 ? 0.92 : 1.08)));
+    const box = stage.getBoundingClientRect();
+    const x = event.clientX - box.left;
+    const y = event.clientY - box.top;
+    const next = Math.min(3, Math.max(0.1, scale * (event.deltaY > 0 ? 0.92 : 1.08)));
+    ox = x - (x - ox) * next / scale;
+    oy = y - (y - oy) * next / scale;
+    scale = next;
     apply();
   };
   let drag: { x: number; y: number; ox: number; oy: number } | null = null;
@@ -149,6 +160,11 @@ export function mountDiagramCard(host: HTMLElement, id: string, label: string, o
     );
   }
 
+  const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => {
+    if (explicit === null) applyHeight(fitted());
+    fitView();
+  });
+  observer?.observe(stage);
   let cancelled = false;
   void api.diagram(id).then(({ diagram }) => {
     if (cancelled) return;
@@ -158,6 +174,10 @@ export function mountDiagramCard(host: HTMLElement, id: string, label: string, o
     const svg = renderDiagramSvg(model, { theme: themeOf() }).replace(/^<\?xml[^>]*>\s*/, "");
     inner.innerHTML = svg;
     const node = inner.querySelector("svg");
+    // The canvas belongs to the viewport. Only diagram artwork is transformed.
+    const backgrounds = node ? Array.from(node.children).filter((child) => child.tagName.toLowerCase() === "rect").slice(0, 2) : [];
+    stage.style.backgroundColor = backgrounds[0]?.getAttribute("fill") || "var(--panel)";
+    backgrounds.forEach((background) => background.remove());
     const box = node?.getBoundingClientRect();
     const width = Number(node?.getAttribute("width")) || box?.width || 0;
     const tall = Number(node?.getAttribute("height")) || box?.height || 0;
@@ -177,6 +197,7 @@ export function mountDiagramCard(host: HTMLElement, id: string, label: string, o
   return {
     destroy: () => {
       cancelled = true;
+      observer?.disconnect();
       stage.removeEventListener("wheel", onWheel);
       stage.removeEventListener("pointerdown", onDown);
       stage.removeEventListener("pointermove", onMove);

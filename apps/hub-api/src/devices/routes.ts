@@ -38,7 +38,8 @@ import { publishBrowserDevice, publishDevice } from "./publish.js";
 import { revokePairedDevice } from "./revoke.js";
 import { outsideAccessOf } from "../workspace/trust.js";
 import { contextForPrompt } from "../connectors/items/index.js";
-import { filesOnTask, filesSection } from "../files/attached.js";
+import { fileOriginal, filesOnTask, filesSection } from "../files/attached.js";
+import { diagramIds, pageAgentText } from "../pages/agent-context.js";
 import { pageMarkdown } from "../pages/markdown.js";
 import { FileAnswer, MAX_UPLOADED_STEPS, PAGE_HEADING, PROTOCOL, RunTotals, UPLOAD_FILE_BYTES, UPLOAD_FILES_MAX, UPLOAD_TOTAL_BYTES, UploadedFile, UploadedStep } from "../remote/contract.js";
 import { folderPath, refusedPath } from "../workspace/folder-read.js";
@@ -411,11 +412,13 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       sseHub.publish(next.userId, { event: "workspace", data: { id: next.id } });
       const fromApps = await contextForPrompt(next.userId, { taskId: next.taskId, projectId: next.task.projectId }, 8_000, prisma).catch(() => "");
       // The computer cannot fetch the originals, so it gets each file's name and the start of its text.
-      const files = await filesOnTask(prisma, next.userId, next.taskId)
-        .then((list) => filesSection(prisma, next.userId, list, { perFile: 1500, total: 6_000, more: () => "" }))
+      const filesAttached = await filesOnTask(prisma, next.userId, next.taskId);
+      const diagramsAttached = await prisma.blockDiagram.findMany({ where: { userId: next.userId, deletedAt: null, id: { in: diagramIds(next.task.page?.content) } }, select: { id: true, title: true, source: true } });
+      const attachments = [...filesAttached.map(({ id, filename, byteSize }) => ({ id, filename, byteSize, kind: "file" as const })), ...diagramsAttached.filter((diagram) => diagram.source.length > 0).map((diagram) => ({ id: diagram.id, kind: "diagram" as const, filename: `${diagram.title || "Diagram"}.ensemble-diagram.txt`, byteSize: Buffer.byteLength(diagram.source) }))].slice(0, 100);
+      const files = await filesSection(prisma, next.userId, filesAttached, { perFile: 1500, total: 6_000, more: () => "Original available to the paired computer for this run." })
         .catch(() => "");
       // The page is the task's main content (a repo link, the steps, what done means): the computer needs it.
-      const page = taskPageMarkdown(next.task.page?.content ?? null, next.task.notes).slice(0, 16_000);
+      const page = await pageAgentText(prisma, next.userId, next.task.page?.content ?? null, next.task.notes, 6000, 9500);
       // The page goes first and is at most 16,000 characters, so the cut below never splits it: older
       // computers read all of it, and newer ones find the whole section to take out.
       const description = [
@@ -435,6 +438,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
         leaseToken,
         leaseUntil: leaseUntil.toISOString(),
         taskId: next.taskId,
+        attachments,
         title: next.task.title,
         kind: next.kind,
         instructions: next.instructions,
@@ -466,6 +470,26 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       };
     }
     return reply.code(204).send();
+  });
+
+  app.get("/api/devices/self/jobs/:id/attachments/:fileId", async (request, reply) => {
+    const device = await ownDevice(app, request, reply);
+    if (!device) return;
+    const { id, fileId } = z.object({ id: z.string().uuid(), fileId: z.string().uuid() }).parse(request.params);
+    const lease = z.string().min(1).max(200).parse(request.headers["x-ensemble-job-lease"]);
+    const held = await holdLease(app, device, id, lease);
+    if (!held.ok) return reply.code(held.status).send({ error: held.message });
+    const attached = await filesOnTask(prisma, held.job.userId, held.job.taskId);
+    let original = attached.some((file) => file.id === fileId) ? await fileOriginal(prisma, held.job.userId, fileId) : null;
+    if (!original) {
+      const page = await prisma.taskPage.findFirst({ where: { taskId: held.job.taskId, userId: held.job.userId, deletedAt: null }, select: { content: true } });
+      if (diagramIds(page?.content).includes(fileId)) {
+        const diagram = await prisma.blockDiagram.findFirst({ where: { id: fileId, userId: held.job.userId, deletedAt: null }, select: { title: true, source: true } });
+        if (diagram) original = { filename: `${diagram.title}.ensemble-diagram.txt`, bytes: Buffer.from(diagram.source) };
+      }
+    }
+    if (!original) return reply.code(404).send({ error: "That attachment is no longer available on this task." });
+    return reply.type("application/octet-stream").header("cache-control", "no-store").send(Buffer.from(original.bytes));
   });
 
   app.post("/api/devices/self/jobs/:id/progress", async (request, reply) => {

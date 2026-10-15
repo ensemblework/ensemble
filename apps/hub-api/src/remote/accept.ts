@@ -5,9 +5,11 @@
  */
 import { tmpdir } from "node:os";
 import type { FastifyInstance } from "fastify";
+import type { PrismaClient } from "@prisma/client";
 import { env } from "../config.js";
 import { requireHostAccess } from "../lib/hosted-access.js";
 import { appendLedger } from "../lib/ledger.js";
+import { saveFile } from "../files/store.js";
 import { createTask } from "../services/tasks.js";
 import { createJob } from "../workspace/assign.js";
 import { runTrustedGit } from "../workspace/git-gate.js";
@@ -18,6 +20,23 @@ import type { JobSpec, ResultLink } from "./contract.js";
 import { loadHeld, loadSettings, type HeldJob } from "./store.js";
 
 const PRIVATE = /Authentication|could not read Username|Permission denied|Repository not found|terminal prompts disabled|Invalid username or password/i;
+
+type DownloadedAttachment = { attachment: NonNullable<JobSpec["attachments"]>[number]; bytes: Uint8Array };
+
+/** The web's ids are not local file ids. Rewrite references while saving the copied originals. */
+export async function attachClaimedFiles(prisma: PrismaClient, userId: string, taskId: string, hostedId: string, downloads: DownloadedAttachment[], page: string): Promise<string> {
+  let notes = page;
+  for (const { attachment, bytes } of downloads) {
+    const file = await saveFile(prisma, userId, { filename: attachment.filename, mediaType: "application/octet-stream", bytes, source: { app: "ensemble", label: "Task attachment", externalId: `remote:${hostedId}:${attachment.id}` } }, { summarize: false, tags: { taskIds: [taskId] } });
+    notes = notes.replaceAll(`ensemble://file/${attachment.id}`, `ensemble://file/${file.id}`);
+    if (attachment.kind === "diagram") {
+      notes = notes.replaceAll(`ensemble://diagram/${attachment.id}`, `ensemble://file/${file.id}`)
+        .replaceAll(`diagram id ${attachment.id}`, `diagram source file id ${file.id}`)
+        .replace(/\[Source truncated;[^\]]+\]/g, "[Read the attached diagram source file with read_attachment for the rest.]");
+    }
+  }
+  return notes;
+}
 
 export async function repoVisibility(url: string, userId = env.ENSEMBLE_DEV_USER_ID): Promise<"public" | "private" | "unreachable"> {
   await requireHostAccess(userId, "Host repository probe");
@@ -70,9 +89,21 @@ export async function acceptClaimed(app: FastifyInstance, client: HostedClient, 
     }
   }
   try {
+    let attachmentBytes = 0;
+    const downloads: DownloadedAttachment[] = [];
+    for (const attachment of spec.attachments ?? []) {
+      attachmentBytes += attachment.byteSize;
+      if (attachmentBytes > 100 * 1024 * 1024) throw new Error("The task attachments exceed the 100 MB transfer limit.");
+      if (!client.downloadAttachment) throw new Error("This computer cannot download the task attachments. Update Ensemble and retry.");
+      const bytes = await client.downloadAttachment(spec.id, spec.leaseToken, attachment.id, attachment.byteSize);
+      if (bytes.byteLength !== attachment.byteSize) throw new Error("The attached file was incomplete. Retry this task.");
+      downloads.push({ attachment, bytes });
+    }
     const task = await app.prisma.$transaction((tx) =>
       createTask(tx, userId, { title: resolved.title, description: resolved.description, notes: resolved.page, status: "todo", owner: "agent", sourceKind: "other", sourceRef: "remote" }, "system"),
     );
+    const notes = await attachClaimedFiles(app.prisma, userId, task.id, spec.id, downloads, resolved.page);
+    if (notes !== resolved.page) await app.prisma.task.update({ where: { id: task.id }, data: { notes } });
     const created = await createJob(app.prisma, userId, { ...resolved.assign, taskId: task.id }, { context: webContext(spec.id), actor: "system" });
     if (!created) throw new Error("The task could not be queued.");
     held.localJobId = created.jobId;

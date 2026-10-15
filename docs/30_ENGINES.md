@@ -121,7 +121,6 @@ The Ensemble assistant (the dock's chat, `@ensemble` on a page, the Ask panel) a
 | ChatGPT | `codex` on the PATH, else the ChatGPT app's copy (§2) | `account/read` (and the plan) | `model/list`, with each model's thinking levels |
 | Cursor | `cursor-agent` on the PATH | `cursor-agent status` | `cursor-agent models` |
 | GitHub Copilot | `copilot` on the PATH | not reported; the first message shows it | `copilot help config` |
-| Gemini | not offered: Google does not allow other apps to use a Gemini plan's sign-in. Settings points to a Gemini API key instead | | |
 
 **Signing in.** *Sign in* on the web (or in the desktop app) opens a terminal window on that computer running the tool's own login: `claude auth login --claudeai`, `codex login`, `cursor-agent login`, `copilot login` (`subscriptions/signin.ts`). The tool opens its vendor's sign-in page in the browser and keeps the sign-in where it always does. Ensemble then checks the tool every 8 seconds for up to 6 minutes and reports the new state.
 
@@ -139,3 +138,5 @@ API keys that would bill an API account instead of the plan (`ANTHROPIC_API_KEY`
 **Problems are said in words**: no computer paired, none online (with when it was last seen), Ensemble too old there, the agent missing (with the vendor's install link), not signed in (with where to press Sign in), the plan's limit reached (shown like a quota), or the agent's own message.
 
 Checked 15 Oct 2026 on a Mac, live: Claude Code 2.1.296 (the CLI) with Haiku 5.5 and Codex 0.162 (the ChatGPT app's copy) with `gpt-6-luna` each answered a real assistant turn on an in-memory Ensemble: they listed the person's tasks with Ensemble's tools, checked a block diagram and proposed it (held for Apply), and their replies streamed into the chat (about 9 s and 45 s); a one-tool turn through the same bridge took 9 and 16 s. Detection on that Mac found Claude Code, Codex, Cursor's agent (signed in, its 120-model list) and Copilot CLI (31 models); the Claude app's copy of Claude Code (2.1.293) was found in its folder. Codex lists no models when its own provider does not answer; it then offers "Codex's default". Cursor's agent and Copilot CLI turns were checked with stand-ins and their help only. Plus the tests in [18](18_WHAT_IS_REAL.md).
+
+Subscription settings use the vendors' marks (`components/connectors/provider-logo.tsx`, sources in `public/providers/manifest.json`). The four supported subscriptions appear in the grid. Gemini is offered only through Manage API keys, without an unavailable subscription card.

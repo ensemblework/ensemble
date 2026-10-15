@@ -24,6 +24,7 @@ export const ROUTES = {
   closeDecision: (decisionId: string) => `/api/devices/self/decisions/${encodeURIComponent(decisionId)}/close`,
   complete: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/complete`,
   events: "/api/devices/self/events",
+  attachment: (jobId: string, fileId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/attachments/${encodeURIComponent(fileId)}`,
   /** The account's model keys, for this computer's own model calls. */
   modelKeys: "/api/devices/self/model-keys",
   /** The text of the files a run changed, sent before complete (protocol 3). */
@@ -106,6 +107,7 @@ export const JobSpec = z
      * `PAGE_HEADING` for computers that predate the field.
      */
     task: z.object({ title: text(500).nullish(), description: text(40_000).nullish(), page: text(20_000).nullish() }).partial().nullish(),
+    attachments: z.array(z.object({ id: z.string().uuid(), filename: text(500), kind: z.enum(["file", "diagram"]).optional(), byteSize: z.number().int().min(0).max(100 * 1024 * 1024) })).max(100).default([]),
     instructions: text(8000).nullish(),
     repoUrl: text(500).nullish(),
     folder: text(200).nullish(),

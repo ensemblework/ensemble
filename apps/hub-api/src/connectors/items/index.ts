@@ -18,6 +18,8 @@ import { redact, upsertPerson } from "../ingest.js";
 import { ConnectorNotConnectedError, providerAccessToken, type ProviderToken } from "../tokens.js";
 import { tooLarge } from "./http.js";
 import { ITEM_SOURCES } from "./registry.js";
+import { notionTree } from "../../imports/api/notion.js";
+import { createImportHttp } from "../../imports/http.js";
 import { DEFAULT_SEARCH_LIMIT, ItemError, MAX_DOWNLOAD_BYTES, MAX_ITEM_TEXT, MAX_PEOPLE, MAX_SEARCH_LIMIT, type ItemContext, type ItemDownload, type ItemSource } from "./types.js";
 
 export { ItemError } from "./types.js";
@@ -125,6 +127,12 @@ export function safeItemId(raw: string): string {
   const id = raw.trim();
   if (!id || id.length > 300 || /\.\.|[?&\\%\t\n\r]/.test(id)) throw new ItemError("That is not an item id this app uses.", 400);
   return id;
+}
+
+/** A Notion page tree, with native blocks rather than the bounded text used for search. */
+export async function readNotionPages(userId: string, ref: { kind: "page" | "database"; id: string }) {
+  const ctx = await contextFor(userId, requireSource("notion"), AbortSignal.timeout(300_000));
+  return notionTree({ auth: { token: ctx.token.token, via: "account" }, signal: ctx.signal, options: {}, http: createImportHttp({ signal: ctx.signal, gapMs: 340, label: "Notion", fetchImpl: ctx.fetch }) }, { kind: ref.kind, id: safeItemId(ref.id) });
 }
 
 export async function readItem(userId: string, ref: { source: string; kind: AppItemKind; id: string }): Promise<AppItemContent> {

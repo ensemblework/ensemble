@@ -6,6 +6,8 @@
  * is reachable a conservative heuristic runs instead, and the extraction row
  * records which one decided.
  */
+import type { Prisma } from "@prisma/client";
+import { markdownToNodes } from "../pages/markdown.js";
 import type { Settings } from "@ensemble/shared-types";
 import { appendLedger } from "../lib/ledger.js";
 import { prisma } from "../lib/prisma.js";
@@ -103,7 +105,8 @@ export async function createProposals(userId: string, proposals: Proposal[], via
       data: {
         userId,
         title: proposal.title.slice(0, 200),
-        description: proposal.description,
+        description: "",
+        ...(proposal.description?.trim() ? { page: { create: { userId, notesSnapshot: proposal.description, searchText: `${proposal.title}\n${proposal.description}`, content: { type: "doc", content: markdownToNodes(proposal.description) } as unknown as Prisma.InputJsonValue } } } : {}),
         sourceKind: proposal.sourceKind,
         sourceRef: proposal.sourceRef,
         sourceUrl: proposal.sourceUrl ?? null,

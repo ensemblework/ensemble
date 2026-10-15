@@ -2,8 +2,9 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
+import { ModelLogo } from "../connectors/provider-logo";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, Check, CircleAlert, Clock3, History, Maximize2, Minimize2, Plus, X } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, CircleAlert, Copy, Clock3, History, Maximize2, Minimize2, Plus, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -128,11 +129,11 @@ function ToolCall({ call, conversationId }: { call: AssistantToolCallRecord; con
   const motion =
     call.state === "failed" ? "failed" : call.state === "awaiting_approval" ? "pending" : call.state === "ok" || phase === "applied" || phase === "undone" ? "done" : "running";
   return (
-    <div className="tile m-tool flex items-center gap-2 rounded-md bg-panel px-2 py-1 text-[12px]" data-motion-slot="tool.call" data-state={motion}>
+    <div className="assistant-tool tile m-tool flex items-center gap-2 rounded-lg px-3 py-2 text-[12px]" data-motion-slot="tool.call" data-state={motion}>
       {icon}
-      <span className="font-mono text-[11px] text-faint">{call.name}</span>
+      <span className="assistant-tool-name" title={call.name}>{call.name.replace(/^(hub_|apps_)/, "").replace(/_/g, " ")}</span>
       <span className="min-w-0 flex-1 whitespace-pre-wrap text-muted">{call.error ?? call.summary}</span>
-      {phase === "applied" ? <span className="text-faint">Applied</span> : null}
+      {phase === "applied" ? <span className="text-faint">{call.isWrite === false ? "Read" : "Applied"}</span> : null}
       {phase === "undone" ? <span className="text-faint">Undone</span> : null}
       {call.href ? (
         <Link href={call.href} className="text-accent hover:underline">
@@ -187,6 +188,20 @@ function ApplyAll({ calls, conversationId }: { calls: AssistantToolCallRecord[];
   );
 }
 
+function CopyReply({ content }: { content: string }) {
+  const [copied, setCopied] = useState(false);
+  const toast = useToast();
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 1600);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+  return <button type="button" aria-label="Copy reply" title="Copy reply" onClick={() => {
+    if (!navigator.clipboard) { toast("Copy is unavailable in this browser.", { tone: "error" }); return; }
+    void navigator.clipboard.writeText(content).then(() => setCopied(true)).catch(() => toast("Could not copy this reply.", { tone: "error" }));
+  }}>{copied ? <Check size={12} /> : <Copy size={12} />} {copied ? "Copied" : "Copy"}</button>;
+}
+
 export function Message({
   message,
   conversationId,
@@ -198,26 +213,31 @@ export function Message({
 }) {
   if (message.role === "user") {
     return (
-      <div className="flex justify-end">
-        <div className="max-w-[82%] whitespace-pre-wrap rounded-lg bg-raised px-3 py-2 text-[13.5px] leading-5">{message.content}</div>
+      <div className="assistant-turn assistant-user-turn">
+        <div className="assistant-user-message">{message.content}</div>
       </div>
     );
   }
   const pending = (message.toolCalls ?? []).filter((call) => call.state === "awaiting_approval" && call.isWrite !== false);
+  const failed = (message.toolCalls ?? []).filter((call) => call.state === "failed").length;
   const answer = splitCutOffReply(message.content);
   return (
-    <div className="space-y-2">
+    <article className="assistant-turn assistant-answer-turn">
+      <div className="assistant-message-heading"><span className="assistant-message-avatar"><Mark size={18} /></span><span>Ensemble</span></div>
       {message.toolCalls?.length ? (
-        <div className="space-y-1">
+        <details className="assistant-activity" open={pending.length > 0 || message.toolCalls.some((call) => call.state === "failed")} >
+          <summary>{failed ? <CircleAlert size={13} /> : <Check size={13} />}<span>{pending.length ? `${pending.length} actions to review` : failed ? `${failed} steps need attention` : `${message.toolCalls.length} steps completed`}</span><ChevronDown size={13} /></summary>
+          <div className="space-y-1.5">
           {pending.length > 1 ? (
             <ApplyAll calls={pending} conversationId={conversationId} />
           ) : null}
           {message.toolCalls.map((call) => (
             <ToolCall key={call.id} call={call} conversationId={conversationId} />
           ))}
-        </div>
+          </div>
+        </details>
       ) : null}
-      <AssistantAnswer content={message.content} />
+      <div className="assistant-answer-body"><AssistantAnswer content={message.content} /></div>
       {onChoose
         ? choiceLines(answer.body).map((choice) => (
             <button key={choice} type="button" className="btn mr-1 mt-1" onClick={() => onChoose(choice)}>
@@ -225,17 +245,21 @@ export function Message({
             </button>
           ))
         : null}
-      {message.model ? <div className="text-2xs text-faint">{message.model}</div> : null}
-    </div>
+      <div className="assistant-message-footer">
+        {message.model ? <span className="inline-flex items-center gap-1.5"><ModelLogo model={message.model} size={11} />{message.model}</span> : null}
+        <CopyReply content={message.content} />
+      </div>
+    </article>
   );
 }
 
 function EmptyAssistant({ pathname, name, onPick }: { pathname: string; name: string | null; onPick: (text: string) => void }) {
   return (
-    <div className="flex h-full flex-col justify-end pb-2" data-assistant-empty>
+    <div className="assistant-welcome" data-assistant-empty>
+      <span className="assistant-welcome-mark"><Mark size={38} /></span>
       <p className="display text-[26px] leading-tight text-ink">{greeting(name)}</p>
-      <p className="mt-1 text-[14px] text-muted">How can I help?</p>
-      <div className="mt-5 flex flex-wrap gap-2">
+      <p className="mt-1 text-[14px] text-muted">Bring your thoughts, pages, and connected apps together.</p>
+      <div className="assistant-starters">
         {starterPrompts(pathname).map((suggestion) => (
           <button key={suggestion} type="button" onClick={() => onPick(suggestion)} className="assistant-starter">
             {suggestion}
@@ -580,13 +604,13 @@ export function AssistantDock() {
     {launcher}
     <div
       className={cx(
-        "pop-in fixed z-50 flex flex-col overflow-hidden rounded-xl border border-line-strong bg-raised shadow-pop",
-        expanded ? "inset-x-[8vw] bottom-6 top-[6vh]" : "bottom-5 right-5 h-[min(640px,80vh)] w-[min(620px,92vw)]",
+        "assistant-window pop-in fixed z-50 flex flex-col overflow-hidden border border-line-strong shadow-pop",
+        expanded ? "inset-x-[5vw] bottom-6 top-[5vh]" : "bottom-5 right-5 h-[min(720px,85vh)] w-[min(660px,94vw)]",
       )}
     >
-      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-line px-3">
+      <div className="assistant-window-header flex shrink-0 items-center gap-2 px-4">
         <BrandMorph size={24} state="once" kind="unfurl" />
-        <span className="flex-1 text-[14px] font-semibold">Assistant</span>
+        <div className="min-w-0 flex-1"><span className="text-[14px] font-semibold">Ensemble assistant</span><span className="assistant-header-hint">Your workspace, in conversation</span></div>
         {working && !pending ? <ThinkingStatus real={working === "Assistant is thinking…" || working === "Working…" ? null : working} active /> : null}
         <button
           type="button"
@@ -627,7 +651,7 @@ export function AssistantDock() {
         />
       ) : null}
 
-      <div ref={scroller} className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5">
+      <div ref={scroller} className="assistant-conversation min-h-0 flex-1 overflow-y-auto">
         {all.length === 0 ? (
           <EmptyAssistant pathname={pathname} name={shell.data?.user?.name ?? null} onPick={(text) => void sendText(text)} />
         ) : (
@@ -636,7 +660,7 @@ export function AssistantDock() {
           ))
         )}
         {pending ? (
-          <div className="space-y-2">
+          <div className="assistant-turn space-y-2">
             {liveTools.map((call) => (
               <ToolCall key={call.id} call={call} conversationId={conversationId} />
             ))}
@@ -658,7 +682,7 @@ export function AssistantDock() {
         ) : null}
       </div>
 
-      <div className="relative shrink-0 border-t border-line p-3">
+      <div className="assistant-composer-area relative shrink-0">
         <MentionPopover menu={mention} />
         {turnError && !all.some((message) => message.role === "assistant" && message.content === turnError) ? (
           <div className="mb-2 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-[12.5px] text-danger">
@@ -673,7 +697,7 @@ export function AssistantDock() {
             ) : null}
           </div>
         ) : null}
-        <div className="tile flex items-end gap-2 rounded-lg bg-panel px-3 py-2 focus-within:border-accent">
+        <div className="assistant-composer tile flex items-end gap-2 px-4 py-3">
           <textarea
             ref={input}
             rows={1}
@@ -691,7 +715,7 @@ export function AssistantDock() {
           />
           <button
             type="button"
-            className="icon-btn border-line"
+            className="assistant-send icon-btn"
             onClick={pending ? stop : submit}
             disabled={!pending && !draft.trim()}
             aria-label={pending ? "Stop" : "Send"}
@@ -699,7 +723,7 @@ export function AssistantDock() {
             {pending ? <span className="text-[11px] font-semibold">Stop</span> : <ArrowUp size={15} />}
           </button>
         </div>
-        <div className="mt-2 flex items-center gap-3 text-[12px] text-faint">
+        <div className="assistant-composer-options mt-2 flex flex-wrap items-center gap-3 text-[12px] text-faint">
           <select
             value={tier}
             onChange={(event) => setTierOverride(event.target.value as Complexity)}
@@ -726,7 +750,7 @@ export function AssistantDock() {
               window.setTimeout(() => input.current?.focus(), 30);
             }}
           />
-          <span>Enter to send · Shift+Enter for a new line · Model presets are in Settings</span>
+          <span className="assistant-key-hint">Enter to send · ⇧ Enter for a new line</span>
         </div>
       </div>
     </div>

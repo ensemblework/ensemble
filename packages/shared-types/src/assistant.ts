@@ -104,6 +104,8 @@ export const AppearanceSettings = z.object({
   /** Legacy motion choices normalize to the single Expressive system. */
   motion: MotionTheme.default("expressive"),
   reduceMotion: z.boolean().default(false),
+  sidebarAutoCollapse: z.boolean().default(false),
+  pagesPanelSide: z.enum(["left", "right"]).default("left"),
   /** Curated accent. Ignored while accentCustom is set. */
   accent: AccentPreset.default("gold"),
   /** User-picked #rrggbb. Null means the preset is in use. */

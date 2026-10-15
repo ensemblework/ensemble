@@ -1,0 +1,73 @@
+{
+  "notice": "Names and marks belong to their owners. Used solely to identify services and models; no affiliation or endorsement is implied.",
+  "marks": {
+    "google": {
+      "source": "https://developers.google.com/identity/branding-guidelines",
+      "asset": "Canonical Google G from the existing connector vector collection, matches the published sign-in symbol"
+    },
+    "microsoft": {
+      "source": "https://learn.microsoft.com/en-us/entra/identity-platform/howto-add-branding-in-apps",
+      "asset": "ms-symbollockup_mssymbol_19.svg"
+    },
+    "github": {
+      "source": "https://brand.github.com/foundations/logo",
+      "asset": "GitHub_Logos.zip / GitHub_Invertocat_Black.svg"
+    },
+    "copilot": {
+      "source": "https://brand.github.com/foundations/logo",
+      "asset": "GitHub_Logos.zip / Copilot_Icon_Black.svg"
+    },
+    "openai": {
+      "source": "https://cdn.oaistatic.com/assets/favicon-o20kmmos.svg",
+      "asset": "Official Blossom path; favicon background omitted for transparent identification"
+    },
+    "claude": {
+      "source": "https://claude.com",
+      "asset": "Official Claude symbol path from its wordmark SVG"
+    },
+    "cursor": {
+      "source": "https://cursor.com/brand",
+      "asset": "cursor-brand-assets.zip / General Logos/Cube/SVG/CUBE_2D_DARK.svg"
+    },
+    "deepseek": {
+      "source": "https://github.com/simple-icons/simple-icons",
+      "asset": "deepseek.svg",
+      "license": "CC0 canonical vendor symbol"
+    },
+    "mistral": {
+      "source": "https://github.com/simple-icons/simple-icons",
+      "asset": "mistralai.svg",
+      "license": "CC0 canonical vendor symbol"
+    },
+    "meta": {
+      "source": "https://github.com/simple-icons/simple-icons",
+      "asset": "meta.svg",
+      "license": "CC0 canonical vendor symbol"
+    },
+    "ollama": {
+      "source": "https://github.com/simple-icons/simple-icons",
+      "asset": "ollama.svg",
+      "license": "CC0 canonical vendor symbol"
+    },
+    "gemini": {
+      "source": "https://github.com/simple-icons/simple-icons",
+      "asset": "googlegemini.svg",
+      "license": "CC0 canonical vendor symbol"
+    },
+    "qwen": {
+      "source": "https://github.com/simple-icons/simple-icons",
+      "asset": "qwen.svg",
+      "license": "CC0 canonical vendor symbol"
+    },
+    "kimi": {
+      "source": "https://github.com/simple-icons/simple-icons",
+      "asset": "kimi.svg",
+      "license": "CC0 canonical vendor symbol"
+    },
+    "openrouter": {
+      "source": "https://github.com/simple-icons/simple-icons",
+      "asset": "openrouter.svg",
+      "license": "CC0 canonical vendor symbol"
+    }
+  }
+}

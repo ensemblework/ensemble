@@ -10,6 +10,10 @@ const ASSETS = [
   ...icons.icon.map(icon => icon.url),
   ...icons.apple.map(icon => icon.url),
   "/icon.svg",
+  "/providers/google.svg",
+  "/providers/github.svg",
+  "/providers/openai.svg",
+  "/providers/claude.svg",
   "/favicon.ico",
   "/robots.txt",
   "/apple-icon.png",
@@ -36,6 +40,8 @@ const ASSETS = [
 test("brand files are anonymous assets and hub routes are not", () => {
   for (const path of ASSETS) assert.equal(isAnonymousAsset(path), true, path);
   assert.equal(isAnonymousAsset("/today"), false);
+  assert.equal(isAnonymousAsset("/providers/google.svg.bak"), false);
+  assert.equal(isAnonymousAsset("/providers/unknown"), false);
   assert.equal(isAnonymousAsset("/login"), false);
   assert.equal(isAnonymousAsset("/icon-192.png.bak"), false);
 });

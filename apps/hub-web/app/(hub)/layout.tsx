@@ -19,6 +19,9 @@ import { Notifier } from "@/components/shell/notifier";
 import { PeekProvider, usePeek, useResizablePeek } from "@/components/shell/peek";
 import { toggleSidebarRail } from "@/lib/sidebar-rail";
 import { SeasonBanner } from "@/components/shell/season-banner";
+import { PagesPanel } from "@/components/pages/pages-panel";
+import { APPEARANCE_KEY, DEFAULT_APPEARANCE, publishAppearance, usePersistentState } from "@/lib/prefs";
+import type { AppearanceSettings } from "@ensemble/shared-types";
 import { Sidebar } from "@/components/shell/sidebar";
 import { SearchLanding } from "@/components/shell/search-match";
 import { TopBar } from "@/components/shell/topbar";
@@ -58,6 +61,26 @@ function MobileNavigation({ onClose }: { onClose: () => void }) {
 function Frame({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [drawer, setDrawer] = useState(false);
+  const [pagesOpen, setPagesOpen] = useState(() => pathname.startsWith("/pages"));
+  const [appearance] = usePersistentState<AppearanceSettings>(APPEARANCE_KEY, DEFAULT_APPEARANCE);
+  const panelSide = appearance.pagesPanelSide;
+  useEffect(() => {
+    const root = document.documentElement;
+    if (pagesOpen) root.dataset.pagesPanel = panelSide;
+    else delete root.dataset.pagesPanel;
+    return () => { delete root.dataset.pagesPanel; };
+  }, [pagesOpen, panelSide]);
+  useEffect(() => {
+    const open = () => { setPagesOpen(true); setDrawer(false); };
+    window.addEventListener("ensemble:pages-open", open);
+    return () => window.removeEventListener("ensemble:pages-open", open);
+  }, []);
+  useEffect(() => { setPagesOpen(window.matchMedia("(max-width: 767px)").matches ? pathname === "/pages" : pathname.startsWith("/pages")); }, [pathname]);
+  const pagesPanel = pagesOpen ? <PagesPanel side={panelSide} onClose={() => setPagesOpen(false)} onSide={() => {
+    const next = { ...appearance, pagesPanelSide: panelSide === "left" ? "right" as const : "left" as const };
+    publishAppearance(next);
+    void api.saveSettings({ appearance: next }).catch(() => undefined);
+  }} /> : null;
   const [Peek, setPeek] = useState<typeof peekPanel>(() => peekPanel);
   const [palette, setPalette] = useState(false);
   const [shortcuts, setShortcuts] = useState(false);
@@ -114,9 +137,10 @@ function Frame({ children }: { children: React.ReactNode }) {
     <div className="flex h-dvh overflow-hidden bg-bg">
       <PageProgress />
       <SearchLanding />
-      <div className="h-full shrink-0 max-md:hidden">
+      <div className="main-sidebar-slot h-full shrink-0 max-md:hidden">
         <Sidebar />
       </div>
+      {pagesOpen && panelSide === "left" ? pagesPanel : null}
       {drawer ? <MobileNavigation onClose={() => setDrawer(false)} /> : null}
       <div ref={area} className="relative flex min-w-0 flex-1">
         <div className={cx("relative flex min-w-0 flex-1 flex-col", peeking && fullscreen && "hidden")}>
@@ -174,6 +198,7 @@ function Frame({ children }: { children: React.ReactNode }) {
           </div>
         ) : null}
       </div>
+      {pagesOpen && panelSide === "right" ? pagesPanel : null}
       <EnsembleHotkey />
       <ShortcutsHost
         onPalette={() => setPalette((value) => !value)}

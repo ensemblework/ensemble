@@ -2,7 +2,7 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
-import { Bot, Bell, CalendarDays, Check, CheckCheck, ChevronDown, CircleCheck, Code2, Columns3, FileText, FolderOpen, GitBranch, MessageSquare, Pencil, MousePointer2, Plus, Search, Settings, ShieldCheck, Sparkles, Users } from "lucide-react";
+import { Orbit, Bell, CalendarDays, Check, CheckCheck, ChevronDown, CircleCheck, Code2, Columns3, FileText, FolderOpen, GitBranch, MessageSquare, Pencil, MousePointer2, Plus, Search, Settings, ShieldCheck, Sparkles, Users } from "lucide-react";
 import { memo, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { PreviewTiles, specPool } from "@/components/desk/live-board";
 import { tileFitsRole, tileDescription } from "@/components/desk/tile-catalog";
@@ -138,7 +138,7 @@ function ApprovalScene({ profile }: { profile: Profile }) {
   const code = profile.codeEnabled && (profile.role === "engineer" || profile.role === "vibe");
   const { story } = profile;
   return <><Heading title="Needs me" line="Decisions to make, questions to answer, and work ready for a next step." />
-    <div className="film-review-overview">{[[Bot, "Agent & editor requests", code ? "1" : "0"], [ShieldCheck, "Outgoing approvals", code ? "0" : "1"], [CalendarDays, "Waiting tasks", "0"]].map(([Icon, label, count]) => { const Mark = Icon as typeof Bot; return <div key={String(label)}><Mark size={17} /><span><strong>{String(count)}</strong><small>{String(label)}</small></span></div>; })}</div>
+    <div className="film-review-overview">{[[Orbit, "Agent & editor requests", code ? "1" : "0"], [ShieldCheck, "Outgoing approvals", code ? "0" : "1"], [CalendarDays, "Waiting tasks", "0"]].map(([Icon, label, count]) => { const Mark = Icon as typeof Orbit; return <div key={String(label)}><Mark size={17} /><span><strong>{String(count)}</strong><small>{String(label)}</small></span></div>; })}</div>
     <div className="film-context-tabs"><span>Everything</span><span data-active={code || undefined}>Requests</span><span data-active={!code || undefined}>Approvals</span><span>Waiting tasks</span></div>
     <div className="film-real-request film-panel" data-request-kind={code ? "permission" : "outgoing"}>
       {code ? <><div className="film-request-meta"><span className="film-tag">Ensemble agent</span><span>wants to git push · just now</span><small>{story.page}</small></div><h4>Push the reviewed changes?</h4><pre>git push origin feature/welcome</pre><p className="film-request-path">fieldnote/app</p><div className="film-real-actions"><span className="film-button" data-primary><Check size={11} />Allow once</span><span className="film-reason">Reason if you deny (sent to the agent)</span><span>Deny</span></div></>

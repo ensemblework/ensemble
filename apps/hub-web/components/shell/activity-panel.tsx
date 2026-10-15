@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { Bot, Code2, FileText, MessageSquare, OctagonX, Pause, Play, RefreshCw, Square } from "lucide-react";
+import { Orbit, Code2, FileText, MessageSquare, OctagonX, Pause, Play, RefreshCw, Square } from "lucide-react";
 import Link from "next/link";
 import { hasModule } from "@ensemble/shared-types/modules";
 import { activityPollInterval } from "@/lib/activity-poll";
@@ -13,10 +13,10 @@ import { useToast } from "../toast";
 import { TrayDot } from "@/components/motion/slot";
 import { Spinner, cx, useClickOutside } from "../ui";
 
-const CALL_ICON: Record<string, typeof Bot> = { assistant: MessageSquare, fetch: RefreshCw, run: Bot, workspace: Bot };
+const CALL_ICON: Record<string, typeof Orbit> = { assistant: MessageSquare, fetch: RefreshCw, run: Orbit, workspace: Orbit };
 const CALL_LABEL: Record<string, string> = { assistant: "Assistant", fetch: "Fetch", run: "Agent run", workspace: "Agent task" };
 
-function Row({ icon: Icon, title, detail, since, live, action }: { icon: typeof Bot; title: string; detail?: string | null; since?: string | null; live?: boolean; action?: React.ReactNode }) {
+function Row({ icon: Icon, title, detail, since, live, action }: { icon: typeof Orbit; title: string; detail?: string | null; since?: string | null; live?: boolean; action?: React.ReactNode }) {
   const elapsed = useElapsed(since ?? null, Boolean(live));
   return (
     <div className="group flex items-start gap-2 rounded-md px-2 py-1.5 hover:bg-hover">
@@ -165,7 +165,7 @@ export function ActivityControls({ connected = true }: { connected?: boolean }) 
               {calls.map((call) => (
                 <Row
                   key={call.id}
-                  icon={CALL_ICON[call.kind] ?? Bot}
+                  icon={CALL_ICON[call.kind] ?? Orbit}
                   title={`${CALL_LABEL[call.kind] ?? call.kind}: ${call.label}`}
                   detail={[call.model, call.detail].filter(Boolean).join(" · ")}
                   since={call.startedAt}

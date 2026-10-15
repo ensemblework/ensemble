@@ -169,7 +169,7 @@ More detail: [docs/17_REPOSITORY_STRUCTURE.md](docs/17_REPOSITORY_STRUCTURE.md).
 
 ## CI and deploys
 
-Every pull request runs `.github/workflows/ci.yml`: typecheck, the TypeScript and Python test suites (hub-api against a real Postgres and Redis), and production builds of the Hub and the landing page. After CI passes on `main`, `.github/workflows/deploy.yml` ships it: the VM pulls the new commit, the Hub and landing page are published on Vercel, and the landing pages are submitted to IndexNow search engines. How it works and which secrets it needs: [docs/01 §8](docs/01_TECH_STACK_AND_ENVIRONMENT.md#8-ci-and-deploys). A tag `cli-v<version>` runs `.github/workflows/cli-release.yml`, which builds the CLI for macOS, Windows and Linux, publishes a GitHub release, and updates the Homebrew tap and Scoop bucket ([docs/26 §7](docs/26_CLI.md#7-releases)).
+Go setup is pinned to `actions/setup-go@v6.4.0` (Go `1.24.x`) in CI and client packaging. Every pull request runs `.github/workflows/ci.yml`: typecheck, the TypeScript and Python test suites (hub-api against a real Postgres and Redis), and production builds of the Hub and the landing page. After CI passes on `main`, `.github/workflows/deploy.yml` ships it: the VM pulls the new commit, the Hub and landing page are published on Vercel, and the landing pages are submitted to IndexNow search engines. How it works and which secrets it needs: [docs/01 §8](docs/01_TECH_STACK_AND_ENVIRONMENT.md#8-ci-and-deploys). A tag `cli-v<version>` runs `.github/workflows/cli-release.yml`, which builds the CLI for macOS, Windows and Linux, publishes a GitHub release, and updates the Homebrew tap and Scoop bucket ([docs/26 §7](docs/26_CLI.md#7-releases)).
 
 ## License
 

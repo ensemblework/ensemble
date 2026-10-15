@@ -150,7 +150,7 @@ test("HTTP waits on 429 Retry-After and never echoes the token", async () => {
   await assert.rejects(denied.json("https://api.example.test/x"), (error: Error) => /did not accept the token/.test(error.message) && !error.message.includes("secret"));
 });
 
-test("Notion: data sources, standalone pages, row properties and blocks to Markdown", async () => {
+test("Notion: data sources, standalone pages, tables, nested pages and native formatting", async () => {
   const { fetch, calls } = mockFetch((call) => {
     if (call.url.endsWith("/v1/search")) {
       const value = (call.body as { filter: { value: string } }).filter.value;
@@ -164,6 +164,11 @@ test("Notion: data sources, standalone pages, row properties and blocks to Markd
         ],
         has_more: false,
       };
+    }
+    if (call.url.endsWith("/v1/data_sources/ds-1")) return { id: "ds-1", properties: { Name: { type: "title" }, Budget: { type: "number" } } };
+    if (call.url.includes("/v1/pages/")) {
+      const id = call.url.split("/").pop()!;
+      return { id, object: "page", properties: { title: { type: "title", title: [{ plain_text: id === "1111-2222" ? "Guide" : id === "aaaa-bbbb" ? "Home" : "Draft field guide" }] } }, parent: id === "1111-2222" ? { type: "page_id", page_id: "aaaa-bbbb" } : { type: "workspace" } };
     }
     if (call.url.endsWith("/v1/data_sources/ds-1/query")) {
       return {
@@ -215,34 +220,24 @@ test("Notion: data sources, standalone pages, row properties and blocks to Markd
   const ctx = context({ token: "secret_notion", via: "token" }, fetch);
   const containers = await notionSource.listContainers(ctx);
   assert.deepEqual(containers.map((container) => [container.id, container.name, container.count, container.importAs]), [
-    ["ds-1", "Field tasks", null, "tasks"],
+    ["ds-1", "Field tasks", null, "pages"],
     ["pages", "Pages", 2, "pages"],
   ]);
   assert.equal(calls[0]!.headers["Notion-Version"], NOTION_VERSION);
   assert.equal(calls[0]!.headers.Authorization, "Bearer secret_notion");
   const items = await collect(notionSource.fetchItems(ctx, containers));
-  const row = items.find((item) => item.kind === "task")!;
-  assert.equal(row.externalId, "aaaabbbbccccddddeeeeffff00001111");
-  assert.equal(row.title, "Draft field guide");
-  assert.equal(row.dueDate, "2026-10-20");
-  assert.equal(row.startDate, "2026-10-18");
-  assert.equal(row.status, "In progress");
-  assert.equal(row.priority, "High");
-  assert.deepEqual(row.labels, ["Writing", "Field guide"]);
-  assert.deepEqual(row.assignees, ["Mira Chen"]);
-  assert.equal(row.projectRef, "ds1");
-  assert.match(row.pageMarkdown!, /\*\*Budget:\*\* 1200/);
-  assert.match(row.pageMarkdown!, /## Outline/);
-  assert.match(row.pageMarkdown!, /- \[x\] \*\*Soil\*\*/);
-  assert.match(row.pageMarkdown!, /```python\nprint\('hi'\)\n```/);
-  assert.match(row.pageMarkdown!, /> 💡 Keep it short/);
-  assert.match(row.pageMarkdown!, /\| Plot \| Crop \|\n\| --- \| --- \|\n\| A \| Rye \|/);
-  assert.match(row.pageMarkdown!, /\[Image: Cover\]\(https:\/\/images\.example\.test\/cover\.png\)/);
-  assert.match(row.pageMarkdown!, /\*\*More\*\*\n\nHidden detail/);
+  const row = items.find((item) => item.externalId === "aaaabbbbccccddddeeeeffff00001111")!;
+  assert.equal(row.kind, "page");
+  assert.equal(row.parentRef, "ds1");
+  assert.deepEqual(row.pageContent!.content.map((node) => node.type), ["heading", "taskList", "codeBlock", "blockquote", "table", "image", "toggleBlock"]);
+  assert.equal(row.pageContent!.content.at(-1)!.content![1]!.content![0]!.text, "Hidden detail");
+  const table = items.find((item) => item.externalId === "ds1")!.pageContent!.content[0]!;
+  assert.equal(table.type, "table");
+  assert.equal(table.content![0]!.content![1]!.attrs!.valueType, "number");
+  assert.equal(table.content![1]!.content![1]!.content![0]!.content![0]!.text, "1200");
   const guide = items.find((item) => item.title === "Guide")!;
-  assert.equal(guide.kind, "page");
-  assert.equal(guide.parentTitle, "Home");
-  assert.equal(guide.pageMarkdown, "[Chapters](https://fieldnote.example.test)");
+  assert.equal(guide.parentRef, "aaaabbbb");
+  assert.equal(guide.pageContent!.content[0]!.content![0]!.marks![0]!.attrs!.href, "https://fieldnote.example.test");
   const query = calls.find((call) => call.url.endsWith("/v1/data_sources/ds-1/query"))!;
   assert.equal(query.method, "POST");
 });

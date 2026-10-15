@@ -78,7 +78,9 @@ Each state comes with one plain sentence, short numbered steps and a button to t
 
 ## 7. Agents, the assistant and editors
 
-- **Ensemble's agent**: its brief lists the files on the task's page, its project's page and files tagged with the task, with up to 2,000 characters of each (10,000 in total). `read_attachment` reads a file in parts; `save_attachment` (code runs) copies the original into the work folder (`attachments/<name>`).
+`files/attached.ts` also includes the original document a page was converted from (`sourceFileId`), even after that page becomes a task. Originals stay attached through nested page content and bulk Trash/Undo. Research and code agents can use `read_attachment` and `save_attachment`; engine runs receive original copies. Paired computers download originals before queueing the local job through `GET /api/devices/self/jobs/:id/attachments/:fileId`, using the owning device token and active `x-ensemble-job-lease` header. The route verifies the file is still attached to this task; it is not a general Files download. The same route supplies full source text for diagrams embedded in the page, saved locally as `.ensemble-diagram.txt` files so source beyond the prompt excerpt remains readable. The runner remaps page references to the copied files' local ids before starting. Transfers are bounded to 100 MB per run.
+
+- **Ensemble's agent**: its brief lists the files on the task's page, its project's page and files tagged with the task, with up to 2,000 characters of each (10,000 in total). `read_attachment` reads a file in parts; `save_attachment` (research and code runs) copies the original into the work folder (`attachments/<name>`).
 - **Claude Code, Codex and Cursor**: the originals are copied for the job and their paths listed in the prompt — to `<workspace>/files/<jobId>/` when the run may read outside its folder, otherwise to `<folder>/.ensemble/attachments/<jobId>/` (git-ignored). Copies are removed when the job ends.
 - **Paired computers**: the claim's task description gets a "Files attached" section with short excerpts.
 - **The assistant**: `hub_list_files` and `hub_read_file`; `hub_import_app_file` brings a file or attachment in from a connected app the same way as `POST /api/documents/import`, after Apply (its preview says when the app is not ready or the hosted plan's 10 files are used); `hub_create_page` and `hub_update_page` attach a file with a `[@name](ensemble://file/<id>)` link; `hub_import_dataset` with `fileId` makes a Plots dataset from a CSV, TSV or `.xlsx` sheet in Files ([11 §8.4](11_HOW_THE_ASSISTANT_WORKS.md)).
@@ -103,7 +105,7 @@ File text is always passed on as information, not instructions.
 | DELETE | `/api/documents/:id` | → 204; the file and its text go to Trash together |
 | GET | `/api/documents/import-sources` | → `{ sources: FileImportSource[] }` |
 | POST | `/api/documents/import` | `{ source, kind: "file" \| "attachment", id }` → 201 `{ file }` (200 when already kept) |
-| GET | `/api/artifacts?exclude=uploads&kind=&q=&before=` | From your apps (§11): → `{ artifacts[], counts[], sync[], nextCursor }` |
+| GET | `/api/artifacts?exclude=uploads&kind=&q=&before=` | Explicit connected-item browser (§11): → `{ artifacts[], counts[], sync[], nextCursor }` |
 | GET | `/api/artifacts/:id` | → `{ artifact }` with `text`, `participants`, `origin`, `documentId` |
 | DELETE | `/api/artifacts/:id` | Owner only → 204; 409 `{ error, documentId }` for an uploaded file's text |
 
@@ -127,9 +129,9 @@ Hosted: a verified email for everything; imports 60 per 10 minutes. Space member
 - Web: `components/editor/file-attach.test.tsx`, `components/files/*.test.tsx` (`from-apps.test.tsx`: the switch, list, chips, search, reader, Remove, paging, empty state, guests), `lib/files/*.test.ts`.
 - Present and Full screen: `components/files/present.test.tsx` runs them on a generated .pptx and a code file (keys, clicks, hidden slides, focus, the × and Esc, the in-page layer when the browser has no Fullscreen API, and a browser that grants it). A PDF in full screen uses the same layer; that path was read, not run, because pdf.js does not run in the test DOM.
 
-## 11. From your apps
+## 11. Connected items opened explicitly
 
-`/files?view=apps` (`apps/hub-web/components/files/from-apps.tsx`) lists the items Ensemble keeps from connected apps: synced mail, events, chats, channel messages, transcripts, pull requests and issues, and items attached to a task or project from an app. It reads `GET /api/artifacts?exclude=uploads`, which leaves out uploaded files' text Artifacts (a Document is linked, or `externalId` starts with `file:`). `origin` says which app each item came from (`apps/hub-api/src/context/artifacts.ts`: `metadata.source`, the attached item's app, or the link). The reader is `GET /api/artifacts/:id`; for an uploaded file's text it returns `documentId` and Files opens the file. Space members see the shared kinds only: never the owner's mail, chats or calendar (`visibleArtifacts`).
+The Files home (`components/files/files-screen.tsx`) shows only uploaded or explicitly imported documents and makes no connected-item list request. **Add from your apps** opens an explicit search/import picker. Existing direct links to `/files?view=apps` or `&item=…` (`apps/hub-web/components/files/from-apps.tsx`) open the items Ensemble keeps from connected apps: synced mail, events, chats, channel messages, transcripts, pull requests and issues, and items attached to a task or project from an app. It reads `GET /api/artifacts?exclude=uploads`, which leaves out uploaded files' text Artifacts (a Document is linked, or `externalId` starts with `file:`). `origin` says which app each item came from (`apps/hub-api/src/context/artifacts.ts`: `metadata.source`, the attached item's app, or the link). The reader is `GET /api/artifacts/:id`; for an uploaded file's text it returns `documentId` and Files opens the file. Space members see the shared kinds only: never the owner's mail, chats or calendar (`visibleArtifacts`).
 
 **Remove** (`DELETE /api/artifacts/:id`, owner only; members get 403):
 
@@ -141,3 +143,5 @@ Hosted: a verified email for everything; imports 60 per 10 minutes. Space member
 A calendar sync also soft-deletes events that left the calendar; those have no suppression and come back when seen again. Attaching the same item again from an app (`saveContent` in `connectors/items/index.ts`) clears the suppression and restores the row. Removed items are not in Trash.
 
 Checked 12 Oct 2026 with `artifacts.integration.test.ts` for the list, the graph, live tiles, attached items and MCP search and read; that calendars and the assistant's context tools skip removed items was read in the code, not run.
+
+Paired-run original-file transfer is included in CLI 0.3.11 and desktop 0.3.8; update older receivers to get the original bytes and local file-ID remapping.

@@ -1,10 +1,11 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Mail, Plus } from "lucide-react";
+import { Orbit as AgentIcon, ChevronRight, Mail, Plus } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useQuickAssign } from "@/components/agent/use-quick-assign";
 import { AssignDialog } from "@/components/agent/assign-dialog";
 import { usePeek } from "@/components/shell/peek";
 import { DeliverablesRail, RemindersRail } from "@/components/today/rail";
@@ -183,16 +184,16 @@ function ProposedCard({
       ) : null}
       <div className="mt-2 flex items-center gap-1">
         <button type="button" className="btn-primary px-2 py-0.5 text-[12px]" onClick={() => onAct("mine")}>
-          I&apos;ll do it
+          I&apos;ll do it <kbd className="ml-1 opacity-65">M</kbd>
         </button>
         <button type="button" className="btn px-2 py-0.5 text-[12px]" onClick={() => onAct("agent")}>
-          Agent does it
+          <AgentIcon size={12} /> Agent <kbd className="ml-1 text-faint">A</kbd>
         </button>
         <button type="button" className="btn-ghost px-2 py-0.5 text-[12px]" onClick={() => onAct("later")}>
-          Later
+          Later <kbd className="ml-1 text-faint">L</kbd>
         </button>
         <button type="button" className="btn-ghost px-2 py-0.5 text-[12px]" onClick={() => onAct("drop")}>
-          Drop
+          Drop <kbd className="ml-1 text-faint">D</kbd>
         </button>
         <button type="button" className="btn-ghost px-2 py-0.5 text-[12px]" onClick={() => onAct("open")}>
           Open
@@ -227,8 +228,9 @@ export function TodayScreen({
   });
   const [title, setTitle] = useState("");
   const [selected, setSelected] = useState(0);
-  const [shortcuts, setShortcuts] = useState(false);
+  const [shortcuts, setShortcuts] = useState(true);
   const [assignTask, setAssignTask] = useState<string | null>(null);
+  const quickAssign = useQuickAssign(setAssignTask);
   const waiting = !tasks.data && (home.isError || home.failureCount > 0);
   const known = Boolean(tasks.data);
   const list = tasks.data?.tasks ?? [];
@@ -323,13 +325,13 @@ export function TodayScreen({
 
   const handle = (task: TaskRecord, action: "mine" | "agent" | "later" | "drop" | "open") => {
     if (action === "open") peek.open(task.id);
-    else if (action === "agent") setAssignTask(task.id);
+    else if (action === "agent") { if (!quickAssign.isPending) quickAssign.mutate(task.id); }
     else act.mutate({ task, action });
   };
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (document.querySelector("[data-layout-editing]")) return;
+      if (document.querySelector("[data-layout-editing], [data-modal-layer]")) return;
       const target = event.target as HTMLElement;
       if (target.closest("input, textarea, select, [contenteditable=true]") || peek.peekId || assignTask) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
@@ -350,7 +352,7 @@ export function TodayScreen({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [proposed, selected, peek.peekId]);
+  }, [proposed, selected, peek.peekId, assignTask, quickAssign.isPending]);
 
 
   const zone = timezone === "local time" ? Intl.DateTimeFormat().resolvedOptions().timeZone : timezone;
@@ -472,7 +474,7 @@ export function TodayScreen({
             <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-muted">
               <span><span className="kbd">J</span>/<span className="kbd">K</span> move</span>
               <span><span className="kbd">M</span> I&apos;ll do it</span>
-              <span><span className="kbd">A</span> agent does it</span>
+              <span><span className="kbd">A</span> agent · default profile</span>
               <span><span className="kbd">L</span> later</span>
               <span><span className="kbd">D</span> drop</span>
               <span><span className="kbd">O</span> open</span>

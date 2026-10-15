@@ -4,8 +4,10 @@
  */
 import type { AppItem, AppItemContent, AppItemPerson } from "@ensemble/shared-types";
 import { createImportHttp } from "../../../imports/http.js";
+import { pageMarkdown } from "../../../pages/markdown.js";
+import { notionNodes, notionTable } from "../../../imports/notion-content.js";
 import { notionBlocks, notionHeaders } from "../../../imports/api/notion.js";
-import { notionBlocksToMarkdown, notionPlain } from "../../../imports/markdown.js";
+import { notionPlain } from "../../../imports/markdown.js";
 import type { SourceContext } from "../../../imports/types.js";
 import { facts, itemFetch, itemMarkdown } from "../http.js";
 import { ItemError, type ItemContext, type ItemSource } from "../types.js";
@@ -38,7 +40,10 @@ export function notionId(text: string): string | null {
 
 function titleOf(row: NotionObject): string {
   for (const property of Object.values(row.properties ?? {})) {
-    if (property.type === "title") return notionPlain(property.title).trim();
+    if (property.type === "title" && Array.isArray(property.title)) {
+      const title = notionPlain(property.title).trim();
+      if (title) return title;
+    }
   }
   return Array.isArray(row.title) ? notionPlain(row.title).trim() : "";
 }
@@ -125,19 +130,11 @@ export const notionItems: ItemSource = {
       const source = await call<NotionObject & { properties?: Record<string, Json> }>(ctx, `/data_sources/${ref.id}`);
       const rows = await call<{ results: NotionObject[] }>(ctx, `/data_sources/${ref.id}/query`, { page_size: 50 });
       const columns = Object.keys(source.properties ?? {}).join(", ");
-      const lines = rows.results.map((row) => {
-        const values = Object.entries(row.properties ?? {})
-          .filter(([, property]) => property.type !== "title")
-          .map(([name, property]) => [name, propertyValue(property)] as const)
-          .filter(([, value]) => value)
-          .slice(0, 6)
-          .map(([name, value]) => `${name}: ${value}`)
-          .join("; ");
-        return `- ${titleOf(row) || "Untitled"}${values ? ` (${values})` : ""}`;
-      });
+      const names = Object.keys(source.properties ?? {});
+      const table = notionTable(names.map((name) => ({ name })), rows.results.map((row) => ({ id: row.id, values: names.map((name) => [{ type: "text", text: propertyValue(row.properties?.[name] ?? {}) || " " }]) })));
       const item = asItem({ ...source, object: "data_source" });
       const list = facts({ Columns: columns, Rows: `${rows.results.length}${rows.results.length === 50 ? "+" : ""}` });
-      return { ...item, facts: list, text: itemMarkdown(item.title, list, lines.join("\n")) };
+      return { ...item, facts: list, text: itemMarkdown(item.title, list, pageMarkdown({ type: "doc", content: [table] }, "")) };
     }
     const page = await call<NotionObject>(ctx, `/pages/${ref.id}`);
     const props = Object.entries(page.properties ?? {})
@@ -151,7 +148,7 @@ export const notionItems: ItemSource = {
       .filter((property) => property.type === "people" && Array.isArray(property.people))
       .flatMap((property) => (property.people as Json[]).map((person) => ({ name: String(person.name ?? ""), email: String((person.person as Json | undefined)?.email ?? "") || undefined })))
       .filter((person) => person.name);
-    return { ...item, facts: list, people, text: itemMarkdown(item.title, list, notionBlocksToMarkdown(blocks)) };
+    return { ...item, facts: list, people, text: itemMarkdown(item.title, list, pageMarkdown({ type: "doc", content: notionNodes(blocks) }, "")) };
   },
   async people(ctx) {
     const out: AppItemPerson[] = [];

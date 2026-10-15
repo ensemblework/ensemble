@@ -12,6 +12,7 @@ import { computerName, folderPlace, freshCloneHint } from "@/lib/device-copy";
 import { usePersistentState } from "@/lib/prefs";
 import { setFeature } from "@/lib/features";
 import { useModuleState } from "@/lib/use-module";
+import { useQuickAssign } from "./use-quick-assign";
 import { canAddProfile, defaultProfile, differs, newProfileId, profileChoices, profileSummary, quickProfile, removeProfile, upsertProfile, type ProfileFields } from "@/lib/run-profiles";
 import { useToast } from "../toast";
 import { Dialog, InfoTip, SettingRow, Spinner, Toggle, cx } from "../ui";
@@ -304,6 +305,7 @@ export function AssignDialog({
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
   const [taskId, setTaskId] = useState(fixedTaskId ?? "");
+  const quickAssignment = useQuickAssign(() => undefined, onClose);
   const [kind, setKind] = usePersistentState<Kind>("ensemble.assign.kind", defaultKind ?? "research");
   const [modelChoice, setModelChoice] = usePersistentState("ensemble.assign.model", "");
   const [engine, setEngine] = usePersistentState<"ensemble" | "claude-code" | "codex" | "cursor-agent">("ensemble.assign.engine", "ensemble");
@@ -1224,6 +1226,7 @@ export function AssignDialog({
           <button type="button" className="btn-ghost" onClick={onClose}>
             Cancel
           </button>
+          {taskId && !appMode ? <button type="button" className="btn-ghost" title="Use the saved default profile" disabled={quickAssignment.isPending || assign.isPending} onClick={() => quickAssignment.mutate(taskId)}>{quickAssignment.isPending ? <Spinner size={12} /> : null} Quick assign</button> : null}
           {appMode ? (
             <button
               type="button"

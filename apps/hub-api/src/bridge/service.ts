@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { fileFormat, hasModule, PageDocument } from "@ensemble/shared-types";
 import { describeFile, filesOnPage, filesOnTask, type AttachedFile } from "../files/attached.js";
+import { pageAgentText } from "../pages/agent-context.js";
 import { pageText as pageDocumentText } from "../pages/markdown.js";
 import { env } from "../config.js";
 import { DATA_GAPS, REFERENCE_NOTE, UNTRUSTED_NOTE } from "./gaps.js";
@@ -537,7 +538,7 @@ export async function readItem(
         },
       });
       if (!task) return { found: false };
-      const page = [task.notes, task.page?.notesSnapshot ?? "", plainFromJson(task.page?.content)].filter(Boolean).join("\n\n");
+      const page = await pageAgentText(db, userId, task.page?.content, task.notes, 15_000, 20_000);
       return {
         found: true,
         item: {
@@ -850,7 +851,7 @@ export async function readItem(
       if (!row) return { found: false };
       const parsed = row.content == null ? null : PageDocument.safeParse(row.content);
       const text = parsed?.success
-        ? pageDocumentText(parsed.data, row.notesSnapshot)
+        ? await pageAgentText(db, userId, parsed.data, row.notesSnapshot, 15_000, 20_000)
         : row.content == null
           ? pageDocumentText(null, row.notesSnapshot)
           : plainFromJson(row.content);

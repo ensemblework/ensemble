@@ -6,7 +6,9 @@
  */
 import { z } from "zod";
 import { APP_ITEM_KIND_LABEL, type AppItemKind } from "@ensemble/shared-types";
-import { itemSource, readItem } from "../../connectors/items/index.js";
+import { itemSource, readItem, readNotionPages } from "../../connectors/items/index.js";
+import { finishPageImport, newWriterState, writePages } from "../../imports/apply.js";
+import { emptyCounts } from "../../imports/types.js";
 import { MAX_ITEM_TEXT } from "../../connectors/items/types.js";
 import { importFromApp, importSources } from "../../files/import.js";
 import { describeFile } from "../../files/attached.js";
@@ -14,7 +16,7 @@ import { fileUsage } from "../../files/store.js";
 import { requireVerifiedUser } from "../../lib/hosted-access.js";
 import { HostedLimitError, sizeLabel } from "../../lib/hosted-limits.js";
 import { sseHub } from "../../lib/sse.js";
-import { lastUndoId, recordUndoInTransaction } from "../../lib/undo.js";
+import { lastUndoId, recordUndoInTransaction, withUndoGroup } from "../../lib/undo.js";
 import { createStandalonePage } from "../../pages/store.js";
 import { defineTool, toolOk, type ToolContext } from "../types.js";
 import { keepOwnMentions, markdownPage } from "./pages.js";
@@ -51,6 +53,37 @@ function itemBody(title: string, text: string): string {
   const lines = text.replace(/\r\n/g, "\n").split("\n");
   if (lines[0]?.replace(/^#\s+/, "").trim() === title.trim()) lines.shift();
   return lines.join("\n").trim();
+}
+
+async function saveNotion(ctx: ToolContext, input: { id: string; kind: "page" | "database"; title?: string }) {
+  const items = await readNotionPages(ctx.userId, input);
+  if (!items.length) throw refused("That Notion page is archived or has no accessible content.");
+  if (input.title) items[0]!.title = input.title;
+  const state = newWriterState(ctx.userId, { externalSource: "notion", sourceKind: "notion", sourceLabel: "Notion", statusMap: {}, importAs: { pages: "pages" } }, emptyCounts());
+  const result = await ctx.prisma.$transaction(async (tx) => {
+    const before = await tx.taskPage.findMany({ where: { userId: ctx.userId, externalSource: "notion", externalId: { in: items.map((item) => item.externalId) } } });
+    return withUndoGroup(tx, { userId: ctx.userId, actor: "agent", subject: "page" }, async () => {
+      await writePages(tx, state, items);
+      await finishPageImport(tx, state);
+      for (const id of state.created.pages) {
+        const page = await tx.taskPage.findUniqueOrThrow({ where: { id } });
+        const op = { op: "create" as const, model: "taskPage" as const, id, data: { updatedAt: page.updatedAt } };
+        await recordUndoInTransaction(tx, { userId: ctx.userId, label: `Imported “${page.title}”`, kind: "create", actor: "agent", subject: "page", inverse: op, forward: op });
+      }
+      for (const previous of before) {
+        const after = await tx.taskPage.findUniqueOrThrow({ where: { id: previous.id } });
+        if (after.updatedAt.getTime() === previous.updatedAt.getTime()) continue;
+        const op = { op: "update" as const, model: "taskPage" as const, id: previous.id, before: { title: previous.title, content: previous.content, revision: previous.revision, annotations: previous.annotations, searchText: previous.searchText, parentId: previous.parentId }, after: { title: after.title, content: after.content, revision: after.revision, annotations: after.annotations, searchText: after.searchText, parentId: after.parentId, updatedAt: after.updatedAt } };
+        await recordUndoInTransaction(tx, { userId: ctx.userId, label: `Updated “${after.title}” from Notion`, kind: "update", actor: "agent", subject: "page", inverse: op, forward: op });
+      }
+      const page = await tx.taskPage.findFirstOrThrow({ where: { userId: ctx.userId, externalSource: "notion", externalId: items[0]!.externalId }, include: { task: { select: { title: true, deletedAt: true } } } });
+      if (page.deletedAt || page.task?.deletedAt) throw refused("This imported page is in Trash. Restore it before importing it again.", 409);
+      return { id: page.id, title: page.task?.title ?? page.title, taskId: page.taskId };
+    });
+  }, { timeout: 120_000 });
+  const href = result.result.taskId ? `/tasks/${result.result.taskId}` : `/pages/${result.result.id}`;
+  sseHub.publish(ctx.userId, { event: "page", data: { id: result.result.id, action: "import" } });
+  return toolOk(`Imported “${result.result.title}” and its nested pages from Notion. Tables and formatting are preserved.`, { ...result.result, href, pages: items.length, counts: state.counts }, { href, invalidate: ["pages"], ...(result.undoEntryId ? { undoEntryId: result.undoEntryId } : {}) });
 }
 
 export const importTools = [
@@ -100,7 +133,7 @@ export const importTools = [
     name: "hub_save_app_item_as_page",
     area: "context",
     description:
-      "Save one item from a connected app (a Notion or Confluence page, a Google Doc's text, an issue…) as an Ensemble page, with a line saying where it came from and a link back. source, kind and id come from an apps_search hit; title overrides the page title. One item per call. Saving the same item again returns the page it made before.",
+      "Save an item from a connected app as an Ensemble page. Notion pages include nested pages and native formatting; Notion databases become ordinary editable tables with linked row pages. source, kind and id come from apps_search; title overrides the root title. Re-imports keep local edits and avoid copies.",
     input: z.object({
       source: z.string().trim().min(1).max(40).regex(/^[a-z0-9_]+$/).describe("The app id from apps_search, e.g. notion, github, atlassian."),
       kind: z.enum(ITEM_KINDS),
@@ -118,6 +151,7 @@ export const importTools = [
       return `Save the ${app.label} ${APP_ITEM_KIND_LABEL[input.kind].toLowerCase()} ${input.title ? `“${input.title}”` : input.id} as a page`;
     },
     async run(ctx, input) {
+      if (input.source === "notion" && (input.kind === "page" || input.kind === "database")) return saveNotion(ctx, { ...input, kind: input.kind });
       const externalId = `${input.source}:${input.kind}:${input.id}`.slice(0, 500);
       const kept = await ctx.prisma.taskPage.findFirst({ where: { userId: ctx.userId, externalSource: PAGE_SOURCE, externalId }, select: { id: true, title: true, deletedAt: true, taskId: true } });
       if (kept && !kept.deletedAt) {

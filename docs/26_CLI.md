@@ -11,6 +11,8 @@ Type `ensemble` in a project folder and Ensemble opens full-screen in the termin
 
 Code: `apps/cli` (npm name `ensemblework`, command `ensemble`); the app is `apps/cli/src/tui` (Ink and React, bundled into the same single file). Packaging: `scripts/package-cli.mjs`, `packaging/`, `.github/workflows/cli-release.yml`. Install scripts: `apps/landing/public/install.sh` and `install.ps1`, served at `https://ensemblework.com/install.sh` and `/install.ps1`. User guide: [ensemblework.com/download](https://ensemblework.com/download), and in the Hub under Connect your apps and Settings → Devices.
 
+CLI 0.3.11 carries the page/diagram source and original attached-file handoff to paired runs. The runner downloads the originals with its active job lease and remaps page references to local file IDs before starting; the transfer is capped at 100 MB. Update older runners for original-file transfer ([25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)).
+
 ## 1. Install
 
 | OS | Command |

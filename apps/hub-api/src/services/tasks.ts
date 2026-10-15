@@ -3,6 +3,7 @@
  * the route would persist, or the bookkeeping (transition, completedAt, undo).
  */
 import type { Actor, Prisma, PrismaClient, Task, TaskStatus } from "@prisma/client";
+import { markdownToNodes } from "../pages/markdown.js";
 import { inferComplexity } from "../lib/complexity.js";
 import { parseDue } from "../lib/clock.js";
 import { assertTransition } from "../lib/state-machine.js";
@@ -159,7 +160,8 @@ export async function createTask(tx: Tx, userId: string, draft: TaskDraft, actor
     data: {
       userId,
       title,
-      description: draft.description ?? "",
+      description: actor === "me" ? draft.description ?? "" : "",
+      ...(actor !== "me" && draft.description?.trim() ? { page: { create: { userId, content: { type: "doc", content: markdownToNodes(draft.description) } as unknown as Prisma.InputJsonValue, notesSnapshot: draft.description, searchText: `${title}\n${draft.description}` } } } : {}),
       notes: draft.notes ?? "",
       ...(await (async () => {
         const who = await resolveAssignee(tx, userId, draft.owner, draft.assignee);
@@ -220,6 +222,7 @@ export async function createTask(tx: Tx, userId: string, draft: TaskDraft, actor
 }
 
 export async function updateTask(tx: Tx, userId: string, id: string, patch: TaskPatch, actor: Actor): Promise<Task> {
+  if (actor !== "me" && patch.description !== undefined) throw Object.assign(new Error("The short description is for people to write. Add automated context to the page body."), { statusCode: 400 });
   const existing = await tx.task.findFirst({ where: { id, userId, deletedAt: null } });
   if (!existing) throw Object.assign(new Error("That task is not on your board."), { statusCode: 404 });
   const claimed = patch.matchTitle;

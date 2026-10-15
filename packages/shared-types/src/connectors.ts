@@ -77,7 +77,7 @@ export interface ConnectorImport {
   /** Where to create a personal token, for the token path. */
   tokenUrl?: string;
   tokenHint?: string;
-  /** What comes across, e.g. ["Databases as projects", "Rows as tasks with due dates and tags", "Pages"]. */
+  /** What comes across, e.g. ["Databases as ordinary tables", "Linked row pages", "Nested pages"]. */
   brings: readonly string[];
 }
 
@@ -418,7 +418,7 @@ export const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
       api: true,
       tokenUrl: "https://www.notion.so/profile/integrations",
       tokenHint: "Create an internal integration, copy its secret, then share the pages to import with it (••• → Connections).",
-      brings: ["Databases as projects", "Rows as tasks with dates, status, tags and people", "Pages with their content"],
+      brings: ["Databases as ordinary editable tables", "Linked row pages with all property values", "Nested pages and native rich formatting"],
     },
     status: "ready",
   },

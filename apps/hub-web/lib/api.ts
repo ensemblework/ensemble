@@ -268,12 +268,15 @@ export type PageRecord = {
 };
 
 export type StandalonePageSummary = {
+  parentId?: string | null;
   id: string;
   title: string;
   updatedAt: string;
 };
 
 export type StandalonePageRecord = {
+  parentId?: string | null;
+  parentTaskId?: string | null;
   id: string;
   title: string;
   taskId: null;
@@ -1167,6 +1170,7 @@ export const api = bindClient({
   savePage: (id: string, data: { revision: number; content: unknown; notes?: string }) =>
     put<PageRecord>(`/api/tasks/${id}/page`, data),
   pages: () => get<{ pages: StandalonePageSummary[] }>("/api/pages"),
+  deletePages: (pageIds: string[]) => post<{ deleted: number; undoEntryId: string | null }>("/api/pages/delete-many", { pageIds }),
   createPage: () => post<{ page: StandalonePageSummary }>("/api/pages", {}),
   convertPage: (kind: "page" | "task", id: string, revision: number) =>
     post<{ kind: "page" | "task"; id: string; pageId: string }>(`/api/pages/${kind}/${id}/convert`, { revision }),

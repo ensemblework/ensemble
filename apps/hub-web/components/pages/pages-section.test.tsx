@@ -3,7 +3,27 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { PagesSection, type PageLinkProps } from "./pages-section.js";
+import { PagesSection, pageTreeOrder, type PageLinkProps } from "./pages-section.js";
+
+test("nested pages are ordered under their parent, with safe roots for missing parents and cycles", () => {
+  const ordered = pageTreeOrder([{ id: "child", title: "Child", parentId: "root" }, { id: "orphan", title: "Orphan", parentId: "gone" }, { id: "root", title: "Root" }, { id: "loop", title: "Loop", parentId: "loop" }]);
+  assert.deepEqual(ordered.map((page) => [page.id, page.depth]), [["orphan", 0], ["root", 0], ["child", 1], ["loop", 0]]);
+});
+
+test("select pages sends one bulk deletion request", async () => {
+  const deleted: string[][] = [];
+  const mounted = await render(<PagesSection pages={[{ id: "a", title: "First" }, { id: "b", title: "Second", parentId: "a" }]} pathname="/pages/a" onCreate={() => {}} onRename={() => {}} onDelete={() => {}} onDeleteMany={(ids) => deleted.push(ids)} renderLink={(props) => <Anchor {...props} />} />);
+  try {
+    await act(async () => mounted.host.querySelector<HTMLButtonElement>('[aria-label="Select pages"]')!.click());
+    await act(async () => mounted.host.querySelector<HTMLInputElement>('[aria-label="Select First"]')!.click());
+    await act(async () => mounted.host.querySelector<HTMLButtonElement>('[aria-label="Expand First"]')!.click());
+    await act(async () => mounted.host.querySelector<HTMLInputElement>('[aria-label="Select Second"]')!.click());
+    const remove = [...mounted.host.querySelectorAll("button")].find((button) => button.textContent?.includes("Delete 2 pages"));
+    assert.ok(remove);
+    await act(async () => remove.click());
+    assert.deepEqual(deleted, [["a", "b"]]);
+  } finally { await unmount(mounted); }
+});
 
 function Anchor({ href, className, title, children }: PageLinkProps) {
   return (
@@ -35,28 +55,16 @@ const pages = [
   { id: "page-old", title: "Older note" },
 ];
 
-test("Pages start collapsed on load, open for an open note, and expand when a page is created", async () => {
-  let created = 0;
-  const mounted = await render(
-    <PagesSection pages={pages} pathname="/today" onCreate={() => { created += 1; }} onRename={() => undefined} onDelete={() => undefined} renderLink={(props) => <Anchor {...props} />} />,
-  );
+test("child pages start collapsed and can be expanded independently", async () => {
+  const mounted = await render(<PagesSection pages={[{ id: "root", title: "Root" }, { id: "child", title: "Child", parentId: "root" }, { id: "other", title: "Other" }]} pathname="/pages/child" onCreate={() => {}} onRename={() => {}} onDelete={() => {}} renderLink={(props) => <Anchor {...props} />} />);
   try {
-    const toggle = mounted.host.querySelector<HTMLButtonElement>("[aria-label='Toggle pages']")!;
-    assert.equal(toggle.getAttribute("aria-expanded"), "false");
-    assert.equal(mounted.host.querySelector("a")?.parentElement?.parentElement?.hidden, true);
+    assert.deepEqual([...mounted.host.querySelectorAll("a")].map((a) => a.textContent), ["Root", "Other"]);
+    const toggle = mounted.host.querySelector<HTMLButtonElement>('[aria-label="Expand Root"]')!;
     await act(async () => toggle.click());
-    assert.equal(toggle.getAttribute("aria-expanded"), "true");
-    await act(async () => toggle.click());
-    await act(async () => mounted.host.querySelector<HTMLButtonElement>("[aria-label='New page']")!.click());
-    assert.equal(created, 1);
-    assert.equal(toggle.getAttribute("aria-expanded"), "true");
+    assert.deepEqual([...mounted.host.querySelectorAll("a")].map((a) => a.textContent), ["Root", "Child", "Other"]);
+    await act(async () => mounted.host.querySelector<HTMLButtonElement>('[aria-label="Collapse Root"]')!.click());
+    assert.equal(mounted.host.querySelector('a[href="/pages/child"]'), null);
   } finally { await unmount(mounted); }
-  const onPage = await render(
-    <PagesSection pages={pages} pathname="/pages/page-old" onCreate={() => undefined} onRename={() => undefined} onDelete={() => undefined} renderLink={(props) => <Anchor {...props} />} />,
-  );
-  try {
-    assert.equal(onPage.host.querySelector("[aria-label='Toggle pages']")?.getAttribute("aria-expanded"), "true");
-  } finally { await unmount(onPage); }
 });
 
 test("the Pages section lists notes as /pages links and + creates one", async () => {
@@ -74,9 +82,9 @@ test("the Pages section lists notes as /pages links and + creates one", async ()
     />,
   );
   try {
-    const nav = document.querySelector("nav[aria-label='Pages']");
+    const nav = document.querySelector("nav[aria-label='Page tree']");
     assert.ok(nav);
-    assert.match(nav?.textContent ?? "", /Pages/);
+    assert.match(nav?.textContent ?? "", /2 pages/);
     const links = [...document.querySelectorAll("a")].map((link) => link.getAttribute("href"));
     assert.deepEqual(links, ["/pages/page-new", "/pages/page-old"]);
     assert.equal(links.some((href) => href?.includes("/api/")), false);

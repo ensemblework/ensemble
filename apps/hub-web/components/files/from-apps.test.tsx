@@ -152,32 +152,17 @@ function listing(call: Call, rows: ArtifactRecord[] = ITEMS, counts = COUNTS) {
 
 const rows = () => Array.from(document.querySelectorAll("[data-app-item]")).map((node) => node.getAttribute("data-app-item"));
 
-test("the switch at the top moves between your files and items from your apps, with an address for each", async () => {
-  assert.equal(filesHref("files"), "/files");
-  assert.equal(filesHref("apps"), "/files?view=apps");
-  assert.equal(filesHref("apps", "a 1"), "/files?view=apps&item=a%201");
+test("Files loads only stored files and never automatically reads connected items", async () => {
   const view = await mount("/files", (call) => {
     if (call.url.pathname === "/api/documents") return { files: [], usage: { count: 0, bytes: 0, maxCount: null, maxBytes: null, maxFileBytes: 1 } };
-    if (call.url.pathname === "/api/artifacts") return listing(call);
     return undefined;
   });
   try {
-    const tabs = Array.from(document.querySelectorAll('[role="tab"]')).map((node) => [node.textContent, node.getAttribute("aria-selected")]);
-    assert.deepEqual(tabs, [
-      ["Your files", "true"],
-      ["From your apps", "false"],
-    ]);
-    await click(button(/^From your apps$/));
-    assert.deepEqual(view.visited, ["/files?view=apps"]);
-    await waitFor(() => rows().length === 4, "the items");
-    const list = view.calls.find((call) => call.url.pathname === "/api/artifacts")!;
-    assert.equal(list.url.searchParams.get("exclude"), "uploads", "uploaded files stay in Your files");
-    await click(button(/^Your files$/));
-    assert.deepEqual(view.visited.at(-1), "/files");
-    await waitFor(() => Boolean(document.querySelector('[aria-label="Search files"]')), "your files again");
-  } finally {
-    await view.done();
-  }
+    await waitFor(() => view.calls.some((call) => call.url.pathname === "/api/documents"), "the library");
+    assert.equal(document.querySelector('[role="tab"]'), null);
+    assert.equal(view.calls.some((call) => call.url.pathname === "/api/artifacts"), false);
+    assert.doesNotMatch(text(), /From your apps/);
+  } finally { await view.done(); }
 });
 
 test("items show their kind, app and date; the kind chips and search ask the server", async () => {

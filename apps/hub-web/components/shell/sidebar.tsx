@@ -24,7 +24,7 @@ import {
 import { HomeLogoLink } from "../motion/brand-morph";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { hasModule, moduleForPath, type OptionalModule } from "@ensemble/shared-types/modules";
 import { api } from "@/lib/api";
 import { startDevWarm } from "@/lib/dev-warm";
@@ -121,6 +121,17 @@ function NavItem({
 
 export function Sidebar({ mobile = false }: { mobile?: boolean }) {
   const { connected } = useLive();
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reveal = () => {
+    if (mobile || document.documentElement.dataset.sidebarAuto !== "true") return;
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    document.documentElement.dataset.sidebarHover = "true";
+  };
+  const hide = () => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    hoverTimer.current = setTimeout(() => { delete document.documentElement.dataset.sidebarHover; }, 120);
+  };
+  useEffect(() => () => { if (hoverTimer.current) clearTimeout(hoverTimer.current); delete document.documentElement.dataset.sidebarHover; }, []);
   const mod = useModKey();
   const client = useQueryClient();
   const router = useRouter();
@@ -176,7 +187,7 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
   const sharedCount = (withMe.data?.spaces.length ?? 0) + (withMe.data?.items.length ?? 0);
   const unopened = withMe.data?.items.filter((item) => !item.openedAt).length ?? 0;
   return (
-    <aside className={cx("app-sidebar flex h-full shrink-0 flex-col border-r border-line bg-sidebar/90", mobile && "sidebar-mobile")}>
+    <aside className={cx("app-sidebar flex h-full shrink-0 flex-col border-r border-line bg-sidebar/90", mobile && "sidebar-mobile")} onPointerEnter={reveal} onPointerLeave={hide} onFocusCapture={reveal} onBlurCapture={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) hide(); }}>
       {mobile ? null : <SidebarResize />}
       <HomeLogoLink size={24} railSize={24} className="sidebar-brand mx-2 mt-3 flex min-h-10 items-center gap-2 rounded-lg px-2 font-semibold" />
       <div className="px-2 pb-2 pt-3">

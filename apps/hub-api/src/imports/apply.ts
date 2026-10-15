@@ -42,6 +42,7 @@ export interface WriterState {
   /** "id:<external id>" or "name:<lower name>" → project id. */
   projects: Map<string, string>;
   nextOrder: number | null;
+  parents: Map<string, string | null>;
 }
 
 export function newWriterState(userId: string, plan: WritePlan, counts: ImportCounts, created?: CreatedIds): WriterState {
@@ -52,6 +53,7 @@ export function newWriterState(userId: string, plan: WritePlan, counts: ImportCo
     created: created ?? { tasks: [], pages: [], projects: [], truncated: false },
     projects: new Map(),
     nextOrder: null,
+    parents: new Map(),
   };
 }
 
@@ -225,7 +227,7 @@ async function writeTaskPage(
   });
 }
 
-async function writePages(tx: Tx, state: WriterState, items: ImportItem[]): Promise<void> {
+export async function writePages(tx: Tx, state: WriterState, items: ImportItem[]): Promise<void> {
   if (!items.length) return;
   const { userId } = state;
   const externalSource = state.plan.externalSource;
@@ -234,16 +236,19 @@ async function writePages(tx: Tx, state: WriterState, items: ImportItem[]): Prom
     select: { id: true, revision: true, content: true, annotations: true, title: true, externalId: true, deletedAt: true },
   });
   const byId = new Map(existing.map((row) => [row.externalId!, row]));
+  const linked = await tx.taskPage.findMany({ where: { userId, externalSource, deletedAt: null }, select: { id: true, externalId: true } });
+  const links = new Map(linked.filter((row) => row.externalId).map((row) => [row.externalId!, row.id]));
   for (const item of items) {
     const title = cleanTitle(item.title);
     const markdown = [item.description ?? "", item.pageMarkdown ?? ""].filter((part) => part.trim()).join("\n\n");
-    const content = documentFor(markdown, breadcrumb(state, item));
+    const content = resolvePageLinks(item.pageContent ? PageDocument.parse({ type: "doc", content: [...breadcrumb(state, item), ...item.pageContent.content] }) : documentFor(markdown, breadcrumb(state, item)), links);
     const found = byId.get(item.externalId);
     if (found) {
       if (found.deletedAt || !pageUntouched(found)) {
         state.counts.pages.keptEdits += 1;
         continue;
       }
+      state.parents.set(item.externalId, item.parentRef ?? null);
       if (found.title === title && same(found.content, content)) {
         state.counts.pages.unchanged += 1;
         continue;
@@ -278,7 +283,50 @@ async function writePages(tx: Tx, state: WriterState, items: ImportItem[]): Prom
       select: { id: true },
     });
     remember(state, "pages", page.id);
+    state.parents.set(item.externalId, item.parentRef ?? null);
     state.counts.pages.created += 1;
+  }
+}
+
+function resolvePageLinks(doc: PageDocument, links: Map<string, string>, final = false): PageDocument {
+  const walk = (node: PageNode): PageNode => {
+    const attrs = { ...node.attrs };
+    if (node.type === "pageLink" && typeof attrs.externalPageId === "string") {
+      const id = links.get(attrs.externalPageId);
+      if (id) attrs.pageId = id;
+    }
+    const marks = node.marks?.map((mark) => {
+      const href = mark.attrs?.href;
+      if (mark.type !== "link" || typeof href !== "string" || !href.startsWith("notion-page://")) return mark;
+      const id = href.slice("notion-page://".length);
+      const page = links.get(id);
+      return { ...mark, attrs: { ...mark.attrs, href: page ? `/pages/${page}` : final ? `https://www.notion.so/${id}` : href } };
+    });
+    return { ...node, ...(node.attrs ? { attrs } : {}), ...(marks ? { marks } : {}), ...(node.content ? { content: node.content.map(walk) } : {}) };
+  };
+  return { ...doc, content: doc.content.map(walk) };
+}
+
+/** Resolve parents and child links after all batches, including children fetched before their parents. */
+export async function finishPageImport(tx: Tx, state: WriterState): Promise<void> {
+  if (!state.parents.size) return;
+  const rows = await tx.taskPage.findMany({ where: { userId: state.userId, externalSource: state.plan.externalSource, deletedAt: null }, select: { id: true, externalId: true, content: true, revision: true, annotations: true, parentId: true } });
+  const byExternal = new Map(rows.filter((row) => row.externalId).map((row) => [row.externalId!, row]));
+  for (const row of rows) {
+    if (!row.externalId || !state.parents.has(row.externalId) || !pageUntouched(row)) continue;
+    const parent = byExternal.get(state.parents.get(row.externalId) ?? "");
+    const parsed = PageDocument.safeParse(row.content);
+    const content = parsed.success ? resolvePageLinks(parsed.data, new Map([...byExternal].map(([key, page]) => [key, page.id])), true) : undefined;
+    let cycle = false;
+    const chain = new Set([row.externalId]);
+    let ref = state.parents.get(row.externalId);
+    while (ref) {
+      if (chain.has(ref)) { cycle = true; break; }
+      chain.add(ref);
+      ref = state.parents.get(ref);
+    }
+    const parentId = !cycle && parent && parent.id !== row.id ? parent.id : null;
+    if (row.parentId !== parentId || (content && !same(content, row.content))) await tx.taskPage.update({ where: { id: row.id }, data: { parentId, ...(content ? { content: content as Prisma.InputJsonValue } : {}) } });
   }
 }
 
@@ -415,6 +463,7 @@ export async function writeBatch(prisma: PrismaClient, state: WriterState, items
   const before = JSON.stringify(state.counts);
   const createdBefore = { tasks: state.created.tasks.length, pages: state.created.pages.length, projects: state.created.projects.length };
   const projectsBefore = new Map(state.projects);
+  const parentsBefore = new Map(state.parents);
   const orderBefore = state.nextOrder;
   try {
     await prisma.$transaction(
@@ -431,6 +480,7 @@ export async function writeBatch(prisma: PrismaClient, state: WriterState, items
     state.created.pages.length = createdBefore.pages;
     state.created.projects.length = createdBefore.projects;
     state.projects = projectsBefore;
+    state.parents = parentsBefore;
     state.nextOrder = orderBefore;
     throw error;
   }

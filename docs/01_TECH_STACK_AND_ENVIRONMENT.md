@@ -251,6 +251,8 @@ hub-api logs JSON lines with `pino` to the console at `ENSEMBLE_LOG_LEVEL` (defa
 
 ## 8. CI and deploys
 
+CI, desktop packaging and CLI releases pin `actions/setup-go@v6.4.0` with Go `1.24.x`. The required checks and sandbox matrix remain enabled.
+
 Checked 7 Oct 2026 against the workflow files, successful GitHub `ci`/`deploy` runs, and public API health/readiness. The pipeline is enabled and has deployed the API on the VM and the Hub/landing page on Vercel. Server addresses, access instructions, and release history remain in the git-ignored `private/` runbooks.
 
 **`.github/workflows/ci.yml`** runs on every pull request and every push to `main`, as six parallel jobs (the sandbox job is a matrix of four runners):

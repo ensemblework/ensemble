@@ -645,8 +645,8 @@ function ReviewStep({
                 value={importAs[container.id] ?? container.importAs}
                 onChange={(event) => onImportAs({ ...importAs, [container.id]: event.target.value as ImportAs })}
               >
-                <option value="tasks">Tasks on the board</option>
-                <option value="pages">Pages</option>
+                {preview.source !== "notion" ? <option value="tasks">Tasks on the board</option> : null}
+                <option value="pages">{preview.source === "notion" ? "Pages and tables" : "Pages"}</option>
               </select>
             </label>
           ))}

@@ -254,7 +254,7 @@ Built on branch `feat/files-preview`; tested with generated files, mocked vendor
 
 Branch `feat/files-followups`; checked with the PGlite HTTP tests and DOM tests listed in [32 §10](32_FILES.md#10-tests), not in a real browser.
 
-- **From your apps** (`/files?view=apps`): Files has a second view with the mail, events, messages, transcripts, pull requests, issues and attached items Ensemble keeps from connected apps, with search, kind chips, paging and a reader ([32 §11](32_FILES.md#11-from-your-apps)). It replaces Context's **Artifacts & sync** tab, which is gone; old links to it open this view. The tab's Sync list (per-source item counts and times) is gone from the UI; Settings → Connections still shows each source's item count and last sync.
+- **Files library**: Files shows uploaded or explicitly imported documents. It does not fetch or offer a connected-mail/chat feed on opening. Explicit app search/import and existing connected-item links remain available ([32 §11](32_FILES.md#11-connected-items-opened-explicitly)).
 - **Remove** an item from an app: it leaves every reader (lists, graph, tiles, calendars, the assistant, MCP) and later syncs do not bring it back; attaching it again restores it. Owner only.
 - **Delete from the list**: each file in Your files has a delete button with the same question as the file's screen.
 - The Files search box shows one focus edge.
@@ -369,7 +369,7 @@ Smaller changes in the same pass: the top bar no longer overlaps on narrow windo
 
 ## Hub UI and editor pass (7 Oct 2026, local checkout)
 
-The focused in-memory API and editor regressions were run locally, not against a deployed service. Navigation and tiles use quieter neutral selections and smaller corners, Pages is collapsible below Today, and new tasks open immediately as untitled documents. Notes can be added to the board and tasks converted back to pages while retaining their document/discussions/diagram links ([02 §13](02_MODULE_INTERACTION_HUB_UI.md#13-document-style-pages)).
+The focused in-memory API and editor regressions were run locally, not against a deployed service. Navigation and tiles use quieter neutral selections and smaller corners, Pages opens a dedicated tree browser, and new tasks open immediately as untitled documents. Notes can be added to the board and tasks converted back to pages while retaining their document/discussions/diagram links ([02 §13](02_MODULE_INTERACTION_HUB_UI.md#13-document-style-pages)).
 
 Inline `@ensemble` requests now include standalone-page and live-editor context. New diagrams and plots are created through real tool calls and attached beneath the answer; other writes still follow approval settings. Plot spaces can be named/switched, file/tile mentions are hierarchical, and embedded plots render real charts with compact/remove controls. The sample-data entry point is removed ([20 §8](20_PLOTS_DESIGN.md#8-tiled-workspace)).
 
@@ -394,7 +394,7 @@ These are on `main` and have their own docs. They were not re-tested live for th
 
 Checked on 5 Oct 2026 with the hub-api, hub-web and agent-runtime suites on a fresh migrated database. The assistant fixes were also run live against Gemini in an earlier recheck. Nothing here was re-tested in a browser for this page.
 
-- **Standalone notes**: pages with no task, in the sidebar and at `/pages/[id]` ([02 §13](02_MODULE_INTERACTION_HUB_UI.md#standalone-notes)).
+- **Standalone notes**: pages with no task, in the Pages browser and at `/pages/[id]` ([02 §13](02_MODULE_INTERACTION_HUB_UI.md#standalone-notes)).
 - **Code folders**: the Code tab's folder list is separate from the terminal's and is checked on add and on use ([16 §1](16_CODE_TAB.md#folders-code-can-use)).
 - **Assistant errors**: a used-up quota is `model_quota_exceeded` with a reset time, with no silent retry or model switch. An unreachable model host is `model_unreachable` in both runtimes. Neither is saved as the reply. Stop works on the first message of a new chat ([11 §9](11_HOW_THE_ASSISTANT_WORKS.md#9-failure-modes-and-what-catches-them)).
 - **Context graph**: labels no longer pile up; the camera fits the graph ([02 §13](02_MODULE_INTERACTION_HUB_UI.md#context-graph)).
@@ -456,3 +456,25 @@ Recoverable page deletion is immediate with Undo and Trash recovery. Board has o
 **Checked 11 Oct 2026:** 283 Hub checks, 3,948 public API checks (two Postgres-only skips), shared-types and theme package tests, all-package TypeScript checks, and the production Hub build. Browser checks covered 390 × 844 and 844 × 390 tile galleries, one scroll area, mobile Today tiles and OTP entry, direct search landing and automatic highlight removal, and desktop keyboard tile ordering.
 
 **Checked 12 Oct 2026:** expanded Jump to keyword destinations for nested settings, Context People/Graph, Code Local repositories, connector settings and model controls. Local browser checks verified exact Accent scrolling on desktop/phone, People/Graph tab navigation, Code section navigation, multiple diagram results and submitting a unique match before search completion. Regression tests cover catalog ranking/gates, setting scroll targets, cancellation of pending navigation and diagram search isolation/Trash/module filtering.
+
+## Page imports and editing — 15 Oct 2026
+
+- Notion imports and the assistant's page-import tool preserve nested pages, native formatting, collapsible blocks and normal tables with linked row pages. Database imports create pages/tables, with no Ensemble database or board-view concept. Formula/rollup values are snapshots; exported CSV has no column type schema. API media keep source URLs, and exported local image bytes are not copied.
+- Pages have Add block and Drag block controls; moves retain code, nested list content and automatic numbering, with editor Undo. Collapsible blocks can contain ordinary page blocks.
+- Bulk page Trash includes descendants and restores with one top-bar Undo. Imported page hierarchy uses the additive `20261015000000_nested_pages` migration.
+- Assigned tasks include diagram source from their embedded diagrams. Converted documents remain attached. Local engines get file originals; paired computers download task-scoped originals with an active device lease before starting.
+- The assistant has a bounded conversation layout, grouped activity, visible approvals and copy controls. Fetch uses a distinct refresh icon; Sign out sits beside profile details and asks for confirmation.
+
+Checked 15 Oct 2026 with in-memory import/page tests, editor/assistant DOM tests, Context Bridge tests and MCP smoke, and an isolated Chrome browser flow for Add block, drag with nested code, fixed diagram zoom, profile confirmation, bulk Trash/Undo and chat history rendering. Vendor coverage uses mocked Notion responses; no authenticated live Notion import was run.
+
+## Navigation, appearance and quick assignment (15 Oct 2026)
+
+- Pages opens a dedicated tree browser with initially collapsed child pages, search, import, rename and bulk Trash/Undo. Its left/right position is an Appearance preference; left placement puts the app navigation into an icon rail. Page peeks reserve the browser's width.
+- Appearance has its own Settings tab. Auto-collapse keeps icons visible and expands the app navigation on hover or keyboard focus without moving the document. Settings Trash links to `/trash` in the current tab.
+- Sign-in uses Google, GitHub and Microsoft marks; model/provider labels and subscription settings use vendor marks and the agent uses an Orbit icon. Gemini remains available through API keys, without an unavailable subscription tile.
+- Today proposals show M/A/L/D actions, with A using the default of up to three saved run profiles. Task pages, standalone pages and Assign also offer Quick assign. Missing setup opens the full dialog. No card flies across the page on assignment.
+- A short description occupies space only when present or explicitly being edited. It uses plain document text. Assistant and automation context is stored on the page; automated writes cannot replace the human description.
+
+Checked 15 Oct 2026: the integrated public API suite passed 4,770 checks (two database-only skips), the full Hub web suite passed 447 tests (two skips), shared types passed 53, and the targeted automation/page suite passed 35. The added persona proposal regression exercises M/A/L/D and the saved default profile. Browser checks against isolated services covered the page tree, both browser positions, hover expansion without content movement, same-tab Trash, sign-in marks, human descriptions, quick assignment, Today A, and the phone drawer's Escape and child navigation. The Hub production build and TypeScript checks passed. Provider turns were intercepted in the UI assignment checks; these checks did not run a paid model.
+
+CLI 0.3.11 and desktop 0.3.8 package the original-file and diagram-source receiver for paired runs; earlier installed receivers need updating for original-file copying. CI and packaging use pinned Go setup `v6.4.0`, with the same Go version and required sandbox checks.

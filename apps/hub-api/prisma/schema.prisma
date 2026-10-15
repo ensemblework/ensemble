@@ -267,6 +267,9 @@ model Task {
 }
 
 model TaskPage {
+  parentId       String?           @map("parent_id")
+  parent         TaskPage?         @relation("PageChildren", fields: [parentId], references: [id], onDelete: SetNull)
+  children       TaskPage[]        @relation("PageChildren")
   id             String            @id @default(uuid())
   userId         String            @map("user_id")
   /// Null for a standalone note. Linked pages keep the task they belong to.
@@ -295,6 +298,7 @@ model TaskPage {
   @@index([userId, updatedAt])
   @@index([userId, deletedAt])
   @@index([sourceFileId])
+  @@index([userId, parentId])
   @@map("task_pages")
 }
 

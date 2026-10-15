@@ -1,5 +1,6 @@
 "use client";
 
+import { ProposalsWidget } from "../today/proposals-widget";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
@@ -695,7 +696,11 @@ export function LiveBoard({ deskId, live, mobile, plots, formKind = null }: { de
     return () => window.removeEventListener("resize", place);
   }, [form]);
   const consumed = useRef<string | null>(null);
-  const specs = layout.shown;
+  const specs = [...layout.shown];
+  const proposals = specPool().get("proposed");
+  if (proposals && live.tasks.some((task) => task.status === "proposed") && !specs.some((spec) => spec.key === "proposed") && (!layout.customized || !layout.hidden.includes("proposed"))) {
+    specs.splice(Math.min(1, specs.length), 0, proposals);
+  }
   const tiles = useTileControls({ shown: specs, hidden: layout.hidden, save: layout.save, customized: layout.customized, mobile, restoreHint: "Add it back from Add a tile." });
 
   useEffect(() => {
@@ -775,7 +780,7 @@ export function LiveBoard({ deskId, live, mobile, plots, formKind = null }: { de
           >
             {filled ? (
               <>
-                <TileBody spec={spec} live={live} />
+                {spec.key === "proposed" ? <ProposalsWidget /> : <TileBody spec={spec} live={live} />}
                 {spec.key === "agenda" ? null : spec.derived ? <Link className="qadd" href="/board">Open your board →</Link> : <button type="button" className="qadd" data-desk-add={spec.kind} onClick={() => open(spec)}>
                   {quietAdd(spec)}
                 </button>}

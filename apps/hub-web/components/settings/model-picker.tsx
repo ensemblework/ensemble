@@ -2,6 +2,7 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
+import { ProviderLogo, ModelLogo } from "../connectors/provider-logo";
 import { Check, ChevronsUpDown, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { EFFORT_LABEL, effortList, modelEfforts, type EffortLevel, type ModelMeta } from "@ensemble/shared-types";
@@ -40,7 +41,7 @@ export function ProviderPicker({ value, choices, onPick, label }: { value: strin
       trigger={(open, toggle) => (
         <button type="button" className="picker-trigger" aria-haspopup="listbox" aria-expanded={open} aria-label={label} onClick={toggle} data-picker="provider">
           <span className={cx("size-1.5 shrink-0 rounded-full", STATUS_DOT[current?.status ?? "none"])} aria-hidden />
-          <span className="min-w-0 flex-1 truncate text-left">{current?.label ?? value}</span>
+          <ProviderLogo id={value} size={15} /><span className="min-w-0 flex-1 truncate text-left">{current?.label ?? value}</span>
           <ChevronsUpDown size={13} className="shrink-0 text-faint" aria-hidden />
         </button>
       )}
@@ -60,7 +61,7 @@ export function ProviderPicker({ value, choices, onPick, label }: { value: strin
               }}
             >
               <span className={cx("size-1.5 shrink-0 rounded-full", STATUS_DOT[choice.status])} aria-hidden />
-              <span className="min-w-0 flex-1 truncate">{choice.label}</span>
+              <ProviderLogo id={choice.id} size={15} /><span className="min-w-0 flex-1 truncate">{choice.label}</span>
               <span className="shrink-0 text-[11.5px] text-faint">{choice.note ?? STATUS_TEXT[choice.status]}</span>
               {choice.id === value ? <Check size={13} className="shrink-0 text-accent" aria-hidden /> : null}
             </button>
@@ -133,7 +134,7 @@ export function ModelPicker({
       width={380}
       trigger={(open, toggle) => (
         <button type="button" className="picker-trigger" aria-haspopup="listbox" aria-expanded={open} aria-label={label} onClick={toggle} data-picker="model">
-          <span className="min-w-0 flex-1 truncate text-left font-mono text-[12.5px]">{value || "Choose a model"}</span>
+          <ModelLogo model={value} provider={provider} /><span className="min-w-0 flex-1 truncate text-left font-mono text-[12.5px]">{value || "Choose a model"}</span>
           {levels.length ? <span className="hidden shrink-0 text-[11px] text-faint sm:inline">thinks {levelRange(levels)}</span> : null}
           <ChevronsUpDown size={13} className="shrink-0 text-faint" aria-hidden />
         </button>

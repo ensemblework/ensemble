@@ -160,6 +160,7 @@ function paintStoredAppearance(): void {
     font?: string;
     textScale?: number;
     reduceMotion?: boolean;
+    sidebarAutoCollapse?: boolean;
     motion?: string;
     accent?: string;
     accentCustom?: string | null;
@@ -184,6 +185,7 @@ function paintStoredAppearance(): void {
   const cookiePalette = palettes.includes(paletteParts[0] || "") ? paletteParts[0] : undefined;
   root.dataset.colorTheme = cookiePalette && (!localPalette || Number(paletteParts[1]) > localAt) ? cookiePalette : localPalette || cookiePalette || "ensemble";
   root.dataset.font = raw.font || "system";
+  root.dataset.sidebarAuto = String(!!raw.sidebarAutoCollapse);
   if (raw.textScale) root.style.fontSize = `${raw.textScale}%`;
   const osReduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
   root.dataset.motionTheme = "expressive";

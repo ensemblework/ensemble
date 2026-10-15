@@ -285,6 +285,7 @@ export async function recordUndoInTransaction(
 
 /** Several writes inside one transaction become one stack entry. */
 export async function withUndoGroup<T>(db: Prisma.TransactionClient, meta: { userId: string; actor?: Actor; subject: string; href?: string }, fn: () => Promise<T>): Promise<{ result: T; undoEntryId: string | null }> {
+  if (groups.getStore()) return { result: await fn(), undoEntryId: null };
   await lockUserTransaction(db, meta.userId);
   const group: Group = { patches: [], labels: [] };
   const result = await groups.run(group, fn);

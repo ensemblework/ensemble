@@ -3,10 +3,11 @@
 import { SETTINGS_DESTINATIONS } from "./navigation";
 import { useMemo, useSyncExternalStore } from "react";
 
-export type SettingsTab = "account" | "spaces" | "sharing" | "assistant" | "connections" | "notifications" | "shortcuts" | "data";
+export type SettingsTab = "account" | "appearance" | "spaces" | "sharing" | "assistant" | "connections" | "notifications" | "shortcuts" | "data";
 
 export const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTab; label: string; hint: string }> = [
-  { id: "account", label: "Account", hint: "Profile, appearance, features" },
+  { id: "account", label: "Account", hint: "Profile, security, features" },
+  { id: "appearance", label: "Appearance", hint: "Theme, colors, text, navigation" },
   { id: "spaces", label: "Spaces", hint: "Your spaces, and shared settings" },
   { id: "sharing", label: "Sharing", hint: "Contacts, what you share, shared with you" },
   { id: "assistant", label: "Assistant", hint: "Models, autonomy, what it may change" },
@@ -28,7 +29,7 @@ export const SECTION_TAB: Readonly<Record<string, SettingsTab>> = {
   profile: "account",
   avatar: "account",
   features: "account",
-  appearance: "account",
+  appearance: "appearance",
   you: "account",
   "this-mac": "account",
   assistant: "assistant",
@@ -91,7 +92,9 @@ export function parseSettingsLocation(search: string, hash: string): SettingsLoc
   const rawDialog = params.get("dialog");
   const dialog = DIALOGS.includes(rawDialog as SettingsDialog) ? (rawDialog as SettingsDialog) : null;
   const rawTab = params.get("tab");
-  const tab: SettingsTab = isSettingsTab(rawTab)
+  const tab: SettingsTab = rawTab === "account" && anchor && SECTION_TAB[anchor] === "appearance"
+    ? "appearance"
+    : isSettingsTab(rawTab)
     ? rawTab
     : anchor && SECTION_TAB[anchor]
       ? SECTION_TAB[anchor]!

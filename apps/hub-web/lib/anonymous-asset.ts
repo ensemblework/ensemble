@@ -6,5 +6,5 @@ const ANONYMOUS =
   /^\/(?:icon\.svg|favicon\.ico|robots\.txt|apple-icon(?:\.png)?|apple-touch-icon\.png|manifest\.webmanifest|site\.webmanifest|icon(?:-maskable)?-\d+\.png|brand-icon-\d+\.png|og-image\.png|opengraph-image(?:\.png)?|twitter-image(?:\.png)?|offline\.html|404\.html|500\.html)$/;
 
 export function isAnonymousAsset(pathname: string): boolean {
-  return ANONYMOUS.test(pathname) || /^\/brand\/(?:favicon|mark|apple)-[a-f0-9]{12}\.(?:ico|png|svg)$/.test(pathname) || /^\/themes\/(lagoon|juniper|blueprint)\.svg$/.test(pathname);
+  return /^\/providers\/(?:google|microsoft|github|openai|claude|cursor|copilot|gemini|deepseek|mistral|meta|ollama|qwen|kimi|openrouter)\.svg$/.test(pathname) || ANONYMOUS.test(pathname) || /^\/brand\/(?:favicon|mark|apple)-[a-f0-9]{12}\.(?:ico|png|svg)$/.test(pathname) || /^\/themes\/(lagoon|juniper|blueprint)\.svg$/.test(pathname);
 }

@@ -75,6 +75,8 @@ export const DEFAULT_APPEARANCE: AppearanceSettings = {
   font: "system",
   motion: "expressive",
   reduceMotion: false,
+  sidebarAutoCollapse: false,
+  pagesPanelSide: "left",
   accent: "gold",
   accentCustom: null,
 };
@@ -144,6 +146,7 @@ export function applyAppearance(appearance: AppearanceSettings): void {
   root.dataset.theme = theme;
   root.dataset.colorTheme = colorTheme(appearance.colorTheme).id;
   root.dataset.font = appearance.font;
+  root.dataset.sidebarAuto = String(appearance.sidebarAutoCollapse);
   const osReduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const reduce = appearance.reduceMotion || osReduce;
   root.dataset.reduceMotion = String(reduce);

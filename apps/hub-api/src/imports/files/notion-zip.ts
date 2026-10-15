@@ -5,6 +5,8 @@
  * which is the page id, so re-importing (or later importing over the API)
  * updates the same rows.
  */
+import { markdownToNodes } from "../../pages/markdown.js";
+import { notionTable } from "../notion-content.js";
 import { createHash } from "node:crypto";
 import { normalizeNotionId, notionIdFrom, stripNotionId } from "../mapping.js";
 import { ImportError, type ImportContainer, type ImportItem } from "../types.js";
@@ -23,6 +25,7 @@ export interface NotionDatabase {
   table: CsvTable;
   mapping: CsvMapping;
   options: Omit<CsvItemOptions, "containerId">;
+  pages: ImportItem[];
 }
 
 export interface NotionExport {
@@ -94,10 +97,13 @@ export function splitNotionMarkdown(text: string): { title: string | null; prope
 export function cleanNotionMarkdown(markdown: string): string {
   return markdown
     .replace(/!\[([^\]]*)\]\((?!https?:)[^)]*\)/g, (_m, alt: string) => (alt ? `(image: ${alt})` : "(image)"))
-    .replace(/\[([^\]]+)\]\((?!https?:)[^)]*\)/g, "$1")
+    .replace(/\[([^\]]+)\]\((?!https?:)([^)]*)\)/g, (_m, label: string, target: string) => {
+      const id = notionIdFrom(decodeURIComponent(target));
+      return id ? `[${label}](notion-page://${id})` : label;
+    })
     .replace(/<aside>\s*([\s\S]*?)\s*<\/aside>/g, (_m, inner: string) => inner.split("\n").map((line) => `> ${line.trim()}`).join("\n"))
     .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/?(details|summary|span|div)[^>]*>/gi, "")
+    .replace(/<\/?(span|div)[^>]*>/gi, "")
     .trim();
 }
 
@@ -159,6 +165,14 @@ export function parseNotionExport(texts: Map<string, string>, maxMarkdownChars =
       if (next) used.add(next);
       return next;
     });
+    const occurrences = new Map<string, number>();
+    table.rows.forEach((row, index) => {
+      if (rowIds[index]) return;
+      const title = key(row[0] ?? "");
+      const occurrence = (occurrences.get(title) ?? 0) + 1;
+      occurrences.set(title, occurrence);
+      rowIds[index] = hashId(`${id}:${title}:${occurrence}`);
+    });
     const bodies = new Map<string, string>();
     for (const row of rows) {
       const rowId = notionIdFrom(withoutExt(base(row)));
@@ -166,7 +180,15 @@ export function parseNotionExport(texts: Map<string, string>, maxMarkdownChars =
     }
     const mapping = proposeMapping(table, "notion");
     databases.push({
-      container: { id, name, kind: "database", count: table.rows.length, parent: parentTitle(dir(folder), titleOf), importAs: "tasks" },
+      container: { id, name, kind: "database", count: table.rows.length, parent: parentTitle(dir(folder), titleOf), importAs: "pages" },
+      pages: [
+        { kind: "page", externalId: id, title: name, parentRef: notionIdFrom(base(dir(folder))), containerId: id, pageContent: { type: "doc", content: [notionTable(table.headers.map((name) => ({ name })), table.rows.map((row, index) => ({ id: rowIds[index] ?? `${id}:${index}`, values: row.map((value, column) => [{ type: "text", text: value || (column === 0 ? "Untitled" : " "), ...(column === 0 && rowIds[index] ? { marks: [{ type: "link", attrs: { href: `notion-page://${rowIds[index]}` } }] } : {}) }]) })))] } },
+        ...table.rows.map((row, index) => {
+          const rowId = rowIds[index]!;
+          const properties = table.headers.map((name, column) => `- **${name}:** ${row[column] ?? ""}`).join("\n");
+          return { kind: "page" as const, externalId: rowId, title: row[0] || "Untitled", parentRef: id, containerId: id, pageContent: { type: "doc" as const, content: markdownToNodes([properties, bodies.get(rowId) ?? ""].filter(Boolean).join("\n\n")) } };
+        }),
+      ],
       table,
       mapping,
       options: {
@@ -193,7 +215,7 @@ export function parseNotionExport(texts: Map<string, string>, maxMarkdownChars =
       title: split.title || stripNotionId(withoutExt(base(path))) || "Untitled",
       pageMarkdown: spend([properties, split.body].filter(Boolean).join("\n\n")),
       parentTitle: parentTitle(dir(path), titleOf),
-      parentRef: notionIdFrom(base(dir(path))),
+      parentRef: notionIdFrom(base(dir(path))) ?? (titleOf.has(dir(path)) ? hashId(`${dir(path)}.md`) : null),
       containerId: "pages",
       url: /^[0-9a-f]{32}$/.test(id) ? `https://www.notion.so/${id}` : null,
     });

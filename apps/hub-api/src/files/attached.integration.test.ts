@@ -206,7 +206,7 @@ test("save_attachment copies the original into the folder, never over a file unl
   const theirs = await runTool(ctx, "save_attachment", { file: foreign.id });
   assert.equal(theirs.ok, false, "another person's file is not attached and not found");
   const research = await runTool(jobContext(arjun.id, task.id, ctx.root, "research"), "save_attachment", { file: "site.png" });
-  assert.match((research.result as { error: string }).error, /not available in this run/);
+  assert.match((research.result as { error: string }).error, /No file .* is attached to this task/);
 });
 
 test("the Hub assistant and editors over MCP find a task's files and read them", async () => {

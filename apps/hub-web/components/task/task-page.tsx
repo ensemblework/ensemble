@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  Bot,
+  Orbit,
   Calendar,
   CheckSquare,
   ChevronRight,
@@ -19,13 +19,15 @@ import {
   Users,
 } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { createContext, useContext, useId, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PageDocument, PageMention } from "@ensemble/shared-types";
 import { ApiError, api, currentLink, currentShare, withLink, withShare, type TaskRecord, type TaskStatus } from "@/lib/api";
 import { useEntities } from "@/lib/entities";
 import { COMPLEXITY_LABEL, OWNER_LABEL, PRIORITY, PRIORITY_ORDER, STATUS, dateTime, isoDate } from "@/lib/format";
 import { MakeDiagramButton, taskDiagramPrompt } from "../diagrams/make-diagram";
+import { HumanDescription } from "../pages/human-description";
+import { useQuickAssign } from "../agent/use-quick-assign";
 import { AssignDialog } from "../agent/assign-dialog";
 import { TaskAgentPanel } from "../agent/job-card";
 import { TaskHandoffs } from "../agent/handoff-card";
@@ -37,7 +39,7 @@ import { useToast } from "../toast";
 import { TaskSkeleton } from "@/components/motion/skeletons";
 import { useDelayedFlag } from "@/lib/motion/use-delayed-flag";
 import { useModuleOn } from "@/lib/use-module";
-import { InlineEdit, MenuItem, Popover, PriorityTag, Tag, cx } from "../ui";
+import { MenuItem, Popover, PriorityTag, Tag, cx } from "../ui";
 import { PageTitleField } from "../pages/title-field";
 import { isPageEnsembleBusy } from "../comments/ensemble-bus";
 import { LabelEditor } from "./labels";
@@ -210,7 +212,22 @@ export function TaskPage({
     },
   });
 
-  const [assigning, setAssigning] = useState(false);
+  const params = useSearchParams();
+  const [assigning, setAssigning] = useState(() => params.get("assign") === "1");
+  const [editingDescription, setEditingDescription] = useState(false);
+  const quickAssign = useQuickAssign(() => setAssigning(true));
+  useEffect(() => {
+    if (shared || !canEdit) return;
+    const key = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || !event.shiftKey || event.key.toLowerCase() !== "a" || event.altKey) return;
+      if (assigning || quickAssign.isPending || (variant === "page" && peek.peekId) || document.querySelector("[data-modal-layer]")) return;
+      if ((event.target as HTMLElement).closest("input, textarea, select, [contenteditable=true]")) return;
+      event.preventDefault();
+      quickAssign.mutate(taskId);
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [taskId, shared, canEdit, assigning, quickAssign.isPending, peek.peekId, variant, quickAssign.mutate]);
 
   const remove = useMutation({
     mutationFn: () => api.deleteTask(taskId),
@@ -424,6 +441,7 @@ export function TaskPage({
             <MessageSquare size={13} />
             Comment
           </button>
+          {!record.description ? <button type="button" className="btn-ghost" onClick={() => setEditingDescription(true)}>Add description</button> : null}
           <MakeDiagramButton text={taskDiagramPrompt(taskId, record.title)} />
           <button type="button" className="btn-ghost" disabled={convert.isPending} onClick={() => convert.mutate()}>
             <FileText size={13} /> Convert to page
@@ -490,7 +508,7 @@ export function TaskPage({
           {shared ? null : record.owner === "agent" ? (
             <>
               <button type="button" className="btn-ghost" onClick={() => setAssigning(true)}>
-                <Bot size={13} />
+                <Orbit size={13} />
                 New agent attempt
               </button>
               <button type="button" className="btn-ghost" onClick={() => update.mutate({ owner: "me" })}>
@@ -499,10 +517,11 @@ export function TaskPage({
             </>
           ) : (
             <button type="button" className="btn-ghost" onClick={() => setAssigning(true)}>
-              <Bot size={13} />
+              <Orbit size={13} />
               Agent does it
             </button>
           )}
+          {!shared && canEditProperties ? <button type="button" className="btn-ghost text-accent" disabled={quickAssign.isPending} title="Use the default run profile · ⌘/Ctrl+Shift+A" onClick={() => quickAssign.mutate(taskId)}><Orbit size={13} /> {quickAssign.isPending ? "Assigning…" : "Quick assign"}</button> : null}
         </PropertyRow>
         {shared ? null : <TaskAgentPanel taskId={taskId} />}
         {shared ? null : <TaskHandoffs taskId={taskId} />}
@@ -717,7 +736,7 @@ export function TaskPage({
               )}
             </Popover>
           </PropertyRow>
-          <PropertyRow icon={Bot} label="Skills">
+          <PropertyRow icon={Orbit} label="Skills">
             <Popover
               trigger={(_open, toggle) => (
                 <ValueButton onClick={toggle} empty={!record.skillIds.length}>
@@ -763,15 +782,7 @@ export function TaskPage({
         </div>
       ) : null}
 
-      <div className="mt-4">
-        <InlineEdit
-          value={record.description}
-          placeholder="Add a short description…"
-          multiline
-          onSave={(description) => update.mutate({ description })}
-          className="text-[13.5px] text-muted"
-        />
-      </div>
+      <HumanDescription value={record.description} editing={editingDescription} onEditing={setEditingDescription} onSave={(description) => update.mutate({ description })} readOnly={!canEditProperties} />
 
       {shared ? null : (
         <>

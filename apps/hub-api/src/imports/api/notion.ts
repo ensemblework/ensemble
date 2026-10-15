@@ -1,16 +1,19 @@
 /**
  * Notion over its API (version 2026-03-11). Databases are read through their
  * data sources (POST /v1/data_sources/{id}/query); standalone pages through
- * search. Page bodies come from block children, converted to Markdown.
+ * search. Page bodies become native page blocks; data sources become ordinary tables.
  */
-import { normalizeDate, normalizeNotionId } from "../mapping.js";
-import { notionBlocksToMarkdown, notionPlain, notionRichText, type NotionBlock } from "../markdown.js";
+import { type PageNode } from "@ensemble/shared-types";
+import { notionInline, notionNodes, notionTable } from "../notion-content.js";
+import { ImportError } from "../types.js";
+import { normalizeNotionId } from "../mapping.js";
+import { notionPlain, notionRichText, type NotionBlock } from "../markdown.js";
 import type { ApiImportSource, ImportContainer, ImportItem, SourceContext } from "../types.js";
 
 export const NOTION_VERSION = "2026-03-11";
 const API = "https://api.notion.com/v1";
 const MAX_PAGES = 5000;
-const BLOCK_DEPTH = 3;
+const BLOCK_DEPTH = 32;
 
 type Json = Record<string, unknown>;
 interface NotionList<T> { results: T[]; has_more?: boolean; next_cursor?: string | null }
@@ -32,7 +35,10 @@ export function notionHeaders(token: string): Record<string, string> {
 
 function titleOf(page: NotionPage): string {
   for (const property of Object.values(page.properties ?? {})) {
-    if (property.type === "title") return notionPlain(property.title).trim();
+    if (property.type === "title" && Array.isArray(property.title)) {
+      const title = notionPlain(property.title).trim();
+      if (title) return title;
+    }
   }
   const title = (page as Json).title;
   return Array.isArray(title) ? notionPlain(title).trim() : "";
@@ -69,13 +75,13 @@ export async function notionBlocks(ctx: SourceContext, id: string, depth = 0): P
   } while (cursor && !ctx.signal.aborted);
   for (const block of blocks) {
     if (!block.has_children || block.type === "child_page" || block.type === "child_database") continue;
-    if (depth >= BLOCK_DEPTH && block.type !== "table") continue;
+    if (depth >= BLOCK_DEPTH) throw new ImportError("This Notion page nests blocks more than 32 levels deep. Import a smaller section.");
     block.children = await notionBlocks(ctx, String(block.id), depth + 1);
   }
   return blocks;
 }
 
-function propertyText(property: Json): string {
+export function propertyText(property: Json): string {
   const value = property[String(property.type)] as unknown;
   switch (property.type) {
     case "rich_text":
@@ -100,10 +106,21 @@ function propertyText(property: Json): string {
       return String(value ?? "");
     case "people":
       return ((value as Json[]) ?? []).map(personName).filter(Boolean).join(", ");
-    case "formula": {
-      const formula = (value ?? {}) as Json;
-      return String(formula[String(formula.type)] ?? "");
+    case "formula": return propertyText((value ?? {}) as Json);
+    case "string": return String(value ?? "");
+    case "boolean": return value ? "Yes" : "No";
+    case "files":
+      return ((value as Json[]) ?? []).map((file) => String(file.name ?? ((file[String(file.type)] ?? {}) as Json).url ?? "")).join(", ");
+    case "relation":
+      return ((value as Json[]) ?? []).map((page) => `https://www.notion.so/${String(page.id).replace(/-/g, "")}`).join(", ");
+    case "rollup": {
+      const rollup = (value ?? {}) as Json;
+      return rollup.type === "array" ? ((rollup.array as Json[]) ?? []).map(propertyText).filter(Boolean).join(", ") : propertyText(rollup);
     }
+    case "created_time": case "last_edited_time":
+      return String(value ?? "");
+    case "created_by": case "last_edited_by":
+      return personName((value ?? {}) as Json);
     case "unique_id": {
       const id = (value ?? {}) as Json;
       return id.number === undefined ? "" : `${id.prefix ? `${id.prefix}-` : ""}${id.number}`;
@@ -117,61 +134,107 @@ function personName(person: Json): string {
   return String(person.name ?? ((person.person ?? {}) as Json).email ?? "").trim();
 }
 
-function pick(properties: Array<[string, Json]>, type: string, name?: RegExp, fallback = true): [string, Json] | undefined {
-  const matches = properties.filter(([, property]) => property.type === type);
-  return (name ? matches.find(([key]) => name.test(key)) : undefined) ?? (fallback ? matches[0] : undefined);
+/** Fetch a page and its descendants, or a data source as a plain table with row pages. */
+export async function notionTree(ctx: SourceContext, root: { id: string; kind: "page" | "database"; title?: string }, seen = new Set<string>(), containerId = "pages"): Promise<ImportItem[]> {
+  const items: ImportItem[] = [];
+  const headers = notionHeaders(ctx.auth.token);
+  const get = <T>(path: string) => ctx.http.json<T>(`${API}${path}`, { headers });
+  const hydrated = new Set<string>();
+  const hydrate = async (row: NotionPage) => {
+    if (hydrated.has(row.id)) return;
+    hydrated.add(row.id);
+    for (const property of Object.values(row.properties ?? {})) {
+      const type = String(property.type);
+      const value = property[type];
+      if (!property.id || !["title", "rich_text", "people", "relation"].includes(type) || (!property.has_more && (!Array.isArray(value) || value.length < 25))) continue;
+      const values: unknown[] = [];
+      let cursor: string | undefined;
+      do {
+        const query = new URLSearchParams({ page_size: "100", ...(cursor ? { start_cursor: cursor } : {}) });
+        const result = await get<NotionList<Json>>(`/pages/${row.id}/properties/${encodeURIComponent(decodeURIComponent(String(property.id)))}?${query}`);
+        values.push(...result.results.map((item) => item[type]));
+        cursor = result.has_more && result.next_cursor ? result.next_cursor : undefined;
+      } while (cursor && !ctx.signal.aborted);
+      property[type] = values;
+    }
+  };
+  const claim = (id: string) => {
+    const key = normalizeNotionId(id);
+    if (seen.has(key)) return false;
+    if (seen.size >= MAX_PAGES) throw new ImportError("This Notion import has more than 5,000 pages. Import a smaller section.");
+    if (ctx.signal.aborted) throw new ImportError("Notion import cancelled.");
+    seen.add(key);
+    return true;
+  };
+  const page = async (id: string, parentRef?: string | null, depth = 0) => {
+    if (depth > BLOCK_DEPTH) throw new ImportError("This Notion page nests pages more than 32 levels deep. Import a smaller section.");
+    if (!claim(id)) return;
+    const row = await get<NotionPage>(`/pages/${id}`);
+    if (row.in_trash || row.archived) return;
+    if (!ctx.options.preview) await hydrate(row);
+    const parent = parentRef ?? (row.parent?.type === "page_id" ? normalizeNotionId(String(row.parent.page_id)) : null);
+    const item: ImportItem = { kind: "page", externalId: normalizeNotionId(id), title: titleOf(row) || "Untitled", parentRef: parent, containerId, url: row.url };
+    items.push(item);
+    if (ctx.options.preview) return;
+    const blocks = await notionBlocks(ctx, id);
+    const descend = async (children: NotionBlock[]) => {
+      for (const block of children) {
+        if (block.type === "child_page") await page(String(block.id), item.externalId, depth + 1);
+        else if (block.type === "child_database") {
+          const database = await get<NotionPage & { data_sources?: Array<{ id: string; name?: string }> }>(`/databases/${String(block.id)}`);
+          const tables: PageNode[] = [];
+          for (const source of database.data_sources ?? []) tables.push(...await table(source.id, item.externalId, source.name || String((block.child_database as Json)?.title ?? "Table"), depth + 1, false));
+          block.tableContent = tables;
+        }
+        if (block.children) await descend(block.children);
+      }
+    };
+    await descend(blocks);
+    const props = Object.entries(row.properties ?? {}).filter(([, property]) => property.type !== "title");
+    const lead: PageNode[] = props.length ? [notionTable([{ name: "Property" }, { name: "Value" }], props.map(([name, property]) => ({ id: name, values: [[{ type: "text", text: name }], propertyNodes(property)] })))] : [];
+    item.pageContent = { type: "doc", content: [...lead, ...notionNodes(blocks)] };
+  };
+  const table = async (id: string, parentRef: string | null, title?: string, depth = 0, ownPage = true): Promise<PageNode[]> => {
+    const key = normalizeNotionId(id);
+    if (!ownPage && !seen.has(key)) claim(id);
+    const source = await get<NotionPage>(`/data_sources/${id}`);
+    const columns = Object.entries(source.properties ?? {}).sort((a, b) => Number(b[1].type === "title") - Number(a[1].type === "title"));
+    const rows: NotionPage[] = [];
+    let cursor: string | undefined;
+    do {
+      const result = await ctx.http.json<NotionList<NotionPage>>(`${API}/data_sources/${id}/query`, { method: "POST", headers, body: { page_size: 100, ...(cursor ? { start_cursor: cursor } : {}) } });
+      rows.push(...result.results.filter((row) => !row.in_trash && !row.archived));
+      if (rows.length > MAX_PAGES) throw new ImportError("This Notion table has more than 5,000 rows. Import a smaller section.");
+      cursor = result.has_more && result.next_cursor ? result.next_cursor : undefined;
+    } while (cursor && !ctx.signal.aborted);
+    if (!ctx.options.preview) for (const row of rows) await hydrate(row);
+    const name = title || titleOf(source) || "Table";
+    const content = [notionTable(columns.map(([name, property]) => ({ name, type: String(property.type) })), rows.map((row) => ({ id: row.id, values: columns.map(([name, property]) => property.type === "title" ? [{ type: "text", text: titleOf(row) || "Untitled", marks: [{ type: "link", attrs: { href: `notion-page://${normalizeNotionId(row.id)}` } }] }] : propertyNodes(row.properties?.[name] ?? property)) })))];
+    if (ownPage && claim(id)) items.push({ kind: "page", externalId: key, title: name, parentRef, containerId, pageContent: { type: "doc", content } });
+    if (!ctx.options.preview) for (const row of rows) await page(row.id, ownPage ? key : parentRef, depth + 1);
+    return [{ type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: name }] }, ...content];
+  };
+  if (root.kind === "database") await table(root.id, null, root.title);
+  else await page(root.id);
+  if (root.title && root.kind === "page" && items[0]) items[0].title = root.title;
+  return items;
 }
 
-/** One database row → task fields. Unmatched properties are listed at the top of the page. */
-export function notionRowItem(page: NotionPage, container: ImportContainer): ImportItem {
-  const properties = Object.entries(page.properties ?? {});
-  const used = new Set<string>();
-  const take = (entry: [string, Json] | undefined) => {
-    if (entry) used.add(entry[0]);
-    return entry?.[1];
-  };
-  const titleEntry = properties.find(([, property]) => property.type === "title");
-  if (titleEntry) used.add(titleEntry[0]);
-  const date = take(pick(properties, "date", /due|deadline|date|when/i))?.date as Json | null | undefined;
-  const statusProperty = take(pick(properties, "status") ?? pick(properties, "select", /status|state|stage/i, false));
-  const priorityProperty = take(pick(properties, "select", /priority|importance|urgency/i, false));
-  const people = take(pick(properties, "people", /assign|owner|people|person|responsible/i));
-  const done = take(pick(properties, "checkbox", /done|complete|finished|closed/i));
-  const description = take(pick(properties, "rich_text", /description|summary|notes|details/i, false));
-  const labels: string[] = [];
-  for (const [key, property] of properties) {
-    if (property.type !== "multi_select") continue;
-    used.add(key);
-    for (const option of (property.multi_select as Json[]) ?? []) labels.push(String(option.name ?? ""));
-  }
-  const extras = properties
-    .filter(([key]) => !used.has(key))
-    .map(([key, property]) => [key, propertyText(property).replace(/\s+/g, " ").trim()] as const)
-    .filter(([, value]) => value)
-    .slice(0, 20)
-    .map(([key, value]) => `- **${key}:** ${value.slice(0, 300)}`);
-  const end = normalizeDate(date?.end);
-  const start = normalizeDate(date?.start);
-  return {
-    kind: "task",
-    externalId: normalizeNotionId(page.id),
-    title: titleOf(page),
-    description: description ? notionRichText(description.rich_text) : null,
-    dueDate: end ?? start,
-    startDate: end ? start : null,
-    status: statusProperty ? String(((statusProperty[String(statusProperty.type)] ?? {}) as Json).name ?? "") || null : null,
-    done: Boolean(done?.checkbox),
-    priority: priorityProperty ? String(((priorityProperty.select ?? {}) as Json).name ?? "") || null : null,
-    labels,
-    assignees: ((people?.people as Json[]) ?? []).map(personName).filter(Boolean),
-    url: page.url ?? null,
-    containerId: container.id,
-    projectRef: normalizeNotionId(container.id),
-    projectName: container.name,
-    pageMarkdown: extras.length ? `**Properties**\n\n${extras.join("\n")}` : null,
-    createdAt: page.created_time ?? null,
-    updatedAt: page.last_edited_time ?? null,
-  };
+function propertyNodes(property: Json): PageNode[] {
+  if (property.type === "title" || property.type === "rich_text") return notionInline(property[String(property.type)]);
+  if (property.type === "relation" && Array.isArray(property.relation)) return property.relation.flatMap((value, index) => {
+    const id = normalizeNotionId(String((value as Json).id ?? ""));
+    return [...(index ? [{ type: "text", text: ", " }] : []), { type: "text", text: `Page ${id.slice(-6)}`, marks: [{ type: "link", attrs: { href: `notion-page://${id}` } }] }];
+  });
+  if (property.type === "files" && Array.isArray(property.files)) return property.files.flatMap((value, index) => {
+    const file = value as Json;
+    const href = String(((file[String(file.type)] ?? {}) as Json).url ?? "");
+    return [...(index ? [{ type: "text", text: ", " }] : []), { type: "text", text: String(file.name ?? "File"), ...(/^https?:\/\//.test(href) ? { marks: [{ type: "link", attrs: { href } }] } : {}) }];
+  });
+  const text = property.type === "checkbox" ? (property.checkbox ? "☑" : "☐") : propertyText(property);
+  if (!text) return [];
+  const href = property.type === "url" ? text : property.type === "email" ? `mailto:${text}` : null;
+  return [{ type: "text", text, ...(href ? { marks: [{ type: "link", attrs: { href } }] } : {}) }];
 }
 
 export const notionSource: ApiImportSource = {
@@ -180,7 +243,7 @@ export const notionSource: ApiImportSource = {
     const containers: ImportContainer[] = [];
     for await (const batch of searchAll(ctx, "data_source")) {
       for (const source of batch) {
-        containers.push({ id: source.id, name: titleOf(source) || "Untitled database", kind: "database", count: null, importAs: "tasks" });
+        containers.push({ id: source.id, name: titleOf(source) || "Untitled database", kind: "database", count: null, importAs: "pages" });
       }
     }
     let pages = 0;
@@ -189,49 +252,16 @@ export const notionSource: ApiImportSource = {
     return containers;
   },
   async *fetchItems(ctx, containers) {
-    for (const container of containers) {
-      if (container.id === "pages") continue;
-      let cursor: string | undefined;
-      do {
-        const page = await ctx.http.json<NotionList<NotionPage>>(`${API}/data_sources/${container.id}/query`, {
-          method: "POST",
-          headers: notionHeaders(ctx.auth.token),
-          body: { page_size: 100, ...(cursor ? { start_cursor: cursor } : {}) },
-        });
-        const items: ImportItem[] = [];
-        for (const row of page.results) {
-          if (row.in_trash || row.archived || row.object !== "page") continue;
-          const item = notionRowItem(row, container);
-          const body = ctx.options.preview ? "" : notionBlocksToMarkdown(await notionBlocks(ctx, row.id));
-          item.pageMarkdown = [item.pageMarkdown, body].filter(Boolean).join("\n\n") || null;
-          items.push(item);
-        }
-        yield items;
-        cursor = page.has_more && page.next_cursor ? page.next_cursor : undefined;
-      } while (cursor && !ctx.signal.aborted);
-    }
-    if (!containers.some((container) => container.id === "pages")) return;
-    const pages: NotionPage[] = [];
-    for await (const batch of searchAll(ctx, "page")) pages.push(...batch.filter(standalone));
-    const titles = new Map(pages.map((page) => [normalizeNotionId(page.id), titleOf(page)]));
-    for (let index = 0; index < pages.length && !ctx.signal.aborted; index += 20) {
-      const items: ImportItem[] = [];
-      for (const page of pages.slice(index, index + 20)) {
-        const parentId = page.parent?.type === "page_id" ? normalizeNotionId(String(page.parent.page_id)) : null;
-        items.push({
-          kind: "page",
-          externalId: normalizeNotionId(page.id),
-          title: titleOf(page) || "Untitled",
-          pageMarkdown: ctx.options.preview ? null : notionBlocksToMarkdown(await notionBlocks(ctx, page.id)),
-          parentRef: parentId,
-          parentTitle: parentId ? titles.get(parentId) ?? null : null,
-          url: page.url ?? null,
-          containerId: "pages",
-          createdAt: page.created_time ?? null,
-          updatedAt: page.last_edited_time ?? null,
-        });
+    const seen = new Set<string>();
+    // Pages first: a table already embedded in an imported page needs no duplicate standalone page.
+    if (containers.some((container) => container.id === "pages")) {
+      for await (const batch of searchAll(ctx, "page")) {
+        for (const page of batch.filter(standalone)) yield await notionTree(ctx, { id: page.id, kind: "page" }, seen, "pages");
       }
-      yield items;
+    }
+    for (const container of containers) {
+      if (container.id === "pages" || seen.has(normalizeNotionId(container.id))) continue;
+      yield await notionTree(ctx, { id: container.id, kind: "database", title: container.name }, seen, container.id);
     }
   },
 };

@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState, useRef } from "react";
 import type { PageDocument, PageMention } from "@ensemble/shared-types";
 import { api, currentLink, inItemView } from "@/lib/api";
 import { diagramMentionIds, editorExtensions, type EntitySource } from "./extensions";
+import { BlockControls } from "./block-controls";
 import { FileChooser } from "./file-chooser";
 import { useModuleState } from "@/lib/use-module";
 import { useToast } from "../toast";
@@ -152,7 +153,10 @@ export function BlockEditor({
   return (
     <div className={page && comments ? "comment-host" : undefined}>
       <div className={page && comments ? "page-with-comments" : undefined}>
-        <EditorContent editor={editor} />
+        <div className="block-editor-body">
+          <EditorContent editor={editor} />
+          {live && editable ? <BlockControls editor={live} /> : null}
+        </div>
         {live && chooser !== null ? <FileChooser editor={live} pos={chooser} onClose={closeChooser} /> : null}
         {/* Comments name people: never on a public link. */}
         {page && live && !currentLink() ? (

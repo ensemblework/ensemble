@@ -8,7 +8,8 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import type { PrismaClient, WorkspaceJob } from "@prisma/client";
 import { decisionBus, waitFor } from "../lib/decisions.js";
 import { sseHub } from "../lib/sse.js";
-import { pageText, writeAgentBlock } from "../pages/markdown.js";
+import { pageAgentText } from "../pages/agent-context.js";
+import { writeAgentBlock } from "../pages/markdown.js";
 import { PageDocument } from "@ensemble/shared-types";
 import { describeFile, diskName, fileOriginal, filesOnTask, fileText, findFile } from "../files/attached.js";
 import { githubCloneAuth } from "../lib/git-auth.js";
@@ -137,6 +138,12 @@ const READ_PAGE: ToolSpec = {
   parameters: { type: "object", properties: {} },
 };
 
+const READ_DIAGRAM: ToolSpec = {
+  name: "read_diagram",
+  description: "Read the complete source of a diagram embedded in this task page. Pass its id and offset to continue a long source.",
+  parameters: { type: "object", properties: { id: str("Diagram id from the page."), offset: int("Character offset, default 0.") }, required: ["id"] },
+};
+
 const READ_ATTACHMENT: ToolSpec = {
   name: "read_attachment",
   description:
@@ -193,8 +200,8 @@ const CODE: ToolSpec[] = [
 ];
 
 export function toolSpecs(kind: string, network: boolean): ToolSpec[] {
-  if (kind === "research") return [...RESEARCH, READ_PAGE, READ_ATTACHMENT, ...COMMON];
-  return [...CODE, SAVE_ATTACHMENT, READ_PAGE, READ_ATTACHMENT, ...(network ? RESEARCH : []), ...COMMON];
+  if (kind === "research") return [...RESEARCH, SAVE_ATTACHMENT, READ_PAGE, READ_DIAGRAM, READ_ATTACHMENT, ...COMMON];
+  return [...CODE, SAVE_ATTACHMENT, READ_PAGE, READ_DIAGRAM, READ_ATTACHMENT, ...(network ? RESEARCH : []), ...COMMON];
 }
 
 export const chatSpecs = (specs: ToolSpec[]) => specs.map((spec) => ({ type: "function", function: spec }));
@@ -467,10 +474,21 @@ export async function runTool(ctx: JobContext, name: string, raw: Record<string,
         const page = await fetchUrl(s("url"), ctx.signal);
         return { ok: true, result: page, summary: `Read ${page.title || page.url}` };
       }
+      case "read_diagram": {
+        const task = await ctx.prisma.task.findFirst({ where: { id: ctx.taskId, userId: ctx.userId, deletedAt: null }, select: { page: { select: { content: true } } } });
+        const { diagramIds } = await import("../pages/agent-context.js");
+        const id = String(raw.id ?? "");
+        if (!diagramIds(task?.page?.content).includes(id)) throw new Error("That diagram is not embedded in this task page.");
+        const diagram = await ctx.prisma.blockDiagram.findFirst({ where: { id, userId: ctx.userId, deletedAt: null }, select: { title: true, source: true } });
+        if (!diagram) throw new Error("That diagram is unavailable.");
+        const offset = Math.max(0, Math.floor(Number(raw.offset) || 0));
+        const text = diagram.source.slice(offset, offset + 20_000);
+        return { ok: true, result: { id, title: diagram.title, source: text, offset, total: diagram.source.length, ...(offset + text.length < diagram.source.length ? { nextOffset: offset + text.length } : {}) }, summary: "Read diagram source" };
+      }
       case "read_page": {
         const task = await ctx.prisma.task.findFirst({ where: { id: ctx.taskId }, select: { notes: true, page: true } });
         const doc = task?.page?.content ? PageDocument.parse(task.page.content) : null;
-        return { ok: true, result: { page: pageText(doc, task?.notes ?? "").slice(0, 20_000) }, summary: "Read the page" };
+        return { ok: true, result: { page: await pageAgentText(ctx.prisma, ctx.userId, doc, task?.notes ?? "", 20_000) }, summary: "Read the page" };
       }
       case "read_attachment": {
         const attached = await filesOnTask(ctx.prisma, ctx.userId, ctx.taskId);

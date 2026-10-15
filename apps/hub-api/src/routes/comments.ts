@@ -8,6 +8,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { ownsOpenSpace } from "../lib/auth.js";
 import { displayName, initialsOf } from "../sharing/store.js";
 import { ActAs, PageDocument, PageMention, documentMentions } from "@ensemble/shared-types";
+import { diagramSources } from "../pages/agent-context.js";
 import { pageText as documentText } from "../pages/markdown.js";
 import { runAssistantTurn } from "../assistant/agent.js";
 import { resolveTypedMentions } from "../assistant/mentions.js";
@@ -65,21 +66,22 @@ async function withCommentPage<T>(
 }
 
 export async function commentPageText(prisma: FastifyInstance["prisma"], userId: string, kind: string, id: string, live?: PageDocument): Promise<string> {
-  const text = (content: unknown, notes: string) => {
+  const text = async (content: unknown, notes: string) => {
     const doc = live ?? (content ? PageDocument.parse(content) : null);
     const references = doc ? documentMentions(doc).slice(0, 40).map((mention) => `${mention.kind}:${mention.id} (${mention.label.slice(0, 200)})`).join("\n") : "";
-    return [references ? `Page references:\n${references}` : "", documentText(doc, notes)].filter(Boolean).join("\n\n");
+    const diagrams = await diagramSources(prisma, userId, content, 12_000);
+    return [references ? `Page references:\n${references}` : "", diagrams ? `Embedded diagram source:\n${diagrams}` : "", documentText(doc, notes)].filter(Boolean).join("\n\n");
   };
   if (kind === "page") {
     const page = await prisma.taskPage.findFirst({ where: { id, userId, taskId: null, deletedAt: null }, select: { title: true, content: true, notesSnapshot: true } });
-    return page ? [page.title, text(page.content, page.notesSnapshot)].join("\n\n").slice(0, 24_000) : "";
+    return page ? [page.title, await text(page.content, page.notesSnapshot)].join("\n\n").slice(0, 24_000) : "";
   }
   if (kind === "task") {
     const [task, page] = await Promise.all([
       prisma.task.findFirst({ where: { id, userId, deletedAt: null }, select: { title: true, description: true, notes: true } }),
       prisma.taskPage.findFirst({ where: { taskId: id, userId }, select: { content: true } }),
     ]);
-    return [task?.title, task?.description, text(page?.content, task?.notes ?? "")]
+    return [task?.title, task?.description, await text(page?.content, task?.notes ?? "")]
       .filter((part) => part && part.trim())
       .join("\n")
       .slice(0, 24_000);
@@ -96,7 +98,7 @@ export async function commentPageText(prisma: FastifyInstance["prisma"], userId:
   }
   if (kind === "meeting") {
     const session = await prisma.meetingSession.findFirst({ where: { id, userId, deletedAt: null }, select: { title: true, notes: true, recap: true } });
-    return session ? [`Meeting notes: ${session.title}`, live ? text(null, "") : session.notes, session.recap ? `Recap:\n${session.recap}` : ""].filter((part) => part.trim()).join("\n\n").slice(0, 24_000) : "";
+    return session ? [`Meeting notes: ${session.title}`, live ? await text(null, "") : session.notes, session.recap ? `Recap:\n${session.recap}` : ""].filter((part) => part.trim()).join("\n\n").slice(0, 24_000) : "";
   }
   if (kind === "deliverable") {
     const deliverable = await prisma.deliverable.findFirst({ where: { id, userId, deletedAt: null }, select: { title: true, notes: true } });

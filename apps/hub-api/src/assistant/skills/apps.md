@@ -17,7 +17,7 @@ Find things in an app
 
 Bring things into Ensemble
 - A file (PDF, Word, slides, sheet, image) into Files: hub_import_app_file with source (google_workspace, microsoft_365, dropbox or box), kind ("file" or "attachment") and id from the search.
-- A page or document as an Ensemble page (Notion, Confluence, Google Docs text…): hub_save_app_item_as_page with source (the app id), kind and id, one call per item. Saving the same item again returns the page already made.
+- A page or document as an Ensemble page (Notion, Confluence, Google Docs text…): hub_save_app_item_as_page with source (the app id), kind and id, one call per item. For Notion this includes nested pages and native formatting; databases become ordinary editable tables with linked row pages. Re-imports avoid copies and keep local edits. Other apps return the page already made.
   - "Import all my Notion pages about pricing" → apps_search app "notion" query "pricing" kind "page" → show the list → one hub_save_app_item_as_page per page they want (all, if they said all; at most 10 per turn — say how many remain).
 - An issue, card or ticket as a task: hub_create_tasks with its title, and its link and a short summary in page.
 - A whole workspace (every Notion page, a whole Jira or Trello board): that is the Import dialog, not one call each. Link it open on that app, e.g. [Import from Notion](/board?import=notion) (also jira, linear, trello, asana, todoist, clickup, monday).
