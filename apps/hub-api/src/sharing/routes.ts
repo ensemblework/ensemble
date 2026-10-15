@@ -45,7 +45,7 @@ const Presence = z.object({
   resource: z.object({ kind: Kind, id: Id }).nullable().optional(),
   cursor: Point.nullable().optional(),
   viewport: Point.extend({ zoom: z.number().finite().min(0.01).max(20) }).nullable().optional(),
-  caret: z.object({ anchor: z.number().int().min(0).max(50_000_000), head: z.number().int().min(0).max(50_000_000) }).nullable().optional(),
+  caret: z.object({ anchor: z.number().int().min(0).max(50_000_000), head: z.number().int().min(0).max(50_000_000), version: z.number().int().min(0).optional() }).nullable().optional(),
   typing: z.boolean().optional(),
   leave: z.boolean().optional(),
 });
