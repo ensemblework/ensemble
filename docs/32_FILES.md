@@ -143,3 +143,5 @@ The Files home (`components/files/files-screen.tsx`) shows only uploaded or expl
 A calendar sync also soft-deletes events that left the calendar; those have no suppression and come back when seen again. Attaching the same item again from an app (`saveContent` in `connectors/items/index.ts`) clears the suppression and restores the row. Removed items are not in Trash.
 
 Checked 12 Oct 2026 with `artifacts.integration.test.ts` for the list, the graph, live tiles, attached items and MCP search and read; that calendars and the assistant's context tools skip removed items was read in the code, not run.
+
+Paired-run original-file transfer is included in CLI 0.3.11 and desktop 0.3.8; update older receivers to get the original bytes and local file-ID remapping.

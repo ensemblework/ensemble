@@ -122,7 +122,7 @@ jobs:
       - run: pnpm db:migrate
 
       # The Linux sandbox's Landlock helper, so the agent and remote e2e tests run sandboxed for real.
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v6.4.0
         with:
           go-version: "1.24.x"
           cache: false
@@ -170,7 +170,7 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v6.4.0
         if: matrix.landrun
         with:
           go-version: "1.24.x"

@@ -48,3 +48,5 @@ The app shell is universal, but the local API inside it uses this Mac's Node and
   Within a couple of seconds the desktop status says: "Removed from Ensemble on the web. Pair again to keep running remote tasks."
 
 Brand checks: run `pnpm brand:check` and `node scripts/check-icons.mjs`. Verify the startup mark, Finder/Dock icon, light/dark Hub, assistant minimized while active, and OS reduced motion.
+
+The 0.3.8 runtime carries original page attachments and diagram source into claimed jobs through the leased attachment endpoint, with a 100 MB transfer cap. The download guide version matches the Tauri configuration.
