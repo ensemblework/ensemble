@@ -6,7 +6,7 @@ import dynamic from "next/dynamic";
 import { useEffect, useLayoutEffect, useState } from "react";
 import { ArrowLeft, Columns3, FileText, FolderGit2, LineChart, BookOpen, CalendarCheck, Briefcase, Workflow, CheckSquare, ShieldOff, X } from "lucide-react";
 import { ApiError, HUB_API, SHARE_GONE_EVENT, api, setOpenLink, setOpenShare, withLink, withShare, type OpenedShare, type ShareKind, type TaskRecord, type TaskStatus } from "@/lib/api";
-import { eventSourceInit, eventsStreamUrl } from "@/lib/events";
+import { LIVE_REOPENED_EVENT, PAGE_STEPS_EVENT, eventSourceInit, eventsStreamUrl } from "@/lib/events";
 import { invalidateSoon } from "@/lib/invalidate";
 import { presenceStore, tabId } from "@/lib/presence";
 import { STATUS } from "@/lib/format";
@@ -59,6 +59,7 @@ function useShareLive(shareId: string, link: boolean, active: boolean) {
             }
           });
         relay("page", "ensemble:page");
+        relay("page.steps", PAGE_STEPS_EVENT);
         relay("diagram", "ensemble:diagram");
         source.addEventListener("page", () => invalidateSoon(client, ["page"]));
         source.addEventListener("task", () => {
@@ -76,7 +77,10 @@ function useShareLive(shareId: string, link: boolean, active: boolean) {
         source.addEventListener("sharing.changed", () => void client.invalidateQueries({ queryKey: [link ? "public-open" : "shared-open"] }));
         // Back after a drop: read again what changed meanwhile.
         source.onopen = () => {
-          if (opened) void client.invalidateQueries();
+          if (opened) {
+            void client.invalidateQueries();
+            window.dispatchEvent(new CustomEvent(LIVE_REOPENED_EVENT));
+          }
           opened = true;
         };
         source.onerror = () => {

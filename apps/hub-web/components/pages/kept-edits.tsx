@@ -20,11 +20,8 @@ async function saveAsOwnPage(title: string, doc: PageDocument): Promise<string> 
   return page.id;
 }
 
-/**
- * Text that could not be saved, still on screen: copy it as Markdown, keep it as a page of
- * your own, or (after a merge that could not be made) take the other person's version.
- */
-export function KeptEdits({ message, title, read, ownCopy, onTheirs }: { message: string; title: string; read: () => PageDocument | null; ownCopy: boolean; onTheirs?: () => void }) {
+/** Text that could not be saved, still on screen: copy it as Markdown, or keep it as a page of your own. */
+export function KeptEdits({ message, title, read, ownCopy }: { message: string; title: string; read: () => PageDocument | null; ownCopy: boolean }) {
   const toast = useToast();
   const router = useRouter();
   const [saving, setSaving] = useState(false);
@@ -57,11 +54,6 @@ export function KeptEdits({ message, title, read, ownCopy, onTheirs }: { message
         {ownCopy ? (
           <button type="button" className="btn" disabled={saving} onClick={keep}>
             <FilePlus2 size={13} /> {saving ? "Saving…" : "Save as my own page"}
-          </button>
-        ) : null}
-        {onTheirs ? (
-          <button type="button" className="btn-ghost" onClick={onTheirs}>
-            Show their version
           </button>
         ) : null}
       </div>

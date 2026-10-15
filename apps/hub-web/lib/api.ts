@@ -5,6 +5,7 @@ import type { LayoutDocument } from "@ensemble/shared-types/widgets";
 import { bindClient, currentExternalSignal, isRequestCancelled, RequestCancelledError, trackRequest, isPageUnloading } from "./fetch-cancel";
 import { resolveHubApi } from "./hub-origin";
 import type { ApplyFailure } from "./assistant-apply";
+import type { CollabBatch, CollabJoin, CollabSend } from "@/components/editor/collab";
 import { MODULE_DENIED } from "@ensemble/shared-types/modules";
 
 /** Direct hub-api origin. SSE uses this so the stream is not buffered by the Next rewrite. */
@@ -31,6 +32,8 @@ export class ApiError extends Error {
     public readonly status: number,
     /** The API's machine-readable reason, when it gave one (`HOST_ACCESS_DENIED`, `EMAIL_UNVERIFIED`…). */
     public readonly code: string | null = null,
+    /** The refusal's JSON body, for answers that carry more than a message (a live page's missed steps). */
+    public readonly data: unknown = null,
   ) {
     const off = status === 404 && message === MODULE_DENIED;
     super(off ? MODULE_OFF_MESSAGE : message);
@@ -45,6 +48,14 @@ function errorCode(text: string): string | null {
   try {
     const body = JSON.parse(text) as { code?: unknown };
     return typeof body.code === "string" ? body.code : null;
+  } catch {
+    return null;
+  }
+}
+
+function errorBody(text: string): unknown {
+  try {
+    return JSON.parse(text);
   } catch {
     return null;
   }
@@ -124,6 +135,8 @@ function visitorId(): string {
 }
 /** Dispatched on `window` when the open share or public link turns out to be gone (a save or a ticket refused). */
 export const SHARE_GONE_EVENT = "ensemble:share-gone";
+/** Dispatched on `window` just before a refused session sends the tab to sign in, so open pages can keep unsent typing. */
+export const SIGNED_OUT_EVENT = "ensemble:signed-out";
 export function setOpenShare(id: string | null): void {
   openShare = id;
 }
@@ -184,12 +197,15 @@ export async function request<T>(path: string, init?: RequestInit & { json?: unk
   // On a public link there is no account to sign in to: a 401 means the link stopped working.
   if (response.status === 401 && typeof window !== "undefined" && !path.startsWith("/api/auth/") && !openLink) {
     const here = window.location.pathname;
-    if (!["/login", "/signup"].includes(here)) window.location.href = `/login?next=${encodeURIComponent(here + window.location.search)}`;
+    if (!["/login", "/signup"].includes(here)) {
+      window.dispatchEvent(new CustomEvent(SIGNED_OUT_EVENT));
+      window.location.href = `/login?next=${encodeURIComponent(here + window.location.search)}`;
+    }
   }
   if (!response.ok) {
     const text = await response.text();
     const message = serverErrorMessage(text);
-    if (message) throw new ApiError(message, response.status, errorCode(text));
+    if (message) throw new ApiError(message, response.status, errorCode(text), errorBody(text));
     if (unreachable(response.status, text)) throw new ApiError(OFFLINE, response.status);
     throw new ApiError(text.trim() || response.statusText, response.status);
   }
@@ -258,6 +274,8 @@ export type TaskRecord = {
 
 /** The file a page was converted from. */
 export type PageSourceFile = NonNullable<TaskPageContent["sourceFile"]>;
+
+const collabPath = (kind: "page" | "task", id: string) => (kind === "page" ? `/api/pages/${id}/collab` : `/api/tasks/${id}/page/collab`);
 
 export type PageRecord = {
   taskId: string;
@@ -1179,6 +1197,10 @@ export const api = bindClient({
   renamePage: (id: string, title: string) => patch<{ page: StandalonePageSummary }>(`/api/pages/${id}`, { title }),
   deletePage: (id: string) => del<void>(`/api/pages/${id}`),
   standalonePage: (id: string) => get<StandalonePageRecord>(`/api/pages/${id}`),
+  /** Live co-editing (`components/editor/collab.ts`): join, the steps since a version, and sending steps. */
+  collabJoin: (kind: "page" | "task", id: string) => get<CollabJoin>(collabPath(kind, id)),
+  collabSince: (kind: "page" | "task", id: string, epoch: string, version: number) => get<CollabBatch>(`${collabPath(kind, id)}${qs({ epoch, version })}`),
+  collabSend: (kind: "page" | "task", id: string, body: CollabSend) => request<CollabBatch>(collabPath(kind, id), { method: "POST", json: body, surviveNavigation: true }),
   saveStandalonePage: (id: string, data: { revision: number; content: unknown; notes?: string }) =>
     put<StandalonePageRecord>(`/api/pages/${id}`, data),
   undo: (entryId?: string) => post<{ label: string; entryId: string } | undefined>("/api/undo", entryId ? { entryId } : {}),
@@ -1808,8 +1830,8 @@ export type PresenceEntry = {
   resource: { kind: ShareKind; id: string } | null;
   cursor: { x: number; y: number } | null;
   viewport: { x: number; y: number; zoom: number } | null;
-  /** Their text cursor on a page: positions in their copy of the document. */
-  caret?: { anchor: number; head: number } | null;
+  /** Their text cursor on a page: positions in the live document at `version`. */
+  caret?: { anchor: number; head: number; version?: number } | null;
   typing: boolean;
   at: number;
   gone?: boolean;
@@ -1834,7 +1856,7 @@ export type PresenceUpdate = {
   resource?: { kind: ShareKind; id: string } | null;
   cursor?: { x: number; y: number } | null;
   viewport?: { x: number; y: number; zoom: number } | null;
-  caret?: { anchor: number; head: number } | null;
+  caret?: { anchor: number; head: number; version?: number } | null;
   typing?: boolean;
   leave?: boolean;
 };
