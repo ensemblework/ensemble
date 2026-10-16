@@ -40,6 +40,7 @@ import { TaskSkeleton } from "@/components/motion/skeletons";
 import { useDelayedFlag } from "@/lib/motion/use-delayed-flag";
 import { useModuleOn } from "@/lib/use-module";
 import { MenuItem, Popover, PriorityTag, Tag, cx } from "../ui";
+import { PageContent } from "../pages/page-content";
 import { PageTitleField } from "../pages/title-field";
 import { PageLoadFailure, inTrash } from "../pages/page-load";
 import { TrashedTask } from "../pages/trashed-page";
@@ -725,20 +726,15 @@ export function TaskPage({
         </>
       )}
 
-      <div className="mt-6 flex items-center justify-between border-t border-line pt-3 text-[12px] text-muted">
-        <span className="font-medium">Page content</span>
-        <span className={saveState === "error" ? "text-danger" : undefined}>{saveText}</span>
-      </div>
-      {locked && unsaved ? (
+      <PageContent status={saveText} error={saveState === "error"} before={locked && unsaved ? (
         <KeptEdits
           message={gone ? "This task isn't shared with you anymore, so your last changes weren't saved. They're still on screen." : "You can't edit this task anymore, so your last changes weren't saved. They're still on screen."}
           title={record.title}
           read={sync.latest}
           ownCopy={Boolean(shared && !shared.link)}
         />
-      ) : null}
+      ) : null}>
 
-      <div className="mt-4" data-focus-keep>
         {sync.failure ? (
           <p className="mt-4 text-[13px] text-muted">This page could not be opened for editing. Reload to try again.</p>
         ) : initialDoc && Editor ? (
@@ -762,7 +758,7 @@ export function TaskPage({
         ) : (
           <div className="skeleton mt-4 h-64 w-full" />
         )}
-      </div>
+      </PageContent>
 
       <AssignDialog
         open={assigning}

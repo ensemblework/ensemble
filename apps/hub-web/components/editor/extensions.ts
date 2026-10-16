@@ -1,7 +1,8 @@
 import { Extension, mergeAttributes } from "@tiptap/core";
 import Link from "@tiptap/extension-link";
 import Mention, { type MentionOptions } from "@tiptap/extension-mention";
-import { api } from "@/lib/api";
+import { inviteForPublicAI } from "../sharing/join-invitation";
+import { api, currentLink } from "@/lib/api";
 import { mountDiagramCard, mountDiagramOff } from "../diagrams/diagram-card";
 import { mountPlotCard, mountPlotOff } from "../plots/plot-card";
 import { mountFileCard } from "../files/file-embed";
@@ -258,9 +259,16 @@ export function editorExtensions(
         char: "@",
         pluginKey: ENTITY_MENTION_KEY,
         allowSpaces: true,
-        items: ({ query }) => mentionItems(query, entities, diagramsOn, plotsOn, { editor: true }),
+        items: ({ query }) => {
+          const items = mentionItems(query, entities, diagramsOn, plotsOn, { editor: true });
+          if (!currentLink()) return items;
+          const invitation: MenuItem[] = [{ type: "action", kind: "ensemble", id: "join-ensemble", label: "Ask Ensemble", detail: "Join to use AI in your own workspace" }];
+          if (/^diagrams?/i.test(query)) invitation.push({ type: "create", kind: "diagram", id: "join-diagram", label: "Create a diagram", detail: "Bring your ideas to life with Ensemble" });
+          return [...items.filter(item => item.kind === "date"), ...invitation];
+        },
         command: ({ editor, range, props }) => {
           const item = props as unknown as MenuItem;
+          if ((item.type === "action" || item.type === "create") && inviteForPublicAI()) return;
           if (item.type === "action") {
             editor.chain().focus().insertContentAt(range, "@ensemble ").run();
             return;

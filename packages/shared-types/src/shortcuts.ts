@@ -77,7 +77,7 @@ const themeChord: ShortcutChord = {
 export const SHORTCUTS: readonly ShortcutBinding[] = [
   {
     id: "palette",
-    label: "Command palette",
+    label: "Search and jump",
     group: "Everywhere",
     scope: "global",
     whileTyping: true,
@@ -114,7 +114,7 @@ export const SHORTCUTS: readonly ShortcutBinding[] = [
   },
   {
     id: "ask",
-    label: "Ask Ensemble",
+    label: "Search and jump (alternate)",
     group: "Everywhere",
     scope: "global",
     whileTyping: false,

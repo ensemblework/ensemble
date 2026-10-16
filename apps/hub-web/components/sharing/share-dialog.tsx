@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Globe, Link2, Lock, RefreshCw, Search, Share2, X } from "lucide-react";
 import {
-  api,
+  api, ApiError,
   type ItemRole,
   type MemberRole,
   type ShareKind,
@@ -15,6 +15,7 @@ import { colorFor } from "@/lib/presence";
 import { publicLinkUrl } from "@/lib/api";
 import { Dialog } from "@/components/ui";
 import { useToast } from "@/components/toast";
+import { ContactLimitDialog, PublicLinkLimitDialog } from "./sharing-limits";
 import { Avatar } from "./people";
 
 export type ShareTarget = { kind: "space"; spaceId: string; name: string } | { kind: ShareKind; resourceId: string; title: string };
@@ -182,6 +183,7 @@ type Row = { id: string; person: SharingPerson & { email?: string }; role: strin
  * have Ensemble accounts. Everyone you share with becomes a contact (up to five).
  */
 export function ShareDialog({ open, onClose, target }: { open: boolean; onClose: () => void; target: ShareTarget }) {
+  const [contactsLimit, setContactsLimit] = useState(false);
   const client = useQueryClient();
   const toast = useToast();
   const space = target.kind === "space";
@@ -224,7 +226,7 @@ export function ShareDialog({ open, onClose, target }: { open: boolean; onClose:
     void client.invalidateQueries({ queryKey: ["sharing"] });
     void client.invalidateQueries({ queryKey: ["shell"] });
   };
-  const fail = (error: unknown) => toast((error as Error).message, { tone: "error" });
+  const fail = (error: unknown) => { if (error instanceof ApiError && error.code === "CONTACT_LIMIT") setContactsLimit(true); else toast((error as Error).message, { tone: "error" }); };
 
   const invite = useMutation({
     mutationFn: async (person: SharingPerson) => {
@@ -268,6 +270,7 @@ export function ShareDialog({ open, onClose, target }: { open: boolean; onClose:
   return (
     <Dialog open={open} onClose={onClose} title={space ? `Share ${name}` : `Share “${name}”`} width={540}>
       <div className="space-y-4">
+        <ContactLimitDialog open={contactsLimit} onClose={() => setContactsLimit(false)} />
         {pending ? (
           <div className="flex items-center gap-2 rounded-lg border border-line-strong bg-bg p-2">
             <Avatar person={pending} color={colorFor(pending.id)} size={30} />
@@ -285,7 +288,7 @@ export function ShareDialog({ open, onClose, target }: { open: boolean; onClose:
             This space is shared with {limit} people, the most a space can have. Remove someone to add another.
           </div>
         ) : (
-          <PersonPicker onPick={setPending} exclude={already} />
+          <PersonPicker onPick={(person) => { setPending(person); if (contactsFull && !contactIds.has(person.id)) setContactsLimit(true); }} exclude={already} />
         )}
         {blocked ? (
           <p className="text-[12px] text-warn">
@@ -416,6 +419,7 @@ const PUBLIC_KINDS: ReadonlySet<string> = new Set(["page", "task", "diagram", "m
  * account. Whole spaces, boards, code and runs never.
  */
 function GeneralAccess({ target }: { target: ShareTarget }) {
+  const [linkLimit, setLinkLimit] = useState(false);
   const client = useQueryClient();
   const toast = useToast();
   const [copied, setCopied] = useState(false);
@@ -432,7 +436,7 @@ function GeneralAccess({ target }: { target: ShareTarget }) {
     void client.invalidateQueries({ queryKey: ["public-links"] });
   };
   const fail = (error: unknown) => toast((error as Error).message, { tone: "error" });
-  const setLink = useMutation({ mutationFn: (role: ItemRole) => api.setPublicLink({ kind: itemKind as ShareKind, resourceId, role }), onSuccess: refresh, onError: fail });
+  const setLink = useMutation({ mutationFn: (role: ItemRole) => api.setPublicLink({ kind: itemKind as ShareKind, resourceId, role }), onSuccess: () => { refresh(); setLinkLimit(false); }, onError: (error) => { if (error instanceof ApiError && error.code === "PUBLIC_LINK_LIMIT") setLinkLimit(true); else fail(error); } });
   const remove = useMutation({ mutationFn: (id: string) => api.removePublicLink(id), onSuccess: () => { refresh(); toast("The link is off. Nobody can open it now."); }, onError: fail });
   const rotate = useMutation({ mutationFn: (id: string) => api.rotatePublicLink(id), onSuccess: () => { refresh(); toast("New link made. The old one stopped working.", { tone: "ok" }); }, onError: fail });
 
@@ -447,7 +451,7 @@ function GeneralAccess({ target }: { target: ShareTarget }) {
   if (!allowed) return null;
   const link = state.data?.link ?? null;
   const viewOnly = target.kind === "meeting";
-  const full = !link && (state.data?.used ?? 0) >= (state.data?.limit ?? 5);
+  const full = !link && (state.data?.used ?? 0) >= (state.data?.limit ?? 3);
   const copy = (token: string) => {
     void navigator.clipboard.writeText(publicLinkUrl(token));
     setCopied(true);
@@ -455,6 +459,7 @@ function GeneralAccess({ target }: { target: ShareTarget }) {
   };
   return (
     <section>
+      <PublicLinkLimitDialog open={linkLimit} onClose={() => setLinkLimit(false)} onContinue={() => setLink.mutateAsync("view")} />
       <div className="mb-1.5 flex items-center justify-between">
         <h4 className="text-2xs font-medium uppercase tracking-wide text-faint">General access</h4>
         {state.data ? <Meter label="public links" used={state.data.used} limit={state.data.limit} /> : null}
@@ -468,14 +473,14 @@ function GeneralAccess({ target }: { target: ShareTarget }) {
             value={link ? "anyone" : "restricted"}
             options={[["restricted", "Only people you add"], ["anyone", "Anyone with the link"]]}
             label="Who can open it"
-            disabled={state.isLoading || setLink.isPending || remove.isPending || (full && !link)}
-            onChange={(next) => (next === "anyone" ? setLink.mutate("view") : link ? remove.mutate(link.id) : undefined)}
+            disabled={state.isLoading || setLink.isPending || remove.isPending}
+            onChange={(next) => (next === "anyone" ? full ? setLinkLimit(true) : setLink.mutate("view") : link ? remove.mutate(link.id) : undefined)}
           />
           <div className="mt-0.5 text-2xs text-muted">
             {link
               ? `No account needed. ${link.opens ? `Opened ${link.opens} time${link.opens === 1 ? "" : "s"}.` : "Not opened yet."}`
               : full
-                ? "You have 5 public links. Turn one off in Settings › Sharing to make another."
+                ? "Your three public pages are in use. Choose “Anyone with the link” to replace one."
                 : "Only the people above can open it."}
           </div>
         </div>

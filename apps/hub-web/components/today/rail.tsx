@@ -8,7 +8,7 @@ import { api, type DeliverableRecord } from "@/lib/api";
 import { clockLabel, isoDate, shortDate } from "@/lib/format";
 import { useTodayData } from "@/lib/home";
 import { useToast } from "../toast";
-import { AskEnsemble } from "../ensemble/ask-button";
+
 import { Dialog, Field, InfoTip, SkeletonRows, cx } from "../ui";
 import type { Size } from "@ensemble/shared-types/widgets";
 
@@ -133,15 +133,6 @@ export function DeliverablesRail({ highlightId, size = "l" }: { highlightId?: st
                       {row.due ? ` · ${shortDate(row.due)}` : ""}
                     </div>
                   </div>
-                  {size === "s" ? null : (
-                  <AskEnsemble
-                    surface="deliverable"
-                    anchorKey={`deliverable:${row.id}`}
-                    label={`Ask Ensemble about ${row.title}`}
-                    entityIds={[row.id]}
-                    contextLabel={row.title}
-                  />
-                  )}
                 </div>
               );
             })}

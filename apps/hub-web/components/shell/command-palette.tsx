@@ -16,15 +16,15 @@ import { findSettingsTarget, SETTINGS_DESTINATION_BY_ID } from "../settings/navi
 import { navigationDestinations, navigationScore } from "./navigation-destinations";
 import { useModalFocus } from "@/lib/modal-focus";
 import { SearchQuery } from "@/components/motion/search-query";
+import { HighlightMatch, searchHitHref } from "./search-match";
 import { cx } from "../ui";
 
 const ACTIONS: Array<{ id: string; label: string; hint: string; run: () => void }> = [
   { id: "act-capture", label: "Quick capture", hint: "New reminder", run: () => window.dispatchEvent(new CustomEvent("ensemble:capture")) },
-  { id: "act-ask", label: "Ask Ensemble", hint: "Search your data", run: () => window.dispatchEvent(new CustomEvent("ensemble:ask")) },
   { id: "act-help", label: "Keyboard shortcuts", hint: "Help", run: () => window.dispatchEvent(new CustomEvent("ensemble:help")) },
 ];
 
-type Item = { id: string; label: string; hint: string; run: () => void };
+type Item = { id: string; label: string; hint: string; excerpt?: string; run: () => void };
 
 export function CommandPalette({ open, onClose }: { open: boolean; onClose: () => void }) {
   const router = useRouter();
@@ -33,10 +33,17 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
   const input = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [index, setIndex] = useState(0);
+  const [debounced, setDebounced] = useState("");
+  const [submitted, setSubmitted] = useState(false);
+  useEffect(() => { setIndex(0); setSubmitted(false); const timer = window.setTimeout(() => setDebounced(query.trim()), 180); return () => clearTimeout(timer); }, [query]);
+  const found = useQuery({ queryKey: ["workspace-search", debounced], queryFn: ({ signal }) => api.searchWorkspace(debounced, signal), enabled: open && Boolean(debounced), staleTime: 15_000, retry: false });
+  const current = query.trim() === debounced;
+  const pending = Boolean(query.trim()) && (!current || found.isPending);
+
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, enabled: open, staleTime: 30_000 });
   const spaces = useQuery({ queryKey: ["spaces"], queryFn: api.spaces, enabled: open, staleTime: 30_000 });
 
-  const items = useMemo<Item[]>(() => {
+  const navigation = useMemo<Item[]>(() => {
     const modules = shell.data?.modules;
     const actions = [
       ...ACTIONS,
@@ -98,9 +105,18 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
     return [...destinations, ...actions];
   }, [query, router, shell.data, spaces.data]);
 
+  const hits: Item[] = current ? (found.data?.results ?? []).map(hit => ({ id: `work-${hit.path}`, label: hit.label, excerpt: hit.excerpt, hint: hit.kind.replace(/_/g, " "), run: () => router.push(searchHitHref(hit.path, query.trim())) })) : [];
+  const items = query.trim() ? [...hits, ...navigation] : navigation;
+  useEffect(() => {
+    if (!open || !submitted || !current || pending) return;
+    setSubmitted(false);
+    if (items.length === 1) { items[0]!.run(); onClose(); }
+  }, [open, submitted, current, pending, items, onClose]);
+
   useEffect(() => {
     if (!open) return;
     setQuery("");
+    setSubmitted(false);
     setIndex(0);
     const frame = requestAnimationFrame(() => input.current?.focus());
     return () => cancelAnimationFrame(frame);
@@ -125,23 +141,24 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
 
   return (
     <div className="fixed inset-0 z-[70] flex items-start justify-center bg-black/45 px-4 pt-[14vh]" onMouseDown={onClose}>
-      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Command palette" className="pop-in w-full max-w-[560px]" onMouseDown={(event) => event.stopPropagation()}>
+      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Search and jump" className="pop-in w-full max-w-[560px]" onMouseDown={(event) => event.stopPropagation()}>
         <SearchQuery
           className="flex max-h-[calc(100dvh-14vh-16px)] min-h-0 flex-col overflow-hidden rounded-xl border border-line-strong bg-panel p-2 shadow-pop"
           inputRef={input}
           value={query}
           onValue={setQuery}
-          placeholder="Jump to a view or setting"
-          label="Jump to a view or setting"
+          placeholder="Search your work, views and settings"
+          label="Search your work, views and settings"
           kbd={`${modKey()}K`}
-          count={items.length}
+          pending={pending}
+          count={pending ? null : items.length}
           list
           controls="command-list"
           resultsId="command-list"
           activeDescendant={items[selected] ? `cmd-${items[selected].id}` : undefined}
           status={`${plural(items.length, "result")} · ↑↓ move · ↵ open`}
-          emptyTitle="Nothing matches."
-          emptyHint="Try a view or a setting, like Avatar or Devices."
+          emptyTitle={found.isError ? "Workspace search couldn’t load." : "Nothing matches."}
+          emptyHint={found.isError ? "Navigation still works. Try searching again in a moment." : "Try a title, a phrase in your notes, or a setting like Avatar."}
           resultsClassName="min-h-0 flex-1 overflow-y-auto overscroll-contain"
           onKeyDown={(event) => {
             if (event.key === "ArrowDown") {
@@ -150,10 +167,10 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
             } else if (event.key === "ArrowUp") {
               event.preventDefault();
               setIndex((value) => Math.max(value - 1, 0));
-            } else if (event.key === "Enter" && items[selected]) {
+            } else if (event.key === "Enter") {
               event.preventDefault();
-              items[selected].run();
-              onClose();
+              if (pending) { setDebounced(query.trim()); setSubmitted(true); }
+              else if (items[selected]) { items[selected].run(); onClose(); }
             } else if (event.key === "Escape") {
               event.preventDefault();
               onClose();
@@ -172,7 +189,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
                   onClose();
                 }}
               >
-                <span className="min-w-0 flex-1 truncate text-[13.5px]">{item.label}</span>
+                <span className="min-w-0 flex-1 text-[13.5px]"><span className="block truncate"><HighlightMatch text={item.label} query={query.trim()} /></span>{item.excerpt ? <small className="block truncate text-[12px] text-muted"><HighlightMatch text={item.excerpt} query={query.trim()} /></small> : null}</span>
                 <span className="k shrink-0">{item.hint}</span>
                 {itemIndex === selected ? <CornerDownLeft size={13} className="text-faint" /> : null}
               </button>

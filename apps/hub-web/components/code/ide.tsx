@@ -44,7 +44,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type ReactNode } from "react";
-import { AskEnsemble } from "@/components/ensemble/ask-button";
+
 import { IdeSpace, ThemeControl } from "@/components/code/ide-theme";
 import type { ChunkCounts, ReviewEditorHandle, ReviewMode } from "@/components/code/review-editor";
 import { CommitPanel } from "@/components/code/commit-panel";
@@ -945,16 +945,6 @@ function FilePane(props: {
             </span>
           ))}
         </span>
-        <AskEnsemble
-          surface="code"
-          anchorKey={`code:${path}:${line}`}
-          label="Ask Ensemble about this line"
-          contextLabel={`${path}:${line}`}
-          path={path}
-          line={line}
-          entityIds={props.taskId ? [props.taskId] : undefined}
-          codeText={(props.editorRef.current?.text() ?? data?.current ?? "").split("\n").slice(Math.max(0, line - 12), line + 12).join("\n")}
-        />
         {props.changed ? <span><span className="text-ok">+{props.changed.added}</span> <span className="text-danger">−{props.changed.removed}</span></span> : null}
         <div className="flex-1" />
         {props.review && counts ? (

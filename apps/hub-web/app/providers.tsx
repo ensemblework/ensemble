@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import type { AppearanceSettings } from "@ensemble/shared-types";
 import { MotionContextProvider } from "@/components/motion/slot";
 import { ToastProvider } from "@/components/toast";
+import { JoinInvitation } from "@/components/sharing/join-invitation";
 import { AskHost } from "@/components/ask-dialog";
 import { ApiError, api, isUnreachable } from "@/lib/api";
 import { isRequestCancelled } from "@/lib/fetch-cancel";
@@ -68,6 +69,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
     <QueryClientProvider client={client}>
       <FetchGuards />
       <ToastProvider>
+        <JoinInvitation />
         <Appearance>{children}</Appearance>
         <AskHost />
       </ToastProvider>

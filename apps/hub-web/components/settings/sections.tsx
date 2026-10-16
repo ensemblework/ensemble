@@ -606,7 +606,7 @@ export function IdentitySection({ settings, patch }: Props) {
   const known = timeZoneName(settings.timezone);
   const device = typeof Intl === "undefined" ? null : timeZoneName(Intl.DateTimeFormat().resolvedOptions().timeZone);
   return (
-    <SectionCard title="You" description="Used for scheduling, quiet hours and to confirm destructive actions.">
+    <SectionCard title="Scheduling and confirmations" description="Your time zone sets scheduled tasks, the morning brief and quiet hours. The email below confirms sensitive workspace changes; it does not change your sign-in email.">
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="text-[13px] font-medium">
           <label htmlFor="settings-email">Email</label>

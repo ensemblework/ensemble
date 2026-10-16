@@ -18,7 +18,7 @@ import { api, type TaskRecord, type TaskStatus } from "@/lib/api";
 import { dueLabel, startOfDay } from "@/lib/format";
 import { safeDate } from "@/lib/safe-date";
 import { PageErrorBoundary } from "@/components/page-error";
-import { AskEnsemble } from "@/components/ensemble/ask-button";
+
 import { WidgetCanvas } from "@/components/widgets/canvas";
 import type { LayoutPayload, TodayCues, TodayNudges } from "@/lib/server-layout";
 import { MorningBrief, NeedsMeCount, PeopleGlance, ReposGlance, WeekRecapLink } from "@/components/widgets/glances";
@@ -507,7 +507,7 @@ export function TodayScreen({
         surface="today"
         title="Today"
         kicker={new Intl.DateTimeFormat("en-IN", { weekday: "short", day: "numeric", month: "short" }).format(new Date())}
-        toolbar={<AskEnsemble surface="today" anchorKey="today" label="Ask Ensemble about today" />}
+        toolbar={null}
         initialLayout={initialLayout}
         initialNudges={initialNudges}
         initialCues={initialCues}

@@ -6,7 +6,7 @@ import type { AppearanceSettings } from "@ensemble/shared-types";
 import { colorThemeSurfaces } from "@/lib/color-themes";
 import { ColorThemePicker } from "./color-theme-picker";
 import { ACCENT_PRESETS, resolveAccent } from "@/lib/accent";
-import { APPEARANCE_KEY, DEFAULT_APPEARANCE, markAccentWrite, publishAppearance, usePersistentState } from "@/lib/prefs";
+import { APPEARANCE_KEY, DEFAULT_APPEARANCE, markAccentWrite, publishAppearance, readAppearance, usePersistentState } from "@/lib/prefs";
 import { radioKeyTarget } from "@/lib/radio-keys";
 import { useToast } from "../toast";
 import { Range, SectionCard, Segmented, SettingRow, Toggle, cx } from "../ui";
@@ -24,7 +24,7 @@ const FONTS: Array<{ id: AppearanceSettings["font"]; label: string; detail: stri
 export function AppearanceSection({ patch }: { patch: Patch }) {
   const [appearance] = usePersistentState<AppearanceSettings>(APPEARANCE_KEY, DEFAULT_APPEARANCE);
   const update = (next: Partial<AppearanceSettings>) => {
-    const merged = { ...appearance, ...next };
+    const merged = { ...readAppearance(), ...next };
     markAccentWrite();
     publishAppearance(merged);
     patch({ appearance: merged });

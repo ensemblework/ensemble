@@ -10,6 +10,8 @@ import { meetingDoc } from "@/lib/export/items";
 import { blockEditor, warmPeek } from "@/lib/warm";
 import { textToDoc } from "../editor/doc";
 import { mentionHref } from "../editor/editor-commands";
+import { PageContent } from "../pages/page-content";
+import { PageTitleField } from "../pages/title-field";
 import { ExportMenu } from "../export-menu";
 import { ShareButton } from "../sharing/share-dialog";
 import { confirmAction } from "../ask-dialog";
@@ -177,22 +179,13 @@ export function MeetingNotesFields({ session, onRemoved, editor }: { session: Me
 
   return <>
     <div className="flex flex-wrap items-center gap-2">
-      <input aria-label="Meeting title" maxLength={200} value={draft.title} className="field min-w-0 flex-1 text-[18px] font-semibold"
-        onChange={(event) => edit({ ...latest.current, title: event.target.value })}
-        onBlur={() => {
-          if (!latest.current.title.trim()) { edit({ ...latest.current, title: savedTitle.current }); toast("A title is required. The previous title was restored."); }
-          void flushRef.current();
-        }} />
+      <div className="w-full"><PageTitleField value={draft.title} restoreValue={savedTitle.current} label="Meeting title" onDraft={(title) => edit({ ...latest.current, title })} onSave={(title) => edit({ ...latest.current, title })} onCommit={() => { void flushRef.current(); }} /></div>
       <ExportMenu load={() => meetingDoc({ ...session, title: latest.current.title, content: latest.current.content })} />
       <ShareButton target={{ kind: "meeting", resourceId: session.id, title: draft.title }} />
       <button type="button" className="btn" disabled={removing} onClick={() => void remove()}>Delete notes</button>
     </div>
     <p className="mt-1 text-[12px] text-muted">Type your notes below. Microphone recording is not available yet.</p>
-    <div className="mt-2 flex flex-wrap items-center gap-2 text-[12px]" role="status">
-      <span className={failed ? "text-danger" : "text-muted"}>{status}</span>
-      {failed ? <button type="button" className="btn" onClick={() => void flushRef.current()}>Retry save</button> : null}
-    </div>
-    <div className="meeting-notes-page mt-3" data-testid="meeting-notes" onBlur={() => { void flushRef.current(); }}>
+    <PageContent status={status} error={failed} actions={failed ? <button type="button" className="btn" onClick={() => void flushRef.current()}>Retry save</button> : null} onBlur={() => { void flushRef.current(); }}>
       {Editor ? (
         <Editor
           initial={initial}
@@ -205,6 +198,6 @@ export function MeetingNotesFields({ session, onRemoved, editor }: { session: Me
           remote={remote}
         />
       ) : <div className="skeleton h-40 w-full" />}
-    </div>
+    </PageContent>
   </>;
 }

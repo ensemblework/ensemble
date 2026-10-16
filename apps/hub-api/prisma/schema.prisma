@@ -2192,3 +2192,13 @@ model PublicLink {
   @@index([createdBy])
   @@map("public_links")
 }
+
+// Minimal operational deletion log; no account content or foreign key survives erasure.
+model AccountDeletionLog {
+  emailKey  String   @id @map("email_key")
+  deletedAt DateTime @default(now()) @map("deleted_at")
+  expiresAt DateTime @map("expires_at")
+
+  @@index([expiresAt])
+  @@map("account_deletion_logs")
+}

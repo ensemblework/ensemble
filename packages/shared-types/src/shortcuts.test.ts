@@ -37,10 +37,10 @@ test("people can rebind global actions without taking browser or system chords",
   assert.match(customChordProblem("new-page", { key: "p", mod: true }, SHORTCUTS, true) ?? "", /browser/);
   assert.match(customChordProblem("new-page", { key: "t", mod: true, shift: true }, SHORTCUTS, false) ?? "", /browser/);
   assert.match(customChordProblem("new-page", { key: "p" }, SHORTCUTS, true) ?? "", /Command or Option/);
-  assert.match(customChordProblem("new-page", { key: "k", mod: true }, SHORTCUTS, true) ?? "", /Command palette/);
+  assert.match(customChordProblem("new-page", { key: "k", mod: true }, SHORTCUTS, true) ?? "", /Search and jump/);
   assert.match(customChordProblem("undo", { key: "u", alt: true }, SHORTCUTS, true) ?? "", /cannot be changed/);
   // Mac Control is Ctrl elsewhere, where Ctrl is the main modifier.
-  assert.match(customChordProblem("new-page", { key: "k", ctrl: true }, SHORTCUTS, true) ?? "", /Command palette/);
+  assert.match(customChordProblem("new-page", { key: "k", ctrl: true }, SHORTCUTS, true) ?? "", /Search and jump/);
   assert.match(customChordProblem("new-page", { key: "t", ctrl: true }, SHORTCUTS, true) ?? "", /browser/);
   assert.equal(customChordProblem("new-page", { key: "y", ctrl: true, shift: true }, SHORTCUTS, true), null);
   const bindings = applyShortcutOverrides({ "new-page": optionP, undo: { key: "u", alt: true } });

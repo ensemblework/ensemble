@@ -18,10 +18,18 @@ export function PageTitleField({
   value,
   onSave,
   autoFocus = false,
+  label = "Page title",
+  onDraft,
+  restoreValue,
+  onCommit,
 }: {
   value: string;
   onSave: (value: string) => void;
   autoFocus?: boolean;
+  label?: string;
+  restoreValue?: string;
+  onCommit?: () => void;
+  onDraft?: (value: string) => void;
 }) {
   const errorId = useId();
   const [error, setError] = useState("");
@@ -49,19 +57,22 @@ export function PageTitleField({
       ref={ref}
       rows={1}
       value={draft}
-      aria-label="Page title"
+      aria-label={label}
       aria-describedby={error ? errorId : undefined}
-      onChange={(event) => { setError(""); setDraft(event.target.value.replace(/\n/g, "")); }}
+      onChange={(event) => { setError(""); const next = event.target.value.replace(/\n/g, ""); setDraft(next); onDraft?.(next); }}
       onBlur={() => {
         const title = draft.trim();
         if (!title) {
-          setDraft(shown(value));
+          setDraft(shown(restoreValue ?? value));
+          onDraft?.(restoreValue ?? value);
           // Still untitled: nothing was lost, so there is nothing to explain.
-          if (shown(value)) setError("A title is required. The previous title was restored.");
+          if (shown(restoreValue ?? value)) setError("A title is required. The previous title was restored.");
+          onCommit?.();
           return;
         }
         setDraft(title);
         if (title !== value) onSave(title);
+        onCommit?.();
       }}
       onKeyDown={(event) => {
         if (event.key !== "Enter" || event.nativeEvent.isComposing) return;

@@ -13,7 +13,7 @@ export default function PrivacyPage() {
     <main className="section">
       <Link href="/">Ensemble home</Link>
       <h1>Privacy policy</h1>
-      <p>Effective 6 October 2026. This policy covers the hosted Ensemble service at ensemblework.com.</p>
+      <p>Effective 17 October 2026. This policy covers the hosted Ensemble service at ensemblework.com.</p>
       <h2>Data we store</h2>
       <p>We store your account email, name, password hash if you use a password, linked login provider identifiers, session records, and the notes, tasks, context and files you choose to save. Login with Google, GitHub or Microsoft requests only identity information; mail and repository connectors require separate authorization.</p>
       <h2>How data is used</h2>
@@ -21,6 +21,8 @@ export default function PrivacyPage() {
       <h2>Security and control</h2>
       <p>Hosted data is separated by account. Passwords are hashed; saved provider credentials are encrypted at rest. The server decrypts credentials when making authorized provider calls. The service operator has administrative access to hosted infrastructure. Do not store secrets or sensitive regulated data in this early testing service.</p>
       <p>You can export your data or delete your account in Settings → Account. Exports exclude credential secrets. Deletion removes active hosted records and revokes devices; it does not remove local files or data already sent to another provider. Infrastructure backups and provider logs may retain records until their normal retention expires.</p>
+      <h2>Deletion logs</h2>
+      <p>After account deletion, we keep a minimal operational log for up to 90 days: a keyed identifier derived from the email, the deletion date and an expiry date. This log contains no readable email, name, profile, workspace content or feedback. It does not prevent signing up again; a repeat deletion replaces the previous log. The identifier is pseudonymous, not anonymous. The log is restricted to the service operator and is not shared externally or sent to a model. To request erasure of the log, contact the operator through a private channel as described below.</p>
       <h2>Cookies</h2>
       <p>We use essential session and login-flow cookies, plus local UI preferences. These cookies keep you signed in and protect login flows.</p>
       <h2>Contact and changes</h2>

@@ -10,7 +10,7 @@ import { displayName, ownedSpaceIds, requireOwnedSpace, resourceTitle, SharingEr
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
-export const MAX_PUBLIC_LINKS = 5;
+export const MAX_PUBLIC_LINKS = 3;
 export const LINK_HEADER = "x-ensemble-link";
 export const VISITOR_HEADER = "x-ensemble-visitor";
 
@@ -68,6 +68,7 @@ export async function setLink(db: PrismaClient, accountId: string, input: { spac
   const kind = input.kind;
   const role = PUBLIC_VIEW_ONLY.has(kind) ? "view" : input.role;
   return db.$transaction(async (tx) => {
+    await tx.user.update({ where: { id: accountId }, data: { id: accountId } });
     await requireOwnedSpace(tx, accountId, input.spaceId);
     const title = await resourceTitle(tx, input.spaceId, kind, input.resourceId);
     if (title === null) throw new SharingError("That item is no longer in this space.", 404);
@@ -75,7 +76,7 @@ export async function setLink(db: PrismaClient, accountId: string, input: { spac
     if (existing) return row(await tx.publicLink.update({ where: { id: existing.id }, data: { role, title } }));
     const spaces = await ownedSpaceIds(tx, accountId);
     if ((await tx.publicLink.count({ where: { spaceId: { in: spaces } } })) >= MAX_PUBLIC_LINKS) {
-      throw new SharingError(`You can have ${MAX_PUBLIC_LINKS} public links. Turn one off in Settings › Sharing to make another.`, 409);
+      throw new SharingError(`You can have ${MAX_PUBLIC_LINKS} public links. Turn one off in Settings › Sharing to make another.`, 409, "PUBLIC_LINK_LIMIT");
     }
     return row(await tx.publicLink.create({ data: { token: newLinkToken(), spaceId: input.spaceId, kind, resourceId: input.resourceId, title, role, createdBy: accountId } }));
   });

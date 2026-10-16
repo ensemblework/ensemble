@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { useRef } from "react";
-import { AskEnsemble } from "@/components/ensemble/ask-button";
+
 import { PageHeader, SectionCard, Spinner } from "@/components/ui";
 import { LoadError } from "@/components/load-error";
 import { useToast } from "@/components/toast";
@@ -55,7 +55,6 @@ export function TrashList({ embedded = false }: { embedded?: boolean }) {
 
   const actions = (
     <>
-      <AskEnsemble surface="trash" anchorKey="trash" label="Ask Ensemble about trash" />
       <button type="button" className="btn" onClick={() => restore.mutate(null)} disabled={!items.length}>
         Restore all
       </button>

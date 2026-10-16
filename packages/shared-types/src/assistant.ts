@@ -26,6 +26,7 @@ export const AssistantPageContext = z.object({
   label: z.string().optional(),
   taskId: z.string().optional(),
   projectId: z.string().optional(),
+  meetingId: z.string().max(64).optional(),
 });
 export type AssistantPageContext = z.infer<typeof AssistantPageContext>;
 

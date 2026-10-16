@@ -51,6 +51,7 @@ export function starterPrompts(pathname: string): string[] {
   if (pathname.startsWith("/pages/") || pathname.startsWith("/tasks/")) return ["Summarize this page.", "Turn this into a checklist.", "What is missing here?"];
   if (pathname.startsWith("/plots")) return ["Plot one column against another.", "Which chart fits this data?"];
   if (pathname.startsWith("/diagrams")) return ["Draw a diagram of a project.", "Simplify the diagram I have open."];
+  if (pathname.startsWith("/meetings")) return ["Summarize this meeting note.", "What decisions did we make?", "Find action items across my meeting notes."];
   if (pathname.startsWith("/code")) return ["What is left to review?", "Summarize the open change."];
   if (pathname.startsWith("/metrics")) return ["Where did model calls go this week?", "Which model cost the most?"];
   return ["Plan my day.", "What is due this week?", "Turn a note into tasks."];
@@ -436,6 +437,7 @@ export function AssistantDock() {
           page: {
             path: pathname,
             taskId: peekId ?? undefined,
+            meetingId: pathname === "/meetings" ? document.querySelector<HTMLElement>("[data-meeting-id]")?.dataset.meetingId : undefined,
             label: peekId ? "a task page" : pathname.startsWith("/pages/") ? "a note" : pathname.slice(1) || "Today",
           },
         }),
@@ -592,7 +594,7 @@ export function AssistantDock() {
   // Always mounted and only hidden: mounting again after a task closes would measure from the corner and slide back.
   const launcher = (
     <AskLauncher
-      hidden={open || Boolean(peekId) || pathname.startsWith("/start")}
+      hidden={open || pathname.startsWith("/start")}
       working={pending}
       onOpen={() => setOpen(true)}
       title={`Ask Ensemble (${chord}). Drag to move it.`}

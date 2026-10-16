@@ -691,3 +691,8 @@ Code inspection: each new dock reply persists `AssistantMessage.credentialSource
 Before running a subscription turn, `subscriptions/agents.ts` refreshes the installed agent’s sign-in and effort capabilities. An API-key Claude login or a Codex custom-provider/API-key account is not advertised as a subscription. Offline devices have no usable subscription agents in `GET /api/subscriptions`; revocation settles their in-flight relay turns immediately. Unknown API-model effort capabilities use the provider default, while known options come from provider metadata or the documented family table.
 
 Official effort references read 16 Oct 2026: [OpenAI reasoning](https://developers.openai.com/api/docs/guides/reasoning), [Claude Code model configuration](https://code.claude.com/docs/en/model-config), [Gemini thinking](https://ai.google.dev/gemini-api/docs/thinking). Subscription app options are those reported by the installed program, not the consumer chat UI’s labels.
+
+
+### Unified assistant entry point (17 Oct 2026)
+
+The Hub's floating assistant is the shared entry point across surfaces, including open task peeks. Scattered per-surface Ask panels and the meeting-library summary form are removed. The selected manual or imported meeting note is sent as `page.meetingId`; `assistant/state.ts` resolves only a non-trashed note in the active space and supplies its id/title (and a manual note excerpt). Meeting notes remain ordinary readable/writable context; users can request their summary in the floating assistant. Inline `@ensemble` remains on editable documents. Public-link visitors can write when granted edit access, but AI attempts open the join invitation and the link policy refuses model routes ([29](29_SHARING.md)).

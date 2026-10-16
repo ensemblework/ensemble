@@ -1,3 +1,4 @@
+import { privateIdentifier } from "./secrets.js";
 import { Prisma, type PrismaClient } from "@prisma/client";
 
 const scopedModels = Prisma.dmmf.datamodel.models.filter((model) => model.fields.some((field) => field.name === "userId" && field.kind === "scalar"));
@@ -71,28 +72,36 @@ export async function exportAccountData(prisma: PrismaClient, userId: string) {
 }
 
 export async function deleteAccountData(prisma: PrismaClient, userId: string): Promise<void> {
-  // An account takes its Ensemble spaces with it. Each space is removed the same way.
-  const owned = await prisma.user.findMany({ where: { ownerId: userId }, select: { id: true } });
-  for (const space of owned) await deleteAccountData(prisma, space.id);
+  const scopes = [userId];
   await prisma.$transaction(async (tx) => {
-    await tx.user.update({ where: { id: userId }, data: { id: userId } });
-    await tx.$queryRaw`SELECT id FROM workspace_jobs WHERE user_id = ${userId} FOR UPDATE`;
-    const active = await tx.workspaceJob.count({ where: { userId, status: { in: ["running", "claimed", "stopping", "waiting_approval"] } } });
+    const user = await tx.user.update({ where: { id: userId }, data: { id: userId } });
+    const owned = await tx.user.findMany({ where: { ownerId: userId }, select: { id: true } });
+    scopes.push(...owned.map(row => row.id));
+    for (const id of scopes.slice(1).sort()) await tx.user.update({ where: { id }, data: { id } });
+    await tx.$queryRaw(Prisma.sql`SELECT id FROM workspace_jobs WHERE user_id IN (${Prisma.join(scopes)}) OR runner_account_id = ${userId} FOR UPDATE`);
+    const active = await tx.workspaceJob.count({ where: { OR: [{ userId: { in: scopes } }, { runnerAccountId: userId }], status: { in: ["running", "claimed", "stopping", "waiting_approval"] } } });
     if (active) throw Object.assign(new Error("Stop your active agent runs before deleting your account."), { statusCode: 409 });
     // All domain foreign keys use Cascade/SetNull; userId-only legacy tables do
     // not reference users, so they must be removed explicitly.
-    for (const model of scopedModels) {
+    for (const scope of scopes) for (const model of scopedModels) {
       const field = model.fields.find((item) => item.name === "userId")!;
       await tx.$executeRawUnsafe(
         `DELETE FROM ${identifier(model.dbName ?? model.name)} WHERE ${identifier(field.dbName ?? field.name)} = $1`,
-        userId,
+        scope,
       );
     }
+    if (!user.ownerId && !user.email.endsWith("@spaces.ensemble.invalid")) {
+      const emailKey = privateIdentifier("account-deletion-log", user.email.trim().toLowerCase());
+      const deletedAt = new Date();
+      const data = { deletedAt, expiresAt: new Date(deletedAt.getTime() + 90 * 86_400_000) };
+      await tx.accountDeletionLog.upsert({ where: { emailKey }, create: { emailKey, ...data }, update: data });
+    }
+    for (const id of scopes.slice(1)) await tx.user.delete({ where: { id } });
     await tx.user.delete({ where: { id: userId } });
   }, { timeout: 60_000 });
   try {
     const { eraseUserDatasetFiles } = await import("../plots/store.js");
-    eraseUserDatasetFiles(userId);
+    for (const id of scopes) eraseUserDatasetFiles(id);
   } catch (cause) {
     throw Object.assign(new Error("Account records were removed, but uploaded dataset file cleanup failed. Contact the operator to finish removing the stored files.", { cause }), {
       statusCode: 503, expose: true, code: "ACCOUNT_FILES_CLEANUP_FAILED",

@@ -6,12 +6,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRightLeft, Check, ExternalLink, Globe, Link2, LogOut, Share2, Trash2, UserPlus, X } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
-import { api, publicLinkUrl, type ShareKind, type SharingContact, type SharingOverview } from "@/lib/api";
+import { ApiError, api, publicLinkUrl, type ShareKind, type SharingContact, type SharingOverview } from "@/lib/api";
 import { distinctInitials } from "@/lib/initials";
 import { colorFor } from "@/lib/presence";
 import { switchSpace } from "@/lib/spaces";
 import { SpaceIcon } from "../shell/space-switcher";
 import { Avatar } from "../sharing/people";
+import { ContactLimitDialog } from "../sharing/sharing-limits";
 import { Meter, PersonPicker, ShareDialog } from "../sharing/share-dialog";
 import { useToast } from "../toast";
 import { Dialog, SectionCard, SkeletonRows } from "../ui";
@@ -138,10 +139,11 @@ export function SharingTab() {
   const [sharingSpace, setSharingSpace] = useState<OwnedSpace | null>(null);
   const [handing, setHanding] = useState<OwnedSpace | null>(null);
   const [adding, setAdding] = useState(false);
+  const [contactLimit, setContactLimit] = useState(false);
   const refresh = () => void client.invalidateQueries({ queryKey: ["sharing"] });
   const fail = (error: unknown) => toast((error as Error).message, { tone: "error" });
 
-  const addContact = useMutation({ mutationFn: (id: string) => api.addContact(id), onSuccess: () => { refresh(); setAdding(false); }, onError: fail });
+  const addContact = useMutation({ mutationFn: (id: string) => api.addContact(id), onSuccess: () => { refresh(); setAdding(false); }, onError: (error) => { if (error instanceof ApiError && error.code === "CONTACT_LIMIT") setContactLimit(true); else fail(error); } });
   const unshare = useMutation({ mutationFn: (id: string) => api.removeShare(id), onSuccess: refresh, onError: fail });
   const leave = useMutation({
     mutationFn: async (spaceId: string) => {
@@ -162,11 +164,13 @@ export function SharingTab() {
 
   return (
     <div className="space-y-5">
+      <ContactLimitDialog open={contactLimit} onClose={() => setContactLimit(false)} />
       <SectionCard
         title="Contacts"
         description={`The people you share with: up to ${data.limits.contacts}. Removing someone takes back everything you shared with them, at once.`}
         actions={<Meter label="contacts" used={data.contacts.length} limit={data.limits.contacts} />}
       >
+        {contactsFull ? <button type="button" className="btn mb-3" onClick={() => setContactLimit(true)}><UserPlus size={14} />Add contact</button> : null}
         <div className="grid gap-2 sm:grid-cols-2">
           {data.contacts.map((contact) => (
             <div key={contact.id} className="group flex items-center gap-2.5 rounded-lg border border-line px-3 py-2">

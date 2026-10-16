@@ -16,8 +16,6 @@ const GraphTab = dynamic(() => import("./graph").then((mod) => mod.GraphTab), {
   loading: () => <div className="skeleton h-[480px] w-full rounded-xl" />,
 });
 
-const AskEnsemble = dynamic(() => import("../ensemble/ask-button").then((mod) => mod.AskEnsemble), { ssr: false });
-
 const VIEWS = [
   { id: "board", label: "Board" },
   { id: "grid", label: "Grid" },
@@ -1167,7 +1165,6 @@ function Peek({ card, cards, onOpen, onClose, onChanged }: { card: BoardCard; ca
           </button>
         </div>
         <div className="mt-4 flex flex-wrap items-center gap-2">
-          <AskEnsemble prominent surface="context" anchorKey={`context:${card.id}`} label={`Ask about ${card.title}`} entityIds={[card.id]} contextLabel={card.title} />
           {card.kind === "project" ? (
             <Link href={`/projects/${card.id}`} className="btn min-h-8">
               Open project

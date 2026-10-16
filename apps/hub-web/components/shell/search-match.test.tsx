@@ -5,7 +5,8 @@ import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { api } from "../../lib/api.js";
-import { AskBar } from "./ask-bar.js";
+import { CommandPalette } from "./command-palette.js";
+import { AppRouterContext } from "next/dist/shared/lib/app-router-context.shared-runtime";
 import { matchParts, searchHitHref } from "./search-match.js";
 
 (globalThis as { React?: typeof React }).React = React;
@@ -16,44 +17,51 @@ test("literal highlights are case-insensitive and preserve punctuation and URLs"
   assert.equal(searchHitHref("/meetings?session=abc#notes", "A+B"), "/meetings?session=abc&match=A%2BB#notes");
 });
 
-test("search shows one-line snippets with a matching highlight, preserves the destination and dismisses stale results", async () => {
-  const client = new QueryClient({ defaultOptions: { queries: { retry:false, gcTime: Infinity } } });
-  const original = api.searchWorkspace;
-  const seen: string[] = [];
-  api.searchWorkspace = async (q) => { seen.push(q); return { query:q, results: [{id:"p1",kind:"page",label:"Release notes",excerpt:`A process was ${q} yesterday.`,path:"/pages/p1"}] }; };
+async function mountSearch(opened: string[]) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { gcTime: Infinity } } });
   const host = document.createElement("div"); document.body.append(host); const root = createRoot(host);
+  const router = { push: (path: string) => opened.push(path), replace() {}, prefetch: async () => {}, back() {}, forward() {}, refresh() {} };
+  function Search() {
+    const [open, setOpen] = React.useState(true);
+    return <CommandPalette open={open} onClose={() => setOpen(false)} />;
+  }
+  client.setQueryData(["shell"], { modules: "" }); client.setQueryData(["spaces"], { spaces: [] });
+  await act(async () => root.render(<QueryClientProvider client={client}><AppRouterContext.Provider value={router}><Search /></AppRouterContext.Provider></QueryClientProvider>));
+  const input = host.querySelector("input")!;
+  return { input, done: async () => { await act(async () => root.unmount()); host.remove(); client.clear(); } };
+}
+async function type(input: HTMLInputElement, value: string) {
+  await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value); input.dispatchEvent(new Event("input", { bubbles: true })); });
+}
+
+test("combined search shows matching snippets, preserves destinations and dismisses stale results", async () => {
+  const original = api.searchWorkspace; const seen: string[] = []; const opened: string[] = [];
+  api.searchWorkspace = async q => { seen.push(q); return { query: q, results: [{ id: "p1", kind: "page", label: "Release notes", excerpt: `A process was ${q} yesterday.`, path: "/pages/p1" }] }; };
+  const view = await mountSearch(opened);
   try {
-    await act(async () => root.render(<QueryClientProvider client={client}><AskBar /></QueryClientProvider>));
-    const input = host.querySelector("input")!;
-    await act(async () => { Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, "established"); input.dispatchEvent(new Event("input", {bubbles:true})); });
-    await act(async () => { await new Promise(resolve => setTimeout(resolve, 240)); });
-    await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); });
+    await type(view.input, "established");
+    await act(async () => new Promise(resolve => setTimeout(resolve, 240)));
+    await act(async () => new Promise(resolve => setTimeout(resolve, 30)));
     assert.deepEqual(seen, ["established"]);
-    const link = document.querySelector<HTMLAnchorElement>('#workspace-link-0')!;
-    assert.equal(link.getAttribute("href"), "/pages/p1?match=established");
-    assert.equal(link.querySelector("mark")!.textContent, "established");
-    assert.ok(!document.body.textContent?.includes("closest match"));
-    await act(async () => input.dispatchEvent(new KeyboardEvent("keydown", {key:"Escape",bubbles:true})));
-    assert.equal(document.querySelector('#workspace-link-0'), null);
-  } finally { await act(async () => root.unmount()); host.remove(); client.clear(); api.searchWorkspace=original; }
+    assert.equal(document.querySelector("mark")!.textContent, "established");
+    await act(async () => view.input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
+    assert.deepEqual(opened, ["/pages/p1?match=established"]);
+    assert.equal(document.querySelector('[role="dialog"]'), null);
+  } finally { await view.done(); api.searchWorkspace = original; }
 });
 
-test("Enter before search finishes opens one matching result, and Escape cancels that pending navigation",async()=>{
-  for(const cancel of [false,true]) {
-    const client=new QueryClient({defaultOptions:{queries:{retry:false,gcTime:Infinity}}});
-    const original=api.searchWorkspace;let finish:(value:Awaited<ReturnType<typeof api.searchWorkspace>>)=>void=()=>{};
-    api.searchWorkspace=()=>new Promise(resolve=>{finish=resolve;});
-    const host=document.createElement("div");document.body.append(host);const root=createRoot(host);
-    const opened:string[]=[];const intercept=(event:Event)=>{const link=(event.target as Element)?.closest('a[id^="workspace-link-"]');if(link){opened.push(link.getAttribute("href")!);event.preventDefault();}};
-    document.addEventListener("click",intercept,true);
+test("Enter waits for the unique combined result and Escape cancels pending navigation", async () => {
+  for (const cancel of [false, true]) {
+    const original = api.searchWorkspace; let finish: (value: Awaited<ReturnType<typeof api.searchWorkspace>>) => void = () => {};
+    api.searchWorkspace = () => new Promise(resolve => { finish = resolve; });
+    const opened: string[] = []; const view = await mountSearch(opened);
     try {
-      await act(async()=>root.render(<QueryClientProvider client={client}><AskBar/></QueryClientProvider>));
-      const input=host.querySelector("input")!;
-      await act(async()=>{Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,"value")!.set!.call(input,"Unique classifier");input.dispatchEvent(new Event("input",{bubbles:true}));});
-      await act(async()=>input.closest("form")!.dispatchEvent(new Event("submit",{bubbles:true,cancelable:true})));
-      if(cancel) await act(async()=>input.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape",bubbles:true})));
-      await act(async()=>{finish({query:"Unique classifier",results:[{id:"d1",kind:"diagram",label:"Unique classifier",excerpt:"Unique classifier",path:"/diagrams/d1"}]});await new Promise(resolve=>setTimeout(resolve,30));});
-      assert.deepEqual(opened,cancel?[]:["/diagrams/d1?match=Unique+classifier"]);
-    } finally {await act(async()=>root.unmount());host.remove();client.clear();api.searchWorkspace=original;document.removeEventListener("click",intercept,true);}
+      await type(view.input, "Unique classifier");
+      await act(async () => view.input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
+      await act(async () => new Promise(resolve => setTimeout(resolve, 20)));
+      if (cancel) await act(async () => view.input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+      await act(async () => { finish({ query: "Unique classifier", results: [{ id: "d1", kind: "diagram", label: "Unique classifier", excerpt: "Unique classifier", path: "/diagrams/d1" }] }); await new Promise(resolve => setTimeout(resolve, 30)); });
+      assert.deepEqual(opened, cancel ? [] : ["/diagrams/d1?match=Unique+classifier"]);
+    } finally { await view.done(); api.searchWorkspace = original; }
   }
 });

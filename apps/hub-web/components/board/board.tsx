@@ -26,7 +26,7 @@ import { MenuItem, PageHeader, Popover, Skeleton, useOverflowRight } from "../ui
 import { LoadError } from "../load-error";
 import { ShareButton } from "../sharing/share-dialog";
 import { PagePeople } from "../sharing/page-people";
-import { AskEnsemble } from "../ensemble/ask-button";
+
 import { CardBody, SortableCard, type BoardCardMotion } from "./task-card";
 import { BoardInsights } from "./insights";
 import { focusLabel, matchesFocus, type BoardFocus } from "./insight-data";
@@ -526,7 +526,6 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
         {tasks.data ? <span className="text-[12.5px] text-muted">{plural(count, "task")}</span> : null}
         {picked.length > 0 && <span className="text-[12.5px] text-muted">{plural(picked.length, "selected task", "selected tasks")}</span>}
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          <AskEnsemble surface="board" anchorKey={picked.length ? `board:sel:${[...picked].sort().join(",")}` : "board:overview"} label={picked.length ? "Ask about selected tasks" : "Ask about this board"} entityIds={picked.length ? picked : baseVisible.map((task) => task.id)} selection={picked.length ? `${picked.length} selected tasks` : "This board"} />
           <Popover trigger={(_open, toggle) => <button type="button" className="btn" disabled={addPage.isPending} onClick={toggle}>Add page</button>}>
             {(close) => (pages.data?.pages.length ? pages.data.pages.map((page) => (
               <MenuItem key={page.id} onClick={() => { close(); addPage.mutate(page.id); }}>{page.title || "Untitled"}</MenuItem>
