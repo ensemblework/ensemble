@@ -26,7 +26,7 @@ test("agent limits and quiet-hour fields have contextual accessible labels", asy
   const root = createRoot(host);
   try {
     // The trust-sharing row asks this computer whether it can share trust; with no answer it stays hidden.
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false, enabled: false } } });
+    const client = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity, retry: false, enabled: false } } });
     await act(async () => root.render(<QueryClientProvider client={client}>
       <AutonomySection settings={SETTINGS} patch={() => {}} />
       <OrchestrationSection settings={SETTINGS} patch={() => {}} />
@@ -48,7 +48,7 @@ type Patch = Record<string, unknown>;
 type View = { host: HTMLDivElement; calls: string[]; patches: Patch[]; done: () => Promise<void> };
 
 /** POST /api/code/folders/resolve refuses /etc (as hub-api does) and returns "<path>-real" for anything else. */
-async function mount(): Promise<View> {
+async function mount(options: { webStatus?: unknown } = {}): Promise<View> {
   const calls: string[] = [];
   const patches: Patch[] = [];
   const realFetch = globalThis.fetch;
@@ -63,10 +63,10 @@ async function mount(): Promise<View> {
         headers: { "Content-Type": "application/json" },
       });
     }
-    const body = url.endsWith("/api/terminal/status") ? STATUS : url.endsWith("/api/code/repos") ? { repos: [], roots: ["/work"] } : {};
+    const body = url.endsWith("/api/web-terminal/status") ? options.webStatus ?? { unlocked: false, passkeys: [] } : url.endsWith("/api/terminal/status") ? STATUS : url.endsWith("/api/code/repos") ? { repos: [], roots: ["/work"] } : {};
     return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
   }) as typeof fetch;
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({ defaultOptions: { queries: { gcTime: Infinity, retry: false } } });
   // The Code module is on, so the section renders (useModuleOn reads the shell query).
   client.setQueryData(["shell"], { modules: "code" });
   const host = document.createElement("div");
@@ -305,4 +305,16 @@ test("desktop: Choose folder… opens the native picker and saves the chosen fol
     assert.equal(view.patches.length, 0);
     assert.match(codeBlock(view.host)?.querySelector('[role="alert"]')?.textContent ?? "", /no folder picker here/);
   });
+});
+
+
+test("hosted passkeys provide a visible way to unlock management", async () => {
+  setTestUrl("https://app.ensemble.test/settings");
+  const view = await mount({ webStatus: { unlocked: false, passkeys: [{ id: "key", label: "This laptop", createdAt: new Date().toISOString(), lastUsedAt: null }] } });
+  try {
+    const remove = view.host.querySelector<HTMLButtonElement>('[aria-label="Remove This laptop"]');
+    assert.ok(remove);
+    assert.equal(remove.disabled, true);
+    assert.ok([...view.host.querySelectorAll("button")].some((button) => button.textContent === "Unlock to manage passkeys"));
+  } finally { await view.done(); setTestUrl("http://localhost/"); }
 });

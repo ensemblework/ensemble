@@ -90,13 +90,9 @@ Signals captured by the Hub (see [02 §4](02_MODULE_INTERACTION_HUB_UI.md#4-inte
 - **`accepted_as_is`** — reinforces current rules.
 - **Context corrections** (e.g. *"Rahul is not on ranker anymore"*).
 
-**Nightly:** `miners/feedback.py` folds these into the `StyleProfile` (rules gain/lose weight), regenerates `SKILL.md` as a **proposed version**; the user sees *"Skill email-reply.default v4 proposed — 3 changes"* in the Skills page with a diff → **Accept / Reject**. **Skills never change silently.**
+The current learning pass is tied to completed-work retention (§10), not a nightly feedback-folding service. It gives a day’s notice, uses the High model, preserves existing instructions when appending learned guidance, and publishes a new skill version before the completed items enter Trash. `Skill.proposedBody` remains in the schema, but this retention pass writes the versioned body directly.
 
-`GET /api/skills/:id/history` is **authenticated human UI history only**; it is not an assistant, worker, retrieval or MCP tool. Ordinary reads use the current `skills.body`, never `skill_versions`. Legacy correction feedback bodies are reduced to signatures before mining so retired instructions do not become future model input. History is pruned on every publication and by daily cleanup, including pre-existing histories; this count limit is independent of the 15/30/45/60-day deletion policy.
-
-The Skills editor **autosaves body edits after a 900 ms pause**, serializing snapshots so a slow response never replaces newer typing. Merely opening a skill does not write a version. Saves compare the last acknowledged version while holding the skill row lock; conflicts and network failures keep the local draft visible with retry/reload controls. Switching skills flushes the current draft. Regenerate, proposal decisions and draft tests remain explicit clicks, not side effects of autosave.
-
----
+The Skills editor autosaves body edits after a 900 ms pause through `PATCH /api/skills/:id`. Current bodies are read by the assistant and retrieval; the route includes the latest three versions for human inspection and restoration. `POST /api/skills/:id/score` checks a supplied draft’s machine-checkable rules. `POST /api/skills/:id/test` generates a preview without taking external actions. A Morning brief preview uses current Today context and its saved personal instructions.
 
 ## 4. Skill Router (runtime)
 
@@ -205,7 +201,7 @@ Three things make cold start work:
 
 The first edit alone promotes a skill from bootstrap to provisional.
 
-**Verified end to end:** editing an approval in the Hub produced a `skill_feedback` row; folding it learned *"prefers about 16 words"* plus the phrasing the engineer substituted, and raised a proposed v2 for review while the live version stayed untouched — skills never change silently (§3).
+The earlier prototype folded approval edits into proposed skill versions. The current completed-work miner is described in §10.
 
 ### Notes from the earlier prototype
 
@@ -224,16 +220,14 @@ These notes describe how an earlier prototype met the checklist. Most of the fil
 
 **Commands:** `pnpm forge:bootstrap`, `pnpm forge:mine`, `pnpm forge:fold`, `pnpm forge:list`, and `ensemble-forge test <slug> --file draft.md`.
 
-**Judge scope.** Only rules with a machine-checkable form (`regex:`, `sections:`, `maxwords:`) are scored; a rule the judge cannot verify must not be allowed to inflate the score. The Hub re-implements the same three checks in TypeScript so `/api/skills/:id/test` needs no round trip to Python — note that rules are authored with Python's inline `(?i)` flag, which JavaScript rejects, so the Hub translates it rather than silently skipping the rule.
+**Judge scope.** Only rules with a machine-checkable form (`regex:`, `sections:`, `maxwords:`) are scored; a rule the judge cannot verify must not be allowed to inflate the score. The Hub re-implements the same three checks in TypeScript so `/api/skills/:id/score` needs no round trip to Python — note that rules are authored with Python's inline `(?i)` flag, which JavaScript rejects, so the Hub translates it rather than silently skipping the rule.
 
 **Deferred.** The LLM style-extraction pass (§2 step 4) and the LLM-judge similarity score (§2 step 6) need a model credential; the structured miners and the rule-adherence judge cover both today and the prompt is written and ready at `packages/prompts/forge/extract_style.md`.
 
 ---
 
-## 10. Hub "Improve skills from my work" run
+## 10. Completed-work learning and morning briefs
 
-The Skills page has an explicit **Improve skills** action for the slow, max-reasoning learning pass. It creates a durable `Run` with worker `skill_improver`, resolves and validates the configured **max** complexity model profile (model and reasoning effort), freezes it in the checkpoint, registers a cancellable activity, and checkpoints progress in `Run.checkpoint`. If the server stops while a billable model request is marked in flight, the restarted worker fails that run with a *"not retried automatically"* message instead of silently spending another call.
+Code inspection, 16 Oct 2026: `apps/hub-api/src/jobs/skill-mining.ts` runs as part of daily retention. It gives at least 24 hours’ notice, calls the user’s **High** model with bounded completed-work evidence and current skills, validates structured output, and creates or updates versioned skills before the work moves to Trash. Pinning keeps an item out. Failed mining or a concurrent skill edit leaves the completed items intact. The current miner is a bounded model completion, not the earlier proposed tool-driven `skill_improver` worker. An empty result means the model found no reusable pattern.
 
-The model is given **read-only catalogue tools** under `apps/hub-api/src/skills/`: completed tasks and transitions, runs and steps, workspace job evidence, people/projects/repos/deliverables/preferences/meeting notes/artifacts/documents, and bounded keyword search. These tools use ordinary `app.prisma` reads, so the soft-delete extension excludes deleted rows; no raw SQL is used. URL fetching is off by default and no arbitrary web fetch tool is exposed.
-
-Proposals follow the existing contract: **the live `Skill.body` is never changed**. Accepted evidence-backed updates are stored in `Skill.proposedBody`, `proposedChanges`, and `proposedAt` for review in the Skills page. Every example is re-read from its cited source id (`artifact:<id>`, `task:<id>`, `workspace-job:<id>:prBody`, etc.) and **kept only when the excerpt is a verbatim substring of that source**. Unsupported or uncited proposals are discarded.
+`apps/hub-api/src/cowork/morning-skill.ts` creates the `morning-brief` skill using profession-specific defaults. The first delivered brief offers personalization; `/morning-brief` saves those instructions as a new skill version. Ordinary Skills editing and version restoration apply. `POST /api/skills/:id/test` generates a preview without taking external actions; Morning brief previews use the current Today briefing. The existing `/score` endpoint checks a supplied draft against machine-checkable rules. The miner never edits `morning-brief`.

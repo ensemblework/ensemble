@@ -317,6 +317,7 @@ async function commandRunner(args: string[]): Promise<void> {
   }
   if (subcommand === "uninstall") {
     parsed(rest);
+    for (const warning of await signOut(paths)) console.warn(warning);
     console.log(await uninstallRunnerService({ home: homedir() }));
     // Ending a Windows scheduled task leaves its child running. The app's own runtime stays.
     await stopRunner(paths).catch((error: unknown) => {

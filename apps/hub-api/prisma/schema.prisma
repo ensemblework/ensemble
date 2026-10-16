@@ -1388,6 +1388,7 @@ model AssistantMessage {
   content        String                @default("")
   toolCalls      Json                  @default("[]") @map("tool_calls")
   model          String?
+  credentialSource String? @map("credential_source")
   credits        Float?
   createdAt      DateTime              @default(now()) @map("created_at")
   conversation   AssistantConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)

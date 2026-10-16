@@ -184,6 +184,7 @@ export function parseClaudeStatus(ran: Pick<Ran, "code" | "stdout" | "stderr">):
   if (start >= 0) {
     try {
       const body = JSON.parse(ran.stdout.slice(start)) as Record<string, unknown>;
+      if (body.authMethod === "api_key" || body.authMethod === "apiKey" || body.authMethod === "api_key_env_var") return { signedIn: false, plan: null };
       const signedIn = [body.loggedIn, body.logged_in, body.isLoggedIn, body.authenticated].find((value) => typeof value === "boolean") as boolean | undefined;
       const plan = [body.subscriptionType, body.subscription, body.plan].find((value) => typeof value === "string" && value.trim()) as string | undefined;
       if (signedIn !== undefined) return { signedIn, plan: signedIn ? (plan?.trim().slice(0, 60) ?? null) : null };
@@ -323,7 +324,8 @@ async function probeCodex(): Promise<SubscriptionAgent | null> {
     server.notify("initialized");
     base.version = firstVersion(String(init.userAgent ?? "").replace(/^[^/]*\//, ""));
     const account = (await server.request("account/read", {})) as { account?: { type?: string; planType?: string } | null; requiresOpenaiAuth?: boolean };
-    base.signedIn = Boolean(account.account) || account.requiresOpenaiAuth === false;
+    base.signedIn = account.account?.type === "chatgpt";
+    if (!base.signedIn && account.requiresOpenaiAuth === false) base.problem = "Codex is configured for an API key or custom provider. Sign in with ChatGPT to use a subscription here.";
     base.plan = account.account?.type === "chatgpt" && account.account.planType && account.account.planType !== "unknown" ? account.account.planType : null;
     const rows: CodexModel[] = [];
     let cursor: string | null = null;

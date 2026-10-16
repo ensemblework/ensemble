@@ -98,6 +98,8 @@ test("a chat turn on the person's Claude plan runs on their computer; the tools 
     assert.deepEqual(simulated.failures, []);
     assert.deepEqual(simulated.heard, ["assistant.turn"]);
     assert.doesNotMatch(turn.body, /event: error/, turn.body);
+    assert.match(turn.body, /credentialSource/);
+    assert.match(turn.body, /Claude subscription/);
 
     const spec = seen.spec as { agent: string; model: string; system: string; prompt: string; tools: Array<{ name: string }> };
     assert.equal(spec.agent, "claude-code");

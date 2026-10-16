@@ -85,7 +85,7 @@ export async function subscriptionRoutes(app: FastifyInstance): Promise<void> {
         lastSeenAt: device.lastSeenAt?.toISOString() ?? null,
         appVersion: device.appVersion,
         ready: caps.turns >= ASSISTANT_TURNS_API,
-        agents: caps.agents,
+        agents: deviceOnline(device.lastSeenAt) ? caps.agents : [],
       };
     });
     return { computers, preferred: settings.models.computer };

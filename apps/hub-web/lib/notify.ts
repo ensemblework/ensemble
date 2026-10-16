@@ -1,3 +1,5 @@
+import { desktopShell } from "./desktop-param";
+import { showNotification } from "@/components/settings/reminders";
 /**
  * Desktop notifications, gated by Settings → Desktop reminders and quiet hours.
  * The Notifier component keeps `config` current; anything can call notify().
@@ -23,10 +25,12 @@ export function inQuietHours(now = new Date()): boolean {
   return from <= until ? current >= from && current < until : current >= from || current < until;
 }
 
-export function notify(title: string, body: string, options: { urgent?: boolean; tag?: string; href?: string } = {}): boolean {
-  if (typeof Notification === "undefined" || Notification.permission !== "granted") return false;
+export async function notify(title: string, body: string, options: { urgent?: boolean; tag?: string; href?: string } = {}): Promise<boolean> {
+
   if (!config.enabled) return false;
   if (!options.urgent && inQuietHours()) return false;
+  if (desktopShell()) return showNotification(title, body);
+  if (typeof Notification === "undefined" || Notification.permission !== "granted") return false;
   const note = new Notification(title, {
     body,
     tag: options.tag,

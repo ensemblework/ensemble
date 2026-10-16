@@ -1,3 +1,4 @@
+import { SUBSCRIPTION_INFO } from "@ensemble/shared-types";
 /**
  * The assistant turn (docs/02 §8, docs/11).
  *
@@ -149,6 +150,7 @@ export interface AssistantTurnResult {
   credits: number | null;
   mutated: boolean;
   interrupted?: boolean;
+  credentialSource?: string;
 }
 
 const liveTurns = new Map<string, AbortController>();
@@ -286,6 +288,7 @@ async function drive(
   const calls: AssistantToolCall[] = [];
   let credits: number | null = 0;
   let answered = args.model;
+  let credentialSource = args.provider === "ollama" ? "Local Ollama" : `API key · ${args.provider}`;
   let mutated = false;
   let text = "";
   let nudged = false;
@@ -347,6 +350,7 @@ async function drive(
           args.emit({ type: "status", text });
         },
       });
+      credentialSource = `${SUBSCRIPTION_INFO[agent].label} subscription · ${done.computer}`;
       text = done.text.trim();
       answered = done.model || args.model;
       credits = null;
@@ -595,7 +599,7 @@ async function drive(
     app.log.error({ err: error }, "Could not record the assistant metric");
   }
 
-  return { content: text, toolCalls: calls, model: answered, credits, mutated, interrupted: stopped };
+  return { content: text, toolCalls: calls, model: answered, credits, mutated, interrupted: stopped, credentialSource };
 }
 
 interface CallOutcome {

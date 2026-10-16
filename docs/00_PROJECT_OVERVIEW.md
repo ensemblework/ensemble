@@ -284,3 +284,6 @@ Where each hard feature lives in this tree. Built-or-not status per feature is i
 | Templates, desks and marketplace | [design/](design/) | `apps/hub-web/app/(hub)/marketplace/`, `apps/hub-web/components/desk/`, `apps/hub-api/src/marketplace/`, `apps/hub-api/src/layouts/` |
 
 **Verification:** isolate fixtures (safe databases, mocked external/model calls) from live checks. A fixture test does not claim that an external PR, model action or desktop notice was actually sent.
+
+
+`AssistantMessage.credentialSource` (16 Oct 2026, code inspection) is an optional display label recording whether a dock reply used an API credential or a subscription on a named computer. The additive migration is `20261016100000_assistant_credential_source`; older messages have no label.

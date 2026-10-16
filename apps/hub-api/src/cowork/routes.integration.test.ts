@@ -23,7 +23,7 @@ async function databaseReady(): Promise<boolean> {
 
 async function user(label: string) {
   return prisma.user.create({
-    data: { email: `cowork-${label}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}@ensemble.test`, name: label },
+    data: { email: `cowork-${label}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}@ensemble.test`, name: label, createdAt: new Date(Date.now() - 2 * 86_400_000) },
   });
 }
 

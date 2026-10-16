@@ -1,3 +1,4 @@
+import { installEditorHook } from "../workspace/editor-hooks.js";
 /**
  * Handing a task to an agent's own app on this computer, and the agents found here
  * (workspace/handoff.ts). Only the runtime on the person's computer opens apps.
@@ -60,6 +61,8 @@ export async function handoffRoutes(app: FastifyInstance): Promise<void> {
       folder = join(base, "runs", `app-${task.id.slice(0, 8)}-${Date.now().toString(36)}`);
       await mkdir(folder, { recursive: true });
     }
+    const target = body.app === "copilot-cli" ? "copilot-cli" : body.app.replace(/-cli$/, "");
+    await installEditorHook(prisma, request.userId, target, { project: folder });
     const marker = newMarker();
     const prompt = handoffPrompt({ title: task.title, description: task.description, instructions: body.instructions, marker });
     const handoff = await prisma.agentHandoff.create({ data: { userId: request.userId, taskId: task.id, app: body.app, folder, marker } });

@@ -464,6 +464,7 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
       content: persisted.shown,
       toolCalls: result.toolCalls,
       model: result.model,
+      credentialSource: result.credentialSource,
       tier: tierName,
       interrupted: result.interrupted ?? false,
       ...(persisted.saveFailed ? { saveFailed: true } : {}),
@@ -501,6 +502,7 @@ async function saveAssistantReply(
           content,
           toolCalls: result.toolCalls as never,
           model: result.model,
+          credentialSource: result.credentialSource,
           credits: result.credits ?? undefined,
         },
       });

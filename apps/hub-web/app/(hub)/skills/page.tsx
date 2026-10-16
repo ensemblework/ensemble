@@ -43,6 +43,7 @@ function SkillDetail({ skill }: { skill: SkillRecord }) {
     mutationFn: (version: number) => api.restoreSkill(skill.id, version),
     onSuccess: () => client.invalidateQueries({ queryKey: ["skills"] }),
   });
+  const preview = useMutation({ mutationFn: () => api.testSkill(skill.id, draft || undefined) });
   const score = useMutation({ mutationFn: () => api.scoreSkill(skill.id, draft) });
 
   return (
@@ -97,6 +98,9 @@ function SkillDetail({ skill }: { skill: SkillRecord }) {
       ) : null}
 
       <h3 className="mt-6 text-[15px] font-semibold">Test this skill</h3>
+      <button type="button" className="btn mt-2" disabled={state !== "saved" || preview.isPending} onClick={() => preview.mutate()}>{preview.isPending ? "Generating…" : "Generate a preview"}</button>
+      {preview.error ? <p role="alert" className="mt-2 text-danger">{preview.error.message}</p> : null}
+      {preview.data ? <div className="mt-3 whitespace-pre-wrap rounded-lg border border-line p-3 text-[13px]">{preview.data.body}</div> : null}
       <p className="text-[12.5px] text-muted">Paste a draft. It is scored against this skill&apos;s machine-checkable rules.</p>
       <textarea
         value={draft}

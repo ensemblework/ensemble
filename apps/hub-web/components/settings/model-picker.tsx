@@ -2,6 +2,9 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { api } from "@/lib/api";
+import { isSubscriptionProvider } from "@ensemble/shared-types";
 import { ProviderLogo, ModelLogo } from "../connectors/provider-logo";
 import { Check, ChevronsUpDown, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -34,10 +37,18 @@ const STATUS_TEXT: Record<ProviderChoice["status"], string> = {
 /** The provider of a tier: a menu with whether each one has a key. */
 export function ProviderPicker({ value, choices, onPick, label }: { value: string; choices: ProviderChoice[]; onPick: (id: string) => void; label: string }) {
   const current = choices.find((choice) => choice.id === value);
+  const client = useQueryClient();
+  const prefs = useQuery({ queryKey: ["preferences"], queryFn: api.preferences });
+  const saved = prefs.data?.preferences.find((row) => row.key === "ui.model-picker-tab")?.value;
+  const [chosen, setChosen] = useState<"subscriptions" | "api" | null>(null);
+  const tab = chosen ?? (saved === "api" || saved === "subscriptions" ? saved : isSubscriptionProvider(value) ? "subscriptions" : "api");
+  const remember = useMutation({ mutationFn: (next: string) => api.putPreference("ui.model-picker-tab", next), onSuccess: () => client.invalidateQueries({ queryKey: ["preferences"] }) });
+  useEffect(() => setChosen(null), [saved]);
+  const shown = choices.filter((choice) => isSubscriptionProvider(choice.id) === (tab === "subscriptions"));
   return (
     <Popover
       fill
-      width={260}
+      width={340}
       trigger={(open, toggle) => (
         <button type="button" className="picker-trigger" aria-haspopup="listbox" aria-expanded={open} aria-label={label} onClick={toggle} data-picker="provider">
           <span className={cx("size-1.5 shrink-0 rounded-full", STATUS_DOT[current?.status ?? "none"])} aria-hidden />
@@ -47,8 +58,12 @@ export function ProviderPicker({ value, choices, onPick, label }: { value: strin
       )}
     >
       {(close) => (
-        <div role="listbox" aria-label={label}>
-          {choices.map((choice) => (
+        <div>
+          <div role="tablist" aria-label="Model source" className="m-1 flex rounded-lg bg-raised p-1">
+            {(["subscriptions", "api"] as const).map((id) => <button type="button" key={id} role="tab" aria-selected={tab === id} className={cx("flex-1 rounded-md px-2 py-2 text-[12px]", tab === id ? "bg-panel font-medium text-ink shadow-sm" : "text-muted")} onClick={() => { setChosen(id); remember.mutate(id); }}>{id === "subscriptions" ? "AI app subscriptions" : "API keys"}</button>)}
+          </div>
+          <div role="listbox" aria-label={label}>
+          {shown.map((choice) => (
             <button
               key={choice.id}
               type="button"
@@ -66,6 +81,7 @@ export function ProviderPicker({ value, choices, onPick, label }: { value: strin
               {choice.id === value ? <Check size={13} className="shrink-0 text-accent" aria-hidden /> : null}
             </button>
           ))}
+          </div>
         </div>
       )}
     </Popover>
@@ -254,7 +270,7 @@ export function ThinkingPicker({
   if (!known.levels.length) {
     return (
       <p className="text-[12px] text-faint" data-thinking="none" data-jump-label={label}>
-        {model ? `${model} has no thinking setting.` : "Pick a model to see its thinking levels."}
+        {known.source === "unknown" ? "No verified thinking options for this model. Its default is used." : model ? `${model} has no thinking setting.` : "Pick a model to see its thinking levels."}
         {value !== "default" ? " Nothing is sent for it." : ""}
       </p>
     );

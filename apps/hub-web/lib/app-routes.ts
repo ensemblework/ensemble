@@ -12,6 +12,7 @@ const EXACT = new Set([
   "/verify",
   "/link",
   "/today",
+  "/morning-brief",
   "/board",
   "/needs-me",
   "/runs",

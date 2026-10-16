@@ -38,3 +38,14 @@ export const AUDIENCES: Array<{ id: AudienceId; label: string; prompts: string[]
     ],
   },
 ];
+
+/** Use only the account's profession; unfamiliar or unset profiles get everyday examples. */
+export function promptsForProfession(profession: string | null | undefined): { prompts: string[] } {
+  const id = (profession ?? "").toLowerCase();
+  const audience = /lawyer|legal/.test(id) ? "lawyer" : /research|scientist/.test(id) ? "researcher" : /engineer|developer|software/.test(id) ? "engineer" : /student/.test(id) ? "student" : null;
+  return AUDIENCES.find((row) => row.id === audience) ?? { prompts: [
+    "What needs my attention today?",
+    "What meetings are coming up, and what should I prepare?",
+    "Help me plan my next three days from my open tasks.",
+  ] };
+}

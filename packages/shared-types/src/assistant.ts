@@ -206,10 +206,10 @@ export const OrchestrationSettings = z.object({
    */
   outsideAccess: OutsideAccess.default("read"),
   /**
-   * Which sessions of Claude Code, Codex, Cursor and Copilot send their prompts to Needs me
-   * through Ensemble's hook: only tasks Ensemble opened in them (default), or every session.
+   * Only sessions Ensemble opened send prompts through its hook. Normalize older saved
+   * values while keeping other editor sessions in their own app.
    */
-  editorRequests: z.enum(["ensemble", "all"]).default("ensemble"),
+  editorRequests: z.enum(["ensemble", "all"]).default("ensemble").transform(() => "ensemble" as const),
   defaultDelivery: z.enum(["review-first", "unattended"]).default("review-first"),
 });
 export type OrchestrationSettings = z.infer<typeof OrchestrationSettings>;

@@ -1,7 +1,9 @@
+import { applyMinedSkills, prepareSkillMining, type MiningPlan } from "./skill-mining.js";
 /**
- * Trash purge, completed-item ageing, and completion records for a future skill miner.
+ * Trash purge and completed-work skill mining before tasks enter Trash.
  * The scheduler calls this on the daily slot and again on startup if a day was missed.
  */
+import type { complete } from "../lib/runtime.js";
 import type { FastifyInstance } from "fastify";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { appendLedger } from "../lib/ledger.js";
@@ -61,16 +63,20 @@ export function completionSummary(text: string): string {
 export async function runRetention(
   app: FastifyInstance,
   userId: string,
-  options: { deletedDays: number; completedDays: number; historyDays?: number; logChunkBatchSize?: number },
+  options: { deletedDays: number; completedDays: number; historyDays?: number; logChunkBatchSize?: number; miningRun?: typeof complete; now?: Date },
 ): Promise<RetentionCounts> {
-  const now = new Date();
+  const now = options.now ?? new Date();
   const deletedCutoff = new Date(now.getTime() - options.deletedDays * 86_400_000);
   const completedCutoff = new Date(now.getTime() - options.completedDays * 86_400_000);
   const counts: RetentionCounts = { completionRecords: 0, completedSoftDeleted: 0, purged: 0, historyPurged: 0, logChunksPurged: 0 };
 
+  let mining: MiningPlan | null = null;
+  try { mining = await prepareSkillMining(app.prisma, userId, options.completedDays, options.miningRun, now); }
+  catch (error) { app.log?.warn({ err: error, userId }, "Skill mining failed; completed work is kept"); }
   const tasks = await app.prisma.task.findMany({
     where: {
       userId,
+      id: { in: mining?.tasks ?? [] },
       deletedAt: null,
       pinned: false,
       completedAt: { lt: completedCutoff },
@@ -79,12 +85,25 @@ export async function runRetention(
     include: { project: { select: { name: true } }, repo: { select: { fullName: true } } },
   });
   const deliverables = await app.prisma.deliverable.findMany({
-    where: { userId, deletedAt: null, pinned: false, status: "completed", completedAt: { lt: completedCutoff } },
+    where: { userId, id: { in: mining?.deliverables ?? [] }, deletedAt: null, pinned: false, status: "completed", completedAt: { lt: completedCutoff } },
     include: { project: { select: { id: true, name: true } } },
   });
 
   if (tasks.length || deliverables.length) {
     await app.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`;
+      await tx.$queryRaw`SELECT id FROM tasks WHERE user_id = ${userId} AND id = ANY(${mining?.tasks ?? []}::text[]) FOR UPDATE`;
+      await tx.$queryRaw`SELECT id FROM deliverables WHERE user_id = ${userId} AND id = ANY(${mining?.deliverables ?? []}::text[]) FOR UPDATE`;
+      if (tasks.length !== mining?.tasks.length || deliverables.length !== mining?.deliverables.length) throw new Error("Completed work changed during mining.");
+      // A reopen, pin or completion edit while the model runs cancels this batch.
+      for (const task of tasks) {
+        const current = await tx.task.findFirst({ where: { id: task.id, userId, deletedAt: null, pinned: false, status: task.status, completedAt: task.completedAt } });
+        if (!current) throw new Error("Completed work changed during mining; keeping the batch.");
+      }
+      for (const row of deliverables) {
+        if (!await tx.deliverable.findFirst({ where: { id: row.id, userId, deletedAt: null, pinned: false, status: "completed", completedAt: row.completedAt } })) throw new Error("Completed work changed during mining; keeping the batch.");
+      }
+      if (mining) await applyMinedSkills(tx, userId, mining);
       for (const task of tasks) {
         await tx.completionRecord.create({
           data: {
@@ -172,6 +191,7 @@ async function hardPurge(prisma: PrismaClient, userId: string, cutoff: Date): Pr
   const files = await prisma.document.findMany({ where, select: { artifactId: true } });
   const fileArtifacts = files.flatMap((file) => (file.artifactId ? [file.artifactId] : []));
   const counts = await prisma.$transaction([
+    prisma.completionRecord.deleteMany({ where: { userId, createdAt: { lt: cutoff } } }),
     prisma.task.deleteMany({ where }),
     prisma.project.deleteMany({ where }),
     prisma.person.deleteMany({ where }),

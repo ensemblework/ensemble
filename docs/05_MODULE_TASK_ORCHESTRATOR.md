@@ -279,3 +279,11 @@ A Graph draft-save step is preceded by real drafting when the plan omitted it; t
 This is approval-checkpoint recovery, not a claim of arbitrary mid-step crash recovery.
 
 The Runs overview is limited to eight recent attempts and a disclosure for the previous ten *(02 §3.4 says 10; check `apps/hub-web/app/(hub)/runs`)*. The database history and per-task run-history pagination remain intact.
+
+## Queue and completed-work learning (16 Oct 2026)
+
+Code inspection: `workspace/queue-policy.ts` serializes claims on the user row for both server and device claims. Eligible jobs are visited by assignment sequence. Claimed, running, stopping and waiting jobs count toward `orchestration.maxConcurrentJobs` (1–8, default 3). A pending Needs me question or publishing approval at least 60 minutes old permits one extra task, at most N+1 total. Answering does not take a second slot. After the extra task starts, nothing new starts until fewer than N jobs remain; one unanswered request cannot repeatedly refill that extra slot. The same project or repository, the same computer’s resource keys, and unfinished continuation chains remain mutually exclusive.
+
+`jobs/skill-mining.ts` warns in the bell at least 24 hours before learning from expired completed work. The daily retention pass uses the **High** model, validates structured skills, versions updates, then writes completion records and moves the batch to Trash atomically. A failed/offline model, pin, reopen, active job or conflicting skill edit preserves the work for a later pass. Batches contain at most 50 tasks and 50 deliverables; the notice state is a per-space `hub.retention-mining` preference. Trash is purged using the existing trash retention setting, including the completion records made when it entered Trash.
+
+The scheduler visits all accounts, including those with no saved settings row. Morning briefs begin on the local day after account creation, use the profession default/personal skill, and are idempotent per local day. The native app/local runtime must be running for local schedules.

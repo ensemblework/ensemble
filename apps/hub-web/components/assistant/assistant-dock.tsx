@@ -247,6 +247,7 @@ export function Message({
         : null}
       <div className="assistant-message-footer">
         {message.model ? <span className="inline-flex items-center gap-1.5"><ModelLogo model={message.model} size={11} />{message.model}</span> : null}
+        {message.credentialSource ? <span className="min-w-0 break-words">{message.credentialSource}</span> : null}
         <CopyReply content={message.content} />
       </div>
     </article>

@@ -11,6 +11,7 @@ import { api } from "@/lib/api";
 import { INSTALL_CHANNELS, type ConnectOs } from "@/lib/connect/configs";
 import { pairingCodeConsumed, platformLabel } from "@/lib/device-copy";
 import { relative } from "@/lib/format";
+import { useClientPlatform } from "@/lib/platform";
 
 const OS_TABS: Array<{ id: ConnectOs; label: string }> = [
   { id: "mac", label: "macOS" },
@@ -22,7 +23,16 @@ export function DevicesSection() {
   const client = useQueryClient();
   const toast = useToast();
   const [code, setCode] = useState<{ code: string; expiresAt: string } | null>(null);
+  const platform = useClientPlatform();
   const [os, setOs] = useState<ConnectOs>("mac");
+  useEffect(() => { if (["mac", "windows", "linux"].includes(platform.os)) setOs(platform.os as ConnectOs); }, [platform.os]);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const rename = useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) => api.renameDevice(id, name),
+    onSuccess: () => { setRenaming(null); void client.invalidateQueries({ queryKey: ["devices"] }); void client.invalidateQueries({ queryKey: ["subscriptions"] }); },
+    onError: (error) => toast((error as Error).message, { tone: "error" }),
+  });
   const devices = useQuery({ queryKey: ["devices"], queryFn: api.devices, refetchInterval: code ? 2_000 : 15_000 });
   const seen = useRef<string[] | null>(null);
   const rows = devices.data?.devices ?? [];
@@ -96,14 +106,7 @@ export function DevicesSection() {
               </div>
             ))}
           </div>
-          <div>
-            <div className="text-[12px] font-semibold uppercase tracking-[0.12em] text-faint">Then run</div>
-            <pre className="mt-2 whitespace-pre-wrap rounded-lg border border-line bg-panel px-3 py-2 font-mono text-[12px] leading-5 text-muted">
-{`ensemble login
-ensemble folders add <path>
-ensemble runner install`}
-            </pre>
-          </div>
+          <div className="text-[13px] text-muted">Prefer the desktop app for guided setup. Open it, sign in, and choose the folders to share in Settings. Ensemble connects its editors and agents for you.</div>
         </div>
       </section>
       {code ? (
@@ -120,8 +123,8 @@ ensemble runner install`}
             <li key={device.id} className="flex items-center gap-3 py-2.5">
               <span className={cx("h-2 w-2 shrink-0 rounded-full", device.online ? "bg-ok pulse-dot" : "bg-faint")} />
               <div className="min-w-0 flex-1">
-                <div className="truncate text-[13.5px] font-medium">
-                  {device.name} <span className="font-normal text-muted">· {platformLabel(device.platform)}</span>
+                <div className="flex flex-wrap items-center gap-1 text-[13.5px] font-medium">
+                  {renaming === device.id ? <form className="flex w-full min-w-0 flex-wrap gap-1" onSubmit={(event) => { event.preventDefault(); rename.mutate({ id: device.id, name: name.trim() }); }}><input autoFocus className="field min-w-0 flex-1" aria-label="Computer name" value={name} maxLength={60} onChange={(event) => setName(event.target.value)} /><button className="btn" disabled={!name.trim() || rename.isPending}>Save</button><button type="button" className="btn-ghost" onClick={() => setRenaming(null)}>Cancel</button></form> : <button type="button" className="hover:underline" aria-label={`Rename ${device.name}`} onClick={() => { setRenaming(device.id); setName(device.name); }}>{device.name}</button>} <span className="font-normal text-muted">· {platformLabel(device.platform)}</span>
                 </div>
                 <div className="truncate text-[12px] text-faint">
                   {device.online ? "Online" : device.lastSeenAt ? `Last seen ${relative(device.lastSeenAt)}` : "Not seen yet"}

@@ -19,7 +19,7 @@ import { confirmAction } from "@/components/ask-dialog";
 import { isEmailAddress, timeZoneName } from "@ensemble/shared-types";
 import { sameTimeZone, timeZoneLabel, timeZoneOptions } from "@/lib/time-zones";
 import { NumberField } from "./number-field";
-import { askNotificationPermission, notificationNote, readNotificationState, type NotificationState } from "./reminders";
+import { askNotificationPermission, notificationNote, readNotificationState, refreshNotificationPermission, showNotification, type NotificationState } from "./reminders";
 
 export type Patch = (patch: Record<string, unknown>) => void;
 type Props = { settings: Settings; patch: Patch };
@@ -56,9 +56,7 @@ export function AutonomySection({ settings, patch }: Props) {
           <Toggle label="Run without asking" checked={orchestration.runWithoutAsking} onChange={(runWithoutAsking) => set({ runWithoutAsking })} />
         </SettingRow>
         <TrustSharingRow />
-        <SettingRow title={<span className="flex items-center gap-1.5">Place new tasks by priority <InfoTip text="New tasks land above lower-priority ones on the board instead of at the bottom." /></span>}>
-          <Toggle label="Place by priority" checked={orchestration.placeByPriority} onChange={(placeByPriority) => set({ placeByPriority })} />
-        </SettingRow>
+
       </div>
     </SectionCard>
   );
@@ -97,7 +95,7 @@ export function OrchestrationSection({ settings, patch }: Props) {
     />
   );
   return (
-    <SectionCard title="Orchestration" description="How many agent tasks run at once, and the limits each one gets. The rest wait in the Workspace queue.">
+    <SectionCard title="Orchestration" description="Tasks start in assignment order. Tasks sharing a project, repository or folder wait their turn. After a Needs me request waits an hour, one extra task can start; the queue then waits until fewer than your limit remain.">
       <div className="divide-y divide-[var(--line)]">
         <SettingRow title="Tasks that run at once" description="Independent tasks run in parallel. Tasks sharing a project, repository or folder wait their turn.">
           {number("maxConcurrentJobs", 1, 8)}
@@ -245,7 +243,7 @@ export function RetentionSection({ settings, patch }: Props) {
           Keep finished tasks on the Context graph for
           <NumberField label="Context review days" min={0} max={365} unit="days" width="w-16" value={settings.contextReviewDays} onChange={(contextReviewDays) => patch({ contextReviewDays })} />
         </div>
-        <p className="text-[12.5px] text-muted">Zero hides them until All completed is ticked on the graph. Completed and Trash live further down this page.</p>
+        <p className="text-[12.5px] text-muted">Zero hides them until All completed is ticked on the graph. Open Completed or Trash below to see their history.</p>
         <div className="flex flex-wrap items-center gap-3">
           Undo history
           <NumberField label="Undo depth" min={3} max={20} unit="actions" width="w-16" value={settings.undoDepth} onChange={(undoDepth) => patch({ undoDepth })} />
@@ -256,16 +254,18 @@ export function RetentionSection({ settings, patch }: Props) {
         </div>
       </div>
       <p className="mt-2 text-[12.5px] text-muted">
-        Deleted items stay in Trash until the trash window. Completed tasks and deliverables stay visible, then move to Trash after their own window. Undo keeps the last few actions (3–20, default 5) and is never unlimited. The audit log and status history use their own clock, separate from Trash, default 90 days. Active work is never purged.
+        Deleted items stay in Trash until the trash window. Completed tasks and deliverables stay visible, then move to Trash after their own window. Undo keeps the last few actions (3–20, default 5) and is never unlimited. The audit log and status history use their own clock, separate from Trash, default 90 days. Active work is never purged. Before older completed work moves to Trash, Ensemble gives at least a day’s notice and uses your High model to learn personal skills. If learning fails, the work stays in Completed.
       </p>
     </SectionCard>
   );
 }
 
 export function RemindersSection({ settings, patch }: Props) {
+  const desktop = useDesktopShell();
   const toast = useToast();
   const [permission, setPermission] = useState<NotificationState>(() => readNotificationState());
   useEffect(() => {
+    void refreshNotificationPermission().then(setPermission);
     // Allowing or blocking from the address bar while this page is open updates the note.
     let status: PermissionStatus | null = null;
     const update = () => setPermission(readNotificationState());
@@ -278,7 +278,7 @@ export function RemindersSection({ settings, patch }: Props) {
       .catch(() => undefined);
     return () => status?.removeEventListener("change", update);
   }, []);
-  const test = () => new Notification("Ensemble", { body: "Reminders will appear like this." });
+  const test = () => void showNotification("Ensemble", "Reminders will appear like this.");
   const enable = async () => {
     const result = await askNotificationPermission();
     setPermission(result);
@@ -291,16 +291,16 @@ export function RemindersSection({ settings, patch }: Props) {
   const blocked = permission === "denied" || permission === "unsupported";
   return (
     <SectionCard
-      title="Desktop reminders"
-      info="Uses your browser's notifications. Your OS focus and notification settings still apply."
-      description="Reminders pop up on this computer while an Ensemble tab is open."
+      title={desktop ? "App notifications" : "Browser notifications"}
+      info="Uses this platform’s notification permissions and focus settings."
+      description={desktop ? "Native reminders while the Ensemble app is running." : "Reminders while an Ensemble tab is open in this browser."}
     >
       <SettingRow title="Show reminders as desktop notifications" description={notificationNote(permission)}>
         <Toggle label="Desktop reminders" checked={on} disabled={blocked} onChange={(next) => (next ? void enable() : patch({ desktopReminders: false }))} />
       </SettingRow>
       {settings.desktopReminders && blocked ? (
         <p role="alert" className="mb-2 text-[12.5px] text-danger">
-          Desktop reminders are switched on for your account, but this browser can&apos;t show them.{" "}
+          Reminders are switched on for your account, but this device can&apos;t show them.{" "}
           <button type="button" className="font-medium underline underline-offset-2" onClick={() => patch({ desktopReminders: false })}>
             Switch them off
           </button>
@@ -316,9 +316,10 @@ export function RemindersSection({ settings, patch }: Props) {
         </button>
       ) : permission === "denied" ? (
         <button type="button" className="btn" onClick={() => {
-          const now = readNotificationState();
+          void refreshNotificationPermission().then((now) => {
           setPermission(now);
-          if (now === "denied") toast("Still blocked. Allow notifications in the site settings, then reload this page.", { tone: "error" });
+          if (now === "denied") toast(desktop ? "Allow Ensemble notifications in your system settings." : "Allow notifications in the site settings, then reload this page.", { tone: "error" });
+          });
         }}>
           Check again
         </button>
@@ -340,6 +341,16 @@ function WebPasskeys() {
     onSuccess: () => client.invalidateQueries({ queryKey: ["terminal-status"] }),
     onError: (failure) => setError((failure as Error).message),
   });
+  const unlock = useMutation({
+    mutationFn: async () => {
+      const { startAuthentication } = await import("@simplewebauthn/browser");
+      const options = await api.webTerminalUnlockOptions();
+      const response = await startAuthentication({ optionsJSON: options as never });
+      await api.webTerminalUnlockVerify(response);
+    },
+    onSuccess: () => { setError(null); void client.invalidateQueries({ queryKey: ["terminal-status"] }); },
+    onError: (failure) => setError((failure as Error).message),
+  });
   const keys = status.data?.passkeys ?? [];
   return (
     <div className="mb-3 rounded-md border border-line bg-panel px-3 py-2 text-[12.5px]" data-testid="web-terminal-passkeys">
@@ -357,8 +368,9 @@ function WebPasskeys() {
               <span className="text-faint">added {new Date(key.createdAt).toLocaleDateString()}{key.lastUsedAt ? ` · last used ${new Date(key.lastUsedAt).toLocaleString()}` : ""}</span>
               <button
                 type="button"
-                className="icon-btn h-5 w-5 opacity-0 group-hover:opacity-100"
-                title={status.data?.unlocked ? "Remove" : "Unlock the terminal first to remove a passkey"}
+                className="icon-btn h-6 w-6 shrink-0"
+                aria-label={`Remove ${key.label || "passkey"}`}
+                title={status.data?.unlocked ? "Remove" : "Unlock below to remove a passkey"}
                 disabled={!status.data?.unlocked || remove.isPending}
                 onClick={() => remove.mutate(key.id)}
               >
@@ -368,7 +380,12 @@ function WebPasskeys() {
           ))
         )}
       </div>
-      {error ? <p className="mt-1 text-[12px] text-danger">{error}</p> : null}
+      {keys.length > 0 && !status.data?.unlocked ? (
+        <button type="button" className="btn mt-2" disabled={unlock.isPending} onClick={() => unlock.mutate()}>
+          {unlock.isPending ? "Unlocking…" : "Unlock to manage passkeys"}
+        </button>
+      ) : null}
+      {error ? <p role="alert" className="mt-1 text-[12px] text-danger">{error}</p> : null}
       <p className="mt-1 text-[12px] text-muted">Every passkey added is recorded in the audit ledger. Remove any you do not recognise.</p>
     </div>
   );
@@ -433,7 +450,7 @@ export function TerminalSection({ settings, patch }: Props) {
             {terminal.roots.map((root) => (
               <div key={root} className="group flex items-center gap-2">
                 {root}
-                <button type="button" className="icon-btn h-5 w-5 opacity-0 group-hover:opacity-100" onClick={() => patch({ terminal: { roots: terminal.roots.filter((value) => value !== root) } })}>
+                <button type="button" className="icon-btn h-6 w-6 shrink-0" onClick={() => patch({ terminal: { roots: terminal.roots.filter((value) => value !== root) } })}>
                   <X size={11} />
                 </button>
               </div>
@@ -460,8 +477,9 @@ export function TerminalSection({ settings, patch }: Props) {
                   <span className="text-faint">added {new Date(key.createdAt).toLocaleDateString()}{key.lastUsedAt ? ` · last used ${new Date(key.lastUsedAt).toLocaleString()}` : ""}</span>
                   <button
                     type="button"
-                    className="icon-btn h-5 w-5 opacity-0 group-hover:opacity-100"
-                    title={status.data?.unlocked ? "Remove" : "Unlock the terminal first to remove a passkey"}
+                    className="icon-btn h-6 w-6 shrink-0"
+                    aria-label={`Remove ${key.label || "passkey"}`}
+                title={status.data?.unlocked ? "Remove" : "Unlock below to remove a passkey"}
                     disabled={!status.data?.unlocked}
                     onClick={() => removeKey.mutate(key.id)}
                   >
@@ -749,16 +767,16 @@ export function DeleteDataSection({ settings }: { settings: Settings }) {
   return (
     <SectionCard
       title="Delete my data"
-      description="Removes ingested mail, chats, meetings and the context graph. The audit ledger records that you deleted, and nothing about what was deleted, removing the evidence of a deletion would defeat the point of an audit trail."
+      description="Context only removes ingested mail, chats, meetings and the context graph. Everything also removes your workspace content. Your account, sign-ins, devices, connected-app setup, model keys and settings stay. The audit ledger records the deletion. Stop active agent tasks first."
     >
-      <select aria-label="Data deletion scope" value={scope} onChange={(event) => setScope(event.target.value as "context" | "everything")} className="field w-full">
+      <select aria-label="Data deletion scope" disabled={remove.isPending} value={scope} onChange={(event) => setScope(event.target.value as "context" | "everything")} className="field w-full">
         <option value="context">Context only</option>
         <option value="everything">Everything (tasks, projects, skills, chats too)</option>
       </select>
       <div className="mt-3 text-[12.5px] text-muted">
         Type <span className="font-mono text-ink">{settings.email}</span> to confirm. This cannot be undone.
       </div>
-      <input aria-label="Confirm data deletion with your email" value={confirm} onChange={(event) => setConfirm(event.target.value)} className="field mt-1.5 w-full" />
+      <input aria-label="Confirm data deletion with your email" disabled={remove.isPending} value={confirm} onChange={(event) => setConfirm(event.target.value)} className="field mt-1.5 w-full" />
       <button
         type="button"
         className="btn mt-3 border-danger/60 text-[#ffb4ae]"

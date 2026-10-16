@@ -8,6 +8,7 @@
  * fallback while the stream is down.
  * Quit and sleep do not start a job again.
  */
+import { existsSync } from "node:fs";
 import type { FastifyInstance } from "fastify";
 import type { WorkspaceJob } from "@prisma/client";
 import { env } from "../config.js";
@@ -307,6 +308,15 @@ async function session(app: FastifyInstance, base: string, token: string, parent
 async function beat(app: FastifyInstance, client: HostedClient, signal: AbortSignal): Promise<void> {
   if (signal.aborted) return;
   const settings = loadSettings();
+  const installed = process.env.ENSEMBLE_INSTALL_PATH;
+  if (installed && !existsSync(installed)) {
+    await stopRemoteWork(app, "Ensemble was uninstalled from this computer.", "cancelled");
+    await client.unpairSelf().catch(() => undefined);
+    await dropDeviceToken();
+    updateSettings({ enabled: false, pairedAt: null, deviceId: null });
+    currentSession?.abort();
+    return;
+  }
   if (!settings.enabled || settings.disconnected) {
     await stopRemoteWork(app, REMOTE_NOTICE.switchedOff, "cancelled");
     currentSession?.abort();

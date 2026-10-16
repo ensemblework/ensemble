@@ -2439,7 +2439,7 @@ button.account-avatar:focus-visible {
 .assistant-message-avatar { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 9px; background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--accent); }
 .assistant-answer-body { font-size: 14px; line-height: 1.75; }
 .assistant-answer-body .markdown-text { line-height: 1.75; }
-.assistant-message-footer { display: flex; align-items: center; gap: 14px; margin-top: 16px; color: var(--faint); font-size: 10.5px; }
+.assistant-message-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; margin-top: 16px; color: var(--faint); font-size: 10.5px; }
 .assistant-message-footer button { display: flex; align-items: center; gap: 5px; border-radius: 5px; padding: 3px 5px; }
 .assistant-message-footer button:hover { background: var(--hover); color: var(--ink); }
 .assistant-activity { margin: 0 0 15px; border: 1px solid var(--line); border-radius: 12px; background: color-mix(in srgb, var(--raised) 40%, transparent); overflow: hidden; }

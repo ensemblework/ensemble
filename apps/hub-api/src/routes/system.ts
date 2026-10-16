@@ -1,3 +1,4 @@
+import { deleteWorkspaceData } from "../lib/workspace-data.js";
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import { ASSISTANT_INSTRUCTIONS } from "../assistant/state.js";
@@ -448,30 +449,8 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(400).send({ error: `Type ${settings.email} to confirm.` });
     }
     const userId = request.userId;
-    await prisma.$transaction(async (tx) => {
-      await tx.artifact.deleteMany({ where: { userId } });
-      await tx.document.deleteMany({ where: { userId } });
-      await tx.meetingNote.deleteMany({ where: { userId } });
-      await tx.meetingSession.deleteMany({ where: { userId } });
-      await tx.extraction.deleteMany({ where: { userId } });
-      await tx.contextPack.deleteMany({ where: { userId } });
-      await tx.syncState.deleteMany({ where: { userId } });
-      await tx.person.deleteMany({ where: { userId } });
-      await tx.repo.deleteMany({ where: { userId } });
-      if (body.scope === "everything") {
-        // Linked pages cascade from the task. Standalone notes have no task,
-        // so they would survive a task delete and stay in context search.
-        // Mentions cascade from the page. search_text is a column on this row.
-        await tx.taskPage.deleteMany({ where: { userId } });
-        await tx.task.deleteMany({ where: { userId } });
-        await tx.project.deleteMany({ where: { userId } });
-        await tx.skill.deleteMany({ where: { userId } });
-        await tx.assistantConversation.deleteMany({ where: { userId } });
-        await tx.reminder.deleteMany({ where: { userId } });
-        await tx.notification.deleteMany({ where: { userId } });
-        await tx.undoEntry.deleteMany({ where: { userId } });
-      }
-    });
+    if ((await listActivities(app.redis, userId)).length) return reply.code(409).send({ error: "Stop active agent activity before deleting your data." });
+    await deleteWorkspaceData(prisma, userId, body.scope);
     // The ledger records that a deletion happened, and nothing about what was deleted.
     await appendLedger({ userId, actor: "me", action: `data.delete.${body.scope}` });
     return { ok: true };

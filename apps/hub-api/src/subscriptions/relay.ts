@@ -134,3 +134,7 @@ export function runOnComputer(input: {
 export function liveTurnCountForTests(): number {
   return live.size;
 }
+
+export function stopComputerTurns(deviceId: string): void {
+  for (const turn of live.values()) if (turn.deviceId === deviceId) turn.settle({ error: new RuntimeError("This computer was disconnected from Ensemble.", 409) });
+}

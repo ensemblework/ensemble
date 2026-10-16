@@ -17,11 +17,11 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import { SUBSCRIPTION_INFO, type SubscriptionProvider } from "@ensemble/shared-types";
+import { checkEffort, SUBSCRIPTION_INFO, type SubscriptionProvider } from "@ensemble/shared-types";
 import { RpcConnection } from "../workspace/engines/rpc.js";
 import { hookScriptPath, localApiUrl } from "../workspace/engines/registry.js";
 import { openBridge, type ToolAnswer, type ToolSpec } from "./bridge.js";
-import { agentBinary, agentEnv } from "./detect.js";
+import { agentBinary, agentEnv, refreshAgent } from "./detect.js";
 
 export type AgentTurnSpec = {
   agent: SubscriptionProvider;
@@ -448,6 +448,14 @@ export async function runAgentTurn(spec: AgentTurnSpec, io: AgentTurnIO): Promis
   const info = SUBSCRIPTION_INFO[spec.agent];
   if (!found) throw new AgentTurnError("not_installed", `${info.label} is not on this computer. ${info.install.label} (${info.install.url}), sign in, and try again.`);
   if (io.signal.aborted) throw aborted();
+  const agent = await refreshAgent(spec.agent);
+  if (io.signal.aborted) throw aborted();
+  if (agent?.signedIn === false) throw new AgentTurnError("signed_out", agent.problem || `${info.label} is not signed in with a subscription on this computer. Sign in from Settings → Models.`);
+  // Always validate against this computer's fresh capabilities, including relayed turns.
+  const levels = agent?.models.find((row) => row.id === spec.model)?.efforts ?? agent?.efforts ?? [];
+  const thinking = checkEffort(spec.agent, spec.model ?? "default", spec.effort, { efforts: levels });
+  if (!thinking.ok) throw new AgentTurnError("failed", thinking.message);
+  spec = { ...spec, effort: thinking.send };
   const folder = await mkdtemp(join(tmpdir(), "ensemble-turn-"));
   const bridge = openBridge(spec.tools, io.call);
   const mcp: McpServer = {

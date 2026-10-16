@@ -968,6 +968,7 @@ export type AssistantMessageRecord = {
   toolCalls: AssistantToolCallRecord[];
   model: string | null;
   createdAt: string;
+  credentialSource?: string | null;
 };
 
 /** A computer the person's AI subscriptions run on, and the agents it found. */
@@ -1340,6 +1341,9 @@ export const api = bindClient({
   // skills
   skills: () => get<{ skills: SkillRecord[] }>("/api/skills"),
   skill: (id: string) => get<{ skill: SkillRecord }>(`/api/skills/${id}`),
+  morningBriefSkill: () => get<{ skill: { id: string; body: string }; notification: HubNotification | null; customize: boolean }>("/api/brief/skill"),
+  saveMorningBriefSkill: (instructions: string) => patch("/api/brief/skill", { instructions }),
+  testSkill: (id: string, prompt?: string) => post<{ title: string; body: string }>(`/api/skills/${id}/test`, { prompt }),
   createSkill: (name: string) => post<{ skill: SkillRecord }>("/api/skills", { name }),
   patchSkill: (id: string, data: Record<string, unknown>) => patch<{ skill: SkillRecord }>(`/api/skills/${id}`, data),
   deleteSkill: (id: string) => del<void>(`/api/skills/${id}`),
@@ -1387,6 +1391,7 @@ export const api = bindClient({
   checkSubscriptions: (deviceId: string) => post<{ sent?: boolean; agents?: SubscriptionAgent[] }>("/api/subscriptions/check", { deviceId }),
   signInSubscription: (deviceId: string, agent: SubscriptionProvider) => post<{ message: string }>("/api/subscriptions/sign-in", { deviceId, agent }),
   pairDevice: () => post<{ code: string; expiresAt: string }>("/api/devices/pair", {}),
+  renameDevice: (id: string, name: string) => patch(`/api/devices/${id}`, { name }),
   revokeDevice: (id: string) => del<void>(`/api/devices/${id}`),
   stopJob: (id: string) => post(`/api/agent/jobs/${id}/stop`),
   retryJob: (id: string) => post<{ jobId: string }>(`/api/agent/jobs/${id}/retry`),

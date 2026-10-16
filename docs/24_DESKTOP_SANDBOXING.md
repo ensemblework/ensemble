@@ -614,3 +614,7 @@ The same order as doc 23 §14. Sandboxing work is steps 2, 4 and 5. It does not 
 4. **Linux `ensemble-sbx`.** Namespaces, Landlock, seccomp, UDP blocked, port forwarding for R11, no agent sockets mounted. The `.deb` installs the AppArmor profile. The AppImage detects that it could not, and reports Landlock only. Then port macOS onto the helper and stop calling `sandbox-exec` directly.
 5. **Windows v1.** Ask mode, or WSL2 using the Linux helper. A strong native sandbox later.
 6. **Later.** Optional container mode. Needs-me polish that is not required for step 2 (batching, rule suggestions). Mobile notifications.
+
+## Queue slots and Code folders (16 Oct 2026)
+
+Code inspection: `workspace/queue-policy.ts` enforces assignment order and the shared N-task budget across server/device claims. Needs me holds a slot; one unanswered request at least 60 minutes old permits at most N+1 total, without releasing folder/project/repository locks. Answered tasks resume immediately, and no new task starts until fewer than N remain. Native Code-folder selection uses Tauri’s dialog command, then the same API validation and saved-root restrictions described above.

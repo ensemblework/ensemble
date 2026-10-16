@@ -23,8 +23,8 @@ type Props = { settings: Settings; patch: Patch };
 export const TIERS: Array<{ id: Complexity; label: string; hint: string }> = [
   { id: "easy", label: "Low model", hint: "Replies, triage, small edits. Also the default for the chat and for fetch triage." },
   { id: "medium", label: "Medium model", hint: "Most delegated tasks." },
-  { id: "high", label: "High model", hint: "Refactors, investigations, multi-file changes." },
-  { id: "max", label: "Max model", hint: "Architecture, migrations and skill mining. Slowest, best." },
+  { id: "high", label: "High model", hint: "Refactors, investigations, multi-file changes and learning skills from completed work." },
+  { id: "max", label: "Max model", hint: "Architecture and migrations. Slowest, best." },
 ];
 
 const PROVIDERS: Array<{ id: ModelProvider; label: string }> = [
@@ -112,8 +112,8 @@ export function ModelsSection({ settings, patch }: Props) {
   const refresh = useRefreshModels();
   const subscriptions = useSubscriptions();
   const computer = activeComputer(subscriptions.data);
-  const agents = computer?.agents ?? null;
-  const choices = providerChoices(catalog.data, agents, computer?.name ?? null);
+  const agents = computer?.online && computer.ready ? computer.agents : null;
+  const choices = providerChoices(catalog.data, agents, computer?.name ?? null).map((choice) => isSubscriptionProvider(choice.id) && computer && !computer.online ? { ...choice, note: `${computer.name} is offline` } : choice);
   const available = (catalog.data?.providers ?? []).reduce((sum, row) => sum + (row.available ? row.models.length : 0), 0);
   const runtimeDown = catalog.data && !catalog.data.runtime;
   const noKeys = keys.data && !keys.data.credentials.some((row) => row.source !== "none");

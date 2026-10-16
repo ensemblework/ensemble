@@ -116,3 +116,9 @@ The local shell page is not the hosted origin. Tauri 2 serves it from `https://t
 **Mobile** (Tauri 2 Android, iOS, iPadOS) should reuse `src/site.rs` (URL choice and in-app vs browser) and `ui/` (the offline page). Keep new windowing code out of those files. Desktop-only pieces are already behind `cfg` for Android and iOS: the single-instance plugin, the menu, and window placement (`src/desktop.rs`). A mobile shell still needs its own WebView, a place to store `site.json`, and the same rule that the hosted origin gets no IPC. Signing, store listings, and a real host URL are separate from this phase.
 
 Desktop 0.3.8 includes the paired-run attachment handoff: original PDF/Office files and embedded diagram source are copied into the local runtime before the job starts. It shares the same 100 MB limit and lease checks as CLI 0.3.11 ([25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)). The Hub UI uses the dedicated Pages browser, Appearance settings and default-profile quick assignment.
+
+## Platform integration (16 Oct 2026)
+
+Code inspection: the local web UI uses the installed Tauri dialog plugin via `core.invoke("plugin:dialog|open", { options })` for Code folders. The selected path still passes the existing API path checks. `tauri-plugin-notification` provides native reminder notifications after system permission; a running app is required. Browser sessions keep browser notifications. The shell grants only the local page the dialog and notification capabilities.
+
+The sidecar receives `ENSEMBLE_INSTALL_PATH` pointing to the installed desktop executable. If that executable disappears while its runtime survives, the next remote heartbeat stops remote tasks/assistant turns, revokes when reachable and forgets the pairing. The hosted online indicator otherwise expires after the heartbeat window. The UI detects phones and hides shortcut settings there; desktop shortcuts keep the host platform’s modifier keys.

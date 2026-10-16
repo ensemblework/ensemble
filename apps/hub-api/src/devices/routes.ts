@@ -1,3 +1,4 @@
+import { claimQueuedJob } from "../workspace/queue-policy.js";
 /**
  * Device routes from docs/25 §4.3. Shapes here are the contract the desktop
  * client codes against. A device token reaches only `/api/devices/self/*`,
@@ -302,6 +303,17 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     return { serverRunner: serverRunnerEnabled(), devices: devices.map((device) => deviceJson(device)) };
   });
 
+  app.patch("/api/devices/:id", async (request, reply) => {
+    requireBrowserSession(request);
+    const { id } = request.params as { id: string };
+    const { name } = z.object({ name: z.string().trim().min(1).max(60) }).parse(request.body);
+    const result = await prisma.device.updateMany({ where: { id, userId: request.userId, revokedAt: null }, data: { name } });
+    if (!result.count) return reply.code(404).send({ error: "Computer not found." });
+    await appendLedger({ userId: request.userId, actor: "me", action: "device.rename", payload: { deviceId: id } });
+    publishBrowserDevice(request.userId, id);
+    return { ok: true };
+  });
+
   app.delete("/api/devices/:id", async (request, reply) => {
     requireBrowserSession(request);
     const { id } = request.params as { id: string };
@@ -380,13 +392,13 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     const device = await ownDevice(app, request, reply);
     if (!device) return;
     if (await isPaused(app.redis, device.userId)) return reply.code(204).send();
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      const next = await prisma.workspaceJob.findFirst({
+    const candidates = await prisma.workspaceJob.findMany({
         where: { ...runsOn(device), status: "queued" },
         orderBy: { sequence: "asc" },
+        take: 200,
         include: { task: { select: { id: true, title: true, description: true, notes: true, projectId: true, sourceKind: true, sourceUrl: true, page: { select: { content: true } } } } },
       });
-      if (!next) return reply.code(204).send();
+    for (const next of candidates) {
       if (!(await stillMember(app, next))) {
         await prisma.workspaceJob.updateMany({ where: { id: next.id, status: "queued" }, data: { status: "cancelled", finishedAt: new Date(), error: "Removed from the shared space.", progress: "Cancelled" } });
         continue;
@@ -394,9 +406,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       const now = new Date();
       const leaseToken = randomBytes(24).toString("base64url");
       const leaseUntil = new Date(now.getTime() + LEASE_MS);
-      const won = await prisma.workspaceJob.updateMany({
-        where: { id: next.id, deviceId: device.id, status: "queued" },
-        data: {
+      const won = await claimQueuedJob(prisma, next.id, {
           status: "claimed",
           leaseOwner: device.id,
           leaseUntil,
@@ -405,9 +415,8 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
           lastProgressAt: now,
           attempt: { increment: 1 },
           progress: "Claimed",
-        },
       });
-      if (won.count !== 1) continue;
+      if (!won) continue;
       await prisma.task.updateMany({ where: { id: next.taskId, owner: "agent", status: { in: ["todo", "proposed", "blocked"] } }, data: { status: "in_progress" } });
       sseHub.publish(next.userId, { event: "workspace", data: { id: next.id } });
       const fromApps = await contextForPrompt(next.userId, { taskId: next.taskId, projectId: next.task.projectId }, 8_000, prisma).catch(() => "");

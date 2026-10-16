@@ -71,8 +71,8 @@ function RemoteMacSettings() {
             : "Remote tasks are off";
   return (
     <SectionCard
-      title="This Mac"
-      description="Pair with Ensemble on the web, then choose whether tasks assigned there may run on this Mac. The switch stays off until you turn it on here."
+      title={mac?.platform === "macos" ? "This Mac" : "This computer"}
+      description="Pair with Ensemble on the web, then choose whether tasks assigned there may run on this computer. The switch stays off until you turn it on here."
     >
       <div className="mb-3 flex items-center gap-2 text-[13px]" data-testid="remote-status">
         <span className={mac?.online ? "h-2 w-2 rounded-full bg-ok" : "h-2 w-2 rounded-full bg-faint"} data-testid="remote-online" data-online={mac?.online ? "yes" : "no"} />
@@ -109,12 +109,12 @@ function RemoteMacSettings() {
           Pair
         </button>
       </div>
-      <SettingRow title="Allow remote tasks" description="Tasks assigned on the web run on this Mac, with this Mac's model key and the same sandbox. Off until you turn it on.">
+      <SettingRow title="Allow remote tasks" description="Tasks assigned on the web run on this computer, with this computer's model key and the same sandbox. Off until you turn it on.">
         <Toggle checked={Boolean(mac?.enabled)} disabled={!mac?.paired || save.isPending} label="Allow remote tasks" onChange={(enabled) => save.mutate({ enabled })} />
       </SettingRow>
       <SettingRow
         title="Push to the run branch"
-        description="Remote tasks may push to their own run branch (ensemble/<run-id>/…) in repos you trust. Anything else still needs a confirmation on this Mac."
+        description="Remote tasks may push to their own run branch (ensemble/<run-id>/…) in repos you trust. Anything else still needs a confirmation on this computer."
       >
         <Toggle
           checked={Boolean(mac?.runBranchPush)}

@@ -14,7 +14,7 @@ Keeping these files current is part of every change. See [`AGENTS.md`](../AGENTS
 | 01 | [Tech stack & environment](01_TECH_STACK_AND_ENVIRONMENT.md) | Languages, services, local env, pluggable models |
 | 02 | [Interaction Hub UI](02_MODULE_INTERACTION_HUB_UI.md) | M1 — Notion-like pages, board, approvals, assistant chrome |
 | 03 | [Context Engine](03_MODULE_CONTEXT_ENGINE.md) | M2 — pluggable connectors, Engineer Graph, context packs |
-| 04 | [Skill Forge](04_MODULE_SKILL_FORGE.md) | M3 — personal skills mined from history (design; miners not built) |
+| 04 | [Skill Forge](04_MODULE_SKILL_FORGE.md) | M3 — personal skills, morning briefs and completed-work mining |
 | 05 | [Task Orchestrator](05_MODULE_TASK_ORCHESTRATOR.md) | M4 — scheduled jobs, planner, workers, HITL |
 | 06 | [Workspace & surfaces](06_MODULE_WORKSPACE_AND_SURFACES.md) | M5 — coding workspace |
 | 07 | [Governance, audit & metrics](07_MODULE_GOVERNANCE_AUDIT_METRICS.md) | M6 — identity, policy, ledger, before/after |

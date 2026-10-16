@@ -84,7 +84,9 @@ export function effortFor(agent: SubscriptionAgent | null, model: string | null,
   if (!agent) return effort;
   const perModel = agent.models.find((row) => row.id === model)?.efforts;
   const allowed = perModel ?? agent.efforts;
-  return allowed?.includes(effort) ? effort : null;
+  if (!allowed?.length) return null;
+  if (!allowed.includes(effort)) throw new RuntimeError(`${model || "This model"} does not take thinking “${effort}”. Choose one of ${allowed.join(", ")} in Settings → Models.`, 409);
+  return effort;
 }
 
 export type SubscriptionTurnInput = {

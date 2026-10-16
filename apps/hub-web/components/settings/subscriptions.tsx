@@ -78,7 +78,7 @@ function SubscriptionTile({
   useEffect(() => {
     if (agent && !agent.models.some((row) => row.id === model)) setModel(defaultModel(agent));
   }, [agent, model]);
-  const usable = Boolean(agent && computer?.ready && agent.signedIn !== false && !agent.problem);
+  const usable = Boolean(agent && computer?.online && computer.ready && agent.signedIn !== false && !agent.problem);
   return (
     <div className="tile flex min-w-0 flex-col gap-3 rounded-xl bg-raised p-3.5" data-subscription={id} data-state={agent ? (agent.signedIn === false ? "signed-out" : "found") : "missing"}>
       <div className="flex items-start gap-3">

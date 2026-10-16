@@ -57,8 +57,7 @@ function claimSchedule(app: FastifyInstance, userId: string, slot: string): Prom
 async function tick(app: FastifyInstance): Promise<void> {
   await expireStale();
   await sweepExpiredDeviceLeases(app).catch((error: unknown) => app.log.error({ err: error }, "device lease sweep failed"));
-  const rows = await app.prisma.preference.findMany({ where: { key: "hub.settings", deletedAt: null }, select: { userId: true } });
-  const users = rows.length ? rows : await app.prisma.user.findMany({ select: { id: true } }).then((list) => list.map((user) => ({ userId: user.id })));
+  const users = (await app.prisma.user.findMany({ select: { id: true } })).map((user) => ({ userId: user.id }));
   for (const { userId } of users) {
     try {
       await requireVerifiedUser(userId);

@@ -180,3 +180,6 @@ Everyone can pick a picture avatar in Settings › Account › Avatar: 15 per pr
 - Live co-editing of meeting notes; live pages held by more than one API process (§5).
 
 Page bulk deletion (15 Oct 2026): `POST /api/pages/delete-many` is in the existing **shared** space route class (`src/sharing/policy.ts`, `/api/pages*`). It needs space edit access; single-item and public-link grants do not include this route. `pages/store.ts` validates every selected id and scopes descendant traversal to the same space. The batch and descendants share one Undo entry. Device attachment downloads remain in the device route class and require the assigned device and active job lease.
+
+
+`PATCH /api/devices/:id` is personal (16 Oct 2026, code inspection): a member renames only their own computer, never a space owner’s. `/api/brief/skill` is owner-only. `POST /api/skills/:id/test` follows the existing shared skill policy and requires editor access for a space member; its completion uses the acting person’s credentials.
