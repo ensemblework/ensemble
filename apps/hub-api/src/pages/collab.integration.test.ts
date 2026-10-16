@@ -304,3 +304,18 @@ test("typing written back into a page in Trash leaves Undo of the delete working
   const back = await ok<{ content: unknown }>(as(mira, { method: "GET", url: `/api/pages/${page}` }));
   assert.match(JSON.stringify(back.content), /Typed before Trash/);
 });
+
+test("a request of steps over 4 MiB (one large paste of CJK text) is taken, not refused by the body limit", async () => {
+  const mira = await person("Mira Chen");
+  const page = (await ok<{ page: { id: string } }>(as(mira, { method: "POST", url: "/api/pages" }), 201)).page.id;
+  const url = `/api/pages/${page}/collab`;
+  const joined = await ok<Joined>(as(mira, { method: "GET", url }));
+  // 600,000 characters of 3-byte text: under the 1,000,000-character step limit, 1.8 MB a step.
+  const text = "漢".repeat(600_000);
+  const insert = (at: number) => ({ stepType: "replace", from: at, to: at, slice: { content: [{ type: "text", text }] } });
+  const payload = JSON.stringify({ epoch: joined.epoch, version: 0, clientID: joined.clientID, token: joined.token, steps: [insert(1), insert(1), insert(1)] });
+  assert.ok(Buffer.byteLength(payload) > 4 * 1024 * 1024);
+  const sent = await as(mira, { method: "POST", url, payload, headers: { "content-type": "application/json" } });
+  assert.equal(sent.statusCode, 200, sent.body.slice(0, 200));
+  assert.equal((sent.json() as Batch).version, 3);
+});

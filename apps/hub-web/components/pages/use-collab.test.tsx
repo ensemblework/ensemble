@@ -150,6 +150,12 @@ test("offline typing stays, says so, and is sent when the connection is back", a
     });
     await waitFor(() => page.status().includes("Offline — your changes will sync when you're back"), "the offline line");
     assert.equal(drafts().length, 1, "the typing is kept as a draft");
+    const leaving = () => {
+      const event = new window.Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    assert.equal(leaving(), true, "closing the tab asks first: the draft would go with it");
     assert.equal(drafts(window.localStorage).length, 0, "in this tab only: another tab never puts it back");
     mode = "ok";
     await act(async () => {
@@ -159,6 +165,7 @@ test("offline typing stays, says so, and is sent when the connection is back", a
     assert.equal(server.posted.length, 1);
     assert.match(JSON.stringify(server.posted[0]!.steps), /for Friday/);
     assert.equal(drafts().length, 0, "the draft goes once saved");
+    assert.equal(leaving(), false, "nothing to lose once saved");
   } finally {
     await page.done();
     server.restore();

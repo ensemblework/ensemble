@@ -517,3 +517,13 @@ test("a page over a size limit can still be edited and shortened; only growth pa
     assert.equal(error.step, 1, "the step that grows the page");
   }
 });
+
+test("a batch larger than the log can hold is answered with its steps, not with 'start over' after it was taken", () => {
+  const authority = new Authority(pageSchema, { doc: pageDoc(p("Agenda")), revision: 1, raw: p("Agenda") }, { ...LIMITS, log: 3 });
+  const words = ["one ", "two ", "three ", "four ", "five "];
+  const tr = new Transform(authority.doc);
+  for (const word of words) tr.insert(1, pageSchema.text(word));
+  const batch = authority.receive(0, tr.steps.map((step) => step.toJSON()), "me/a");
+  assert.deepEqual([batch.from, batch.version, batch.steps.length, batch.clientIDs.length], [0, 5, 5, 5]);
+  assert.equal(authority.first, 2, "the log keeps three steps");
+});

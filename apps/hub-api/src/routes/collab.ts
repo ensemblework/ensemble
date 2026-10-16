@@ -28,6 +28,13 @@ const accountOf = (request: FastifyRequest) => request.accountId ?? request.user
 const SECRET = randomBytes(32);
 const tokenFor = (clientID: string) => createHmac("sha256", SECRET).update(clientID).digest("base64url");
 
+/**
+ * A request of steps: more than the API's usual 4 MiB, so that one step of the largest kind
+ * (1,000,000 characters of JSON, up to 3 bytes each in UTF-8) always fits. Editors send at most
+ * 1 MiB of steps at a time otherwise.
+ */
+const STEPS_BODY_LIMIT = 8 * 1024 * 1024;
+
 const Params = z.object({ id: z.string().uuid() });
 const Since = z.object({ epoch: z.string().min(1).max(64), version: z.coerce.number().int().nonnegative() });
 const Steps = z.object({
@@ -86,7 +93,7 @@ export async function collabRoutes(app: FastifyInstance): Promise<void> {
       return answer(reply, kind, () => collabHub.since(key, since.epoch, since.version));
     });
 
-    app.post(path, async (request, reply) => {
+    app.post(path, { bodyLimit: STEPS_BODY_LIMIT }, async (request, reply) => {
       const key: DocKey = { space: request.userId, kind, id: Params.parse(request.params).id };
       const { token, ...body } = Steps.parse(request.body);
       // Another account's id (a session that expired on a public link) or no valid token: join again.

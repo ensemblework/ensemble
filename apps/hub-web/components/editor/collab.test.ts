@@ -51,6 +51,8 @@ class Server {
   revision = 1;
   private readonly listeners = new Map<string, { steps: (batch: CollabBatch) => void; saved: (epoch: string, saved: number) => void }>();
   private readonly lines = new Map<string, Promise<void>>();
+  /** Clients the event stream does not reach (their connection dropped). */
+  readonly deaf = new Set<string>();
   /** Clients whose requests fail as if offline, or with an expired session. */
   readonly offline = new Set<string>();
   readonly signedOut = new Set<string>();
@@ -61,9 +63,14 @@ class Server {
   /** Joins so far: each one issues a new client id, as the API does. */
   private joins = 0;
 
-  constructor(doc: PageDocument, private readonly rand: () => number) {
+  /** Bytes of each request of steps, by client. */
+  readonly bytes = new Map<string, number[]>();
+  /** Fastify's limit on a request body, as `routes/collab.ts` sets it for steps. */
+  bodyLimit = 8 * 1024 * 1024;
+
+  constructor(doc: PageDocument, private readonly rand: () => number, private readonly limits = LIMITS) {
     this.stored = doc;
-    this.authority = new Authority(pageSchema, { doc: pageDoc(doc), revision: 1, raw: doc });
+    this.authority = new Authority(pageSchema, { doc: pageDoc(doc), revision: 1, raw: doc }, limits);
   }
 
   private latency(): Promise<unknown> {
@@ -89,7 +96,7 @@ class Server {
 
   /** The process dies: what was not written back is gone from the server. */
   crash(): void {
-    this.authority = new Authority(pageSchema, { doc: pageDoc(this.stored), revision: this.revision, raw: this.stored, previous: this.marker });
+    this.authority = new Authority(pageSchema, { doc: pageDoc(this.stored), revision: this.revision, raw: this.stored, previous: this.marker }, this.limits);
   }
 
   /** The assistant writes from the stored copy; the authority takes it in. */
@@ -107,6 +114,7 @@ class Server {
 
   private deliver(send: (listener: { steps: (batch: CollabBatch) => void; saved: (epoch: string, saved: number) => void }) => void): void {
     for (const [name, listener] of this.listeners) {
+      if (this.deaf.has(name)) continue;
       const line = (this.lines.get(name) ?? Promise.resolve()).then(() => this.latency()).then(() => send(listener));
       this.lines.set(name, line);
     }
@@ -164,6 +172,9 @@ class Server {
       send: async (body) => {
         await this.latency();
         gate();
+        const size = Buffer.byteLength(JSON.stringify(body));
+        this.bytes.set(name, [...(this.bytes.get(name) ?? []), size]);
+        if (size > this.bodyLimit) throw { status: 413, code: "FST_ERR_CTP_BODY_TOO_LARGE", message: "Request body is too large" };
         if (body.epoch !== this.authority.epoch) throw { status: 410, code: "COLLAB_RESET" };
         if (!body.clientID.startsWith(`${account}/`) || body.token !== tokenFor(body.clientID)) throw { status: 410, code: "COLLAB_REJOIN", message: "Join this page again to go on editing." };
         this.sent.set(name, [...(this.sent.get(name) ?? []), body.steps.length]);
@@ -214,13 +225,14 @@ function memoryDrafts(key = `page-${(pages += 1)}`): DraftStore & { value: Draft
 
 type Tab = { name: string; editor: Editor; session: CollabSession; status: () => CollabStatus; close: () => void; drafts: ReturnType<typeof memoryDrafts>; restored: () => number };
 
-async function open(server: Server, name: string, drafts = memoryDrafts(), options: { tab?: CollabTab; account?: string; transport?: CollabTransport; errors?: string[] } = {}): Promise<Tab> {
+async function open(server: Server, name: string, drafts = memoryDrafts(), options: { tab?: CollabTab; account?: string; transport?: CollabTransport; errors?: string[]; sendBytes?: number } = {}): Promise<Tab> {
   let status: CollabStatus = "saved";
   let restored = 0;
   const session = new CollabSession({
     transport: options.transport ?? server.transport(name, options.account),
     drafts,
     tab: options.tab,
+    sendBytes: options.sendBytes,
     onError: (message) => options.errors?.push(message),
     live: () => true,
     delays: { live: 3, alone: 3, retry: 5, maxRetry: 20, draft: 5 },
@@ -704,7 +716,7 @@ function gated(transport: CollabTransport) {
 }
 
 /** No liveness at all: what the editor did before drafts were kept per editor. */
-const noTab: CollabTab = { hold: () => () => undefined, take: async (ids) => ids, give: () => undefined, finishing: () => undefined, settled: async () => undefined };
+const noTab: CollabTab = { hold: () => () => undefined, take: async (ids) => ids, give: () => undefined, applied: () => false, claim: () => true, finishing: () => undefined, settled: async () => undefined };
 
 /** The closing editor's typing lands after the page opened again (`late`), or a moment after it closed. */
 async function closeAndReopenAtOnce(tab: CollabTab, late: boolean): Promise<number> {
@@ -900,5 +912,226 @@ test("the draft is written a little after typing is sent, at once on leaving, an
     assert.equal(drafts.value?.steps.length, 2, "kept once there is room again");
   } finally {
     tab.close();
+  }
+});
+
+// ── Final check: same-server catch-up, restarts after closing, duplicated drafts, large requests ──
+
+const NOTES = { type: "paragraph", content: [{ type: "text", text: "Notes" }] };
+const LIST: PageDocument = { type: "doc", content: [{ type: "bulletList", content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "Agenda" }] }] }] }, NOTES] };
+const AGENDA: PageDocument = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Agenda" }] }, NOTES] };
+
+/**
+ * A types offline (its event stream down too) while B types enough for the server's log (three
+ * steps) to drop A's version; then A comes back and catches up on the same server.
+ */
+async function behindTheLog(start: PageDocument, mine: (editor: Editor) => void, theirs: (editor: Editor) => void): Promise<string[]> {
+  const server = new Server(start, random(109), { ...LIMITS, log: 3 });
+  const a = await open(server, "a");
+  const b = await open(server, "b");
+  try {
+    server.offline.add("a");
+    server.deaf.add("a");
+    mine(a.editor);
+    await until(() => a.status() === "offline", "a offline");
+    theirs(b.editor);
+    // More typing in the last paragraph, so the log moves on.
+    for (const word of [" one", " two", " three", " four"]) b.editor.chain().setTextSelection(b.editor.state.doc.content.size - 1).insertContent(word).run();
+    await settle(server, [b]);
+    assert.ok(server.authority.first > 0, "the log no longer reaches back to a's version");
+    server.offline.delete("a");
+    server.deaf.delete("a");
+    a.session.retryNow();
+    await settle(server, [a, b]);
+    assertConverged(server, [a, b]);
+    const out: string[] = [];
+    pageDoc(server.stored).descendants((node) => {
+      if (node.isTextblock) out.push(node.textContent);
+      return !node.isTextblock;
+    });
+    return out;
+  } finally {
+    a.close();
+    b.close();
+  }
+}
+
+const endOfFirstBlock = (editor: Editor) => {
+  let end = 0;
+  editor.state.doc.descendants((node, pos) => {
+    if (!end && node.isTextblock) end = pos + node.nodeSize - 1;
+    return !end;
+  });
+  return end;
+};
+
+test("catching up on the same server keeps two new list items whole and apart, not merged word by word", async () => {
+  const item = (text: string) => (editor: Editor) => editor.chain().setTextSelection(endOfFirstBlock(editor)).splitListItem("listItem").insertContent(text).run();
+  const blocks = await behindTheLog(LIST, item("Send the deck to the board"), item("Book the room for the offsite"));
+  // Both items whole, each its own item, after Agenda (which of the two comes first is the rebase's order).
+  assert.equal(blocks.length, 4, JSON.stringify(blocks));
+  assert.deepEqual([blocks[0], blocks[3]], ["Agenda", "Notes one two three four"]);
+  assert.deepEqual(blocks.slice(1, 3).sort(), ["Book the room for the offsite", "Send the deck to the board"]);
+});
+
+test("catching up on the same server keeps typing in one paragraph whole, not interleaved", async () => {
+  const typing = (text: string) => (editor: Editor) => editor.chain().setTextSelection(endOfFirstBlock(editor)).insertContent(text).run();
+  const [text] = await behindTheLog(AGENDA, typing(" ship the app"), typing(" draft the review"));
+  assert.equal(text, "Agenda draft the review ship the app");
+});
+
+test("a page closed while its last request meets a restart stops, keeps the draft, and the page opening again takes it", async () => {
+  const server = new Server(START, random(113));
+  const drafts = memoryDrafts();
+  const base = server.transport("closing");
+  let sends = 0;
+  const closing = await open(server, "closing", drafts, { transport: { ...base, send: (body) => ((sends += 1), base.send(body)) } });
+  closing.editor.chain().setTextSelection(1).insertContent("Typed before the deploy ").run();
+  server.crash();
+  closing.close();
+  await sleep(150);
+  assert.ok(sends <= 3, `no storm of requests (${sends})`);
+  assert.ok(drafts.value?.steps.length, "the typing is kept as a draft");
+  const started = Date.now();
+  const again = await open(server, "again", drafts);
+  try {
+    assert.ok(Date.now() - started < 2000, "the page opening again does not wait out the closed one");
+    assert.equal(again.restored(), 1);
+    await settle(server, [again]);
+    assert.equal(words(server.stored).filter((word) => word === "deploy").length, 1);
+  } finally {
+    again.close();
+  }
+});
+
+/** `localStorage`: shared by every tab of the browser. */
+function sharedStorage() {
+  const map = new Map<string, string>();
+  return {
+    get length() {
+      return map.size;
+    },
+    key: (at: number) => [...map.keys()][at] ?? null,
+    getItem: (key: string) => map.get(key) ?? null,
+    setItem: (key: string, value: string) => void map.set(key, value),
+    removeItem: (key: string) => void map.delete(key),
+  };
+}
+
+async function leftoverInDuplicate(shared: ReturnType<typeof sharedStorage> | null): Promise<number> {
+  const server = new Server(START, random(127));
+  const locks = sharedLocks();
+  const original = memoryDrafts("page");
+  // A page closed offline leaves a draft behind in this tab; its editor is gone.
+  const gone = await open(server, "gone", original, { tab: collabTab(locks, shared) });
+  server.offline.add("gone");
+  gone.editor.chain().setTextSelection(1).insertContent("Offline ").run();
+  await until(() => gone.status() === "offline", "offline");
+  gone.close();
+  await sleep(30);
+  // The tab is duplicated, drafts and all; then the page opens in both tabs.
+  const copy = memoryDrafts("page");
+  copy.value = original.value;
+  const one = await open(server, "one", original, { tab: collabTab(locks, shared) });
+  const two = await open(server, "two", copy, { tab: collabTab(locks, shared) });
+  try {
+    await settle(server, [one, two]);
+    assert.equal(copy.entries.size, 0, "the copy is gone either way");
+    return words(server.stored).filter((word) => word === "Offline").length;
+  } finally {
+    one.close();
+    two.close();
+  }
+}
+
+test("a draft left behind and copied into a duplicated tab is put back once, not by both tabs", async () => {
+  assert.equal(await leftoverInDuplicate(null), 2, "with nothing shared between tabs, both put it back");
+  assert.equal(await leftoverInDuplicate(sharedStorage()), 1);
+});
+
+test("unsent steps go out in requests of at most the byte limit (one step however large)", async () => {
+  const server = new Server(START, random(131));
+  const tab = await open(server, "me", memoryDrafts(), { sendBytes: 100_000 });
+  try {
+    server.offline.add("me");
+    for (let at = 0; at < 5; at += 1) tab.editor.chain().setTextSelection(1).insertContent(`${"漢".repeat(20_000)} `).run();
+    tab.editor.chain().setTextSelection(1).insertContent(`${"字".repeat(50_000)} `).run();
+    await until(() => tab.status() === "offline", "offline");
+    server.offline.delete("me");
+    tab.session.retryNow();
+    await settle(server, [tab]);
+    const sizes = server.bytes.get("me")!.filter((size) => size > 1000);
+    assert.ok(sizes.length >= 4, `split into several requests (${sizes.join(", ")})`);
+    assert.ok(sizes.every((size) => size <= 100_000 + 1000 || size > 150_000), `each at most the limit, or one large step (${sizes.join(", ")})`);
+    assert.equal(words(server.stored).length, words(START).length + 6);
+  } finally {
+    tab.close();
+  }
+});
+
+test("a step too large for the API's body limit is taken back once, and the rest is saved", async () => {
+  const server = new Server(START, random(137));
+  server.bodyLimit = 50_000;
+  const errors: string[] = [];
+  const tab = await open(server, "me", memoryDrafts(), { errors, sendBytes: 10_000 });
+  try {
+    server.offline.add("me");
+    tab.editor.chain().setTextSelection(1).insertContent("Before ").run();
+    tab.editor.chain().insertContent(`${"x".repeat(60_000)} `).run();
+    tab.editor.chain().insertContent("After ").run();
+    await until(() => tab.status() === "offline", "offline");
+    server.offline.delete("me");
+    tab.session.retryNow();
+    await settle(server, [tab]);
+    assert.deepEqual(words(server.stored).slice(0, 3), ["Before", "After", "Agenda"]);
+    assert.equal(errors.length, 1);
+    assert.match(errors[0]!, /too large to save in one piece/);
+    assert.ok(server.bytes.get("me")!.filter((size) => size > server.bodyLimit).length <= 2, "not sent again and again");
+  } finally {
+    tab.close();
+  }
+});
+
+test("a refusal whose step index went stale (others' steps arrived meanwhile) is asked again, not applied to the wrong step", async () => {
+  const server = new Server({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Keep Notes here" }] }] }, random(139));
+  const other = await open(server, "other");
+  const base = server.transport("me");
+  let first = true;
+  const errors: string[] = [];
+  const transport: CollabTransport = {
+    ...base,
+    send: async (body) => {
+      try {
+        return await base.send(body);
+      } catch (error) {
+        if (first && (error as { code?: string }).code === "COLLAB_REJECTED") {
+          first = false;
+          // Before the refusal arrives, someone deletes the word this tab deleted: its first step goes on rebase.
+          other.editor.commands.deleteRange({ from: 5, to: 12 });
+          await settle(server, [other]);
+          await server.quiet();
+        }
+        throw error;
+      }
+    },
+  };
+  const tab = await open(server, "me", memoryDrafts(), { transport, errors });
+  try {
+    server.offline.add("me");
+    tab.editor.commands.deleteRange({ from: 6, to: 11 });
+    tab.editor.chain().setTextSelection(1).insertContent("bad\u0000char ").run();
+    tab.editor.chain().insertContent("After ").run();
+    await until(() => tab.status() === "offline", "offline");
+    server.offline.delete("me");
+    tab.session.retryNow();
+    await settle(server, [tab, other]);
+    assertConverged(server, [tab, other]);
+    const final = words(server.stored);
+    assert.ok(final.includes("After"), `the step after the refused one stays (${final.join(" ")})`);
+    assert.ok(!final.some((word) => word.includes("\u0000")));
+    assert.equal(errors.length, 1);
+  } finally {
+    tab.close();
+    other.close();
   }
 });

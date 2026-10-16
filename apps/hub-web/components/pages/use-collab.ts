@@ -191,6 +191,19 @@ export function useCollab(options: {
     if (options.frozen) state?.session.freeze();
   }, [options.frozen, state]);
 
+  // Closing the tab or the browser while typing is not yet stored asks first: the draft lives in
+  // this tab's storage, which closing it throws away (a reload keeps it).
+  useEffect(() => {
+    if (!state || status === "saved") return;
+    const leave = (event: BeforeUnloadEvent) => {
+      state.session.keepDraft();
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", leave);
+    return () => window.removeEventListener("beforeunload", leave);
+  }, [state, status]);
+
   const binding = useMemo<CollabBinding | null>(
     () => (state ? { version: state.joined.version, clientID: state.session.clientID, attach: (editor) => state.session.attach(editor) } : null),
     [state],

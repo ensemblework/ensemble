@@ -238,7 +238,7 @@ test("random concurrent edits never lose a word either person typed", () => {
 test("union keeps what both sides already share once: typing re-sent after a restart is not doubled", () => {
   const base: PageDocument = { type: "doc", content: [p("Hello world")] };
   const mine: PageDocument = { type: "doc", content: [p("Hello brave new world")] };
-  const theirs: PageDocument = { type: "doc", content: [p("Hello great brave new world")] };
+  const theirs: PageDocument = { type: "doc", content: [p("Hello brave new world, friends")] };
   assert.ok(sameDoc(mergeDocs(base, mine, mine, { union: true }).doc, mine), "the same edit on both sides counts once");
   assert.ok(sameDoc(mergeDocs(base, mine, theirs, { union: true }).doc, theirs), "theirs already holds mine");
   const other: PageDocument = { type: "doc", content: [p("Hello dear world")] };
@@ -246,12 +246,14 @@ test("union keeps what both sides already share once: typing re-sent after a res
   assert.ok(sameDoc(both, { type: "doc", content: [p("Hello dear brave new world")] }), JSON.stringify(both));
 });
 
-test("union drops typing already present, spaces words it adds, and keeps deletions deleted", () => {
+test("union drops typing already present, keeps different typing whole (theirs first, spaced), and keeps deletions deleted", () => {
   const union = (base: string, mine: string, theirs: string) => lines(mergeDocs(doc(p(base)), doc(p(mine)), doc(p(theirs)), { union: true }).doc)[0];
-  // Theirs holds mine's words with an edit of its own: nothing is added twice.
+  // Theirs holds mine's words, a comma aside: nothing is added twice.
   assert.equal(union("Agenda ", "Agenda Hello world", "Agenda Hello, world"), "Agenda Hello, world");
-  // A word theirs lacks is added after theirs, with a space, never glued on.
-  assert.equal(union("Agenda ", "Agenda Hello world", "Agenda Hello there"), "Agenda Hello there world");
+  // Different words at the same place: both runs whole, theirs first, with a space, never glued on.
+  assert.equal(union("Agenda ", "Agenda Hello world", "Agenda Hello there"), "Agenda Hello there Hello world");
+  // Never interleaved by a word they happen to share ("the").
+  assert.equal(union("Agenda", "Agenda ship the app", "Agenda draft the review"), "Agenda draft the review ship the app");
   // Someone deleted "big" after mine was typed: it stays deleted, and mine's words are there once.
   assert.equal(union("Agenda big ", "Agenda big Hello world", "Agenda Hello world"), "Agenda Hello world");
   assert.equal(union("Agenda big ", "Agenda big Hello world", "Agenda "), "Agenda Hello world");
@@ -259,12 +261,16 @@ test("union drops typing already present, spaces words it adds, and keeps deleti
   assert.equal(union("Plan the big launch", "Plan the launch", "Plan the big launch today"), "Plan the launch today");
 });
 
-test("union of blocks: a paragraph theirs already has is not added again, one theirs deleted is not brought back", () => {
+test("union of blocks: a block theirs already has is not added again, new blocks stay whole, one theirs deleted is not brought back", () => {
   const base = doc(p("Agenda"), p("big"));
   const mine = doc(p("Agenda"), p("big"), p("Hello world"));
   assert.deepEqual(lines(mergeDocs(base, mine, doc(p("Agenda"), p("Hello world")), { union: true }).doc), ["Agenda", "Hello world"]);
-  assert.deepEqual(lines(mergeDocs(base, mine, doc(p("Agenda"), p("big"), p("Hello, world")), { union: true }).doc), ["Agenda", "big", "Hello, world"]);
+  assert.deepEqual(lines(mergeDocs(base, mine, doc(p("Agenda"), p("big"), p("Hello, world")), { union: true }).doc), ["Agenda", "big", "Hello, world", "Hello world"]);
   assert.deepEqual(lines(mergeDocs(base, mine, doc(p("Agenda"), p("Notes")), { union: true }).doc), ["Agenda", "Notes", "Hello world"]);
+  // Two new list items sharing a few words are two items, each whole, theirs first.
+  const list = doc(ul(li(p("Agenda"))));
+  const items = mergeDocs(list, doc(ul(li(p("Agenda")), li(p("Send the deck to the board")))), doc(ul(li(p("Agenda")), li(p("Book the room for the offsite")))), { union: true }).doc;
+  assert.deepEqual(lines(items), ["Agenda | Book the room for the offsite | Send the deck to the board"]);
   // One paragraph both typed into at either end is still one paragraph, with everyone's words once.
   const long = doc(p("Plan the launch with the whole team"));
   const atEnds = mergeDocs(long, doc(p("Mine: Plan the launch with the whole team today")), doc(p("Theirs: Plan the launch with the whole team soon")), { union: true }).doc;

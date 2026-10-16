@@ -101,13 +101,19 @@ type Locks = {
  * Which editors are still live, so a draft is taken over only from one that is gone: in this
  * tab (a page closed and opened again at once is still sending), and through Web Locks in any
  * other (a duplicated tab starts with a copy of this one's drafts). Sessions closing a page are
- * waited for (`settled`) before another one of the same page reads the drafts.
+ * waited for (`settled`) before another one of the same page reads the drafts. A draft put back
+ * is recorded in `localStorage`, which all tabs share, so a copy of it in a duplicated tab is
+ * never put back a second time (`claim`).
  */
 export type CollabTab = {
   /** Marks an editor live until the returned function is called. */
   hold(clientID: ClientID): () => void;
-  /** Of `ids`, those no live editor has and no other session here took over; they are now yours. */
+  /** Of `ids`, those no live editor has, no other session here took over and no tab put back; they are now yours. */
   take(ids: ClientID[]): Promise<ClientID[]>;
+  /** A tab already put back this editor's draft: a copy left here is stale. */
+  applied(clientID: ClientID): boolean;
+  /** Records that this editor's draft is being put back now; false when a tab already did. */
+  claim(clientID: ClientID): boolean;
   /** Drafts taken but not put back (the page closed first): another session may take them. */
   give(ids: ClientID[]): void;
   /** A session of page `key` is still sending what was typed before it closed. */
@@ -117,11 +123,48 @@ export type CollabTab = {
 };
 
 const LOCK = "ensemble.collab:";
+const APPLIED = "ensemble.draft-applied:";
+/** How long a put-back draft is remembered across tabs. */
+const APPLIED_MS = 30 * 24 * 60 * 60 * 1000;
 
-export function collabTab(locks: Locks | null = (globalThis.navigator as { locks?: Locks } | undefined)?.locks ?? null): CollabTab {
+/** Storage all tabs share (`localStorage`), when the browser allows it. */
+type Shared = Pick<Storage, "getItem" | "setItem" | "removeItem" | "key" | "length">;
+
+function sharedStorage(): Shared | null {
+  try {
+    return (globalThis as { localStorage?: Shared }).localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function collabTab(locks: Locks | null = (globalThis.navigator as { locks?: Locks } | undefined)?.locks ?? null, shared: Shared | null = sharedStorage()): CollabTab {
   const live = new Set<ClientID>();
   const taken = new Set<ClientID>();
   const closing = new Map<string, Set<Promise<unknown>>>();
+  let pruned = false;
+  const applied = (clientID: ClientID) => {
+    try {
+      return Boolean(shared?.getItem(`${APPLIED}${clientID}`));
+    } catch {
+      return false;
+    }
+  };
+  /** Forgets put-back drafts older than a month, once per tab. */
+  const prune = () => {
+    if (pruned || !shared) return;
+    pruned = true;
+    try {
+      const old: string[] = [];
+      for (let at = 0; at < shared.length; at += 1) {
+        const key = shared.key(at);
+        if (key?.startsWith(APPLIED) && Date.now() - Number(shared.getItem(key)) > APPLIED_MS) old.push(key);
+      }
+      for (const key of old) shared.removeItem(key);
+    } catch {
+      // Nothing to prune.
+    }
+  };
   return {
     hold(clientID) {
       live.add(clientID);
@@ -153,9 +196,21 @@ export function collabTab(locks: Locks | null = (globalThis.navigator as { locks
           // No answer: only this tab's editors count.
         }
       }
-      const free = ids.filter((id) => !busy.has(id) && !live.has(id) && !taken.has(id));
+      const free = ids.filter((id) => !busy.has(id) && !live.has(id) && !taken.has(id) && !applied(id));
       for (const id of free) taken.add(id);
       return free;
+    },
+    applied,
+    claim(clientID) {
+      if (!shared) return true;
+      prune();
+      try {
+        if (applied(clientID)) return false;
+        shared.setItem(`${APPLIED}${clientID}`, String(Date.now()));
+      } catch {
+        // Storage full or blocked: this tab's own records still hold.
+      }
+      return true;
     },
     give(ids) {
       for (const id of ids) taken.delete(id);
@@ -200,6 +255,8 @@ export type CollabSessionOptions = {
   onRestored?: () => void;
   /** Which editors are live (this tab's, by default). */
   tab?: CollabTab;
+  /** Bytes of steps in one request (`MAX_SEND_BYTES`). */
+  sendBytes?: number;
   delays?: Partial<typeof DELAYS>;
 };
 
@@ -217,6 +274,26 @@ const DELAYS = {
 };
 /** Steps in one request; the server takes up to 1,000, and a prefix is confirmed like the whole. */
 export const MAX_SEND = 200;
+/**
+ * Bytes of steps in one request (at least one step goes, however large): well under the 8 MiB
+ * the collab route takes, which is more than one step can be (1,000,000 characters of JSON).
+ */
+export const MAX_SEND_BYTES = 1024 * 1024;
+
+/** The length of `text` in UTF-8. */
+function utf8Length(text: string): number {
+  let bytes = 0;
+  for (let at = 0; at < text.length; at += 1) {
+    const code = text.charCodeAt(at);
+    if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xd800 && code <= 0xdbff && at + 1 < text.length) {
+      bytes += 4;
+      at += 1;
+    } else bytes += 3;
+  }
+  return bytes;
+}
 /** Recent step maps kept to place other people's carets sent from older versions. */
 const KEEP_MAPS = 500;
 /** Server steps kept after the last known write-back, for drafts and for starting over. */
@@ -225,6 +302,7 @@ const KEEP_WINDOW = 3000;
 const SETTLE_MS = 10_000;
 const REFUSED = "This page can't save that change. Reload the page; your text is kept in this tab.";
 const TAKEN_BACK = "That change was taken out of the page; the rest of your typing is saved as usual.";
+const TOO_LARGE = "This change is too large to save in one piece. Paste it in parts.";
 const DRAFT_FULL = "This tab's storage is full, so unsaved typing is not kept for a reload. Keep the page open until it says saved.";
 
 const UNSTORABLE = /[\u0000\uD800-\uDFFF]/;
@@ -273,17 +351,20 @@ function storableFragment(fragment: Fragment): Fragment {
 
 type Failure = "behind" | "reset" | "lost" | "signedOut" | "offline" | "busy" | "refused" | "failed";
 
-function failure(error: unknown): { kind: Failure; data: unknown; message: string; code: string | null } {
-  const { status, code = null, data, message } = (error ?? {}) as { status?: number; code?: string | null; data?: unknown; message?: string };
+function failure(error: unknown): { kind: Failure; data: unknown; message: string; code: string | null; status: number } {
+  const { status = 0, code = null, data, message } = (error ?? {}) as { status?: number; code?: string | null; data?: unknown; message?: string };
   const text = message ?? "Could not save.";
-  if (status === 409 && code === "COLLAB_BEHIND") return { kind: "behind", data, message: text, code };
-  if (status === 410) return { kind: "reset", data, message: text, code };
-  if (status === 401) return { kind: "signedOut", data, message: text, code };
-  if (code === "COLLAB_REJECTED" || code === "COLLAB_TOO_LARGE" || code === "COLLAB_UNSAVED") return { kind: "refused", data, message: text, code };
-  if (code === "SHARE_GONE" || status === 403 || status === 404) return { kind: "lost", data, message: text, code };
-  if (!status || status >= 500) return { kind: "offline", data, message: text, code };
-  if (status === 429) return { kind: "busy", data, message: text, code };
-  return { kind: "failed", data, message: text, code };
+  const out = (kind: Failure, why = text) => ({ kind, data, message: why, code, status });
+  if (status === 409 && code === "COLLAB_BEHIND") return out("behind");
+  if (status === 410) return out("reset");
+  if (status === 401) return out("signedOut");
+  if (code === "COLLAB_REJECTED" || code === "COLLAB_TOO_LARGE" || code === "COLLAB_UNSAVED") return out("refused");
+  // The request itself was over the API's size limit (Fastify's 413): too large, never retried as it is.
+  if (status === 413) return out("refused", TOO_LARGE);
+  if (code === "SHARE_GONE" || status === 403 || status === 404) return out("lost");
+  if (!status || status >= 500) return out("offline");
+  if (status === 429) return out("busy");
+  return out("failed");
 }
 
 /**
@@ -320,10 +401,11 @@ function without(start: ProseNode, steps: Step[], drop: boolean[]): { doc: Prose
 }
 
 /**
- * `mine` and `fresh` both changed `base`: the steps that turn `fresh` into the three-way merge,
- * so mine's changes are added once and a change both already have is not added again.
+ * `mine` and `fresh` both changed `base`: the steps that turn `fresh` into their three-way merge
+ * (`mergeDocs`). `union` is for typing proposed again after the server started over, which
+ * `fresh` may already hold: identical typing is then added once.
  */
-function mergeOnto(schema: Schema, base: ProseNode, mine: ProseNode, fresh: ProseNode): Step[] {
+function mergeOnto(schema: Schema, base: ProseNode, mine: ProseNode, fresh: ProseNode, union = false): Step[] {
   const json = (node: ProseNode) => node.toJSON() as PageDocument;
   if (mine.eq(base) || sameDoc(json(mine), json(fresh))) return [];
   const parse = (doc: PageDocument, check: boolean) => {
@@ -335,9 +417,23 @@ function mergeOnto(schema: Schema, base: ProseNode, mine: ProseNode, fresh: Pros
       return null;
     }
   };
-  const deep = mergeDocs(json(base), json(mine), json(fresh), { union: true }).doc;
-  const merged = parse(deep, true) ?? parse(mergeDocs(json(base), json(mine), json(fresh), { deep: false, union: true }).doc, true) ?? parse(deep, false) ?? mine;
+  const deep = mergeDocs(json(base), json(mine), json(fresh), { union }).doc;
+  const merged = parse(deep, true) ?? parse(mergeDocs(json(base), json(mine), json(fresh), { deep: false, union }).doc, true) ?? parse(deep, false) ?? mine;
   return diffSteps(fresh, merged);
+}
+
+/**
+ * On the same server: `steps` (typed on `base`) moved over what changed from `base` to `fresh`
+ * (`over`, its steps when known), exactly as prosemirror-collab would; when one no longer fits,
+ * the plain three-way merge.
+ */
+function carryOver(schema: Schema, base: ProseNode, steps: Step[], fresh: ProseNode, over: Step[] = diffSteps(base, fresh)): Step[] {
+  if (!steps.length) return [];
+  const moved = rebaseSteps(base, steps, over);
+  if (moved) return moved;
+  let mine = base;
+  for (const step of steps) mine = step.apply(mine).doc ?? mine;
+  return mergeOnto(schema, base, mine, fresh);
 }
 
 /** How far back to look for the version a restarted server's document is at. */
@@ -361,7 +457,7 @@ function reproposal(schema: Schema, savedDoc: ProseNode, window: Array<{ step: S
   let mine = docs.at(-1)!;
   for (const step of unconfirmed) mine = step.apply(mine).doc ?? mine;
   const base = without(savedDoc, window.map((entry) => entry.step), window.map((entry) => own.has(entry.id))).doc;
-  return mergeOnto(schema, base, mine, fresh);
+  return mergeOnto(schema, base, mine, fresh, true);
 }
 
 /** What an editor knew of the server before it started over: enough to tell what of its typing to send again. */
@@ -393,7 +489,7 @@ function fromStored(schema: Schema, known: Known, stored: ProseNode, previous: S
       const others = [...tail.map((entry) => !known.own.has(entry.id)), ...known.unconfirmed.map(() => false)];
       return diffSteps(stored, without(stored, steps, others).doc);
     }
-    if (previous.version > reached) return mergeOnto(schema, known.serverDoc, known.mine, stored);
+    if (previous.version > reached) return mergeOnto(schema, known.serverDoc, known.mine, stored, true);
   }
   return reproposal(schema, known.savedDoc, known.window, known.unconfirmed, known.own, stored);
 }
@@ -412,25 +508,27 @@ function startingOver(schema: Schema, known: Known, fresh: ProseNode, start: Sta
 }
 
 /**
- * A draft's unconfirmed steps replayed against what the server did since its version (`batch`),
- * the way the tab that wrote it would have: steps the server took from that tab are dropped,
- * the rest rebased. Null when they no longer fit `live`, the server's document now.
+ * An editor's unconfirmed steps (on `atVersion`, the server's document at `version`) replayed
+ * against what the server did since (`batch`), the way that editor would have: steps the server
+ * took from it (under any of its ids, `own`) are dropped, the rest rebased. Null when they no
+ * longer fit `live`, the server's document now.
  */
-function replay(schema: Schema, draft: Draft, atVersion: ProseNode, batch: CollabBatch, live: ProseNode): Step[] | null {
-  let state = EditorState.create({ schema, doc: atVersion, plugins: [collab({ version: draft.version, clientID: draft.clientID })] });
-  if (draft.steps.length) {
+function replay(schema: Schema, atVersion: ProseNode, version: number, unconfirmed: Step[], own: Set<ClientID>, batch: Pick<CollabBatch, "steps" | "clientIDs">, live: ProseNode): Step[] | null {
+  const me = "replayed";
+  let state = EditorState.create({ schema, doc: atVersion, plugins: [collab({ version, clientID: me })] });
+  if (unconfirmed.length) {
     const tr = state.tr;
-    for (const json of draft.steps) tr.step(Step.fromJSON(schema, json));
+    for (const step of unconfirmed) tr.step(step);
     state = state.apply(tr);
   }
   for (let at = 0; at < batch.steps.length; ) {
-    const own = batch.clientIDs[at] === draft.clientID;
+    const mine = own.has(batch.clientIDs[at]!);
     let end = at;
-    while (end < batch.steps.length && (batch.clientIDs[end] === draft.clientID) === own) end += 1;
+    while (end < batch.steps.length && own.has(batch.clientIDs[end]!) === mine) end += 1;
     const steps = batch.steps.slice(at, end).map((json) => Step.fromJSON(schema, json));
-    // That tab's steps the draft did not hold (typed after it was written) apply like anyone's.
-    const held = own ? Math.min(steps.length, sendableSteps(state)?.steps.length ?? 0) : 0;
-    if (held) state = state.apply(receiveTransaction(state, steps.slice(0, held), steps.slice(0, held).map(() => draft.clientID)));
+    // That editor's steps the draft did not hold (typed after it was written) apply like anyone's.
+    const held = mine ? Math.min(steps.length, sendableSteps(state)?.steps.length ?? 0) : 0;
+    if (held) state = state.apply(receiveTransaction(state, steps.slice(0, held), steps.slice(0, held).map(() => me)));
     if (held < steps.length) state = state.apply(receiveTransaction(state, steps.slice(held), steps.slice(held).map(() => "server")));
     at = end;
   }
@@ -513,7 +611,7 @@ export class CollabSession {
   private sending: Promise<unknown> | null = null;
   /** Epochs this session has moved on from; their late answers are ignored. */
   private readonly retired = new Set<string>();
-  private resetting: Promise<void> | null = null;
+  private resetting: Promise<boolean> | null = null;
   private catching: Promise<void> | null = null;
   private failures = 0;
   /** A draft of this editor's is in the store. */
@@ -527,10 +625,13 @@ export class CollabSession {
   private finishing = false;
   private last: PageDocument | null = null;
   private readonly delays: typeof DELAYS;
+  /** Bytes of steps per request; one step a request after the API found a request too large. */
+  private sendBytes: number;
 
   constructor(private readonly options: CollabSessionOptions) {
     this.delays = { ...DELAYS, ...options.delays };
     this.tab = options.tab ?? thisTab;
+    this.sendBytes = options.sendBytes ?? MAX_SEND_BYTES;
   }
 
   private get state(): EditorState | null {
@@ -618,6 +719,8 @@ export class CollabSession {
     const candidates = found.filter((draft) => draft && typeof draft.clientID === "string" && !this.ids.includes(draft.clientID) && accountOf(draft.clientID) === account);
     if (!candidates.length || this.closed) return joined;
     const free = new Set(await this.tab.take(candidates.map((draft) => draft.clientID)));
+    // Copies of drafts another tab already put back (this tab was duplicated from it) go.
+    for (const draft of candidates) if (!free.has(draft.clientID) && this.tab.applied(draft.clientID)) drafts?.clear(draft.clientID);
     const left = new Set(read().map((draft) => draft.clientID));
     const adopted = candidates.filter((draft) => free.has(draft.clientID) && left.has(draft.clientID)).sort((a, b) => (a.at ?? 0) - (b.at ?? 0));
     if (!adopted.length) return joined;
@@ -670,10 +773,13 @@ export class CollabSession {
     const window = draft.server.steps.map((json) => Step.fromJSON(schema, json));
     let atVersion = savedDoc;
     for (const step of window) atVersion = step.apply(atVersion).doc ?? atVersion;
-    const replayed = batch ? replay(schema, draft, atVersion, batch, joined) : null;
-    if (replayed) return replayed;
-    // The server started over (or the log is gone): your typing it lacks goes again.
     const unconfirmed = draft.steps.map((json) => Step.fromJSON(schema, json));
+    const own = new Set([...(draft.ids ?? []), draft.clientID]);
+    const replayed = batch ? replay(schema, atVersion, draft.version, unconfirmed, own, batch, joined) : null;
+    if (replayed) return replayed;
+    // The same server, its log gone: the unconfirmed typing moved over what changed since.
+    if (draft.epoch === this.epoch) return carryOver(schema, atVersion, unconfirmed, joined);
+    // The server started over: your typing it lacks goes again.
     let mine = atVersion;
     for (const step of unconfirmed) mine = step.apply(mine).doc ?? mine;
     const known: Known = {
@@ -682,11 +788,11 @@ export class CollabSession {
       savedVersion: draft.saved,
       window: window.map((step, at) => ({ step, id: draft.server.clientIDs[at]! })),
       unconfirmed,
-      own: new Set([...(draft.ids ?? []), draft.clientID]),
+      own,
       serverDoc: atVersion,
       mine,
     };
-    return draft.epoch === this.epoch ? mergeOnto(schema, atVersion, mine, joined) : startingOver(schema, known, joined, start);
+    return startingOver(schema, known, joined, start);
   }
 
   /** Puts typing from the drafts taken over back, one after another; this editor's own draft then holds it. */
@@ -699,16 +805,13 @@ export class CollabSession {
     const joined = editor.state.doc;
     const applied: Step[] = [];
     for (const { draft, batch } of restore.drafts) {
+      // Another tab put it back meanwhile (a duplicate of this one): not twice.
+      if (!this.tab.claim(draft.clientID)) continue;
       try {
         const steps = this.draftSteps(schema, draft, batch, joined, restore.start);
         if (!steps.length) continue;
         // After an earlier draft's typing: moved past it, else merged onto the page as it is now.
-        let moved = applied.length ? rebaseSteps(joined, steps, applied) : steps;
-        if (!moved) {
-          let mine = joined;
-          for (const step of steps) mine = step.apply(mine).doc ?? mine;
-          moved = mergeOnto(schema, joined, mine, editor.state.doc);
-        }
+        const moved = applied.length ? carryOver(schema, joined, steps, editor.state.doc, applied) : steps;
         const tr = editor.state.tr;
         for (const step of moved) tr.step(step);
         editor.view.dispatch(tr.setMeta("addToHistory", false));
@@ -763,8 +866,18 @@ export class CollabSession {
       if (!this.failures) this.setStatus("saving");
       this.scheduleDraft();
       const epoch = this.epoch;
+      // At most MAX_SEND steps and sendBytes of them, but always one.
+      const steps: unknown[] = [];
+      let bytes = 0;
+      for (const step of sendable.steps) {
+        if (steps.length >= MAX_SEND) break;
+        const json = step.toJSON();
+        const size = utf8Length(JSON.stringify(json));
+        if (steps.length && bytes + size > this.sendBytes) break;
+        steps.push(json);
+        bytes += size;
+      }
       try {
-        const steps = sendable.steps.slice(0, MAX_SEND).map((step) => step.toJSON());
         this.sending = this.options.transport.send({ epoch, version: sendable.version, clientID: this.clientID, token: this.token, steps });
         const batch = (await this.sending.finally(() => (this.sending = null))) as CollabBatch;
         this.failures = 0;
@@ -773,7 +886,7 @@ export class CollabSession {
         const next = this.state;
         if (next && sendableSteps(next) && !this.closed) await new Promise((resolve) => setTimeout(resolve, this.options.live?.() ? this.delays.live : this.delays.alone));
       } catch (error) {
-        if (!(await this.failed(error, epoch))) return;
+        if (!(await this.failed(error, epoch, { version: sendable.version, count: steps.length }))) return;
       }
     }
     // Still refused after many rounds: try again in a moment rather than spin.
@@ -789,17 +902,21 @@ export class CollabSession {
     }, wait);
   }
 
-  /** Handles a refused or failed request, made under `epoch`. True: try again now. */
-  private async failed(error: unknown, epoch = this.epoch): Promise<boolean> {
-    const { kind, data, message, code } = failure(error);
+  /**
+   * Handles a refused or failed request, made under `epoch` (with `sent`: steps sent from that
+   * version, so many). True: try again now.
+   */
+  private async failed(error: unknown, epoch = this.epoch, sent?: { version: number; count: number }): Promise<boolean> {
+    const { kind, data, message, code, status } = failure(error);
     switch (kind) {
       case "behind":
         this.take(data as CollabBatch);
         return true;
       case "reset":
-        // A late answer to a request from before the editor started over: nothing to do again.
-        if (epoch === this.epoch) await this.reset();
-        return true;
+        // A late answer to a request from before the editor started over: send again as it is now.
+        if (epoch !== this.epoch) return !this.stopped;
+        // Again only once on the fresh document; a page closed meanwhile stops and keeps its draft.
+        return (await this.reset()) && !this.stopped;
       case "lost":
         // Kept: a page restored from Trash puts it back.
         this.keepDraft();
@@ -815,17 +932,28 @@ export class CollabSession {
         this.options.onSignedOut?.();
         return false;
       default: {
-        // One step refused (a character pages cannot store, a page grown past its limit): that
-        // step is taken out and the rest goes on.
+        // One step refused (a character pages cannot store, a page grown past its limit), or a
+        // request of one step too large for the API: that step is taken out and the rest goes on.
+        // Steps from others since the request may have moved the queue: send again for a fresh answer.
         const index = (data as { step?: unknown } | null | undefined)?.step;
-        if (kind === "refused" && typeof index === "number" && this.takeBack(index)) {
-          this.options.onError?.(`${message} ${TAKEN_BACK}`);
-          return true;
+        const state = this.state;
+        if (kind === "refused" && sent && state && (typeof index === "number" || status === 413)) {
+          if (getVersion(state) !== sent.version) return true;
+          const at = typeof index === "number" ? index : sent.count === 1 ? 0 : null;
+          if (at === null) {
+            // Several steps too large together: one a request from now on.
+            this.sendBytes = 1;
+            return true;
+          }
+          if (at < sent.count && this.takeBack(at)) {
+            this.options.onError?.(`${message} ${TAKEN_BACK}`);
+            return true;
+          }
         }
         this.failures += 1;
         this.setStatus(kind === "offline" ? "offline" : kind === "busy" ? "saving" : "error");
         // Refused changes are not sent again right away: the same change would be refused again.
-        if ((kind === "failed" || kind === "refused") && this.failures === 1) this.options.onError?.(kind === "refused" && code === "COLLAB_REJECTED" ? REFUSED : message);
+        if ((kind === "failed" || kind === "refused") && this.failures === 1) this.options.onError?.(kind === "refused" && (code === "COLLAB_REJECTED" || status === 413) ? REFUSED : message);
         this.keepDraft();
         this.retryLater(Math.min(this.delays.maxRetry, this.delays.retry * 2 ** (this.failures - 1)));
         return false;
@@ -992,7 +1120,7 @@ export class CollabSession {
    * this account's any more, say after a session expired on a public link): take the fresh
    * document and id, and propose your unsaved typing again.
    */
-  private reset(): Promise<void> {
+  private reset(): Promise<boolean> {
     this.resetting ??= this.restart().finally(() => {
       this.resetting = null;
       // Steps that came meanwhile were for the old version, or are not here yet.
@@ -1002,30 +1130,58 @@ export class CollabSession {
     return this.resetting;
   }
 
-  private async restart(): Promise<void> {
+  /**
+   * The page closed and the server started over (or asks it to join again): there is no editor
+   * to take the fresh document, so nothing more is sent. The draft stays, and the page opening
+   * again may take it at once.
+   */
+  private park(): false {
+    this.keepDraft();
+    this.stopped = true;
+    clearTimeout(this.timer);
+    this.done();
+    return false;
+  }
+
+  /** True when the editor moved to the fresh document; false when it stopped (lost access, or the page closed). */
+  private async restart(): Promise<boolean> {
     // Steps on the way may have landed before the server started over: take the answer first.
     if (this.sending) await this.sending.catch(() => undefined);
     let fresh: CollabJoin | null = null;
     for (let attempt = 0; !fresh; attempt += 1) {
-      if (this.stopped || (this.closed && !this.editor)) return;
+      if (this.stopped) return false;
+      if (this.closed && !this.editor) return this.park();
       try {
         fresh = await this.options.transport.join({ stored: true, start: true });
       } catch (error) {
         const { kind } = failure(error);
         if (kind === "lost" || kind === "signedOut") {
           await this.failed(error);
-          return;
+          return false;
         }
         this.setStatus("offline");
         await new Promise((resolve) => setTimeout(resolve, Math.min(this.delays.maxRetry, this.delays.retry * 2 ** attempt)));
       }
     }
-    const editor = this.editor;
+    let editor = this.editor;
     // A closed page keeps its draft for next time rather than starting over without an editor.
-    if (!editor || editor.isDestroyed) return;
-    this.keepDraft();
-    // The same server (you fell behind its log): it has everything it confirmed; only unconfirmed typing goes again.
+    if (!editor || editor.isDestroyed) return this.closed ? this.park() : false;
+    // The same server (you fell behind its log, or must join again): it has everything it
+    // confirmed. What it did since your version, while its log has it, says exactly which of
+    // your steps it took.
     const same = fresh.epoch === this.epoch;
+    let since: { from: number; batch: CollabBatch } | null = null;
+    if (same) {
+      const from = getVersion(editor.state);
+      try {
+        since = { from, batch: await this.options.transport.since(fresh.epoch, from) };
+      } catch {
+        since = null;
+      }
+      editor = this.editor;
+      if (!editor || editor.isDestroyed) return this.closed ? this.park() : false;
+    }
+    this.keepDraft();
     const known: Known = {
       epoch: this.epoch,
       savedDoc: this.savedDoc ?? editor.state.doc,
@@ -1045,9 +1201,15 @@ export class CollabSession {
     this.mapsFrom = fresh.version;
     const schema = editor.schema;
     const freshDoc = schema.nodeFromJSON(fresh.doc);
-    const again = same
-      ? mergeOnto(schema, this.serverDoc ?? freshDoc, editor.state.doc, freshDoc)
-      : startingOver(schema, known, freshDoc, fresh.start);
+    let again: Step[];
+    if (same) {
+      const version = getVersion(editor.state);
+      const count = fresh.version - version;
+      const batch = since && since.from === version && since.batch.from === version && count >= 0 && since.batch.steps.length >= count ? since.batch : null;
+      const exact = batch ? replay(schema, known.serverDoc, version, known.unconfirmed, known.own, { steps: batch.steps.slice(0, count), clientIDs: batch.clientIDs.slice(0, count) }, freshDoc) : null;
+      // Its log is gone: the unconfirmed typing moved over what changed since, else the plain merge.
+      again = exact ?? carryOver(schema, known.serverDoc, known.unconfirmed, freshDoc);
+    } else again = startingOver(schema, known, freshDoc, fresh.start);
     // Swap in the fresh document and version without sending it back…
     editor.unregisterPlugin("collab");
     const swap = editor.state.tr;
@@ -1067,6 +1229,7 @@ export class CollabSession {
     // The draft moves to the new id.
     this.keepDraft();
     if (former && former !== this.clientID) this.options.drafts?.clear(former);
+    return true;
   }
 
   private kick(): void {

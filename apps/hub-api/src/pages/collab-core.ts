@@ -219,7 +219,9 @@ export class Authority {
       this.docBytes = measured;
       this.grown = 0;
     } else this.grown += bytes;
-    return this.since(version);
+    // The answer is the steps just taken, even when the log (by steps or bytes) cannot hold them
+    // all: answered from the log, a large batch would read as "start over" after it was taken.
+    return { epoch: this.epoch, from: version, version: this.version, steps: parsed.map((step) => step.toJSON()), clientIDs: parsed.map(() => clientID), saved: this.saved };
   }
 
   /** Why a step is refused before it is applied: a mention the store cannot index. */
