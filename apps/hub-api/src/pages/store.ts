@@ -1,3 +1,4 @@
+import { checkpointPage, pageEditor } from "./history.js";
 import { Prisma, type Actor, type PrismaClient, type Task } from "@prisma/client";
 import {
   EMPTY_PAGE,
@@ -123,12 +124,14 @@ export async function saveTaskPage(
       if (existing && existing.revision !== body.revision) {
         throw new TaskPageError("REVISION_CONFLICT", "This page changed in another tab.", 409);
       }
+      if (existing) await checkpointPage(db, existing, existing.title || task.title);
       const notes = body.notes ?? task.notes;
       const mentions = collectMentions(content);
       const data = {
         userId,
         taskId,
         revision: (existing?.revision ?? 0) + 1,
+        editorAccountId: await pageEditor(db, userId),
         content: content as Prisma.InputJsonValue,
         annotations: (body.annotations ?? []) as Prisma.InputJsonValue,
         notesSnapshot: notes,
@@ -262,6 +265,7 @@ export async function createStandalonePage(
     data: {
       userId,
       taskId: null,
+      editorAccountId: await pageEditor(prisma, userId),
       title,
       revision: 1,
       content: content as Prisma.InputJsonValue,
@@ -308,10 +312,11 @@ export async function renameStandalonePage(
   return prisma.$transaction(async (db) => {
     const page = await ownedStandalone(db, userId, id, true);
     if (!page) throw new TaskPageError("PAGE_NOT_FOUND", "Page not found.", 404);
+    await checkpointPage(db, page);
     const content = page.content ? PageDocument.parse(page.content) : null;
     const updated = await db.taskPage.update({
       where: { id: page.id },
-      data: { title: trimmed, searchText: pageSearchText(trimmed, content, page.notesSnapshot) },
+      data: { title: trimmed, editorAccountId: await pageEditor(db, userId), searchText: pageSearchText(trimmed, content, page.notesSnapshot) },
       select: { id: true, title: true, updatedAt: true, parentId: true },
     });
     return { id: updated.id, parentId: updated.parentId, title: updated.title, updatedAt: updated.updatedAt.toISOString() };
@@ -332,12 +337,14 @@ export async function saveStandalonePage(
     if (existing.revision !== body.revision) {
       throw new TaskPageError("REVISION_CONFLICT", "This page changed in another tab.", 409);
     }
+    await checkpointPage(db, existing);
     const notes = body.notes ?? existing.notesSnapshot;
     const mentions = collectMentions(content);
     const page = await db.taskPage.update({
       where: { id: existing.id },
       data: {
         revision: existing.revision + 1,
+        editorAccountId: await pageEditor(db, userId),
         content: content as Prisma.InputJsonValue,
         annotations: (body.annotations ?? []) as Prisma.InputJsonValue,
         notesSnapshot: notes,
@@ -443,9 +450,11 @@ export async function writePageContent(
   if (!page) throw new TaskPageError("PAGE_NOT_FOUND", "Page not found.", 404);
   const content = storable(restoreMentionLinks(PageDocument.parse(wanted.content)));
   const title = task ? task.title : wanted.title?.trim() || currentTitle;
+  await checkpointPage(db, page, currentTitle);
   const updated = await db.taskPage.update({
     where: { id: page.id },
     data: {
+      editorAccountId: await pageEditor(db, userId),
       revision: page.revision + 1,
       content: content as Prisma.InputJsonValue,
       searchText: pageSearchText(task ? page.title || task.title : title, content, notesNow),
@@ -619,7 +628,7 @@ export async function writeCollabPage(
   prisma: PrismaClient,
   userId: string,
   target: CollabTarget,
-  decide: (row: CollabRow) => { content: PageDocument; marker: { epoch: string; version: number } } | null,
+  decide: (row: CollabRow) => { content: PageDocument; marker: { epoch: string; version: number }; editorAccountId?: string | null } | null,
 ): Promise<{ revision: number; wrote: boolean } | null> {
   return prisma.$transaction(async (db) => {
     const found = await collabRow(db, userId, target, true);
@@ -629,12 +638,14 @@ export async function writeCollabPage(
     const { marker } = next;
     const content = storable(next.content);
     const { task, page } = found;
+    if (page && !found.row.trashed) await checkpointPage(db, page, page.title || task?.title);
+    const editorAccountId = next.editorAccountId !== undefined ? next.editorAccountId : await pageEditor(db, userId);
     const revision = found.row.revision + 1;
     const searchText = task ? pageSearchText(page?.title || task.title, content, task.notes) : pageSearchText(page!.title, content, page!.notesSnapshot);
     // A page in Trash keeps its time, which Undo of the delete checks.
     const saved = page
-      ? await db.taskPage.update({ where: { id: page.id }, data: { revision, content: content as Prisma.InputJsonValue, searchText, ...(found.row.trashed ? { updatedAt: page.updatedAt } : {}) } })
-      : await db.taskPage.create({ data: { userId, taskId: task!.id, revision, content: content as Prisma.InputJsonValue, notesSnapshot: task!.notes, searchText } });
+      ? await db.taskPage.update({ where: { id: page.id }, data: { revision, editorAccountId, content: content as Prisma.InputJsonValue, searchText, ...(found.row.trashed ? { updatedAt: page.updatedAt } : {}) } })
+      : await db.taskPage.create({ data: { userId, taskId: task!.id, revision, editorAccountId, content: content as Prisma.InputJsonValue, notesSnapshot: task!.notes, searchText } });
     await db.taskPageMention.deleteMany({ where: { pageId: saved.id } });
     const mentions = collectMentions(content);
     if (mentions.length) {

@@ -151,7 +151,7 @@ export function ModelPicker({
       trigger={(open, toggle) => (
         <button type="button" className="picker-trigger" aria-haspopup="listbox" aria-expanded={open} aria-label={label} onClick={toggle} data-picker="model">
           <ModelLogo model={value} provider={provider} /><span className="min-w-0 flex-1 truncate text-left font-mono text-[12.5px]">{value || "Choose a model"}</span>
-          {levels.length ? <span className="hidden shrink-0 text-[11px] text-faint sm:inline">thinks {levelRange(levels)}</span> : null}
+          {levels.length ? <span className="hidden shrink-0 text-[11px] text-faint sm:inline">Thinking: {levelRange(levels)}</span> : null}
           <ChevronsUpDown size={13} className="shrink-0 text-faint" aria-hidden />
         </button>
       )}
@@ -239,12 +239,6 @@ export function ModelPicker({
   );
 }
 
-const SOURCE_NOTE = {
-  provider: (name: string) => `Levels from ${name}'s own model list.`,
-  documented: (name: string) => `Levels from ${name}'s documentation.`,
-  unknown: (name: string) => `${name} decides which of these this model takes; one it does not take is refused with its own message.`,
-} as const;
-
 /**
  * How hard a tier's model thinks: exactly the levels that model takes, and the model's default.
  * What is chosen here is what the provider receives.
@@ -276,7 +270,7 @@ export function ThinkingPicker({
     );
   }
   const options: Array<{ id: string; label: string }> = [
-    { id: "default", label: known.fallback ? `Default · ${EFFORT_LABEL[known.fallback]}` : "Model default" },
+    { id: "default", label: known.fallback ? `Automatic (${EFFORT_LABEL[known.fallback]})` : "Automatic" },
     ...known.levels.map((level) => ({ id: level, label: EFFORT_LABEL[level] })),
   ];
   const offered = options.some((option) => option.id === value);
@@ -290,7 +284,7 @@ export function ThinkingPicker({
         ))}
       </div>
       {offered ? (
-        <p className="text-[11.5px] text-faint">{SOURCE_NOTE[known.source as keyof typeof SOURCE_NOTE](providerLabel)}</p>
+        null
       ) : (
         <p className="text-[12px] text-warn" role="status">
           {model} does not take “{EFFORT_LABEL[value as EffortLevel] ?? value}”, so calls on this tier are refused until you pick one of {effortList(known.levels)}.

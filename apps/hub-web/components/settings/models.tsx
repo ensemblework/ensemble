@@ -2,6 +2,7 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
+import { ASSISTANT_UNAVAILABLE, assistantErrorText } from "@ensemble/shared-types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound } from "lucide-react";
 import { isSubscriptionProvider, SUBSCRIPTION_INFO, SUBSCRIPTION_PROVIDERS, type ModelMeta, type ModelProvider, type Settings, type SubscriptionAgent } from "@ensemble/shared-types";
@@ -75,7 +76,7 @@ export function useRefreshModels() {
       void client.invalidateQueries({ queryKey: ["model-keys"] });
       void client.invalidateQueries({ queryKey: ["model-catalog"] });
       const count = catalog.providers.reduce((sum, row) => sum + (row.available ? row.models.length : 0), 0);
-      toast(catalog.runtime ? `Model lists refreshed: ${count} models from your keys.` : (catalog.error ?? "The model runtime is not running."), { tone: catalog.runtime ? "ok" : "error" });
+      toast(catalog.runtime ? `Model lists refreshed: ${count} models from your keys.` : (assistantErrorText(catalog.error ?? ASSISTANT_UNAVAILABLE)), { tone: catalog.runtime ? "ok" : "error" });
     },
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
@@ -120,7 +121,7 @@ export function ModelsSection({ settings, patch }: Props) {
   return (
     <SectionCard
       title="Models"
-      info="A subscription runs on your own computer with your own sign-in. API keys are held by the model runtime, never by the web app. A provider that cannot answer is said, never swapped for another vendor."
+      info="Use an AI subscription from your connected computer, or add an API key. Ensemble uses the provider you choose for each level."
       description="Power the assistant with the AI plan you already have, or with API keys. A task's complexity picks the tier, and the chat starts on the default preset above."
     >
       <SubscriptionsCard settings={settings} patch={patch} />
@@ -131,7 +132,7 @@ export function ModelsSection({ settings, patch }: Props) {
             <div className="text-[13.5px] font-medium">API keys</div>
             <div className={`text-[12.5px] ${noKeys || runtimeDown ? "text-warn" : "text-muted"}`}>
               {runtimeDown
-                ? (catalog.data?.error ?? "The model runtime is not running.")
+                ? (assistantErrorText(catalog.data?.error ?? ASSISTANT_UNAVAILABLE))
                 : `${keySummary(keys.data?.credentials)}${catalog.data?.runtime && available ? ` ${available} models available.` : ""}`}
             </div>
           </div>
@@ -145,12 +146,12 @@ export function ModelsSection({ settings, patch }: Props) {
           <h3 className="text-[13px] font-semibold">Which model each tier uses</h3>
           <p className="text-[12px] text-muted" data-testid="models-fetched">
             {catalog.data?.fetchedAt
-              ? `Model lists from your keys, fetched ${relative(catalog.data.fetchedAt)}. They refresh every week.`
-              : "Model lists come from your keys and refresh every week."}
+              ? `Model lists from your keys, fetched ${relative(catalog.data.fetchedAt)}. Available thinking levels follow provider information. Lists refresh every week.`
+              : "Models and available thinking levels come from the provider’s model list or documentation. Lists refresh every week."}
           </p>
         </div>
-        <button type="button" className="btn" onClick={() => refresh.mutate()} disabled={refresh.isPending || !catalog.data?.runtime}>
-          <FetchGlyph active={refresh.isPending} size={12} /> Refresh model lists
+        <button type="button" className="btn" onClick={() => refresh.mutate()} disabled={refresh.isPending}>
+          <FetchGlyph active={refresh.isPending} size={12} /> {catalog.data?.runtime === false ? "Retry" : "Refresh model lists"}
         </button>
       </div>
       <div className="space-y-5">

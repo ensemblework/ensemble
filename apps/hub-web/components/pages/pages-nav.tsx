@@ -13,6 +13,8 @@ import { useSpaceAccess } from "@/lib/access";
 import { useToast } from "../toast";
 import { standalonePageHref } from "./page-href";
 import { PAGE_DRAG_TYPE, pageIdFromHref } from "@/lib/page-drag";
+import { PageActions } from "./page-actions";
+import { NewPageDialog } from "./new-page-dialog";
 import { PagesSection, type PageLinkProps } from "./pages-section";
 
 const ImportDialog = dynamic(() => import("../imports/import-dialog").then((mod) => mod.ImportDialog), { ssr: false });
@@ -45,6 +47,7 @@ export function PagesBrowser() {
   const pages = useQuery({ queryKey: ["pages"], queryFn: api.pages });
   const access = useSpaceAccess();
   const [importing, setImporting] = useState(false);
+  const [newPage, setNewPage] = useState(false);
   const [creating, setCreating] = useState(false);
   const createPending = useRef(false);
 
@@ -56,21 +59,12 @@ export function PagesBrowser() {
         renderLink={(props) => <PageLink {...props} />}
         onImport={access.guest ? undefined : () => setImporting(true)}
         creating={creating}
+        renderActions={!access.guest ? (page, rename, remove) => <PageActions id={page.id} title={page.title} onRename={rename} onDelete={remove} /> : undefined}
         onCreate={() => {
+          if (!access.guest) { setNewPage(true); return; }
           if (createPending.current) return;
-          createPending.current = true;
-          setCreating(true);
-          void api
-            .createPage()
-            .then(({ page }) => {
-              void client.invalidateQueries({ queryKey: ["pages"] });
-              router.push(standalonePageHref(page.id, true));
-            })
-            .catch((error: Error) => toast(error.message, { tone: "error" }))
-            .finally(() => {
-              createPending.current = false;
-              setCreating(false);
-            });
+          createPending.current = true; setCreating(true);
+          void api.createPage().then(result => { void client.invalidateQueries({ queryKey: ["pages"] }); router.push(standalonePageHref(result.page.id, true)); }).catch((error: Error) => toast(error.message, { tone: "error" })).finally(() => { createPending.current = false; setCreating(false); });
         }}
         onDeleteMany={access.ready && access.canEdit ? (ids) => {
           const selected = new Set(ids);
@@ -113,6 +107,7 @@ export function PagesBrowser() {
             .catch((error: Error) => toast(error.message, { tone: "error" }));
         }}
       />
+      {!access.guest ? <NewPageDialog open={newPage} onClose={() => setNewPage(false)} /> : null}
       {importing ? <ImportDialog open onClose={() => setImporting(false)} initialSource="notion" /> : null}
     </>
   );

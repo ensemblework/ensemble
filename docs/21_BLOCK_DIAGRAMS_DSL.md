@@ -623,3 +623,7 @@ Schema version is `1`. Do not author this by hand. It is the contract between th
 - On a diagram, Alt+Shift+R reorganizes, Alt+Shift+L locks the selection, Alt+Shift+N adds a text box, Alt+Shift+F shows only the canvas, ⌘B / ⌘I / ⌘U style the selected text, and Delete removes the selection. ⌘/Ctrl + = (or +) and ⌘/Ctrl + − zoom the canvas in and out and ⌘/Ctrl + 0 fits the diagram, like the zoom buttons; the browser's page zoom keys do this only while the diagram is open and the cursor is not in the text. **Lock** needs a selection: with nothing selected its tooltip says to select blocks or text boxes first. Line labels sit above the blocks on a background, so a block does not hide them; a selected block comes above them (`components/diagrams/edge.tsx`). Dragging several selected blocks moves them all and saves all of them. Esc leaves the canvas-only view. `g` then `d` opens the diagram list from anywhere.
 
 Package: `packages/block-diagrams`. It has no React and no DOM. The Hub UI is only the renderer and the save buttons.
+
+### History browser
+
+`components/diagrams/diagram-more.tsx` uses the shared `components/history/version-history.tsx` dialog also used by pages. Diagram entries show saved time and title; selecting one enables its existing restore action. The diagram list/restore APIs are unchanged. The extra inline Ask form has been removed; the floating assistant and Refresh with AI continue to use the current diagram as context. Code inspection, 17 Oct 2026.

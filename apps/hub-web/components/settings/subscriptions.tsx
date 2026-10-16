@@ -10,6 +10,7 @@ import { api, type SubscriptionComputer, type SubscriptionsView } from "@/lib/ap
 import { relative } from "@/lib/format";
 import { useToast } from "../toast";
 import { cx, Tag } from "../ui";
+import { ConnectComputerButton } from "./connect-computer";
 import { navigateSettings } from "./url-state";
 import { ProviderLogo } from "../connectors/provider-logo";
 
@@ -202,14 +203,7 @@ export function SubscriptionsCard({ settings, patch }: { settings: Settings; pat
               Install Ensemble on the computer that has the Claude or ChatGPT app and sign in with this account. Its subscriptions then show up here.
             </div>
           </div>
-          <div className="flex shrink-0 gap-1.5">
-            <a className="btn" href="https://ensemblework.com/download" target="_blank" rel="noreferrer">
-              Get Ensemble <ExternalLink size={11} aria-hidden />
-            </a>
-            <button type="button" className="btn-primary" onClick={() => navigateSettings({ tab: "connections", anchor: "devices" })}>
-              Pair a computer
-            </button>
-          </div>
+          <ConnectComputerButton className="btn-primary" />
         </div>
       ) : null}
       {computer ? (

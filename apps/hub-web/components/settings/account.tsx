@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { LogOut } from "lucide-react";
+import { SignOutButton } from "../account/sign-out";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PASSWORD_RULE, passwordProblem } from "@ensemble/shared-types";
 import { DESK_IDS, DESKS, MARKET_ID } from "@/components/desk/desks";
@@ -114,13 +114,6 @@ export function AccountSection() {
     passwordBusy.current = true;
     save.mutate({ password, current: current || undefined }, { onSettled: () => { passwordBusy.current = false; } });
   };
-  const logout = useMutation({
-    mutationFn: api.logout,
-    onSuccess: () => {
-      clearBrowserTabSession();
-      window.location.href = "/login";
-    },
-  });
   const identities = useQuery({ queryKey: ["auth-identities"], queryFn: api.identities, enabled: me.data?.via === "session" });
   const unlink = useMutation({
     mutationFn: (provider: string) => api.unlinkIdentity(provider),
@@ -156,13 +149,11 @@ export function AccountSection() {
             Create account
           </a>
         ) : (
-          <button type="button" className="btn" onClick={() => logout.mutate()}>
-            <LogOut size={12} /> Sign out
-          </button>
+          <SignOutButton />
         )
       }
     >
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line px-3 py-2.5">
+      {devTools ? <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line px-3 py-2.5">
         <div>
           <div className="text-[13px] font-medium">{shell.data?.templateName ?? "Default"}</div>
           <p className="text-[12.5px] text-muted">The layout and modules on this account. Switching back does not delete tasks.</p>
@@ -177,7 +168,7 @@ export function AccountSection() {
             Use Default
           </button>
         ) : null}
-      </div>
+      </div> : null}
       {devTools && history.data?.history.length ? (
         <ul className="mb-4 divide-y divide-line rounded-xl border border-line">
           {history.data.history.map((row, index) => (

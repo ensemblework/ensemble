@@ -202,3 +202,19 @@ test("Apply all on a batch that partly lands shows which calls landed and which 
     client.clear();
   }
 });
+
+test("unavailable replies are error alerts with Retry and no model or Copy controls", async () => {
+  let retried = 0;
+  const host = document.createElement("div"), root = createRoot(host);
+  document.body.appendChild(host);
+  try {
+    for (const role of ["error", "assistant"]) {
+      await act(async () => root.render(<Message message={{ ...stale, role, content: "The model runtime could not be reached. Start it with pnpm dev (or pnpm dev:agent). fetch failed" }} conversationId="conv" onRetry={() => retried++} />));
+      assert.ok(host.querySelector('[role="alert"]'));
+      assert.match(host.textContent!, /The assistant is unavailable right now/);
+      assert.doesNotMatch(host.textContent!, /pnpm|fetch failed|gemini|Copy/);
+      await act(async () => host.querySelector<HTMLButtonElement>("button")!.click());
+    }
+    assert.equal(retried, 2);
+  } finally { await act(async () => root.unmount()); host.remove(); }
+});

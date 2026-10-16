@@ -5,7 +5,7 @@ export type SurfacePalette = { bg: string; sidebar: string; panel: string; raise
 type ColorTheme = { id: AppColorTheme; name: string; description: string; detail: string; light: SurfacePalette; dark: SurfacePalette; artwork?: string; colorful?: boolean };
 
 export const COLOR_THEMES: readonly ColorTheme[] = [
-  { id: "ensemble", name: "Ensemble · Deep Petrol", description: "Satin Gold on deep, cool colour.", detail: "Warm paper / deep petrol",
+  { id: "ensemble", name: "Ensemble · Deep Petrol", description: "Satin Gold on deep, cool color.", detail: "Warm paper / deep petrol",
     light: { bg: "#f4f1ea", sidebar: "#ebe6dc", panel: "#fffcf7", raised: "#f7f3ec", tile: "#fffdf9", ink: "#1c1915", muted: "#5a534c", faint: "#3f3a34" },
     dark: { bg: "#10282b", sidebar: "#0d2225", panel: "#173236", raised: "#213e42", tile: "#163034", ink: "#f2f0e9", muted: "#aec3bf", faint: "#91b1ae" } },
   { id: "aubergine", name: "Smoked Aubergine", description: "A warmer setting for Satin Gold.", detail: "Soft parchment / smoked aubergine",

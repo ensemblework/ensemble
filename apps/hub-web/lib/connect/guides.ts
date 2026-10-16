@@ -317,7 +317,7 @@ export function stepsFor(app: AppId, built: boolean): GuideStep[] {
 const SHARED_TROUBLE: Trouble[] = [
   {
     problem: "It says Ensemble is not running.",
-    fix: "Open Ensemble the same way you opened this page, and leave it open. If you start it from a terminal, that command is pnpm dev, from the Ensemble folder.",
+    fix: "Open Ensemble on your computer and leave it running, then try connecting again.",
   },
   {
     problem: "It says the key is missing, or it mentions dev-internal-token.",

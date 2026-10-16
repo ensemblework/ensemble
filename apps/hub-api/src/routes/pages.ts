@@ -1,3 +1,4 @@
+import { pageVersionRoutes } from "../pages/version-routes.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { sseHub } from "../lib/sse.js";
@@ -21,6 +22,7 @@ const RenamePage = z.object({
 
 export async function pageRoutes(app: FastifyInstance): Promise<void> {
   const { prisma } = app;
+  await pageVersionRoutes(app);
 
   app.post("/api/pages/:kind/:id/convert", async (request, reply) => {
     const { kind, id } = z.object({ kind: z.enum(["page", "task"]), id: z.string().uuid() }).parse(request.params);

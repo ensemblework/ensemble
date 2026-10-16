@@ -31,7 +31,8 @@ export async function loadSettings(prisma: PrismaClient | Prisma.TransactionClie
   const parsed = Settings.safeParse(row?.value ?? {});
   const base = parsed.success ? parsed.data : DEFAULT_SETTINGS;
   if (!row) return { ...base, autonomy: env.ENSEMBLE_AUTONOMY_LEVEL, timezone: env.ENSEMBLE_TIMEZONE };
-  return base;
+  const raw = row.value as Record<string, unknown> | null;
+  return raw?.timezone && raw.timezoneMode === undefined ? { ...base, timezoneMode: "manual" } : base;
 }
 
 export async function saveSettings(prisma: PrismaClient | Prisma.TransactionClient, spaceOrUser: string, patch: unknown): Promise<SettingsType> {

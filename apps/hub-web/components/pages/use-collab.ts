@@ -62,7 +62,7 @@ export function tabDrafts(kind: "page" | "task", id: string): DraftStore {
 const STALLED_MS = 10_000;
 
 /** The `page` event a write-back publishes (pages/collab.ts in hub-api). */
-type SavedEvent = { id?: string; taskId?: string; by?: string; epoch?: string; saved?: number };
+type SavedEvent = { action?: string; id?: string; taskId?: string; by?: string; epoch?: string; saved?: number };
 
 /**
  * Live co-editing of one page or task page (docs/29 §5). Joins the server's live document, and
@@ -153,6 +153,7 @@ export function useCollab(options: {
     };
     const onSaved = (event: Event) => {
       const detail = (event as CustomEvent<SavedEvent | null>).detail;
+      if (detail?.action === "restore" && (kind === "page" ? detail.id : detail.taskId) === id) { void session.catchUp(); return; }
       if (detail?.by !== "collab" || !detail.epoch || typeof detail.saved !== "number") return;
       if ((kind === "page" ? detail.id : detail.taskId) === id) session.noteSaved(detail.epoch, detail.saved);
     };

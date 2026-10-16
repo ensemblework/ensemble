@@ -52,15 +52,17 @@ test("combined search shows matching snippets, preserves destinations and dismis
 
 test("Enter waits for the unique combined result and Escape cancels pending navigation", async () => {
   for (const cancel of [false, true]) {
-    const original = api.searchWorkspace; let finish: (value: Awaited<ReturnType<typeof api.searchWorkspace>>) => void = () => {};
-    api.searchWorkspace = () => new Promise(resolve => { finish = resolve; });
+    const original = api.searchWorkspace; let started = false; let finish: (value: Awaited<ReturnType<typeof api.searchWorkspace>>) => void = () => {};
+    api.searchWorkspace = () => new Promise(resolve => { started = true; finish = resolve; });
     const opened: string[] = []; const view = await mountSearch(opened);
     try {
       await type(view.input, "Unique classifier");
       await act(async () => view.input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
-      await act(async () => new Promise(resolve => setTimeout(resolve, 20)));
+      for (let attempt = 0; attempt < 50 && !started; attempt++) await act(async () => new Promise(resolve => setTimeout(resolve, 20)));
+      assert.equal(started, true, "the request has started before it resolves");
       if (cancel) await act(async () => view.input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
       await act(async () => { finish({ query: "Unique classifier", results: [{ id: "d1", kind: "diagram", label: "Unique classifier", excerpt: "Unique classifier", path: "/diagrams/d1" }] }); await new Promise(resolve => setTimeout(resolve, 30)); });
+      if (!cancel) for (let attempt = 0; attempt < 50 && !opened.length; attempt++) await act(async () => new Promise(resolve => setTimeout(resolve, 20)));
       assert.deepEqual(opened, cancel ? [] : ["/diagrams/d1?match=Unique+classifier"]);
     } finally { await view.done(); api.searchWorkspace = original; }
   }

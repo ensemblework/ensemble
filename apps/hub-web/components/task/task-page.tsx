@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Orbit,
+  History,
   Calendar,
   CheckSquare,
   ChevronRight,
@@ -60,6 +61,7 @@ import { TaskExportMenu } from "./task-export";
 import { SourceFileBanner, exportBackItems } from "../files/source-file-banner";
 import { PAGE_FOCUS_CLASS, PageFocusBar, PageFocusButton, usePageFocus } from "../pages/page-focus";
 import { collabStatusText, useCollab } from "../pages/use-collab";
+import { PageHistory } from "../pages/page-history";
 import { KeptEdits } from "../pages/kept-edits";
 
 function useBlockEditor() {
@@ -140,6 +142,7 @@ export function TaskPage({
 
   const [propsState, setPropsState] = useState<"saved" | "saving">("saved");
   const [linkedOpen, setLinkedOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const titleSave = useRef<Promise<unknown> | null>(null);
   // The share (or none) this task was opened under. Its saves, the last one on leaving too, go there.
   const openedAs = useRef(currentShare());
@@ -364,6 +367,7 @@ export function TaskPage({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <PagePeople kind="task" id={taskId} />
+          {!shared && !access.guest ? <><button type="button" className="icon-btn" title="Version history" aria-label="Version history" onClick={() => { void (async () => { if (titleSave.current) await titleSave.current; await sync.flush(); setHistoryOpen(true); })().catch((error: Error) => toast(error.message, { tone: "error" })); }}><History size={14} /></button><PageHistory kind="task" id={taskId} open={historyOpen} onClose={() => setHistoryOpen(false)} /></> : null}
           {shared ? <span className="whitespace-nowrap">{canEdit ? "Shared with you · can edit" : "Shared with you · view only"}</span> : !canEdit ? <span className="whitespace-nowrap">View only</span> : null}
           {canEditProperties ? <span className="whitespace-nowrap">{propsState === "saving" ? "Saving…" : "Properties saved"}</span> : null}
           {shared || !canEdit ? null : (

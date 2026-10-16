@@ -385,7 +385,7 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
 
     let result: AssistantTurnResult;
     if (refused) {
-      result = { content: refused, toolCalls: [], model: modelName, credits: null, mutated: false };
+      result = { failed: true, content: refused, toolCalls: [], model: modelName, credits: null, mutated: false };
       send("error", { message: refused, status: 400 });
     } else try {
       result = await runAssistantTurn({
@@ -446,7 +446,7 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
           finish();
           return;
         }
-        result = { content: shown, toolCalls: [], model: modelName, credits: null, mutated: false };
+        result = { failed: true, content: shown, toolCalls: [], model: modelName, credits: null, mutated: false };
         const status = error instanceof RuntimeError ? error.statusCode : failure.status || 502;
         send("error", { message: shown, status });
       }
@@ -467,6 +467,7 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
       credentialSource: result.credentialSource,
       tier: tierName,
       interrupted: result.interrupted ?? false,
+      failed: result.failed ?? false,
       ...(persisted.saveFailed ? { saveFailed: true } : {}),
     });
     finish();
@@ -498,10 +499,10 @@ async function saveAssistantReply(
         data: {
           conversationId,
           userId,
-          role: "assistant",
+          role: result.failed ? "error" : "assistant",
           content,
           toolCalls: result.toolCalls as never,
-          model: result.model,
+          model: result.failed ? null : result.model,
           credentialSource: result.credentialSource,
           credits: result.credits ?? undefined,
         },

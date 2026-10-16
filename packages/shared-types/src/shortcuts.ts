@@ -553,7 +553,8 @@ export function formatChord(chord: ShortcutChord | null, apple: boolean): string
   if (chord.alt) parts.push(labels.alt!);
   if (chord.shift) parts.push(labels.shift!);
   if (chord.meta) parts.push(labels.meta!);
-  const key = chord.key.length === 1 ? chord.key.toUpperCase() : chord.key;
+  const names: Record<string, string> = { escape: "Esc", delete: "Delete", backspace: "Backspace", enter: "Enter", tab: "Tab", space: "Space", arrowup: "↑", arrowdown: "↓", arrowleft: "←", arrowright: "→" };
+  const key = names[chord.key.toLowerCase()] ?? (chord.key.length === 1 ? chord.key.toUpperCase() : chord.key);
   parts.push(key);
   return apple ? parts.join("") : parts.join("+");
 }

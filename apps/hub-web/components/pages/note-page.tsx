@@ -16,6 +16,7 @@ import { mentionHref } from "../editor/editor-commands";
 import { useToast } from "../toast";
 import { PageLoadFailure, inTrash } from "./page-load";
 import { TrashedPage } from "./trashed-page";
+import { PageActions } from "./page-actions";
 import { PageContent } from "./page-content";
 import { PageTitleField } from "./title-field";
 import { isPageEnsembleBusy } from "../comments/ensemble-bus";
@@ -262,6 +263,7 @@ export function NotePage({
         </span>
         <div className="flex min-w-0 flex-wrap items-center justify-end gap-x-2 gap-y-1">
           <PagePeople kind="page" id={pageId} />
+          {!shared && !access.guest ? <PageActions id={pageId} title={record.title} before={async () => { if (titleSave.current) await titleSave.current; if (!(await flush())) throw new Error("Save the page before using this action."); }} /> : null}
           {shared || !canEdit ? (
             <>
               <PageFocusButton onEnter={focusMode.enter} />

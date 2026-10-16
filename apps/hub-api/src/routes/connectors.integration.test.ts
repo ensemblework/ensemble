@@ -536,10 +536,15 @@ test("app setup lists every OAuth provider with its redirect URI", async () => {
   const mira = await verified("mira.apps@fieldnote.example");
   const apps = await call(mira, "GET", "/api/connectors/apps", "/api/connectors/apps", "happy-path");
   assert.equal(apps.statusCode, 200, apps.body);
-  const list = apps.json<{ apps: Array<{ provider: string; configured: boolean; source: string | null; redirectUri: string }> }>().apps;
+  const list = apps.json<{ apps: Array<{ provider: string; configured: boolean; source: string | null; redirectUri: string; steps: string[] }> }>().apps;
   const microsoft = list.find((row) => row.provider === "microsoft")!;
   assert.deepEqual({ configured: microsoft.configured, source: microsoft.source }, { configured: true, source: "signin" });
   assert.equal(list.find((row) => row.provider === "docusign")?.redirectUri, "http://api.example.test/api/connectors/docusign/callback");
+  const github = list.find((row) => row.provider === "github")!;
+  assert.equal(github.redirectUri, "http://api.example.test/api/connectors/github/callback");
+  assert.match(github.steps.join(" "), /wildcard matching disabled/);
+  assert.match(github.steps.join(" "), /Add callback URL/);
+  assert.match(github.steps.join(" "), /\/api\/auth\/oauth\/github\/callback/);
   const bad = await call(mira, "PUT", "/api/connectors/apps/todoist", "/api/connectors/apps/:provider", "invalid-input", { clientId: "client-id-1", clientSecret: "client-secret-1" });
   assert.equal(bad.statusCode, 400, bad.body);
 });

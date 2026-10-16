@@ -144,6 +144,7 @@ export interface AssistantTurnArgs {
 }
 
 export interface AssistantTurnResult {
+  failed?: boolean;
   content: string;
   toolCalls: AssistantToolCall[];
   model: string;

@@ -405,8 +405,16 @@ export const Settings = z.object({
   /** Per connector-store entry (e.g. google_workspace), which products are switched on. Missing keys use the catalog default. */
   connectorProducts: z.record(z.string(), z.record(z.string(), z.boolean())).default({}),
   timezone: z.string().default("Asia/Kolkata"),
+  timezoneMode: z.enum(["auto", "manual"]).default("auto"),
   email: z.string().default("you@ensemble.local"),
 });
 export type Settings = z.infer<typeof Settings>;
 
 export const DEFAULT_SETTINGS: Settings = Settings.parse({});
+
+export const ASSISTANT_UNAVAILABLE = "The assistant is unavailable right now. Try again in a minute.";
+
+/** Network diagnostics are for operator logs, never a substitute for a model reply. */
+export function assistantErrorText(message: string): string {
+  return /model runtime|fetch failed|ECONNREFUSED|ENOTFOUND|failed to fetch|networkerror/i.test(message) ? ASSISTANT_UNAVAILABLE : message;
+}

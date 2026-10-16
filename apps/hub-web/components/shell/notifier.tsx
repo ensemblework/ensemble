@@ -1,5 +1,6 @@
 "use client";
 
+import { canonicalTimeZone } from "@/lib/time-zones";
 import { MorningBriefPrompt } from "../morning-brief";
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
@@ -16,6 +17,16 @@ export function Notifier() {
   const access = useSpaceAccess();
   const reminders = useQuery({ queryKey: ["reminders"], queryFn: api.reminders, refetchInterval: 60_000, enabled: access.ready && !access.guest });
   const shown = useRef(new Set<string>());
+
+  const detectedZone = useRef<string | null>(null);
+  useEffect(() => {
+    const value = settings.data?.settings;
+    if (!value || value.timezoneMode !== "auto") return;
+    const zone = canonicalTimeZone(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    if (zone === canonicalTimeZone(value.timezone) || detectedZone.current === zone) return;
+    detectedZone.current = zone;
+    void api.saveSettings({ timezone: zone, timezoneMode: "auto" }).then(() => settings.refetch()).catch(() => { detectedZone.current = null; });
+  }, [settings.data]);
 
   useEffect(() => {
     const value = settings.data?.settings;

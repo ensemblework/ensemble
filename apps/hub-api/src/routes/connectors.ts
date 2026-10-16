@@ -68,7 +68,7 @@ const APP_HELP: Partial<Record<AccountProvider, { console: string; steps: string
     console: "https://github.com/settings/applications/new",
     steps: [
       "GitHub → Settings → Developer settings → OAuth Apps → New OAuth App.",
-      "Homepage URL: your Ensemble address. Authorization callback URL: the redirect URI below. To share the sign-in app (AUTH_GITHUB_CLIENT_ID), set its callback to your API origin followed by /api so both callbacks sit under it.",
+      "Homepage URL: your Ensemble address. Authorization callback URL: the exact redirect URI below, with wildcard matching disabled. To share the sign-in app (AUTH_GITHUB_CLIENT_ID), keep its exact /api/auth/oauth/github/callback URL and use Add callback URL for the connector URI below. Registering only /api is not sufficient.",
       "Register, generate a client secret, and paste both here.",
     ],
   },

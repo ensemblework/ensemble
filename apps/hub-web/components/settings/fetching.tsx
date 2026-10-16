@@ -2,11 +2,12 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
+import { friendlyDateTime } from "@/lib/format";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { PauseCircle } from "lucide-react";
 import type { Settings } from "@ensemble/shared-types";
 import { api } from "@/lib/api";
-import { dateTime, plural } from "@/lib/format";
+import { plural } from "@/lib/format";
 import { FetchGlyph } from "@/components/motion/slot";
 import { useToast } from "../toast";
 import { SectionCard, SettingRow, Toggle } from "../ui";
@@ -34,7 +35,7 @@ export function FetchSection({ settings, patch }: { settings: Settings; patch: P
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
   const fetch = settings.fetch;
-  const last = connections.data?.lastFetch;
+  const last = connections.data?.connections.some(row => row.enabled) ? connections.data.lastFetch : null;
   return (
     <SectionCard
       title="Fetching"
@@ -47,8 +48,7 @@ export function FetchSection({ settings, patch }: { settings: Settings; patch: P
       <div role="note" className="-mt-1 flex items-start gap-2 rounded-lg border border-line bg-raised px-3 py-2 text-[12.5px] text-muted" data-testid="fetch-paused">
         <PauseCircle size={14} className="mt-0.5 shrink-0" aria-hidden />
         <span>
-          <span className="font-medium text-ink">Scheduled fetching is paused.</span> Ensemble reads your connected apps when you press Sync now. Routines will bring
-          back automatic fetching. Last sync: {last ? dateTime(last) : "never"}.
+          <span className="font-medium text-ink">Sync when you need it.</span> Ensemble reads your connected apps when you press Sync now. {last && new Date(last).getTime() <= Date.now() ? `Last synced ${friendlyDateTime(last)}.` : "No sync completed yet."}
         </span>
       </div>
       <div className="mt-1 divide-y divide-[var(--line)]">

@@ -2,11 +2,13 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
+import { useClientPlatform } from "@/lib/platform";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRightLeft, Check, ExternalLink, Globe, Link2, LogOut, Share2, Trash2, UserPlus, X } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { ApiError, api, publicLinkUrl, type ShareKind, type SharingContact, type SharingOverview } from "@/lib/api";
+import { friendlyDateTime } from "@/lib/format";
 import { distinctInitials } from "@/lib/initials";
 import { colorFor } from "@/lib/presence";
 import { switchSpace } from "@/lib/spaces";
@@ -132,6 +134,7 @@ function TransferDialog({ space, onClose }: { space: OwnedSpace; onClose: () => 
 
 /** Settings → Sharing: your contacts, what you share, and what is shared with you. */
 export function SharingTab() {
+  const { native } = useClientPlatform();
   const client = useQueryClient();
   const toast = useToast();
   const overview = useQuery({ queryKey: ["sharing", "overview"], queryFn: api.sharingOverview });
@@ -243,10 +246,10 @@ export function SharingTab() {
         </div>
       </SectionCard>
 
-      <SectionCard title="Items you shared" description="Single pages, tasks, diagrams, plots and more. Each link opens only for the person it was shared with.">
+      <SectionCard actions={<Link className="btn" href="/shared-by-me" target={native ? undefined : "_blank"} rel="noopener">Manage all sharing <ExternalLink size={13} /></Link>} title="Items you shared" description="Single pages, tasks, diagrams, plots and more. Each link opens only for the person it was shared with.">
         {data.items.length ? (
           <div className="divide-y divide-line">
-            {data.items.map((item) => (
+            {data.items.slice(0, 5).map((item) => (
               <div key={item.id} className="flex items-center gap-3 py-2">
                 <span className="shrink-0 text-2xs uppercase tracking-wide text-faint sm:w-24">{KIND_NAMES[item.kind]}</span>
                 <span className="min-w-0 flex-1 truncate text-[13px]">{item.title}</span>
@@ -269,10 +272,10 @@ export function SharingTab() {
 
       <PublicLinks />
 
-      <SectionCard title="Shared with you" description="Spaces and items other people shared with you. Leaving or removing one never touches their copy.">
+      <SectionCard actions={<Link className="btn" href="/shared" target={native ? undefined : "_blank"} rel="noopener">View all <ExternalLink size={13} /></Link>} title="Shared with you" description="Spaces and items other people shared with you. Leaving or removing one never touches their copy.">
         {data.withMe.spaces.length + data.withMe.items.length ? (
           <div className="divide-y divide-line">
-            {data.withMe.spaces.map((space) => (
+            {data.withMe.spaces.slice(0, 5).map((space) => (
               <div key={space.id} className="flex items-center gap-3 py-2">
                 <SpaceIcon space={space} size={26} />
                 <div className="min-w-0 flex-1">
@@ -291,7 +294,7 @@ export function SharingTab() {
                 </button>
               </div>
             ))}
-            {data.withMe.items.map((item) => (
+            {data.withMe.items.slice(0, 5).map((item) => (
               <div key={item.id} className="flex items-center gap-3 py-2">
                 <span className="shrink-0 text-2xs uppercase tracking-wide text-faint sm:w-24">{KIND_NAMES[item.kind]}</span>
                 <span className="min-w-0 flex-1 truncate text-[13px]">

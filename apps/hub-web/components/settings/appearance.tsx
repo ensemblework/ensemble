@@ -67,7 +67,7 @@ export function AppearanceSection({ patch }: { patch: Patch }) {
       <ColorThemePicker appearance={appearance} onChange={(colorTheme) => update({ colorTheme })} />
       <div className="mt-6">
         <div data-jump-label="Accent" className="text-[13px] font-medium">Accent</div>
-        <p className="mt-0.5 text-[12.5px] text-muted">Satin Gold is the default. Presets are tuned for dark and light. A custom colour keeps text on it readable.</p>
+        <p className="mt-0.5 text-[12.5px] text-muted">Satin Gold is the default. Presets are tuned for dark and light. A custom color keeps text on it readable.</p>
         <div className="mt-2 flex flex-wrap items-center gap-2">
           {ACCENT_PRESETS.map((preset) => {
             const on = !custom && appearance.accent === preset.id;

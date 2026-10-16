@@ -149,3 +149,16 @@ test("a social-only account adds its first password in a dialog and then require
     assert.equal(document.querySelectorAll('[data-password-form] input[type="password"]').length, 3);
   } finally { await view.done(); }
 });
+
+test("Settings sign out confirms first and Cancel keeps the session", async () => {
+  const view = await mount();
+  try {
+    assert.doesNotMatch(view.host.textContent!, /Switching back does not delete tasks/);
+    await act(async () => [...view.host.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Sign out")!.click());
+    assert.match(document.querySelector('[role="dialog"]')!.textContent!, /Sign out of Ensemble\?/);
+    assert.equal(view.writes.length, 0);
+    await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(button => button.textContent === "Cancel")!.click());
+    assert.equal(document.querySelector('[role="dialog"]'), null);
+    assert.equal(view.writes.length, 0);
+  } finally { await view.done(); }
+});

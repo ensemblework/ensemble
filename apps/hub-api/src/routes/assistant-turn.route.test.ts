@@ -261,3 +261,29 @@ test("the first frame of a new chat carries the conversation id, and Stop saves 
 test("Stop on a new chat cancels the Python runtime turn and saves the note", { timeout: 20_000 }, async () => {
   await stoppedNewChat("python");
 });
+
+test("unreachable runtime saves an error turn without developer commands", { timeout: 20_000 }, async () => {
+  const previousFlag = process.env.ENSEMBLE_INPROCESS_RUNTIME, previousUrl = env.AGENT_RUNTIME_URL;
+  process.env.ENSEMBLE_INPROCESS_RUNTIME = "0";
+  (env as { AGENT_RUNTIME_URL: string }).AGENT_RUNTIME_URL = "http://127.0.0.1:1";
+  const { prisma, saved } = stubPrisma("http://127.0.0.1:9");
+  setCredentialResolverForTests(async (_userId, provider) => ({ provider, secret: "", source: "none", baseUrl: null }));
+  const app = Fastify({ logger: false });
+  app.decorate("prisma", prisma as never); app.decorate("redis", memoryRedis() as never);
+  app.addHook("onRequest", async request => { request.userId = USER; request.modules = null; });
+  await app.register(assistantRoutes);
+  try {
+    const response = await app.inject({ method: "POST", url: "/api/assistant/turn", payload: { message: "Hi" } });
+    assert.equal(response.statusCode, 200);
+    assert.match(response.body, /The assistant is unavailable right now/);
+    assert.doesNotMatch(response.body, /pnpm|fetch failed/);
+    assert.equal(saved.filter(row => row.role === "assistant").length, 0);
+    assert.equal(saved.filter(row => row.role === "error").length, 1);
+    assert.match(response.body, /"failed":true/);
+  } finally {
+    setCredentialResolverForTests(null);
+    (env as { AGENT_RUNTIME_URL: string }).AGENT_RUNTIME_URL = previousUrl;
+    if (previousFlag === undefined) delete process.env.ENSEMBLE_INPROCESS_RUNTIME; else process.env.ENSEMBLE_INPROCESS_RUNTIME = previousFlag;
+    await app.close();
+  }
+});

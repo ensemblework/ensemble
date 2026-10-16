@@ -16,8 +16,8 @@ import { currentTerminalAccess } from "../code/terminal-address";
 import { pickFolderNative } from "@/lib/desktop-dialog";
 import { InfoTip, SectionCard, SettingRow, Spinner, Tag, Toggle, cx } from "../ui";
 import { confirmAction } from "@/components/ask-dialog";
-import { isEmailAddress, timeZoneName } from "@ensemble/shared-types";
-import { sameTimeZone, timeZoneLabel, timeZoneOptions } from "@/lib/time-zones";
+import { isEmailAddress } from "@ensemble/shared-types";
+import { TimezonePicker } from "./timezone-picker";
 import { NumberField } from "./number-field";
 import { askNotificationPermission, notificationNote, readNotificationState, refreshNotificationPermission, showNotification, type NotificationState } from "./reminders";
 
@@ -40,8 +40,8 @@ export function AutonomySection({ settings, patch }: Props) {
         Policy still forces approval for anything leaving your domain or mentioning money, legal or HR matters, at every level.
       </p>
       <div className="mt-2 divide-y divide-[var(--line)]">
-        <SettingRow title="Daily high-risk write limit" description="Beyond this, unattended sends fall back to asking you, the runaway brake.">
-          <NumberField label="Daily high-risk write limit" min={0} max={500} value={orchestration.dailyHighRiskLimit} onChange={(dailyHighRiskLimit) => set({ dailyHighRiskLimit })} />
+        <SettingRow title="Daily action safety limit" description="After this many sensitive actions in one day, Ensemble asks you before continuing.">
+          <NumberField label="Daily action safety limit" min={0} max={500} value={orchestration.dailyHighRiskLimit} onChange={(dailyHighRiskLimit) => set({ dailyHighRiskLimit })} />
         </SettingRow>
         <SettingRow
           title="Network for sandboxed commands"
@@ -602,9 +602,6 @@ export function IdentitySection({ settings, patch }: Props) {
   const [left, setLeft] = useState(false);
   useEffect(() => setEmail(settings.email), [settings.email]);
   const emailError = left && !isEmailAddress(email) ? "Enter an email address like name@example.com." : null;
-  const zones = useMemo(() => timeZoneOptions(settings.timezone), [settings.timezone]);
-  const known = timeZoneName(settings.timezone);
-  const device = typeof Intl === "undefined" ? null : timeZoneName(Intl.DateTimeFormat().resolvedOptions().timeZone);
   return (
     <SectionCard title="Scheduling and confirmations" description="Your time zone sets scheduled tasks, the morning brief and quiet hours. The email below confirms sensitive workspace changes; it does not change your sign-in email.">
       <div className="grid gap-3 sm:grid-cols-2">
@@ -633,31 +630,7 @@ export function IdentitySection({ settings, patch }: Props) {
         </div>
         <div className="text-[13px] font-medium">
           <label htmlFor="settings-timezone">Time zone</label>
-          <select
-            id="settings-timezone"
-            value={known ?? settings.timezone}
-            onChange={(event) => patch({ timezone: event.target.value })}
-            aria-invalid={known ? undefined : true}
-            aria-describedby={known ? undefined : "settings-timezone-error"}
-            className="field mt-1.5 w-full"
-          >
-            {known ? null : <option value={settings.timezone}>{settings.timezone || "None"} (not a time zone)</option>}
-            {zones.map((zone) => (
-              <option key={zone} value={zone}>
-                {timeZoneLabel(zone)}
-              </option>
-            ))}
-          </select>
-          {known ? null : (
-            <span id="settings-timezone-error" role="alert" className="mt-1 block text-[12px] font-normal text-danger">
-              Pick your time zone from the list.
-            </span>
-          )}
-          {device && !sameTimeZone(device, known) ? (
-            <button type="button" className="mt-1 block text-[12px] font-normal text-accent hover:underline" onClick={() => patch({ timezone: device })}>
-              Use this computer&apos;s, {device.replace(/_/g, " ")}
-            </button>
-          ) : null}
+          <div className="mt-1.5"><TimezonePicker value={settings.timezone} automatic={settings.timezoneMode === "auto"} onChange={(timezone, timezoneMode) => patch({ timezone, timezoneMode })} /></div>
         </div>
       </div>
     </SectionCard>
@@ -670,10 +643,10 @@ export function FailedJobsSection() {
   const connections = useQuery({ queryKey: ["connections"], queryFn: api.connections });
   const failed = (connections.data?.connections ?? []).filter((row) => row.enabled && row.lastError);
   return (
-    <SectionCard title="Failed jobs" info="Syncs and background jobs that gave up after retrying.">
-      {failed.length === 0 ? (
+    <SectionCard title="Updates needing attention" description="Connected apps that could not finish updating. Try syncing them again.">
+      {connections.isPending ? <p role="status" className="text-[13px] text-muted">Checking for updates…</p> : connections.error ? <p role="alert" className="text-[13px] text-danger">Could not check connected apps.<button type="button" className="btn ml-2" onClick={() => void connections.refetch()}>Retry</button></p> : failed.length === 0 ? (
         <div className="flex items-center gap-2 text-[13px]">
-          Nothing failed permanently. <Tag tone="green">clear</Tag>
+          No updates need attention.
         </div>
       ) : (
         failed.map((row) => (
@@ -758,7 +731,7 @@ export function DeleteDataSection({ settings }: { settings: Settings }) {
   const remove = useMutation({
     mutationFn: () => api.deleteMyData(scope, confirm),
     onSuccess: () => {
-      toast(scope === "context" ? "Context deleted." : "Everything deleted.");
+      toast(scope === "context" ? "People and app information deleted." : "Everything deleted.");
       setConfirm("");
       void client.invalidateQueries();
     },
@@ -767,10 +740,10 @@ export function DeleteDataSection({ settings }: { settings: Settings }) {
   return (
     <SectionCard
       title="Delete my data"
-      description="Context only removes ingested mail, chats, meetings and the context graph. Everything also removes your workspace content. Your account, sign-ins, devices, connected-app setup, model keys and settings stay. The audit ledger records the deletion. Stop active agent tasks first."
+      description="Remove saved emails, messages, meeting notes, people, repository details and their links. Everything also removes your pages, tasks and other workspace content. Your account, sign-ins, computers, connected apps, model keys and settings stay. We keep a record that you deleted data, without its contents. Stop active agent tasks first."
     >
       <select aria-label="Data deletion scope" disabled={remove.isPending} value={scope} onChange={(event) => setScope(event.target.value as "context" | "everything")} className="field w-full">
-        <option value="context">Context only</option>
+        <option value="context">People and app information</option>
         <option value="everything">Everything (tasks, projects, skills, chats too)</option>
       </select>
       <div className="mt-3 text-[12.5px] text-muted">
@@ -783,7 +756,7 @@ export function DeleteDataSection({ settings }: { settings: Settings }) {
         disabled={confirm.trim().toLowerCase() !== settings.email.toLowerCase() || remove.isPending}
         onClick={() => remove.mutate()}
       >
-        Delete {scope === "context" ? "context" : "everything"}
+        Delete {scope === "context" ? "people and app information" : "everything"}
       </button>
     </SectionCard>
   );

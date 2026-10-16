@@ -1,3 +1,4 @@
+import { ASSISTANT_UNAVAILABLE } from "@ensemble/shared-types";
 /**
  * Hosted plot export.
  *
@@ -48,8 +49,7 @@ export async function fetchHostedPlotRun(
     });
   } catch (error) {
     if (controller.signal.aborted) throw new RuntimeError(PLOT_EXPORTS_BUSY, 503);
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new RuntimeError(`The model runtime is not running. Start it with pnpm dev (or pnpm dev:agent). ${detail}`, 503, true);
+    throw new RuntimeError(ASSISTANT_UNAVAILABLE, 503, true);
   } finally {
     clearTimeout(killer);
   }

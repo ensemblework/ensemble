@@ -3,10 +3,11 @@
  * The rules people see are in docs/29_SHARING.md. Limits live here so a paid plan can raise
  * them in one place.
  */
+import { sharePreviews } from "./previews.js";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { personInitials } from "@ensemble/shared-types";
 import { isHosted } from "../lib/hosted-access.js";
-import { copySettings, MAX_SPACES } from "../spaces/store.js";
+import { copySettings, listSpaces, MAX_SPACES } from "../spaces/store.js";
 import { PRIVATE_ARTIFACT_KINDS, SHARE_KINDS, type ShareKind } from "./context.js";
 import { VIEW_ONLY_KINDS } from "./policy.js";
 
@@ -347,7 +348,7 @@ export async function deleteShare(db: PrismaClient, accountId: string, shareId: 
 
 export type SharedWithMe = {
   spaces: Array<{ id: string; name: string; icon: string | null; owner: { id: string; name: string; initials: string; avatar: string | null }; role: "viewer" | "editor"; since: string }>;
-  items: Array<{ id: string; kind: ShareKind; title: string; role: "view" | "edit"; owner: { id: string; name: string; initials: string; avatar: string | null }; spaceName: string; since: string; openedAt: string | null }>;
+  items: Array<{ id: string; kind: ShareKind; title: string; excerpt?: string; role: "view" | "edit"; owner: { id: string; name: string; initials: string; avatar: string | null }; spaceName: string; since: string; openedAt: string | null }>;
 };
 
 export async function sharedWithMe(db: Db, accountId: string): Promise<SharedWithMe> {
@@ -360,9 +361,10 @@ export async function sharedWithMe(db: Db, accountId: string): Promise<SharedWit
     db.share.findMany({
       where: { recipientId: accountId },
       orderBy: { createdAt: "desc" },
-      select: { id: true, kind: true, title: true, role: true, createdAt: true, openedAt: true, space: { select: { id: true, name: true, spaceName: true, ownerId: true, email: true } } },
+      select: { id: true, kind: true, resourceId: true, title: true, role: true, createdAt: true, openedAt: true, space: { select: { id: true, name: true, spaceName: true, ownerId: true, email: true } } },
     }),
   ]);
+  const preview = await sharePreviews(db, shares.map(row => ({ ...row, spaceId: row.space.id })));
   const ownerIds = [...new Set([...members.map((row) => row.space.ownerId ?? row.space.id), ...shares.map((row) => row.space.ownerId ?? row.space.id)])];
   const owners = new Map(
     (await db.user.findMany({ where: { id: { in: ownerIds } }, select: { id: true, name: true, email: true, avatar: true } })).map((row) => [
@@ -385,7 +387,8 @@ export async function sharedWithMe(db: Db, accountId: string): Promise<SharedWit
       .map((row) => ({
         id: row.id,
         kind: row.kind as ShareKind,
-        title: row.title || "Untitled",
+        title: preview({ ...row, spaceId: row.space.id })?.title ?? (row.title || "Untitled"),
+        excerpt: preview({ ...row, spaceId: row.space.id })?.excerpt ?? "",
         role: row.role === "edit" ? "edit" : "view",
         owner: ownerOf(row.space),
         spaceName: spaceLabel(row.space),
@@ -445,9 +448,13 @@ export async function transferSpace(db: PrismaClient, accountId: string, spaceId
     // Undo across a change of owner would mix two people's histories.
     await tx.undoEntry.deleteMany({ where: { userId: spaceId } });
 
+    const takenNames = new Set((await listSpaces(tx, toId)).spaces.map(row => row.name.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase()));
+    const baseName = space.spaceName || "Untitled space";
+    let transferredName = baseName, suffix = 2;
+    while (takenNames.has(transferredName.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase())) transferredName = `${Array.from(baseName).slice(0, 70).join("")} (${suffix++})`;
     const position = (await tx.user.count({ where: { ownerId: toId } })) + 1;
     const owner = await tx.user.findUniqueOrThrow({ where: { id: toId }, select: { name: true, gender: true, profession: true, organization: true, heardFrom: true, profileCompletedAt: true, emailVerifiedAt: true, tester: true } });
-    await tx.user.update({ where: { id: spaceId }, data: { ownerId: toId, spacePosition: position, ...owner } });
+    await tx.user.update({ where: { id: spaceId }, data: { ownerId: toId, spaceName: transferredName, spacePosition: position, ...owner } });
     await tx.spaceMember.delete({ where: { id: member.id } });
     // Other members stay only if they are also the new owner's contacts.
     const others = await tx.spaceMember.findMany({ where: { spaceId }, select: { id: true, accountId: true } });

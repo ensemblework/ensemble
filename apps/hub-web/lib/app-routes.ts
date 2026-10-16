@@ -32,6 +32,7 @@ const EXACT = new Set([
   "/spaces",
   "/spaces/new",
   "/shared",
+  "/shared-by-me",
   "/welcome",
   "/unavailable",
   "/diagrams",
