@@ -6,6 +6,7 @@ import {
   hiddenTilesFor,
   hideTile,
   isDefaultLayout,
+  moveAnnouncement,
   moveTile,
   readLayout,
   resizeTile,
@@ -117,4 +118,12 @@ test("desk extras follow their switch even with a saved or template layout", () 
   const exact = readLayout({ v: 1, exact: true, tiles: [{ key: "courses", c: 6, r: 2 }], hidden: [] });
   assert.deepEqual(arrange([...defaults, concepts], withExtras, exact, { extras: new Set(["concepts"]) }).map((spec) => spec.key), ["courses", "concepts"]);
   assert.deepEqual(arrange([...defaults, concepts], withExtras, exact).map((spec) => spec.key), ["courses"]);
+});
+
+test("a keyboard move says where the tile went", () => {
+  const keys = ["week", "plan", "reading"];
+  assert.equal(moveAnnouncement("Study plan", keys, "plan", 1), "Study plan moved to position 3 of 3.");
+  assert.equal(moveAnnouncement("Study plan", keys, "plan", -1), "Study plan moved to position 1 of 3.");
+  assert.equal(moveAnnouncement("This week", keys, "week", -1), "This week is already first.");
+  assert.equal(moveAnnouncement("Reading", keys, "reading", 1), "Reading is already last.");
 });

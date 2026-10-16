@@ -67,8 +67,9 @@
 .board-focus-bar > span { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); background: var(--panel); padding: 5px 8px; border-radius: 6px; }
 .board-focus-bar button { color: var(--muted); }
 .board-column[data-empty="true"] { border: 1px dashed var(--line); }
+.board-no-match { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 0 24px 12px; font-size: 13px; color: var(--muted); }
 .board-column-empty { padding: 14px 8px; font-size: 11px; color: var(--faint); line-height: 1.5; }
-@media (max-width: 767px) { .board-insights { padding-inline: 16px; } .board-insight { flex: 0 0 255px; } .board-insights-heading > span { display: none; } .board-focus-bar { padding-inline: 16px; } }
+@media (max-width: 767px) { .board-insights { padding-inline: 16px; } .board-insight { flex: 0 0 255px; } .board-insights-heading > span { display: none; } .board-focus-bar, .board-no-match { padding-inline: 16px; } }
 .insight-loading { min-height: 157px; display: grid; place-items: center; width: 100%; color: var(--muted); font-size: 12px; border: 1px solid var(--line); border-radius: 10px; }
 .insight-cap-setting { display: flex; align-items: center; gap: 8px; }
 .insight-cap-setting input { width: 52px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 5px; background: var(--panel); color: var(--ink); }

@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import { useMemo, useRef, useId, useState } from "react";
 import { tileSchema, type Frame, type LinkChoice, type PlotConfig, type PoolColumn, type PoolDataset, type WorkspaceTile } from "@ensemble/shared-types";
 import { ChartView } from "@/components/plots/chart-view";
-import { FigureOutput, RunButton, useFigureRun } from "@/components/plots/figure-run";
+import { FigureBesideToggle, FigureOutput, RunButton, useFigureBeside, useFigureRun } from "@/components/plots/figure-run";
 import { figureBytes } from "@/lib/plots/figure-file";
 import { ColumnSelect } from "@/components/plots/column-select";
 import { StyleTab } from "@/components/plots/studio";
@@ -72,6 +72,7 @@ export function FocusEditor({
   );
   const script = tileScript(tile, generated);
   const figure = useFigureRun(workspaceId);
+  const [figureBeside, setFigureBeside] = useFigureBeside();
   const [preview, setPreview] = useState<"chart" | "output">("output");
   const showOutput = tab === "Code" && preview === "output";
   const runCode = () => {
@@ -206,8 +207,8 @@ export function FocusEditor({
             {tab === "Encode" ? <Encode columns={columns} tile={tile} warnings={warnings} onChange={onChange} /> : null}
             {tab === "Style" ? <StyleTab config={config} update={apply} /> : null}
             {tab === "Code" ? (
-              <div className={`flex min-h-0 flex-1 gap-3 ${fullScreen ? "flex-col lg:flex-row" : "flex-col"}`} data-plot-code data-code-edited={script.edited ? "1" : "0"}>
-                <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2">
+              <div className={`flex min-h-0 flex-1 gap-3 ${fullScreen && figureBeside ? "flex-col lg:flex-row" : "flex-col"}`} data-plot-code data-code-edited={script.edited ? "1" : "0"}>
+                <div className={`flex min-h-0 min-w-0 flex-col gap-2 ${fullScreen ? "flex-[3]" : "flex-1"}`}>
                   <p className="shrink-0 text-[12px] leading-4 text-muted">
                     {script.edited
                       ? "Edited. Export draws this code, and changes in Encode and Style no longer reach it."
@@ -224,13 +225,14 @@ export function FocusEditor({
                         <>
                           <RunButton running={figure.state.status === "running"} disabled={!workspaceId} onRun={runCode} />
                           {script.edited ? <button type="button" className="btn px-2 py-0.5 text-[12px]" data-plot-code-reset onClick={() => onChange(tileSchema.parse({ ...tile, code: null }))}>Reset to generated</button> : null}
+                          {fullScreen ? <FigureBesideToggle beside={figureBeside} onChange={setFigureBeside} /> : null}
                         </>
                       }
                     />
                   </div>
                 </div>
                 {fullScreen ? (
-                  <div className="flex min-h-[220px] min-w-0 flex-1 flex-col rounded-lg border border-line p-2">
+                  <div className="flex min-h-[220px] min-w-0 flex-[2] flex-col rounded-lg border border-line p-2">
                     <FigureOutput state={figure.state} placeholder="Run the code to draw its figure here." />
                   </div>
                 ) : null}

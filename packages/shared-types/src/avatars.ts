@@ -55,6 +55,7 @@ export function avatarRoleFor(role: string | null | undefined, profession?: stri
 /** Each word's letters and digits: "Mary-Jane O'Neil" reads as MaryJane, ONeil. Code points, so an accent or emoji is never split. */
 function nameWords(text: string): string[][] {
   return text
+    .normalize("NFC")
     .trim()
     .split(/\s+/)
     .map((word) => Array.from(word.replace(/[^\p{L}\p{N}]/gu, "")))

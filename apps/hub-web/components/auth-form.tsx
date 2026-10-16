@@ -2,7 +2,8 @@
 
 import { useMutation, useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { PASSWORD_RULE, passwordProblem } from "@ensemble/shared-types";
 import { api, HUB_API } from "@/lib/api";
 import { clearBrowserTabSession } from "@/lib/tab-session";
 import { INVITE_ONLY, safeLoginNext, showInviteNote, signupPanel } from "@/lib/signup-ui";
@@ -11,6 +12,7 @@ import { EnsembleLogo } from "./brand/Logo";
 import { Spinner } from "./ui";
 import { AuthTurnstile } from "./auth-turnstile";
 import { AuthBackdrop } from "./auth-backdrop";
+import { PasswordField } from "./password-field";
 
 export function authRedirectTarget(mode: "login" | "signup", result: { verificationSent?: boolean; user?: unknown }, next: string | null): string {
   if (mode === "signup") return result.verificationSent ? "/verify?next=/start" : "/start";
@@ -25,6 +27,8 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const [turnstileToken, setTurnstileToken] = useState("");
   const [resetChallenge, setResetChallenge] = useState(0);
   const [providerError, setProviderError] = useState("");
+  const [passwordError, setPasswordError] = useState<string | null>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     setProviderError(new URLSearchParams(window.location.search).get("error") ?? "");
   }, []);
@@ -43,6 +47,15 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const emailAvailable = mode === "login" || status.data?.emailSignupAvailable !== false;
   const unavailable = !closed && !emailAvailable && !status.data?.providers.length;
   const inviteNote = showInviteNote(signup);
+  const serverError = submit.error ? (submit.error as Error).message : null;
+  // Sign-in only says the pair is wrong, so both fields are marked; sign-up errors name their field.
+  const emailInvalid = Boolean(serverError) && (mode === "login" || /email|account/i.test(serverError ?? ""));
+  const passwordInvalid = Boolean(serverError) && (mode === "login" || /password/i.test(serverError ?? ""));
+  /** Typing again clears the last error, so it never describes a value that is no longer there. */
+  const edited = () => {
+    if (submit.error) submit.reset();
+    setPasswordError(null);
+  };
   return (
     <div className="auth-shell">
       <div className="auth-brand">
@@ -54,7 +67,14 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
         className="auth-form"
         onSubmit={(event) => {
           event.preventDefault();
-          if (emailAvailable && !submit.isPending) submit.mutate();
+          if (!emailAvailable || submit.isPending) return;
+          const problem = mode === "signup" ? passwordProblem(password) : null;
+          if (problem) {
+            setPasswordError(problem);
+            passwordRef.current?.focus();
+            return;
+          }
+          submit.mutate();
         }}
       >
         <h1 className="display text-[30px] leading-tight tracking-tight">
@@ -97,26 +117,43 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
           ) : null}
           <label className="block text-[13px] font-medium">
             Email
-            <input type="email" required value={email} onChange={(event) => setEmail(event.target.value)} className="field mt-1 w-full" autoComplete="email" />
-          </label>
-          <label className="block text-[13px] font-medium">
-            Password
             <input
-              type="password"
+              type="email"
               required
-              minLength={8}
-              maxLength={256}
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
+              value={email}
+              onChange={(event) => {
+                setEmail(event.target.value);
+                edited();
+              }}
+              aria-invalid={emailInvalid || undefined}
+              aria-describedby={emailInvalid ? "auth-error" : undefined}
               className="field mt-1 w-full"
-              autoComplete={mode === "signup" ? "new-password" : "current-password"}
+              autoComplete="email"
             />
           </label>
+          <PasswordField
+            ref={passwordRef}
+            label="Password"
+            required
+            minLength={8}
+            maxLength={256}
+            value={password}
+            onChange={(value) => {
+              setPassword(value);
+              edited();
+            }}
+            rule={mode === "signup" ? PASSWORD_RULE : undefined}
+            error={passwordError}
+            invalid={passwordInvalid}
+            describedBy={passwordInvalid ? "auth-error" : undefined}
+            errorClassName="text-[#ffb4ae]"
+            autoComplete={mode === "signup" ? "new-password" : "current-password"}
+          />
         </div>}
         {mode === "signup" && !closed && emailAvailable && status.data?.turnstileSiteKey ? (
           <AuthTurnstile siteKey={status.data.turnstileSiteKey} onToken={setTurnstileToken} resetKey={resetChallenge} />
         ) : null}
-        {submit.error ? <div className="mt-3 text-[12.5px] text-[#ffb4ae]">{(submit.error as Error).message}</div> : null}
+        {serverError ? <p id="auth-error" role="alert" className="mt-3 text-[12.5px] text-[#ffb4ae]">{serverError}</p> : null}
         {status.error ? <p role="alert" className="mt-3 text-[13px] text-muted">{status.error.message}</p> : null}
         {closed || !emailAvailable ? null : (
         <button type="submit" className="btn-primary mt-5 w-full justify-center py-2" disabled={submit.isPending || status.isPending || status.isError || (mode === "signup" && Boolean(status.data?.turnstileSiteKey) && !turnstileToken)}>

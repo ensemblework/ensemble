@@ -129,6 +129,16 @@ export function stepTile({ shown, hidden }: Arranged, key: string, delta: -1 | 1
   return save(next, hidden);
 }
 
+/** What a screen reader hears after moving the tile `key` one place with the arrow keys. */
+export function moveAnnouncement(title: string, keys: string[], key: string, delta: -1 | 1): string {
+  const index = keys.indexOf(key);
+  if (index < 0) return "";
+  const target = index + delta;
+  if (target < 0) return `${title} is already first.`;
+  if (target >= keys.length) return `${title} is already last.`;
+  return `${title} moved to position ${target + 1} of ${keys.length}.`;
+}
+
 /** Grid cells covered when a tile that started at `start` is dragged by (dx, dy) pixels. */
 export function sizeFromDrag(
   start: TileSize,

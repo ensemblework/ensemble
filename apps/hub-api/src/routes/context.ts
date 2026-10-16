@@ -10,7 +10,7 @@ import type { ArtifactKind, Prisma } from "@prisma/client";
 import { plotMentionEntities } from "../plots/mentions.js";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { accountIdOf, ownsOpenSpace } from "../lib/auth.js";
-import { hasModule, ONBOARDING_TOUR_KEY } from "@ensemble/shared-types";
+import { hasModule, ONBOARDING_TOUR_KEY, personInitials } from "@ensemble/shared-types";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings } from "../lib/settings.js";
 import { sseHub } from "../lib/sse.js";
@@ -33,9 +33,7 @@ function assertEditablePreference(key: string): void {
 }
 
 function initials(name: string): string {
-  const parts = name.trim().split(/\s+/).slice(0, 2);
-  const letters = parts.map((part) => part[0]?.toUpperCase() ?? "").join("");
-  return letters || "?";
+  return personInitials(name) || "?";
 }
 
 const WHEN = new Intl.DateTimeFormat("en-IN", { day: "numeric", month: "short", timeZone: "UTC" });
@@ -62,6 +60,23 @@ function dayMonth(value: Date): { day: string; month: string } {
     day: parts.find((part) => part.type === "day")?.value ?? "",
     month: (parts.find((part) => part.type === "month")?.value ?? "").slice(0, 3).toUpperCase(),
   };
+}
+
+/**
+ * Someone already in this person's people: the same email (any case, also an address
+ * recorded for them), or with no email, the same name.
+ */
+async function existingPerson(prisma: FastifyInstance["prisma"], userId: string, name: string, email: string | null) {
+  const match: Prisma.PersonWhereInput = email
+    ? {
+        OR: [
+          { email: { equals: email, mode: "insensitive" } },
+          { upn: { equals: email, mode: "insensitive" } },
+          { identities: { some: { kind: "email", value: email.toLowerCase() } } },
+        ],
+      }
+    : { name: { equals: name, mode: "insensitive" } };
+  return prisma.person.findFirst({ where: { userId, deletedAt: null, ...match }, select: { id: true, name: true, email: true } });
 }
 
 /** "<ISO time>|<id>" of the last item on a page. */
@@ -129,10 +144,18 @@ export async function contextRoutes(app: FastifyInstance): Promise<void> {
 
   app.post("/api/people", async (request, reply) => {
     const body = z
-      .object({ name: z.string().min(1), email: z.string().email().optional(), role: z.string().optional() })
+      .object({ name: z.string().trim().min(1).transform((name) => name.replace(/\s+/g, " ")), email: z.string().trim().email().optional(), role: z.string().optional() })
       .parse(request.body);
+    const email = body.email || null;
+    const existing = await existingPerson(prisma, request.userId, body.name, email);
+    if (existing) {
+      return reply.code(409).send({ error: `${existing.name} is already in your people.`, code: "person_exists", person: existing });
+    }
+    const upn = email?.toLowerCase() ?? null;
+    // Someone removed earlier keeps their address, which would clash with the unique key.
+    const removed = upn ? await prisma.person.findFirst({ where: { userId: request.userId, upn, deletedAt: { not: null } }, select: { id: true } }) : null;
     const person = await prisma.person.create({
-      data: { userId: request.userId, name: body.name, email: body.email, role: body.role, upn: body.email },
+      data: { userId: request.userId, name: body.name, email, role: body.role, upn: removed ? null : upn },
     });
     return reply.code(201).send({ person });
   });

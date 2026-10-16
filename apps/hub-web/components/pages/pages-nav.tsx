@@ -12,13 +12,20 @@ import { api } from "@/lib/api";
 import { useSpaceAccess } from "@/lib/access";
 import { useToast } from "../toast";
 import { standalonePageHref } from "./page-href";
+import { PAGE_DRAG_TYPE, pageIdFromHref } from "@/lib/page-drag";
 import { PagesSection, type PageLinkProps } from "./pages-section";
 
 const ImportDialog = dynamic(() => import("../imports/import-dialog").then((mod) => mod.ImportDialog), { ssr: false });
 
-function PageLink({ href, className, title, children }: PageLinkProps) {
+/** A row dropped on a page body becomes a link to this page (components/editor/clipboard.ts). */
+function dragPage(data: DataTransfer, href: string, title?: string) {
+  const id = pageIdFromHref(href, window.location.origin);
+  if (id) data.setData(PAGE_DRAG_TYPE, JSON.stringify({ id, title: title ?? "" }));
+}
+
+function PageLink({ href, className, title, current, children }: PageLinkProps) {
   return (
-    <Link href={href} className={className} title={title}>
+    <Link href={href} className={className} title={title} aria-current={current ? "page" : undefined} onDragStart={(event) => dragPage(event.dataTransfer, href, title)}>
       {children}
     </Link>
   );
@@ -74,9 +81,9 @@ export function PagesBrowser() {
           }
           const detail = { ids, affected: [...selected] };
           if (!window.dispatchEvent(new CustomEvent("ensemble:delete-pages", { detail, cancelable: true }))) return;
-          void api.deletePages(ids).then(() => {
+          void api.deletePages(ids).then((result) => {
             void client.invalidateQueries({ predicate: (query) => !query.queryKey.some((part) => typeof part === "string" && selected.has(part)) });
-            toast("Pages moved to Trash. One Undo restores them all.", { action: { label: "Undo", run: () => { void api.undo().then(() => client.invalidateQueries()).catch((error: Error) => toast(error.message, { tone: "error" })); } } });
+            toast("Pages moved to Trash. One Undo restores them all.", { action: { label: "Undo", run: () => { void api.undo(result.undoEntryId ?? undefined).then(() => client.invalidateQueries()).catch((error: Error) => toast(error.message, { tone: "error" })); } } });
             if ([...selected].some((id) => pathname === `/pages/${id}`)) router.push("/pages");
           }).catch((error: Error) => toast(error.message, { tone: "error" }));
         } : undefined}

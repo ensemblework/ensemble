@@ -12,7 +12,7 @@ import { downloadItem, ItemError } from "../connectors/items/index.js";
 import { DRIVE_SCOPES, FULL_DRIVE_SCOPES, GMAIL_SCOPES } from "../connectors/items/sources/google.js";
 import { hasScopes } from "../connectors/tokens.js";
 import { isGuestIn } from "../sharing/context.js";
-import { FILE_SELECT, fileRecord, saveFile } from "./store.js";
+import { assertNewFile, FILE_SELECT, fileRecord, saveFile } from "./store.js";
 
 export const IMPORT_KINDS = ["file", "attachment"] as const;
 export type ImportKind = (typeof IMPORT_KINDS)[number];
@@ -158,6 +158,7 @@ export async function importFromApp(db: PrismaClient, userId: string, ref: { sou
   });
   if (kept) return { file: fileRecord(kept), existing: true };
   const download = await downloadItem(userId, ref);
+  assertNewFile(download.filename, download.bytes.byteLength, { imported: true });
   const file = await saveFile(db, userId, {
     filename: download.filename,
     mediaType: download.mediaType,

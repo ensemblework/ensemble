@@ -76,6 +76,27 @@ async function cleanup(ids: string[]) {
   await prisma.user.deleteMany({ where: { id: { in: ids } } });
 }
 
+test("a page search matches titles and text and returns a snippet", async (t) => {
+  if (!(await databaseReady())) return t.skip("Postgres is not reachable");
+  const owner = await user("search");
+  const app = await appFor(owner.id);
+  try {
+    const page = (await app.inject({ method: "POST", url: "/api/pages" })).json().page as { id: string };
+    const saved = await app.inject({ method: "PUT", url: `/api/pages/${page.id}`, payload: { revision: 1, content: doc("Notes for the quarterly zebra crossing review.") } });
+    assert.equal(saved.statusCode, 200);
+    await app.inject({ method: "POST", url: "/api/pages" });
+    const all = (await app.inject({ method: "GET", url: "/api/pages" })).json().pages as Array<{ id: string; createdAt?: string }>;
+    assert.equal(all.length, 2);
+    assert.ok(all.every((row) => typeof row.createdAt === "string"));
+    const found = (await app.inject({ method: "GET", url: "/api/pages?q=ZEBRA" })).json().pages as Array<{ id: string; snippet?: string }>;
+    assert.deepEqual(found.map((row) => row.id), [page.id]);
+    assert.match(found[0]!.snippet ?? "", /zebra crossing/);
+  } finally {
+    await app.close();
+    await cleanup([owner.id]);
+  }
+});
+
 test("standalone pages list newest first and support create, rename, and delete", async (t) => {
   if (!(await databaseReady())) return t.skip("Postgres is not reachable");
   const owner = await user("owner");
@@ -128,7 +149,16 @@ test("standalone pages list newest first and support create, rename, and delete"
 
     const removed = await app.inject({ method: "DELETE", url: `/api/pages/${older.id}` });
     assert.equal(removed.statusCode, 204);
-    assert.equal((await app.inject({ method: "GET", url: `/api/pages/${older.id}` })).statusCode, 404);
+    const binned = await app.inject({ method: "GET", url: `/api/pages/${older.id}` });
+    assert.equal(binned.statusCode, 404);
+    assert.equal(binned.json().code, "PAGE_IN_TRASH");
+    const readable = await app.inject({ method: "GET", url: `/api/pages/${older.id}?trashed=1` });
+    assert.equal(readable.statusCode, 200);
+    assert.equal(readable.json().title, unique);
+    assert.ok(readable.json().deletedAt);
+    const never = await app.inject({ method: "GET", url: "/api/pages/00000000-0000-4000-8000-000000000000" });
+    assert.equal(never.statusCode, 404);
+    assert.equal(never.json().code, "PAGE_NOT_FOUND");
     const remaining = (await app.inject({ method: "GET", url: "/api/pages" })).json().pages as Array<{ id: string }>;
     assert.deepEqual(remaining.map((row) => row.id), [newer.id]);
     assert.equal(await prisma.task.count({ where: { userId: owner.id } }), 0);

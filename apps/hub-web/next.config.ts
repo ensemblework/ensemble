@@ -41,6 +41,10 @@ const nextConfig: NextConfig = {
   experimental: {
     optimizePackageImports: ["lucide-react", "@ensemble/block-diagrams"],
     proxyTimeout: 310_000,
+    // The /api rewrite streams request bodies through this limit and cuts them off past it,
+    // so hub-api would wait for the rest. It covers the largest upload hub-api reads: a
+    // 100 MB file as base64 JSON. Bigger bodies are refused by hub-api from their Content-Length.
+    middlewareClientMaxBodySize: "140mb",
   },
   // `next build --turbopack` (and a future turbopack production build) must
   // resolve the dev fixture to the empty stub. `next dev` keeps the real module.

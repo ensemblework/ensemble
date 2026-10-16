@@ -7,25 +7,22 @@ import { useEffect, useRef } from "react";
 import { api } from "@/lib/api";
 import { isApplePlatform } from "@/lib/platform";
 import { activeShortcuts, useShortcuts } from "@/lib/shortcut-store";
+import { SEQUENCE_MS, sequenceStep } from "@/lib/shortcut-sequence";
+import { GO_ROUTES, shortcutAvailable } from "@/lib/shortcut-help";
 import { standalonePageHref } from "../pages/page-href";
 import { useToast } from "../toast";
 
-const GO: Record<string, string> = {
-  "go-today": "/today",
-  "go-board": "/board",
-  "go-needs": "/needs-me",
-  "go-meetings": "/meetings",
-  "go-recap": "/recap",
-  "go-settings": "/settings",
-  "go-diagrams": "/diagrams",
-  "go-plots": "/plots",
-};
-
-const HANDLED = new Set(["palette", "help", "capture", "ask", "assistant", "new-task", "new-page", ...Object.keys(GO)]);
+const HANDLED = new Set(["palette", "help", "capture", "ask", "assistant", "new-task", "new-page", ...Object.keys(GO_ROUTES)]);
 
 function typingTarget(event: KeyboardEvent): boolean {
   const target = event.target as HTMLElement | null;
-  return Boolean(target?.closest("input, textarea, select, [contenteditable=true], .cm-editor"));
+  return Boolean(target?.closest?.("input, textarea, select, [contenteditable=true], [contenteditable=''], .cm-editor"));
+}
+
+/** A dialog keeps its letters: G then S must not navigate away from an open form or menu. */
+function inDialog(event: KeyboardEvent): boolean {
+  const target = event.target as HTMLElement | null;
+  return Boolean(target?.closest?.("[role=dialog], [data-modal-layer], [data-layout-editing]"));
 }
 
 /** Global chords and left-hand sequences from the shared shortcut list. */
@@ -76,8 +73,11 @@ export function ShortcutsHost({
       window.clearTimeout(timer);
     };
     const run = (id: string) => {
-      const href = GO[id];
+      const href = GO_ROUTES[id];
       if (href) {
+        const binding = activeShortcuts().find((item) => item.id === id);
+        const modules = client.getQueryData<{ modules?: string | null }>(["shell"])?.modules;
+        if (binding && !shortcutAvailable(binding, modules)) return;
         router.push(href);
         return;
       }
@@ -95,37 +95,36 @@ export function ShortcutsHost({
       if (event.altKey && event.key.toLowerCase() === "f4") return;
       const typing = typingTarget(event);
       const apple = isApplePlatform();
-      const bindings = activeShortcuts();
-      const chord = matchShortcut(event, apple, typing, bindings);
+      const chord = matchShortcut(event, apple, typing, activeShortcuts());
       if (chord && HANDLED.has(chord.id)) {
         event.preventDefault();
         clear();
         run(chord.id);
-        return;
       }
-      if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
-      if (event.key.length !== 1) return;
-      const key = event.key.toLowerCase();
-      const sequences = bindings.filter((binding) => binding.scope === "global" && binding.sequence?.length);
-      buffer.current = (buffer.current + key).slice(-2);
-      const hit = sequences.find((binding) => binding.sequence?.join("") === buffer.current);
-      if (hit) {
-        event.preventDefault();
-        clear();
-        run(hit.id);
-        return;
-      }
-      const prefix = sequences.some((binding) => (binding.sequence ?? []).join("").startsWith(buffer.current));
-      window.clearTimeout(timer);
-      if (!prefix) buffer.current = "";
-      else timer = window.setTimeout(clear, 700);
     };
+    // Letter sequences run in the capture phase: a page's own key handler (a board card, a
+    // Today tile) would otherwise stop the event first or act on the second letter too.
+    const onSequence = (event: KeyboardEvent) => {
+      const step = sequenceStep(buffer.current, event, typingTarget(event) || inDialog(event), activeShortcuts());
+      buffer.current = step.buffer;
+      window.clearTimeout(timer);
+      if (step.hit) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        clear();
+        run(step.hit);
+        return;
+      }
+      if (step.buffer) timer = window.setTimeout(clear, SEQUENCE_MS);
+    };
+    window.addEventListener("keydown", onSequence, true);
     window.addEventListener("keydown", onKey);
     return () => {
+      window.removeEventListener("keydown", onSequence, true);
       window.removeEventListener("keydown", onKey);
       window.clearTimeout(timer);
     };
-  }, [router]);
+  }, [router, client]);
 
   return null;
 }

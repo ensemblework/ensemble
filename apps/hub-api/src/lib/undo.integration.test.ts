@@ -6,7 +6,7 @@ import test from "node:test";
 import { Settings } from "@ensemble/shared-types";
 import "../config.js";
 import { prisma } from "./prisma.js";
-import { recordUndoInTransaction, redoLast, undoLast, withUndoGroup, UndoConflict } from "./undo.js";
+import { UNDO_WINDOW_MS, recordUndoInTransaction, redoLast, undoLast, undoState, withUndoGroup, UndoConflict } from "./undo.js";
 import { saveTaskPage } from "../pages/store.js";
 import { softDelete } from "../services/records.js";
 import { createTask, updateTask } from "../services/tasks.js";
@@ -121,6 +121,32 @@ test("targeted undo restores the toast's own task", async (t) => {
     await undoLast(prisma, owner.id, firstEntry.id);
     assert.equal((await prisma.task.findUnique({ where: { id: first.id } }))?.status, "todo");
     assert.equal((await prisma.task.findUnique({ where: { id: second.id } }))?.status, "done");
+  } finally {
+    await cleanup(owner.id);
+  }
+});
+
+test("plain undo reaches back only a few minutes; a named entry still undoes", async (t) => {
+  if (!(await databaseReady())) return t.skip("Postgres is not reachable");
+  const owner = await user("window");
+  try {
+    const old = await add(owner.id, "Made last week");
+    const entry = await prisma.undoEntry.findFirst({ where: { userId: owner.id }, orderBy: { seq: "desc" } });
+    assert.ok(entry);
+    await prisma.undoEntry.update({ where: { id: entry.id }, data: { createdAt: new Date(Date.now() - UNDO_WINDOW_MS - 60_000) } });
+    assert.deepEqual(await undoState(prisma, owner.id), { canUndo: false, canRedo: false, undoLabel: null, redoLabel: null });
+    await assert.rejects(undoLast(prisma, owner.id), (error: { statusCode?: number }) => error.statusCode === 204);
+    assert.equal((await prisma.task.findUnique({ where: { id: old.id } }))?.deletedAt, null);
+
+    await add(owner.id, "Just now");
+    const state = await undoState(prisma, owner.id);
+    assert.equal(state.canUndo, true);
+    assert.match(state.undoLabel ?? "", /Just now/);
+    await undoLast(prisma, owner.id);
+    assert.match((await undoState(prisma, owner.id)).redoLabel ?? "", /Just now/);
+
+    await undoLast(prisma, owner.id, entry.id);
+    assert.ok((await prisma.task.findUnique({ where: { id: old.id } }))?.deletedAt);
   } finally {
     await cleanup(owner.id);
   }

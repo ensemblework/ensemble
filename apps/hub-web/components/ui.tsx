@@ -9,6 +9,7 @@ import { createPortal } from "react-dom";
 import { placeAnchoredPanel, type Side } from "@/lib/place-layer";
 import type { Priority, TaskStatus } from "@/lib/api";
 import { PRIORITY, STATUS, toneStyle, type Tone } from "@/lib/format";
+import { radioKeyTarget } from "@/lib/radio-keys";
 import { useModalFocus } from "@/lib/modal-focus";
 import { useDelayedFlag } from "@/lib/motion/use-delayed-flag";
 
@@ -309,7 +310,13 @@ export function useClickOutside(ref: React.RefObject<HTMLElement | null>, onOuts
   }, [ref, onOutside, active]);
 }
 
-/** A click-to-open menu anchored to its trigger. Side is chosen once, then kept until resize or scroll. */
+const POPOVER_FOCUSABLE = 'button:not([disabled]), a[href], input:not([disabled]):not([type="hidden"]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/**
+ * A click-to-open menu anchored to its trigger. Side is chosen once, then kept until resize or scroll.
+ * The panel is portalled to the end of the page, where Tab from the trigger never reaches it, so focus
+ * moves into it when it opens and back to the trigger when it closes.
+ */
 export function Popover({
   trigger,
   children,
@@ -388,6 +395,26 @@ export function Popover({
       window.removeEventListener("scroll", place, true);
     };
   }, [open, align, width]);
+  const visible = box !== null;
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (!open || !visible || !panel || panel.contains(document.activeElement)) return;
+    const items = Array.from(panel.querySelectorAll<HTMLElement>(POPOVER_FOCUSABLE));
+    (items.find((node) => node.matches("input, textarea, select")) ?? items[0])?.focus({ preventScroll: true });
+  }, [open, visible]);
+  const wasOpen = useRef(false);
+  useLayoutEffect(() => {
+    if (open) {
+      wasOpen.current = true;
+      return;
+    }
+    if (!wasOpen.current) return;
+    wasOpen.current = false;
+    // Focus left with the panel (Escape, a picked item). A click elsewhere keeps its own focus.
+    const active = document.activeElement;
+    if (active && active !== document.body) return;
+    ref.current?.querySelector<HTMLElement>(POPOVER_FOCUSABLE)?.focus({ preventScroll: true });
+  }, [open]);
   return (
     <div ref={ref} className={cx("relative", fill ? "block w-full" : "inline-block", className)}>
       {trigger(open, () => setOpen((value) => !value))}
@@ -561,15 +588,24 @@ export function Segmented<T extends string>({
   onChange: (value: T) => void;
   label?: string;
 }) {
+  const current = Math.max(0, options.findIndex((option) => option.id === value));
   return (
     <div role="radiogroup" aria-label={label} className="inline-flex max-w-full flex-wrap gap-0.5 rounded-lg bg-raised p-0.5">
-      {options.map((option) => (
+      {options.map((option, index) => (
         <button
           key={option.id}
           type="button"
           role="radio"
           aria-checked={value === option.id}
+          tabIndex={index === current ? 0 : -1}
           onClick={() => onChange(option.id)}
+          onKeyDown={(event) => {
+            const next = radioKeyTarget(event.key, index, options.length);
+            if (next === null) return;
+            event.preventDefault();
+            onChange(options[next]!.id);
+            (event.currentTarget.parentElement?.children[next] as HTMLElement | undefined)?.focus();
+          }}
           className={cx(
             "rounded-md px-3 py-1 text-[13px] transition-colors",
             value === option.id ? "bg-panel font-medium text-ink shadow-sm" : "text-muted hover:text-ink",

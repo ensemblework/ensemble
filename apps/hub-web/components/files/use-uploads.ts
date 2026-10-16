@@ -2,7 +2,7 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useRef, useState } from "react";
-import type { FileRecord, FileUsage } from "@ensemble/shared-types";
+import { fileTypeProblem, type FileRecord, type FileUsage } from "@ensemble/shared-types";
 import { FILE_QUERY, filesApi, formatBytes } from "@/lib/api-files";
 import { emitToast } from "@/lib/toast-bus";
 import { invalidateFileLists } from "./use-file";
@@ -20,13 +20,37 @@ export type UploadItem = {
 
 const ROOM = "Delete a file to make room, or use the Ensemble desktop app, which has no limit.";
 
-/** Files that fit the account's limits, and a plain sentence for the ones that do not. */
-export function checkUploads(files: File[], usage: FileUsage | undefined): { accepted: File[]; problem: string | null } {
-  if (!usage) return { accepted: files, problem: null };
-  const tooBig = files.filter((file) => file.size > usage.maxFileBytes);
-  let accepted = files.filter((file) => file.size <= usage.maxFileBytes);
-  let problem: string | null = null;
+export type Refused = { file: File; reason: string };
+
+/** Why one file cannot be uploaded at all, whatever room is left: it is empty, or a program. */
+export function fileRefusal(file: File): string | null {
+  const kind = fileTypeProblem(file.name);
+  if (kind) return kind;
+  if (file.size === 0) return "This file is empty (0 bytes), so there is nothing to upload.";
+  return null;
+}
+
+/** One sentence for the files left out, for the toast; each row in the upload list says its own reason. */
+export function refusedSentence(refused: Refused[]): string | null {
+  if (!refused.length) return null;
+  if (refused.length === 1) return `${refused[0]!.file.name}: ${refused[0]!.reason}`;
+  return `${refused.length} files were not uploaded. The upload list says why.`;
+}
+
+/** Files that fit the account's limits, the others with their reason, and a plain sentence about them. */
+export function checkUploads(files: File[], usage: FileUsage | undefined): { accepted: File[]; refused: Refused[]; problem: string | null } {
+  const refused: Refused[] = [];
+  let accepted = files.filter((file) => {
+    const reason = fileRefusal(file);
+    if (reason) refused.push({ file, reason });
+    return !reason;
+  });
+  let problem = refusedSentence(refused);
+  if (!usage) return { accepted, refused, problem };
+  const tooBig = accepted.filter((file) => file.size > usage.maxFileBytes);
   if (tooBig.length) {
+    accepted = accepted.filter((file) => file.size <= usage.maxFileBytes);
+    for (const file of tooBig) refused.push({ file, reason: `Over ${formatBytes(usage.maxFileBytes)}, the most one file can be here.` });
     problem =
       tooBig.length === 1
         ? `${tooBig[0]!.name} is ${formatBytes(tooBig[0]!.size)}. Each file can be up to ${formatBytes(usage.maxFileBytes)} here.`
@@ -34,6 +58,7 @@ export function checkUploads(files: File[], usage: FileUsage | undefined): { acc
   }
   if (usage.maxCount !== null && usage.count + accepted.length > usage.maxCount) {
     const room = Math.max(0, usage.maxCount - usage.count);
+    for (const file of accepted.slice(room)) refused.push({ file, reason: `No room: hosted accounts keep up to ${usage.maxCount} files.` });
     accepted = accepted.slice(0, room);
     problem = room
       ? `Only ${room} more ${room === 1 ? "file fits" : "files fit"}: hosted accounts keep up to ${usage.maxCount} files. ${ROOM}`
@@ -43,14 +68,17 @@ export function checkUploads(files: File[], usage: FileUsage | undefined): { acc
     let used = usage.bytes;
     const fits: File[] = [];
     for (const file of accepted) {
-      if (used + file.size > usage.maxBytes) continue;
+      if (used + file.size > usage.maxBytes) {
+        refused.push({ file, reason: `No room: hosted accounts keep ${formatBytes(usage.maxBytes)} of files.` });
+        continue;
+      }
       used += file.size;
       fits.push(file);
     }
     if (fits.length < accepted.length) problem = `That would pass the ${formatBytes(usage.maxBytes)} hosted accounts can keep (${formatBytes(usage.bytes)} used). ${ROOM}`;
     accepted = fits;
   }
-  return { accepted, problem };
+  return { accepted, refused, problem };
 }
 
 export type Duplicate = {
@@ -105,12 +133,18 @@ export function useFileUploads() {
   const counter = useRef(0);
 
   const update = (key: string, patch: Partial<UploadItem>) => setItems((rows) => rows.map((row) => (row.key === key ? { ...row, ...patch } : row)));
+  const showRefused = useCallback((refused: Refused[]) => {
+    if (!refused.length) return;
+    const failed = refused.map(({ file, reason }) => ({ key: `upload-${++counter.current}`, name: file.name, size: file.size, progress: 0, state: "failed" as const, error: reason }));
+    setItems((rows) => [...rows, ...failed]);
+  }, []);
 
   const send = useCallback(
     (files: File[], replacing: Array<{ file: File; match: FileRecord }> = []): void => {
       const usage = client.getQueryData<{ usage: FileUsage }>(FILE_QUERY.list(""))?.usage;
-      const { accepted, problem } = checkUploads(files, usage);
+      const { accepted, refused, problem } = checkUploads(files, usage);
       if (problem) emitToast(problem, { tone: "error" });
+      showRefused(refused);
       if (!accepted.length && !replacing.length) return;
       const batch = [
         ...accepted.map((file) => ({ file, match: null as FileRecord | null, key: `upload-${++counter.current}` })),
@@ -140,18 +174,26 @@ export function useFileUploads() {
         if (said) emitToast(said, { tone: "ok" });
       });
     },
-    [client],
+    [client, showRefused],
   );
 
   const start = useCallback(
-    (files: File[]): void => {
+    (picked: File[]): void => {
+      const refused = picked.flatMap((file) => {
+        const reason = fileRefusal(file);
+        return reason ? [{ file, reason }] : [];
+      });
+      const said = refusedSentence(refused);
+      if (said) emitToast(said, { tone: "error" });
+      showRefused(refused);
+      const files = picked.filter((file) => !refused.some((row) => row.file === file));
       if (!files.length) return;
       const existing = client.getQueryData<{ files: FileRecord[] }>(FILE_QUERY.list(""))?.files ?? [];
       void (async () => {
         // Only a file the size of one already here can have its content; the others are not read twice.
         const sizes = new Set(existing.map((file) => file.byteSize));
-        const picked = await Promise.all(files.map(async (file) => ({ file, name: file.name, size: file.size, sha256: sizes.has(file.size) || files.some((other) => other !== file && other.size === file.size) ? await sha256(file) : null })));
-        const { fresh, duplicates } = findDuplicates(picked, existing);
+        const hashed = await Promise.all(files.map(async (file) => ({ file, name: file.name, size: file.size, sha256: sizes.has(file.size) || files.some((other) => other !== file && other.size === file.size) ? await sha256(file) : null })));
+        const { fresh, duplicates } = findDuplicates(hashed, existing);
         const inBatch = duplicates.filter((row) => !row.match);
         if (inBatch.length) emitToast(inBatch.length === 1 ? `${inBatch[0]!.item.name} was picked twice, so it is added once.` : `${inBatch.length} files were picked twice, so each is added once.`);
         const known = duplicates.flatMap((row) => (row.match ? [{ file: row.item.file, match: row.match, same: row.same }] : []));
@@ -159,7 +201,7 @@ export function useFileUploads() {
         else send(fresh.map((row) => row.file));
       })();
     },
-    [client, send],
+    [client, send, showRefused],
   );
 
   /** The choice for every file in the review: skip them, add them as new files, or put a new version's bytes into the file with its name. */

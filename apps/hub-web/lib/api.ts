@@ -5,6 +5,7 @@ import type { LayoutDocument } from "@ensemble/shared-types/widgets";
 import { bindClient, currentExternalSignal, isRequestCancelled, RequestCancelledError, trackRequest, isPageUnloading } from "./fetch-cancel";
 import { resolveHubApi } from "./hub-origin";
 import type { ApplyFailure } from "./assistant-apply";
+import type { CollabBatch, CollabJoin, CollabSend } from "@/components/editor/collab";
 import { MODULE_DENIED } from "@ensemble/shared-types/modules";
 
 /** Direct hub-api origin. SSE uses this so the stream is not buffered by the Next rewrite. */
@@ -31,6 +32,8 @@ export class ApiError extends Error {
     public readonly status: number,
     /** The API's machine-readable reason, when it gave one (`HOST_ACCESS_DENIED`, `EMAIL_UNVERIFIED`…). */
     public readonly code: string | null = null,
+    /** The refusal's JSON body, for answers that carry more than a message (a live page's missed steps). */
+    public readonly data: unknown = null,
   ) {
     const off = status === 404 && message === MODULE_DENIED;
     super(off ? MODULE_OFF_MESSAGE : message);
@@ -50,7 +53,20 @@ function errorCode(text: string): string | null {
   }
 }
 
+function errorBody(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
 const OFFLINE = "Ensemble can't reach its server right now.";
+
+/** The request never got an answer from hub-api (no network, or the proxy could not connect). A 500 is not this. */
+export function isUnreachable(error: unknown): boolean {
+  return error instanceof ApiError && error.message === OFFLINE;
+}
 
 /** A JSON error body the server meant the person to read. */
 function serverErrorMessage(text: string): string | null {
@@ -124,6 +140,8 @@ function visitorId(): string {
 }
 /** Dispatched on `window` when the open share or public link turns out to be gone (a save or a ticket refused). */
 export const SHARE_GONE_EVENT = "ensemble:share-gone";
+/** Dispatched on `window` just before a refused session sends the tab to sign in, so open pages can keep unsent typing. */
+export const SIGNED_OUT_EVENT = "ensemble:signed-out";
 export function setOpenShare(id: string | null): void {
   openShare = id;
 }
@@ -184,12 +202,15 @@ export async function request<T>(path: string, init?: RequestInit & { json?: unk
   // On a public link there is no account to sign in to: a 401 means the link stopped working.
   if (response.status === 401 && typeof window !== "undefined" && !path.startsWith("/api/auth/") && !openLink) {
     const here = window.location.pathname;
-    if (!["/login", "/signup"].includes(here)) window.location.href = `/login?next=${encodeURIComponent(here + window.location.search)}`;
+    if (!["/login", "/signup"].includes(here)) {
+      window.dispatchEvent(new CustomEvent(SIGNED_OUT_EVENT));
+      window.location.href = `/login?next=${encodeURIComponent(here + window.location.search)}`;
+    }
   }
   if (!response.ok) {
     const text = await response.text();
     const message = serverErrorMessage(text);
-    if (message) throw new ApiError(message, response.status, errorCode(text));
+    if (message) throw new ApiError(message, response.status, errorCode(text), errorBody(text));
     if (unreachable(response.status, text)) throw new ApiError(OFFLINE, response.status);
     throw new ApiError(text.trim() || response.statusText, response.status);
   }
@@ -259,6 +280,8 @@ export type TaskRecord = {
 /** The file a page was converted from. */
 export type PageSourceFile = NonNullable<TaskPageContent["sourceFile"]>;
 
+const collabPath = (kind: "page" | "task", id: string) => (kind === "page" ? `/api/pages/${id}/collab` : `/api/tasks/${id}/page/collab`);
+
 export type PageRecord = {
   taskId: string;
   revision: number;
@@ -274,6 +297,9 @@ export type StandalonePageSummary = {
   id: string;
   title: string;
   updatedAt: string;
+  createdAt?: string;
+  /** Set on search results: the page's words around the match. */
+  snippet?: string;
 };
 
 export type StandalonePageRecord = {
@@ -1121,6 +1147,9 @@ export const api = bindClient({
       attention: number;
       canUndo: boolean;
       canRedo: boolean;
+      /** The action the top bar's Undo would reverse: the latest from the last few minutes. */
+      undoLabel?: string | null;
+      redoLabel?: string | null;
       onboardingComplete: boolean;
       verificationRequired?: boolean;
       highlights: string[];
@@ -1172,6 +1201,8 @@ export const api = bindClient({
   savePage: (id: string, data: { revision: number; content: unknown; notes?: string }) =>
     put<PageRecord>(`/api/tasks/${id}/page`, data),
   pages: () => get<{ pages: StandalonePageSummary[] }>("/api/pages"),
+  /** Pages whose title or text contains `query`, each with a snippet. */
+  searchPages: (query: string) => get<{ pages: StandalonePageSummary[] }>(`/api/pages${qs({ q: query })}`),
   deletePages: (pageIds: string[]) => post<{ deleted: number; undoEntryId: string | null }>("/api/pages/delete-many", { pageIds }),
   createPage: () => post<{ page: StandalonePageSummary }>("/api/pages", {}),
   convertPage: (kind: "page" | "task", id: string, revision: number) =>
@@ -1179,6 +1210,12 @@ export const api = bindClient({
   renamePage: (id: string, title: string) => patch<{ page: StandalonePageSummary }>(`/api/pages/${id}`, { title }),
   deletePage: (id: string) => del<void>(`/api/pages/${id}`),
   standalonePage: (id: string) => get<StandalonePageRecord>(`/api/pages/${id}`),
+  /** A page in Trash, to read before restoring it. The owner only. */
+  trashedPage: (id: string) => get<StandalonePageRecord & { deletedAt: string }>(`/api/pages/${id}?trashed=1`),
+  /** Live co-editing (`components/editor/collab.ts`): join, the steps since a version, and sending steps. */
+  collabJoin: (kind: "page" | "task", id: string, options: { stored?: boolean; start?: boolean } = {}) => get<CollabJoin>(`${collabPath(kind, id)}${qs({ stored: options.stored ? 1 : undefined, start: options.start ? 1 : undefined })}`),
+  collabSince: (kind: "page" | "task", id: string, epoch: string, version: number) => get<CollabBatch>(`${collabPath(kind, id)}${qs({ epoch, version })}`),
+  collabSend: (kind: "page" | "task", id: string, body: CollabSend) => request<CollabBatch>(collabPath(kind, id), { method: "POST", json: body, surviveNavigation: true }),
   saveStandalonePage: (id: string, data: { revision: number; content: unknown; notes?: string }) =>
     put<StandalonePageRecord>(`/api/pages/${id}`, data),
   undo: (entryId?: string) => post<{ label: string; entryId: string } | undefined>("/api/undo", entryId ? { entryId } : {}),
@@ -1465,7 +1502,11 @@ export const api = bindClient({
   /** Asks each provider with a key (or only those named) for its model list now. */
   refreshModels: (providers?: string[]) => post<ModelCatalog>("/api/models/refresh", providers?.length ? { providers } : {}),
   prompts: () => get<{ prompts: Array<{ id: string; title: string; when: string; purpose: string; body?: string }> }>("/api/prompts"),
-  deleted: () => get<{ items: Array<{ kind: string; id: string; label: string; deletedAt: string }> }>("/api/deleted"),
+  deleted: () =>
+    get<{
+      /** `detail`: for a comment, the page it was on. `href`: where the item opens once restored. */
+      items: Array<{ kind: string; id: string; label: string; detail?: string | null; href?: string | null; deletedAt: string }>;
+    }>("/api/deleted"),
   restoreDeleted: (data: { kind?: string; id?: string } = {}) => post<{ restored: number }>("/api/deleted/restore", data),
   emptyDeleted: () => post<{ removed: number }>("/api/deleted/empty"),
   deleteMyData: (scope: "context" | "everything", confirm: string) => post("/api/data/delete", { scope, confirm }),
@@ -1808,8 +1849,8 @@ export type PresenceEntry = {
   resource: { kind: ShareKind; id: string } | null;
   cursor: { x: number; y: number } | null;
   viewport: { x: number; y: number; zoom: number } | null;
-  /** Their text cursor on a page: positions in their copy of the document. */
-  caret?: { anchor: number; head: number } | null;
+  /** Their text cursor on a page: positions in the live document at `version`. */
+  caret?: { anchor: number; head: number; version?: number } | null;
   typing: boolean;
   at: number;
   gone?: boolean;
@@ -1834,7 +1875,7 @@ export type PresenceUpdate = {
   resource?: { kind: ShareKind; id: string } | null;
   cursor?: { x: number; y: number } | null;
   viewport?: { x: number; y: number; zoom: number } | null;
-  caret?: { anchor: number; head: number } | null;
+  caret?: { anchor: number; head: number; version?: number } | null;
   typing?: boolean;
   leave?: boolean;
 };
@@ -1880,7 +1921,8 @@ export type DeskLive = {
   deliverables: Array<{ id: string; title: string; due: string | null; status: string }>;
   people: Array<{ id: string; name: string; role: string | null; capacityHours: number | null; oneOnOneDays: number | null; lastInteraction: string | null }>;
   meetings: Array<{ id: string; title: string }>;
-  artifacts: Array<{ id: string; title: string; kind: string; url: string | null; ts: string; source: string }>;
+  /** `format` and `fileType` say what a file is: an uploaded file's extension, or the media type or type name its app gave. */
+  artifacts: Array<{ id: string; title: string; kind: string; url: string | null; ts: string; source: string; format?: string | null; fileType?: string | null }>;
   reminders: Array<{ id: string; title: string; dueDate: string }>;
   slots: Array<{ id: string; title: string; weekday: number; startMin: number; endMin: number; course: string }>;
   holidays: Array<{ id: string; day: string; name: string }>;

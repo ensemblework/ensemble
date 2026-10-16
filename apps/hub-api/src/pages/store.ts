@@ -5,16 +5,16 @@ import {
   PageDocument,
   PageMention,
   SaveTaskPage,
-  documentMentions,
   type PageNode,
   restoreMentionLinks,
   type TaskPageContent,
 } from "@ensemble/shared-types";
 import { markdownToNodes, pageSearchText } from "./markdown.js";
+import { storable } from "./content.js";
 import { lockUserTransaction } from "../lib/user-lock.js";
 import { recordUndoInTransaction, withUndoGroup } from "../lib/undo.js";
 import { createTask } from "../services/tasks.js";
-import { currentScope } from "../sharing/context.js";
+import { currentScope, isGuestIn } from "../sharing/context.js";
 
 export class TaskPageError extends Error {
   constructor(
@@ -94,8 +94,18 @@ export async function getTaskPage(prisma: PrismaClient, userId: string, taskId: 
   );
 }
 
+/** The mentions to index. One the index cannot hold (an unknown kind) is left out rather than failing the save. */
 function collectMentions(doc: PageDocument): Array<{ kind: string; entityId: string; label: string }> {
-  return documentMentions(doc).map((mention) => ({ kind: mention.kind, entityId: mention.id, label: mention.label }));
+  const found = new Map<string, { kind: string; entityId: string; label: string }>();
+  const walk = (node: PageNode) => {
+    if (node.type === "mention" && node.attrs) {
+      const mention = PageMention.safeParse({ kind: String(node.attrs.kind ?? "people"), id: String(node.attrs.id ?? ""), label: String(node.attrs.label ?? "") });
+      if (mention.success && mention.data.id) found.set(JSON.stringify([mention.data.kind, mention.data.id]), { kind: mention.data.kind, entityId: mention.data.id, label: mention.data.label });
+    }
+    node.content?.forEach(walk);
+  };
+  doc.content.forEach(walk);
+  return [...found.values()];
 }
 
 export async function saveTaskPage(
@@ -105,7 +115,7 @@ export async function saveTaskPage(
   input: unknown,
 ): Promise<TaskPageContent> {
   const body = SaveTaskPage.parse(input);
-  const content = restoreMentionLinks(body.content);
+  const content = storable(restoreMentionLinks(body.content));
   return prisma.$transaction(
     async (db) => {
       const task = await taskForPage(db, userId, taskId, true);
@@ -153,6 +163,9 @@ export type StandalonePageSummary = {
   id: string;
   title: string;
   updatedAt: string;
+  createdAt?: string;
+  /** With a search: the words around the first match in the page's text. */
+  snippet?: string;
 };
 
 export type StandalonePageContent = {
@@ -204,13 +217,36 @@ async function ownedStandalone(db: Db, userId: string, id: string, lock = false)
   return db.taskPage.findFirst({ where: { id, userId, taskId: null, deletedAt: null }, include: PAGE_INCLUDE });
 }
 
-export async function listStandalonePages(prisma: PrismaClient, userId: string): Promise<StandalonePageSummary[]> {
+export async function listStandalonePages(prisma: PrismaClient, userId: string, query = ""): Promise<StandalonePageSummary[]> {
+  const words = query.trim().slice(0, 200);
   const rows = await prisma.taskPage.findMany({
-    where: { userId, taskId: null, deletedAt: null },
+    where: { userId, taskId: null, deletedAt: null, ...(words ? { searchText: { contains: words, mode: "insensitive" as const } } : {}) },
     orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
-    select: { id: true, title: true, updatedAt: true, parentId: true },
+    select: { id: true, title: true, updatedAt: true, createdAt: true, parentId: true, ...(words ? { searchText: true } : {}) },
+    ...(words ? { take: 200 } : {}),
   });
-  return rows.map((row) => ({ id: row.id, parentId: row.parentId, title: row.title || "Untitled", updatedAt: row.updatedAt.toISOString() }));
+  return rows.map((row) => ({
+    id: row.id,
+    parentId: row.parentId,
+    title: row.title || "Untitled",
+    updatedAt: row.updatedAt.toISOString(),
+    createdAt: row.createdAt.toISOString(),
+    ...(words ? { snippet: searchSnippet((row as { searchText?: string | null }).searchText ?? "", row.title, words) } : {}),
+  }));
+}
+
+/** About 120 characters of the page's text around the first match, title left out. */
+export function searchSnippet(text: string, title: string, query: string): string {
+  const body = text.startsWith(title.trim()) ? text.slice(title.trim().length) : text;
+  const flat = body.replace(/\s+/g, " ").trim();
+  const at = flat.toLowerCase().indexOf(query.toLowerCase());
+  if (at < 0) return "";
+  let start = Math.max(0, at - 50);
+  let end = Math.min(flat.length, at + query.length + 70);
+  // Whole words only at the cut ends.
+  if (start > 0) start = Math.min(at, flat.indexOf(" ", start) + 1 || at);
+  if (end < flat.length) end = Math.max(at + query.length, flat.lastIndexOf(" ", end));
+  return `${start > 0 ? "…" : ""}${flat.slice(start, end).trim()}${end < flat.length ? "…" : ""}`;
 }
 
 /** A new note: empty, or made from a file (`sourceFileId`) or from text with its title and content. */
@@ -220,7 +256,7 @@ export async function createStandalonePage(
   from: { title: string; content: PageDocument; sourceFileId: string | null; externalSource?: string; externalId?: string } | null = null,
 ): Promise<StandalonePageSummary> {
   const title = from?.title.trim() || "Untitled";
-  const content = from ? restoreMentionLinks(PageDocument.parse(from.content)) : EMPTY_PAGE;
+  const content = from ? storable(restoreMentionLinks(PageDocument.parse(from.content))) : EMPTY_PAGE;
   const mentions = from ? collectMentions(content) : [];
   const page = await prisma.taskPage.create({
     data: {
@@ -241,10 +277,24 @@ export async function createStandalonePage(
   return { id: page.id, parentId: page.parentId, title: page.title, updatedAt: page.updatedAt.toISOString() };
 }
 
-export async function getStandalonePage(prisma: PrismaClient, userId: string, id: string): Promise<StandalonePageContent> {
+/**
+ * A page to open. A page in Trash answers 404 `PAGE_IN_TRASH` to the space owner, so the
+ * Hub can offer Restore; with `trashed`, the owner gets it to read, with `deletedAt` set.
+ */
+export async function getStandalonePage(
+  prisma: PrismaClient,
+  userId: string,
+  id: string,
+  options: { trashed?: boolean } = {},
+): Promise<StandalonePageContent & { deletedAt?: string }> {
   const page = await ownedStandalone(prisma, userId, id);
-  if (!page) throw new TaskPageError("PAGE_NOT_FOUND", "Page not found.", 404);
-  return standaloneDto(page);
+  if (page) return standaloneDto(page);
+  const binned = isGuestIn(userId)
+    ? null
+    : await prisma.taskPage.findFirst({ where: { id, userId, taskId: null, deletedAt: { not: null } }, include: PAGE_INCLUDE });
+  if (binned?.deletedAt && options.trashed) return { ...standaloneDto(binned), deletedAt: binned.deletedAt.toISOString() };
+  if (binned) throw new TaskPageError("PAGE_IN_TRASH", "This page is in Trash.", 404);
+  throw new TaskPageError("PAGE_NOT_FOUND", "Page not found.", 404);
 }
 
 export async function renameStandalonePage(
@@ -275,7 +325,7 @@ export async function saveStandalonePage(
   input: unknown,
 ): Promise<StandalonePageContent> {
   const body = SaveTaskPage.parse(input);
-  const content = restoreMentionLinks(body.content);
+  const content = storable(restoreMentionLinks(body.content));
   return prisma.$transaction(async (db) => {
     const existing = await ownedStandalone(db, userId, id, true);
     if (!existing) throw new TaskPageError("PAGE_NOT_FOUND", "Page not found.", 404);
@@ -391,7 +441,7 @@ export async function writePageContent(
   const wanted = next({ title: currentTitle, taskId: task?.id ?? null, content: found.page?.content ? PageDocument.parse(found.page.content) : null, notes: notesNow });
   const page = found.page ?? (task ? await db.taskPage.create({ data: { userId, taskId: task.id, notesSnapshot: task.notes, searchText: pageSearchText(task.title, null, task.notes) }, include: PAGE_INCLUDE }) : null);
   if (!page) throw new TaskPageError("PAGE_NOT_FOUND", "Page not found.", 404);
-  const content = restoreMentionLinks(PageDocument.parse(wanted.content));
+  const content = storable(restoreMentionLinks(PageDocument.parse(wanted.content)));
   const title = task ? task.title : wanted.title?.trim() || currentTitle;
   const updated = await db.taskPage.update({
     where: { id: page.id },
@@ -507,6 +557,91 @@ export async function convertPage(
       data: { targetKind, targetId },
     });
     return { kind: targetKind, id: targetId, pageId: page?.id ?? targetId };
+  });
+}
+
+export type CollabTarget = { pageId: string } | { taskId: string };
+/**
+ * A page's stored copy for live editing (`collab.ts`). `fallback` is shown while `content` is null.
+ * `trashed`: the page (or its task) is in Trash.
+ */
+export type CollabRow = {
+  revision: number;
+  content: unknown;
+  fallback: PageDocument;
+  trashed: boolean;
+  /** The live authority (epoch, version) that wrote `content`, while no other write came since. */
+  marker?: { epoch: string; version: number };
+};
+
+/** A task's plain notes as paragraphs, the way its page shows them before it is first written. */
+export function notesDoc(notes: string): PageDocument {
+  return { type: "doc", content: notes.split("\n").map((line) => (line ? { type: "paragraph", content: [{ type: "text", text: line }] } : { type: "paragraph" })) };
+}
+
+/** Also finds pages and tasks in Trash, so typing that was not yet written back still is. */
+async function collabRow(db: Db, userId: string, target: CollabTarget, lock: boolean) {
+  if ("taskId" in target) {
+    if (lock) await db.$queryRaw`SELECT id FROM tasks WHERE id = ${target.taskId} AND user_id = ${userId} FOR UPDATE`;
+    const task = await db.task.findFirst({ where: { id: target.taskId, userId } });
+    if (!task) return null;
+    if (lock) await db.$queryRaw`SELECT id FROM task_pages WHERE user_id = ${userId} AND task_id = ${task.id} FOR UPDATE`;
+    const page = await readPage(db, userId, task.id);
+    const row: CollabRow = { revision: page?.revision ?? 0, content: page?.content ?? null, fallback: notesDoc(task.notes), trashed: task.deletedAt !== null, ...(page ? await markerOf(db, page.id, page.revision) : {}) };
+    return { task, page, row };
+  }
+  if (lock) await db.$queryRaw`SELECT id FROM task_pages WHERE id = ${target.pageId} AND user_id = ${userId} AND task_id IS NULL FOR UPDATE`;
+  const page = await db.taskPage.findFirst({ where: { id: target.pageId, userId, taskId: null }, include: PAGE_INCLUDE });
+  if (!page) return null;
+  const row: CollabRow = { revision: page.revision, content: page.content, fallback: EMPTY_PAGE, trashed: page.deletedAt !== null, ...(await markerOf(db, page.id, page.revision)) };
+  return { task: null, page, row };
+}
+
+/** The authority marker, while the page is still at the revision it wrote. */
+async function markerOf(db: Db, pageId: string, revision: number): Promise<{ marker?: CollabRow["marker"] }> {
+  const [row] = await db.$queryRaw<Array<{ epoch: string | null; version: number | null; revision: number | null }>>`
+    SELECT collab_epoch AS epoch, collab_version AS version, collab_revision AS revision FROM task_pages WHERE id = ${pageId}
+  `;
+  return row?.epoch && row.version !== null && row.revision === revision ? { marker: { epoch: row.epoch, version: row.version } } : {};
+}
+
+export async function readCollabPage(prisma: PrismaClient, userId: string, target: CollabTarget): Promise<CollabRow | null> {
+  return (await collabRow(prisma, userId, target, false))?.row ?? null;
+}
+
+/**
+ * The live document's write-back. Locks the page (and its task) like the other writers, shows the
+ * stored copy to `decide`, and saves what it returns as the next revision with its mention index
+ * and search text, into a page in Trash too (it stays there). No undo entry: typing is undone in
+ * the editor.
+ */
+export async function writeCollabPage(
+  prisma: PrismaClient,
+  userId: string,
+  target: CollabTarget,
+  decide: (row: CollabRow) => { content: PageDocument; marker: { epoch: string; version: number } } | null,
+): Promise<{ revision: number; wrote: boolean } | null> {
+  return prisma.$transaction(async (db) => {
+    const found = await collabRow(db, userId, target, true);
+    if (!found) return null;
+    const next = decide(found.row);
+    if (!next) return { revision: found.row.revision, wrote: false };
+    const { marker } = next;
+    const content = storable(next.content);
+    const { task, page } = found;
+    const revision = found.row.revision + 1;
+    const searchText = task ? pageSearchText(page?.title || task.title, content, task.notes) : pageSearchText(page!.title, content, page!.notesSnapshot);
+    // A page in Trash keeps its time, which Undo of the delete checks.
+    const saved = page
+      ? await db.taskPage.update({ where: { id: page.id }, data: { revision, content: content as Prisma.InputJsonValue, searchText, ...(found.row.trashed ? { updatedAt: page.updatedAt } : {}) } })
+      : await db.taskPage.create({ data: { userId, taskId: task!.id, revision, content: content as Prisma.InputJsonValue, notesSnapshot: task!.notes, searchText } });
+    await db.taskPageMention.deleteMany({ where: { pageId: saved.id } });
+    const mentions = collectMentions(content);
+    if (mentions.length) {
+      await db.taskPageMention.createMany({ data: mentions.map((mention) => ({ pageId: saved.id, kind: mention.kind, entityId: mention.entityId, label: mention.label })) });
+    }
+    await db.$executeRaw`UPDATE task_pages SET collab_epoch = ${marker.epoch}, collab_version = ${marker.version}, collab_revision = ${revision} WHERE id = ${saved.id}`;
+    return { revision, wrote: true };
   });
 }
 

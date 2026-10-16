@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useState, type ComponentType, type ReactNode } from "react";
 import { Tabs } from "@/components/ui";
 import { WidgetShell } from "@/components/widgets/shell";
@@ -52,7 +52,6 @@ export function WidgetLayout({ initialLayout }: { initialLayout: LayoutPayload |
     };
   }, []);
   const params = useSearchParams();
-  const router = useRouter();
   const requested = params.get("tab");
   const overview = !requested || requested === "overview";
   const tab = (TABS.find((row) => row.id === requested)?.id ?? "overview") as TabId;
@@ -67,7 +66,7 @@ export function WidgetLayout({ initialLayout }: { initialLayout: LayoutPayload |
         panelId="context-panel"
         tabs={[...TABS]}
         value={overview ? "overview" : tab}
-        onChange={(value) => router.replace(value === "overview" ? "/context?view=widgets" : `/context?view=widgets&tab=${value}`, { scroll: false })}
+        onChange={(value) => window.history.pushState(null, "", value === "overview" ? "/context?view=widgets" : `/context?view=widgets&tab=${value}`)}
       />
     </div>
   );

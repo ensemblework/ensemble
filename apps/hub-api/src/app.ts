@@ -8,8 +8,10 @@ import { env } from "./config.js";
 import "./types.js";
 import { enforceRouteModule } from "./lib/module-gate.js";
 import { identify } from "./lib/auth.js";
-import { keysFor } from "./sharing/context.js";
-import { scopeHook, sharingGate } from "./sharing/gate.js";
+import { keysFor, runInScope } from "./sharing/context.js";
+import { scopeHook, scopeOf, sharingGate } from "./sharing/gate.js";
+import { recordedUndo } from "./lib/undo.js";
+import { sseHub } from "./lib/sse.js";
 import { sharingRoutes } from "./sharing/routes.js";
 import { enforceHostedRequest, requireVerifiedUser } from "./lib/hosted-access.js";
 import { isPublicAuthPath } from "./lib/auth-public.js";
@@ -26,6 +28,7 @@ import { connectorRoutes } from "./routes/connectors.js";
 import { decisionRoutes } from "./routes/decisions.js";
 import { taskRoutes } from "./routes/tasks.js";
 import { pageRoutes } from "./routes/pages.js";
+import { collabRoutes } from "./routes/collab.js";
 import { miscRoutes } from "./routes/misc.js";
 import { assistantRoutes } from "./routes/assistant.js";
 import { internalRoutes } from "./routes/internal.js";
@@ -181,6 +184,12 @@ export async function buildApp(options: BuildAppOptions = {}) {
   });
   // Must follow identity: every later hook and the handler run inside this request's scope.
   app.addHook("onRequest", scopeHook);
+  // After the response, when its transaction has committed: the person's tabs read their Undo
+  // label again, so it names this action rather than an older one.
+  app.addHook("onResponse", async (request) => {
+    const scope = scopeOf(request);
+    if (scope && recordedUndo(scope)) runInScope(scope, () => sseHub.publish(scope.spaceId, { event: "undo.recorded", data: {} }));
+  });
 
   app.addHook("preHandler", sharingGate);
   app.addHook("preHandler", enforceRouteModule);
@@ -223,6 +232,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     miscRoutes,
     taskRoutes,
     pageRoutes,
+    collabRoutes,
     boardRoutes,
     assistantRoutes,
     internalRoutes,

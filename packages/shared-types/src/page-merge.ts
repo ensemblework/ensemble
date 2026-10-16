@@ -1,14 +1,15 @@
 /**
  * Three-way merge of two edits to one page (ProseMirror JSON): the version both started from
- * (`base`, the last one this editor saved or loaded), the editor's own (`mine`), and what
- * someone else saved since (`theirs`).
+ * (`base`), one side's edit (`mine`) and the other's (`theirs`). The collab authority in hub-api
+ * uses it when a write from elsewhere cannot be mapped through the steps typed meanwhile, and the
+ * editor when it re-proposes unsent typing after the authority restarted or a session expired.
  *
  * Edits in different places all land. Text is compared word by word, then letter by letter
  * where both people changed the same words. Two people typing at the same spot both keep
  * their text (theirs first). Where both rewrote the same words, or one deleted a block the
  * other edited, nothing is dropped: both versions, or the edited one, stay.
  */
-import type { PageDocument, PageNode } from "@ensemble/shared-types";
+import type { PageDocument, PageNode } from "./domain.js";
 
 type Mark = NonNullable<PageNode["marks"]>[number];
 
@@ -18,7 +19,7 @@ export type MergeResult = {
   kept: number;
 };
 
-type Context = { deep: boolean; kept: number };
+type Context = { deep: boolean; kept: number; union: boolean };
 
 const EMPTYABLE = new Set(["attrs", "content", "marks"]);
 
@@ -320,6 +321,173 @@ function both(theirs: Unit[], mine: Unit[]): Unit[] {
 
 const oneWord = (list: Unit[]) => list.length === 1 && /[\p{L}\p{N}_]/u.test(list[0]!.text ?? "");
 
+const isSpace = (unit: Unit | undefined) => unit?.text !== undefined && /^\s+$/.test(unit.text);
+const isWord = (unit: Unit) => unit.text === undefined || /[\p{L}\p{N}_]/u.test(unit.text);
+
+/**
+ * Words with the punctuation right after them and the spaces after that ("Hello, "), so a union
+ * never glues one person's word to another's. A group is named by its words alone: "Hello, "
+ * and "Hello " are the same word, one with a comma typed after it.
+ */
+function wordGroups(list: Unit[]): Array<{ units: Unit[]; key: string }> {
+  const groups: Unit[][] = [];
+  for (const unit of list) {
+    const last = groups[groups.length - 1];
+    const trailing = isSpace(unit) || (!isWord(unit) && last !== undefined && !isSpace(last[last.length - 1]));
+    if (last && trailing) last.push(unit);
+    else groups.push([unit]);
+  }
+  return groups.map((units) => {
+    const words = units.filter(isWord);
+    const marks = units.filter((unit) => !isSpace(unit));
+    return { units, key: (words.length ? words : marks.length ? marks : units).map(unitKey).join("\u0001") };
+  });
+}
+
+/** Which item of the second list each item of the first is, or -1: base to mine, base to theirs, mine to theirs. */
+type Pairs = { baseToMine: number[]; baseToTheirs: number[]; mineToTheirs: number[] };
+
+/**
+ * `mine` proposed again onto `theirs`, both edits of `base`, where `theirs` may already hold some
+ * of `mine` (typing re-proposed after the server started over). Items are paired by `pairs`.
+ * What mine added that theirs lacks is added, before the next item both have (theirs first);
+ * what mine deleted and theirs left unchanged goes; what theirs deleted stays deleted unless
+ * mine changed it (`same`: unchanged); an item both have is kept once (`both` merges its two
+ * versions).
+ */
+function unionMerge<T>(
+  base: T[],
+  mine: T[],
+  theirs: T[],
+  { baseToMine, baseToTheirs, mineToTheirs }: Pairs,
+  same: (a: T, b: T) => boolean,
+  both: (base: T | null, mine: T, theirs: T) => T[],
+): Array<{ item: T; mine: boolean }> {
+  const invert = (map: number[], length: number) => {
+    const out = new Array<number>(length).fill(-1);
+    map.forEach((to, from) => {
+      if (to >= 0) out[to] = from;
+    });
+    return out;
+  };
+  const mineBase = invert(baseToMine, mine.length);
+  const theirsBase = invert(baseToTheirs, theirs.length);
+  const theirsMine = invert(mineToTheirs, theirs.length);
+  const before: T[][] = Array.from({ length: theirs.length + 1 }, () => []);
+  let pending: T[] = [];
+  mine.forEach((item, j) => {
+    const k = mineToTheirs[j]!;
+    if (k >= 0) {
+      before[k]!.push(...pending);
+      pending = [];
+      return;
+    }
+    const i = mineBase[j]!;
+    // From the base and not in theirs: theirs deleted it, which stands unless mine changed it.
+    if (i >= 0 && (baseToTheirs[i]! >= 0 || same(base[i]!, item))) return;
+    pending.push(item);
+  });
+  before[theirs.length]!.push(...pending);
+  const out: Array<{ item: T; mine: boolean }> = [];
+  theirs.forEach((item, k) => {
+    for (const added of before[k]!) out.push({ item: added, mine: true });
+    const j = theirsMine[k]!;
+    const i = theirsBase[k]!;
+    if (j < 0) {
+      // Mine deleted it and theirs left it as it was: it goes.
+      if (!(i >= 0 && baseToMine[i]! < 0 && same(base[i]!, item))) out.push({ item, mine: false });
+      return;
+    }
+    const from = mineBase[j]! >= 0 ? base[mineBase[j]!]! : i >= 0 ? base[i]! : null;
+    for (const merged of both(from, mine[j]!, item)) out.push({ item: merged, mine: false });
+  });
+  for (const added of before[theirs.length]!) out.push({ item: added, mine: true });
+  return out;
+}
+
+/**
+ * Mine to theirs for union: items both kept from the base are paired through it; between two
+ * such anchors, items new on both sides are paired only as `pairNew` says (identical ones), never
+ * by a word or two they happen to share, so nothing is interleaved.
+ */
+function throughBase(baseToMine: number[], baseToTheirs: number[], mineLength: number, theirsLength: number, pairNew: (mineNew: number[], theirsNew: number[]) => Array<[number, number]>): number[] {
+  const mineToTheirs = new Array<number>(mineLength).fill(-1);
+  const fromBase = (map: number[], length: number) => {
+    const out = new Array<boolean>(length).fill(false);
+    for (const to of map) if (to >= 0) out[to] = true;
+    return out;
+  };
+  const [mineOld, theirsOld] = [fromBase(baseToMine, mineLength), fromBase(baseToTheirs, theirsLength)];
+  const anchors: Array<[number, number]> = [];
+  baseToMine.forEach((j, i) => {
+    const k = baseToTheirs[i]!;
+    if (j >= 0 && k >= 0) {
+      mineToTheirs[j] = k;
+      anchors.push([j, k]);
+    }
+  });
+  let [fromJ, fromK] = [0, 0];
+  for (const [j, k] of [...anchors, [mineLength, theirsLength] as [number, number]]) {
+    const mineNew: number[] = [];
+    const theirsNew: number[] = [];
+    for (let at = fromJ; at < j; at += 1) if (!mineOld[at]) mineNew.push(at);
+    for (let at = fromK; at < k; at += 1) if (!theirsOld[at]) theirsNew.push(at);
+    if (mineNew.length && theirsNew.length) for (const [mj, tk] of pairNew(mineNew, theirsNew)) mineToTheirs[mj] = tk;
+    [fromJ, fromK] = [j + 1, k + 1];
+  }
+  return mineToTheirs;
+}
+
+/** Runs of consecutive indices. */
+function runs(indices: number[]): number[][] {
+  const out: number[][] = [];
+  for (const index of indices) {
+    const last = out[out.length - 1];
+    if (last && last[last.length - 1] === index - 1) last.push(index);
+    else out.push([index]);
+  }
+  return out;
+}
+
+const groupText = (group: Unit[]) => group.map((unit) => (unit.text === undefined ? "x" : unit.text)).join("");
+
+/**
+ * Union of a paragraph's text, word by word. Words typed on both sides at the same place are
+ * one only when the whole run of them is the same ("Hello world" both times, a comma aside);
+ * otherwise both runs stay whole, theirs first. A word followed by another person's word gets
+ * a space between them, so "there" and "world" never come out as "thereworld".
+ */
+function unionText(base: Unit[], mine: Unit[], theirs: Unit[]): Unit[] {
+  const [b, m, t] = [base, mine, theirs].map(wordGroups);
+  const pair = (x: typeof b, y: typeof b) => alignByKey(x!.map((group) => group.key), y!.map((group) => group.key));
+  const [baseToMine, baseToTheirs] = [pair(b, m), pair(b, t)];
+  const sameRun = (x: number[], y: number[]) => x.length === y.length && x.every((j, at) => m![j]!.key === t![y[at]!]!.key);
+  const mineToTheirs = throughBase(baseToMine, baseToTheirs, m!.length, t!.length, (mineNew, theirsNew) => {
+    const out: Array<[number, number]> = [];
+    const theirsRuns = runs(theirsNew);
+    let next = 0;
+    for (const run of runs(mineNew)) {
+      const found = theirsRuns.findIndex((other, at) => at >= next && sameRun(run, other));
+      if (found < 0) continue;
+      run.forEach((j, at) => out.push([j, theirsRuns[found]![at]!]));
+      next = found + 1;
+    }
+    return out;
+  });
+  const pairs = { baseToMine, baseToTheirs, mineToTheirs };
+  const full = (group: { units: Unit[] }) => group.units.map(unitKey).join("\u0001");
+  // One word both have: mine's version (a comma typed after it) where theirs left it as it was.
+  const both = (from: (typeof b)[number] | null, mineGroup: (typeof b)[number], theirsGroup: (typeof b)[number]) => [from && full(from) === full(theirsGroup) ? mineGroup : theirsGroup];
+  const merged = unionMerge(b!, m!, t!, pairs, (x, y) => x.key === y.key, both);
+  const out: Unit[] = [];
+  merged.forEach(({ item, mine: fromMine }, at) => {
+    const previous = merged[at - 1];
+    if (previous && previous.mine !== fromMine && /[\p{L}\p{N}_.,;:!?)\]}]$/u.test(groupText(previous.item.units)) && /^[\p{L}\p{N}_]/u.test(groupText(item.units))) out.push(SPACE);
+    out.push(...item.units);
+  });
+  return out;
+}
+
 function textConflict(base: Unit[], mine: Unit[], theirs: Unit[], context: Context): Unit[] {
   if (!base.length) return both(theirs, mine);
   // Both changed one word: merge its letters when they changed different ones ("recieve" made
@@ -333,6 +501,7 @@ function textConflict(base: Unit[], mine: Unit[], theirs: Unit[], context: Conte
 }
 
 function mergeText(base: PageNode[], mine: PageNode[], theirs: PageNode[], context: Context): PageNode[] {
+  if (context.union) return toNodes(unionText(toUnits(base, words), toUnits(mine, words), toUnits(theirs, words)));
   const merged = merge3(toUnits(base, words), toUnits(mine, words), toUnits(theirs, words), unitKey, (b, m, t) => textConflict(b, m, t, context))!;
   return toNodes(merged);
 }
@@ -449,17 +618,73 @@ function blockConflict(base: PageNode[], mine: PageNode[], theirs: PageNode[], c
   return out;
 }
 
+/** A block's words (letters and numbers), counted, for pairing it with its edited self. */
+function wordCounts(node: PageNode): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const word of textOf(node).match(/[\p{L}\p{N}_]+/gu) ?? []) counts.set(word, (counts.get(word) ?? 0) + 1);
+  return counts;
+}
+
+/**
+ * How surely `edited` is the base block `base` after an edit, for union: 12 identical; 2 to 11
+ * the same kind keeping at least half of the base block's words (wherever they are: both sides
+ * may have typed at either end; an empty block counts as kept), more for more alike; 0 else.
+ */
+function kinship(base: PageNode, edited: PageNode, wa: Map<string, number>, wb: Map<string, number>): number {
+  if (canonical(base) === canonical(edited)) return 12;
+  if (base.type !== edited.type) return 0;
+  let total = 0;
+  let other = 0;
+  let shared = 0;
+  for (const count of wa.values()) total += count;
+  for (const [word, count] of wb) {
+    other += count;
+    shared += Math.min(count, wa.get(word) ?? 0);
+  }
+  if (!total) return 2;
+  return shared / total >= 0.5 ? 2 + Math.floor((9 * shared) / Math.max(total, other)) : 0;
+}
+
+/**
+ * Union of a run of blocks. A block mine and theirs both have from the base (as it was, or
+ * edited: sharing enough of its words) is paired through it, and merged inside when both
+ * changed it. Blocks new on both sides are one only when identical; otherwise both stay,
+ * theirs first.
+ */
+function unionBlocks(base: PageNode[], mine: PageNode[], theirs: PageNode[], context: Context): PageNode[] {
+  const words = (list: PageNode[]) => list.map(wordCounts);
+  const [wb, wm, wt] = [words(base), words(mine), words(theirs)];
+  const pair = (a: PageNode[], wa: Array<Map<string, number>>, a0: number, a1: number, b: PageNode[], wbb: Array<Map<string, number>>, b0: number, b1: number) =>
+    align(a1 - a0, b1 - b0, (i, j) => kinship(a[a0 + i]!, b[b0 + j]!, wa[a0 + i]!, wbb[b0 + j]!), 12, a.slice(a0, a1).map(gist), b.slice(b0, b1).map(gist));
+  const baseToMine = pair(base, wb, 0, base.length, mine, wm, 0, mine.length);
+  const baseToTheirs = pair(base, wb, 0, base.length, theirs, wt, 0, theirs.length);
+  const mineToTheirs = throughBase(baseToMine, baseToTheirs, mine.length, theirs.length, (mineNew, theirsNew) => {
+    const map = alignByKey(
+      mineNew.map((j) => canonical(mine[j])),
+      theirsNew.map((k) => canonical(theirs[k])),
+    );
+    return mineNew.flatMap((j, at) => (map[at]! >= 0 ? [[j, theirsNew[map[at]!]!] as [number, number]] : []));
+  });
+  const same = (a: PageNode, b: PageNode) => canonical(a) === canonical(b);
+  const both = (from: PageNode | null, mineNode: PageNode, theirsNode: PageNode) => mergeNode(from ?? { type: mineNode.type }, mineNode, theirsNode, context);
+  return unionMerge(base, mine, theirs, { baseToMine, baseToTheirs, mineToTheirs }, same, both).map(({ item }) => item);
+}
+
 function mergeBlocks(base: PageNode[], mine: PageNode[], theirs: PageNode[], context: Context): PageNode[] {
+  if (context.union) return unionBlocks(base, mine, theirs, context);
   return merge3(base, mine, theirs, canonical, (b, m, t) => blockConflict(b, m, t, context))!;
 }
 
 /**
  * Merges `mine` and `theirs`, both edited from `base`. `deep: false` never merges inside a
  * block: a block both changed is kept twice, theirs then mine. Use it when the deep result does
- * not fit the editor's schema (for example two summaries in one toggle).
+ * not fit the editor's schema (for example two summaries in one toggle). `union`: for when
+ * `theirs` may already hold some of `mine` (typing re-proposed after the server started over):
+ * words and blocks mine added are added only where theirs lacks them, what mine deleted goes,
+ * and what theirs deleted stays deleted (see `unionMerge`).
  */
-export function mergeDocs(base: PageDocument, mine: PageDocument, theirs: PageDocument, options: { deep?: boolean } = {}): MergeResult {
-  const context: Context = { deep: options.deep ?? true, kept: 0 };
+export function mergeDocs(base: PageDocument, mine: PageDocument, theirs: PageDocument, options: { deep?: boolean; union?: boolean } = {}): MergeResult {
+  const context: Context = { deep: options.deep ?? true, kept: 0, union: options.union ?? false };
   const content = mergeBlocks(base.content ?? [], mine.content ?? [], theirs.content ?? [], context);
   return { doc: { type: "doc", content: content.length ? content : [{ type: "paragraph" }] }, kept: context.kept };
 }

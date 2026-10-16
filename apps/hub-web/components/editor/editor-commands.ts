@@ -4,7 +4,7 @@
  * `ensemble://` links with exactly the same rules the editor writes them with.
  */
 import type { ChainedCommands, Editor, Range } from "@tiptap/core";
-import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import type { Node as ProseMirrorNode, ResolvedPos } from "@tiptap/pm/model";
 import type { Transaction } from "@tiptap/pm/state";
 import { liftTarget } from "@tiptap/pm/transform";
 import {
@@ -121,7 +121,17 @@ function convert(chain: ChainedCommands, command: BlockCommandId): boolean {
   }
 }
 
+/** Whether a position is inside a table cell. */
+export function inTable($pos: ResolvedPos): boolean {
+  for (let depth = $pos.depth; depth > 0; depth--) {
+    const name = $pos.node(depth).type.name;
+    if (name === "tableCell" || name === "tableHeader") return true;
+  }
+  return false;
+}
+
 export function applyBlock(editor: Editor, range: Range, command: BlockCommandId): void {
+  if (command === "table" && inTable(editor.state.doc.resolve(range.from))) return;
   const chain = editor.chain().focus().deleteRange(range);
   switch (command) {
     case "toggle":

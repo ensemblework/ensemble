@@ -9,6 +9,7 @@ import { AppearanceSection } from "@/components/settings/appearance";
 import { AccountTab } from "@/components/settings/tab-account";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
 import { navigateSettings, useSettingsLocation, type SettingsTab } from "@/components/settings/url-state";
+import { confirmLeaveSettings, hasUnsaved } from "@/components/settings/unsaved";
 import { useToast } from "@/components/toast";
 import { PageHeader, SkeletonRows } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
@@ -107,9 +108,14 @@ export default function SettingsPage() {
   }, [draft, location.tab, location.anchor]);
 
   const selectTab = useCallback((tab: SettingsTab) => {
-    scrolled.current = null;
-    navigateSettings({ tab, anchor: null, dialog: null, store: null, connector: null }, "push");
-    mainRef.current?.scrollTo?.({ top: 0 });
+    const go = () => {
+      scrolled.current = null;
+      navigateSettings({ tab, anchor: null, dialog: null, store: null, connector: null }, "push");
+      mainRef.current?.scrollTo?.({ top: 0 });
+    };
+    // Most of Settings saves as you go; the profile and password forms wait for Save.
+    if (hasUnsaved()) void confirmLeaveSettings().then((leave) => leave && go());
+    else go();
   }, []);
 
   const flush = useCallback(async () => {

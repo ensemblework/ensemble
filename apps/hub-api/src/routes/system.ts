@@ -16,6 +16,7 @@ import { HostedAccessError, requireVerifiedUser } from "../lib/hosted-access.js"
 import { mirrorSettings, spaceIds } from "../spaces/store.js";
 import { accountIdOf } from "../lib/auth.js";
 import { purgeDeletedStandalonePages } from "../pages/store.js";
+import { commentTrashDetail, commentTrashText, trashHref } from "../lib/trash-items.js";
 import { forgetCatalog, modelCatalog } from "../lib/model-catalog.js";
 import { forgetAccountKeys } from "../remote/account-keys.js";
 
@@ -302,28 +303,50 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
       prisma.repo.findMany({ where, select: { id: true, fullName: true, deletedAt: true } }),
       prisma.deliverable.findMany({ where, select: { id: true, title: true, deletedAt: true } }),
       prisma.reminder.findMany({ where, select: { id: true, title: true, deletedAt: true } }),
-      prisma.pageDiscussion.findMany({ where, select: { id: true, quote: true, deletedAt: true } }),
+      prisma.pageDiscussion.findMany({ where, select: { id: true, quote: true, body: true, pageKind: true, pageId: true, deletedAt: true } }),
       prisma.meetingSession.findMany({ where, select: { id: true, title: true, deletedAt: true } }),
       hasModule(request.modules, "diagrams")
         ? prisma.blockDiagram.findMany({ where, select: { id: true, title: true, deletedAt: true } })
         : Promise.resolve([]),
       prisma.taskPage.findMany({ where: { ...where, taskId: null }, select: { id: true, title: true, deletedAt: true } }),
     ]);
+    // Comments name the page they were on, which may be in Trash too.
+    const onKind = (kind: string) => [...new Set(comments.filter((row) => row.pageKind === kind).map((row) => row.pageId))];
+    const userId = request.userId;
+    const titled = await Promise.all([
+      prisma.taskPage.findMany({ where: { userId, id: { in: onKind("page") } }, select: { id: true, title: true } }),
+      prisma.task.findMany({ where: { userId, id: { in: onKind("task") } }, select: { id: true, title: true } }),
+      prisma.project.findMany({ where: { userId, id: { in: onKind("project") } }, select: { id: true, name: true } }),
+      prisma.deliverable.findMany({ where: { userId, id: { in: onKind("deliverable") } }, select: { id: true, title: true } }),
+      prisma.meetingSession.findMany({ where: { userId, id: { in: onKind("meeting") } }, select: { id: true, title: true } }),
+    ]);
+    const pageTitles = new Map<string, string>(titled.flat().map((row) => [row.id, ("title" in row ? row.title : row.name) || "Untitled"]));
+    const items = [
+      ...pages.map((row) => ({ kind: "page", id: row.id, label: row.title || "Untitled", deletedAt: row.deletedAt })),
+      ...tasks.map((row) => ({ kind: "task", id: row.id, label: row.title, deletedAt: row.deletedAt })),
+      ...projects.map((row) => ({ kind: "project", id: row.id, label: row.name, deletedAt: row.deletedAt })),
+      ...people.map((row) => ({ kind: "person", id: row.id, label: row.name, deletedAt: row.deletedAt })),
+      ...skills.map((row) => ({ kind: "skill", id: row.id, label: row.name, deletedAt: row.deletedAt })),
+      ...documents.map((row) => ({ kind: "document", id: row.id, label: row.filename, deletedAt: row.deletedAt })),
+      ...repos.map((row) => ({ kind: "repo", id: row.id, label: row.fullName, deletedAt: row.deletedAt })),
+      ...deliverables.map((row) => ({ kind: "deliverable", id: row.id, label: row.title, deletedAt: row.deletedAt })),
+      ...reminders.map((row) => ({ kind: "reminder", id: row.id, label: row.title, deletedAt: row.deletedAt })),
+      ...comments.map((row) => {
+        const label = commentTrashText(row.body, row.quote);
+        return {
+          kind: "comment",
+          id: row.id,
+          label,
+          detail: commentTrashDetail(pageTitles.get(row.pageId) ?? null, row.quote, label) || null,
+          href: trashHref(row.pageKind, row.pageId),
+          deletedAt: row.deletedAt,
+        };
+      }),
+      ...meetings.map((row) => ({ kind: "meeting", id: row.id, label: row.title, deletedAt: row.deletedAt })),
+      ...diagrams.map((row) => ({ kind: "diagram", id: row.id, label: row.title, deletedAt: row.deletedAt })),
+    ];
     return {
-      items: [
-        ...pages.map((row) => ({ kind: "page", id: row.id, label: row.title || "Untitled", deletedAt: row.deletedAt })),
-        ...tasks.map((row) => ({ kind: "task", id: row.id, label: row.title, deletedAt: row.deletedAt })),
-        ...projects.map((row) => ({ kind: "project", id: row.id, label: row.name, deletedAt: row.deletedAt })),
-        ...people.map((row) => ({ kind: "person", id: row.id, label: row.name, deletedAt: row.deletedAt })),
-        ...skills.map((row) => ({ kind: "skill", id: row.id, label: row.name, deletedAt: row.deletedAt })),
-        ...documents.map((row) => ({ kind: "document", id: row.id, label: row.filename, deletedAt: row.deletedAt })),
-        ...repos.map((row) => ({ kind: "repo", id: row.id, label: row.fullName, deletedAt: row.deletedAt })),
-        ...deliverables.map((row) => ({ kind: "deliverable", id: row.id, label: row.title, deletedAt: row.deletedAt })),
-        ...reminders.map((row) => ({ kind: "reminder", id: row.id, label: row.title, deletedAt: row.deletedAt })),
-        ...comments.map((row) => ({ kind: "comment", id: row.id, label: row.quote || "Comment", deletedAt: row.deletedAt })),
-        ...meetings.map((row) => ({ kind: "meeting", id: row.id, label: row.title, deletedAt: row.deletedAt })),
-        ...diagrams.map((row) => ({ kind: "diagram", id: row.id, label: row.title, deletedAt: row.deletedAt })),
-      ],
+      items: items.map((item) => ({ ...item, href: "href" in item ? item.href : trashHref(item.kind, item.id, item.label) })),
     };
   });
 

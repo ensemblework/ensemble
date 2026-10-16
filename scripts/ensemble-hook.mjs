@@ -451,7 +451,7 @@ function install(opts, remove = false) {
     const token = opts.token ?? readJson(CONFIG, {}).token;
     if (!token) throw new Error("--token ens_… is required the first time (create one in Ensemble → Settings → Editors & agents).");
     if (!String(token).startsWith("ens_")) {
-      throw new Error("That token is not a Ensemble token. In Settings → Editors & agents, press Create token, and paste the ens_… value. A Cursor or provider API key will not sign this hook in.");
+      throw new Error("That token is not an Ensemble token. In Settings → Editors & agents, press Create token, and paste the ens_… value. A Cursor or provider API key will not sign this hook in.");
     }
     const current = readJson(CONFIG, {});
     writeJson(CONFIG, { url: opts.url ?? current.url ?? "http://127.0.0.1:4000", token: opts.token ?? current.token }, 0o600);

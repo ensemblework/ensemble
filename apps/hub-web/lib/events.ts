@@ -14,3 +14,8 @@ export function eventsStreamUrl(hubApi: string): string {
 export function eventSourceInit(): { withCredentials: true } {
   return { withCredentials: true };
 }
+
+/** Live co-editing steps from the stream (`page.steps`), re-dispatched on `window` for open pages. */
+export const PAGE_STEPS_EVENT = "ensemble:page-steps";
+/** The stream reconnected after a drop: live pages fetch the steps they missed. */
+export const LIVE_REOPENED_EVENT = "ensemble:live-reopened";

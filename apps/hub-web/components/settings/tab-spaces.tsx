@@ -16,7 +16,7 @@ import { navigateSettings } from "./url-state";
 
 const templateName = (id: string | null) => TEMPLATE_CARDS.find((card) => card.id === id)?.name ?? null;
 
-function SpaceRow({ space, active, onChanged, onDelete }: { space: SpaceSummary; active: boolean; onChanged: () => void; onDelete: (space: SpaceSummary) => void }) {
+function SpaceRow({ space, active, twin, onChanged, onDelete }: { space: SpaceSummary; active: boolean; twin: boolean; onChanged: () => void; onDelete: (space: SpaceSummary) => void }) {
   const toast = useToast();
   const [name, setName] = useState(space.name);
   const save = useMutation({
@@ -72,7 +72,14 @@ function SpaceRow({ space, active, onChanged, onDelete }: { space: SpaceSummary;
           }}
         />
         <div className="px-1.5 text-[12px] text-faint">
-          {[space.primary ? "Your first space" : null, sub].filter(Boolean).join(" · ") || "Space"}
+          {[
+            space.primary ? "Your first space" : null,
+            sub,
+            // Spaces made before names had to differ: the date tells them apart.
+            twin ? `created ${new Date(space.createdAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}` : null,
+          ]
+            .filter(Boolean)
+            .join(" · ") || "Space"}
         </div>
       </div>
       {active ? (
@@ -178,7 +185,14 @@ export function SpacesTab() {
       >
         {spaces.isLoading ? <div className="skeleton h-24 rounded-md" /> : null}
         {(data?.spaces ?? []).map((space) => (
-          <SpaceRow key={`${space.id}-${space.name}-${space.icon}`} space={space} active={space.id === data?.activeId} onChanged={refresh} onDelete={(row) => { setDoomed(row); setConfirm(""); }} />
+          <SpaceRow
+            key={`${space.id}-${space.name}-${space.icon}`}
+            space={space}
+            active={space.id === data?.activeId}
+            twin={(data?.spaces ?? []).some((other) => other.id !== space.id && other.name.trim().toLowerCase() === space.name.trim().toLowerCase())}
+            onChanged={refresh}
+            onDelete={(row) => { setDoomed(row); setConfirm(""); }}
+          />
         ))}
       </SectionCard>
 

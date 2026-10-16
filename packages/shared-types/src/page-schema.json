@@ -1,0 +1,376 @@
+{
+  "topNode": "doc",
+  "nodes": [
+    [
+      "paragraph",
+      {
+        "content": "inline*",
+        "group": "block"
+      }
+    ],
+    [
+      "mention",
+      {
+        "group": "inline",
+        "inline": true,
+        "atom": true,
+        "selectable": false,
+        "attrs": {
+          "id": {
+            "default": null
+          },
+          "label": {
+            "default": null
+          },
+          "kind": {
+            "default": "people"
+          },
+          "height": {
+            "default": null
+          }
+        }
+      }
+    ],
+    [
+      "blockquote",
+      {
+        "content": "block+",
+        "group": "block",
+        "defining": true
+      }
+    ],
+    [
+      "bulletList",
+      {
+        "content": "listItem+",
+        "group": "block list"
+      }
+    ],
+    [
+      "codeBlock",
+      {
+        "content": "text*",
+        "marks": "",
+        "group": "block",
+        "code": true,
+        "defining": true,
+        "attrs": {
+          "language": {
+            "default": null
+          }
+        }
+      }
+    ],
+    [
+      "doc",
+      {
+        "content": "block+"
+      }
+    ],
+    [
+      "hardBreak",
+      {
+        "group": "inline",
+        "inline": true,
+        "selectable": false,
+        "linebreakReplacement": true
+      }
+    ],
+    [
+      "heading",
+      {
+        "content": "inline*",
+        "group": "block",
+        "defining": true,
+        "attrs": {
+          "level": {
+            "default": 1
+          }
+        }
+      }
+    ],
+    [
+      "horizontalRule",
+      {
+        "group": "block"
+      }
+    ],
+    [
+      "listItem",
+      {
+        "content": "paragraph block*",
+        "defining": true
+      }
+    ],
+    [
+      "orderedList",
+      {
+        "content": "listItem+",
+        "group": "block list",
+        "attrs": {
+          "start": {
+            "default": 1
+          },
+          "type": {
+            "default": null
+          }
+        }
+      }
+    ],
+    [
+      "text",
+      {
+        "group": "inline"
+      }
+    ],
+    [
+      "table",
+      {
+        "tableRole": "table",
+        "content": "tableRow+",
+        "group": "block",
+        "isolating": true
+      }
+    ],
+    [
+      "tableRow",
+      {
+        "tableRole": "row",
+        "content": "(tableCell | tableHeader)*"
+      }
+    ],
+    [
+      "tableHeader",
+      {
+        "tableRole": "header_cell",
+        "content": "block+",
+        "isolating": true,
+        "attrs": {
+          "colspan": {
+            "default": 1
+          },
+          "rowspan": {
+            "default": 1
+          },
+          "colwidth": {
+            "default": null
+          },
+          "valueType": {
+            "default": "text"
+          }
+        }
+      }
+    ],
+    [
+      "tableCell",
+      {
+        "tableRole": "cell",
+        "content": "block+",
+        "isolating": true,
+        "attrs": {
+          "colspan": {
+            "default": 1
+          },
+          "rowspan": {
+            "default": 1
+          },
+          "colwidth": {
+            "default": null
+          },
+          "valueType": {
+            "default": "text"
+          }
+        }
+      }
+    ],
+    [
+      "taskList",
+      {
+        "content": "taskItem+",
+        "group": "block list"
+      }
+    ],
+    [
+      "taskItem",
+      {
+        "content": "paragraph block*",
+        "defining": true,
+        "attrs": {
+          "checked": {
+            "default": false
+          }
+        }
+      }
+    ],
+    [
+      "pageLink",
+      {
+        "group": "block",
+        "atom": true,
+        "attrs": {
+          "pageId": {
+            "default": null
+          },
+          "externalPageId": {
+            "default": null
+          },
+          "label": {
+            "default": "Untitled"
+          }
+        }
+      }
+    ],
+    [
+      "image",
+      {
+        "group": "block",
+        "atom": true,
+        "attrs": {
+          "src": {
+            "default": null
+          },
+          "alt": {
+            "default": ""
+          }
+        }
+      }
+    ],
+    [
+      "toggleBlock",
+      {
+        "content": "(paragraph | heading) block*",
+        "group": "block",
+        "defining": true,
+        "attrs": {
+          "collapsed": {
+            "default": false
+          }
+        }
+      }
+    ],
+    [
+      "agentBlock",
+      {
+        "content": "block+",
+        "group": "block",
+        "defining": true,
+        "isolating": true,
+        "attrs": {
+          "jobId": {
+            "default": null
+          },
+          "runId": {
+            "default": null
+          },
+          "model": {
+            "default": ""
+          },
+          "title": {
+            "default": ""
+          },
+          "at": {
+            "default": null
+          },
+          "fingerprint": {
+            "default": null
+          }
+        }
+      }
+    ],
+    [
+      "ensembleReply",
+      {
+        "group": "block",
+        "atom": true,
+        "selectable": true,
+        "attrs": {
+          "threadId": {
+            "default": null
+          },
+          "prompt": {
+            "default": ""
+          },
+          "pageKind": {
+            "default": "task"
+          },
+          "pageId": {
+            "default": ""
+          },
+          "attachedCalls": {
+            "default": []
+          }
+        }
+      }
+    ]
+  ],
+  "marks": [
+    [
+      "link",
+      {
+        "inclusive": true,
+        "attrs": {
+          "href": {
+            "default": null
+          },
+          "target": {
+            "default": "_blank"
+          },
+          "rel": {
+            "default": "noopener noreferrer nofollow"
+          },
+          "class": {
+            "default": null
+          }
+        }
+      }
+    ],
+    [
+      "bold",
+      {}
+    ],
+    [
+      "code",
+      {
+        "excludes": "_",
+        "code": true
+      }
+    ],
+    [
+      "italic",
+      {}
+    ],
+    [
+      "strike",
+      {}
+    ],
+    [
+      "underline",
+      {}
+    ],
+    [
+      "notionColor",
+      {
+        "attrs": {
+          "color": {
+            "default": "default"
+          }
+        }
+      }
+    ],
+    [
+      "comment",
+      {
+        "inclusive": false,
+        "excludes": "",
+        "attrs": {
+          "id": {
+            "default": null
+          },
+          "commentId": {
+            "default": null
+          }
+        }
+      }
+    ]
+  ]
+}

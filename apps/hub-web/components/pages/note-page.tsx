@@ -6,15 +6,16 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { Orbit, CheckSquare, FileText, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { EMPTY_PAGE, type PageDocument, type PageMention } from "@ensemble/shared-types";
-import { ApiError, api, currentLink, currentShare, withLink, withShare } from "@/lib/api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { EMPTY_PAGE, type PageMention } from "@ensemble/shared-types";
+import { ApiError, api, currentLink, currentShare } from "@/lib/api";
 import { quickAssignTask } from "@/lib/quick-assign";
 import { useEntities } from "@/lib/entities";
 import { blockEditor, warmPeek } from "@/lib/warm";
 import { mentionHref } from "../editor/editor-commands";
 import { useToast } from "../toast";
-import { PageLoadFailure } from "./page-load";
+import { PageLoadFailure, inTrash } from "./page-load";
+import { TrashedPage } from "./trashed-page";
 import { PageTitleField } from "./title-field";
 import { isPageEnsembleBusy } from "../comments/ensemble-bus";
 import { announceTyping, onResource, tabId, usePresence } from "@/lib/presence";
@@ -25,7 +26,7 @@ import { ExportMenu } from "../export-menu";
 import { pageDoc } from "@/lib/export/items";
 import { SourceFileBanner, exportBackItems } from "../files/source-file-banner";
 import { PAGE_FOCUS_CLASS, PageFocusBar, PageFocusButton, usePageFocus } from "./page-focus";
-import { usePageSave, type PageEvent } from "./page-save";
+import { collabStatusText, useCollab } from "./use-collab";
 import { KeptEdits } from "./kept-edits";
 
 function useBlockEditor() {
@@ -67,12 +68,10 @@ export function NotePage({
     enabled: !leaving,
   });
   const family = useQuery({ queryKey: ["pages"], queryFn: api.pages, enabled: !shared });
-  const [epoch, setEpoch] = useState(0);
   const titleSave = useRef<Promise<unknown> | null>(null);
   // The share (or none) this page was opened under. Its saves, the last one on leaving too, go there.
   const openedAs = useRef(currentShare());
   const openedLink = useRef(currentLink());
-  const loaded = Boolean(page.data);
   const access = useSpaceAccess();
   // "gone": the share was removed; "view": you may still open it but no longer edit it.
   const [lost, setLost] = useState<"gone" | "view" | null>(null);
@@ -84,38 +83,22 @@ export function NotePage({
   const watchingRef = useRef(watching);
   watchingRef.current = watching;
   const focusMode = usePageFocus();
-  const saver = usePageSave({
-    load: async () => {
-      const fresh = await withLink(openedLink.current, () => withShare(openedAs.current, () => api.standalonePage(pageId)));
-      client.setQueryData(["standalone-page", pageId], fresh);
-      return { revision: fresh.revision, content: fresh.content ?? EMPTY_PAGE };
-    },
-    save: async (revision, content) => {
-      const saved = await withLink(openedLink.current, () => withShare(openedAs.current, () => api.saveStandalonePage(pageId, { revision, content })));
-      return { revision: saved.revision, content: saved.content ?? content };
-    },
-    matches: (event: PageEvent) => (event.id ?? event.pageId) === pageId,
+  const sync = useCollab({
+    kind: "page",
+    // Not while the page is loading, in Trash or missing; it joins as soon as it opens (after Restore, say).
+    enabled: Boolean(page.data),
+    id: pageId,
+    share: openedAs.current,
+    link: openedLink.current,
     live: others.length > 0,
     frozen: locked,
-    onError: (message) => toast(message, { tone: "error" }),
-    onKept: () => toast("You and someone else changed the same words at once. Both versions are on the page."),
     onLost: (error) => setLost(error.code === "SHARE_GONE" ? "gone" : "view"),
+    onError: (message) => toast(message, { tone: "error" }),
+    onRestored: () => toast("Changes you made before were not saved yet. They are back on the page and saving now."),
   });
-  const { flush, edit } = saver;
-
-  const initialDoc = useMemo(() => {
-    if (!page.data) return null;
-    const doc = page.data.content ?? EMPTY_PAGE;
-    saver.adopt({ revision: page.data.revision, content: doc });
-    return doc;
-    // The editor owns the document after the first load; others' saves are merged into it in place.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pageId, loaded, epoch]);
-  // A refetch (after the live stream reconnects, say) can bring a newer version than the editor has.
-  const offer = saver.offer;
-  useEffect(() => {
-    if (page.data) offer({ revision: page.data.revision, content: page.data.content ?? EMPTY_PAGE });
-  }, [page.data, offer]);
+  const { flush } = sync;
+  // The editor opens on the live document; everyone's changes arrive in it as they are typed.
+  const initialDoc = sync.joined?.doc ?? null;
 
   const rename = useMutation({
     mutationFn: (title: string) => api.renamePage(pageId, title),
@@ -202,10 +185,9 @@ export function NotePage({
     onMutate: () => setLeaving(true),
     mutationFn: async (quick: boolean = false) => {
       if (isPageEnsembleBusy("page", pageId)) throw new Error("Wait for Ensemble to finish before adding this page to the board.");
-      saver.cancel();
       if (titleSave.current) await titleSave.current;
       if (!(await flush())) throw new Error("Save the page before adding it to the board.");
-      const result = await api.convertPage("page", pageId, saver.revision.current);
+      const result = await api.convertPage("page", pageId, sync.revision());
       return { ...result, quick };
     },
     onSuccess: async (result) => {
@@ -220,18 +202,13 @@ export function NotePage({
     },
     onError: (error: Error) => {
       setLeaving(false);
-      if (saver.pending.current) saver.schedule();
       toast(error.message, { tone: "error" });
     },
   });
 
-  const onChange = useCallback(
-    (doc: PageDocument) => {
-      edit(doc);
-      if (watchingRef.current) announceTyping((typing) => api.sendPresence({ tabId: tabId(), typing }));
-    },
-    [edit],
-  );
+  const onChange = useCallback(() => {
+    if (watchingRef.current) announceTyping((typing) => api.sendPresence({ tabId: tabId(), typing }));
+  }, []);
 
   const onMentionClick = useCallback(
     (mention: PageMention) => {
@@ -243,18 +220,18 @@ export function NotePage({
 
   if (page.isLoading) return <div className="p-10 text-muted">Loading…</div>;
   if (!page.data) {
+    if (!shared && inTrash(page.error)) return <TrashedPage pageId={pageId} onRestored={() => void page.refetch()} />;
     const missing = page.error instanceof ApiError && page.error.status === 404;
-    return <PageLoadFailure missing={missing} onRetry={() => void page.refetch()} />;
+    return <PageLoadFailure missing={missing} links={!shared} error={page.error} retrying={page.isFetching} onRetry={() => void page.refetch()} />;
   }
 
   const record = page.data;
   const source = record.sourceFile ?? null;
-  const pageNow = () => ({ title: record.title || "Untitled", doc: saver.latest.current ?? record.content ?? EMPTY_PAGE });
+  const pageNow = () => ({ title: record.title || "Untitled", doc: sync.latest() ?? record.content ?? EMPTY_PAGE });
   const exportExtra = exportBackItems(source, pageNow);
-  const saveState = saver.state;
-  const unsaved = saveState === "dirty" || saveState === "error";
-  const saveText =
-    locked && unsaved ? "Not saved" : saveState === "saved" ? "All changes saved" : saveState === "saving" ? "Saving…" : saveState === "dirty" ? "Unsaved changes" : "Could not save. Retry on the next edit.";
+  const saveState = sync.status;
+  const unsaved = saveState !== "saved";
+  const saveText = collabStatusText(saveState, locked);
   return (
     <div
       ref={focusMode.layer}
@@ -264,7 +241,7 @@ export function NotePage({
       data-page-focus={focusMode.active ? "true" : undefined}
     >
       {focusMode.active ? <PageFocusBar status={saveText} error={saveState === "error"} onExit={focusMode.exit} /> : null}
-      <div className="mb-3 flex items-center justify-between text-[12.5px] text-muted">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 text-[12.5px] text-muted">
         <span>
           {shared?.link
             ? gone
@@ -282,7 +259,7 @@ export function NotePage({
                 ? "Pages"
                 : "Pages · view only"}
         </span>
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-x-2 gap-y-1">
           <PagePeople kind="page" id={pageId} />
           {shared || !canEdit ? (
             <>
@@ -291,10 +268,10 @@ export function NotePage({
             </>
           ) : (
             <>
-              <button type="button" className="btn-ghost" disabled={convert.isPending} onClick={() => convert.mutate(false)}>
-                <CheckSquare size={13} /> Add to board
+              <button type="button" className="btn-ghost" disabled={convert.isPending} aria-label="Add to board" title="Add to board" onClick={() => convert.mutate(false)}>
+                <CheckSquare size={13} /> <span className="max-sm:hidden">Add to board</span>
               </button>
-              <button type="button" className="btn-ghost text-accent" disabled={convert.isPending} title="Add to the board and use your default run profile" onClick={() => convert.mutate(true)}><Orbit size={13} /> Quick assign</button>
+              <button type="button" className="btn-ghost text-accent" disabled={convert.isPending} aria-label="Quick assign" title="Add to the board and use your default run profile" onClick={() => convert.mutate(true)}><Orbit size={13} /> <span className="max-sm:hidden">Quick assign</span></button>
               <button type="button" className="icon-btn" title="Delete" aria-label="Delete page" disabled={remove.isPending} onClick={() => remove.mutate()}>
                 <Trash2 size={14} />
               </button>
@@ -326,36 +303,34 @@ export function NotePage({
         <KeptEdits
           message={gone ? "This page isn't shared with you anymore, so your last changes weren't saved. They're still on screen." : "You can't edit this page anymore, so your last changes weren't saved. They're still on screen."}
           title={record.title}
-          read={() => saver.latest.current}
+          read={sync.latest}
           ownCopy={Boolean(shared && !shared.link)}
-        />
-      ) : saver.stuck ? (
-        <KeptEdits
-          message="Someone else saved a version of this page that can't be combined with yours. Your text is still here and isn't saved."
-          title={record.title}
-          read={() => saver.latest.current}
-          ownCopy={false}
-          onTheirs={() => {
-            saver.discard();
-            void page.refetch().then(() => setEpoch((value) => value + 1));
-          }}
         />
       ) : null}
       <div className="mt-4" data-focus-keep>
-        {initialDoc && Editor ? (
+        {sync.failure ? (
+          <PageLoadFailure missing={false} onRetry={() => window.location.reload()} />
+        ) : initialDoc && Editor ? (
           <Editor
-            key={`${pageId}-${epoch}`}
+            key={pageId}
             initial={initialDoc}
             entities={entities.get}
             onChange={onChange}
             onMentionClick={onMentionClick}
             page={{ kind: "page", id: pageId }}
             editable={!leaving && canEdit}
-            control={saver.control}
+            collab={sync.binding}
           />
-        ) : initialDoc ? (
+        ) : sync.stalled ? (
+          <div className="mt-4 text-[13px] text-muted" role="status">
+            <p>Still connecting to this page. Reload if this takes long.</p>
+            <button type="button" className="btn mt-2" onClick={() => window.location.reload()}>
+              Reload
+            </button>
+          </div>
+        ) : (
           <div className="skeleton mt-4 h-64 w-full" />
-        ) : null}
+        )}
       </div>
 
       {!shared && family.data?.pages.some((child) => child.parentId === pageId) ? <nav aria-label="Nested pages" className="mt-6 space-y-1 border-t border-line pt-4">

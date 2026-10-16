@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { PageHeader, SkeletonRows } from "@/components/ui";
 import { ImportedMeetingNotes } from "@/components/meetings/imported-notes";
 import { useToast } from "@/components/toast";
@@ -11,7 +11,7 @@ import { connectedApi } from "@/lib/api-connected";
 import { api } from "@/lib/api";
 import { MeetingNotesFields } from "@/components/meetings/notes-fields";
 import { ArrowUpRight, ChevronLeft, BookOpen, Clock3, FileText, MessageSquare, Plus, Search } from "lucide-react";
-import { whenLabel } from "@/lib/format";
+import { meetingWhen, newMeetingTitle, newestFirst } from "@/components/meetings/meeting-time";
 
 function MeetingsBody() {
   const params = useSearchParams();
@@ -45,7 +45,7 @@ function MeetingsBody() {
   });
   const starting = useRef(false);
   const start = useMutation({
-    mutationFn: () => api.startMeeting(null, "Meeting notes"),
+    mutationFn: () => api.startMeeting(null, newMeetingTitle()),
     onSuccess: (result) => {
       choose(result.session.id);
       void client.invalidateQueries({ queryKey: ["meeting-sessions"] });
@@ -88,7 +88,7 @@ function MeetingsBody() {
   });
 
   const session = detail.data?.session;
-  const sessions = list.data?.sessions ?? [];
+  const sessions = useMemo(() => newestFirst(list.data?.sessions ?? []), [list.data]);
   const importedNotes = imported.data?.notes ?? [];
   const libraryReady = list.isSuccess && imported.isSuccess;
   const visible = sessions.filter((s) => (filter === "all" || filter === "active" && s.status !== "ended" || filter === "recaps" && Boolean(s.recap?.trim())) && `${s.title} ${s.notes}`.toLowerCase().includes(search.trim().toLowerCase()));
@@ -164,7 +164,7 @@ function MeetingsBody() {
                 aria-pressed={row.id === active}
                 onClick={() => choose(row.id)}
               >
-                <span className="meeting-card-meta"><MessageSquare size={14} />{whenLabel(row.startedAt)}<i data-active={row.status !== "ended"}>{row.status !== "ended" ? "In progress" : "Ended"}</i></span>
+                <span className="meeting-card-meta"><MessageSquare size={14} /><time dateTime={row.startedAt}>{meetingWhen(row.startedAt)}</time><i data-active={row.status !== "ended"}>{row.status !== "ended" ? "In progress" : "Ended"}</i></span>
                 <strong>{row.title}</strong>
                 <p>{row.notes.trim().slice(0, 110) || "A fresh page for this conversation."}</p>
                 <span className="meeting-card-footer">{row.recap?.trim() ? "Recap ready" : "Meeting notes"}<ArrowUpRight size={12} /></span>
@@ -175,7 +175,7 @@ function MeetingsBody() {
         </ul>
         {detail.isError ? <div className="work-load-error" role="alert">Couldn't open this meeting.<button type="button" className="btn" onClick={() => void detail.refetch()}>Try again</button></div> : detail.isPending && active ? <SkeletonRows count={4} /> : session ? (
           <article className="meeting-paper">
-            <div className="meeting-paper-kicker"><MessageSquare size={13} />{whenLabel(session.startedAt)}<span>{session.status !== "ended" ? "In progress" : "Meeting ended"}</span></div>
+            <div className="meeting-paper-kicker"><MessageSquare size={13} /><time dateTime={session.startedAt}>{meetingWhen(session.startedAt)}</time><span>{session.status !== "ended" ? "In progress" : "Meeting ended"}</span></div>
             <MeetingNotesFields key={session.id} session={session} onRemoved={() => choose("")} />
             <div className="mt-3 flex flex-wrap gap-2">
               {session.status !== "ended" ? (

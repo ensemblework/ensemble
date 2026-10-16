@@ -177,9 +177,9 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
     if (guest && (href === "/today" || href === "/metrics")) return false;
     const gate = moduleForPath(href);
     if (!gate) return true;
-    // Hide a module only after the shell says it is off. Until then the link
-    // has to be clickable, or the first click on Metrics lands on nothing.
-    if (!shell.data) return true;
+    // Optional modules wait for the shell: when it fails, a link the space has
+    // turned off must not appear and lead to a 404.
+    if (!shell.data) return false;
     return hasModule(modules, gate as OptionalModule);
   };
   const waiting = (shell.data?.approvals ?? 0) + (shell.data?.decisions ?? 0);

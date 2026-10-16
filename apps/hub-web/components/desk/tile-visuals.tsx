@@ -5,7 +5,7 @@ import { ArrowRight, BookOpen, Check, ChevronLeft, ChevronRight, FileText } from
 import type { DeskLive } from "@/lib/api";
 import { personInitials } from "@/lib/initials";
 import type { Spec } from "./live-board";
-import { CHART_COLORS as COLORS, datedItems, mockScores, ratio, taskSegments, timeSegments, type Segment } from "./tile-data";
+import { CHART_COLORS as COLORS, datedItems, dayLabel, isLate, mockScores, ratio, taskSegments, timeSegments, weekAhead, type Segment } from "./tile-data";
 
 const short = (day: string) => new Date(`${day.slice(0, 10)}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
 const round = (n: number) => Number(n.toFixed(1)).toLocaleString("en-GB");
@@ -107,7 +107,8 @@ function Documents({ spec, live, preview }: { spec: Spec; live: DeskLive; previe
   return <div className="visual-documents" data-visual="document-cards">{rows.slice(0, spec.r <= 3 ? 2 : 4).map((r, i) => {
     const task = live.tasks.find((t) => t.id === r.id);
     const status = task?.pipelineStage || task?.matterStage || (task?.status === "done" ? "Finished" : task?.status === "in_progress" ? "In progress" : reading ? "To read" : "Draft");
-    const content = <><span className="visual-document-icon" style={{ color: tone(i) }}>{reading ? <BookOpen size={20} /> : <FileText size={20} />}</span><strong>{r.title}</strong><span className="visual-tag">{status}</span><small>{reading ? "Reading queue" : "Document workspace"}<ArrowRight size={12} /></small></>;
+    const late = task ? isLate(task, live.today) : false;
+    const content = <><span className="visual-document-icon" style={{ color: tone(i) }}>{reading ? <BookOpen size={20} /> : <FileText size={20} />}</span><strong title={r.title}>{r.title}</strong><span className="visual-document-tags"><span className="visual-tag">{status}</span>{task?.due ? <span className="visual-tag" data-urgent={late}>{late ? "Overdue · " : ""}{dayLabel(task.due, live.today)}</span> : null}</span><small>{reading ? "Reading queue" : "Document workspace"}<ArrowRight size={12} /></small></>;
     return preview || !task ? <div key={r.id} className="visual-document">{content}</div> : <a key={r.id} href={`/tasks/${encodeURIComponent(r.id)}`} className="visual-document">{content}</a>;
   })}</div>;
 }
@@ -116,7 +117,7 @@ function Timeline({ spec, live }: { spec: Spec; live: DeskLive }) {
   const ids = new Set(spec.rows(live).map((r) => r.id));
   const dated = datedItems(live).filter((r) => ids.has(r.id));
   const fallback = spec.rows(live).filter((r) => !dated.some((d) => d.id === r.id));
-  return <div className="visual-timeline" data-visual="date-agenda">{[...dated.map((r) => ({ ...r, meta: short(r.day) })), ...fallback.map((r) => ({ ...r, day: "" }))].slice(0, 5).map((r, i) => <div key={r.id}><span className="visual-date" style={{ color: r.day && r.day < live.today ? "var(--chart-rose)" : tone(i) }}>{r.meta || "Next"}</span><span className="visual-timeline-dot" style={{ background: tone(i) }} /><strong>{r.title}</strong></div>)}</div>;
+  return <div className="visual-timeline" data-visual="date-agenda">{[...dated.map((r) => ({ ...r, meta: dayLabel(r.day, live.today) })), ...fallback.map((r) => ({ ...r, day: "" }))].slice(0, 5).map((r, i) => <div key={r.id}><span className="visual-date" style={{ color: r.day && r.day < live.today ? "var(--chart-rose)" : tone(i) }}>{r.meta || "Next"}</span><span className="visual-timeline-dot" style={{ background: tone(i) }} /><strong title={r.title}>{r.title}</strong></div>)}</div>;
 }
 
 export function TileVisuals({ spec, live, preview = false, interactive = true }: { spec: Spec; live: DeskLive; preview?: boolean; interactive?: boolean }) {
@@ -126,12 +127,11 @@ export function TileVisuals({ spec, live, preview = false, interactive = true }:
   if (["time-split", "hours", "billable", "unbilled"].includes(key)) return timeSegments(live).length ? <Donut interactive={interactive} segments={timeSegments(live)} label="hours logged" unit="h" /> : <Empty>Log time to see how your hours are distributed.</Empty>;
   if (key === "calendar") return <Calendar live={live} interactive={interactive} />;
   if (key === "due-week") {
-    const dated = datedItems(live);
-    const days = Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(Date.parse(`${live.today}T00:00:00Z`) + i * 86400000);
-      return { label: d.toLocaleDateString("en-GB", { weekday: "short", timeZone: "UTC" }), value: dated.filter((r) => r.day === d.toISOString().slice(0, 10)).length, color: tone(i) };
-    });
-    return <><Metric value={days.reduce((s, d) => s + d.value, 0)} label="due in 7 days" /><Columns segments={days} label="Due in the next seven days" /></>;
+    const week = weekAhead(live);
+    const days = week.days.map((d, i) => ({ label: new Date(`${d.day}T00:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", timeZone: "UTC" }), value: d.value, color: tone(i) }));
+    const late = week.overdue ? [{ label: "Late", value: week.overdue, color: "var(--chart-rose)" }] : [];
+    const total = week.overdue + days.reduce((s, d) => s + d.value, 0);
+    return <><Metric value={total} label={week.overdue ? "due or overdue" : "due in 7 days"} note={week.overdue ? `${week.overdue} overdue` : undefined} /><Columns segments={[...late, ...days]} label={week.overdue ? "Overdue, then due in the next seven days" : "Due in the next seven days"} /></>;
   }
   if (key === "mocks") return <Scores live={live} interactive={interactive} />;
   if (key === "marking") return <Grading live={live} />;
@@ -155,7 +155,7 @@ export function TileVisuals({ spec, live, preview = false, interactive = true }:
     const type = key === "syllabus" ? "phase" : key === "concepts" ? "concept" : "revision";
     const rows = live.tasks.filter((t) => t.taskType === type);
     const done = rows.filter((t) => t.status === "done" || t.pipelineStage?.toLowerCase() === "done").length;
-    return <div data-visual="phase-plan" className="visual-phases"><div className="visual-phase-summary"><strong>{done}<small> / {rows.length}</small></strong><span>completed {type === "phase" ? "units" : "topics"}</span></div>{rows.slice(0, 4).map((r, i) => <div key={r.id} className="visual-phase"><span style={{ color: tone(i), borderColor: tone(i) }}>{r.status === "done" || r.pipelineStage?.toLowerCase() === "done" ? <Check size={12} /> : i + 1}</span><section><strong>{r.title}</strong><small>{r.subject || (r.due ? `Due ${short(r.due)}` : r.pipelineStage || "To do")}</small></section></div>)}</div>;
+    return <div data-visual="phase-plan" className="visual-phases"><div className="visual-phase-summary"><strong>{done}<small> / {rows.length}</small></strong><span>completed {type === "phase" ? "units" : "topics"}</span></div>{rows.slice(0, 4).map((r, i) => <div key={r.id} className="visual-phase"><span style={{ color: tone(i), borderColor: tone(i) }}>{r.status === "done" || r.pipelineStage?.toLowerCase() === "done" ? <Check size={12} /> : i + 1}</span><section><strong title={r.title}>{r.title}</strong><small>{r.subject || (r.due ? `Due ${dayLabel(r.due, live.today)}` : r.pipelineStage || "To do")}</small></section></div>)}</div>;
   }
   if (["deadlines", "dels", "reminders", "brief", "filings", "paper", "hearings", "cause", "venue", "lead", "next", "hold"].includes(key)) return <Timeline spec={spec} live={live} />;
   if (key === "stages") {
@@ -172,7 +172,8 @@ export function TileVisuals({ spec, live, preview = false, interactive = true }:
   return <div className={`visual-work ${meetings ? "visual-meetings" : ""}`} data-visual={meetings ? "meeting-cards" : "work-cards"}>{rows.slice(0, spec.r <= 2 ? 1 : spec.r === 3 ? 3 : 5).map((r, i) => {
     const task = live.tasks.find((t) => t.id === r.id);
     const status = task?.status;
-    const content = <><span className="visual-work-marker" style={{ color: status === "blocked" ? tone(3) : tone(i), background: `color-mix(in srgb, ${tone(i)} 12%, transparent)` }}>{status === "done" ? <Check size={13} /> : meetings ? personInitials(r.title) : String(i + 1).padStart(2, "0")}</span><section><strong>{r.title}</strong><small>{r.meta || (status ? status.replaceAll("_", " ") : meetings ? "Meeting notes & follow-up" : "On your desk")}</small></section><ArrowRight size={13} /></>;
+    const late = task ? isLate(task, live.today) : false;
+    const content = <><span className="visual-work-marker" style={{ color: status === "blocked" ? tone(3) : tone(i), background: `color-mix(in srgb, ${tone(i)} 12%, transparent)` }}>{status === "done" ? <Check size={13} /> : meetings ? personInitials(r.title) : String(i + 1).padStart(2, "0")}</span><section><strong title={r.title}>{r.title}</strong><small>{r.meta || (status ? status.replaceAll("_", " ") : meetings ? "Meeting notes & follow-up" : "On your desk")}{late ? <span className="visual-tag" data-urgent="true">Overdue</span> : null}</small></section><ArrowRight size={13} /></>;
     return task && !preview ? <a key={r.id} href={`/tasks/${encodeURIComponent(r.id)}`}>{content}</a> : <div key={r.id}>{content}</div>;
   })}</div>;
 }

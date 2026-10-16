@@ -14,9 +14,30 @@ import { readSse } from "@/lib/sse";
 import { beginPageEnsemble, publishEnsemble, readEnsemble, subscribeEnsemble, type EnsembleLive } from "./ensemble-bus";
 import type { PageDocument, PageMention } from "@ensemble/shared-types";
 import { attachEnsembleArtifacts, retargetEnsembleReply } from "./ensemble-artifacts";
+import { markdownFragment } from "../editor/clipboard";
+import { Selection } from "@tiptap/pm/state";
 import { useToast } from "../toast";
 
-export function EnsembleView({ node, deleteNode, editor }: NodeViewProps) {
+/**
+ * Puts an answer on the page as real blocks after its reply: Markdown headings, lists,
+ * checklists, code, quotes and tables become those blocks instead of `##` and `**` text.
+ */
+export function insertAnswer(editor: NodeViewProps["editor"], at: number, markdown: string): boolean {
+  const blocks = markdown.trim() ? markdownFragment(editor.schema, markdown) : null;
+  if (!blocks) return false;
+  let tr;
+  try {
+    tr = editor.state.tr.insert(at, blocks);
+  } catch {
+    return false;
+  }
+  tr.setSelection(Selection.near(tr.doc.resolve(Math.min(at + blocks.size, tr.doc.content.size)), -1)).scrollIntoView();
+  editor.view.dispatch(tr);
+  editor.view.focus();
+  return true;
+}
+
+export function EnsembleView({ node, deleteNode, editor, getPos }: NodeViewProps) {
   const client = useQueryClient();
   const threadId = String(node.attrs.threadId ?? "");
   const pageKind = String(node.attrs.pageKind ?? "task");
@@ -112,20 +133,23 @@ export function EnsembleView({ node, deleteNode, editor }: NodeViewProps) {
               >
                 {copied ? <Check size={12} /> : <Copy size={12} />} Copy
               </button>
-              <button
-                type="button"
-                className="btn"
-                onClick={() => {
-                  const pos = editor.state.selection.from;
-                  editor.chain().focus().insertContentAt(pos, text.split(/\n{2,}/).map((paragraph) => ({ type: "paragraph", content: paragraph ? [{ type: "text", text: paragraph }] : [] }))).run();
-                }}
-              >
-                Insert into page
-              </button>
               {editor.isEditable ? (
-                <button type="button" className="btn" onClick={() => deleteNode()}>
-                  <Trash2 size={12} /> Delete
-                </button>
+                <>
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={streaming || !text.trim()}
+                    onClick={() => {
+                      const pos = typeof getPos === "function" ? getPos() : undefined;
+                      insertAnswer(editor, typeof pos === "number" ? pos + node.nodeSize : editor.state.selection.to, text);
+                    }}
+                  >
+                    Insert into page
+                  </button>
+                  <button type="button" className="btn" onClick={() => deleteNode()}>
+                    <Trash2 size={12} /> Delete
+                  </button>
+                </>
               ) : null}
             </div>
           </div>

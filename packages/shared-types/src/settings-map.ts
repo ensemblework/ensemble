@@ -12,6 +12,7 @@
 import { AppColorTheme, AccentPreset, ReasoningEffort } from "./assistant.js";
 import { OPTIONAL_MODULES, type OptionalModule } from "./modules.js";
 import { FEATURES } from "./features.js";
+import { timeZoneName } from "./account.js";
 
 export type SettingsMapTab = "account" | "appearance" | "spaces" | "sharing" | "assistant" | "connections" | "notifications" | "shortcuts" | "data";
 
@@ -280,15 +281,6 @@ export function describeRule(rule: SettingRule): string {
   }
 }
 
-function validTimeZone(value: string): boolean {
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: value });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Parses a value given as text, a number or a boolean into what the setting stores, or
  * returns the reason it is refused. `null` is stored for a custom accent of "none".
@@ -317,8 +309,10 @@ export function parseSettingValue(rule: SettingRule, raw: unknown): { ok: true; 
       const match = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(text);
       return match ? { ok: true, value: `${match[1]!.padStart(2, "0")}:${match[2]}` } : { ok: false, error: "Use HH:MM, 24-hour, such as 07:30." };
     }
-    case "timezone":
-      return text && !/^[+-]?\d/.test(text) && validTimeZone(text) ? { ok: true, value: text } : { ok: false, error: "Use an IANA time zone such as Europe/London or America/New_York." };
+    case "timezone": {
+      const zone = timeZoneName(text);
+      return zone ? { ok: true, value: zone } : { ok: false, error: "Use an IANA time zone such as Europe/London or America/New_York." };
+    }
     case "color":
       if (!text || text.toLowerCase() === "none") return { ok: true, value: null };
       return /^#[0-9a-fA-F]{6}$/.test(text) ? { ok: true, value: text.toLowerCase() } : { ok: false, error: "Use #rrggbb, or none." };

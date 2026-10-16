@@ -223,6 +223,23 @@ test("switching and renaming", async () => {
   assert.equal((first.json() as { space: { name: string; primary: boolean } }).space.name, "Home");
 });
 
+test("two spaces never share a name: a double click makes one, and renames are checked too", async () => {
+  const mira = await harness.asUser();
+  const payload = { name: "Thesis", templateId: "semester-desk", settings: { mode: "fresh" } };
+  const both = await Promise.all([as(mira, { method: "POST", url: "/api/spaces", payload }), as(mira, { method: "POST", url: "/api/spaces", payload })]);
+  assert.deepEqual(both.map((res) => res.statusCode).sort(), [201, 409], both.map((res) => res.body).join(" | "));
+  assert.match((both.find((res) => res.statusCode === 409)!.json() as { error: string }).error, /already have a space called Thesis/);
+  const again = await as(mira, { method: "POST", url: "/api/spaces", payload: { ...payload, name: "  thesis " } });
+  assert.equal(again.statusCode, 409, "names differing only in case or spaces are the same name");
+  const other = await createSpace(mira, { name: "Club", settings: { mode: "fresh" } });
+  assert.equal((await as(mira, { method: "PATCH", url: `/api/spaces/${other.id}`, payload: { name: "THESIS" } })).statusCode, 409);
+  const first = (await as(mira, { method: "GET", url: "/api/spaces" })).json() as { spaces: Array<{ id: string; name: string; primary: boolean }> };
+  assert.equal(first.spaces.filter((row) => row.name === "Thesis").length, 1);
+  const home = first.spaces.find((row) => row.primary)!;
+  assert.equal((await as(mira, { method: "PATCH", url: `/api/spaces/${other.id}`, payload: { name: home.name } })).statusCode, 409, "the first space's name counts");
+  assert.equal((await as(mira, { method: "PATCH", url: `/api/spaces/${other.id}`, payload: { name: "Club", icon: "🎓" } })).statusCode, 200, "keeping its own name is fine");
+});
+
 test("deleting the account deletes every space it owns", async () => {
   const mira = await harness.asUser();
   const one = await createSpace(mira, { name: "One", settings: { mode: "fresh" } });

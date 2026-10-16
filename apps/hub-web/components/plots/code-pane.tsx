@@ -11,6 +11,7 @@ import { IdeSpace, ThemeControl } from "@/components/code/ide-theme";
 import { useIdeTheme } from "@/components/code/ide-theme-context";
 import { codeMirrorTheme } from "@/components/code/codemirror-theme";
 import { remeasureOnFontLoad } from "@/lib/editor-font";
+import { usePersistentState } from "@/lib/prefs";
 
 const scroll = EditorView.theme({
   ".cm-scroller": { overflow: "auto" },
@@ -43,6 +44,7 @@ export function PlotCodePane(props: PaneProps) {
 function ThemedPlotCode({ value, onChange, onRun, errorLine = null, errorText = "", actions }: PaneProps) {
   const [phone, setPhone] = useState(false);
   const [view, setView] = useState<EditorView | null>(null);
+  const [wrap, setWrap] = usePersistentState("ensemble.plots.code-wrap", false);
   const run = useRef(onRun);
   run.current = onRun;
   useEffect(() => {
@@ -72,7 +74,19 @@ function ThemedPlotCode({ value, onChange, onRun, errorLine = null, errorText = 
     <>
     <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-line px-2 py-1.5">
       {actions}
-      <span className="ml-auto flex items-center gap-2"><span className="text-[10px] text-muted">Theme shared with Code</span><ThemeControl /></span>
+      <span className="ml-auto flex items-center gap-2">
+        <button
+          type="button"
+          className="btn px-2 py-0.5 text-[12px]"
+          aria-pressed={wrap}
+          title={wrap ? "Long lines wrap. Turn off to scroll them sideways." : "Long lines scroll sideways. Turn on to wrap them."}
+          onClick={() => setWrap(!wrap)}
+          data-plot-code-wrap={wrap ? "1" : "0"}
+        >
+          Wrap lines
+        </button>
+        <span className="text-[10px] text-muted">Theme shared with Code</span><ThemeControl />
+      </span>
     </div>
     {phone && <p className="shrink-0 px-3 py-2 text-[11px] text-muted">View code here. Use a larger screen to edit.</p>}
     <CodeMirror
@@ -82,7 +96,7 @@ function ThemedPlotCode({ value, onChange, onRun, errorLine = null, errorText = 
       height="100%"
       minHeight="0px"
       theme={custom ? "none" : oneDark}
-      extensions={[python(), runKeys, scroll, ...(custom ? [custom] : [blend]), remeasureOnFontLoad]}
+      extensions={[python(), runKeys, scroll, ...(wrap ? [EditorView.lineWrapping] : []), ...(custom ? [custom] : [blend]), remeasureOnFontLoad]}
       onChange={onChange}
       onCreateEditor={setView}
       className="min-h-0 min-w-0 flex-1 overflow-hidden rounded-b-lg"

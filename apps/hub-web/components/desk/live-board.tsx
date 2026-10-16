@@ -2,7 +2,7 @@
 
 import { ProposalsWidget } from "../today/proposals-widget";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   BookOpen,
@@ -27,7 +27,6 @@ import { plural } from "@/lib/format";
 import { DESK_EXTRAS, resolveExtras, type DeskExtraId } from "@/lib/desk-extras";
 import { templateDeskLayout } from "@ensemble/shared-types/manifest";
 import { useToast } from "@/components/toast";
-import { placeCenteredPanel } from "@/lib/place-layer";
 import { DESK_IDS, type DeskId } from "./desks";
 import { arrange, hiddenTilesFor, isDefaultLayout, layoutKey, readLayout } from "./layout";
 import { CalendarAgenda } from "./calendar-agenda";
@@ -36,9 +35,12 @@ import { deskRole, tileFitsRole } from "./tile-catalog";
 import { liveHero } from "./live-heroes";
 import { DeskPreviewProvider, Tile } from "./ui";
 import { useLayoutPreference, useTileControls } from "./arrange";
+import { DeskAddForm } from "./add-form";
+import { parseClock, type DeskField } from "./form-check";
+import { byUrgency, dayLabel, isLate } from "./tile-data";
 
 type Row = { id: string; title: string; meta?: string };
-type Field = { key: string; label: string; input?: "text" | "date" | "number" | "select"; options?: Array<[string, string]>; optional?: boolean; placeholder?: string };
+type Field = DeskField;
 export type Spec = {
   key: string;
   title: string;
@@ -54,6 +56,8 @@ export type Spec = {
   fields: Field[];
   rows: (live: DeskLive) => Row[];
   stat?: (live: DeskLive) => { v: string; unit?: string; note?: string } | null;
+  /** The header count when it is not the number of rows (attendance counts marks). */
+  count?: (live: DeskLive) => number;
 };
 
 const OPEN = new Set(["todo", "proposed", "in_progress", "blocked", "waiting_approval"]);
@@ -68,9 +72,8 @@ const RULES: Array<[string, string]> = [
 ];
 const WEEKDAYS: Array<[string, string]> = DAYS.map((label, index) => [String(index), label]);
 
-function when(iso: string | null | undefined) {
-  if (!iso) return "";
-  return new Date(`${iso.slice(0, 10)}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+function when(iso: string | null | undefined, today: string) {
+  return iso ? dayLabel(iso, today) : "";
 }
 function hm(min: number) {
   return `${String(Math.floor(min / 60)).padStart(2, "0")}:${String(min % 60).padStart(2, "0")}`;
@@ -110,7 +113,7 @@ function specsFor(id: DeskId): Spec[] {
           { key: "rule", label: "Rule", input: "select", options: RULES },
           { key: "court", label: "Court", optional: true },
         ],
-        rows: (live) => live.limitation.map((row) => ({ id: row.id, title: row.title, meta: `${row.days}d · ${when(row.due)}${row.court ? ` · ${row.court}` : ""}` })),
+        rows: (live) => live.limitation.map((row) => ({ id: row.id, title: row.title, meta: `${row.days}d · ${when(row.due, live.today)}${row.court ? ` · ${row.court}` : ""}` })),
         stat: (live) => (live.limitation[0] ? { v: String(live.limitation[0].days), unit: "days", note: live.limitation[0].note ?? live.limitation[0].title } : null),
       }),
       tile({
@@ -120,7 +123,7 @@ function specsFor(id: DeskId): Spec[] {
           { key: "day", label: "Date", input: "date" },
           { key: "court", label: "Court", optional: true },
         ],
-        rows: (live) => ofType(live, "hearing").map((row) => ({ id: row.id, title: row.title, meta: [when(row.due), row.court].filter(Boolean).join(" · ") })),
+        rows: (live) => ofType(live, "hearing").map((row) => ({ id: row.id, title: row.title, meta: [when(row.due, live.today), row.court].filter(Boolean).join(" · ") })),
       }),
       tile({
         key: "billable", title: "Billable", icon: Scale, c: 3, r: 3, kind: "time", action: "Log your first hour", ghost: "Set a weekly target",
@@ -140,11 +143,11 @@ function specsFor(id: DeskId): Spec[] {
         return [...counts.entries()].map(([name, n]) => ({ id: name, title: name, meta: String(n) }));
       }, { fields: [{ key: "title", label: "Matter" }, { key: "orderDate", label: "Order date", input: "date" }, { key: "rule", label: "Rule", input: "select", options: RULES }] }),
       task("filings", "Filings", FileText, 5, 4, "filing", "Add a filing", "Nothing due to file", (live) => [
-        ...live.deliverables.map((row) => ({ id: row.id, title: row.title, meta: when(row.due) })),
-        ...ofType(live, "filing").map((row) => ({ id: row.id, title: row.title, meta: when(row.due) })),
+        ...live.deliverables.map((row) => ({ id: row.id, title: row.title, meta: when(row.due, live.today) })),
+        ...ofType(live, "filing").map((row) => ({ id: row.id, title: row.title, meta: when(row.due, live.today) })),
       ]),
       task("drafts", "Drafts", FileText, 4, 4, "draft", "Add a draft", "Drafts you are in stay here", (live) => ofType(live, "draft").slice(0, 4).map((row) => ({ id: row.id, title: row.title, meta: row.matterStage ?? "" }))),
-      task("cause", "Cause list", CalendarClock, 3, 2, "hearing", "Add a hearing", "Today's list is empty", (live) => ofType(live, "hearing").filter((row) => row.due === live.today || (row.due && row.due >= live.today)).slice(0, 3).map((row) => ({ id: row.id, title: row.title, meta: row.court ?? when(row.due) })), { fields: [{ key: "title", label: "Matter" }, { key: "day", label: "Date", input: "date" }, { key: "court", label: "Court", optional: true }] }),
+      task("cause", "Cause list", CalendarClock, 3, 2, "hearing", "Add a hearing", "Today's list is empty", (live) => ofType(live, "hearing").filter((row) => row.due === live.today || (row.due && row.due >= live.today)).slice(0, 3).map((row) => ({ id: row.id, title: row.title, meta: row.court ?? when(row.due, live.today) })), { fields: [{ key: "title", label: "Matter" }, { key: "day", label: "Date", input: "date" }, { key: "court", label: "Court", optional: true }] }),
       tile({
         key: "unbilled", title: "Logged time", icon: Scale, c: 3, r: 2, kind: "time", action: "Log your first hour", ghost: "Hours you log land here",
         fields: [{ key: "title", label: "Matter" }, { key: "hours", label: "Hours", input: "number" }],
@@ -176,8 +179,8 @@ function specsFor(id: DeskId): Spec[] {
         stat: (live) => (todaySlots(live)[0] ? { v: String(todaySlots(live).length), unit: "today", note: todaySlots(live).map((row) => row.title).join(" · ") } : live.slots[0] ? { v: String(live.slots.length), unit: live.slots.length === 1 ? "class" : "classes" } : null),
       }),
       task("deadlines", "Deadlines", Flag, 4, 4, "deadline", "Add a deadline", "Dates you name stay on the rail", (live) => [
-        ...live.deliverables.map((row) => ({ id: row.id, title: row.title, meta: when(row.due) })),
-        ...ofType(live, "deadline").map((row) => ({ id: row.id, title: row.title, meta: when(row.due) })),
+        ...live.deliverables.map((row) => ({ id: row.id, title: row.title, meta: when(row.due, live.today) })),
+        ...ofType(live, "deadline").map((row) => ({ id: row.id, title: row.title, meta: when(row.due, live.today) })),
       ]),
       tile({
         key: "courses", title: "Courses", icon: GraduationCap, c: 8, r: 2, kind: "slot", action: "Add your timetable", ghost: "Courses come from the timetable",
@@ -190,8 +193,9 @@ function specsFor(id: DeskId): Spec[] {
       }),
       tile({
         key: "streak", title: "Attendance", icon: Target, c: 5, r: 2, kind: "attendance", action: "Mark attendance", ghost: "One mark starts the count",
-        fields: [{ key: "name", label: "Name" }, { key: "present", label: "Present", input: "select", options: [["yes", "Present"], ["no", "Absent"]] }],
+        fields: [{ key: "name", label: "Name" }, { key: "present", label: "Status", input: "select", options: [["yes", "Present"], ["no", "Absent"]] }],
         rows: () => [],
+        count: (live) => live.attendance.present + live.attendance.absent,
         stat: (live) => {
           const total = live.attendance.present + live.attendance.absent;
           return total ? { v: String(Math.round((live.attendance.present / total) * 100)), unit: "%", note: `${live.attendance.present} present · ${live.attendance.absent} absent` } : null;
@@ -202,7 +206,7 @@ function specsFor(id: DeskId): Spec[] {
         fields: [{ key: "title", label: "Class" }, { key: "weekday", label: "Day", input: "select", options: WEEKDAYS }, { key: "start", label: "Start", placeholder: "09:00" }, { key: "end", label: "End", placeholder: "10:15" }],
         rows: (live) => todaySlots(live).map((row) => ({ id: row.id, title: row.title, meta: hm(row.startMin) })),
       }),
-      task("plan", "Study plan", ListTodo, 4, 3, "task", "Add a study block", "Open tasks for the week", (live) => openTasks(live).slice(0, 4).map((row) => ({ id: row.id, title: row.title, meta: when(row.due) }))),
+      task("plan", "Study plan", ListTodo, 4, 3, "task", "Add a study block", "Open tasks for the week", (live) => byUrgency(openTasks(live)).slice(0, 4).map((row) => ({ id: row.id, title: row.title, meta: when(row.due, live.today) }))),
       tile({
         key: "group", title: "Project group", icon: Users, c: 4, r: 3, kind: "person", action: "Name your group", ghost: "The group is empty",
         fields: [{ key: "name", label: "Name" }],
@@ -216,12 +220,12 @@ function specsFor(id: DeskId): Spec[] {
       tile({
         key: "countdown", title: "Countdown", icon: Hourglass, c: 8, r: 4, hero: true, kind: "exam", action: "Set the exam date", ghost: "The countdown starts from the exam date",
         fields: [{ key: "day", label: "Exam date", input: "date" }],
-        rows: (live) => live.countdowns.map((row) => ({ id: row.id, title: row.title, meta: `${row.days}d · ${when(row.due)}` })),
-        stat: (live) => (live.countdowns[0] ? { v: String(live.countdowns[0].days), unit: "days", note: `${live.countdowns[0].title} · ${when(live.countdowns[0].due)}` } : null),
+        rows: (live) => live.countdowns.map((row) => ({ id: row.id, title: row.title, meta: `${row.days}d · ${when(row.due, live.today)}` })),
+        stat: (live) => (live.countdowns[0] ? { v: String(live.countdowns[0].days), unit: "days", note: `${live.countdowns[0].title} · ${when(live.countdowns[0].due, live.today)}` } : null),
       }),
-      task("target", "Today", Target, 4, 2, "revision", "Add today's topic", "One topic is enough", (live) => ofType(live, "revision").slice(0, 2).map((row) => ({ id: row.id, title: row.title, meta: row.subject ?? when(row.due) })), { fields: [{ key: "title", label: "Topic" }, { key: "subject", label: "Subject", optional: true }] }),
+      task("target", "Today", Target, 4, 2, "revision", "Add today's topic", "One topic is enough", (live) => ofType(live, "revision").slice(0, 2).map((row) => ({ id: row.id, title: row.title, meta: row.subject ?? when(row.due, live.today) })), { fields: [{ key: "title", label: "Topic" }, { key: "subject", label: "Subject", optional: true }] }),
       task("affairs", "Saved", BookOpen, 4, 2, "reading", "Add a note", "What you saved this week", (live) => ofType(live, "reading").slice(0, 2).map((row) => ({ id: row.id, title: row.title }))),
-      task("syllabus", "Syllabus", Layers, 6, 3, "phase", "Add a phase", "Phases of the syllabus", (live) => ofType(live, "phase").map((row) => ({ id: row.id, title: row.title, meta: when(row.due) || row.pipelineStage || "" }))),
+      task("syllabus", "Syllabus", Layers, 6, 3, "phase", "Add a phase", "Phases of the syllabus", (live) => ofType(live, "phase").map((row) => ({ id: row.id, title: row.title, meta: when(row.due, live.today) || row.pipelineStage || "" }))),
       tile({
         key: "mocks", title: "Mocks", icon: Target, c: 6, r: 3, kind: "mock", action: "Log a mock score", ghost: "Two scores make a line",
         fields: [
@@ -236,7 +240,7 @@ function specsFor(id: DeskId): Spec[] {
           return last ? { v: String(last.measure ?? 0), unit: last.weight ? `/ ${last.weight}` : "", note: last.subject || `${mocks.length} logged` } : null;
         },
       }),
-      task("revision", "Revision", BookOpen, 5, 3, "revision", "Add a revision", "Topics still due", (live) => ofType(live, "revision").map((row) => ({ id: row.id, title: row.title, meta: [row.subject, when(row.due)].filter(Boolean).join(" · ") })), { fields: [{ key: "title", label: "Topic" }, { key: "subject", label: "Subject", optional: true }, { key: "day", label: "Due", input: "date", optional: true }] }),
+      task("revision", "Revision", BookOpen, 5, 3, "revision", "Add a revision", "Topics still due", (live) => ofType(live, "revision").map((row) => ({ id: row.id, title: row.title, meta: [row.subject, when(row.due, live.today)].filter(Boolean).join(" · ") })), { fields: [{ key: "title", label: "Topic" }, { key: "subject", label: "Subject", optional: true }, { key: "day", label: "Due", input: "date", optional: true }] }),
       tile({
         key: "hours", title: "Hours", icon: CalendarClock, c: 4, r: 3, kind: "time", action: "Log an hour", ghost: "Hours you study",
         fields: [{ key: "title", label: "What" }, { key: "hours", label: "Hours", input: "number" }],
@@ -279,7 +283,7 @@ function specsFor(id: DeskId): Spec[] {
       task("read", "Reading", BookOpen, 4, 3, "reading", "Add a reading", "What is open", (live) => ofType(live, "reading").map((row) => ({ id: row.id, title: row.title }))),
       task("questions", "Open questions", ListTodo, 6, 3, "task", "Add a question", "What is still open", (live) => openTasks(live).slice(0, 4).map((row) => ({ id: row.id, title: row.title }))),
       tile({ key: "advisor", title: "Advisors", icon: Users, c: 3, r: 3, kind: "person", action: "Add a person", ghost: "Advisor and co-authors", fields: [{ key: "name", label: "Name" }], rows: (live) => live.people.map((row) => ({ id: row.id, title: row.name, meta: row.role ?? "" })) }),
-      task("venue", "Venue", Flag, 3, 3, "deadline", "Pick a venue", "The deadline stays up", (live) => live.deliverables.concat(ofType(live, "deadline").map((row) => ({ id: row.id, title: row.title, due: row.due, status: "" }))).map((row) => ({ id: row.id, title: row.title, meta: when(row.due) }))),
+      task("venue", "Venue", Flag, 3, 3, "deadline", "Pick a venue", "The deadline stays up", (live) => live.deliverables.concat(ofType(live, "deadline").map((row) => ({ id: row.id, title: row.title, due: row.due, status: "" }))).map((row) => ({ id: row.id, title: row.title, meta: when(row.due, live.today) }))),
     ];
   }
   if (id === "classes") {
@@ -298,12 +302,13 @@ function specsFor(id: DeskId): Spec[] {
           return live.grading.length ? { v: String(left), unit: "left" } : null;
         },
       }),
-      task("syllabus", "Classes", GraduationCap, 4, 3, "phase", "Add a class plan", "What the class is on", (live) => ofType(live, "phase").map((row) => ({ id: row.id, title: row.title, meta: when(row.due) }))),
+      task("syllabus", "Classes", GraduationCap, 4, 3, "phase", "Add a class plan", "What the class is on", (live) => ofType(live, "phase").map((row) => ({ id: row.id, title: row.title, meta: when(row.due, live.today) }))),
       tile({ key: "people", title: "People", icon: Users, c: 4, r: 3, kind: "person", action: "Add a person", ghost: "Students and colleagues", fields: [{ key: "name", label: "Name" }], rows: (live) => live.people.map((row) => ({ id: row.id, title: row.name })) }),
       tile({
         key: "attendance", title: "Attendance", icon: Target, c: 3, r: 2, kind: "attendance", action: "Mark attendance", ghost: "Mark who was in",
-        fields: [{ key: "name", label: "Name" }, { key: "present", label: "Present", input: "select", options: [["yes", "Present"], ["no", "Absent"]] }],
+        fields: [{ key: "name", label: "Name" }, { key: "present", label: "Status", input: "select", options: [["yes", "Present"], ["no", "Absent"]] }],
         rows: () => [],
+        count: (live) => live.attendance.present + live.attendance.absent,
         stat: (live) => {
           const total = live.attendance.present + live.attendance.absent;
           return total ? { v: String(live.attendance.present), unit: "in", note: `${live.attendance.absent} absent` } : null;
@@ -312,8 +317,8 @@ function specsFor(id: DeskId): Spec[] {
       task("meet", "Meetings", Users, 3, 2, "task", "Add a follow-up", "After class", (live) => live.meetings.map((row) => ({ id: row.id, title: row.title }))),
       task("duty", "Duty", ListTodo, 3, 2, "task", "Add a duty", "What else is on you", (live) => openTasks(live).slice(0, 3).map((row) => ({ id: row.id, title: row.title }))),
       task("paper", "Next paper", Flag, 3, 2, "deadline", "Set the next paper", "The date stays visible", (live) => [
-        ...ofType(live, "deadline").map((row) => ({ id: row.id, title: row.title, meta: when(row.due) })),
-        ...live.countdowns.map((row) => ({ id: row.id, title: row.title, meta: when(row.due) })),
+        ...ofType(live, "deadline").map((row) => ({ id: row.id, title: row.title, meta: when(row.due, live.today) })),
+        ...live.countdowns.map((row) => ({ id: row.id, title: row.title, meta: when(row.due, live.today) })),
       ]),
     ];
   }
@@ -340,7 +345,7 @@ function specsFor(id: DeskId): Spec[] {
         ...live.meetings.map((row) => ({ id: row.id, title: row.title, meta: "Note" })),
         ...ofType(live, "decision").map((row) => ({ id: row.id, title: row.title, meta: "" })),
       ]),
-      tile({ key: "out", title: "Team contacts", icon: Users, c: 5, r: 3, kind: "person", action: "Add your team", ghost: "Who is on the team", fields: [{ key: "name", label: "Name" }], rows: (live) => live.people.map((row) => ({ id: row.id, title: row.name, meta: row.lastInteraction ? when(row.lastInteraction) : "" })) }),
+      tile({ key: "out", title: "Team contacts", icon: Users, c: 5, r: 3, kind: "person", action: "Add your team", ghost: "Who is on the team", fields: [{ key: "name", label: "Name" }], rows: (live) => live.people.map((row) => ({ id: row.id, title: row.name, meta: row.lastInteraction ? when(row.lastInteraction, live.today) : "" })) }),
     ];
   }
   if (id === "branch") {
@@ -365,7 +370,7 @@ function specsFor(id: DeskId): Spec[] {
   }
   if (id === "bench") {
     return [
-      task("build", "Build", Boxes, 12, 4, "deadline", "Name the next milestone", "The date stays up", (live) => openTasks(live).slice(0, 4).map((row) => ({ id: row.id, title: row.title, meta: when(row.due) })), { hero: true }),
+      task("build", "Build", Boxes, 12, 4, "deadline", "Name the next milestone", "The date stays up", (live) => byUrgency(openTasks(live)).slice(0, 4).map((row) => ({ id: row.id, title: row.title, meta: when(row.due, live.today) })), { hero: true }),
       tile({
         key: "parts", title: "Parts", icon: Boxes, c: 4, r: 4, kind: "part", action: "Add a part", ghost: "Parts get a status",
         fields: [{ key: "name", label: "Part" }, { key: "qty", label: "Qty", input: "number", optional: true }, { key: "status", label: "Status", input: "select", options: [["out", "Out"], ["ordered", "Ordered"], ["in", "In"]] }],
@@ -383,20 +388,20 @@ function specsFor(id: DeskId): Spec[] {
         rows: (live) => live.deploys.map((row) => ({ id: row.id, title: row.name, meta: row.env })),
       }),
       tile({ key: "count", title: "Still out", icon: Boxes, c: 3, r: 2, kind: "part", action: "Add a part", ghost: "Nothing on the BOM", fields: [{ key: "name", label: "Part" }], rows: (live) => live.parts.filter((row) => row.status !== "in").slice(0, 3).map((row) => ({ id: row.id, title: row.name, meta: row.status })), stat: (live) => (live.parts.length ? { v: String(live.parts.filter((row) => row.status !== "in").length), unit: "out" } : null) }),
-      task("lead", "Lead time", CalendarClock, 3, 2, "deadline", "Add a date", "When it is due", (live) => ofType(live, "deadline").map((row) => ({ id: row.id, title: row.title, meta: when(row.due) }))),
+      task("lead", "Lead time", CalendarClock, 3, 2, "deadline", "Add a date", "When it is due", (live) => ofType(live, "deadline").map((row) => ({ id: row.id, title: row.title, meta: when(row.due, live.today) }))),
       tile({ key: "result", title: "Last result", icon: Flag, c: 3, r: 2, kind: "test", action: "Log a test run", ghost: "The latest run", fields: [{ key: "name", label: "Test" }, { key: "status", label: "Status", input: "select", options: [["pass", "Pass"], ["fail", "Fail"]] }], rows: (live) => live.tests.slice(0, 2).map((row) => ({ id: row.id, title: row.name, meta: row.status })) }),
-      task("next", "Milestone", Flag, 3, 2, "deadline", "Name the next milestone", "The date stays up", (live) => live.deliverables.map((row) => ({ id: row.id, title: row.title, meta: when(row.due) }))),
+      task("next", "Milestone", Flag, 3, 2, "deadline", "Name the next milestone", "The date stays up", (live) => live.deliverables.map((row) => ({ id: row.id, title: row.title, meta: when(row.due, live.today) }))),
     ];
   }
   return [
-    task("day", "Your day", CalendarClock, 8, 4, "task", "Add what needs you", "A decision or a review", (live) => openTasks(live).slice(0, 4).map((row) => ({ id: row.id, title: row.title, meta: when(row.due) })), { hero: true }),
+    task("day", "Your day", CalendarClock, 8, 4, "task", "Add what needs you", "A decision or a review", (live) => byUrgency(openTasks(live)).slice(0, 4).map((row) => ({ id: row.id, title: row.title, meta: when(row.due, live.today) })), { hero: true }),
     task("needs", "Needs you", Flag, 4, 2, "task", "Add a task", "Waiting on you", (live) => openTasks(live).slice(0, 2).map((row) => ({ id: row.id, title: row.title }))),
-    tile({ key: "brief", title: "Reminders", icon: CalendarClock, c: 4, r: 2, kind: "deadline", action: "Add a reminder", ghost: "A date you should see", fields: [{ key: "title", label: "Reminder" }, { key: "day", label: "Date", input: "date", optional: true }], rows: (live) => live.reminders.map((row) => ({ id: row.id, title: row.title, meta: when(row.dueDate) })) }),
+    tile({ key: "brief", title: "Reminders", icon: CalendarClock, c: 4, r: 2, kind: "deadline", action: "Add a reminder", ghost: "A date you should see", fields: [{ key: "title", label: "Reminder" }, { key: "day", label: "Date", input: "date", optional: true }], rows: (live) => live.reminders.map((row) => ({ id: row.id, title: row.title, meta: when(row.dueDate, live.today) })) }),
     task("focus", "Focus", ListTodo, 6, 3, "task", "Add what needs you", "Open work", (live) => openTasks(live).slice(0, 4).map((row) => ({ id: row.id, title: row.title }))),
     task("proposed", "Proposed", Layers, 6, 3, "task", "Add a proposal", "Not decided yet", (live) => live.tasks.filter((row) => row.status === "proposed").map((row) => ({ id: row.id, title: row.title }))),
-    tile({ key: "dels", title: "Deliverables", icon: Flag, c: 4, r: 3, kind: "deadline", action: "Name a deliverable", ghost: "So the date stays visible", fields: [{ key: "title", label: "Deliverable" }, { key: "day", label: "Due", input: "date", optional: true }], rows: (live) => live.deliverables.map((row) => ({ id: row.id, title: row.title, meta: when(row.due) })) }),
+    tile({ key: "dels", title: "Deliverables", icon: Flag, c: 4, r: 3, kind: "deadline", action: "Name a deliverable", ghost: "So the date stays visible", fields: [{ key: "title", label: "Deliverable" }, { key: "day", label: "Due", input: "date", optional: true }], rows: (live) => live.deliverables.map((row) => ({ id: row.id, title: row.title, meta: when(row.due, live.today) })) }),
     tile({ key: "people", title: "People", icon: Users, c: 4, r: 3, kind: "person", action: "Add a person", ghost: "People on the work", fields: [{ key: "name", label: "Name" }], rows: (live) => live.people.map((row) => ({ id: row.id, title: row.name })) }),
-    tile({ key: "reminders", title: "Dates", icon: CalendarClock, c: 4, r: 3, kind: "deadline", action: "Add a date", ghost: "Upcoming dates", fields: [{ key: "title", label: "Title" }, { key: "day", label: "Date", input: "date" }], rows: (live) => live.countdowns.map((row) => ({ id: row.id, title: row.title, meta: `${row.days}d` })).concat(live.reminders.map((row) => ({ id: row.id, title: row.title, meta: when(row.dueDate) }))) }),
+    tile({ key: "reminders", title: "Dates", icon: CalendarClock, c: 4, r: 3, kind: "deadline", action: "Add a date", ghost: "Upcoming dates", fields: [{ key: "title", label: "Title" }, { key: "day", label: "Date", input: "date" }], rows: (live) => live.countdowns.map((row) => ({ id: row.id, title: row.title, meta: `${row.days}d` })).concat(live.reminders.map((row) => ({ id: row.id, title: row.title, meta: when(row.dueDate, live.today) }))) }),
   ];
 }
 
@@ -406,7 +411,7 @@ function extraSpecs(extras: ReadonlySet<DeskExtraId>): Spec[] {
     more.push(tile({
       key: "deadlines", title: "Deadlines", icon: Hourglass, c: 6, r: 3, kind: "deadline", action: "Add a deadline", ghost: "A date you cannot miss",
       fields: [{ key: "title", label: "Deadline" }, { key: "day", label: "Date", input: "date" }],
-      rows: (live) => ofType(live, "deadline").map((row) => ({ id: row.id, title: row.title, meta: when(row.due) })),
+      rows: (live) => ofType(live, "deadline").map((row) => ({ id: row.id, title: row.title, meta: when(row.due, live.today) })),
     }));
   }
   if (extras.has("learning")) {
@@ -420,7 +425,7 @@ function extraSpecs(extras: ReadonlySet<DeskExtraId>): Spec[] {
     more.push(tile({
       key: "hold", title: "On the bench", icon: Boxes, c: 6, r: 3, kind: "hold", action: "What's clamped", ghost: "The piece in front of you, and the next check",
       fields: [{ key: "title", label: "What's clamped" }, { key: "day", label: "Next check", input: "date", optional: true }],
-      rows: (live) => ofType(live, "hold").map((row) => ({ id: row.id, title: row.title, meta: when(row.due) })),
+      rows: (live) => ofType(live, "hold").map((row) => ({ id: row.id, title: row.title, meta: when(row.due, live.today) })),
     }));
   }
   return more;
@@ -544,6 +549,8 @@ export function liveLine(id: DeskId, live: DeskLive): string | null {
   if (id === "exam" && live.countdowns[0]) return `${plural(live.countdowns[0].days, "day")} to ${live.countdowns[0].title}.`;
   if (id === "semester" && todaySlots(live).length) return `${plural(todaySlots(live).length, "class")} today.`;
   const openN = openTasks(live).length;
+  const late = openTasks(live).filter((row) => isLate(row, live.today)).length;
+  if (openN && late) return `${openN} open on this desk, ${late} overdue.`;
   return openN ? `${openN} open on this desk.` : "Your entries are on the desk.";
 }
 
@@ -646,6 +653,11 @@ export function quietAdd(spec: { key: string; title: string }): string {
   return `+ Add ${noun}`.replace(/\bfirst\b/gi, "").replace(/\s+/g, " ").trim();
 }
 
+/** A tile has something to show: rows, or a figure such as attendance counts. Today and Context both decide with this. */
+export function tileFilled(spec: Pick<Spec, "rows" | "stat">, live: DeskLive): boolean {
+  return spec.rows(live).length > 0 || Boolean(spec.stat?.(live));
+}
+
 export function TileBody({ spec, live, preview = false, interactivePreview = false }: { spec: Spec; live: DeskLive; preview?: boolean; interactivePreview?: boolean }) {
   const rows = spec.rows(live);
   const stat = spec.stat?.(live) ?? null;
@@ -658,7 +670,11 @@ export function TileBody({ spec, live, preview = false, interactivePreview = fal
 function stubLive(live: DeskLive, kind: string, values: Record<string, string>): DeskLive {
   const id = `tmp-${Date.now()}`;
   if (kind === "slot") {
-    return { ...live, slots: [...live.slots, { id, title: values.title || "Class", weekday: Number(values.weekday || 1), startMin: 9 * 60, endMin: 10 * 60, course: values.course ?? "" }] };
+    return { ...live, slots: [...live.slots, { id, title: values.title || "Class", weekday: Number(values.weekday || 1), startMin: parseClock(values.start ?? "") ?? 9 * 60, endMin: parseClock(values.end ?? "") ?? 10 * 60, course: values.course ?? "" }] };
+  }
+  if (kind === "attendance") {
+    const present = values.present !== "no";
+    return { ...live, attendance: { present: live.attendance.present + (present ? 1 : 0), absent: live.attendance.absent + (present ? 0 : 1) } };
   }
   if (kind === "matter") {
     return { ...live, limitation: [...live.limitation, { id, title: values.title || "Matter", court: values.court || null, due: values.orderDate || live.today, days: 0, shifted: false, note: "Counting…" }] };
@@ -672,29 +688,14 @@ function stubLive(live: DeskLive, kind: string, values: Record<string, string>):
   return { ...live, tasks: [{ id, title: values.title || values.name || kind, status: "todo", taskType: kind, due: values.day || null, startsAt: null, court: values.court || null, matterStage: null, orderDate: null, subject: values.subject || null, weight: null, wordCount: null, pipelineStage: null, measure: null, rule: null, projectId: null }, ...live.tasks] };
 }
 
+/** Desk entries saved as open tasks: they are on the board too, so the form and toast say so. */
+const BOARD_KINDS = new Set(["hearing", "matter", "filing", "draft", "task", "paper", "reading", "exam", "phase", "revision", "deadline", "review", "concept", "hold"]);
+
 export function LiveBoard({ deskId, live, mobile, plots, formKind = null }: { deskId: DeskId; live: DeskLive; mobile?: boolean; plots?: boolean; formKind?: string | null }) {
   const toast = useToast();
   const client = useQueryClient();
   const layout = useDeskLayout(deskId);
   const [form, setForm] = useState<Spec | null>(null);
-  const formRef = useRef<HTMLFormElement>(null);
-  const [values, setValues] = useState<Record<string, string>>({});
-  const [pending, setPending] = useState(false);
-  useLayoutEffect(() => {
-    const node = formRef.current;
-    if (!form || !node) return;
-    const place = () => {
-      const next = placeCenteredPanel(
-        { width: window.innerWidth, height: window.innerHeight },
-        node.scrollHeight,
-      );
-      node.style.top = `${next.top}px`;
-      node.style.maxHeight = `${next.maxHeight}px`;
-    };
-    place();
-    window.addEventListener("resize", place);
-    return () => window.removeEventListener("resize", place);
-  }, [form]);
   const consumed = useRef<string | null>(null);
   const specs = [...layout.shown];
   const proposals = specPool().get("proposed");
@@ -710,42 +711,33 @@ export function LiveBoard({ deskId, live, mobile, plots, formKind = null }: { de
     if (!spec) return;
     consumed.current = kind;
     setForm(spec);
-    setValues({});
   }, [formKind, layout.ready, specs, layout.defaults]);
 
-  function open(spec: Spec) {
-    setForm(spec);
-    setValues({});
-  }
-
-  async function save(event: FormEvent) {
-    event.preventDefault();
-    if (!form || pending) return;
-    setPending(true);
+  async function save(spec: Spec, values: Record<string, string>) {
     const snapshot = client.getQueryData<DeskLive>(["desk-live"]);
-    if (snapshot) client.setQueryData(["desk-live"], stubLive(snapshot, form.kind, values));
-    setForm(null);
+    if (snapshot) client.setQueryData(["desk-live"], stubLive(snapshot, spec.kind, values));
+    let saved: Awaited<ReturnType<typeof api.deskAdd>>;
     try {
-      const saved = await api.deskAdd(form.kind, values);
-      await client.invalidateQueries({ queryKey: ["desk-live"] });
-      toast(`Added “${saved.title}”.`, {
-        action: {
-          label: "Undo",
-          run: () => {
-            void (async () => {
-              if (saved.undoEntryId) await api.undo(saved.undoEntryId);
-              else await api.deskRemove(saved.kind, saved.id);
-              await client.invalidateQueries({ queryKey: ["desk-live"] });
-            })();
-          },
-        },
-      });
+      saved = await api.deskAdd(spec.kind, values);
     } catch (error) {
       if (snapshot) client.setQueryData(["desk-live"], snapshot);
-      toast((error as Error).message, { tone: "error" });
-    } finally {
-      setPending(false);
+      throw error;
     }
+    setForm(null);
+    void client.invalidateQueries({ queryKey: ["desk-live"] });
+    if (BOARD_KINDS.has(spec.kind)) void client.invalidateQueries({ queryKey: ["tasks"] });
+    toast(BOARD_KINDS.has(spec.kind) ? `Added “${saved.title}”. It is a task on your board too.` : `Added “${saved.title}”.`, {
+      action: {
+        label: "Undo",
+        run: () => {
+          void (async () => {
+            if (saved.undoEntryId) await api.undo(saved.undoEntryId);
+            else await api.deskRemove(saved.kind, saved.id);
+            await client.invalidateQueries({ queryKey: ["desk-live"] });
+          })();
+        },
+      },
+    });
   }
 
   return (
@@ -753,7 +745,7 @@ export function LiveBoard({ deskId, live, mobile, plots, formKind = null }: { de
       {plots ? <PlotsTile mobile={mobile} /> : null}
       {specs.map((spec) => {
         const rows = spec.rows(live);
-        const filled = rows.length > 0 || Boolean(spec.stat?.(live));
+        const filled = tileFilled(spec, live);
         const size = tiles.sizeOf(spec);
         const control = tiles.controls(spec);
         return (
@@ -769,19 +761,19 @@ export function LiveBoard({ deskId, live, mobile, plots, formKind = null }: { de
             grip={control.grip}
             onHide={control.onHide}
             corner={control.corner}
-            meta={spec.derived ? "Live" : filled ? `${rows.length || 1}` : "Nothing yet"}
-            onAdd={filled && !spec.derived ? () => open(spec) : undefined}
+            meta={spec.derived ? "Live" : filled ? String(spec.count?.(live) ?? (rows.length || 1)) : "Nothing yet"}
+            onAdd={filled && !spec.derived ? () => setForm(spec) : undefined}
             openHref={filled ? tileHref(spec.key) ?? (spec.derived ? "/board" : undefined) : undefined}
             ghost={
               filled
                 ? false
-                : { label: spec.ghost, sub: spec.sub, action: spec.action, kind: spec.kind, onAction: () => open(spec) }
+                : { label: spec.ghost, sub: spec.sub, action: spec.action, kind: spec.kind, onAction: () => setForm(spec) }
             }
           >
             {filled ? (
               <>
                 {spec.key === "proposed" ? <ProposalsWidget /> : <TileBody spec={spec} live={live} />}
-                {spec.key === "agenda" ? null : spec.derived ? <Link className="qadd" href="/board">Open your board →</Link> : <button type="button" className="qadd" data-desk-add={spec.kind} onClick={() => open(spec)}>
+                {spec.key === "agenda" ? null : spec.derived ? <Link className="qadd" href="/board">Open your board →</Link> : <button type="button" className="qadd" data-desk-add={spec.kind} onClick={() => setForm(spec)}>
                   {quietAdd(spec)}
                 </button>}
               </>
@@ -790,35 +782,16 @@ export function LiveBoard({ deskId, live, mobile, plots, formKind = null }: { de
         );
       })}
       {form ? (
-        <form ref={formRef} className="addpop tile" data-desk-form={form.kind} onSubmit={(event) => void save(event)} style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10 }}>
-          <div className="row sb">
-            <span style={{ fontWeight: 650 }}>{quietAdd(form).replace(/^\+\s*/, "")}</span>
-            <button type="button" className="btn" onClick={() => setForm(null)}>Close</button>
-          </div>
-          {form.fields.map((field) => (
-            <label key={field.key} className="col gap4" style={{ fontSize: 12, color: "var(--muted)" }}>
-              {field.label}
-              {field.input === "select" ? (
-                <select className="field" required={!field.optional} value={values[field.key] ?? ""} onChange={(event) => setValues({ ...values, [field.key]: event.target.value })}>
-                  <option value="">Choose</option>
-                  {field.options?.map(([value, label]) => (
-                    <option key={value} value={value}>{label}</option>
-                  ))}
-                </select>
-              ) : (
-                <input
-                  className="field"
-                  required={!field.optional}
-                  type={field.input ?? "text"}
-                  placeholder={field.placeholder}
-                  value={values[field.key] ?? ""}
-                  onChange={(event) => setValues({ ...values, [field.key]: event.target.value })}
-                />
-              )}
-            </label>
-          ))}
-          <button type="submit" className="btn-p" disabled={pending}>{pending ? "Saving…" : "Save"}</button>
-        </form>
+        <DeskAddForm
+          key={form.key}
+          kind={form.kind}
+          title={quietAdd(form).replace(/^\+\s*/, "")}
+          fields={form.fields}
+          note={BOARD_KINDS.has(form.kind) ? <>Saved as a task, so it shows on your <Link href="/board">board</Link> too.</> : undefined}
+          onSubmit={(values) => save(form, values)}
+          onClose={() => setForm(null)}
+          returnFocus={() => document.querySelector<HTMLElement>(`[data-desk-key="${CSS.escape(form.key)}"] [data-desk-add]`)}
+        />
       ) : null}
     </>
   );
@@ -889,9 +862,9 @@ const TAB_MATCH: Record<string, string[]> = {
   learning: ["concepts"],
 };
 
-export function lensSections(id: DeskId, tab: string, live: DeskLive, extras: ReadonlySet<DeskExtraId> = new Set()): Array<{ title: string; kind: string; icon: LucideIcon; rows: Row[]; spec: Spec }> {
+export function lensSections(id: DeskId, tab: string, live: DeskLive, extras: ReadonlySet<DeskExtraId> = new Set()): Array<{ title: string; kind: string; icon: LucideIcon; rows: Row[]; filled: boolean; spec: Spec }> {
   const all = boardSpecs(id, extras);
   const keys = TAB_MATCH[tab];
   const specs = !keys ? all.slice(0, 4) : all.filter((spec) => keys.includes(spec.key));
-  return specs.slice(0, 4).map((spec) => ({ title: spec.title, kind: spec.kind, icon: spec.icon, rows: spec.rows(live).slice(0, 6), spec }));
+  return specs.slice(0, 4).map((spec) => ({ title: spec.title, kind: spec.kind, icon: spec.icon, rows: spec.rows(live).slice(0, 6), filled: tileFilled(spec, live), spec }));
 }

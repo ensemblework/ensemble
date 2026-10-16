@@ -9,7 +9,7 @@ import { bindToast } from "@/lib/toast-bus";
 import { createHash } from "node:crypto";
 import { FilesScreen, shortFileName, usageLine } from "./files-screen.js";
 import { ImportFromApps } from "./import-from-apps.js";
-import { checkUploads, findDuplicates } from "./use-uploads.js";
+import { checkUploads, fileRefusal, findDuplicates } from "./use-uploads.js";
 
 Object.defineProperty(globalThis, "self", { configurable: true, value: window });
 
@@ -50,7 +50,7 @@ const FILES = [
   record("f3", "Field notes.txt", { kind: "text", mediaType: "text/plain", byteSize: 4200 }),
 ];
 
-async function mount(node: React.ReactNode, handle: (call: Call) => unknown) {
+async function mount(node: React.ReactNode, handle: (call: Call) => unknown, queries: { retry?: number | false; retryDelay?: number } = { retry: false }) {
   const calls: Call[] = [];
   const toasts: Array<{ text: string; tone?: string }> = [];
   bindToast((text, options) => void toasts.push({ text, tone: options?.tone }));
@@ -63,7 +63,7 @@ async function mount(node: React.ReactNode, handle: (call: Call) => unknown) {
     if (answer !== undefined) return json(answer);
     return json({ error: `not mocked: ${call.method} ${call.url.pathname}` }, 404);
   }) as typeof fetch;
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { gcTime: Infinity } } });
+  const client = new QueryClient({ defaultOptions: { queries: { ...queries, gcTime: Infinity }, mutations: { gcTime: Infinity } } });
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
@@ -105,6 +105,15 @@ function button(label: RegExp): HTMLButtonElement {
 async function click(node: HTMLElement) {
   await act(async () => {
     node.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+}
+
+async function type(input: HTMLInputElement, value: string) {
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+    setter.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
     await new Promise((resolve) => setTimeout(resolve, 20));
   });
 }
@@ -387,4 +396,85 @@ test("Add from your apps lists each app's state, with plain steps and a way to f
   } finally {
     await view.done();
   }
+});
+
+test("searching keeps the kind chosen and the kind buttons", async () => {
+  const view = await mount(<FilesScreen />, (call) => {
+    if (call.url.pathname !== "/api/documents") return undefined;
+    const q = (call.url.searchParams.get("q") ?? "").toLowerCase();
+    return { files: FILES.filter((file) => file.filename.toLowerCase().includes(q)), usage: HOSTED };
+  });
+  try {
+    await waitFor(() => document.querySelectorAll("[data-file-row]").length === 3, "the files");
+    await click(button(/^Spreadsheet$/));
+    await type(document.querySelector<HTMLInputElement>('input[type="search"]')!, "e");
+    await waitFor(() => view.calls.some((call) => call.url.searchParams.get("q") === "e"), "the search", 2000);
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 50)));
+    assert.equal(button(/^Spreadsheet$/).getAttribute("aria-pressed"), "true", "the kind stays chosen");
+    assert.ok(button(/^PDF$/), "every kind button stays");
+    assert.deepEqual(Array.from(document.querySelectorAll("[data-file-row]"), (node) => node.getAttribute("data-file-row")), ["f2"]);
+    await type(document.querySelector<HTMLInputElement>('input[type="search"]')!, "lease");
+    await waitFor(() => Boolean(document.querySelector('[data-testid="files-no-kind"]')), "the empty kind note");
+    assert.match(text(), /No spreadsheet files match “lease”/);
+    await click(button(/^Show all kinds$/));
+    assert.deepEqual(Array.from(document.querySelectorAll("[data-file-row]"), (node) => node.getAttribute("data-file-row")), ["f1"]);
+  } finally {
+    await view.done();
+  }
+});
+
+test("when the list fails, the error and Retry show at the first failure, while retries wait", async () => {
+  let fail = true;
+  const view = await mount(
+    <FilesScreen />,
+    (call) => {
+      if (call.url.pathname !== "/api/documents") return undefined;
+      return fail ? json({ error: "Database unavailable" }, 500) : { files: FILES, usage: HOSTED };
+    },
+    { retry: 3, retryDelay: 60_000 },
+  );
+  try {
+    await waitFor(() => Boolean(document.querySelector("[data-load-error]")), "the error");
+    assert.match(text(), /Couldn't load your files/);
+    assert.equal(document.querySelector("[data-file-row]"), null);
+    fail = false;
+    await click(button(/^Retry$/));
+    await waitFor(() => document.querySelectorAll("[data-file-row]").length === 3, "the files after Retry");
+    assert.equal(document.querySelector("[data-load-error]"), null);
+  } finally {
+    await view.done();
+  }
+});
+
+test("empty files and programs are refused before sending, each with its reason on its row", async () => {
+  const view = await mount(<FilesScreen />, (call) => {
+    if (call.url.pathname !== "/api/documents") return undefined;
+    if (call.method === "POST") return json({ file: record("f9", "Plan.md", { kind: "text" }) }, 201);
+    return { files: FILES, usage: HOSTED };
+  });
+  try {
+    await waitFor(() => Boolean(document.querySelector("[data-file-row]")), "the files");
+    await choose([new File([], "Blank.txt"), new File(["MZ"], "setup.exe"), new File(["01"], "firmware.bin"), new File(["# Plan"], "Plan.md", { type: "text/markdown" })]);
+    await waitFor(() => view.toasts.some((toast) => toast.tone === "ok"), "the upload");
+    const posts = view.calls.filter((call) => call.method === "POST");
+    assert.deepEqual(posts.map((call) => (call.body as { filename: string }).filename), ["Plan.md"], "only the file with something in it was sent");
+    const failed = Array.from(document.querySelectorAll('[data-upload-state="failed"]'), (row) => row.textContent ?? "");
+    assert.equal(failed.length, 3);
+    assert.match(failed[0]!, /Blank\.txt.*empty/);
+    assert.match(failed[1]!, /setup\.exe.*\.exe files are programs/);
+    assert.match(failed[2]!, /firmware\.bin.*\.bin files are programs/);
+    assert.match(view.toasts.find((toast) => toast.tone === "error")!.text, /3 files were not uploaded/);
+  } finally {
+    await view.done();
+  }
+});
+
+test("a file is refused when empty or a program; other formats, shown or not, are kept", () => {
+  assert.match(fileRefusal(new File([], "notes.txt")) ?? "", /empty/);
+  assert.match(fileRefusal(new File(["x"], "Setup.EXE")) ?? "", /\.exe files are programs/);
+  assert.equal(fileRefusal(new File(["x"], "photos.zip")), null);
+  assert.equal(fileRefusal(new File(["x"], "report.pdf")), null);
+  const { accepted, refused } = checkUploads([new File([], "a.txt"), new File(["b"], "b.txt")], HOSTED);
+  assert.deepEqual(accepted.map((file) => file.name), ["b.txt"]);
+  assert.deepEqual(refused.map((row) => row.file.name), ["a.txt"]);
 });

@@ -110,6 +110,11 @@ export const TaskDto = z.object({
 });
 export type TaskDto = z.infer<typeof TaskDto>;
 
+/** Due dates outside these years are typing slips (a date field passes 0201 on its way to 2026). */
+export const DUE_YEAR_MIN = 1900;
+export const DUE_YEAR_MAX = 2200;
+export const DUE_YEAR_MESSAGE = `Pick a date between ${DUE_YEAR_MIN} and ${DUE_YEAR_MAX}.`;
+
 export const MAX_TASK_LABELS = 20;
 export const MAX_TASK_LABEL_LENGTH = 40;
 

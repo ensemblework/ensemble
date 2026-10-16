@@ -3,8 +3,9 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { createContext, useContext, useEffect, useState } from "react";
 import { HUB_API, api } from "@/lib/api";
+import { loadFailureKind } from "@/lib/load-failure";
 import { isSilentCancellation } from "@/lib/fetch-cancel";
-import { eventSourceInit, eventsStreamUrl } from "@/lib/events";
+import { LIVE_REOPENED_EVENT, PAGE_STEPS_EVENT, eventSourceInit, eventsStreamUrl } from "@/lib/events";
 import { invalidateSoon } from "@/lib/invalidate";
 import { notify, notifyDecision } from "@/lib/notify";
 import { presenceStore } from "@/lib/presence";
@@ -14,11 +15,13 @@ type LiveState = {
   connected: boolean;
   /** True after a live connection drops, until the next successful open. */
   dropped: boolean;
+  /** The server answered the last connection attempt with an error: it is up but failing, not unreachable. */
+  serverError: boolean;
   working: string | null;
   setWorking: (label: string | null) => void;
 };
 
-const LiveContext = createContext<LiveState>({ connected: false, dropped: false, working: null, setWorking: () => {} });
+const LiveContext = createContext<LiveState>({ connected: false, dropped: false, serverError: false, working: null, setWorking: () => {} });
 
 export const useLive = () => useContext(LiveContext);
 
@@ -41,6 +44,8 @@ const INVALIDATES: Record<string, string[][]> = {
   documents: [["documents"]],
   "reminder.due": [["reminders"], ["shell"]],
   "undo.changed": [["shell"], ["tasks"], ["assistant-messages"], ["ensemble-replies"]],
+  // You did something that can be undone: the top bar's Undo label names it.
+  "undo.recorded": [["shell"]],
 };
 
 /**
@@ -56,6 +61,7 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
   const client = useQueryClient();
   const [connected, setConnected] = useState(false);
   const [dropped, setDropped] = useState(false);
+  const [serverError, setServerError] = useState(false);
   const [working, setWorking] = useState<string | null>(null);
 
   useEffect(() => {
@@ -86,6 +92,7 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
         }
         sawError = true;
         setDropped(true);
+        setServerError(loadFailureKind(error) === "server");
         retry = window.setTimeout(() => void connect(), 8000);
         return;
       }
@@ -95,7 +102,12 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
       source.onopen = () => {
         setConnected(true);
         setDropped(false);
-        if (opened || sawError) void client.invalidateQueries();
+        setServerError(false);
+        if (opened || sawError) {
+          void client.invalidateQueries();
+          // Live pages fetch the steps they missed while the stream was down.
+          window.dispatchEvent(new CustomEvent(LIVE_REOPENED_EVENT));
+        }
         opened = true;
         sawError = false;
       };
@@ -136,6 +148,14 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
       source.addEventListener("page", (event) => {
         try {
           window.dispatchEvent(new CustomEvent("ensemble:page", { detail: JSON.parse((event as MessageEvent<string>).data) }));
+        } catch {
+          // ignore malformed frames
+        }
+      });
+      // Live co-editing steps on a page or task page (components/pages/use-collab.ts).
+      source.addEventListener("page.steps", (event) => {
+        try {
+          window.dispatchEvent(new CustomEvent(PAGE_STEPS_EVENT, { detail: JSON.parse((event as MessageEvent<string>).data) }));
         } catch {
           // ignore malformed frames
         }
@@ -224,5 +244,5 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
     };
   }, [client]);
 
-  return <LiveContext.Provider value={{ connected, dropped, working, setWorking }}>{children}</LiveContext.Provider>;
+  return <LiveContext.Provider value={{ connected, dropped, serverError, working, setWorking }}>{children}</LiveContext.Provider>;
 }

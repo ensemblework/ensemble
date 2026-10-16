@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma.js";
 import { appendLedger } from "../lib/ledger.js";
 import { sseHub } from "../lib/sse.js";
 import { lastUndoId } from "../lib/undo.js";
+import { isGuestIn } from "../sharing/context.js";
 import { hidesSignupStarters } from "../marketplace/starters.js";
 import { createTask, updateTask } from "../services/tasks.js";
 import { getTaskPage, saveTaskPage, TaskPageError } from "../pages/store.js";
@@ -48,7 +49,11 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
     const task = await prisma.task.findFirst({
       where: { id, userId: request.userId, deletedAt: null },
     });
-    if (!task) return reply.code(404).send({ error: "Task not found." });
+    if (!task) {
+      // The owner is told a task is in Trash, so the Hub can offer Restore instead of "not found".
+      const binned = isGuestIn(request.userId) ? null : await prisma.task.findFirst({ where: { id, userId: request.userId, deletedAt: { not: null } }, select: { id: true } });
+      return reply.code(404).send(binned ? { error: "This task is in Trash.", code: "TASK_IN_TRASH" } : { error: "Task not found." });
+    }
     return { task: serializeTask(task) };
   });
 

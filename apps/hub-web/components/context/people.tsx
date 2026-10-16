@@ -2,16 +2,22 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Clock3, Plus, Search, Trash2, Users } from "lucide-react";
-import { useState } from "react";
-import { api, type PersonRecord } from "@/lib/api";
+import { useEffect, useId, useRef, useState, type FormEvent } from "react";
+import { ApiError, api, type PersonRecord } from "@/lib/api";
 import { plural, shortDate } from "@/lib/format";
 import { useToast } from "../toast";
 import { Dialog, Empty, Field, InlineEdit, Spinner } from "../ui";
 import { AddPeopleFromApps } from "../app-items/people-from-apps";
+import { LoadError } from "../load-error";
+import { emailProblem, findSamePerson } from "./person-match";
 
-function PersonCard({ person }: { person: PersonRecord }) {
+function PersonCard({ person, focused = false }: { person: PersonRecord; focused?: boolean }) {
   const client = useQueryClient();
   const toast = useToast();
+  const card = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (focused) card.current?.scrollIntoView?.({ block: "nearest" });
+  }, [focused]);
   const save = useMutation({
     mutationFn: (data: Record<string, unknown>) => api.patchPerson(person.id, data),
     onSuccess: () => client.invalidateQueries({ queryKey: ["people"] }),
@@ -25,7 +31,11 @@ function PersonCard({ person }: { person: PersonRecord }) {
     },
   });
   return (
-    <div className="tile lift group relative flex flex-col rounded-xl bg-panel p-4 text-[13px]">
+    <div
+      ref={card}
+      data-person-card={person.id}
+      className={`tile lift group relative flex flex-col rounded-xl bg-panel p-4 text-[13px]${focused ? " ring-2 ring-accent" : ""}`}
+    >
       {person.derived ? null : (
         <button
           type="button"
@@ -38,7 +48,7 @@ function PersonCard({ person }: { person: PersonRecord }) {
       )}
       <div className="flex items-start gap-2.5 pr-6">
         <div className="min-w-0">
-          <div className="text-[15px] font-semibold leading-5">{person.name}</div>
+          <div className="truncate text-[15px] font-semibold leading-5" title={person.name}>{person.name}</div>
           <div className="truncate text-[12.5px] text-muted">{person.email ?? "No email"}</div>
         </div>
       </div>
@@ -84,26 +94,74 @@ export function PeopleTab({ initialSearch, who = "" }: { initialSearch: string; 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("");
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [duplicate, setDuplicate] = useState<{ message: string; person: PersonRecord | null } | null>(null);
+  const [focusId, setFocusId] = useState<string | null>(null);
+  const emailRef = useRef<HTMLInputElement>(null);
+  const formId = useId();
   const toast = useToast();
+  const all = people.data?.people ?? [];
+  const reset = () => {
+    setName("");
+    setEmail("");
+    setRole("");
+    setEmailError(null);
+    setDuplicate(null);
+  };
+  const close = () => {
+    setAdding(false);
+    reset();
+  };
   const create = useMutation({
     mutationFn: () => api.createPerson({ name: name.trim(), email: email.trim() || undefined, role: role.trim() || undefined }),
     onSuccess: () => {
-      setAdding(false);
       toast(`Added ${name.trim()}.`, { tone: "ok" });
-      setName("");
-      setEmail("");
-      setRole("");
+      close();
       void client.invalidateQueries({ queryKey: ["people"] });
       void client.invalidateQueries({ queryKey: ["entities"] });
       void client.invalidateQueries({ queryKey: ["desk-live"] });
     },
-    onError: (error: Error) => toast(error.message, { tone: "error" }),
+    onError: async (error: Error) => {
+      if (error instanceof ApiError && error.code === "person_exists") {
+        const fresh = await client.fetchQuery({ queryKey: ["people"], queryFn: api.people, staleTime: 0 }).catch(() => null);
+        setDuplicate({ message: error.message, person: fresh ? findSamePerson(fresh.people, { name, email }) : null });
+        return;
+      }
+      if (error instanceof ApiError && error.status === 400 && /email/i.test(error.message)) {
+        setEmailError(emailProblem(email) ?? "That email address is not valid.");
+        emailRef.current?.focus();
+        return;
+      }
+      toast(error.message, { tone: "error" });
+    },
   });
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (!name.trim() || create.isPending) return;
+    const problem = emailProblem(email);
+    setEmailError(problem);
+    if (problem) {
+      emailRef.current?.focus();
+      return;
+    }
+    const same = findSamePerson(all, { name, email });
+    if (same) {
+      setDuplicate({ message: `${same.name} is already in your people.`, person: same });
+      return;
+    }
+    create.mutate();
+  };
+  const showPerson = (person: PersonRecord) => {
+    close();
+    setSearch(person.email ?? person.name);
+    setFocusId(person.id);
+  };
   const wanted = who ? new Set(who.split(",").filter(Boolean)) : null;
-  const list = (people.data?.people ?? []).filter((person) => {
+  const list = all.filter((person) => {
     if (wanted && !wanted.has(person.id) && !wanted.has(person.name)) return false;
     return `${person.name} ${person.email ?? ""} ${person.team ?? ""}`.toLowerCase().includes(search.toLowerCase());
   });
+  const emailErrorId = `${formId}-email-error`;
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-3">
@@ -114,6 +172,7 @@ export function PeopleTab({ initialSearch, who = "" }: { initialSearch: string; 
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             placeholder="Filter people…"
+            aria-label="Filter people"
             className="search-line w-48 bg-transparent text-[13px] outline-none placeholder:text-faint"
           />
         </div>
@@ -123,11 +182,19 @@ export function PeopleTab({ initialSearch, who = "" }: { initialSearch: string; 
           <Plus size={13} /> Add person
         </button>
       </div>
-      {people.isLoading ? (
+      {people.isPending ? (
         <Spinner />
+      ) : people.isError && !people.data ? (
+        <LoadError error={people.error} onRetry={() => void people.refetch()} retrying={people.isFetching} what="your people" />
       ) : list.length === 0 ? (
         wanted ? (
           <Empty>No one on today's work.</Empty>
+        ) : all.length > 0 ? (
+          <div className="empty-state flex flex-col items-start gap-3" data-people-no-match>
+            <span className="text-[14px] font-medium text-ink">No people match “{search.trim()}”</span>
+            <span>{plural(all.length, "person", "people")} saved. Clear the filter to see everyone.</span>
+            <button type="button" className="btn" onClick={() => setSearch("")}>Clear filter</button>
+          </div>
         ) : (
           <div className="empty-state flex flex-col items-start gap-3" data-people-empty>
             <span className="flex items-center gap-2 text-[14px] font-medium text-ink"><Users size={15} /> Add the people you work with</span>
@@ -138,27 +205,62 @@ export function PeopleTab({ initialSearch, who = "" }: { initialSearch: string; 
       ) : (
         <div className="grid grid-cols-[repeat(auto-fill,minmax(270px,1fr))] gap-3">
           {list.map((person) => (
-            <PersonCard key={person.id} person={person} />
+            <PersonCard key={person.id} person={person} focused={person.id === focusId} />
           ))}
         </div>
       )}
-      <Dialog open={adding} onClose={() => setAdding(false)} title="Add a person">
-        <div className="space-y-3">
+      <Dialog open={adding} onClose={close} title="Add a person">
+        <form className="space-y-3" noValidate onSubmit={submit}>
           <Field label="Name">
-            <input autoFocus value={name} onChange={(event) => setName(event.target.value)} className="field w-full" />
+            <input
+              autoFocus
+              value={name}
+              onChange={(event) => {
+                setName(event.target.value);
+                setDuplicate(null);
+              }}
+              className="field w-full"
+            />
           </Field>
           <Field label="Email (optional)">
-            <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} className="field w-full" />
+            <input
+              ref={emailRef}
+              type="email"
+              value={email}
+              onChange={(event) => {
+                setEmail(event.target.value);
+                setEmailError(null);
+                setDuplicate(null);
+              }}
+              aria-invalid={emailError ? true : undefined}
+              aria-describedby={emailError ? emailErrorId : undefined}
+              className="field w-full"
+            />
+            {emailError ? (
+              <span id={emailErrorId} role="alert" className="mt-1 block text-[12px] font-normal text-danger">
+                {emailError}
+              </span>
+            ) : null}
           </Field>
           <Field label="Role (optional)">
             <input value={role} onChange={(event) => setRole(event.target.value)} placeholder="e.g. Advisor, client, teammate" className="field w-full" />
           </Field>
+          {duplicate ? (
+            <div role="alert" className="flex flex-wrap items-center gap-2 rounded-lg border border-line bg-panel px-3 py-2 text-[13px]" data-person-duplicate>
+              <span className="min-w-0 flex-1 text-ink">{duplicate.message}</span>
+              {duplicate.person ? (
+                <button type="button" className="btn" onClick={() => showPerson(duplicate.person!)}>
+                  Show {duplicate.person.name}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
           <div className="flex justify-end">
-            <button type="button" className="btn-primary" disabled={!name.trim() || create.isPending} onClick={() => create.mutate()}>
+            <button type="submit" className="btn-primary" disabled={!name.trim() || create.isPending || Boolean(duplicate)}>
               {create.isPending ? "Adding…" : "Add person"}
             </button>
           </div>
-        </div>
+        </form>
       </Dialog>
     </div>
   );

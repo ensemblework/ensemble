@@ -23,6 +23,7 @@ import { STATUS, plural } from "@/lib/format";
 import { Held } from "@/components/motion/held";
 import { SearchQuery } from "@/components/motion/search-query";
 import { MenuItem, PageHeader, Popover, Skeleton, useOverflowRight } from "../ui";
+import { LoadError } from "../load-error";
 import { ShareButton } from "../sharing/share-dialog";
 import { PagePeople } from "../sharing/page-people";
 import { AskEnsemble } from "../ensemble/ask-button";
@@ -81,6 +82,7 @@ function Column({
   picked,
   onToggleSelect,
   onDelete,
+  filtered = false,
 }: {
   id: ColumnId;
   pill: TaskStatus;
@@ -96,6 +98,8 @@ function Column({
   picked: string[];
   onToggleSelect: (id: string) => void;
   onDelete?: (id: string) => void;
+  /** A search or filter is hiding cards, so an empty column says that rather than its usual hint. */
+  filtered?: boolean;
 }) {
   const { setNodeRef } = useDroppable({ id });
   const label = id === "waiting" ? "Waiting" : STATUS[pill].label;
@@ -116,7 +120,7 @@ function Column({
       <div
         className="flex min-h-[60px] flex-col gap-1.5 rounded-lg p-1"
       >
-        {ids.length === 0 && <div className="board-column-empty">{id === "proposed" ? "A place for ideas before you commit." : id === "in_progress" ? "The next task you start will land here." : id === "waiting" ? "Nothing waiting in this view." : id === "done" ? "Finished work lands here." : "Ready when you are."}</div>}
+        {ids.length === 0 && <div className="board-column-empty">{filtered ? "No tasks match." : id === "proposed" ? "A place for ideas before you commit." : id === "in_progress" ? "The next task you start will land here." : id === "waiting" ? "Nothing waiting in this view." : id === "done" ? "Finished work lands here." : "Ready when you are."}</div>}
         <SortableContext id={id} items={ids} strategy={verticalListSortingStrategy}>
           {ids.map((taskId) => {
             const task = tasks.get(taskId);
@@ -460,6 +464,13 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
   };
 
   const count = visible.filter((task) => columnOf(task.status)).length;
+  const filtered = Boolean(search.trim() || owner !== "all" || priority !== "all" || focus);
+  const clearFilters = () => {
+    setSearch("");
+    setOwner("all");
+    setPriority("all");
+    setFocus(null);
+  };
 
   return (
     <div ref={boardRef} className="board-frame flex min-h-full min-w-0 flex-col" data-motion-slot="board.drag" data-dragging={dragId ? "1" : undefined}>
@@ -512,7 +523,7 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
           <option value="priority">By priority</option>
           <option value="manual">Manual order</option>
         </select>
-        <span className="text-[12.5px] text-muted">{plural(count, "task")}</span>
+        {tasks.data ? <span className="text-[12.5px] text-muted">{plural(count, "task")}</span> : null}
         {picked.length > 0 && <span className="text-[12.5px] text-muted">{plural(picked.length, "selected task", "selected tasks")}</span>}
         <div className="ml-auto flex flex-wrap items-center gap-2">
           <AskEnsemble surface="board" anchorKey={picked.length ? `board:sel:${[...picked].sort().join(",")}` : "board:overview"} label={picked.length ? "Ask about selected tasks" : "Ask about this board"} entityIds={picked.length ? picked : baseVisible.map((task) => task.id)} selection={picked.length ? `${picked.length} selected tasks` : "This board"} />
@@ -535,10 +546,16 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
       </div>
       <BoardInsights tasks={baseVisible} initialLayout={initialBoardLayout} editing={layoutEdit} onEditingChange={setLayoutEdit} who={people} onOpen={peek.open} onIdea={access.ready && access.canEdit ? () => setIdeaOpen(true) : undefined} focus={focus} onFocus={setFocus} filtered={Boolean(search.trim() || owner !== "all" || priority !== "all")} loading={tasks.isPending} />
       {focus && <div className="board-focus-bar"><span>{focusLabel(focus)}<button type="button" aria-label="Clear board focus" onClick={() => setFocus(null)}><X size={13} /></button></span><small>{count} matching tasks</small></div>}
+      {tasks.data && filtered && count === 0 ? (
+        <div className="board-no-match" role="status">
+          <span>No tasks match these filters.</span>
+          <button type="button" className="btn" onClick={clearFilters}>Clear filters</button>
+        </div>
+      ) : null}
       </div>
-      {tasks.isError && <div className="work-load-error mx-6" role="alert">Couldn't refresh the board.<button type="button" className="btn" onClick={() => void tasks.refetch()}>Try again</button></div>}
+      {tasks.isError && tasks.data ? <div className="work-load-error mx-6" role="alert">Couldn't refresh the board.<button type="button" className="btn" onClick={() => void tasks.refetch()}>Try again</button></div> : null}
       {ideaOpen && <CreateTaskDialog status="proposed" title="Capture an idea" onCreated={created} onClose={() => setIdeaOpen(false)} />}
-      <Held
+      {tasks.isError && !tasks.data ? <LoadError className="mx-6" error={tasks.error} what="the board" retrying={tasks.isFetching} onRetry={() => void tasks.refetch()} /> : <Held
         pending={tasks.isLoading}
         fallback={
         <div className="flex gap-3 px-5" aria-hidden>
@@ -592,6 +609,7 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
                   picked={picked}
                   onToggleSelect={togglePick}
                   onDelete={access.ready && access.canEdit ? (id) => remove.mutate(id) : undefined}
+                  filtered={filtered}
                 />
               ))}
             </div>
@@ -607,7 +625,7 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
             {dragId && byId.get(dragId) ? <CardBody task={byId.get(dragId)!} /> : null}
           </BoardDragOverlay>
         </DndContext>
-      </Held>
+      </Held>}
     </div>
   );
 }

@@ -23,7 +23,7 @@ import {
 import { AddTileDialog } from "@/components/plots/add-tile";
 import { UploadDialog } from "@/components/plots/upload-dialog";
 import { ExportDialog } from "@/components/plots/export-dialog";
-import { FigureOutput, RunButton, useFigureRun } from "@/components/plots/figure-run";
+import { FigureBesideToggle, FigureOutput, RunButton, useFigureBeside, useFigureRun } from "@/components/plots/figure-run";
 import { canvasSource } from "@/lib/plots/tile-code";
 import { InlineEdit, Popover } from "@/components/ui";
 import { seriesSwatchColor, usePlotTheme } from "@/lib/plots/theme";
@@ -260,6 +260,7 @@ function PlotWorkspaceInner({ shared }: { shared?: SharedPlots }) {
   tilesRef.current = config?.tiles ?? [];
   const theme = usePlotTheme();
   const canvasRun = useFigureRun(workspaceId);
+  const [figureBeside, setFigureBeside] = useFigureBeside();
   // Only while the Code view or the export is open: the script embeds every tile's table.
   const canvasDefault = useMemo(
     () => (config && (codeOpen || exportOpen) ? canvasSource(config.tiles, { datasets, links: config.links, accent: theme.accent, dark: theme.dark }) : ""),
@@ -441,8 +442,12 @@ function PlotWorkspaceInner({ shared }: { shared?: SharedPlots }) {
         <button type="button" className="btn-primary" onClick={() => setExportOpen(true)} data-export-figure>Export figure</button>
       </div>
       {codeOpen ? (
-        <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-auto lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:overflow-hidden" data-plot-code data-code-edited={canvasEdited ? "1" : "0"}>
-          <div className="flex min-h-[320px] min-w-0 flex-col gap-2 rounded-xl border border-line bg-panel p-3">
+        <div
+          className={figureBeside ? "grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-auto lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] lg:overflow-hidden" : "flex min-h-0 flex-1 flex-col gap-3 overflow-auto"}
+          data-plot-code
+          data-code-edited={canvasEdited ? "1" : "0"}
+        >
+          <div className={`flex min-h-[320px] min-w-0 flex-col gap-2 rounded-xl border border-line bg-panel p-3 ${figureBeside ? "" : "flex-[3]"}`}>
             <p className="shrink-0 text-[12px] leading-4 text-muted">
               {canvasEdited
                 ? "Edited. Export figure offers this script or the tiles."
@@ -465,12 +470,13 @@ function PlotWorkspaceInner({ shared }: { shared?: SharedPlots }) {
                   <>
                     <RunButton running={canvasRun.state.status === "running"} disabled={!workspaceId} onRun={() => void canvasRun.run(canvasCode)} />
                     {canvasEdited ? <button type="button" className="btn px-2 py-0.5 text-[12px]" data-plot-code-reset onClick={() => setCode("")}>Reset to generated</button> : null}
+                    <FigureBesideToggle beside={figureBeside} onChange={setFigureBeside} />
                   </>
                 }
               />
             </div>
           </div>
-          <div className="flex min-h-[260px] min-w-0 flex-col rounded-xl border border-line bg-panel p-3" data-plot-code-preview>
+          <div className={`flex min-h-[260px] min-w-0 flex-col rounded-xl border border-line bg-panel p-3 ${figureBeside ? "" : "flex-[2]"}`} data-plot-code-preview>
             <FigureOutput state={canvasRun.state} placeholder="Run the script to draw the figure here." />
           </div>
         </div>

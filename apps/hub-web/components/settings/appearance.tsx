@@ -1,12 +1,14 @@
 "use client";
 
-import { RotateCcw } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Check, RotateCcw } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import type { AppearanceSettings } from "@ensemble/shared-types";
 import { colorThemeSurfaces } from "@/lib/color-themes";
 import { ColorThemePicker } from "./color-theme-picker";
 import { ACCENT_PRESETS, resolveAccent } from "@/lib/accent";
 import { APPEARANCE_KEY, DEFAULT_APPEARANCE, markAccentWrite, publishAppearance, usePersistentState } from "@/lib/prefs";
+import { radioKeyTarget } from "@/lib/radio-keys";
+import { useToast } from "../toast";
 import { Range, SectionCard, Segmented, SettingRow, Toggle, cx } from "../ui";
 
 type Patch = (patch: Record<string, unknown>) => void;
@@ -27,6 +29,14 @@ export function AppearanceSection({ patch }: { patch: Patch }) {
     publishAppearance(merged);
     patch({ appearance: merged });
   };
+  const toast = useToast();
+  const fonts = useRef<HTMLDivElement>(null);
+  const reset = () => {
+    const before = appearance;
+    update(DEFAULT_APPEARANCE);
+    toast("Appearance reset to the defaults.", { action: { label: "Undo", run: () => update(before) } });
+  };
+  const selectedFont = Math.max(0, FONTS.findIndex((font) => font.id === appearance.font));
   const custom = appearance.accentCustom;
   const [theme, setTheme] = useState<"light" | "dark">("dark");
   useEffect(() => {
@@ -94,7 +104,7 @@ export function AppearanceSection({ patch }: { patch: Patch }) {
       </div>
       <div className="mt-6 flex items-center justify-between">
         <h3 className="text-[15px] font-semibold">Text and font</h3>
-        <button type="button" className="btn-ghost" onClick={() => update(DEFAULT_APPEARANCE)}>
+        <button type="button" className="btn-ghost" onClick={reset}>
           <RotateCcw size={12} /> Reset appearance
         </button>
       </div>
@@ -104,17 +114,30 @@ export function AppearanceSection({ patch }: { patch: Patch }) {
         <Range label="Text size" min={80} max={130} step={5} value={appearance.textScale} onChange={(textScale) => update({ textScale })} />
       </div>
       <p className="mt-1 text-[12px] text-muted">Default is 100%. Use smaller text on large monitors or larger text when reading long notes.</p>
-      <div data-jump-label="App font" className="mt-4 text-[13px] font-medium">App font</div>
-      <div className="mt-2 grid max-w-xl gap-2">
-        {FONTS.map((font) => (
+      <div data-jump-label="App font" id="app-font-label" className="mt-4 text-[13px] font-medium">App font</div>
+      <div ref={fonts} role="radiogroup" aria-labelledby="app-font-label" className="mt-2 grid max-w-xl gap-2">
+        {FONTS.map((font, index) => (
           <button
             key={font.id}
             type="button"
+            role="radio"
+            aria-checked={index === selectedFont}
+            tabIndex={index === selectedFont ? 0 : -1}
             onClick={() => update({ font: font.id })}
-            data-active={appearance.font === font.id || undefined}
-            className="tile rounded-md bg-raised px-3 py-2 text-left"
+            onKeyDown={(event) => {
+              const next = radioKeyTarget(event.key, index, FONTS.length);
+              if (next === null) return;
+              event.preventDefault();
+              update({ font: FONTS[next]!.id });
+              fonts.current?.querySelectorAll<HTMLButtonElement>("[role=radio]")[next]?.focus();
+            }}
+            data-active={index === selectedFont || undefined}
+            className={cx("tile rounded-md bg-raised px-3 py-2 text-left", index === selectedFont && "!border-accent shadow-[0_0_0_1px_rgb(var(--accent-rgb))]")}
           >
-            <div className="text-[13.5px] font-medium">{font.label}</div>
+            <div className="flex items-center justify-between text-[13.5px] font-medium">
+              {font.label}
+              {index === selectedFont ? <Check size={14} className="text-accent" aria-hidden /> : null}
+            </div>
             <div className="text-[12px] text-muted">{font.detail}</div>
             <div className="mt-0.5 text-[14px] font-semibold" style={{ fontFamily: font.family }}>
               Plan today, review tomorrow.

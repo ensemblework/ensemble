@@ -7,7 +7,7 @@ import { parseCapture } from "./capture.js";
 import { weekBounds } from "./dates.js";
 import { extractiveAnswer, meetingPhase, parseCrossMeetingQuestion, participantNames } from "./meetings.js";
 import { nudgeQuestion, nudgeReasons, pathToDone } from "./nudges.js";
-import { renderWeeklyRecap } from "./recap.js";
+import { renderWeeklyRecap, slippedLinks } from "./recap.js";
 
 const WEDNESDAY: { date: string; weekday: string } = { date: "2026-09-30", weekday: "Wednesday" };
 
@@ -190,6 +190,27 @@ test("weekly recap rolls meeting summaries into markdown", () => {
   assert.match(markdown, /Ship on Friday/);
   assert.match(markdown, /Priya will send the draft/);
   assert.match(markdown, /Contract/);
+});
+
+test("slipped lists every open task past due, not only this week's", () => {
+  const due = (day: string) => new Date(`${day}T11:30:00.000Z`);
+  const tasks = [
+    { id: "a", title: "Due this week", status: "todo", due: due("2026-10-13") },
+    { id: "b", title: "Due last month", status: "in_progress", due: due("2026-09-02") },
+    { id: "c", title: "Due last year", status: "blocked", due: due("2025-01-01") },
+    { id: "d", title: "Due today", status: "todo", due: due("2026-10-16") },
+    { id: "e", title: "Finished late", status: "done", due: due("2026-09-01") },
+    { id: "f", title: "Dropped", status: "dropped", due: due("2026-09-01") },
+    { id: "g", title: "No date", status: "todo", due: null },
+  ];
+  const slipped = slippedLinks(tasks, "2026-10-16", "2026-10-16");
+  assert.deepEqual(slipped.map((row) => row.title), ["Due last year", "Due last month", "Due this week"]);
+  assert.equal(slipped[0]!.detail, "1 Jan 2025");
+  assert.equal(slipped[2]!.href, "/tasks/a");
+  const markdown = renderWeeklyRecap({ label: "12 Oct – 18 Oct", done: [], decided: [], slipped, meetings: [] });
+  assert.match(markdown, /Due last month/);
+  assert.doesNotMatch(markdown, /Nothing past due is still open/);
+  assert.deepEqual(slippedLinks(tasks, "2025-06-01", "2026-10-16").map((row) => row.title), ["Due last year"], "a past week counts what was due before its end");
 });
 
 test("ask answer keeps source links and finds useful words", () => {

@@ -6,11 +6,14 @@ import { CheckSquare, ChevronRight, Import, FileText, Pencil, Plus, Trash2 } fro
 import { useState } from "react";
 import { plural } from "@/lib/format";
 import { cx } from "../ui";
+import { titleMatches } from "./pages-list";
 
 export type PageLinkProps = {
   href: string;
   className?: string;
   title?: string;
+  /** The open page: marked for screen readers and forced-colors mode. */
+  current?: boolean;
   children: React.ReactNode;
 };
 
@@ -69,7 +72,7 @@ export function PagesSection({
   const byId = new Map(pages.map((page) => [page.id, page]));
   const parents = new Set(pages.map((page) => page.parentId).filter(Boolean));
   const visible = pageTreeOrder(pages).filter((page) => {
-    if (search.trim()) return page.title.toLowerCase().includes(search.trim().toLowerCase());
+    if (search.trim()) return titleMatches(page.title, search);
     const seen = new Set([page.id]);
     let parent = page.parentId;
     while (parent && byId.has(parent) && !seen.has(parent)) {
@@ -102,7 +105,7 @@ export function PagesSection({
           </button>
         </span>
       </div>
-      <input aria-label="Find a page" placeholder="Find a page…" type="search" value={search} onChange={(event) => setSearch(event.target.value)} className="field mb-3 w-full text-[13px]" />
+      <input aria-label="Find a page" placeholder="Find a page…" type="search" value={search} onChange={(event) => setSearch(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setSearch(""); } }} className="field mb-3 w-full text-[13px]" />
       <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
         {pages.length > 0 && visible.length === 0 ? <p className="py-4 text-[13px] text-muted">No matching pages</p> : null}
         {pages.length === 0 ? <p className="px-2 py-1 text-[12.5px] text-faint">No pages yet</p> : null}
@@ -126,7 +129,12 @@ export function PagesSection({
                       event.preventDefault();
                       commitRename(page, event.currentTarget.value);
                     }
-                    if (event.key === "Escape") setEditingId(null);
+                    if (event.key === "Escape") {
+                      // Esc cancels the rename only; the panel stays open.
+                      event.preventDefault();
+                      event.stopPropagation();
+                      setEditingId(null);
+                    }
                   }}
                   className="field mx-1 my-0.5 min-w-0 flex-1 px-1.5 py-1 text-[13px]"
                 />
@@ -134,6 +142,7 @@ export function PagesSection({
                 renderLink({
                   href,
                   title: page.title,
+                  current: active,
                   className: cx(
                     "nav-link row-tile flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2 py-[6px] text-[13.5px]",
                     active ? "font-medium text-ink" : "text-ink/80",

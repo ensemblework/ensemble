@@ -6,7 +6,7 @@ import type { AppearanceSettings } from "@ensemble/shared-types";
 import { MotionContextProvider } from "@/components/motion/slot";
 import { ToastProvider } from "@/components/toast";
 import { AskHost } from "@/components/ask-dialog";
-import { ApiError, api } from "@/lib/api";
+import { ApiError, api, isUnreachable } from "@/lib/api";
 import { isRequestCancelled } from "@/lib/fetch-cancel";
 import { FetchGuards } from "@/lib/use-fetch-guards";
 import { APPEARANCE_KEY, DEFAULT_APPEARANCE, applyAppearance, resolveMotionTheme, usePersistentState } from "@/lib/prefs";
@@ -48,6 +48,8 @@ export function Providers({ children }: { children: React.ReactNode }) {
           retry: (failureCount, error) => {
             if (isRequestCancelled(error)) return false;
             if (error instanceof ApiError && error.status >= 400 && error.status < 500) return false;
+            // A server error rarely clears in seconds: show the screen's error and Retry soon.
+            if (error instanceof ApiError && error.status >= 500 && !isUnreachable(error)) return failureCount < 2;
             return failureCount < 6;
           },
           retryDelay: (attempt) => Math.min(800 * 2 ** attempt, 8000),

@@ -19,13 +19,13 @@ Object.defineProperty(document, "elementFromPoint", { configurable: true, value:
 
 const p = (text: string) => ({ type: "paragraph", content: [{ type: "text", text }] });
 
-async function mount(content: object[]) {
+async function mount(content: object[], comment = false) {
   const editor = new Editor({ extensions: [StarterKit, ToggleBlock], content: { type: "doc", content } });
   document.body.appendChild(editor.view.dom);
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
-  await act(async () => root.render(<BlockControls editor={editor} />));
+  await act(async () => root.render(<BlockControls editor={editor} comment={comment} />));
   return {
     editor,
     done: async () => {
@@ -129,6 +129,66 @@ test("hovering a collapsible block's summary gives the handle for the whole bloc
     await fire(body!, pointer("pointermove"));
     assert.equal(editor.state.doc.nodeAt(Number(handle()!.dataset.blockPosition))?.textContent, "Body");
   } finally {
+    await done();
+  }
+});
+
+test("the gaps between blocks keep the controls where they were, and no block means no visible controls", async () => {
+  const { editor, done } = await mount([p("First"), p("Second")]);
+  const controls = () => document.querySelector<HTMLElement>(".block-controls")!;
+  try {
+    assert.equal(controls().hasAttribute("data-idle"), true, "nothing hovered yet");
+    await fire(editor.view.dom, pointer("pointermove"));
+    assert.equal(controls().hasAttribute("data-idle"), true, "the editor's own padding is not a block");
+    await fire(editor.view.dom.querySelectorAll("p")[1]!, pointer("pointermove"));
+    const at = handle()!.dataset.blockPosition;
+    await fire(editor.view.dom, pointer("pointermove"));
+    assert.equal(handle()!.dataset.blockPosition, at);
+    assert.equal(controls().hasAttribute("data-idle"), false);
+  } finally {
+    await done();
+  }
+});
+
+test("after a scroll the controls stand for the block now under the pointer", async () => {
+  const { editor, done } = await mount([p("First"), p("Second")]);
+  try {
+    const [first, second] = Array.from(editor.view.dom.querySelectorAll("p"));
+    await fire(first!, pointer("pointermove", 5, 5));
+    await fire(document, pointer("pointermove", 5, 5));
+    assert.equal(editor.state.doc.nodeAt(Number(handle()!.dataset.blockPosition))?.textContent, "First");
+    pointTarget = second!;
+    await act(async () => {
+      window.dispatchEvent(new Event("scroll"));
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    });
+    assert.equal(editor.state.doc.nodeAt(Number(handle()!.dataset.blockPosition))?.textContent, "Second");
+  } finally {
+    pointTarget = null;
+    await done();
+  }
+});
+
+test("the comment button stands for the same block as the handle, and only for blocks with text", async () => {
+  const { editor, done } = await mount([p("First"), { type: "horizontalRule" }, { type: "bulletList", content: [{ type: "listItem", content: [p("Item")] }] }], true);
+  const button = () => document.querySelector<HTMLButtonElement>(".block-comment-action");
+  const asked: Array<{ from: number; to: number }> = [];
+  const listen = (event: Event) => asked.push((event as CustomEvent<{ from: number; to: number }>).detail);
+  editor.view.dom.addEventListener("ensemble:comment-block", listen);
+  try {
+    await fire(editor.view.dom.querySelector("hr")!, pointer("pointermove"));
+    assert.ok(handle());
+    assert.equal(button(), null);
+    await fire(editor.view.dom.querySelector("li p")!, pointer("pointermove"));
+    assert.ok(button());
+    assert.equal(button()!.style.top, document.querySelector<HTMLElement>(".block-controls")!.style.top);
+    await fire(button()!, new MouseEvent("click", { bubbles: true }));
+    const item = Number(handle()!.dataset.blockPosition);
+    assert.equal(editor.state.doc.nodeAt(item)?.type.name, "listItem");
+    assert.deepEqual(asked, [{ from: item + 1, to: item + editor.state.doc.nodeAt(item)!.nodeSize - 1 }]);
+    assert.equal(editor.state.doc.textBetween(asked[0]!.from, asked[0]!.to), "Item");
+  } finally {
+    editor.view.dom.removeEventListener("ensemble:comment-block", listen);
     await done();
   }
 });

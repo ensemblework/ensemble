@@ -20,11 +20,11 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
-import { createContext, useContext, useId, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { PageDocument, PageMention } from "@ensemble/shared-types";
-import { api, currentLink, currentShare, withLink, withShare, type TaskRecord, type TaskStatus } from "@/lib/api";
+import { createContext, useContext, useId, useCallback, useEffect, useRef, useState } from "react";
+import type { PageMention } from "@ensemble/shared-types";
+import { ApiError, api, currentLink, currentShare, type TaskRecord, type TaskStatus } from "@/lib/api";
 import { useEntities } from "@/lib/entities";
-import { COMPLEXITY_LABEL, OWNER_LABEL, PRIORITY, PRIORITY_ORDER, STATUS, dateTime, isoDate } from "@/lib/format";
+import { COMPLEXITY_LABEL, OWNER_LABEL, PRIORITY, PRIORITY_ORDER, STATUS, dateTime } from "@/lib/format";
 import { MakeDiagramButton, taskDiagramPrompt } from "../diagrams/make-diagram";
 import { HumanDescription } from "../pages/human-description";
 import { useQuickAssign } from "../agent/use-quick-assign";
@@ -41,8 +41,11 @@ import { useDelayedFlag } from "@/lib/motion/use-delayed-flag";
 import { useModuleOn } from "@/lib/use-module";
 import { MenuItem, Popover, PriorityTag, Tag, cx } from "../ui";
 import { PageTitleField } from "../pages/title-field";
+import { PageLoadFailure, inTrash } from "../pages/page-load";
+import { TrashedTask } from "../pages/trashed-page";
 import { isPageEnsembleBusy } from "../comments/ensemble-bus";
 import { LabelEditor } from "./labels";
+import { DueDateField } from "./due-date-field";
 import { FromMeeting } from "../meetings/from-meeting";
 import { AttachedItems } from "../app-items/attached-items";
 import { PostUpdate } from "../app-items/post-update";
@@ -55,7 +58,7 @@ import { colorFor } from "@/lib/presence";
 import { TaskExportMenu } from "./task-export";
 import { SourceFileBanner, exportBackItems } from "../files/source-file-banner";
 import { PAGE_FOCUS_CLASS, PageFocusBar, PageFocusButton, usePageFocus } from "../pages/page-focus";
-import { usePageSave, type PageEvent } from "../pages/page-save";
+import { collabStatusText, useCollab } from "../pages/use-collab";
 import { KeptEdits } from "../pages/kept-edits";
 
 function useBlockEditor() {
@@ -136,14 +139,12 @@ export function TaskPage({
 
   const [propsState, setPropsState] = useState<"saved" | "saving">("saved");
   const [linkedOpen, setLinkedOpen] = useState(false);
-  const [epoch, setEpoch] = useState(0);
   const titleSave = useRef<Promise<unknown> | null>(null);
   // The share (or none) this task was opened under. Its saves, the last one on leaving too, go there.
   const openedAs = useRef(currentShare());
   const openedLink = useRef(currentLink());
   const propertiesBusy = useRef(0);
   const propertyWaiters = useRef<Array<() => void>>([]);
-  const loaded = Boolean(page.data);
   const access = useSpaceAccess();
   // "gone": the share was removed; "view": you may still open it but no longer edit it.
   const [lost, setLost] = useState<"gone" | "view" | null>(null);
@@ -160,41 +161,22 @@ export function TaskPage({
   watchingRef.current = watching;
   // Focus mode is for the task's own page, not the side peek.
   const focusMode = usePageFocus(variant === "page");
-  const saver = usePageSave({
-    load: async () => {
-      const fresh = await withLink(openedLink.current, () => withShare(openedAs.current, () => api.page(taskId)));
-      client.setQueryData(["page", taskId], fresh);
-      return { revision: fresh.revision, content: fresh.content ?? textToDoc(fresh.notes) };
-    },
-    save: async (revision, content) => {
-      const saved = await withLink(openedLink.current, () => withShare(openedAs.current, () => api.savePage(taskId, { revision, content })));
-      return { revision: saved.revision, content: saved.content ?? content };
-    },
-    matches: (event: PageEvent) => event.taskId === taskId,
+  const sync = useCollab({
+    kind: "task",
+    // Not while the page is loading, in Trash or missing; it joins as soon as it opens (after Restore, say).
+    enabled: Boolean(page.data),
+    id: taskId,
+    share: openedAs.current,
+    link: openedLink.current,
     live: othersHere,
     frozen: locked,
-    onError: (message) => toast(message, { tone: "error" }),
-    onKept: () => toast("You and someone else changed the same words at once. Both versions are on the page."),
     onLost: (error) => setLost(error.code === "SHARE_GONE" ? "gone" : "view"),
+    onError: (message) => toast(message, { tone: "error" }),
+    onRestored: () => toast("Changes you made before were not saved yet. They are back on the page and saving now."),
   });
-  const { flush, edit } = saver;
-
-  /**
-   * The editor owns the document once it is loaded. Background refetches (our own saves
-   * echoing back over SSE) must not reset it; others' saves are merged into it in place.
-   */
-  const initialDoc = useMemo(() => {
-    if (!page.data) return null;
-    const doc = page.data.content ?? textToDoc(page.data.notes);
-    saver.adopt({ revision: page.data.revision, content: doc });
-    return doc;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [taskId, loaded, epoch]);
-  // The page query refetches on every page event and after the live stream reconnects.
-  const offer = saver.offer;
-  useEffect(() => {
-    if (page.data) offer({ revision: page.data.revision, content: page.data.content ?? textToDoc(page.data.notes) });
-  }, [page.data, offer]);
+  const { flush } = sync;
+  // The editor opens on the live document; everyone's changes arrive in it as they are typed.
+  const initialDoc = sync.joined?.doc ?? null;
 
   const update = useMutation({
     mutationFn: (data: Record<string, unknown>) => api.patchTask(taskId, data),
@@ -264,13 +246,12 @@ export function TaskPage({
     onMutate: () => setLeaving(true),
     mutationFn: async () => {
       if (isPageEnsembleBusy("task", taskId)) throw new Error("Wait for Ensemble to finish before converting this task.");
-      saver.cancel();
       if (titleSave.current) await titleSave.current;
       while (propertiesBusy.current) {
         await new Promise<void>((resolve) => propertyWaiters.current.push(resolve));
       }
       if (!(await flush())) throw new Error("Save the task page before converting it.");
-      return api.convertPage("task", taskId, saver.revision.current);
+      return api.convertPage("task", taskId, sync.revision());
     },
     onSuccess: (result) => {
       void client.invalidateQueries();
@@ -278,18 +259,13 @@ export function TaskPage({
     },
     onError: (error: Error) => {
       setLeaving(false);
-      if (saver.pending.current) saver.schedule();
       toast(error.message, { tone: "error" });
     },
   });
 
-  const onChange = useCallback(
-    (doc: PageDocument) => {
-      edit(doc);
-      if (watchingRef.current) announceTyping((typing) => api.sendPresence({ tabId: tabId(), typing }));
-    },
-    [edit],
-  );
+  const onChange = useCallback(() => {
+    if (watchingRef.current) announceTyping((typing) => api.sendPresence({ tabId: tabId(), typing }));
+  }, []);
 
   const exitFocus = focusMode.exit;
   const onMentionClick = useCallback(
@@ -311,7 +287,11 @@ export function TaskPage({
   if (taskPending || taskHold) {
     return <TaskSkeleton peek={variant === "peek"} />;
   }
-  if (!task.data) return <div className="p-10 text-muted">This task no longer exists.</div>;
+  if (!task.data) {
+    if (!shared && inTrash(task.error)) return <TrashedTask taskId={taskId} onRestored={() => { void task.refetch(); void page.refetch(); }} />;
+    const missing = task.error instanceof ApiError && task.error.status === 404;
+    return <PageLoadFailure kind="task" missing={missing} links={!shared} error={task.error} retrying={task.isFetching} onRetry={() => void task.refetch()} />;
+  }
 
   const record = task.data.task;
   const project = projects.data?.projects.find((row) => row.id === record.projectId);
@@ -323,12 +303,11 @@ export function TaskPage({
   const ownerText =
     record.owner !== "me" ? OWNER_LABEL[record.owner] : personId === space.me ? "Me" : (space.byId.get(personId ?? "")?.name ?? "Someone");
   const source = page.data?.sourceFile ?? null;
-  const pageNow = () => ({ title: record.title || "Untitled", doc: saver.latest.current ?? page.data?.content ?? textToDoc(page.data?.notes ?? "") });
+  const pageNow = () => ({ title: record.title || "Untitled", doc: sync.latest() ?? page.data?.content ?? textToDoc(page.data?.notes ?? "") });
 
-  const saveState = saver.state;
-  const unsaved = saveState === "dirty" || saveState === "error";
-  const saveText =
-    locked && unsaved ? "Not saved" : saveState === "saved" ? "All changes saved" : saveState === "saving" ? "Saving…" : saveState === "dirty" ? "Unsaved changes" : "Could not save. Retry on the next edit.";
+  const saveState = sync.status;
+  const unsaved = saveState !== "saved";
+  const saveText = collabStatusText(saveState, locked);
 
   return (
     <div
@@ -344,7 +323,7 @@ export function TaskPage({
     >
       {focusMode.active ? <PageFocusBar status={saveText} error={saveState === "error"} onExit={focusMode.exit} /> : null}
       {variant === "page" ? (
-        <div className="-mb-1 flex justify-end gap-1">
+        <div className="-mb-1 flex flex-wrap justify-end gap-1">
           <PageFocusButton onEnter={focusMode.enter} />
           <TaskExportMenu taskId={taskId} extra={exportBackItems(source, pageNow)} />
           {shared ? null : <ShareButton compact target={{ kind: "task", resourceId: taskId, title: record.title }} />}
@@ -546,18 +525,7 @@ export function TaskPage({
         </PropertyRow>
 
         <PropertyRow icon={Calendar} label="Due date">
-          <input
-            type="date"
-            aria-label="Due date"
-            value={record.due ? isoDate(new Date(record.due)) : ""}
-            onChange={(event) =>
-              update.mutate({ due: event.target.value ? new Date(`${event.target.value}T17:00:00`).toISOString() : null })
-            }
-            className={cx(
-              "row-tile -mx-1.5 rounded bg-transparent px-1.5 py-0.5 text-[13.5px] outline-none",
-              !record.due && "text-faint",
-            )}
-          />
+          <DueDateField due={record.due} onSave={(due) => update.mutate({ due })} />
         </PropertyRow>
 
         <PropertyRow icon={TagIcon} label="Labels">
@@ -765,37 +733,35 @@ export function TaskPage({
         <KeptEdits
           message={gone ? "This task isn't shared with you anymore, so your last changes weren't saved. They're still on screen." : "You can't edit this task anymore, so your last changes weren't saved. They're still on screen."}
           title={record.title}
-          read={() => saver.latest.current}
+          read={sync.latest}
           ownCopy={Boolean(shared && !shared.link)}
-        />
-      ) : saver.stuck ? (
-        <KeptEdits
-          message="Someone else saved a version of this page that can't be combined with yours. Your text is still here and isn't saved."
-          title={record.title}
-          read={() => saver.latest.current}
-          ownCopy={false}
-          onTheirs={() => {
-            saver.discard();
-            void page.refetch().then(() => setEpoch((value) => value + 1));
-          }}
         />
       ) : null}
 
       <div className="mt-4" data-focus-keep>
-        {initialDoc && Editor ? (
+        {sync.failure ? (
+          <p className="mt-4 text-[13px] text-muted">This page could not be opened for editing. Reload to try again.</p>
+        ) : initialDoc && Editor ? (
           <Editor
-            key={`${taskId}-${epoch}`}
+            key={taskId}
             initial={initialDoc}
             entities={entities.get}
             onChange={onChange}
             onMentionClick={onMentionClick}
             page={{ kind: "task", id: taskId }}
             editable={!leaving && canEdit}
-            control={saver.control}
+            collab={sync.binding}
           />
-        ) : initialDoc ? (
+        ) : sync.stalled ? (
+          <div className="mt-4 text-[13px] text-muted" role="status">
+            <p>Still connecting to this page. Reload if this takes long.</p>
+            <button type="button" className="btn mt-2" onClick={() => window.location.reload()}>
+              Reload
+            </button>
+          </div>
+        ) : (
           <div className="skeleton mt-4 h-64 w-full" />
-        ) : null}
+        )}
       </div>
 
       <AssignDialog

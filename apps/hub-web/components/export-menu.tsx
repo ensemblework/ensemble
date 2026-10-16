@@ -52,8 +52,9 @@ export function ExportMenu({
   };
   const run = (format: DocFormat, close: () => void) =>
     perform(format, async () => {
-      await downloadDocument(await load(), format);
-      if (format === "pages") toast("Saved as .docx. Open it in Pages to edit.");
+      const result = await downloadDocument(await load(), format);
+      if (result === "printed") toast("This page has text the PDF fonts here can't draw (such as Hindi, Arabic or emoji), so it opened in the print dialog. Choose Save as PDF there.", { durationMs: 12000 });
+      else if (format === "pages") toast("Saved as .docx. Open it in Pages to edit.");
     }, close);
   return (
     <Popover

@@ -3,6 +3,7 @@
 /** @jsxImportSource react */
 
 import { useEffect, useId, useRef, useState } from "react";
+import { focusPageBody } from "../editor/page-body";
 
 /**
  * The title new pages and tasks are created with (hub-api stores it). The field shows it as its
@@ -63,10 +64,10 @@ export function PageTitleField({
         if (title !== value) onSave(title);
       }}
       onKeyDown={(event) => {
-        if (event.key === "Enter") {
-          event.preventDefault();
-          (event.target as HTMLTextAreaElement).blur();
-        }
+        if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+        event.preventDefault();
+        // Enter carries on writing in the page; focus must not fall to the page, where keys are shortcuts.
+        if (!focusPageBody(event.currentTarget)) event.currentTarget.blur();
       }}
       placeholder={UNTITLED}
       className="w-full resize-none overflow-hidden bg-transparent text-[34px] font-bold leading-tight tracking-tight outline-none placeholder:text-faint"

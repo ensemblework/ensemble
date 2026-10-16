@@ -2,7 +2,7 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, LayoutGrid, List, Plug, Search, Trash2, UploadCloud, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -13,7 +13,8 @@ import { type FilesView } from "@/lib/files/links";
 import { useSpaceAccess } from "@/lib/access";
 import { relative } from "@/lib/format";
 import { BrandLogo, brandName } from "../connectors/brand-logo";
-import { Dialog, Empty, PageHeader, QueryError, SkeletonRows, cx } from "../ui";
+import { LoadError } from "../load-error";
+import { Dialog, Empty, PageHeader, SkeletonRows, cx } from "../ui";
 import { DeleteFileDialog } from "./delete-file";
 import { FileIcon } from "./file-icon";
 import { FromApps } from "./from-apps";
@@ -100,6 +101,8 @@ export function shortFileName(filename: string, max = 56): string {
   const head = Math.max(1, max - ext.length - tail - 1);
   return `${stem.slice(0, head)}…${stem.slice(stem.length - tail)}${ext}`;
 }
+
+const kindOf = (file: FileRecord): FileKind => file.kind ?? fileFormat(file.filename).kind;
 
 function meta(file: FileRecord): string {
   const format = fileFormat(file.filename);
@@ -188,7 +191,7 @@ export function Uploads({ items, onDismiss }: { items: UploadItem[]; onDismiss: 
               <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-line" role="progressbar" aria-label={`Uploading ${item.name}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(item.progress * 100)}>
                 <span className={cx("block h-full rounded-full bg-accent transition-[width]", item.state === "waiting" && "opacity-40")} style={{ width: `${Math.max(4, Math.round(item.progress * 100))}%` }} />
               </span>
-              <span className="w-10 text-right tabular-nums text-muted">{item.state === "waiting" ? "…" : `${Math.round(item.progress * 100)}%`}</span>
+              <span className="w-14 text-right tabular-nums text-muted">{item.state === "waiting" ? "…" : item.progress >= 1 ? "Saving…" : `${Math.round(item.progress * 100)}%`}</span>
             </span>
           )}
           <span className="w-16 text-right text-faint">{formatBytes(item.size)}</span>
@@ -307,8 +310,8 @@ function YourFiles() {
   const [text, setText] = useState("");
   const q = useDebounced(text.trim(), 250);
   const list = useQuery({ queryKey: FILE_QUERY.list(q), queryFn: () => filesApi.list(q), placeholderData: keepPreviousData });
-  // The empty search holds the account's usage, which uploads check before sending.
-  useQuery({ queryKey: FILE_QUERY.list(""), queryFn: () => filesApi.list(""), enabled: Boolean(q) });
+  // The empty search holds the account's usage, which uploads check before sending, and every kind of file kept.
+  const everything = useQuery({ queryKey: FILE_QUERY.list(""), queryFn: () => filesApi.list(""), enabled: Boolean(q) });
   const [kind, setKind] = useState<FileKind | "all">("all");
   const [view, setView] = useState<"grid" | "list">("grid");
   const [importing, setImporting] = useState(false);
@@ -334,11 +337,19 @@ function YourFiles() {
 
   const files = list.data?.files ?? [];
   const usage = list.data?.usage;
-  const kinds = KIND_ORDER.filter((value) => files.some((file) => (file.kind ?? fileFormat(file.filename).kind) === value));
-  const shown = kind === "all" ? files : files.filter((file) => (file.kind ?? fileFormat(file.filename).kind) === kind);
+  // The kind buttons come from every file, so a search keeps them and the kind chosen.
+  const kept = (q ? everything.data?.files : list.data?.files) ?? files;
+  const kinds = KIND_ORDER.filter((value) => kept.some((file) => kindOf(file) === value));
+  const shown = kind === "all" ? files : files.filter((file) => kindOf(file) === kind);
+  const settled = q ? everything.isSuccess && !everything.isPlaceholderData : list.isSuccess && !list.isPlaceholderData;
   useEffect(() => {
-    if (kind !== "all" && !kinds.includes(kind) && !list.isPlaceholderData) setKind("all");
-  }, [kind, kinds, list.isPlaceholderData]);
+    if (kind !== "all" && settled && !kinds.includes(kind)) setKind("all");
+  }, [kind, kinds, settled]);
+  // Retries go on quietly; the error and Retry show from the first failure instead of a skeleton.
+  const failure = list.data ? null : (list.error ?? list.failureReason);
+  const client = useQueryClient();
+  // refetch() waits for a retry that is sleeping out its delay; cancel it so Retry asks now.
+  const retry = () => void client.cancelQueries({ queryKey: FILE_QUERY.list(q), exact: true }).then(() => list.refetch());
 
   return (
     <>
@@ -426,8 +437,8 @@ function YourFiles() {
           </div>
         ) : null}
 
-        {list.error && !list.data ? (
-          <QueryError error={list.error as Error} retry={() => void list.refetch()} />
+        {failure ? (
+          <LoadError error={failure} what="your files" onRetry={retry} />
         ) : list.isPending ? (
           <SkeletonRows count={4} rowClassName="h-14" />
         ) : !files.length ? (
@@ -436,6 +447,13 @@ function YourFiles() {
           ) : (
             <Empty title="No files yet">Upload a file, drop files anywhere on this screen, or add them from your apps.</Empty>
           )
+        ) : !shown.length ? (
+          <p className="text-[13.5px] text-muted" data-testid="files-no-kind">
+            No {kind === "all" ? "" : `${kind === "pdf" ? "PDF" : kind === "other" ? "other" : FILE_KIND_LABEL[kind].toLowerCase()} `}files{q ? ` match “${q}”` : " here"}.{" "}
+            <button type="button" className="text-accent hover:underline" onClick={() => setKind("all")}>
+              Show all kinds
+            </button>
+          </p>
         ) : view === "grid" ? (
           <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4" aria-label="Files">
             {shown.map((file) => (

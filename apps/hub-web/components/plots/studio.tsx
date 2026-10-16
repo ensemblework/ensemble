@@ -22,6 +22,7 @@ import {
 import { ChevronDown } from "lucide-react";
 import { ChartView, exportChartPng, exportChartSvg, usePlotTheme } from "@/components/plots/chart-view";
 import { ColumnSelect } from "@/components/plots/column-select";
+import { FigureBesideToggle, useFigureBeside } from "@/components/plots/figure-run";
 import { useDelayedFlag } from "@/lib/motion/use-delayed-flag";
 import { api } from "@/lib/api";
 import { renderPlot } from "@/lib/plots/render";
@@ -691,17 +692,18 @@ export function LinesTab({ config, update }: { config: PlotConfig; update: (patc
 }
 
 function CodeTab({ code, onChange, onRun, onExport, preview, errorText, datasetName }: { code: string; onChange: (value: string) => void; onRun: () => void; onExport: (format: "png" | "pdf") => void; preview: string | null; errorText: string; datasetName?: string }) {
+  const [beside, setBeside] = useFigureBeside();
   return (
-    <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-2" data-plot-code>
-      <div className="flex min-h-0 min-w-0 flex-col gap-2 rounded-xl border border-line bg-panel p-3">
+    <div className={beside ? "grid min-h-0 flex-1 grid-cols-1 gap-3 lg:grid-cols-2" : "flex min-h-0 flex-1 flex-col gap-3 overflow-auto"} data-plot-code>
+      <div className={cx("flex min-h-0 min-w-0 flex-col gap-2 rounded-xl border border-line bg-panel p-3", !beside && "flex-[3]")}>
         <p className="shrink-0 text-[12px] text-muted">load({datasetName ? `"${datasetName}"` : '"name"'}) reads the dataset on this plot. No file path is shown. save() or plt.show() captures the figure.</p>
         <div className="min-h-[280px] flex-1">
-          <CodePane value={code} onChange={onChange} onRun={onRun} />
+          <CodePane value={code} onChange={onChange} onRun={onRun} actions={<FigureBesideToggle beside={beside} onChange={setBeside} />} />
         </div>
         <button type="button" className="btn-primary shrink-0 self-start" onClick={onRun}>Run</button>
         {errorText ? <pre className="shrink-0 whitespace-pre-wrap text-[12px] text-danger">{errorText}</pre> : null}
       </div>
-      <div className="flex min-h-0 min-w-0 flex-col gap-2 rounded-xl border border-line bg-panel p-3">
+      <div className={cx("flex min-h-[220px] min-w-0 flex-col gap-2 rounded-xl border border-line bg-panel p-3", !beside && "flex-[2]")}>
         <div className="flex items-center justify-between gap-2">
           <span className="text-[13px] font-medium">Figure</span>
           <div className="flex gap-1">

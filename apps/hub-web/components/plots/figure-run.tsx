@@ -3,6 +3,7 @@
 import { Play } from "lucide-react";
 import { useCallback, useRef, useState } from "react";
 import { usePythonStatus } from "@/lib/plots/browser-python";
+import { usePersistentState } from "@/lib/prefs";
 import { renderPlot, scriptErrorLine } from "@/lib/plots/render";
 import { useModKey } from "@/lib/platform";
 import { cx } from "@/components/ui";
@@ -64,5 +65,27 @@ export function FigureOutput({ state, placeholder }: { state: FigureRun; placeho
         <p className="m-auto max-w-xs px-4 text-center text-[13px] text-muted">{placeholder}</p>
       ) : null}
     </div>
+  );
+}
+
+/** Code panels put the figure under the code, so the code has the full width; this browser can ask for it beside the code instead. */
+export function useFigureBeside() {
+  const [beside, setBeside] = usePersistentState("ensemble.plots.figure-beside", false);
+  return [beside, setBeside] as const;
+}
+
+/** Only wide screens have room for the figure beside the code. */
+export function FigureBesideToggle({ beside, onChange }: { beside: boolean; onChange: (beside: boolean) => void }) {
+  return (
+    <button
+      type="button"
+      className="btn hidden px-2 py-0.5 text-[12px] lg:inline-flex"
+      aria-pressed={beside}
+      title={beside ? "Put the figure under the code, so the code has the full width" : "Show the figure beside the code"}
+      onClick={() => onChange(!beside)}
+      data-plot-figure-beside={beside ? "1" : "0"}
+    >
+      Figure beside code
+    </button>
   );
 }

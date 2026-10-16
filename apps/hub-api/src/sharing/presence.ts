@@ -32,8 +32,8 @@ export type PresenceEntry = {
   cursor: { x: number; y: number } | null;
   /** Where the person is looking on a diagram: the centre of their view (diagram coordinates) and zoom. */
   viewport: { x: number; y: number; zoom: number } | null;
-  /** Their text cursor on a page or task page: ProseMirror positions in their copy of the document. */
-  caret: { anchor: number; head: number } | null;
+  /** Their text cursor on a page or task page: ProseMirror positions in the live document at `version` (pages/collab.ts). */
+  caret: { anchor: number; head: number; version?: number } | null;
   typing: boolean;
   at: number;
 };
@@ -80,7 +80,7 @@ export type PresenceUpdate = {
   resource?: PresenceResource | null;
   cursor?: { x: number; y: number } | null;
   viewport?: { x: number; y: number; zoom: number } | null;
-  caret?: { anchor: number; head: number } | null;
+  caret?: { anchor: number; head: number; version?: number } | null;
   typing?: boolean;
   leave?: boolean;
 };

@@ -13,6 +13,7 @@ import {
   TaskPageError,
 } from "../pages/store.js";
 import { appendLedger } from "../lib/ledger.js";
+import { collabHub } from "../pages/live.js";
 
 const RenamePage = z.object({
   title: z.string().trim().min(1).max(200),
@@ -25,6 +26,8 @@ export async function pageRoutes(app: FastifyInstance): Promise<void> {
     const { kind, id } = z.object({ kind: z.enum(["page", "task"]), id: z.string().uuid() }).parse(request.params);
     const { revision } = z.object({ revision: z.number().int().nonnegative() }).parse(request.body);
     try {
+      // The editor flushed before asking; this also writes back what others typed since.
+      await collabHub.flush({ space: request.userId, kind, id }).catch(() => undefined);
       const result = await convertPage(prisma, request.userId, kind, id, revision);
       await appendLedger({ userId: request.userId, actor: "me", action: "page.convert", payload: { fromKind: kind, fromId: id, ...result } });
       sseHub.publish(request.userId, { event: "page", data: { id: result.pageId, taskId: kind === "task" ? id : result.id, action: "convert" } });
@@ -37,7 +40,8 @@ export async function pageRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.get("/api/pages", async (request) => {
-    return { pages: await listStandalonePages(prisma, request.userId) };
+    const { q } = z.object({ q: z.string().max(200).optional() }).parse(request.query ?? {});
+    return { pages: await listStandalonePages(prisma, request.userId, q ?? "") };
   });
 
   app.post("/api/pages", async (request, reply) => {
@@ -48,6 +52,8 @@ export async function pageRoutes(app: FastifyInstance): Promise<void> {
 
   app.post("/api/pages/delete-many", async (request) => {
     const { pageIds } = z.object({ pageIds: z.array(z.string().uuid()).min(1).max(100) }).parse(request.body);
+    // Nested pages go too: write back every page open live in the space first.
+    await collabHub.flushSpace(request.userId);
     const result = await prisma.$transaction((tx) => trashStandalonePages(tx, request.userId, pageIds));
     sseHub.publish(request.userId, { event: "page", data: { action: "delete", ids: result.pages.map((page) => page.id) } });
     return { deleted: result.pages.length, undoEntryId: result.undoEntryId };
@@ -55,10 +61,12 @@ export async function pageRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/pages/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
+    // `?trashed=1`: a page in Trash, to read before restoring it.
+    const { trashed } = z.object({ trashed: z.enum(["1", "true"]).optional() }).parse(request.query ?? {});
     try {
-      return await getStandalonePage(prisma, request.userId, id);
+      return await getStandalonePage(prisma, request.userId, id, { trashed: Boolean(trashed) });
     } catch (error) {
-      if (error instanceof TaskPageError) return reply.code(error.statusCode).send({ error: error.message });
+      if (error instanceof TaskPageError) return reply.code(error.statusCode).send({ error: error.message, code: error.code });
       throw error;
     }
   });
@@ -91,6 +99,7 @@ export async function pageRoutes(app: FastifyInstance): Promise<void> {
   app.delete("/api/pages/:id", async (request, reply) => {
     const { id } = request.params as { id: string };
     try {
+      await collabHub.flushSpace(request.userId);
       await deleteStandalonePage(prisma, request.userId, id);
       sseHub.publish(request.userId, { event: "page", data: { id, action: "delete" } });
       return reply.code(204).send();

@@ -43,7 +43,7 @@ function Section({ title, count, children }: { title: string; count: number; chi
   );
 }
 
-export function ActivityControls({ connected = true }: { connected?: boolean }) {
+export function ActivityControls({ connected = true, serverError = false }: { connected?: boolean; serverError?: boolean }) {
   const client = useQueryClient();
   const toast = useToast();
   const peek = usePeek();
@@ -103,7 +103,7 @@ export function ActivityControls({ connected = true }: { connected?: boolean }) 
   const queued: AgentJob[] = data?.queued ?? [];
   const busy = calls.length + running.length;
   const paused = data?.paused ?? false;
-  const label = !connected ? "Offline" : paused ? "Paused" : busy ? `Working · ${busy}` : waiting.length ? "Needs you" : queued.length ? "Queued" : "Idle";
+  const label = !connected ? (serverError ? "Server error" : "Offline") : paused ? "Paused" : busy ? `Working · ${busy}` : waiting.length ? "Needs you" : queued.length ? "Queued" : "Idle";
 
   const jobRow = (job: AgentJob) => (
     <div key={job.id} role="button" onClick={() => (peek.open(job.taskId), setOpen(false))} className="cursor-pointer">
@@ -136,8 +136,8 @@ export function ActivityControls({ connected = true }: { connected?: boolean }) 
         type="button"
         onClick={() => setOpen(!open)}
         className={cx("flex items-center gap-1.5 rounded-md px-2 py-1 text-[12.5px] hover:bg-hover", paused ? "text-danger" : "text-muted")}
-        title={connected ? "Live updates. What the AI is doing right now." : "Reconnecting to the Hub…"}
-        aria-label={connected ? `Activity: ${label}` : "Reconnecting to the Hub"}
+        title={connected ? "Live updates. What the AI is doing right now." : serverError ? "Ensemble's server is answering with errors. Retrying…" : "Reconnecting to the Hub…"}
+        aria-label={connected ? `Activity: ${label}` : serverError ? "Ensemble's server is answering with errors" : "Reconnecting to the Hub"}
       >
         <TrayDot state={!connected ? "offline" : paused ? "paused" : busy ? "working" : waiting.length ? "needs" : "idle"} />
         <span className="hidden whitespace-nowrap lg:inline">{label}</span>

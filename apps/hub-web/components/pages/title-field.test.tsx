@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { Editor } from "@tiptap/core";
+import StarterKit from "@tiptap/starter-kit";
 import { PageTitleField } from "./title-field.js";
 
 async function render(node: React.ReactNode): Promise<{ root: Root; host: HTMLDivElement }> {
@@ -68,5 +70,32 @@ test("blank titles visibly restore the persisted title without saving an empty n
   } finally {
     await act(async () => mounted.root.unmount());
     mounted.host.remove();
+  }
+});
+
+test("Enter in the title moves the caret to the start of the page body, not off the page", async () => {
+  const page = document.createElement("div");
+  document.body.appendChild(page);
+  const titleHost = document.createElement("div");
+  page.appendChild(titleHost);
+  const editor = new Editor({ extensions: [StarterKit], editorProps: { attributes: { "data-page-body": "" } }, content: "<p>First line</p><p>Second</p>" });
+  page.appendChild(editor.view.dom);
+  const root = createRoot(titleHost);
+  await act(async () => root.render(<PageTitleField value="Plan" onSave={() => undefined} />));
+  try {
+    const input = titleHost.querySelector("textarea")!;
+    input.focus();
+    editor.commands.setTextSelection(10);
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      // The editor takes focus on the next frame.
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    });
+    assert.equal(document.activeElement, editor.view.dom);
+    assert.equal(editor.state.selection.from, 1);
+  } finally {
+    await act(async () => root.unmount());
+    editor.destroy();
+    page.remove();
   }
 });

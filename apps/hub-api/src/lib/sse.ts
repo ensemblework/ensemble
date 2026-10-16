@@ -23,9 +23,11 @@ export type Listener = {
 type Subscriber = { reply: FastifyReply; listener: Listener };
 
 /** Frames for the person who acted: an assistant reply streams to them, not to the space. */
-const ACTOR_EVENTS = new Set(["assistant.frame", "assistant.acted", "undo.changed"]);
+const ACTOR_EVENTS = new Set(["assistant.frame", "assistant.acted", "undo.changed", "undo.recorded"]);
 /** The owner's private surfaces: reminders, connected-app syncs, their computers. */
 const OWNER_EVENTS = new Set(["reminder.due", "sync", "device"]);
+/** Live co-editing steps on a page or task page (pages/collab.ts). */
+const PAGE_STEPS = "page.steps";
 /** Reach you on your account channel wherever you are working. */
 const PERSONAL_EVENTS = new Set(["sharing.changed", "notification"]);
 
@@ -42,9 +44,9 @@ function shareSees(share: NonNullable<Listener["share"]>, frame: Frame): boolean
   switch (share.kind) {
     case "page":
     case "task":
-      return (frame.event === "page" || frame.event === "task") && about.includes(share.resourceId);
+      return (frame.event === "page" || frame.event === "task" || frame.event === PAGE_STEPS) && about.includes(share.resourceId);
     case "board":
-      return frame.event === "task" || (frame.event === "page" && Boolean((frame.data as { taskId?: string } | null)?.taskId));
+      return frame.event === "task" || ((frame.event === "page" || frame.event === PAGE_STEPS) && Boolean((frame.data as { taskId?: string } | null)?.taskId));
     case "diagram":
     case "plot":
     case "plot_space":
@@ -153,7 +155,7 @@ class SseHub {
     }
   }
 
-  /** Test hook. Production callers use `publish` and `end`. */
+  /** Every frame as it is written: tests, and live pages that re-read what a write changed (pages/collab.ts). */
   onFrame(listener: (event: { userId: string; frame: Frame }) => void): () => void {
     this.bus.on("frame", listener);
     return () => this.bus.off("frame", listener);

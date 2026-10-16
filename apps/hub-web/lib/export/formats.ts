@@ -15,8 +15,18 @@ export const DOC_FORMATS: Array<{ id: DocFormat; label: string; hint: string }> 
   { id: "txt", label: "Plain text", hint: ".txt" },
 ];
 
+/**
+ * A file name from a title. Letters and digits in any script, and emoji, stay; everything else
+ * (including the characters file systems refuse, such as / \ : * ? " < > |) becomes a hyphen.
+ */
 export function fileSlug(title: string): string {
-  return title.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80) || "untitled";
+  const slug = title
+    .normalize("NFC")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{M}\p{N}\p{Extended_Pictographic}\p{Emoji_Modifier}\p{Regional_Indicator}\u200d]+/gu, "-")
+    .replace(/^-+|-+$/g, "");
+  // Cut by characters, not UTF-16 units, so an emoji is never split in half.
+  return Array.from(slug).slice(0, 80).join("").replace(/[-\u200d]+$/, "") || "untitled";
 }
 
 export function saveBlob(blob: Blob, name: string): void {
@@ -173,6 +183,41 @@ export async function toPdf(doc: ExportDoc, options: { style?: FileStyleProfile 
   return pdf.output("blob");
 }
 
+// What jsPDF's built-in fonts can draw (Windows-1252). Other scripts and emoji come out garbled.
+const PDF_FONT_TEXT = /^[\t\n\r\x20-\x7e\xa0-\xff€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ]*$/;
+
+/** Whether every character of the document can be drawn in a PDF made here (Latin text only). */
+export function pdfCanDraw(doc: ExportDoc): boolean {
+  return PDF_FONT_TEXT.test(toMarkdown(doc));
+}
+
+/**
+ * The browser's print dialog on the document as a web page, for Save as PDF. Used for PDFs with
+ * Hindi, Arabic, Chinese, emoji and other text the built-in fonts can't draw: the browser shapes
+ * and draws them with the computer's own fonts, so nothing large ships with the app.
+ */
+export async function printDocument(doc: ExportDoc): Promise<void> {
+  const frame = document.createElement("iframe");
+  frame.setAttribute("aria-hidden", "true");
+  frame.tabIndex = -1;
+  frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0;";
+  document.body.appendChild(frame);
+  try {
+    await new Promise<void>((resolve, reject) => {
+      frame.onload = () => resolve();
+      frame.onerror = () => reject(new Error("The page could not be prepared for printing."));
+      frame.srcdoc = toHtml(doc);
+    });
+    const view = frame.contentWindow;
+    if (!view) throw new Error("Printing is not available here.");
+    view.focus();
+    view.print();
+  } finally {
+    // Some browsers return from print() before the dialog closes; the frame must outlive it.
+    window.setTimeout(() => frame.remove(), 60_000);
+  }
+}
+
 /** A Word document. Apple Pages, Google Docs and LibreOffice all open it. */
 export async function toDocx(doc: ExportDoc): Promise<Blob> {
   const docx = await import("docx");
@@ -241,7 +286,13 @@ export async function renderDocument(doc: ExportDoc, format: DocFormat): Promise
   }
 }
 
-export async function downloadDocument(doc: ExportDoc, format: DocFormat): Promise<void> {
+/** Saves the file, or for a PDF the built-in fonts can't draw, opens the print dialog instead ("printed"). */
+export async function downloadDocument(doc: ExportDoc, format: DocFormat): Promise<"saved" | "printed"> {
+  if (format === "pdf" && !pdfCanDraw(doc)) {
+    await printDocument(doc);
+    return "printed";
+  }
   const { blob, name } = await renderDocument(doc, format);
   saveBlob(blob, name);
+  return "saved";
 }

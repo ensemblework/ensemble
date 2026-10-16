@@ -396,3 +396,31 @@ test("hosted accounts keep ten files in 50 MB; removing one frees room; the serv
   assert.equal(full.statusCode, 507);
   assert.equal(full.json<{ error: string }>().error, "File storage on this server is full right now.");
 });
+
+test("an empty file, a program, and a body over the size limit are refused with a reason, and nothing is kept", async () => {
+  const before = (await ok<{ usage: FileUsage }>(mira.inject({ method: "GET", url: "/api/documents" }))).usage.count;
+  const empty = await upload(mira, "blank.txt", "");
+  assert.equal(empty.statusCode, 400, empty.body);
+  assert.equal(empty.json<{ error: string }>().error, "This file is empty, so there is nothing to keep.");
+  for (const name of ["setup.exe", "firmware.BIN"]) {
+    const refused = await upload(mira, name, "MZ");
+    assert.equal(refused.statusCode, 415, `${name}: ${refused.body}`);
+    assert.match(refused.json<{ error: string }>().error, /programs or raw binary data/);
+  }
+  const archive = await uploaded(mira, "Fieldnote photos.zip", "PK");
+  assert.equal(archive.kind, "other", "formats Ensemble cannot show are still kept");
+  const renamed = await mira.inject({ method: "PUT", url: `/api/documents/${archive.id}/content`, payload: { dataBase64: Buffer.from("MZ").toString("base64"), filename: "photos.exe" } });
+  assert.equal(renamed.statusCode, 415, "a replacement cannot turn a file into a program");
+
+  // The Content-Length alone is over the route's limit: refused before the body is read.
+  const huge = await mira.inject({
+    method: "POST",
+    url: "/api/documents",
+    headers: { "content-type": "application/json", "content-length": String(200 * 1024 * 1024) },
+    payload: JSON.stringify({ filename: "scan.pdf", mediaType: "application/pdf", dataBase64: "JVBERi0=", summarize: false }),
+  });
+  assert.equal(huge.statusCode, 413, huge.body);
+  assert.equal(huge.json<{ error: string }>().error, "Files can be up to 100 MB.");
+  const after = (await ok<{ usage: FileUsage }>(mira.inject({ method: "GET", url: "/api/documents" }))).usage.count;
+  assert.equal(after, before + 1, "only the archive was kept");
+});

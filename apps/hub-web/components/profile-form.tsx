@@ -19,11 +19,16 @@ export function ProfileForm({
   initial,
   submitLabel,
   pending = false,
+  requireChange = false,
+  onDirtyChange,
   onSubmit,
 }: {
   initial: { name: string; profile?: Partial<Profile> | null };
   submitLabel: string;
   pending?: boolean;
+  /** Settings: Save stays off until something differs from what is saved. */
+  requireChange?: boolean;
+  onDirtyChange?: (dirty: boolean) => void;
   onSubmit: (profile: ProfileInput) => void;
 }) {
   const starting = genderChoice(initial.profile?.gender);
@@ -45,20 +50,29 @@ export function ProfileForm({
   }, [initial.name, initial.profile?.gender, initial.profile?.profession, initial.profile?.organization, initial.profile?.heardFrom]);
 
   const gender = choice === "prefer-not" ? null : choice === "self" ? self.trim() || null : choice;
-  const disabled = pending || name.trim().length === 0;
+  const values: ProfileInput = {
+    name: name.trim(),
+    gender,
+    profession: profession.trim() || null,
+    organization: organization.trim() || null,
+    heardFrom: heardFrom.trim() || null,
+  };
+  const dirty =
+    values.name !== initial.name.trim() ||
+    values.gender !== (initial.profile?.gender || null) ||
+    values.profession !== (initial.profile?.profession || null) ||
+    values.organization !== (initial.profile?.organization || null) ||
+    values.heardFrom !== (initial.profile?.heardFrom || null);
+  useEffect(() => onDirtyChange?.(dirty), [dirty, onDirtyChange]);
+  const disabled = pending || name.trim().length === 0 || (requireChange && !dirty);
   return (
     <form
       className="space-y-3"
       data-profile-form
       onSubmit={(event) => {
         event.preventDefault();
-        onSubmit({
-          name: name.trim(),
-          gender,
-          profession: profession.trim() || null,
-          organization: organization.trim() || null,
-          heardFrom: heardFrom.trim() || null,
-        });
+        if (disabled) return;
+        onSubmit(values);
       }}
     >
       <label className="block text-[13px] font-medium">

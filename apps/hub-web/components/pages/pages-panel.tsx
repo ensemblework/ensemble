@@ -20,7 +20,7 @@ export function PagesPanel({ side, onClose, onSide }: { side: "left" | "right"; 
     return () => media.removeEventListener("change", read);
   }, []);
   useModalFocus(ref, mobile, onClose);
-  const panel = <aside className="pages-panel flex h-full shrink-0 flex-col border-line bg-sidebar" data-side={side} aria-label="Pages browser" onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); onClose(); } }}>
+  const panel = <aside className="pages-panel flex h-full shrink-0 flex-col border-line bg-sidebar" data-side={side} aria-label="Pages browser" onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); onClose(); } }}>
     <div className="flex items-center gap-2 px-4 pb-4 pt-5">
       <h2 className="flex-1 text-[16px] font-semibold tracking-tight">Pages</h2>
       <button type="button" className="icon-btn" aria-label={`Move pages panel ${side === "left" ? "right" : "left"}`} title={`Move to the ${side === "left" ? "right" : "left"}`} onClick={onSide}>{side === "left" ? <PanelRight size={15} /> : <PanelLeft size={15} />}</button>

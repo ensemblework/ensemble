@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { isApplePlatform } from "@/lib/platform";
 import { formatBinding, SHORTCUTS } from "@ensemble/shared-types";
+import { useShortcuts } from "@/lib/shortcut-store";
 import { useToast } from "../toast";
 import { plainMentions } from "@/lib/mentions/text";
 import { MentionPopover, useMentionMenu } from "../mentions/mention-menu";
@@ -15,7 +16,11 @@ export function QuickCapture({ open, onClose }: { open: boolean; onClose: () => 
   const input = useRef<HTMLTextAreaElement>(null);
   const [text, setText] = useState("");
   const mention = useMentionMenu({ value: text, onValue: setText, inputRef: input });
-  const label = formatBinding(SHORTCUTS.find((binding) => binding.id === "capture")!, isApplePlatform());
+  // The person's own chord when they changed it in Settings → Shortcuts.
+  const { bindings } = useShortcuts();
+  const apple = isApplePlatform();
+  const label = formatBinding(bindings.find((binding) => binding.id === "capture") ?? SHORTCUTS.find((binding) => binding.id === "capture")!, apple);
+  const saveKeys = apple ? "⌘↩" : "Ctrl+Enter";
 
   useEffect(() => {
     if (!open) return;
@@ -76,15 +81,21 @@ export function QuickCapture({ open, onClose }: { open: boolean; onClose: () => 
       >
         <div className="mb-2 flex items-center justify-between gap-3">
           <h2 className="text-[15px] font-semibold">Quick capture</h2>
-          <span className="kbd">{label}</span>
+          <span className="kbd" title="Opens Quick capture from anywhere in Ensemble">{label}</span>
         </div>
-        <p className="mb-3 text-[12.5px] text-muted">Type a reminder. A name and a day become a person and a due date.</p>
+        <p id="quick-capture-hint" className="mb-3 text-[12.5px] text-muted">Type a reminder. A name and a day become a person and a due date. {saveKeys} saves.</p>
         <MentionPopover menu={mention} />
         <textarea
           ref={input}
           value={text}
           {...mention.inputProps}
-          onKeyDown={mention.onKeyDown}
+          onKeyDown={(event) => {
+            if (mention.onKeyDown(event) || event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return;
+            event.preventDefault();
+            if (text.trim() && !save.isPending) save.mutate();
+          }}
+          aria-label="Reminder to capture"
+          aria-describedby="quick-capture-hint"
           rows={3}
           placeholder="Remind Priya about the contract Friday"
           className="field w-full resize-none"
