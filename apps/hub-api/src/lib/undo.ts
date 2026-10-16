@@ -15,7 +15,7 @@ import { Settings } from "@ensemble/shared-types";
 import { appendLedger } from "./ledger.js";
 import { sseHub } from "./sse.js";
 import { lockUserTransaction } from "./user-lock.js";
-import { actorFor, isVisitor } from "../sharing/context.js";
+import { actorFor, currentScope, isVisitor, type RequestScope } from "../sharing/context.js";
 import { syncFileText } from "../files/visibility.js";
 import { tidyUndoLabel } from "./undo-label.js";
 
@@ -239,6 +239,13 @@ async function depthFor(db: Db, userId: string): Promise<number> {
   return Math.min(20, Math.max(3, depth));
 }
 
+/** Requests that recorded an undo entry; app.ts tells the person's tabs once the response is out. */
+const recorded = new WeakSet<RequestScope>();
+
+export function recordedUndo(scope: RequestScope): boolean {
+  return recorded.has(scope);
+}
+
 async function writeEntry(
   db: Prisma.TransactionClient,
   input: { userId: string; label: string; kind: UndoKind; actor?: Actor; subject: string; href?: string; source?: string; patches: UndoPatch[] },
@@ -280,6 +287,8 @@ async function writeEntry(
   });
   if (extras.length) await db.undoEntry.deleteMany({ where: { id: { in: extras.map((row) => row.id) } } });
   lastIds.set(db, id);
+  const scope = currentScope();
+  if (scope) recorded.add(scope);
   return id;
 }
 

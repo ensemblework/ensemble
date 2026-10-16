@@ -5,7 +5,7 @@ import type { Node } from "prosemirror-model";
 import type { PageDocument } from "@ensemble/shared-types";
 import { Authority, CollabError, LIMITS, type StepBatch } from "./collab-core.js";
 import { diffSteps } from "./page-diff.js";
-import { CollabHub, STEPS_EVENT, type CollabStore, type DocKey, type StoredDoc } from "./collab.js";
+import { CollabHub, STEPS_EVENT, TIMING, type CollabStore, type DocKey, type StoredDoc } from "./collab.js";
 import { pageDoc, pageSchema } from "./schema.js";
 
 const p = (...texts: string[]): PageDocument => ({ type: "doc", content: texts.map((text) => (text ? { type: "paragraph", content: [{ type: "text", text }] } : { type: "paragraph" })) });
@@ -146,14 +146,15 @@ test("when the steps since the copy are gone, a write from elsewhere is three-wa
 class MemoryStore implements CollabStore {
   rows = new Map<string, StoredDoc>();
   writes = 0;
-  failNext = false;
+  /** The next this many write-backs fail. */
+  failing = 0;
   read(key: DocKey): Promise<StoredDoc | null> {
     const row = this.rows.get(key.id);
     return Promise.resolve(row ? structuredClone(row) : null);
   }
-  async write(key: DocKey, decide: (row: StoredDoc) => PageDocument | null) {
-    if (this.failNext) {
-      this.failNext = false;
+  async write(key: DocKey, decide: (row: StoredDoc) => { content: PageDocument; marker: { epoch: string; version: number } } | null) {
+    if (this.failing > 0) {
+      this.failing -= 1;
       throw new Error("database is down");
     }
     const row = this.rows.get(key.id);
@@ -162,7 +163,8 @@ class MemoryStore implements CollabStore {
     if (!next) return { revision: row.revision, wrote: false };
     this.writes += 1;
     row.revision += 1;
-    row.content = structuredClone(next);
+    row.content = structuredClone(next.content);
+    row.marker = next.marker;
     return { revision: row.revision, wrote: true };
   }
   /** Someone else's write, straight to the stored copy. */
@@ -170,6 +172,7 @@ class MemoryStore implements CollabStore {
     const row = this.rows.get(id)!;
     row.content = edit(structuredClone((row.content ?? row.fallback) as PageDocument));
     row.revision += 1;
+    delete row.marker;
   }
 }
 
@@ -180,12 +183,14 @@ function harness(timing: Partial<typeof import("./collab.js").TIMING> = {}) {
   const store = new MemoryStore();
   const events: Array<{ space: string; event: string; data: Record<string, unknown> }> = [];
   const hub = new CollabHub(store, (space, event, data) => events.push({ space, event, data }), {
+    ...TIMING,
     quietMs: 20,
     maxMs: 60,
     retryMs: 20,
     idleMs: 1000,
     sweepMs: 60_000,
     maxOpen: 10,
+    recheckMs: [30, 80],
     ...timing,
   });
   return { store, events, hub };
@@ -220,7 +225,7 @@ test("the hub writes back after typing pauses, at most every few seconds while i
   await until(() => store.writes === 1);
   assert.deepEqual(lines(store.rows.get("p1")!.content as PageDocument), ["Start!"]);
   const saved = events.find((frame) => frame.event === "page");
-  assert.deepEqual(saved?.data, { id: "p1", action: "save", revision: 2, by: "collab" });
+  assert.deepEqual(saved?.data, { id: "p1", action: "save", revision: 2, by: "collab", epoch: joined.epoch, saved: 1 }, "the write-back says which version is now stored");
 
   // Typing without a pause still writes back within maxMs.
   const began = store.writes;
@@ -242,7 +247,7 @@ test("a failed write-back is retried, and close writes back everything", async (
   store.rows.set("p1", { revision: 1, content: p("A"), fallback: p() });
   const key: DocKey = { space: SPACE, kind: "page", id: "p1" };
   const joined = (await hub.join(key))!;
-  store.failNext = true;
+  store.failing = 1;
   await hub.post(key, { epoch: joined.epoch, version: 0, steps: typing(pageDoc(joined.doc), 2, "B").steps, clientID: "tab" });
   await until(() => store.writes === 1);
   assert.deepEqual(lines(store.rows.get("p1")!.content as PageDocument), ["AB"]);
@@ -329,4 +334,186 @@ test("a deleted page is forgotten; other epochs reload; idle pages are written b
   assert.equal(await hub.join(key), null);
   assert.equal(await hub.post(key, { epoch: fresh.epoch, version: 0, steps: [], clientID: "tab" }), null);
   await hub.close();
+});
+
+// ── Review findings: what the authority refuses, and what a write-back must survive ──────────
+
+function inserted(doc: Node, pos: number, content: unknown): unknown[] {
+  return [{ stepType: "replace", from: pos, to: pos, slice: { content: [content] } }];
+}
+
+test("steps the page store could not save are refused: a null character, an unknown mention kind, deep nesting", () => {
+  const authority = new Authority(pageSchema, { doc: pageDoc(p("Hi")), revision: 1, raw: p("Hi") });
+  const code = (work: () => unknown) => {
+    try {
+      work();
+      return "accepted";
+    } catch (error) {
+      return error instanceof CollabError ? error.code : "threw";
+    }
+  };
+  assert.equal(code(() => authority.receive(0, inserted(authority.doc, 3, { type: "text", text: "a\u0000b" }), "tab")), "COLLAB_REJECTED");
+  assert.equal(code(() => authority.receive(0, inserted(authority.doc, 3, { type: "mention", attrs: { kind: "nope", id: "x", label: "X" } }), "tab")), "COLLAB_REJECTED");
+  assert.equal(code(() => authority.receive(0, [{ stepType: "addMark", from: 1, to: 3, mark: { type: "link", attrs: { href: "x\u0000" } } }], "tab")), "COLLAB_REJECTED");
+  let nested: Record<string, unknown> = { type: "paragraph", content: [{ type: "text", text: "deep" }] };
+  for (let at = 0; at < 60; at += 1) nested = { type: "blockquote", content: [nested] };
+  assert.equal(code(() => authority.receive(0, inserted(authority.doc, 4, nested), "tab")), "COLLAB_REJECTED");
+  assert.equal(authority.version, 0, "nothing was applied");
+  // A valid mention is fine, and so is changing it to another known kind; an unknown kind is not.
+  assert.equal(code(() => authority.receive(0, inserted(authority.doc, 3, { type: "mention", attrs: { kind: "people", id: "p", label: "Mira" } }), "tab")), "accepted");
+  assert.equal(code(() => authority.receive(1, [{ stepType: "attr", pos: 3, attr: "kind", value: "nope" }], "tab")), "COLLAB_REJECTED");
+  assert.equal(code(() => authority.receive(1, [{ stepType: "attr", pos: 3, attr: "kind", value: "project" }], "tab")), "accepted");
+});
+
+test("a page cannot grow past its byte limit, and the step log is bounded by bytes", () => {
+  const limits = { ...LIMITS, docBytes: 2_000, logBytes: 1_000, stepBytes: 1_500 };
+  const authority = new Authority(pageSchema, { doc: pageDoc(p("Start")), revision: 1, raw: p("Start") }, limits);
+  const chunk = "x".repeat(400);
+  let accepted = 0;
+  for (let at = 0; at < 10; at += 1) {
+    try {
+      authority.receive(authority.version, typing(authority.doc, 1, chunk).steps, "tab");
+      accepted += 1;
+    } catch (error) {
+      assert.equal(code(error), "COLLAB_TOO_LARGE");
+    }
+  }
+  assert.ok(accepted >= 3 && accepted < 10, `some typing fits, the rest is refused (${accepted})`);
+  assert.ok(JSON.stringify(authority.doc.toJSON()).length <= 2_000);
+  assert.throws(() => authority.receive(authority.version, typing(authority.doc, 1, "y".repeat(2_000)).steps, "tab"), (error) => code(error) === "COLLAB_TOO_LARGE");
+  // Older steps fell out of the log once it held more than 1,000 bytes.
+  assert.throws(() => authority.since(0), (error) => code(error) === "COLLAB_RESET");
+  assert.equal(authority.since(authority.version).steps.length, 0);
+});
+
+test("steps report the last version written back, and a stored copy equal to the live page counts as saved", () => {
+  const authority = new Authority(pageSchema, { doc: pageDoc(p("A")), revision: 1, raw: p("A") });
+  authority.receive(0, typing(authority.doc, 2, "b").steps, "tab");
+  assert.equal(authority.since(0).saved, 0);
+  authority.persisted(2, authority.doc.toJSON(), authority.doc, 1);
+  authority.receive(1, typing(authority.doc, 3, "c").steps, "tab");
+  assert.equal(authority.since(2).saved, 1);
+  authority.persisted(3, authority.doc.toJSON(), authority.doc, 2);
+  // A write from elsewhere with nothing typed meanwhile: the stored copy is the live page, version 3 included.
+  authority.absorb(p("Abcd"), 4, pageDoc(p("Abcd")));
+  assert.equal(authority.version, 3);
+  assert.equal(authority.saved, 3);
+});
+
+test("write-backs that keep failing stop new steps (COLLAB_UNSAVED) until one succeeds", async () => {
+  const { store, hub } = harness({ quietMs: 5, maxMs: 10, retryMs: 15, failLimit: 2 });
+  store.rows.set("p1", { revision: 1, content: p("A"), fallback: p() });
+  const key: DocKey = { space: SPACE, kind: "page", id: "p1" };
+  const joined = (await hub.join(key))!;
+  store.failing = 2;
+  let version = (await hub.post(key, { epoch: joined.epoch, version: 0, steps: typing(pageDoc(joined.doc), 2, "B").steps, clientID: "tab" }))!.version;
+  await until(() => store.failing === 0);
+  await assert.rejects(hub.post(key, { epoch: joined.epoch, version, steps: [], clientID: "tab" }), (error) => code(error) === "COLLAB_UNSAVED");
+  await until(() => store.writes === 1);
+  version = (await hub.post(key, { epoch: joined.epoch, version, steps: [], clientID: "tab", flush: true }))!.version;
+  assert.equal(version, 1);
+  store.failing = 5;
+  await assert.rejects(hub.post(key, { epoch: joined.epoch, version, steps: [], clientID: "tab", flush: true }), (error) => code(error) === "COLLAB_UNSAVED");
+  store.failing = 0;
+  await hub.close();
+});
+
+test("a page moved to Trash gets its unsaved typing written back, is dropped, and is not opened again", async () => {
+  const { store, hub } = harness({ quietMs: 10_000, maxMs: 10_000 });
+  store.rows.set("p1", { revision: 1, content: p("Draft"), fallback: p() });
+  const key: DocKey = { space: SPACE, kind: "page", id: "p1" };
+  const joined = (await hub.join(key))!;
+  await hub.post(key, { epoch: joined.epoch, version: 0, steps: typing(pageDoc(joined.doc), 6, " typed").steps, clientID: "tab" });
+  store.rows.get("p1")!.trashed = true;
+  hub.changed(SPACE, "page", { id: "p1", action: "delete" });
+  await until(() => hub.size === 0);
+  assert.deepEqual(lines(store.rows.get("p1")!.content as PageDocument), ["Draft typed"], "written into the page in Trash");
+  assert.equal(store.rows.get("p1")!.trashed, true);
+  await assert.rejects(hub.join(key), (error) => code(error) === "PAGE_IN_TRASH");
+  store.rows.get("p1")!.trashed = false;
+  assert.deepEqual(lines((await hub.join(key))!.doc), ["Draft typed"], "restored, it opens with the typing");
+  await hub.close();
+});
+
+test("a write published before it committed is still taken in, a moment later", async () => {
+  const { store, events, hub } = harness({ quietMs: 10_000, maxMs: 10_000, recheckMs: [20, 60] });
+  store.rows.set("p1", { revision: 1, content: p("One"), fallback: p() });
+  const key: DocKey = { space: SPACE, kind: "page", id: "p1" };
+  await hub.join(key);
+  hub.changed(SPACE, "page", { id: "p1", action: "save", by: "agent" });
+  await sleep(5);
+  store.external("p1", () => p("One", "From the assistant"));
+  await until(() => events.some((frame) => frame.event === STEPS_EVENT));
+  assert.deepEqual(lines((await hub.join(key))!.doc), ["One", "From the assistant"]);
+  await hub.close();
+});
+
+test("a task page never written follows its notes until it is", async () => {
+  const { store, hub } = harness();
+  store.rows.set("t1", { revision: 0, content: null, fallback: p("first notes") });
+  const key: DocKey = { space: SPACE, kind: "task", id: "t1" };
+  await hub.join(key);
+  store.rows.get("t1")!.fallback = p("first notes", "added to the notes");
+  hub.changed(SPACE, "task", { id: "t1", action: "update" });
+  for (let tries = 0; tries < 100 && lines((await hub.join(key))!.doc).length < 2; tries += 1) await sleep(5);
+  assert.deepEqual(lines((await hub.join(key))!.doc), ["first notes", "added to the notes"]);
+  await hub.close();
+});
+
+test("after a restart, joining with start tells which authority and version wrote the stored copy", async () => {
+  const { store, hub } = harness({ quietMs: 10_000, maxMs: 10_000 });
+  store.rows.set("p1", { revision: 1, content: p("A"), fallback: p() });
+  const key: DocKey = { space: SPACE, kind: "page", id: "p1" };
+  const first = (await hub.join(key))!;
+  await hub.post(key, { epoch: first.epoch, version: 0, steps: typing(pageDoc(first.doc), 2, "b").steps, clientID: "tab", flush: true });
+  await hub.close();
+  const { hub: restarted } = { hub: new CollabHub(store, () => undefined, { ...TIMING, quietMs: 10_000, maxMs: 10_000 }) };
+  const again = (await restarted.join(key, { start: true }))!;
+  assert.notEqual(again.epoch, first.epoch);
+  assert.deepEqual(again.start?.previous, { epoch: first.epoch, version: 1 });
+  assert.deepEqual(lines(again.start!.doc), ["Ab"]);
+  // A write from elsewhere since then: the stored copy no longer says who wrote it.
+  store.external("p1", () => p("Ab", "C"));
+  const later = new CollabHub(store, () => undefined, { ...TIMING, quietMs: 10_000, maxMs: 10_000 });
+  assert.equal((await later.join(key, { start: true }))!.start?.previous, null);
+  await restarted.close();
+  await later.close();
+});
+
+// ── Re-review: what the authority must accept, and which step it refuses ─────────────────────
+
+test("code that mentions \\u0000 is fine; a real U+0000 or half a character is refused, naming the step", () => {
+  const authority = new Authority(pageSchema, { doc: pageDoc(p("Code")), revision: 1, raw: p("Code") });
+  authority.receive(0, inserted(authority.doc, 5, { type: "text", text: ' s.replace(/\\u0000/g, "") 😀' }), "tab");
+  assert.match(authority.doc.textContent, /\\u0000/);
+  const refusal = (steps: unknown[]) => {
+    try {
+      authority.receive(authority.version, steps, "tab");
+      return null;
+    } catch (error) {
+      return error instanceof CollabError ? { code: error.code, step: error.step } : null;
+    }
+  };
+  const ok = inserted(authority.doc, 1, { type: "text", text: "fine " })[0];
+  assert.deepEqual(refusal([ok, inserted(authority.doc, 1, { type: "text", text: "a\u0000b" })[0]]), { code: "COLLAB_REJECTED", step: 1 });
+  assert.deepEqual(refusal([ok, ok, inserted(authority.doc, 1, { type: "text", text: "\ud83d" })[0]]), { code: "COLLAB_REJECTED", step: 2 });
+  assert.deepEqual(refusal([{ stepType: "attr", pos: 0, attr: "level", value: "\udc00" }]), { code: "COLLAB_REJECTED", step: 0 });
+});
+
+test("a page over a size limit can still be edited and shortened; only growth past the limit is refused", () => {
+  const big = p("x".repeat(500));
+  const authority = new Authority(pageSchema, { doc: pageDoc(big), revision: 1, raw: big }, { ...LIMITS, docSize: 300, docBytes: 400 });
+  // Already over both limits (an agent wrote it). Deleting, and sending nothing, are fine.
+  authority.receive(0, [{ stepType: "replace", from: 1, to: 11 }], "tab");
+  authority.receive(1, [], "tab");
+  // Replacing a letter keeps the size: fine. Adding is refused, at the step that adds.
+  authority.receive(1, [{ stepType: "replace", from: 1, to: 2, slice: { content: [{ type: "text", text: "y" }] } }], "tab");
+  try {
+    authority.receive(2, [{ stepType: "replace", from: 1, to: 2 }, ...typing(authority.doc, 1, "zz").steps], "tab");
+    assert.fail("growth past the limit is refused");
+  } catch (error) {
+    assert.ok(error instanceof CollabError);
+    assert.equal(error.code, "COLLAB_TOO_LARGE");
+    assert.equal(error.step, 1, "the step that grows the page");
+  }
 });

@@ -7,6 +7,7 @@ import { sseHub } from "../lib/sse.js";
 import { lastUndoId, recordUndoInTransaction } from "../lib/undo.js";
 import { loadSettings } from "../lib/settings.js";
 import { assertOwned, createReminder, softDelete } from "../services/records.js";
+import { collabHub } from "../pages/live.js";
 
 const MoveBody = z.object({
   status: TaskStatus,
@@ -99,6 +100,8 @@ export async function boardRoutes(app: FastifyInstance): Promise<void> {
     const { id } = request.params as { id: string };
     const existing = await prisma.task.findFirst({ where: { id, userId: request.userId, deletedAt: null } });
     if (!existing) return reply.code(404).send({ error: "Task not found." });
+    // Typing on its page that is not written back yet goes with it into Trash.
+    await collabHub.flush({ space: request.userId, kind: "task", id }).catch(() => undefined);
     const removed = await prisma.$transaction(async (tx) => {
       const result = await softDelete(tx, request.userId, "task", id, "me");
       return { ...result, undoEntryId: lastUndoId(tx) ?? null };

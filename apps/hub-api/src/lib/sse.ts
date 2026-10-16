@@ -23,7 +23,7 @@ export type Listener = {
 type Subscriber = { reply: FastifyReply; listener: Listener };
 
 /** Frames for the person who acted: an assistant reply streams to them, not to the space. */
-const ACTOR_EVENTS = new Set(["assistant.frame", "assistant.acted", "undo.changed"]);
+const ACTOR_EVENTS = new Set(["assistant.frame", "assistant.acted", "undo.changed", "undo.recorded"]);
 /** The owner's private surfaces: reminders, connected-app syncs, their computers. */
 const OWNER_EVENTS = new Set(["reminder.due", "sync", "device"]);
 /** Live co-editing steps on a page or task page (pages/collab.ts). */

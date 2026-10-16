@@ -286,6 +286,10 @@ model TaskPage {
   externalId     String?           @map("external_id")
   /// The file this page was converted from.
   sourceFileId   String?           @map("source_file_id")
+  /// The live-editing authority that wrote `content` last (src/pages/collab.ts): its epoch and version, valid while `revision` equals `collabRevision`.
+  collabEpoch    String?           @map("collab_epoch")
+  collabVersion  Int?              @map("collab_version")
+  collabRevision Int?              @map("collab_revision")
   deletedAt      DateTime?         @map("deleted_at")
   createdAt      DateTime          @default(now()) @map("created_at")
   updatedAt      DateTime          @updatedAt @map("updated_at")

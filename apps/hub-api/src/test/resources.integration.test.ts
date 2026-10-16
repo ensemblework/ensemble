@@ -96,12 +96,12 @@ test("live page editing: joining, steps, catching up and flushing stay inside th
     await hidden("GET", `${path}?epoch=${joined.epoch}&version=0`);
     await check(a, "GET", `${path}?epoch=${joined.epoch}&version=-1`, 400, "invalid-input");
     const steps = [{ stepType: "replace", from: 1, to: 1, slice: { content: [{ type: "text", text: "Hi " }] } }];
-    const body = { epoch: joined.epoch, version: 0, clientID: "tab", steps };
+    const body = { epoch: joined.epoch, version: 0, clientID: joined.clientID, token: joined.token, steps };
     await hidden("POST", path, body);
     const posted = await check(a, "POST", path, 200, "happy-path", { ...body, flush: true });
     assert.equal(posted.version, 1);
     assert.equal(typeof posted.revision, "number");
-    assert.deepEqual((await check(a, "GET", `${path}?epoch=${joined.epoch}&version=0`, 200, "happy-path")).clientIDs, ["tab"]);
+    assert.deepEqual((await check(a, "GET", `${path}?epoch=${joined.epoch}&version=0`, 200, "happy-path")).clientIDs, [joined.clientID]);
     await check(a, "POST", path, 400, "invalid-input", { ...body, version: "bad" });
     await check(a, "POST", path, 400, "invalid-input", { ...body, version: 1, steps: [{ stepType: "replace", from: 999, to: 999 }] });
   }

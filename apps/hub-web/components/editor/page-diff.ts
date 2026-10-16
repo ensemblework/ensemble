@@ -65,12 +65,14 @@ function hunks(a: readonly string[], b: readonly string[]): Hunk[] {
   return out;
 }
 
-const WORDS = /\s+|[\p{L}\p{N}_]+|[^\s\p{L}\p{N}_]/gu;
+const WORDS = /\s+|[\p{L}\p{N}_]+\s*|[^\s\p{L}\p{N}_]\s*/gu;
 
 /**
- * Inline content as words, runs of spaces, single other characters and inline leaves, each with
- * its marks, and where each starts. Comparing words keeps a typed word whole: compared letter by
- * letter, "b20" against "b2" would come out as "b2" plus an inserted "0".
+ * Inline content as words (with the spaces after them), single other characters and inline
+ * leaves, each with its marks, and where each starts. Comparing words keeps a typed word whole:
+ * compared letter by letter, "b20" against "b2" would come out as "b2" plus an inserted "0". The
+ * space after a word goes with it, so a word added between two others is one insertion at a
+ * word boundary, never one that starts inside the space before it.
  */
 function inlineUnits(node: Node): { keys: string[]; text: string[]; offsets: number[] } {
   const keys: string[] = [];
@@ -93,9 +95,19 @@ function inlineUnits(node: Node): { keys: string[]; text: string[]; offsets: num
   return { keys, text, offsets };
 }
 
-/** One word changed into another with the same marks: the letters that changed. */
+/**
+ * One word changed into another with the same marks: the letters that changed, by character
+ * (an emoji is one), as offsets in UTF-16 units. Half an emoji is not text anyone can store.
+ */
 function letterHunks(a: string, b: string): Hunk[] {
-  return hunks(a.split(""), b.split(""));
+  const [left, right] = [Array.from(a), Array.from(b)];
+  const units = (chars: string[]) => {
+    const offsets = [0];
+    for (const char of chars) offsets.push(offsets.at(-1)! + char.length);
+    return offsets;
+  };
+  const [ua, ub] = [units(left), units(right)];
+  return hunks(left, right).map(([aFrom, aTo, bFrom, bTo]) => [ua[aFrom]!, ua[aTo]!, ub[bFrom]!, ub[bTo]!]);
 }
 
 const same = (a: unknown, b: unknown) => a === b || JSON.stringify(a) === JSON.stringify(b);

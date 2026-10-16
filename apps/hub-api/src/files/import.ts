@@ -158,7 +158,7 @@ export async function importFromApp(db: PrismaClient, userId: string, ref: { sou
   });
   if (kept) return { file: fileRecord(kept), existing: true };
   const download = await downloadItem(userId, ref);
-  assertNewFile(download.filename, download.bytes.byteLength);
+  assertNewFile(download.filename, download.bytes.byteLength, { imported: true });
   const file = await saveFile(db, userId, {
     filename: download.filename,
     mediaType: download.mediaType,

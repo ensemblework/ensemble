@@ -134,15 +134,14 @@ export function TopBar({ onToggleSidebar, drawerOpen = false }: { onToggleSideba
       if (editingText(event.target)) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") {
         event.preventDefault();
-        const latest = client.getQueryData<{ canUndo?: boolean; canRedo?: boolean }>(["shell"]);
-        if (event.shiftKey) {
-          if (latest?.canRedo) redo.mutate();
-        } else if (latest?.canUndo) undo.mutate();
+        // Not gated on the shell's cached canUndo: it can lag behind; the API says when there is nothing.
+        if (event.shiftKey) redo.mutate();
+        else undo.mutate();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [undo, redo, client]);
+  }, [undo, redo]);
 
   const toggleMode = () => {
     const next = mode === "side" ? "page" : "side";

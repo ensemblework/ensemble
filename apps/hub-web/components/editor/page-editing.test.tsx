@@ -68,6 +68,25 @@ test("pasted plain-text Markdown becomes headings, lists, checklists, code, quot
   } finally { done(editor); }
 });
 
+test("pasted lines that are not block syntax keep their line breaks instead of joining into one", () => {
+  const editor = make();
+  try {
+    editor.commands.setTextSelection(1);
+    paste(editor, { "text/plain": "# install deps\nnpm ci\nnpm run build\n\nError at `foo()`\n  at bar.js:10\n  at baz.js:20" });
+    assert.deepEqual(types(editor), ["heading", "paragraph", "paragraph"]);
+    const lines = (index: number) => {
+      const out: string[] = [""];
+      editor.state.doc.child(index).forEach((child) => {
+        if (child.type.name === "hardBreak") out.push("");
+        else out[out.length - 1] += child.text ?? "";
+      });
+      return out;
+    };
+    assert.deepEqual(lines(1), ["npm ci", "npm run build"]);
+    assert.deepEqual(lines(2), ["Error at foo()", "  at bar.js:10", "  at baz.js:20"]);
+  } finally { done(editor); }
+});
+
 test("Markdown in the middle of a line pastes inline; HTML on the clipboard and code blocks keep the text as it is", () => {
   const editor = make(p("Hello "), { type: "codeBlock", content: [{ type: "text", text: "x" }] });
   try {

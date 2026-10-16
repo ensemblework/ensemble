@@ -85,6 +85,8 @@ export function NotePage({
   const focusMode = usePageFocus();
   const sync = useCollab({
     kind: "page",
+    // Not while the page is loading, in Trash or missing; it joins as soon as it opens (after Restore, say).
+    enabled: Boolean(page.data),
     id: pageId,
     share: openedAs.current,
     link: openedLink.current,
@@ -319,6 +321,13 @@ export function NotePage({
             editable={!leaving && canEdit}
             collab={sync.binding}
           />
+        ) : sync.stalled ? (
+          <div className="mt-4 text-[13px] text-muted" role="status">
+            <p>Still connecting to this page. Reload if this takes long.</p>
+            <button type="button" className="btn mt-2" onClick={() => window.location.reload()}>
+              Reload
+            </button>
+          </div>
         ) : (
           <div className="skeleton mt-4 h-64 w-full" />
         )}

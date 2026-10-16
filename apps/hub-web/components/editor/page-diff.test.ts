@@ -107,3 +107,20 @@ test("someone's changes move onto a version that changed elsewhere, word by word
     editor.destroy();
   }
 });
+
+test("a changed emoji is replaced whole: no step carries half of one", () => {
+  const editor = new Editor({ extensions: editorExtensions(() => [], ""), content: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Mood 😀 ok 𝒜b" }] }] } });
+  try {
+    const from = editor.state.doc;
+    const to = editor.schema.nodeFromJSON({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Mood 😃 ok 𝒜c" }] }] });
+    const steps = diffSteps(from, to);
+    assert.ok(applyAll(from, steps).eq(to));
+    const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+    for (const step of steps) {
+      const texts = ((step.toJSON() as { slice?: { content?: Array<{ text?: string }> } }).slice?.content ?? []).map((node) => node.text ?? "");
+      assert.ok(texts.every((text) => !lone.test(text)), JSON.stringify(step.toJSON()));
+    }
+  } finally {
+    editor.destroy();
+  }
+});

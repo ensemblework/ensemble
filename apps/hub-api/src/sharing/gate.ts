@@ -1,15 +1,24 @@
 import type { FastifyReply, FastifyRequest, HookHandlerDoneFunction } from "fastify";
 import { prisma } from "../lib/prisma.js";
-import { runInScope } from "./context.js";
+import { runInScope, type RequestScope } from "./context.js";
 import { linkDecision, memberDecision, shareDecision } from "./policy.js";
 
 /**
  * Runs the rest of the request inside its scope (who is acting, in which space). Must be a
  * callback hook that calls `done` inside `run`, so every later hook and the handler inherit it.
  */
+const scopes = new WeakMap<FastifyRequest, RequestScope>();
+
+/** The scope a request ran in, for hooks that run after the handler (outside it). */
+export function scopeOf(request: FastifyRequest): RequestScope | undefined {
+  return scopes.get(request);
+}
+
 export function scopeHook(request: FastifyRequest, _reply: FastifyReply, done: HookHandlerDoneFunction): void {
   if (!request.userId) return done();
-  runInScope({ spaceId: request.userId, accountId: request.accountId ?? request.userId, access: request.access ?? { kind: "owner" } }, () => done());
+  const scope: RequestScope = { spaceId: request.userId, accountId: request.accountId ?? request.userId, access: request.access ?? { kind: "owner" } };
+  scopes.set(request, scope);
+  runInScope(scope, () => done());
 }
 
 async function firstName(id: string): Promise<string> {

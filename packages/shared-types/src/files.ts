@@ -143,16 +143,21 @@ export function fileFormat(filename: string): FileFormat {
   return BY_EXT.get(ext) ?? { ...OTHER, ext };
 }
 
-/** Programs, installers, disk images and raw binaries. Other formats Ensemble cannot show are still kept. */
+/**
+ * Programs, installers, disk images and raw binaries. Other formats Ensemble cannot show are still
+ * kept. Not `.com` or `.app`: a name that ends in a domain ("Invoice from acme.com") reads as one.
+ */
 const REFUSED_EXTENSIONS = new Set([
-  "exe", "msi", "msix", "msp", "com", "scr", "pif", "cpl", "dll", "sys", "drv", "ocx", "bat", "cmd", "vbs", "vbe", "wsf", "wsh", "hta", "lnk", "reg",
-  "bin", "so", "dylib", "elf", "run", "appimage", "app", "dmg", "pkg", "mpkg", "deb", "rpm", "apk", "aab", "ipa", "xapk", "jar", "iso",
+  "exe", "msi", "msix", "msp", "scr", "pif", "cpl", "dll", "sys", "drv", "ocx", "bat", "cmd", "vbs", "vbe", "wsf", "wsh", "hta", "lnk", "reg",
+  "bin", "so", "dylib", "elf", "run", "appimage", "dmg", "pkg", "mpkg", "deb", "rpm", "apk", "aab", "ipa", "xapk", "jar", "iso",
 ]);
+/** Mail apps name attachments they cannot type `ATT00001.bin`; an import from an app keeps those. */
+const IMPORTED_RAW_DATA = new Set(["bin"]);
 
 /** Why Ensemble will not keep a file of this kind, or null when it will. Uploads, drops and imports all ask. */
-export function fileTypeProblem(filename: string): string | null {
+export function fileTypeProblem(filename: string, options: { imported?: boolean } = {}): string | null {
   const ext = fileExtension(filename);
-  if (!REFUSED_EXTENSIONS.has(ext)) return null;
+  if (!REFUSED_EXTENSIONS.has(ext) || (options.imported && IMPORTED_RAW_DATA.has(ext))) return null;
   return `.${ext} files are programs or raw binary data, which Files does not keep.`;
 }
 

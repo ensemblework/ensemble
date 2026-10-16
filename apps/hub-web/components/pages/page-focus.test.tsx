@@ -44,9 +44,9 @@ async function mount(shared?: { role: "view" | "edit" }) {
     if (path === "/api/pages/p1") return json(PAGE);
     if (path === "/api/pages/p1/collab" && init?.method === "POST") {
       const body = JSON.parse(String(init.body)) as { version: number; steps: unknown[]; clientID: string };
-      return json({ epoch: "e1", from: body.version, version: body.version + body.steps.length, steps: body.steps, clientIDs: body.steps.map(() => body.clientID) });
+      return json({ epoch: "e1", from: body.version, version: body.version + body.steps.length, steps: body.steps, clientIDs: body.steps.map(() => body.clientID), saved: body.version + body.steps.length });
     }
-    if (path === "/api/pages/p1/collab") return json({ epoch: "e1", version: 0, doc: PAGE.content, revision: PAGE.revision });
+    if (path === "/api/pages/p1/collab") return json({ epoch: "e1", version: 0, doc: PAGE.content, revision: PAGE.revision, saved: 0, clientID: "me/tab" });
     if (path === "/api/entities") return json({ entities: [] });
     return json({ error: "not mocked" }, 404);
   }) as typeof fetch;

@@ -38,6 +38,12 @@ const paragraph = (text: string): PageNode => {
   return content.length ? { type: "paragraph", content } : { type: "paragraph" };
 };
 
+/** A paragraph whose lines are kept apart by hard breaks. */
+function brokenParagraph(lines: string[]): PageNode {
+  const content = lines.flatMap((line, index): PageNode[] => [...(index ? [{ type: "hardBreak" }] : []), ...inline(line)]);
+  return content.length ? { type: "paragraph", content } : { type: "paragraph" };
+}
+
 function tableNode(rows: string[][]): PageNode {
   const width = Math.max(...rows.map((row) => row.length));
   return {
@@ -55,7 +61,11 @@ function tableNode(rows: string[][]): PageNode {
 /** A table's header rule: `| --- | :-: |`. */
 const TABLE_RULE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
 
-export function markdownToNodes(markdown: string): PageNode[] {
+/**
+ * `lineBreaks`: each line of a paragraph keeps its own line (a hard break), as pasted text such
+ * as a log or a list of commands expects, instead of Markdown's joining them with spaces.
+ */
+export function markdownToNodes(markdown: string, options: { lineBreaks?: boolean } = {}): PageNode[] {
   const lines = markdown.replace(/\r\n/g, "\n").split("\n");
   const nodes: PageNode[] = [];
   let i = 0;
@@ -78,7 +88,7 @@ export function markdownToNodes(markdown: string): PageNode[] {
       const html = body.join("\n");
       const summary = /<summary>([\s\S]*?)<\/summary>/i.exec(html)?.[1] ?? "Details";
       const inner = html.replace(/^\s*<details[^>]*>\s*/i, "").replace(/<summary>[\s\S]*?<\/summary>/i, "").replace(/<\/details>\s*$/i, "");
-      nodes.push({ type: "toggleBlock", attrs: { collapsed: !/^\s*<details[^>]*\bopen\b/i.test(html) }, content: [paragraph(summary), ...markdownToNodes(inner)] });
+      nodes.push({ type: "toggleBlock", attrs: { collapsed: !/^\s*<details[^>]*\bopen\b/i.test(html) }, content: [paragraph(summary), ...markdownToNodes(inner, options)] });
       continue;
     }
     const image = /^!\[([^\]]*)\]\((https?:\/\/[^)]+)\)\s*$/.exec(line.trim());
@@ -115,7 +125,7 @@ export function markdownToNodes(markdown: string): PageNode[] {
     if (line.startsWith(">")) {
       const body: string[] = [];
       while (i < lines.length && lines[i]!.startsWith(">")) body.push(lines[i++]!.replace(/^>\s?/, ""));
-      nodes.push({ type: "blockquote", content: markdownToNodes(body.join("\n")) });
+      nodes.push({ type: "blockquote", content: markdownToNodes(body.join("\n"), options) });
       continue;
     }
     if (isList(line)) {
@@ -139,15 +149,16 @@ export function markdownToNodes(markdown: string): PageNode[] {
           extra.push(next.slice(Math.min(base + 2, indent)));
           i++;
         }
-        items.push({ type: checklist ? "taskItem" : "listItem", ...(checklist ? { attrs: { checked: Boolean(check && check[1] !== " ") } } : {}), content: [paragraph(body), ...(extra.length ? markdownToNodes(extra.join("\n")) : [])] });
+        items.push({ type: checklist ? "taskItem" : "listItem", ...(checklist ? { attrs: { checked: Boolean(check && check[1] !== " ") } } : {}), content: [paragraph(body), ...(extra.length ? markdownToNodes(extra.join("\n"), options) : [])] });
       }
       nodes.push({ type: checklist ? "taskList" : ordered ? "orderedList" : "bulletList", ...(ordered ? { attrs: { start: Number.parseInt(first[2]!, 10) || 1 } } : {}), content: items });
       continue;
     }
-    const body: string[] = [line.trim()];
+    const keep = (text: string) => (options.lineBreaks ? text.trimEnd() : text.trim());
+    const body: string[] = [keep(line.trimStart())];
     i += 1;
-    while (i < lines.length && lines[i]!.trim() && !/^(#{1,6}\s|```|>|\s*([-*+]|\d+[.)])\s|\|)/.test(lines[i]!)) body.push(lines[i++]!.trim());
-    nodes.push(paragraph(body.join(" ")));
+    while (i < lines.length && lines[i]!.trim() && !/^(#{1,6}\s|```|>|\s*([-*+]|\d+[.)])\s|\|)/.test(lines[i]!)) body.push(keep(lines[i++]!));
+    nodes.push(options.lineBreaks ? brokenParagraph(body) : paragraph(body.join(" ")));
   }
   return nodes.length ? nodes : [{ type: "paragraph" }];
 }

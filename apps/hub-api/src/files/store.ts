@@ -162,8 +162,8 @@ function assertSize(bytes: number): void {
  * and must not be a program. Copies of files already kept, such as a paired computer's task
  * attachments, are not asked again.
  */
-export function assertNewFile(filename: string, bytes: number): void {
-  const kind = fileTypeProblem(filename);
+export function assertNewFile(filename: string, bytes: number, options: { imported?: boolean } = {}): void {
+  const kind = fileTypeProblem(filename, options);
   if (kind) throw new FileError(kind, 415);
   if (bytes === 0) throw new FileError("This file is empty, so there is nothing to keep.", 400);
 }

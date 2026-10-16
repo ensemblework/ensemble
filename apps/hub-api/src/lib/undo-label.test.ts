@@ -11,3 +11,8 @@ test("a quoted title is quoted once and a long one is cut", () => {
   assert.equal(long, `Edited “${"a".repeat(59)}…”`);
   assert.equal(tidyUndoLabel(`Updated “${"🚀".repeat(70)}”`), `Updated “${"🚀".repeat(59)}…”`);
 });
+
+test("an empty or blank title keeps both of its quotes", () => {
+  assert.equal(tidyUndoLabel("Created “”"), "Created “”");
+  assert.equal(tidyUndoLabel("Edited “ ”"), "Edited “ ”");
+});

@@ -10,10 +10,10 @@ import test from "node:test";
 import { Editor } from "@tiptap/core";
 import type { PageDocument } from "@ensemble/shared-types";
 import { sameDoc } from "@ensemble/shared-types/page-merge";
-import { Authority, CollabError } from "../../../hub-api/src/pages/collab-core";
+import { Authority, CollabError, LIMITS } from "../../../hub-api/src/pages/collab-core";
 import { pageDoc, pageSchema } from "../../../hub-api/src/pages/schema";
 import { editorExtensions } from "./extensions";
-import { CollabSession, CollabSync, type CollabBatch, type CollabStatus, type CollabTransport, type Draft, type DraftStore } from "./collab";
+import { CollabSession, CollabSync, collabTab, type CollabBatch, type CollabStatus, type CollabTab, type CollabTransport, type Draft, type DraftStore } from "./collab";
 
 Object.defineProperty(globalThis, "self", { configurable: true, value: window });
 
@@ -37,19 +37,29 @@ async function until(check: () => boolean, label: string, ms = 5000): Promise<vo
     await sleep(5);
   }
 }
-const HTTP: Record<string, number> = { COLLAB_BEHIND: 409, COLLAB_RESET: 410, COLLAB_REJECTED: 400, COLLAB_TOO_LARGE: 413 };
-const asHttp = (error: unknown) => (error instanceof CollabError ? { status: HTTP[error.code], code: error.code, data: error.batch, message: error.message } : error);
+const HTTP: Record<string, number> = { COLLAB_BEHIND: 409, COLLAB_RESET: 410, COLLAB_REJECTED: 400, COLLAB_TOO_LARGE: 413, COLLAB_UNSAVED: 503, PAGE_IN_TRASH: 404, COLLAB_REJOIN: 410 };
+/** As `routes/collab.ts` answers: the missed steps for COLLAB_BEHIND, the refused step's index for a refusal. */
+const asHttp = (error: unknown) =>
+  error instanceof CollabError ? { status: HTTP[error.code], code: error.code, data: error.batch ?? (error.step === undefined ? undefined : { step: error.step }), message: error.message } : error;
 
 /** The API process: one authority, write-backs, the event stream, and a network that can fail. */
 class Server {
   authority: Authority;
   stored: PageDocument;
+  /** The authority and version that wrote `stored`, as the page row's marker records. */
+  marker: { epoch: string; version: number } | null = null;
   revision = 1;
-  private readonly listeners = new Map<string, (batch: CollabBatch) => void>();
+  private readonly listeners = new Map<string, { steps: (batch: CollabBatch) => void; saved: (epoch: string, saved: number) => void }>();
   private readonly lines = new Map<string, Promise<void>>();
   /** Clients whose requests fail as if offline, or with an expired session. */
   readonly offline = new Set<string>();
   readonly signedOut = new Set<string>();
+  /** Clients whose next accepted steps get no answer, as if the connection dropped on the way back. */
+  readonly dropAnswer = new Set<string>();
+  /** Steps per request seen, by client. */
+  readonly sent = new Map<string, number[]>();
+  /** Joins so far: each one issues a new client id, as the API does. */
+  private joins = 0;
 
   constructor(doc: PageDocument, private readonly rand: () => number) {
     this.stored = doc;
@@ -60,30 +70,44 @@ class Server {
     return sleep(Math.floor(this.rand() * 6));
   }
 
+  /** A write-back, and its `page` event telling every tab the version now stored. */
   persist(): void {
     if (!this.authority.unsaved) return;
     this.revision += 1;
     this.stored = this.authority.doc.toJSON() as PageDocument;
+    this.marker = { epoch: this.authority.epoch, version: this.authority.version };
     this.authority.persisted(this.revision, this.stored, this.authority.doc, this.authority.version);
+    const { epoch, saved } = this.authority;
+    this.deliver((listener) => listener.saved(epoch, saved));
   }
 
   /** A deploy: write back, then a fresh authority (new epoch, version 0) from the stored copy. */
   restart(): void {
     this.persist();
-    this.authority = new Authority(pageSchema, { doc: pageDoc(this.stored), revision: this.revision, raw: this.stored });
+    this.crash();
+  }
+
+  /** The process dies: what was not written back is gone from the server. */
+  crash(): void {
+    this.authority = new Authority(pageSchema, { doc: pageDoc(this.stored), revision: this.revision, raw: this.stored, previous: this.marker });
   }
 
   /** The assistant writes from the stored copy; the authority takes it in. */
   external(edit: (doc: PageDocument) => PageDocument): void {
     this.stored = edit(structuredClone(this.stored));
+    this.marker = null;
     this.revision += 1;
     const batch = this.authority.absorb(this.stored, this.revision, pageDoc(this.stored));
     if (batch) this.broadcast(batch);
   }
 
   broadcast(batch: CollabBatch): void {
+    this.deliver((listener) => listener.steps(batch));
+  }
+
+  private deliver(send: (listener: { steps: (batch: CollabBatch) => void; saved: (epoch: string, saved: number) => void }) => void): void {
     for (const [name, listener] of this.listeners) {
-      const line = (this.lines.get(name) ?? Promise.resolve()).then(() => this.latency()).then(() => listener(batch));
+      const line = (this.lines.get(name) ?? Promise.resolve()).then(() => this.latency()).then(() => send(listener));
       this.lines.set(name, line);
     }
   }
@@ -92,22 +116,40 @@ class Server {
     await Promise.all(this.lines.values());
   }
 
-  subscribe(name: string, listener: (batch: CollabBatch) => void): () => void {
+  subscribe(name: string, listener: { steps: (batch: CollabBatch) => void; saved: (epoch: string, saved: number) => void }): () => void {
     this.listeners.set(name, listener);
     return () => this.listeners.delete(name);
   }
 
-  transport(name: string): CollabTransport {
+  /** A tab's requests. Client ids are `<account>/<name>.<join>`; the token is the API's HMAC, here per authority. */
+  transport(name: string, account = "u1"): CollabTransport {
+    const tokenFor = (clientID: string) => `${this.authority.epoch}:${clientID}`;
     const gate = () => {
       if (this.offline.has(name)) throw { status: 0, code: null, message: "Ensemble can't reach its server right now." };
       if (this.signedOut.has(name)) throw { status: 401, code: null, message: "Sign in again." };
     };
     return {
-      join: async () => {
+      join: async (options) => {
         await this.latency();
         gate();
         const { authority } = this;
-        return { epoch: authority.epoch, version: authority.version, doc: authority.doc.toJSON() as PageDocument, revision: authority.known.revision };
+        const known = authority.known;
+        const since = options?.stored && known.exact && known.version < authority.version && known.version >= authority.first ? authority.since(known.version) : null;
+        const stored = since ? { version: known.version, doc: known.doc.toJSON() as PageDocument, steps: since.steps, clientIDs: since.clientIDs } : undefined;
+        const all = options?.start && authority.first === 0 ? authority.since(0) : null;
+        const start = all ? { doc: authority.loaded.toJSON() as PageDocument, steps: all.steps, clientIDs: all.clientIDs, previous: authority.previous } : undefined;
+        const clientID = `${account}/${name}.${(this.joins += 1)}`;
+        return {
+          epoch: authority.epoch,
+          version: authority.version,
+          doc: authority.doc.toJSON() as PageDocument,
+          revision: authority.known.revision,
+          saved: authority.saved,
+          clientID,
+          token: tokenFor(clientID),
+          ...(stored ? { stored } : {}),
+          ...(start ? { start } : {}),
+        };
       },
       since: async (epoch, version) => {
         await this.latency();
@@ -123,6 +165,8 @@ class Server {
         await this.latency();
         gate();
         if (body.epoch !== this.authority.epoch) throw { status: 410, code: "COLLAB_RESET" };
+        if (!body.clientID.startsWith(`${account}/`) || body.token !== tokenFor(body.clientID)) throw { status: 410, code: "COLLAB_REJOIN", message: "Join this page again to go on editing." };
+        this.sent.set(name, [...(this.sent.get(name) ?? []), body.steps.length]);
         let batch: CollabBatch;
         try {
           batch = this.authority.receive(body.version, body.steps, body.clientID);
@@ -132,45 +176,61 @@ class Server {
         if (batch.steps.length) this.broadcast(batch);
         if (body.flush) this.persist();
         await this.latency();
-        return { ...batch, revision: this.revision };
+        if (batch.steps.length && this.dropAnswer.delete(name)) throw { status: 0, code: null, message: "The connection dropped." };
+        return { ...batch, saved: this.authority.saved, revision: this.revision };
       },
     };
   }
 }
 
-function memoryDrafts(): DraftStore & { value: Draft | null } {
+let pages = 0;
+/** One page's drafts in one tab (`sessionStorage` in the app). `value`: the latest. */
+function memoryDrafts(key = `page-${(pages += 1)}`): DraftStore & { value: Draft | null; entries: Map<string, Draft>; full: boolean } {
+  const entries = new Map<string, Draft>();
   return {
-    value: null,
+    key,
+    entries,
+    full: false,
+    get value() {
+      return [...entries.values()].sort((a, b) => a.at - b.at).at(-1) ?? null;
+    },
+    set value(draft: Draft | null) {
+      entries.clear();
+      if (draft) entries.set(draft.clientID, structuredClone(draft));
+    },
     read() {
-      return this.value;
+      return [...entries.values()].map((draft) => structuredClone(draft));
     },
     write(draft) {
-      this.value = structuredClone(draft);
+      if (this.full) return false;
+      entries.set(draft.clientID, structuredClone(draft));
+      return true;
     },
-    clear() {
-      this.value = null;
+    clear(clientID) {
+      entries.delete(clientID);
     },
   };
 }
 
 type Tab = { name: string; editor: Editor; session: CollabSession; status: () => CollabStatus; close: () => void; drafts: ReturnType<typeof memoryDrafts>; restored: () => number };
 
-async function open(server: Server, name: string, drafts = memoryDrafts()): Promise<Tab> {
+async function open(server: Server, name: string, drafts = memoryDrafts(), options: { tab?: CollabTab; account?: string; transport?: CollabTransport; errors?: string[] } = {}): Promise<Tab> {
   let status: CollabStatus = "saved";
   let restored = 0;
   const session = new CollabSession({
-    transport: server.transport(name),
-    clientID: name,
+    transport: options.transport ?? server.transport(name, options.account),
     drafts,
+    tab: options.tab,
+    onError: (message) => options.errors?.push(message),
     live: () => true,
-    delays: { live: 3, alone: 3, retry: 5, maxRetry: 20 },
+    delays: { live: 3, alone: 3, retry: 5, maxRetry: 20, draft: 5 },
     onStatus: (next) => (status = next),
     onRestored: () => (restored += 1),
   });
   const joined = await session.join();
-  const editor = new Editor({ extensions: [...editorExtensions(() => [], ""), CollabSync.configure({ version: joined.version, clientID: name })], content: joined.doc });
+  const editor = new Editor({ extensions: [...editorExtensions(() => [], ""), CollabSync.configure({ version: joined.version, clientID: joined.clientID })], content: joined.doc });
   const detach = session.attach(editor);
-  const stop = server.subscribe(name, (batch) => session.receive(batch));
+  const stop = server.subscribe(name, { steps: (batch) => session.receive(batch), saved: (epoch, saved) => session.noteSaved(epoch, saved) });
   return {
     name,
     editor,
@@ -423,5 +483,422 @@ test("other people's carets sent from an older version land where they meant", a
     assert.equal(a.session.place({ anchor: 1, head: 1 }), null, "a caret with no version is placed as before");
   } finally {
     for (const tab of tabs) tab.close();
+  }
+});
+
+// ── Review findings: drafts, durability, large batches, refusals ─────────────────────────────
+
+test("the server crashing loses no typing: confirmed but unwritten words go again from their authors, once", async () => {
+  for (const seed of [41, 42, 43]) {
+    const rand = random(seed);
+    const server = new Server(START, rand);
+    const tabs = [await open(server, "a"), await open(server, "b"), await open(server, "c")];
+    const typed: string[] = [];
+    try {
+      for (let op = 0; op < 90; op += 1) {
+        typeWord(tabs[op % 3]!, rand, typed);
+        if (op % 30 === 10) server.persist();
+        if (op % 30 === 20) server.crash();
+        if (rand() < 0.3) await sleep(Math.floor(rand() * 4));
+      }
+      await settle(server, tabs);
+      assertConverged(server, tabs);
+      const final = words(server.stored);
+      for (const word of typed) assert.equal(final.filter((item) => item === word).length, 1, `seed ${seed}: ${word} is on the page once`);
+    } finally {
+      for (const tab of tabs) tab.close();
+    }
+  }
+});
+
+test("typing stays 'Saving…' and in the draft until the server reports it written back", async () => {
+  const server = new Server(START, random(47));
+  const tab = await open(server, "me");
+  try {
+    tab.editor.chain().setTextSelection(1).insertContent("Durable ").run();
+    await until(() => tab.session.caretVersion() !== null, "the server confirming the typing");
+    await server.quiet();
+    assert.equal(tab.status(), "saving", "confirmed is not yet written back");
+    await until(() => tab.drafts.value !== null, "the draft, written shortly after sending");
+    server.persist();
+    await server.quiet();
+    assert.equal(tab.status(), "saved");
+    assert.equal(tab.drafts.value, null);
+  } finally {
+    tab.close();
+  }
+});
+
+test("a draft whose steps the server already took (lost answer, then a reload) is not typed twice", async () => {
+  const server = new Server(START, random(53));
+  const other = await open(server, "other");
+  const drafts = memoryDrafts();
+  let tab = await open(server, "me", drafts);
+  try {
+    // The steps reach the server but the answer is lost, and the tab is offline from then on.
+    server.dropAnswer.add("me");
+    tab.editor.chain().setTextSelection(1).insertContent("brave new ").run();
+    await until(() => tab.status() === "offline", "the lost answer");
+    server.offline.add("me");
+    tab.close();
+    await until(() => !server.dropAnswer.has("me"), "the steps reaching the server");
+    assert.ok(drafts.value, "the draft is kept: the tab cannot tell the steps arrived");
+    other.editor.chain().setTextSelection(1).insertContent("Hello ").run();
+    await settle(server, [other]);
+
+    server.offline.delete("me");
+    tab = await open(server, "me-again", drafts);
+    await settle(server, [tab, other]);
+    assertConverged(server, [tab, other]);
+    const final = words(server.stored);
+    assert.equal(final.filter((word) => word === "brave").length, 1, "typed once, not again from the draft");
+    assert.ok(final.includes("Hello"));
+  } finally {
+    tab.close();
+    other.close();
+  }
+});
+
+test("a draft written while its steps were on the way (pagehide), then a reload, is not typed twice", async () => {
+  const server = new Server(START, random(59));
+  const tab = await open(server, "me");
+  let kept: Draft | null = null;
+  try {
+    tab.editor.chain().setTextSelection(1).insertContent("in flight ").run();
+    tab.session.keepDraft();
+    kept = structuredClone(tab.drafts.value);
+    assert.ok(kept?.steps.length, "the draft holds the steps not yet confirmed");
+    await settle(server, [tab]);
+  } finally {
+    tab.close();
+  }
+  const reloaded = memoryDrafts();
+  reloaded.value = kept;
+  const again = await open(server, "me-reloaded", reloaded);
+  try {
+    await settle(server, [again]);
+    assert.equal(words(server.stored).filter((word) => word === "flight").length, 1);
+    assert.equal(again.restored(), 0, "nothing was missing, so nothing was put back");
+  } finally {
+    again.close();
+  }
+});
+
+test("more than a thousand unsent steps go out in requests of at most 200", async () => {
+  const server = new Server(START, random(61));
+  const tab = await open(server, "me");
+  try {
+    server.offline.add("me");
+    for (let at = 0; at < 1200; at += 1) tab.editor.chain().setTextSelection(1).insertContent("x").run();
+    await until(() => tab.status() === "offline", "offline");
+    server.offline.delete("me");
+    tab.session.retryNow();
+    await settle(server, [tab]);
+    assert.equal(words(server.stored)[0], `${"x".repeat(1200)}Agenda`);
+    assert.ok(Math.max(...server.sent.get("me")!) <= 200, "no request carries more than 200 steps");
+  } finally {
+    tab.close();
+  }
+});
+
+test("a change the server refuses is not resent in a storm: the page says so once and keeps the text", async () => {
+  const server = new Server(START, random(67));
+  let sends = 0;
+  const errors: string[] = [];
+  const base = server.transport("me");
+  const drafts = memoryDrafts();
+  const session = new CollabSession({
+    transport: {
+      ...base,
+      send: async () => {
+        sends += 1;
+        throw { status: 400, code: "COLLAB_REJECTED", message: "This change does not fit the page." };
+      },
+    },
+    drafts,
+    delays: { live: 3, alone: 3, retry: 40, maxRetry: 400 },
+    onError: (message) => errors.push(message),
+  });
+  const joined = await session.join();
+  const editor = new Editor({ extensions: [...editorExtensions(() => [], ""), CollabSync.configure({ version: joined.version, clientID: joined.clientID })], content: joined.doc });
+  const detach = session.attach(editor);
+  try {
+    editor.chain().setTextSelection(1).insertContent("Refused ").run();
+    await sleep(250);
+    assert.ok(sends <= 4, `backed off (${sends} sends)`);
+    assert.equal(session.status, "error");
+    assert.equal(errors.length, 1);
+    assert.match(errors[0]!, /Reload the page/);
+    assert.ok(drafts.value, "the text is kept");
+  } finally {
+    session.freeze();
+    detach();
+    editor.destroy();
+  }
+});
+
+test("a page moved to Trash while typing keeps the unsaved text as a draft, for after Restore", async () => {
+  const server = new Server(START, random(71));
+  const base = server.transport("me");
+  const drafts = memoryDrafts();
+  let lost = 0;
+  const session = new CollabSession({
+    transport: { ...base, send: async () => Promise.reject({ status: 404, code: "PAGE_IN_TRASH", message: "This page is in Trash." }) },
+    drafts,
+    delays: { live: 3, alone: 3, retry: 5, maxRetry: 20 },
+    onLost: () => (lost += 1),
+  });
+  const joined = await session.join();
+  const editor = new Editor({ extensions: [...editorExtensions(() => [], ""), CollabSync.configure({ version: joined.version, clientID: joined.clientID })], content: joined.doc });
+  const detach = session.attach(editor);
+  try {
+    editor.chain().setTextSelection(1).insertContent("Not yet saved ").run();
+    await until(() => lost === 1, "the page in Trash");
+    assert.equal(session.status, "lost");
+    assert.ok(drafts.value?.steps.length, "the typing stays in the draft");
+  } finally {
+    detach();
+    editor.destroy();
+  }
+});
+
+// ── Re-review: drafts per editor, refused steps, rejoining ───────────────────────────────────
+
+/** Web Locks shared by the tabs of one browser. */
+function sharedLocks() {
+  const held = new Set<string>();
+  return {
+    async request(name: string, callback: () => Promise<void>) {
+      held.add(name);
+      try {
+        await callback();
+      } finally {
+        held.delete(name);
+      }
+    },
+    async query() {
+      return { held: [...held].map((name) => ({ name })) };
+    },
+  };
+}
+
+/** A tab's transport whose step requests wait until `open()` is called. */
+function gated(transport: CollabTransport) {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  let waiting = 0;
+  return {
+    transport: {
+      ...transport,
+      send: async (body: Parameters<CollabTransport["send"]>[0]) => {
+        if (body.steps.length) {
+          waiting += 1;
+          await gate;
+        }
+        return transport.send(body);
+      },
+    } satisfies CollabTransport,
+    open: () => release(),
+    waiting: () => waiting,
+  };
+}
+
+/** No liveness at all: what the editor did before drafts were kept per editor. */
+const noTab: CollabTab = { hold: () => () => undefined, take: async (ids) => ids, give: () => undefined, finishing: () => undefined, settled: async () => undefined };
+
+/** The closing editor's typing lands after the page opened again (`late`), or a moment after it closed. */
+async function closeAndReopenAtOnce(tab: CollabTab, late: boolean): Promise<number> {
+  const server = new Server(START, random(73));
+  const drafts = memoryDrafts();
+  const first = gated(server.transport("peek"));
+  const peek = await open(server, "peek", drafts, { tab, transport: first.transport });
+  peek.editor.chain().setTextSelection(1).insertContent("Hello ").run();
+  await until(() => first.waiting() > 0, "the typing on its way");
+  // Task peek → "Open as full page": the peek closes with its typing in flight, the page opens in the same tab.
+  peek.close();
+  if (!late) setTimeout(first.open, 30);
+  const page = await open(server, "page", drafts, { tab });
+  if (late) first.open();
+  try {
+    await settle(server, [page]);
+    return words(server.stored).filter((word) => word === "Hello").length;
+  } finally {
+    page.close();
+  }
+}
+
+test("a page closed and opened again at once in the same tab does not type the closing editor's words twice", async () => {
+  assert.equal(await closeAndReopenAtOnce(noTab, true), 2, "without waiting for the closing editor, its words come twice");
+  assert.equal(await closeAndReopenAtOnce(collabTab(null), false), 1);
+});
+
+async function duplicateTab(second: CollabTab, locks: ReturnType<typeof sharedLocks>): Promise<{ count: number; restored: number }> {
+  const server = new Server(START, random(79));
+  const original = memoryDrafts("page");
+  const first = gated(server.transport("one"));
+  const one = await open(server, "one", original, { tab: collabTab(locks), transport: first.transport });
+  one.editor.chain().setTextSelection(1).insertContent("Hello ").run();
+  await until(() => first.waiting() > 0, "the typing on its way");
+  one.session.keepDraft();
+  // Chrome's "Duplicate tab" copies this tab's storage, drafts and all.
+  const copy = memoryDrafts("page");
+  copy.value = original.value;
+  const two = await open(server, "two", copy, { tab: second });
+  first.open();
+  try {
+    await settle(server, [one, two]);
+    return { count: words(server.stored).filter((word) => word === "Hello").length, restored: two.restored() };
+  } finally {
+    one.close();
+    two.close();
+  }
+}
+
+test("a duplicated tab does not take over the drafts of the tab it was copied from while that one is open", async () => {
+  const locks = sharedLocks();
+  assert.deepEqual(await duplicateTab(collabTab(null), locks), { count: 2, restored: 1 }, "without Web Locks the copy puts the words back a second time");
+  assert.deepEqual(await duplicateTab(collabTab(locks), locks), { count: 1, restored: 0 });
+});
+
+test("drafts are kept per page and editor, and only the same account takes one over", async () => {
+  const server = new Server(START, random(83));
+  const drafts = memoryDrafts();
+  let theirs = await open(server, "theirs", drafts, { account: "u2" });
+  server.offline.add("theirs");
+  theirs.editor.chain().setTextSelection(1).insertContent("Offline words ").run();
+  await until(() => theirs.status() === "offline", "offline");
+  theirs.close();
+  // Opening the page waits for the closing editor, which cannot send (offline) and keeps its draft.
+  const mine = await open(server, "mine", drafts, { account: "u1" });
+  try {
+    await settle(server, [mine]);
+    assert.equal(mine.restored(), 0, "another account's draft is not put back");
+    assert.equal(drafts.entries.size, 1, "and is left for that account");
+  } finally {
+    mine.close();
+  }
+  server.offline.delete("theirs");
+  theirs = await open(server, "theirs-again", drafts, { account: "u2" });
+  try {
+    await settle(server, [theirs]);
+    assert.equal(theirs.restored(), 1);
+    assert.equal(words(server.stored).filter((word) => word === "Offline").length, 1);
+    assert.equal(drafts.entries.size, 0);
+  } finally {
+    theirs.close();
+  }
+});
+
+test("a step the server refuses is taken out of the page and the queue; the typing after it is saved", async () => {
+  const server = new Server(START, random(89));
+  const errors: string[] = [];
+  const drafts = memoryDrafts();
+  const tab = await open(server, "me", drafts, { errors });
+  const other = await open(server, "other");
+  try {
+    server.offline.add("me");
+    tab.editor.chain().setTextSelection(1).insertContent("Before ").run();
+    // A character pages cannot store, typed without a paste (pastes are cleaned).
+    tab.editor.chain().insertContent("bad\u0000char ").run();
+    tab.editor.chain().insertContent("After ").run();
+    await until(() => tab.status() === "offline", "offline");
+    server.offline.delete("me");
+    tab.session.retryNow();
+    await settle(server, [tab, other]);
+    assertConverged(server, [tab, other]);
+    assert.deepEqual(words(server.stored).slice(0, 3), ["Before", "After", "Agenda"]);
+    assert.equal(errors.length, 1);
+    assert.match(errors[0]!, /cannot store \(U\+0000\)\. That change was taken out of the page/);
+    assert.equal(drafts.value, null, "nothing left unsaved, and no draft that would put it back");
+  } finally {
+    tab.close();
+    other.close();
+  }
+});
+
+test("a step that grows the page past its limit is taken back; deleting from a page over the limit still works", async () => {
+  const big = "x".repeat(60);
+  const server = new Server({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: big }] }] }, random(97));
+  server.authority = new Authority(pageSchema, { doc: pageDoc(server.stored), revision: 1, raw: server.stored }, { ...LIMITS, docSize: 40 });
+  const errors: string[] = [];
+  const tab = await open(server, "me", memoryDrafts(), { errors });
+  try {
+    tab.editor.chain().setTextSelection(2).insertContent("more").run();
+    await until(() => errors.length === 1, "the refusal");
+    await settle(server, [tab]);
+    assert.equal(tab.editor.getText(), big, "the growth is taken back");
+    tab.editor.commands.deleteRange({ from: 2, to: 12 });
+    await settle(server, [tab]);
+    assert.equal(words(server.stored)[0], "x".repeat(50), "shrinking is never refused");
+  } finally {
+    tab.close();
+  }
+});
+
+test("pasted text loses U+0000 and half emoji before it is sent", async () => {
+  const server = new Server(START, random(101));
+  const tab = await open(server, "me");
+  try {
+    tab.editor.commands.setTextSelection(1);
+    tab.editor.view.pasteText("a\u0000b \ud83d c 😀 ", new Event("paste") as ClipboardEvent);
+    await settle(server, [tab]);
+    assert.deepEqual(words(server.stored).slice(0, 4), ["ab", "�", "c", "😀"]);
+  } finally {
+    tab.close();
+  }
+});
+
+test("an editor asked to join again (a session expired on a public link) takes a new id and goes on, no loop", async () => {
+  const server = new Server(START, random(103));
+  const base = server.transport("me", "user");
+  let account = "user";
+  let joins = 0;
+  let sends = 0;
+  // The session expired: requests now come from the link's anonymous visitor, as the API sees them.
+  const transport: CollabTransport = {
+    join: async (options) => {
+      joins += 1;
+      return account === "user" ? base.join(options) : server.transport("me", "visitor").join(options);
+    },
+    since: (epoch, version) => base.since(epoch, version),
+    send: async (body) => {
+      sends += 1;
+      return (account === "user" ? base : server.transport("me", "visitor")).send(body);
+    },
+  };
+  const tab = await open(server, "me", memoryDrafts(), { transport });
+  try {
+    account = "visitor";
+    tab.editor.chain().setTextSelection(1).insertContent("Still typing ").run();
+    await settle(server, [tab]);
+    assert.ok(tab.session.clientID.startsWith("visitor/"));
+    assert.equal(joins, 2);
+    assert.ok(sends < 10, `no loop (${sends} sends)`);
+    assert.equal(words(server.stored).filter((word) => word === "Still").length, 1);
+  } finally {
+    tab.close();
+  }
+});
+
+test("the draft is written a little after typing is sent, at once on leaving, and a full storage is said once", async () => {
+  const server = new Server(START, random(107));
+  const drafts = memoryDrafts();
+  const errors: string[] = [];
+  const tab = await open(server, "me", drafts, { errors });
+  try {
+    server.offline.add("me");
+    drafts.full = true;
+    tab.editor.chain().setTextSelection(1).insertContent("one ").run();
+    await until(() => errors.length === 1, "the full storage, said");
+    tab.editor.chain().insertContent("two ").run();
+    tab.session.keepDraft();
+    tab.session.keepDraft();
+    assert.equal(errors.length, 1, "said once");
+    assert.match(errors[0]!, /storage is full/);
+    drafts.full = false;
+    tab.session.keepDraft();
+    assert.equal(drafts.value?.steps.length, 2, "kept once there is room again");
+  } finally {
+    tab.close();
   }
 });

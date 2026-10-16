@@ -1213,7 +1213,7 @@ export const api = bindClient({
   /** A page in Trash, to read before restoring it. The owner only. */
   trashedPage: (id: string) => get<StandalonePageRecord & { deletedAt: string }>(`/api/pages/${id}?trashed=1`),
   /** Live co-editing (`components/editor/collab.ts`): join, the steps since a version, and sending steps. */
-  collabJoin: (kind: "page" | "task", id: string) => get<CollabJoin>(collabPath(kind, id)),
+  collabJoin: (kind: "page" | "task", id: string, options: { stored?: boolean; start?: boolean } = {}) => get<CollabJoin>(`${collabPath(kind, id)}${qs({ stored: options.stored ? 1 : undefined, start: options.start ? 1 : undefined })}`),
   collabSince: (kind: "page" | "task", id: string, epoch: string, version: number) => get<CollabBatch>(`${collabPath(kind, id)}${qs({ epoch, version })}`),
   collabSend: (kind: "page" | "task", id: string, body: CollabSend) => request<CollabBatch>(collabPath(kind, id), { method: "POST", json: body, surviveNavigation: true }),
   saveStandalonePage: (id: string, data: { revision: number; content: unknown; notes?: string }) =>

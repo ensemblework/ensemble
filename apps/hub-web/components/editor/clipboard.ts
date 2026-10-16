@@ -94,8 +94,8 @@ export function plainTextOf(slice: Slice): string {
 }
 
 /** Markdown as page blocks for this editor, or null when it does not fit the schema. */
-export function markdownFragment(schema: Schema, markdown: string): Fragment | null {
-  const nodes = markdownToNodes(markdown);
+export function markdownFragment(schema: Schema, markdown: string, options: { lineBreaks?: boolean } = {}): Fragment | null {
+  const nodes = markdownToNodes(markdown, options);
   // A link to something this editor has no block for (an ensemble://ask link) stays a link.
   for (const content of [restoreMentionLinks({ type: "doc", content: nodes }).content, nodes] as PageNode[][]) {
     try {
@@ -156,7 +156,8 @@ export const PageClipboard = Extension.create({
           clipboardTextSerializer: (slice) => plainTextOf(slice),
           clipboardTextParser: (text, $context, plain, view) => {
             if (plain || $context.parent.type.spec.code || !looksLikeMarkdown(text)) return null as unknown as Slice;
-            const fragment = markdownFragment(view.state.schema, text);
+            // Pasted text keeps its line breaks (logs, commands); only block syntax starts a new block.
+            const fragment = markdownFragment(view.state.schema, text, { lineBreaks: true });
             return (fragment ? new Slice(fragment, 0, 0) : null) as Slice;
           },
           transformPastedHTML: (html) => pastedPageHtml(html, origin()),

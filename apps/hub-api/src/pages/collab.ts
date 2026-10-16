@@ -15,16 +15,19 @@ import { docJson, pageDoc, pageSchema } from "./schema.js";
 export type DocKind = "page" | "task";
 /** `space` is the owner's id; `id` a standalone page's id, or a task's id for its page. */
 export type DocKey = { space: string; kind: DocKind; id: string };
-/** The stored copy. `content` is null for a task page never written; `fallback` is then shown. */
-export type StoredDoc = { revision: number; content: unknown; fallback: PageDocument };
+/**
+ * The stored copy. `content` is null for a task page never written; `fallback` (its notes) is then
+ * shown. `trashed`: the page is in Trash; it still takes a write-back, but is not opened.
+ */
+export type StoredDoc = { revision: number; content: unknown; fallback: PageDocument; trashed?: boolean; marker?: { epoch: string; version: number } };
 
 export interface CollabStore {
   read(key: DocKey): Promise<StoredDoc | null>;
   /**
    * Locks the stored copy, shows it to `decide`, and writes what `decide` returns (null: nothing)
-   * as the next revision. Null when the document is gone.
+   * as the next revision, also into a page in Trash. Null when the document is gone.
    */
-  write(key: DocKey, decide: (row: StoredDoc) => PageDocument | null): Promise<{ revision: number; wrote: boolean } | null>;
+  write(key: DocKey, decide: (row: StoredDoc) => { content: PageDocument; marker: { epoch: string; version: number } } | null): Promise<{ revision: number; wrote: boolean } | null>;
 }
 
 export type CollabPublish = (space: string, event: string, data: Record<string, unknown>) => void;
@@ -38,6 +41,10 @@ export const TIMING = {
   /** …but at least this often while steps keep coming. */
   maxMs: 3000,
   retryMs: 5000,
+  /** Write-backs failing this many times in a row: steps are refused until one succeeds. */
+  failLimit: 3,
+  /** A page event that changed nothing is checked again after these delays (its writer may not have committed). */
+  recheckMs: [300, 2000],
   /** Untouched this long: written back and forgotten. */
   idleMs: 15 * 60_000,
   sweepMs: 60_000,
@@ -53,9 +60,28 @@ type Entry = {
   chain: Promise<unknown>;
   used: number;
   gone: boolean;
+  /** Write-backs that failed in a row. */
+  failures: number;
+  recheck?: ReturnType<typeof setTimeout>;
 };
 
-export type Joined = { epoch: string; version: number; doc: PageDocument; revision: number };
+/**
+ * `stored`, when asked for: the stored copy as last written back or loaded (at `version`) and
+ * the steps since, when the log still has them and anything was typed since.
+ */
+export type Joined = {
+  epoch: string;
+  version: number;
+  doc: PageDocument;
+  revision: number;
+  saved: number;
+  stored?: { version: number; doc: PageDocument; steps: unknown[]; clientIDs: ClientID[] };
+  /**
+   * `start`, when asked for and the log still has it: the document as loaded, the steps since, and
+   * which authority (epoch, version) wrote it, for editors starting over after a restart.
+   */
+  start?: { doc: PageDocument; steps: unknown[]; clientIDs: ClientID[]; previous: { epoch: string; version: number } | null };
+};
 export type Posted = StepBatch & { revision?: number };
 
 const nameOf = (key: DocKey) => `${key.space}:${key.kind}:${key.id}`;
@@ -64,6 +90,11 @@ function sameContent(a: unknown, b: unknown): boolean {
   if (a == null || b == null) return a == null && b == null;
   return sameDoc(a as PageDocument, b as PageDocument);
 }
+
+/** What a stored copy shows: its content, or for a task page never written, its notes. */
+const shownOf = (row: StoredDoc): unknown => row.content ?? row.fallback;
+
+const UNSAVED = "This page can't be saved right now. Your changes are kept on this computer and sent again shortly.";
 
 function idsOf(data: Record<string, unknown> | null): string[] {
   if (!data) return [];
@@ -105,14 +136,16 @@ export class CollabHub {
       pending = (async () => {
         const row = await this.store.read(key);
         if (!row) return null;
+        if (row.trashed) throw new CollabError("PAGE_IN_TRASH", "This page is in Trash.");
         const entry: Entry = {
           key,
           name,
-          authority: new Authority(pageSchema, { doc: this.docOf(row), revision: row.revision, raw: row.content }),
+          authority: new Authority(pageSchema, { doc: this.docOf(row), revision: row.revision, raw: shownOf(row), previous: row.marker ?? null }),
           dirtySince: 0,
           chain: Promise.resolve(),
           used: Date.now(),
           gone: false,
+          failures: 0,
         };
         this.entries.set(name, entry);
         this.startSweeper();
@@ -124,12 +157,26 @@ export class CollabHub {
     return pending;
   }
 
-  /** The document as it is now, to start editing from. Null when it does not exist. */
-  async join(key: DocKey): Promise<Joined | null> {
+  /**
+   * The document as it is now, to start editing from. Null when it does not exist. `stored` adds
+   * the stored copy and the steps typed since: an editor can then tell which of its typing the
+   * server has written back, when it starts over after a restart.
+   */
+  async join(key: DocKey, options: { stored?: boolean; start?: boolean } = {}): Promise<Joined | null> {
     const entry = await this.open(key);
     if (!entry) return null;
     const { authority } = entry;
-    return { epoch: authority.epoch, version: authority.version, doc: docJson(authority.doc), revision: authority.known.revision };
+    const joined: Joined = { epoch: authority.epoch, version: authority.version, doc: docJson(authority.doc), revision: authority.known.revision, saved: authority.saved };
+    const known = authority.known;
+    if (options.stored && known.exact && known.version < authority.version && known.version >= authority.first) {
+      const since = authority.since(known.version);
+      joined.stored = { version: known.version, doc: docJson(known.doc), steps: since.steps, clientIDs: since.clientIDs };
+    }
+    if (options.start && authority.first === 0) {
+      const since = authority.since(0);
+      joined.start = { doc: docJson(authority.loaded), steps: since.steps, clientIDs: since.clientIDs, previous: authority.previous };
+    }
+    return joined;
   }
 
   /** Steps since `version`, for an editor that missed some. */
@@ -144,20 +191,29 @@ export class CollabHub {
    * An editor's steps made against `version`. Answers with the steps from `version` on, its own
    * included. `flush` also writes the page back before answering, with the stored revision.
    */
-  async post(key: DocKey, input: { epoch: string; version: number; steps: unknown[]; clientID: ClientID; flush?: boolean }): Promise<Posted | null> {
+  async post(key: DocKey, input: { epoch: string; version: number; steps: unknown[]; clientID: ClientID; flush?: boolean; trusted?: boolean }): Promise<Posted | null> {
     const entry = await this.open(key);
     if (!entry) return null;
     const { authority } = entry;
+    // Not the editor that joined with this client id (or another account now): it joins again.
+    if (input.trusted === false) throw new CollabError("COLLAB_REJOIN", "Join this page again to go on editing.");
     if (authority.epoch !== input.epoch) throw new CollabError("COLLAB_RESET", "This page was reloaded on the server. Load it again.");
+    // While the page cannot be written back, steps stay with the editors that typed them.
+    if (entry.failures >= this.timing.failLimit) throw new CollabError("COLLAB_UNSAVED", UNSAVED);
     const batch = authority.receive(input.version, input.steps, input.clientID);
     if (batch.steps.length) {
       this.broadcast(entry, batch);
       this.schedule(entry);
     }
     if (!input.flush) return batch;
-    await this.persist(entry);
+    try {
+      await this.persist(entry);
+    } catch (error) {
+      this.failed(entry, error);
+      throw new CollabError("COLLAB_UNSAVED", UNSAVED);
+    }
     if (entry.gone) return null;
-    return { ...batch, revision: authority.known.revision };
+    return { ...batch, saved: authority.saved, revision: authority.known.revision };
   }
 
   private broadcast(entry: Entry, batch: StepBatch): void {
@@ -179,75 +235,92 @@ export class CollabHub {
     const delay = wait ?? Math.max(0, Math.min(this.timing.quietMs, entry.dirtySince + this.timing.maxMs - now));
     entry.timer = setTimeout(() => {
       entry.timer = undefined;
-      void this.persist(entry).catch((error: unknown) => {
-        this.onError(error);
-        this.schedule(entry, this.timing.retryMs);
-      });
+      void this.persist(entry).catch((error: unknown) => this.failed(entry, error));
     }, delay);
     entry.timer.unref?.();
   }
 
+  /** A write-back failed: counted, reported, and tried again later. */
+  private failed(entry: Entry, error: unknown): void {
+    entry.failures += 1;
+    this.onError(error);
+    this.schedule(entry, this.timing.retryMs);
+  }
+
   /** A stored copy that differs from what the authority last saw is someone else's write. */
-  private absorbRow(entry: Entry, row: StoredDoc): void {
+  private absorbRow(entry: Entry, row: StoredDoc): boolean {
     const { authority } = entry;
     const known = authority.known;
-    if (row.revision === known.revision && sameContent(row.content, known.raw)) return;
+    const shown = shownOf(row);
+    if (row.revision === known.revision && sameContent(shown, known.raw)) return false;
     let theirs: Node;
     try {
       theirs = this.docOf(row);
     } catch (error) {
       this.onError(error);
-      authority.known = { ...known, revision: row.revision, raw: row.content };
-      return;
+      authority.known = { ...known, revision: row.revision, raw: shown };
+      return false;
     }
-    const batch = authority.absorb(row.content, row.revision, theirs);
+    const batch = authority.absorb(shown, row.revision, theirs);
     if (batch) this.broadcast(entry, batch);
+    return true;
   }
 
   private persist(entry: Entry): Promise<void> {
-    return this.serial(entry, async () => {
-      clearTimeout(entry.timer);
-      entry.timer = undefined;
-      if (entry.gone) return;
-      const { authority, key } = entry;
-      const out: { saved?: { doc: Node; version: number; json: PageDocument } } = {};
-      const result = await this.store.write(key, (row) => {
-        this.absorbRow(entry, row);
-        if (!authority.unsaved) return null;
-        out.saved = { doc: authority.doc, version: authority.version, json: docJson(authority.doc) };
-        return out.saved.json;
-      });
-      if (!result) {
-        this.forget(entry);
-        return;
-      }
-      const saved = out.saved;
-      if (saved && result.wrote) {
-        authority.persisted(result.revision, saved.json, saved.doc, saved.version);
-        this.publish(key.space, "page", { ...(key.kind === "page" ? { id: key.id } : { taskId: key.id }), action: "save", revision: result.revision, by: "collab" });
-      }
-      entry.dirtySince = 0;
-      if (authority.unsaved) this.schedule(entry);
-    });
+    return this.serial(entry, () => this.writeBack(entry));
   }
 
-  /** Reads the stored copy again and takes in a change made elsewhere. */
-  private sync(entry: Entry): Promise<void> {
-    return this.serial(entry, async () => {
-      if (entry.gone) return;
-      const row = await this.store.read(entry.key);
-      if (!row) {
-        this.forget(entry);
-        return;
-      }
+  /** The write-back itself; callers hold the entry's turn. */
+  private async writeBack(entry: Entry): Promise<void> {
+    clearTimeout(entry.timer);
+    entry.timer = undefined;
+    if (entry.gone) return;
+    const { authority, key } = entry;
+    const out: { saved?: { doc: Node; version: number; json: PageDocument } } = {};
+    const result = await this.store.write(key, (row) => {
       this.absorbRow(entry, row);
+      if (!authority.unsaved) return null;
+      out.saved = { doc: authority.doc, version: authority.version, json: docJson(authority.doc) };
+      return { content: out.saved.json, marker: { epoch: authority.epoch, version: authority.version } };
+    });
+    if (!result) {
+      this.forget(entry);
+      return;
+    }
+    const saved = out.saved;
+    entry.failures = 0;
+    if (saved && result.wrote) {
+      authority.persisted(result.revision, saved.json, saved.doc, saved.version);
+      // `saved` tells the editors their typing up to that version is stored, so they can drop their drafts.
+      this.publish(key.space, "page", { ...(key.kind === "page" ? { id: key.id } : { taskId: key.id }), action: "save", revision: result.revision, by: "collab", epoch: authority.epoch, saved: authority.saved });
+    }
+    entry.dirtySince = 0;
+    if (authority.unsaved) this.schedule(entry);
+  }
+
+  /**
+   * Reads the stored copy again and takes in a change made elsewhere. A page moved to Trash (or
+   * gone) gets what is unsaved written back first, then is dropped. True when something changed.
+   */
+  private sync(entry: Entry): Promise<boolean> {
+    return this.serial(entry, async () => {
+      if (entry.gone) return false;
+      const row = await this.store.read(entry.key);
+      if (!row || row.trashed) {
+        if (entry.authority.unsaved) await this.writeBack(entry).catch((error: unknown) => this.onError(error));
+        this.forget(entry);
+        return true;
+      }
+      const changed = this.absorbRow(entry, row);
       if (entry.authority.unsaved) this.schedule(entry);
+      return changed;
     });
   }
 
   private forget(entry: Entry): void {
     entry.gone = true;
     clearTimeout(entry.timer);
+    clearTimeout(entry.recheck);
     if (this.entries.get(entry.name) === entry) this.entries.delete(entry.name);
   }
 
@@ -263,7 +336,21 @@ export class CollabHub {
     const names = ids.length ? new Set(ids.flatMap((id) => [nameOf({ space, kind: "page", id }), nameOf({ space, kind: "task", id })])) : null;
     const wanted = (name: string) => (names ? names.has(name) : name.startsWith(`${space}:`));
     for (const entry of this.entries.values()) {
-      if (wanted(entry.name)) void this.sync(entry).catch((error: unknown) => this.onError(error));
+      if (!wanted(entry.name)) continue;
+      const check = (later: number[]) => {
+        void this.sync(entry)
+          .then((changed) => {
+            // Some writers publish before their transaction commits: read once or twice more.
+            if (changed || !later.length || event !== "page" || entry.gone || entry.recheck) return;
+            entry.recheck = setTimeout(() => {
+              entry.recheck = undefined;
+              check(later.slice(1));
+            }, later[0]);
+            entry.recheck.unref?.();
+          })
+          .catch((error: unknown) => this.onError(error));
+      };
+      check(this.timing.recheckMs);
     }
     for (const [name, pending] of this.loading) {
       if (wanted(name)) void pending.then((entry) => (entry ? this.sync(entry) : undefined)).catch((error: unknown) => this.onError(error));
@@ -272,8 +359,14 @@ export class CollabHub {
 
   /** Writes back one document now (before converting or deleting it, say). */
   async flush(key: DocKey): Promise<void> {
-    const entry = this.entries.get(nameOf(key)) ?? (await this.loading.get(nameOf(key)));
+    const entry = this.entries.get(nameOf(key)) ?? (await this.loading.get(nameOf(key))?.catch(() => null));
     if (entry) await this.persist(entry);
+  }
+
+  /** Writes back every open page of a space (before pages are moved to Trash, say). */
+  async flushSpace(space: string): Promise<void> {
+    const open = [...this.entries.values()].filter((entry) => entry.key.space === space);
+    await Promise.all(open.map((entry) => this.persist(entry).catch((error: unknown) => this.failed(entry, error))));
   }
 
   /** Writes back everything; on shutdown. */

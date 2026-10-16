@@ -44,6 +44,8 @@ const INVALIDATES: Record<string, string[][]> = {
   documents: [["documents"]],
   "reminder.due": [["reminders"], ["shell"]],
   "undo.changed": [["shell"], ["tasks"], ["assistant-messages"], ["ensemble-replies"]],
+  // You did something that can be undone: the top bar's Undo label names it.
+  "undo.recorded": [["shell"]],
 };
 
 /**
