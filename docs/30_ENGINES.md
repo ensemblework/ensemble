@@ -78,7 +78,7 @@ Each vendor lets another app fill in a prompt and never send it, so in an app th
 
 The same hook, installed into each tool's own settings, sends prompts to Needs me (Settings → Editors & agents → **Connect**, on the desktop app or the CLI's runtime; `ensemble hooks connect <tool>`; or `node scripts/ensemble-hook.mjs install --target …` with a token). Connect signs the hook in with a **`hooks` key**: it can open a card, wait on it, withdraw it and report what happened in its session, and nothing else; it can never answer a card (`hooksTokenRejected` in `bridge/auth.ts`).
 
-**Which sessions.** By default only tasks Ensemble opened in the tool (§4): a request from any other session gets `skipped` at once and the tool asks you itself, without delay. Settings → Editors & agents → "Which sessions come to Needs me" can route every session instead (`orchestration.editorRequests`). A run Ensemble started (Claude Code, Codex or Cursor's agent as the engine) answers through its own engine channel, so the person's own hook steps aside there (`ENSEMBLE_RUN`).
+**Which sessions.** Only tasks Ensemble opened in the tool (§4) reach Needs me. A request from any other session gets `skipped` at once, including sessions in the same folder. The prompt marker or an already linked session identifies the handoff; folder proximity is insufficient. The retired `orchestration.editorRequests: all` value normalizes to `ensemble`. A run Ensemble started (Claude Code, Codex or Cursor's agent as the engine) answers through its own engine channel, so the person's own hook steps aside there (`ENSEMBLE_RUN`).
 
 | Tool | Asks | Reports | Answer in either place |
 |---|---|---|---|

@@ -273,6 +273,7 @@ fn spawn(launch: &Launch, data: &Path, discovery: &Path, log_path: &Path, token:
         .env("ENSEMBLE_BACKUP_DIR", data.join("backups"))
         .env("ENSEMBLE_DISCOVERY_FILE", discovery)
         .env("ENSEMBLE_RUNTIME_OWNER", "desktop")
+        .env("ENSEMBLE_INSTALL_PATH", std::env::current_exe().map_err(|error| error.to_string())?)
         .env("HUB_API_HOST", "127.0.0.1")
         .env("HUB_API_PORT", port.to_string())
         .env("REDIS_URL", "memory://desktop")

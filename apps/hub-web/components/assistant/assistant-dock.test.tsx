@@ -359,3 +359,29 @@ test("the box grows to eight lines, Recent chats opens an earlier chat, and a ch
     window.localStorage.removeItem("ensemble.assistant.conversation");
   }
 });
+
+test("the styled tier menu closes before the assistant on Escape", async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) => new Response(JSON.stringify(String(input).includes("/api/settings") ? settings : {}), { headers: { "Content-Type": "application/json" } })) as typeof fetch;
+  window.localStorage.setItem("ensemble.assistant.open", "true");
+  window.localStorage.removeItem("ensemble.assistant.conversation");
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { gcTime: Infinity } } });
+  const host = document.createElement("div"), root = createRoot(host);
+  document.body.appendChild(host);
+  try {
+    await act(async () => root.render(<PathnameContext.Provider value="/today"><QueryClientProvider client={client}><AssistantDock /></QueryClientProvider></PathnameContext.Provider>));
+    await act(async () => new Promise(resolve => setTimeout(resolve, 50)));
+    const trigger = host.querySelector<HTMLButtonElement>('[aria-label="Complexity"]')!;
+    assert.ok(trigger); assert.equal(host.querySelector('select[aria-label="Complexity"]'), null);
+    await act(async () => trigger.click());
+    const list = document.querySelector('[role="listbox"][aria-label="Response complexity"]')!;
+    assert.ok(list); assert.equal(list.querySelectorAll('[role="option"]').length, 4);
+    await act(async () => list.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+    assert.ok(host.querySelector("textarea"), "first Escape keeps the assistant");
+    await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+    assert.equal(JSON.parse(window.localStorage.getItem("ensemble.assistant.open")!), false);
+  } finally {
+    await act(async () => root.unmount()); host.remove(); client.clear(); globalThis.fetch = original;
+    window.localStorage.removeItem("ensemble.assistant.open"); window.localStorage.removeItem("ensemble.assistant.conversation");
+  }
+});

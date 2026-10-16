@@ -9,6 +9,7 @@ import type { PageDocument, PageMention } from "@ensemble/shared-types";
 import { api, currentLink, inItemView } from "@/lib/api";
 import { diagramMentionIds, editorExtensions, type EntitySource } from "./extensions";
 import { BlockControls } from "./block-controls";
+import { inviteForPublicAI } from "../sharing/join-invitation";
 import { LinkPopover } from "./link-popover";
 import { PAGE_BODY_ATTRIBUTE } from "./page-body";
 import { FileChooser } from "./file-chooser";
@@ -96,6 +97,13 @@ export function BlockEditor({
     content: initial as JSONContent,
     editorProps: {
       attributes: { class: "ProseMirror", spellcheck: "true", role: "textbox", "aria-multiline": "true", "aria-label": "Page content", [PAGE_BODY_ATTRIBUTE]: "" },
+      handleKeyDown(view, event) {
+        if (currentLink() && event.key === "Enter" && !event.shiftKey && !event.isComposing && /@(?:ask\s+)?ensemble\b|@diagrams?\b/i.test(view.state.selection.$from.parent.textContent)) {
+          event.preventDefault();
+          return inviteForPublicAI();
+        }
+        return false;
+      },
       handleClick(_view, _pos, event) {
         const anchor = (event.target as HTMLElement).closest("a.mention") as HTMLAnchorElement | null;
         if (!anchor) return false;

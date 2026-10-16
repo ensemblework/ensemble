@@ -43,8 +43,8 @@ test("thinking offers exactly the levels the model takes, and the choice is the 
   }
   const view = await render(<Harness />);
   try {
-    assert.deepEqual(radios(view.host), ["Model default", "Low", "Medium", "High", "Extra high", "Max"], "Copilot's own list: no Minimal, and Max is there");
-    assert.match(view.host.textContent ?? "", /Levels from GitHub Copilot's own model list/);
+    assert.deepEqual(radios(view.host), ["Automatic", "Low", "Medium", "High", "Extra high", "Max"], "Copilot's own list: no Minimal, and Max is there");
+    assert.doesNotMatch(view.host.textContent ?? "", /Levels from/);
     await click([...view.host.querySelectorAll('[role="radio"]')].find((node) => node.textContent === "Max")!);
     assert.equal(saved, "max");
     assert.equal(view.host.querySelector('[aria-checked="true"]')?.textContent, "Max");
@@ -58,7 +58,7 @@ test("a model without a thinking setting says so; a saved level it does not take
   assert.match(none.host.textContent ?? "", /mistral-large-latest has no thinking setting/);
   await none.done();
   const stale = await render(<ThinkingPicker label="Low model thinking" provider="anthropic" providerLabel="Claude" model="claude-opus-5-5" value="minimal" onChange={() => undefined} />);
-  assert.deepEqual(radios(stale.host), ["Default · Medium", "Low", "Medium", "High", "Extra high", "Max"]);
+  assert.deepEqual(radios(stale.host), ["Automatic (Medium)", "Low", "Medium", "High", "Extra high", "Max"]);
   assert.match(stale.host.textContent ?? "", /does not take “Minimal”, so calls on this tier are refused/);
   await stale.done();
   assert.equal(effortFor("anthropic", "claude-opus-5-5", null, "minimal"), "default", "switching to a model that lacks the level resets it");
@@ -81,7 +81,7 @@ test("the model picker searches the provider's list, picks with the keyboard, an
   );
   try {
     const trigger = view.host.querySelector('[data-picker="model"]')!;
-    assert.match(trigger.textContent ?? "", /gemini-3\.5-flash-lite.*thinks Minimal–High/);
+    assert.match(trigger.textContent ?? "", /gemini-3\.5-flash-lite.*Thinking: Minimal–High/);
     await click(trigger);
     const panel = document.querySelector("[data-model-picker]")!;
     const options = [...panel.querySelectorAll('[role="option"]')].map((node) => node.textContent ?? "");

@@ -9,8 +9,10 @@ type TauriDialog = { open: (options: { directory: boolean; multiple: boolean; ti
 export async function pickFolderNative(title: string): Promise<string | null | undefined> {
   if (typeof window === "undefined") return undefined;
   const dialog = (window as unknown as { __TAURI__?: { dialog?: TauriDialog } }).__TAURI__?.dialog;
-  if (!dialog?.open) return undefined;
-  const chosen = await dialog.open({ directory: true, multiple: false, title });
+  const core = (window as unknown as { __TAURI__?: { core?: { invoke: (command: string, args: unknown) => Promise<string | string[] | null> } } }).__TAURI__?.core;
+  if (!dialog?.open && !core?.invoke) return undefined;
+  const options = { directory: true, multiple: false, title };
+  const chosen = dialog?.open ? await dialog.open(options) : await core!.invoke("plugin:dialog|open", { options });
   if (Array.isArray(chosen)) return chosen[0] ?? null;
   return chosen ?? null;
 }

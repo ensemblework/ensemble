@@ -1,14 +1,14 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { APPS } from "@/lib/connect/catalog";
 import { METHOD_LABELS } from "@/lib/connect/configs";
-import { AUDIENCES, type AudienceId } from "@/lib/connect/prompts";
+import { promptsForProfession } from "@/lib/connect/prompts";
 import { useToast } from "../toast";
-import { PageHeader, cx } from "../ui";
+import { PageHeader } from "../ui";
 import { StatusPill } from "./bits";
 import { BridgeKey } from "./bridge-key";
 import { AppMark } from "./logos";
@@ -21,8 +21,8 @@ export function ConnectPage() {
     refetchInterval: 20_000,
     staleTime: 10_000,
   });
-  const [audience, setAudience] = useState<AudienceId>("student");
-  const prompts = AUDIENCES.find((row) => row.id === audience) ?? AUDIENCES[0]!;
+  const me = useQuery({ queryKey: ["me"], queryFn: api.me });
+  const prompts = promptsForProfession(me.data?.user.profile?.profession);
   const state = bridge.isLoading ? "loading" : (bridge.data?.state ?? "not_running");
 
   return (
@@ -88,24 +88,7 @@ export function ConnectPage() {
         <p className="mt-1 max-w-2xl text-[13.5px] leading-5 text-muted">
           Ordinary sentences are enough. Copy one and paste it into the app after you connect. The app looks the answer up in Ensemble and should tell you where it came from.
         </p>
-        <div role="tablist" aria-label="Who is asking" className="mt-4 flex flex-wrap gap-1.5">
-          {AUDIENCES.map((row) => (
-            <button
-              key={row.id}
-              type="button"
-              role="tab"
-              aria-selected={audience === row.id}
-              className={cx(
-                "rounded-full border px-3 py-1 text-[13px]",
-                audience === row.id ? "border-accent bg-accent-soft font-medium text-ink" : "border-line text-muted hover:text-ink",
-              )}
-              onClick={() => setAudience(row.id)}
-            >
-              {row.label}
-            </button>
-          ))}
-        </div>
-        <ul className="mt-3 grid gap-2 md:grid-cols-3" key={audience}>
+        <ul className="mt-3 grid gap-2 md:grid-cols-3">
           {prompts.prompts.map((prompt, index) => (
             <li key={prompt} className="connect-rise" style={{ animationDelay: `${index * 50}ms` }}>
               <button

@@ -171,7 +171,7 @@ test("the live Today proposal inbox handles M/A/L/D and uses the saved default p
     const result = path === "/api/settings" ? { settings } : path === "/api/devices" ? { devices: [], serverRunner: true } : path === "/api/tasks" ? { tasks: [task] } : { jobId: "job", undoEntryId: "undo-proposal" };
     return new Response(JSON.stringify(result), { headers: { "Content-Type": "application/json" } });
   }) as typeof fetch;
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } } });
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity }, mutations: { gcTime: Infinity } } });
   client.setQueryData(["tasks"], { tasks: [task] });
   const host = document.createElement("div"); document.body.appendChild(host);
   const root = createRoot(host);

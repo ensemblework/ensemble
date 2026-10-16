@@ -8,7 +8,6 @@ import { useModalFocus } from "@/lib/modal-focus";
 import { X } from "lucide-react";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { AssistantDock } from "@/components/assistant/assistant-dock";
-import { EnsembleHotkey } from "@/components/ensemble/hotkey";
 import { LiveProvider } from "@/components/live";
 import { PresenceHost } from "@/components/sharing/presence-host";
 import { FollowHost } from "@/components/sharing/people";
@@ -115,10 +114,12 @@ function Frame({ children }: { children: React.ReactNode }) {
     const openCapture = () => setCapture(true);
     const openHelp = () => setShortcuts(true);
     window.addEventListener("ensemble:palette", openPalette);
+    window.addEventListener("ensemble:ask", openPalette);
     window.addEventListener("ensemble:capture", openCapture);
     window.addEventListener("ensemble:help", openHelp);
     return () => {
       window.removeEventListener("ensemble:palette", openPalette);
+      window.removeEventListener("ensemble:ask", openPalette);
       window.removeEventListener("ensemble:capture", openCapture);
       window.removeEventListener("ensemble:help", openHelp);
     };
@@ -212,7 +213,6 @@ function Frame({ children }: { children: React.ReactNode }) {
         ) : null}
       </div>
       {pagesOpen && panelSide === "right" ? pagesPanel : null}
-      <EnsembleHotkey />
       <ShortcutsHost
         onPalette={() => setPalette((value) => !value)}
         onHelp={() => setShortcuts((value) => !value)}

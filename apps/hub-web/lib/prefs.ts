@@ -152,7 +152,8 @@ export function applyAppearance(appearance: AppearanceSettings): void {
   root.dataset.reduceMotion = String(reduce);
   root.dataset.motionTheme = resolveMotionTheme(appearance, osReduce);
   const textScale = Number.isFinite(appearance.textScale) ? appearance.textScale : DEFAULT_APPEARANCE.textScale;
-  root.style.fontSize = `${textScale}%`;
+  root.style.removeProperty("font-size");
+  root.style.setProperty("--text-scale", String(Math.max(80, Math.min(130, textScale)) / 100));
   const resolved = resolveAccent(accentChoice(appearance, theme), theme, colorThemeSurfaces(appearance.colorTheme, theme));
   root.style.setProperty("--accent", resolved.hex);
   root.style.setProperty("--accent-rgb", resolved.rgb);

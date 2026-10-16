@@ -16,6 +16,8 @@ import { mentionHref } from "../editor/editor-commands";
 import { useToast } from "../toast";
 import { PageLoadFailure, inTrash } from "./page-load";
 import { TrashedPage } from "./trashed-page";
+import { PageActions } from "./page-actions";
+import { PageContent } from "./page-content";
 import { PageTitleField } from "./title-field";
 import { isPageEnsembleBusy } from "../comments/ensemble-bus";
 import { announceTyping, onResource, tabId, usePresence } from "@/lib/presence";
@@ -261,6 +263,7 @@ export function NotePage({
         </span>
         <div className="flex min-w-0 flex-wrap items-center justify-end gap-x-2 gap-y-1">
           <PagePeople kind="page" id={pageId} />
+          {!shared && !access.guest ? <PageActions id={pageId} title={record.title} before={async () => { if (titleSave.current) await titleSave.current; if (!(await flush())) throw new Error("Save the page before using this action."); }} /> : null}
           {shared || !canEdit ? (
             <>
               <PageFocusButton onEnter={focusMode.enter} />
@@ -295,19 +298,15 @@ export function NotePage({
         )}
       </div>
       {!shared && record.parentId ? <Link className="mt-3 inline-flex text-[12px] text-muted hover:text-ink" href={record.parentTaskId ? `/tasks/${record.parentTaskId}` : `/pages/${record.parentId}`}>← {family.data?.pages.find((parent) => parent.id === record.parentId)?.title || (record.parentTaskId ? "Parent task" : "Parent page")}</Link> : null}
-      <div className="mt-6 flex items-center justify-between border-t border-line pt-3 text-[12px] text-muted">
-        <span className="font-medium">Page content</span>
-        <span className={saveState === "error" ? "text-danger" : undefined}>{saveText}</span>
-      </div>
-      {locked && unsaved ? (
+      <PageContent status={saveText} error={saveState === "error"} before={locked && unsaved ? (
         <KeptEdits
           message={gone ? "This page isn't shared with you anymore, so your last changes weren't saved. They're still on screen." : "You can't edit this page anymore, so your last changes weren't saved. They're still on screen."}
           title={record.title}
           read={sync.latest}
           ownCopy={Boolean(shared && !shared.link)}
         />
-      ) : null}
-      <div className="mt-4" data-focus-keep>
+      ) : null}>
+
         {sync.failure ? (
           <PageLoadFailure missing={false} onRetry={() => window.location.reload()} />
         ) : initialDoc && Editor ? (
@@ -331,7 +330,7 @@ export function NotePage({
         ) : (
           <div className="skeleton mt-4 h-64 w-full" />
         )}
-      </div>
+      </PageContent>
 
       {!shared && family.data?.pages.some((child) => child.parentId === pageId) ? <nav aria-label="Nested pages" className="mt-6 space-y-1 border-t border-line pt-4">
         <p className="mb-2 text-[12px] font-medium text-muted">Nested pages</p>

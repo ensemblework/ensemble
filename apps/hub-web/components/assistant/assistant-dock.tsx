@@ -2,6 +2,7 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
+import { Popover } from "../ui";
 import { ModelLogo } from "../connectors/provider-logo";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUp, Check, ChevronDown, CircleAlert, Copy, Clock3, History, Maximize2, Minimize2, Plus, X } from "lucide-react";
@@ -10,7 +11,7 @@ import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Mark } from "../mark";
 import { AskLauncher } from "./ask-launcher";
-import { formatChord, isSubscriptionProvider, SUBSCRIPTION_INFO, type PageMention } from "@ensemble/shared-types";
+import { assistantErrorText, ASSISTANT_UNAVAILABLE, formatChord, isSubscriptionProvider, SUBSCRIPTION_INFO, type PageMention } from "@ensemble/shared-types";
 import { isApplePlatform } from "@/lib/platform";
 import { useShortcuts } from "@/lib/shortcut-store";
 import { API, ApiError, api, type AssistantMessageRecord, type AssistantToolCallRecord, type Complexity, type ConversationRecord } from "@/lib/api";
@@ -51,6 +52,7 @@ export function starterPrompts(pathname: string): string[] {
   if (pathname.startsWith("/pages/") || pathname.startsWith("/tasks/")) return ["Summarize this page.", "Turn this into a checklist.", "What is missing here?"];
   if (pathname.startsWith("/plots")) return ["Plot one column against another.", "Which chart fits this data?"];
   if (pathname.startsWith("/diagrams")) return ["Draw a diagram of a project.", "Simplify the diagram I have open."];
+  if (pathname.startsWith("/meetings")) return ["Summarize this meeting note.", "What decisions did we make?", "Find action items across my meeting notes."];
   if (pathname.startsWith("/code")) return ["What is left to review?", "Summarize the open change."];
   if (pathname.startsWith("/metrics")) return ["Where did model calls go this week?", "Which model cost the most?"];
   return ["Plan my day.", "What is due this week?", "Turn a note into tasks."];
@@ -202,14 +204,20 @@ function CopyReply({ content }: { content: string }) {
   }}>{copied ? <Check size={12} /> : <Copy size={12} />} {copied ? "Copied" : "Copy"}</button>;
 }
 
+export function AssistantFailure({ message, onRetry }: { message: string; onRetry?: () => void }) {
+  return <div role="alert" className="m-3 rounded-xl border border-danger/40 bg-danger/10 p-3 text-[13px] text-ink"><div className="flex items-start gap-2"><CircleAlert size={16} className="mt-0.5 shrink-0 text-danger" /><p className="flex-1">{assistantErrorText(message)}</p></div>{onRetry ? <button type="button" className="btn mt-3" onClick={onRetry}>Retry</button> : null}</div>;
+}
+
 export function Message({
   message,
   conversationId,
   onChoose,
+  onRetry,
 }: {
   message: AssistantMessageRecord;
   conversationId: string | null;
   onChoose?: (text: string) => void;
+  onRetry?: () => void;
 }) {
   if (message.role === "user") {
     return (
@@ -218,6 +226,7 @@ export function Message({
       </div>
     );
   }
+  if (message.role === "error" || /^The model runtime (?:is not running|could not be reached)/i.test(message.content)) return <AssistantFailure message={message.content} onRetry={onRetry} />;
   const pending = (message.toolCalls ?? []).filter((call) => call.state === "awaiting_approval" && call.isWrite !== false);
   const failed = (message.toolCalls ?? []).filter((call) => call.state === "failed").length;
   const answer = splitCutOffReply(message.content);
@@ -247,6 +256,7 @@ export function Message({
         : null}
       <div className="assistant-message-footer">
         {message.model ? <span className="inline-flex items-center gap-1.5"><ModelLogo model={message.model} size={11} />{message.model}</span> : null}
+        {message.credentialSource ? <span className="min-w-0 break-words">{message.credentialSource}</span> : null}
         <CopyReply content={message.content} />
       </div>
     </article>
@@ -409,8 +419,20 @@ export function AssistantDock() {
     if (open) window.setTimeout(() => input.current?.focus(), 30);
   }, [open]);
 
+  const lastRequest = useRef<{ text: string; mentions: PageMention[] } | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const dismiss = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented || document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      setOpen(false);
+      requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('button[aria-label="Ask Ensemble"]')?.focus());
+    };
+    window.addEventListener("keydown", dismiss);
+    return () => window.removeEventListener("keydown", dismiss);
+  }, [open, setOpen]);
   const sendText = async (text: string, mentions: PageMention[] = []) => {
     if (abortRef.current) return;
+    lastRequest.current = { text, mentions };
     const controller = new AbortController();
     abortRef.current = controller;
     setPending(true);
@@ -421,7 +443,7 @@ export function AssistantDock() {
     setWorking("Assistant is thinking…");
     setOptimistic([{ id: `local-${Date.now()}`, role: "user", content: text, toolCalls: [], model: null, createdAt: new Date().toISOString() }]);
     let nextId = conversationId;
-    const held: { reply: { messageId?: string; content: string } | null } = { reply: null };
+    const held: { reply: { messageId?: string; content: string; failed?: boolean } | null } = { reply: null };
     try {
       const response = await fetch(`${API}/api/assistant/turn`, {
         method: "POST",
@@ -435,6 +457,7 @@ export function AssistantDock() {
           page: {
             path: pathname,
             taskId: peekId ?? undefined,
+            meetingId: pathname === "/meetings" ? document.querySelector<HTMLElement>("[data-meeting-id]")?.dataset.meetingId : undefined,
             label: peekId ? "a task page" : pathname.startsWith("/pages/") ? "a note" : pathname.slice(1) || "Today",
           },
         }),
@@ -470,6 +493,7 @@ export function AssistantDock() {
           model?: string;
           resetsAt?: string;
           saveFailed?: boolean;
+          failed?: boolean;
         };
         if (event === "status") {
           if (frame.userMessageId) setOptimistic((rows) => rows.map((row) => row.role === "user" ? { ...row, id: frame.userMessageId! } : row));
@@ -492,11 +516,11 @@ export function AssistantDock() {
             markModelOutOfQuota(mark);
             void client.invalidateQueries({ queryKey: ["models"] });
           }
-          setTurnError(frame.message ?? "The model request failed.");
+          setTurnError(assistantErrorText(frame.message ?? ASSISTANT_UNAVAILABLE));
         }
         if (event === "done" && frame.conversationId) {
           nextId = frame.conversationId;
-          if (frame.saveFailed && frame.content) held.reply = { messageId: frame.messageId, content: frame.content };
+          if (frame.saveFailed && frame.content) held.reply = { messageId: frame.messageId, content: frame.content, failed: frame.failed };
         }
       });
       if (nextId) setConversationId(nextId);
@@ -518,7 +542,7 @@ export function AssistantDock() {
               ...current.messages,
               {
                 id: kept.messageId || `unsaved-${Date.now()}`,
-                role: "assistant",
+                role: kept.failed ? "error" : "assistant",
                 content: kept.content,
                 toolCalls: [],
                 model: null,
@@ -591,7 +615,7 @@ export function AssistantDock() {
   // Always mounted and only hidden: mounting again after a task closes would measure from the corner and slide back.
   const launcher = (
     <AskLauncher
-      hidden={open || Boolean(peekId) || pathname.startsWith("/start")}
+      hidden={open || pathname.startsWith("/start")}
       working={pending}
       onOpen={() => setOpen(true)}
       title={`Ask Ensemble (${chord}). Drag to move it.`}
@@ -655,8 +679,8 @@ export function AssistantDock() {
         {all.length === 0 ? (
           <EmptyAssistant pathname={pathname} name={shell.data?.user?.name ?? null} onPick={(text) => void sendText(text)} />
         ) : (
-          all.map((message) => (
-            <Message key={message.id} message={message} conversationId={conversationId} onChoose={(choice) => void sendText(choice)} />
+          all.map((message, index) => (
+            <Message key={message.id} message={message} conversationId={conversationId} onChoose={(choice) => void sendText(choice)} onRetry={pending ? undefined : () => { const previous = all.slice(0, index).reverse().find(row => row.role === "user"); if (previous) void sendText(previous.content); }} />
           ))
         )}
         {pending ? (
@@ -684,19 +708,7 @@ export function AssistantDock() {
 
       <div className="assistant-composer-area relative shrink-0">
         <MentionPopover menu={mention} />
-        {turnError && !all.some((message) => message.role === "assistant" && message.content === turnError) ? (
-          <div className="mb-2 rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-[12.5px] text-danger">
-            {turnError}
-            {/\bno key\b/i.test(turnError) ? (
-              <>
-                {" "}
-                <Link href="/settings#models" className="font-medium underline">
-                  Settings → Models
-                </Link>
-              </>
-            ) : null}
-          </div>
-        ) : null}
+        {turnError && !all.some(message => message.role === "error" && assistantErrorText(message.content) === assistantErrorText(turnError)) ? <AssistantFailure message={turnError} onRetry={pending ? undefined : () => { const request = lastRequest.current; if (request) void sendText(request.text, request.mentions); }} /> : null}
         <div className="assistant-composer tile flex items-end gap-2 px-4 py-3">
           <textarea
             ref={input}
@@ -724,26 +736,14 @@ export function AssistantDock() {
           </button>
         </div>
         <div className="assistant-composer-options mt-2 flex flex-wrap items-center gap-3 text-[12px] text-faint">
-          <select
-            value={tier}
-            onChange={(event) => setTierOverride(event.target.value as Complexity)}
-            className="field py-1 text-[12px]"
-            aria-label="Complexity"
-          >
-            {(Object.keys(TIER_LABEL) as Complexity[]).map((key) => {
-            const model = tiers?.[key].model;
-            const provider = tiers?.[key].provider;
-            // A subscription tier names the plan: "Claude · haiku", run on the person's computer.
-            const plan = provider && isSubscriptionProvider(provider) ? `${SUBSCRIPTION_INFO[provider].label} · ` : "";
-            return (
-              <option key={key} value={key}>
-                {TIER_LABEL[key]} · {plan}
-                {model ?? "…"}
-                {quotaSuffix(model, quotas)}
-              </option>
-            );
-          })}
-          </select>
+          <Popover width={360} trigger={(open, toggle) => <button type="button" className="btn min-w-0 max-w-full" aria-label="Complexity" aria-haspopup="listbox" aria-expanded={open} onClick={toggle}><span className="truncate">{TIER_LABEL[tier]} · {tiers?.[tier].model ?? "Automatic"}</span><ChevronDown size={13} /></button>}>
+            {close => <div role="listbox" aria-label="Response complexity" className="space-y-1" onKeyDown={event => {
+              const options = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="option"]')];
+              const index = options.indexOf(document.activeElement as HTMLButtonElement);
+              const next = event.key === "ArrowDown" ? (index + 1) % options.length : event.key === "ArrowUp" ? (index + options.length - 1) % options.length : event.key === "Home" ? 0 : event.key === "End" ? options.length - 1 : -1;
+              if (next >= 0) { event.preventDefault(); options[next]?.focus(); }
+            }}>{(Object.keys(TIER_LABEL) as Complexity[]).map(key => <button key={key} type="button" role="option" aria-selected={tier === key} className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-[13px] text-ink hover:bg-hover" onClick={() => { setTierOverride(key); close(); }}><span><strong className="font-medium">{TIER_LABEL[key]}</strong><small className="mt-1 block text-muted">{tiers?.[key].model ?? "Automatic"}{quotaSuffix(tiers?.[key].model, quotas)}</small></span>{tier === key ? <Check size={14} /> : null}</button>)}</div>}
+          </Popover>
           <AddAppItemToMessage
             onInsert={(line) => {
               setDraft((current) => (current.trim() ? `${current.trimEnd()} ${line} ` : `${line} `));

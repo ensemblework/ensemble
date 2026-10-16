@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { fetchJson, HttpError } from "./http.js";
 import { migrateLegacyData } from "./migrate.js";
 import { fileExists, resolveCliPaths, type CliPaths } from "./paths.js";
+import { resolveLauncherCommand } from "./launcher.js";
 import { VERSION } from "./version.js";
 
 export type Discovery = {
@@ -159,6 +160,7 @@ function sidecarEnv(input: {
     ENSEMBLE_DEV_AUTH_BYPASS: "false",
     ENSEMBLE_DESKTOP_TOKEN: input.token,
     ENSEMBLE_RUNTIME_OWNER: "cli",
+    ENSEMBLE_INSTALL_PATH: resolveLauncherCommand({ sidecarAvailable: true }).command,
     ENSEMBLE_RUNTIME_MODE: input.adminOnly ? "admin" : "runner",
     ENSEMBLE_LOG_LEVEL: process.env.ENSEMBLE_LOG_LEVEL ?? "info",
   };

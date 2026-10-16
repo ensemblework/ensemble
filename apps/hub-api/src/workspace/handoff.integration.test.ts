@@ -61,11 +61,12 @@ test("the prompt's marker links the session; its prompts reach Needs me; answere
   assert.equal(finished!.summary, "Tidied the README.");
 });
 
-test("a tool whose hooks never see the prompt is linked by working in the hand-off's folder", async () => {
+test("an unrelated session in the handoff folder stays in its editor", async () => {
   const row = await handoff(a, "codex", "/work/api");
   const asked = await post(a, "/api/decisions", { source: "codex", event: "PermissionRequest", payload: { session_id: "c1", cwd: "/work/api/src", tool_name: "shell", tool_input: { command: "cargo test" } }, waitSeconds: 60 });
-  assert.equal(asked.status, 202);
-  assert.deepEqual((await harness.prisma.agentHandoff.findUnique({ where: { id: row.id } }))!.sessions, ["c1"]);
+  assert.equal(asked.status, 200);
+  assert.equal(asked.body.status, "skipped");
+  assert.deepEqual((await harness.prisma.agentHandoff.findUnique({ where: { id: row.id } }))!.sessions, []);
   // Claude working in the same folder is not Codex's hand-off.
   assert.equal((await post(a, "/api/decisions", permission("c2", "ls", "/work/api"))).body.status, "skipped");
 });
@@ -78,8 +79,9 @@ test("someone else's marker or folder links nothing", async () => {
 });
 
 test("a hooks key can ask and wait, never answer or read", async () => {
-  await handoff(a, "claude", "/work/hooks");
+  const row = await handoff(a, "claude", "/work/hooks");
   const key = await harness.asToken(a, "hooks");
+  await post(key, "/api/decisions/activity", { source: "claude", event: "UserPromptSubmit", payload: { session_id: "h1", prompt: row.marker } });
   const asked = await post(key, "/api/decisions", permission("h1", "make", "/work/hooks"));
   assert.equal(asked.status, 202);
   assert.equal((await key.inject({ method: "GET", url: `/api/decisions/${asked.body.id}/wait?timeout=1` })).statusCode, 200);

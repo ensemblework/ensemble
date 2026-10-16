@@ -4,19 +4,19 @@
  * Postgres holds the queue; this process runs what it claims. Per person, at
  * most `maxConcurrentJobs` run at once. Jobs on the same folder, and a job that
  * continues an unfinished one, wait their turn; unrelated jobs pass them.
- * A job waiting on Needs me gives its slot back until it is answered.
+ * Needs me holds its slot; after an hour one extra task may start.
  */
 import type { FastifyInstance } from "fastify";
 import type { WorkspaceJob } from "@prisma/client";
 import { activityIds, isPaused, requestCancel, setPaused } from "../lib/activity.js";
 import { appendLedger } from "../lib/ledger.js";
-import { loadSettings } from "../lib/settings.js";
 import { HostedAccessError, requireHostAccess } from "../lib/hosted-access.js";
 import { sseHub } from "../lib/sse.js";
 import { publishDevice } from "../devices/publish.js";
 import { endOpenRuns } from "../devices/settle.js";
 import { executeJob } from "./agent.js";
 import { INTERRUPTED_MESSAGE, Interruption, SHUTDOWN } from "./lifecycle.js";
+import { claimQueuedJob } from "./queue-policy.js";
 import { killGroup } from "./runner.js";
 
 const DEVICE_LIVE = ["claimed", "running", "waiting_approval", "stopping"] as const;
@@ -67,25 +67,12 @@ export function isRunningHere(jobId: string): boolean {
   return controllers.has(jobId);
 }
 
-async function claim(job: WorkspaceJob): Promise<boolean> {
+async function claim(app: FastifyInstance, job: WorkspaceJob): Promise<boolean> {
   if (job.deviceId) return false;
-  const app = appRef!;
-  const claimed = await app.prisma.workspaceJob.updateMany({
-    where: { id: job.id, status: "queued", deviceId: null },
-    data: { status: "running", leaseOwner: String(process.pid), progress: "Starting" },
-  });
-  return claimed.count === 1;
+  return claimQueuedJob(app.prisma, job.id, { status: "running", leaseOwner: String(process.pid), progress: "Starting" });
 }
 
-async function slotFree(userId: string, jobId: string): Promise<boolean> {
-  const app = appRef!;
-  const settings = await loadSettings(app.prisma, userId);
-  const running = await app.prisma.workspaceJob.count({ where: { userId, status: { in: [...ACTIVE] }, id: { not: jobId } } });
-  return running < settings.orchestration.maxConcurrentJobs && !(await isPaused(app.redis, userId));
-}
-
-function start(job: WorkspaceJob): void {
-  const app = appRef!;
+function start(app: FastifyInstance, job: WorkspaceJob): void {
   const controller = new AbortController();
   controllers.set(job.id, controller);
   const waitForPerson = async <T>(work: () => Promise<T>): Promise<T> => {
@@ -95,9 +82,6 @@ function start(job: WorkspaceJob): void {
     try {
       return await work();
     } finally {
-      while (!controller.signal.aborted && !(await slotFree(job.userId, job.id))) {
-        await new Promise((resolve) => setTimeout(resolve, 1000));
-      }
       if (!controller.signal.aborted) {
         await app.prisma.workspaceJob.update({ where: { id: job.id }, data: { status: "running" } });
         sseHub.publish(job.userId, { event: "workspace", data: { id: job.id } });
@@ -146,23 +130,9 @@ export async function tickServerQueue(bound?: FastifyInstance): Promise<boolean>
         continue;
       }
       if (await isPaused(app.redis, userId)) continue;
-      const settings = await loadSettings(app.prisma, userId);
-      const busy = await app.prisma.workspaceJob.findMany({
-        where: { userId, deviceId: null, status: { in: [...UNFINISHED] }, NOT: { status: "queued" } },
-        select: { id: true, status: true, resourceKeys: true },
-      });
-      let running = busy.filter((job) => job.status === "running" || job.status === "stopping").length;
-      const held = new Set(busy.flatMap((job) => job.resourceKeys));
-      const unfinished = new Set((await app.prisma.workspaceJob.findMany({ where: { userId, status: { in: [...UNFINISHED] } }, select: { id: true } })).map((row) => row.id));
       for (const job of queued.filter((row) => row.userId === userId)) {
-        if (running >= settings.orchestration.maxConcurrentJobs) break;
-        if (job.continueFromJobId && unfinished.has(job.continueFromJobId)) continue;
-        if (job.resourceKeys.some((key) => held.has(key))) continue;
-        if (!(await claim(job))) continue;
-        running += 1;
-        for (const key of job.resourceKeys) held.add(key);
-        unfinished.add(job.id);
-        start(job);
+        if (!(await claim(app, job))) continue;
+        start(app, job);
       }
     }
     notePostgresUp();

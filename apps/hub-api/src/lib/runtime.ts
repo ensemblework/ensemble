@@ -1,3 +1,4 @@
+import { ASSISTANT_UNAVAILABLE } from "@ensemble/shared-types";
 /**
  * Model calls. Hosted Ensemble posts them to the Python runtime.
  * The desktop sidecar runs the same calls in this process (ENSEMBLE_INPROCESS_RUNTIME,
@@ -48,8 +49,7 @@ export async function runtime<T>(path: string, init: RequestInit & { json?: unkn
       })) as T;
     } catch (error) {
       if (error instanceof DispatchError) throw new RuntimeError(error.message, error.statusCode);
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new RuntimeError(detail, 502);
+      throw new RuntimeError(ASSISTANT_UNAVAILABLE, 503, true);
     }
   }
   let response: Response;
@@ -65,8 +65,7 @@ export async function runtime<T>(path: string, init: RequestInit & { json?: unkn
       signal: rest.signal ?? AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new RuntimeError(`The model runtime is not running. Start it with pnpm dev (or pnpm dev:agent). ${detail}`, 503, true);
+    throw new RuntimeError(ASSISTANT_UNAVAILABLE, 503, true);
   }
   if (!response.ok) {
     const text = await response.text();

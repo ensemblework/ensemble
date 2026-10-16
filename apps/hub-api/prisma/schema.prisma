@@ -267,35 +267,38 @@ model Task {
 }
 
 model TaskPage {
-  parentId       String?           @map("parent_id")
-  parent         TaskPage?         @relation("PageChildren", fields: [parentId], references: [id], onDelete: SetNull)
-  children       TaskPage[]        @relation("PageChildren")
-  id             String            @id @default(uuid())
-  userId         String            @map("user_id")
+  historySavedAt  DateTime?         @map("history_saved_at")
+  editorAccountId String?           @map("editor_account_id")
+  versions        PageRevision[]
+  parentId        String?           @map("parent_id")
+  parent          TaskPage?         @relation("PageChildren", fields: [parentId], references: [id], onDelete: SetNull)
+  children        TaskPage[]        @relation("PageChildren")
+  id              String            @id @default(uuid())
+  userId          String            @map("user_id")
   /// Null for a standalone note. Linked pages keep the task they belong to.
-  taskId         String?           @unique @map("task_id")
+  taskId          String?           @unique @map("task_id")
   /// Standalone notes use this title. Linked pages keep the task title.
-  title          String            @default("")
-  revision       Int               @default(1)
-  content        Json?
-  annotations    Json              @default("[]")
-  notesSnapshot  String            @default("") @map("notes_snapshot")
+  title           String            @default("")
+  revision        Int               @default(1)
+  content         Json?
+  annotations     Json              @default("[]")
+  notesSnapshot   String            @default("") @map("notes_snapshot")
   /// Plain title and body. NULL means not indexed yet; a save or the startup backfill fills it.
-  searchText     String?           @map("search_text")
-  externalSource String?           @map("external_source")
-  externalId     String?           @map("external_id")
+  searchText      String?           @map("search_text")
+  externalSource  String?           @map("external_source")
+  externalId      String?           @map("external_id")
   /// The file this page was converted from.
-  sourceFileId   String?           @map("source_file_id")
+  sourceFileId    String?           @map("source_file_id")
   /// The live-editing authority that wrote `content` last (src/pages/collab.ts): its epoch and version, valid while `revision` equals `collabRevision`.
-  collabEpoch    String?           @map("collab_epoch")
-  collabVersion  Int?              @map("collab_version")
-  collabRevision Int?              @map("collab_revision")
-  deletedAt      DateTime?         @map("deleted_at")
-  createdAt      DateTime          @default(now()) @map("created_at")
-  updatedAt      DateTime          @updatedAt @map("updated_at")
-  task           Task?             @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  sourceFile     Document?         @relation(fields: [sourceFileId], references: [id], onDelete: SetNull)
-  mentions       TaskPageMention[]
+  collabEpoch     String?           @map("collab_epoch")
+  collabVersion   Int?              @map("collab_version")
+  collabRevision  Int?              @map("collab_revision")
+  deletedAt       DateTime?         @map("deleted_at")
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+  task            Task?             @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  sourceFile      Document?         @relation(fields: [sourceFileId], references: [id], onDelete: SetNull)
+  mentions        TaskPageMention[]
 
   @@unique([userId, externalSource, externalId])
   @@index([userId])
@@ -1388,6 +1391,7 @@ model AssistantMessage {
   content        String                @default("")
   toolCalls      Json                  @default("[]") @map("tool_calls")
   model          String?
+  credentialSource String? @map("credential_source")
   credits        Float?
   createdAt      DateTime              @default(now()) @map("created_at")
   conversation   AssistantConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
@@ -2190,4 +2194,42 @@ model PublicLink {
   @@unique([spaceId, kind, resourceId])
   @@index([createdBy])
   @@map("public_links")
+}
+
+// Minimal operational deletion log; no account content or foreign key survives erasure.
+model AccountDeletionLog {
+  emailKey  String   @id @map("email_key")
+  deletedAt DateTime @default(now()) @map("deleted_at")
+  expiresAt DateTime @map("expires_at")
+
+  @@index([expiresAt])
+  @@map("account_deletion_logs")
+}
+
+model PageRevision {
+  id              String   @id @default(uuid())
+  userId          String   @map("user_id")
+  pageId          String   @map("page_id")
+  revision        Int
+  title           String
+  content         Json?
+  annotations     Json     @default("[]")
+  authorAccountId String?  @map("author_account_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+  page            TaskPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@index([userId, pageId, createdAt])
+  @@map("page_revisions")
+}
+
+model PageTemplate {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  profile   String
+  title     String
+  content   Json
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId, profile, createdAt])
+  @@map("page_templates")
 }

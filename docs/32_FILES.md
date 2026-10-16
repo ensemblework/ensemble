@@ -151,3 +151,10 @@ A calendar sync also soft-deletes events that left the calendar; those have no s
 Checked 12 Oct 2026 with `artifacts.integration.test.ts` for the list, the graph, live tiles, attached items and MCP search and read; that calendars and the assistant's context tools skip removed items was read in the code, not run.
 
 Paired-run original-file transfer is included in CLI 0.3.11 and desktop 0.3.8; update older receivers to get the original bytes and local file-ID remapping.
+
+
+## Word previews on phones (17 Oct 2026)
+
+`components/files/viewers/docx-viewer.tsx` defaults to **Reading view** when its preview pane is below 600 px. Text flows at a readable size with normal paragraph/bullet spacing and one column. **Page view** retains the original document geometry with Fit width and zoom controls. Scaling uses a transform on the rendered page wrapper and disables browser text inflation inside the sandboxed iframe; it no longer applies CSS zoom to the document body. Reading view affects only the preview, never the stored file or exports. Compact thumbnails retain the page view.
+
+Checked 17 Oct 2026 in local Chrome at 320 px and 390 px viewports with a synthetic Word document containing exact line heights and bullets: reading view used readable spacing, page view remained available, and browser console errors were empty. The original reported Word file and physical mobile browsers were not available for this check.

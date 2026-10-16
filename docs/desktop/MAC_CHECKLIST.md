@@ -50,3 +50,12 @@ The app shell is universal, but the local API inside it uses this Mac's Node and
 Brand checks: run `pnpm brand:check` and `node scripts/check-icons.mjs`. Verify the startup mark, Finder/Dock icon, light/dark Hub, assistant minimized while active, and OS reduced motion.
 
 The 0.3.8 runtime carries original page attachments and diagram source into claimed jobs through the leased attachment endpoint, with a 100 MB transfer cap. The download guide version matches the Tauri configuration.
+
+## Settings regression checks (16 Oct 2026)
+
+- Add a Code folder through **Choose folder…**; verify its git checkout appears in Code and can be reviewed. The picker must use the installed Tauri dialog plugin.
+- Enable App notifications, grant macOS permission and send a test reminder. Denial leaves the setting off; system Focus still applies.
+- On hosted Settings → Terminal and commits, unlock passkey management, then remove a disposable key. Locked removal must remain refused.
+- Rename a paired machine and verify its name remains after a heartbeat. Sign out or uninstall the runner and check remote access ends. With a packaged app, deletion of its executable must be noticed by a surviving runtime’s next heartbeat.
+
+These are manual release checks; compilation or simulated HTTP tests alone do not certify physical Touch ID, OS notifications or installer removal.

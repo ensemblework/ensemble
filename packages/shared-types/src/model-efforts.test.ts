@@ -35,6 +35,6 @@ test("a chosen level is sent as it is, or refused with the levels the model take
   assert.equal(refused.ok, false);
   assert.match(!refused.ok ? refused.message : "", /does not take thinking “Minimal”\. It takes Low, Medium, High, Extra high and Max/);
   assert.deepEqual(checkEffort("mistral", "mistral-large-latest", "high"), { ok: true, send: null }, "no setting on the model: nothing is sent");
-  assert.deepEqual(checkEffort("openai", "gpt-7-nova", "max"), { ok: true, send: "max" }, "unknown models: the provider decides");
+  assert.deepEqual(checkEffort("openai", "gpt-7-nova", "max"), { ok: true, send: null }, "unknown models use their default until capabilities are known");
   assert.deepEqual(checkEffort("google", "gemini-3.5-flash-lite", "minimal"), { ok: true, send: "minimal" });
 });

@@ -3,10 +3,11 @@
  * The rules people see are in docs/29_SHARING.md. Limits live here so a paid plan can raise
  * them in one place.
  */
+import { sharePreviews } from "./previews.js";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { personInitials } from "@ensemble/shared-types";
 import { isHosted } from "../lib/hosted-access.js";
-import { copySettings, MAX_SPACES } from "../spaces/store.js";
+import { copySettings, listSpaces, MAX_SPACES } from "../spaces/store.js";
 import { PRIVATE_ARTIFACT_KINDS, SHARE_KINDS, type ShareKind } from "./context.js";
 import { VIEW_ONLY_KINDS } from "./policy.js";
 
@@ -157,6 +158,9 @@ export async function listContacts(db: Db, accountId: string): Promise<ContactRo
 
 /** Adds a contact when there is room. Already a contact: nothing changes. */
 export async function ensureContact(db: Db, accountId: string, personId: string): Promise<void> {
+  if ("$transaction" in db) return db.$transaction(tx => ensureContact(tx, accountId, personId));
+  // All contact allocations serialize on their account, across every owned space.
+  await db.user.update({ where: { id: accountId }, data: { id: accountId } });
   if (personId === accountId) throw new SharingError("You already have access to your own work.");
   const person = await personRow(db, personId);
   if (!person) throw new SharingError("That person does not have an Ensemble account.", 404);
@@ -164,7 +168,7 @@ export async function ensureContact(db: Db, accountId: string, personId: string)
   if (existing) return;
   const count = await db.contact.count({ where: { ownerId: accountId } });
   if (count >= MAX_CONTACTS) {
-    throw new SharingError(`You can share with up to ${MAX_CONTACTS} people. Remove someone from your contacts in Settings, Sharing, to add another.`, 409);
+    throw new SharingError(`You can share with up to ${MAX_CONTACTS} people. Remove someone from your contacts in Settings, Sharing, to add another.`, 409, "CONTACT_LIMIT");
   }
   await db.contact.create({ data: { ownerId: accountId, contactId: personId } });
 }
@@ -172,6 +176,7 @@ export async function ensureContact(db: Db, accountId: string, personId: string)
 /** Removes a contact and, at once, everything this account shared with them. */
 export async function removeContact(db: PrismaClient, accountId: string, personId: string): Promise<{ spaces: number; items: number }> {
   return db.$transaction(async (tx) => {
+    await tx.user.update({ where: { id: accountId }, data: { id: accountId } });
     const spaces = await ownedSpaceIds(tx, accountId);
     const members = await tx.spaceMember.deleteMany({ where: { accountId: personId, spaceId: { in: spaces } } });
     const items = await tx.share.deleteMany({ where: { recipientId: personId, spaceId: { in: spaces } } });
@@ -209,6 +214,7 @@ async function notify(db: Db, recipientId: string, title: string, body: string, 
 
 export async function addMember(db: PrismaClient, accountId: string, spaceId: string, personId: string, role: "viewer" | "editor"): Promise<MemberRow[]> {
   await db.$transaction(async (tx) => {
+    await tx.user.update({ where: { id: accountId }, data: { id: accountId } });
     const space = await requireOwnedSpace(tx, accountId, spaceId);
     if (personId === accountId) throw new SharingError("You already own this space.");
     const already = await tx.spaceMember.findUnique({ where: { spaceId_accountId: { spaceId, accountId: personId } } });
@@ -217,7 +223,7 @@ export async function addMember(db: PrismaClient, accountId: string, spaceId: st
       return;
     }
     if ((await tx.spaceMember.count({ where: { spaceId } })) >= MAX_MEMBERS) {
-      throw new SharingError(`A space can be shared with ${MAX_MEMBERS} people. Remove someone to add another.`, 409);
+      throw new SharingError(`A space can be shared with ${MAX_MEMBERS} people. Remove someone to add another.`, 409, "MEMBER_LIMIT");
     }
     await ensureContact(tx, accountId, personId);
     await tx.spaceMember.create({ data: { spaceId, accountId: personId, role, addedBy: accountId } });
@@ -303,6 +309,7 @@ export async function shareItem(
   if (!(SHARE_KINDS as readonly string[]).includes(input.kind)) throw new SharingError("That cannot be shared.");
   const role = VIEW_ONLY_KINDS.has(input.kind) ? "view" : input.role;
   await db.$transaction(async (tx) => {
+    await tx.user.update({ where: { id: accountId }, data: { id: accountId } });
     await requireOwnedSpace(tx, accountId, input.spaceId);
     if (input.personId === accountId) throw new SharingError("You already have access to your own work.");
     const title = await resourceTitle(tx, input.spaceId, input.kind, input.resourceId);
@@ -341,7 +348,7 @@ export async function deleteShare(db: PrismaClient, accountId: string, shareId: 
 
 export type SharedWithMe = {
   spaces: Array<{ id: string; name: string; icon: string | null; owner: { id: string; name: string; initials: string; avatar: string | null }; role: "viewer" | "editor"; since: string }>;
-  items: Array<{ id: string; kind: ShareKind; title: string; role: "view" | "edit"; owner: { id: string; name: string; initials: string; avatar: string | null }; spaceName: string; since: string; openedAt: string | null }>;
+  items: Array<{ id: string; kind: ShareKind; title: string; excerpt?: string; role: "view" | "edit"; owner: { id: string; name: string; initials: string; avatar: string | null }; spaceName: string; since: string; openedAt: string | null }>;
 };
 
 export async function sharedWithMe(db: Db, accountId: string): Promise<SharedWithMe> {
@@ -354,9 +361,10 @@ export async function sharedWithMe(db: Db, accountId: string): Promise<SharedWit
     db.share.findMany({
       where: { recipientId: accountId },
       orderBy: { createdAt: "desc" },
-      select: { id: true, kind: true, title: true, role: true, createdAt: true, openedAt: true, space: { select: { id: true, name: true, spaceName: true, ownerId: true, email: true } } },
+      select: { id: true, kind: true, resourceId: true, title: true, role: true, createdAt: true, openedAt: true, space: { select: { id: true, name: true, spaceName: true, ownerId: true, email: true } } },
     }),
   ]);
+  const preview = await sharePreviews(db, shares.map(row => ({ ...row, spaceId: row.space.id })));
   const ownerIds = [...new Set([...members.map((row) => row.space.ownerId ?? row.space.id), ...shares.map((row) => row.space.ownerId ?? row.space.id)])];
   const owners = new Map(
     (await db.user.findMany({ where: { id: { in: ownerIds } }, select: { id: true, name: true, email: true, avatar: true } })).map((row) => [
@@ -379,7 +387,8 @@ export async function sharedWithMe(db: Db, accountId: string): Promise<SharedWit
       .map((row) => ({
         id: row.id,
         kind: row.kind as ShareKind,
-        title: row.title || "Untitled",
+        title: preview({ ...row, spaceId: row.space.id })?.title ?? (row.title || "Untitled"),
+        excerpt: preview({ ...row, spaceId: row.space.id })?.excerpt ?? "",
         role: row.role === "edit" ? "edit" : "view",
         owner: ownerOf(row.space),
         spaceName: spaceLabel(row.space),
@@ -397,6 +406,7 @@ export async function sharedWithMe(db: Db, accountId: string): Promise<SharedWit
 export async function transferSpace(db: PrismaClient, accountId: string, spaceId: string, toId: string): Promise<void> {
   if (spaceId === accountId) throw new SharingError("Your first space is your account. Only spaces you created can change owner.");
   await db.$transaction(async (tx) => {
+    for (const id of [accountId, toId].sort()) await tx.user.update({ where: { id }, data: { id } });
     const space = await requireOwnedSpace(tx, accountId, spaceId);
     if (!space.ownerId) throw new SharingError("Your first space is your account. Only spaces you created can change owner.");
     if ((await tx.spaceTransfer.count({ where: { spaceId } })) >= MAX_TRANSFERS) {
@@ -438,9 +448,13 @@ export async function transferSpace(db: PrismaClient, accountId: string, spaceId
     // Undo across a change of owner would mix two people's histories.
     await tx.undoEntry.deleteMany({ where: { userId: spaceId } });
 
+    const takenNames = new Set((await listSpaces(tx, toId)).spaces.map(row => row.name.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase()));
+    const baseName = space.spaceName || "Untitled space";
+    let transferredName = baseName, suffix = 2;
+    while (takenNames.has(transferredName.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase())) transferredName = `${Array.from(baseName).slice(0, 70).join("")} (${suffix++})`;
     const position = (await tx.user.count({ where: { ownerId: toId } })) + 1;
     const owner = await tx.user.findUniqueOrThrow({ where: { id: toId }, select: { name: true, gender: true, profession: true, organization: true, heardFrom: true, profileCompletedAt: true, emailVerifiedAt: true, tester: true } });
-    await tx.user.update({ where: { id: spaceId }, data: { ownerId: toId, spacePosition: position, ...owner } });
+    await tx.user.update({ where: { id: spaceId }, data: { ownerId: toId, spaceName: transferredName, spacePosition: position, ...owner } });
     await tx.spaceMember.delete({ where: { id: member.id } });
     // Other members stay only if they are also the new owner's contacts.
     const others = await tx.spaceMember.findMany({ where: { spaceId }, select: { id: true, accountId: true } });

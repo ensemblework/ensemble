@@ -256,7 +256,6 @@ export async function handoffFor(
   const found =
     (marker ? open.find((row) => row.marker === marker) : undefined) ??
     (call.sessionId ? open.find((row) => row.sessions.includes(call.sessionId!)) : undefined) ??
-    (call.cwd ? open.find((row) => HANDOFF_APPS[row.app as HandoffApp]?.source === call.source && within(row.folder, call.cwd!)) : undefined) ??
     null;
   if (found && call.sessionId && !found.sessions.includes(call.sessionId)) {
     return prisma.agentHandoff.update({ where: { id: found.id }, data: { sessions: { push: call.sessionId } } });

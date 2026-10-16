@@ -62,7 +62,7 @@ test("status labels say who is connected, and when the server is not set up", ()
   const by = (id: string) => entries.find((entry) => entry.id === id)!;
   assert.equal(statusLabel(by("google_workspace")), "Connected as mira@fieldnote.example");
   assert.equal(entryStatus(by("microsoft_365")), "not_set_up");
-  assert.equal(statusLabel(by("microsoft_365")), "Not set up on this server");
+  assert.equal(statusLabel(by("microsoft_365")), "Not available to connect yet");
   // GitHub still works with a pasted token when its OAuth app is missing.
   assert.equal(statusLabel(by("github")), "Not connected");
   assert.equal(statusLabel(by("csv")), "Import from a file");

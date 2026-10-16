@@ -170,4 +170,8 @@ Code is view only for anyone the space is shared with ([29](29_SHARING.md)): the
 - Allowed programs are powerful by design: `git` follows repository config (hardened, not eliminated), and `npm install`, `make` or `pytest` run the repository's own code, inside the sandbox.
 - **On the web, Ensemble's server passes the commands.** While you have the terminal unlocked, a compromised Ensemble on the web could send allow-listed commands to your computer, and it can always send Code calls (reading, and changing code unless you turned that off). Your computer still applies its own allow-list, folders, sandbox and switches; turn off *Terminal from the web* or *Change code from the web* there to rule them out.
 
-Jump to searches **Local repositories** and **Code reviews** as section destinations (`/code#local-repositories`, `/code#reviews`), independently of repository or review names.
+The combined **Search and jump** dialog searches **Local repositories** and **Code reviews** as section destinations (`/code#local-repositories`, `/code#reviews`), independently of repository or review names.
+
+## Folder and passkey settings (16 Oct 2026)
+
+Code inspection: Code folders continue to use `settings.code.roots`, separately from terminal roots. The native folder chooser now invokes the installed Tauri dialog plugin through `core.invoke`; the API resolves and checks the chosen path before saving. On hosted Settings, **Unlock to manage passkeys** performs the same WebAuthn verification as the Code terminal, then enables removal. Removal still requires an unlocked session; buttons remain visible for touch and keyboard users.

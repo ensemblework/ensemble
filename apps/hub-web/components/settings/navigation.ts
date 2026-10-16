@@ -2,16 +2,16 @@ import type { SettingsTab } from "./url-state";
 
 export type SettingsDestination = { id: string; tab: SettingsTab; section: string; heading?: string; label: string; target: string; keywords: string; ownerOnly?: boolean; dialog?: "keys" | "changes" };
 const groups: Array<[SettingsTab, string, string, Array<string | [string, string, string?]>]> = [
-  ["account", "account", "Account", ["Profile", ["Sign out", "logout log out signout"], ["Full name", "name identity"], ["Gender", "identity optional"], ["Profession", "job role occupation"], "Organization", "How did you hear about Ensemble?", ["Change password", "add password security login", "New password"], ["Linked login methods", "login google github microsoft oauth authentication"], "Export account data (JSON)", "Delete account"]],
+  ["account", "account", "Account", ["Profile", ["Sign out", "logout log out signout"], ["Full name", "name identity"], ["Gender", "identity optional"], ["Profession", "job role occupation"], "Organization", "How did you hear about Ensemble?", ["Change password", "add password security login", "Change password"], ["Linked login methods", "login google github microsoft oauth authentication"], "Export account data (JSON)", "Delete account"]],
   ["account", "avatar", "Avatar", [["Avatar", "profile picture initials face photo"], "Use initials"]],
-  ["account", "you", "You", ["Email", ["Time zone", "timezone scheduling local time"]]],
+  ["account", "you", "Scheduling and confirmations", ["Email", ["Time zone", "timezone scheduling local time"]]],
   ["appearance", "appearance", "Appearance", [["Theme", "dark light system mode"], ["Color theme", "palette petrol aubergine graphite lagoon aurora juniper blueprint ensemble background patterns doodles"], ["Accent", "colour color colors palette presets gold satin indigo tide ember rose brass orchid moss sky"], ["Custom accent", "custom colour color hex"], ["Text and font", "typography appearance"], ["Text size", "scale zoom font size"], ["App font", "typeface inter georgia monospace figtree plex"], ["Reduce motion", "disable animations accessibility"], ["Auto-collapse sidebar", "navigation hover icon rail"], ["Pages panel position", "page browser left right sidebar"], "Reset appearance"]],
   ["account", "features", "Features", [["Features", "modules enable disable code workspace runs metrics skills diagrams plots"], ["Desk extras", "optional tiles deadlines learning"]]],
   ["account", "this-mac", "This computer", [["Allow remote tasks", "mac computer device runner"], ["Push to the run branch", "remote git push"], "Accept approvals from the web and phone"]],
   ["assistant", "assistant", "The assistant", [["Write policy", "preview apply changes permissions", "When it wants to change something"], ["Default model preset", "default complexity tier low medium high max"], ["What it may change", "allowed write areas permissions"]]],
   ["assistant", "models", "Models", [["Models", "model presets thinking provider tier low medium high max"], ["Your AI subscriptions", "subscription plan claude chatgpt codex cursor copilot pro max plus sign in computer app"], "Which model each tier uses"]],
   ["assistant", "watchers", "Watching for you", [["Watching for you", "watchers monitor follow up tell me when"]]],
-  ["assistant", "autonomy", "Autonomy", [["Autonomy level", "ask review only unattended"], "Daily high-risk write limit", ["Network for sandboxed commands", "internet sandbox network"], ["Run commands in the Ensemble workspace without asking", "run without asking auto approval"], ["Place new tasks by priority", "board ordering priority"]]],
+  ["assistant", "autonomy", "Autonomy", [["Autonomy level", "ask review only unattended"], ["Daily action safety limit", "high risk write limit spending safety"], ["Network for sandboxed commands", "internet sandbox network"], ["Run commands in the Ensemble workspace without asking", "run without asking auto approval"]]],
   ["assistant", "orchestration", "Orchestration", [["Tasks that run at once", "parallel concurrency job limit"], ["Model turns per task", "turn limit agent"], ["Minutes per task", "timeout duration time limit"], ["Sandbox by default", "execution native isolation"], ["Internet for agent commands by default", "network sandbox"]]],
   ["assistant", "quiet", "Quiet hours", [["Quiet hours", "do not disturb notifications"], "Quiet hours start", "Quiet hours end"]],
   ["assistant", "prompts", "Prompts", [["Prompts", "system instructions model requests"]]],
@@ -19,7 +19,7 @@ const groups: Array<[SettingsTab, string, string, Array<string | [string, string
   ["connections", "imports", "Imports", [["Imports", "import migration csv todoist notion trello asana clickup obsidian"], "Recent imports"]],
   ["connections", "fetch", "Fetching", [["Fetching", "sync fetching refresh scheduled pause"], ["Look back", "fetch lookback days"], ["Propose todos from what was read", "sync proposals tasks"]]],
   ["connections", "editors", "Editors & agents", [["Editors & agents", "connect editor vscode cursor claude codex mcp"], "Connect an editor or AI app", ["Personal token", "api token hooks credentials"]]],
-  ["connections", "devices", "Devices", [["Devices", "paired computers laptop mac windows linux cli runner"], ["Pair a computer", "pair desktop app cli device", "Pair desktop app"]]],
+  ["connections", "devices", "Connected computers", [["Connected computers", "devices paired computers laptop mac windows linux cli runner"], ["Connect a computer", "pair desktop app cli device"]]],
   ["notifications", "brief", "Morning brief", ["Morning brief", "Deliver the morning brief", "Morning brief time"]],
   ["notifications", "nudges", "Quiet nudges", ["Quiet nudges", "Ask when work goes quiet", ["Days before a quiet nudge", "stale idle untouched days"]]],
   ["notifications", "reminders", "Desktop reminders", [["Desktop reminders", "push browser notifications permission"], "Show reminders as desktop notifications"]],
@@ -32,7 +32,7 @@ const groups: Array<[SettingsTab, string, string, Array<string | [string, string
   ["data", "completed", "Completed", [["Completed", "finished done tasks history"]]],
   ["data", "trash", "Trash", [["Trash", "deleted recover restore empty bin"]]],
   ["data", "terminal", "Terminal and commits", ["Terminal and commits", "Terminal on", ["Folders Code can use", "local repositories roots folders workspace"], "Terminal folder", ["Passkeys", "touch id fingerprint unlock terminal"], "Branch prefix for agent work", "Commit author", "Sign commits"]],
-  ["data", "failed", "Failed jobs", [["Failed jobs", "retry errors background jobs sync"]]],
+  ["data", "failed", "Updates needing attention", [["Updates needing attention", "failed jobs retry errors background jobs sync"]]],
   ["data", "deleted", "Deleted items", [["Deleted items", "restore trash retention"]]],
   ["data", "danger", "Delete my data", [["Delete my data", "erase account data deletion scope"]]],
 ];

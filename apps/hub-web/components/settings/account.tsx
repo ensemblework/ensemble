@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { LogOut } from "lucide-react";
+import { SignOutButton } from "../account/sign-out";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { PASSWORD_RULE, passwordProblem } from "@ensemble/shared-types";
 import { DESK_IDS, DESKS, MARKET_ID } from "@/components/desk/desks";
@@ -10,6 +10,8 @@ import { ProfileForm } from "@/components/profile-form";
 import { useToast } from "@/components/toast";
 import { api, HUB_API } from "@/lib/api";
 import { clearBrowserTabSession } from "@/lib/tab-session";
+import { Modal } from "./modal";
+import { BrandLogo } from "../connectors/brand-logo";
 import { SectionCard } from "../ui";
 import { hasUnsaved, markUnsaved } from "./unsaved";
 
@@ -54,6 +56,7 @@ export function AccountSection() {
     },
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
+  const [passwordOpen, setPasswordOpen] = useState(false);
   const [current, setCurrent] = useState("");
   const [password, setPassword] = useState("");
   const [repeat, setRepeat] = useState("");
@@ -92,6 +95,7 @@ export function AccountSection() {
     mutationFn: (data: { name?: string; password?: string; current?: string }) => api.updateMe(data),
     onSuccess: async () => {
       toast("Password saved.", { tone: "ok" });
+      setPasswordOpen(false);
       setCurrent("");
       setPassword("");
       setRepeat("");
@@ -110,16 +114,9 @@ export function AccountSection() {
     passwordBusy.current = true;
     save.mutate({ password, current: current || undefined }, { onSettled: () => { passwordBusy.current = false; } });
   };
-  const logout = useMutation({
-    mutationFn: api.logout,
-    onSuccess: () => {
-      clearBrowserTabSession();
-      window.location.href = "/login";
-    },
-  });
   const identities = useQuery({ queryKey: ["auth-identities"], queryFn: api.identities, enabled: me.data?.via === "session" });
   const unlink = useMutation({
-    mutationFn: (provider: string) => api.unlinkIdentity(provider, current || undefined),
+    mutationFn: (provider: string) => api.unlinkIdentity(provider),
     onSuccess: async () => { await client.invalidateQueries({ queryKey: ["auth-identities"] }); toast("Login method removed.", { tone: "ok" }); },
     onError: (error) => toast(error.message, { tone: "error" }),
   });
@@ -136,7 +133,7 @@ export function AccountSection() {
     onError: (error) => toast(error.message, { tone: "error" }),
   });
   const deletion = useMutation({
-    mutationFn: () => api.deleteAccount(current || undefined),
+    mutationFn: () => api.deleteAccount(),
     onSuccess: () => { clearBrowserTabSession(); client.clear(); window.location.href = "/signup"; },
     onError: (error) => toast(error.message, { tone: "error" }),
   });
@@ -152,13 +149,11 @@ export function AccountSection() {
             Create account
           </a>
         ) : (
-          <button type="button" className="btn" onClick={() => logout.mutate()}>
-            <LogOut size={12} /> Sign out
-          </button>
+          <SignOutButton />
         )
       }
     >
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line px-3 py-2.5">
+      {devTools ? <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line px-3 py-2.5">
         <div>
           <div className="text-[13px] font-medium">{shell.data?.templateName ?? "Default"}</div>
           <p className="text-[12.5px] text-muted">The layout and modules on this account. Switching back does not delete tasks.</p>
@@ -173,7 +168,7 @@ export function AccountSection() {
             Use Default
           </button>
         ) : null}
-      </div>
+      </div> : null}
       {devTools && history.data?.history.length ? (
         <ul className="mb-4 divide-y divide-line rounded-xl border border-line">
           {history.data.history.map((row, index) => (
@@ -232,15 +227,16 @@ export function AccountSection() {
               />
             </div>
           </div>
+          <button type="button" className="btn" data-jump-label="Change password" disabled={save.isPending} onClick={() => setPasswordOpen(true)}>{needsCurrent ? "Change password" : "Add a password"}</button>
+          <Modal open={passwordOpen} onClose={() => { setPasswordOpen(false); setCurrent(""); setPassword(""); setRepeat(""); setPasswordError(null); setRepeatError(null); }} title={needsCurrent ? "Change password" : "Add a password"} width={480}>
           <form
-            className="rounded-xl border border-line p-3"
+            className="space-y-3"
             data-password-form
             onSubmit={(event) => {
               event.preventDefault();
               changePassword();
             }}
           >
-            <h3 className="text-[13px] font-medium">{needsCurrent ? "Change password" : "Add a password"}</h3>
             <p className="mt-1 text-[12px] text-muted">{PASSWORD_RULE} Other devices are signed out when it changes.</p>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               {needsCurrent ? (
@@ -272,10 +268,12 @@ export function AccountSection() {
                 error={repeatError}
               />
             </div>
-            <button type="submit" className="btn mt-3" disabled={save.isPending || !password || !repeat || (needsCurrent && !current)}>
+            {save.error ? <p role="alert" className="mt-2 text-[13px] text-danger">{save.error.message}</p> : null}
+            <button type="submit" className="btn-primary mt-3" disabled={save.isPending || !password || !repeat || (needsCurrent && !current)}>
               {save.isPending ? "Saving..." : "Save password"}
             </button>
           </form>
+          </Modal>
         </div>
       )}
       {!local ? (
@@ -289,8 +287,8 @@ export function AccountSection() {
                 const linked = identities.data.identities.some((identity) => identity.provider === provider);
                 const label = provider === "github" ? "GitHub" : provider === "google" ? "Google" : "Microsoft";
                 return linked ? (
-                  <button key={provider} type="button" className="btn" disabled={unlink.isPending || (!me.data.user.hasPassword && identities.data.identities.length <= 1)} onClick={() => unlink.mutate(provider)}>Unlink {label}</button>
-                ) : <a key={provider} href={`${HUB_API}/api/auth/oauth/${provider}/start?link=1`} className="btn">Link {label}</a>;
+                  <button key={provider} type="button" className="btn" disabled={unlink.isPending || (!me.data.user.hasPassword && identities.data.identities.length <= 1)} onClick={() => unlink.mutate(provider)}><BrandLogo id={provider} size={18} />Unlink {label}</button>
+                ) : <a key={provider} href={`${HUB_API}/api/auth/oauth/${provider}/start?link=1`} className="btn"><BrandLogo id={provider} size={18} />Link {label}</a>;
               })}
             </div>
           </div>

@@ -30,6 +30,10 @@ type Rule = [methods: string, pattern: string, cls: RouteClass];
 
 /** First match wins. A pattern ending in `*` matches that prefix of the route pattern. */
 const RULES: Rule[] = [
+  ["*", "/api/page-versions*", "owner"],
+  ["*", "/api/page-templates*", "owner"],
+  ["POST", "/api/pages/:id/duplicate", "owner"],
+  ["POST", "/api/pages/:id/template", "owner"],
   ["*", "/health*", "open"],
   ["*", "/api/themes/*", "open"],
   ["GET", "/api/marketplace/templates*", "open"],
@@ -58,6 +62,7 @@ const RULES: Rule[] = [
   ["*", "/api/activity*", "personal"],
   ["GET", "/api/devices", "personal"],
   ["DELETE", "/api/devices/:id", "personal"],
+  ["PATCH", "/api/devices/:id", "personal"],
   ["POST", "/api/devices/pair", "personal"],
   ["POST", "/api/devices/register", "personal"],
   // The Code tab and terminal on the person's own computer (devices/code-routes.ts): theirs, whatever space is open.

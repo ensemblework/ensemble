@@ -1,7 +1,7 @@
 /**
  * Public links over HTTP: anyone with the link (no account) opens one item and nothing else,
  * edits only its content when the link allows it, gets a stable creature name, and loses access
- * the moment the owner turns the link off or makes a new one. Five links per account.
+ * the moment the owner turns the link off or makes a new one. Three links per account.
  */
 import assert from "node:assert/strict";
 import test, { after } from "node:test";
@@ -104,7 +104,7 @@ test("an edit link lets anyone edit the content; turning it off or rotating ends
   const peek = await ben.inject({ method: "GET", url: `/api/links/item?kind=page&resourceId=${page.page.id}` });
   assert.ok(peek.json().link === null, "in Ben's own space there is no such item");
   const listed = await ok<{ links: Array<{ id: string; opens: number }>; limit: number }>(mira.inject({ method: "GET", url: "/api/links" }));
-  assert.equal(listed.limit, 5);
+  assert.equal(listed.limit, 3);
   assert.ok((listed.links.find((row) => row.id === made.link.id)?.opens ?? 0) >= 1);
   claim("GET /api/links", "happy-path");
   const item = await ok<{ link: { id: string } | null; used: number }>(mira.inject({ method: "GET", url: `/api/links/item?kind=page&resourceId=${page.page.id}` }));
@@ -124,14 +124,14 @@ test("an edit link lets anyone edit the content; turning it off or rotating ends
   assert.equal((await anon(rotated.link.token, { method: "GET", url: "/api/links/open" })).statusCode, 401);
 });
 
-test("five public links per account, only for pages, tasks, diagrams and meeting notes", async () => {
+test("three public links per account, only for pages, tasks, diagrams and meeting notes", async () => {
   const mira = await person("Mira Chen");
   const ids: string[] = [];
   for (let index = 0; index < 6; index += 1) ids.push((await ok<{ page: { id: string } }>(mira.inject({ method: "POST", url: "/api/pages" }), 201)).page.id);
-  for (const id of ids.slice(0, 5)) await ok(mira.inject({ method: "POST", url: "/api/links", payload: { kind: "page", resourceId: id, role: "view" } }), 201);
-  const sixth = await mira.inject({ method: "POST", url: "/api/links", payload: { kind: "page", resourceId: ids[5], role: "view" } });
-  assert.equal(sixth.statusCode, 409);
-  assert.match(sixth.body, /5 public links/);
+  for (const id of ids.slice(0, 3)) await ok(mira.inject({ method: "POST", url: "/api/links", payload: { kind: "page", resourceId: id, role: "view" } }), 201);
+  const fourth = await mira.inject({ method: "POST", url: "/api/links", payload: { kind: "page", resourceId: ids[3], role: "view" } });
+  assert.equal(fourth.statusCode, 409);
+  assert.match(fourth.body, /3 public links/);
   const space = await mira.inject({ method: "POST", url: "/api/links", payload: { kind: "board", resourceId: mira.id, role: "view" } });
   assert.equal(space.statusCode, 400, "a board, a space or code is never public");
   claim("POST /api/links", "invalid-input");

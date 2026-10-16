@@ -323,7 +323,27 @@ export const workspaceSearchRouteCoverage: Readonly<Record<string, readonly Rout
   "GET /api/context/search": ["happy-path", "isolation", "invalid-input"],
 };
 
+export const testingReportRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
+  "PATCH /api/devices/:id": ["happy-path", "isolation", "invalid-input"],
+  "GET /api/brief/skill": ["happy-path", "isolation"],
+  "PATCH /api/brief/skill": ["happy-path", "isolation", "invalid-input"],
+  "POST /api/skills/:id/test": ["unknown-id", "invalid-input", "hosted-verification"],
+};
+
+export const pageVersionRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
+  "GET /api/page-versions": ["happy-path", "isolation", "unknown-id", "invalid-input"],
+  "GET /api/page-versions/:id": ["happy-path", "isolation", "unknown-id", "invalid-input"],
+  "POST /api/page-versions/:id/restore": ["happy-path", "isolation", "unknown-id", "invalid-input"],
+  "POST /api/pages/:id/duplicate": ["happy-path", "isolation", "unknown-id", "invalid-input"],
+  "POST /api/pages/:id/template": ["happy-path", "isolation", "unknown-id", "invalid-input"],
+  "GET /api/page-templates": ["happy-path", "isolation"],
+  "POST /api/page-templates/:id/create": ["happy-path", "isolation", "unknown-id", "invalid-input"],
+  "DELETE /api/page-templates/:id": ["happy-path", "isolation", "unknown-id", "invalid-input"],
+};
+
 export const routeCoverage = {
+  ...pageVersionRouteCoverage,
+  ...testingReportRouteCoverage,
   ...workspaceSearchRouteCoverage,
   ...resourceRouteCoverage,
   ...authRouteCoverage,

@@ -1,3 +1,4 @@
+import { ASSISTANT_UNAVAILABLE } from "@ensemble/shared-types";
 /**
  * One question to agent-runtime (docs/11).
  *
@@ -316,9 +317,8 @@ export async function askRuntime(args: {
         `The model request timed out after ${Math.round(limit / 60_000) || 1} minute${limit >= 120_000 ? "s" : ""}.`,
       );
     }
-    const detail = error instanceof Error ? error.message : String(error);
     throw new RuntimeError(
-      `The model runtime could not be reached. Start it with pnpm dev (or pnpm dev:agent). ${detail}`,
+      ASSISTANT_UNAVAILABLE,
       503,
     );
   }

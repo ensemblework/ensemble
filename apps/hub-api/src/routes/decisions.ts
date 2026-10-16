@@ -1,13 +1,9 @@
-import { spawnSync } from "node:child_process";
+import { installEditorHook } from "../workspace/editor-hooks.js";
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import { requireBrowserSession } from "../bridge/auth.js";
-import { newApiToken, sha256 } from "../lib/auth.js";
-import { prisma } from "../lib/prisma.js";
 import { publicApiUrl } from "../connectors/oauth.js";
 import { publishDevice } from "../devices/publish.js";
 import { decisionBus, expireStale, matchingRule, normalize, publicDecision, waitFor, type Source } from "../lib/decisions.js";
@@ -18,7 +14,6 @@ import { OUTSIDE_TOOL, RUN_RULE_SOURCE } from "../workspace/tools.js";
 import { PATH_RULE_SOURCE, PATH_RULE_TOOL } from "../workspace/trust.js";
 import { trustChanged } from "../workspace/trust-share.js";
 import { handoffFor } from "../workspace/handoff.js";
-import { loadSettings } from "../lib/settings.js";
 import { hookScriptPath } from "../workspace/engines/registry.js";
 import { actorFor } from "../sharing/context.js";
 import { ownsOpenSpace } from "../lib/auth.js";
@@ -157,9 +152,9 @@ export async function decisionRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/decisions", async (request, reply) => {
     const body = Ask.parse(request.body);
     const call = normalize(body.source as Source, body.event, body.payload);
-    // Only tasks Ensemble opened in the tool, unless the person chose every session in Settings.
+    // A hook installed globally must leave unrelated editor sessions in the editor.
     const handoff = await handoffFor(prisma, request.userId, call);
-    if (!handoff && (await loadSettings(prisma, request.userId)).orchestration.editorRequests !== "all") {
+    if (!handoff) {
       return { id: null, status: "skipped", reason: "Not a task Ensemble opened, so the tool asks you itself." };
     }
     if (handoff) call.detail = { ...call.detail, handoffId: handoff.id, taskId: handoff.taskId };
@@ -277,7 +272,7 @@ export async function decisionRoutes(app: FastifyInstance): Promise<void> {
     return { decision: publicDecision(updated) };
   });
 
-  /** What the Settings page needs to show a copy-paste install command. */
+  /** Connection state for Settings; installation runs on the local runtime. */
   app.get("/api/editors/setup", async () => ({
     node: process.execPath,
     script: HOOK_SCRIPT,
@@ -297,17 +292,8 @@ export async function decisionRoutes(app: FastifyInstance): Promise<void> {
       return reply.code(409).send({ error: "Connect a tool from Ensemble on the computer it runs on (the desktop app, or `ensemble` there)." });
     }
     const body = z.object({ target: z.enum(["claude", "codex", "copilot-cli", "cursor"]), remove: z.boolean().default(false) }).parse(request.body);
-    const args = [HOOK_SCRIPT, body.remove ? "uninstall" : "install", "--target", body.target];
-    if (!body.remove && !(await hookKeyStillValid(request.userId))) {
-      const { token, hash, prefix } = newApiToken();
-      await prisma.apiToken.create({ data: { userId: request.userId, name: "Agent hooks (this computer)", tokenHash: hash, prefix, scope: "hooks" } });
-      await appendLedger({ userId: request.userId, actor: "me", action: "token.create", payload: { name: "Agent hooks", prefix, scope: "hooks" } });
-      // The default address lets the hook follow this runtime's port through its discovery file.
-      args.push("--token", token, "--url", "http://127.0.0.1:4000");
-    }
-    const result = spawnSync(process.execPath, args, { encoding: "utf8", timeout: 20_000, windowsHide: true });
-    if (result.status !== 0) return reply.code(500).send({ error: (result.stderr || result.stdout || "Could not change the tool's hooks.").trim() });
-    return { ok: true, message: result.stdout.trim(), connected: await connectedTargets() };
+    const message = await installEditorHook(prisma, request.userId, body.target, { remove: body.remove });
+    return { ok: true, message, connected: await connectedTargets() };
   });
 
   app.get("/api/decision-rules", async (request) => ({
@@ -380,14 +366,6 @@ async function connectedTargets(): Promise<string[]> {
     if (text.includes("ensemble-hook.mjs")) found.push(target);
   }
   return found;
-}
-
-/** The hook's saved key is a live `hooks` key of this person's. */
-async function hookKeyStillValid(userId: string): Promise<boolean> {
-  const saved = await readFile(join(homedir(), ".ensemble", "hook.json"), "utf8").then((text) => JSON.parse(text) as { token?: unknown }).catch(() => null);
-  if (typeof saved?.token !== "string") return false;
-  const row = await prisma.apiToken.findFirst({ where: { tokenHash: sha256(saved.token), userId, revokedAt: null } });
-  return Boolean(row);
 }
 
 /** Strings the computer offered. A device answer has to be one of these, exactly. */

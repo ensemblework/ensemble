@@ -50,7 +50,9 @@ export function PagesSection({
   onImport,
   onDeleteMany,
   renderLink,
+  renderActions,
 }: {
+  renderActions?: (page: PageListItem, rename: () => void, remove: () => void) => React.ReactNode;
   pages: PageListItem[];
   pathname: string;
   onCreate: () => void;
@@ -157,27 +159,7 @@ export function PagesSection({
               )}
               {editingId === page.id ? null : (
                 <span className="flex shrink-0 items-center opacity-0 group-hover:opacity-100 focus-within:opacity-100">
-                  <button
-                    type="button"
-                    className="icon-btn"
-                    aria-label={`Rename ${page.title}`}
-                    title="Rename"
-                    onClick={() => {
-                      setDraft(page.title);
-                      setEditingId(page.id);
-                    }}
-                  >
-                    <Pencil size={13} />
-                  </button>
-                  <button
-                    type="button"
-                    className="icon-btn"
-                    aria-label={`Delete ${page.title}`}
-                    title="Delete"
-                    onClick={() => onDelete(page.id)}
-                  >
-                    <Trash2 size={13} />
-                  </button>
+                  {renderActions ? renderActions(page, () => { setDraft(page.title); setEditingId(page.id); }, () => onDelete(page.id)) : <><button type="button" className="icon-btn" aria-label={`Rename ${page.title}`} onClick={() => { setDraft(page.title); setEditingId(page.id); }}><Pencil size={13} /></button><button type="button" className="icon-btn" aria-label={`Delete ${page.title}`} onClick={() => onDelete(page.id)}><Trash2 size={13} /></button></>}
                 </span>
               )}
             </div>

@@ -27,7 +27,7 @@ export interface CollabStore {
    * Locks the stored copy, shows it to `decide`, and writes what `decide` returns (null: nothing)
    * as the next revision, also into a page in Trash. Null when the document is gone.
    */
-  write(key: DocKey, decide: (row: StoredDoc) => { content: PageDocument; marker: { epoch: string; version: number } } | null): Promise<{ revision: number; wrote: boolean } | null>;
+  write(key: DocKey, decide: (row: StoredDoc) => { content: PageDocument; marker: { epoch: string; version: number }; editorAccountId?: string | null } | null): Promise<{ revision: number; wrote: boolean } | null>;
 }
 
 export type CollabPublish = (space: string, event: string, data: Record<string, unknown>) => void;
@@ -60,6 +60,7 @@ type Entry = {
   chain: Promise<unknown>;
   used: number;
   gone: boolean;
+  editorAccountId?: string | null;
   /** Write-backs that failed in a row. */
   failures: number;
   recheck?: ReturnType<typeof setTimeout>;
@@ -191,7 +192,7 @@ export class CollabHub {
    * An editor's steps made against `version`. Answers with the steps from `version` on, its own
    * included. `flush` also writes the page back before answering, with the stored revision.
    */
-  async post(key: DocKey, input: { epoch: string; version: number; steps: unknown[]; clientID: ClientID; flush?: boolean; trusted?: boolean }): Promise<Posted | null> {
+  async post(key: DocKey, input: { epoch: string; version: number; steps: unknown[]; clientID: ClientID; flush?: boolean; trusted?: boolean; editorAccountId?: string | null }): Promise<Posted | null> {
     const entry = await this.open(key);
     if (!entry) return null;
     const { authority } = entry;
@@ -202,6 +203,7 @@ export class CollabHub {
     if (entry.failures >= this.timing.failLimit) throw new CollabError("COLLAB_UNSAVED", UNSAVED);
     const batch = authority.receive(input.version, input.steps, input.clientID);
     if (batch.steps.length) {
+      entry.editorAccountId = input.editorAccountId;
       this.broadcast(entry, batch);
       this.schedule(entry);
     }
@@ -281,7 +283,7 @@ export class CollabHub {
       this.absorbRow(entry, row);
       if (!authority.unsaved) return null;
       out.saved = { doc: authority.doc, version: authority.version, json: docJson(authority.doc) };
-      return { content: out.saved.json, marker: { epoch: authority.epoch, version: authority.version } };
+      return { content: out.saved.json, marker: { epoch: authority.epoch, version: authority.version }, editorAccountId: entry.editorAccountId };
     });
     if (!result) {
       this.forget(entry);
@@ -322,6 +324,12 @@ export class CollabHub {
     clearTimeout(entry.timer);
     clearTimeout(entry.recheck);
     if (this.entries.get(entry.name) === entry) this.entries.delete(entry.name);
+  }
+
+  /** Reconcile a committed replacement before its caller refreshes an already-open editor. */
+  async refresh(key: DocKey): Promise<void> {
+    const entry = this.entries.get(nameOf(key));
+    if (entry) await this.sync(entry);
   }
 
   /**

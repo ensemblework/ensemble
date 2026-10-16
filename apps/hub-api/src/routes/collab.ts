@@ -98,7 +98,7 @@ export async function collabRoutes(app: FastifyInstance): Promise<void> {
       const { token, ...body } = Steps.parse(request.body);
       // Another account's id (a session that expired on a public link) or no valid token: join again.
       const trusted = body.clientID.startsWith(`${accountOf(request)}/`) && token === tokenFor(body.clientID);
-      return answer(reply, kind, () => collabHub.post(key, { ...body, trusted }));
+      return answer(reply, kind, () => collabHub.post(key, { ...body, trusted, editorAccountId: accountOf(request) }));
     });
   }
 }

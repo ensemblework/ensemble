@@ -8,8 +8,7 @@
  * 2. The provider's documentation for the model family (checked 13 Oct 2026): OpenAI's model
  *    pages, Gemini's OpenAI-compatibility table, Anthropic's effort table, OpenRouter's
  *    `reasoning.effort`, Ollama's gpt-oss levels.
- * 3. A model the table does not know: the provider's whole set is offered and the provider
- *    decides; a level it refuses comes back as its own error.
+ * 3. A model the table does not know uses its own default; no effort parameter is sent.
  */
 
 export const EFFORT_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
@@ -52,7 +51,7 @@ export function orderLevels(values: readonly string[]): EffortLevel[] {
 
 const NONE: ModelEfforts = { levels: [], fallback: null, source: "none" };
 const doc = (levels: EffortLevel[], fallback: EffortLevel | null = null): ModelEfforts => ({ levels, fallback, source: "documented" });
-const unknown = (levels: EffortLevel[]): ModelEfforts => ({ levels, fallback: null, source: "unknown" });
+const unknown = (_levels: EffortLevel[]): ModelEfforts => ({ levels: [], fallback: null, source: "unknown" });
 
 const ALL: EffortLevel[] = ["low", "medium", "high", "xhigh", "max"];
 

@@ -3,11 +3,12 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { explainDiagram, toMermaid, type DiagramModel } from "@ensemble/block-diagrams";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useToast } from "@/components/toast";
 import { api } from "@/lib/api";
+import { VersionHistoryDialog } from "../history/version-history";
 import { copyDiagramPng } from "./export-image";
-import { prefillAssistant, refineDiagramPrompt, refreshDiagramPrompt } from "./make-diagram";
+import { prefillAssistant, refreshDiagramPrompt } from "./make-diagram";
 
 export function DiagramMore({
   id,
@@ -21,11 +22,12 @@ export function DiagramMore({
   const toast = useToast();
   const router = useRouter();
   const client = useQueryClient();
-  const [note, setNote] = useState("");
+  const [selected, setSelected] = useState<string | null>(null);
   const [explain, setExplain] = useState(false);
   const [history, setHistory] = useState(false);
   const freshness = useQuery({ queryKey: ["diagram-freshness", id], queryFn: () => api.diagramFreshness(id) });
   const revisions = useQuery({ queryKey: ["diagram-revisions", id], queryFn: () => api.diagramRevisions(id), enabled: history });
+  useEffect(() => { if (history && revisions.data?.revisions.length && !revisions.data.revisions.some(item => String(item.version) === selected)) setSelected(String(revisions.data.revisions[0]!.version)); }, [history, revisions.data, selected]);
   const title = model.meta.title || "Untitled diagram";
 
   const restore = useMutation({
@@ -54,26 +56,6 @@ export function DiagramMore({
         </div>
       ) : null}
       <div className="flex flex-wrap items-center gap-1.5">
-        <form
-          className="flex min-w-[16rem] flex-1 items-center gap-1.5"
-          onSubmit={(event) => {
-            event.preventDefault();
-            if (!note.trim()) return;
-            prefillAssistant(refineDiagramPrompt(id, title, note));
-            setNote("");
-          }}
-        >
-          <input
-            value={note}
-            onChange={(event) => setNote(event.target.value)}
-            aria-label="Ask AI to refine"
-            placeholder="Ask AI to refine"
-            className="field min-w-0 flex-1 bg-transparent px-2 py-1 text-[13px]"
-          />
-          <button type="submit" className="btn-ghost" disabled={!note.trim()}>
-            Ask
-          </button>
-        </form>
         <button type="button" className="btn-ghost" aria-expanded={explain} onClick={() => setExplain((open) => !open)}>
           Explain
         </button>
@@ -109,20 +91,7 @@ export function DiagramMore({
         </button>
       </div>
       {explain ? <p className="mt-2 max-w-[68ch] whitespace-pre-wrap text-[13px] leading-5 text-muted">{explainDiagram(model)}</p> : null}
-      {history ? (
-        <ul className="mt-2 space-y-1">
-          {(revisions.data?.revisions ?? []).length === 0 ? <li className="text-[12.5px] text-muted">No earlier versions yet.</li> : null}
-          {(revisions.data?.revisions ?? []).map((item) => (
-            <li key={item.version} className="flex items-center gap-2 text-[12.5px]">
-              <span className="text-muted">Version {item.version}</span>
-              <span className="min-w-0 flex-1 truncate">{item.title}</span>
-              <button type="button" className="btn-ghost" disabled={restore.isPending} onClick={() => restore.mutate(item.version)}>
-                Restore
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : null}
+      <VersionHistoryDialog open={history} onClose={() => setHistory(false)} title="Diagram" versions={(revisions.data?.revisions ?? []).map(item => ({ ...item, id: String(item.version) }))} selected={selected} onSelect={setSelected} loading={revisions.isPending} error={revisions.error?.message ?? restore.error?.message} onRetry={() => void revisions.refetch()} restoring={restore.isPending} onRestore={() => { if (selected) restore.mutate(Number(selected)); }} preview={<p className="text-[13px] text-muted">{selected ? `Version ${selected} · ${revisions.data?.revisions.find(item => String(item.version) === selected)?.title ?? "Diagram"}` : "Choose a saved version."}</p>} />
     </div>
   );
 }

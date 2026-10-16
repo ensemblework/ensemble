@@ -10,14 +10,27 @@ import { Toolbar, ViewerNote, type ViewerProps } from "./shared";
 const SAFE_LINK = /^(https?:|mailto:)/i;
 const ZOOMS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
-function frameDocument(background: string, compact: boolean): string {
-  return `<!doctype html><html><head><meta charset="utf-8"><style>
-html,body{margin:0;background:${background};}
+function viewerStyles(background: string, compact: boolean): string {
+  return `
+html,body{margin:0;background:${background};-webkit-text-size-adjust:none;text-size-adjust:none;}
 body{overflow:${compact ? "hidden" : "auto"};}
 .docx-wrapper{background:transparent!important;padding:${compact ? "0" : "16px"}!important;}
 .docx-wrapper>section.docx{box-shadow:0 1px 4px rgba(0,0,0,.18);margin:0 auto ${compact ? "0" : "16px"}!important;}
 a{color:#0563c1;}
-</style></head><body></body></html>`;
+body[data-reading=true] .docx-wrapper{padding:0!important;width:100%!important;transform:none!important;}
+body[data-reading=true] section.docx{width:100%!important;min-height:0!important;height:auto!important;padding:24px 20px!important;box-sizing:border-box;box-shadow:none;}
+body[data-reading=true] article{column-count:1!important;column-width:auto!important;}
+body[data-reading=true] p{height:auto!important;min-height:0!important;line-height:1.6!important;margin-top:0!important;margin-bottom:.8em!important;text-indent:0!important;}
+body[data-reading=true] p,body[data-reading=true] span{font-size:16px!important;line-height:1.6!important;}
+body[data-reading=true] table{max-width:100%!important;table-layout:fixed;}
+body[data-reading=true] td{height:auto!important;overflow-wrap:anywhere;}
+body[data-reading=true] img{max-width:100%!important;height:auto!important;}
+
+`;
+}
+
+function frameDocument(background: string, compact: boolean): string {
+  return `<!doctype html><html><head><meta charset="utf-8"><style>${viewerStyles(background, compact)}</style></head><body></body></html>`;
 }
 
 /** Keeps links to web pages and email (opened in a new tab) and in-document jumps; any other link loses its target. */
@@ -43,6 +56,9 @@ export default function DocxViewer({ file, bytes, compact }: ViewerProps) {
   const [rendered, setRendered] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [zoom, setZoom] = useState<number | "fit">("fit");
+  const [phone, setPhone] = useState(false);
+  const [mode, setMode] = useState<"auto" | "reading" | "page">("auto");
+  const reading = !compact && (mode === "reading" || (mode === "auto" && phone));
   const [pageWidth, setPageWidth] = useState(816);
   const [background] = useState(() =>
     typeof window === "undefined" ? "#efebe4" : getComputedStyle(document.documentElement).getPropertyValue("--raised").trim() || "#efebe4",
@@ -55,6 +71,7 @@ export default function DocxViewer({ file, bytes, compact }: ViewerProps) {
     setRendered(false);
     setError(null);
     doc.body.replaceChildren();
+    delete doc.body.dataset.reading;
     doc.body.style.removeProperty("zoom");
     void import("docx-preview")
       .then(({ renderAsync }) =>
@@ -77,6 +94,17 @@ export default function DocxViewer({ file, bytes, compact }: ViewerProps) {
       .then(() => {
         if (!live) return;
         tidyLinks(doc);
+        // docx-preview replaces its style container, including the frame's initial styles.
+        const style = doc.createElement("style");
+        style.textContent = viewerStyles(background, Boolean(compact));
+        doc.head.append(style);
+        const wrapper = doc.querySelector<HTMLElement>(".docx-wrapper");
+        if (wrapper) {
+          const viewport = doc.createElement("div");
+          viewport.dataset.docxViewport = "";
+          wrapper.replaceWith(viewport);
+          viewport.append(wrapper);
+        }
         // Measured before any zoom is applied, so fitting never feeds back on itself.
         setPageWidth(doc.querySelector<HTMLElement>("section.docx")?.offsetWidth || 816);
         setRendered(true);
@@ -93,7 +121,7 @@ export default function DocxViewer({ file, bytes, compact }: ViewerProps) {
   useEffect(() => {
     const node = frame.current;
     if (!node || !rendered) return;
-    const measure = () => setFitScale(Math.max(0.2, Math.min(compact ? 1 : 1.5, (node.clientWidth - (compact ? 0 : 40)) / pageWidth)));
+    const measure = () => { setPhone(node.clientWidth < 600); setFitScale(Math.max(0.2, Math.min(compact ? 1 : 1.5, (node.clientWidth - (compact ? 0 : 40)) / pageWidth))); };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(node);
@@ -102,9 +130,27 @@ export default function DocxViewer({ file, bytes, compact }: ViewerProps) {
 
   const scale = zoom === "fit" ? Math.min(1, fitScale) : zoom;
   useEffect(() => {
-    const body = frame.current?.contentDocument?.body;
-    if (body && rendered) body.style.setProperty("zoom", String(scale));
-  }, [scale, rendered]);
+    const node = frame.current;
+    const body = node?.contentDocument?.body;
+    const wrapper = body?.querySelector<HTMLElement>(".docx-wrapper");
+    const viewport = body?.querySelector<HTMLElement>("[data-docx-viewport]");
+    if (!body || !wrapper || !viewport || !rendered || !node) return;
+    body.dataset.reading = String(reading);
+    body.style.removeProperty("zoom");
+    wrapper.style.transformOrigin = "top left";
+    wrapper.style.transform = reading ? "none" : `scale(${scale})`;
+    wrapper.style.width = reading ? "100%" : `${Math.max(pageWidth + (compact ? 0 : 32), node.clientWidth / scale)}px`;
+    wrapper.style.boxSizing = "border-box";
+    const size = () => {
+      viewport.style.overflow = reading ? "visible" : "hidden";
+      viewport.style.width = reading ? "100%" : `${wrapper.offsetWidth * scale}px`;
+      viewport.style.height = reading ? "auto" : `${wrapper.scrollHeight * scale}px`;
+    };
+    size();
+    const observer = new ResizeObserver(size);
+    observer.observe(wrapper);
+    return () => observer.disconnect();
+  }, [scale, rendered, reading, pageWidth, compact, phone]);
 
   if (error) return <ViewerNote title={error} file={file} bytes={bytes} compact={compact} />;
 
@@ -135,8 +181,9 @@ export default function DocxViewer({ file, bytes, compact }: ViewerProps) {
   return (
     <div className="flex h-full min-h-0 flex-col" data-docx-viewer>
       <Toolbar>
-        <span className="px-1">Word document</span>
-        <span className="ml-auto flex items-center gap-1">
+        <span className="px-1 max-sm:hidden">Word document</span>
+        <button type="button" className="btn-ghost" aria-pressed={reading} onClick={() => setMode(reading ? "page" : "reading")}>{reading ? "Page view" : "Reading view"}</button>
+        <span className="ml-auto flex items-center gap-1" style={{ display: reading ? "none" : undefined }}>
           <button type="button" className="icon-btn" aria-label="Zoom out" title="Zoom out" onClick={() => step(-1)}>
             <Minus size={14} />
           </button>

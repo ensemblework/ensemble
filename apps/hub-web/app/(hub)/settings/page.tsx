@@ -14,6 +14,7 @@ import { useToast } from "@/components/toast";
 import { PageHeader, SkeletonRows } from "@/components/ui";
 import { ApiError, api } from "@/lib/api";
 import { useSpaceAccess } from "@/lib/access";
+import { useClientPlatform } from "@/lib/platform";
 
 const loading = () => <SkeletonRows count={4} rowClassName="h-28" className="space-y-5" />;
 const AssistantTab = dynamic(() => import("@/components/settings/tab-assistant").then((mod) => mod.AssistantTab), { ssr: false, loading });
@@ -51,7 +52,9 @@ export default function SettingsPage() {
   const location = useSettingsLocation();
   // In a space shared with you, connected apps and the space's data are the owner's.
   const access = useSpaceAccess();
-  const guestTabs: SettingsTab[] = access.guest ? ["connections", "data"] : [];
+  const platform = useClientPlatform();
+  const guestTabs: SettingsTab[] = [...(access.guest ? ["connections", "data"] as SettingsTab[] : []), ...(platform.mobile ? ["shortcuts"] as SettingsTab[] : [])];
+  useEffect(() => { if (platform.mobile && location.tab === "shortcuts") navigateSettings({ tab: "account" }); }, [platform.mobile, location.tab]);
   useEffect(() => {
     if (access.guest && (location.tab === "connections" || location.tab === "data")) navigateSettings({ tab: "account" });
   }, [access.guest, location.tab]);

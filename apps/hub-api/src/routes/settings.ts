@@ -18,6 +18,7 @@ export function checkIdentityPatch(body: Record<string, unknown>): Record<string
     const zone = typeof body.timezone === "string" ? timeZoneName(body.timezone) : null;
     if (!zone) throw Object.assign(new Error("Pick a time zone from the list, such as Europe/London."), { statusCode: 400 });
     next.timezone = zone;
+    next.timezoneMode = body.timezoneMode ?? "manual";
   }
   return next;
 }

@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Orbit,
+  History,
   Calendar,
   CheckSquare,
   ChevronRight,
@@ -40,6 +41,7 @@ import { TaskSkeleton } from "@/components/motion/skeletons";
 import { useDelayedFlag } from "@/lib/motion/use-delayed-flag";
 import { useModuleOn } from "@/lib/use-module";
 import { MenuItem, Popover, PriorityTag, Tag, cx } from "../ui";
+import { PageContent } from "../pages/page-content";
 import { PageTitleField } from "../pages/title-field";
 import { PageLoadFailure, inTrash } from "../pages/page-load";
 import { TrashedTask } from "../pages/trashed-page";
@@ -59,6 +61,7 @@ import { TaskExportMenu } from "./task-export";
 import { SourceFileBanner, exportBackItems } from "../files/source-file-banner";
 import { PAGE_FOCUS_CLASS, PageFocusBar, PageFocusButton, usePageFocus } from "../pages/page-focus";
 import { collabStatusText, useCollab } from "../pages/use-collab";
+import { PageHistory } from "../pages/page-history";
 import { KeptEdits } from "../pages/kept-edits";
 
 function useBlockEditor() {
@@ -139,6 +142,7 @@ export function TaskPage({
 
   const [propsState, setPropsState] = useState<"saved" | "saving">("saved");
   const [linkedOpen, setLinkedOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const titleSave = useRef<Promise<unknown> | null>(null);
   // The share (or none) this task was opened under. Its saves, the last one on leaving too, go there.
   const openedAs = useRef(currentShare());
@@ -363,6 +367,7 @@ export function TaskPage({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <PagePeople kind="task" id={taskId} />
+          {!shared && !access.guest ? <><button type="button" className="icon-btn" title="Version history" aria-label="Version history" onClick={() => { void (async () => { if (titleSave.current) await titleSave.current; await sync.flush(); setHistoryOpen(true); })().catch((error: Error) => toast(error.message, { tone: "error" })); }}><History size={14} /></button><PageHistory kind="task" id={taskId} open={historyOpen} onClose={() => setHistoryOpen(false)} /></> : null}
           {shared ? <span className="whitespace-nowrap">{canEdit ? "Shared with you · can edit" : "Shared with you · view only"}</span> : !canEdit ? <span className="whitespace-nowrap">View only</span> : null}
           {canEditProperties ? <span className="whitespace-nowrap">{propsState === "saving" ? "Saving…" : "Properties saved"}</span> : null}
           {shared || !canEdit ? null : (
@@ -725,20 +730,15 @@ export function TaskPage({
         </>
       )}
 
-      <div className="mt-6 flex items-center justify-between border-t border-line pt-3 text-[12px] text-muted">
-        <span className="font-medium">Page content</span>
-        <span className={saveState === "error" ? "text-danger" : undefined}>{saveText}</span>
-      </div>
-      {locked && unsaved ? (
+      <PageContent status={saveText} error={saveState === "error"} before={locked && unsaved ? (
         <KeptEdits
           message={gone ? "This task isn't shared with you anymore, so your last changes weren't saved. They're still on screen." : "You can't edit this task anymore, so your last changes weren't saved. They're still on screen."}
           title={record.title}
           read={sync.latest}
           ownCopy={Boolean(shared && !shared.link)}
         />
-      ) : null}
+      ) : null}>
 
-      <div className="mt-4" data-focus-keep>
         {sync.failure ? (
           <p className="mt-4 text-[13px] text-muted">This page could not be opened for editing. Reload to try again.</p>
         ) : initialDoc && Editor ? (
@@ -762,7 +762,7 @@ export function TaskPage({
         ) : (
           <div className="skeleton mt-4 h-64 w-full" />
         )}
-      </div>
+      </PageContent>
 
       <AssignDialog
         open={assigning}

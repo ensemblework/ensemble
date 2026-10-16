@@ -3,7 +3,7 @@
  * Same format and key as agent-runtime's vault.py, so either side can read
  * what the other wrote: "v1:" + base64(nonce[12] + ciphertext + tag[16]).
  */
-import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHmac, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -63,4 +63,9 @@ export function decrypt(value: string): string {
 /** Tests set a key after another file may have cached one. */
 export function resetSecretKeyCacheForTests(): void {
   cached = null;
+}
+
+/** Purpose-separated keyed identifiers are not reversible emails or public email hashes. */
+export function privateIdentifier(purpose: string, value: string): string {
+  return createHmac("sha256", key()).update(`${purpose}\0${value}`).digest("hex");
 }

@@ -97,15 +97,22 @@ test("the email is saved only when it is an address, and the time zone is picked
     assert.deepEqual(patches, [{ email: "mira@fieldnote.example" }]);
     assert.equal(view.host.querySelector("#settings-email-error"), null);
 
-    const zone = view.host.querySelector<HTMLSelectElement>("#settings-timezone")!;
-    assert.equal(zone.value, "Mars/Olympus_1");
-    assert.match(zone.options[0]!.textContent ?? "", /not a time zone/);
+    const zone = view.host.querySelector<HTMLButtonElement>("#settings-timezone")!;
+    assert.equal(zone.getAttribute("aria-invalid"), "true");
     assert.match(view.host.querySelector("#settings-timezone-error")?.textContent ?? "", /Pick your time zone/);
-    assert.ok(Array.from(zone.options).some((option) => option.value === "Europe/London"));
-    await act(async () => choose(zone, "Europe/London"));
-    assert.deepEqual(patches.at(-1), { timezone: "Europe/London" });
+    await act(async () => zone.click());
+    const search = document.querySelector<HTMLInputElement>('[aria-label="Search time zones"]')!;
+    await act(async () => typeInput(search, "Kolkata"));
+    const option = document.querySelector<HTMLButtonElement>('[role="option"]')!;
+    assert.match(option.textContent!, /Kolkata/);
+    assert.equal(document.querySelectorAll('[role="option"]').length, 1);
+    await act(async () => option.click());
+    assert.deepEqual(patches.at(-1), { timezone: "Asia/Kolkata", timezoneMode: "manual" });
     assert.equal(view.host.querySelector("#settings-timezone-error"), null);
-    assert.ok(!Array.from(zone.options).some((option) => /not a time zone/.test(option.textContent ?? "")));
+    await act(async () => zone.click());
+    const detect = [...document.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent?.includes("Use this computer’s time zone"))!;
+    await act(async () => detect.click());
+    assert.equal((patches.at(-1) as Record<string, unknown>)?.timezoneMode, "auto");
   } finally {
     await view.done();
   }

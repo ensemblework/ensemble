@@ -117,7 +117,9 @@ test("retention records a completion, skips pinned rows, purges old trash, and f
   });
   let reminderId = "";
   try {
-    const first = await runRetention(app, user.id, { deletedDays: 30, completedDays: 60 });
+    await runRetention(app, user.id, { deletedDays: 30, completedDays: 60 });
+    await prisma.preference.update({ where: { userId_key: { userId: user.id, key: "hub.retention-mining" } }, data: { value: { after: new Date(Date.now() - 1).toISOString(), tasks: [task.id], deliverables: [] } } });
+    const first = await runRetention(app, user.id, { deletedDays: 30, completedDays: 60, miningRun: async () => ({ text: '{"skills":[]}', json: { skills: [] }, model: "fixture", tokensIn: 0, tokensOut: 0 }) });
     assert.equal(first.completionRecords, 1);
     assert.equal(first.completedSoftDeleted, 1);
     const archived = await prisma.task.findUnique({ where: { id: task.id } });

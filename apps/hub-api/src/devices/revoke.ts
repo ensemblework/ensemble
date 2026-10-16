@@ -3,6 +3,7 @@
  * Revoking the device and revoking its key are the same action.
  */
 import type { Device, PrismaClient } from "@prisma/client";
+import { stopComputerTurns } from "../subscriptions/relay.js";
 import { appendLedger } from "../lib/ledger.js";
 import { sseHub } from "../lib/sse.js";
 import { DEVICE_REMOVED, LIVE_DEVICE_STATUSES } from "./constants.js";
@@ -18,6 +19,7 @@ export async function revokePairedDevice(prisma: PrismaClient, userId: string, d
   });
   await prisma.device.update({ where: { id: device.id }, data: { revokedAt: now } });
   await prisma.apiToken.update({ where: { id: device.tokenId }, data: { revokedAt: now } });
+  stopComputerTurns(device.id);
   publishDeviceRevoked(device.id);
   await prisma.workspaceJob.updateMany({
     where: { deviceId: device.id, status: { in: [...LIVE_DEVICE_STATUSES] } },

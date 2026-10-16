@@ -315,7 +315,7 @@ function OperatorSetup({ provider }: { provider?: string }) {
 function NotSetUp({ entry }: { entry: CatalogEntry }) {
   return (
     <section role="note" className="rounded-xl border border-line bg-raised px-3 py-3 text-[13px] sm:px-4" data-testid="not-set-up">
-      <div className="font-medium">Not set up on this server yet</div>
+      <div className="font-medium">Not available to connect yet</div>
       <p className="mt-0.5 text-[12.5px] text-muted">
         Connecting {entry.name} needs a {brand(entry)} app registered for this Ensemble server. Whoever runs it registers the app once and adds its
         client ID and secret; after that everyone just signs in here.

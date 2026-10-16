@@ -118,7 +118,7 @@ export function statusLabel(entry: CatalogEntry): string {
     case "pending":
       return "Waiting for approval";
     case "not_set_up":
-      return "Not set up on this server";
+      return "Not available to connect yet";
     case "soon":
       return "Coming soon";
     default:

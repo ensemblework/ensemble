@@ -26,6 +26,7 @@ export const AssistantPageContext = z.object({
   label: z.string().optional(),
   taskId: z.string().optional(),
   projectId: z.string().optional(),
+  meetingId: z.string().max(64).optional(),
 });
 export type AssistantPageContext = z.infer<typeof AssistantPageContext>;
 
@@ -206,10 +207,10 @@ export const OrchestrationSettings = z.object({
    */
   outsideAccess: OutsideAccess.default("read"),
   /**
-   * Which sessions of Claude Code, Codex, Cursor and Copilot send their prompts to Needs me
-   * through Ensemble's hook: only tasks Ensemble opened in them (default), or every session.
+   * Only sessions Ensemble opened send prompts through its hook. Normalize older saved
+   * values while keeping other editor sessions in their own app.
    */
-  editorRequests: z.enum(["ensemble", "all"]).default("ensemble"),
+  editorRequests: z.enum(["ensemble", "all"]).default("ensemble").transform(() => "ensemble" as const),
   defaultDelivery: z.enum(["review-first", "unattended"]).default("review-first"),
 });
 export type OrchestrationSettings = z.infer<typeof OrchestrationSettings>;
@@ -404,8 +405,16 @@ export const Settings = z.object({
   /** Per connector-store entry (e.g. google_workspace), which products are switched on. Missing keys use the catalog default. */
   connectorProducts: z.record(z.string(), z.record(z.string(), z.boolean())).default({}),
   timezone: z.string().default("Asia/Kolkata"),
+  timezoneMode: z.enum(["auto", "manual"]).default("auto"),
   email: z.string().default("you@ensemble.local"),
 });
 export type Settings = z.infer<typeof Settings>;
 
 export const DEFAULT_SETTINGS: Settings = Settings.parse({});
+
+export const ASSISTANT_UNAVAILABLE = "The assistant is unavailable right now. Try again in a minute.";
+
+/** Network diagnostics are for operator logs, never a substitute for a model reply. */
+export function assistantErrorText(message: string): string {
+  return /model runtime|fetch failed|ECONNREFUSED|ENOTFOUND|failed to fetch|networkerror/i.test(message) ? ASSISTANT_UNAVAILABLE : message;
+}

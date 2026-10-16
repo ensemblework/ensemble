@@ -29,7 +29,7 @@ import { usePersistentState } from "@/lib/prefs";
 import { filesHref } from "@/lib/files/links";
 import { useFullscreen } from "@/lib/fullscreen";
 import { usePeek } from "../shell/peek";
-import { AskEnsemble } from "../ensemble/ask-button";
+
 import { useModuleOn } from "@/lib/use-module";
 import { Held } from "@/components/motion/held";
 import { GraphSkeleton } from "@/components/motion/skeletons";
@@ -925,16 +925,6 @@ export function GraphTab({ compact = false }: { compact?: boolean }) {
               >
                 <RotateCcw size={12} /> Reset
               </button>
-              <div className="px-1 py-1">
-                <AskEnsemble
-                  surface="graph"
-                  anchorKey={picked.length ? `graph:${[...picked].sort().join(",")}` : "graph"}
-                  label="Ask Ensemble about the graph"
-                  entityIds={picked.length ? picked : undefined}
-                  contextLabel={picked.length ? `${picked.length} selected` : "Whole graph"}
-                  onCitations={setCited}
-                />
-              </div>
               <button type="button" className="menu-item flex items-center gap-2 text-left" onClick={() => void client.invalidateQueries({ queryKey: ["graph"] })}>
                 <RefreshCw size={12} /> Refresh
               </button>

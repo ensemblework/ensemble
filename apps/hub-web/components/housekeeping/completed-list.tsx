@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { AskEnsemble } from "@/components/ensemble/ask-button";
+
 import { PageHeader, SectionCard, Spinner, Tag } from "@/components/ui";
 import { useToast } from "@/components/toast";
 import { api } from "@/lib/api";
@@ -68,7 +68,7 @@ export function CompletedList({ embedded = false }: { embedded?: boolean }) {
       <SectionCard
         title="Completed"
         description="Everything finished, including rows the board hides after the recent few. Pinned items are kept past the purge window."
-        actions={<AskEnsemble surface="completed" anchorKey="completed" label="Ask Ensemble about completed" />}
+        actions={null}
       >
         {body}
       </SectionCard>
@@ -79,7 +79,7 @@ export function CompletedList({ embedded = false }: { embedded?: boolean }) {
       <PageHeader
         title="Completed"
         description="Everything finished, including rows the board hides after the recent few. Pinned items are kept past the purge window."
-        actions={<AskEnsemble surface="completed" anchorKey="completed" label="Ask Ensemble about completed" />}
+        actions={null}
       />
       {body}
     </div>

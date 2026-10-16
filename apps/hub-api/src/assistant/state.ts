@@ -101,10 +101,12 @@ export interface OpenPage {
   label?: string;
   taskId?: string;
   projectId?: string;
+  meetingId?: string;
   timezone: string;
   today: string;
   weekday: string;
   open?: {
+    kind?: "meeting";
     id: string;
     title: string;
     status?: string;
@@ -190,7 +192,9 @@ export function buildSystemPrompt(
           open.repo ? `Linked repo: ${open.repo}` : "",
           open.deliverables?.length ? `Deliverables: ${open.deliverables.join("; ")}` : "",
           open.skills?.length ? `Skills on this item: ${open.skills.join(", ")}` : "",
-          open.status
+          open.kind === "meeting"
+            ? "This is meeting notes. Use this id with hub_read_meeting_note; it is not a task on the board."
+            : open.status
             ? "Use this id. Do not substitute a different task with a similar name."
             : "Use this id. This is a note, not a task on the board.",
         ].filter(Boolean).join("\n")
@@ -222,7 +226,7 @@ export const ASSISTANT_INSTRUCTIONS = ASSISTANT_RULES;
 export async function loadOpenPage(
   prisma: PrismaClient,
   userId: string,
-  page: { path: string; label?: string; taskId?: string; projectId?: string } | undefined,
+  page: { path: string; label?: string; taskId?: string; projectId?: string; meetingId?: string } | undefined,
   timezone: string,
   today: string,
   weekday: string,
@@ -230,6 +234,12 @@ export async function loadOpenPage(
 ): Promise<OpenPage | undefined> {
   if (!page) return undefined;
   const base: OpenPage = { ...page, timezone, today, weekday };
+  if (page.meetingId) {
+    const session = await prisma.meetingSession.findFirst({ where: { id: page.meetingId, userId, deletedAt: null }, select: { id: true, title: true, notes: true, content: true } });
+    const imported = session ? null : await prisma.meetingNote.findFirst({ where: { id: page.meetingId, userId, deletedAt: null }, select: { id: true, title: true } });
+    const note = session ?? imported;
+    if (note) base.open = { kind: "meeting", id: note.id, title: note.title || "Meeting notes", excerpt: session ? excerptFrom(session.content) || session.notes.slice(0, 4000) : "Read this connected meeting note with hub_read_meeting_note." };
+  }
   const taskId = page.taskId ?? (page.path.startsWith("/tasks/") ? page.path.split("/")[2] : undefined);
   const noteId = !taskId && page.path.startsWith("/pages/") ? page.path.split("/").filter(Boolean)[1] : undefined;
   if (noteId && noteId !== "_") {

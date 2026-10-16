@@ -16,6 +16,7 @@ import { agentConversation, effortFor, howYouRun, jsonFrom, pickComputer } from 
 
 test("Claude Code's sign-in is read from its own status, as JSON or as words", () => {
   assert.deepEqual(parseClaudeStatus({ code: 0, stdout: '{"loggedIn":true,"authMethod":"claude.ai","subscriptionType":"max"}', stderr: "" }), { signedIn: true, plan: "max" });
+  assert.deepEqual(parseClaudeStatus({ code: 0, stdout: '{"loggedIn":true,"authMethod":"api_key"}', stderr: "" }), { signedIn: false, plan: null });
   assert.deepEqual(parseClaudeStatus({ code: 1, stdout: '{"loggedIn":false}', stderr: "" }), { signedIn: false, plan: null });
   assert.deepEqual(parseClaudeStatus({ code: 1, stdout: "Not logged in. Run claude auth login to authenticate.\n", stderr: "" }), { signedIn: false, plan: null });
   assert.deepEqual(parseClaudeStatus({ code: 0, stdout: "Logged in as someone\n", stderr: "" }), { signedIn: true, plan: null });
@@ -212,7 +213,7 @@ test("a thinking level is sent only when the agent takes it for that model", () 
     checkedAt: "",
   };
   assert.equal(effortFor(agent, "gpt-6-luna", "high"), "high");
-  assert.equal(effortFor(agent, "gpt-6-luna", "max"), null);
+  assert.throws(() => effortFor(agent, "gpt-6-luna", "max"), /does not take thinking/);
   assert.equal(effortFor(agent, "plain", "medium"), "medium", "the agent's own list when the model has none");
   assert.equal(effortFor(agent, "plain", "default"), null);
   assert.equal(effortFor(null, "x", "low"), "low");

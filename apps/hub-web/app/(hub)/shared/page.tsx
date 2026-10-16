@@ -1,5 +1,6 @@
 "use client";
 
+import { friendlyDateTime } from "@/lib/format";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { ArrowUpRight, BookOpen, Briefcase, CalendarCheck, CheckSquare, Columns3, FileText, FolderGit2, LineChart, Users, Workflow } from "lucide-react";
@@ -103,10 +104,11 @@ export default function SharedWithYouPage() {
                     {!item.openedAt ? <span className="ml-auto rounded bg-accent-soft px-1.5 text-[10px] font-medium text-ink">New</span> : null}
                   </span>
                   <span className="mt-2 line-clamp-2 text-[14px] font-medium leading-5">{item.title}</span>
+                  {item.excerpt ? <p className="mt-1 line-clamp-2 text-[12px] text-muted">{item.excerpt}</p> : null}
                   <span className="mt-auto flex items-center gap-1.5 pt-3 text-2xs text-muted">
                     <Avatar person={item.owner} size={16} />
                     <span className="truncate">
-                      {item.owner.name} · {item.role === "edit" ? "can edit" : "view only"} · {since(item.since)}
+                      {item.owner.name} · {item.role === "edit" ? "can edit" : "view only"} · {friendlyDateTime(item.since)}
                     </span>
                   </span>
                 </Link>

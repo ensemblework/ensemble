@@ -591,10 +591,6 @@ export function EditorsSection() {
   });
   const revoke = useMutation({ mutationFn: api.revokeToken, onSuccess: () => client.invalidateQueries({ queryKey: ["tokens"] }) });
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings });
-  const sessions = useMutation({
-    mutationFn: (editorRequests: "ensemble" | "all") => api.saveSettings({ orchestration: { editorRequests } }),
-    onSuccess: () => client.invalidateQueries({ queryKey: ["settings"] }),
-  });
   const connect = useMutation({
     mutationFn: ({ target, remove }: { target: string; remove?: boolean }) => api.connectEditor(target, remove),
     onSuccess: (result) => {
@@ -606,8 +602,6 @@ export function EditorsSection() {
   });
   const connected = setup.data?.connected ?? [];
   const dropRule = useMutation({ mutationFn: api.deleteDecisionRule, onSuccess: () => client.invalidateQueries({ queryKey: ["decision-rules"] }) });
-  const command = (target: string) =>
-    setup.data ? `"${setup.data.node}" "${setup.data.script}" install --target ${target} --token ${fresh ?? "<create a token above>"} --url ${setup.data.apiUrl}` : "";
   return (
     <SectionCard
       title="Editors & agents"
@@ -640,20 +634,7 @@ export function EditorsSection() {
       </div>
       {routing ? (
       <div id="editor-permission-routing" className="mt-2">
-      <SettingRow
-        title="Which sessions come to Needs me"
-        description="Tasks Ensemble opened in the tool (Assign → Who does the work), or every session you start there yourself as well. A session that is not sent here asks you in the tool, at once."
-      >
-        <select
-          aria-label="Which sessions come to Needs me"
-          className="field"
-          value={settings.data?.settings.orchestration.editorRequests ?? "ensemble"}
-          onChange={(event) => sessions.mutate(event.target.value as "ensemble" | "all")}
-        >
-          <option value="ensemble">Tasks Ensemble opened</option>
-          <option value="all">Every session</option>
-        </select>
-      </SettingRow>
+      <p className="mb-3 text-[12.5px] text-muted">Only tasks started through Ensemble come to Needs me. Ensemble sets up the connection on the computer running the task automatically. Your other sessions keep their questions in their own app.</p>
       {setup.data?.local ? (
         <div className="mb-2 border-b border-line pb-2">
           {CONNECTABLE.map((target) => (
@@ -672,7 +653,7 @@ export function EditorsSection() {
               )}
             </SettingRow>
           ))}
-          <div className="text-[12px] text-muted">For VS Code, or a tool on another computer, use a personal token and the commands below.</div>
+          <div className="text-[12px] text-muted">Connections for tasks on another computer are set up by Ensemble on that computer.</div>
         </div>
       ) : null}
       <SettingRow title="Personal token" description="Hooks use this to reach your Ensemble. Shown once; revoke it here any time.">
@@ -698,18 +679,6 @@ export function EditorsSection() {
           </button>
         </div>
       ))}
-      <div className="mt-3 space-y-3">
-        {TARGETS.map((target) => (
-          <div key={target.id}>
-            <div className="text-[13px] font-medium">{target.label}</div>
-            <div className="text-[12px] text-muted">{target.detail} Run once in a terminal, then restart the editor:</div>
-            <div className="mt-1 flex items-center gap-2 rounded-md bg-panel px-2 py-1.5 font-mono text-[11.5px]">
-              <span className="min-w-0 flex-1 break-all">{command(target.id)}</span>
-              <CopyButton text={command(target.id)} />
-            </div>
-          </div>
-        ))}
-      </div>
       <div className="mt-4 text-[13px] font-medium">Standing answers</div>
       {(rules.data?.rules ?? []).length === 0 ? (
         <div className="text-[12.5px] text-muted">None yet. “Allow for this session” and “Always allow” on Needs me create them.</div>

@@ -422,6 +422,9 @@ importers:
       '@tanstack/react-query':
         specifier: ^5.87.4
         version: 5.103.2(react@19.3.0)
+      '@tauri-apps/plugin-notification':
+        specifier: ^2.7.0
+        version: 2.7.0
       '@tiptap/core':
         specifier: ^2.27.3
         version: 2.27.3(@tiptap/pm@2.27.3)
@@ -1462,6 +1465,9 @@ packages:
     peerDependencies:
       react: ^18 || ^19
 
+  '@tauri-apps/api@2.12.4':
+    resolution: {integrity: sha512-pVmfis+4zT8H0Qhp3xPZx9Ju7kpzvA6rr/PSJPyuwfvucTQ8sVt61NYU9KMkK703UFlYadFmjKA4HhybOtN0gg==}
+
   '@tauri-apps/cli-darwin-arm64@2.12.0':
     resolution: {integrity: sha512-v5J+jISihLGtih1+3yWagbsL+5dbLZORu4vaSI0vhY0Heb+MAW+T/1s1RyKxrQrwEPGBG5kqwfDDTnSbmVkuqA==}
     engines: {node: '>= 10'}
@@ -1537,6 +1543,9 @@ packages:
     resolution: {integrity: sha512-GIShnAR4C16kSTA8NO02fo8fOw/I5z5sAUEB5S2HlPHFnBkbihL4c9a/MpkxOm1+q5S+tFd3X4QUjHWxfyGzpQ==}
     engines: {node: '>= 10'}
     hasBin: true
+
+  '@tauri-apps/plugin-notification@2.7.0':
+    resolution: {integrity: sha512-kgdHCPSY/3GIi4gSWuLfd3y555U0kwzP0PmnUjT+sGhgO7RdAM6goFjDqayRaKC8yA5oEYi7w2NnA3oQxIjldw==}
 
   '@tiptap/core@2.27.3':
     resolution: {integrity: sha512-a5LfRbLpfaGI3hbL/LPHUYHI0I+FQHdSHsy8L4YnVIuu3hXcm3QZgkWbpEGf8hCz8krk6zEiu0+iFOjTySU2FA==}
@@ -4582,6 +4591,8 @@ snapshots:
       '@tanstack/query-core': 5.103.2
       react: 19.3.0
 
+  '@tauri-apps/api@2.12.4': {}
+
   '@tauri-apps/cli-darwin-arm64@2.12.0':
     optional: true
 
@@ -4628,6 +4639,10 @@ snapshots:
       '@tauri-apps/cli-win32-arm64-msvc': 2.12.0
       '@tauri-apps/cli-win32-ia32-msvc': 2.12.0
       '@tauri-apps/cli-win32-x64-msvc': 2.12.0
+
+  '@tauri-apps/plugin-notification@2.7.0':
+    dependencies:
+      '@tauri-apps/api': 2.12.4
 
   '@tiptap/core@2.27.3(@tiptap/pm@2.27.3)':
     dependencies:

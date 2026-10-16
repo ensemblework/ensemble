@@ -186,7 +186,7 @@ function paintStoredAppearance(): void {
   root.dataset.colorTheme = cookiePalette && (!localPalette || Number(paletteParts[1]) > localAt) ? cookiePalette : localPalette || cookiePalette || "ensemble";
   root.dataset.font = raw.font || "system";
   root.dataset.sidebarAuto = String(!!raw.sidebarAutoCollapse);
-  if (raw.textScale) root.style.fontSize = `${raw.textScale}%`;
+  if (raw.textScale) root.style.setProperty("--text-scale", String(Math.max(80, Math.min(130, raw.textScale)) / 100));
   const osReduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
   root.dataset.motionTheme = "expressive";
   root.dataset.reduceMotion = String(!!raw.reduceMotion || osReduce);

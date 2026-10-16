@@ -21,11 +21,12 @@ async function settle() {
   for (let i = 0; i < 6; i += 1) await act(async () => new Promise((resolve) => setTimeout(resolve, 10)));
 }
 
-async function mount() {
+async function mount(initialPassword = true) {
   const writes: Array<{ method: string; path: string; body: unknown }> = [];
   let name = "Mira Chen";
   const realFetch = globalThis.fetch;
-  const me = () => ({ user: { id: "u1", email: "mira@fieldnote.example", name, emailVerified: true, hasPassword: true, profile: PROFILE }, via: "session", spaceId: "u1" });
+  let hasPassword = initialPassword;
+  const me = () => ({ user: { id: "u1", email: "mira@fieldnote.example", name, emailVerified: true, hasPassword, profile: PROFILE }, via: "session", spaceId: "u1" });
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const path = String(input).replace(/^https?:\/\/[^/]+/, "");
     const method = init?.method ?? "GET";
@@ -37,6 +38,7 @@ async function mount() {
         name = (body as { name: string }).name;
         return reply({ user: me().user, profile: PROFILE });
       }
+      if (path === "/api/auth/me" && (body as { password?: string }).password) hasPassword = true;
       return reply({ user: me().user });
     }
     if (path === "/api/auth/me") return reply(me());
@@ -53,7 +55,7 @@ async function mount() {
   return {
     host,
     writes,
-    field: (label: string) => host.querySelector<HTMLInputElement>(`#${CSS.escape(Array.from(host.querySelectorAll("label")).find((node) => node.textContent === label)!.htmlFor)}`)!,
+    field: (label: string) => document.querySelector<HTMLInputElement>(`#${CSS.escape(Array.from(document.querySelectorAll("label")).find((node) => node.textContent === label)!.htmlFor)}`)!,
     done: async () => {
       await act(async () => root.unmount());
       host.remove();
@@ -68,7 +70,8 @@ const CSS = { escape: (value: string) => value.replace(/([^a-zA-Z0-9_-])/g, "\\$
 test("changing the password needs it typed twice, shows the rule first, and a double click sends it once", async () => {
   const view = await mount();
   try {
-    const form = view.host.querySelector<HTMLFormElement>("[data-password-form]")!;
+    await act(async () => Array.from(view.host.querySelectorAll("button")).find(button => button.textContent === "Change password")!.click());
+    const form = document.querySelector<HTMLFormElement>("[data-password-form]")!;
     assert.match(form.textContent ?? "", /At least 8 characters/);
     assert.ok(form.querySelector('button[aria-label="Show new password"]'), "each field can be shown");
     const submit = () => act(async () => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
@@ -102,7 +105,7 @@ test("changing the password needs it typed twice, shows the rule first, and a do
     await settle();
     assert.deepEqual(view.writes.map((row) => `${row.method} ${row.path}`), ["PATCH /api/auth/me"]);
     assert.deepEqual(view.writes[0]!.body, { password: "a-new-password-1", current: "test-password-only-123" });
-    assert.equal(view.field("New password").value, "");
+    assert.equal(document.querySelector("[data-password-form]"), null, "successful save closes the dialog");
     assert.equal(hasUnsaved(), false);
   } finally {
     await view.done();
@@ -130,4 +133,32 @@ test("Save profile waits for a change, marks it unsaved, and a double click save
   } finally {
     await view.done();
   }
+});
+
+test("a social-only account adds its first password in a dialog and then requires current password", async () => {
+  const view = await mount(false);
+  try {
+    await act(async () => Array.from(view.host.querySelectorAll("button")).find(button => button.textContent === "Add a password")!.click());
+    assert.equal(Array.from(document.querySelectorAll("label")).some(label => label.textContent === "Current password"), false);
+    await act(async () => { typeInput(view.field("New password"), "a-new-password-1"); typeInput(view.field("Confirm new password"), "a-new-password-1"); });
+    await act(async () => document.querySelector<HTMLFormElement>("[data-password-form]")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })));
+    await settle();
+    assert.deepEqual(view.writes[0]!.body, { password: "a-new-password-1" });
+    await act(async () => Array.from(view.host.querySelectorAll("button")).find(button => button.textContent === "Change password")!.click());
+    assert.ok(view.field("Current password"));
+    assert.equal(document.querySelectorAll('[data-password-form] input[type="password"]').length, 3);
+  } finally { await view.done(); }
+});
+
+test("Settings sign out confirms first and Cancel keeps the session", async () => {
+  const view = await mount();
+  try {
+    assert.doesNotMatch(view.host.textContent!, /Switching back does not delete tasks/);
+    await act(async () => [...view.host.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "Sign out")!.click());
+    assert.match(document.querySelector('[role="dialog"]')!.textContent!, /Sign out of Ensemble\?/);
+    assert.equal(view.writes.length, 0);
+    await act(async () => [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')].find(button => button.textContent === "Cancel")!.click());
+    assert.equal(document.querySelector('[role="dialog"]'), null);
+    assert.equal(view.writes.length, 0);
+  } finally { await view.done(); }
 });

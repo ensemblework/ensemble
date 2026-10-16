@@ -444,7 +444,9 @@ test("the web cannot set run-branch push, and log caps hold", async (t) => {
       headers: cookie(session),
       payload: { runBranchPush: true },
     });
-    assert.equal(webPatch.statusCode, 404);
+    assert.equal(webPatch.statusCode, 400);
+    const unchanged = await app.inject({ method: "GET", url: "/api/devices", headers: cookie(session) });
+    assert.equal(unchanged.json().devices.find((row: { id: string }) => row.id === win.device.id).runBranchPush, false);
     const webAssign = await app.inject({
       method: "POST",
       url: "/api/agent/assign",

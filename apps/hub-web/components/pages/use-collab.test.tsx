@@ -94,7 +94,7 @@ function serve(answer: () => Answer, trashed: () => boolean = () => false, accou
     }
     return json({ error: "not mocked" }, 404);
   }) as typeof fetch;
-  return { posted, joins: () => joins, restore: () => (globalThis.fetch = realFetch) };
+  return { posted, joins: () => joins, externalStep: (step: unknown) => { current = applySteps(current, [step]); log.push(step); ids.push("server"); version++; }, restore: () => (globalThis.fetch = realFetch) };
 }
 
 async function waitFor(check: () => boolean, label: string, timeout = 8000) {
@@ -254,4 +254,17 @@ test("a draft is found after a reload whether or not the app's shell loaded firs
     await page.done();
     server.restore();
   }
+});
+
+
+test("restoring history fetches the new writing even without a live stream", async () => {
+  sessionStorage.clear();
+  const server = serve(() => "ok"), view = await mount();
+  try {
+    assert.equal(view.editor.getText(), "Agenda");
+    server.externalStep({ stepType: "replace", from: 1, to: 7, slice: { content: [{ type: "text", text: "Restored agenda" }] } });
+    await act(async () => window.dispatchEvent(new window.CustomEvent("ensemble:page", { detail: { id: "p1", action: "restore" } })));
+    await waitFor(() => view.editor.getText() === "Restored agenda", "restored writing without an SSE frame");
+    assert.equal(server.posted.length, 0);
+  } finally { await view.done(); server.restore(); }
 });

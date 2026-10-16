@@ -193,16 +193,7 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
       <div className="px-2 pb-2 pt-3">
         <SpaceSwitcher />
       </div>
-      <button
-        type="button"
-        className="sidebar-search mx-2 mb-3 flex items-center gap-2 rounded-lg border border-line bg-panel/80 px-2.5 py-1.5 text-left text-[12.5px] text-muted hover:border-line-strong hover:text-ink"
-        title="Jump to…"
-        aria-label="Jump to"
-        onClick={() => window.dispatchEvent(new CustomEvent("ensemble:palette"))}
-      >
-        <span className="sidebar-label flex-1">Jump to…</span>
-        <span className="sidebar-label kbd">{mod === "⌘" ? "⌘K" : "Ctrl+K"}</span>
-      </button>
+
       <div className="min-h-0 flex-1 overflow-y-auto pb-3">
       {guest ? null : (
         <nav className="flex flex-col gap-0.5 px-2" aria-label="Primary">

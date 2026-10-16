@@ -1,3 +1,4 @@
+import { ensureMorningSkill } from "../cowork/morning-skill.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { PageDocument } from "@ensemble/shared-types";
@@ -44,6 +45,28 @@ export async function coworkRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/brief/today", async (request) => deliverMorningBrief(db, request.userId));
 
   app.post("/api/brief/deliver", async (request) => deliverMorningBrief(db, request.userId));
+
+  app.get("/api/brief/skill", async (request) => {
+    const skill = await ensureMorningSkill(db, request.userId);
+    const notification = await db.notification.findFirst({ where: { userId: request.userId, kind: "morning_brief" }, orderBy: { createdAt: "desc" } });
+    const scope = skill.scope as { customized?: boolean } | null;
+    return { skill: { id: skill.id, body: skill.body }, notification, customize: Boolean(notification && !skill.deletedAt && !scope?.customized) };
+  });
+
+  app.patch("/api/brief/skill", async (request) => {
+    const { instructions } = z.object({ instructions: z.string().trim().min(1).max(20_000) }).parse(request.body);
+    const initial = await ensureMorningSkill(db, request.userId);
+    const body = `# My morning brief\n\n${instructions}\n\nUse only the supplied context. Never invent tasks or facts. Do not send anything to anyone.\n`;
+    const skill = await db.$transaction(async (tx) => {
+      const current = await tx.skill.findUniqueOrThrow({ where: { id: initial.id } });
+      const next = await tx.skill.update({ where: { id: initial.id }, data: { body, scope: { purpose: "morning-brief", customized: true }, version: { increment: 1 }, enabled: true, deletedAt: null } });
+      await tx.skillVersion.create({ data: { skillId: next.id, version: current.version + 1, body, note: "Personal morning brief preferences" } });
+      const stale = await tx.skillVersion.findMany({ where: { skillId: next.id }, orderBy: { version: "desc" }, skip: 3, select: { id: true } });
+      await tx.skillVersion.deleteMany({ where: { id: { in: stale.map((row) => row.id) } } });
+      return next;
+    });
+    return { skill };
+  });
 
   app.post("/api/capture/preview", async (request) => {
     const body = textBody.parse(request.body);

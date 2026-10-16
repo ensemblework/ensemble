@@ -1,3 +1,4 @@
+import { sharePreviews } from "./previews.js";
 import { z } from "zod";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { requireBrowserSession } from "../bridge/auth.js";
@@ -87,6 +88,7 @@ export async function sharingRoutes(app: FastifyInstance): Promise<void> {
       prisma.spaceTransfer.findMany({ where: { spaceId: { in: spaces } }, select: { spaceId: true, createdAt: true } }),
       sharedWithMe(prisma, account),
     ]);
+    const preview = await sharePreviews(prisma, items);
     const transferred = new Map(transfers.map((row) => [row.spaceId, row.createdAt.toISOString()]));
     const ordered = [...rows].sort((a, b) => (a.ownerId ? 1 : 0) - (b.ownerId ? 1 : 0) || a.createdAt.getTime() - b.createdAt.getTime());
     const owned = [];
@@ -109,7 +111,8 @@ export async function sharingRoutes(app: FastifyInstance): Promise<void> {
         .map((row) => ({
           id: row.id,
           kind: row.kind,
-          title: row.title || "Untitled",
+          title: preview(row)?.title ?? (row.title || "Untitled"),
+          excerpt: preview(row)?.excerpt ?? "",
           role: row.role === "edit" ? "edit" : "view",
           spaceId: row.spaceId,
           resourceId: row.resourceId,

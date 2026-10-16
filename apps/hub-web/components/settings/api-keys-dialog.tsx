@@ -2,6 +2,7 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
+import { ASSISTANT_UNAVAILABLE, assistantErrorText } from "@ensemble/shared-types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUpRight, Check, CircleAlert, CircleCheck, Eye, EyeOff, KeyRound, Search, SlidersHorizontal, Trash2, X, Zap } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -287,7 +288,7 @@ export function ApiKeysDialog({ open, onClose, settings, patch }: { open: boolea
     onSuccess: (next) => {
       client.setQueryData(["models"], next);
       void client.invalidateQueries({ queryKey: ["model-keys"] });
-      toast(next.runtime ? "Model lists refreshed." : (next.error ?? "The model runtime is not running."), { tone: next.runtime ? "ok" : "error" });
+      toast(next.runtime ? "Model lists refreshed." : (assistantErrorText(next.error ?? ASSISTANT_UNAVAILABLE)), { tone: next.runtime ? "ok" : "error" });
     },
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
@@ -317,8 +318,8 @@ export function ApiKeysDialog({ open, onClose, settings, patch }: { open: boolea
             <p className="mt-0.5 text-[12.5px] text-muted">For people who have API keys. With a Claude, ChatGPT, Cursor or Copilot plan you don't need one: use Your AI subscriptions instead.</p>
           </div>
           <div className="flex shrink-0 items-center gap-1">
-            <button type="button" className="btn hidden sm:inline-flex" onClick={() => refresh.mutate()} disabled={refresh.isPending}>
-              <FetchGlyph active={refresh.isPending || catalog.isFetching} size={12} /> Refresh model lists
+            <button type="button" className="btn" onClick={() => refresh.mutate()} disabled={refresh.isPending}>
+              <FetchGlyph active={refresh.isPending || catalog.isFetching} size={12} /> {catalog.data?.runtime === false ? "Retry" : "Refresh model lists"}
             </button>
             <button type="button" className="icon-btn" onClick={onClose} aria-label="Close">
               <X size={15} />

@@ -138,11 +138,12 @@ export async function mirrorAccount(db: Db, accountId: string): Promise<void> {
 }
 
 export async function createSpaceUser(db: Db, accountId: string, input: { name: string; icon: string | null }): Promise<string> {
-  const account = await db.user.findUniqueOrThrow({ where: { id: accountId }, select: { ...MIRRORED, ownerId: true } });
+  const account = await db.user.findUniqueOrThrow({ where: { id: accountId }, select: { ...MIRRORED, ownerId: true, spaceName: true } });
   if (account.ownerId) throw Object.assign(new Error("Spaces belong to an account, not to another space."), { statusCode: 400 });
   const count = await db.user.count({ where: { ownerId: accountId } });
   if (count + 1 >= MAX_SPACES) throw Object.assign(new Error(`You can have up to ${MAX_SPACES} spaces. Delete one to make room.`), { statusCode: 409 });
-  const { ownerId: _owner, ...fields } = account;
+  if (!account.spaceName) await db.user.update({ where: { id: accountId }, data: { spaceName: defaultSpaceName(account.name) } });
+  const { ownerId: _owner, spaceName: _spaceName, ...fields } = account;
   const row = await db.user.create({
     data: {
       ...fields,

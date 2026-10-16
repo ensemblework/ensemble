@@ -212,12 +212,13 @@ test("remote tasks: pair, run, refuse a server overreach, disconnect, and do not
 
     const remoteSlow = "[slow] Remote revoke";
     const localSlow = "[slow] Local keeps going";
+    const localSource = makeSourceRepo(join(root, "independent-local"));
     const remoteHosted = host.enqueue(spec(remoteSlow));
     await until("the remote slow job starts", async () => (stub.calls.get(remoteSlow) ?? 0) > 0);
     const created = await side.api<{ task: { id: string } }>("/api/tasks", { json: { title: localSlow } });
     assert.equal(created.status, 201);
     const assigned = await side.api<{ jobId: string }>("/api/agent/assign", {
-      json: { taskId: created.body.task.id, kind: "code", provider: "openai", model: "stub-model", repoUrl: source, delivery: "local" },
+      json: { taskId: created.body.task.id, kind: "code", provider: "openai", model: "stub-model", repoUrl: localSource, delivery: "local" },
     });
     assert.equal(assigned.status, 201, JSON.stringify(assigned.body));
     await until("the local slow job starts", async () => (stub.calls.get(localSlow) ?? 0) > 0);
@@ -412,10 +413,11 @@ test("a closed event stream that 401s on reconnect, a 403, or a device.revoked f
     await enable();
 
     const localSlow = "[slow] Local keeps going";
+    const localSource = makeSourceRepo(join(root, "independent-local"));
     const created = await side.api<{ task: { id: string } }>("/api/tasks", { json: { title: localSlow } });
     assert.equal(created.status, 201);
     const assigned = await side.api("/api/agent/assign", {
-      json: { taskId: created.body.task.id, kind: "code", provider: "openai", model: "stub-model", repoUrl: source, delivery: "local" },
+      json: { taskId: created.body.task.id, kind: "code", provider: "openai", model: "stub-model", repoUrl: localSource, delivery: "local" },
     });
     assert.equal(assigned.status, 201, JSON.stringify(assigned.body));
     await until("the local slow job starts", async () => ((stub.calls.get(localSlow) ?? 0) > 0 ? true : null));

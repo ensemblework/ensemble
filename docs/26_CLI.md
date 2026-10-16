@@ -168,3 +168,9 @@ Not run yet: `install.ps1` and Scoop on a real Windows machine (Windows PowerShe
 ## Shared identity and motion
 
 The terminal identity is `[e] Ensemble` with Satin Gold accents. The status row uses a four-cell braille infinity while a chat or task is running (`apps/cli/src/tui/brand.tsx`, `packages/brand/cli.js`), at 8 fps without rerendering the whole React app. Idle has no timer. Redirected output and `TERM=dumb` use a still ASCII marker; `NO_COLOR` suppresses brand color; truecolor terminals use `#D7B56F`, others ANSI yellow. Set `ENSEMBLE_REDUCE_MOTION=1` to keep the marker still. Errors, queued work and human decisions retain explicit text.
+
+## Connection lifetime and automatic editor setup (16 Oct 2026)
+
+Code inspection: `ensemble logout` revokes the CLI key and unpairs the local runtime. `ensemble runner uninstall` also signs out before removing the service. A packaged CLI passes its launcher path as `ENSEMBLE_INSTALL_PATH`; a surviving runtime detects removal on its next remote heartbeat and stops/forgets remote access.
+
+When Ensemble hands a task to an installed editor, `workspace/editor-hooks.ts` creates a scoped hook token if needed and installs the hook before opening that task. VS Code receives its project hook automatically. Settings does not ask people to run hook setup commands. Only the handoff’s marker or already linked session sends questions to Needs me; other editor sessions, including those in the same folder, stay in that editor.

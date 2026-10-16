@@ -34,7 +34,7 @@ const CreateBody = z.object({
     .default({ mode: "copy" }),
 });
 
-const nameKey = (name: string) => name.normalize("NFC").trim().replace(/\s+/g, " ").toLowerCase();
+const nameKey = (name: string) => name.normalize("NFKC").trim().replace(/\s+/g, " ").toLowerCase();
 
 /** Two spaces with one name could not be told apart in the switcher or in Settings › Spaces. */
 async function refuseTakenName(db: Prisma.TransactionClient, accountId: string, name: string, except?: string): Promise<void> {

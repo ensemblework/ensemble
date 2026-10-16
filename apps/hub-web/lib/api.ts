@@ -968,6 +968,7 @@ export type AssistantMessageRecord = {
   toolCalls: AssistantToolCallRecord[];
   model: string | null;
   createdAt: string;
+  credentialSource?: string | null;
 };
 
 /** A computer the person's AI subscriptions run on, and the agents it found. */
@@ -1340,6 +1341,9 @@ export const api = bindClient({
   // skills
   skills: () => get<{ skills: SkillRecord[] }>("/api/skills"),
   skill: (id: string) => get<{ skill: SkillRecord }>(`/api/skills/${id}`),
+  morningBriefSkill: () => get<{ skill: { id: string; body: string }; notification: HubNotification | null; customize: boolean }>("/api/brief/skill"),
+  saveMorningBriefSkill: (instructions: string) => patch("/api/brief/skill", { instructions }),
+  testSkill: (id: string, prompt?: string) => post<{ title: string; body: string }>(`/api/skills/${id}/test`, { prompt }),
   createSkill: (name: string) => post<{ skill: SkillRecord }>("/api/skills", { name }),
   patchSkill: (id: string, data: Record<string, unknown>) => patch<{ skill: SkillRecord }>(`/api/skills/${id}`, data),
   deleteSkill: (id: string) => del<void>(`/api/skills/${id}`),
@@ -1387,6 +1391,7 @@ export const api = bindClient({
   checkSubscriptions: (deviceId: string) => post<{ sent?: boolean; agents?: SubscriptionAgent[] }>("/api/subscriptions/check", { deviceId }),
   signInSubscription: (deviceId: string, agent: SubscriptionProvider) => post<{ message: string }>("/api/subscriptions/sign-in", { deviceId, agent }),
   pairDevice: () => post<{ code: string; expiresAt: string }>("/api/devices/pair", {}),
+  renameDevice: (id: string, name: string) => patch(`/api/devices/${id}`, { name }),
   revokeDevice: (id: string) => del<void>(`/api/devices/${id}`),
   stopJob: (id: string) => post(`/api/agent/jobs/${id}/stop`),
   retryJob: (id: string) => post<{ jobId: string }>(`/api/agent/jobs/${id}/retry`),
@@ -1674,6 +1679,14 @@ export const api = bindClient({
   updateDiagram: (id: string, body: { source?: string; title?: string; version: number }) =>
     patch<{ diagram: DiagramDetail }>(`/api/diagrams/${id}`, body),
   deleteDiagram: (id: string) => del<void>(`/api/diagrams/${id}`),
+  pageVersions: (kind: "page" | "task", id: string) => get<{ revision: number; updatedAt: string | null; versions: Array<{ id: string; revision: number; title: string; createdAt: string; author: string }> }>(`/api/page-versions?kind=${kind}&id=${encodeURIComponent(id)}`),
+  pageVersion: (id: string) => get<{ version: { id: string; title: string; content: PageDocument; markdown: string } }>(`/api/page-versions/${id}`),
+  restorePageVersion: (id: string, revision: number, updatedAt: string) => post<{ restored: { id: string } }>(`/api/page-versions/${id}/restore`, { revision, updatedAt }),
+  duplicatePage: (id: string) => post<{ page: { id: string; title: string } }>(`/api/pages/${id}/duplicate`, {}),
+  savePageTemplate: (id: string, title: string) => post<{ template: { id: string; title: string } }>(`/api/pages/${id}/template`, { title }),
+  pageTemplates: () => get<{ profile: string; templates: Array<{ id: string; title: string; createdAt: string }> }>("/api/page-templates"),
+  pageFromTemplate: (id: string) => post<{ page: { id: string; title: string } }>(`/api/page-templates/${id}/create`, {}),
+  deletePageTemplate: (id: string) => del<void>(`/api/page-templates/${id}`),
   diagramRevisions: (id: string) =>
     get<{ current: { version: number; title: string; updatedAt: string }; revisions: Array<{ version: number; title: string; createdAt: string }> }>(
       `/api/diagrams/${id}/revisions`,
@@ -1826,13 +1839,13 @@ export type SpaceMembers = {
 };
 export type ItemShare = { id: string; person: SharingPerson & { email: string }; role: ItemRole; createdAt: string };
 export type SharedSpace = { id: string; name: string; icon: string | null; owner: SharingPerson; role: MemberRole; since: string };
-export type SharedItem = { id: string; kind: ShareKind; title: string; role: ItemRole; owner: SharingPerson; spaceName: string; since: string; openedAt: string | null };
+export type SharedItem = { id: string; kind: ShareKind; title: string; excerpt?: string; role: ItemRole; owner: SharingPerson; spaceName: string; since: string; openedAt: string | null };
 export type SharedWithMe = { spaces: SharedSpace[]; items: SharedItem[] };
 export type SharingOverview = {
   limits: { contacts: number; members: number };
   contacts: SharingContact[];
   spaces: Array<{ id: string; name: string; icon: string | null; primary: boolean; members: SpaceMember[]; transferredAt: string | null }>;
-  items: Array<{ id: string; kind: ShareKind; title: string; role: ItemRole; spaceId: string; resourceId: string; createdAt: string; person: SharingPerson }>;
+  items: Array<{ id: string; kind: ShareKind; title: string; excerpt?: string; role: ItemRole; spaceId: string; resourceId: string; createdAt: string; person: SharingPerson }>;
   withMe: SharedWithMe;
 };
 export type OpenedShare = { id: string; kind: ShareKind; resourceId: string; title: string; role: ItemRole; spaceId: string; owner: SharingPerson };

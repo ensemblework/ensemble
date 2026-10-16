@@ -158,9 +158,8 @@ export const SETTINGS_MAP: readonly SettingsMapEntry[] = [
   ]),
   ...group("assistant", "Autonomy", [
     { id: "autonomy.level", label: "Autonomy level", keywords: "autonomy ask review only unattended delegate", about: "The default for newly delegated tasks.", href: at("assistant", "jump-autonomy-autonomy-level") },
-    { id: "autonomy.high-risk-limit", label: "Daily high-risk write limit", keywords: "high risk limit brake sends", about: "Beyond this, unattended sends ask you first.", href: at("assistant", "jump-autonomy-daily-high-risk-write-limit") },
+    { id: "autonomy.high-risk-limit", label: "Daily action safety limit", keywords: "high risk limit brake sends", about: "Beyond this, unattended sends ask you first.", href: at("assistant", "jump-autonomy-daily-action-safety-limit") },
     { id: "autonomy.run-without-asking", label: "Run commands in the Ensemble workspace without asking", keywords: "run without asking trusted folder commands approval", about: "Commands in the trusted workspace folder run without an Allow prompt.", href: at("assistant", "jump-autonomy-run-commands-in-the-ensemble-workspace-without-asking") },
-    { id: "autonomy.place-by-priority", label: "Place new tasks by priority", keywords: "board order priority placement new tasks", about: "New tasks land on the board by priority instead of at the end.", href: at("assistant", "jump-autonomy-place-new-tasks-by-priority"), key: "orchestration.placeByPriority", rule: bool },
     { id: "autonomy.trust-sharing", label: "Trust folders in your other AI tools too", keywords: "trust folders claude code codex cursor share trust", about: "Desktop app and CLI: folders you trust here are trusted in those tools.", href: at("assistant", "autonomy") },
   ]),
   ...group("assistant", "Orchestration", [
@@ -193,11 +192,11 @@ export const SETTINGS_MAP: readonly SettingsMapEntry[] = [
   ...group("connections", "Editors & agents", [
     { id: "editors.connect", label: "Editors & agents", keywords: "editor vscode cursor claude code codex copilot mcp hooks connect", about: "Connect an editor or AI app to Ensemble (MCP and hooks).", href: at("connections", "jump-editors-editors-agents"), ownerOnly: true },
     { id: "editors.token", label: "Personal token", keywords: "api token personal token hooks credentials", about: "Tokens for hooks and scripts.", href: at("connections", "jump-editors-personal-token"), ownerOnly: true },
-    { id: "editors.requests", label: "Which sessions come to Needs me", keywords: "needs me editor sessions prompts hooks", about: "Only tasks Ensemble opened, or every editor session.", href: at("connections", "editors"), ownerOnly: true },
+    { id: "editors.requests", label: "Which sessions come to Needs me", keywords: "needs me editor sessions prompts hooks", about: "Only tasks Ensemble opened; their connections are set up automatically.", href: at("connections", "editors"), ownerOnly: true },
   ]),
-  ...group("connections", "Devices", [
-    { id: "devices.list", label: "Devices", keywords: "devices paired computers laptop remove", about: "Computers paired to run tasks, with Remove.", href: at("connections", "jump-devices-devices"), ownerOnly: true },
-    { id: "devices.pair", label: "Pair a computer", keywords: "pair computer desktop app cli device", about: "Pair the desktop app or the CLI.", href: at("connections", "jump-devices-pair-a-computer"), ownerOnly: true },
+  ...group("connections", "Connected computers", [
+    { id: "devices.list", label: "Connected computers", keywords: "devices paired computers laptop remove", about: "Computers paired to run tasks, with Remove.", href: at("connections", "jump-devices-connected-computers"), ownerOnly: true },
+    { id: "devices.pair", label: "Connect a computer", keywords: "pair computer desktop app cli device", about: "Install Ensemble and connect with a short-lived code.", href: at("connections", "jump-devices-connect-a-computer"), ownerOnly: true },
   ]),
 
   // ── Notifications ─────────────────────────────────────────────────────────
@@ -210,7 +209,7 @@ export const SETTINGS_MAP: readonly SettingsMapEntry[] = [
     { id: "nudges.days", label: "Days before a quiet nudge", keywords: "nudge days untouched stale", about: "How long an item sits untouched first (1–180 days).", href: at("notifications", "jump-nudges-days-before-a-quiet-nudge"), key: "staleNudge.untouchedDays", rule: { type: "int", min: 1, max: 180 } },
   ]),
   ...group("notifications", "Desktop reminders", [
-    { id: "reminders.desktop", label: "Desktop reminders", keywords: "desktop notifications push browser reminders pop up", about: "Reminders pop up on this computer; the browser must allow notifications.", href: at("notifications", "jump-reminders-show-reminders-as-desktop-notifications"), key: "desktopReminders", rule: bool },
+    { id: "reminders.desktop", label: "Notifications on this device", keywords: "desktop notifications push browser reminders pop up native app", about: "Reminders use browser notifications on the web and native notifications in the desktop app.", href: at("notifications", "jump-reminders-show-reminders-as-desktop-notifications"), key: "desktopReminders", rule: bool },
   ]),
   ...group("notifications", "Quick capture", [
     { id: "capture.shortcut", label: "Quick capture", keywords: "quick capture shortcut reminder anywhere", about: "The shortcut that captures a reminder from anywhere.", href: at("notifications", "jump-capture-quick-capture") },
@@ -247,7 +246,7 @@ export const SETTINGS_MAP: readonly SettingsMapEntry[] = [
     { id: "terminal.sign", label: "Sign commits", keywords: "sign commits gpg signing", about: "Passes -S to git commit.", href: at("data", "jump-terminal-sign-commits"), ownerOnly: true },
   ]),
   ...group("data", "Delete my data", [
-    { id: "data.failed", label: "Failed jobs", keywords: "failed jobs errors retry sync background", about: "Syncs and background jobs that gave up, with Retry.", href: at("data", "jump-failed-failed-jobs"), ownerOnly: true },
+    { id: "data.failed", label: "Updates needing attention", keywords: "failed jobs errors retry sync background", about: "Connected apps that could not finish updating.", href: at("data", "jump-failed-updates-needing-attention"), ownerOnly: true },
     { id: "data.deleted", label: "Deleted items", keywords: "deleted items restore", about: "Items deleted from connected sources.", href: at("data", "jump-deleted-deleted-items"), ownerOnly: true },
     { id: "data.delete", label: "Delete my data", keywords: "delete erase data wipe context", about: "Removes what Ensemble read from your apps, or everything.", href: at("data", "jump-danger-delete-my-data"), ownerOnly: true },
   ]),

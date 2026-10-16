@@ -2,6 +2,7 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
+import { SignOutDialog } from "../account/sign-out";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Keyboard, Layers, LayoutTemplate, LogOut, Moon, MousePointer2, Palette, Plug, Settings, Sparkles, Sun, UserRound } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -76,13 +77,6 @@ export function AccountMenu() {
   const local = via === "bypass" || via === "desktop";
   const name = user?.name?.trim() || (local ? "Local account" : "");
   const initials = personInitials(user?.name, user?.email);
-  const logout = useMutation({
-    mutationFn: api.logout,
-    onSuccess: () => {
-      clearBrowserTabSession();
-      window.location.href = "/login";
-    },
-  });
   const go = (close: () => void, href: string) => {
     close();
     router.push(href);
@@ -147,14 +141,7 @@ export function AccountMenu() {
         </div>
       )}
     </Popover>
-    <Dialog open={confirmLogout} title="Sign out of Ensemble?" onClose={() => { if (!logout.isPending) setConfirmLogout(false); }} width={400}>
-      <p className="text-[14px] text-muted">You can sign back in to continue with your pages and work.</p>
-      {logout.error ? <p role="alert" className="mt-3 text-[13px] text-danger">{(logout.error as Error).message}</p> : null}
-      <div className="mt-5 flex justify-end gap-2">
-        <button type="button" className="btn" disabled={logout.isPending} onClick={() => setConfirmLogout(false)}>Cancel</button>
-        <button type="button" className="btn-primary" disabled={logout.isPending} onClick={() => logout.mutate()}>{logout.isPending ? "Signing out…" : "Sign out"}</button>
-      </div>
-    </Dialog>
+    <SignOutDialog open={confirmLogout} onClose={() => setConfirmLogout(false)} />
     </>
   );
 }
