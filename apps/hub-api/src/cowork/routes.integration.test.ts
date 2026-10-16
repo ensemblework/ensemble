@@ -42,6 +42,8 @@ async function appFor(userId: string) {
     return reply.code(statusCode).send({ error: message });
   });
   await app.register(coworkRoutes);
+  // A live server holds the event loop while optional Redis/model calls settle.
+  await app.listen({ host: "127.0.0.1", port: 0 });
   return app;
 }
 
