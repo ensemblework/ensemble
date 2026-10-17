@@ -34,7 +34,7 @@ export function getAppTool(name: string): AnyHubTool | undefined {
 
 /**
  * App tools offered in one turn, across all sources (built-in suites first, then MCP).
- * With the Hub's own tools this stays under 128, the most functions OpenAI accepts in one request.
+ * The agent advertises routed tools, capped at 128 schemas per model request.
  */
 export const MAX_APP_TOOLS = 64;
 

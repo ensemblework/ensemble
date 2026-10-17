@@ -290,7 +290,7 @@ export const calendarCreateEvent = defineTool({
       method: "POST",
       body: {
         summary: input.title,
-        ...(input.recurrence ? { recurrence: googleRecurrence(input.recurrence) } : {}),
+        ...(input.recurrence ? { recurrence: googleRecurrence(input.recurrence, span.timeZone, span.allDay) } : {}),
         ...(input.description ? { description: input.description } : {}),
         ...(input.location ? { location: input.location } : {}),
         start: eventTime(span, "start"),

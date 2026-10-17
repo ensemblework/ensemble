@@ -62,3 +62,12 @@ test("recurring event schemas and provider mappings preserve weekly weekdays and
  assert.equal(graph.pattern.type, "absoluteMonthly"); assert.equal(graph.pattern.dayOfMonth, 19); assert.equal(graph.range.type, "endDate");
  assert.equal(tool("calendar_create_event").input.safeParse({ title: "Review", start: "2026-10-19T10:00", recurrence: { frequency: "weekly", count: 2, until: "2027-01-01" } }).success, false);
 });
+
+test("all-day Outlook moves use calendar days across DST, and Google recurrence ends in the chosen zone", async () => {
+ await run("outlook_calendar_manage_event", { action: "update", eventId: "event-1", matchTitle: "Review", start: "2026-11-01", end: "2026-11-01", timeZone: "America/Los_Angeles" });
+ const patch = seen.find(row => row.method === "PATCH")!;
+ assert.equal(patch.body.start.dateTime, "2026-11-01T07:00:00.000");
+ assert.equal(patch.body.end.dateTime, "2026-11-02T08:00:00.000");
+ assert.deepEqual(googleRecurrence({ frequency: "daily", interval: 1, until: "2026-11-01" }, "America/Los_Angeles"), ["RRULE:FREQ=DAILY;INTERVAL=1;UNTIL=20261102T075959Z"]);
+ assert.deepEqual(googleRecurrence({ frequency: "daily", interval: 1, until: "2026-11-01" }, "America/Los_Angeles", true), ["RRULE:FREQ=DAILY;INTERVAL=1;UNTIL=20261101"]);
+});

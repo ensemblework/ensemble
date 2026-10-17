@@ -1,15 +1,17 @@
 import { calendarReceipt } from "./calendar-receipts.js";
 import { z } from "zod";
 import { defineTool, toolOk, type ToolContext } from "../types.js";
-import { appFetch, appToken, emailList, eventSpan, spanStartInstant, When } from "./apps-common.js";
+import { appFetch, appToken, emailList, eventSpan, spanStartInstant, When, addDays } from "./apps-common.js";
+import { zonedDateTimeToUtc } from "../../lib/clock.js";
 import { CALENDAR_API, CALENDAR_READ, CALENDAR_WRITE } from "./google/meta.js";
 import { GRAPH, OUTLOOK_CALENDAR_READ, OUTLOOK_CALENDAR_WRITE } from "./microsoft/meta.js";
 
 const Repeat = z.object({ frequency: z.enum(["daily", "weekly", "monthly", "yearly"]), interval: z.number().int().min(1).max(99).default(1), weekdays: z.array(z.enum(["MO", "TU", "WE", "TH", "FR", "SA", "SU"])).max(7).optional(), count: z.number().int().min(1).max(500).optional(), until: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() }).refine(row => !(row.count && row.until), "Choose count or until.");
 export const CalendarRepeat = Repeat;
 const DAYS = { MO: "monday", TU: "tuesday", WE: "wednesday", TH: "thursday", FR: "friday", SA: "saturday", SU: "sunday" };
-export function googleRecurrence(input: z.infer<typeof Repeat>): string[] {
-  return [`RRULE:FREQ=${input.frequency.toUpperCase()};INTERVAL=${input.interval}${input.weekdays?.length ? `;BYDAY=${input.weekdays.join(",")}` : ""}${input.count ? `;COUNT=${input.count}` : input.until ? `;UNTIL=${input.until.replaceAll("-", "")}T235959Z` : ""}`];
+export function googleRecurrence(input: z.infer<typeof Repeat>, timeZone = "UTC", allDay = false): string[] {
+  const until = input.until ? allDay ? input.until.replaceAll("-", "") : new Date(zonedDateTimeToUtc(input.until, "23:59", timeZone).getTime() + 59000).toISOString().replace(/[-:]|\.\d{3}/g, "") : null;
+  return [`RRULE:FREQ=${input.frequency.toUpperCase()};INTERVAL=${input.interval}${input.weekdays?.length ? `;BYDAY=${input.weekdays.join(",")}` : ""}${input.count ? `;COUNT=${input.count}` : until ? `;UNTIL=${until}` : ""}`];
 }
 export function outlookRecurrence(input: z.infer<typeof Repeat>, date: string, timeZone: string) {
   const at = new Date(`${date}T12:00:00Z`);
@@ -72,9 +74,9 @@ function toolsFor(provider: "google" | "microsoft") {
         if (input.start) {
           const span = eventSpan(input.start, input.end, input.timeZone ?? ctx.settings.timezone);
           if (google) { body.start = span.allDay ? { date: span.start.date } : { dateTime: `${span.start.date}T${span.start.time}:00`, timeZone: span.timeZone }; body.end = span.allDay ? { date: new Date(Date.parse(`${span.end.date}T00:00:00Z`) + 86400000).toISOString().slice(0, 10) } : { dateTime: `${span.end.date}T${span.end.time}:00`, timeZone: span.timeZone }; }
-          else { body.start = { dateTime: spanStartInstant(span).toISOString().replace("Z", ""), timeZone: "UTC" }; const end = eventSpan(`${span.end.date}${span.end.time ? `T${span.end.time}` : ""}`, undefined, span.timeZone); body.end = { dateTime: new Date(spanStartInstant(end).getTime() + (span.allDay ? 86400000 : 0)).toISOString().replace("Z", ""), timeZone: "UTC" }; body.isAllDay = span.allDay; }
+          else { body.start = { dateTime: spanStartInstant(span).toISOString().replace("Z", ""), timeZone: "UTC" }; const end = eventSpan(`${span.allDay ? addDays(span.end.date, 1) : span.end.date}${span.end.time ? `T${span.end.time}` : ""}`, undefined, span.timeZone); body.end = { dateTime: spanStartInstant(end).toISOString().replace("Z", ""), timeZone: "UTC" }; body.isAllDay = span.allDay; }
         }
-        if (input.recurrence !== undefined) body.recurrence = google ? input.recurrence ? googleRecurrence(input.recurrence) : [] : input.recurrence ? outlookRecurrence(input.recurrence, input.start?.slice(0, 10) ?? event.start?.dateTime?.slice(0, 10), input.timeZone ?? ctx.settings.timezone) : null;
+        if (input.recurrence !== undefined) body.recurrence = google ? input.recurrence ? googleRecurrence(input.recurrence, input.timeZone ?? ctx.settings.timezone, Boolean((body.start as { date?: string } | undefined)?.date ?? event.start?.date)) : [] : input.recurrence ? outlookRecurrence(input.recurrence, input.start?.slice(0, 10) ?? event.start?.dateTime?.slice(0, 10), input.timeZone ?? ctx.settings.timezone) : null;
         if (!Object.keys(body).length) throw new Error("Send the event fields to change.");
         const updated = await appFetch<Record<string, any>>(ctx, write, token, google ? `${url}?sendUpdates=all` : url, { method: "PATCH", body, headers: (event.etag ?? event["@odata.etag"]) ? { "If-Match": event.etag ?? event["@odata.etag"] } : {} });
         const hubEventId = await calendarReceipt(ctx, provider, { ...event, ...body, ...updated });
