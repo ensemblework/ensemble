@@ -250,3 +250,16 @@ test("an explicitly created calendar event is visible in Ensemble and can anchor
   const note = await run(u, "hub_create_meeting_note", { eventId: data.hubEventId, notes: "Agenda and next steps." }); assert.ok((note.data as any).id);
  } finally { globalThis.fetch = originalFetch; setAppTokenResolverForTests(null); }
 });
+
+test("relationship previews resolve real targets and reject unavailable apps before Apply", async () => {
+ const u = await h.asUser(); const outsider = await h.asUser();
+ const project = await h.prisma.project.create({ data: { userId: u.id, name: "Launch" } });
+ const foreign = await h.prisma.task.create({ data: { userId: outsider.id, title: "Private task" } });
+ const tool = getTool("hub_manage_app_relationship")!;
+ await assert.rejects(async () => tool.preview!(context(u), tool.input.parse({ action: "attach", source: "notion", kind: "page", id: "source-page", taskId: foreign.id })), /Task not found/);
+ await assert.rejects(async () => tool.preview!(context(u), tool.input.parse({ action: "import_people", source: "notion" })), /not ready/);
+ const preview = await tool.preview!(context(u), tool.input.parse({ action: "link_project", source: "jira", containerId: "LAUNCH", containerName: "Launch tracker", projectId: project.id }));
+ assert.match(preview, /project “Launch”/); assert.match(preview, /jira “Launch tracker”/);
+ await assert.rejects(async () => tool.preview!(context(u), tool.input.parse({ action: "link_project", source: "atlassian", containerId: "LAUNCH", projectId: project.id })), /Project source links use.*jira/);
+ const sources = (await run(u, "hub_list_app_relationships", { view: "project_containers" })).data as any; assert.ok(sources.linkSources.includes("jira"));
+});
