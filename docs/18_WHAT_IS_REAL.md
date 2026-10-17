@@ -624,3 +624,5 @@ PostgreSQL follow-up, checked 17 Oct 2026: the page-history/template migration f
 - The floating assistant stays above panels/dialogs and drags freely with a saved position. Agent symbols use Ensemble’s own woven agent mark from `packages/brand`.
 - Older password sessions can confirm deletion/unlink with a password. Shared access removal confirms first; sharing previews have excerpts/dates. Existing time zones switch to automatic detection once on upgrade; subsequent manual choices are retained.
 - Skill-mining review, one-time profession changes, unified permissions and further meeting-note improvements are **written designs**, not shipped controls: [design](design/real-world-next.md). Prompt wording was tightened while retaining gates, factual grounding and structured outputs; Settings describes actual prompt usage. Model-output quality still needs real-world evaluation; local tests do not prove model equivalence.
+
+Intel Mac installer packaging uses a directly created, verified APFS image after Tauri builds the app and signed updater archive. This is a packaging repair for the current release; application code, data and release version are unchanged.
