@@ -275,7 +275,8 @@ export function GraphTab({ compact = false, contextTabs, mockServices = [], cont
 
   const nodes = useMemo(() => {
     const base = (devGraph?.nodes ?? apiNodes).filter(node => !contextTabs || node.kind !== "repo" || contextTabs.includes("Repos"));
-    return [...base, ...contextNodes.filter(node => !base.some(row => row.id === node.id)), ...mockServices.map(row => ({ id: `mock:${row.id}`, kind: "mock", label: row.name, sub: row.detail }))];
+    const combined = [...base, ...contextNodes.filter(node => !base.some(row => row.id === node.id)), ...mockServices.map(row => ({ id: `mock:${row.id}`, kind: "mock", label: row.name, sub: row.detail }))];
+    return [...new Map(combined.map(node => [node.id, node])).values()];
   }, [devGraph, apiNodes, contextTabs, contextNodes, mockServices]);
   const edges = useMemo(() => (devGraph?.edges ?? apiEdges).filter(edge => nodes.some(node => node.id === edge.source) && nodes.some(node => node.id === edge.target)), [devGraph, apiEdges, nodes]);
   const scoped = useMemo(() => {
