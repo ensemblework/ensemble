@@ -34,7 +34,7 @@ export function getAppTool(name: string): AnyHubTool | undefined {
 
 /**
  * App tools offered in one turn, across all sources (built-in suites first, then MCP).
- * With the Hub's own tools this stays under 128, the most functions OpenAI accepts in one request.
+ * The agent advertises routed tools, capped at 128 schemas per model request.
  */
 export const MAX_APP_TOOLS = 64;
 
@@ -70,7 +70,7 @@ export interface AppGrant {
 
 /** Which suites this person connected. Reads the non-secret columns only. */
 /** Hub tools that reach the owner's private surfaces: reminders, connector syncs, repository links. */
-const OWNER_TOOLS = new Set(["hub_import_meeting_notes", "hub_fetch_now", "hub_link_repo", "hub_unlink_repo", "hub_create_watcher"]);
+const OWNER_TOOLS = new Set(["hub_list_events", "hub_edit_layout", "hub_list_app_relationships", "hub_manage_app_relationship", "hub_preview_board_import", "hub_start_board_import", "hub_read_import", "hub_manage_import", "hub_import_meeting_notes", "hub_fetch_now", "hub_link_repo", "hub_unlink_repo", "hub_create_watcher"]);
 
 /**
  * In a space shared with you, the assistant works on the space's content only: never the

@@ -18,7 +18,9 @@
     "./desktop-discovery": "./src/desktop-discovery.ts",
     "./page-merge": "./src/page-merge.ts",
     "./page-schema": "./src/page-schema.ts",
-    "./version": "./src/version.ts"
+    "./version": "./src/version.ts",
+    "./desk-layout": "./src/desk-layout.ts",
+    "./workspace-tiles": "./src/workspace-tiles.generated.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

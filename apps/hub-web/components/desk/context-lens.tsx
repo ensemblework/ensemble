@@ -1,4 +1,5 @@
 "use client";
+import { useAssistantSurface } from "@/lib/assistant-surface";
 
 import { Fragment } from "react";
 import dynamic from "next/dynamic";
@@ -403,6 +404,7 @@ function ArrangedLens({ deskId, tab, sections, live, ready, onPeople, onArtifact
   const { layout, save } = useLayoutPreference(`desk.context.${deskId}.${tab}`);
   const pool = new Map(defaults.map((spec) => [spec.key, spec]));
   const shown = arrange(defaults, pool, layout);
+  useAssistantSurface("/context", { kind: "context", tab, tiles: shown.map(spec => ({ key: spec.key, title: spec.title, c: spec.c, r: spec.r })) });
   const hidden = hiddenTilesFor(defaults, shown);
   const customized = !isDefaultLayout(layout, shown, defaults);
   const tiles = useTileControls({ shown, hidden: hidden.map((spec) => spec.key), save, customized, restoreHint: "Bring it back below the tiles." });

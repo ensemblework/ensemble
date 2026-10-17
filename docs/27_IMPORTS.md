@@ -113,3 +113,7 @@ Fixtures (fictional Fieldnote data) are in `apps/hub-api/src/imports/fixtures/`.
 - No scheduled re-sync; imports run when you start them.
 - Comments, attachments (other than links) and sub-task trees are not imported; parents are noted in the description.
 - Notion relations and rollups come across as text in the page's property list.
+
+## Importing a whole board from chat (18 Oct 2026)
+
+The assistant can run this same flow: `hub_preview_board_import` lists connected containers, or previews an export already uploaded in Files (`fileId`). A second preview with the selected containers returns sample rows/statuses. `hub_start_board_import` waits for Apply and starts the existing job; `hub_read_import` reports progress and `hub_manage_import` cancels/undoes. Tokens are not accepted in tool arguments. Existing mapping, expiry, caps and re-import behavior remain in force. A started job is not reported as completed. Tools live in `assistant/tools/board-imports.ts`.

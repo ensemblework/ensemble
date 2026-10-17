@@ -35,6 +35,9 @@ export interface ToolContext {
   pendingProjectNames?: readonly string[];
   /** Set only for Ensemble Code turns on the person's own computer. */
   code?: CodeSession;
+  /** Original request credentials, used only inside the API; never sent to a model. */
+  requestHeaders?: Record<string, string>;
+  toolCallId?: string;
 }
 
 export interface ToolResult {

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isDeepStrictEqual } from "node:util";
 import type { FastifyInstance } from "fastify";
 import { actorFor, keysFor } from "../sharing/context.js";
 import {
@@ -32,6 +33,7 @@ import { recordModelProbe } from "../lib/probes.js";
 import { RuntimeError } from "../lib/runtime.js";
 import { persistAssistantText, safePublicError, stripLoneSurrogates, truncateText } from "../lib/text.js";
 import { env } from "../config.js";
+import { assistantHeaders } from "../assistant/request.js";
 import { streamCorsHeaders } from "../lib/cors-origin.js";
 import { hubCorsPolicy } from "../lib/hub-cors.js";
 
@@ -149,6 +151,12 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
     }
     // A call this conversation already applied never runs again: not on a resend, and not after its lock expires.
     const stored = body.conversationId ? await storedCalls(app, request.userId, body.conversationId) : new Map<string, Record<string, unknown>>();
+    for (const item of planned.filter(row => row.tool.name === "hub_run_workflow")) {
+      const original = item.call.callId ? stored.get(item.call.callId) : undefined;
+      if (!original || original.name !== item.tool.name || !isDeepStrictEqual(item.tool.input.parse(original.input), item.input)) {
+        return reply.code(409).send({ error: "This workflow does not match its saved proposal. Ask the assistant to propose the changed plan." });
+      }
+    }
     const done = planned.filter((item) => item.call.callId && stored.get(item.call.callId)?.state === "ok");
     const pending = planned.filter((item) => !done.includes(item));
     if (!pending.length) {
@@ -182,7 +190,7 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
     try {
       batchResult = await applyHeldCalls(
         app,
-        { app, prisma: app.prisma, userId: request.userId, actor: "agent", conversationId: body.conversationId, settings, modules: request.modules, ...(code ? { code } : {}) },
+        { app, prisma: app.prisma, userId: request.userId, actor: "agent", conversationId: body.conversationId, settings, modules: request.modules, requestHeaders: assistantHeaders(request), ...(code ? { code } : {}) },
         pending,
       );
     } catch (error) {
@@ -404,6 +412,7 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
       send("error", { message: refused, status: 400 });
     } else try {
       result = await runAssistantTurn({
+        requestHeaders: assistantHeaders(request),
         provider: callProvider,
         app,
         userId: request.userId,

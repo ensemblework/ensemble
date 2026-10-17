@@ -1,3 +1,4 @@
+import { replaceOfficeText } from "./office-edit.js";
 /**
  * Runs inside a worker thread with its own memory cap (files/extract.ts starts it):
  * text out of PDF and Office files, and cell edits saved into an .xlsx. A file
@@ -13,7 +14,8 @@ import { xlsxPreview } from "./xlsx-text.js";
 
 export type WorkerJob =
   | { task: "text"; kind: "pdf" | "docx" | "pptx" | "xlsx"; bytes: Uint8Array; maxChars: number }
-  | { task: "cells"; bytes: Uint8Array; patch: SheetPatch };
+  | { task: "cells"; bytes: Uint8Array; patch: SheetPatch }
+  | { task: "office-edit"; kind: "docx" | "pptx"; bytes: Uint8Array; find: string; replacement: string };
 
 export type WorkerText = { text: string; pageCount: number | null; warnings: string[] };
 export type WorkerReply =
@@ -212,6 +214,7 @@ export async function patchInThread(bytes: Uint8Array, patch: SheetPatch): Promi
 
 async function run(job: WorkerJob): Promise<WorkerReply> {
   try {
+    if (job.task === "office-edit") { try { return { ok: true, bytes: replaceOfficeText(job.bytes, job.kind, job.find, job.replacement) }; } catch (error) { throw new ExposedError(error instanceof Error ? error.message : "The edit failed."); } }
     if (job.task === "cells") return { ok: true, bytes: await patchInThread(job.bytes, job.patch) };
     return { ok: true, text: await extractInThread(job.kind, job.bytes, job.maxChars) };
   } catch (error) {

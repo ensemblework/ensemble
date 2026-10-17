@@ -1,4 +1,5 @@
 "use client";
+import { assistantSurface } from "@/lib/assistant-surface";
 import { createPortal } from "react-dom";
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
@@ -87,14 +88,16 @@ function ToolCall({ call, conversationId }: { call: AssistantToolCallRecord; con
   const apply = useMutation({
     mutationFn: () => api.applyAssistant({ name: call.name, input: call.input ?? {}, conversationId: conversationId ?? undefined, callId: call.id }),
     onSuccess: (result) => {
-      setLocal({ phase: "applied", entryId: result.undoEntryId ?? null });
+      const failedHere = result.failed?.some(item => item.callId === call.id);
+      setLocal(failedHere ? null : { phase: "applied", entryId: result.undoEntryId ?? null });
       if (conversationId && result.replies?.length) {
         client.setQueryData(["assistant-messages", conversationId], (current: { messages: AssistantMessageRecord[] } | undefined) =>
           current ? applyRepliesToCache(current, result.replies) ?? current : current,
         );
       }
-      toast(result.summary, {
-        tone: "ok",
+      const notice = applyNotice(result);
+      toast(notice.text, {
+        tone: notice.tone,
         action: result.undoEntryId
           ? {
               label: "Undo",
@@ -144,9 +147,9 @@ function ToolCall({ call, conversationId }: { call: AssistantToolCallRecord; con
           Open
         </Link>
       ) : null}
-      {phase === "pending" && call.state !== "failed" ? (
+      {phase === "pending" && (call.state !== "failed" || call.name === "hub_run_workflow" && Array.isArray(call.input?.steps) && !/interrupted|uncertain|may have completed/i.test(call.error ?? "")) ? (
         <button type="button" className="btn-primary px-2 py-0.5 text-[11.5px]" onClick={() => apply.mutate()} disabled={apply.isPending}>
-          Apply
+          {call.state === "failed" ? "Retry remaining steps" : "Apply"}
         </button>
       ) : null}
       {phase === "applied" && entryId ? (
@@ -464,7 +467,9 @@ export function AssistantDock() {
           ...(mentions.length ? { mentions } : {}),
           ...(picked ? { model: picked, provider: INCLUDED_PROVIDER, reasoningEffort: "default" } : tierOverride ? { tier: tierOverride } : {}),
           page: {
-            path: pathname,
+            path: pathname + (() => { const params = new URLSearchParams(); const current = new URLSearchParams(window.location.search); for (const key of ["q", "search", "who", "ids", "status", "owner", "project", "projectId", "view", "tab", "run", "session", "note", "skill", "item", "space"]) { const value = current.get(key); if (value) params.set(key, value.slice(0, 200)); } return params.size ? `?${params}` : ""; })(),
+            selection: window.getSelection()?.toString().slice(0, 2000) || undefined,
+            surface: assistantSurface(pathname),
             taskId: peekId ?? undefined,
             meetingId: pathname === "/meetings" ? document.querySelector<HTMLElement>("[data-meeting-id]")?.dataset.meetingId : undefined,
             label: peekId ? "a task page" : pathname.startsWith("/pages/") ? "a note" : pathname.slice(1) || "Today",

@@ -1,3 +1,5 @@
+import { calendarReceipt } from "../calendar-receipts.js";
+import { CalendarRepeat, googleRecurrence } from "../calendar-management.js";
 /** Gmail (read) and Google Calendar (read, create, update). */
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -235,6 +237,7 @@ const eventTime = (span: EventSpan, which: "start" | "end") => {
 };
 
 const CreateEvent = z.object({
+  recurrence: CalendarRepeat.optional(),
   title: z.string().trim().min(1).max(300),
   start: When.describe("Local start, YYYY-MM-DDTHH:MM, or YYYY-MM-DD for an all-day event."),
   end: When.optional().describe("Local end (same format). Timed events default to 30 minutes; all-day events to one day (inclusive last day)."),
@@ -270,6 +273,7 @@ export const calendarCreateEvent = defineTool({
     return [
       `Create event ${quote(input.title)} ${describeSpan(span)} in ${where}${guests}.${pastWarning(span)}`,
       input.googleMeet ? "Adds a Google Meet link." : "",
+      input.recurrence ? `Repeats: ${JSON.stringify(input.recurrence)}` : "",
       input.location ? `Location: ${input.location}` : "",
       input.description ? `Description: ${quote(input.description)}` : "",
     ]
@@ -286,6 +290,7 @@ export const calendarCreateEvent = defineTool({
       method: "POST",
       body: {
         summary: input.title,
+        ...(input.recurrence ? { recurrence: googleRecurrence(input.recurrence, span.timeZone, span.allDay) } : {}),
         ...(input.description ? { description: input.description } : {}),
         ...(input.location ? { location: input.location } : {}),
         start: eventTime(span, "start"),
@@ -296,10 +301,11 @@ export const calendarCreateEvent = defineTool({
           : {}),
       },
     });
+    const hubEventId = await calendarReceipt(ctx, "google", { ...created, summary: input.title, calendarId: input.calendarId, start: eventTime(span, "start"), end: eventTime(span, "end"), attendees: input.attendees.map(email => ({ email })), description: input.description, location: input.location });
     return toolOk(
       `Created ${quote(input.title)} ${describeSpan(span)} in Google Calendar${notify ? `; invites sent to ${listWords(input.attendees)}` : ""}.`,
-      { id: created.id, link: created.htmlLink, meetLink: created.hangoutLink ?? null },
-      created.htmlLink ? { href: created.htmlLink } : {},
+      { id: created.id, hubEventId, link: created.htmlLink, meetLink: created.hangoutLink ?? null },
+      { href: created.htmlLink, invalidate: ["calendar", "desk-live", "context"] },
     );
   },
 });
@@ -425,10 +431,11 @@ export const calendarUpdateEvent = defineTool({
         },
       },
     );
+    const hubEventId = await calendarReceipt(ctx, "google", { ...current, ...updated, calendarId: input.calendarId, description: input.description ?? updated.description ?? current.description, location: input.location ?? updated.location ?? current.location, summary: input.title ?? updated.summary ?? current.summary, ...(span ? { start: eventTime(span, "start"), end: eventTime(span, "end") } : {}), ...(touchedGuests ? { attendees } : {}) });
     return toolOk(
       `Updated ${quote(updated.summary ?? current.summary ?? "the event")}${span ? ` to ${describeSpan(span)}` : ""}${notify ? "; guests were emailed" : ""}.`,
-      { id: updated.id, link: updated.htmlLink, meetLink: updated.hangoutLink ?? null },
-      updated.htmlLink ? { href: updated.htmlLink } : {},
+      { id: updated.id, hubEventId, link: updated.htmlLink, meetLink: updated.hangoutLink ?? null },
+      { href: updated.htmlLink, invalidate: ["calendar", "desk-live", "context"] },
     );
   },
 });

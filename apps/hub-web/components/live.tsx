@@ -10,6 +10,8 @@ import { invalidateSoon } from "@/lib/invalidate";
 import { notify, notifyDecision } from "@/lib/notify";
 import { presenceStore } from "@/lib/presence";
 import { consumeFlash, flash } from "@/lib/flash";
+import { AppearanceSettings } from "@ensemble/shared-types";
+import { publishAppearance, readAppearance } from "@/lib/prefs";
 
 type LiveState = {
   connected: boolean;
@@ -138,8 +140,9 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
       // A tool also names what it changed (pages, diagrams, plots, meetings…); the list above covers the usual ones.
       source.addEventListener("assistant.acted", (event) => {
         try {
-          const data = JSON.parse((event as MessageEvent<string>).data) as { keys?: unknown };
+          const data = JSON.parse((event as MessageEvent<string>).data) as { keys?: unknown; appearance?: unknown };
           for (const key of Array.isArray(data.keys) ? data.keys : []) if (typeof key === "string") invalidateSoon(client, [key]);
+          if (data.appearance) { const patch = AppearanceSettings.partial().strict().safeParse(data.appearance); if (patch.success) publishAppearance({ ...readAppearance(), ...patch.data }); }
         } catch {
           // ignore malformed frames
         }

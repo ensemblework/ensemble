@@ -271,3 +271,10 @@ export function queueFileText(db: PrismaClient, id: string, again = false): Prom
   inflight.set(id, job);
   return job;
 }
+
+/** Edit Office text with the same worker memory/time limits as spreadsheet changes. */
+export async function patchOfficeText(bytes: Uint8Array, kind: "docx" | "pptx", find: string, replacement: string): Promise<Uint8Array> {
+  const reply = await runWorker({ task: "office-edit", bytes: new Uint8Array(bytes), kind, find, replacement }, CELLS_MEMORY_MB);
+  if (!reply.ok) throw new FileWorkError(reply.reason === "exposed" ? reply.message : "This Office file is too large, complex or damaged to edit here.", reply.reason === "exposed" ? 400 : 413);
+  return reply.bytes!;
+}

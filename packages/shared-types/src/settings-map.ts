@@ -6,10 +6,9 @@
  * Entries with a `key` are the only settings the assistant may change (hub_update_settings,
  * always held for Apply). Everything else is the person's to change in Settings: secrets and
  * keys, sign-in, sharing and space membership, connections, the assistant's own permissions,
- * sandbox and run limits, folders, retention and deletion. Light/dark mode, font, text size and motion
- * have no key because they are kept per browser; a server change would not reach the screen.
+ * sandbox, folders, retention and deletion. Appearance changes reach the active browser through an actor-only live event.
  */
-import { AppColorTheme, AccentPreset, ReasoningEffort } from "./assistant.js";
+import { AppColorTheme, AccentPreset, AppFont, ReasoningEffort } from "./assistant.js";
 import { OPTIONAL_MODULES, type OptionalModule } from "./modules.js";
 import { FEATURES } from "./features.js";
 import { timeZoneName } from "./account.js";
@@ -88,13 +87,13 @@ export const SETTINGS_MAP: readonly SettingsMapEntry[] = [
     { id: "account.timezone", label: "Time zone", keywords: "timezone time zone local time scheduling clock", about: "Used for due times, reminders, quiet hours and the morning brief.", href: at("account", "jump-you-time-zone"), key: "timezone", rule: { type: "timezone" } },
   ]),
   ...group("appearance", "Appearance", [
-    { id: "appearance.theme", label: "Theme (dark, light, system)", keywords: "theme dark light mode system night", about: "Kept in each browser: change it here or with the light/dark switch in the account menu.", href: at("appearance", "jump-appearance-theme") },
+    { id: "appearance.theme", label: "Theme (dark, light, system)", keywords: "theme dark light mode system night", about: "Light, dark or system mode; assistant changes also reach this browser.", href: at("appearance", "jump-appearance-theme"), key: "appearance.theme", rule: { type: "enum", values: ["dark", "light", "system"] } },
     { id: "appearance.color-theme", label: "Color theme", keywords: "theme palette atmosphere petrol aubergine graphite lagoon aurora juniper blueprint ensemble background patterns doodles", about: "A coordinated light and dark palette. Keeps your accent, font and mode choices.", href: at("appearance", "jump-appearance-color-theme"), key: "appearance.colorTheme", rule: { type: "enum", values: AppColorTheme.options } },
     { id: "appearance.accent", label: "Accent colour", keywords: "accent colour color palette gold satin indigo tide ember rose brass orchid moss sky", about: "The highlight colour, from nine presets, with Satin Gold as the default.", href: at("appearance", "jump-appearance-accent"), key: "appearance.accent", rule: { type: "enum", values: AccentPreset.options } },
     { id: "appearance.accent-custom", label: "Custom accent colour", keywords: "custom accent colour color hex", about: "Your own accent as #rrggbb; none goes back to the preset.", href: at("appearance", "jump-appearance-custom-accent"), key: "appearance.accentCustom", rule: { type: "color" } },
-    { id: "appearance.text-size", label: "Text size", keywords: "text size font size zoom scale bigger smaller", about: "Kept in each browser: change it in Appearance.", href: at("appearance", "jump-appearance-text-size") },
-    { id: "appearance.font", label: "App font", keywords: "font typeface inter plex georgia monospace", about: "Kept in each browser: change it in Appearance.", href: at("appearance", "jump-appearance-app-font") },
-    { id: "appearance.reduce-motion", label: "Reduce motion", keywords: "reduce motion animations accessibility", about: "Kept in each browser: change it in Appearance.", href: at("appearance", "jump-appearance-reduce-motion") },
+    { id: "appearance.text-size", label: "Text size", keywords: "text size font size zoom scale bigger smaller", about: "Changes the text size in this browser.", href: at("appearance", "jump-appearance-text-size"), key: "appearance.textScale", rule: { type: "int", min: 80, max: 130 } },
+    { id: "appearance.font", label: "App font", keywords: "font typeface inter plex georgia monospace", about: "Changes the text size in this browser.", href: at("appearance", "jump-appearance-app-font"), key: "appearance.font", rule: { type: "enum", values: AppFont.options } },
+    { id: "appearance.reduce-motion", label: "Reduce motion", keywords: "reduce motion animations accessibility", about: "Changes the text size in this browser.", href: at("appearance", "jump-appearance-reduce-motion"), key: "appearance.reduceMotion", rule: bool },
   ]),
   ...group(
     "account",

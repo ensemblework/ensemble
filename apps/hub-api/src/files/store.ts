@@ -245,7 +245,7 @@ export async function replaceFileBytes(
   db: PrismaClient,
   userId: string,
   id: string,
-  input: { bytes: Uint8Array; filename?: string; mediaType?: string },
+  input: { bytes: Uint8Array; filename?: string; mediaType?: string; expectedSha256?: string },
   action = "document.update",
 ): Promise<FileRecord | null> {
   const existing = await db.document.findFirst({ where: { id, userId, deletedAt: null }, select: { filename: true, mediaType: true, format: true } });
@@ -257,7 +257,9 @@ export async function replaceFileBytes(
   const known = immediateText(filename, original);
   const row = await db.$transaction((tx) =>
     withHostedUserLock(tx, userId, async (inner) => {
-      if (!(await inner.document.findFirst({ where: { id, userId, deletedAt: null }, select: { id: true } }))) return null;
+      const current = await inner.document.findFirst({ where: { id, userId, deletedAt: null }, select: { id: true, sha256: true } });
+      if (!current) return null;
+      if (input.expectedSha256 && current.sha256 !== input.expectedSha256) throw new FileError("The file changed. Read it again before editing.", 409);
       await assertFileRoom(inner, userId, { files: 0, bytes: original.byteLength, replacingId: id });
       const updated = await inner.document.update({
         where: { id },

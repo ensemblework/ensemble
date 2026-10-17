@@ -91,7 +91,7 @@ export async function layoutsRoutes(app: FastifyInstance): Promise<void> {
   });
 }
 
-async function readLayout(prisma: FastifyInstance["prisma"], userId: string, surface: LayoutSurface) {
+export async function readLayout(prisma: FastifyInstance["prisma"] | import("@prisma/client").Prisma.TransactionClient, userId: string, surface: LayoutSurface) {
   const saved = await prisma.widgetLayout.findUnique({ where: { userId_surface: { userId, surface } } });
   if (saved) {
     const clean = sanitizeLayout(surface, saved.document);

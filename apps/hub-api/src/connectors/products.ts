@@ -8,6 +8,8 @@ import type { AccountProvider } from "./accounts.js";
 
 export interface ProductSpec {
   scopes: readonly string[];
+  /** Requested on new consent; missing optional access does not disable existing product features. */
+  additionalScopes?: readonly string[];
   /** Sync sources this product feeds (settings.connections keys). */
   sources: readonly ConnectorId[];
   defaultOn: boolean;
@@ -37,7 +39,7 @@ export const SUITES: Readonly<Record<string, SuiteSpec>> = {
     base: ["openid", "email", "profile"],
     products: {
       gmail: { scopes: GOOGLE_PRODUCT_SCOPES.gmail, sources: ["gmail"], defaultOn: true },
-      calendar: { scopes: GOOGLE_PRODUCT_SCOPES.calendar, sources: ["google_calendar"], defaultOn: true },
+      calendar: { scopes: GOOGLE_PRODUCT_SCOPES.calendar, additionalScopes: [`${GOOGLE}calendar.freebusy`], sources: ["google_calendar"], defaultOn: true },
       drive_docs: { scopes: GOOGLE_PRODUCT_SCOPES.drive_docs, sources: [], defaultOn: true },
       // Restricted scope: public servers need Google's security assessment before this can be offered to everyone.
       drive_search: { scopes: GOOGLE_PRODUCT_SCOPES.drive_search, sources: [], defaultOn: false },
@@ -83,7 +85,7 @@ export function productState(suite: SuiteSpec, settings: Pick<Settings, "connect
 export function scopesFor(suite: SuiteSpec, products: Record<string, boolean>): string[] {
   const scopes = new Set<string>(suite.base);
   for (const [id, on] of Object.entries(products)) {
-    if (on) for (const scope of suite.products[id]?.scopes ?? []) scopes.add(scope);
+    if (on) for (const scope of [...(suite.products[id]?.scopes ?? []), ...(suite.products[id]?.additionalScopes ?? [])]) scopes.add(scope);
   }
   return [...scopes];
 }

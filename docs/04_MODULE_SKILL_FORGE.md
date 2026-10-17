@@ -233,3 +233,7 @@ Code inspection, 16 Oct 2026: `apps/hub-api/src/jobs/skill-mining.ts` runs as pa
 `apps/hub-api/src/cowork/morning-skill.ts` creates the `morning-brief` skill using profession-specific defaults. The first delivered brief offers personalization; `/morning-brief` saves those instructions as a new skill version. Ordinary Skills editing and version restoration apply. `POST /api/skills/:id/test` generates a preview without taking external actions; Morning brief previews use the current Today briefing. The existing `/score` endpoint checks a supplied draft against machine-checkable rules. The miner never edits `morning-brief`.
 
 The next skill-mining review workflow is a written design in [real-world-next](design/real-world-next.md#skill-mining), not an implemented approval screen. Current retention mining still validates and applies additions after its notice window.
+
+## Personal skills through the assistant (18 Oct 2026)
+
+`assistant/tools/skills.ts` exposes create/update/enable/disable/restore/Trash through `hub_manage_skill`, always after Apply. `hub_read_skill` reads the current body in parts and can list the retained versions. Updates take `expectedVersion`; `PATCH /api/skills/:id` checks it while holding the row lock. `POST /api/skills` accepts an optional initial `body`, so creation does not need a second write. These tools reuse the existing versioned routes and module/sharing checks; they do not run mining or a model test. Built-in assistant playbooks are separate from these personal skills.

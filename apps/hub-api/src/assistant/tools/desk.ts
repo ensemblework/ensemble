@@ -24,7 +24,7 @@ interface KindSpec {
 
 const task = (label: string, fields = "title; day?; subject?; stage?"): KindSpec => ({ label, fields, store: "task" });
 
-const KINDS = {
+export const KINDS = {
   deadline: task("Deadlines and dates", "title; day"),
   hearing: task("Hearings", "title (matter); day; court?; stage?"),
   matter: task("Matters with a limitation date", "title; orderDate; rule (30d|45d|90d|120d|3m|6m); court?; stage?"),
@@ -203,7 +203,7 @@ async function itemLabel(ctx: ToolContext, kind: Kind, id: string): Promise<stri
   }
 }
 
-const AddInput = z.object({
+export const AddInput = z.object({
   kind: z.enum(KIND_NAMES).describe("Which list. hub_list_desk_items says which this profile has and what each needs."),
   title: z.string().trim().min(1).max(200).optional().describe("The entry's name: a class, part, test, person, matter, paper… For a citation, the citing work."),
   day: DateField.optional(),

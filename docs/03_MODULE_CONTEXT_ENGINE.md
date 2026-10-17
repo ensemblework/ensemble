@@ -527,3 +527,7 @@ Uploaded and imported files are described in [32](32_FILES.md): formats, preview
 Notion imports (15 Oct 2026): `imports/api/notion.ts` reads child pages recursively, and `imports/notion-content.ts` preserves native page blocks and rich text. Databases become ordinary editable tables in pages, with row pages and property values; they do not create an Ensemble database, project or board. The assistant's `hub_save_app_item_as_page` uses the same importer. See [27](27_IMPORTS.md) for limits and mock-test evidence.
 
 Connector proposal context is written as a task page (`connectors/triage.ts`), leaving the short description for a person. Files no longer opens a connected-item feed automatically: app browsing/import is explicit, and existing `/files?view=apps` links still reach connected items.
+
+### Explicit relationships and calendar access (18 Oct 2026)
+
+The assistant now exposes the existing scoped Attach/Refresh/Remove/Add as task/People import/project source-link/merge routes through `assistant/tools/relationships.ts`; whole-board imports through `board-imports.ts`. These remain explicit requests, never background acquisition. Google new consent requests the additional `calendar.freebusy` scope for availability. `connectors/products.ts` distinguishes additional consent scopes from the required scopes for existing product features, so an older Calendar grant continues to read/create events; availability asks the person to reconnect when access is missing. The action inventory and boundaries are in [34](34_ASSISTANT_ACTIONS.md).

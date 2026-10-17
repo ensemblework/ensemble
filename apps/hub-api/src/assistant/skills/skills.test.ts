@@ -105,7 +105,8 @@ test("the system prompt names the open space, carries the map and the playbook i
   assert.match(prompt, /Map of Ensemble/);
   assert.match(prompt, /- recap: .*\(loaded below\)/);
   assert.match(prompt, /- diagrams: /);
-  assert.match(prompt, /## Playbook: Weekly recap\nsteps$/);
+  assert.match(prompt, /## Playbook: Weekly recap\nsteps/);
+  assert.ok(prompt.indexOf("## Playbook: Weekly recap") < prompt.indexOf("What is in the workspace right now:"), "stable playbook precedes live state for prefix caching");
 });
 
 // A whole turn with a scripted model --------------------------------------------------
@@ -215,4 +216,36 @@ test("a playbook with Windows line endings (a Windows checkout) parses like one 
   const parsed = parsePlaybook(windows, "demo.md");
   assert.deepEqual(parsed, parsePlaybook(unix, "demo.md"));
   assert.ok(!parsed.body.includes("\r"));
+});
+
+test("Ensemble Code keeps local tools while staying within the provider's schema limit", async () => {
+ const asked: string[][] = [];
+ setAskRuntimeStreamForTests(async args => {
+  asked.push(((args.chatTools ?? []) as Array<{ function: { name: string } }>).map(tool => tool.function.name));
+  return { text: "Ready.", toolCalls: [], model: "test-model", credits: 0, tokensIn: 1, tokensOut: 1, reasoning: "", raw: {}, finishReason: "stop", cutOff: false };
+ });
+ const app = fakeApp(); const original = app.prisma;
+ app.prisma = new Proxy(original, { get(target, prop) {
+  if (prop === "authToken") return { findMany: async () => [{ provider: "google", account: "mira@fieldnote.example", scopes: [] }, { provider: "microsoft", account: "mira@fieldnote.example", scopes: [] }], findUnique: async () => null };
+  return Reflect.get(target, prop);
+ } });
+ process.env.ENSEMBLE_ASSISTANT_TOOLSETS = "off";
+ try {
+  await runAssistantTurn({ app, userId: "space-lab", conversationId: "code-catalog", message: "Hello", settings: DEFAULT_SETTINGS, model: "test-model", code: { folder: "/tmp/fictional-project" }, emit() {} });
+  assert.ok(asked[0]!.length <= 128, `${asked[0]!.length} schemas`);
+  assert.ok(asked[0]!.includes("ensemble_start_agent"));
+  assert.ok(asked[0]!.includes("code_read_file"));
+ } finally { delete process.env.ENSEMBLE_ASSISTANT_TOOLSETS; }
+});
+
+test("Ensemble Code can load another area's tools during a turn", async () => {
+ const seen: string[][] = []; let step = 0;
+ setAskRuntimeStreamForTests(async args => {
+  seen.push(((args.chatTools ?? []) as Array<{ function: { name: string } }>).map(tool => tool.function.name)); step++;
+  return { text: step === 1 ? "" : "Ready.", toolCalls: step === 1 ? [{ id: "load-pages", name: "hub_how_to", arguments: JSON.stringify({ name: "pages" }) }] : [], model: "test-model", credits: 0, tokensIn: 1, tokensOut: 1, reasoning: "", raw: {}, finishReason: "stop", cutOff: false };
+ });
+ await runAssistantTurn({ app: fakeApp(), userId: "space-lab", conversationId: "code-load", message: "Help me organize", settings: DEFAULT_SETTINGS, model: "test-model", code: { folder: "/tmp/fictional-project" }, emit() {} });
+ assert.equal(seen[0]!.includes("hub_create_page"), false);
+ assert.ok(seen[1]!.includes("hub_create_page"));
+ assert.ok(seen[1]!.includes("ensemble_start_agent"));
 });

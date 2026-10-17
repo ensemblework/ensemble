@@ -110,9 +110,9 @@ The assistant works inside the open Ensemble space. Its tools read and write wit
 | `packages/shared-types/src/assistant.ts` | 267 | every shape that crosses the wire |
 | `packages/shared-types/src/undo.ts` | — | the undo/redo contract |
 
-**82 Hub tools** (43 read, 39 write) in the static catalog, grouped by the data they touch, plus **38 connected-app tools** (23 read, 15 write) offered per person ([§8.2](#82-connected-apps)).
+The current Hub catalog is assembled in `assistant/registry.ts`; connected-app tools are offered per person. The current action map, workflow receipts and tile systems are documented in [34](34_ASSISTANT_ACTIONS.md).
 
-Roughly **2,000 lines of tools and 600 of orchestration**. The tools are the bulk, and that is the right shape: the interesting part is *what the agent may do*, not the loop that lets it.
+The typed tools are grouped by the data they touch; [34](34_ASSISTANT_ACTIONS.md) describes the current implementation and limits.
 
 ---
 
@@ -180,7 +180,7 @@ After the rules come a few sentences about the person from `personaBlock` (`pack
 
 **Three — the map and the playbooks** (`skills/`, §10.1). Every turn carries a short map of Ensemble (where each thing lives, with its path) and one line per playbook. The playbooks the turn points at — by the open page, the mentions, or the words of the message, at most two — come in full at the end of the prompt.
 
-**Four — the tool list for this turn**: the Hub catalog filtered by your settings, plus this person's connected-app tools (`toolsForTurn` in `apps.ts`). Any of these may run. The model is *shown* only the core tools (the reads most requests start with, task create/update, and `hub_how_to`) and the tools of the playbooks in play, so a plain turn sees the 17 core tools instead of 120; when the model loads another playbook with `hub_how_to`, its tools are added from the next step. Ensemble Code turns are shown everything. `ENSEMBLE_ASSISTANT_TOOLSETS=off` shows everything everywhere.
+**Four — the tool list for this turn**: the Hub catalog filtered by your settings, plus this person's connected-app tools (`toolsForTurn` in `apps.ts`). Any of these may run. The model is *shown* only the core tools (the reads most requests start with, task create/update, and `hub_how_to`) and the tools of the playbooks in play, so a plain turn sees the small core set; a simple todo uses five tools and a short recipe; when the model loads another playbook with `hub_how_to`, its tools are added from the next step. Ensemble Code retains its additional local tools. `ENSEMBLE_ASSISTANT_TOOLSETS=off` shows everything everywhere.
 
 ### 4.3 The catalog becomes a contract
 
@@ -708,3 +708,13 @@ The floating dock closes on Escape after an inner menu or dialog handles it, and
 Manual `hub_fetch_now` updates real contact metadata only; it creates no artifacts, proposals or model calls. Explicit connected-app search/read/import tools remain available. The Hub prompt removes redundant Apply/ambiguity wording while retaining exact task-title matching, standing skills, source citations and approval constraints. Planner wording is profile-neutral; retention mining uses the shared exported `SKILL_MINING_PROMPT`. Settings identifies the actual retention-triggered use rather than claiming it is button-only. The floating assistant is a top-layer portal usable above dialogs, with a freely draggable launcher. Key-related failures link to model settings.
 
 `hub_import_meeting_notes { source, since, proposeTasks? }` explicitly imports a bounded batch from connected meeting sources after Apply. It is always held for confirmation, runs outside the shared write transaction and is not called by Sync people. The shared-space guest guard refuses imports into a space the person does not own.
+
+## Workspace actions and small models (18 Oct 2026)
+
+[34 · Assistant actions](34_ASSISTANT_ACTIONS.md) documents the expanded typed tools: actual profile/Board/Context layouts, surface state, precise block edits, connector relationships, board imports, original-file edits, personal skill management, settings/model selection, record maintenance and calendar management. Playbooks guide the calls; tools and the existing API services execute them. Native tile definitions are checked against the UI during web tests.
+
+`hub_run_workflow` holds an ordered plan for one Apply and checkpoints its successful steps in `assistant_workflows` (migration `20261018090000_assistant_workflows`). Result references resolve only after earlier writes succeed. A partial failure does not replay completed steps. A running step interrupted before its receipt is kept unresolved rather than automatically repeated.
+
+Stable playbooks precede live state in the prompt. Intent beats surface defaults; personal skill bodies are read on demand. Responses schemas explicitly use `strict: false` in the Hub catalog and both runtime adapters, preserving optional fields as described by [OpenAI's function-calling documentation](https://developers.openai.com/api/docs/guides/function-calling?strict-mode=disabled). Without it GPT-5 mini attempted to populate unrequested fields in a todo; the regression and synthetic evaluation cover this.
+
+Checked 18 Oct 2026: live GPT-5 mini created/applied a todo, linked person/project/tasks, a tile change, a personal skill, an appearance setting and a precise page edit in an isolated fictional workspace. This does not establish authenticated vendor-calendar or connector reliability. The included-model catalog and 20,000 monthly credit allowance are unchanged.

@@ -1447,6 +1447,19 @@ model AssistantMessage {
   @@map("assistant_messages")
 }
 
+model AssistantWorkflow {
+  id             String   @id
+  userId         String   @map("user_id")
+  conversationId String   @map("conversation_id")
+  planHash       String   @map("plan_hash")
+  steps          Json     @default("[]")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@index([userId, conversationId])
+  @@map("assistant_workflows")
+}
+
 model UndoEntry {
   id             String    @id @default(uuid())
   userId         String    @map("user_id")

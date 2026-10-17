@@ -184,3 +184,12 @@ def test_copilot_meta_keeps_the_endpoints_a_model_takes() -> None:
     assert responses_api.api_for("copilot", "gpt-5.4-mini") == "responses"
     assert responses_api.api_for("copilot", "gpt-5-mini") == "chat"
     assert responses_api.api_for("openai", "gpt-5.4-mini") == "chat", "only Copilot is routed"
+
+
+def test_optional_tool_arguments_remain_optional():
+    from ensemble_agent.responses_api import tools_for
+    schema = {"type": "object", "properties": {"title": {"type": "string"}, "project": {"type": "string"}}, "required": ["title"]}
+    for source in [{"type": "function", "name": "create", "parameters": schema}, {"type": "function", "function": {"name": "create", "parameters": schema}}]:
+        result = tools_for([source])[0]
+        assert result["strict"] is False
+        assert result["parameters"]["required"] == ["title"]

@@ -46,8 +46,7 @@ import { reflectProposals } from "./reply.js";
 import { statusFor } from "./status-line.js";
 import { toolAllowedFor, chatToolSpecs, responsesToolSpecs } from "./registry.js";
 import { appsPrompt, ensureAppAccess, loadAppGrants, toolsForTurn, writeRefusal } from "./apps.js";
-import { diagramGuidance } from "./diagram-skill.js";
-import { advertisedTools, appMap, findPlaybook, playbookIndex, playbooksFor, routePlaybooks, type Playbook } from "./skills/index.js";
+import { advertisedTools, playbookText, appMap, findPlaybook, playbookIndex, playbooksFor, routePlaybooks, type Playbook } from "./skills/index.js";
 import { hasModule, isSubscriptionProvider } from "@ensemble/shared-types";
 import type { ToolAnswer } from "../subscriptions/bridge.js";
 import { agentConversation, runSubscriptionTurn, USE_TOOL } from "../subscriptions/turn.js";
@@ -112,6 +111,7 @@ export async function stopRequested(
 }
 
 export interface AssistantTurnArgs {
+  requestHeaders?: Record<string, string>;
   app: FastifyInstance;
   userId: string;
   conversationId: string;
@@ -223,19 +223,22 @@ async function drive(
   // and in Ensemble Code the folder's read tools and agent runs. Any of these may run.
   const tools = [...(await toolsForTurn(ctx, grants)), ...(args.code ? codeTools : [])];
   const byName = new Map(tools.map((tool) => [tool.name, tool]));
-  // Outside Ensemble Code, the model is shown the core tools and those of the playbooks in play
+  // The model sees core tools and the playbooks in play; Code also keeps its local tools.
   // (skills/index.ts): the ones the page, mentions and words point at, and any it loads with hub_how_to.
-  const playbooks = args.code ? [] : playbooksFor(args.modules);
+  const playbooks = playbooksFor(args.modules);
   const active = new Map<string, Playbook>(
     routePlaybooks({ message: args.message, path: openPage?.path ?? args.page?.path, mentions: args.mentions }, playbooks).map((playbook) => [playbook.name, playbook]),
   );
-  const shown = () => (args.code ? tools : advertisedTools(tools, active.values()));
+  const shown = () => {
+    const selected = advertisedTools(tools, active.values(), args.message);
+    const ordered = args.code ? [...codeTools, ...selected] : selected;
+    return [...new Map(ordered.map(tool => [tool.name, tool])).values()].slice(0, 128);
+  };
   const persona =
     args.preamble !== undefined && args.actAs === undefined
       ? undefined
       : personaBlock(personaFor(args.actAs ?? settings.assistant.actAs, state.user.onboardingRole), state.user.firstName);
-  // Ensemble Code keeps the diagram skill on diagram turns; elsewhere it is part of the diagrams playbook.
-  const system = buildSystemPrompt(state, openPage, args.code && diagramsOn ? diagramGuidance(args.message, openPage?.path) : undefined, {
+  const system = buildSystemPrompt(state, openPage, undefined, {
     diagrams: diagramsOn,
     repos: reposOn,
     plots: plotsOn,
@@ -244,13 +247,9 @@ async function drive(
     timezone: settings.timezone,
     persona,
     apps: appsPrompt(tools, grants, settings) || undefined,
-    ...(args.code
-      ? {}
-      : {
-          map: appMap() || undefined,
-          playbooks: playbookIndex(playbooks, [...active.values()]),
-          loaded: [...active.values()].map((playbook) => `## Playbook: ${playbook.title}\n${playbook.body}`).join("\n\n") || undefined,
-        }),
+    map: appMap() || undefined,
+    playbooks: playbookIndex(playbooks, [...active.values()]),
+    loaded: [...active.values()].map((playbook) => `## Playbook: ${playbook.title}\n${playbookText(playbook, args.message)}`).join("\n\n") || undefined,
   });
   const history = await priorTurns(app, args.conversationId, args.messageId);
 
@@ -541,7 +540,7 @@ async function drive(
         loadedPlaybook = true;
       }
     }
-    if (loadedPlaybook && !args.code) {
+    if (loadedPlaybook) {
       chatTools = chatToolSpecs(shown());
       responsesTools = responsesToolSpecs(shown());
     }
@@ -695,7 +694,7 @@ async function runOne(
   }
 
   try {
-        const result = await tool.run(ctx, input as never);
+        const result = await tool.run({ ...ctx, toolCallId: requested.id }, input as never);
     const summary = withPastScheduleWarning(result.summary, input, ctx.settings.timezone);
     const forModel = { ok: true, summary, ...trim(result.data) };
     const call: AssistantToolCall = {
@@ -825,6 +824,7 @@ function toolContext(args: AssistantTurnArgs): ToolContext {
     actor: "agent",
     conversationId: args.conversationId,
     page: args.page,
+    requestHeaders: args.requestHeaders,
     settings: args.settings,
     modules: args.modules,
     ...(args.code ? { code: args.code } : {}),

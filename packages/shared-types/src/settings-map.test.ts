@@ -56,7 +56,7 @@ test("every changeable key exists in Settings and a valid value saves", () => {
 
 test("secrets, permissions, sandbox, folders and retention are never changeable", () => {
   const keys = [...ASSISTANT_SETTING_KEYS.keys()];
-  for (const forbidden of [/writePolicy/, /allowedWriteAreas/, /connectedAppWrites/, /^autonomy/, /sandbox|outsideAccess|defaultExecution|runWithoutAsking|dailyHighRiskLimit/, /^terminal/, /^code\./, /^connections/, /connectorProducts/, /^email$/, /retentionDays|undoDepth/, /runProfiles/, /ollamaUrl|embedding/, /\.model$|\.provider$/, /appearance\.theme/]) {
+  for (const forbidden of [/writePolicy/, /allowedWriteAreas/, /connectedAppWrites/, /^autonomy/, /sandbox|outsideAccess|defaultExecution|runWithoutAsking|dailyHighRiskLimit/, /^terminal/, /^code\./, /^connections/, /connectorProducts/, /^email$/, /retentionDays|undoDepth/, /runProfiles/, /ollamaUrl|embedding/, /\.model$|\.provider$/]) {
     assert.ok(!keys.some((key) => forbidden.test(key)), `${forbidden} must not be changeable`);
   }
 });
@@ -83,3 +83,5 @@ test("a few words find the right setting", () => {
   assert.deepEqual(findSettings("the"), []);
   assert.ok(findSettings("connected apps", { guest: true }).every((entry) => !entry.ownerOnly));
 });
+
+ test("appearance settings are changeable without exposing permissions", () => { for (const key of ["appearance.theme", "appearance.font", "appearance.textScale", "appearance.reduceMotion"]) assert.ok(ASSISTANT_SETTING_KEYS.has(key), key); });

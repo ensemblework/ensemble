@@ -59,6 +59,7 @@ export const taskTools = [
       status: TaskStatus.optional(),
       owner: z.enum(["me", "agent", "unassigned"]).optional(),
       query: z.string().min(1).max(200).optional(),
+      ids: z.array(z.string().uuid()).max(100).optional().describe("Only these real task IDs, for a selection or visible board rows."),
       label: z.string().min(1).max(40).optional().describe("Only tasks with this tag."),
       limit: z.number().int().min(1).max(100).default(50),
       offset: z.number().int().min(0).max(500).default(0),
@@ -69,6 +70,7 @@ export const taskTools = [
       const where = {
         userId: ctx.userId,
         deletedAt: null,
+        ...(input.ids ? { id: { in: input.ids } } : {}),
         ...(input.status ? { status: input.status } : {}),
         ...(input.owner ? { owner: input.owner } : {}),
         ...(input.label ? { labels: { has: input.label } } : {}),

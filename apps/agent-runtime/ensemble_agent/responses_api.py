@@ -179,13 +179,13 @@ def tools_for(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
             continue
         fn = tool.get("function")
         if isinstance(fn, dict):
-            spec: dict[str, Any] = {"type": "function", "name": fn.get("name") or ""}
+            spec: dict[str, Any] = {"type": "function", "name": fn.get("name") or "", "strict": False}
             if fn.get("description"):
                 spec["description"] = fn["description"]
             spec["parameters"] = fn.get("parameters") or {"type": "object", "properties": {}}
             out.append(spec)
         elif tool.get("name"):
-            spec = {"type": "function", "name": tool["name"]}
+            spec = {"type": "function", "name": tool["name"], "strict": False}
             if tool.get("description"):
                 spec["description"] = tool["description"]
             spec["parameters"] = tool.get("parameters") or {"type": "object", "properties": {}}

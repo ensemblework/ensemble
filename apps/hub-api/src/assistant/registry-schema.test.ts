@@ -31,3 +31,7 @@ test("all chat and Responses tool schemas use provider-compatible JSON Schema bo
   assert.match(json, /"xTickStep":\{[^}]*"exclusiveMinimum":0/);
   assert.doesNotMatch(json, /"exclusiveMinimum":true/);
 });
+
+test("Responses tools keep optional arguments optional instead of normalizing every field to required", () => {
+  for (const spec of responsesToolSpecs([...TOOLS.values(), ...APP_TOOL_LIST])) assert.equal(spec.strict, false, String(spec.name));
+});

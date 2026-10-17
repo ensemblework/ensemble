@@ -13,11 +13,11 @@ test("the assistant prompt includes today's date and timezone with no page open"
   });
   assert.match(prompt, /Today is Sunday, 2026-10-04/);
   assert.match(prompt, /America\/Los_Angeles/);
-  assert.match(prompt, /tomorrow/);
-  assert.match(prompt, /before the Oct 6 release/);
-  assert.match(prompt, /not "before the release tomorrow"/);
-  assert.match(prompt, /I've proposed a project page — press Apply to create it/);
-  assert.match(prompt, /created or drafted/);
+  assert.match(prompt, /Resolve relative dates from today's date/);
+  assert.match(prompt, /YYYY-MM-DD/);
+  assert.match(prompt, /HH:MM in the given zone/);
+  assert.match(prompt, /A held write is a proposal until Apply/);
+  assert.match(prompt, /Do not claim completion before it runs/);
 });
 
 test("an open page still carries the date and timezone", () => {

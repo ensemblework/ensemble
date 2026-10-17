@@ -2,7 +2,7 @@
 name: pages
 title: Pages and notes
 when: find, read, write, add to, rewrite or delete pages (standalone notes) and task pages; drafts, outlines and write-ups saved in Ensemble
-tools: hub_list_pages, hub_read_page, hub_create_page, hub_update_page, hub_delete_page, hub_delete_pages, hub_restore_entity, hub_read_task_page, hub_list_tasks, hub_list_files
+tools: hub_list_pages, hub_read_page, hub_create_page, hub_update_page, hub_delete_page, hub_delete_pages, hub_restore_entity, hub_read_task_page, hub_list_tasks, hub_list_files, hub_read_page_blocks, hub_edit_page, hub_move_page, hub_export_page_file, hub_run_workflow, hub_manage_record, hub_read_record_details
 match: \b(pages?|notes?|write[- ]?up|draft|outline|document this|jot|notebook|wiki)\b
 paths: /pages
 ---
@@ -24,3 +24,8 @@ Good pages
 - Lead with the point, then sections. Keep the person's words and facts; do not pad.
 - Dates are absolute ("Oct 14"), not "tomorrow".
 - Writes wait for Apply: say "Ready to apply — press Apply to create the page".
+
+Precise edit: hub_read_page_blocks returns revision, paths and exact block Markdown. hub_edit_page takes these plus replace, replace_text, insert_before, insert_after or delete. Unchanged blocks stay intact. Use replace_text for a phrase while preserving its formatting. Paths in multiple edits refer to the document after the preceding edit.
+Move a page → hub_move_page. Export → hub_export_page_file. Dependent creates → hub_run_workflow.
+
+Other record maintenance → hub_manage_record (restore one trashed record, page/task conversion, supported plot/diagram/dataset actions, file tags and internal comments). Use the relevant real ID; it preserves the app's existing access and deletion rules.

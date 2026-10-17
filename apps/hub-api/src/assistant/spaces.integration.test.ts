@@ -125,6 +125,23 @@ test("every assistant tool stays inside the open space", async () => {
   for (const tool of TOOLS.values()) {
     if (SKIP.has(tool.name)) continue;
     const extra: Record<string, Array<Record<string, unknown>>> = {
+      hub_read_record_details: [{ view: "comments", kind: "page", id: ids.page }],
+      hub_update_repo: [{ repoId: ids.task, description: "Across" }],
+      hub_read_layout: [{ surface: "board" }],
+      hub_edit_layout: [{ surface: "board", version: "not-current", edits: [{ action: "add", type: "blocked" }] }],
+      hub_edit_page: [{ pageId: ids.page, revision: 1, edits: [{ path: [0], action: "delete", expected: "x" }] }],
+      hub_list_app_relationships: [{ view: "attached", taskId: ids.task }],
+      hub_manage_app_relationship: [{ action: "attach", source: "notion", kind: "page", id: "external", taskId: ids.task }],
+      hub_start_board_import: [{ previewId: ids.task, containers: ["board"] }],
+      hub_manage_import: [{ jobId: ids.task, action: "cancel" }],
+      hub_run_workflow: [{ title: "Across", steps: [{ id: "a", tool: "hub_update_person", input: { personId: ids.person, role: "Across" } }, { id: "b", tool: "hub_update_person", input: { personId: ids.person, role: "Across" } }] }],
+      hub_edit_file: [{ fileId: ids.file, expectedSha256: "0".repeat(64), action: "replace_text", find: "x", replacement: "y" }],
+      hub_export_page_file: [{ pageId: ids.page, format: "md", filename: "copy.md" }],
+      hub_update_desk_item: [{ kind: "person", id: ids.person, title: "Across" }],
+      hub_move_page: [{ pageId: ids.page, parentId: null }],
+      hub_manage_record: [{ action: "restore", kind: "page", id: ids.page }],
+      hub_manage_skill: [{ action: "update", skillId: ids.task, expectedVersion: 1, body: "Across" }],
+      hub_choose_model: [{ tier: "easy", provider: "openai", model: "gpt-5-mini" }],
       hub_import_meeting_notes: [{ source: "fireflies", since: "2026-10-01T00:00:00.000Z", proposeTasks: false }],
       hub_read_page: [{ pageId: ids.page }],
       hub_update_page: [{ pageId: ids.page, matchTitle: `${MARK} page`, mode: "append", markdown: "Added from another space" }],

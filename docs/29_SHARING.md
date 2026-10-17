@@ -199,3 +199,7 @@ An edit-enabled public link still permits writing without an account. AI request
 ### Sharing management detail
 
 Settings’ Shared with you rows show their first content excerpt, source space and sharing date. `/shared-by-me` asks for confirmation before removing individual or space access or turning off a public link. Run-feedback creation is runner-class; only the originating runner may start a follow-up on that computer, and the ordinary assignment checks run again.
+
+## Expanded assistant actions (18 Oct 2026)
+
+The new route-backed assistant tools forward the current person's original request credentials internally; they do not mint an owner token. Existing route policy classes therefore continue to apply. No new HTTP routes were added by this action expansion. Viewers have no write tools. Layout writes and private connector relationships/import tools are owner-only in the assistant catalog. Workflows recheck each nested tool's permissions and scope and retain per-actor receipts. Source: `assistant/apps.ts`, `assistant/request.ts`, `assistant/tools/workflows.ts`; [34](34_ASSISTANT_ACTIONS.md).
