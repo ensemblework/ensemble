@@ -9,6 +9,14 @@ on:
         type: choice
         default: all
         options: [all, macos-arm64, macos-x64, windows, linux]
+      recovery_source_run:
+        description: Original tagged build run for packaging recovery (leave empty to build).
+        type: string
+        default: ''
+      recovery_intel_run:
+        description: Successful Intel-only recovery run (leave empty to build).
+        type: string
+        default: ''
   push:
     branches:
       - desktop
@@ -24,6 +32,7 @@ permissions:
 
 jobs:
   targets:
+    if: ${{ !inputs.recovery_source_run && !inputs.recovery_intel_run }}
     name: Select desktop targets
     runs-on: ubuntu-latest
     outputs:
@@ -168,6 +177,7 @@ jobs:
   # Escape and trust tests. The Seatbelt cases skip everywhere except macOS.
   # No Postgres: these files do not open a database.
   seatbelt:
+    if: ${{ !inputs.recovery_source_run && !inputs.recovery_intel_run }}
     name: macOS sandbox escapes
     runs-on: macos-latest
     steps:
@@ -193,3 +203,22 @@ jobs:
 
       - name: Verify the Mac installer packager
         run: node --test scripts/package-mac-dmg.test.mjs
+
+  recovery-publish:
+    name: Publish verified desktop recovery
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (inputs.recovery_source_run || inputs.recovery_intel_run)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify source, signatures and publish the complete installer set
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RECOVERY_SOURCE_RUN: ${{ inputs.recovery_source_run }}
+          RECOVERY_INTEL_RUN: ${{ inputs.recovery_intel_run }}
+        run: node scripts/publish-desktop-recovery.mjs

@@ -184,3 +184,5 @@ Go setup is pinned to `actions/setup-go@v6.4.0` (Go `1.24.x`) in CI and client p
 `release.json` is the version source for the web, API, desktop, quick capture and CLI. Change it, run `pnpm version:sync`, and commit the derived manifests/configs together. `pnpm version:check` runs before typecheck and application builds. Native builds also validate the version from Rust. Desktop and CLI tags must match it; publish both from the tested main commit. Desktop releases build Apple silicon and Intel separately so their sidecars match. See [Desktop](docs/DESKTOP.md) and [CLI releases](docs/26_CLI.md#7-releases).
 
 The desktop workflow can build a selected target on manual dispatch for recovery. Intel Mac disk images use the verified APFS packager (`scripts/package-mac-dmg.mjs`) after the app and signed updater archive are built, avoiding the interactive disk-image staging path.
+
+A desktop packaging recovery can assemble successful tagged artifacts with a corrected Intel-only build on a GitHub runner; it verifies runtime source parity and every updater signature before publishing.

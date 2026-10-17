@@ -171,3 +171,5 @@ Folders such as `node_modules/`, `.next/`, `dist/`, `.venv/`, `__pycache__/`, `*
 `release.json` at the root is the canonical release number. `scripts/release-version.mjs` synchronizes/checks all build metadata; `scripts/desktop-release.mjs` assembles signed platform update manifests.
 
 `scripts/desktop-targets.mjs` defines the desktop build matrix; `scripts/package-mac-dmg.mjs` creates and verifies the Intel Mac disk image.
+
+`scripts/publish-desktop-recovery.mjs` assembles a verified complete installer set from existing CI artifacts. `scripts/verify-desktop-signatures.mjs` and its Rust source verify updater signatures using the public key, without access to the signing secret.
