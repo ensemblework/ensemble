@@ -287,3 +287,7 @@ Code inspection: `workspace/queue-policy.ts` serializes claims on the user row f
 `jobs/skill-mining.ts` warns in the bell at least 24 hours before learning from expired completed work. The daily retention pass uses the **High** model, validates structured skills, versions updates, then writes completion records and moves the batch to Trash atomically. A failed/offline model, pin, reopen, active job or conflicting skill edit preserves the work for a later pass. Batches contain at most 50 tasks and 50 deliverables; the notice state is a per-space `hub.retention-mining` preference. Trash is purged using the existing trash retention setting, including the completion records made when it entered Trash.
 
 The scheduler visits all accounts, including those with no saved settings row. Morning briefs begin on the local day after account creation, use the profession default/personal skill, and are idempotent per local day. The native app/local runtime must be running for local schedules.
+
+### First-brief introduction lifecycle
+
+Delivery starts on the local day after signup. The introduction belongs to the account, and `cowork/brief-prompt.ts` records its first offer before the Hub opens it. Dismissal, saving and later deliveries do not reset it. A data-only migration retires introductions for existing accounts that already received a brief. Scheduling and the permanent `/morning-brief` editor are unchanged. Code inspection and focused regressions, 17 Oct 2026.

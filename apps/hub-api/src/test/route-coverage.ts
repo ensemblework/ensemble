@@ -341,7 +341,8 @@ export const pageVersionRouteCoverage: Readonly<Record<string, readonly RouteChe
   "DELETE /api/page-templates/:id": ["happy-path", "isolation", "unknown-id", "invalid-input"],
 };
 
-export const routeCoverage = {
+export const routeCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
+  "POST /api/brief/prompt": ["happy-path", "isolation", "invalid-input"] as readonly RouteCheck[],
   ...pageVersionRouteCoverage,
   ...testingReportRouteCoverage,
   ...workspaceSearchRouteCoverage,

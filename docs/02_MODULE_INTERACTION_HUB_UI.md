@@ -1008,7 +1008,8 @@ Additional API contracts (Code inspection):
 |---|---|---|---|
 | PATCH | `/api/devices/:id` | `{ name }`, trimmed, 1–60 characters; only the signed-in person’s device | personal |
 | GET | `/api/brief/skill` | Morning brief skill, latest delivered brief, whether personalization is pending | owner |
-| PATCH | `/api/brief/skill` | `{ instructions }` saves and versions the personal brief skill | owner |
+| PATCH | `/api/brief/skill` | `{ instructions }` saves and versions the personal brief skill and finishes the account’s introduction | owner |
+| POST | `/api/brief/prompt` | `{ action: "show" \| "dismiss" }`; atomically claims the one-time account introduction or closes it permanently | personal |
 | POST | `/api/skills/:id/test` | Generates an example on the Low model; Morning brief uses current Today context | shared (existing skills policy; viewers cannot write) |
 
 `POST /api/data/delete` uses `lib/workspace-data.ts`. Context-only removes ingested context and sync state; Everything also removes pages, tasks, diagrams, plots, skills, completion records, discussions and other workspace data, including their cascading child records. It keeps the account, sign-ins, devices, connector/model configuration, settings and audit ledger. Active agent tasks must be stopped first (409). Uploaded plot dataset files are removed for Everything. Deletion is scoped to the open space, and the ledger records the deletion scope without erased content.
@@ -1027,3 +1028,7 @@ Account and avatar-menu sign out use `components/account/sign-out.tsx`: the same
 Settings › Sharing shows up to five items per list, current page titles, first-line excerpts and share dates. **View all** opens `/shared`; **Manage all sharing** opens `/shared-by-me` for person-grouped access removal and public-link revocation. These links open a new tab on the web and stay inside the native app. Share-limit dialogs use the same management destination. See [29](29_SHARING.md).
 
 Checked 17 Oct 2026 with the Round 3 HTTP regressions and a local production-build Chrome walkthrough (1440 px and 390 px): assistant failure/Retry and Escape, dark complexity list, history restore while the stream is offline, duplicate/template creation, share previews/revocation, the shared pairing dialog and sign-out confirmation/redirect.
+
+### First morning brief introduction
+
+`components/morning-brief.tsx` asks the API to claim the introduction before opening its dialog. It appears only after the first delivered brief on a later local calendar day than signup, once per account across tabs, spaces and computers. Closing, following Read your first brief, saving preferences, or refreshing after the offer never causes it to return. Preferences stay editable on `/morning-brief`. Existing delivered briefs are retired by `20261017110000_morning_brief_once` so old accounts are not prompted again. Checked 17 Oct 2026 with concurrent claims, reload/remount, dismissal, save, account isolation and migration regressions.

@@ -1343,6 +1343,7 @@ export const api = bindClient({
   skill: (id: string) => get<{ skill: SkillRecord }>(`/api/skills/${id}`),
   morningBriefSkill: () => get<{ skill: { id: string; body: string }; notification: HubNotification | null; customize: boolean }>("/api/brief/skill"),
   saveMorningBriefSkill: (instructions: string) => patch("/api/brief/skill", { instructions }),
+  morningBriefPrompt: (action: "show" | "dismiss") => post<{ show: boolean }>("/api/brief/prompt", { action }),
   testSkill: (id: string, prompt?: string) => post<{ title: string; body: string }>(`/api/skills/${id}/test`, { prompt }),
   createSkill: (name: string) => post<{ skill: SkillRecord }>("/api/skills", { name }),
   patchSkill: (id: string, data: Record<string, unknown>) => patch<{ skill: SkillRecord }>(`/api/skills/${id}`, data),
