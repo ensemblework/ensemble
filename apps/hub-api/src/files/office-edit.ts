@@ -34,4 +34,3 @@ export function replaceOfficeText(bytes: Uint8Array, format: "docx" | "pptx", fi
   for (const [path, xml] of pending) files[path] = strToU8(xml);
   return zipSync(files);
 }
-

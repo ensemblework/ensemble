@@ -10,12 +10,6 @@ import { catalog, clearCatalogCache, completeText, completeWithTools, setRuntime
 import { resetBuckets, setRuntimeSleepForTests } from "./pace.js";
 import { apiFor, cleanItems, forgetLearnedForTests, otherEndpoint, toolsFor } from "./responses-api.js";
 
-test("optional function inputs stay optional on Responses", () => {
-  const tools = toolsFor([{ type: "function", function: { name: "create", parameters: { type: "object", properties: { title: { type: "string" }, project: { type: "string" } }, required: ["title"] } } }]);
-  assert.equal(tools[0]!.strict, false);
-  assert.deepEqual((tools[0]!.parameters as Record<string, unknown>).required, ["title"]);
-});
-
 const REFUSAL = { error: { message: 'model "gpt-5.4-mini" is not accessible via the /chat/completions endpoint', code: "model_not_supported", type: "invalid_request_error" } };
 const RESPONSE = {
   id: "resp_1",
@@ -161,4 +155,10 @@ test("only a refusal that names an endpoint switches; history is cleaned for sto
     [{ role: "assistant", content: "Done." }],
     "an earlier reply's text is sent once",
   );
+});
+
+test("optional function inputs stay optional on Responses", () => {
+  const tools = toolsFor([{ type: "function", function: { name: "create", parameters: { type: "object", properties: { title: { type: "string" }, project: { type: "string" } }, required: ["title"] } } }]);
+  assert.equal(tools[0]!.strict, false);
+  assert.deepEqual((tools[0]!.parameters as Record<string, unknown>).required, ["title"]);
 });
