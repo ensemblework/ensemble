@@ -65,7 +65,7 @@ export function parseIncludedConfig(env: NodeJS.ProcessEnv = process.env): Inclu
     const unknown = [...wanted].filter((id) => !INCLUDED_MODELS.some((model) => model.id === id));
     if (unknown.length) throw new Error(`ENSEMBLE_INCLUDED_MODELS names models Ensemble does not include: ${unknown.join(", ")}.`);
   }
-  const models = INCLUDED_MODELS.filter((model) => !wanted || wanted.has(model.id));
+  const models = INCLUDED_MODELS.filter((model) => (wanted ? wanted.has(model.id) : model.offeredByDefault));
   if (!models.length) return null;
   return {
     resource,

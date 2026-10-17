@@ -20,6 +20,8 @@ test("a long prompt pays the long-context rates for the whole request", () => {
   close(includedCost("grok-4.7", { inputTokens: 199_999, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 1_000 }).usd, (199_999 * 2 + 1_000 * 6) / 1e6);
   close(includedCost("grok-4.7", { inputTokens: 200_000, cacheReadTokens: 50_000, cacheWriteTokens: 0, outputTokens: 1_000 }).usd, (150_000 * 4 + 50_000 * 1 + 1_000 * 12) / 1e6, "from 200,000 prompt tokens");
   close(includedCost("deepseek-v4-flash", { inputTokens: 900_000, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0 }).usd, (900_000 * 0.19) / 1e6);
+  close(includedCost("gpt-5-mini", { inputTokens: 20_000, cacheReadTokens: 10_000, cacheWriteTokens: 0, outputTokens: 1_000 }).usd, (10_000 * 0.25 + 10_000 * 0.025 + 1_000 * 2) / 1e6);
+  close(includedCost("gpt-4.1-mini", { inputTokens: 20_000, cacheReadTokens: 10_000, cacheWriteTokens: 0, outputTokens: 1_000 }).usd, (10_000 * 0.4 + 10_000 * 0.1 + 1_000 * 1.6) / 1e6);
 });
 
 test("counts are clamped: cache cannot exceed input, negatives are zero", () => {
@@ -44,6 +46,7 @@ test("configuration: off, unknown models, resource names and limits", () => {
   assert.equal(includedConfig({ ...base, ENSEMBLE_INCLUDED_MAX_OUTPUT_TOKENS: "4096" })!.maxOutputTokens, 4_096);
   assert.throws(() => parseIncludedConfig({ ...base, ENSEMBLE_INCLUDED_MAX_OUTPUT_TOKENS: "1.5" }), /whole number/);
   assert.deepEqual(includedConfig({ ...base, ENSEMBLE_INCLUDED_MODELS: "gpt-6-luna" })!.models.map((model) => model.id), ["gpt-6-luna"]);
+  assert.deepEqual(includedConfig({ ...base, ENSEMBLE_INCLUDED_MODELS: "gpt-4.1-mini,gpt-5-mini" })!.models.map((model) => model.id), ["gpt-5-mini", "gpt-4.1-mini"], "free-account models only when named");
   assert.throws(() => parseIncludedConfig({ ...base, ENSEMBLE_INCLUDED_MODELS: "claude-haiku-5-5" }), /does not include: claude-haiku-5-5/);
   assert.throws(() => parseIncludedConfig({ ...base, AZURE_FOUNDRY_RESOURCE: "https://ensemble-ai.services.ai.azure.com" }), /resource name/);
   assert.throws(() => parseIncludedConfig({ ...base, ENSEMBLE_INCLUDED_TOTAL_MONTHLY_USD: "-1" }), /positive/);

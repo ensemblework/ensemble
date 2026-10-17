@@ -21,6 +21,9 @@ export const INCLUDED_PRICES: Record<string, Price> = {
     base: { input: 2, cacheRead: 0.1, cacheWrite: 2.5, output: 10 },
     long: { over: 272_000, rates: { input: 4, cacheRead: 0.2, cacheWrite: 5, output: 15 } },
   },
+  // OpenAI's list price; Azure's priority-processing meters are exactly 1.8 times these.
+  "gpt-5-mini": { base: { input: 0.25, cacheRead: 0.025, cacheWrite: 0.25, output: 2 } },
+  "gpt-4.1-mini": { base: { input: 0.4, cacheRead: 0.1, cacheWrite: 0.4, output: 1.6 } },
   // xAI: the higher rates apply from 200,000 prompt tokens; Azure's "L" meters match them.
   "grok-4.7": {
     base: { input: 2, cacheRead: 0.5, cacheWrite: 2, output: 6 },

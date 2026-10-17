@@ -53,6 +53,8 @@ class IncludedModel:
     version: str | None
     # The thinking levels the model takes. Any other level is not sent.
     efforts: tuple[str, ...]
+    # Offered when ENSEMBLE_INCLUDED_MODELS is unset; the others only when it names them.
+    by_default: bool = True
 
 
 _LEVELS = ("low", "medium", "high")
@@ -63,6 +65,9 @@ MODELS: dict[str, IncludedModel] = {
     "deepseek-v4-flash": IncludedModel("chat", "services", "DeepSeek V4 Flash", None, ()),
     "gpt-6.1-sol": IncludedModel("responses", "openai", "GPT-6.1 Sol", "2026-09-29", _LEVELS),
     "grok-4.7": IncludedModel("responses", "services", "Grok 4.7", None, _LEVELS),
+    # For testing on an Azure free account, whose quota tier gives the four above no tokens.
+    "gpt-5-mini": IncludedModel("responses", "openai", "GPT-5 mini", "2025-08-07", _LEVELS, by_default=False),
+    "gpt-4.1-mini": IncludedModel("responses", "openai", "GPT-4.1 mini", "2025-04-14", (), by_default=False),
 }
 
 # How a Claude model answers without thinking, at effort high or below.
@@ -140,7 +145,7 @@ def included_config(env: Mapping[str, str] | None = None) -> IncludedConfig | No
         unknown = [name for name in wanted if name not in MODELS]
         if unknown:
             raise IncludedConfigError(f"ENSEMBLE_INCLUDED_MODELS names models Ensemble does not include: {', '.join(unknown)}.")
-    chosen = tuple(name for name in MODELS if wanted is None or name in wanted)
+    chosen = tuple(name for name, entry in MODELS.items() if (entry.by_default if wanted is None else name in wanted))
     if not chosen:
         return None
     return IncludedConfig(resource=resource, api_key=api_key, models=chosen, max_output_tokens=_output_cap(source))
