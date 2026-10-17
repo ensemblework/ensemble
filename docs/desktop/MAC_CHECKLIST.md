@@ -63,3 +63,5 @@ These are manual release checks; compilation or simulated HTTP tests alone do no
 ## Release consistency
 
 Check About Ensemble against root `release.json`. Confirm the installer matches the Mac’s chip, the same version appears in the CLI, and About can check for updates. An active task must block installing an update. A 0.3.x install needs one manual installer download to bootstrap the signed updater.
+
+Intel disk images use the APFS packager and a simple app/Applications layout. Verify the image opens and the bundle’s version matches the canonical release before publication. CI also creates/verifies a fixture image without Finder automation.

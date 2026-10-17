@@ -169,3 +169,5 @@ Folders such as `node_modules/`, `.next/`, `dist/`, `.venv/`, `__pycache__/`, `*
 `packages/brand` owns Woven Chorus artwork, Satin Gold, the Expressive SVG motion controller and terminal frames. Web, landing, native startup, Quick capture and CLI consume this source. `scripts/build-ensemble-brand.mjs` exports packaged icons, social previews and standalone fallback pages. Run `pnpm brand:build` after changing a master; `pnpm brand:check` checks source/output hashes. Details: [Brand and motion](BRAND.md).
 
 `release.json` at the root is the canonical release number. `scripts/release-version.mjs` synchronizes/checks all build metadata; `scripts/desktop-release.mjs` assembles signed platform update manifests.
+
+`scripts/desktop-targets.mjs` defines the desktop build matrix; `scripts/package-mac-dmg.mjs` creates and verifies the Intel Mac disk image.
