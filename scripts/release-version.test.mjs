@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 
 test('release checks tolerate Windows checkout line endings and synchronization updates all surfaces', async () => {
   const root = await mkdtemp(join(tmpdir(),'ensemble-version-test-'));
-  const files=['release.json','package.json','scripts/release-version.mjs','apps/agent-runtime/pyproject.toml','packages/shared-types/src/version.ts'];
+  const files=['release.json','package.json','scripts/release-version.mjs','apps/agent-runtime/pyproject.toml','packages/shared-types/src/version.ts','apps/agent-runtime/ensemble_agent/version.py'];
   for(const group of ['apps','packages']) for(const name of await readdir(group)) {try{await readFile(`${group}/${name}/package.json`);files.push(`${group}/${name}/package.json`);}catch{}}
   for(const app of ['desktop','quick-capture']) for(const file of ['Cargo.toml','Cargo.lock','tauri.conf.json']) files.push(`apps/${app}/src-tauri/${file}`);
   try {

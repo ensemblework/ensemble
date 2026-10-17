@@ -26,6 +26,9 @@ change("apps/agent-runtime/pyproject.toml", current => current.replace(/^version
 const sharedPath = "packages/shared-types/src/version.ts";
 const generated = `/** Generated from release.json. Every surface uses this release number. */\nexport const ENSEMBLE_VERSION = "${releaseVersion}";\n`;
 if (!existsSync(join(root, sharedPath)) || readFileSync(join(root, sharedPath), "utf8").replace(/\r\n/g, "\n") !== generated) changes.push({ path: sharedPath, next: generated });
+const pythonVersionPath = "apps/agent-runtime/ensemble_agent/version.py";
+const pythonVersion = `"""Generated from release.json."""\n__version__ = "${releaseVersion}"\n`;
+if (!existsSync(join(root, pythonVersionPath)) || readFileSync(join(root, pythonVersionPath), "utf8").replace(/\r\n/g, "\n") !== pythonVersion) changes.push({ path: pythonVersionPath, next: pythonVersion });
 export function checkReleaseVersion() {
   if (changes.length) throw new Error(`Release versions need synchronizing: ${changes.map(item => item.path).join(", ")}. Run pnpm version:sync.`);
 }

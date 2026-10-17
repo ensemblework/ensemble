@@ -312,6 +312,8 @@ Packaged CLI/desktop launchers set `ENSEMBLE_INSTALL_PATH` internally (16 Oct 20
 
 ## Canonical release version (17 Oct 2026)
 
-`release.json` owns the version. `pnpm version:sync` writes package manifests, Tauri/Cargo configs/locks, Python metadata and the shared TypeScript constant; `pnpm version:check` rejects differences. Web/API/landing prebuilds, CLI/sidecar packaging and native Rust builds check it. `/health` and public `/api/version` report it. About shows the installed version, and `GET /api/version?updates=1` checks published CLI/desktop channels with a five-minute cache (30 seconds on failure).
+`release.json` owns the version. `pnpm version:sync` writes package manifests, Tauri/Cargo configs/locks, Python metadata/runtime constant and the shared TypeScript constant; `pnpm version:check` rejects differences. Web/API/landing prebuilds, CLI/sidecar packaging and native Rust builds check it. `/health` and public `/api/version` report it. About shows the installed version, and `GET /api/version?updates=1` checks published CLI/desktop channels with a five-minute cache (30 seconds on failure).
 
 Desktop publication requires signed updater packages for macOS arm64/x64, Windows x64 and Linux x64. `TAURI_SIGNING_PRIVATE_KEY` is a GitHub Actions secret; only its public key is in Tauri config. `scripts/desktop-release.mjs` validates the packages and manifest before a draft becomes public. OS code signing is separate and remains unconfigured. CLI publication still updates the Homebrew tap and Scoop bucket through their existing deploy keys.
+
+The Context Bridge MCP server-info and the Python runtime’s health/OpenAPI version also report the canonical release; `version:sync` generates `ensemble_agent/version.py`.

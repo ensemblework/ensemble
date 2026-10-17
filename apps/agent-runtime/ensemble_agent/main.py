@@ -10,7 +10,7 @@ import httpx
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from ensemble_agent import credentials
+from ensemble_agent import credentials, __version__
 from ensemble_agent.hosted_access import HostedAccessError, HostedAccessUnavailable, require_host_access, require_verified_user
 from ensemble_agent.config import get_settings
 from ensemble_agent.production import format_production_problems, production_problems
@@ -62,7 +62,7 @@ async def _lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="ensemble-agent-runtime", lifespan=_lifespan)
+app = FastAPI(title="ensemble-agent-runtime", version=__version__, lifespan=_lifespan)
 
 @app.exception_handler(HostedAccessError)
 async def hosted_access_failure(_request, exc: HostedAccessError) -> JSONResponse:
@@ -113,7 +113,7 @@ def _fail(exc: Exception) -> NoReturn:
 
 @app.get("/health")
 def health() -> dict[str, bool | str]:
-    return {"ok": True, "service": "agent-runtime"}
+    return {"ok": True, "service": "agent-runtime", "version": __version__}
 
 
 @app.post("/api/chat/tools")

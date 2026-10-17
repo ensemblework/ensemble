@@ -102,7 +102,7 @@ def test_health_and_model_routes_preserve_response_shapes(client, monkeypatch):
     monkeypatch.setattr(main, "complete_text", completion)
     monkeypatch.setattr(main, "catalog", catalog)
     monkeypatch.setattr(main, "stream_with_tools", stream)
-    assert client.get("/health").json() == {"ok": True, "service": "agent-runtime"}
+    assert client.get("/health").json() == {"ok": True, "service": "agent-runtime", "version": __import__("ensemble_agent").__version__}
     for path in ["/api/chat/tools", "/api/complete"]:
         assert client.post(path, headers=HEADERS, json={}).json()["text"] == "fixture"
     assert client.get("/api/models", headers=HEADERS).json()["providers"][0]["id"] == "fixture"

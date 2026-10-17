@@ -1,3 +1,4 @@
+import { ENSEMBLE_VERSION } from "@ensemble/shared-types/version";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { loadBridgeConfig } from "./config.js";
@@ -76,7 +77,7 @@ function idOf(variables: Record<string, unknown>, key = "id"): string {
 export function buildServer(deps: BridgeDeps = {}): McpServer {
   const hub = deps.hub ?? createHubClient(loadBridgeConfig());
   const detect = deps.detect ?? detectGit;
-  const server = new McpServer({ name: "ensemble-context-bridge", version: "0.1.0" });
+  const server = new McpServer({ name: "ensemble-context-bridge", version: ENSEMBLE_VERSION });
 
   server.registerTool(
     "ensemble_brief",
