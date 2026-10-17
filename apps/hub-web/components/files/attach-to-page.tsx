@@ -106,7 +106,7 @@ function AttachBody({ file, onClose, onOpen }: { file: FileRecord; onClose: () =
 
   return (
     <div className="text-[13px]">
-      <label className="flex h-9 items-center gap-2 rounded-lg border border-line bg-panel px-2.5 focus-within:border-accent">
+      <label className="flex h-9 items-center gap-2 rounded-lg border border-line bg-panel px-2.5 focus-within:border-line-strong">
         <Search size={14} className="shrink-0 text-muted" aria-hidden />
         <input
           autoFocus

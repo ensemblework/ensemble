@@ -255,3 +255,23 @@ test("hosted: a tier whose provider has no key for this account reads as an incl
   assert.deepEqual((await withIncludedDefaults(db, user.id, DEFAULT_SETTINGS)).models, DEFAULT_SETTINGS.models, "not hosted: unchanged");
 });
 
+
+test("hosted: picking another included model in Settings sticks, on an account still on the shipped default", async () => {
+  const user = await harness.asUser();
+  await db.user.update({ where: { id: user.id }, data: { emailVerifiedAt: new Date() } });
+  const before = process.env.NODE_ENV;
+  process.env.NODE_ENV = "production";
+  process.env.ENSEMBLE_INCLUDED_MODELS = "gpt-5-mini,gpt-4.1-mini";
+  try {
+    const shown = (await user.inject({ method: "GET", url: "/api/settings" })).json().settings.models.easy;
+    assert.deepEqual(shown, { provider: "ensemble", model: "gpt-5-mini", effort: "default" });
+    const saved = await user.inject({ method: "PATCH", url: "/api/settings", payload: { models: { easy: { model: "gpt-4.1-mini", effort: "default" } } } });
+    assert.equal(saved.statusCode, 200, saved.body);
+    assert.deepEqual(saved.json().settings.models.easy, { provider: "ensemble", model: "gpt-4.1-mini", effort: "default" });
+    const again = (await user.inject({ method: "GET", url: "/api/settings" })).json().settings.models.easy;
+    assert.deepEqual(again, { provider: "ensemble", model: "gpt-4.1-mini", effort: "default" });
+  } finally {
+    process.env.NODE_ENV = before;
+    delete process.env.ENSEMBLE_INCLUDED_MODELS;
+  }
+});

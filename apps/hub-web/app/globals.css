@@ -390,7 +390,7 @@ select:focus-visible {
     @apply flex h-9 w-full min-w-0 items-center gap-2 rounded-lg border border-line bg-raised px-2.5 text-[13px] text-ink transition-colors hover:border-line-strong focus-visible:border-accent focus-visible:outline-none aria-expanded:border-accent;
   }
   .picker-search {
-    @apply mx-1 mt-0.5 flex items-center gap-2 rounded-md border border-line bg-panel px-2 py-1.5 focus-within:border-accent;
+    @apply mx-1 mt-0.5 flex items-center gap-2 rounded-md border border-line bg-panel px-2 py-1.5 focus-within:border-line-strong;
   }
   .picker-option {
     @apply flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[13px] text-ink transition-colors hover:bg-hover;
@@ -983,6 +983,21 @@ select:focus-visible {
 }
 .tile:focus-within:has(.search-line) {
   box-shadow: 0 0 0 2px rgb(var(--accent-rgb) / 0.9);
+}
+/* Search bars draw no focus highlight of their own: no ring on the input, and the box around it does
+   not turn accent. The search slot (.sq) and tile search lines (.search-line) keep the one outer edge
+   they were designed with; nothing else adds one. */
+:is(input[type="search"], input[role="searchbox"], input[aria-label*="search" i], input[aria-label*="find" i], input[aria-label*="filter" i], input[placeholder*="search" i], input[placeholder^="find" i], input[placeholder^="filter" i]):is(:focus, :focus-visible),
+:is(label, div):has(> svg.lucide-search) input:is(:focus, :focus-visible) {
+  outline: none !important;
+  outline-offset: 0 !important;
+  box-shadow: none !important;
+}
+.field:is([type="search"], [aria-label*="search" i], [aria-label*="find" i], [aria-label*="filter" i], [placeholder*="search" i], [placeholder^="find" i], [placeholder^="filter" i]):is(:focus, :focus-visible),
+:is(label, div):not(.tile, .sq-field):has(> svg.lucide-search):focus-within {
+  border-color: var(--line-strong) !important;
+  box-shadow: none !important;
+  outline: none !important;
 }
 @container (max-width: 640px) {
   .board-column {

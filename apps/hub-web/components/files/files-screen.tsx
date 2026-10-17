@@ -385,7 +385,7 @@ function YourFiles() {
         <Uploads items={uploads.items} onDismiss={uploads.dismiss} />
 
         <div className="mb-3 flex flex-wrap items-center gap-2">
-          <label className="flex h-9 min-w-0 flex-[1_1_16rem] items-center gap-2 rounded-lg border border-line bg-panel px-2.5 focus-within:border-accent">
+          <label className="flex h-9 min-w-0 flex-[1_1_16rem] items-center gap-2 rounded-lg border border-line bg-panel px-2.5 focus-within:border-line-strong">
             <Search size={14} className="shrink-0 text-muted" aria-hidden />
             <input
               type="search"
