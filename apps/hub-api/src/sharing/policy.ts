@@ -30,6 +30,7 @@ type Rule = [methods: string, pattern: string, cls: RouteClass];
 
 /** First match wins. A pattern ending in `*` matches that prefix of the route pattern. */
 const RULES: Rule[] = [
+  ["POST", "/api/brief/prompt", "personal"],
   ["*", "/api/page-versions*", "owner"],
   ["*", "/api/page-templates*", "owner"],
   ["POST", "/api/pages/:id/duplicate", "owner"],

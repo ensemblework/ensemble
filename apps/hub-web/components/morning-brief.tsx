@@ -1,6 +1,6 @@
 "use client";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { useSpaceAccess } from "@/lib/access";
@@ -68,19 +68,38 @@ export function MorningBriefPrompt() {
     enabled: access.ready && !access.guest,
     refetchInterval: 60_000,
   });
-  const [dismissed, setDismissed] = useState(false);
+  const client = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const requested = useRef(false);
+  const claim = useMutation({
+    mutationFn: () => api.morningBriefPrompt("show"),
+    onSuccess: result => {
+      setOpen(result.show);
+      client.setQueryData(["morning-brief-skill"], (current: Awaited<ReturnType<typeof api.morningBriefSkill>> | undefined) => current ? { ...current, customize: false } : current);
+    },
+    onError: () => { requested.current = false; },
+  });
+  useEffect(() => {
+    if (!view.data?.customize || requested.current) return;
+    requested.current = true;
+    claim.mutate();
+  }, [view.data?.customize]);
+  const close = () => {
+    setOpen(false);
+    void api.morningBriefPrompt("dismiss").catch(() => undefined);
+  };
   return (
     <Dialog
-      open={Boolean(view.data?.customize && !dismissed)}
+      open={open}
       title="Make your morning brief yours"
-      onClose={() => setDismissed(true)}
+      onClose={close}
     >
       <div className="p-4">
-        <BriefPreferences onSaved={() => setDismissed(true)} />
+        <BriefPreferences onSaved={() => setOpen(false)} />
         <Link
           className="mt-3 block text-[13px] text-accent"
           href="/morning-brief"
-          onClick={() => setDismissed(true)}
+          onClick={close}
         >
           Read your first brief
         </Link>
