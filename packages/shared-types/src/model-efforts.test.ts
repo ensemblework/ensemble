@@ -38,3 +38,15 @@ test("a chosen level is sent as it is, or refused with the levels the model take
   assert.deepEqual(checkEffort("openai", "gpt-7-nova", "max"), { ok: true, send: null }, "unknown models use their default until capabilities are known");
   assert.deepEqual(checkEffort("google", "gemini-3.5-flash-lite", "minimal"), { ok: true, send: "minimal" });
 });
+
+test("included models offer Auto, Low, Medium and High at most, whatever the catalog says", () => {
+  assert.deepEqual(modelEfforts("ensemble", "gpt-6-luna"), { levels: ["low", "medium", "high"], fallback: "medium", source: "documented" });
+  assert.deepEqual(modelEfforts("ensemble", "gpt-6.1-sol", { efforts: ["low", "max"] }).levels, ["low", "medium", "high"]);
+  assert.equal(modelEfforts("ensemble", "grok-4.7").fallback, "high");
+  assert.deepEqual(modelEfforts("ensemble", "deepseek-v4-flash").levels, [], "DeepSeek has no thinking setting: Auto only");
+  assert.deepEqual(modelEfforts("ensemble", "not-a-deployment").levels, []);
+  assert.deepEqual(checkEffort("ensemble", "gpt-6-luna", "high"), { ok: true, send: "high" });
+  assert.deepEqual(checkEffort("ensemble", "gpt-6-luna", "default"), { ok: true, send: null });
+  assert.deepEqual(checkEffort("ensemble", "deepseek-v4-flash", "high"), { ok: true, send: null }, "a model with no setting gets no level");
+  for (const level of ["max", "xhigh", "none"]) assert.equal(checkEffort("ensemble", "grok-4.7", level).ok, false, level);
+});

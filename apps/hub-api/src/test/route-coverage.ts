@@ -41,6 +41,12 @@ export const roundNextRouteCoverage: Readonly<Record<string, readonly RouteCheck
   "POST /api/runs/:id/feedback": ["happy-path", "isolation", "unknown-id", "invalid-input"],
 };
 
+export const includedRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
+  "GET /api/metrics/credits": ["happy-path", "isolation"],
+  "POST /api/internal/included/reserve": ["happy-path", "invalid-input"],
+  "POST /api/internal/included/settle": ["happy-path", "invalid-input"],
+};
+
 export const resourceRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
   "GET /api/tasks": ["happy-path", "isolation"],
   "POST /api/tasks": ["happy-path", "invalid-input", "relation-isolation"],
@@ -365,6 +371,7 @@ export const routeCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
   ...connectedDataRouteCoverage,
   ...spacesRouteCoverage,
   ...subscriptionRouteCoverage,
+  ...includedRouteCoverage,
   ...sharingRouteCoverage,
   ...linksRouteCoverage,
   ...fileRouteCoverage,

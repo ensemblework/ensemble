@@ -8,6 +8,7 @@ clear error, never a silent fallback to another vendor.
 Chat-with-tools providers speak an OpenAI-compatible API: Gemini, OpenAI,
 OpenRouter, Ollama, Copilot, Mistral, Kimi (Moonshot) and Qwen (DashScope).
 Anthropic uses the native Messages API.
+Ensemble's included models (Azure AI Foundry, paid by the operator) are in included.py.
 Cursor is an agent runtime, not a chat endpoint: its key is validated and its
 agent models listed here. Delegated runs use it; the Hub chat does not.
 """
@@ -30,7 +31,7 @@ from typing import Any, Iterator, Literal
 import httpx
 from ensemble_agent.hosted_access import HostedAccessError, HostedAccessUnavailable, can_use_host_credentials, require_host_access, require_verified_user
 
-from ensemble_agent import credentials, responses_api
+from ensemble_agent import credentials, included, responses_api
 from ensemble_agent.provider_error import COPILOT_CLASSIC_TOKEN, ProviderError, no_key_message, parse_provider_error
 from ensemble_agent.rate_limit import pace, take_token
 from ensemble_agent.reach import ModelUnreachable, classify_connect, is_unreachable_notice, transport_failure
@@ -1646,6 +1647,8 @@ async def complete_with_tools(body: dict[str, Any]) -> dict[str, Any]:
         return _mock_turn(body, model)
     if provider == "cursor":
         raise _cursor_chat_error()
+    if provider == included.PROVIDER:
+        return await included.complete(body, model, body.get("messages") or [], items=body.get("responsesMessages") or None)
     if provider == "anthropic":
         return await _anthropic_chat(body, model, body.get("userId"), 300)
     return await _openai_turn(
@@ -1867,6 +1870,8 @@ async def complete_text(body: dict[str, Any]) -> dict[str, Any]:
         result = _mock_turn(mock_body, model)
     elif provider == "cursor":
         raise ModelAuthError("Cursor is not a completion provider. Pick another provider for this tier.")
+    elif provider == included.PROVIDER:
+        result = await included.complete(body, model, messages, json_mode=bool(body.get("json")), timeout=120)
     elif provider == "anthropic":
         call = {
             "messages": messages,
@@ -1891,6 +1896,7 @@ async def complete_text(body: dict[str, Any]) -> dict[str, Any]:
             stream=bool(body.get("stream")),
         )
     out = {key: result[key] for key in ("text", "model", "tokensIn", "tokensOut")}
+    out["credits"] = result.get("credits")
     if result.get("fallbackFrom"):
         out["fallbackFrom"] = result["fallbackFrom"]
     if body.get("json"):
@@ -1928,6 +1934,8 @@ async def complete_json(
 
 
 def _public_failure(exc: Exception) -> dict[str, Any]:
+    if isinstance(exc, included.IncludedLimitError):
+        return exc.to_dict()
     if isinstance(exc, (HostedAccessError, HostedAccessUnavailable)):
         return {"message": str(exc), "kind": "auth", "status": exc.status_code}
     if isinstance(exc, ModelUnreachable):
@@ -1964,6 +1972,12 @@ async def _chat_frames(body: dict[str, Any]):
         return
     if provider == "cursor":
         raise _cursor_chat_error()
+    if provider == included.PROVIDER:
+        result = await included.complete(body, model, body.get("messages") or [], items=body.get("responsesMessages") or None)
+        for piece in text_chunks(str(result.get("text") or "")):
+            yield _sse("delta", {"text": piece})
+        yield _sse("turn", result)
+        return
     if provider == "anthropic":
         result = await _anthropic_chat(body, model, body.get("userId"), 300)
         for piece in text_chunks(str(result.get("text") or "")):

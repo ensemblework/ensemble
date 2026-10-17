@@ -11,7 +11,8 @@ import { useInProcessRuntime } from "../runtime/mode.js";
 import { isPaused } from "./activity.js";
 import { recordMetric } from "./metrics.js";
 import { redis } from "./redis.js";
-import { estimateUsd } from "./pricing.js";
+import { callCost } from "./pricing.js";
+import { includedErrorFrom, IncludedLimitError } from "../included/errors.js";
 import { prisma } from "./prisma.js";
 import { errorFromRuntimeBody } from "../runtime/errors.js";
 import { truncateText } from "./text.js";
@@ -48,6 +49,7 @@ export async function runtime<T>(path: string, init: RequestInit & { json?: unkn
         signal: rest.signal ?? AbortSignal.timeout(timeoutMs),
       })) as T;
     } catch (error) {
+      if (error instanceof IncludedLimitError) throw error;
       if (error instanceof DispatchError) throw new RuntimeError(error.message, error.statusCode);
       throw new RuntimeError(ASSISTANT_UNAVAILABLE, 503, true);
     }
@@ -69,10 +71,20 @@ export async function runtime<T>(path: string, init: RequestInit & { json?: unkn
   }
   if (!response.ok) {
     const text = await response.text();
+    const included = includedErrorFrom(parseJson(text));
+    if (included) throw included;
     const failure = errorFromRuntimeBody(response.status, text);
     throw new RuntimeError(failure.message, failure.statusCode);
   }
   return (await response.json()) as T;
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 export type Tier = keyof Pick<Settings["models"], "easy" | "medium" | "high" | "max">;
@@ -88,13 +100,13 @@ export async function complete(args: {
   /** "triage" or "plan". The runtime skips JSON values that are not that shape. */
   jsonShape?: "triage" | "plan";
   purpose?: string;
-}): Promise<{ text: string; json?: unknown; model: string; tokensIn: number | null; tokensOut: number | null }> {
+}): Promise<{ text: string; json?: unknown; model: string; tokensIn: number | null; tokensOut: number | null; credits?: number | null }> {
   const tier = args.settings.models[args.tier ?? "easy"];
   if (await isPaused(redis, args.userId)) {
     throw new RuntimeError("The agent is paused. Resume it from the top bar to allow model calls.", 409);
   }
   if (isSubscriptionProvider(tier.provider)) return completeOnSubscription({ ...args, provider: tier.provider, model: tier.model, effort: tier.effort });
-  const result = await runtime<{ text: string; json?: unknown; model: string; tokensIn: number | null; tokensOut: number | null }>("/api/complete", {
+  const result = await runtime<{ text: string; json?: unknown; model: string; tokensIn: number | null; tokensOut: number | null; credits?: number | null }>("/api/complete", {
     method: "POST",
     json: {
       userId: args.userId,
@@ -106,6 +118,7 @@ export async function complete(args: {
       jsonShape: args.jsonShape,
       ollamaUrl: args.settings.models.ollamaUrl,
       reasoningEffort: await effortToSend(args.userId, tier.provider, tier.model, tier.effort),
+      purpose: args.purpose ?? "Other",
     },
   });
   const model = result.model || tier.model;
@@ -118,7 +131,7 @@ export async function complete(args: {
       purpose: args.purpose ?? "Other",
       tokensIn: result.tokensIn,
       tokensOut: result.tokensOut,
-      estimatedUsd: estimateUsd(model, result.tokensIn, result.tokensOut),
+      ...callCost(tier.provider, model, result.tokensIn, result.tokensOut, result.credits),
       title: truncateText(args.prompt, 80),
     },
   }).catch(() => undefined);

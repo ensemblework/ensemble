@@ -24,6 +24,7 @@ PROVIDER_NAMES = {
     "copilot": "GitHub Copilot",
     "cursor": "Cursor",
     "ollama": "Ollama",
+    "ensemble": "Ensemble",
 }
 
 _DROP_NAMES = frozenset(

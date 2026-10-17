@@ -10,6 +10,7 @@ import { MarkdownText } from "../markdown-text";
 import { api, type AssistantToolCallRecord } from "@/lib/api";
 import { API } from "@/lib/api";
 import { isSilentCancellation } from "@/lib/fetch-cancel";
+import { includedRefusal } from "@/lib/included";
 import { readSse } from "@/lib/sse";
 import { beginPageEnsemble, publishEnsemble, readEnsemble, subscribeEnsemble, type EnsembleLive } from "./ensemble-bus";
 import type { PageDocument, PageMention } from "@ensemble/shared-types";
@@ -212,7 +213,13 @@ export async function streamEnsemble(input: {
     });
     if (!response.ok) {
       const raw = await response.text();
-      throw new Error(raw || "Ensemble could not answer.");
+      let body: unknown = null;
+      try {
+        body = JSON.parse(raw);
+      } catch {
+        // not json
+      }
+      throw new Error(includedRefusal(body) ?? (raw || "Ensemble could not answer."));
     }
     let text = "";
     let model = "";

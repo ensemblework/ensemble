@@ -5,12 +5,16 @@
  * There is no embeddings call in hub-api. Settings stores models.embedding, and
  * the schema has an embedding column, but nothing in this tree requests vectors.
  */
+import { INCLUDED_PROVIDER } from "@ensemble/shared-types";
 import { ModelUnreachableError } from "../lib/model-reach.js";
 import { HostedAccessError, canUseHostCredentials, requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
 import { CONNECTION_DROPPED_NOTICE, normalizeTransportError } from "../lib/stream-drop.js";
 import { truncateText } from "../lib/text.js";
+import { IncludedLimitError } from "../included/errors.js";
 import { COPILOT_CLASSIC_TOKEN, ModelAuthError, ProviderError, noKeyMessage, parseProviderError } from "./errors.js";
 import { PROVIDERS, resolveCredential, type Credential } from "./credentials.js";
+import { postWithRetry, readJsonObject, sendJson, vendorFetch } from "./http.js";
+import { includedTurn } from "./included.js";
 import { parseModelJson } from "./model-json.js";
 import { apiFor, buildResponsesPayload, cleanItems, itemsFromChat, learn, learnFromListing, otherEndpoint, toolsFor, turnFromResponse, turnFromStream, type Api } from "./responses-api.js";
 import { pace, resetBuckets, runtimeSleep, takeToken } from "./pace.js";
@@ -37,12 +41,7 @@ import {
 } from "./payload.js";
 
 export { resetBuckets };
-
-let fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis);
-
-export function setRuntimeFetchForTests(fetchFn: typeof fetch | null): void {
-  fetchImpl = fetchFn ?? globalThis.fetch.bind(globalThis);
-}
+export { postWithRetry, setRuntimeFetchForTests } from "./http.js";
 
 export interface CallOptions {
   signal?: AbortSignal;
@@ -99,15 +98,6 @@ export function clearCatalogCache(): void {
   catalogCache.clear();
 }
 
-function combineSignals(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
-  const timeout = AbortSignal.timeout(timeoutMs);
-  return signal ? AbortSignal.any([signal, timeout]) : timeout;
-}
-
-async function vendorFetch(url: string, init: RequestInit, timeoutMs: number, signal?: AbortSignal): Promise<Response> {
-  return fetchImpl(url, { ...init, signal: combineSignals(signal, timeoutMs) });
-}
-
 /**
  * Copilot takes the person's own GitHub token as a bearer token: a fine-grained token with the
  * account permission "Copilot requests" (GitHub's documented way to make Copilot requests for a
@@ -151,44 +141,6 @@ export async function endpoint(
   return { base, headers, source: cred.source };
 }
 
-async function sendJson(
-  url: string,
-  headers: Record<string, string>,
-  payload: Json,
-  timeoutMs: number,
-  signal?: AbortSignal,
-  context?: { provider: string; model: string; url: string },
-): Promise<Response> {
-  try {
-    return await vendorFetch(url, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(payload) }, timeoutMs, signal);
-  } catch (error) {
-    if (!context) throw error;
-    throw normalizeTransportError(error, context);
-  }
-}
-
-export async function postWithRetry(
-  send: (payload: Json) => Promise<Response>,
-  payload: Json,
-  options: { retry?: boolean; sleep?: (seconds: number) => Promise<void> } = {},
-): Promise<Response> {
-  const pause = options.sleep ?? runtimeSleep;
-  const retry = options.retry !== false;
-  const current = { ...payload };
-  let attempt = 0;
-  while (true) {
-    const response = await send(current);
-    if (response.ok) return response;
-    const body = await response.text();
-    const error = parseProviderError(response.status, body, response.headers);
-    if (!retry) throw error;
-    const delay = retryPlan(error, attempt);
-    if (delay == null) throw error;
-    await pause(delay);
-    attempt += 1;
-  }
-}
-
 function canFallback(error: ProviderError, fallback: unknown, model: string): boolean {
   return canCrossModelFallback(error, fallback, model);
 }
@@ -201,19 +153,6 @@ async function withModelFallback(body: Json, model: string, call: (chosen: strin
     const result = await call(String(body.fallbackModel), false);
     result.fallbackFrom = model;
     return result;
-  }
-}
-
-async function readJsonObject(response: Response): Promise<Json> {
-  try {
-    const data = (await response.json()) as unknown;
-    if (!data || typeof data !== "object" || Array.isArray(data)) {
-      throw new ProviderError(502, "other", "The model provider returned a non-JSON response.");
-    }
-    return data as Json;
-  } catch (error) {
-    if (error instanceof ProviderError) throw error;
-    throw new ProviderError(502, "other", "The model provider returned a non-JSON response.");
   }
 }
 
@@ -526,6 +465,7 @@ export async function completeWithTools(body: Json, options: CallOptions = {}): 
   const provider = providerForCall(body.provider, model);
   if (provider === "mock") return mockTurn(body, model);
   if (provider === "cursor") throw cursorChatError();
+  if (provider === INCLUDED_PROVIDER) return includedTurn(body, model, asMessages(body.messages), { items: itemsOf(body), signal: options.signal, timeoutMs: 300_000 });
   if (provider === "anthropic") return anthropicChat(body, model, stringOrNull(body.userId), 300_000, options.signal);
   return openaiTurn(body, model, provider, asMessages(body.messages), 300_000, {
     tools: toolsOf(body),
@@ -562,6 +502,8 @@ export async function completeText(body: Json, options: CallOptions = {}): Promi
     result = mockTurn({ ...body, messages }, model);
   } else if (provider === "cursor") {
     throw new ModelAuthError("Cursor is not a completion provider. Pick another provider for this tier.");
+  } else if (provider === INCLUDED_PROVIDER) {
+    result = await includedTurn(body, model, messages, { jsonMode: Boolean(body.json), signal: options.signal, timeoutMs: 120_000 });
   } else if (provider === "anthropic") {
     result = await anthropicChat(
       {
@@ -587,7 +529,7 @@ export async function completeText(body: Json, options: CallOptions = {}): Promi
       signal: options.signal,
     });
   }
-  const out: Json = { text: result.text, model: result.model, tokensIn: result.tokensIn ?? null, tokensOut: result.tokensOut ?? null };
+  const out: Json = { text: result.text, model: result.model, tokensIn: result.tokensIn ?? null, tokensOut: result.tokensOut ?? null, credits: result.credits ?? null };
   if (result.fallbackFrom) out.fallbackFrom = result.fallbackFrom;
   if (body.json) {
     const shape = body.jsonShape === "triage" || body.jsonShape === "plan" ? body.jsonShape : undefined;
@@ -597,6 +539,7 @@ export async function completeText(body: Json, options: CallOptions = {}): Promi
 }
 
 function publicFailure(error: unknown): Json {
+  if (error instanceof IncludedLimitError) return { message: error.message, kind: "credits", status: error.statusCode, code: error.code, resetsAt: error.resetsAt };
   if (error instanceof HostedAccessError) return { message: error.message, kind: "auth", status: 403 };
   if (error instanceof ModelUnreachableError) return error.toJSON();
   if (error instanceof Error && error.name === "ConnectionDropped") {
@@ -653,6 +596,12 @@ async function* chatFrames(body: Json, signal?: AbortSignal): AsyncGenerator<str
     return;
   }
   if (provider === "cursor") throw cursorChatError();
+  if (provider === INCLUDED_PROVIDER) {
+    const result = await includedTurn(body, model, asMessages(body.messages), { items: itemsOf(body), signal, timeoutMs: 300_000 });
+    for (const piece of textChunks(String(result.text ?? ""))) yield sse("delta", { text: piece });
+    yield sse("turn", result);
+    return;
+  }
   if (provider === "anthropic") {
     const result = await anthropicChat(body, model, stringOrNull(body.userId), 300_000, signal);
     for (const piece of textChunks(String(result.text ?? ""))) yield sse("delta", { text: piece });

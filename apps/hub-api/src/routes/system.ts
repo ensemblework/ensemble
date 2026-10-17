@@ -1,4 +1,5 @@
 import { deleteWorkspaceData } from "../lib/workspace-data.js";
+import { includedCatalogEntry } from "../included/catalog.js";
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import { ASSISTANT_INSTRUCTIONS } from "../assistant/state.js";
@@ -182,13 +183,15 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
         }
         return { ...row, notes };
       });
-      const payload = { providers, runtime: true, updatedAt: catalog.refreshedAt ?? new Date().toISOString(), fetchedAt: catalog.fetchedAt };
+      const included = includedCatalogEntry();
+      const payload = { providers: included ? [included, ...providers] : providers, runtime: true, updatedAt: catalog.refreshedAt ?? new Date().toISOString(), fetchedAt: catalog.fetchedAt };
       writeModelCatalog(userId, payload);
       return payload;
     } catch (error) {
       if (error instanceof HostedAccessError) throw error;
+      const included = includedCatalogEntry();
       const payload = {
-        providers: [],
+        providers: included ? [included] : [],
         runtime: false,
         error: error instanceof Error ? error.message : String(error),
         updatedAt: new Date().toISOString(),

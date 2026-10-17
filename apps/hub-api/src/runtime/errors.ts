@@ -3,6 +3,9 @@
  * `message` is the composed sentence (Python's exc.message). `describe()` is str(exc).
  */
 
+import { INCLUDED_PROVIDER, INCLUDED_UNAVAILABLE } from "@ensemble/shared-types";
+import { includedMessage } from "../included/errors.js";
+
 export const DECRYPT_MESSAGE = "This stored key can't be decrypted — re-enter it in Settings → Models.";
 
 export class DecryptError extends Error {
@@ -77,6 +80,7 @@ const PROVIDER_NAMES: Record<string, string> = {
   copilot: "GitHub Copilot",
   cursor: "Cursor",
   ollama: "Ollama",
+  ensemble: "Ensemble",
 };
 
 /** GitHub's own rule: Copilot requests need a fine-grained token with the "Copilot requests" permission. */
@@ -88,6 +92,7 @@ const KEY_NAMES: Record<string, string> = { ...PROVIDER_NAMES, google: "Google G
 
 /** The provider is the one of the model the tier or the chat uses: a Gemini model needs a Google Gemini key. */
 export function noKeyMessage(provider: string): string {
+  if (provider === INCLUDED_PROVIDER) return includedMessage(INCLUDED_UNAVAILABLE, null);
   const name = KEY_NAMES[provider] ?? provider;
   return `No key for ${name}. Add one in Settings → Models (in the Ensemble CLI: /keys ${provider}), or pick a model whose provider has a key.`;
 }

@@ -1,6 +1,8 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 /** Vendor marks identify providers; the source assets and attribution live in public/providers/manifest.json. */
+import { EnsembleMark } from "../brand/Logo";
+
 const NAMES: Record<string, string> = { qwen: "Qwen", kimi: "Kimi", openrouter: "OpenRouter", openai: "OpenAI", claude: "Claude", cursor: "Cursor", copilot: "GitHub Copilot", google: "Google", gemini: "Gemini", microsoft: "Microsoft", github: "GitHub", deepseek: "DeepSeek", mistral: "Mistral AI", meta: "Meta", ollama: "Ollama" };
 
 export function modelBrand(model?: string | null, provider?: string | null): string | null {
@@ -15,12 +17,14 @@ export function modelBrand(model?: string | null, provider?: string | null): str
   if (/mistral|mixtral|codestral|devstral|ministral/.test(value)) return "mistral";
   if (/llama/.test(value)) return "meta";
   const key = (provider ?? (model?.includes("::") ? model.split("::")[0] : model) ?? "").toLowerCase();
-  return ({ qwen: "qwen", kimi: "kimi", openrouter: "openrouter", anthropic: "claude", "claude-code": "claude", codex: "openai", openai: "openai", chatgpt: "openai", "cursor-agent": "cursor", cursor: "cursor", "copilot-cli": "copilot", copilot: "copilot", google: "gemini", gemini: "gemini", microsoft: "microsoft", github: "github", deepseek: "deepseek", mistral: "mistral", ollama: "ollama" } as Record<string, string>)[key] ?? null;
+  return ({ qwen: "qwen", kimi: "kimi", openrouter: "openrouter", anthropic: "claude", "claude-code": "claude", codex: "openai", openai: "openai", chatgpt: "openai", "cursor-agent": "cursor", cursor: "cursor", "copilot-cli": "copilot", copilot: "copilot", google: "gemini", gemini: "gemini", microsoft: "microsoft", github: "github", deepseek: "deepseek", mistral: "mistral", ollama: "ollama", ensemble: "ensemble" } as Record<string, string>)[key] ?? null;
 }
 
 export function ProviderLogo({ id, size = 16, decorative = true, className = "" }: { id: string; size?: number; decorative?: boolean; className?: string }) {
   const key = NAMES[id] ? id : modelBrand(null, id);
   if (!key) return null;
+  // Included models: Ensemble's own mark, in its brand colours rather than masked to the text colour.
+  if (key === "ensemble") return <EnsembleMark size={size} data-provider-logo="ensemble" title={decorative ? undefined : "Ensemble"} className={`inline-block shrink-0 align-middle ${className}`} />;
   const url = `url("/providers/${key}.svg")`;
   return <span data-provider-logo={key} aria-hidden={decorative || undefined} role={decorative ? undefined : "img"} aria-label={decorative ? undefined : NAMES[key]} className={`inline-block shrink-0 align-middle text-ink ${className}`} style={{ width: size, height: size, backgroundColor: "currentColor", maskImage: url, WebkitMaskImage: url, maskSize: "contain", WebkitMaskSize: "contain", maskPosition: "center", WebkitMaskPosition: "center", maskRepeat: "no-repeat", WebkitMaskRepeat: "no-repeat" }} />;
 }

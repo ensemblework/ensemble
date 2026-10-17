@@ -32,7 +32,7 @@ import {
 import { appendLedger } from "../lib/ledger.js";
 import { sseHub } from "../lib/sse.js";
 import { recordMetric } from "../lib/metrics.js";
-import { estimateUsd } from "../lib/pricing.js";
+import { callCost } from "../lib/pricing.js";
 import {
   beginActivity,
   endActivity,
@@ -407,6 +407,7 @@ async function drive(
         chatTools: finalAnswer ? [] : chatTools,
         responsesTools: finalAnswer ? [] : responsesTools,
         signal: stop.signal,
+        purpose: "Hub chat",
         onDelta(piece) {
           streamed += piece;
           args.emit({ type: "delta", text: piece });
@@ -432,7 +433,7 @@ async function drive(
               purpose: "Hub chat",
               tokensIn: known.tokensIn,
               tokensOut: known.tokensOut,
-              estimatedUsd: estimateUsd(model, known.tokensIn, known.tokensOut),
+              ...callCost(args.provider, model, known.tokensIn, known.tokensOut),
               title: truncateText(args.message, 80),
               cancelled: true,
             },
@@ -466,7 +467,7 @@ async function drive(
           purpose: "Hub chat",
           tokensIn: turn.tokensIn,
           tokensOut: turn.tokensOut,
-          estimatedUsd: estimateUsd(answered, turn.tokensIn, turn.tokensOut),
+          ...callCost(args.provider, answered, turn.tokensIn, turn.tokensOut, turn.credits),
           title: truncateText(args.message, 80),
         },
       });

@@ -3,8 +3,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Check, ChevronRight, Code2, FileText, FolderOpen, GitBranch, Lock, Monitor, Pencil, ShieldCheck, Star, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ReasoningEffort, RunProfile } from "@ensemble/shared-types";
+import { INCLUDED_LABEL, INCLUDED_PROVIDER, type ReasoningEffort, type RunProfile } from "@ensemble/shared-types";
 import { api, type AssignInput, type Complexity, type HandoffApp } from "@/lib/api";
+import { tierModelName } from "@/lib/included";
 import { useSpaceAccess } from "@/lib/access";
 import { pickFolderNative } from "@/lib/desktop-dialog";
 import { desktopShell } from "@/lib/desktop-param";
@@ -36,6 +37,7 @@ const PROVIDER_LABEL: Record<string, string> = {
   openrouter: "OpenRouter",
   copilot: "GitHub Copilot",
   ollama: "Ollama",
+  [INCLUDED_PROVIDER]: INCLUDED_LABEL,
 };
 
 const SANDBOX_NAME: Record<string, string> = {
@@ -848,19 +850,19 @@ export function AssignDialog({
               className="field w-full"
             >
               <option value="">
-                Task tier: {TIER_LABEL[complexity]} · {tier ? `${PROVIDER_LABEL[tier.provider] ?? tier.provider} ${tier.model}` : "…"}
+                Task tier: {TIER_LABEL[complexity]} · {tier ? `${PROVIDER_LABEL[tier.provider] ?? tier.provider} ${tierModelName(tier.provider, tier.model)}` : "…"}
               </option>
               {chatProviders.map((row) => (
                 <optgroup key={row.provider} label={PROVIDER_LABEL[row.provider] ?? row.provider}>
                   {row.cheapest && row.models.includes(row.cheapest) ? (
-                    <option value={`${row.provider}::${row.cheapest}`}>{row.cheapest} · cheapest</option>
+                    <option value={`${row.provider}::${row.cheapest}`}>{tierModelName(row.provider, row.cheapest)} · cheapest</option>
                   ) : null}
                   {row.models
                     .filter((name) => name !== row.cheapest)
                     .slice(0, 40)
                     .map((name) => (
                       <option key={name} value={`${row.provider}::${name}`}>
-                        {name}
+                        {tierModelName(row.provider, name)}
                       </option>
                     ))}
                 </optgroup>

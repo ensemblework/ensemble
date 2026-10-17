@@ -26,6 +26,7 @@ from ensemble_agent.models import (
     list_models,
     stream_with_tools,
 )
+from ensemble_agent.included import IncludedLimitError
 from ensemble_agent.reach import ModelUnreachable
 from ensemble_agent.provider_error import ProviderError, friendly_key_error
 from ensemble_agent.search import grounded_search
@@ -82,6 +83,8 @@ def http_error_for(exc: Exception) -> HTTPException:
     """Map a model failure onto a JSON-serializable HTTPException."""
     if isinstance(exc, HostedAccessError):
         return HTTPException(status_code=403, detail=str(exc))
+    if isinstance(exc, IncludedLimitError):
+        return HTTPException(status_code=exc.status, detail=exc.to_dict())
     # A 503 with a plain string reads as "the provider is under high demand" in hub-api; these say what happened.
     if isinstance(exc, HostedAccessUnavailable):
         return HTTPException(status_code=503, detail={"message": str(exc), "kind": "other"})

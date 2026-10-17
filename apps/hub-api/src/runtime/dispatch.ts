@@ -8,6 +8,7 @@ import { catalog, clearCatalogCache, completeText, completeWithTools, listModels
 import { parseTable, runPlot } from "./plots-python.js";
 import { groundedSearch } from "./search.js";
 import type { Json } from "./payload.js";
+import { IncludedLimitError } from "../included/errors.js";
 import { HostedAccessError } from "../lib/hosted-access.js";
 
 export class DispatchError extends Error {
@@ -42,6 +43,8 @@ export async function dispatchRuntime(
   try {
     return await route(method, url.pathname, url.searchParams, body, init.signal);
   } catch (error) {
+    // Keeps its code and reset time: the caller answers with the included error body.
+    if (error instanceof IncludedLimitError) throw error;
     throw toDispatchError(error);
   }
 }

@@ -23,6 +23,21 @@ const PER_MILLION: Record<string, [number, number]> = {
   "qwen-flash": [0.05, 0.4],
 };
 
+/**
+ * What a model.call metric records about cost. Included calls carry the Ensemble credits they
+ * used and no dollar figure: people see credits for them, never dollars.
+ */
+export function callCost(
+  provider: string | null | undefined,
+  model: string,
+  tokensIn: number | null,
+  tokensOut: number | null,
+  credits?: number | null,
+): { estimatedUsd: number | null; credits?: number | null } {
+  if (provider === "ensemble") return { estimatedUsd: null, credits: credits ?? null };
+  return { estimatedUsd: estimateUsd(model, tokensIn, tokensOut) };
+}
+
 /** Vendor id for a model name, when the call did not record one. */
 export function providerFor(model: string | null | undefined, given?: string | null): string {
   if (given && given !== "unknown") return given;

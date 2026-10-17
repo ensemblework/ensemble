@@ -304,6 +304,8 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
       tokensIn: number | null;
       tokensOut: number | null;
       estimatedUsd: number | null;
+      /** Ensemble credits an included call used; null for every other call. */
+      credits: number | null;
       at: Date;
     };
     const num = (value: unknown): number | null => (typeof value === "number" && Number.isFinite(value) ? value : null);
@@ -313,14 +315,17 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
       const model = text(row.model, "unknown");
       const tokensIn = num(row.tokensIn);
       const tokensOut = num(row.tokensOut);
+      const provider = providerFor(model, typeof row.provider === "string" ? row.provider : null);
+      const included = provider === "ensemble";
       return {
         title: text(row.title, "Model call"),
         purpose: text(row.purpose, "Other"),
-        provider: providerFor(model, typeof row.provider === "string" ? row.provider : null),
+        provider,
         model,
         tokensIn,
         tokensOut,
-        estimatedUsd: num(row.estimatedUsd) ?? estimateUsd(model, tokensIn, tokensOut),
+        estimatedUsd: included ? null : (num(row.estimatedUsd) ?? estimateUsd(model, tokensIn, tokensOut)),
+        credits: included ? num(row.credits) : null,
         at,
       };
     };
@@ -339,7 +344,7 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
       if (tokensIn == null && tokensOut == null) return null;
       const provider = providerFor(model);
       if (provider === "unknown") return null;
-      return { title, purpose, provider, model, tokensIn, tokensOut, estimatedUsd: estimateUsd(model, tokensIn, tokensOut), at };
+      return { title, purpose, provider, model, tokensIn, tokensOut, estimatedUsd: estimateUsd(model, tokensIn, tokensOut), credits: null, at };
     };
     const calls: Call[] = [
       ...recorded,
@@ -363,13 +368,14 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
       .filter((call): call is Call => call != null)
       .sort((a, b) => b.at.getTime() - a.at.getTime());
 
-    const days: Array<{ day: string; calls: number; tokensIn: number; tokensOut: number; estimatedUsd: number | null }> = [];
+    const days: Array<{ day: string; calls: number; tokensIn: number; tokensOut: number; estimatedUsd: number | null; credits: number | null }> = [];
     for (let i = 13; i >= 0; i -= 1) {
       const day = new Date(Date.now() - i * DAY).toISOString().slice(0, 10);
-      days.push({ day, calls: 0, tokensIn: 0, tokensOut: 0, estimatedUsd: null });
+      days.push({ day, calls: 0, tokensIn: 0, tokensOut: 0, estimatedUsd: null, credits: null });
     }
-    const byModel = new Map<string, { provider: string; calls: number; tokensIn: number; tokensOut: number; estimatedUsd: number | null }>();
-    const byPurpose = new Map<string, { calls: number; tokensIn: number; tokensOut: number; estimatedUsd: number | null }>();
+    // Keyed by provider too: the same model on an included deployment and on the person's own key are two rows.
+    const byModel = new Map<string, { model: string; provider: string; calls: number; tokensIn: number; tokensOut: number; estimatedUsd: number | null; credits: number | null }>();
+    const byPurpose = new Map<string, { calls: number; tokensIn: number; tokensOut: number; estimatedUsd: number | null; credits: number | null }>();
     const addUsd = (current: number | null, next: number | null) => (next == null ? current : (current ?? 0) + next);
     for (const call of calls) {
       const day = days.find((row) => row.day === call.at.toISOString().slice(0, 10));
@@ -378,19 +384,23 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
         day.tokensIn += call.tokensIn ?? 0;
         day.tokensOut += call.tokensOut ?? 0;
         day.estimatedUsd = addUsd(day.estimatedUsd, call.estimatedUsd);
+        day.credits = addUsd(day.credits, call.credits);
       }
-      const model = byModel.get(call.model) ?? { provider: call.provider, calls: 0, tokensIn: 0, tokensOut: 0, estimatedUsd: null };
+      const modelKey = `${call.provider === "ensemble" ? "ensemble" : ""}:${call.model}`;
+      const model = byModel.get(modelKey) ?? { model: call.model, provider: call.provider, calls: 0, tokensIn: 0, tokensOut: 0, estimatedUsd: null, credits: null };
       model.calls += 1;
       model.tokensIn += call.tokensIn ?? 0;
       model.tokensOut += call.tokensOut ?? 0;
       model.estimatedUsd = addUsd(model.estimatedUsd, call.estimatedUsd);
+      model.credits = addUsd(model.credits, call.credits);
       if (call.provider !== "unknown") model.provider = call.provider;
-      byModel.set(call.model, model);
-      const purpose = byPurpose.get(call.purpose) ?? { calls: 0, tokensIn: 0, tokensOut: 0, estimatedUsd: null };
+      byModel.set(modelKey, model);
+      const purpose = byPurpose.get(call.purpose) ?? { calls: 0, tokensIn: 0, tokensOut: 0, estimatedUsd: null, credits: null };
       purpose.calls += 1;
       purpose.tokensIn += call.tokensIn ?? 0;
       purpose.tokensOut += call.tokensOut ?? 0;
       purpose.estimatedUsd = addUsd(purpose.estimatedUsd, call.estimatedUsd);
+      purpose.credits = addUsd(purpose.credits, call.credits);
       byPurpose.set(call.purpose, purpose);
     }
 
@@ -401,7 +411,7 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
 
     return {
       days,
-      byModel: [...byModel.entries()].map(([model, row]) => ({ model, ...row })).sort((a, b) => b.calls - a.calls),
+      byModel: [...byModel.values()].sort((a, b) => b.calls - a.calls),
       byPurpose: [...byPurpose.entries()].map(([purpose, row]) => ({ purpose, ...row })),
       recent: calls.slice(0, 40).map((call) => ({ ...call, at: call.at.toISOString() })),
       providers: [...new Set(calls.map((call) => call.provider))].sort(),

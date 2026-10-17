@@ -4,15 +4,25 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { isSubscriptionProvider } from "@ensemble/shared-types";
+import { INCLUDED_PROVIDER, includedModel, includedModelName, isSubscriptionProvider } from "@ensemble/shared-types";
+import { relativeCost } from "@/lib/included";
 import { ProviderLogo, ModelLogo } from "../connectors/provider-logo";
 import { Check, ChevronsUpDown, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { EFFORT_LABEL, effortList, modelEfforts, type EffortLevel, type ModelMeta } from "@ensemble/shared-types";
 import { Popover, cx } from "../ui";
 
-/** "plan": the person's own subscription, found on their computer; "plan-missing": not found or not signed in there. */
-export type ProviderChoice = { id: string; label: string; status: "key" | "account" | "server" | "none" | "local" | "plan" | "plan-missing"; note?: string };
+/**
+ * "plan": the person's own subscription, found on their computer; "plan-missing": not found or not signed in there.
+ * "included": Ensemble's own models with credits to spend; "included-out": credits used, or paused for everyone.
+ */
+export type ProviderChoice = { id: string; label: string; status: "key" | "account" | "server" | "none" | "local" | "plan" | "plan-missing" | "included" | "included-out"; note?: string };
+
+type SourceTab = "included" | "subscriptions" | "api";
+
+const TAB_LABEL: Record<SourceTab, string> = { included: "Included", subscriptions: "AI app subscriptions", api: "API keys" };
+
+const tabOf = (id: string): SourceTab => (id === INCLUDED_PROVIDER ? "included" : isSubscriptionProvider(id) ? "subscriptions" : "api");
 
 const STATUS_DOT: Record<ProviderChoice["status"], string> = {
   key: "bg-ok",
@@ -22,6 +32,8 @@ const STATUS_DOT: Record<ProviderChoice["status"], string> = {
   none: "bg-line-strong",
   plan: "bg-ok",
   "plan-missing": "bg-warn",
+  included: "bg-ok",
+  "included-out": "bg-warn",
 };
 
 const STATUS_TEXT: Record<ProviderChoice["status"], string> = {
@@ -32,6 +44,8 @@ const STATUS_TEXT: Record<ProviderChoice["status"], string> = {
   none: "no key",
   plan: "your plan",
   "plan-missing": "not on your computer",
+  included: "monthly credits",
+  "included-out": "no credits left",
 };
 
 /** The provider of a tier: a menu with whether each one has a key. */
@@ -40,11 +54,13 @@ export function ProviderPicker({ value, choices, onPick, label }: { value: strin
   const client = useQueryClient();
   const prefs = useQuery({ queryKey: ["preferences"], queryFn: api.preferences });
   const saved = prefs.data?.preferences.find((row) => row.key === "ui.model-picker-tab")?.value;
-  const [chosen, setChosen] = useState<"subscriptions" | "api" | null>(null);
-  const tab = chosen ?? (saved === "api" || saved === "subscriptions" ? saved : isSubscriptionProvider(value) ? "subscriptions" : "api");
+  const [chosen, setChosen] = useState<SourceTab | null>(null);
+  const tabs: SourceTab[] = choices.some((choice) => choice.id === INCLUDED_PROVIDER) ? ["included", "subscriptions", "api"] : ["subscriptions", "api"];
+  const remembered = tabs.find((id) => id === saved);
+  const tab = chosen ?? remembered ?? (tabs.includes(tabOf(value)) ? tabOf(value) : "api");
   const remember = useMutation({ mutationFn: (next: string) => api.putPreference("ui.model-picker-tab", next), onSuccess: () => client.invalidateQueries({ queryKey: ["preferences"] }) });
   useEffect(() => setChosen(null), [saved]);
-  const shown = choices.filter((choice) => isSubscriptionProvider(choice.id) === (tab === "subscriptions"));
+  const shown = choices.filter((choice) => tabOf(choice.id) === tab);
   return (
     <Popover
       fill
@@ -60,7 +76,7 @@ export function ProviderPicker({ value, choices, onPick, label }: { value: strin
       {(close) => (
         <div>
           <div role="tablist" aria-label="Model source" className="m-1 flex rounded-lg bg-raised p-1">
-            {(["subscriptions", "api"] as const).map((id) => <button type="button" key={id} role="tab" aria-selected={tab === id} className={cx("flex-1 rounded-md px-2 py-2 text-[12px]", tab === id ? "bg-panel font-medium text-ink shadow-sm" : "text-muted")} onClick={() => { setChosen(id); remember.mutate(id); }}>{id === "subscriptions" ? "AI app subscriptions" : "API keys"}</button>)}
+            {tabs.map((id) => <button type="button" key={id} role="tab" aria-selected={tab === id} className={cx("flex-1 rounded-md px-2 py-2 text-[12px]", tab === id ? "bg-panel font-medium text-ink shadow-sm" : "text-muted")} onClick={() => { setChosen(id); remember.mutate(id); }}>{TAB_LABEL[id]}</button>)}
           </div>
           <div role="listbox" aria-label={label}>
           {shown.map((choice) => (
@@ -94,7 +110,8 @@ export function levelRange(levels: readonly EffortLevel[]): string {
   return levels.length === 1 ? EFFORT_LABEL[levels[0]!] : `${EFFORT_LABEL[levels[0]!]}–${EFFORT_LABEL[levels[levels.length - 1]!]}`;
 }
 
-type ModelRow = { id: string; cheapest: boolean; levels: EffortLevel[]; unavailable: string | null };
+/** `name`: an included model's name with its version, which is shown instead of the id. */
+type ModelRow = { id: string; name: string | null; cheapest: boolean; levels: EffortLevel[]; unavailable: string | null };
 
 /**
  * The model of a tier: the provider's list for this key, searchable, with the cheapest first and
@@ -126,9 +143,11 @@ export function ModelPicker({
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const list = useRef<HTMLDivElement>(null);
+  const included = provider === INCLUDED_PROVIDER;
   const rows = useMemo<ModelRow[]>(() => {
     const all = models.map((id) => ({
       id,
+      name: provider === INCLUDED_PROVIDER ? includedModelName(id) : null,
       cheapest: id === cheapest,
       levels: modelEfforts(provider, id, meta?.[id]).levels,
       unavailable: notes?.[id]?.available === false ? notes[id]!.reason || "This key cannot use it." : null,
@@ -136,8 +155,9 @@ export function ModelPicker({
     return [...all.filter((row) => row.cheapest), ...all.filter((row) => !row.cheapest)];
   }, [models, cheapest, provider, meta, notes]);
   const needle = query.trim().toLowerCase();
-  const shown = needle ? rows.filter((row) => row.id.toLowerCase().includes(needle)) : rows;
-  const custom = needle && !rows.some((row) => row.id.toLowerCase() === needle) ? query.trim() : null;
+  const shown = needle ? rows.filter((row) => row.id.toLowerCase().includes(needle) || Boolean(row.name?.toLowerCase().includes(needle))) : rows;
+  // Included models are a fixed list: a typed name would only be refused.
+  const custom = needle && !included && !rows.some((row) => row.id.toLowerCase() === needle) ? query.trim() : null;
   const count = shown.length + (custom ? 1 : 0);
   useEffect(() => setActive(0), [needle]);
   useEffect(() => {
@@ -150,7 +170,8 @@ export function ModelPicker({
       width={380}
       trigger={(open, toggle) => (
         <button type="button" className="picker-trigger" aria-haspopup="listbox" aria-expanded={open} aria-label={label} onClick={toggle} data-picker="model">
-          <ModelLogo model={value} provider={provider} /><span className="min-w-0 flex-1 truncate text-left font-mono text-[12.5px]">{value || "Choose a model"}</span>
+          <ModelLogo model={value} provider={provider} />
+          {included && value ? <span className="min-w-0 flex-1 truncate text-left">{includedModelName(value)}</span> : <span className="min-w-0 flex-1 truncate text-left font-mono text-[12.5px]">{value || "Choose a model"}</span>}
           {levels.length ? <span className="hidden shrink-0 text-[11px] text-faint sm:inline">Thinking: {levelRange(levels)}</span> : null}
           <ChevronsUpDown size={13} className="shrink-0 text-faint" aria-hidden />
         </button>
@@ -184,7 +205,7 @@ export function ModelPicker({
                     else if (custom) pick(custom);
                   }
                 }}
-                placeholder={rows.length ? `Search ${rows.length} ${providerLabel} models` : "Type a model name"}
+                placeholder={rows.length ? `Search ${rows.length} ${providerLabel} models` : included ? "No included models" : "Type a model name"}
                 aria-label="Search models"
                 className="min-w-0 flex-1 bg-transparent text-[13px] outline-none placeholder:text-faint"
               />
@@ -192,7 +213,11 @@ export function ModelPicker({
             <div ref={list} role="listbox" aria-label={label} className="max-h-[260px] overflow-y-auto py-1">
               {!rows.length ? (
                 <p className="px-2.5 py-2 text-[12.5px] text-muted">
-                  {hasKey ? `${providerLabel} listed no models for this key. Refresh the list, or type a model name.` : `Add a ${providerLabel} key to see its models. You can still type a name.`}
+                  {included
+                    ? "Included models are not set up on this server. Use an API key or your AI plan instead."
+                    : hasKey
+                      ? `${providerLabel} listed no models for this key. Refresh the list, or type a model name.`
+                      : `Add a ${providerLabel} key to see its models. You can still type a name.`}
                 </p>
               ) : null}
               {shown.map((row, index) => (
@@ -206,11 +231,12 @@ export function ModelPicker({
                   onMouseEnter={() => setActive(index)}
                   onClick={() => pick(row.id)}
                 >
+                  {row.name ? <ModelLogo model={row.id} provider={provider} /> : null}
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate font-mono text-[12.5px]">{row.id}</span>
+                    {row.name ? <span className="block truncate text-[12.5px]">{row.name}</span> : <span className="block truncate font-mono text-[12.5px]">{row.id}</span>}
                     {row.unavailable ? <span className="block truncate text-[11.5px] text-warn">{row.unavailable}</span> : null}
                   </span>
-                  {row.cheapest ? <span className="picker-badge">cheapest</span> : null}
+                  {row.name ? <CostBadge id={row.id} /> : row.cheapest ? <span className="picker-badge">cheapest</span> : null}
                   {row.levels.length ? <span className="shrink-0 text-[11px] text-faint">{levelRange(row.levels)}</span> : null}
                   {row.id === value ? <Check size={13} className="shrink-0 text-accent" aria-hidden /> : null}
                 </button>
@@ -239,6 +265,11 @@ export function ModelPicker({
   );
 }
 
+function CostBadge({ id }: { id: string }) {
+  const cost = relativeCost(id);
+  return cost ? <span className="picker-badge" title={cost.title} data-cost={cost.badge}>{cost.badge}</span> : null;
+}
+
 /**
  * How hard a tier's model thinks: exactly the levels that model takes, and the model's default.
  * What is chosen here is what the provider receives.
@@ -261,7 +292,9 @@ export function ThinkingPicker({
   label: string;
 }) {
   const known = modelEfforts(provider, model, meta);
-  if (!known.levels.length) {
+  // An included model without levels still offers Auto, its one choice.
+  const included = provider === INCLUDED_PROVIDER && Boolean(includedModel(model));
+  if (!known.levels.length && !included) {
     return (
       <p className="text-[12px] text-faint" data-thinking="none" data-jump-label={label}>
         {known.source === "unknown" ? "No verified thinking options for this model. Its default is used." : model ? `${model} has no thinking setting.` : "Pick a model to see its thinking levels."}
@@ -270,7 +303,7 @@ export function ThinkingPicker({
     );
   }
   const options: Array<{ id: string; label: string }> = [
-    { id: "default", label: known.fallback ? `Automatic (${EFFORT_LABEL[known.fallback]})` : "Automatic" },
+    { id: "default", label: `${provider === INCLUDED_PROVIDER ? "Auto" : "Automatic"}${known.fallback ? ` (${EFFORT_LABEL[known.fallback]})` : ""}` },
     ...known.levels.map((level) => ({ id: level, label: EFFORT_LABEL[level] })),
   ];
   const offered = options.some((option) => option.id === value);
@@ -285,9 +318,13 @@ export function ThinkingPicker({
       </div>
       {offered ? (
         null
-      ) : (
+      ) : known.levels.length ? (
         <p className="text-[12px] text-warn" role="status">
-          {model} does not take “{EFFORT_LABEL[value as EffortLevel] ?? value}”, so calls on this tier are refused until you pick one of {effortList(known.levels)}.
+          {included ? includedModelName(model) : model} does not take “{EFFORT_LABEL[value as EffortLevel] ?? value}”, so calls on this tier are refused until you pick one of {effortList(known.levels)}.
+        </p>
+      ) : (
+        <p className="text-[12px] text-faint" role="status">
+          {includedModelName(model)} decides how much to think, so “{EFFORT_LABEL[value as EffortLevel] ?? value}” is not sent.
         </p>
       )}
     </div>

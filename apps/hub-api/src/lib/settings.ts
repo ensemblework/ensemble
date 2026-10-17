@@ -4,6 +4,7 @@ import { env } from "../config.js";
 import { isHosted } from "./hosted-access.js";
 import { checkConnectorLimit, withHostedUserLock } from "./hosted-limits.js";
 import { keysFor } from "../sharing/context.js";
+import { withIncludedDefaults } from "../included/defaults.js";
 
 const KEY = "hub.settings";
 
@@ -29,7 +30,7 @@ export async function loadSettings(prisma: PrismaClient | Prisma.TransactionClie
   const userId = keysFor(spaceOrUser);
   const row = await prisma.preference.findFirst({ where: { userId, key: KEY, deletedAt: null } });
   const parsed = Settings.safeParse(row?.value ?? {});
-  const base = parsed.success ? parsed.data : DEFAULT_SETTINGS;
+  const base = await withIncludedDefaults(prisma, userId, parsed.success ? parsed.data : DEFAULT_SETTINGS);
   if (!row) return { ...base, autonomy: env.ENSEMBLE_AUTONOMY_LEVEL, timezone: env.ENSEMBLE_TIMEZONE };
   const raw = row.value as Record<string, unknown> | null;
   return raw?.timezone && raw.timezoneMode === undefined ? { ...base, timezoneMode: "auto" } : base;

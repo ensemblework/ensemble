@@ -1338,6 +1338,51 @@ model MetricEvent {
   @@map("metric_events")
 }
 
+/// One included-model call against an account's monthly Ensemble credits (src/included/budget.ts).
+/// A row is written as `reserved` before the call and settled with the real usage after it.
+model IncludedUsage {
+  id                   String    @id @default(uuid())
+  /// The account that pays: a space resolves to its owner.
+  accountId            String    @map("account_id")
+  /// The space or account the call ran for.
+  userId               String    @map("user_id")
+  /// UTC calendar month, "2026-10".
+  period               String
+  model                String
+  answeredBy           String?   @map("answered_by")
+  purpose              String?
+  /// reserved, settled, unreported (the call stopped without usage), expired (never settled).
+  status               String    @default("reserved")
+  estimatedInputTokens Int       @map("estimated_input_tokens")
+  maxOutputTokens      Int       @map("max_output_tokens")
+  reservedUsd          Decimal   @map("reserved_usd") @db.Decimal(20, 10)
+  usd                  Decimal   @default(0) @db.Decimal(20, 10)
+  inputUsd             Decimal   @default(0) @map("input_usd") @db.Decimal(20, 10)
+  outputUsd            Decimal   @default(0) @map("output_usd") @db.Decimal(20, 10)
+  inputTokens          Int       @default(0) @map("input_tokens")
+  cacheReadTokens      Int       @default(0) @map("cache_read_tokens")
+  cacheWriteTokens     Int       @default(0) @map("cache_write_tokens")
+  outputTokens         Int       @default(0) @map("output_tokens")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  settledAt            DateTime? @map("settled_at")
+  account              User      @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, period])
+  @@index([status, createdAt])
+  @@map("included_usage")
+}
+
+/// The operator's spend across every account for one month. Its row is the lock every reservation
+/// takes, and it keeps counting after an account and its usage rows are deleted.
+model IncludedPeriod {
+  period      String   @id
+  spentUsd    Decimal  @default(0) @map("spent_usd") @db.Decimal(20, 10)
+  reservedUsd Decimal  @default(0) @map("reserved_usd") @db.Decimal(20, 10)
+  updatedAt   DateTime @default(now()) @map("updated_at")
+
+  @@map("included_periods")
+}
+
 model MetricBaseline {
   id         String   @id @default(uuid())
   userId     String   @map("user_id")
@@ -1628,6 +1673,7 @@ model User {
   plots                 Plot[]
   widgetLayouts         WidgetLayout[]
   templateApplications  TemplateApplication[]
+  includedUsage         IncludedUsage[]
 
   @@index([ownerId])
   @@map("users")

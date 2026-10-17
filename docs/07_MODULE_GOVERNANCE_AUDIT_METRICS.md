@@ -199,6 +199,7 @@ Charts: acceptance rate by skill version (shows learning), tasks by owner per da
 | Guarded writes | `apps/agent-runtime/ensemble_agent/tools/guarded.py` | — |
 | Ledger (TS / Python) | `apps/hub-api/src/lib/ledger.ts`, `apps/agent-runtime/ensemble_agent/audit/ledger.py` | — |
 | Metrics | `apps/hub-api/src/lib/metrics.ts`, `/api/metrics/summary` in `routes/runs.ts` | — |
+| Included-model credits ledger | `apps/hub-api/src/included/budget.ts`, tables `included_usage` (one row per included call, kept until the account is deleted, no prompt text) and `included_periods` (each month's spend across all accounts, kept after an account is deleted) ([33](33_INCLUDED_AI.md)) | `node --import tsx --test src/included/budget.integration.test.ts` (from `apps/hub-api`) |
 | Settings / controls | `apps/hub-api/src/routes/settings.ts`, Hub `/settings` | — |
 
 Not in this tree yet: the INSERT-only database role script, the evaluation harness and baseline files under `eval/`, OpenTelemetry tracing, and the Entra walkthrough. The rows below that mention them describe the plan.
