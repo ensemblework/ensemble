@@ -91,7 +91,7 @@ export function RunPreview({ runId, onClose }: { runId: string; onClose: () => v
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <div className="run-sheet relative flex h-full min-w-[min(100vw,360px)] max-w-full flex-col border-l border-line bg-bg shadow-pop" style={{ width: fullscreen.active ? "100%" : `${resize.width}%` }}>
+      <div className="run-sheet relative flex h-full min-w-[min(100vw,360px)] max-w-full flex-col border-l border-line bg-bg shadow-pop" style={{ width: fullscreen.active ? "100%" : "var(--page-width, 50%)" }}>
         {!fullscreen.active && <div role="separator" aria-orientation="vertical" aria-label="Run panel width" tabIndex={0} aria-valuemin={resize.min} aria-valuemax={resize.max} aria-valuenow={resize.width} onPointerDown={resize.onPointerDown} onKeyDown={resize.onKeyDown} onDoubleClick={resize.reset} className="absolute inset-y-0 -left-1 z-10 w-2 cursor-col-resize touch-none hover:bg-accent/30 focus-visible:bg-accent/30"/>}
         {detail.isLoading ? (
           <div className="flex flex-1 items-center justify-center">
@@ -181,7 +181,7 @@ function Fact({ label, children, hint }: { label: string; children: ReactNode; h
   return (
     <div className="min-w-0 rounded-md bg-raised px-2.5 py-2" title={hint}>
       <div className="text-[11px] uppercase tracking-wide text-faint">{label}</div>
-      <div className="mt-0.5 break-words text-[13px] [&_span]:max-w-full [&_span]:flex-wrap">{children}</div>
+      <div className="mt-0.5 min-w-0 text-[13px] [overflow-wrap:anywhere] [&_span]:min-w-0 [&_span]:max-w-full [&_span]:flex-wrap">{children}</div>
     </div>
   );
 }
