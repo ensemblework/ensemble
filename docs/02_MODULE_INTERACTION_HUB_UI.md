@@ -133,7 +133,7 @@ All review cards use neutral borders and small status labels, with no colored ed
 
 ### 3.4 Runs (Agent Timeline / Trace)
 
-`app/(hub)/runs/page.tsx` lists every run separately. `components/runs/run-preview.tsx` opens a resizable sheet using `useResizablePeek`; its fullscreen control reuses `lib/fullscreen.ts`. Esc exits fullscreen first, then closes the sheet.
+`app/(hub)/runs/page.tsx` lists every run separately. `components/runs/run-preview.tsx` opens a resizable sheet using `useResizablePeek` and the live `--page-width` CSS value, so it follows the pointer during a drag; its fullscreen control reuses `lib/fullscreen.ts`. Esc exits fullscreen first, then closes the sheet.
 
 Every run has **Results, Files, Traces**, in that order, opening on Results. Files includes an empty state when nothing changed. Traces retains tool calls, thinking and timing. Compact facts show harness, requested model, answered model, work done, tokens and cost; code runs also show their short guardrails. Facts wrap at narrow widths.
 
