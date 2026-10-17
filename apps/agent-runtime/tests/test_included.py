@@ -179,6 +179,8 @@ def test_config_follows_hub_api_rules() -> None:
             included.included_config({**base, "ENSEMBLE_INCLUDED_MAX_OUTPUT_TOKENS": wrong})
     picked = included.included_config({**base, "ENSEMBLE_INCLUDED_MODELS": " grok-4.7 , gpt-6-luna "})
     assert picked is not None and picked.models == ("gpt-6-luna", "grok-4.7")
+    free = included.included_config({**base, "ENSEMBLE_INCLUDED_MODELS": "gpt-4.1-mini,gpt-5-mini"})
+    assert free is not None and free.models == ("gpt-5-mini", "gpt-4.1-mini"), "free-account models only when named"
     assert included.included_config({**base, "ENSEMBLE_INCLUDED_MODELS": ","}) is None, "a list with no names offers none, as in hub-api"
     with pytest.raises(included.IncludedConfigError, match="claude-haiku-5-5"):
         included.included_config({**base, "ENSEMBLE_INCLUDED_MODELS": "gpt-6-luna,claude-haiku-5-5"})
@@ -230,6 +232,26 @@ def test_gpt_6_luna_goes_to_responses_on_the_openai_host(server: _Server) -> Non
         "answeredBy": "gpt-6.1-sol-2026-09-29",
     }
     assert (turn["tokensIn"], turn["tokensOut"], turn["credits"]) == (5000, 20, 1.25)
+
+
+def test_free_account_models_go_to_responses_and_only_gpt_5_mini_takes_a_level(server: _Server, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ENSEMBLE_INCLUDED_MODELS", "gpt-5-mini,gpt-4.1-mini")
+    for model, sent_level in (("gpt-5-mini", {"effort": "high"}), ("gpt-4.1-mini", None)):
+        asyncio.run(
+            complete_with_tools(
+                {
+                    "provider": "ensemble",
+                    "model": model,
+                    "userId": "u1",
+                    "reasoningEffort": "high",
+                    "messages": [{"role": "user", "content": "Hi"}],
+                }
+            )
+        )
+        azure = server.of("azure")[-1]
+        assert azure["url"] == "https://ensemble-ai.openai.azure.com/openai/v1/responses"
+        assert azure["json"]["model"] == model
+        assert azure["json"].get("reasoning") == sent_level, model
 
 
 def test_grok_goes_to_responses_on_the_services_host_with_the_operators_cap(server: _Server, monkeypatch: pytest.MonkeyPatch) -> None:

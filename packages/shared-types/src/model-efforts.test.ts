@@ -44,6 +44,8 @@ test("included models offer Auto, Low, Medium and High at most, whatever the cat
   assert.deepEqual(modelEfforts("ensemble", "gpt-6.1-sol", { efforts: ["low", "max"] }).levels, ["low", "medium", "high"]);
   assert.equal(modelEfforts("ensemble", "grok-4.7").fallback, "high");
   assert.deepEqual(modelEfforts("ensemble", "deepseek-v4-flash").levels, [], "DeepSeek has no thinking setting: Auto only");
+  assert.deepEqual(modelEfforts("ensemble", "gpt-5-mini"), { levels: ["low", "medium", "high"], fallback: "medium", source: "documented" });
+  assert.deepEqual(modelEfforts("ensemble", "gpt-4.1-mini").levels, [], "GPT-4.1 mini does not reason: Auto only");
   assert.deepEqual(modelEfforts("ensemble", "not-a-deployment").levels, []);
   assert.deepEqual(checkEffort("ensemble", "gpt-6-luna", "high"), { ok: true, send: "high" });
   assert.deepEqual(checkEffort("ensemble", "gpt-6-luna", "default"), { ok: true, send: null });

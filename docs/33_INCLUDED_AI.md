@@ -25,6 +25,15 @@ and credits cannot pay for it.
 | `gpt-6.1-sol` | GPT-6.1 Sol (2026-09-29) | Responses, `openai.azure.com` | Auto (Medium), Low, Medium, High | about 20× |
 | `grok-4.7` | Grok 4.7 | Responses, `https://{resource}.services.ai.azure.com/openai/v1/responses` | Auto (High), Low, Medium, High | about 20× |
 
+**For an Azure free account** two more models can be offered, only when `ENSEMBLE_INCLUDED_MODELS`
+names them: Microsoft's free quota tier ("Tier 0") gives the four above no tokens, and gives these
+500K and 200K tokens a minute.
+
+| Model | Shown as | API on Azure | Thinking | Typical cost |
+|---|---|---|---|---|
+| `gpt-5-mini` | GPT-5 mini (2025-08-07) | Responses, `openai.azure.com` | Auto (Medium), Low, Medium, High | about 3× |
+| `gpt-4.1-mini` | GPT-4.1 mini (2025-04-14) | Responses, `openai.azure.com` | Auto only (no reasoning) | about 4× |
+
 "Typical cost" is a turn of 25,000 input and 1,000 output tokens next to GPT-6 Luna. The GPT models
 always use the Responses API (`store: false`): GPT-6.1 Sol takes function tools only there. Both
 runtimes send the key in the `api-key` header, no temperature or `top_p`, and no fallback model.
@@ -166,7 +175,7 @@ High in `meta`) when the server offers them; it carries no key and no price.
 |---|---|---|
 | `AZURE_FOUNDRY_RESOURCE` | (none) | The Foundry resource name, such as `ensemble-ai`, not a URL |
 | `AZURE_FOUNDRY_API_KEY` | (none) | The resource's key. Server-only: never returned by `/api/credentials`, the catalog or any page |
-| `ENSEMBLE_INCLUDED_MODELS` | all four | Comma list of the deployments to offer, or `off` (the kill switch). An id Ensemble does not include stops startup of included AI with an error |
+| `ENSEMBLE_INCLUDED_MODELS` | the four in §1 | Comma list of the deployments to offer (the four, and `gpt-5-mini` / `gpt-4.1-mini` for a free account), or `off` (the kill switch). A wrong value (an id Ensemble does not include, a URL as the resource) turns included AI off and is logged by hub-api ("Included AI is off: …") |
 | `ENSEMBLE_INCLUDED_MONTHLY_CREDITS` | 20000 | Credits per account per month |
 | `ENSEMBLE_INCLUDED_TOTAL_MONTHLY_USD` | 180 | Model cost across every account per month, in USD |
 | `ENSEMBLE_INCLUDED_MAX_OUTPUT_TOKENS` | 16000 | Reply cap per call, reasoning included (max 128000) |
