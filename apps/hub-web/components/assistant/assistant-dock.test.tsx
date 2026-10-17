@@ -6,6 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PathnameContext } from "next/dist/shared/lib/hooks-client-context.shared-runtime.js";
 import { AssistantDock } from "./assistant-dock.js";
+import { quotaFor } from "@/lib/model-quota";
 
 const CONVERSATION = "11111111-1111-4111-8111-111111111111";
 
@@ -383,5 +384,107 @@ test("the styled tier menu closes before the assistant on Escape", async () => {
   } finally {
     await act(async () => root.unmount()); host.remove(); client.clear(); globalThis.fetch = original;
     window.localStorage.removeItem("ensemble.assistant.open"); window.localStorage.removeItem("ensemble.assistant.conversation");
+  }
+});
+
+test("an included refusal shows its sentence as the turn error, is not stored or marked out of quota, and refreshes credits", async () => {
+  if (typeof Element !== "undefined" && typeof Element.prototype.scrollTo !== "function") {
+    Element.prototype.scrollTo = () => undefined;
+  }
+  window.localStorage.setItem("ensemble.assistant.open", "true");
+  window.localStorage.removeItem("ensemble.assistant.conversation");
+  const PAUSED = "Ensemble's included AI is paused for everyone until Nov 1: this month's shared budget is used up, even for accounts with credits left. Your own API keys and AI plans still work (Settings → Models).";
+  const USED = "You've used this month's Ensemble credits. They reset on Nov 1. To keep going now, add your own API key or AI plan in Settings → Models.";
+  const included = {
+    settings: {
+      ...settings.settings,
+      models: { ...settings.settings.models, medium: { provider: "ensemble", model: "grok-4.7", effort: "default" } },
+    },
+  };
+  let turns = 0;
+  const original = globalThis.fetch;
+  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes("/api/settings")) return json(included);
+    if (url.includes("/messages")) {
+      return json({ messages: [{ id: "saved-user", role: "user", content: "Plan my day", toolCalls: [], model: null, createdAt: "2026-10-17T09:00:00.000Z" }] });
+    }
+    if (url.includes("/api/assistant/turn")) {
+      turns += 1;
+      if (turns === 2) {
+        return json({ code: "included_credits_used", error: USED, message: USED, resetsAt: "2026-11-01T00:00:00.000Z", status: 429 }, 429);
+      }
+      const frames = [
+        `event: status\ndata: ${JSON.stringify({ conversationId: CONVERSATION, userMessageId: "saved-user" })}\n\n`,
+        `event: error\ndata: ${JSON.stringify({ code: "included_paused", error: PAUSED, message: PAUSED, model: "grok-4.7", resetsAt: "2026-11-01T00:00:00.000Z", status: 429 })}\n\n`,
+        `event: done\ndata: ${JSON.stringify({ conversationId: CONVERSATION })}\n\n`,
+      ];
+      return new Response(frames.join(""), { status: 200, headers: { "content-type": "text/event-stream" } });
+    }
+    return json({});
+  }) as typeof fetch;
+
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } } });
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root: Root = createRoot(host);
+  const wait = (ms = 20) => act(async () => { await new Promise((resolve) => setTimeout(resolve, ms)); });
+  const alertText = () => document.body.querySelector('[role="alert"]')?.textContent ?? "";
+  try {
+    await act(async () => {
+      root.render(
+        <PathnameContext.Provider value="/today">
+          <QueryClientProvider client={client}>
+            <AssistantDock />
+          </QueryClientProvider>
+        </PathnameContext.Provider>,
+      );
+    });
+    for (let attempt = 0; attempt < 20 && !/Grok 4\.7/.test(document.body.querySelector('[aria-label="Complexity"]')?.textContent ?? ""); attempt += 1) await wait();
+    assert.equal(document.body.querySelector('[aria-label="Complexity"]')?.textContent, "Medium · Grok 4.7", "the tier menu names the included model");
+    await act(async () => document.body.querySelector<HTMLButtonElement>('[aria-label="Complexity"]')!.click());
+    const medium = [...document.querySelectorAll('[aria-label="Response complexity"] [role="option"]')].find((node) => /^Medium/.test(node.textContent ?? ""))!;
+    assert.match(medium.textContent ?? "", /Included with Ensemble · Grok 4\.7/);
+    await act(async () => medium.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+
+    client.setQueryData(["included-usage"], { available: true, remaining: 10 });
+    client.setQueryData(["models"], { providers: [], runtime: true, updatedAt: "2026-10-17T00:00:00.000Z" });
+    const textarea = document.body.querySelector("textarea")!;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")!.set!;
+    const send = async (text: string) => {
+      await act(async () => {
+        setter.call(textarea, text);
+        textarea.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await act(async () => {
+        document.body.querySelector<HTMLButtonElement>('button[aria-label="Send"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+    };
+
+    await send("Plan my day");
+    for (let attempt = 0; attempt < 30 && !alertText().includes("paused for everyone"); attempt += 1) await wait();
+    assert.match(alertText(), /Ensemble's included AI is paused for everyone until Nov 1/);
+    for (let attempt = 0; attempt < 30 && !/Plan my day/.test(document.body.querySelector(".assistant-conversation")?.textContent ?? ""); attempt += 1) await wait();
+    assert.equal((document.body.textContent?.match(/paused for everyone/g) ?? []).length, 1, "shown once, as the turn error, not as a saved reply");
+    assert.equal(document.body.querySelectorAll(".assistant-answer-turn").length, 0, "no assistant message holds it");
+    assert.equal(client.getQueryState(["included-usage"])?.isInvalidated, true, "credits are fetched again");
+    assert.equal(client.getQueryState(["models"])?.isInvalidated, true, "the model list is fetched again");
+    assert.equal(quotaFor("grok-4.7"), null, "the model is not marked out of quota");
+
+    client.setQueryData(["included-usage"], { available: true, remaining: 0 });
+    await send("And tomorrow?");
+    for (let attempt = 0; attempt < 30 && !alertText().includes("used this month"); attempt += 1) await wait();
+    assert.match(alertText(), /You've used this month's Ensemble credits\. They reset on Nov 1\./, "the sentence, not the JSON body");
+    assert.doesNotMatch(alertText(), /included_credits_used/);
+    assert.equal(textarea.value, "And tomorrow?", "the message stays in the box to send again");
+    assert.equal(client.getQueryState(["included-usage"])?.isInvalidated, true);
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+    globalThis.fetch = original;
+    client.clear();
+    window.localStorage.removeItem("ensemble.assistant.open");
+    window.localStorage.removeItem("ensemble.assistant.conversation");
   }
 });

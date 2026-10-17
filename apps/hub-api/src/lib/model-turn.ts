@@ -19,6 +19,7 @@ import { useInProcessRuntime } from "../runtime/mode.js";
 import type { Json } from "../runtime/payload.js";
 import { effortToSend } from "./model-meta.js";
 import { keysFor } from "../sharing/context.js";
+import { includedErrorFrom, IncludedLimitError } from "../included/errors.js";
 
 export const RuntimeTurn = z.object({
   text: z.string(),
@@ -180,6 +181,7 @@ function chatBody(args: {
   responsesTools: ModelMessage[];
   fallbackModel?: string;
   stream?: boolean;
+  purpose?: string;
 }): Json {
   const { chat, responses } = encodeMessages(args.messages);
   return {
@@ -196,10 +198,12 @@ function chatBody(args: {
     responsesTools: args.responsesTools,
     fallbackModel: args.fallbackModel,
     stream: args.stream,
+    purpose: args.purpose,
   };
 }
 
 function inProcessChatError(error: unknown, model: string, provider?: string): RuntimeError {
+  if (error instanceof IncludedLimitError) return error;
   if (error instanceof ModelUnreachableError) return error;
   if (error instanceof ModelQuotaError) return error;
   if (error instanceof ProviderError) {
@@ -216,6 +220,14 @@ function inProcessChatError(error: unknown, model: string, provider?: string): R
   return new RuntimeError(text.includes("://") ? "The model provider could not be reached." : truncateText(text, 500), 502);
 }
 
+function includedFromRaw(raw: string): IncludedLimitError | null {
+  try {
+    return includedErrorFrom(JSON.parse(raw));
+  } catch {
+    return null;
+  }
+}
+
 function unreachableFromRaw(raw: string, model: string): ModelUnreachableError | null {
   try {
     const body = JSON.parse(raw) as { detail?: unknown; code?: unknown };
@@ -229,6 +241,8 @@ function unreachableFromRaw(raw: string, model: string): ModelUnreachableError |
 }
 
 export function runtimeFailureFromBody(status: number, raw: string, model = "that model", provider?: string | null): RuntimeError {
+  const included = includedFromRaw(raw);
+  if (included) return included;
   const unreachable = unreachableFromRaw(raw, model);
   if (unreachable) return unreachable;
   const failure = parseRuntimeBody(status, truncateText(raw, 2000));
@@ -263,6 +277,8 @@ export function errorFromStreamFrame(
   provider?: string | null,
 ): RuntimeError {
   if (data.code === MODEL_UNREACHABLE) return unreachableFromFrame(data, model);
+  const included = includedErrorFrom(data);
+  if (included) return included;
   const failure = parseRuntimeBody(typeof data.status === "number" ? data.status : 502, JSON.stringify({ detail: data }));
   if (isQuotaFailure(failure)) {
     const retry = failure.retryAfterSeconds != null && failure.retryAfterSeconds > 0 ? failure.retryAfterSeconds : null;
@@ -284,6 +300,8 @@ export async function askRuntime(args: {
   responsesTools: ModelMessage[];
   signal?: AbortSignal;
   timeoutMs?: number;
+  /** Recorded with an included call's credits: "Hub chat", "Agent research"… */
+  purpose?: string;
 }): Promise<RuntimeTurn> {
   const limit = args.timeoutMs ?? 300_000;
   const timeout = AbortSignal.timeout(limit);

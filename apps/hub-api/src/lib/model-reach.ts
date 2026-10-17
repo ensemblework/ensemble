@@ -22,6 +22,7 @@ const PROVIDER_NAMES: Record<string, string> = {
   copilot: "GitHub Copilot",
   cursor: "Cursor",
   ollama: "Ollama",
+  ensemble: "Ensemble",
 };
 
 const DROP_NAMES = new Set([

@@ -5,11 +5,14 @@
 import { ASSISTANT_UNAVAILABLE, assistantErrorText } from "@ensemble/shared-types";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound } from "lucide-react";
-import { isSubscriptionProvider, SUBSCRIPTION_INFO, SUBSCRIPTION_PROVIDERS, type ModelMeta, type ModelProvider, type Settings, type SubscriptionAgent } from "@ensemble/shared-types";
+import Link from "next/link";
+import { INCLUDED_LABEL, INCLUDED_PROVIDER, isSubscriptionProvider, SUBSCRIPTION_INFO, SUBSCRIPTION_PROVIDERS, type IncludedUsage, type ModelMeta, type ModelProvider, type Settings, type SubscriptionAgent } from "@ensemble/shared-types";
 import { api, type Complexity, type ModelCatalog } from "@/lib/api";
 import { relative } from "@/lib/format";
+import { includedBlocked, includedNote, resetDay, useIncludedUsage, wholeCredits } from "@/lib/included";
 import { useQuotaMarks } from "@/lib/model-quota";
 import { FetchGlyph } from "@/components/motion/slot";
+import { ProviderLogo } from "../connectors/provider-logo";
 import { useToast } from "../toast";
 import { InfoTip, SectionCard, Tag } from "../ui";
 import { ModelPicker, ProviderPicker, ThinkingPicker, effortFor, type ProviderChoice } from "./model-picker";
@@ -42,7 +45,11 @@ const PROVIDERS: Array<{ id: ModelProvider; label: string }> = [
 ];
 
 const label = (id: string) =>
-  isSubscriptionProvider(id) ? `${SUBSCRIPTION_INFO[id].label} (your plan)` : (KEY_PROVIDERS.find((row) => row.id === id)?.label ?? PROVIDERS.find((row) => row.id === id)?.label ?? id);
+  id === INCLUDED_PROVIDER
+    ? INCLUDED_LABEL
+    : isSubscriptionProvider(id)
+      ? `${SUBSCRIPTION_INFO[id].label} (your plan)`
+      : (KEY_PROVIDERS.find((row) => row.id === id)?.label ?? PROVIDERS.find((row) => row.id === id)?.label ?? id);
 
 /** A subscription's models as the tier pickers take them: ids, and each model's thinking levels. */
 export function subscriptionModels(agent: SubscriptionAgent | null): { models: string[]; meta: Record<string, ModelMeta>; cheapest: string | null } {
@@ -75,11 +82,35 @@ export function useRefreshModels() {
       client.setQueryData(["models"], catalog);
       void client.invalidateQueries({ queryKey: ["model-keys"] });
       void client.invalidateQueries({ queryKey: ["model-catalog"] });
-      const count = catalog.providers.reduce((sum, row) => sum + (row.available ? row.models.length : 0), 0);
+      const count = catalog.providers.reduce((sum, row) => sum + (row.available && row.provider !== INCLUDED_PROVIDER ? row.models.length : 0), 0);
       toast(catalog.runtime ? `Model lists refreshed: ${count} models from your keys.` : (assistantErrorText(catalog.error ?? ASSISTANT_UNAVAILABLE)), { tone: catalog.runtime ? "ok" : "error" });
     },
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
+}
+
+function includedChoice(usage: IncludedUsage | null): ProviderChoice {
+  return { id: INCLUDED_PROVIDER, label: INCLUDED_LABEL, status: usage && includedBlocked(usage) ? "included-out" : "included", ...(usage ? { note: includedNote(usage) } : {}) };
+}
+
+/** "Included with Ensemble: 12,345 of 20,000 credits left this month · resets Nov 1", and whether included calls stop now. */
+function IncludedCreditsLine({ usage }: { usage: IncludedUsage }) {
+  const blocked = includedBlocked(usage);
+  const day = resetDay(usage.resetsAt);
+  return (
+    <div className="row-tile mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-raised px-3 py-2.5" data-testid="included-credits" data-state={usage.paused ? "paused" : blocked ? "used" : "ok"}>
+      <div className="flex min-w-0 items-start gap-2.5">
+        <ProviderLogo id={INCLUDED_PROVIDER} size={15} className="mt-0.5" />
+        <div className={`min-w-0 text-[12.5px] ${blocked ? "text-warn" : "text-muted"}`}>
+          <span className="font-medium text-ink">{INCLUDED_LABEL}:</span> {wholeCredits(usage.remaining)} of {wholeCredits(usage.limit)} credits left this month · resets {day}
+          {usage.paused ? <span className="block">Paused for everyone until {day}: this month&apos;s shared budget is used up. Your own keys and plans still work.</span> : null}
+        </div>
+      </div>
+      <Link href="/metrics" className="btn shrink-0">
+        See usage
+      </Link>
+    </div>
+  );
 }
 
 function providerChoices(catalog: ModelCatalog | undefined, agents: SubscriptionAgent[] | null, computerName: string | null): ProviderChoice[] {
@@ -114,8 +145,14 @@ export function ModelsSection({ settings, patch }: Props) {
   const subscriptions = useSubscriptions();
   const computer = activeComputer(subscriptions.data);
   const agents = computer?.online && computer.ready ? computer.agents : null;
-  const choices = providerChoices(catalog.data, agents, computer?.name ?? null).map((choice) => isSubscriptionProvider(choice.id) && computer && !computer.online ? { ...choice, note: `${computer.name} is offline` } : choice);
-  const available = (catalog.data?.providers ?? []).reduce((sum, row) => sum + (row.available ? row.models.length : 0), 0);
+  const includedOffered = Boolean(catalog.data?.providers.some((row) => row.provider === INCLUDED_PROVIDER && row.available));
+  const credits = useIncludedUsage(includedOffered);
+  const usage = includedOffered && credits.data?.available ? credits.data : null;
+  const choices = [
+    ...(includedOffered ? [includedChoice(usage)] : []),
+    ...providerChoices(catalog.data, agents, computer?.name ?? null).map((choice) => isSubscriptionProvider(choice.id) && computer && !computer.online ? { ...choice, note: `${computer.name} is offline` } : choice),
+  ];
+  const available = (catalog.data?.providers ?? []).reduce((sum, row) => sum + (row.available && row.provider !== INCLUDED_PROVIDER ? row.models.length : 0), 0);
   const runtimeDown = catalog.data && !catalog.data.runtime;
   const noKeys = keys.data && !keys.data.credentials.some((row) => row.source !== "none");
   return (
@@ -125,15 +162,16 @@ export function ModelsSection({ settings, patch }: Props) {
       description="Power the assistant with the AI plan you already have, or with API keys. A task's complexity picks the tier, and the chat starts on the default preset above."
     >
       <SubscriptionsCard settings={settings} patch={patch} />
+      {usage ? <IncludedCreditsLine usage={usage} /> : null}
       <div className="row-tile mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-raised px-3 py-2.5" data-testid="model-keys-row">
         <div className="flex min-w-0 items-start gap-2.5">
           <KeyRound size={15} className="mt-0.5 shrink-0 text-muted" aria-hidden />
           <div className="min-w-0">
             <div className="text-[13.5px] font-medium">API keys</div>
-            <div className={`text-[12.5px] ${noKeys || runtimeDown ? "text-warn" : "text-muted"}`}>
+            <div className={`text-[12.5px] ${(noKeys && !includedOffered) || runtimeDown ? "text-warn" : "text-muted"}`}>
               {runtimeDown
                 ? (assistantErrorText(catalog.data?.error ?? ASSISTANT_UNAVAILABLE))
-                : `${keySummary(keys.data?.credentials)}${catalog.data?.runtime && available ? ` ${available} models available.` : ""}`}
+                : `${noKeys && includedOffered ? "No keys yet. The included models answer without one." : keySummary(keys.data?.credentials)}${catalog.data?.runtime && available ? ` ${available} models available.` : ""}`}
             </div>
           </div>
         </div>
@@ -169,10 +207,12 @@ export function ModelsSection({ settings, patch }: Props) {
                 {tier.label} <InfoTip text={tier.hint} />
                 {provider && !provider.available ? <Tag tone="orange">no key for {providerName}</Tag> : null}
                 {provider && !provider.chat ? <Tag tone="orange">Cursor cannot run the chat</Tag> : null}
-                {provider?.available && provider.models.length && !provider.models.includes(value.model) ? <Tag tone="orange">model not offered to your key</Tag> : null}
+                {provider?.available && provider.models.length && !provider.models.includes(value.model) ? <Tag tone="orange">{value.provider === INCLUDED_PROVIDER ? "model not offered" : "model not offered to your key"}</Tag> : null}
                 {plan && subscriptions.data && !agent ? <Tag tone="orange">{computer ? `not on ${computer.name}` : "no computer paired"}</Tag> : null}
                 {plan && agent?.signedIn === false ? <Tag tone="orange">not signed in</Tag> : null}
                 {plan && computer && !computer.online ? <Tag tone="orange">{computer.name} is offline</Tag> : null}
+                {value.provider === INCLUDED_PROVIDER && catalog.data && !includedOffered ? <Tag tone="orange">included models are not set up here</Tag> : null}
+                {value.provider === INCLUDED_PROVIDER && usage && includedBlocked(usage) ? <Tag tone="orange">{usage.paused ? `paused until ${resetDay(usage.resetsAt)}` : "no credits left"}</Tag> : null}
               </div>
               <div className="mt-1.5 grid grid-cols-1 gap-2 sm:grid-cols-[190px_minmax(0,1fr)]">
                 <ProviderPicker
@@ -181,6 +221,11 @@ export function ModelsSection({ settings, patch }: Props) {
                   choices={choices}
                   onPick={(next) => {
                     if (next === value.provider) return;
+                    if (next === INCLUDED_PROVIDER) {
+                      const entry = catalog.data?.providers.find((row) => row.provider === next);
+                      patch({ models: { [tier.id]: { provider: next, model: entry?.cheapest ?? entry?.models[0] ?? value.model, effort: "default" } } });
+                      return;
+                    }
                     if (isSubscriptionProvider(next)) {
                       const nextAgent = agents?.find((row) => row.id === next) ?? null;
                       patch({ models: { [tier.id]: { provider: next, model: subscriptionModels(nextAgent).cheapest ?? "default", effort: "default" } } });

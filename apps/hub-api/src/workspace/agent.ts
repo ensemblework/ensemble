@@ -18,7 +18,7 @@ import { beginActivity, endActivity, heartbeat, isCancelled, isPaused, updateAct
 import { appendLedger } from "../lib/ledger.js";
 import { recordMetric } from "../lib/metrics.js";
 import { assistantEcho, askRuntime, toolResult, type ModelMessage } from "../lib/model-turn.js";
-import { estimateUsd } from "../lib/pricing.js";
+import { callCost } from "../lib/pricing.js";
 import { loadSettings } from "../lib/settings.js";
 import { sseHub } from "../lib/sse.js";
 import { pageAgentText } from "../pages/agent-context.js";
@@ -779,6 +779,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
           responsesTools: responsesSpecs(specs),
           signal: control.signal,
           timeoutMs: 90_000,
+          purpose: job.kind === "research" ? "Agent research" : "Agent coding",
         });
       let answer;
       try {
@@ -819,13 +820,13 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
           purpose: job.kind === "research" ? "Agent research" : "Agent coding",
           tokensIn: answer.tokensIn,
           tokensOut: answer.tokensOut,
-          estimatedUsd: estimateUsd(answer.model || job.model, answer.tokensIn, answer.tokensOut),
+          ...callCost(job.provider, answer.model || job.model, answer.tokensIn, answer.tokensOut, answer.credits),
           title: job.task.title,
         },
       });
       messages.push(assistantEcho(answer));
       answeredBy = answer.model || job.model;
-      const callUsd = estimateUsd(answeredBy, answer.tokensIn, answer.tokensOut);
+      const callUsd = callCost(job.provider, answeredBy, answer.tokensIn, answer.tokensOut).estimatedUsd;
       if (callUsd != null) estimatedUsd = (estimatedUsd ?? 0) + callUsd;
       // What the model showed of its reasoning this turn, kept with the step.
       const thought = answer.reasoning?.trim() ? { reasoning: preview(answer.reasoning, TRACE_PREVIEW.thinking), reasoningSource: "model" } : {};

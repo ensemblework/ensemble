@@ -6,9 +6,10 @@ import { ASSISTANT_UNAVAILABLE, assistantErrorText } from "@ensemble/shared-type
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowUpRight, Check, CircleAlert, CircleCheck, Eye, EyeOff, KeyRound, Search, SlidersHorizontal, Trash2, X, Zap } from "lucide-react";
 import { useMemo, useState } from "react";
-import type { ModelProvider, Settings } from "@ensemble/shared-types";
-import { api, type Complexity, type ModelKey } from "@/lib/api";
+import { INCLUDED_PROVIDER, isIncludedErrorCode, type ModelProvider, type Settings } from "@ensemble/shared-types";
+import { api, ApiError, type Complexity, type ModelKey } from "@/lib/api";
 import { dateTime } from "@/lib/format";
+import { INCLUDED_USAGE_KEY, refreshIncluded, tierModelLabel, tierModelName } from "@/lib/included";
 import { FetchGlyph } from "@/components/motion/slot";
 import { useToast } from "../toast";
 import { cx, SettingRow, Spinner, Tag, Toggle } from "../ui";
@@ -228,10 +229,17 @@ function ProviderPane({ id, settings, patch }: { id: ModelProvider; settings: Se
 
 function MorePane({ settings, patch }: { settings: Settings; patch: Patch }) {
   const [results, setResults] = useState<Partial<Record<Complexity, { ok: boolean; text: string }>>>({});
+  const client = useQueryClient();
   const test = useMutation({
     mutationFn: (tier: Complexity) => api.testModel(tier),
-    onSuccess: (result, tier) => setResults((now) => ({ ...now, [tier]: { ok: true, text: `${result.model} answered in ${result.ms} ms` } })),
-    onError: (error, tier) => setResults((now) => ({ ...now, [tier]: { ok: false, text: (error as Error).message } })),
+    onSuccess: (result, tier) => {
+      setResults((now) => ({ ...now, [tier]: { ok: true, text: `${tierModelName(settings.models[tier].provider, result.model)} answered in ${result.ms} ms` } }));
+      if (settings.models[tier].provider === INCLUDED_PROVIDER) void client.invalidateQueries({ queryKey: INCLUDED_USAGE_KEY });
+    },
+    onError: (error, tier) => {
+      setResults((now) => ({ ...now, [tier]: { ok: false, text: (error as Error).message } }));
+      if (error instanceof ApiError && isIncludedErrorCode(error.code)) refreshIncluded(client);
+    },
   });
   return (
     <div className="pop-in space-y-5" data-pane="more">
@@ -255,7 +263,7 @@ function MorePane({ settings, patch }: { settings: Settings; patch: Patch }) {
                   {running ? <Spinner size={11} /> : <Zap size={11} aria-hidden />} {tier.label}
                 </button>
                 <span className={cx("min-w-0 flex-1 truncate text-[12px]", result ? (result.ok ? "text-ok" : "text-warn") : "text-faint")} title={result?.text}>
-                  {result?.text ?? `${settings.models[tier.id].provider} · ${settings.models[tier.id].model}`}
+                  {result?.text ?? (settings.models[tier.id].provider === INCLUDED_PROVIDER ? tierModelLabel(settings.models[tier.id]) : `${settings.models[tier.id].provider} · ${settings.models[tier.id].model}`)}
                 </span>
               </div>
             );

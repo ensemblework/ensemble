@@ -84,4 +84,8 @@ test("model ownership wins over the subscription or reseller harness", () => {
   assert.equal(modelBrand("gpt-6-luna", "copilot-cli"), "openai");
   assert.equal(modelBrand("default", "codex"), "openai");
   assert.equal(modelBrand("unknown", "unknown"), null);
+  assert.equal(modelBrand("gpt-6.1-sol", "ensemble"), "openai", "an included model shows its vendor");
+  assert.equal(modelBrand(null, "ensemble"), "ensemble", "the included provider shows Ensemble's mark");
+  assert.equal(modelBrand("deepseek-v4-flash", "ensemble"), "deepseek");
+  assert.equal(modelBrand("grok-4.7", "ensemble"), "ensemble", "no xAI mark ships, so Grok shows the provider's");
 });

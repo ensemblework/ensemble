@@ -146,6 +146,8 @@ export const ModelProvider = z.enum([
   "cursor",
   "ollama",
   "openrouter",
+  // Models the operator hosts on Azure and pays for, metered in Ensemble credits (included.ts).
+  "ensemble",
   // The person's own AI subscription, run by that vendor's agent on their paired computer (subscriptions.ts).
   "claude-code",
   "codex",

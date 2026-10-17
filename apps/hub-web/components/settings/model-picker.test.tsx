@@ -109,3 +109,80 @@ test("the model picker searches the provider's list, picks with the keyboard, an
     await view.done();
   }
 });
+
+const INCLUDED_IDS = ["gpt-6-luna", "deepseek-v4-flash", "gpt-6.1-sol", "grok-4.7"];
+
+test("included models show their names with versions, vendor logos and relative cost, and search reads both name and id", async () => {
+  const picked: string[] = [];
+  const view = await render(
+    <ModelPicker
+      label="Low model model"
+      value="gpt-6-luna"
+      provider="ensemble"
+      providerLabel="Included with Ensemble"
+      models={INCLUDED_IDS}
+      cheapest="gpt-6-luna"
+      hasKey
+      onPick={(model) => picked.push(model)}
+    />,
+  );
+  try {
+    const trigger = view.host.querySelector('[data-picker="model"]')!;
+    assert.match(trigger.textContent ?? "", /^GPT-6 Luna \(2026-09-22\)Thinking: Low–High/);
+    assert.equal(trigger.querySelector('[data-provider-logo="openai"]') !== null, true);
+    await click(trigger);
+    const panel = document.querySelector("[data-model-picker]")!;
+    const options = [...panel.querySelectorAll('[role="option"]')];
+    const names = () => [...panel.querySelectorAll('[role="option"]')].map((node) => node.querySelector("span.min-w-0")?.textContent);
+    assert.deepEqual(names(), ["GPT-6 Luna (2026-09-22)", "DeepSeek V4 Flash", "GPT-6.1 Sol (2026-09-29)", "Grok 4.7"]);
+    assert.doesNotMatch(panel.textContent ?? "", /gpt-6-luna|cheapest/, "no raw ids and no cheapest badge");
+    assert.deepEqual(options.map((node) => node.querySelector("[data-cost]")?.textContent), ["1×", "2×", "20×", "20×"]);
+    assert.match(options[3]!.querySelector("[data-cost]")!.getAttribute("title")!, /about 20× the credits of GPT-6 Luna/);
+    assert.deepEqual(
+      options.map((node) => node.querySelector("[data-provider-logo]")?.getAttribute("data-provider-logo")),
+      ["openai", "deepseek", "openai", "ensemble"],
+      "the vendor's mark where there is one, Ensemble's otherwise",
+    );
+    assert.doesNotMatch(options[1]!.textContent ?? "", /Low|High/, "DeepSeek has no thinking levels");
+    assert.match(options[3]!.textContent ?? "", /Low–High/);
+    const search = panel.querySelector<HTMLInputElement>('input[aria-label="Search models"]')!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    const type = async (text: string) =>
+      act(async () => {
+        setter.call(search, text);
+        search.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    await type("luna");
+    assert.deepEqual(names(), ["GPT-6 Luna (2026-09-22)"], "by name, and no typed-name row");
+    await type("gpt-6.1");
+    assert.deepEqual(names(), ["GPT-6.1 Sol (2026-09-29)"], "by id");
+    await type("claude-opus-5-5");
+    assert.equal(panel.querySelectorAll('[role="option"]').length, 0, "an included tier cannot take a typed name");
+    await type("grok");
+    await act(async () => void search.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    assert.deepEqual(picked, ["grok-4.7"]);
+  } finally {
+    await view.done();
+  }
+});
+
+test("included models offer Auto with the model's default and Low, Medium and High where the model takes them", async () => {
+  const luna = await render(<ThinkingPicker label="Low model thinking" provider="ensemble" providerLabel="Included with Ensemble" model="gpt-6-luna" value="default" onChange={() => undefined} />);
+  assert.deepEqual(radios(luna.host), ["Auto (Medium)", "Low", "Medium", "High"]);
+  await luna.done();
+  const grok = await render(<ThinkingPicker label="High model thinking" provider="ensemble" providerLabel="Included with Ensemble" model="grok-4.7" value="xhigh" onChange={() => undefined} />);
+  assert.deepEqual(radios(grok.host), ["Auto (High)", "Low", "Medium", "High"]);
+  assert.match(grok.host.textContent ?? "", /Grok 4\.7 does not take “Extra high”/);
+  await grok.done();
+  const deepseek = await render(<ThinkingPicker label="Low model thinking" provider="ensemble" providerLabel="Included with Ensemble" model="deepseek-v4-flash" value="default" onChange={() => undefined} />);
+  assert.deepEqual(radios(deepseek.host), ["Auto"], "DeepSeek decides for itself: Auto only");
+  assert.equal(deepseek.host.querySelector('[role="radio"][aria-checked="true"]')?.textContent, "Auto");
+  await deepseek.done();
+  const stale = await render(<ThinkingPicker label="Low model thinking" provider="ensemble" providerLabel="Included with Ensemble" model="deepseek-v4-flash" value="high" onChange={() => undefined} />);
+  assert.deepEqual(radios(stale.host), ["Auto"]);
+  assert.match(stale.host.textContent ?? "", /DeepSeek V4 Flash decides how much to think, so “High” is not sent/);
+  await stale.done();
+  assert.equal(effortFor("ensemble", "deepseek-v4-flash", null, "high"), "default", "switching a tier to DeepSeek resets thinking to Auto");
+  assert.equal(effortFor("ensemble", "gpt-6-luna", null, "xhigh"), "default");
+  assert.equal(effortFor("ensemble", "grok-4.7", null, "high"), "high");
+});

@@ -57,6 +57,7 @@ const VENDOR: Record<string, string> = {
   copilot: "GitHub Copilot",
   cursor: "Cursor",
   ollama: "Ollama",
+  ensemble: "Ensemble",
 };
 
 /**

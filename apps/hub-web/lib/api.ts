@@ -1,5 +1,5 @@
 import type { IdeTheme, ThemeDirectoryExtension } from "@ensemble/ide-theme";
-import { emptyWorkspace, type ModelMeta, type PageDocument, type Settings, type SubscriptionAgent, type SubscriptionProvider, type TaskPageContent } from "@ensemble/shared-types";
+import { emptyWorkspace, type IncludedUsage, type ModelMeta, type PageDocument, type Settings, type SubscriptionAgent, type SubscriptionProvider, type TaskPageContent } from "@ensemble/shared-types";
 import type { LayoutDocument } from "@ensemble/shared-types/widgets";
 
 import { bindClient, currentExternalSignal, isRequestCancelled, RequestCancelledError, trackRequest, isPageUnloading } from "./fetch-cancel";
@@ -926,13 +926,15 @@ export type UsageCall = {
   tokensIn: number | null;
   tokensOut: number | null;
   estimatedUsd: number | null;
+  /** Ensemble credits, for included models only (their estimatedUsd is null). */
+  credits: number | null;
   at: string;
 };
 
 export type MetricsSummary = {
-  days: Array<{ day: string; calls: number; tokensIn: number; tokensOut: number; estimatedUsd: number | null }>;
-  byModel: Array<{ model: string; provider: string; calls: number; tokensIn: number; tokensOut: number; estimatedUsd: number | null }>;
-  byPurpose: Array<{ purpose: string; calls: number; tokensIn: number; tokensOut: number; estimatedUsd: number | null }>;
+  days: Array<{ day: string; calls: number; tokensIn: number; tokensOut: number; estimatedUsd: number | null; credits: number | null }>;
+  byModel: Array<{ model: string; provider: string; calls: number; tokensIn: number; tokensOut: number; estimatedUsd: number | null; credits: number | null }>;
+  byPurpose: Array<{ purpose: string; calls: number; tokensIn: number; tokensOut: number; estimatedUsd: number | null; credits: number | null }>;
   recent: UsageCall[];
   providers: string[];
   baselines: Array<{
@@ -998,7 +1000,8 @@ export type ModelCatalog = {
     notes?: Record<string, { available: boolean; reason: string | null }>;
     /** What the provider's own model list said about each model: its thinking levels. */
     meta?: Record<string, ModelMeta>;
-    source: "you" | "account" | "env" | "cli" | "none" | "local";
+    /** included: the operator's own models, metered in Ensemble credits (provider "ensemble"). */
+    source: "you" | "account" | "env" | "cli" | "none" | "local" | "included";
     chat: boolean;
     cheapest: string | null;
     error: string | null;
@@ -1501,6 +1504,8 @@ export const api = bindClient({
 
   // metrics
   metrics: () => get<MetricsSummary>("/api/metrics/summary"),
+  /** This account's included credits this month. `available` is false when the server has no included models. */
+  includedUsage: () => get<IncludedUsage>("/api/metrics/credits"),
   verifyLedger: () => post<{ ok: boolean; checked: number; brokenAt?: string }>("/api/ledger/verify"),
 
   // settings & system

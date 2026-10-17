@@ -59,7 +59,8 @@ async function until(check: () => boolean, label: string) {
   assert.fail(`Timed out waiting for ${label}`);
 }
 
-async function mount(url: string) {
+/** `answers`: GET responses that replace the defaults below, by path. */
+async function mount(url: string, answers: Record<string, unknown> = {}) {
   setTestUrl(url);
   const realFetch = globalThis.fetch;
   const calls: string[] = [];
@@ -68,6 +69,7 @@ async function mount(url: string) {
     const path = String(input);
     calls.push(path);
     if (init?.method && init.method !== "GET") bodies.push({ path, method: init.method, body: init.body ? JSON.parse(String(init.body)) : null });
+    if ((!init?.method || init.method === "GET") && path in answers) return json(answers[path]);
     if (path === "/api/settings") return json({ settings: SETTINGS });
     if (path === "/api/subscriptions") return json(SUBSCRIPTIONS);
     if (path === "/api/subscriptions/sign-in") return json({ message: "A sign-in window is opening on Studio Mac. Finish signing in there." }, 202);
@@ -257,4 +259,141 @@ test("an old Accent deep link selects Appearance and scrolls to the control", as
     assert.match(view.selected(),/^Appearance/);
     assert.equal(scrolled.at(-1)?.dataset.jumpLabel,"Accent");
   } finally {await view.done();HTMLElement.prototype.scrollIntoView=previous;}
+});
+
+const INCLUDED_IDS = ["gpt-6-luna", "deepseek-v4-flash", "gpt-6.1-sol", "grok-4.7"];
+const INCLUDED_CATALOG = {
+  providers: [
+    {
+      provider: "ensemble",
+      available: true,
+      source: "included",
+      models: INCLUDED_IDS,
+      meta: Object.fromEntries(INCLUDED_IDS.map((id) => [id, { efforts: id === "deepseek-v4-flash" ? [] : ["low", "medium", "high"] }])),
+      chat: true,
+      cheapest: "gpt-6-luna",
+      error: null,
+    },
+    { provider: "google", available: true, source: "you", models: ["gemini-3.5-flash-lite", "gemini-3.5-flash"], chat: true, cheapest: "gemini-3.5-flash-lite", error: null },
+  ],
+  runtime: true,
+  updatedAt: "2026-10-17T00:00:00.000Z",
+};
+const EMPTY_ROW = { calls: 0, inputTokens: 0, cachedTokens: 0, outputTokens: 0, inputCredits: 0, outputCredits: 0, credits: 0 };
+const USAGE = {
+  available: true,
+  models: [],
+  period: "2026-10",
+  resetsAt: "2026-11-01T00:00:00.000Z",
+  limit: 20_000,
+  used: 7_654.6,
+  remaining: 12_345.4,
+  paused: false,
+  totals: EMPTY_ROW,
+  byModel: [],
+  byPurpose: [],
+  days: [],
+};
+
+const tabNames = () => Array.from(document.querySelectorAll('[role="tablist"][aria-label="Model source"] [role="tab"]')).map((node) => node.textContent);
+
+test("without included models there is no Included tab and nothing about credits", async () => {
+  const view = await mount("http://localhost/settings?tab=assistant");
+  try {
+    await until(() => Boolean(document.querySelector('[aria-label="Low model provider"]')), "the tier pickers");
+    await act(async () => {
+      document.querySelector('[aria-label="Low model provider"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    assert.deepEqual(tabNames(), ["AI app subscriptions", "API keys"]);
+    assert.equal(document.querySelector('[data-testid="included-credits"]'), null);
+    assert.ok(!view.calls.includes("/api/metrics/credits"), "credits are not asked for");
+  } finally {
+    await view.done();
+  }
+});
+
+test("included models: a first Included tab with credits left, the credits line, and picking one sets the cheapest model on Auto", async () => {
+  const view = await mount("http://localhost/settings?tab=assistant", { "/api/models": INCLUDED_CATALOG, "/api/metrics/credits": USAGE });
+  try {
+    await until(() => Boolean(document.querySelector('[data-testid="included-credits"]')), "the credits line");
+    const line = document.querySelector<HTMLElement>('[data-testid="included-credits"]')!;
+    assert.match(line.textContent ?? "", /Included with Ensemble: 12,345 of 20,000 credits left this month · resets Nov 1/);
+    assert.equal(line.dataset.state, "ok");
+    assert.equal(line.querySelector("a")?.getAttribute("href"), "/metrics");
+    await act(async () => {
+      document.querySelector('[aria-label="Low model provider"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    assert.deepEqual(tabNames(), ["Included", "AI app subscriptions", "API keys"]);
+    const included = Array.from(document.querySelectorAll('[role="tab"]')).find((node) => node.textContent === "Included")!;
+    await act(async () => {
+      included.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const option = document.querySelector<HTMLElement>('[role="listbox"][aria-label="Low model provider"] [role="option"]')!;
+    assert.match(option.textContent ?? "", /Included with Ensemble12,345 credits left/);
+    assert.equal(option.querySelector('[data-provider-logo="ensemble"]') !== null, true);
+    await act(async () => {
+      option.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await settle(2);
+    const tier = document.querySelector<HTMLElement>('[data-tier="easy"]')!;
+    assert.match(tier.querySelector('[data-picker="model"]')?.textContent ?? "", /GPT-6 Luna \(2026-09-22\)/);
+    assert.deepEqual(
+      Array.from(tier.querySelectorAll('[role="radio"]')).map((node) => node.textContent),
+      ["Auto (Medium)", "Low", "Medium", "High"],
+    );
+    assert.equal(tier.querySelector('[role="radio"][aria-checked="true"]')?.textContent, "Auto (Medium)");
+    await settle(45);
+    const patch = view.bodies.find((row) => row.path === "/api/settings" && row.method === "PATCH");
+    assert.ok(patch, "the tier is saved");
+    const easy = (patch.body as { models: Record<string, { provider: string; model: string; effort: string }> }).models.easy!;
+    assert.deepEqual({ provider: easy.provider, model: easy.model, effort: easy.effort }, { provider: "ensemble", model: "gpt-6-luna", effort: "default" });
+
+    const high = Array.from(tier.querySelectorAll('[role="radio"]')).find((node) => node.textContent === "High")!;
+    await act(async () => {
+      high.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    assert.equal(tier.querySelector('[role="radio"][aria-checked="true"]')?.textContent, "High");
+    await act(async () => {
+      tier.querySelector('[data-picker="model"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const deepseek = Array.from(document.querySelectorAll('[data-model-picker] [role="option"]')).find((node) => /DeepSeek V4 Flash/.test(node.textContent ?? ""))!;
+    await act(async () => {
+      deepseek.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await settle(2);
+    assert.deepEqual(Array.from(tier.querySelectorAll('[role="radio"]')).map((node) => node.textContent), ["Auto"], "DeepSeek offers Auto only");
+    assert.equal(tier.querySelector('[role="radio"][aria-checked="true"]')?.textContent, "Auto", "the level goes back to Auto");
+  } finally {
+    await view.done();
+  }
+});
+
+test("the credits line warns when this account's credits are used or included AI is paused for everyone", async () => {
+  const used = await mount("http://localhost/settings?tab=assistant", { "/api/models": INCLUDED_CATALOG, "/api/metrics/credits": { ...USAGE, used: 20_000, remaining: 0 } });
+  try {
+    await until(() => Boolean(document.querySelector('[data-testid="included-credits"]')), "the credits line");
+    const line = document.querySelector<HTMLElement>('[data-testid="included-credits"]')!;
+    assert.equal(line.dataset.state, "used");
+    assert.match(line.textContent ?? "", /0 of 20,000 credits left/);
+    assert.ok(line.querySelector(".text-warn"), "warning tone");
+  } finally {
+    await used.done();
+  }
+  const paused = await mount("http://localhost/settings?tab=assistant", { "/api/models": INCLUDED_CATALOG, "/api/metrics/credits": { ...USAGE, paused: true } });
+  try {
+    await until(() => Boolean(document.querySelector('[data-testid="included-credits"]')), "the credits line");
+    const line = document.querySelector<HTMLElement>('[data-testid="included-credits"]')!;
+    assert.equal(line.dataset.state, "paused");
+    assert.match(line.textContent ?? "", /Paused for everyone until Nov 1/);
+    await act(async () => {
+      document.querySelector('[aria-label="Low model provider"]')!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const included = Array.from(document.querySelectorAll('[role="tab"]')).find((node) => node.textContent === "Included")!;
+    await act(async () => {
+      included.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    assert.match(document.querySelector('[role="listbox"][aria-label="Low model provider"]')?.textContent ?? "", /paused until Nov 1/);
+  } finally {
+    await paused.done();
+  }
 });

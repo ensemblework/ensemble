@@ -11,6 +11,8 @@
  * 3. A model the table does not know uses its own default; no effort parameter is sent.
  */
 
+import { INCLUDED_PROVIDER, includedModel } from "./included.js";
+
 export const EFFORT_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type EffortLevel = (typeof EFFORT_LEVELS)[number];
 
@@ -88,12 +90,19 @@ function google(model: string): ModelEfforts {
   return NONE;
 }
 
+/** Included models offer Low, Medium and High at most; Auto leaves the model on its own default. */
+function included(model: string): ModelEfforts {
+  const found = includedModel(model);
+  return found?.efforts.length ? doc([...found.efforts], found.autoEffort) : NONE;
+}
+
 /**
  * The thinking levels a model takes. `meta` is what the provider's own model list said, and wins
  * when it lists levels. A Copilot model the list says nothing about has no setting.
  */
 export function modelEfforts(provider: string, model: string, meta?: ModelMeta | null): ModelEfforts {
   if (!model) return NONE;
+  if (provider === INCLUDED_PROVIDER) return included(model);
   if (Array.isArray(meta?.efforts)) {
     const levels = orderLevels(meta.efforts);
     const documented = provider === "anthropic" ? anthropic(model).fallback : null;

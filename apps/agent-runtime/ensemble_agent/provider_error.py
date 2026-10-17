@@ -81,8 +81,13 @@ COPILOT_TOKEN_HELP = (
 COPILOT_CLASSIC_TOKEN = f"This is a classic GitHub token. {COPILOT_TOKEN_HELP}"
 
 
+INCLUDED_NOT_SET_UP = "Included AI is not set up on this server. Add your own API key or AI plan in Settings → Models."
+
+
 def no_key_message(provider: str) -> str:
     """The provider is the one of the model the tier or the chat uses: a Gemini model needs a Google Gemini key."""
+    if provider == "ensemble":
+        return INCLUDED_NOT_SET_UP
     name = {**_PROVIDER_NAMES, "google": "Google Gemini", "anthropic": "Claude (Anthropic)"}.get(provider, provider)
     return f"No key for {name}. Add one in Settings → Models (in the Ensemble CLI: /keys {provider}), or pick a model whose provider has a key."
 
@@ -139,6 +144,7 @@ _PROVIDER_NAMES = {
     "copilot": "GitHub Copilot",
     "cursor": "Cursor",
     "ollama": "Ollama",
+    "ensemble": "Ensemble",
 }
 
 

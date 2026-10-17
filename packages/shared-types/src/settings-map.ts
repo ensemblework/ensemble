@@ -142,7 +142,7 @@ export const SETTINGS_MAP: readonly SettingsMapEntry[] = [
   ...group("assistant", "Models", [
     { id: "models.subscriptions", label: "Your AI subscriptions", keywords: "subscription plan claude chatgpt codex cursor copilot pro max plus sign in computer app", about: "Use your Claude, ChatGPT, Cursor or Copilot plan, on your own computer, for Ensemble's AI.", href: at("assistant", "jump-models-your-ai-subscriptions") },
     { id: "models.keys", label: "API keys", keywords: "api key keys credentials model providers anthropic openai google gemini copilot ollama openrouter provider", about: "API keys per provider, the Ollama address and the GitHub token for private clones.", href: "/settings?tab=assistant&dialog=keys" },
-    { id: "models.tiers", label: "Which model each tier uses", keywords: "model provider tier low medium high max choose model", about: "Pick the provider and model for each tier from the list of models your keys reach.", href: at("assistant", "jump-models-models") },
+    { id: "models.tiers", label: "Which model each tier uses", keywords: "model provider tier low medium high max choose model included ensemble credits azure claude haiku sonnet gpt luna sol", about: "Pick the provider and model for each tier: models included with Ensemble, or the models your keys reach.", href: at("assistant", "jump-models-models") },
     ...TIERS.map(([tier, name]) => ({
       id: `models.${tier}.effort`,
       label: `${name} model thinking`,

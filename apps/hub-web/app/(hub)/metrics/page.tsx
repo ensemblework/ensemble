@@ -5,9 +5,12 @@ import { Info, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { Held } from "@/components/motion/held";
 import { MetricsSkeleton } from "@/components/motion/skeletons";
+import { INCLUDED_LABEL, INCLUDED_PROVIDER, includedModelName } from "@ensemble/shared-types";
+import { IncludedCreditsCard } from "@/components/metrics/included-credits";
 import { Empty, PageHeader, Tag } from "@/components/ui";
 import { api, type MetricsSummary } from "@/lib/api";
 import { dateTime } from "@/lib/format";
+import { creditAmount, useIncludedUsage } from "@/lib/included";
 
 function countNoun(count: number, singular: string, plural = `${singular}s`): string {
   return `${count} ${count === 1 ? singular : plural}`;
@@ -32,6 +35,15 @@ function money(value: number | null): string {
   return `$${value.toFixed(2)}`;
 }
 
+/** Dollars for people's own keys, credits for included models, both when a row has both. */
+function spent(row: { estimatedUsd: number | null; credits?: number | null } | undefined): string {
+  const parts = [row?.estimatedUsd != null ? money(row.estimatedUsd) : null, row?.credits != null ? creditAmount(row.credits) : null].filter(Boolean);
+  return parts.length ? parts.join(" · ") : "-";
+}
+
+const modelName = (provider: string, model: string) => (provider === INCLUDED_PROVIDER ? includedModelName(model) : model);
+const providerName = (provider: string) => (provider === INCLUDED_PROVIDER ? INCLUDED_LABEL : provider);
+
 function DailySpend({ days }: { days: MetricsSummary["days"] }) {
   const peak = Math.max(...days.map((day) => day.calls), 0);
   const scale = peak || 1;
@@ -49,7 +61,7 @@ function DailySpend({ days }: { days: MetricsSummary["days"] }) {
               style={{ height: `${Math.max((day.calls / scale) * 100, day.calls ? 3 : 0)}%` }}
             />
             <div className="pointer-events-none absolute -top-7 hidden whitespace-nowrap rounded bg-raised px-1.5 py-0.5 text-2xs shadow-pop group-hover:block">
-              {day.day}: {countNoun(day.calls, "call")} · {day.tokensIn + day.tokensOut} tokens · {money(day.estimatedUsd)}
+              {day.day}: {countNoun(day.calls, "call")} · {day.tokensIn + day.tokensOut} tokens · {spent(day)}
             </div>
           </div>
         ))}
@@ -105,7 +117,7 @@ function Donut({ rows }: { rows: MetricsSummary["byPurpose"] }) {
           return (
             <div key={purpose} className="flex items-center gap-2">
               <span className="h-2.5 w-2.5 rounded-sm" style={{ background: PURPOSE_COLORS[purpose] }} />
-              {purpose} · {countNoun(row?.calls ?? 0, "call")} · {(row?.tokensIn ?? 0) + (row?.tokensOut ?? 0)} tokens · {money(row?.estimatedUsd ?? null)}
+              {purpose} · {countNoun(row?.calls ?? 0, "call")} · {(row?.tokensIn ?? 0) + (row?.tokensOut ?? 0)} tokens · {spent(row)}
             </div>
           );
         })}
@@ -125,6 +137,7 @@ function Stat({ title, children }: { title: string; children: React.ReactNode })
 
 export default function MetricsPage() {
   const metrics = useQuery({ queryKey: ["metrics"], queryFn: api.metrics });
+  const credits = useIncludedUsage();
   const [more, setMore] = useState(false);
   const [provider, setProvider] = useState("all");
   const verify = useMutation({ mutationFn: api.verifyLedger });
@@ -148,7 +161,7 @@ export default function MetricsPage() {
             <option value="all">All providers</option>
             {(data?.providers ?? []).filter((name) => name !== "unknown").map((name) => (
               <option key={name} value={name}>
-                {name}
+                {providerName(name)}
               </option>
             ))}
           </select>
@@ -156,6 +169,7 @@ export default function MetricsPage() {
       />
       <Held pending={metrics.isLoading || !shown} fallback={<MetricsSkeleton />}>
         {shown ? <div className="space-y-4">
+          {credits.data?.available ? <IncludedCreditsCard usage={credits.data} /> : null}
           <DailySpend days={shown.days} />
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div className="tile rounded-lg bg-panel p-4">
@@ -165,13 +179,13 @@ export default function MetricsPage() {
               ) : (
                 <div className="space-y-2">
                   {shown.byModel.map((row) => (
-                    <div key={row.model} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_150px] items-center gap-3 text-[12.5px]">
-                      <span className="truncate">{row.model}</span>
+                    <div key={`${row.provider}:${row.model}`} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_150px] items-center gap-3 text-[12.5px]" data-model-row={`${row.provider}:${row.model}`}>
+                      <span className="truncate" title={row.provider === INCLUDED_PROVIDER ? INCLUDED_LABEL : undefined}>{modelName(row.provider, row.model)}</span>
                       <div className="h-2.5 overflow-hidden rounded bg-raised">
                         <div className="h-full rounded bg-accent" style={{ width: `${(row.calls / maxModel) * 100}%` }} />
                       </div>
                       <span className="text-right text-muted">
-                        {countNoun(row.calls, "call")} · {money(row.estimatedUsd)}
+                        {countNoun(row.calls, "call")} · {spent(row)}
                       </span>
                     </div>
                   ))}
@@ -191,12 +205,12 @@ export default function MetricsPage() {
             ) : (
               <>
                 {shown.recent.slice(0, more ? 40 : 5).map((call, index) => (
-                  <div key={`${call.at}-${index}`} className="row-tile flex items-center gap-3 rounded border-b border-b-line px-2 py-1.5 text-[12.5px]">
+                  <div key={`${call.at}-${index}`} className="row-tile flex items-center gap-3 rounded border-b border-b-line px-2 py-1.5 text-[12.5px]" data-call-provider={call.provider}>
                     <span className="min-w-0 flex-1 truncate font-medium">{call.title}</span>
                     <span className="text-muted">
-                      {call.provider} · {call.model} · in {call.tokensIn ?? "-"} · out {call.tokensOut ?? "-"} · {dateTime(call.at)}
+                      {providerName(call.provider)} · {modelName(call.provider, call.model)} · in {call.tokensIn ?? "-"} · out {call.tokensOut ?? "-"} · {dateTime(call.at)}
                     </span>
-                    <span className="w-16 text-right text-muted">{money(call.estimatedUsd)}</span>
+                    <span className="min-w-16 whitespace-nowrap text-right text-muted">{spent(call)}</span>
                   </div>
                 ))}
                 {shown.recent.length > 5 ? (
@@ -208,7 +222,7 @@ export default function MetricsPage() {
             )}
             <div className="mt-3 flex items-start gap-2 rounded-md border border-line bg-raised p-2 text-[12px] text-muted">
               <Info size={13} className="mt-0.5 shrink-0" />
-              Token counts come back from the provider on each call. A dollar figure is an estimate from that vendor&apos;s published list price, and only when Ensemble knows the price for that exact model. Your invoice is in the provider&apos;s billing page.
+              Token counts come back from the provider on each call. A dollar figure is an estimate from that vendor&apos;s published list price, and only when Ensemble knows the price for that exact model. Your invoice is in the provider&apos;s billing page. Calls on models included with Ensemble show the credits they used instead.
             </div>
           </div>
 

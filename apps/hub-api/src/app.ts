@@ -32,6 +32,8 @@ import { collabRoutes } from "./routes/collab.js";
 import { miscRoutes } from "./routes/misc.js";
 import { assistantRoutes } from "./routes/assistant.js";
 import { internalRoutes } from "./routes/internal.js";
+import { includedRoutes } from "./routes/included.js";
+import { IncludedLimitError } from "./included/errors.js";
 import { settingsRoutes } from "./routes/settings.js";
 import { contextRoutes } from "./routes/context.js";
 import { boardRoutes } from "./routes/board.js";
@@ -212,6 +214,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
       if (error.code === "P2002") return reply.code(409).send({ error: "That item already exists." });
       if (error.code === "P2003") return reply.code(400).send({ error: "A referenced account or item is no longer available." });
     }
+    if (error instanceof IncludedLimitError) return reply.code(error.statusCode).send(error.toJSON());
     const statusCode = (error as { statusCode?: number }).statusCode ?? 500;
     const message = redactText(error instanceof Error ? error.message : String(error));
     if (statusCode >= 500) {
@@ -237,6 +240,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     boardRoutes,
     assistantRoutes,
     internalRoutes,
+    includedRoutes,
     settingsRoutes,
     contextRoutes,
     skillRoutes,

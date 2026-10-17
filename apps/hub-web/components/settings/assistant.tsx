@@ -7,6 +7,7 @@ import type { AssistantToolArea, Settings } from "@ensemble/shared-types";
 import { ASSISTANT_WRITE_AREAS } from "@ensemble/shared-types";
 import { api } from "@/lib/api";
 import { relative } from "@/lib/format";
+import { tierModelName } from "@/lib/included";
 import { useToast } from "../toast";
 import { SectionCard, SettingRow, Toggle } from "../ui";
 import { Modal } from "./modal";
@@ -49,7 +50,7 @@ export function AssistantSection({ settings, patch }: Props) {
           <select aria-label="Default complexity" value={assistant.defaultTier} onChange={(event) => patch({ assistant: { defaultTier: event.target.value } })} className="field">
             {TIERS.map((tier) => (
               <option key={tier.id} value={tier.id}>
-                {tier.label.replace(" model", "")} · {settings.models[tier.id].model}
+                {tier.label.replace(" model", "")} · {tierModelName(settings.models[tier.id].provider, settings.models[tier.id].model)}
               </option>
             ))}
           </select>

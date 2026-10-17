@@ -6,7 +6,7 @@ import { appendLedger } from "../lib/ledger.js";
 import { prisma } from "../lib/prisma.js";
 import { assertOwned } from "../services/records.js";
 
-function assertInternal(request: FastifyRequest): void {
+export function assertInternal(request: FastifyRequest): void {
   const token = request.headers["x-ensemble-internal"];
   if (token !== env.ENSEMBLE_INTERNAL_TOKEN) {
     const error = new Error("Unauthorized internal call.");

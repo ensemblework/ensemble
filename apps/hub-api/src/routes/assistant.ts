@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
-import { actorFor } from "../sharing/context.js";
+import { actorFor, keysFor } from "../sharing/context.js";
 import {
   AssistantPageContext,
   PageMention,
@@ -24,6 +24,9 @@ import { replyAfterApply, type ReplyCall } from "../assistant/reply.js";
 import { friendlyModelError, parseRuntimeBody } from "../lib/model-error.js";
 import { ModelChoiceError, providerForModel } from "../lib/model-choice.js";
 import { ModelQuotaError } from "../lib/model-quota.js";
+import { INCLUDED_PROVIDER } from "@ensemble/shared-types";
+import { assertIncludedOpen } from "../included/budget.js";
+import { IncludedLimitError } from "../included/errors.js";
 import { ModelUnreachableError } from "../lib/model-reach.js";
 import { recordModelProbe } from "../lib/probes.js";
 import { RuntimeError } from "../lib/runtime.js";
@@ -383,6 +386,18 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
     // `@people:Mira Chen` typed without an id (by hand, pasted, from the terminal app) gets one when it names one record here.
     const mentions = await resolveTypedMentions(app.prisma, request.userId, request.modules, message, body.mentions);
 
+    if (!refused && callProvider === INCLUDED_PROVIDER) {
+      // No credits or the shared budget used up: say so before any model work starts.
+      try {
+        await assertIncludedOpen(keysFor(request.userId), modelName);
+      } catch (error) {
+        if (!(error instanceof IncludedLimitError)) throw error;
+        send("error", error.toJSON());
+        finish();
+        return;
+      }
+    }
+
     let result: AssistantTurnResult;
     if (refused) {
       result = { failed: true, content: refused, toolCalls: [], model: modelName, credits: null, mutated: false };
@@ -400,7 +415,7 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
         model: modelName,
         reasoningEffort:
           body.reasoningEffort ??
-          (tierSetting.effort !== "default" ? tierSetting.effort : settings.assistant.reasoningEffort),
+          (tierSetting.effort !== "default" ? tierSetting.effort : callProvider === INCLUDED_PROVIDER ? undefined : settings.assistant.reasoningEffort),
         messageId: userMessage.id,
         mentions,
         referenceContext: body.referenceContext,
@@ -422,6 +437,11 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
           interrupted: true,
         };
         send("status", { text: "Stopped." });
+      } else if (error instanceof IncludedLimitError) {
+        if (!streamed) return reply.code(error.statusCode).send(error.toJSON());
+        send("error", error.toJSON());
+        finish();
+        return;
       } else if (error instanceof ModelQuotaError) {
         void recordModelProbe(app.prisma, request.userId, callProvider, modelName, "quota", error.message).catch(() => undefined);
         if (!streamed) return reply.code(429).send(error.toJSON());
