@@ -4,7 +4,8 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { Orbit, CheckSquare, FileText, Trash2 } from "lucide-react";
+import { AgentIcon as Orbit } from "@/components/agent-icon";
+import { CheckSquare, FileText, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { EMPTY_PAGE, type PageMention } from "@ensemble/shared-types";

@@ -29,16 +29,11 @@ The Ensemble CLI's runner uses the same folder and the same sidecar (doc [26](26
 pnpm desktop:build
 ```
 
-Bundles are written under `apps/desktop/src-tauri/target/release/bundle/` (universal macOS builds use `target/universal-apple-darwin/release/bundle/`). The GitHub workflow [`.github/workflows/desktop.yml`](../.github/workflows/desktop.yml) builds unsigned artifacts on pull requests, on every push to `desktop`, on manual dispatch and on a `desktop-v*` tag, and uploads them as `ensemble-desktop-macos`, `ensemble-desktop-windows`, and `ensemble-desktop-linux`. A `desktop-v<version>` tag that matches `tauri.conf.json` also publishes them as a GitHub release (the `publish` job); the CLI has its own `cli-v*` releases:
+Release bundles are written under `apps/desktop/src-tauri/target/<target>/release/bundle/`. `.github/workflows/desktop.yml` builds separate macOS arm64 and x64 installers on matching native hosts, plus Windows x64 and Linux x64. The Node and Prisma sidecar architecture matches each app. Artifacts are `ensemble-desktop-macos-arm64`, `ensemble-desktop-macos-x64`, `ensemble-desktop-windows` and `ensemble-desktop-linux`.
 
-| Runner | Bundles |
-|---|---|
-| macOS | universal `.app` and `.dmg` (arm64 + x64) |
-| Windows | `.msi` and NSIS `.exe` |
-| Linux | `.deb` and `.AppImage` |
+A `desktop-v<version>` tag matching root `release.json` publishes the release after every platform succeeds. `scripts/desktop-release.mjs` checks all four updater packages/signatures, gives the two Mac archives distinct names and writes `latest.json`. Installers and signed updater packages are uploaded to a draft before publication. Updater signing uses `TAURI_SIGNING_PRIVATE_KEY`; publishing fails when signed packages are missing. PR builds may omit update signatures.
 
-Nothing is signed. There is no Apple certificate, no Windows Authenticode cert, and no Linux signing key. On macOS 14 and earlier, right-click the app → Open the first time; on macOS 15 and later, open it once, then System Settings → Privacy & Security → Open Anyway. Windows SmartScreen will warn. That is expected until signing is funded.
-
+OS code-signing certificates are not configured: macOS Gatekeeper and Windows SmartScreen may warn on first install. Tauri updater signatures authenticate later in-app updates; they do not replace Apple notarization or Authenticode.
 On a Mac, `pnpm desktop:dmg` builds an unsigned disk image locally. [desktop/MAC_CHECKLIST.md](desktop/MAC_CHECKLIST.md) is the hand test for it.
 
 ## Local API
@@ -49,10 +44,13 @@ The window loads `ensemble://localhost` (on Windows, `http://ensemble.localhost`
 
 **PATH.** A GUI app gets the system's bare PATH, so at start the sidecar takes the person's login-shell PATH and the usual install folders (`apps/hub-api/src/desktop/user-path.ts`, [26](26_CLI.md) §4): Claude Code, Codex, Cursor's agent, git and node are found as in their terminal.
 
-**Downloads.** [ensemblework.com/download](https://ensemblework.com/download) lists the installers for the version in `apps/landing/lib/download.ts` (`DESKTOP_VERSION`, kept equal to `tauri.conf.json` by `packages/shared-types/src/release-versions.test.ts`), linking the `desktop-v<version>` release assets: `Ensemble_<v>_universal.dmg`, `Ensemble_<v>_x64-setup.exe` and `_x64_en-US.msi`, `Ensemble_<v>_amd64.AppImage` and `_amd64.deb`. The visitor's system comes first, with first-launch steps for the unsigned builds. Bump both versions together and tag after the merge, or the links point at a release that does not exist yet.
+**Downloads and version.** Every surface reads root `release.json`, checked by `scripts/release-version.mjs`. Settings → Account → About Ensemble shows the native version (from Tauri initialization metadata) and the interface version. It can check and install updates without a terminal. Local and hosted native windows share the same About component.
 
-The Ensemble menu exports a diagnostics file (versions and log tails, with the launch token and `ens_` keys removed) and checks for updates. An update is not installed while workspace jobs are running. Signing the updater artifacts needs the `TAURI_SIGNING_PRIVATE_KEY` secret; without it, CI builds unsigned installers.
+The download guide uses the canonical version for `Ensemble_<v>_aarch64.dmg`, `Ensemble_<v>_x64.dmg`, `Ensemble_<v>_x64-setup.exe`, `Ensemble_<v>_x64_en-US.msi`, `Ensemble_<v>_amd64.AppImage` and `Ensemble_<v>_amd64.deb`. Publish matching desktop and CLI tags after the merged build passes.
 
+The updater calls `GET /api/desktop/update/:target/:arch/:current`, which resolves only the latest published **desktop** tag, independently of CLI releases. The API validates the manifest version and official asset URLs; Tauri verifies its signature. About’s only native command is `install_update`, permitted for the bundled app and official hosted origin, with no filesystem or shell permission. Active local jobs block installation until the person finishes or stops them. Successful installation restarts the app.
+
+Desktop releases before 0.4.0 need one download/install to move to the working signed updater channel. Their old channel had no published update manifest. The Ensemble menu also exports redacted diagnostics.
 Migrations run on launch. An existing database is copied into `backups/` first. A database written by a newer build is refused.
 
 The key that encrypts saved model keys and the device token lives beside the data folder (`secret.key` next to `pglite/`), set by `src/desktop/main.ts` through `ENSEMBLE_SECRET_KEY_FILE`. A key left by an older build at `<app>/.ensemble/secret.key` is copied there once. The install folder is never written, so a read-only or replaced install keeps its saved keys. The `ensemble` CLI runs this same sidecar without the window ([26](26_CLI.md)); `scripts/assemble-desktop-sidecar.mjs --dest <dir>` packs it for the CLI.
@@ -65,7 +63,7 @@ The native shell and exported Hub use **Woven Chorus / Satin Gold**. `packages/b
 
 The first connection uses Infinity after its slot's 180 ms delay. Failure stops the loop and shows the still logo with retry guidance. The OS reduced-motion preference shows the still mark. In the Hub, the separate account/browser Reduce motion setting is also honored. Native startup does not synchronize that toggle from the hosted origin; it follows the OS. Reconnecting replaces and destroys the previous controller.
 
-Expressive is the single motion system. For compatibility, the read-only probe still reads `localStorage["ensemble.appearance"].motion` and stores a normalized `expressive` value in `motion.json`; legacy Quiet/Dot values map to Expressive. Unknown values are ignored. The hosted page receives no Tauri commands. The desktop app has no tray; Quick capture's tray uses the generated monochrome/contrast-aware mark.
+Expressive is the single motion system. For compatibility, the read-only probe still reads `localStorage["ensemble.appearance"].motion` and stores a normalized `expressive` value in `motion.json`; legacy Quiet/Dot values map to Expressive. Unknown values are ignored. The official hosted page receives only the signed-update command; other shell commands remain unavailable. The desktop app has no tray; Quick capture's tray uses the generated monochrome/contrast-aware mark.
 
 Config directories, from the identifier `com.ensemblework.desktop`:
 

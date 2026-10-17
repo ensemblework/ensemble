@@ -7,10 +7,15 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use serde::{Deserialize, Serialize};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri_plugin_opener::OpenerExt;
+use tauri_plugin_dialog::DialogExt;
 use tauri::{
     AppHandle, Manager, PhysicalPosition, PhysicalSize, Position, Size, WebviewWindow, Window,
     WindowEvent,
 };
+
+static UPDATING: AtomicBool = AtomicBool::new(false);
+struct UpdateGuard;
+impl Drop for UpdateGuard { fn drop(&mut self) { UPDATING.store(false, Ordering::SeqCst); } }
 
 static READY: AtomicBool = AtomicBool::new(false);
 
@@ -83,10 +88,7 @@ pub fn install_menu(app: &tauri::App) -> tauri::Result<()> {
             tauri::async_runtime::spawn(async move {
                 let message = check_for_updates(&app, true).await;
                 eprintln!("ensemble desktop: {message}");
-                if let Some(window) = app.get_webview_window("main") {
-                    let text = serde_json::to_string(&message).unwrap_or_else(|_| "\"\"".into());
-                    let _ = window.eval(&format!("console.info({text})"));
-                }
+                app.dialog().message(message).title("Ensemble updates").show(|_| {});
             });
         }
         "reload" => reload(app),
@@ -262,27 +264,32 @@ fn export_diagnostics(app: &AppHandle) -> Result<(), String> {
 }
 
 pub async fn check_for_updates(app: &AppHandle, install: bool) -> String {
+    let _guard = if install {
+        if UPDATING.swap(true, Ordering::SeqCst) { return "An update is already being installed.".into(); }
+        Some(UpdateGuard)
+    } else { None };
     use tauri_plugin_updater::UpdaterExt;
     let updater = match app.updater() {
         Ok(updater) => updater,
-        Err(error) => return format!("Updates are not available ({error})."),
+        Err(error) => { eprintln!("updater unavailable: {error}"); return "Updates are unavailable right now. Try again in a moment.".into(); },
     };
     let update = match updater.check().await {
         Ok(Some(update)) => update,
         Ok(None) => return "Ensemble is up to date.".into(),
-        Err(error) => return format!("Could not check for updates ({error}). The app keeps running."),
+        Err(error) => { eprintln!("update check failed: {error}"); return "Could not check for updates right now. Try again in a moment.".into(); },
     };
     if !install {
         return format!("Update {} is available.", update.version);
     }
     if jobs_running(app).await {
         return format!(
-            "Update {} is ready. It will wait until workspace jobs finish.",
+            "Update {} is ready. Finish or stop your active tasks, then update again.",
             update.version
         );
     }
     if let Err(error) = update.download_and_install(|_, _| {}, || {}).await {
-        return format!("Could not install the update ({error}).");
+        eprintln!("update install failed: {error}");
+        return "Could not install the update right now. Your current app and work are kept.".into();
     }
     app.request_restart();
     "Restarting to finish the update.".into()

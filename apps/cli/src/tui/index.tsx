@@ -2,6 +2,8 @@
  * `ensemble` with no arguments: make sure this computer's Ensemble is running (start it in the
  * background if not; it keeps running tasks after you leave), then open the app full-screen.
  */
+import { fileURLToPath } from "node:url";
+import { dailyUpdateNotice, installCliUpdate } from "../update.js";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { render } from "ink";
@@ -35,7 +37,7 @@ export async function runApp(): Promise<void> {
       .then((workspace) => workspace.running.length + workspace.waiting.length)
       .catch(() => 0);
     if (busy) {
-      console.log(`Ensemble ${discovery.version!.replace(/^cli-/, "")} is running ${busy} task${busy === 1 ? "" : "s"} on this computer and keeps them going. When they finish, run \`ensemble runner restart\` to update it to ${VERSION}.`);
+      console.log(`Ensemble ${discovery.version!.replace(/^cli-/, "")} is running ${busy} task${busy === 1 ? "" : "s"} on this computer and keeps them going. Finish or stop them, then reopen Ensemble to use ${VERSION}.`);
     } else {
       console.log(`Updating Ensemble on this computer to ${VERSION}.`);
       await stopRunner(paths).catch(() => false);
@@ -56,6 +58,7 @@ export async function runApp(): Promise<void> {
   const runner = discovery;
 
   const ops: Ops = {
+    update: () => installCliUpdate(fileURLToPath(import.meta.url)),
     signIn: (onCode, signal) => signIn({ onCode, signal, paths }).then((result) => ({ email: result.email, paired: result.paired })),
     signOut: () => signOut(paths),
     savePrefs: (next) => void savePrefs(next, paths).catch(() => undefined),
@@ -93,6 +96,7 @@ export async function runApp(): Promise<void> {
         api={api}
         folder={process.cwd()}
         version={VERSION}
+        updateNotice={await dailyUpdateNotice({paths}).catch(()=>null)}
         account={{ email: config.account?.email ?? null, paired: Boolean(config.pairedAt), apiBase: config.apiBase }}
         prefs={prefs}
         ops={ops}

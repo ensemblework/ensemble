@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "CLI version to release. Defaults to apps/cli/package.json."
+        description: "CLI version to release. Defaults to root release.json."
         required: false
         type: string
       dry_run:
@@ -48,7 +48,7 @@ jobs:
           INPUT_DRY_RUN: ${{ inputs.dry_run || false }}
         run: |
           set -euo pipefail
-          package_version="$(node -p "require('./apps/cli/package.json').version")"
+          package_version="$(node -p "require('./release.json').version")"
           dry_run="$INPUT_DRY_RUN"
           if [[ "$EVENT_NAME" == "push" ]]; then
             tag_version="${REF_NAME#cli-v}"

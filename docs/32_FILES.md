@@ -158,3 +158,7 @@ Paired-run original-file transfer is included in CLI 0.3.11 and desktop 0.3.8; u
 `components/files/viewers/docx-viewer.tsx` defaults to **Reading view** when its preview pane is below 600 px. Text flows at a readable size with normal paragraph/bullet spacing and one column. **Page view** retains the original document geometry with Fit width and zoom controls. Scaling uses a transform on the rendered page wrapper and disables browser text inflation inside the sandboxed iframe; it no longer applies CSS zoom to the document body. Reading view affects only the preview, never the stored file or exports. Compact thumbnails retain the page view.
 
 Checked 17 Oct 2026 in local Chrome at 320 px and 390 px viewports with a synthetic Word document containing exact line heights and bullets: reading view used readable spacing, page view remained available, and browser console errors were empty. The original reported Word file and physical mobile browsers were not available for this check.
+
+### Explicit acquisition
+
+Connecting an app or running Sync people adds no file or artifact. Files are saved through an explicit upload, app import/attach/save or requested assistant action. Previously saved artifacts are kept. The Overview invitation says to add a file rather than promising connected content will arrive automatically.

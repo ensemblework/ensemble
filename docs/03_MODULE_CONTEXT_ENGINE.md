@@ -1,17 +1,17 @@
 # 03 · Module M2 — Context Engine (connectors, Engineer Graph, context packs)
 
-**Purpose:** Continuously assemble everything the agent needs to understand my work without being told: who I work with, on what, what I owe, what changed, and how the pieces connect. Exposes a **Context Pack API** that every worker and the "Help me" surface consume.
+**Purpose:** Connect the people and work the person chooses to keep in Ensemble. Exposes a **Context Pack API** that every worker and the "Help me" surface consume.
 
 ---
 
 ## 1. Responsibilities
 
-1. **Ingest** from pluggable connectors: Gmail, Outlook, Teams, calendar, GitHub, local workspace — later Notion, Linear, and office docs. **No Azure DevOps sync** (it connects for search, attach and updates, [31](31_CONNECTORS_IN_USE.md)). **No M365 Copilot.**
+1. **Read contact metadata on manual sync**; save other connected content only through explicit upload, import or assistant actions.
 2. **Normalize** into a common `Artifact` shape with people, time, project and repo links.
 3. **Extract** commitments, asks, decisions, action items, deadlines (LLM, structured output).
 4. **Maintain the Engineer Graph** — a small personal knowledge graph: People, Projects, Repos, WorkItems, Meetings, Threads, Preferences — with evidence and confidence.
 5. **Build Context Packs** on demand for a task, a meeting, a chat, or a coding session (bounded, ranked, cited).
-6. **Emit deltas** ("what changed") to the orchestrator for todo proposals.
+6. **Publish changes** to refresh the people, files and work the person explicitly saved.
 
 Everything here is scoped by `user_id`. An Ensemble space is its own user id, so each space has its own connectors, graph, artifacts and context packs, and nothing is retrieved across spaces ([28](28_ENSEMBLE_SPACES.md)).
 
@@ -19,34 +19,21 @@ Everything here is scoped by `user_id`. An Ensemble space is its own user id, so
 
 ## 2. Connectors
 
-**First wave** (see [00](00_PROJECT_OVERVIEW.md#direction)). What is connected today is in [18](18_WHAT_IS_REAL.md#connectors-read-only): sync from Gmail, Google Calendar, Outlook mail, Outlook calendar, Teams chats, GitHub, Slack and Linear (`apps/hub-api/src/connectors/`), meeting notes from Fireflies, Fathom, Granola, tl;dv, Krisp, Jamie and Otter (§2.3), and accounts for Notion, Atlassian (Jira), Trello, Asana, Todoist, ClickUp, monday.com, Zoom and Docusign that imports and assistant tools use through `tokens.ts`.
+Manual **Sync people** (`POST /api/fetch`, `POST /api/connections/:id/sync`) calls `connectors/people-sync.ts`. It stores real contact metadata only, without message bodies, artifacts, proposals or model triage. Connecting an app itself saves no content. Scheduled fetch calls return without reading providers, even when an older deployment retains the fetch environment setting.
 
-Hosted public accounts must verify email before connecting, syncing or using a connector token (`requireVerifiedUser`). Any verified person can connect their own accounts through the instance's OAuth apps or a pasted token. Only two things stay operator-only: saving an instance OAuth app (`PUT /api/connectors/apps/:provider`) and the host credential fallbacks (`GITHUB_TOKEN`, `SLACK_USER_TOKEN`/`SLACK_BOT_TOKEN`, `LINEAR_API_KEY`, `gh auth token`; `canUseHostCredentials`). Login OAuth is identity-only: signing in never stores a connector token, although connectors may borrow the same OAuth client (§2.1). The scheduler and enrichment worker skip unverified users. Local and desktop behavior is unchanged.
+| Source | Metadata read on manual sync |
+| --- | --- |
+| Gmail | At most 100 recent message IDs, then From/To and bulk-mail headers with `format=metadata`; no subject, snippet or body |
+| Outlook | At most 100 inbox and 100 sent metadata rows: sender/recipients, dates, draft state, bulk headers |
+| Google Calendar / Outlook calendar | At most 100 events' attendee names and addresses; no event artifacts |
+| Slack | At most 200 non-bot, non-deleted member profiles |
+| Teams | At most 50 chats' member profiles, without messages |
+| GitHub | At most 100 followed real user handles |
+| Other apps and meeting sources | No content read through generic sync; use explicit search/import tools |
 
-Uploaded and imported files have their own hosted caps per account: 10 files (`ENSEMBLE_MAX_DOCUMENTS`) and 50 MB combined (`ENSEMBLE_MAX_DOCUMENT_BYTES`), not counting removed files, plus the server-wide `ENSEMBLE_FILES_TOTAL_MAX_BYTES` ([32 §3](32_FILES.md#3-limits)). `createCappedDocument` in `lib/hosted-limits.ts` admits under the user-row transaction lock; exact-threshold concurrent tests ensure an excess upload leaves no original/artifact. These caps do not stop unverified accounts from storing their own files; model summaries still require verification.
+`people/filter.ts` uses fixed domain, local-address and bulk/list header rules. Removed people remain removed through identity tombstones and suppressions. Exact addresses and provider-confirmed Slack/Teams/Linear user IDs reuse/merge existing identities; names alone never cause an automatic merge. Manual contact sync requires a verified account and granted product scopes. Provider errors do not erase previously saved people.
 
-| Connector | Source / API | Wave | Data pulled |
-|---|---|---|---|
-| `gmail` | Gmail API (history/delta) | P0 | subject, from/to/cc, body, thread, labels |
-| `outlook-mail` | Graph `/me/messages` delta *(old `mail` connector)* | P0 | same shape as Gmail, normalized |
-| `google-calendar` / `outlook-calendar` | Calendar API / Graph `calendarView` | P0 | events, attendees, all-day/cancelled, joinUrl |
-| `github` | GitHub REST (or MCP): PRs, reviews, commits, issues | P0 | my PRs, review comments, CI, history |
-| `teams-chat` | Graph chats/channels *(old Teams connectors)* | P1 | 1:1, group, channel posts, mentions |
-| `workspace` | Local FS + git | P0 | branch, diff, TODOs, failing tests |
-| `notion` / `linear` | Official APIs | P2 | pages, issues — import, then sync |
-| `office-docs` | Word / PPTX / Excel · Google Docs / Slides / Sheets | P2 | referenced files as artifacts (reuse §13 parser) |
-
-**Out of scope:** syncing Azure DevOps, M365 Copilot paste, fabricated seed tenants.
-
-Microsoft 365 as built (`apps/hub-api/src/connectors/microsoft.ts`, Graph v1.0, `$select`ed fields, `@odata.nextLink` paging that never leaves `graph.microsoft.com`):
-
-| Source id | Graph call | Data pulled |
-|---|---|---|
-| `outlook` | `/me/mailFolders/inbox/messages` and `/sentitems/messages`, filtered by date since the last sync (or `fetch.lookbackDays`), up to 100 per folder, text bodies via `Prefer: outlook.body-content-type="text"` | subject, from/to/cc, body with quoted history removed, conversationId, webLink. Drafts and Focused Inbox "Other" are skipped. Mail from others goes to triage like Gmail. |
-| `outlook_calendar` | `/me/calendarView` from a week ago to three weeks out, times in UTC | subject, attendees, organizer, all-day, location, Teams join link. Cancelled and declined events are skipped; events gone from the window are soft-deleted. |
-| `teams` | `/me/chats` (newest first, members expanded, up to 40 one-to-one and group chats) and `/me/chats/{id}/messages` changed since the last sync | chat messages as `chat_msg` artifacts. Messages from others in one-to-one chats, and messages that @mention you in group chats, go to triage; todos are titled "Answer … on Teams". Channel posts and meeting chats are not read. Work or school accounts only. |
-
-> **Cadence:** scheduled fetching is paused product-wide until routines replace it. `startScheduler` skips the fetch slots unless `ENSEMBLE_SCHEDULED_FETCH=on`, whatever `settings.fetch.scheduled` says (default `false`). *Fetch now* (`POST /api/fetch`) and per-source *Sync* (`POST /api/connections/:id/sync`) work as before. See [05 §2](05_MODULE_TASK_ORCHESTRATOR.md#2-scheduled-work-two-fetches-a-day).
+Files and artifacts enter through an explicit upload, import, attach/save operation or an assistant action the person requested. Search results are transient; reading a result does not save every match. Existing saved artifacts remain available. `connectors/items` and the connected-app assistant tools use the person's own refreshed grants; login alone never grants connector access. See [31](31_CONNECTORS_IN_USE.md), [32](32_FILES.md) and the [fetching design](design/real-world-next.md#connector-fetching).
 
 ### 2.1 Connector store, OAuth apps, products and tokens
 
@@ -108,7 +95,7 @@ Google Calendar sync reads the calendars shown in Google Calendar (`calendarList
 
 **Connector rules:**
 
-- Each connector implements `fetch_delta(cursor) -> (artifacts[], cursor)`, is **idempotent**, respects provider throttling (429 + `Retry-After`), and writes `context.sync_state`.
+- Manual metadata sync is bounded and records its last successful read in `sync_state`; explicit content search/import uses the per-provider item implementation.
 - Bodies are stored **redacted-on-write** for known secret patterns (tokens, connection strings).
 - Connector attachments store only metadata + links, not attachment bytes. Documents explicitly uploaded by the engineer are a separate, private, bounded store with downloadable originals (see §13).
 
@@ -167,7 +154,7 @@ Code: `apps/hub-api/src/connectors/mcp/` (`manager.ts` connect/callback/calls, `
 
 ### 2.3 Meeting-notes sources
 
-Meeting tools with a personal API key sync into Meeting notes (`apps/hub-api/src/connectors/meetings/`). Each is a token connector (group `notes`) in `src/connectors/base.ts`, a `ConnectorId` in `packages/shared-types/src/assistant.ts`, and a `CONNECTOR_CATALOG` entry in category `meetings`. Scheduled fetching stays paused; *Sync now* (`POST /api/fetch`) and `POST /api/connections/:id/sync` run them. Each sync reads at most 20 meetings changed since the last sync (or `fetch.lookbackDays`).
+Meeting tools with a personal API key have explicit import adapters for Meeting notes (`apps/hub-api/src/connectors/meetings/`). Each is a token connector (group `notes`) in `src/connectors/base.ts`, a `ConnectorId` in `packages/shared-types/src/assistant.ts`, and a `CONNECTOR_CATALOG` entry in category `meetings`. Generic Sync people does not run these transcript adapters. `hub_import_meeting_notes` saves a requested batch (up to 20 meetings since a date) after Apply; it proposes action-item tasks only when explicitly requested. Specific single-meeting reads remain available through supported app tools. The legacy adapter bounds a requested batch to 20 meetings.
 
 | Source id | API (checked against the vendor docs on 7 Oct 2026) | Key and plan |
 |---|---|---|
@@ -241,39 +228,21 @@ Inferred fields still carry **evidence and confidence in the database**, and a c
 
 ## 4. Pipelines
 
-### 4.1 Ingest → Normalize → Chunk → Embed
+### 4.1 Explicit content ingestion
 
-```text
-connector.fetch_delta
-  → normalizer.<kind>()
-  → linker   (resolve people via UPN/email/display name;
-              link repos via URLs / org/repo#123 patterns;
-              link work items via AB#1234, #1234, ADO URLs;
-              link projects via alias dictionary + embedding similarity)
-  → chunker  (~400 tokens, overlap 40)
-  → embedder
-  → upsert
-```
+Uploads and requested app imports normalize content into artifacts and link saved people/projects. `connectors/ingest.ts` retains the common redaction and suppression helpers for explicit adapters. `connectors/sync.ts` calls only `syncPeople`, not the legacy content-reading adapters.
 
-### 4.2 Extract (LLM, `gpt-4.1-mini`, structured output)
+### 4.2 Extraction
 
-Runs per new artifact (or per thread when a thread updates). Prompt receives: artifact text, the *my identity* block (name, UPN, aliases, team), thread summary so far, and the list of known projects/people for grounding. Outputs `Extraction`. Anything `toMe && type in (ask, action_item, commitment)` with `confidence ≥ 0.5` is emitted as a **TodoCandidate** to the orchestrator.
+The triage helper (`connectors/triage.ts`) can classify explicitly selected content. Manual contact sync never calls it or creates todo proposals. Meeting summaries and action-item extraction happen only on the person's request; writes continue to wait for Apply.
 
-### 4.3 Meeting processing (most valuable, do it well)
+### 4.3 Meeting processing
 
-1. Event ends → fetch transcript VTT → segments with speaker.
-2. Speaker → Person resolution (attendee list + name matching).
-3. Chunk by topic (silence gaps / topic shift via embedding drift).
-4. Per meeting produce `MeetingRecap(summary, decisions[], actionItems[(owner, text, due, timestamp, quote)], openQuestions[], myCommitments[])`.
-5. Each action item owned by me → TodoCandidate with `source = { kind: 'meeting', ref: eventId, excerpt: quote, timestamp }`.
-6. Link the recap to the Project (attendees ∩ project people, title keywords).
+Selected meeting imports retain source attribution and the source's transcript/decisions. Manual meeting notes remain editable; imported source notes remain read-only. Recaps and task proposals use the selected note and never invent owners or dates. The next workflow is described in [the meeting-notes design](design/real-world-next.md#meeting-notes-next-improvements).
 
-### 4.4 Graph maintenance (runs with the afternoon fetch)
+### 4.4 Graph maintenance
 
-- Recompute `relationshipWeight` (interaction frequency × recency × directness).
-- Infer projects: cluster artifacts (embeddings + shared people + shared repos/WIs) → propose Project nodes; UI can rename/merge.
-- Update preferences: working hours from send-time histogram; response times; tone notes come from Skill Forge.
-- Skip anything the engineer deleted — see §4.6.
+The graph is derived on read from saved people, projects and work. It does not start an afternoon provider fetch or automatically infer new artifacts. Deleted entries remain suppressed (§4.6).
 
 ### 4.5 Delta emitter
 
@@ -302,7 +271,7 @@ A suppression is a **statement about what the engineer wants**, not a tombstone 
 
 `person_identities` (`PersonIdentity`) holds every address and handle a person is known by: `kind` (`email`, `slack`, `github`, `linear`, `jira`, `teams`, `zoom`, `phone`, `name`), a normalised lowercase `value`, the `source` that saw it first, and `verified`; `(user, kind, value)` is unique. The migration `20261007140000_identities_links_meetings` backfilled emails from `people.email`/`upn` and handles from `slack:`/`teams:` upns.
 
-`upsertPerson` in `src/connectors/ingest.ts` (all mail, calendar, chat, GitHub, Linear and meeting syncs) resolves a person by email first, then handles (`src/people/identity.ts`); names never resolve on their own. It records every identity it saw with the person: Gmail/Outlook addresses, Slack and Teams user ids with their emails, GitHub logins of PR and issue authors, Linear issue creators (email and user id), calendar attendees and meeting speakers. **It never merges two existing people.** When an identity of one person shows up next to another person's address, the identity stays where it is and `suggested_person_id` records the other person.
+`upsertPerson` in `src/connectors/ingest.ts` (all mail, calendar, chat, GitHub, Linear and meeting syncs) resolves a person by email first, then handles (`src/people/identity.ts`); names never resolve on their own. It records every identity it saw with the person: Gmail/Outlook addresses, Slack and Teams user ids with their emails, GitHub logins of PR and issue authors, Linear issue creators (email and user id), calendar attendees and meeting speakers. **It merges existing rows for the same normalized address or a provider-confirmed Slack/Teams/Linear user ID paired with an address.** When an identity of one person shows up next to another person's address, the identity stays where it is and `suggested_person_id` records the other person.
 
 Adding a person by hand (`POST /api/people`, `routes/context.ts`) does not make a second copy: it answers `409 person_exists` with the person already saved when one has the same email in any case, in `email`, `upn` or an email identity, or, when no email is given, the same name (any case, spaces collapsed). The address goes into `upn` lowercase, as ingest writes it, so a later sync finds the same row. If someone removed earlier still holds that `upn`, the new row is saved without one.
 
@@ -462,7 +431,7 @@ These notes describe how an earlier prototype met the checklist. Most of the fil
 |---|---|---|
 | Connectors | `apps/hub-api/src/connectors/` | Mail, Teams, calendar, GitHub, ADO over REST. Every body is cleaned (HTML→text, quoted history stripped) and secret-redacted on write — a token in the store becomes a token in a prompt. |
 | Auth for dev tools | `connectors/cli-auth.ts` *(inferred from 00 §11)* | GitHub and ADO borrow the sign-in you already have: `gh auth token`, and `az account get-access-token` for ADO's resource id. No PAT to mint, paste or rotate, and nothing written to disk. An explicit `GITHUB_TOKEN`/`ADO_PAT` still wins — an explicit choice should. |
-| Tracked repos | `context/repos.ts` + `connectors/devtools.ts` | Paste a URL: it is parsed, fetched from the provider, and only then written. A row that cannot be fetched is worse than none — the connector would retry it forever and the graph would show a live repo as dormant. Local paths like `~/dev/thing` are refused (6 tests). Tracked repos contribute PRs, issues and 14 days of commits on every fetch. |
+| Tracked repos | `context/repos.ts` + `connectors/devtools.ts` | Paste a URL: it is parsed, fetched from the provider, and only then written. A row that cannot be fetched is worse than none — the connector would retry it forever and the graph would show a live repo as dormant. Local paths like `~/dev/thing` are refused (6 tests). Generic contact sync does not fetch repository content. Repository content is read explicitly through the repository and app tools. |
 | Transcripts | `connectors/vtt.ts` + `transcripts.ts` | Parsing is split from fetching so VTT handling is unit-testable without a tenant (19 tests). Cues are merged into speaker turns, because raw VTT fragments are useless as evidence. Ambiguous speakers are left unresolved rather than guessed — mis-attributing an action item is worse than leaving it unowned. |
 | Linker | `context/linker.ts` | 17 tests. Conservative by design: full names only (a bare first name is too collision-prone), and `#1234` counts as a work item only outside a repo context, where it means an issue. |
 | Extractor | `context/extractor.ts` | Two paths behind one shape: LLM structured output, and a cue-phrase fallback that works with no credential. The fallback is the demo path today and the regression baseline the LLM must beat. |

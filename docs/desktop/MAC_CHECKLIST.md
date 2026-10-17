@@ -8,7 +8,7 @@ pnpm desktop:dmg
 
 The script prints the path to the `.dmg`. The build is unsigned.
 
-The app shell is universal, but the local API inside it uses this Mac's Node and Prisma engine. Test on a Mac with the same chip as the one that built it.
+The app and local Node/Prisma sidecar are built for the same chip. Use the Apple silicon installer on M-series Macs and the Intel installer on Intel Macs.
 
 - [ ] Install from the `.dmg` and open it.
   Drag Ensemble to Applications. A normal double-click may be blocked the first time.
@@ -59,3 +59,7 @@ The 0.3.8 runtime carries original page attachments and diagram source into clai
 - Rename a paired machine and verify its name remains after a heartbeat. Sign out or uninstall the runner and check remote access ends. With a packaged app, deletion of its executable must be noticed by a surviving runtime’s next heartbeat.
 
 These are manual release checks; compilation or simulated HTTP tests alone do not certify physical Touch ID, OS notifications or installer removal.
+
+## Release consistency
+
+Check About Ensemble against root `release.json`. Confirm the installer matches the Mac’s chip, the same version appears in the CLI, and About can check for updates. An active task must block installing an update. A 0.3.x install needs one manual installer download to bootstrap the signed updater.

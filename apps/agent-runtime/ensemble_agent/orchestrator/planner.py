@@ -29,7 +29,7 @@ except Exception:  # pragma: no cover
 
     log = logging.getLogger(__name__)
 
-PROMPT_VERSION = "planner@2026-09-16"
+PROMPT_VERSION = "planner@2026-10-17"
 MAX_STEPS = 8
 Gate = Literal["none", "policy", "approval"]
 
@@ -37,7 +37,7 @@ Gate = Literal["none", "policy", "approval"]
 #: system. A plan for one of these with no write step has not done the job.
 REQUIRES_WRITE_STEP = frozenset({"reply_email", "reply_teams", "open_pr", "update_workitem", "schedule"})
 
-PLANNER_PROMPT = """You plan work for an engineer's personal agent.
+PLANNER_PROMPT = """Plan this person's task using only the supplied facts and tools.
 
 <<IDENTITY>>
 
@@ -48,7 +48,7 @@ Autonomy for this task: <<AUTONOMY>>
 Context already gathered:
 <<CONTEXT>>
 
-Answers the engineer has already given you:
+Answers already supplied:
 <<ANSWERS>>
 
 Suggested personal skills: <<SKILLS>>
@@ -80,9 +80,8 @@ Rules:
 - At most <<MAX_STEPS>> steps.
 - For research.papers set a concise topical query, not the task title.
 - Every step that writes anything must name its tool AND its gate.
-- Never invent a fact. If something required is missing from the context above, add it to questionsForUser and leave it out of the steps.
-- If the answers section already covers what you were missing, treat it as fact and return an empty questionsForUser. Do not ask the same thing twice.
-- Only ask about facts that block a step. If you can plan the work, plan it.
+- Never invent facts. Ask only for missing facts that block a step; omit blocked steps.
+- Use supplied answers without asking again. Return empty questionsForUser when no blocker remains.
 - Draft steps come before send steps. The last write step is always the one that leaves the system.
 """
 

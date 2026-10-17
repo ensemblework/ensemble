@@ -6,11 +6,16 @@ import { estimateUsd, providerFor } from "../lib/pricing.js";
 import { loadSettings } from "../lib/settings.js";
 import { sseHub } from "../lib/sse.js";
 import { isHosted } from "../lib/hosted-access.js";
+import { createJob, Assign } from "../workspace/assign.js";
+import { repeatAssignment } from "../workspace/repeat.js";
+import { runnerRefusal } from "./agents.js";
+import { isPaused } from "../lib/activity.js";
 import { actorFor } from "../sharing/context.js";
 
 const DAY = 24 * 60 * 60 * 1000;
 
 const JOB_FACTS = {
+  context: true,
   id: true,
   kind: true,
   status: true,
@@ -44,6 +49,7 @@ const JOB_FACTS = {
 } as const;
 
 type JobFactsRow = {
+  context: unknown;
   id: string;
   kind: string;
   status: string;
@@ -87,6 +93,7 @@ function jobFacts(job: JobFactsRow) {
   const engine = job.kind === "code" && job.provider && ENGINES[job.provider] ? job.provider : "ensemble";
   const mine = (job.runnerAccountId ?? null) === actorFor(job.userId);
   return {
+    sourceRunId: typeof (job.context as Record<string, unknown> | null)?.feedbackOnRun === "string" ? (job.context as Record<string, unknown>).feedbackOnRun as string : null,
     id: job.id,
     kind: job.kind,
     status: job.status,
@@ -159,6 +166,7 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
         );
         const job = run.workspaceJob ? jobFacts(run.workspaceJob) : null;
         return {
+          sourceRunId: job?.sourceRunId ?? null,
           id: run.id,
           taskId: run.taskId,
           title: run.task.title,
@@ -195,7 +203,49 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
     });
     if (!run) return reply.code(404).send({ error: "Run not found." });
     const { workspaceJob, ...rest } = run;
-    return { run: rest, job: workspaceJob ? jobFacts(workspaceJob) : null };
+    return { run: { ...rest, sourceRunId: workspaceJob ? jobFacts(workspaceJob).sourceRunId : null }, job: workspaceJob ? jobFacts(workspaceJob) : null };
+  });
+
+  app.post("/api/runs/:id/feedback", async (request, reply) => {
+    const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
+    const body = z.object({ id: z.string().uuid(), text: z.string().trim().min(1).max(4000), start: z.boolean() }).strict().parse(request.body);
+    const run = await prisma.run.findFirst({ where: { id, userId: request.userId, deletedAt: null }, include: { task: true, workspaceJob: true } });
+    if (!run) return reply.code(404).send({ error: "Run not found." });
+    if (!run.endedAt && (!run.workspaceJob || ["queued", "claimed", "running", "waiting_approval", "stopping"].includes(run.workspaceJob.status))) return reply.code(409).send({ error: "Wait for this run to finish before leaving feedback." });
+    const claim = await prisma.$transaction(async tx => {
+      await tx.$queryRaw`SELECT id FROM runs WHERE id = ${run.id} FOR UPDATE`;
+      const current = await tx.run.findUniqueOrThrow({ where: { id: run.id }, select: { feedback: true } });
+      const rows = (Array.isArray(current.feedback) ? current.feedback : []) as Array<{ id: string; text: string; at: string; authorId: string; jobId: string | null }>;
+      const existing = rows.find(row => row.id === body.id);
+      if (existing) return { feedback: existing, created: false };
+      if (rows.length >= 100) throw Object.assign(new Error("This run already has 100 feedback tags."), { statusCode: 409 });
+      const feedback = { id: body.id, text: body.text, at: new Date().toISOString(), authorId: actorFor(request.userId) ?? request.userId, jobId: null as string | null };
+      await tx.run.update({ where: { id: run.id }, data: { feedback: [...rows, feedback] } });
+      return { feedback, created: true };
+    });
+    if (!claim.created) return { feedback: claim.feedback, jobId: claim.feedback.jobId };
+    let jobId: string | null = null;
+    if (body.start) {
+      if (!hasModule(request.modules, "workspace")) return reply.code(404).send({ error: MODULE_DENIED });
+      if (run.workspaceJob) {
+        const refusal = await runnerRefusal(app, run.workspaceJob);
+        if (refusal) return reply.code(403).send({ error: refusal });
+      }
+      if (await isPaused(app.redis, request.userId)) return reply.code(409).send({ error: "Resume the agent before starting another run." });
+      const original = run.workspaceJob ? repeatAssignment(run.workspaceJob) : Assign.parse({ taskId: run.taskId, kind: "research", instructions: run.assignmentInstructions ?? run.task.description });
+      const instructions = `${original.instructions ?? run.task.description}\n\nOriginal task: ${run.task.title}\n\nFeedback on the earlier result:\n${body.text}`;
+      const created = await createJob(prisma, request.userId, Assign.parse({ ...original, instructions }), { context: { feedbackOnRun: run.id, feedbackId: body.id } });
+      if (!created) return reply.code(404).send({ error: "The original task is no longer available." });
+      jobId = created.jobId;
+    }
+    const feedback = { ...claim.feedback, jobId };
+    if (jobId) await prisma.$transaction(async tx => {
+      await tx.$queryRaw`SELECT id FROM runs WHERE id = ${run.id} FOR UPDATE`;
+      const current = await tx.run.findUniqueOrThrow({ where: { id: run.id }, select: { feedback: true } });
+      const rows = Array.isArray(current.feedback) ? current.feedback : [];
+      await tx.run.update({ where: { id: run.id }, data: { feedback: rows.map(row => row && typeof row === "object" && !Array.isArray(row) && row.id === body.id ? feedback : row) } });
+    });
+    return { feedback, jobId };
   });
 
   app.delete("/api/runs/:id", async (request, reply) => {

@@ -1,8 +1,8 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AgentIcon as Orbit } from "@/components/agent-icon";
 import {
-  Orbit,
   History,
   Calendar,
   CheckSquare,

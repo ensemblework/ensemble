@@ -2,6 +2,7 @@ import { deleteWorkspaceData } from "../lib/workspace-data.js";
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import { ASSISTANT_INSTRUCTIONS } from "../assistant/state.js";
+import { SKILL_MINING_PROMPT } from "../jobs/skill-mining.js";
 import { TRIAGE_PROMPT } from "../connectors/triage.js";
 import { connectionState, listConnectors } from "../connectors/base.js";
 import { fetchAll, syncConnector } from "../connectors/sync.js";
@@ -72,7 +73,7 @@ const PROMPTS = [
   {
     id: "classifier",
     title: "Triage",
-    when: "After each fetch, once per new item.",
+    when: "When an explicitly selected item is passed to triage. Manual contact sync does not run this prompt.",
     purpose: "Decide whether an email, chat or PR needs a todo, and who should own it.",
     body: TRIAGE_PROMPT.split("<<ITEMS>>")[0]?.trim() ?? "",
   },
@@ -80,13 +81,14 @@ const PROMPTS = [
     id: "coder",
     title: "Workspace coder",
     when: "Repository jobs in the Workspace.",
-    purpose: "Edit files inside the checkout, run tests, and stop at the review gate before any commit or push.",
+    purpose: "Edit files and verify the result while following the run’s file, internet and publishing permissions.",
   },
   {
     id: "skill.miner",
     title: "Skill miner",
-    when: "Only when you press “Improve skills from my work”.",
-    purpose: "Propose skill updates from completed work with real examples. Proposals wait for your review.",
+    when: "After a day’s notice, when older work is ready to leave Completed.",
+    purpose: "Learn reusable preferences and add them to your personal skills, preserving existing instructions. Review and edit them in Skills.",
+    body: SKILL_MINING_PROMPT,
   },
 ];
 

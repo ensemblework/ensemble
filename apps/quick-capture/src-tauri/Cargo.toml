@@ -1,6 +1,6 @@
 [package]
 name = "ensemble-capture"
-version = "0.1.0"
+version = "0.4.0"
 description = "Cross-platform tray and global shortcut for Ensemble quick capture"
 edition = "2021"
 rust-version = "1.77"
@@ -10,6 +10,7 @@ name = "ensemble_capture_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
+serde_json = "1"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]

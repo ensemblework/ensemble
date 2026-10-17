@@ -46,7 +46,7 @@ Checked against `main` while revising. Where the tree disagrees with the review,
 
 | OS | Format | Notes |
 |---|---|---|
-| macOS | **DMG** (universal, Apple Silicon and Intel) | Drag to Applications. Signed with Developer ID and notarised once the $99-a-year Apple account exists. Until then it's unsigned. On macOS Sequoia and later, right-click then Open does not bypass Gatekeeper. The person uses **System Settings → Privacy & Security → Open Anyway**. **No Mac App Store** (it would force the App Sandbox, which conflicts with running developer tools on the person's repos). |
+| macOS | **DMG** (separate Apple silicon and Intel builds) | Drag to Applications. Signed with Developer ID and notarised once the $99-a-year Apple account exists. Until then it's unsigned. On macOS Sequoia and later, right-click then Open does not bypass Gatekeeper. The person uses **System Settings → Privacy & Security → Open Anyway**. **No Mac App Store** (it would force the App Sandbox, which conflicts with running developer tools on the person's repos). |
 | Windows | **NSIS `.exe` installer** plus a portable **`.zip`** | Per-user install, no admin needed. Defender and SmartScreen flag unsigned NSIS binaries. v1 does not pretend to sandbox strongly: it is **Ask mode, or the Linux sandbox via WSL2**. A strong native sandbox comes later. |
 | Linux | **AppImage** plus **`.deb`** (`.rpm` later) | **No Flatpak.** The `.deb` installs the AppArmor profile the helper needs on Ubuntu 24.04. An AppImage cannot install that profile, so on Ubuntu 24.04 it falls back to Landlock only. Secret Service is often missing on a minimal desktop, so the keychain needs a fallback. |
 
@@ -311,3 +311,7 @@ The 0.3.8 runtime carries original page attachments and diagram source into clai
 ## Current platform integration (16 Oct 2026)
 
 Code inspection: native folder choice uses the Tauri dialog plugin and existing API path validation. Native reminders use `tauri-plugin-notification` with system permission while the app is running; browser reminders use browser permission. `ENSEMBLE_INSTALL_PATH` lets a surviving sidecar notice deletion of its installed executable on the next remote heartbeat and clear remote access. Desktop passkey security and terminal limitations remain as documented in [DESKTOP](DESKTOP.md) and [16](16_CODE_TAB.md).
+
+## Canonical release and updater (17 Oct 2026)
+
+Implemented: root `release.json` supplies the web, API, CLI and native versions. Build checks reject drift. Separate native Mac jobs keep the shell and Node/Prisma sidecar on the same architecture. About shares the web UI and native metadata in local/hosted mode. `install_update` installs only Tauri-verified signed updates and refuses while local work is active. The desktop-specific API channel avoids CLI tags changing the updater manifest. See [DESKTOP](DESKTOP.md) for release assets and bootstrap limits.

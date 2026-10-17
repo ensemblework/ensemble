@@ -16,7 +16,7 @@ type Patch = (patch: Record<string, unknown>) => void;
 
 /**
  * Scheduled fetching is paused product-wide until routines replace it, so this
- * card has no schedule: Sync now, how far back a sync reads, and whether new
+ * card has no schedule: Sync people, how far back a sync reads, and whether new
  * items become proposed todos.
  */
 export function FetchSection({ settings, patch }: { settings: Settings; patch: Patch }) {
@@ -38,17 +38,17 @@ export function FetchSection({ settings, patch }: { settings: Settings; patch: P
   const last = connections.data?.connections.some(row => row.enabled) ? connections.data.lastFetch : null;
   return (
     <SectionCard
-      title="Fetching"
+      title="Sync people"
       actions={
         <button type="button" className="btn-primary" onClick={() => syncAll.mutate()} disabled={syncAll.isPending}>
-          <FetchGlyph active={syncAll.isPending} slot="connector.sync" size={12} /> Sync now
+          <FetchGlyph active={syncAll.isPending} slot="connector.sync" size={12} /> Sync people
         </button>
       }
     >
       <div role="note" className="-mt-1 flex items-start gap-2 rounded-lg border border-line bg-raised px-3 py-2 text-[12.5px] text-muted" data-testid="fetch-paused">
         <PauseCircle size={14} className="mt-0.5 shrink-0" aria-hidden />
         <span>
-          <span className="font-medium text-ink">Sync when you need it.</span> Ensemble reads your connected apps when you press Sync now. {last && new Date(last).getTime() <= Date.now() ? `Last synced ${friendlyDateTime(last)}.` : "No sync completed yet."}
+          <span className="font-medium text-ink">Sync when you need it.</span> Sync people reads contact details from your connected apps. Messages, files and other items are saved only when you ask the assistant or upload them. {last && new Date(last).getTime() <= Date.now() ? `Last synced ${friendlyDateTime(last)}.` : "No sync completed yet."}
         </span>
       </div>
       <div className="mt-1 divide-y divide-[var(--line)]">
@@ -61,9 +61,7 @@ export function FetchSection({ settings, patch }: { settings: Settings; patch: P
             ))}
           </select>
         </SettingRow>
-        <SettingRow title="Propose todos from what was read" description="New items that need you become proposed todos on Today. Off means context only.">
-          <Toggle label="Propose todos" checked={fetch.proposeTodos} onChange={(proposeTodos) => patch({ fetch: { proposeTodos } })} />
-        </SettingRow>
+
       </div>
     </SectionCard>
   );

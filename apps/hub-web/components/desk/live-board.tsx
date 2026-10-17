@@ -370,7 +370,7 @@ function specsFor(id: DeskId): Spec[] {
   }
   if (id === "bench") {
     return [
-      task("build", "Build", Boxes, 12, 4, "deadline", "Name the next milestone", "The date stays up", (live) => byUrgency(openTasks(live)).slice(0, 4).map((row) => ({ id: row.id, title: row.title, meta: when(row.due, live.today) })), { hero: true }),
+      task("build", "Next milestone", Boxes, 12, 4, "deadline", "Name the next milestone", "The date stays up", (live) => byUrgency(openTasks(live)).slice(0, 4).map((row) => ({ id: row.id, title: row.title, meta: when(row.due, live.today) })), { hero: true }),
       tile({
         key: "parts", title: "Parts", icon: Boxes, c: 4, r: 4, kind: "part", action: "Add a part", ghost: "Parts get a status",
         fields: [{ key: "name", label: "Part" }, { key: "qty", label: "Qty", input: "number", optional: true }, { key: "status", label: "Status", input: "select", options: [["out", "Out"], ["ordered", "Ordered"], ["in", "In"]] }],
@@ -383,7 +383,7 @@ function specsFor(id: DeskId): Spec[] {
         rows: (live) => live.tests.map((row) => ({ id: row.id, title: row.name, meta: [row.build, row.status].filter(Boolean).join(" · ") })),
       }),
       tile({
-        key: "log", title: "Builds", icon: Boxes, c: 4, r: 4, kind: "deploy", action: "Log a build", ghost: "What left the bench",
+        key: "log", title: "Build log", icon: Boxes, c: 4, r: 4, kind: "deploy", action: "Log a build", ghost: "What left the bench",
         fields: [{ key: "name", label: "Build" }, { key: "env", label: "Rev", optional: true }],
         rows: (live) => live.deploys.map((row) => ({ id: row.id, title: row.name, meta: row.env })),
       }),
@@ -837,6 +837,7 @@ function PlotsTile({ mobile }: { mobile?: boolean }) {
 
 const TAB_MATCH: Record<string, string[]> = {
   people: ["people", "advisor", "follow", "group", "ones", "out"],
+  hearings: ["hearings", "cause"],
   matters: ["limitation", "hearings", "stages", "filings", "drafts", "cause"],
   papers: ["pipeline", "words", "cites", "read"],
   courses: ["courses", "week", "now"],
@@ -863,8 +864,15 @@ const TAB_MATCH: Record<string, string[]> = {
 };
 
 export function lensSections(id: DeskId, tab: string, live: DeskLive, extras: ReadonlySet<DeskExtraId> = new Set()): Array<{ title: string; kind: string; icon: LucideIcon; rows: Row[]; filled: boolean; spec: Spec }> {
-  const all = boardSpecs(id, extras);
-  const keys = TAB_MATCH[tab];
+  const source: Partial<Record<string, DeskId>> = { builds: "bench", parts: "bench", tests: "bench", repos: "branch", reviews: "branch", deploys: "branch", assignments: "semester", courses: "semester", subjects: "exam", revision: "exam", papers: "literature", classes: "classes", marking: "classes", matters: "chambers", hearings: "chambers", filings: "chambers", reading: "literature", team: "staff", decisions: "staff", workload: "staff", objectives: "staff", milestones: "bench" };
+  if (tab === "assignments") {
+    const spec: Spec = { key: "assignments", title: "Assignments", icon: GraduationCap, c: 12, r: 4, kind: "task", action: "Add an assignment", ghost: "Coursework you add to your board", fields: [{ key: "title", label: "Assignment" }], rows: value => value.tasks.filter(row => row.taskType === "assignment").map(row => ({ id: row.id, title: row.title, meta: when(row.due,value.today) })) };
+    const rows = spec.rows(live);
+    return [{ title: spec.title, kind: spec.kind, icon: spec.icon, rows, filled: rows.length > 0, spec }];
+  }
+  const all = boardSpecs(source[tab] ?? id, tab === "learning" ? new Set([...extras, "learning" as const]) : extras);
+  const aliases: Record<string,string> = { filings: "artifacts", reading: "artifacts", workload: "load", objectives: "load", milestones: "builds" };
+  const keys = TAB_MATCH[aliases[tab] ?? tab];
   const specs = !keys ? all.slice(0, 4) : all.filter((spec) => keys.includes(spec.key));
   return specs.slice(0, 4).map((spec) => ({ title: spec.title, kind: spec.kind, icon: spec.icon, rows: spec.rows(live).slice(0, 6), filled: tileFilled(spec, live), spec }));
 }

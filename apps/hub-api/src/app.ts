@@ -75,7 +75,7 @@ import { subscriptionRoutes } from "./subscriptions/routes.js";
 import { remoteRoutes } from "./remote/routes.js";
 import { desktopHostAllowed } from "./lib/desktop-guard.js";
 
-const PUBLIC_PATHS = new Set(["/health", "/health/ready", "/api/events", "/api/devices/register"]);
+const PUBLIC_PATHS = new Set(["/api/version", "/health", "/health/ready", "/api/events", "/api/devices/register"]);
 const ADDITIONAL_MODEL_STREAM_ROUTES = new Set(["/api/pages/:kind/:id/ensemble", "/api/ensemble/invoke"]);
 
 export function bypassesGlobalAuth(path: string): boolean {
@@ -83,6 +83,7 @@ export function bypassesGlobalAuth(path: string): boolean {
   // /api/engine/assistant/* with the assistant turn's (subscriptions/bridge.ts).
   return (
     PUBLIC_PATHS.has(path) ||
+    /^\/api\/desktop\/update\/(darwin|windows|linux)\/(aarch64|x86_64)\/\d+\.\d+\.\d+$/.test(path) ||
     isPublicAuthPath(path) ||
     /^\/api\/connectors\/[a-z_]+\/callback$/.test(path) ||
     path === "/api/engine/ask" ||

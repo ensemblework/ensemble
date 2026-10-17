@@ -457,6 +457,7 @@ export type SkillRecord = {
 };
 
 export type RunSummary = {
+  sourceRunId?: string | null;
   id: string;
   taskId: string;
   title: string;
@@ -511,6 +512,8 @@ export type RunStep = {
 };
 
 export type RunDetail = {
+  sourceRunId?: string | null;
+  feedback?: Array<{ id: string; text: string; at: string; authorId: string; jobId: string | null }>;
   id: string;
   taskId?: string;
   worker?: string;
@@ -1138,6 +1141,7 @@ export type DecisionRuleRecord = {
 // ── client ─────────────────────────────────────────────────────────────────
 
 export const api = bindClient({
+  version: (updates = false) => get<{ version: string; commit: string | null; mode: "local" | "web"; checked: boolean; releases: { desktop: { version: string; assets: Array<{ name: string; url: string }> } | null; cli: { version: string; assets: Array<{ name: string; url: string }> } | null } | null }>(`/api/version${updates ? "?updates=1" : ""}`),
   health: () => get<{ ok: boolean }>("/health"),
   shell: () =>
     get<{
@@ -1358,6 +1362,7 @@ export const api = bindClient({
   // runs & workspace
   runs: (take = 20) => get<{ runs: RunSummary[]; total: number }>(`/api/runs${qs({ take })}`),
   run: (id: string) => get<{ run: RunDetail; job: RunJob | null }>(`/api/runs/${id}`),
+  runFeedback: (id: string, text: string, start: boolean) => post<{ jobId: string | null }>(`/api/runs/${id}/feedback`, { id: crypto.randomUUID(), text, start }),
   deleteRun: (id: string) => del(`/api/runs/${id}`),
   workspace: () => get<WorkspaceBoard>("/api/workspace"),
   assign: (data: AssignInput) => post<{ jobId: string }>("/api/agent/assign", data),

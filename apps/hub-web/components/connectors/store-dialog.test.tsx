@@ -238,7 +238,7 @@ test("Jira's token form sends email, token and site", async () => {
       token: "ATATT3xFfGF0-test-token",
       site: "fieldnote.atlassian.net",
     });
-    assert.match(document.body.textContent ?? "", /not set up on this server yet/);
+    assert.match(document.body.textContent ?? "", /not available yet|coming soon/);
   } finally {
     await view.done();
   }

@@ -9,7 +9,7 @@ import { requireVerifiedUser } from "../lib/hosted-access.js";
 import { checkConnectorLimit } from "../lib/hosted-limits.js";
 import { sseHub } from "../lib/sse.js";
 import { connectionState, getConnector, listConnectors } from "./base.js";
-import { createProposals, triage } from "./triage.js";
+import { syncPeople } from "./people-sync.js";
 import { ConnectorError } from "./types.js";
 
 export interface SyncOutcome {
@@ -52,7 +52,7 @@ async function run(app: FastifyInstance, userId: string, id: string): Promise<Sy
         cursor: data.cursor ?? null,
       },
       update: {
-        ...(data.ok ? { lastSyncAt: new Date(), itemCount: { increment: data.items ?? 0 } } : {}),
+        ...(data.ok ? { lastSyncAt: new Date(), itemCount: data.items ?? 0 } : {}),
         lastError: data.ok ? null : data.message,
         ...(data.cursor !== undefined ? { cursor: data.cursor } : {}),
       },
@@ -66,16 +66,12 @@ async function run(app: FastifyInstance, userId: string, id: string): Promise<Sy
   const lookback = new Date(Date.now() - settings.fetch.lookbackDays * 86_400_000);
   const since = previous?.lastSyncAt && previous.lastSyncAt > lookback ? new Date(previous.lastSyncAt.getTime() - 10 * 60_000) : lookback;
   try {
-    const result = await connector.sync({ userId, settings, since, cursor: previous?.cursor ?? null });
-    let proposed = settings.fetch.proposeTodos ? await createProposals(userId, result.proposals, "connector") : 0;
-    const triaged = await triage(userId, settings, result.triage);
-    proposed += triaged.created;
-    const notes = triaged.error ? ` Triage used the fallback rules: ${triaged.error.slice(0, 160)}` : "";
-    const message = `${result.items} item${result.items === 1 ? "" : "s"} read, ${proposed} todo${proposed === 1 ? "" : "s"} proposed.${notes}`;
-    await record({ ok: true, message, items: result.stored.filter((row) => row.created).length, cursor: result.cursor });
-    await appendLedger({ userId, actor: "agent", action: `connector.sync.${id}`, payload: { items: result.items, proposed, triage: triaged.via } });
-    if (proposed) sseHub.publish(userId, { event: "task", data: { action: "propose", count: proposed } });
-    return { id, ok: true, message, items: result.items, proposed };
+    const items = await syncPeople(id, { userId, settings, since, cursor: null });
+    const message = `${items} ${items === 1 ? "person" : "people"} updated. Files and messages are saved only when you ask.`;
+    await record({ ok: true, message, items });
+    await appendLedger({ userId, actor: "me", action: `connector.sync.${id}`, payload: { people: items } });
+    sseHub.publish(userId, { event: "sync", data: { id, people: items } });
+    return { id, ok: true, message, items, proposed: 0 };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     app.log.warn({ connector: id, err: message }, "connector sync failed");
@@ -85,6 +81,7 @@ async function run(app: FastifyInstance, userId: string, id: string): Promise<Sy
 }
 
 export async function fetchAll(app: FastifyInstance, userId: string, reason: "button" | "schedule"): Promise<{ results: SyncOutcome[]; message?: string }> {
+  if (reason === "schedule") return { results: [], message: "Use Sync people to update your contacts. Files are saved only when you ask." };
   await requireVerifiedUser(userId);
   const settings = await loadSettings(app.prisma, userId);
   const enabled = listConnectors().filter((connector) => connector.sync && settings.connections[connector.id]?.enabled);

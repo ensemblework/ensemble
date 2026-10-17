@@ -178,3 +178,7 @@ Go setup is pinned to `actions/setup-go@v6.4.0` (Go `1.24.x`) in CI and client p
 ### Shared brand assets
 
 `packages/brand` owns Woven Chorus artwork, Satin Gold, the Expressive SVG motion controller and terminal frames. Web, landing, native startup, Quick capture and CLI consume this source. `scripts/build-ensemble-brand.mjs` exports packaged icons, social previews and standalone fallback pages. Run `pnpm brand:build` after changing a master; `pnpm brand:check` checks source/output hashes. Details: [Brand and motion](docs/BRAND.md).
+
+## Release version
+
+`release.json` is the version source for the web, API, desktop, quick capture and CLI. Change it, run `pnpm version:sync`, and commit the derived manifests/configs together. `pnpm version:check` runs before typecheck and application builds. Native builds also validate the version from Rust. Desktop and CLI tags must match it; publish both from the tested main commit. Desktop releases build Apple silicon and Intel separately so their sidecars match. See [Desktop](docs/DESKTOP.md) and [CLI releases](docs/26_CLI.md#7-releases).

@@ -53,6 +53,7 @@ jobs:
           pnpm --filter @ensemble/shared-types test
           pnpm --filter @ensemble/block-diagrams test
           pnpm --filter @ensemble/ide-theme test
+          node --test scripts/desktop-release.test.mjs scripts/release-version.test.mjs
 
       # The plots preview test renders the same figure with the agent runtime's matplotlib.
       - uses: actions/setup-python@v6

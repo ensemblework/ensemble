@@ -2,7 +2,8 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
-import { Orbit, Bell, CalendarDays, Check, CheckCheck, ChevronDown, CircleCheck, Code2, Columns3, FileText, FolderOpen, GitBranch, MessageSquare, Pencil, MousePointer2, Plus, Search, Settings, ShieldCheck, Sparkles, Users } from "lucide-react";
+import { AgentIcon as Orbit } from "@/components/agent-icon";
+import { Bell, CalendarDays, Check, CheckCheck, ChevronDown, CircleCheck, Code2, Columns3, FileText, FolderOpen, GitBranch, MessageSquare, Pencil, MousePointer2, Plus, Search, Settings, ShieldCheck, Sparkles, Users } from "lucide-react";
 import { memo, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { PreviewTiles, specPool } from "@/components/desk/live-board";
 import { tileFitsRole, tileDescription } from "@/components/desk/tile-catalog";

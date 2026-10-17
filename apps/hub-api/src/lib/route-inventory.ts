@@ -29,7 +29,7 @@ export function routeAuth(method: string, path: string): RouteAuth {
   if (/^\/api\/connectors\/[^/]+\/callback$/.test(path)) return "connector-oauth-state";
   // A coding agent's hook in an engine run, or an assistant turn's tools: the run's (turn's) own secret, on loopback, on the desktop only.
   if (path === "/api/engine/ask" || path === "/api/engine/tool" || path === "/api/engine/assistant/tools" || path === "/api/engine/assistant/tool") return "engine-run-secret";
-  if (path === "/health" || path === "/health/ready" || isPublicAuthPath(sampleRoutePath(path))) return "public";
+  if (path === "/api/version" || path === "/api/desktop/update/:target/:arch/:current" || path === "/health" || path === "/health/ready" || isPublicAuthPath(sampleRoutePath(path))) return "public";
   if (path.startsWith("/api/internal/")) return "internal-token";
   return "identity";
 }

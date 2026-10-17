@@ -1,6 +1,6 @@
 [package]
 name = "ensemble-desktop"
-version = "0.3.8"
+version = "0.4.0"
 description = "Cross-platform shell that opens the hosted Ensemble site"
 edition = "2021"
 rust-version = "1.87"
@@ -10,6 +10,7 @@ name = "ensemble_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
+serde_json = "1"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]

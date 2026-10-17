@@ -1,7 +1,8 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Orbit as AgentIcon, ChevronRight, Mail, Plus } from "lucide-react";
+import { AgentIcon as AgentIcon } from "@/components/agent-icon";
+import { ChevronRight, Mail, Plus } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";

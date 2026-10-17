@@ -2,9 +2,10 @@
  * Normalize → link → upsert (docs/03 §4.1). Every connector writes through
  * here so redaction, suppression and people linking happen exactly once.
  */
+import { nonPerson } from "../people/filter.js";
 import type { ArtifactKind, Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
-import { cleanIdentities, parseHandle, recordIdentities, resolvePerson, type IdentityInput } from "../people/identity.js";
+import { cleanIdentities, parseHandle, recordIdentities, resolvePerson, mergePeople, type IdentityInput } from "../people/identity.js";
 import { projectForContainers, type Container } from "../projects/links.js";
 import { removedByPerson } from "../context/artifacts.js";
 
@@ -157,7 +158,7 @@ export async function upsertPerson(userId: string, input: PersonInput, self: Arr
   ]);
   const handle = parseHandle(input.handle);
   const upn = (input.email ?? input.handle ?? "").trim().toLowerCase() || (identities[0] ? `${identities[0].kind}:${identities[0].value}` : "");
-  if (!upn || AUTOMATED.test(upn)) return null;
+  if (!upn || AUTOMATED.test(upn) || identities.some(row => row.kind === "email" && nonPerson(row.value))) return null;
   const selfSet = new Set(self.filter((value): value is string => Boolean(value)).map((value) => value.toLowerCase()));
   if (selfSet.has(upn) || identities.some((row) => row.kind === "email" && selfSet.has(row.value))) return null;
   const blocked = await suppressed(userId, "person");
@@ -172,9 +173,23 @@ export async function upsertPerson(userId: string, input: PersonInput, self: Arr
     identities.filter((row) => row.kind !== "name"),
   );
   if (resolved?.deleted) return null;
-  const existing = resolved
+  const emails = identities.filter(row => row.kind === "email").map(row => row.value);
+  const legacy = emails.length ? await prisma.person.findMany({ where: { userId, OR: emails.flatMap(email => [{ email: { equals: email, mode: "insensitive" as const } }, { upn: { equals: email, mode: "insensitive" as const } }]) }, orderBy: { createdAt: "asc" } }) : [];
+  const providerKind = input.evidence.split(":")[0];
+  const stable = identities.find(row => ["slack", "teams", "linear"].includes(row.kind) && row.kind === providerKind);
+  if (stable && emails.length) {
+    const linked = await prisma.personIdentity.findFirst({ where: { userId, kind: stable.kind, value: stable.value }, include: { person: true } });
+    if (linked?.person.deletedAt) return null;
+    if (linked && !legacy.some(row => row.id === linked.personId)) legacy.push(linked.person);
+  }
+  if (!resolved && legacy.some(row => row.deletedAt)) return null;
+  let existing = resolved
     ? await prisma.person.findUnique({ where: { id: resolved.personId } })
     : await prisma.person.findUnique({ where: { userId_upn: { userId, upn } } });
+  existing ??= legacy[0] ?? null;
+  if (existing && legacy.length) {
+    for (const duplicate of legacy) if (!duplicate.deletedAt && duplicate.id !== existing.id) await mergePeople(prisma, userId, existing.id, duplicate.id);
+  }
   if (existing) {
     if (existing.deletedAt) return null;
     const newer = !existing.lastInteraction || existing.lastInteraction < input.at;

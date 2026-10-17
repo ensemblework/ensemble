@@ -30,6 +30,8 @@ import { filesHref } from "@/lib/files/links";
 import { useFullscreen } from "@/lib/fullscreen";
 import { usePeek } from "../shell/peek";
 
+import { MobileGraph } from "./mobile-graph";
+import type { MockService } from "../desk/context-customize";
 import { useModuleOn } from "@/lib/use-module";
 import { Held } from "@/components/motion/held";
 import { GraphSkeleton } from "@/components/motion/skeletons";
@@ -208,7 +210,7 @@ function publishDebug(value: GraphDebug) {
   window.__ensembleGraphDebug = value;
 }
 
-export function GraphTab({ compact = false }: { compact?: boolean }) {
+export function GraphTab({ compact = false, contextTabs, mockServices = [], contextNodes = [] }: { compact?: boolean; contextTabs?: string[]; mockServices?: MockService[]; contextNodes?: GraphNode[] }) {
   const diagramsOn = useModuleOn("diagrams");
   const plotsOn = useModuleOn("plots");
   const kinds = KINDS.filter((column) => (column.kind !== "diagram" || diagramsOn) && (column.kind !== "plot" || plotsOn));
@@ -271,8 +273,12 @@ export function GraphTab({ compact = false }: { compact?: boolean }) {
     };
   }, [graph.isLoading, graph.data, apiNodes, apiEdges]);
 
-  const nodes = devGraph?.nodes ?? apiNodes;
-  const edges = devGraph?.edges ?? apiEdges;
+  const nodes = useMemo(() => {
+    const base = (devGraph?.nodes ?? apiNodes).filter(node => !contextTabs || node.kind !== "repo" || contextTabs.includes("Repos"));
+    const combined = [...base, ...contextNodes.filter(node => !base.some(row => row.id === node.id)), ...mockServices.map(row => ({ id: `mock:${row.id}`, kind: "mock", label: row.name, sub: row.detail }))];
+    return [...new Map(combined.map(node => [node.id, node])).values()];
+  }, [devGraph, apiNodes, contextTabs, contextNodes, mockServices]);
+  const edges = useMemo(() => (devGraph?.edges ?? apiEdges).filter(edge => nodes.some(node => node.id === edge.source) && nodes.some(node => node.id === edge.target)), [devGraph, apiEdges, nodes]);
   const scoped = useMemo(() => {
     const kept = focus ? neighbourhood(focus, edges) : null;
     return filterByNodeType(nodes, hidden).filter((node) => !kept || kept.has(node.id));
@@ -292,7 +298,9 @@ export function GraphTab({ compact = false }: { compact?: boolean }) {
   }, [selected, visible]);
 
   const open = (node: GraphNode) => {
-    if (node.kind === "task") peek.open(node.id, "task");
+    if (node.kind === "mock") router.push("/context?tab=mocks");
+    else if (node.kind.startsWith("context-")) router.push(`/context?tab=${node.kind.slice(8)}`);
+    else if (node.kind === "task") peek.open(node.id, "task");
     else if (node.kind === "project") peek.open(node.id, "project");
     else if (node.kind === "people") router.push(`/context?tab=people&search=${encodeURIComponent(node.label)}`);
     else if (node.kind === "repo") router.push("/context?tab=repos");
@@ -759,8 +767,9 @@ export function GraphTab({ compact = false }: { compact?: boolean }) {
   const focusOptions = nodes.filter((node) => node.kind === focusKind);
   const linkCount = edges.filter((edge) => positions.has(edge.source) && positions.has(edge.target)).length;
 
-  return (
-    <div ref={fullscreenLayer} className={cx("flex h-full min-h-0 min-w-0 flex-col", fullscreen && "fixed inset-0 z-[60] bg-bg p-4")}>
+  return (<>
+    {!compact && <MobileGraph nodes={nodes} edges={edges} onOpen={open}/> }
+    <div ref={fullscreenLayer} className={cx(compact ? "flex h-full min-h-0 min-w-0 flex-col" : "hidden h-full min-h-0 min-w-0 flex-col sm:flex", fullscreen && "fixed inset-0 z-[60] bg-bg p-4")}>
       {compact ? (
         <div className="mb-1 flex items-center justify-between gap-2">
           <div className="flex min-w-0 items-center gap-1.5">
@@ -1003,5 +1012,5 @@ export function GraphTab({ compact = false }: { compact?: boolean }) {
       </p>
       )}
     </div>
-  );
+  </>);
 }

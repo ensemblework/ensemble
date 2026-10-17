@@ -55,7 +55,7 @@ export const calendarTools = [
     name: "hub_list_events",
     area: "tasks",
     description:
-      "List events from every calendar Ensemble syncs (Google Calendar, Outlook) between from and to (YYYY-MM-DD, inclusive, the person's time zone; default today to 7 days ahead): time, title, place or meeting link, attendees, which calendar, and any meeting notes linked to the event. To create or move an event use the calendar app tools.",
+      "List calendar events already saved in Ensemble (Google Calendar, Outlook) between from and to (YYYY-MM-DD, inclusive, the person's time zone; default today to 7 days ahead): time, title, place or meeting link, attendees, which calendar, and any meeting notes linked to the event. To create or move an event use the calendar app tools.",
     input: z.object({
       from: DateField.optional(),
       to: DateField.optional(),

@@ -54,8 +54,8 @@ export function ConnectPage() {
       </section>
 
       <h2 className="mb-3 mt-8 text-[13px] font-semibold uppercase tracking-[0.14em] text-faint">Choose an app</h2>
-      <section className="mb-5 grid gap-2 md:grid-cols-3" aria-label="Connection methods">
-        {(["cli", "hosted", "source"] as const).map((method) => (
+      <section className="mb-5 grid gap-2 md:grid-cols-2" aria-label="Connection methods">
+        {(["cli", "hosted"] as const).map((method) => (
           <div key={method} className="tile rounded-xl bg-panel p-3">
             <h3 className="text-[13.5px] font-semibold">{METHOD_LABELS[method].title}</h3>
             <p className="mt-1 text-[12.5px] leading-5 text-muted">{METHOD_LABELS[method].description}</p>

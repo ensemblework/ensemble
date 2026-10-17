@@ -1,4 +1,5 @@
 "use client";
+import { createPortal } from "react-dom";
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
@@ -205,7 +206,7 @@ function CopyReply({ content }: { content: string }) {
 }
 
 export function AssistantFailure({ message, onRetry }: { message: string; onRetry?: () => void }) {
-  return <div role="alert" className="m-3 rounded-xl border border-danger/40 bg-danger/10 p-3 text-[13px] text-ink"><div className="flex items-start gap-2"><CircleAlert size={16} className="mt-0.5 shrink-0 text-danger" /><p className="flex-1">{assistantErrorText(message)}</p></div>{onRetry ? <button type="button" className="btn mt-3" onClick={onRetry}>Retry</button> : null}</div>;
+  return <div role="alert" className="m-3 rounded-xl border border-danger/40 bg-danger/10 p-3 text-[13px] text-ink"><div className="flex items-start gap-2"><CircleAlert size={16} className="mt-0.5 shrink-0 text-danger" /><p className="flex-1">{assistantErrorText(message)}</p></div>{onRetry ? <button type="button" className="btn mt-3" onClick={onRetry}>Retry</button> : null}{/key|provider|model.*configure/i.test(message) ? <a className="btn ml-2 mt-3 inline-flex" href="/settings?tab=assistant#models">Open model settings</a> : null}</div>;
 }
 
 export function Message({
@@ -313,6 +314,7 @@ function ChatHistory({
       className="absolute right-2 top-12 z-10 flex max-h-[min(360px,60%)] w-[min(320px,calc(100%-16px))] flex-col overflow-hidden rounded-lg border border-line-strong bg-raised shadow-pop"
       onKeyDown={(event) => {
         if (event.key !== "Escape") return;
+        event.preventDefault();
         event.stopPropagation();
         onClose();
       }}
@@ -623,12 +625,14 @@ export function AssistantDock() {
   );
   if (!open) return launcher;
 
-  return (
+  return createPortal(
     <>
     {launcher}
     <div
+      data-assistant-surface
+      onKeyDown={event => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); event.stopPropagation(); setOpen(false); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('button[aria-label="Ask Ensemble"]')?.focus()); } }}
       className={cx(
-        "assistant-window pop-in fixed z-50 flex flex-col overflow-hidden border border-line-strong shadow-pop",
+        "assistant-window pop-in fixed z-[2000] flex flex-col overflow-hidden border border-line-strong shadow-pop",
         expanded ? "inset-x-[5vw] bottom-6 top-[5vh]" : "bottom-5 right-5 h-[min(720px,85vh)] w-[min(660px,94vw)]",
       )}
     >
@@ -754,6 +758,6 @@ export function AssistantDock() {
         </div>
       </div>
     </div>
-    </>
+    </>, document.body
   );
 }

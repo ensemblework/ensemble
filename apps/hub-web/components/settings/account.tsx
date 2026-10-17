@@ -62,6 +62,8 @@ export function AccountSection() {
   const [repeat, setRepeat] = useState("");
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [repeatError, setRepeatError] = useState<string | null>(null);
+  const [securityPassword,setSecurityPassword]=useState("");
+  const [unlinking,setUnlinking]=useState<string|null>(null);
   const [confirmation, setConfirmation] = useState("");
   // Mutation state reaches the button a render later; these refuse a second click in between.
   const profileBusy = useRef(false);
@@ -116,8 +118,8 @@ export function AccountSection() {
   };
   const identities = useQuery({ queryKey: ["auth-identities"], queryFn: api.identities, enabled: me.data?.via === "session" });
   const unlink = useMutation({
-    mutationFn: (provider: string) => api.unlinkIdentity(provider),
-    onSuccess: async () => { await client.invalidateQueries({ queryKey: ["auth-identities"] }); toast("Login method removed.", { tone: "ok" }); },
+    mutationFn: (provider: string) => api.unlinkIdentity(provider, securityPassword || undefined),
+    onSuccess: async () => { await client.invalidateQueries({ queryKey: ["auth-identities"] }); setUnlinking(null);setSecurityPassword("");toast("Login method removed.", { tone: "ok" }); },
     onError: (error) => toast(error.message, { tone: "error" }),
   });
   const exported = useMutation({
@@ -133,7 +135,7 @@ export function AccountSection() {
     onError: (error) => toast(error.message, { tone: "error" }),
   });
   const deletion = useMutation({
-    mutationFn: () => api.deleteAccount(),
+    mutationFn: () => api.deleteAccount(securityPassword || undefined),
     onSuccess: () => { clearBrowserTabSession(); client.clear(); window.location.href = "/signup"; },
     onError: (error) => toast(error.message, { tone: "error" }),
   });
@@ -142,7 +144,7 @@ export function AccountSection() {
   return (
     <SectionCard
       title="Account"
-      description={local ? "No-login mode (ENSEMBLE_DEV_AUTH_BYPASS). Create an account to turn sign-in on; your existing data comes with you." : `Signed in as ${me.data.user.email}.`}
+      description={local ? "You’re using Ensemble on this computer." : `Signed in as ${me.data.user.email}.`}
       actions={
         local ? (
           <a className="btn-primary" href="/signup">
@@ -287,7 +289,7 @@ export function AccountSection() {
                 const linked = identities.data.identities.some((identity) => identity.provider === provider);
                 const label = provider === "github" ? "GitHub" : provider === "google" ? "Google" : "Microsoft";
                 return linked ? (
-                  <button key={provider} type="button" className="btn" disabled={unlink.isPending || (!me.data.user.hasPassword && identities.data.identities.length <= 1)} onClick={() => unlink.mutate(provider)}><BrandLogo id={provider} size={18} />Unlink {label}</button>
+                  <button key={provider} type="button" className="btn" disabled={unlink.isPending || (!me.data.user.hasPassword && identities.data.identities.length <= 1)} onClick={() => {setSecurityPassword("");setUnlinking(provider);}}><BrandLogo id={provider} size={18} />Unlink {label}</button>
                 ) : <a key={provider} href={`${HUB_API}/api/auth/oauth/${provider}/start?link=1`} className="btn"><BrandLogo id={provider} size={18} />Link {label}</a>;
               })}
             </div>
@@ -302,12 +304,14 @@ export function AccountSection() {
             <label className="mt-2 block text-[12px] text-muted">Type DELETE to confirm
               <input className="field mt-1 w-full" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} autoComplete="off" />
             </label>
+            {me.data.user.hasPassword ? <PasswordField className="mt-3" label="Password to delete account" autoComplete="current-password" value={securityPassword} onChange={setSecurityPassword}/> : <p className="mt-2 text-[12px] text-muted">If your sign-in is older than 10 minutes, sign in again before deleting your account.</p>}
             <button type="button" className="btn mt-2" disabled={confirmation !== "DELETE" || deletion.isPending} onClick={() => deletion.mutate()}>
               {deletion.isPending ? "Deleting..." : "Permanently delete account"}
             </button>
           </div>
         </div>
       ) : null}
+      <Modal open={Boolean(unlinking)} onClose={()=>{setUnlinking(null);setSecurityPassword("");}} title="Remove this sign-in method?" width={440}><p className="mb-3 text-[13px] text-muted">Your work stays in Ensemble. You can sign in with your other methods.</p>{me.data.user.hasPassword ? <PasswordField label="Password to remove this method" autoComplete="current-password" value={securityPassword} onChange={setSecurityPassword}/> : <p className="text-[13px] text-muted">For an older session, sign in again before removing a login method.</p>}<div className="mt-4 flex justify-end gap-2"><button className="btn" onClick={()=>setUnlinking(null)}>Cancel</button><button className="btn btn-danger" disabled={unlink.isPending||(me.data.user.hasPassword&&!securityPassword)} onClick={()=>unlinking&&unlink.mutate(unlinking)}>Remove method</button></div></Modal>
     </SectionCard>
   );
 }

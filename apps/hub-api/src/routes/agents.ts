@@ -14,6 +14,7 @@ import { canUseHostCredentials, requireHostAccess } from "../lib/hosted-access.j
 import { declareModule } from "../lib/module-gate.js";
 import { deviceOnline, serverRunnerEnabled } from "../devices/constants.js";
 import { jobOrigin } from "../remote/origin.js";
+import { repeatAssignment } from "../workspace/repeat.js";
 import { Assign, createJob } from "../workspace/assign.js";
 import { blockedReason, resolveWorkFolder, sandboxAvailable, ENSEMBLE_SOURCE, within, workspaceRoot } from "../workspace/guard.js";
 import { liveLog } from "../workspace/live-log.js";
@@ -40,7 +41,7 @@ function yours(job: { userId: string; runnerAccountId: string | null }): boolean
 }
 
 /** Only the person whose computer runs a job may stop it or run it again. */
-async function runnerRefusal(app: FastifyInstance, job: { userId: string; runnerAccountId: string | null }): Promise<string | null> {
+export async function runnerRefusal(app: FastifyInstance, job: { userId: string; runnerAccountId: string | null }): Promise<string | null> {
   if (yours(job)) return null;
   const id = job.runnerAccountId ?? (await app.prisma.user.findUnique({ where: { id: job.userId }, select: { ownerId: true } }))?.ownerId ?? job.userId;
   const row = await app.prisma.user.findUnique({ where: { id }, select: { name: true } });
@@ -159,38 +160,10 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
     if (old.deviceId && (await isPaused(app.redis, request.userId))) {
       return reply.code(409).send({ error: "The agent is paused. Resume it before assigning work to a computer." });
     }
-    const sameFolder = !old.deviceId && old.kind === "code" && !old.externalRoot && Boolean(old.repoPath);
     const created = await createJob(
       prisma,
       request.userId,
-      Assign.parse({
-        taskId: old.taskId,
-        kind: old.kind,
-        provider: old.provider ?? undefined,
-        model: old.model,
-        engine: old.provider === "claude-code" || old.provider === "codex" || old.provider === "cursor-agent" ? old.provider : "ensemble",
-        outsideAccess: outsideAccessOf(old.context) ?? undefined,
-        reasoningEffort: old.reasoningEffort ?? undefined,
-        instructions: old.instructions,
-        folder: old.deviceId ? undefined : old.externalRoot ?? undefined,
-        folderLabel: old.deviceId ? old.folderLabel ?? undefined : undefined,
-        deviceId: old.deviceId ?? undefined,
-        continueFromJobId: old.deviceId || sameFolder ? old.id : old.continueFromJobId ?? undefined,
-        repoUrl: old.deviceId || (!sameFolder && !old.externalRoot && !old.continueFromJobId) ? old.repoUrl ?? undefined : undefined,
-        branchMode: sameFolder ? "as-is" : old.branchMode,
-        branch: sameFolder || old.branchMode === "as-is" ? undefined : old.branch || undefined,
-        delivery: old.delivery,
-        askBeforePublish: old.askBeforePublish,
-        useCredentials: old.useCredentials,
-        sandbox: old.executionMode === "sandbox",
-        network: old.networkAccess,
-        markDone: old.markDone,
-        mode: old.unattended ? "unattended" : old.accessMode === "auto" ? "review" : "ask",
-        accessMode: old.accessMode === "review" ? "review" : "read-write",
-        maxMinutes: old.maxMinutes,
-        maxToolCalls: old.maxToolCalls,
-        maxTurns: old.maxTurns,
-      }),
+      repeatAssignment(old),
       { retryOf: old.id },
     );
     return created ? reply.code(201).send(created) : reply.code(404).send({ error: "Task not found." });

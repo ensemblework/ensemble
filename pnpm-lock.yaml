@@ -546,6 +546,9 @@ importers:
       '@ensemble/brand':
         specifier: workspace:*
         version: link:../../packages/brand
+      '@ensemble/shared-types':
+        specifier: workspace:*
+        version: link:../../packages/shared-types
       next:
         specifier: ^15.5.4
         version: 15.5.26(@types/node@22.20.4)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)

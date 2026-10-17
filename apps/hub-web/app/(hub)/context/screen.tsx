@@ -46,10 +46,10 @@ export function ContextScreen({ initialLayout, initialBoard }: { initialLayout: 
   // The server always renders the skeleton here. This boundary can hydrate after the shell
   // query has answered (the page streams in behind the layout), so hydrate the skeleton too.
   if (!hydrated || shell.isPending) return <ContextRouteSkeleton />;
-  const deskId = deskIdFromTemplate(shell.data?.activeTemplateId);
+  const deskId = deskIdFromTemplate(shell.data?.activeTemplateId) ?? "default";
   if (deskId && prefs.isPending) return <ContextRouteSkeleton />;
   const sample = prefs.data?.preferences.some((row) => row.key === "desk.sample" && row.value === true) === true;
-  if (deskId && (!requested || contextTabs(deskId, true).some((label) => tabKey(label) === requested))) {
+  if (deskId) {
     return <ContextLens deskId={deskId} state={sample ? "populated" : "empty"} initialTab={requested} search={params.get("search") ?? ""} who={params.get("who") ?? ""} ids={params.get("ids") ?? ""} />;
   }
   return <ContextDesk initial={initialBoard} />;

@@ -194,3 +194,5 @@ It then connects with the official MCP SDK the way the editor configs do (`node 
 The script leaves hub-api and the HTTP bridge running. Logs are under `/tmp/ensemble-bridge-e2e/`. A JSON summary is written to `bridge-e2e-report.json`. The token is not printed.
 
 Page context (15 Oct 2026): `apps/hub-api/src/pages/agent-context.ts` supplies the source of diagrams embedded in saved task and standalone pages to `ensemble_read`, with space ownership checks. Page bodies and diagram source have separate bounds (15,000 and 20,000 characters for the bridge), then use the existing offset/nextOffset pagination. Converted source documents also appear in the page's file citations through `files/attached.ts`.
+
+MCP server-info reports the same release version as the CLI/web/native builds, read from `@ensemble/shared-types/version`.

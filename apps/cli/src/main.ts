@@ -8,7 +8,7 @@ import { parseArgs, type ParseArgsConfig } from "node:util";
 import { normalizeApiBase, loadConfig, saveConfig, loadToken, saveToken, clearToken } from "./config.js";
 import { bearerHeaders, fetchJson, HttpError } from "./http.js";
 import { resolveLauncherCommand } from "./launcher.js";
-import { detectInstallMethod, dailyUpdateNotice, upgradeInstruction } from "./update.js";
+import { detectInstallMethod, dailyUpdateNotice, installCliUpdate } from "./update.js";
 import { VERSION } from "./version.js";
 import { signIn, signOut } from "./login.js";
 import { resolveCliPaths, readJsonFile } from "./paths.js";
@@ -770,13 +770,7 @@ async function commandDoctor(args: string[]): Promise<void> {
 async function commandUpdate(args: string[]): Promise<void> {
   const result = parsed(args);
   if (result.values.help) return void console.log(HELP_BY_COMMAND.update);
-  const sidecarDir = resolveSidecarDir(import.meta.url);
-  const method = detectInstallMethod({
-    bundlePath: fileURLToPath(import.meta.url),
-    sidecarAvailable: await sidecarAvailable(sidecarDir),
-    home: homedir(),
-  });
-  console.log(upgradeInstruction(method));
+  console.log(await installCliUpdate(fileURLToPath(import.meta.url)));
 }
 
 async function main(argv = process.argv.slice(2)): Promise<void> {

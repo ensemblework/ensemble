@@ -53,6 +53,7 @@ export type Account = { email: string | null; paired: boolean; apiBase: string }
 
 /** Side effects that live outside the app (sign-in, the background service), so the app is testable. */
 export type Ops = {
+  update?: () => Promise<string>;
   signIn: (onCode: (code: string, url: string, opened: boolean) => void, signal: AbortSignal) => Promise<{ email: string | null; paired: boolean }>;
   signOut: () => Promise<string[]>;
   runnerService: (install: boolean) => Promise<string>;
@@ -74,7 +75,7 @@ type Notice = { text: string; tone: "info" | "ok" | "error" };
 let entrySeq = 0;
 const entry = (kind: Entry["kind"], text: string): Entry => ({ id: `e${(entrySeq += 1)}`, kind, text });
 
-export function App(props: { api: LocalApi; folder: string; version: string; account: Account; prefs: Prefs; ops: Ops }) {
+export function App(props: { api: LocalApi; folder: string; version: string; updateNotice?: string | null; account: Account; prefs: Prefs; ops: Ops }) {
   const { api, folder, ops } = props;
   const { exit } = useApp();
   const { stdout } = useStdout();
@@ -370,7 +371,7 @@ export function App(props: { api: LocalApi; folder: string; version: string; acc
   const [historyAt, setHistoryAt] = useState(-1);
   const [menuIndex, setMenuIndex] = useState(0);
   const [actionIndex, setActionIndex] = useState(0);
-  const [notice, setNoticeState] = useState<Notice | null>(null);
+  const [notice, setNoticeState] = useState<Notice | null>(props.updateNotice ? {text:props.updateNotice,tone:"info"} : null);
   const [overlay, setOverlay] = useState<Overlay | null>(null);
   const [detailScroll, setDetailScroll] = useState(0);
   const [exitArmed, setExitArmed] = useState(false);
@@ -733,6 +734,9 @@ export function App(props: { api: LocalApi; folder: string; version: string; acc
           .then((message) => say(message, "ok"))
           .catch((error: Error) => say(error.message, "error"));
       }
+      case "update":
+        say("Checking for an update…");
+        return ops.update?.().then(message => say(message, "ok")).catch((error: Error) => say(error.message, "error"));
       case "status":
         return showStatus();
       case "sidebar":

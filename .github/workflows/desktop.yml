@@ -10,7 +10,7 @@ on:
     tags:
       - "desktop-v*"
 
-# Installers are unsigned unless TAURI_SIGNING_PRIVATE_KEY is set.
+# Published updater packages require TAURI_SIGNING_PRIVATE_KEY.
 # There is no Apple, Windows, or Linux code-signing certificate in this workflow.
 permissions:
   contents: read
@@ -23,10 +23,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: macos
-            os: macos-latest
-            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
-            args: --target universal-apple-darwin --bundles app,dmg
+          - name: macos-arm64
+            os: macos-14
+            rust_targets: aarch64-apple-darwin
+            args: --target aarch64-apple-darwin --bundles app,dmg
+          - name: macos-x64
+            os: macos-15-intel
+            rust_targets: x86_64-apple-darwin
+            args: --target x86_64-apple-darwin --bundles app,dmg
           - name: windows
             os: windows-latest
             rust_targets: x86_64-pc-windows-msvc
@@ -113,7 +117,8 @@ jobs:
             apps/desktop/src-tauri/target/**/bundle/msi/*.msi
             apps/desktop/src-tauri/target/**/bundle/nsis/*.exe
             apps/desktop/src-tauri/target/**/bundle/dmg/*.dmg
-            apps/desktop/src-tauri/target/**/bundle/macos/*.app
+            apps/desktop/src-tauri/target/**/bundle/macos/*.app.tar.gz
+            apps/desktop/src-tauri/target/**/bundle/**/*.sig
 
   publish:
     name: Publish the desktop release
@@ -140,19 +145,18 @@ jobs:
           pattern: ensemble-desktop-*
           path: bundles
 
-      - name: Create the GitHub release
-        shell: bash
+      - name: Assemble and publish signed desktop updates
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          set -euo pipefail
-          # Only the installers: the macOS .app also carries .exe helpers (sandbox-runtime's Windows binaries).
-          mapfile -t files < <(find bundles -type f \( -path '*/bundle/dmg/*.dmg' -o -path '*/bundle/msi/*.msi' -o -path '*/bundle/nsis/*.exe' -o -path '*/bundle/deb/*.deb' -o -path '*/bundle/appimage/*.AppImage' \) | sort)
-          [[ ${#files[@]} -gt 0 ]] || { echo "No installers were built." >&2; exit 1; }
-          printf '%s\n' "${files[@]}"
-          gh release create "$GITHUB_REF_NAME" "${files[@]}" --verify-tag \
-            --title "Ensemble desktop ${GITHUB_REF_NAME#desktop-v}" \
-            --notes "Ensemble for macOS (universal .dmg), Windows (.msi, .exe) and Linux (.deb, .AppImage). Unsigned: on macOS open it once, then System Settings → Privacy & Security → Open Anyway; Windows SmartScreen will warn. The CLI is released separately (cli-v*)."
+          node scripts/desktop-release.mjs bundles
+          if gh release view "$GITHUB_REF_NAME" --json isDraft >/dev/null 2>&1; then
+            [[ "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft)" == "true" ]] || { echo "This release is already published." >&2; exit 1; }
+          else
+            gh release create "$GITHUB_REF_NAME" --verify-tag --draft --title "Ensemble desktop ${GITHUB_REF_NAME#desktop-v}" --notes "Ensemble for Apple silicon and Intel Macs, Windows and Linux. Includes the local workspace and signed in-app updates. OS code-signing certificates are not yet configured."
+          fi
+          node scripts/desktop-release.mjs bundles --upload
+          gh release edit "$GITHUB_REF_NAME" --draft=false
 
   # Escape and trust tests. The Seatbelt cases skip everywhere except macOS.
   # No Postgres: these files do not open a database.

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { TEMPLATE_CARDS } from "@ensemble/shared-types/manifest";
 import { boardSpecs, specPool } from "@/components/desk/live-board";
-import { contextTabs, tabKey } from "@/components/desk/context-tabs";
+import { contextTabs, selectedContextTabs, tabKey } from "@/components/desk/context-tabs";
 import { DESK_IDS, type DeskId } from "@/components/desk/desks";
 import { arrange, readLayout } from "@/components/desk/layout";
 import { roleFromProfession } from "./roles";
@@ -57,7 +57,7 @@ test("every desk's Context has people, projects and the graph; files and app ite
     assert.ok(!tabs.map(tabKey).includes("artifacts"), `${id} still has an artifacts tab`);
     assert.equal(new Set(tabs).size, tabs.length, `${id} repeats a tab`);
   }
-  assert.ok(contextTabs("semester", true).includes("Learning"));
-  assert.deepEqual(contextTabs("branch").map(tabKey), ["overview", "people", "projects", "repos", "reviews", "deploys", "graph"]);
+  assert.ok(selectedContextTabs("student", ["Learning"]).includes("Learning"));
+  assert.deepEqual(contextTabs("branch").map(tabKey), ["overview", "people", "projects", "repos", "graph"]);
   assert.ok(!contextTabs("semester").map(tabKey).includes("repos"));
 });

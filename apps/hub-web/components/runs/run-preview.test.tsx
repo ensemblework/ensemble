@@ -77,8 +77,8 @@ const job: RunJob = {
   finishedAt: at(20),
 };
 
-test("a run opens as a trace: facts, timeline with tool timings, result as Markdown, and the task one click away", async () => {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+test("a run opens on Results with three tabs: facts, timeline with tool timings, result as Markdown, and the task one click away", async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity }, mutations: {gcTime:Infinity} } });
   client.setQueryData(["run", "run-1"], { run, job });
   const host = document.createElement("div");
   document.body.appendChild(host);
@@ -93,6 +93,10 @@ test("a run opens as a trace: facts, timeline with tool timings, result as Markd
   });
   const sheet = document.querySelector('[role="dialog"]') as HTMLElement;
   assert.ok(sheet, "the preview opens as a dialog");
+  const tabs = [...sheet.querySelectorAll('[role="tab"]')];
+  assert.deepEqual(tabs.map(tab => tab.textContent?.replace(/\d+$/,"")),["Results","Files","Traces"]);
+  assert.ok(sheet.querySelector("table"), "Results is open by default");
+  await act(async () => (tabs[2] as HTMLButtonElement).click());
   const text = sheet.textContent ?? "";
   assert.match(text, /Summarise the rea repo/);
   assert.match(text, /Ensemble agent/);
@@ -100,14 +104,13 @@ test("a run opens as a trace: facts, timeline with tool timings, result as Markd
   assert.match(text, /mai-code-1\.1-flash/);
   assert.match(text, /gemini-2\.5-flash/, "the model that answered is shown");
   assert.ok(sheet.querySelector(".text-warn"), "an answer from another model than the one asked for is flagged");
-  assert.match(text, /Akash's MacBook/);
   assert.match(text, /Bash/);
   assert.match(text, /3\.2s/, "each tool call shows its time");
   assert.match(text, /\$0\.012/);
   const open = [...sheet.querySelectorAll("a")].find((link) => /Open task/.test(link.textContent ?? ""));
   assert.equal(open?.getAttribute("href"), "/tasks/task-1");
 
-  const resultTab = [...sheet.querySelectorAll('[role="tab"]')].find((tab) => tab.textContent === "Result") as HTMLButtonElement;
+  const resultTab = [...sheet.querySelectorAll('[role="tab"]')].find((tab) => tab.textContent === "Results") as HTMLButtonElement;
   await act(async () => resultTab.click());
   assert.ok(sheet.querySelector("table"), "the result renders its Markdown table");
 

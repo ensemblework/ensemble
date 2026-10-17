@@ -31,7 +31,9 @@ import { accentVars, Av, Sk, Tile, type State } from "./ui";
 import { Drafts } from "./widgets/legal";
 import { CiteGraph } from "./widgets/research";
 import "./desk.css";
-import { contextTabs, tabKey } from "./context-tabs";
+import { selectedContextTabs, CONTEXT_DESCRIPTIONS, tabKey } from "./context-tabs";
+import { deskRole } from "./tile-catalog";
+import { CustomizeContext, MockServices, mockServices, AssignmentsPanel } from "./context-customize";
 import { useLensTab } from "./lens-tab";
 import { ARTIFACT_KIND_LABEL, artifactLine } from "./artifact-label";
 import { LoadError } from "@/components/load-error";
@@ -210,11 +212,15 @@ export function ContextLens({ deskId, state, initialTab = null, search = "", who
   const prefs = useQuery({ queryKey: ["preferences"], queryFn: api.preferences, staleTime: 30_000 });
   const extras = resolveExtras(deskId, prefs.data?.preferences.find((row) => row.key === "desk.extras")?.value);
   const router = useRouter();
-  const tabs = contextTabs(deskId, extras.has("learning"));
+  const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
+  const role = deskRole(deskId, shell.data?.onboardingTemplateId);
+  const tabs = selectedContextTabs(role, prefs.data?.preferences.find(row => row.key === `context.tabs.${role}`)?.value);
+  const mocks = mockServices(prefs.data?.preferences.find(row => row.key === "context.mock-services")?.value);
   const [active, choose] = useLensTab(tabs, initialTab);
   const shared = ["people", "projects", "graph"].includes(tabKey(active));
   const rich = state === "populated" && (deskId === "chambers" || deskId === "literature") && active === "Overview";
   const live = useQuery({ queryKey: ["desk-live"], queryFn: api.deskLive, enabled: state !== "populated", staleTime: 15_000 });
+  const graphExtras = tabs.filter(label => !["Overview","People","Projects","Graph","Repos","Mocks"].includes(label)).flatMap(label => lensSections(deskId, tabKey(label), live.data ?? emptyLive(), extras).flatMap(section => section.rows.map(row => ({ id: row.id, kind: `context-${tabKey(label)}`, label: row.title, sub: label }))));
   const sections = state === "populated" || shared ? [] : lensSections(deskId, tabKey(active), live.data ?? emptyLive(), extras);
   return (
     <div className="desk page" style={accentVars(desk.accent)} data-context-lens={deskId} data-sample={state === "populated" ? "1" : undefined}>
@@ -238,12 +244,12 @@ export function ContextLens({ deskId, state, initialTab = null, search = "", who
             ) : !live.isFetched ? (
               <span className="sub-skel sk" aria-hidden />
             ) : (
-              "The people, projects, and files around your work."
+              "Connect the people, projects and work you choose to keep in Ensemble."
             )}
           </div>
         </div>
       </div>
-      <div className="context-tabs" role="tablist" aria-label="Context sections">
+      <div className="flex items-start gap-3"><div className="context-tabs min-w-0 flex-1" role="tablist" aria-label="Context sections">
         {tabs.map((label) => (
           <button
             key={label}
@@ -257,19 +263,22 @@ export function ContextLens({ deskId, state, initialTab = null, search = "", who
             {label}
           </button>
         ))}
-      </div>
+      </div><CustomizeContext role={role} tabs={tabs} ready={prefs.isSuccess && shell.isSuccess}/></div>
+      <p className="mb-4 text-[13px] leading-5 text-muted" data-context-explanation>{CONTEXT_DESCRIPTIONS[active]}</p>
       {tabKey(active) === "people" ? (
         <div data-lens-panel="people"><PeopleTab key={`${search}|${who}`} initialSearch={search} who={who} /></div>
       ) : tabKey(active) === "projects" ? (
         <div data-lens-panel="projects"><ProjectsTab ids={ids} /></div>
       ) : tabKey(active) === "graph" ? (
-        <div data-lens-panel="graph" data-lens-graph style={{ height: "min(72vh, 720px)" }}><GraphTab /></div>
+        <div data-lens-panel="graph" data-lens-graph style={{ height: "min(72vh, 720px)" }}><GraphTab contextTabs={tabs} contextNodes={graphExtras} mockServices={tabs.includes("Mocks") ? mocks : []} /></div>
       ) : (
       <div className="bento" data-lens-panel={tabKey(active)}>
+        {active === "Assignments" && role === "student" ? <AssignmentsPanel rows={live.data?.tasks ?? []}/> : null}
+        {active === "Mocks" && role === "engineer" ? <MockServices rows={mocks}/> : null}
         {rich && deskId === "chambers" ? <Chambers state={state} /> : null}
         {rich && deskId === "literature" ? <Literature state={state} /> : null}
         {!rich && state === "populated" ? <SamplePanel deskId={deskId} tab={tabKey(active)} /> : null}
-        {!rich && state !== "populated" ? (
+        {!rich && active !== "Mocks" && active !== "Assignments" && state !== "populated" ? (
           live.isError && !live.data ? (
             <LoadError className="col-span-full" error={live.error} onRetry={() => void live.refetch()} retrying={live.isFetching} what="your context" />
           ) : (
@@ -368,7 +377,7 @@ function LiveArtifacts({ rows, ready, size, control, onOpen }: { rows: DeskLive[
       r={size.r}
       {...control}
       meta={ready ? String(rows.length) : undefined}
-      ghost={ready && rows.length === 0 ? { label: "No files or links yet", sub: "Documents, mail, and pull requests from connected apps land here.", ...(guest ? {} : { action: "Connect an app", onAction: () => window.location.assign("/settings?tab=connections") }) } : false}
+      ghost={ready && rows.length === 0 ? { label: "No files or links yet", sub: "Files and links you upload or ask Ensemble to save appear here.", ...(guest ? {} : { action: "Add a file", onAction: () => window.location.assign("/files") }) } : false}
     >
       {ready ? null : <TileLoading />}
       {rows.length ? <div className="visual-body"><div className="context-file-grid" data-lens-artifacts>

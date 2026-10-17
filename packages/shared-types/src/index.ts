@@ -25,3 +25,5 @@ export * from "./account.js";
 export * from "./settings-map.js";
 export * from "./onboarding-tour.js";
 export * from "./subscriptions.js";
+
+export * from "./version.js";

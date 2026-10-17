@@ -184,10 +184,9 @@ export const SETTINGS_MAP: readonly SettingsMapEntry[] = [
     { id: "connections.apps", label: "Connected apps", keywords: "connect connector integration google microsoft notion linear github slack jira disconnect", about: "Connect, disconnect and switch products of the apps Ensemble reads.", href: at("connections", "jump-connections-connections"), ownerOnly: true },
     { id: "connections.imports", label: "Imports from other apps", keywords: "import notion trello asana todoist clickup csv migration", about: "Bring tasks and pages over from other apps; recent imports.", href: at("connections", "jump-imports-imports"), ownerOnly: true },
   ]),
-  ...group("connections", "Fetching", [
-    { id: "fetch.sync", label: "Fetching and Sync now", keywords: "sync now fetch refresh scheduled", about: "Read your connected apps now. Scheduled fetching is paused.", href: at("connections", "jump-fetch-fetching"), ownerOnly: true },
+  ...group("connections", "Sync people", [
+    { id: "fetch.sync", label: "Sync people", keywords: "sync people contacts metadata fetch refresh", about: "Update real contacts only. Files and messages are saved when you ask.", href: at("connections", "jump-fetch-sync-people"), ownerOnly: true },
     { id: "fetch.lookback", label: "Look back", keywords: "look back days sync gap fetch", about: "How far back a sync reads after a gap: 1, 2, 3, 7, 14 or 30 days.", href: at("connections", "jump-fetch-look-back"), key: "fetch.lookbackDays", rule: { type: "int", min: 1, max: 30, values: [1, 2, 3, 7, 14, 30] }, ownerOnly: true },
-    { id: "fetch.propose", label: "Propose todos from what was read", keywords: "propose todos tasks from email sync proposals", about: "New items that need you become proposed todos on Today.", href: at("connections", "jump-fetch-propose-todos-from-what-was-read"), key: "fetch.proposeTodos", rule: bool, ownerOnly: true },
   ]),
   ...group("connections", "Editors & agents", [
     { id: "editors.connect", label: "Editors & agents", keywords: "editor vscode cursor claude code codex copilot mcp hooks connect", about: "Connect an editor or AI app to Ensemble (MCP and hooks).", href: at("connections", "jump-editors-editors-agents"), ownerOnly: true },

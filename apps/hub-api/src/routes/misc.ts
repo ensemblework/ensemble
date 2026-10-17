@@ -1,3 +1,5 @@
+import { ENSEMBLE_VERSION } from "@ensemble/shared-types";
+import { releaseInfo, desktopUpdate } from "../lib/release-info.js";
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -27,11 +29,17 @@ async function ready(reply: FastifyReply) {
 }
 
 export async function miscRoutes(app: FastifyInstance): Promise<void> {
+  app.get("/api/desktop/update/:target/:arch/:current", async (request, reply) => {
+    const { target, arch, current } = z.object({ target: z.enum(["darwin", "windows", "linux"]), arch: z.enum(["aarch64", "x86_64"]), current: z.string().regex(/^\d+\.\d+\.\d+$/) }).parse(request.params);
+    try { const update = await desktopUpdate(target, arch, current); return update ?? reply.code(204).send(); }
+    catch { return reply.code(503).send({ error: "Updates are unavailable right now. Try again later." }); }
+  });
+  app.get("/api/version", async request => { const query = z.object({ updates: z.literal("1").optional() }).parse(request.query); return releaseInfo(query.updates === "1"); });
   app.get("/health", async (request, reply) => {
     const deep = (request.query as { deep?: string }).deep;
     if (deep === "1" || deep === "true") return ready(reply);
     const commit = deployedCommit();
-    return { ok: true, service: "hub-api", ...(commit ? { commit } : {}) };
+    return { ok: true, service: "hub-api", version: ENSEMBLE_VERSION, ...(commit ? { commit } : {}) };
   });
 
   app.get("/health/ready", async (_request, reply) => ready(reply));

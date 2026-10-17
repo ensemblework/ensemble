@@ -49,7 +49,7 @@ const EMPTY: Record<string, string> = {
   projects: "No project yet. A project is the pile a person, a repo, and the work belong to.",
   repos: "No repo yet. Connect one when you have it, this lane does not invent one.",
   meetings: "No meeting notes yet. They show up when you take notes or a calendar syncs.",
-  artifacts: "No artifacts yet. Deliverables, mail, and files land here.",
+  artifacts: "No saved items yet. Upload a file or ask Ensemble to find and save something.",
 };
 
 type LaneModel = { id: string; label: string; kind: string; total: number; cards: BoardCard[]; progress?: { done: number; total: number } | null };

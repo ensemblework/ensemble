@@ -3,10 +3,11 @@
 /** @jsxImportSource react */
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { BrandMorph } from "../motion/brand-morph";
 import { usePersistentState } from "@/lib/prefs";
 
-export type LauncherSpot = { edge: "bottom" | "right"; t: number };
+export type LauncherSpot = { edge: "bottom" | "right"; t: number } | { edge: "free"; x: number; y: number };
 export type LauncherBounds = { width: number; height: number; top: number };
 
 export const LAUNCHER_SIZE = 44;
@@ -18,6 +19,7 @@ const clamp01 = (value: number) => (Number.isFinite(value) ? Math.min(1, Math.ma
 
 export function normalizeSpot(value: unknown): LauncherSpot {
   const spot = value as Partial<LauncherSpot> | null;
+  if (spot?.edge === "free") return { edge: "free", x: clamp01(Number(spot.x)), y: clamp01(Number(spot.y)) };
   if (!spot || (spot.edge !== "bottom" && spot.edge !== "right")) return DEFAULT_LAUNCHER_SPOT;
   return { edge: spot.edge, t: clamp01(Number(spot.t)) };
 }
@@ -32,6 +34,7 @@ export function launcherPosition(spot: LauncherSpot, bounds: LauncherBounds): { 
   const maxX = Math.max(minX, bounds.width - LAUNCHER_SIZE - MARGIN);
   const minY = bounds.top + MARGIN;
   const maxY = Math.max(minY, bounds.height - LAUNCHER_SIZE - MARGIN);
+  if (spot.edge === "free") return { x: Math.round(minX + spot.x * (maxX-minX)), y: Math.round(minY + spot.y * (maxY-minY)) };
   if (spot.edge === "right") return { x: maxX, y: Math.round(minY + spot.t * (maxY - minY)) };
   return { x: Math.round(minX + spot.t * (maxX - minX)), y: maxY };
 }
@@ -43,10 +46,7 @@ export function snapLauncher(point: { x: number; y: number }, bounds: LauncherBo
   const maxX = Math.max(minX, bounds.width - LAUNCHER_SIZE - MARGIN);
   const minY = bounds.top + MARGIN;
   const maxY = Math.max(minY, bounds.height - LAUNCHER_SIZE - MARGIN);
-  const toBottom = Math.abs(maxY + half - point.y);
-  const toRight = Math.abs(maxX + half - point.x);
-  if (toRight < toBottom) return { edge: "right", t: clamp01(maxY === minY ? 1 : (point.y - half - minY) / (maxY - minY)) };
-  return { edge: "bottom", t: clamp01(maxX === minX ? 1 : (point.x - half - minX) / (maxX - minX)) };
+  return { edge: "free", x: clamp01((point.x-half-minX) / Math.max(1,maxX-minX)), y: clamp01((point.y-half-minY) / Math.max(1,maxY-minY)) };
 }
 
 /**
@@ -64,11 +64,7 @@ export function AskLauncher({ onOpen, title, hidden = false, working = false }: 
   const drag = useRef<{ x: number; y: number; moved: boolean; pointer: number } | null>(null);
 
   const measure = useCallback(() => {
-    const area = ref.current?.parentElement;
-    if (!area) return;
-    const main = area.querySelector("main");
-    const top = main ? main.getBoundingClientRect().top - area.getBoundingClientRect().top : 0;
-    setBounds({ width: area.clientWidth, height: area.clientHeight, top: Math.max(0, top) });
+    setBounds({ width: window.innerWidth, height: window.innerHeight, top: 0 });
   }, []);
 
   useLayoutEffect(() => {
@@ -88,14 +84,17 @@ export function AskLauncher({ onOpen, title, hidden = false, working = false }: 
   }, [measure]);
 
   const pointFor = (event: { clientX: number; clientY: number }) => {
-    const area = ref.current?.parentElement?.getBoundingClientRect();
-    return { x: event.clientX - (area?.left ?? 0), y: event.clientY - (area?.top ?? 0) };
+    return { x: event.clientX, y: event.clientY };
   };
 
   const nudge = (edge: LauncherSpot["edge"], delta: number) => {
-    const current = spot.edge === edge ? spot.t : 1;
+    if (!bounds) return;
+    const position = launcherPosition(spot,bounds);
+    const next = { x: position.x + LAUNCHER_SIZE/2, y: position.y + LAUNCHER_SIZE/2 };
+    if (edge === "bottom") next.x += delta * bounds.width;
+    else next.y += delta * bounds.height;
     setNudged(true);
-    setStored({ edge, t: clamp01(current + delta) });
+    setStored(snapLauncher(next,bounds));
   };
 
   useEffect(() => {
@@ -111,8 +110,10 @@ export function AskLauncher({ onOpen, title, hidden = false, working = false }: 
 
   const shown = live ?? spot;
   const position = bounds && loaded ? launcherPosition(shown, bounds) : null;
-  return (
+  if (typeof document === "undefined" || !loaded || !bounds) return null;
+  return createPortal(
     <button
+      data-assistant-surface
       ref={ref}
       type="button"
       className="ask-launcher"
@@ -169,6 +170,6 @@ export function AskLauncher({ onOpen, title, hidden = false, working = false }: 
       }}
     >
       <BrandMorph size={30} kind="infinity" state={working ? "loop" : "idle"} />
-    </button>
+    </button>, document.body
   );
 }

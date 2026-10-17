@@ -137,8 +137,8 @@ export default function Guide() {
         {method === "source" ? <StatusPill state={bridge.isLoading ? "loading" : (bridge.data?.state ?? "not_running")} /> : null}
       </div>
 
-      <div className="mb-6 grid gap-2 md:grid-cols-3" role="tablist" aria-label="Connection method">
-        {(["cli", "hosted", "source"] as const).map((item) => (
+      <div className="mb-6 grid gap-2 md:grid-cols-2" role="tablist" aria-label="Connection method">
+        {(["cli", "hosted"] as const).map((item) => (
           <button
             key={item}
             type="button"

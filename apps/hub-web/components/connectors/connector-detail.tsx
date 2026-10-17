@@ -270,7 +270,7 @@ function ConnectPanel({ entry, mcpKnown, onImport }: { entry: CatalogEntry; mcpK
       </ul>
       {oauthBlocked ? (
         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-3 py-2 text-[12px] text-faint sm:px-4">
-          <span>Sign in with {brand(entry)} is not set up on this server yet, so the options above are the way in.</span>
+          <span>Sign in with {brand(entry)} is not available yet. Use one of the connection options above.</span>
           <OperatorSetup provider={entry.provider} />
         </div>
       ) : null}
@@ -467,7 +467,7 @@ function ConnectedPanel({ entry, settings, patch }: { entry: CatalogEntry; setti
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
   const waiting = products.filter((product) => entry.state.needsConsent?.includes(product.id));
-  const sources = Object.entries(entry.state.sources ?? {});
+  const sources = Object.entries(entry.state.sources ?? {}).filter(([id]) => ["gmail", "outlook", "slack", "teams", "github", "google_calendar", "outlook_calendar"].includes(id));
   return (
     <section className="rounded-xl border border-line" aria-label={`${entry.name} connection`}>
       <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-3 sm:px-4">
@@ -518,7 +518,8 @@ function ConnectedPanel({ entry, settings, patch }: { entry: CatalogEntry; setti
       ) : null}
       {sources.length ? (
         <div className="border-t border-line px-3 py-2 sm:px-4">
-          <h4 className="pt-1 text-[13px] font-semibold">What Ensemble reads</h4>
+          <h4 className="pt-1 text-[13px] font-semibold">Contact sync</h4>
+          <p className="mt-1 text-[12px] text-muted">Sync saves people only. Files and messages are saved when you ask.</p>
           <ul className="divide-y divide-[var(--line)]">
             {sources.map(([id, source]) => (
               <li key={id} className="flex flex-wrap items-center justify-between gap-2 py-2">
@@ -537,7 +538,7 @@ function ConnectedPanel({ entry, settings, patch }: { entry: CatalogEntry; setti
                     onClick={() => sync.mutate(id)}
                     aria-label={`Sync ${sourceName(entry, id)} now`}
                   >
-                    {sync.isPending && sync.variables === id ? <BrandMorph size={14} kind="beacon" state="loop" /> : <RefreshCw size={11} />} Sync now
+                    {sync.isPending && sync.variables === id ? <BrandMorph size={14} kind="beacon" state="loop" /> : <RefreshCw size={11} />} Sync people
                   </button>
                   {!products.length && patch ? (
                     <Toggle

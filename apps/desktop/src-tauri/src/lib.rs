@@ -144,7 +144,7 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![shell_state, connect_to])
+        .invoke_handler(tauri::generate_handler![shell_state, connect_to, install_update])
         .build(tauri::generate_context!())
         .expect("Ensemble desktop failed to start")
         .run(|app, event| {
@@ -233,6 +233,7 @@ fn initialization_script(local_mode: bool, local: Option<&(u16, String)>) -> Str
         };
         parts.push(desktop_init_script(&base, token));
     }
+    parts.push(format!("window.__ENSEMBLE_DESKTOP__=Object.assign({{}},window.__ENSEMBLE_DESKTOP__||{{}},{{version:{},platform:{},arch:{}}});", serde_json::to_string(env!("ENSEMBLE_VERSION")).unwrap(), serde_json::to_string(std::env::consts::OS).unwrap(), serde_json::to_string(std::env::consts::ARCH).unwrap()));
     parts.push(blank_target_script().to_string());
     parts.push(motion_probe_script(motion_report_prefix()));
     parts.join("\n")
@@ -499,4 +500,10 @@ fn write_site(path: &Path, url: &str) -> Result<(), String> {
         let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
     }
     Ok(())
+}
+
+#[tauri::command]
+async fn install_update(app: tauri::AppHandle) -> Result<String, String> {
+    if !navigation_is_trusted(&app) { return Err("Open Ensemble before updating.".into()); }
+    Ok(desktop::check_for_updates(&app, true).await)
 }

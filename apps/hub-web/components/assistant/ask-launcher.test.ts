@@ -24,12 +24,13 @@ test("a stored spot is a fraction, so it follows the window when it resizes", ()
   assert.ok(narrow.x + LAUNCHER_SIZE <= 600 - 16);
 });
 
-test("dragging snaps to the nearest allowed edge and clamps at the corners", () => {
-  assert.deepEqual(snapLauncher({ x: 300, y: 690 }, bounds).edge, "bottom");
-  assert.deepEqual(snapLauncher({ x: 995, y: 300 }, bounds).edge, "right");
-  assert.equal(snapLauncher({ x: -50, y: 690 }, bounds).t, 0);
-  assert.equal(snapLauncher({ x: 995, y: -400 }, bounds).t, 0);
-  assert.equal(snapLauncher({ x: 995, y: 4000 }, bounds).t, 1);
+test("dragging moves freely and clamps inside the viewport", () => {
+  const middle = snapLauncher({ x: 400, y: 300 }, bounds);
+  assert.equal(middle.edge, "free");
+  const placed = launcherPosition(middle, bounds);
+  assert.equal(placed.x, 400 - LAUNCHER_SIZE/2);
+  assert.equal(placed.y, 300 - LAUNCHER_SIZE/2);
+  assert.deepEqual(launcherPosition(snapLauncher({ x: -50, y: -50 }, bounds),bounds),{x:16,y:60});
 });
 
 test("unknown stored values fall back to the bottom-right corner", () => {

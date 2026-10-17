@@ -1,6 +1,6 @@
 /**
  * Connected data over HTTP: people identities and merges, project links applied
- * at ingest, and every meeting-notes connector end to end (pasted key → Sync now
+ * at ingest, and every meeting-notes connector end to end (pasted key → explicit import
  * → transcript, meeting note, calendar match, proposed todos), with isolation
  * between accounts. Every vendor call is answered by a mocked fetch; the people
  * and companies are fictional (Mira Chen at Fieldnote).
@@ -18,6 +18,7 @@ process.env.ENSEMBLE_MEETING_PACE_MS = "0";
 
 const harness: HttpHarness = await createHttpHarness();
 const { upsertArtifact, upsertPerson } = await import("../connectors/ingest.js");
+const { importRequestedMeetings } = await import("../connectors/meetings/requested-import.js");
 const { createProposals } = await import("./../connectors/triage.js");
 const { rememberImportLink, linkedProject } = await import("../projects/links.js");
 const db = harness.prisma;
@@ -95,10 +96,10 @@ test("people are found by any identity, email first, and a clash becomes a sugge
   const identities = await db.personIdentity.findMany({ where: { personId: arjun! }, orderBy: { kind: "asc" } });
   assert.deepEqual(identities.map((row) => `${row.kind}:${row.value}`), ["email:arjun@fieldnote.example", "slack:u0arjun"]);
 
-  // A Teams-only person, then a message that pairs Sam's address with that Teams handle.
+  // An unverified imported pair is a suggestion; only a provider-confirmed pair can merge automatically.
   const teamsSam = await upsertPerson(user.id, { name: "Sam R", handle: "teams:sam-guid", at, evidence: "teams:chat-1" }, self);
   const sam = await upsertPerson(user.id, { email: "sam@fieldnote.example", name: "Sam Rivera", at, evidence: "gmail:t2" }, self);
-  const paired = await upsertPerson(user.id, { email: "sam@fieldnote.example", name: "Sam Rivera", handle: "teams:sam-guid", at, evidence: "teams:chat-2" }, self);
+  const paired = await upsertPerson(user.id, { email: "sam@fieldnote.example", name: "Sam Rivera", handle: "teams:sam-guid", at, evidence: "import:chat-2" }, self);
   assert.equal(paired, sam, "email wins");
   assert.notEqual(teamsSam, sam);
   assert.equal(await db.person.count({ where: { userId: user.id, id: { in: [sam!, teamsSam!] }, deletedAt: null } }), 2, "nothing merged on its own");
@@ -438,8 +439,13 @@ async function calendarEvent(userId: string, externalId: string, title: string) 
   });
 }
 
+async function requestedImport(user: HttpUser, source: string) {
+  const result = await importRequestedMeetings(user.id, source as import("../connectors/meetings/types.js").MeetingVendor, new Date(0), true);
+  return { statusCode: 200, body: JSON.stringify(result), json: <T,>() => result as T };
+}
+
 for (const fixture of FIXTURES) {
-  test(`${fixture.vendor}: pasted key, Sync now, transcript, matched meeting note, my action item proposed once`, async () => {
+  test(`${fixture.vendor}: pasted key, explicit import, matched meeting note, requested action item proposed once`, async () => {
     resetMocks();
     const user = await mira(fixture.vendor);
     fixture.install(user.email);
@@ -449,7 +455,9 @@ for (const fixture of FIXTURES) {
 
     const connected = await user.inject({ method: "POST", url: `/api/connectors/${fixture.vendor}/token`, payload: { token: fixture.key } });
     assert.equal(connected.statusCode, 200, connected.body);
-    const synced = await user.inject({ method: "POST", url: `/api/connections/${fixture.vendor}/sync` });
+    const contacts = await user.inject({ method: "POST", url: `/api/connections/${fixture.vendor}/sync` });
+    assert.equal(contacts.json().items,0); assert.equal(await db.meetingNote.count({where:{userId:user.id}}),0);
+    const synced = await requestedImport(user,fixture.vendor);
     assert.equal(synced.statusCode, 200, synced.body);
     const outcome = synced.json<{ ok: boolean; message: string; proposed?: number }>();
     assert.equal(outcome.ok, true, outcome.message);
@@ -479,7 +487,7 @@ for (const fixture of FIXTURES) {
     assert.ok(tasks[0]!.sourceUrl);
 
     // Sync again: updated in place, nothing proposed twice.
-    const again = await user.inject({ method: "POST", url: `/api/connections/${fixture.vendor}/sync` });
+    const again = await requestedImport(user,fixture.vendor);
     assert.equal(again.json<{ ok: boolean }>().ok, true, again.body);
     assert.equal(await db.task.count({ where: { userId: user.id, meetingNoteId: note.id } }), 1);
     assert.equal(await db.meetingNote.count({ where: { userId: user.id, externalSource: fixture.vendor } }), 1);
@@ -499,14 +507,14 @@ test("a rejected key is not stored; deleting a meeting note keeps it deleted on 
   resetMocks();
   FIXTURES.find((row) => row.vendor === "fireflies")!.install(user.email);
   await user.inject({ method: "POST", url: "/api/connectors/fireflies/token", payload: { token: "ff-key-0123456789" } });
-  await user.inject({ method: "POST", url: "/api/connections/fireflies/sync" });
+  await requestedImport(user,"fireflies");
   const note = await db.meetingNote.findFirstOrThrow({ where: { userId: user.id, externalSource: "fireflies" } });
   assert.equal(note.eventArtifactId, null, "no calendar event to match");
   const task = await db.task.findFirstOrThrow({ where: { userId: user.id, meetingNoteId: note.id } });
   await db.task.update({ where: { id: task.id }, data: { deletedAt: new Date() } });
   await db.meetingNote.update({ where: { id: note.id }, data: { deletedAt: new Date() } });
   await db.syncState.deleteMany({ where: { userId: user.id } });
-  const again = await user.inject({ method: "POST", url: "/api/connections/fireflies/sync" });
+  const again = await requestedImport(user,"fireflies");
   assert.equal(again.json<{ ok: boolean }>().ok, true, again.body);
   assert.ok((await db.meetingNote.findUniqueOrThrow({ where: { id: note.id } })).deletedAt, "still deleted");
   assert.equal(await db.task.count({ where: { userId: user.id, deletedAt: null } }), 0, "a dismissed action item is not proposed again");
@@ -526,7 +534,7 @@ test("meeting routes list imported notes with decisions, action items and the ma
   FIXTURES.find((row) => row.vendor === "fireflies")!.install(user.email);
   const review = await calendarEvent(user.id, "evt-routes", "Atlas design review");
   await user.inject({ method: "POST", url: "/api/connectors/fireflies/token", payload: { token: "ff-key-0123456789" } });
-  await user.inject({ method: "POST", url: "/api/connections/fireflies/sync" });
+  await requestedImport(user,"fireflies");
 
   const listed = await call(user, "GET", "/api/meetings/imported", "/api/meetings/imported", "happy-path");
   assert.equal(listed.statusCode, 200, listed.body);

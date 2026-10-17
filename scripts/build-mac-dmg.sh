@@ -4,15 +4,14 @@
 # From the repo root:
 #   pnpm desktop:dmg
 #
-# The app shell is a universal build (Apple Silicon and Intel), the same
-# target the desktop workflow uses. The packed API sidecar is not: it copies
-# this Mac's Node binary, the libraries that binary links, and the Prisma
-# engine, so the image runs only on a Mac with the same chip as the one that
-# built it. Nothing is signed.
+# Build for this Mac's architecture so the app and Node/Prisma sidecar match.
+# The release workflow builds Apple silicon and Intel on separate native hosts.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
+case "$(uname -m)" in arm64) mac_target=aarch64-apple-darwin ;; x86_64) mac_target=x86_64-apple-darwin ;; *) echo "Unsupported Mac architecture" >&2; exit 1 ;; esac
 cd "$root"
+node scripts/release-version.mjs
 
 problems=()
 
@@ -143,11 +142,11 @@ fi
 if [[ "$(uname -s)" == "Darwin" ]]; then
   if [[ "${rustup_advised}" -eq 0 ]] && ! command -v rustup >/dev/null 2>&1; then
     problem "$(cat <<'EOF'
-rustup is not installed. The universal disk image needs the Apple Silicon and Intel targets, and rustup adds them.
+rustup is not installed. The disk image needs this Mac’s native target, which rustup adds.
   curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
   source "$HOME/.cargo/env"
   rustup default stable
-  rustup target add aarch64-apple-darwin x86_64-apple-darwin
+  rustup target add "${mac_target}"
 EOF
 )"
   fi
@@ -210,18 +209,18 @@ say "Packing the local API sidecar…"
 pnpm desktop:sidecar
 
 say ""
-say "Adding the Apple Silicon and Intel Rust targets…"
-rustup target add aarch64-apple-darwin x86_64-apple-darwin
+say "Adding this Mac’s Rust target…"
+rustup target add "${mac_target}"
 
 # A key in the environment would sign the bundle. This command stays unsigned.
 unset TAURI_SIGNING_PRIVATE_KEY
 unset TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 
 say ""
-say "Building the universal disk image (Apple Silicon and Intel)…"
+say "Building the disk image for this Mac…"
 (
   cd "${root}/apps/desktop"
-  pnpm exec tauri build --target universal-apple-darwin --bundles app,dmg
+  pnpm exec tauri build --target "${mac_target}" --bundles app,dmg
 )
 
 # Cargo writes under CARGO_TARGET_DIR when it is set, not src-tauri/target.
@@ -230,7 +229,7 @@ case "${target_dir}" in
   /*) ;;
   *) target_dir="${root}/apps/desktop/src-tauri/${target_dir}" ;;
 esac
-bundle_dir="${target_dir}/universal-apple-darwin/release/bundle/dmg"
+bundle_dir="${target_dir}/${mac_target}/release/bundle/dmg"
 shopt -s nullglob
 dmgs=("${bundle_dir}"/*.dmg)
 shopt -u nullglob

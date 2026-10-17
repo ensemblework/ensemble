@@ -35,6 +35,12 @@ export const mcpRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> =
   "DELETE /mcp": ["invalid-input"],
 };
 
+export const roundNextRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
+  "GET /api/version": ["happy-path", "invalid-input"],
+  "GET /api/desktop/update/:target/:arch/:current": ["happy-path"],
+  "POST /api/runs/:id/feedback": ["happy-path", "isolation", "unknown-id", "invalid-input"],
+};
+
 export const resourceRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
   "GET /api/tasks": ["happy-path", "isolation"],
   "POST /api/tasks": ["happy-path", "invalid-input", "relation-isolation"],
@@ -347,6 +353,7 @@ export const routeCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
   ...testingReportRouteCoverage,
   ...workspaceSearchRouteCoverage,
   ...resourceRouteCoverage,
+  ...roundNextRouteCoverage,
   ...authRouteCoverage,
   ...cliAuthRouteCoverage,
   ...mcpRouteCoverage,
