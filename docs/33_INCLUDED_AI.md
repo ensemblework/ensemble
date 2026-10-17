@@ -152,11 +152,19 @@ stored as something the assistant said.
   their error banner. It is not stored as a message, does not mark the model "out of quota", and the
   credits and model list refresh.
 - Nothing about credits appears when the server offers no included models.
-- **Hosted defaults**: on a hosted server with included models, a tier still on the shipped Gemini
-  default reads as an included model unless the account saved a Google key of its own
-  (`apps/hub-api/src/included/defaults.ts`): Low and Medium use the first everyday model (GPT-6
-  Luna), High the first step-up model (GPT-6.1 Sol), Max the same at High thinking. A tier
-  someone chose is never changed.
+- **The assistant's model menu** (the Low/Medium/High/Max button under the chat box) lists the included
+  models under *Included with Ensemble*, with the credits left. Picking one sends that model with each
+  message of the chat on Auto thinking (`model`, `provider: "ensemble"`, `reasoningEffort: "default"` on
+  `POST /api/assistant/turn`); picking a tier goes back to the tier's model
+  (`components/assistant/assistant-dock.tsx`).
+- **Every hosted account gets included models where it has no other way to answer**
+  (`apps/hub-api/src/included/defaults.ts`): a tier whose provider has no key the account can use (no key
+  saved for that provider, and not an operator with that provider's server key) reads as an included
+  model. That covers the shipped Gemini default for everyone without a Google key, and older accounts
+  whose tiers name a provider they never added a key for. Low and Medium use the first everyday model
+  (GPT-6 Luna; GPT-5 mini on a free account), High the first step-up model (GPT-6.1 Sol), Max the same
+  at High thinking. A tier on the account's own key, its AI plan (Claude Code, Codex…) or Cursor is
+  never changed. Saving settings keeps what was read.
 
 ## 7. API
 

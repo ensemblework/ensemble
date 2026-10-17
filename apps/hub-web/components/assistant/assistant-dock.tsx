@@ -12,7 +12,7 @@ import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Mark } from "../mark";
 import { AskLauncher } from "./ask-launcher";
-import { assistantErrorText, ASSISTANT_UNAVAILABLE, formatChord, INCLUDED_PROVIDER, isSubscriptionProvider, SUBSCRIPTION_INFO, type PageMention } from "@ensemble/shared-types";
+import { assistantErrorText, ASSISTANT_UNAVAILABLE, formatChord, INCLUDED_LABEL, INCLUDED_PROVIDER, includedModelName, isSubscriptionProvider, SUBSCRIPTION_INFO, type PageMention } from "@ensemble/shared-types";
 import { isApplePlatform } from "@/lib/platform";
 import { useShortcuts } from "@/lib/shortcut-store";
 import { API, ApiError, api, type AssistantMessageRecord, type AssistantToolCallRecord, type Complexity, type ConversationRecord } from "@/lib/api";
@@ -22,7 +22,7 @@ import { applyNotice, applyRepliesToCache, refreshAfterAssistantWrite } from "@/
 import { useAutoGrow } from "@/lib/auto-grow";
 import { relative } from "@/lib/format";
 import { markModelOutOfQuota, quotaMessage, quotaSuffix, useQuotaMarks } from "@/lib/model-quota";
-import { includedRefusal, INCLUDED_USAGE_KEY, refreshIncluded, tierModelLabel, tierModelName } from "@/lib/included";
+import { includedNote, includedRefusal, INCLUDED_USAGE_KEY, refreshIncluded, tierModelLabel, tierModelName, useIncludedUsage } from "@/lib/included";
 import { AssistantAnswer, splitCutOffReply } from "./cut-off-notice";
 import { MarkdownText, choiceLines } from "../markdown-text";
 import { MentionPopover, useMentionMenu } from "../mentions/mention-menu";
@@ -365,6 +365,8 @@ export function AssistantDock() {
     conversationRef.current = conversationId;
   }, [conversationId]);
   const [tierOverride, setTierOverride] = useState<Complexity | null>(null);
+  /** An included model picked for this chat instead of a tier. */
+  const [includedPick, setIncludedPick] = useState<string | null>(null);
   const [streaming, setStreaming] = useState("");
   const [liveTools, setLiveTools] = useState<AssistantToolCallRecord[]>([]);
   const [pending, setPending] = useState(false);
@@ -381,6 +383,10 @@ export function AssistantDock() {
 
   const quotas = useQuotaMarks();
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings, enabled: open });
+  const catalog = useQuery({ queryKey: ["models"], queryFn: api.models, enabled: open, staleTime: 60_000 });
+  const includedModels = catalog.data?.providers?.find((row) => row.provider === INCLUDED_PROVIDER && row.available)?.models ?? [];
+  const usage = useIncludedUsage(open && includedModels.length > 0);
+  const picked = includedPick && includedModels.includes(includedPick) ? includedPick : null;
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
   const { bindings } = useShortcuts();
   const assistantBinding = bindings.find((binding) => binding.id === "assistant");
@@ -456,7 +462,7 @@ export function AssistantDock() {
           conversationId: conversationId ?? undefined,
           message: text,
           ...(mentions.length ? { mentions } : {}),
-          ...(tierOverride ? { tier: tierOverride } : {}),
+          ...(picked ? { model: picked, provider: INCLUDED_PROVIDER, reasoningEffort: "default" } : tierOverride ? { tier: tierOverride } : {}),
           page: {
             path: pathname,
             taskId: peekId ?? undefined,
@@ -541,7 +547,7 @@ export function AssistantDock() {
       if (nextId) setConversationId(nextId);
       await client.invalidateQueries({ queryKey: ["assistant-messages", nextId] });
       void client.invalidateQueries({ queryKey: ["assistant-chats"] });
-      if (settings.data?.settings.models[tier]?.provider === INCLUDED_PROVIDER) void client.invalidateQueries({ queryKey: INCLUDED_USAGE_KEY });
+      if (picked || settings.data?.settings.models[tier]?.provider === INCLUDED_PROVIDER) void client.invalidateQueries({ queryKey: INCLUDED_USAGE_KEY });
       const kept = held.reply;
       if (kept && nextId) {
         client.setQueryData(["assistant-messages", nextId], (current: { messages: AssistantMessageRecord[] } | undefined) => {
@@ -754,13 +760,17 @@ export function AssistantDock() {
           </button>
         </div>
         <div className="assistant-composer-options mt-2 flex flex-wrap items-center gap-3 text-[12px] text-faint">
-          <Popover width={360} trigger={(open, toggle) => <button type="button" className="btn min-w-0 max-w-full" aria-label="Complexity" aria-haspopup="listbox" aria-expanded={open} onClick={toggle}><span className="truncate">{TIER_LABEL[tier]} · {tiers ? tierModelName(tiers[tier].provider, tiers[tier].model) : "Automatic"}</span><ChevronDown size={13} /></button>}>
+          <Popover width={360} trigger={(open, toggle) => <button type="button" className="btn min-w-0 max-w-full" aria-label="Complexity" aria-haspopup="listbox" aria-expanded={open} onClick={toggle}><span className="truncate">{picked ? `${includedModelName(picked)} · Included` : `${TIER_LABEL[tier]} · ${tiers ? tierModelName(tiers[tier].provider, tiers[tier].model) : "Automatic"}`}</span><ChevronDown size={13} /></button>}>
             {close => <div role="listbox" aria-label="Response complexity" className="space-y-1" onKeyDown={event => {
               const options = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="option"]')];
               const index = options.indexOf(document.activeElement as HTMLButtonElement);
               const next = event.key === "ArrowDown" ? (index + 1) % options.length : event.key === "ArrowUp" ? (index + options.length - 1) % options.length : event.key === "Home" ? 0 : event.key === "End" ? options.length - 1 : -1;
               if (next >= 0) { event.preventDefault(); options[next]?.focus(); }
-            }}>{(Object.keys(TIER_LABEL) as Complexity[]).map(key => <button key={key} type="button" role="option" aria-selected={tier === key} className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-[13px] text-ink hover:bg-hover" onClick={() => { setTierOverride(key); close(); }}><span><strong className="font-medium">{TIER_LABEL[key]}</strong><small className="mt-1 block text-muted">{tierModelLabel(tiers?.[key]) ?? "Automatic"}{quotaSuffix(tiers?.[key].model, quotas)}</small></span>{tier === key ? <Check size={14} /> : null}</button>)}</div>}
+            }}>{(Object.keys(TIER_LABEL) as Complexity[]).map(key => <button key={key} type="button" role="option" aria-selected={!picked && tier === key} className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-[13px] text-ink hover:bg-hover" onClick={() => { setIncludedPick(null); setTierOverride(key); close(); }}><span><strong className="font-medium">{TIER_LABEL[key]}</strong><small className="mt-1 block text-muted">{tierModelLabel(tiers?.[key]) ?? "Automatic"}{quotaSuffix(tiers?.[key].model, quotas)}</small></span>{!picked && tier === key ? <Check size={14} /> : null}</button>)}
+              {includedModels.length ? <div role="group" aria-label={INCLUDED_LABEL} className="mt-1 border-t border-line pt-2">
+                <div className="px-3 pb-1 text-[11.5px] text-muted">{INCLUDED_LABEL}{usage.data?.available ? ` · ${includedNote(usage.data)}` : ""}</div>
+                {includedModels.map(model => <button key={model} type="button" role="option" aria-selected={picked === model} className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-[13px] text-ink hover:bg-hover" onClick={() => { setIncludedPick(model); close(); }}><span className="inline-flex items-center gap-2"><ModelLogo model={model} provider={INCLUDED_PROVIDER} size={13} />{includedModelName(model)}</span>{picked === model ? <Check size={14} /> : null}</button>)}
+              </div> : null}</div>}
           </Popover>
           <AddAppItemToMessage
             onInsert={(line) => {

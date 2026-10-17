@@ -1,25 +1,37 @@
-import { DEFAULT_SETTINGS, INCLUDED_PROVIDER, type Settings } from "@ensemble/shared-types";
+import { INCLUDED_PROVIDER, type Settings } from "@ensemble/shared-types";
 import type { Prisma, PrismaClient } from "@prisma/client";
-import { isHosted } from "../lib/hosted-access.js";
+import { canUseHostCredentials, isHosted } from "../lib/hosted-access.js";
 import { includedConfig } from "./config.js";
 
 type Tier = "easy" | "medium" | "high" | "max";
 const TIERS: Tier[] = ["easy", "medium", "high", "max"];
 
-const sameTier = (a: Settings["models"][Tier], b: Settings["models"][Tier]) => a.provider === b.provider && a.model === b.model && a.effort === b.effort;
+/** Providers that answer only with a key. Ollama is the operator's own server when hosted. */
+const KEYED = new Set(["google", "openai", "anthropic", "mistral", "kimi", "qwen", "openrouter", "copilot", "ollama"]);
 
 /**
- * On a hosted server with included models, a tier still on the shipped Gemini default reads as an
- * included model, unless the account saved a Google key of its own: hosted people have no Gemini
- * key by default, so the shipped default could not answer for them.
+ * On a hosted server with included models, a tier whose provider has no key this account can use
+ * reads as an included model: hosted people have no server keys, so that tier could not answer.
+ * A tier on the account's own key, its AI plan (claude-code, codex…) or Cursor is never changed.
+ * The shipped Gemini default is such a tier for everyone without a Google key.
  */
 export async function withIncludedDefaults(db: PrismaClient | Prisma.TransactionClient, account: string, settings: Settings): Promise<Settings> {
   if (!isHosted()) return settings;
   const config = includedConfig();
   if (!config) return settings;
-  const untouched = TIERS.filter((tier) => sameTier(settings.models[tier], DEFAULT_SETTINGS.models[tier]));
-  if (!untouched.length) return settings;
-  if (await db.modelCredential.findUnique({ where: { userId_provider: { userId: account, provider: "google" } }, select: { userId: true } })) return settings;
+  const keyed = TIERS.filter((tier) => KEYED.has(settings.models[tier].provider));
+  if (!keyed.length) return settings;
+  const saved = new Set(
+    (await db.modelCredential.findMany({ where: { userId: account, provider: { in: [...KEYED] } }, select: { provider: true } })).map((row) => row.provider),
+  );
+  const missing = keyed.filter((tier) => !saved.has(settings.models[tier].provider));
+  if (!missing.length) return settings;
+  let unusable = missing;
+  if (await canUseHostCredentials(account)) {
+    const { hasEnvKey } = await import("../runtime/credentials.js");
+    unusable = missing.filter((tier) => settings.models[tier].provider !== "ollama" && !hasEnvKey(settings.models[tier].provider));
+  }
+  if (!unusable.length) return settings;
   const everyday = config.models.find((model) => model.role === "everyday") ?? config.models[0]!;
   const stepUp = config.models.find((model) => model.role === "step-up") ?? everyday;
   const chosen: Record<Tier, Settings["models"][Tier]> = {
@@ -29,6 +41,6 @@ export async function withIncludedDefaults(db: PrismaClient | Prisma.Transaction
     max: { provider: INCLUDED_PROVIDER, model: stepUp.id, effort: stepUp.efforts.includes("high") ? "high" : "default" },
   };
   const models = { ...settings.models };
-  for (const tier of untouched) models[tier] = chosen[tier];
+  for (const tier of unusable) models[tier] = chosen[tier];
   return { ...settings, models };
 }
