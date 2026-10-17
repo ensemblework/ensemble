@@ -1,4 +1,5 @@
 "use client";
+import Link from "next/link";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ModelLogo } from "@/components/connectors/provider-logo";
@@ -48,6 +49,7 @@ function RunRow({ run, onOpen }: { run: RunSummary; onOpen: () => void }) {
         <PanelRightOpen size={14} className="shrink-0 text-faint" />
         <div className="min-w-0 flex-1">
           <div className="truncate text-[14.5px] font-semibold">{run.title}</div>
+          {run.sourceRunId && <Link href={`/runs?run=${run.sourceRunId}`} onClick={event=>event.stopPropagation()} className="mt-1 block text-[12px] text-accent hover:underline">From feedback on an earlier run</Link>}
           <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12.5px] text-muted">
             <span className="inline-flex items-center gap-1">
               <Clock3 size={12} /> {shortDate(run.startedAt)}
@@ -145,7 +147,6 @@ export default function RunsPage() {
           </>
         )}
       </Held>
-      <div className="mt-6 text-[12px] text-faint">Times are shown in your browser&apos;s zone · last refreshed {dateTime(new Date())}</div>
       {openId ? <RunPreview key={openId} runId={openId} onClose={close} /> : null}
     </div>
   );

@@ -3,7 +3,8 @@
 /** @jsxImportSource react */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Orbit, ArrowUpRight } from "lucide-react";
+import { AgentIcon as Orbit } from "@/components/agent-icon";
+import { ArrowUpRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api, type TaskRecord } from "@/lib/api";
 import { startOfDay } from "@/lib/format";

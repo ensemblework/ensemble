@@ -1,7 +1,8 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, Orbit, Check, CheckCheck, CircleHelp, Clock3, Lock, Pencil, ShieldCheck, X } from "lucide-react";
+import { AgentIcon as Orbit } from "@/components/agent-icon";
+import { ArrowUpRight, Check, CheckCheck, CircleHelp, Clock3, Lock, Pencil, ShieldCheck, X } from "lucide-react";
 import { useSpaceAccess } from "@/lib/access";
 import { useState } from "react";
 import { EditorDecisions } from "@/components/needs-me/editor-decisions";

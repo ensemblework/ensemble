@@ -41,26 +41,11 @@ For hosted public accounts, email verification is required before scheduled mode
 
 ---
 
-## 2. Scheduled work: two fetches a day
+## 2. Scheduled work
 
-> **Paused (7 Oct 2026).** Scheduled fetching is off product-wide until routines replace it. `startScheduler` (`apps/hub-api/src/jobs/scheduler.ts`, `scheduledFetchDue`) skips the fetch slots unless `ENSEMBLE_SCHEDULED_FETCH=on`, whatever `settings.fetch.scheduled` says (default `false`). Reminders, the morning brief, stale nudges, watchers and retention still run. Fetch now (`POST /api/fetch`) and per-source Sync (`POST /api/connections/:id/sync`) are unchanged.
+`jobs/scheduler.ts` still dispatches reminders, the morning brief, stale notices, watchers, device lease sweeps and retention. Generic connector fetching is manual. `fetchAll(..., "schedule")` returns without reading a provider; old fetch times and `ENSEMBLE_SCHEDULED_FETCH` do not enable content ingestion.
 
-| | `morning_fetch` | `evening_fetch` | Fetch now |
-|---|---|---|---|
-| **When** | 09:00 local (configurable) | 16:00 local (configurable) | On demand |
-| **What** | The whole cycle: renew the Graph token, read every enabled connector, link and extract, propose todos, recap meetings, unsnooze, drop stale proposals, clear the briefing cache | The same cycle, **plus** graph maintenance and skill folding — both read the whole history and neither changes between two fetches | The identical cycle, from the header button or `POST /api/fetch/now` |
-
-Both times are set in *Settings → When Ensemble fetches*, written as **local wall clock** and handed to BullMQ with `tz`, so nothing has to be re-derived in UTC every daylight-saving change. Turning the schedule off leaves the button as the only way data arrives.
-
-Jobs publish `agent.status` so the Hub pill shows *"Fetching…"* → *"idle"*.
-
-### Why polling was removed
-
-Earlier builds ran **twelve** scheduled jobs: mail and Teams every five minutes, calendar and ADO every fifteen, GitHub every ten, meeting-prep cards every ten, nudges hourly, an end-of-day wrap-up. That is roughly four hundred runs a day, almost all of which discovered that nothing had changed.
-
-It bought nothing. An email that arrives at 11:20 is not more useful for having been noticed at 11:25, because the engineer reads the Hub when they read it — and the nudge jobs produced notifications nobody had asked for, which is how a tool teaches you to ignore it. Two fetches and a button cover the same ground at a fraction of the cost, and the cost was real: every one of those runs was a Graph call, and some were model calls. `registerCronJobs` **prunes schedulers it no longer defines**, so upgrading removes the old ones rather than leaving them firing alongside the new schedule.
-
----
+**Sync people** runs `connectors/people-sync.ts` through `POST /api/fetch` or `POST /api/connections/:id/sync`. It reads bounded contact metadata, filters services/newsletters/bots with fixed rules and upserts real people. It saves no artifacts and makes no model call. Files, messages and transcripts are read/saved through explicit requests ([03 §2](03_MODULE_CONTEXT_ENGINE.md#2-connectors)).
 
 ## 3. Todo Proposer
 
@@ -230,7 +215,7 @@ OpenTelemetry spans: `job.*`, `proposer`, `plan`, `run.step`, `tool.call`, `llm.
 | Area | Where | Notes |
 |---|---|---|
 | Fetch cycle | `apps/hub-api/src/jobs/fetch.ts` | One function behind both scheduled fetches and the button. `nextFetchAt` takes the timezone as a parameter rather than reading the environment, so the rollover logic is pure and pinned by tests in both directions. |
-| Schedule | `apps/hub-api/src/jobs/scheduler.ts`, `jobs/claim.ts` | In-process scheduler. With `ENSEMBLE_SCHEDULED_FETCH=on`, each person's saved fetch times (`settings.fetch.times`; Settings shows only a paused notice while fetching is paused) run once per slot in their time zone; otherwise fetch slots are skipped. `claim.ts` takes a Postgres claim so two API processes do not run the same slot twice. |
+| Schedule | `apps/hub-api/src/jobs/scheduler.ts`, `jobs/claim.ts` | In-process scheduler. Legacy fetch slots perform no provider read. Contact metadata sync is manual. `claim.ts` takes a Postgres claim so two API processes do not run the same slot twice. |
 | Complexity | `apps/hub-api/src/lib/complexity.ts` | Rules used when no classifier model answers. Deliberately shallow: a wrong tier costs a slightly better or worse model on one task, and pretending to more precision than that would cost more. |
 | Tool catalog | `apps/agent-runtime/ensemble_agent/tools/catalog.py` | Single source of truth for risk, gate, reversibility and undo window. The planner's gate output is **recomputed from here and never trusted from the model**, so a hallucinated `"gate": "none"` on a send cannot slip past. |
 | State | `apps/hub-api/src/lib/state-machine.ts` | `ALLOWED` transition table plus guards. `/triage`, `/delegate`, `/takeover` and `/answer` all route through `transitionTask`, so every move is logged with actor and reason. |

@@ -1,0 +1,15 @@
+{
+  "identifier": "hosted-updates",
+  "description": "The official web interface may request the signed Ensemble updater, with no filesystem or shell permissions.",
+  "windows": [
+    "main"
+  ],
+  "remote": {
+    "urls": [
+      "https://app.ensemblework.com"
+    ]
+  },
+  "permissions": [
+    "release-commands"
+  ]
+}

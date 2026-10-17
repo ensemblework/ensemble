@@ -60,3 +60,9 @@ Keeping these files current is part of every change. See [`AGENTS.md`](../AGENTS
 ## Design notes
 
 [`design/`](design/) holds design specs and working notes for larger features (assistant and trash, Context redesign, widgets and templates, marketplace, the Today desk, what could come next for connectors). They record intent at the time they were written; check the code before relying on them.
+
+## Planned follow-on work
+
+| Design | Scope |
+| --- | --- |
+| [Real-world testing follow-on designs](design/real-world-next.md) | Skill mining review, explicit connector fetching, one-time profession change, unified requests and meeting notes; not built |

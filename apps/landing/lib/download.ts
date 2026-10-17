@@ -6,15 +6,16 @@ export const WINGET_ACCEPTED = false;
 export const NPM_PUBLISHED = false;
 export const AUR_AVAILABLE = false;
 
-/** The desktop app's released version (apps/desktop/src-tauri/tauri.conf.json; a test keeps them equal). */
-export const DESKTOP_VERSION = "0.3.8";
+/** All installers and the site read the same release number. */
+export { ENSEMBLE_VERSION as DESKTOP_VERSION } from "@ensemble/shared-types/version";
+import { ENSEMBLE_VERSION as DESKTOP_VERSION } from "@ensemble/shared-types/version";
 
 export type DesktopFile = { label: string; file: string; note: string; primary?: boolean };
 
 /** The installers a `desktop-v<version>` release carries, per system (`.github/workflows/desktop.yml`). */
 export function desktopFiles(version = DESKTOP_VERSION): Record<OsId, DesktopFile[]> {
   return {
-    mac: [{ label: "Download for Mac", file: `Ensemble_${version}_universal.dmg`, note: "Apple silicon and Intel, macOS 13 or later", primary: true }],
+    mac: [{ label: "Download for Apple silicon", file: `Ensemble_${version}_aarch64.dmg`, note: "M1 and later, macOS 13 or later", primary: true }, { label: "Download for Intel Mac", file: `Ensemble_${version}_x64.dmg`, note: "Intel, macOS 13 or later" }],
     windows: [
       { label: "Download for Windows", file: `Ensemble_${version}_x64-setup.exe`, note: "Windows 10 and 11, x64", primary: true },
       { label: ".msi installer", file: `Ensemble_${version}_x64_en-US.msi`, note: "for managed installs" },

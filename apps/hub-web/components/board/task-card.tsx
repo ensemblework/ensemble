@@ -2,7 +2,8 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useSortable, type AnimateLayoutChanges } from "@dnd-kit/sortable";
-import { Orbit, GripVertical, Trash2 } from "lucide-react";
+import { AgentIcon as Orbit } from "@/components/agent-icon";
+import { GripVertical, Trash2 } from "lucide-react";
 import { type TaskRecord } from "@/lib/api";
 import { warmTask } from "@/lib/warm";
 import { dueLabel, plural } from "@/lib/format";

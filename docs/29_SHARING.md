@@ -195,3 +195,7 @@ An edit-enabled public link still permits writing without an account. AI request
 ### Page history boundaries (17 Oct 2026)
 
 `/api/page-versions*`, `/api/page-templates*`, `POST /api/pages/:id/duplicate` and `POST /api/pages/:id/template` are explicitly `owner` in `sharing/policy.ts`. Members, single-item recipients and public-link visitors cannot inspect saved history or private templates, restore a version, or duplicate a page through these routes. They retain existing live editing rights. `routes/collab.ts` attaches the server-authenticated editor id to accepted writes; a request cannot spoof history authorship.
+
+### Sharing management detail
+
+Settings’ Shared with you rows show their first content excerpt, source space and sharing date. `/shared-by-me` asks for confirmation before removing individual or space access or turning off a public link. Run-feedback creation is runner-class; only the originating runner may start a follow-up on that computer, and the ordinary assignment checks run again.

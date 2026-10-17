@@ -9,6 +9,9 @@ import { fileURLToPath } from "node:url";
 import { buildLandrun } from "./build-landrun.mjs";
 import { run } from "./desktop-spawn.mjs";
 
+import { checkReleaseVersion } from "./release-version.mjs";
+checkReleaseVersion();
+
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const dest = parseArgs(process.argv.slice(2));
 const appDir = join(dest, "app");

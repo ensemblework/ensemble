@@ -47,7 +47,7 @@ export function McpConnectWay({ entry, primary }: { entry: CatalogEntry; primary
   if (mcp.client && entry.state.mcpReady === false) {
     return (
       <div className="mt-2 space-y-2 text-[12.5px] text-muted" data-testid="mcp-not-set-up">
-        <p>{brand}'s MCP server accepts only apps registered with {brand}, and none is set up on this server yet. Whoever runs Ensemble registers one once.</p>
+        <p>Sign in with {brand} is coming soon. You can use another connection option when available.</p>
         <McpClientSetup app={mcp.client.app} />
       </div>
     );

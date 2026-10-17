@@ -2,7 +2,8 @@
 
 import { Node, mergeAttributes } from "@tiptap/core";
 import { NodeViewContent, NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from "@tiptap/react";
-import { Orbit, Check, Trash2 } from "lucide-react";
+import { AgentIcon as Orbit } from "@/components/agent-icon";
+import { Check, Trash2 } from "lucide-react";
 import { relative } from "@/lib/format";
 
 /** Same fingerprint the server stamps on the block, so "edited" survives reloads without a write on open. */

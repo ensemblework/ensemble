@@ -2,7 +2,7 @@
 name: meeting-notes
 title: Meeting notes
 when: find, read, write, edit, recap or delete meeting notes; action items and decisions from a meeting; notes imported from Zoom or other meeting tools
-tools: hub_list_meeting_notes, hub_read_meeting_note, hub_create_meeting_note, hub_update_meeting_note, hub_delete_meeting_note, hub_restore_entity, hub_list_events, hub_list_people, hub_create_tasks, hub_search_context, zoom_list_meetings, zoom_get_meeting_summary, zoom_get_transcript, zoom_list_recordings
+tools: hub_import_meeting_notes, hub_list_meeting_notes, hub_read_meeting_note, hub_create_meeting_note, hub_update_meeting_note, hub_delete_meeting_note, hub_restore_entity, hub_list_events, hub_list_people, hub_create_tasks, hub_search_context, zoom_list_meetings, zoom_get_meeting_summary, zoom_get_transcript, zoom_list_recordings
 match: \b(meeting notes?|minutes|transcripts?|standup|stand-up|1:1|one-on-one|sync notes|retro|action items?|decisions?|recap (of|from) (the|my|our|today'?s|yesterday'?s) (meeting|call|sync))\b
 paths: /meetings
 ---
@@ -11,6 +11,7 @@ Meeting notes live at `/meetings`. Some are written in Ensemble; others come in 
 Find and read
 - hub_list_meeting_notes with query (title or person) and/or from/to dates; then hub_read_meeting_note with meetingId for the full notes, attendees, decisions and action items (in parts if long). Notes from meeting tools say where they came from and are read-only.
 - "What did we decide with Mira last week?" → hub_list_meeting_notes (query "Mira", from/to last week) → read each → answer with the decisions and who owns what.
+- If they ask to import recent notes from Fireflies, Fathom, Granola, tl;dv, Krisp, Jamie or Otter: hub_import_meeting_notes with source and since. It saves at most 20 meetings after Apply. Set proposeTasks only if they also asked for action-item tasks. Contact sync never imports transcripts.
 - A Zoom meeting with no note in Ensemble: zoom_list_meetings (past) → zoom_get_meeting_summary, or zoom_list_recordings → zoom_get_transcript.
 
 Write

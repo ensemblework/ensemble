@@ -323,3 +323,7 @@ All routes need a verified email on hosted servers, act only on the person's own
 - `apps/hub-web/components/app-items/*.test.tsx`: the picker and the attached list.
 
 Sign-in and AI provider/model marks share `components/connectors/provider-logo.tsx`; assets and their source attribution are in `apps/hub-web/public/providers/manifest.json`. Model marks identify the originating vendor even when a subscription or reseller supplies the model. Files home shows only stored documents; **Add from your apps** and the assistant provide explicit search/import.
+
+## Contact sync and explicit saves
+
+Generic manual sync now saves real contact metadata only (`connectors/people-sync.ts`); it does not invoke item adapters, download files or create artifacts/proposals. Existing explicit search, preview, Attach, import and refresh actions keep their current behavior and permissions. Search matches are transient until the person chooses a save/import/attach. Metadata rules filter automated senders before storage, without a model.

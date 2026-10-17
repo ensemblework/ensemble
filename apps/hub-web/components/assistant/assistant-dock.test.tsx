@@ -115,12 +115,12 @@ test("streaming reconciles the saved user message by id, keeps real repeats, and
         </PathnameContext.Provider>,
       );
     });
-    for (let attempt = 0; attempt < 20 && !host.querySelector("textarea"); attempt += 1) {
+    for (let attempt = 0; attempt < 20 && !document.body.querySelector("textarea"); attempt += 1) {
       await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 20));
       });
     }
-    const textarea = host.querySelector("textarea");
+    const textarea = document.body.querySelector("textarea");
     assert.ok(textarea, host.innerHTML);
     const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
     assert.ok(setter);
@@ -128,25 +128,25 @@ test("streaming reconciles the saved user message by id, keeps real repeats, and
       setter.call(textarea, "Hello from a new chat");
       textarea.dispatchEvent(new Event("input", { bubbles: true }));
     });
-    const send = [...host.querySelectorAll("button")].find((node) => node.getAttribute("aria-label") === "Send");
+    const send = [...document.body.querySelectorAll("button")].find((node) => node.getAttribute("aria-label") === "Send");
     assert.ok(send);
     await act(async () => {
       send.dispatchEvent(new MouseEvent("click", { bubbles: true }));
       await new Promise((resolve) => setTimeout(resolve, 40));
     });
-    const stop = [...host.querySelectorAll("button")].find((node) => node.getAttribute("aria-label") === "Stop");
+    const stop = [...document.body.querySelectorAll("button")].find((node) => node.getAttribute("aria-label") === "Stop");
     assert.ok(stop, host.innerHTML);
-    for (let i = 0; i < 20 && (host.textContent?.match(/Hello from a new chat/g) ?? []).length !== 2; i++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 15)); });
+    for (let i = 0; i < 20 && (document.body.textContent?.match(/Hello from a new chat/g) ?? []).length !== 2; i++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 15)); });
     assert.equal(textarea.value, "");
-    assert.equal((host.textContent?.match(/Hello from a new chat/g) ?? []).length, 2);
-    const close = host.querySelector<HTMLButtonElement>('button[aria-label="Close"]');
+    assert.equal((document.body.textContent?.match(/Hello from a new chat/g) ?? []).length, 2);
+    const close = document.body.querySelector<HTMLButtonElement>('button[aria-label="Close"]');
     assert.ok(close);
     await act(async () => { close.click(); });
-    const launcher = host.querySelector<HTMLButtonElement>('button[aria-label="Ask Ensemble"]');
+    const launcher = document.body.querySelector<HTMLButtonElement>('button[aria-label="Ask Ensemble"]');
     assert.ok(launcher);
     assert.equal(launcher.querySelector('.u-morph')?.getAttribute('data-state'), 'loop', 'minimized assistant keeps the real pending work visible');
     await act(async () => { launcher.click(); });
-    const reopenedStop = host.querySelector<HTMLButtonElement>('button[aria-label="Stop"]');
+    const reopenedStop = document.body.querySelector<HTMLButtonElement>('button[aria-label="Stop"]');
     assert.ok(reopenedStop);
     await act(async () => {
       reopenedStop.click();
@@ -155,8 +155,8 @@ test("streaming reconciles the saved user message by id, keeps real repeats, and
     assert.equal(stops.length, 1);
     assert.equal(stops[0]?.includes(`/api/assistant/conversations/${CONVERSATION}/stop`), true);
     assert.equal(seen.turnSignal?.aborted, true);
-    assert.match(host.textContent ?? "", /Stopped/);
-    assert.equal((host.textContent ?? "").includes("What needs me today"), false);
+    assert.match(document.body.textContent ?? "", /Stopped/);
+    assert.equal((document.body.textContent ?? "").includes("What needs me today"), false);
   } finally {
     await act(async () => root.unmount());
     host.remove();
@@ -209,8 +209,8 @@ test("@ in the box ranks across kinds, Enter writes @people:Name, and Send passe
         </PathnameContext.Provider>,
       );
     });
-    for (let attempt = 0; attempt < 20 && !host.querySelector("textarea"); attempt += 1) await wait();
-    const textarea = host.querySelector("textarea")!;
+    for (let attempt = 0; attempt < 20 && !document.body.querySelector("textarea"); attempt += 1) await wait();
+    const textarea = document.body.querySelector("textarea")!;
     const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")!.set!;
     const type = async (text: string) => {
       await act(async () => {
@@ -297,7 +297,7 @@ test("the box grows to eight lines, Recent chats opens an earlier chat, and a ch
   document.body.appendChild(host);
   const root: Root = createRoot(host);
   const wait = (ms = 20) => act(async () => { await new Promise((resolve) => setTimeout(resolve, ms)); });
-  const button = (label: string) => [...host.querySelectorAll("button")].find((node) => node.getAttribute("aria-label") === label);
+  const button = (label: string) => [...document.body.querySelectorAll("button")].find((node) => node.getAttribute("aria-label") === label);
   try {
     await act(async () => {
       root.render(
@@ -308,8 +308,8 @@ test("the box grows to eight lines, Recent chats opens an earlier chat, and a ch
         </PathnameContext.Provider>,
       );
     });
-    for (let attempt = 0; attempt < 20 && !host.querySelector("textarea"); attempt += 1) await wait();
-    const textarea = host.querySelector("textarea")!;
+    for (let attempt = 0; attempt < 20 && !document.body.querySelector("textarea"); attempt += 1) await wait();
+    const textarea = document.body.querySelector("textarea")!;
     let lines = 1;
     Object.defineProperty(textarea, "scrollHeight", { configurable: true, get: () => lines * 24 });
     const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")!.set!;
@@ -339,8 +339,8 @@ test("the box grows to eight lines, Recent chats opens an earlier chat, and a ch
     await act(async () => {
       toggle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
-    for (let attempt = 0; attempt < 20 && !/Draft the launch note/.test(host.querySelector("[data-chat-history]")?.textContent ?? ""); attempt += 1) await wait();
-    const panel = host.querySelector("[data-chat-history]")!;
+    for (let attempt = 0; attempt < 20 && !/Draft the launch note/.test(document.body.querySelector("[data-chat-history]")?.textContent ?? ""); attempt += 1) await wait();
+    const panel = document.body.querySelector("[data-chat-history]")!;
     assert.match(panel.textContent ?? "", /Plan my day.*Draft the launch note/);
     assert.ok(asked.some((url) => url.includes("/api/assistant/conversations?chats=1")));
     const earlier = [...panel.querySelectorAll("button")].find((node) => /Draft the launch note/.test(node.textContent ?? ""))!;
@@ -348,7 +348,7 @@ test("the box grows to eight lines, Recent chats opens an earlier chat, and a ch
       earlier.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     for (let attempt = 0; attempt < 20 && !asked.some((url) => url.includes(`/conversations/${EARLIER}/messages`)); attempt += 1) await wait();
-    assert.equal(host.querySelector("[data-chat-history]"), null, "the list closes");
+    assert.equal(document.body.querySelector("[data-chat-history]"), null, "the list closes");
     assert.equal(JSON.parse(window.localStorage.getItem("ensemble.assistant.conversation") ?? "null"), EARLIER);
   } finally {
     await act(async () => root.unmount());
@@ -371,13 +371,13 @@ test("the styled tier menu closes before the assistant on Escape", async () => {
   try {
     await act(async () => root.render(<PathnameContext.Provider value="/today"><QueryClientProvider client={client}><AssistantDock /></QueryClientProvider></PathnameContext.Provider>));
     await act(async () => new Promise(resolve => setTimeout(resolve, 50)));
-    const trigger = host.querySelector<HTMLButtonElement>('[aria-label="Complexity"]')!;
-    assert.ok(trigger); assert.equal(host.querySelector('select[aria-label="Complexity"]'), null);
+    const trigger = document.body.querySelector<HTMLButtonElement>('[aria-label="Complexity"]')!;
+    assert.ok(trigger); assert.equal(document.body.querySelector('select[aria-label="Complexity"]'), null);
     await act(async () => trigger.click());
     const list = document.querySelector('[role="listbox"][aria-label="Response complexity"]')!;
     assert.ok(list); assert.equal(list.querySelectorAll('[role="option"]').length, 4);
     await act(async () => list.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
-    assert.ok(host.querySelector("textarea"), "first Escape keeps the assistant");
+    assert.ok(document.body.querySelector("textarea"), "first Escape keeps the assistant");
     await act(async () => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
     assert.equal(JSON.parse(window.localStorage.getItem("ensemble.assistant.open")!), false);
   } finally {

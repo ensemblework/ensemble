@@ -297,8 +297,10 @@ export function SharingTab() {
             {data.withMe.items.slice(0, 5).map((item) => (
               <div key={item.id} className="flex items-center gap-3 py-2">
                 <span className="shrink-0 text-2xs uppercase tracking-wide text-faint sm:w-24">{KIND_NAMES[item.kind]}</span>
-                <span className="min-w-0 flex-1 truncate text-[13px]">
-                  {item.title}
+                <span className="min-w-0 flex-1 text-[13px]">
+                  <span className="block truncate font-medium">{item.title}</span>
+                  {item.excerpt && <span className="mt-1 line-clamp-2 block text-[12px] text-muted">{item.excerpt}</span>}
+                  <span className="mt-1 block text-[11px] text-faint">{item.spaceName} · Shared {friendlyDateTime(item.since)}</span>
                   {!item.openedAt ? <span className="ml-1.5 rounded bg-accent-soft px-1 text-[10px] text-ink">New</span> : null}
                 </span>
                 <span className="min-w-0 max-w-[35%] truncate text-2xs text-muted">from {item.owner.name}</span>

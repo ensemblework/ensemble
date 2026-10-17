@@ -42,7 +42,7 @@ function coverPage(layer: HTMLElement): () => void {
   const covered: HTMLElement[] = [];
   for (let node = layer; node.parentElement && node !== document.body; node = node.parentElement) {
     for (const sibling of Array.from(node.parentElement.children)) {
-      if (sibling === node || !(sibling instanceof HTMLElement) || sibling.inert) continue;
+      if (sibling === node || !(sibling instanceof HTMLElement) || sibling.inert || sibling.hasAttribute("data-assistant-surface")) continue;
       sibling.inert = true;
       covered.push(sibling);
     }

@@ -4,8 +4,10 @@ import { BrandMorph } from "@/components/motion/brand-morph";
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Maximize2,
+  Minimize2,
   AlertTriangle,
   Brain,
   CheckCircle2,
@@ -33,11 +35,13 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { createPortal } from "react-dom";
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import { MarkdownText } from "@/components/markdown-text";
 import { Spinner, Tag, Tabs, cx } from "@/components/ui";
 import { api, type RunDetail, type RunJob } from "@/lib/api";
 import { dateTime, plural } from "@/lib/format";
+import { useFullscreen } from "@/lib/fullscreen";
+import { useResizablePeek } from "../shell/peek";
 import { useModalFocus } from "@/lib/modal-focus";
 import { duration, modelsSeen, sameModel, toolStats, traceEntries, usd, type TraceCall, type TraceEntry, type TraceKind } from "@/lib/run-trace";
 
@@ -57,13 +61,16 @@ function runIsLive(run: RunDetail, job: RunJob | null): boolean {
 }
 const DELIVERY: Record<string, string> = { local: "Local only", commit: "May commit", push: "May push" };
 
-type Tab = "trace" | "result" | "files" | "activity" | "log";
+type Tab = "trace" | "result" | "files";
 type Filter = "all" | "tools" | "thinking" | "messages";
 
 /** The run, opened from the Runs page: its trace, result, files, activity and log, beside the list. */
 export function RunPreview({ runId, onClose }: { runId: string; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
-  useModalFocus(ref, true, onClose);
+  const fullscreen = useFullscreen({ escape: false });
+  const resize = useResizablePeek(ref);
+  const setLayer = useCallback((node: HTMLDivElement | null) => { ref.current = node; fullscreen.layer(node); }, [fullscreen.layer]);
+  useModalFocus(ref, true, () => fullscreen.active ? fullscreen.exit() : onClose());
   const detail = useQuery({
     queryKey: ["run", runId],
     queryFn: () => api.run(runId),
@@ -73,7 +80,7 @@ export function RunPreview({ runId, onClose }: { runId: string; onClose: () => v
   const data = detail.data;
   return createPortal(
     <div
-      ref={ref}
+      ref={setLayer}
       data-modal-layer={`run-${runId}`}
       tabIndex={-1}
       role="dialog"
@@ -84,7 +91,8 @@ export function RunPreview({ runId, onClose }: { runId: string; onClose: () => v
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <div className="run-sheet flex h-full w-[min(920px,100vw)] min-w-0 flex-col border-l border-line bg-bg shadow-pop">
+      <div className="run-sheet relative flex h-full min-w-[min(100vw,360px)] max-w-full flex-col border-l border-line bg-bg shadow-pop" style={{ width: fullscreen.active ? "100%" : `${resize.width}%` }}>
+        {!fullscreen.active && <div role="separator" aria-orientation="vertical" aria-label="Run panel width" tabIndex={0} aria-valuemin={resize.min} aria-valuemax={resize.max} aria-valuenow={resize.width} onPointerDown={resize.onPointerDown} onKeyDown={resize.onKeyDown} onDoubleClick={resize.reset} className="absolute inset-y-0 -left-1 z-10 w-2 cursor-col-resize touch-none hover:bg-accent/30 focus-visible:bg-accent/30"/>}
         {detail.isLoading ? (
           <div className="flex flex-1 items-center justify-center">
             <Spinner />
@@ -97,7 +105,7 @@ export function RunPreview({ runId, onClose }: { runId: string; onClose: () => v
             </button>
           </div>
         ) : (
-          <RunSheet run={data.run} job={data.job} onClose={onClose} />
+          <RunSheet key={runId} run={data.run} job={data.job} onClose={onClose} fullscreen={fullscreen.active} onFullscreen={event => fullscreen.active ? fullscreen.exit() : fullscreen.enter(event.currentTarget)} />
         )}
       </div>
     </div>,
@@ -105,8 +113,8 @@ export function RunPreview({ runId, onClose }: { runId: string; onClose: () => v
   );
 }
 
-function RunSheet({ run, job, onClose }: { run: RunDetail; job: RunJob | null; onClose: () => void }) {
-  const [tab, setTab] = useState<Tab>("trace");
+function RunSheet({ run, job, onClose, fullscreen, onFullscreen }: { run: RunDetail; job: RunJob | null; onClose: () => void; fullscreen: boolean; onFullscreen: React.MouseEventHandler<HTMLButtonElement> }) {
+  const [tab, setTab] = useState<Tab>("result");
   const live = runIsLive(run, job);
   const outcome = run.outcome
     ? (RUN_OUTCOME[run.outcome] ?? { label: run.outcome, tone: "gray" as const })
@@ -119,10 +127,9 @@ function RunSheet({ run, job, onClose }: { run: RunDetail; job: RunJob | null; o
   const taskId = run.task.id;
   const elapsed = duration((endedAt ? Date.parse(endedAt) : Date.now()) - Date.parse(run.startedAt));
   const tabs: Array<{ id: Tab; label: string; badge?: number }> = [
-    { id: "trace", label: "Trace", badge: entries.length || undefined },
-    { id: "result", label: "Result" },
-    ...(job?.files.length ? [{ id: "files" as const, label: "Files", badge: job.files.length }] : []),
-    ...(job ? [{ id: "activity" as const, label: "Activity" }, { id: "log" as const, label: "Log" }] : []),
+    { id: "result", label: "Results" },
+    { id: "files", label: "Files", badge: job?.files.length || undefined },
+    { id: "trace", label: "Traces", badge: entries.length || undefined },
   ];
   return (
     <>
@@ -140,8 +147,10 @@ function RunSheet({ run, job, onClose }: { run: RunDetail; job: RunJob | null; o
               </>
             ) : null}
           </div>
+          {run.sourceRunId && <Link className="mt-2 block text-[12px] text-accent hover:underline" href={`/runs?run=${run.sourceRunId}`}>From feedback on an earlier run</Link>}
           <h2 className="mt-1.5 text-[17px] font-semibold leading-6">{run.task.title}</h2>
         </div>
+        <button type="button" className="icon-btn shrink-0" aria-label={fullscreen ? "Exit full screen" : "Full screen"} onClick={onFullscreen}>{fullscreen ? <Minimize2 size={16}/> : <Maximize2 size={16}/>}</button>
         <Link href={`/tasks/${taskId}`} className="btn shrink-0 gap-1.5 py-1 text-[12.5px]" title="Open the task page">
           <SquareArrowOutUpRight size={13} /> Open task
         </Link>
@@ -161,10 +170,8 @@ function RunSheet({ run, job, onClose }: { run: RunDetail; job: RunJob | null; o
           <Tabs label="Run sections" tabs={tabs} value={tab} onChange={setTab} />
         </div>
         {tab === "trace" ? <Trace entries={entries} live={live} /> : null}
-        {tab === "result" ? <Result run={run} /> : null}
-        {tab === "files" && job ? <Files job={job} /> : null}
-        {tab === "activity" && job ? <Activity jobId={job.id} live={live} run={run} /> : null}
-        {tab === "log" && job ? <Log jobId={job.id} live={live} /> : null}
+        {tab === "result" ? <><Result run={run} />{!live && <RunFeedback run={run}/>}</> : null}
+        {tab === "files" ? job && (job.files.length || job.results.length) ? <Files job={job} /> : <p className="rounded-lg border border-dashed border-line p-6 text-center text-[13px] text-muted">{live ? "Files appear here as the run creates or changes them." : "This run did not create or change any files."}</p> : null}
       </div>
     </>
   );
@@ -174,7 +181,7 @@ function Fact({ label, children, hint }: { label: string; children: ReactNode; h
   return (
     <div className="min-w-0 rounded-md bg-raised px-2.5 py-2" title={hint}>
       <div className="text-[11px] uppercase tracking-wide text-faint">{label}</div>
-      <div className="mt-0.5 truncate text-[13px]">{children}</div>
+      <div className="mt-0.5 break-words text-[13px] [&_span]:max-w-full [&_span]:flex-wrap">{children}</div>
     </div>
   );
 }
@@ -194,7 +201,7 @@ function Facts({ run, job, entries }: { run: RunDetail; job: RunJob | null; entr
         {job ? job.engineName : "Ensemble"}
         {job?.engine === "ensemble" && job.provider ? <span className="text-muted"> · {job.provider}</span> : null}
       </Fact>
-      <Fact label="Model asked for" hint={job?.reasoningEffort ? `Thinking: ${job.reasoningEffort}` : undefined}>
+      <Fact label="Model" hint={job?.reasoningEffort ? `Thinking: ${job.reasoningEffort}` : undefined}>
         <span className="inline-flex items-center gap-1.5 font-mono text-[12.5px]"><ModelLogo model={asked} provider={job?.provider} />{asked ?? "—"}</span>
         {job?.reasoningEffort && job.reasoningEffort !== "default" ? <span className="text-muted"> · {job.reasoningEffort}</span> : null}
       </Fact>
@@ -208,19 +215,9 @@ function Facts({ run, job, entries }: { run: RunDetail; job: RunJob | null; entr
           <span className="text-muted">{run.endedAt ? "Not reported" : "—"}</span>
         )}
       </Fact>
-      <Fact label="Where">
-        {job ? (
-          <span className="inline-flex items-center gap-1">
-            {job.where === "device" ? <Laptop size={12} /> : job.where === "server" ? <Server size={12} /> : <Laptop size={12} />}
-            {job.where === "device" ? job.deviceName ?? "A paired computer" : job.where === "server" ? "Ensemble server" : "This computer"}
-          </span>
-        ) : (
-          "Ensemble"
-        )}
-      </Fact>
       {job?.kind === "code" ? (
         <Fact label="Guardrails" hint={`${job.sandbox ? "Sandboxed" : "Not sandboxed"} · internet ${job.networkAccess ? "on" : "off"} · ${DELIVERY[job.delivery] ?? job.delivery}`}>
-          <span className="inline-flex items-center gap-1.5">
+          <span className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
             {job.sandbox ? <ShieldCheck size={12} className="text-ok" /> : <ShieldAlert size={12} className="text-warn" />}
             {job.sandbox ? "Sandbox" : "No sandbox"}
             <span className="text-faint">·</span>
@@ -231,16 +228,7 @@ function Facts({ run, job, entries }: { run: RunDetail; job: RunJob | null; entr
           </span>
         </Fact>
       ) : null}
-      {job?.folder || job?.repoUrl ? (
-        <Fact label="Folder" hint={job.repoUrl ?? undefined}>
-          <span className="inline-flex items-center gap-1 font-mono text-[12px]">
-            <FolderGit2 size={12} />
-            {job.folder ?? job.repoUrl}
-            {job.branch ? <span className="text-muted"> · {job.branch}</span> : null}
-          </span>
-        </Fact>
-      ) : null}
-      <Fact label="Work" hint={job ? `Limits: ${job.limits.turns} turns · ${job.limits.toolCalls} tool calls · ${job.limits.minutes} min` : undefined}>
+      <Fact label="Work done" hint={job ? `Limits: ${job.limits.turns} turns · ${job.limits.toolCalls} tool calls · ${job.limits.minutes} min` : undefined}>
         {job ? `${plural(job.turns, "turn")} · ` : ""}
         {plural(calls, "tool call")}
       </Fact>
@@ -556,76 +544,6 @@ function Files({ job }: { job: RunJob }) {
   );
 }
 
-const EVENT_LABEL: Record<string, string> = {
-  prepared: "Folder ready",
-  tool: "Tool",
-  command: "Command",
-  engine: "Engine",
-  sandbox: "Sandbox",
-  needs_me: "Needs you",
-  not_sandboxed: "Not sandboxed",
-  trust_revoked: "Trust removed",
-  interrupted: "Interrupted",
-  engine_new_session: "New session",
-  commit_undone: "Commit undone",
-  planted: "Flagged",
-};
-
-function eventText(kind: string, data: Record<string, unknown>): string {
-  if (kind === "command") return `$ ${String(data.command ?? "")}${data.exitCode !== undefined ? ` → exit ${String(data.exitCode)}` : ""}`;
-  if (kind === "tool") return String(data.summary ?? data.name ?? "");
-  if (kind === "prepared") return [data.root ?? data.folder, data.branch, data.sandboxed === true ? "sandboxed" : data.sandboxed === false ? "not sandboxed" : null].filter(Boolean).map(String).join(" · ");
-  if (kind === "not_sandboxed") return String(data.reason ?? "");
-  if (kind === "engine") return [data.engine, data.model, data.version].filter(Boolean).map(String).join(" · ");
-  if (kind === "sandbox") return [data.mechanism, data.strength, data.network === true ? "internet on" : data.network === false ? "internet off" : null].filter(Boolean).map(String).join(" · ");
-  if (kind === "decision") return `${String(data.question ?? "")}${data.recommended ? ` → ${String(data.recommended)}` : ""}`;
-  if (kind === "commit_undone") return String(data.note ?? "");
-  if (kind === "planted") return `${String(data.folder ?? "")}: ${Array.isArray(data.files) ? data.files.map(String).join(", ") : ""} can run code when opened or built`;
-  return String(data.title ?? data.summary ?? data.reason ?? data.note ?? data.message ?? "");
-}
-
-function Activity({ jobId, live, run }: { jobId: string; live: boolean; run: RunDetail }) {
-  const detail = useQuery({ queryKey: ["job", jobId], queryFn: () => api.job(jobId), refetchInterval: live ? 3000 : false });
-  if (detail.isLoading) return <Spinner />;
-  const events = detail.data?.events ?? [];
-  const approvals = run.approvals ?? [];
-  if (!events.length && !approvals.length) return <div className="text-[13px] text-muted">Nothing happened around this run besides its steps.</div>;
-  return (
-    <ol className="space-y-1">
-      {events.map((event) => (
-        <li key={event.id} className="flex gap-3 text-[12.5px]">
-          <span className="w-16 shrink-0 tabular-nums text-faint">{new Date(event.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
-          <span className="w-24 shrink-0 text-muted">{EVENT_LABEL[event.kind] ?? event.kind}</span>
-          <span className={cx("min-w-0 flex-1 break-words", event.kind === "command" && "font-mono text-[12px]", event.data.ok === false && "text-danger")}>
-            {eventText(event.kind, event.data)}
-            {typeof event.data.ms === "number" ? <span className="text-faint"> · {duration(event.data.ms)}</span> : null}
-          </span>
-        </li>
-      ))}
-      {approvals.map((approval) => (
-        <li key={approval.id} className="flex gap-3 text-[12.5px]">
-          <span className="w-16 shrink-0 tabular-nums text-faint">{new Date(approval.requestedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
-          <span className="w-24 shrink-0 text-muted">Approval</span>
-          <span className="min-w-0 flex-1">
-            {approval.title} <span className="text-faint">· {approval.decision ?? "waiting"}</span>
-          </span>
-        </li>
-      ))}
-    </ol>
-  );
-}
-
-function Log({ jobId, live }: { jobId: string; live: boolean }) {
-  const logs = useQuery({ queryKey: ["job-logs", jobId], queryFn: () => api.jobLogs(jobId), refetchInterval: live ? 2500 : false });
-  if (logs.isLoading) return <Spinner />;
-  const chunks = logs.data?.chunks ?? [];
-  if (!chunks.length) return <div className="text-[13px] text-muted">No output was logged.</div>;
-  return (
-    <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words rounded-md border border-line bg-panel p-3 font-mono text-[11.5px] leading-[1.5] text-muted">
-      {chunks.map((chunk) => chunk.text).join("")}
-    </pre>
-  );
-}
 
 function firstLine(text: string): string {
   const line = text.split("\n").find((row) => row.trim()) ?? "";
@@ -640,4 +558,10 @@ export function RunWhere({ where, deviceName }: { where?: RunJob["where"] | null
       <Icon size={12} /> {where === "device" ? deviceName ?? "Your computer" : where === "server" ? "Ensemble server" : "This computer"}
     </span>
   );
+}
+
+function RunFeedback({ run }: { run: RunDetail }) {
+  const [open,setOpen]=useState(false); const [text,setText]=useState(""); const client=useQueryClient();
+  const save=useMutation({mutationFn:(start:boolean)=>api.runFeedback(run.id,text,start),onSuccess:()=>{setOpen(false);setText("");void client.invalidateQueries({queryKey:["run",run.id]});void client.invalidateQueries({queryKey:["runs"]});void client.invalidateQueries({queryKey:["workspace"]});}});
+  return <section className="mt-5 space-y-3 border-t border-line pt-4">{run.feedback?.map(tag=><div key={tag.id} className="rounded-lg border border-line bg-panel p-3"><span className="text-[11px] uppercase tracking-wide text-accent">Feedback</span><p className="mt-1 whitespace-pre-wrap break-words text-[13px]">{tag.text}</p></div>)}{!open?<button className="text-[13px] text-muted underline-offset-4 hover:text-ink hover:underline" onClick={()=>setOpen(true)}>Didn’t like this output?</button>:<div className="space-y-3"><label className="block text-[13px] font-medium">What should change?<textarea className="field mt-2 min-h-28 w-full" maxLength={4000} value={text} onChange={e=>setText(e.target.value)} placeholder="Describe what went wrong and what you want instead…"/></label><p className="text-[12px] text-muted">Your feedback stays on this run. A new run includes the original task and these instructions.</p><div className="flex flex-wrap gap-2"><button className="btn-primary" disabled={!text.trim()||save.isPending} onClick={()=>save.mutate(true)}>Start a new run</button><button className="btn" disabled={!text.trim()||save.isPending} onClick={()=>save.mutate(false)}>Tag only</button><button className="btn" disabled={save.isPending} onClick={()=>setOpen(false)}>Cancel</button></div></div>}{save.error&&<p role="alert" className="text-[13px] text-danger">{save.error.message}</p>}{save.isSuccess&&<p role="status" className="text-[13px] text-ok">{save.data.jobId?"Feedback saved. A new run is queued and will appear separately in Runs.":"Feedback saved. No new run was started."}</p>}</section>;
 }

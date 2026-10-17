@@ -34,7 +34,7 @@ export function clientPlatform(): ClientPlatform {
   const nav = navigator as Navigator & { userAgentData?: { platform?: string; mobile?: boolean } };
   const text = `${nav.userAgentData?.platform ?? nav.platform} ${nav.userAgent}`;
   const os = /android/i.test(text) ? "android" : /iphone|ipad|ipod/i.test(text) || (/mac/i.test(text) && nav.maxTouchPoints > 1) ? "ios" : /mac/i.test(text) ? "mac" : /win/i.test(text) ? "windows" : /linux/i.test(text) ? "linux" : "unknown";
-  const native = typeof window !== "undefined" && Boolean((window as Window & { __ENSEMBLE_DESKTOP__?: unknown }).__ENSEMBLE_DESKTOP__);
+  const native = typeof window !== "undefined" && Boolean((window as Window & { __ENSEMBLE_DESKTOP__?: unknown; __TAURI_INTERNALS__?: unknown }).__ENSEMBLE_DESKTOP__ || (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
   return { os, mobile: os === "android" || os === "ios" || nav.userAgentData?.mobile === true, native };
 }
 

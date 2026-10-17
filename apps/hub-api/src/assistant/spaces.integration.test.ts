@@ -125,6 +125,7 @@ test("every assistant tool stays inside the open space", async () => {
   for (const tool of TOOLS.values()) {
     if (SKIP.has(tool.name)) continue;
     const extra: Record<string, Array<Record<string, unknown>>> = {
+      hub_import_meeting_notes: [{ source: "fireflies", since: "2026-10-01T00:00:00.000Z", proposeTasks: false }],
       hub_read_page: [{ pageId: ids.page }],
       hub_update_page: [{ pageId: ids.page, matchTitle: `${MARK} page`, mode: "append", markdown: "Added from another space" }],
       hub_delete_page: [{ pageId: ids.page }],

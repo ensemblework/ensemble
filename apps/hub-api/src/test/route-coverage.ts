@@ -36,6 +36,9 @@ export const mcpRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> =
 };
 
 export const resourceRouteCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
+  "GET /api/version": ["happy-path", "invalid-input"],
+  "GET /api/desktop/update/:target/:arch/:current": ["happy-path"],
+  "POST /api/runs/:id/feedback": ["happy-path", "isolation", "unknown-id", "invalid-input"],
   "GET /api/tasks": ["happy-path", "isolation"],
   "POST /api/tasks": ["happy-path", "invalid-input", "relation-isolation"],
   "GET /api/tasks/:id": ["happy-path", "isolation", "unknown-id"],

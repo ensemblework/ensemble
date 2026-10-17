@@ -388,6 +388,7 @@ model PlanStep {
 }
 
 model Run {
+  feedback               Json            @default("[]")
   id                     String          @id @default(uuid())
   taskId                 String          @map("task_id")
   userId                 String          @map("user_id")

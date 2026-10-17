@@ -6,7 +6,7 @@ const focusable = 'button:not([disabled]), a[href], input:not([disabled]):not([t
 
 function surfaces(root: HTMLElement): HTMLElement[] {
   const id = root.dataset.modalLayer;
-  return [root, ...Array.from(document.querySelectorAll<HTMLElement>("[data-modal-owner]")).filter((node) => node.dataset.modalOwner === id)];
+  return [root, ...Array.from(document.querySelectorAll<HTMLElement>("[data-assistant-surface]")), ...Array.from(document.querySelectorAll<HTMLElement>("[data-modal-owner]")).filter((node) => node.dataset.modalOwner === id)];
 }
 
 function updateBackground() {
@@ -41,7 +41,7 @@ export function useModalFocus(ref: RefObject<HTMLElement | null>, open: boolean,
     updateBackground();
     const observer = new MutationObserver(updateBackground);
     observer.observe(document.body, { childList: true, subtree: true });
-    const items = () => surfaces(root).flatMap((surface) => Array.from(surface.querySelectorAll<HTMLElement>(focusable)))
+    const items = () => surfaces(root).flatMap((surface) => [...(surface.matches(focusable) ? [surface] : []), ...Array.from(surface.querySelectorAll<HTMLElement>(focusable))])
       .filter((node) => {
         if (node.tabIndex < 0 || node.matches(":disabled") || node.closest('[inert], [hidden], [aria-hidden="true"]')) return false;
         for (let parent: HTMLElement | null = node; parent; parent = parent.parentElement) {

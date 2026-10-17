@@ -1,0 +1,1 @@
+ALTER TABLE "runs" ADD COLUMN "feedback" JSONB NOT NULL DEFAULT '[]';

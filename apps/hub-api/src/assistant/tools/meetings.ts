@@ -8,7 +8,8 @@ import { z } from "zod";
 import type { MeetingNote, MeetingSession, Prisma } from "@prisma/client";
 import { decisionLines, participantNames } from "../../cowork/meetings.js";
 import { endMeetingSession, matchAttendees, meetingContent, meetingNotesFields, notesDocument, saveMeetingNotes } from "../../cowork/service.js";
-import { isMeetingVendor, VENDOR_LABEL } from "../../connectors/meetings/types.js";
+import { importRequestedMeetings } from "../../connectors/meetings/requested-import.js";
+import { MEETING_VENDORS, isMeetingVendor, VENDOR_LABEL } from "../../connectors/meetings/types.js";
 import { zonedDateTimeToUtc } from "../../lib/clock.js";
 import { clip } from "../../lib/office/text.js";
 import { lastUndoId, recordUndoInTransaction, type UndoOp } from "../../lib/undo.js";
@@ -107,6 +108,15 @@ async function withMirror(db: Db, session: MeetingSession) {
 }
 
 export const meetingTools = [
+  defineTool({
+    name: "hub_import_meeting_notes",
+    area: "projects",
+    description: "Import recent notes/transcripts from a meeting app only when the person asks. This saves at most 20 source meetings since the supplied date. Does not run from contact sync. Action-item tasks are proposed only if the person also asks for them.",
+    input: z.object({ source: z.enum(MEETING_VENDORS), since: z.string().datetime(), proposeTasks: z.boolean().default(false) }),
+    isWrite: true, risk: "low", undoable: false, outsideTransaction: true, alwaysHold: true,
+    preview(_ctx,input) { return `Import up to 20 meeting notes from ${VENDOR_LABEL[input.source]} since ${input.since.slice(0,10)}. ${input.proposeTasks ? "Propose action items as tasks." : "Do not create tasks."}`; },
+    async run(ctx,input) { const result = await importRequestedMeetings(ctx.userId,input.source,new Date(input.since),input.proposeTasks); return toolOk(result.message,result,{href:"/meetings"}); },
+  }),
   defineTool({
     name: "hub_list_meeting_notes",
     area: "projects",

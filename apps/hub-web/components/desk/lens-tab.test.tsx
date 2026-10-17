@@ -11,7 +11,7 @@ import { contextTabHref, useLensTab } from "./lens-tab";
 
 test("each Context tab has its own address; Overview is plain /context", () => {
   assert.equal(contextTabHref("overview"), "/context");
-  assert.equal(contextTabHref("deadlines"), "/context?tab=deadlines");
+  assert.equal(contextTabHref("graph"), "/context?tab=graph");
   assert.equal(contextTabHref("projects"), "/context?tab=projects");
 });
 
@@ -36,9 +36,9 @@ test("choosing a tab pushes that tab's address, so Back returns to the one befor
   assert.equal(active, "Projects");
   const before = window.history.length;
 
-  await act(async () => choose("Deadlines"));
-  assert.equal(active, "Deadlines");
-  assert.equal(window.location.search, "?tab=deadlines", "the address names the tab just chosen, not the one before");
+  await act(async () => choose("Graph"));
+  assert.equal(active, "Graph");
+  assert.equal(window.location.search, "?tab=graph", "the address names the tab just chosen, not the one before");
   assert.equal(window.history.length, before + 1, "a new history entry, not a replaced one");
 
   await act(async () => choose("Overview"));
@@ -50,8 +50,8 @@ test("choosing a tab pushes that tab's address, so Back returns to the one befor
   assert.equal(window.history.length, before + 2);
 
   // Back: the router reports ?tab= from the restored address and the lens follows it.
-  await render("deadlines");
-  assert.equal(active, "Deadlines");
+  await render("graph");
+  assert.equal(active, "Graph");
   await render(null);
   assert.equal(active, "Overview");
   await act(async () => root.unmount());

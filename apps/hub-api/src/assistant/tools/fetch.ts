@@ -8,7 +8,7 @@ export const fetchTools = [
     name: "hub_fetch_now",
     area: "context",
     description:
-      "Read connected sources now (gmail, google_calendar, github, slack, linear) and propose todos from anything that asks something of the user. Call this instead of promising to look. Omit sources to read every switched-on source.",
+      "Sync real contact metadata from connected apps now. Saves people only; never saves messages, files or other artifacts and never proposes tasks. Use app search/import tools for specific content. Omit sources to sync switched-on contact sources.",
     input: z.object({
       sources: z.array(z.string()).optional(),
     }),
@@ -30,8 +30,8 @@ export const fetchTools = [
       }
       const results = [];
       for (const connector of ready) results.push(await syncConnector(ctx.app, ctx.userId, connector.id));
-      const proposed = results.reduce((sum, row) => sum + (row.proposed ?? 0), 0);
-      return toolOk(`Read ${ready.length} source(s); ${proposed} new proposed todo(s) on Today.`, { results }, { href: "/today" });
+      const people = results.reduce((sum, row) => sum + (row.items ?? 0), 0);
+      return toolOk(`Synced contacts from ${ready.length} source(s); ${people} people updated. No files or messages were saved.`, { results }, { href: "/context?tab=people" });
     },
   }),
 ];

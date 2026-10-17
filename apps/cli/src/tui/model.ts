@@ -31,6 +31,7 @@ export const COMMANDS: readonly Command[] = [
   { name: "login", description: "Sign in, so tasks from ensemblework.com run here" },
   { name: "logout", description: "Sign out and unpair this computer" },
   { name: "runner", args: "[install|uninstall]", description: "Start Ensemble at login, or stop doing that" },
+  { name: "update", description: "Update Ensemble on this computer" },
   { name: "status", description: "Account, runtime, sandbox and keys" },
   { name: "sidebar", description: "Show or hide the sidebar (Ctrl+B)" },
   { name: "help", description: "Keys and commands" },

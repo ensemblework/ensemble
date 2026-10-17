@@ -287,3 +287,7 @@ Where each hard feature lives in this tree. Built-or-not status per feature is i
 
 
 `AssistantMessage.credentialSource` (16 Oct 2026, code inspection) is an optional display label recording whether a dock reply used an API credential or a subscription on a named computer. The additive migration is `20261016100000_assistant_credential_source`; older messages have no label.
+
+### Run feedback
+
+`Run.feedback` is a bounded JSON list (up to 100 tags of 4,000 characters), with ID, text, author, time and optional follow-up job ID. Follow-up `WorkspaceJob.context.feedbackOnRun` links back to the source run; runs remain separate. The profile-change migration is a design only ([plan](design/real-world-next.md)).

@@ -1,7 +1,8 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUpRight, Bell, BellOff, Orbit, CalendarClock, Check, CheckCheck, CircleAlert, Eye, Share2, Sun, Timer, X, type LucideIcon } from "lucide-react";
+import { AgentIcon as Orbit } from "@/components/agent-icon";
+import { ArrowUpRight, Bell, BellOff, CalendarClock, Check, CheckCheck, CircleAlert, Eye, Share2, Sun, Timer, X, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";

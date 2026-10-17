@@ -30,22 +30,7 @@ export function detectInstallMethod(input: {
 }
 
 export function upgradeInstruction(method: InstallMethod): string {
-  switch (method) {
-    case "homebrew":
-      return "brew upgrade ensemble";
-    case "scoop":
-      return "scoop update ensemble";
-    case "winget":
-      return "winget upgrade EnsembleWork.EnsembleCLI";
-    case "linux-package":
-      return "Upgrade with your package manager, for example: sudo apt update && sudo apt install ensemble-cli, or sudo dnf upgrade ensemble-cli";
-    case "install-script":
-      return "Re-run the Ensemble install script from https://ensemblework.com/download";
-    case "npm":
-      return "npm i -g ensemblework@latest";
-    case "unknown":
-      return "Install method is unknown. Download the latest CLI from https://ensemblework.com/download";
-  }
+  return method === "homebrew" ? "brew upgrade ensemble" : "Choose Update Ensemble to install the latest version. Your work and settings are kept.";
 }
 
 type Release = {
@@ -109,5 +94,64 @@ export async function dailyUpdateNotice(input: {
 
 function noticeFor(latest: string | null | undefined, current: string): string | null {
   if (!latest) return null;
-  return compareVersions(latest, `cli-v${current}`) > 0 ? `A newer Ensemble CLI is available (${latest.replace(/^cli-v/, "")}). Run \`ensemble update\`.` : null;
+  return compareVersions(latest, `cli-v${current}`) > 0 ? `A newer Ensemble CLI is available (${latest.replace(/^cli-v/, "")}). Choose Update Ensemble in the app.` : null;
+}
+
+
+declare const __ENSEMBLE_INSTALL_SH__: string;
+declare const __ENSEMBLE_INSTALL_PS1__: string;
+
+let installingUpdate: Promise<string> | undefined;
+export function installCliUpdate(bundlePath: string): Promise<string> {
+  return installingUpdate ??= performCliUpdate(bundlePath).finally(() => { installingUpdate = undefined; });
+}
+async function performCliUpdate(bundlePath: string): Promise<string> {
+  let latest: string;
+  try {
+    const response = await fetch("https://api.github.com/repos/ensemblework/ensemble/releases?per_page=30", { headers: { accept: "application/vnd.github+json", "user-agent": `Ensemble/${VERSION}` }, signal: AbortSignal.timeout(5000) });
+    if (!response.ok) throw new Error("unavailable");
+    const releases = await response.json() as Release[];
+    latest = releases.filter(row => !row.draft && !row.prerelease && /^cli-v\d+\.\d+\.\d+$/.test(row.tag_name ?? "")).map(row => row.tag_name!).sort((a,b) => compareVersions(b,a))[0] ?? "";
+    if (!latest) throw new Error("unavailable");
+  } catch { throw new Error("Could not check for updates right now. Try again in a moment."); }
+  if (compareVersions(latest, VERSION) <= 0) return `Ensemble ${VERSION} is up to date.`;
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const run = promisify(execFile);
+  const { runningRunner, stopRunner, resolveSidecarDir, sidecarAvailable } = await import("./sidecar.js");
+  const { LocalApi } = await import("./tui/local.js");
+  const { resolveCliPaths } = await import("./paths.js");
+  const { homedir, tmpdir } = await import("node:os");
+  const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const paths = resolveCliPaths();
+  const runner = await runningRunner(paths);
+  if (runner) {
+    const workspace = await new LocalApi(runner).workspace();
+    if (workspace.running.length || workspace.waiting.length || workspace.queued.length) throw new Error("Finish or stop your active tasks, then update again.");
+  }
+  const method = detectInstallMethod({ bundlePath, home: homedir(), sidecarAvailable: await sidecarAvailable(resolveSidecarDir(import.meta.url)) });
+  if (method === "unknown" || method === "winget" || method === "linux-package") {
+    const { openBrowser } = await import("./browser.js");
+    await openBrowser("https://ensemblework.com/download");
+    return "Choose the current installer in Downloads. Your work and settings are kept.";
+  }
+  const temp = await mkdtemp(join(tmpdir(), "ensemble-update-"));
+  try {
+    const options = { timeout: 300_000, maxBuffer: 2_000_000, windowsHide: true, env: { ...process.env, ENSEMBLE_VERSION: latest.replace(/^cli-v/, "") } };
+    if (method === "homebrew") await run("brew", ["upgrade", "ensemble"], options);
+    else if (method === "scoop") await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "scoop update ensemble"], options);
+    else if (method === "npm") await run(process.platform === "win32" ? "npm.cmd" : "npm", ["install", "-g", "ensemblework@latest"], options);
+    else {
+      const windows = process.platform === "win32";
+      const script = join(temp, windows ? "install.ps1" : "install.sh");
+      const contents = windows ? (typeof __ENSEMBLE_INSTALL_PS1__ === "string" ? __ENSEMBLE_INSTALL_PS1__ : null) : (typeof __ENSEMBLE_INSTALL_SH__ === "string" ? __ENSEMBLE_INSTALL_SH__ : null);
+      if (!contents) throw new Error("Update this development install from Downloads.");
+      await writeFile(script, contents, { mode: 0o600 });
+      await run(windows ? "powershell.exe" : "/bin/sh", windows ? ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script] : [script], options);
+    }
+    if (runner && runner.owner !== "desktop") await stopRunner(paths);
+    return "Update installed. Reopen Ensemble to use the new version. Your work and settings are kept.";
+  } catch { throw new Error(method === "homebrew" ? "Could not update automatically. You can also use brew upgrade ensemble." : "Could not install the update right now. Try again in a moment."); }
+  finally { await rm(temp, { recursive: true, force: true }); }
 }

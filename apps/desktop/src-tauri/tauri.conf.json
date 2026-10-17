@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Ensemble",
-  "version": "0.3.8",
+  "version": "0.4.0",
   "identifier": "com.ensemblework.desktop",
   "build": {
     "frontendDist": "../ui"
@@ -47,9 +47,9 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDc2NTFGMTVCQzFDNzgyRTMKUldUamdzZkJXL0ZSZHBScWliYmRTd1ovVFpjdFhDbUZHMDdzWnlOdEg0L3p5OGJTTjVPMW9kTC8K",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI1RDJCMzMyQzIzRDRCN0UKUldSK1N6M0NNclBTdGVVRHZPc1NnN1hmbTlPbHlZUlhOcXdidzRHRzBzZmxBdHZYL2lvYUpzaHIK",
       "endpoints": [
-        "https://github.com/ensemblework/ensemble/releases/latest/download/latest.json"
+        "https://api.ensemblework.com/api/desktop/update/{{target}}/{{arch}}/{{current_version}}"
       ]
     }
   }

@@ -2,7 +2,8 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { Orbit, Code2, FileText, MessageSquare, OctagonX, Pause, Play, RefreshCw, Square } from "lucide-react";
+import { AgentIcon as Orbit } from "@/components/agent-icon";
+import { Code2, FileText, MessageSquare, OctagonX, Pause, Play, RefreshCw, Square } from "lucide-react";
 import Link from "next/link";
 import { hasModule } from "@ensemble/shared-types/modules";
 import { activityPollInterval } from "@/lib/activity-poll";

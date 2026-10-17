@@ -3,6 +3,7 @@ import type { SettingsTab } from "./url-state";
 export type SettingsDestination = { id: string; tab: SettingsTab; section: string; heading?: string; label: string; target: string; keywords: string; ownerOnly?: boolean; dialog?: "keys" | "changes" };
 const groups: Array<[SettingsTab, string, string, Array<string | [string, string, string?]>]> = [
   ["account", "account", "Account", ["Profile", ["Sign out", "logout log out signout"], ["Full name", "name identity"], ["Gender", "identity optional"], ["Profession", "job role occupation"], "Organization", "How did you hear about Ensemble?", ["Change password", "add password security login", "Change password"], ["Linked login methods", "login google github microsoft oauth authentication"], "Export account data (JSON)", "Delete account"]],
+  ["account", "about", "About Ensemble", [["About Ensemble", "version release update desktop web CLI"], "Check for updates"]],
   ["account", "avatar", "Avatar", [["Avatar", "profile picture initials face photo"], "Use initials"]],
   ["account", "you", "Scheduling and confirmations", ["Email", ["Time zone", "timezone scheduling local time"]]],
   ["appearance", "appearance", "Appearance", [["Theme", "dark light system mode"], ["Color theme", "palette petrol aubergine graphite lagoon aurora juniper blueprint ensemble background patterns doodles"], ["Accent", "colour color colors palette presets gold satin indigo tide ember rose brass orchid moss sky"], ["Custom accent", "custom colour color hex"], ["Text and font", "typography appearance"], ["Text size", "scale zoom font size"], ["App font", "typeface inter georgia monospace figtree plex"], ["Reduce motion", "disable animations accessibility"], ["Auto-collapse sidebar", "navigation hover icon rail"], ["Pages panel position", "page browser left right sidebar"], "Reset appearance"]],
@@ -17,7 +18,7 @@ const groups: Array<[SettingsTab, string, string, Array<string | [string, string
   ["assistant", "prompts", "Prompts", [["Prompts", "system instructions model requests"]]],
   ["connections", "connections", "Connected apps", [["Connections", "connectors integrations apps", "Connected apps"]]],
   ["connections", "imports", "Imports", [["Imports", "import migration csv todoist notion trello asana clickup obsidian"], "Recent imports"]],
-  ["connections", "fetch", "Fetching", [["Fetching", "sync fetching refresh scheduled pause"], ["Look back", "fetch lookback days"], ["Propose todos from what was read", "sync proposals tasks"]]],
+  ["connections", "fetch", "Sync people", [["Sync people", "sync contacts people refresh fetching"], ["Look back", "fetch lookback days"]]],
   ["connections", "editors", "Editors & agents", [["Editors & agents", "connect editor vscode cursor claude codex mcp"], "Connect an editor or AI app", ["Personal token", "api token hooks credentials"]]],
   ["connections", "devices", "Connected computers", [["Connected computers", "devices paired computers laptop mac windows linux cli runner"], ["Connect a computer", "pair desktop app cli device"]]],
   ["notifications", "brief", "Morning brief", ["Morning brief", "Deliver the morning brief", "Morning brief time"]],

@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-import { chmod } from "node:fs/promises";
+import { chmod, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const packageJson = JSON.parse(await import("node:fs/promises").then((fs) => fs.readFile(join(root, "package.json"), "utf8")));
+const { releaseVersion, checkReleaseVersion } = await import("../../../scripts/release-version.mjs");
+checkReleaseVersion();
 const outfile = join(root, "dist", "ensemble.mjs");
 
 /**
@@ -37,7 +38,9 @@ await esbuild.build({
     js: "#!/usr/bin/env node\nimport { createRequire as __ensembleCreateRequire } from 'node:module';\nconst require = __ensembleCreateRequire(import.meta.url);",
   },
   define: {
-    __ENSEMBLE_VERSION__: JSON.stringify(packageJson.version),
+    __ENSEMBLE_VERSION__: JSON.stringify(releaseVersion),
+    __ENSEMBLE_INSTALL_SH__: JSON.stringify(await readFile(join(root, "../landing/public/install.sh"), "utf8")),
+    __ENSEMBLE_INSTALL_PS1__: JSON.stringify(await readFile(join(root, "../landing/public/install.ps1"), "utf8")),
     // React's production build: smaller, and no development warnings in the terminal.
     "process.env.NODE_ENV": JSON.stringify("production"),
   },

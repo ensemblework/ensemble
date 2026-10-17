@@ -6,6 +6,9 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { run as spawnCommand } from "./desktop-spawn.mjs";
 
+import { releaseVersion, checkReleaseVersion } from "./release-version.mjs";
+checkReleaseVersion();
+
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const supportedTargets = new Set(["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64", "windows-x64"]);
 
@@ -19,7 +22,7 @@ if (host !== options.target) {
 }
 
 const cliPackage = JSON.parse(readFileSync(join(root, "apps/cli/package.json"), "utf8"));
-const version = cliPackage.version;
+const version = releaseVersion;
 if (!version || typeof version !== "string") usage("apps/cli/package.json does not contain a string version.");
 
 const outDir = resolve(root, options.out);

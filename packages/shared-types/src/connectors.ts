@@ -476,7 +476,7 @@ export const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
     category: "chat",
     featured: false,
     logo: "slack",
-    tagline: "Direct asks become proposed todos, channels become task context, and your workspace's people join People.",
+    tagline: "Sync real workspace members to People. Find and save messages when you ask.",
     auth: ["token", "oauth", "mcp"],
     provider: "slack",
     reads: ["DMs, group DMs and listed channels", "Workspace members"],
@@ -656,7 +656,7 @@ export const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
     mcp: MCP("https://mcp.granola.ai/mcp", "On Granola's free plan only the last 30 days of notes are available."),
     status: "ready",
     notes: [
-      "The MCP connection works on any plan; syncing notes into Meeting notes needs a Granola API key (Business plan or above).",
+      "The MCP connection works on any plan; importing selected notes into Meeting notes needs a Granola API key (Business plan or above).",
       "Create the key in the Granola app → Settings → Connectors → API keys.",
     ],
     docsUrl: "https://docs.granola.ai/introduction",
@@ -694,7 +694,7 @@ export const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
     status: "ready",
     notes: [
       "Create an API key at app.fireflies.ai → Integrations → Fireflies API (https://app.fireflies.ai/integrations/custom/fireflies).",
-      "The free plan's API allowance is small (about 50 requests a day); each Sync now uses one or two.",
+      "The free plan's API allowance is small (about 50 requests a day); each requested meeting import uses one or two.",
     ],
     docsUrl: "https://docs.fireflies.ai/",
   },
@@ -786,7 +786,7 @@ export const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
     mcp: MCP("https://mcp.otter.ai/mcp"),
     status: "ready",
     notes: [
-      "Syncing needs an API key from Otter → Integrations → Developer, which only Enterprise workspaces have.",
+      "Importing selected notes needs an API key from Otter → Integrations → Developer, which only Enterprise workspaces have.",
       "The MCP connection works on other plans and lets the assistant search your Otter meetings live.",
     ],
     docsUrl: "https://help.otter.ai/hc/en-us/articles/36130822688279-Otter-ai-Public-API",

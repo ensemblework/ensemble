@@ -13,7 +13,7 @@
     "build": "pnpm -r run build",
     "cli:build": "pnpm --filter ensemblework build",
     "cli:package": "node scripts/package-cli.mjs",
-    "typecheck": "pnpm -r run typecheck",
+    "typecheck": "pnpm version:check && pnpm -r run typecheck",
     "infra:up": "docker compose -f infra/docker-compose.yml up -d",
     "infra:down": "docker compose -f infra/docker-compose.yml down",
     "db:generate": "pnpm --filter @ensemble/hub-api prisma:generate",
@@ -35,9 +35,12 @@
     "desktop:dmg": "bash scripts/build-mac-dmg.sh",
     "desktop:e2e": "pnpm desktop:export && pnpm --filter @ensemble/hub-api test:desktop-ui",
     "brand:build": "node scripts/build-ensemble-brand.mjs",
-    "brand:check": "node scripts/build-ensemble-brand.mjs --check"
+    "brand:check": "node scripts/build-ensemble-brand.mjs --check",
+    "version:sync": "node scripts/release-version.mjs --sync",
+    "version:check": "node scripts/release-version.mjs"
   },
   "devDependencies": {
     "playwright-core": "^1.63.0"
-  }
+  },
+  "version": "0.4.0"
 }
