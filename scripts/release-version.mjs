@@ -9,7 +9,7 @@ const changes = [];
 const change = (path, update) => {
   const file = join(root, path);
   if (!existsSync(file)) return;
-  const current = readFileSync(file, "utf8"), next = update(current);
+  const current = readFileSync(file, "utf8").replace(/\r\n/g, "\n"), next = update(current);
   if (next !== current) changes.push({ path, next });
 };
 const jsonVersion = path => change(path, current => { const data = JSON.parse(current); data.version = releaseVersion; return `${JSON.stringify(data, null, 2)}\n`; });
@@ -25,7 +25,7 @@ for (const app of ["desktop", "quick-capture"]) {
 change("apps/agent-runtime/pyproject.toml", current => current.replace(/^version = "[^"]+"/m, `version = "${releaseVersion}"`));
 const sharedPath = "packages/shared-types/src/version.ts";
 const generated = `/** Generated from release.json. Every surface uses this release number. */\nexport const ENSEMBLE_VERSION = "${releaseVersion}";\n`;
-if (!existsSync(join(root, sharedPath)) || readFileSync(join(root, sharedPath), "utf8") !== generated) changes.push({ path: sharedPath, next: generated });
+if (!existsSync(join(root, sharedPath)) || readFileSync(join(root, sharedPath), "utf8").replace(/\r\n/g, "\n") !== generated) changes.push({ path: sharedPath, next: generated });
 export function checkReleaseVersion() {
   if (changes.length) throw new Error(`Release versions need synchronizing: ${changes.map(item => item.path).join(", ")}. Run pnpm version:sync.`);
 }

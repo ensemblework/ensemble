@@ -17,7 +17,7 @@ const ROLE_TILES: Record<Role, string> = {
 
 export function deskRole(desk: DeskId, onboardingId?: string | null): Role {
   const card = onboardingId ? templateCard(onboardingId) : undefined;
-  if (card?.desk === desk) return card.role;
+  if (card) return card.role;
   return ({ default: "engineer", semester: "student", exam: "student", literature: "student", classes: "teacher", chambers: "lawyer", staff: "manager", branch: "engineer", bench: "vibe" } as const)[desk];
 }
 

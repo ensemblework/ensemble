@@ -39,7 +39,7 @@ import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import { MarkdownText } from "@/components/markdown-text";
 import { Spinner, Tag, Tabs, cx } from "@/components/ui";
 import { api, type RunDetail, type RunJob } from "@/lib/api";
-import { dateTime, plural } from "@/lib/format";
+import { friendlyDateTime, plural } from "@/lib/format";
 import { useFullscreen } from "@/lib/fullscreen";
 import { useResizablePeek } from "../shell/peek";
 import { useModalFocus } from "@/lib/modal-focus";
@@ -139,7 +139,7 @@ function RunSheet({ run, job, onClose, fullscreen, onFullscreen }: { run: RunDet
             <Tag tone={outcome.tone}>{outcome.label}</Tag>
             {job ? <span className="font-medium text-ink">{job.engineName}</span> : <span>{run.worker === "workspace" ? "Agent" : "Delegated run"}</span>}
             <span>·</span>
-            <span>{dateTime(run.startedAt)}</span>
+            <span>{friendlyDateTime(run.startedAt)}</span>
             {elapsed ? (
               <>
                 <span>·</span>

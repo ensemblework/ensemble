@@ -131,7 +131,7 @@ async function performCliUpdate(bundlePath: string): Promise<string> {
     if (workspace.running.length || workspace.waiting.length || workspace.queued.length) throw new Error("Finish or stop your active tasks, then update again.");
   }
   const method = detectInstallMethod({ bundlePath, home: homedir(), sidecarAvailable: await sidecarAvailable(resolveSidecarDir(import.meta.url)) });
-  if (method === "unknown" || method === "winget" || method === "linux-package") {
+  if (method === "unknown" || method === "winget" || method === "linux-package" || method === "npm") {
     const { openBrowser } = await import("./browser.js");
     await openBrowser("https://ensemblework.com/download");
     return "Choose the current installer in Downloads. Your work and settings are kept.";
@@ -141,7 +141,6 @@ async function performCliUpdate(bundlePath: string): Promise<string> {
     const options = { timeout: 300_000, maxBuffer: 2_000_000, windowsHide: true, env: { ...process.env, ENSEMBLE_VERSION: latest.replace(/^cli-v/, "") } };
     if (method === "homebrew") await run("brew", ["upgrade", "ensemble"], options);
     else if (method === "scoop") await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "scoop update ensemble"], options);
-    else if (method === "npm") await run(process.platform === "win32" ? "npm.cmd" : "npm", ["install", "-g", "ensemblework@latest"], options);
     else {
       const windows = process.platform === "win32";
       const script = join(temp, windows ? "install.ps1" : "install.sh");

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { DeskLive } from "@/lib/api";
 import { contextTabs, selectedContextTabs, PROFILE_CONTEXT, tabKey } from "./context-tabs";
+import { deskRole } from "./tile-catalog";
 import { DESK_IDS } from "./desks";
 import { lensSections, tileFilled } from "./live-board";
 
@@ -38,3 +39,5 @@ test("Context defaults are fixed and optional choices stay within each profile",
  assert.deepEqual(selectedContextTabs("engineer",["Courses","Reviews","Mocks"]),["Overview","People","Projects","Repos","Mocks","Reviews","Graph"]);
  assert.ok(!selectedContextTabs("student",["Mocks","Parts"]).includes("Mocks"));
 });
+
+test("changing a desk layout does not expose another profile’s tabs or tiles",()=>{assert.equal(deskRole("default","semester-desk"),"student");assert.equal(deskRole("bench","branch-desk"),"engineer");});

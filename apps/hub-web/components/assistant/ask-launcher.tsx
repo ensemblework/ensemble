@@ -110,7 +110,7 @@ export function AskLauncher({ onOpen, title, hidden = false, working = false }: 
 
   const shown = live ?? spot;
   const position = bounds && loaded ? launcherPosition(shown, bounds) : null;
-  if (typeof document === "undefined") return null;
+  if (typeof document === "undefined" || !loaded || !bounds) return null;
   return createPortal(
     <button
       data-assistant-surface

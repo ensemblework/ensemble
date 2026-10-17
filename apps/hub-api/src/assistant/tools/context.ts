@@ -100,7 +100,7 @@ export const contextTools = [
     name: "hub_search_context",
     area: "context",
     description:
-      "Search what Ensemble already keeps: synced mail, chats, calendar events, pull requests and issues, meeting transcripts, and items people attached from their connected apps. Filter by task or project to see what is attached there. Read one result in full with hub_read_context.",
+      "Search messages, events, pull requests, issues, transcripts and files the person already saved or attached in Ensemble. Connecting an app does not import its content. Filter by task or project to see what is attached there. Read one result in full with hub_read_context.",
     input: z.object({
       query: z.string().max(200).default("").describe("Words to find in the title or text. Empty lists the newest."),
       taskId: z.string().uuid().optional(),

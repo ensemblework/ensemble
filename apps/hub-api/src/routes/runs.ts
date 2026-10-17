@@ -226,6 +226,7 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
     if (!claim.created) return { feedback: claim.feedback, jobId: claim.feedback.jobId };
     let jobId: string | null = null;
     if (body.start) {
+      if (!hasModule(request.modules, "workspace")) return reply.code(404).send({ error: MODULE_DENIED });
       if (run.workspaceJob) {
         const refusal = await runnerRefusal(app, run.workspaceJob);
         if (refusal) return reply.code(403).send({ error: refusal });
