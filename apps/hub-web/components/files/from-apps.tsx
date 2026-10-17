@@ -290,7 +290,7 @@ export function FromApps({ item, onItem, onOpenFile }: { item: string | null; on
           </Empty>
         ) : (
           <>
-            <label className="mb-3 flex h-9 min-w-0 items-center gap-2 rounded-lg border border-line bg-panel px-2.5 focus-within:border-accent">
+            <label className="mb-3 flex h-9 min-w-0 items-center gap-2 rounded-lg border border-line bg-panel px-2.5 focus-within:border-line-strong">
               <Search size={14} className="shrink-0 text-muted" aria-hidden />
               <input
                 type="search"

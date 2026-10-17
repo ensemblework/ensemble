@@ -448,7 +448,7 @@ body[data-desk-moving="1"], body[data-desk-moving="1"] * { cursor: grabbing !imp
 .tile-gallery-sidebar { display: flex; flex-direction: column; border-right: 1px solid var(--line); background: var(--bg); height: 570px; }
 .tile-gallery-search { display: flex; gap: 8px; align-items: center; margin: 14px; border: 1px solid var(--line); border-radius: 7px; padding: 8px 10px; color: var(--muted); }
 .tile-gallery-search input { min-width: 0; width: 100%; background: transparent; font-size: 12px; outline: none; color: var(--ink); }
-.tile-gallery-search:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tile-gallery-search:focus-within { border-color: var(--line-strong); }
 .tile-gallery-categories { padding: 0 10px 12px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 2px; }
 .tile-gallery-categories button { font-size: 11px; color: var(--muted); padding: 7px 9px; text-align: left; border-radius: 6px; display: flex; justify-content: space-between; }
 .tile-gallery-categories button[aria-pressed="true"] { background: var(--hover); color: var(--ink); font-weight: 600; }

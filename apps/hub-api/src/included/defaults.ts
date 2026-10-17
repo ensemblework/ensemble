@@ -1,6 +1,6 @@
 import { INCLUDED_PROVIDER, type Settings } from "@ensemble/shared-types";
 import type { Prisma, PrismaClient } from "@prisma/client";
-import { canUseHostCredentials, isHosted } from "../lib/hosted-access.js";
+import { isHosted, operatorEmail } from "../lib/hosted-access.js";
 import { includedConfig } from "./config.js";
 
 type Tier = "easy" | "medium" | "high" | "max";
@@ -8,6 +8,16 @@ const TIERS: Tier[] = ["easy", "medium", "high", "max"];
 
 /** Providers that answer only with a key. Ollama is the operator's own server when hosted. */
 const KEYED = new Set(["google", "openai", "anthropic", "mistral", "kimi", "qwen", "openrouter", "copilot", "ollama"]);
+
+/**
+ * The same answer as canUseHostCredentials, read through `db`: settings are loaded inside the
+ * account's lock transaction, and a query on another connection there could wait on it.
+ */
+async function operator(db: PrismaClient | Prisma.TransactionClient, account: string): Promise<boolean> {
+  const row = await db.user.findUnique({ where: { id: account }, select: { email: true, emailVerifiedAt: true, owner: { select: { email: true, emailVerifiedAt: true } } } });
+  const who = row?.owner ?? row;
+  return Boolean(who?.emailVerifiedAt) && operatorEmail(who!.email);
+}
 
 /**
  * On a hosted server with included models, a tier whose provider has no key this account can use
@@ -27,7 +37,7 @@ export async function withIncludedDefaults(db: PrismaClient | Prisma.Transaction
   const missing = keyed.filter((tier) => !saved.has(settings.models[tier].provider));
   if (!missing.length) return settings;
   let unusable = missing;
-  if (await canUseHostCredentials(account)) {
+  if (await operator(db, account)) {
     const { hasEnvKey } = await import("../runtime/credentials.js");
     unusable = missing.filter((tier) => settings.models[tier].provider !== "ollama" && !hasEnvKey(settings.models[tier].provider));
   }

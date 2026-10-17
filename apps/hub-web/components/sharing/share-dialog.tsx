@@ -118,7 +118,7 @@ export function PersonPicker({ onPick, exclude }: { onPick: (person: SharingPers
   };
   return (
     <div className="relative">
-      <div className="flex items-center gap-2 rounded-lg border border-line-strong bg-bg px-2.5 focus-within:border-accent">
+      <div className="flex items-center gap-2 rounded-lg border border-line-strong bg-bg px-2.5 focus-within:border-line-strong">
         <Search size={14} className="text-faint" />
         <input
           ref={input}
