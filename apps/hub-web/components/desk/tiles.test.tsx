@@ -37,13 +37,13 @@ test("each profile has six distinct, role-relevant designs with static, truthful
   }
 });
 
-test("profile filtering excludes foreign-domain tiles and uses the active desk on a template change", () => {
+test("profile filtering excludes foreign-domain tiles and keeps the account profile on a layout change", () => {
   for (const role of ["engineer", "vibe", "manager"] as const) {
     for (const key of ["hearings", "limitation", "periods", "marking"]) assert.equal(tileFitsRole(key, role), false, `${role}: ${key}`);
   }
   assert.equal(tileFitsRole("reviews", "lawyer"), false);
   assert.equal(tileFitsRole("hearings", "lawyer"), true);
-  assert.equal(deskRole("chambers", "branch-desk"), "lawyer");
+  assert.equal(deskRole("chambers", "branch-desk"), "engineer");
   assert.equal(deskRole("literature", "thesis-year"), "student");
   for (const role of ROLES) for (const key of ["calendar", "progress", "due-week"]) assert.ok(tileFitsRole(key, role.id));
 });

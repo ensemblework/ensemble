@@ -144,7 +144,7 @@ export function AccountSection() {
   return (
     <SectionCard
       title="Account"
-      description={local ? "No-login mode (ENSEMBLE_DEV_AUTH_BYPASS). Create an account to turn sign-in on; your existing data comes with you." : `Signed in as ${me.data.user.email}.`}
+      description={local ? "You’re using Ensemble on this computer." : `Signed in as ${me.data.user.email}.`}
       actions={
         local ? (
           <a className="btn-primary" href="/signup">

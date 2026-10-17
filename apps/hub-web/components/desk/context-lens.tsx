@@ -33,7 +33,7 @@ import { CiteGraph } from "./widgets/research";
 import "./desk.css";
 import { selectedContextTabs, CONTEXT_DESCRIPTIONS, tabKey } from "./context-tabs";
 import { deskRole } from "./tile-catalog";
-import { CustomizeContext, MockServices, mockServices } from "./context-customize";
+import { CustomizeContext, MockServices, mockServices, AssignmentsPanel } from "./context-customize";
 import { useLensTab } from "./lens-tab";
 import { ARTIFACT_KIND_LABEL, artifactLine } from "./artifact-label";
 import { LoadError } from "@/components/load-error";
@@ -273,11 +273,12 @@ export function ContextLens({ deskId, state, initialTab = null, search = "", who
         <div data-lens-panel="graph" data-lens-graph style={{ height: "min(72vh, 720px)" }}><GraphTab contextTabs={tabs} contextNodes={graphExtras} mockServices={tabs.includes("Mocks") ? mocks : []} /></div>
       ) : (
       <div className="bento" data-lens-panel={tabKey(active)}>
+        {active === "Assignments" && role === "student" ? <AssignmentsPanel rows={live.data?.tasks ?? []}/> : null}
         {active === "Mocks" && role === "engineer" ? <MockServices rows={mocks}/> : null}
         {rich && deskId === "chambers" ? <Chambers state={state} /> : null}
         {rich && deskId === "literature" ? <Literature state={state} /> : null}
         {!rich && state === "populated" ? <SamplePanel deskId={deskId} tab={tabKey(active)} /> : null}
-        {!rich && active !== "Mocks" && state !== "populated" ? (
+        {!rich && active !== "Mocks" && active !== "Assignments" && state !== "populated" ? (
           live.isError && !live.data ? (
             <LoadError className="col-span-full" error={live.error} onRetry={() => void live.refetch()} retrying={live.isFetching} what="your context" />
           ) : (

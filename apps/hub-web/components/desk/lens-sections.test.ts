@@ -41,3 +41,8 @@ test("Context defaults are fixed and optional choices stay within each profile",
 });
 
 test("changing a desk layout does not expose another profile’s tabs or tiles",()=>{assert.equal(deskRole("default","semester-desk"),"student");assert.equal(deskRole("bench","branch-desk"),"engineer");});
+
+test("every profile add-on has a data source even with Today extras turned off",()=>{
+ const desk={engineer:"branch",student:"semester",teacher:"classes",lawyer:"chambers",manager:"staff",vibe:"bench"} as const;
+ for(const role of Object.keys(PROFILE_CONTEXT) as Array<keyof typeof PROFILE_CONTEXT>)for(const label of PROFILE_CONTEXT[role].optional){if(label==="Mocks")continue;assert.ok(lensSections(desk[role],tabKey(label),live({present:0,absent:0})).length,`${role}: ${label}`);}
+});

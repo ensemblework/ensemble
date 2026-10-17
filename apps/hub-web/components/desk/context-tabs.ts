@@ -27,7 +27,7 @@ export const CONTEXT_DESCRIPTIONS: Record<string, string> = {
   Parts: "Parts and stock you record for your builds. Add a part from Today.",
   Tests: "Checks and test results you record. Add a test result from Today.",
   Mocks: "Mock services and test doubles for engineering work. Add a service, endpoint or test double below.",
-  Assignments: "Coursework you add as tasks. Add an assignment on your board or in Today.",
+  Assignments: "Coursework you add as tasks. Add an assignment here or keep working on it from your board.",
   Courses: "Courses and their dated work. Add a course or coursework from Today.",
   Reviews: "Review requests you save or add as tasks. Ask Ensemble to find a review, or add one from Today.",
   Deploys: "Deployments you record. Log a deployment from Today to keep track of what shipped.",

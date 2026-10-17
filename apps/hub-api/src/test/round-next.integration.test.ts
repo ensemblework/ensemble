@@ -93,3 +93,9 @@ test("a provider-confirmed stable user identity joins multiple addresses without
  assert.equal(matched,second);assert.equal(await h.prisma.person.count({where:{userId:user.id,deletedAt:null}}),1);
  assert.equal(await upsertPerson(user.id,{email:"mira@work.example",name:"Mira",at:new Date(),evidence:"gmail:contact"},[]),second);
 });
+
+test("Context coursework saves a board assignment and appears in the live Context data",async()=>{
+ const user=await h.asUser();const response=await user.inject({method:"POST",url:"/api/tasks",payload:{title:"Draft the methods chapter",taskType:"assignment",due:"2026-11-01T11:30:00.000Z",owner:"me",status:"todo",sourceKind:"manual"}});assert.equal(response.statusCode,201,response.body);
+ const task=response.json().task;assert.equal(task.taskType,"assignment");
+ const live=(await user.inject({method:"GET",url:"/api/desk/live"})).json();assert.ok(live.tasks.some((row:{id:string;taskType:string})=>row.id===task.id&&row.taskType==="assignment"));
+});
