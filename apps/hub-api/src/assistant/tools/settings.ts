@@ -29,6 +29,9 @@ import { recordUndoInTransaction } from "../../lib/undo.js";
 import { isGuestIn, keysFor } from "../../sharing/context.js";
 import { mirrorSettings } from "../../spaces/store.js";
 import { defineTool, inTransaction, toolOk, ToolBlockedError, type ToolContext } from "../types.js";
+import { effortToSend } from "../../lib/model-meta.js";
+import { sseHub } from "../../lib/sse.js";
+import { assistantRequest } from "../request.js";
 
 type Value = string | number | boolean | null;
 type Changeable = SettingsMapEntry & { key: string; rule: SettingRule };
@@ -246,11 +249,29 @@ export const settingsTools = [
         if (isGuestIn(ctx.userId)) throw new ToolBlockedError("In a space shared with you only its owner can switch features.");
         await setOwnModule(ctx.prisma, ctx.userId, row.feature!, row.after === true);
       }
+      const appearance = Object.fromEntries(settingsRows.filter(row => row.entry.key.startsWith("appearance.")).map(row => [row.entry.key.slice("appearance.".length), row.after]));
+      if (Object.keys(appearance).length) sseHub.publish(ctx.userId, { event: "assistant.acted", data: { keys: ["settings"], appearance } });
       return toolOk(
         `Changed ${rows.map(line).join("; ")}.${undoEntryId ? " Undo in the app bar puts the settings back." : ""}`,
         { changed: rows.map((row) => ({ key: row.entry.key, from: row.before, to: row.after })) },
         { href: rows[0]!.entry.href, ...(undoEntryId ? { undoEntryId } : {}), invalidate: ["settings", "shell"] },
       );
     },
+  }),
+  defineTool({ name: "hub_list_model_choices", area: "context", description: "List the person's available model IDs/providers for settings, including included Ensemble models. Does not reveal keys or invoke a model. Use before hub_choose_model.", input: z.object({ provider: z.string().max(40).optional(), query: z.string().max(100).default("") }), isWrite: false, risk: "low", async run(ctx, input) {
+    const result = await assistantRequest(ctx, "GET", "/api/models");
+    const providers = (result.providers ?? []).filter((row: any) => !input.provider || row.provider === input.provider).map((row: any) => ({ provider: row.provider, models: (row.models ?? []).filter((model: string) => model.toLowerCase().includes(input.query.toLowerCase())).slice(0, 50), error: row.error }));
+    return toolOk("Read available model choices.", { providers, current: ctx.settings.models });
+  } }),
+  defineTool({ name: "hub_choose_model", area: "context", description: "Set a model tier to an exact provider/model from hub_list_model_choices. Uses existing keys or included credits; changes no credentials or permissions. Resets thinking to Automatic unless an effort is supplied. Always waits for Apply.", input: z.object({ tier: z.enum(["easy", "medium", "high", "max"]), provider: z.string().max(40), model: z.string().min(1).max(240), effort: z.string().max(30).default("default") }), isWrite: true, risk: "low", alwaysHold: true, outsideTransaction: true,
+    preview(_ctx, input) { return `Use ${input.provider} / ${input.model} for ${input.tier} (${input.effort}).`; },
+    async run(ctx, input) {
+      const catalog = await assistantRequest(ctx, "GET", "/api/models");
+      const provider = catalog.providers?.find((row: any) => row.provider === input.provider);
+      if (!provider?.models?.includes(input.model)) throw new Error("That model is not available. Read hub_list_model_choices again.");
+      await effortToSend(ctx.userId, input.provider, input.model, input.effort);
+      await assistantRequest(ctx, "PATCH", "/api/settings", { models: { [input.tier]: { provider: input.provider, model: input.model, effort: input.effort } } });
+      return toolOk(`Updated the ${input.tier} model.`, input, { href: "/settings?tab=assistant", invalidate: ["settings", "models"] });
+    }
   }),
 ];

@@ -1,4 +1,5 @@
 "use client";
+import { useAssistantSurface } from "@/lib/assistant-surface";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Plus, Search, GripVertical } from "lucide-react";
@@ -44,6 +45,7 @@ export function BoardInsights({ tasks, initialLayout, editing, onEditingChange, 
   const fallback = !access.guest && initialLayout?.source === "saved" ? initialLayout.document.placements.map((p) => LEGACY[p.type]).filter((id): id is InsightId => Boolean(id)) : DEFAULT_INSIGHTS[role];
   const savedLayout = editable ? prefs.data?.preferences.find((p) => p.key === INSIGHTS_KEY)?.value : null;
   const layout = readInsightLayout(savedLayout, fallback);
+  useAssistantSurface("/board", { kind: "board", tiles: layout.tiles.map(key => ({ key, title: insightTitle(key, role), c: 4, r: 3 })) });
   const cap = layout.wipCap ?? (access.guest ? 3 : initialLayout?.document.config?.wipCap ?? 3);
   const [phone, setPhone] = useState(false);
   useEffect(() => {

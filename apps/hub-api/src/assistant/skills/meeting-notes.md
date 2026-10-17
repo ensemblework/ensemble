@@ -2,7 +2,7 @@
 name: meeting-notes
 title: Meeting notes
 when: find, read, write, edit, recap or delete meeting notes; action items and decisions from a meeting; notes imported from Zoom or other meeting tools
-tools: hub_import_meeting_notes, hub_list_meeting_notes, hub_read_meeting_note, hub_create_meeting_note, hub_update_meeting_note, hub_delete_meeting_note, hub_restore_entity, hub_list_events, hub_list_people, hub_create_tasks, hub_search_context, zoom_list_meetings, zoom_get_meeting_summary, zoom_get_transcript, zoom_list_recordings
+tools: hub_import_meeting_notes, hub_list_meeting_notes, hub_read_meeting_note, hub_create_meeting_note, hub_update_meeting_note, hub_delete_meeting_note, hub_restore_entity, hub_list_events, hub_list_people, hub_create_tasks, hub_search_context, zoom_list_meetings, zoom_get_meeting_summary, zoom_get_transcript, zoom_list_recordings, hub_manage_record
 match: \b(meeting notes?|minutes|transcripts?|standup|stand-up|1:1|one-on-one|sync notes|retro|action items?|decisions?|recap (of|from) (the|my|our|today'?s|yesterday'?s) (meeting|call|sync))\b
 paths: /meetings
 ---
@@ -23,3 +23,5 @@ Write
 Rules
 - Use only what the notes or transcript say. Name owners only when the text does.
 - Writes wait for Apply.
+
+Other record maintenance → hub_manage_record (restore one trashed record, page/task conversion, supported plot/diagram/dataset actions, file tags and internal comments). Use the relevant real ID; it preserves the app's existing access and deletion rules.

@@ -162,3 +162,9 @@ Checked 17 Oct 2026 in local Chrome at 320 px and 390 px viewports with a synthe
 ### Explicit acquisition
 
 Connecting an app or running Sync people adds no file or artifact. Files are saved through an explicit upload, app import/attach/save or requested assistant action. Previously saved artifacts are kept. The Overview invitation says to add a file rather than promising connected content will arrive automatically.
+
+## Assistant edits and exports (18 Oct 2026)
+
+`assistant/tools/file-edits.ts` adds `hub_file_edit_info` and `hub_edit_file`: read the current SHA-256, then change one unique passage in Word/PowerPoint/text/code/CSV, or edit supported spreadsheet cells/rows. Office passage edits preserve the rest of the package and run through the existing bounded worker (`files/office-edit.ts`, `files/extract-worker.ts`). File IDs stay fixed. `PUT /api/documents/:id/content` and cell patches accept `expectedSha256`; `replaceFileBytes` checks it under the existing storage lock and refuses stale writes.
+
+`hub_file_to_page` makes a supported file into a page; PDF/Word require Markdown from the text the assistant read. `hub_export_page_file` writes Word/PDF/Markdown/text into Files or replaces a named file with its current hash. Server export rebuilds formatting rather than using the browser's original-template export. PDF uses jsPDF's standard fonts and refuses characters they cannot render; Word is the alternative. No OCR, image/audio/video understanding or slide redesign is introduced. Every original-file edit/export waits for Apply.

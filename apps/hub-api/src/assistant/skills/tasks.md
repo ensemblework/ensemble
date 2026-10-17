@@ -2,7 +2,7 @@
 name: tasks
 title: Tasks, todos, projects and deliverables
 when: create, change, move, finish, delete or restore tasks, todos, projects and deliverables; what is due or overdue
-tools: hub_list_tasks, hub_get_task, hub_create_tasks, hub_update_task, hub_delete_task, hub_restore_entity, hub_read_task_page, hub_read_page, hub_update_page, hub_list_projects, hub_create_project, hub_list_deliverables, hub_create_deliverable, hub_update_deliverable, hub_complete_deliverable, hub_delete_deliverable, hub_delete_entity, hub_list_due, hub_list_people, hub_list_repos, hub_link_repo, hub_unlink_repo, hub_list_approvals, hub_create_watcher
+tools: hub_list_tasks, hub_get_task, hub_create_tasks, hub_update_task, hub_delete_task, hub_restore_entity, hub_read_task_page, hub_read_page, hub_update_page, hub_list_projects, hub_create_project, hub_list_deliverables, hub_create_deliverable, hub_update_deliverable, hub_complete_deliverable, hub_delete_deliverable, hub_delete_entity, hub_list_due, hub_list_people, hub_list_repos, hub_link_repo, hub_unlink_repo, hub_list_approvals, hub_create_watcher, hub_update_project, hub_run_workflow, hub_manage_record, hub_read_record_details
 match: \b(tasks?|todos?|to-dos?|deliverables?|projects?|board|backlog|kanban|due|overdue|priorit(y|ies)|assign(ed)?|mark(ed)? .{0,30}(done|complete)|move .{0,40} to|in progress|blocked)\b
 paths: /board, /tasks, /projects, /completed, /today
 mentions: task, project, deliverable
@@ -36,3 +36,8 @@ Rules
 Examples
 - "Mark the deck task done and push the budget one to next Monday" → hub_list_tasks query "deck" and query "budget", then two hub_update_task calls (status done; due = next Monday).
 - "Add todos from this page" → read the open page excerpt (or hub_read_page), then one hub_create_tasks with each action item, status proposed.
+
+Create a todo → hub_create_tasks; details go in page. Update → hub_list_tasks then hub_update_task.
+Project properties or links → hub_update_project. Several creates that need one another's IDs → hub_run_workflow; use earlier result references instead of guessing IDs.
+
+Other record maintenance → hub_manage_record (restore one trashed record, page/task conversion, supported plot/diagram/dataset actions, file tags and internal comments). Use the relevant real ID; it preserves the app's existing access and deletion rules.

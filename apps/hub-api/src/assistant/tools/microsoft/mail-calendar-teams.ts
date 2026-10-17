@@ -1,3 +1,5 @@
+import { calendarReceipt } from "../calendar-receipts.js";
+import { CalendarRepeat, outlookRecurrence } from "../calendar-management.js";
 /** Outlook mail (read), Outlook calendar (read, create with invites), Teams chats (read), via Microsoft Graph. */
 import { z } from "zod";
 import { zonedParts } from "../../../lib/clock.js";
@@ -221,6 +223,8 @@ export const outlookCalendarCreateEvent = defineTool({
   app: OUTLOOK_CALENDAR_WRITE,
   description: "Create an Outlook calendar event; with attendees, Outlook emails them invites. Can add a Teams meeting.",
   input: z.object({
+    recurrence: CalendarRepeat.optional(),
+    calendarId: z.string().max(300).optional(),
     title: z.string().trim().min(1).max(300),
     start: When.describe("Local start, YYYY-MM-DDTHH:MM, or YYYY-MM-DD for an all-day event."),
     end: When.optional().describe("Local end (same format). Timed events default to 30 minutes; all-day events to one day (inclusive last day)."),
@@ -239,6 +243,7 @@ export const outlookCalendarCreateEvent = defineTool({
     return [
       `Create event ${quote(input.title)} ${describeSpan(span)} in ${where}${guests}.${pastWarning(span)}`,
       input.teamsMeeting ? "Adds a Microsoft Teams meeting link." : "",
+      input.recurrence ? `Repeats: ${JSON.stringify(input.recurrence)}` : "",
       input.location ? `Location: ${input.location}` : "",
       input.description ? `Description: ${quote(input.description)}` : "",
     ]
@@ -248,10 +253,11 @@ export const outlookCalendarCreateEvent = defineTool({
   async run(ctx, input) {
     const span = eventSpan(input.start, input.end, input.timeZone ?? ctx.settings.timezone);
     const token = await appToken(ctx, OUTLOOK_CALENDAR_WRITE);
-    const created = await appFetch<GraphEvent>(ctx, OUTLOOK_CALENDAR_WRITE, token, `${GRAPH}/me/events`, {
+    const created = await appFetch<GraphEvent>(ctx, OUTLOOK_CALENDAR_WRITE, token, input.calendarId ? `${GRAPH}/me/calendars/${encodeURIComponent(input.calendarId)}/events` : `${GRAPH}/me/events`, {
       method: "POST",
       body: {
         subject: input.title,
+        ...(input.recurrence ? { recurrence: outlookRecurrence(input.recurrence, span.start.date, span.timeZone) } : {}),
         ...(input.description ? { body: { contentType: "text", content: input.description } } : {}),
         start: graphTime(span, "start"),
         end: graphTime(span, "end"),
@@ -261,10 +267,11 @@ export const outlookCalendarCreateEvent = defineTool({
         ...(input.teamsMeeting ? { isOnlineMeeting: true, onlineMeetingProvider: "teamsForBusiness" } : {}),
       },
     });
+    const hubEventId = await calendarReceipt(ctx, "microsoft", { ...created, subject: input.title, start: graphTime(span, "start"), end: graphTime(span, "end"), attendees: input.attendees.map(address => ({ emailAddress: { address } })), body: { content: input.description }, location: input.location ? { displayName: input.location } : undefined });
     return toolOk(
       `Created ${quote(input.title)} ${describeSpan(span)} in the Outlook calendar${input.attendees.length ? `; Outlook sent invites to ${listWords(input.attendees)}` : ""}.`,
-      { id: created.id, link: created.webLink, teamsLink: created.onlineMeeting?.joinUrl ?? null },
-      created.webLink ? { href: created.webLink } : {},
+      { id: created.id, hubEventId, link: created.webLink, teamsLink: created.onlineMeeting?.joinUrl ?? null },
+      { href: created.webLink, invalidate: ["calendar", "desk-live", "context"] },
     );
   },
 });

@@ -15,6 +15,7 @@ import { ensureAppAccess } from "./apps.js";
 import type { AnyHubTool, ToolContext, ToolResult } from "./types.js";
 
 export interface PlannedCall {
+  call?: { callId?: string };
   tool: AnyHubTool;
   input: unknown;
 }
@@ -111,9 +112,10 @@ export async function applyHeldCalls(
       continue;
     }
     try {
-      outcomes[index] = { ok: true, result: await runOutsideWrite(base, item.tool, item.input) };
+      outcomes[index] = { ok: true, result: await runOutsideWrite({ ...base, toolCallId: item.call?.callId ?? base.toolCallId }, item.tool, item.input) };
       landed = true;
     } catch (error) {
+      if ((error as { partial?: boolean })?.partial) landed = true;
       if (!landed) throw error;
       outcomes[index] = { ok: false, error: failure(error), attempted: true };
       stopped = true;

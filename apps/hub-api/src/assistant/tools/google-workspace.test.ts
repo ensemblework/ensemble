@@ -214,7 +214,7 @@ test("calendar_create_event previews exactly what happens, then creates it with 
   assert.equal(body.conferenceData.createRequest.conferenceSolutionKey.type, "hangoutsMeet");
   assert.ok(body.conferenceData.createRequest.requestId);
   assert.equal(result.href, "https://www.google.com/calendar/event?eid=evt1");
-  assert.deepEqual(result.data, { id: "evt1", link: "https://www.google.com/calendar/event?eid=evt1", meetLink: "https://meet.google.com/abc-defg-hij" });
+  assert.deepEqual(result.data, { id: "evt1", hubEventId: null, link: "https://www.google.com/calendar/event?eid=evt1", meetLink: "https://meet.google.com/abc-defg-hij" });
 
   seen = [];
   respond = () => json({ id: "evt2", htmlLink: "https://calendar.google.com/evt2" });

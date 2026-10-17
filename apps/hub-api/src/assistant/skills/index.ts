@@ -113,7 +113,7 @@ export function playbookIndex(playbooks: readonly Playbook[], loaded: readonly P
   const open = new Set(loaded.map((playbook) => playbook.name));
   return [
     "Playbooks: step-by-step know-how for each part of Ensemble. Before multi-step work in an area whose playbook is not loaded below, call hub_how_to with its name; it also gives you that area's tools.",
-    ...playbooks.map((playbook) => `- ${playbook.name}: ${playbook.when}${open.has(playbook.name) ? " (loaded below)" : ""}`),
+    ...playbooks.map((playbook) => `- ${playbook.name}: ${playbook.when.length > 115 ? playbook.when.slice(0, 112) + "…" : playbook.when}${open.has(playbook.name) ? " (loaded below)" : ""}`),
   ].join("\n");
 }
 
@@ -141,48 +141,66 @@ export function routePlaybooks(
   const scored = playbooks
     .map((playbook, order) => {
       let score = 0;
-      if (turn.path && playbook.paths.some((path) => turn.path === path || turn.path!.startsWith(`${path}/`) || turn.path!.startsWith(`${path}?`))) score += 3;
+      if (turn.path && playbook.paths.some((path) => turn.path === path || turn.path!.startsWith(`${path}/`) || turn.path!.startsWith(`${path}?`))) score += 1;
       if (playbook.mentions.some((kind) => kinds.has(kind))) score += 2;
-      score += wordScore(playbook, turn.message);
-      return { playbook, score, order };
+      const intent = wordScore(playbook, turn.message);
+      score += intent;
+      return { playbook, score, order, intent };
     })
     .filter((row) => row.score > 0)
     .sort((a, b) => b.score - a.score || a.order - b.order);
-  return scored.slice(0, MAX_ROUTED).map((row) => row.playbook);
+  const candidates = scored.some(row => row.intent > 0) ? scored.filter(row => row.intent > 0) : scored;
+  return candidates.slice(0, MAX_ROUTED).map((row) => row.playbook);
 }
 
 /** Always advertised, whatever the playbooks: the reads most requests start with, and hub_how_to. */
 export const CORE_TOOLS: readonly string[] = [
   "hub_how_to",
+  "hub_read_surface",
   "hub_list_tasks",
   "hub_get_task",
   "hub_create_tasks",
   "hub_update_task",
-  "hub_list_projects",
-  "hub_list_people",
-  "hub_list_due",
-  "hub_list_events",
-  "hub_search_context",
-  "hub_read_context",
-  "hub_list_files",
-  "hub_read_file",
-  "hub_list_pages",
-  "hub_read_page",
   "hub_find_setting",
   "hub_web_search",
 ];
+
+export function simpleTodoRequest(message: string): boolean {
+  return message.length < 400 && /\b(add|create|make)\b.{0,30}\b(todo|to-do|task)\b/i.test(message) && !/\b(then|workflow|import|attach|new project|new person|calendar|meeting|tile|skill)\b/i.test(message);
+}
+
+/** A common request gets one direct recipe rather than the complete area manual. */
+export function playbookText(playbook: Playbook, message: string): string {
+  if (playbook.name === "tasks" && simpleTodoRequest(message)) return "Create a todo → hub_create_tasks with tasks [{title, page?}]. Use todo when asked, proposed for inferred work. Set due, priority, projectName, labels and people only when stated or clear; list projects/people to resolve names. Detail goes in page, not description. A held write waits for Apply; report it as proposed. Return the created link after Apply.";
+  return playbook.body;
+}
 
 /**
  * The tools a turn shows the model: the core tools and those of the playbooks in play, in the
  * order the caller offered them. `ENSEMBLE_ASSISTANT_TOOLSETS=off` shows them all.
  */
-export function advertisedTools(offered: readonly AnyHubTool[], active: Iterable<Playbook>): AnyHubTool[] {
+export function advertisedTools(offered: readonly AnyHubTool[], active: Iterable<Playbook>, message?: string): AnyHubTool[] {
   if (process.env.ENSEMBLE_ASSISTANT_TOOLSETS === "off") return [...offered];
   const names = new Set(CORE_TOOLS);
   let apps = false;
-  for (const playbook of active) {
+  const playbooks = [...active];
+  const mentionedServers = message ? new Set(offered.flatMap(tool => { const server = /^mcp_([^_]+)_/.exec(tool.name)?.[1]; return server && message.toLowerCase().includes(server) ? [server] : []; })) : new Set<string>();
+  for (const playbook of playbooks) {
     for (const name of playbook.tools) names.add(name);
     apps ||= playbook.appTools;
   }
-  return offered.filter((tool) => names.has(tool.name) || (apps && tool.area === "apps"));
+  if (message && simpleTodoRequest(message) && playbooks.every(book => ["tasks", "recap"].includes(book.name))) {
+    return offered.filter(tool => ["hub_how_to", "hub_create_tasks", "hub_list_tasks", "hub_list_people", "hub_list_projects"].includes(tool.name));
+  }
+  return offered.filter((tool) => {
+    if (names.has(tool.name)) return true;
+    if (!apps || tool.area !== "apps") return false;
+    if (!message) return true;
+    const lower = message.toLowerCase();
+    if (/\b(google|gmail|drive|docs|sheets|slides)\b/.test(lower) && tool.app?.provider === "microsoft") return false;
+    if (/\b(outlook|onedrive|microsoft|word|excel|powerpoint)\b/.test(lower) && tool.app?.provider === "google") return false;
+    const remote = /^mcp_([^_]+)_/.exec(tool.name)?.[1];
+    if (remote && mentionedServers.size && !mentionedServers.has(remote) && !/\b(connected apps|all apps|integration)\b/.test(lower)) return false;
+    return true;
+  });
 }

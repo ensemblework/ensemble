@@ -627,3 +627,11 @@ PostgreSQL follow-up, checked 17 Oct 2026: the page-history/template migration f
 - Skill-mining review, one-time profession changes, unified permissions and further meeting-note improvements are **written designs**, not shipped controls: [design](design/real-world-next.md). Prompt wording was tightened while retaining gates, factual grounding and structured outputs; Settings describes actual prompt usage. Model-output quality still needs real-world evaluation; local tests do not prove model equivalence.
 
 Intel Mac installer packaging uses a directly created, verified APFS image after Tauri builds the app and signed updater archive. This is a packaging repair for the current release; application code, data and release version are unchanged.
+
+## Assistant workspace actions (18 Oct 2026)
+
+Implemented: surface/selection awareness; profile Today, Context and Board overview tile editing; exact block edits; app relationships; whole-board imports from connected accounts or uploaded exports; original Office/text/spreadsheet edits; page exports; personal skills; settings/model changes; record maintenance; and Google/Outlook calendar management, recurrence, RSVP and availability. [34](34_ASSISTANT_ACTIONS.md) lists the exact tools and current boundaries. Native tile layouts use the same preference keys as the visible UI; the alternate widgets view retains its own layout API. Board overview remains four fixed-size tiles.
+
+Dependent writes use `hub_run_workflow`, one Apply and durable step receipts; successful steps are skipped on retry, and uncertain interrupted steps are not replayed automatically. Hub changes retain their normal policy; outside changes, workflows, original-file edits and settings stay explicitly gated. No general email/Teams/Slack sending, arbitrary routines or audiovisual/OCR support was added.
+
+Checked 18 Oct 2026 with isolated HTTP/database tests and mocked vendors. A live GPT-5 mini evaluation applied six fictional workflows successfully; its reported usage included cached input. Real connector/calendar accounts were not exercised. The included-model and 20,000-credit behavior is unchanged.

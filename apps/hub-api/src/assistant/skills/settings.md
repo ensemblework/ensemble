@@ -2,7 +2,7 @@
 name: settings
 title: Settings and finding your way around
 when: where a setting is, how to change something in Ensemble (theme, time zone, notifications, models, features, connections, shortcuts, spaces, sharing), and changing the safe ones
-tools: hub_find_setting, hub_get_settings, hub_update_settings
+tools: hub_find_setting, hub_get_settings, hub_update_settings, hub_list_model_choices, hub_choose_model
 match: \b(settings?|preferences?|configure|config|turn (on|off)|enable|disable|switch (on|off)|dark mode|light mode|theme|time ?zone|working hours|quiet hours|notifications?|models?|api keys?|shortcuts?|password|sign ?in|account|features?|modules?|where (is|do i|can i)|how do i (change|set|find))\b
 paths: /settings
 ---
@@ -17,5 +17,8 @@ Notes
 - Connecting an app: [Settings → Connections](/settings?tab=connections) → pick the app → Connect → approve in the app's window. Turning on a product (Gmail, Drive, Calendar) is a switch on the same card.
 - Spaces: the switcher at the top of the sidebar; manage them at [Spaces](/spaces).
 - Keyboard shortcuts: press `?` anywhere, or [Settings → Shortcuts](/settings?tab=shortcuts).
-- Theme (light or dark), font, text size and motion are kept by each browser, so you cannot change them: point to the account menu's theme switch or Settings → Appearance.
+- Appearance settings can be changed with hub_update_settings; the active browser applies approved changes.
 - Optional features (diagrams, plots, skills, code…) are switched in Settings → Features (key features.<module>, this space only); the playbooks for a feature that is off are not available.
+
+Change theme, font, text size, reduced motion, palette, quiet hours, notification preferences or a feature → hub_find_setting, then hub_update_settings with the exact key/value. Appearance changes reach the active browser after Apply.
+Change a model → hub_list_model_choices with the name/query; then hub_choose_model with an exact provider/model and tier. Included models use the person's Ensemble credits. Keys and account permissions remain in the person's Settings controls.

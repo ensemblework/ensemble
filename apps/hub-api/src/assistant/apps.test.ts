@@ -157,10 +157,10 @@ test("the prompt describes the situation, the person and the connected apps inst
     timezone: "Asia/Kolkata",
   });
   assert.match(prompt, /^This conversation is inside Ensemble, where Mira keeps their tasks/);
-  assert.match(prompt, /When Mira asks for something in the workspace and a tool can do it, call the tool in this turn\./);
+  assert.match(prompt, /For a workspace action, call its tool now\./);
   assert.match(prompt, /Mira works as a lawyer; they usually want a clause summarised/);
   assert.match(prompt, /Connected apps:/);
-  for (const rule of [/Never invent a person, project, repo, skill or task id/, /Choices:/, /press Apply to create it/, /YYYY-MM-DD/, /Never invent a citation or a source/, /follow the diagrams playbook/]) assert.match(prompt, rule);
+  for (const rule of [/Use real IDs from results or the open item/, /Choices:/, /proposal until Apply/, /YYYY-MM-DD/, /Cite actual source links/, /follow the diagrams playbook/]) assert.match(prompt, rule);
   assert.doesNotMatch(prompt, /Act as:|You are Ensemble|This preset changes tone/);
 
   assert.equal(personaFor("general", "vibe"), "engineer");

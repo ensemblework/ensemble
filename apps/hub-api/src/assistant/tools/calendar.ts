@@ -1,3 +1,4 @@
+import { isGuestIn } from "../../sharing/context.js";
 /**
  * The calendar Ensemble keeps (events synced from every connected Google and Outlook calendar,
  * the same rows as GET /api/calendar) and the weekly recap (GET /api/recap/week), for the
@@ -65,6 +66,7 @@ export const calendarTools = [
     isWrite: false,
     risk: "low",
     async run(ctx, input) {
+      if (isGuestIn(ctx.userId)) throw new Error("The space owner’s calendar is private. Open a space you own to use your calendar.");
       const timeZone = ctx.settings.timezone;
       const range = dayRange(timeZone, input.from, input.to, 7);
       if (range.end.getTime() - range.start.getTime() > (MAX_DAYS + 1) * 86_400_000) throw badInput(`Ask for at most ${MAX_DAYS} days at a time.`);

@@ -8,7 +8,13 @@ import { setCredentialResolverForTests, type Credential } from "./credentials.js
 import { ProviderError } from "./errors.js";
 import { catalog, clearCatalogCache, completeText, completeWithTools, setRuntimeFetchForTests, streamWithTools } from "./models.js";
 import { resetBuckets, setRuntimeSleepForTests } from "./pace.js";
-import { apiFor, cleanItems, forgetLearnedForTests, otherEndpoint } from "./responses-api.js";
+import { apiFor, cleanItems, forgetLearnedForTests, otherEndpoint, toolsFor } from "./responses-api.js";
+
+test("optional function inputs stay optional on Responses", () => {
+  const tools = toolsFor([{ type: "function", function: { name: "create", parameters: { type: "object", properties: { title: { type: "string" }, project: { type: "string" } }, required: ["title"] } } }]);
+  assert.equal(tools[0]!.strict, false);
+  assert.deepEqual((tools[0]!.parameters as Record<string, unknown>).required, ["title"]);
+});
 
 const REFUSAL = { error: { message: 'model "gpt-5.4-mini" is not accessible via the /chat/completions endpoint', code: "model_not_supported", type: "invalid_request_error" } };
 const RESPONSE = {
@@ -62,6 +68,7 @@ function install(): Call[] {
 const endpoints = (calls: Call[]) => calls.map((call) => call.url.split("/").pop());
 
 test.beforeEach(() => {
+  process.env.NODE_ENV = "test";
   process.env.ENSEMBLE_INPROCESS_RUNTIME = "1";
   resetBuckets();
   clearCatalogCache();

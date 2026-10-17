@@ -20,6 +20,17 @@ import { syncFileText } from "../files/visibility.js";
 import { tidyUndoLabel } from "./undo-label.js";
 
 export type UndoModel =
+  | "partRow"
+  | "testResult"
+  | "objective"
+  | "gradingRow"
+  | "citationLink"
+  | "deployEvent"
+  | "courtHoliday"
+  | "timetableSlot"
+  | "attendanceMark"
+
+  | "widgetLayout"
   | "task"
   | "taskPage"
   | "project"
@@ -56,8 +67,20 @@ export type UndoPatch = {
 
 const DATE_TAG = "$date";
 const SKIP = new Set(["updatedAt", "createdAt", "id", "userId"]);
+const STAMPED_MODELS = new Set(Prisma.dmmf.datamodel.models.filter(model => model.fields.some(field => field.name === "updatedAt")).map(model => model.name[0]!.toLowerCase() + model.name.slice(1)));
 
 const JSON_NULLABLE: Record<UndoModel, readonly string[]> = {
+  partRow: [],
+  testResult: [],
+  objective: [],
+  gradingRow: [],
+  citationLink: [],
+  deployEvent: [],
+  courtHoliday: [],
+  timetableSlot: [],
+  attendanceMark: [],
+
+  widgetLayout: [],
   task: ["blockedQuestion"],
   taskPage: ["content"],
   project: [],
@@ -76,6 +99,17 @@ const JSON_NULLABLE: Record<UndoModel, readonly string[]> = {
 };
 
 const DELEGATE: Record<UndoModel, string> = {
+  partRow: "partRow",
+  testResult: "testResult",
+  objective: "objective",
+  gradingRow: "gradingRow",
+  citationLink: "citationLink",
+  deployEvent: "deployEvent",
+  courtHoliday: "courtHoliday",
+  timetableSlot: "timetableSlot",
+  attendanceMark: "attendanceMark",
+
+  widgetLayout: "widgetLayout",
   task: "task",
   taskPage: "taskPage",
   project: "project",
@@ -396,7 +430,7 @@ async function applyPatch(db: Db, userId: string, patch: UndoPatch, direction: "
   for (const [key, pair] of Object.entries(patch.fields)) {
     data[key] = direction === "undo" ? pair.before : pair.after;
   }
-  data.updatedAt = now;
+  if (STAMPED_MODELS.has(DELEGATE[patch.model])) data.updatedAt = now;
   const decoded = decodeSnapshot(patch.model, data);
   // Content put back is a new revision, so open editors and live pages see it changed.
   if (patch.model === "taskPage" && "content" in patch.fields) decoded.revision = { increment: 1 };
@@ -502,6 +536,11 @@ async function runEntry(db: PrismaClient, userId: string, entryId: string | unde
     throw new UndoConflict(entry.label);
   }
   await flipStoredCalls(db, userId, entry.id, direction);
+  for (const patch of patches.filter(item => item.model === "preference" && item.fields.value)) {
+    const row = await db.preference.findFirst({ where: { id: patch.id, key: "hub.settings" }, select: { value: true } });
+    const parsed = row ? Settings.safeParse(row.value) : null;
+    if (parsed?.success) sseHub.publish(userId, { event: "assistant.acted", data: { keys: ["settings"], appearance: parsed.data.appearance } });
+  }
   await appendLedger({ userId, actor: entry.actor, action: direction, payload: { id: entry.id, label: entry.label } });
   const state = await undoState(db, userId);
   sseHub.publish(userId, {

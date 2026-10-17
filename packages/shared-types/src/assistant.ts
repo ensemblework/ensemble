@@ -27,6 +27,15 @@ export const AssistantPageContext = z.object({
   taskId: z.string().optional(),
   projectId: z.string().optional(),
   meetingId: z.string().max(64).optional(),
+  selection: z.string().max(2000).optional(),
+  surface: z.object({
+    kind: z.enum(["desk", "board", "context", "widgets"]),
+    tab: z.string().max(40).optional(),
+    filters: z.record(z.union([z.string().max(200), z.number(), z.boolean(), z.null()])).optional(),
+    selectedIds: z.array(z.string().uuid()).max(100).optional(),
+    visibleIds: z.array(z.string().uuid()).max(100).optional(),
+    tiles: z.array(z.object({ key: z.string().max(100), title: z.string().max(200).optional(), c: z.number().int().min(1).max(12), r: z.number().int().min(1).max(8) })).max(100).optional(),
+  }).optional(),
 });
 export type AssistantPageContext = z.infer<typeof AssistantPageContext>;
 

@@ -2,7 +2,7 @@
 name: diagrams
 title: Diagrams and flowcharts
 when: block diagrams, flowcharts, architectures, pipelines, org charts and decision trees, from a page, task, project or repository, or of a well-known system (a transformer, OAuth, TCP)
-tools: hub_list_diagrams, hub_get_diagram, hub_validate_diagram, hub_create_diagram, hub_update_diagram, hub_edit_diagram, hub_explain_diagram, hub_diagram_context, hub_repo_overview, hub_repo_read_file, hub_list_repos, hub_read_page, hub_read_task_page, hub_list_pages
+tools: hub_list_diagrams, hub_get_diagram, hub_validate_diagram, hub_create_diagram, hub_update_diagram, hub_edit_diagram, hub_explain_diagram, hub_diagram_context, hub_repo_overview, hub_repo_read_file, hub_list_repos, hub_read_page, hub_read_task_page, hub_list_pages, hub_manage_record, hub_read_record_details
 module: diagrams
 include: block-diagrams
 match: \b(diagrams?|flow ?charts?|flow diagram|architecture|block diagram|sequence diagram|pipeline|org chart|decision tree|mind ?map|state machine|draw|visuali[sz]e (the|this|how)|how .{0,40} fits together)\b
@@ -108,3 +108,5 @@ edge back --> start : "resubmit"
 Changing a diagram: hub_get_diagram, then hub_edit_diagram with small ops (keeps ids and layout); hub_update_diagram only to replace the text. Explaining one: hub_explain_diagram.
 
 The full language and drawing rules follow.
+
+Other record maintenance → hub_manage_record (restore one trashed record, page/task conversion, supported plot/diagram/dataset actions, file tags and internal comments). Use the relevant real ID; it preserves the app's existing access and deletion rules.

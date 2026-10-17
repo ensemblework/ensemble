@@ -105,7 +105,8 @@ test("the system prompt names the open space, carries the map and the playbook i
   assert.match(prompt, /Map of Ensemble/);
   assert.match(prompt, /- recap: .*\(loaded below\)/);
   assert.match(prompt, /- diagrams: /);
-  assert.match(prompt, /## Playbook: Weekly recap\nsteps$/);
+  assert.match(prompt, /## Playbook: Weekly recap\nsteps/);
+  assert.ok(prompt.indexOf("## Playbook: Weekly recap") < prompt.indexOf("What is in the workspace right now:"), "stable playbook precedes live state for prefix caching");
 });
 
 // A whole turn with a scripted model --------------------------------------------------

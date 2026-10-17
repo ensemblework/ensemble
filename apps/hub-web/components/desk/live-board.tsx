@@ -1,4 +1,5 @@
 "use client";
+import { useAssistantSurface } from "@/lib/assistant-surface";
 
 import { ProposalsWidget } from "../today/proposals-widget";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -703,6 +704,7 @@ export function LiveBoard({ deskId, live, mobile, plots, formKind = null }: { de
     specs.splice(Math.min(1, specs.length), 0, proposals);
   }
   const tiles = useTileControls({ shown: specs, hidden: layout.hidden, save: layout.save, customized: layout.customized, mobile, restoreHint: "Add it back from Add a tile." });
+  useAssistantSurface("/today", { kind: "desk", tiles: specs.map(spec => ({ key: spec.key, title: spec.title, c: spec.c, r: spec.r })) });
 
   useEffect(() => {
     const kind = formKind;

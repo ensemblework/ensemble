@@ -327,3 +327,7 @@ Sign-in and AI provider/model marks share `components/connectors/provider-logo.t
 ## Contact sync and explicit saves
 
 Generic manual sync now saves real contact metadata only (`connectors/people-sync.ts`); it does not invoke item adapters, download files or create artifacts/proposals. Existing explicit search, preview, Attach, import and refresh actions keep their current behavior and permissions. Search matches are transient until the person chooses a save/import/attach. Metadata rules filter automated senders before storage, without a model.
+
+## Relationships from the assistant (18 Oct 2026)
+
+`hub_list_app_relationships` and `hub_manage_app_relationship` in `assistant/tools/relationships.ts` now expose the same Attach, Remove, Refresh, Add as task, Add people, project source-link and explicit People merge operations as the app. They use the original authenticated request to call the existing scoped routes, retaining their permissions, verification, limits and deduplication. Changes wait for Apply. `hub_run_workflow` can link newly created records using earlier results. This adds no general email or chat-sending tools. Full action map: [34](34_ASSISTANT_ACTIONS.md).

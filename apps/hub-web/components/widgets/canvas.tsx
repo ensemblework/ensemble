@@ -1,4 +1,5 @@
 "use client";
+import { useAssistantSurface } from "@/lib/assistant-surface";
 
 import dynamic from "next/dynamic";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -61,6 +62,7 @@ export function WidgetCanvas({
   });
   const document = (layout.data?.document ?? null) as LayoutDocument | null;
   const placements = document?.placements ?? [];
+  useAssistantSurface(`/${surface}`, { kind: "widgets" });
   const cuesOn = placements.some((row) => row.type === "meeting-cues");
   const nudgesOn = placements.some((row) => row.type === "stale-nudges");
   const cues = useQuery({

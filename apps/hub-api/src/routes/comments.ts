@@ -3,6 +3,7 @@
  * Humans cannot reply to a comment. The only nested row is Ensemble.
  */
 import { z } from "zod";
+import { assistantHeaders } from "../assistant/request.js";
 import type { Prisma } from "@prisma/client";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { ownsOpenSpace } from "../lib/auth.js";
@@ -311,6 +312,7 @@ export async function commentRoutes(app: FastifyInstance): Promise<void> {
     let lastFlush = 0;
     try {
       const result = await runAssistantTurn({
+        requestHeaders: assistantHeaders(request),
         app,
         userId: request.userId,
         modules: request.modules,

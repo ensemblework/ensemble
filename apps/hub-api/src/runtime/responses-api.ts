@@ -146,6 +146,7 @@ export function toolsFor(tools: Json[] | null | undefined): Json[] {
     out.push({
       type: "function",
       name: String(source.name ?? ""),
+      strict: false,
       ...(source.description ? { description: source.description } : {}),
       parameters: source.parameters ?? { type: "object", properties: {} },
     });

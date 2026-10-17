@@ -39,6 +39,7 @@ Keeping these files current is part of every change. See [`AGENTS.md`](../AGENTS
 | 27 | [Imports](27_IMPORTS.md) | Import from Notion, Linear, Jira, Trello, Asana, Todoist, ClickUp, monday.com, GitHub and spreadsheets; re-runs and undo |
 | 31 | [Connectors in use](31_CONNECTORS_IN_USE.md) | What Ensemble does with each connected app (attach, add as task, post updates, people, repositories for agents, the assistant's tools), how other AI apps use connectors, every connector and how it connects |
 | 32 | [Files](32_FILES.md) | Upload or import almost any file, preview it, edit spreadsheets, turn PDF/Word/text/code into pages and export back, attach files in pages, limits, and how agents and MCP read them |
+| 34 | [Assistant actions](34_ASSISTANT_ACTIONS.md) | Current action map, view awareness, tile systems, dependent workflows and small-model validation |
 | 33 | [Included AI and Ensemble credits](33_INCLUDED_AI.md) | Four Azure-hosted models the operator pays for, monthly Ensemble credits per account, the operator's monthly ceiling, how each call is reserved and settled, what people see |
 | — | [Context Bridge setup](CONTEXT_BRIDGE.md) | What the bridge runs, and editor config |
 | — | [Demo data](DEMO_DATA.md) | The Branch desk demo and `pnpm seed:demo` |

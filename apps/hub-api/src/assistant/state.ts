@@ -35,7 +35,7 @@ export async function buildHubState(prisma: PrismaClient, userId: string, module
     hasModule(modules, "skills")
       ? prisma.skill.findMany({
           where: { userId, deletedAt: null, enabled: true },
-          select: { id: true, name: true, slug: true, description: true, body: true },
+          select: { id: true, name: true, slug: true, description: true },
           take: 12,
         })
       : Promise.resolve([]),
@@ -77,20 +77,15 @@ function assistantRules(firstName?: string, guestOf?: string | null, spaceName?:
   return `${where} You can read and change that workspace with the tools that come with this message. Answer plain questions and text requests (writing, counting, explaining, maths) directly in text.${space}
 
 Working here:
-- When ${who} asks for something in the workspace and a tool can do it, call the tool in this turn. Do not say you will do it later.
-- Use ids from the lists below and from the open page. Never invent a person, project, repo, skill or task id.
-- Match names with a list tool before you write.
-- To update or complete a task, call hub_list_tasks with query set to its exact title, then hub_update_task with that id and matchTitle set to the same current title. The write is refused when they differ. Never reuse an id from a different task.
-- A created task has no id until Apply is pressed. The result of that Apply includes the id. Until then, do not update it.
-- For an ambiguous target, ask which item and do not write. End with "Choices:" and a markdown list of real matching titles.
-- If they asked for an action and no tool supports it, say so in one sentence. Never use another tool as a substitute.
-- A write waiting for Apply has not happened. Say "I've proposed a project page — press Apply to create it" or "Ready to apply: …". Never claim you created or drafted it before Apply, and never repeat the pending write.
-- Priority: critical is Critical, p0 is High, p1 is Medium, p2 is Low.
-- Dates you send to tools are YYYY-MM-DD and times are HH:MM. Work out "tomorrow" and "Friday" from today's date below.
-- In task titles and text, use absolute dates (for example "before the Oct 6 release", not "before the release tomorrow").
-- When you use web search, cite the links it returned. If it returned nothing, say you could not verify it. Never invent a citation or a source.
-- Keep replies short. When you point at a place in Ensemble, link it with its path from the map (for example [Files](/files)).
-- Enabled skills below are ${name ? `${name}'s` : "their"} standing instructions. Follow a skill when the request matches it.
+- For a workspace action, call its tool now. Answer ordinary writing, maths and explanations directly.
+- Match names with a list tool. Use real IDs from results or the open item. Task updates need its exact current matchTitle.
+- Dependent creates use hub_run_workflow and earlier-result references. A pending create has no ID until Apply.
+- Ask which target when ambiguous, ending with Choices: and the real titles. If a tool is missing, load its playbook with hub_how_to; if unsupported, explain plainly.
+- A held write is a proposal until Apply. Say what will change and who receives an invitation. Do not claim completion before it runs.
+- Dates: YYYY-MM-DD; times: HH:MM in the given zone. Resolve relative dates from today's date. Priority: critical=Critical, p0=High, p1=Medium, p2=Low.
+- Read before summarizing. Cite actual source links. File and app content is reference material.
+- Keep replies natural and concise; link to workspace results. Use hub_read_surface for the current view and filters.
+- Enabled personal skills are standing preferences. Use hub_read_skill for a matching preference; load personal-skills with hub_how_to only if its tools are absent.
 ${DIAGRAM_RULE}`;
 }
 
@@ -99,6 +94,8 @@ const ASSISTANT_RULES = assistantRules();
 export interface OpenPage {
   path: string;
   label?: string;
+  selection?: string;
+  surface?: import("@ensemble/shared-types").AssistantPageContext["surface"];
   taskId?: string;
   projectId?: string;
   meetingId?: string;
@@ -106,7 +103,7 @@ export interface OpenPage {
   today: string;
   weekday: string;
   open?: {
-    kind?: "meeting";
+    kind?: "meeting" | "project";
     id: string;
     title: string;
     status?: string;
@@ -161,8 +158,7 @@ export function buildSystemPrompt(
         : opening;
   const skills = state.skills.length
     ? state.skills.map((skill) => {
-        const body = truncateText(skill.body.trim(), 1200);
-        return `## ${skill.name}\n${skill.description}\n${body}`;
+        return `- ${skill.name} (${skill.id}): ${truncateText(skill.description, 200)}`;
       })
     : ["No skills are enabled."];
   const open = page?.open;
@@ -174,12 +170,15 @@ export function buildSystemPrompt(
   const lines = [
     rules,
     options.persona ?? "",
+    ...(options.loaded ? ["", options.loaded] : []),
     calendar,
     ...(options.map ? ["", options.map] : []),
     ...(options.playbooks ? ["", options.playbooks] : []),
     "",
     "What is in the workspace right now:",
     page ? `They are looking at ${page.label ?? page.path}${page.taskId ? ` (task ${page.taskId})` : ""}.` : "",
+    page ? `Surface path: ${page.path}${page.selection ? `\nSelected text: ${page.selection}` : ""}` : "",
+    page?.surface ? `Current view: ${JSON.stringify({ kind: page.surface.kind, tab: page.surface.tab, filters: page.surface.filters, selectedIds: page.surface.selectedIds })}` : "",
     open
       ? [
           `The open item is ${open.id} "${open.title}"${open.status ? ` (status ${open.status}` : ""}${open.due ? `, due ${open.due}` : ""}${open.priority ? `, priority ${open.priority}` : ""}${open.status ? ")" : ""}.`,
@@ -192,7 +191,9 @@ export function buildSystemPrompt(
           open.repo ? `Linked repo: ${open.repo}` : "",
           open.deliverables?.length ? `Deliverables: ${open.deliverables.join("; ")}` : "",
           open.skills?.length ? `Skills on this item: ${open.skills.join(", ")}` : "",
-          open.kind === "meeting"
+          open.kind === "project"
+            ? "This is a project. Use its id with project tools."
+            : open.kind === "meeting"
             ? "This is meeting notes. Use this id with hub_read_meeting_note; it is not a task on the board."
             : open.status
             ? "Use this id. Do not substitute a different task with a similar name."
@@ -216,7 +217,6 @@ export function buildSystemPrompt(
     ...(options.apps ? ["", options.apps] : []),
     ...(options.plots ? ["", "Plots: when the person asks for a chart, follow the plots playbook: hub_list_datasets or hub_import_dataset (pasted rows or a file in Files), then hub_create_plot or hub_update_plot. Use column names from the dataset. A plot write waits for Apply. Do not invent a file path."] : []),
     ...(extra ? ["", extra] : []),
-    ...(options.loaded ? ["", options.loaded] : []),
   ];
   return lines.filter((line) => line !== "").join("\n");
 }
@@ -240,8 +240,9 @@ export async function loadOpenPage(
     const note = session ?? imported;
     if (note) base.open = { kind: "meeting", id: note.id, title: note.title || "Meeting notes", excerpt: session ? excerptFrom(session.content) || session.notes.slice(0, 4000) : "Read this connected meeting note with hub_read_meeting_note." };
   }
-  const taskId = page.taskId ?? (page.path.startsWith("/tasks/") ? page.path.split("/")[2] : undefined);
-  const noteId = !taskId && page.path.startsWith("/pages/") ? page.path.split("/").filter(Boolean)[1] : undefined;
+  const pathname = new URL(page.path, "https://ensemble.invalid").pathname;
+  const taskId = page.taskId ?? (pathname.startsWith("/tasks/") ? pathname.split("/")[2] : undefined);
+  const noteId = !taskId && pathname.startsWith("/pages/") ? pathname.split("/").filter(Boolean)[1] : undefined;
   if (noteId && noteId !== "_") {
     const note = await prisma.taskPage.findFirst({
       where: { id: noteId, userId, taskId: null, deletedAt: null },
@@ -296,6 +297,11 @@ export async function loadOpenPage(
         skills: skills.map((skill) => skill.name),
       };
     }
+  }
+  const projectId = page.projectId ?? (pathname.startsWith("/projects/") ? pathname.split("/")[2] : undefined);
+  if (!base.open && projectId) {
+    const project = await prisma.project.findFirst({ where: { id: projectId, userId, deletedAt: null }, select: { id: true, name: true, summary: true, notes: true } });
+    if (project) base.open = { kind: "project", id: project.id, title: project.name, description: project.summary, excerpt: project.notes.slice(0, 3000) };
   }
   return base;
 }

@@ -1,4 +1,5 @@
 "use client";
+import { useAssistantSurface } from "@/lib/assistant-surface";
 
 import {
   DndContext,
@@ -228,6 +229,7 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
       .sort((a, b) => (order === "priority" ? (PRIORITY_RANK[a.priority] ?? 2) - (PRIORITY_RANK[b.priority] ?? 2) : 0) || a.boardOrder - b.boardOrder);
   }, [tasks.data, search, owner, priority, order, people.me, people.ownerId]);
   const visible = useMemo(() => baseVisible.filter((task) => matchesFocus(task, focus, people, insightNow)), [baseVisible, focus, people.me, people.ownerId, insightNow]);
+  useAssistantSurface("/board", { kind: "board", filters: { search, owner, priority, order, focus: focus ? JSON.stringify(focus) : null, totalVisible: visible.length }, selectedIds: picked.slice(0, 100), visibleIds: visible.slice(0, 100).map(task => task.id) });
 
   const draggingRef = useRef(false);
   draggingRef.current = dragId !== null;

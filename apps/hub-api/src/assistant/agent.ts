@@ -47,7 +47,7 @@ import { statusFor } from "./status-line.js";
 import { toolAllowedFor, chatToolSpecs, responsesToolSpecs } from "./registry.js";
 import { appsPrompt, ensureAppAccess, loadAppGrants, toolsForTurn, writeRefusal } from "./apps.js";
 import { diagramGuidance } from "./diagram-skill.js";
-import { advertisedTools, appMap, findPlaybook, playbookIndex, playbooksFor, routePlaybooks, type Playbook } from "./skills/index.js";
+import { advertisedTools, playbookText, appMap, findPlaybook, playbookIndex, playbooksFor, routePlaybooks, type Playbook } from "./skills/index.js";
 import { hasModule, isSubscriptionProvider } from "@ensemble/shared-types";
 import type { ToolAnswer } from "../subscriptions/bridge.js";
 import { agentConversation, runSubscriptionTurn, USE_TOOL } from "../subscriptions/turn.js";
@@ -112,6 +112,7 @@ export async function stopRequested(
 }
 
 export interface AssistantTurnArgs {
+  requestHeaders?: Record<string, string>;
   app: FastifyInstance;
   userId: string;
   conversationId: string;
@@ -229,7 +230,7 @@ async function drive(
   const active = new Map<string, Playbook>(
     routePlaybooks({ message: args.message, path: openPage?.path ?? args.page?.path, mentions: args.mentions }, playbooks).map((playbook) => [playbook.name, playbook]),
   );
-  const shown = () => (args.code ? tools : advertisedTools(tools, active.values()));
+  const shown = () => (args.code ? tools : advertisedTools(tools, active.values(), args.message));
   const persona =
     args.preamble !== undefined && args.actAs === undefined
       ? undefined
@@ -249,7 +250,7 @@ async function drive(
       : {
           map: appMap() || undefined,
           playbooks: playbookIndex(playbooks, [...active.values()]),
-          loaded: [...active.values()].map((playbook) => `## Playbook: ${playbook.title}\n${playbook.body}`).join("\n\n") || undefined,
+          loaded: [...active.values()].map((playbook) => `## Playbook: ${playbook.title}\n${playbookText(playbook, args.message)}`).join("\n\n") || undefined,
         }),
   });
   const history = await priorTurns(app, args.conversationId, args.messageId);
@@ -695,7 +696,7 @@ async function runOne(
   }
 
   try {
-        const result = await tool.run(ctx, input as never);
+        const result = await tool.run({ ...ctx, toolCallId: requested.id }, input as never);
     const summary = withPastScheduleWarning(result.summary, input, ctx.settings.timezone);
     const forModel = { ok: true, summary, ...trim(result.data) };
     const call: AssistantToolCall = {
@@ -825,6 +826,7 @@ function toolContext(args: AssistantTurnArgs): ToolContext {
     actor: "agent",
     conversationId: args.conversationId,
     page: args.page,
+    requestHeaders: args.requestHeaders,
     settings: args.settings,
     modules: args.modules,
     ...(args.code ? { code: args.code } : {}),

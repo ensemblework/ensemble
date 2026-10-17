@@ -38,9 +38,28 @@ import { activityTools } from "./tools/activity.js";
 import { settingsTools } from "./tools/settings.js";
 import { workspaceTools } from "./tools/workspace.js";
 import { howToTools } from "./tools/howto.js";
+import { layoutTools } from "./tools/layouts.js";
+import { pageEditTools } from "./tools/page-edits.js";
+import { relationshipTools } from "./tools/relationships.js";
+import { boardImportTools } from "./tools/board-imports.js";
+import { workflowTools } from "./tools/workflows.js";
+import { calendarManagementTools } from "./tools/calendar-management.js";
+import { fileEditTools } from "./tools/file-edits.js";
+import { recordTools } from "./tools/records.js";
+import { surfaceTools } from "./tools/surfaces.js";
+import { recordActionTools } from "./tools/record-actions.js";
 
 const ALL: readonly AnyHubTool[] = [
   ...howToTools,
+  ...layoutTools,
+  ...pageEditTools,
+  ...relationshipTools,
+  ...boardImportTools,
+  ...workflowTools,
+  ...fileEditTools,
+  ...recordTools,
+  ...surfaceTools,
+  ...recordActionTools,
   ...taskTools,
   ...projectTools,
   ...contextTools,
@@ -71,7 +90,7 @@ export const TOOLS: ReadonlyMap<string, AnyHubTool> = new Map(ALL.map((tool) => 
  * apps.ts offers them per person, by connection and product, and Apply finds
  * them through apps.resolveTool.
  */
-export const APP_TOOL_LIST: readonly AnyHubTool[] = [...googleWorkspaceTools, ...microsoft365Tools, ...zoomTools, ...docusignTools, ...jiraTools];
+export const APP_TOOL_LIST: readonly AnyHubTool[] = [...googleWorkspaceTools, ...microsoft365Tools, ...zoomTools, ...docusignTools, ...jiraTools, ...calendarManagementTools];
 
 /** Names, for tests that assert the catalog has not silently shrunk. */
 export const TOOL_NAMES: readonly string[] = ALL.map((tool) => tool.name);
@@ -161,6 +180,7 @@ export const responsesToolSpecs = (tools: readonly AnyHubTool[]): Array<Record<s
   tools.map((tool) => ({
     type: "function",
     name: tool.name,
+    strict: false,
     description: tool.description,
     parameters: parameters(tool),
   }));

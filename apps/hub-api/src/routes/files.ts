@@ -43,6 +43,7 @@ const Upload = z.object({
 });
 
 const Replace = z.object({
+  expectedSha256: z.string().length(64).optional(),
   dataBase64: z.string(),
   filename: z.string().max(1000).optional(),
   mediaType: z.string().max(255).optional(),
@@ -51,6 +52,7 @@ const Replace = z.object({
 const CellValue = z.union([z.string().max(32_767), z.number().finite(), z.boolean(), z.null()]);
 
 const Patch = z.object({
+  expectedSha256: z.string().length(64).optional(),
   sheets: z
     .array(
       z.object({
@@ -212,7 +214,7 @@ export async function fileRoutes(app: FastifyInstance): Promise<void> {
       const kind = fileTypeProblem(body.filename);
       if (kind) throw new FileError(kind, 415);
     }
-    const file = await replaceFileBytes(prisma, request.userId, id, { bytes: decode(body.dataBase64), filename: body.filename, mediaType: body.mediaType });
+    const file = await replaceFileBytes(prisma, request.userId, id, { bytes: decode(body.dataBase64), filename: body.filename, mediaType: body.mediaType, expectedSha256: body.expectedSha256 });
     if (!file) return notFound(reply);
     return { file };
   });
@@ -232,7 +234,7 @@ export async function fileRoutes(app: FastifyInstance): Promise<void> {
     }
     const current = await prisma.document.findFirstOrThrow({ where: owned(id, request.userId), select: { original: true } });
     const bytes = await patchWorkbook(current.original, patch);
-    const file = await replaceFileBytes(prisma, request.userId, id, { bytes }, "document.cells");
+    const file = await replaceFileBytes(prisma, request.userId, id, { bytes, expectedSha256: patch.expectedSha256 }, "document.cells");
     if (!file) return notFound(reply);
     return { file };
   });

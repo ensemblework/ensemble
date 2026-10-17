@@ -35,7 +35,7 @@ export const graphTools = [
     },
     async run(ctx, input) {
       const person = await inTransaction(ctx, (tx) => createPerson(tx, ctx.userId, input, "agent"));
-      return toolOk(`Added ${person.name}.`, { person: { id: person.id, name: person.name } }, { invalidate: ["people"] });
+      return toolOk(`Added ${person.name}.`, { person: { id: person.id, name: person.name, email: person.email } }, { invalidate: ["people"] });
     },
   }),
   defineTool({

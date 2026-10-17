@@ -2,7 +2,7 @@
 name: files
 title: Files and items from connected apps
 when: find, read or summarise files (PDF, Word, slides, sheets) and items synced from apps; bring a file in from Drive, OneDrive, Dropbox, Box, Gmail or Outlook; attach a file to a page
-tools: hub_list_files, hub_read_file, hub_search_context, hub_read_context, hub_import_app_file, apps_search, apps_read, hub_update_page, hub_read_page, hub_delete_entity, hub_restore_entity
+tools: hub_list_files, hub_read_file, hub_search_context, hub_read_context, hub_import_app_file, apps_search, apps_read, hub_update_page, hub_read_page, hub_delete_entity, hub_restore_entity, hub_file_edit_info, hub_edit_file, hub_file_to_page, hub_export_page_file, hub_run_workflow, hub_manage_record
 appTools: true
 match: \b(files?|pdfs?|docx?|word doc(ument)?s?|pptx?|powerpoint|slides?|decks?|xlsx?|excel|spreadsheets?|csv|attachments?|uploads?|uploaded|documents?|resume|cv|contract|invoice|report)\b
 paths: /files
@@ -31,3 +31,8 @@ Remove
 - A file: hub_delete_entity kind "document" with the file id (goes to Trash; hub_restore_entity brings it back).
 
 If no app is connected for what they want, say which one to connect and link [Settings → Connections](/settings?tab=connections).
+
+Edit an original: hub_read_file → hub_file_edit_info → hub_edit_file with the returned expectedSha256. replace_text changes one unique exact passage in Word, PowerPoint or text/code/CSV; edit_cells takes sheet names and 1-based row/col values, or deleteRows. Unsupported workbook features are refused.
+Make a page → hub_file_to_page (PDF/Word need Markdown from the text you read). Export a page → hub_export_page_file. File edits preserve the ID so attachments follow. A Word export rebuilds formatting; tell the person before replacing an original.
+
+Other record maintenance → hub_manage_record (restore one trashed record, page/task conversion, supported plot/diagram/dataset actions, file tags and internal comments). Use the relevant real ID; it preserves the app's existing access and deletion rules.

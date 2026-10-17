@@ -134,7 +134,7 @@ test("unsafe, unknown and malformed changes are refused with the link instead", 
   await refuse("terminal.enabled", false, /for the person to change/);
   await refuse("timezone", "Mars/Olympus", /IANA time zone/);
   await refuse("quietHours.from", "9pm", /HH:MM/);
-  await refuse("appearance.theme", "light", /Kept in each browser|for the person to change/);
+  await refuse("appearance.theme", "invalid", /dark|light|system/);
   // One bad change stops the whole batch.
   await assert.rejects(() => call("hub_update_settings", ctx(mira.id), { changes: [{ key: "timezone", value: "UTC" }, { key: "account.password", value: "x" }] }), /Change password/);
   const settings = await loadSettings(db, mira.id);
