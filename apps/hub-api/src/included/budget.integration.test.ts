@@ -222,21 +222,36 @@ test("the reserve and settle routes need the internal token", async () => {
   assert.equal(outside.statusCode, 401);
 });
 
-test("hosted: tiers still on the shipped default read as included models unless the account has a Google key", async () => {
+test("hosted: a tier whose provider has no key for this account reads as an included model; working tiers stay", async () => {
   const user = await harness.asUser();
   const before = process.env.NODE_ENV;
   process.env.NODE_ENV = "production";
   try {
-    const custom = { ...DEFAULT_SETTINGS, models: { ...DEFAULT_SETTINGS.models, high: { provider: "openai" as const, model: "gpt-6-luna", effort: "low" as const } } };
-    const read = await withIncludedDefaults(db, user.id, custom);
-    assert.deepEqual(read.models.easy, { provider: "ensemble", model: "gpt-6-luna", effort: "default" });
-    assert.deepEqual(read.models.medium, { provider: "ensemble", model: "gpt-6-luna", effort: "default" });
-    assert.deepEqual(read.models.high, custom.models.high, "a chosen tier is never changed");
-    assert.deepEqual(read.models.max, { provider: "ensemble", model: "gpt-6.1-sol", effort: "high" });
+    const chosen = {
+      ...DEFAULT_SETTINGS,
+      models: {
+        ...DEFAULT_SETTINGS.models,
+        medium: { provider: "openai" as const, model: "gpt-6-luna", effort: "low" as const },
+        high: { provider: "anthropic" as const, model: "claude-sonnet-5-5", effort: "default" as const },
+        max: { provider: "claude-code" as const, model: "haiku", effort: "default" as const },
+      },
+    };
+    await db.modelCredential.create({ data: { userId: user.id, provider: "anthropic", secret: "v1:not-a-real-secret", hint: "…test" } });
+    const read = await withIncludedDefaults(db, user.id, chosen);
+    assert.deepEqual(read.models.easy, { provider: "ensemble", model: "gpt-6-luna", effort: "default" }, "the shipped Gemini default with no Google key");
+    assert.deepEqual(read.models.medium, { provider: "ensemble", model: "gpt-6-luna", effort: "default" }, "a chosen OpenAI model with no OpenAI key");
+    assert.deepEqual(read.models.high, chosen.models.high, "a tier on the account's own key is never changed");
+    assert.deepEqual(read.models.max, chosen.models.max, "a tier on the person's AI plan is never changed");
     await db.modelCredential.create({ data: { userId: user.id, provider: "google", secret: "v1:not-a-real-secret", hint: "…test" } });
     assert.deepEqual((await withIncludedDefaults(db, user.id, DEFAULT_SETTINGS)).models.easy, DEFAULT_SETTINGS.models.easy);
+    process.env.ENSEMBLE_INCLUDED_MODELS = "gpt-5-mini,gpt-4.1-mini";
+    const free = await withIncludedDefaults(db, user.id, chosen);
+    assert.deepEqual(free.models.medium, { provider: "ensemble", model: "gpt-5-mini", effort: "default" }, "a free account's models");
+    assert.deepEqual((await withIncludedDefaults(db, (await harness.asUser()).id, DEFAULT_SETTINGS)).models.max, { provider: "ensemble", model: "gpt-5-mini", effort: "high" });
   } finally {
     process.env.NODE_ENV = before;
+    delete process.env.ENSEMBLE_INCLUDED_MODELS;
   }
   assert.deepEqual((await withIncludedDefaults(db, user.id, DEFAULT_SETTINGS)).models, DEFAULT_SETTINGS.models, "not hosted: unchanged");
 });
+

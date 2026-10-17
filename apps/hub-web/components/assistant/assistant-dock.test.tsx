@@ -402,11 +402,16 @@ test("an included refusal shows its sentence as the turn error, is not stored or
     },
   };
   let turns = 0;
+  let modelLists = 0;
   const original = globalThis.fetch;
   const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = String(input);
     if (url.includes("/api/settings")) return json(included);
+    if (url.includes("/api/models")) {
+      modelLists += 1;
+      return json({ providers: [], runtime: true, updatedAt: "2026-10-17T00:00:00.000Z" });
+    }
     if (url.includes("/messages")) {
       return json({ messages: [{ id: "saved-user", role: "user", content: "Plan my day", toolCalls: [], model: null, createdAt: "2026-10-17T09:00:00.000Z" }] });
     }
@@ -462,6 +467,7 @@ test("an included refusal shows its sentence as the turn error, is not stored or
       });
     };
 
+    const listsBefore = modelLists;
     await send("Plan my day");
     for (let attempt = 0; attempt < 30 && !alertText().includes("paused for everyone"); attempt += 1) await wait();
     assert.match(alertText(), /Ensemble's included AI is paused for everyone until Nov 1/);
@@ -469,7 +475,8 @@ test("an included refusal shows its sentence as the turn error, is not stored or
     assert.equal((document.body.textContent?.match(/paused for everyone/g) ?? []).length, 1, "shown once, as the turn error, not as a saved reply");
     assert.equal(document.body.querySelectorAll(".assistant-answer-turn").length, 0, "no assistant message holds it");
     assert.equal(client.getQueryState(["included-usage"])?.isInvalidated, true, "credits are fetched again");
-    assert.equal(client.getQueryState(["models"])?.isInvalidated, true, "the model list is fetched again");
+    for (let attempt = 0; attempt < 30 && modelLists === listsBefore; attempt += 1) await wait();
+    assert.ok(modelLists > listsBefore, "the model list is fetched again");
     assert.equal(quotaFor("grok-4.7"), null, "the model is not marked out of quota");
 
     client.setQueryData(["included-usage"], { available: true, remaining: 0 });
@@ -486,5 +493,74 @@ test("an included refusal shows its sentence as the turn error, is not stored or
     client.clear();
     window.localStorage.removeItem("ensemble.assistant.open");
     window.localStorage.removeItem("ensemble.assistant.conversation");
+  }
+});
+
+test("the model menu offers the included models: a pick is sent with the turn on Auto, and a tier takes over again", async () => {
+  window.localStorage.setItem("ensemble.assistant.open", "true");
+  window.localStorage.removeItem("ensemble.assistant.conversation");
+  const bodies: Array<Record<string, unknown>> = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    if (url.includes("/api/settings")) return json(settings);
+    if (url.includes("/api/models")) {
+      return json({ runtime: true, providers: [{ provider: "ensemble", available: true, source: "included", models: ["gpt-5-mini", "gpt-4.1-mini"], meta: {}, chat: true, cheapest: "gpt-5-mini", error: null }] });
+    }
+    if (url.includes("/api/metrics/credits")) {
+      return json({ available: true, models: [], period: "2026-10", resetsAt: "2026-11-01T00:00:00.000Z", limit: 20000, used: 1000, remaining: 19000, paused: false, totals: {}, byModel: [], byPurpose: [], days: [] });
+    }
+    if (url.includes("/api/assistant/turn")) {
+      bodies.push(JSON.parse(String(init?.body)));
+      return new Response(`event: done\ndata: ${JSON.stringify({ conversationId: CONVERSATION, content: "Done." })}\n\n`, { status: 200, headers: { "content-type": "text/event-stream" } });
+    }
+    if (url.includes("/messages")) return json({ messages: [] });
+    return json({});
+  }) as typeof fetch;
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false, gcTime: 0 } } });
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root: Root = createRoot(host);
+  const wait = async (ms = 20) => act(async () => { await new Promise((resolve) => setTimeout(resolve, ms)); });
+  const menu = async () => {
+    await act(async () => document.body.querySelector<HTMLButtonElement>('[aria-label="Complexity"]')!.click());
+    return document.querySelector('[role="listbox"][aria-label="Response complexity"]')!;
+  };
+  const send = async (text: string) => {
+    const textarea = document.body.querySelector("textarea")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, text);
+      textarea.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
+    const before = bodies.length;
+    for (let attempt = 0; attempt < 20 && bodies.length === before; attempt += 1) await wait();
+  };
+  try {
+    await act(async () => root.render(<PathnameContext.Provider value="/today"><QueryClientProvider client={client}><AssistantDock /></QueryClientProvider></PathnameContext.Provider>));
+    for (let attempt = 0; attempt < 20 && !document.body.querySelector("textarea"); attempt += 1) await wait();
+    let list = await menu();
+    for (let attempt = 0; attempt < 20 && !list.querySelector('[role="group"]'); attempt += 1) { await wait(); list = document.querySelector('[role="listbox"][aria-label="Response complexity"]')!; }
+    let group = list.querySelector('[role="group"]')!;
+    for (let attempt = 0; attempt < 20 && !/credits left/.test(group.textContent ?? ""); attempt += 1) { await wait(); group = document.querySelector('[role="listbox"] [role="group"]')!; }
+    assert.match(group.textContent ?? "", /Included with Ensemble · 19,000 credits left/);
+    const options = [...group.querySelectorAll<HTMLButtonElement>('[role="option"]')];
+    assert.deepEqual(options.map((option) => option.textContent), ["GPT-5 mini (2025-08-07)", "GPT-4.1 mini (2025-04-14)"]);
+    await act(async () => options[0]!.click());
+    assert.match(document.body.querySelector('[aria-label="Complexity"]')?.textContent ?? "", /GPT-5 mini \(2025-08-07\) · Included/);
+    await send("Hello");
+    assert.deepEqual({ model: bodies[0]!.model, provider: bodies[0]!.provider, reasoningEffort: bodies[0]!.reasoningEffort, tier: bodies[0]!.tier }, { model: "gpt-5-mini", provider: "ensemble", reasoningEffort: "default", tier: undefined });
+    list = await menu();
+    await act(async () => [...list.querySelectorAll<HTMLButtonElement>('[role="option"]')].find((option) => option.textContent?.startsWith("High"))!.click());
+    await send("Again");
+    assert.equal(bodies[1]!.tier, "high");
+    assert.equal(bodies[1]!.model, undefined, "a tier sends no model of its own");
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+    globalThis.fetch = original;
+    client.clear();
+    window.localStorage.removeItem("ensemble.assistant.open");
   }
 });

@@ -235,7 +235,7 @@ Credits remain **estimates**, separate from measured tokens. Existing four-model
 
 ### 6.4 Included models on a hosted server
 
-A hosted server can offer four models the operator runs on Azure AI Foundry (provider `ensemble`, **Included with Ensemble**): GPT-6 Luna, DeepSeek V4 Flash, GPT-6.1 Sol and Grok 4.7, metered in Ensemble credits per account with a monthly ceiling for everyone ([33](33_INCLUDED_AI.md)). They offer Auto, Low, Medium and High thinking (DeepSeek V4 Flash: Auto only) and keep Azure's default context window. On such a server, a tier still on the shipped Gemini default reads as an included model unless the account saved a Google key ([33 §6](33_INCLUDED_AI.md#6-what-people-see)). Included calls record Ensemble credits on run steps and `model.call` metrics instead of a dollar estimate.
+A hosted server can offer four models the operator runs on Azure AI Foundry (provider `ensemble`, **Included with Ensemble**): GPT-6 Luna, DeepSeek V4 Flash, GPT-6.1 Sol and Grok 4.7, metered in Ensemble credits per account with a monthly ceiling for everyone ([33](33_INCLUDED_AI.md)). They offer Auto, Low, Medium and High thinking (DeepSeek V4 Flash: Auto only) and keep Azure's default context window. On such a server, a tier whose provider has no key the account can use reads as an included model, and the assistant's model menu lists the included models ([33 §6](33_INCLUDED_AI.md#6-what-people-see)). Included calls record Ensemble credits on run steps and `model.call` metrics instead of a dollar estimate.
 
 All prompts live in `packages/prompts/` with version headers; every run records `prompt_version` in the audit ledger.
 

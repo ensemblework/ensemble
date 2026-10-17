@@ -48,6 +48,11 @@ export interface Credential {
   baseUrl: string | null;
 }
 
+/** The server's environment holds a key for this provider (usable only by operators when hosted). */
+export function hasEnvKey(provider: string): boolean {
+  return (ENV_KEYS[provider] ?? []).some((name) => (process.env[name] ?? "").trim());
+}
+
 export function hint(secret: string): string {
   return secret.length > 8 ? `…${secret.slice(-4)}` : "set";
 }
