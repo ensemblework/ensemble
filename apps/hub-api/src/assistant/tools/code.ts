@@ -308,7 +308,7 @@ export const codeTools: readonly AnyHubTool[] = [
   }),
 ];
 
-function engineName(engine: string): string {
+export function engineName(engine: string): string {
   return { ensemble: "Ensemble's agent", "claude-code": "Claude Code", codex: "Codex", "cursor-agent": "Cursor's agent" }[engine] ?? engine;
 }
 

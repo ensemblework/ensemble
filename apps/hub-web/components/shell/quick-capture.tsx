@@ -9,6 +9,7 @@ import { useShortcuts } from "@/lib/shortcut-store";
 import { useToast } from "../toast";
 import { plainMentions } from "@/lib/mentions/text";
 import { MentionPopover, useMentionMenu } from "../mentions/mention-menu";
+import { MentionTextarea } from "../mentions/mention-field";
 
 export function QuickCapture({ open, onClose }: { open: boolean; onClose: () => void }) {
   const toast = useToast();
@@ -85,10 +86,9 @@ export function QuickCapture({ open, onClose }: { open: boolean; onClose: () => 
         </div>
         <p id="quick-capture-hint" className="mb-3 text-[12.5px] text-muted">Type a reminder. A name and a day become a person and a due date. {saveKeys} saves.</p>
         <MentionPopover menu={mention} />
-        <textarea
-          ref={input}
+        <MentionTextarea
+          menu={mention}
           value={text}
-          {...mention.inputProps}
           onKeyDown={(event) => {
             if (mention.onKeyDown(event) || event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return;
             event.preventDefault();

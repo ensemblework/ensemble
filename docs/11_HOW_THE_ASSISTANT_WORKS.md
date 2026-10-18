@@ -42,7 +42,7 @@ All paths below are relative to `apps/hub-api/src/` unless qualified.
 
 ## 3. Context and prompt size
 
-`buildHubState` reads a bounded summary, not the whole account. `loadOpenPage` resolves the actual open task/page/project/meeting ID; current excerpts, linked records, embedded diagram source and attached-file summaries are bounded. Typed mentions retain kind/ID; names without IDs are resolved in the current scope. An ID is an exact lookup key, not a search phrase.
+`buildHubState` reads a bounded summary, not the whole account. `loadOpenPage` resolves the actual open task/page/project/meeting ID; current excerpts, linked records, embedded diagram source and attached-file summaries are bounded. Typed mentions retain kind/ID; names without IDs are resolved in the current scope. An ID is an exact lookup key, not a search phrase. `routes/assistant.ts` resolves them before it saves the person's message and stores the result as `[{ kind, id, label }]` in `assistant_messages.mentions` (migration `20261018130000_assistant_message_mentions`). `GET /api/assistant/conversations/:id/messages` returns that column, only for the conversation's owner, so the dock draws exact mention chips after a reload. Messages saved before the column have `[]` and show their `@kind:Label` text as typed, because the end of an unknown label cannot be told from the words after it.
 
 The prompt places stable instructions/playbooks before changing workspace state. Personal skills start as name/description entries; relevant bodies are read on demand. Connected app availability is a compact grant/product description. Settings → Prompts exposes the actual prompt sources; `packages/prompts` is not the working prompt store.
 
@@ -67,7 +67,9 @@ A `defineTool` entry specifies name, area, description, Zod input, write/read fl
 
 Before running, the server validates input and current access. Read tools still enforce scope. Existing API-backed tools use `assistant/request.ts` to preserve route auth, quotas, module and sharing checks. Original request headers remain server-only and are never model input. Stale page revisions, skill versions, file hashes and layout versions cause a readable failure instead of overwriting new work.
 
-Results contain a summary and optional bounded data, `href`, invalidation keys or Undo entry. The loop truncates oversized tool output; readers offer chunking for longer content. Do not claim a complete document was read if only an excerpt was returned.
+Results contain a summary and optional bounded data, `href`, invalidation keys or Undo entry. The loop truncates oversized tool output (`trim` in `agent.ts`): a result holding one list, such as `hub_list_tasks`, is cut at whole items by `fitList`, so every id the model sees is complete, and the note names the `offset` to continue from; any other oversized result becomes a text preview. Readers offer chunking for longer content. Do not claim a complete document was read if only an excerpt was returned.
+
+A tool may define `prepare`, which runs after the input is validated and before the preview or the write. Tools that act on a filter use it to fix the exact records (`hub_delete_tasks` turns `all: true` into task ids; `hub_assign_to_agent` fixes the profile and computer), so Apply changes only what the preview showed.
 
 ### Turn limits and final answer
 
@@ -83,11 +85,11 @@ Provider and model are explicit. Effort is checked against the selected model be
 
 ## 6. Apply, Undo and dependent actions
 
-`holdsAssistantWrite` applies configured immediate/preview/Needs me policy. Connected-app writes and `alwaysHold` tools always wait for Apply. The inline artifact flow has a limited existing exception for requested diagrams/plots; it is not blanket permission for all writes.
+`holdsAssistantWrite` applies the person's write policy, `settings.assistant.writePolicy`: `immediate` (Settings → Assistant → "Just do it (undoable)", the default), `preview` (waits for Apply in the chat) or `needs-me`. Migration `20261018120000_assistant_writes_immediate` moved accounts that had Preview saved to `immediate` on 18 Oct 2026; Needs me was kept. Connected-app writes and `alwaysHold` tools (settings changes, agent assignments) always wait for Apply. Under Preview, the inline artifact flow has a limited existing exception for requested diagrams/plots. Playbooks are written for every policy, so each turn adds one system line from `writeModeNote` saying which writes run at once and which wait.
 
 `POST /api/assistant/apply` resolves calls saved on the authorized conversation/message, checks state, validates proposed arguments and current permissions, and locks against duplicate application. It does not accept an arbitrary new tool call as an approval.
 
-`applyHeldCalls` groups ordinary Hub writes in a database transaction with one Undo group. Outside writes run afterward, sequentially, without holding the Hub transaction across a slow network request. Each landed outside write is ledgered. After a partial failure, receipts distinguish succeeded, failed and unattempted calls; retry does not resend the succeeded calls. External writes generally have no Hub Undo.
+`applyHeldCalls` groups ordinary Hub writes in a database transaction (30 s timeout, so a large batch is not rolled back by Prisma's 5 s default) with one Undo group. Outside writes run afterward, sequentially, without holding the Hub transaction across a slow network request. Each landed outside write is ledgered. After a partial failure, receipts distinguish succeeded, failed and unattempted calls; retry does not resend the succeeded calls. External writes generally have no Hub Undo.
 
 ### Ordered workflows
 
@@ -117,7 +119,7 @@ Native mail/Slack/Teams sending is not offered. Supported connected-item updates
 
 ### 8.3 Running work, Code and settings
 
-Assignments enter the durable job queue and retain execution choices. Ensemble Code adds its own local tools; it is not an exception to Hub routing or a way to change host security settings. Settings tools edit the allowlist; model selection uses the actual available catalog and validates effort. Secret/permission/folder-trust/account controls remain human actions.
+Assignments enter the durable job queue and retain execution choices. In chat, `hub_assign_to_agent` (`tools/agent-assign.ts`) assigns a task under a run profile: the one the person names, else their default (the starred one, else the first saved, else the built-in Quick settings; `pickRunProfile`). It runs on the computer they name (or `"any"` for "my computer"), else the profile's computer, else this server when it runs Ensemble's agent, else their most recently seen paired computer. It sends the same request as `POST /api/agent/assign` (`createJob`), always waits for Apply, refuses while the agent is paused, and the computer checks the job again against its own folders and rules ([25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)). `hub_list_agent_options` lists the profiles (default marked) and paired computers (online, shared folder names). The assistant itself never runs commands. Ensemble Code adds its own local tools; it is not an exception to Hub routing or a way to change host security settings. Settings tools edit the allowlist; model selection uses the actual available catalog and validates effort. Secret/permission/folder-trust/account controls remain human actions.
 
 ### 8.4 Files, layouts and skills
 

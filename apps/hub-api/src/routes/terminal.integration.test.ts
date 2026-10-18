@@ -213,7 +213,8 @@ test("the streamed terminal run response varies on Origin, like every other hija
 
     // Locked: refused before anything is streamed, and the CORS plugin's Vary is there.
     const locked = await call(port, "POST", "/api/terminal/run", human, { cwd: await workspaceRoot(), line: "ls" });
-    assert.equal(locked.status, 401, locked.body);
+    assert.equal(locked.status, 423, locked.body);
+    assert.equal(JSON.parse(locked.body).code, "TERMINAL_LOCKED");
     assertVaryOrigin(locked.headers, "locked run");
 
     // Unlock with the passkey.

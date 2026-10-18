@@ -3,6 +3,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { LinkifiedText } from "../linkified-text";
 
 /** Plain document text. The empty field is revealed only by an explicit human action. */
 export function HumanDescription({ value, editing, onEditing, onSave, readOnly = false }: { value: string; editing: boolean; onEditing: (editing: boolean) => void; onSave: (value: string) => void; readOnly?: boolean }) {
@@ -23,6 +24,6 @@ export function HumanDescription({ value, editing, onEditing, onSave, readOnly =
     }} onKeyDown={(event) => {
       if (event.key === "Escape") { event.preventDefault(); cancelled.current = true; onEditing(false); }
       else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); event.currentTarget.blur(); }
-    }} /> : <div className="whitespace-pre-wrap break-words" tabIndex={readOnly ? undefined : 0} role={readOnly ? undefined : "button"} aria-label={readOnly ? undefined : "Edit short description"} onClick={() => { if (!readOnly) onEditing(true); }} onKeyDown={(event) => { if (!readOnly && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); onEditing(true); } }}>{value}</div>}
+    }} /> : <div className="whitespace-pre-wrap break-words" tabIndex={readOnly ? undefined : 0} role={readOnly ? undefined : "button"} aria-label={readOnly ? undefined : "Edit short description"} onClick={() => { if (!readOnly) onEditing(true); }} onKeyDown={(event) => { if (!readOnly && (event.key === "Enter" || event.key === " ") && !(event.target as HTMLElement).closest("a")) { event.preventDefault(); onEditing(true); } }}><LinkifiedText text={value} /></div>}
   </div>;
 }

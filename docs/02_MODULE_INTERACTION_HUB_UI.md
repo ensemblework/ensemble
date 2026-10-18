@@ -8,7 +8,7 @@ Use the existing task/page/record identity across views. Show saved, pending, fa
 
 ## 2. Information architecture & navigation
 
-`app/(hub)` contains authenticated routes. `components/shell` provides the rail, phone navigation, space switcher, page tree, top-bar search and floating assistant. `/` enters the authenticated/onboarding flow. Search and Jump to share Cmd/Ctrl+K. Pages sits beneath Today and can collapse while retaining its add action.
+`app/(hub)` contains authenticated routes. `components/shell` provides the rail, phone navigation, space switcher, page tree, top-bar search and floating assistant. The top bar's sidebar button switches the sidebar between full and rail (on a phone it opens the navigation drawer). With *Auto-collapse sidebar* on, or the Pages panel docked on the left, the sidebar stays a rail (with auto-collapse, pointing at it or focusing its controls opens it), so on a computer that button and the rail's Expand button are hidden (`sidebarRailForced` in `lib/sidebar-rail.ts`, rules in `app/globals.css`). `/` enters the authenticated/onboarding flow. Search and Jump to share Cmd/Ctrl+K. Pages sits beneath Today and can collapse while retaining its add action.
 
 Navigation follows the signup profession, enabled modules and access scope. Code, Workspace, Runs and Skills are offered to engineer and Builder profiles; other profiles retain applicable Context records, Diagrams, Plots and Metrics. Optional features/tabs can be hidden without deleting data. A manually entered URL still undergoes module and server authorization checks.
 
@@ -117,6 +117,7 @@ The checked-in route inventory and route modules are authoritative; this table g
 
 | Area | Routes / implementation |
 | --- | --- |
+| Shell and Today | `/api/shell` (account, open space, counts, modules, `hostCode`: whether this account may read this server's own Code and workspace folders), `/api/today/home`; `routes/views.ts` |
 | Tasks and board | `/api/tasks`, `/api/tasks/:id`, `/api/tasks/:id/move`; `routes/tasks.ts`, `board.ts` |
 | Task documents | `/api/tasks/:id/page`, `/api/tasks/:id/page/collab`; task and collaboration routes |
 | Standalone pages | `/api/pages`, `/api/pages/:id`, `/api/pages/delete-many`; `routes/pages.ts` and `pages/` |
@@ -150,13 +151,17 @@ Internal service routes require internal credentials; device routes require a sc
 
 `packages/brand` owns marks, palettes and motion. [BRAND](BRAND.md) describes the current system. Reduced motion is independent of theme. Menus/dialogs opened from the floating assistant use a layer above their parent, so model and mention menus stay clickable.
 
+Mentions use one chip everywhere: page mentions, mentions in sent assistant messages and in comments (`.mention` in `app/globals.css`, `components/mentions/mention-chip.tsx`). Each kind takes its hue from the `--kind-*` tokens, mixed soft and tuned separately for light and dark, so it reads under every color theme; the chip is inline and does not change its line's height. Text boxes with the @ menu (assistant composer, comments, Quick capture) use `components/mentions/mention-field.tsx`: a copy of the text behind the transparent box tints picked mentions, a bare `@people:` prefix and the token being picked, while caret, selection, undo and IME stay the browser's.
+
+Addresses in text are links. `lib/linkify.ts` finds http(s) URLs, `www.` hosts and email addresses (never other schemes), trimming sentence punctuation and unbalanced closing brackets; `components/linkified-text.tsx` renders them in raw text (sent assistant messages, run trace thinking/errors/tool input and output, live job logs and events, task short descriptions, plain-text files, app item text, meeting recaps, Morning brief, approval previews). `MarkdownText` also links bare and `<…>` addresses, but not inside code. Web addresses open in a new tab with `noopener noreferrer`; in-app paths stay in the tab. A click on a link inside a clickable row or a click-to-edit field opens only the link.
+
 ## 9. Verification
 
 Use `pnpm --filter @ensemble/hub-web test` and relevant API tests for behavior changes. Browser scripts under `e2e` and `scripts` have individual prerequisites; a historical screenshot or mock does not verify today's production page. The route inventory checks registered endpoints, not every happy-path contract. This documentation audit does not rerun the complete UI/provider matrix.
 
 ## 10. The Hub assistant
 
-The floating dock remains the shared conversation surface, including over task peeks. Typed mentions send kind/ID references; names without IDs are resolved conservatively in the current space. A From your apps picker can add a source URL for explicit live reading. Model menus choose the available tier/model and identify the funding source. Unavailable turns persist as errors with Retry, not successful assistant messages.
+The floating dock remains the shared conversation surface, including over task peeks. Floating, it resizes from its left edge, top edge or top-left corner (it stays anchored bottom-right): drag, or focus an edge and use the arrow keys; double-click or Home goes back to the default size. The size is kept in this browser (`ensemble.assistant.size`), never below 380 × 440 px and never past the window less a 20 px margin, and is fitted again when the window changes (`components/assistant/use-panel-size.ts`). Expanded, and on phones (640 px wide or less), it has no handles and keeps its fixed layout. Typed mentions send kind/ID references; names without IDs are resolved conservatively in the current space. The composer tints mentions while typing, and a sent message shows its saved mentions as chips that open the record in the app ([11](11_HOW_THE_ASSISTANT_WORKS.md#3-context-and-prompt-size)). A From your apps picker can add a source URL for explicit live reading. Model menus choose the available tier/model and identify the funding source. Unavailable turns persist as errors with Retry, not successful assistant messages.
 
 [11](11_HOW_THE_ASSISTANT_WORKS.md) owns routing, tool execution and Apply. [34](34_ASSISTANT_ACTIONS.md) owns the current action map.
 
@@ -192,7 +197,9 @@ Duplicate creates independent writing. Save as template snapshots for the owner'
 
 ### Blocks and mentions
 
-Slash commands insert supported writing blocks; `@` links real entities by ID and can request Ensemble. Embedded files, plots and diagrams retain their resource identity. Plot/diagram height is saved on the mention; removing the embed does not delete the resource. The mention menu must finish entity selection before Enter can send an inline request.
+Slash commands insert supported writing blocks; `@` links real entities by ID and can request Ensemble. Mentions render as kind-tinted chips; embedded files, plots and diagrams render as cards and retain their resource identity. Plot/diagram height is saved on the mention; removing the embed does not delete the resource. The mention menu must finish entity selection before Enter can send an inline request.
+
+Links in an editable page open on a click: in-app paths, `ensemble://` record links and link-to-page blocks in place, everything else in a new tab (Cmd/Ctrl+click always uses a new tab). Resting the pointer on a link for about half a second, or Alt+Enter with the caret in one, shows a card to open, edit or remove it (`components/editor/link-popover.tsx`); selecting part of a link with a drag or Shift+click does not open it. Read-only pages use ordinary links that open in a new tab.
 
 ### Saving and concurrent edits
 

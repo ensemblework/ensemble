@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Settings } from "@ensemble/shared-types";
 import { SHORTCUTS, formatBinding } from "@ensemble/shared-types";
 import { api } from "@/lib/api";
-import { useModuleOn } from "@/lib/use-module";
+import { useHostCode, useModuleOn } from "@/lib/use-module";
 import { isApplePlatform } from "@/lib/platform";
 import { plural, relative } from "@/lib/format";
 import { useToast } from "../toast";
@@ -402,7 +402,8 @@ export function TerminalSection({ settings, patch }: Props) {
   // Read only after mount (desktop is null until then), so the static export and first render match.
   const access = desktop === false ? currentTerminalAccess() : null;
   const usable = access?.ok === true;
-  const repos = useQuery({ queryKey: ["code-repos"], queryFn: api.codeRepos, enabled: codeOn });
+  const hostCode = useHostCode();
+  const repos = useQuery({ queryKey: ["code-repos"], queryFn: api.codeRepos, enabled: codeOn && hostCode === true });
   const status = useQuery({ queryKey: ["terminal-status"], queryFn: api.terminalStatus, enabled: codeOn && usable });
   const removeKey = useMutation({
     mutationFn: api.terminalRemovePasskey,

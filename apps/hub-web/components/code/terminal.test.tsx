@@ -4,6 +4,7 @@ import test from "node:test";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ApiError, SIGNED_OUT_EVENT, api, terminalLocked } from "@/lib/api";
 import { Terminal } from "./terminal.js";
 import { terminalAccess } from "./terminal-address.js";
 import { TERMINAL_DESKTOP_BODY, TERMINAL_DESKTOP_TITLE } from "./terminal-desktop-note.js";
@@ -279,6 +280,141 @@ test("on Ensemble on the web, a paired computer's terminal is unlocked with a pa
       await locked.done();
     }
   } finally {
+    setTestUrl("http://localhost/");
+  }
+});
+
+type Call = { url: string; op?: string };
+
+/** A paired computer's terminal that starts unlocked; `locked` flips what the server answers. */
+async function mountUnlockedDevice(server: { locked: boolean; statusSaysUnlocked?: boolean }): Promise<{ host: HTMLDivElement; calls: Call[]; signedOut: () => number; done: () => Promise<void> }> {
+  const calls: Call[] = [];
+  let signOuts = 0;
+  const onSignedOut = () => {
+    signOuts += 1;
+  };
+  window.addEventListener(SIGNED_OUT_EVENT, onSignedOut);
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    const op = typeof init?.body === "string" ? (JSON.parse(init.body) as { op?: string }).op : undefined;
+    calls.push({ url, op });
+    const reply = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+    if (url.includes("/api/web-terminal/status")) {
+      // A real round trip: the cached status is what the page sees in the meantime.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const unlocked = server.statusSaysUnlocked ?? !server.locked;
+      return reply(200, { unlocked, expiresAt: unlocked ? new Date(Date.now() + 1_800_000).toISOString() : null, passkeys: [{ id: "k", label: "This Mac" }], password: true, emailCode: false });
+    }
+    if (url.includes("/api/web-terminal/lock")) {
+      server.locked = true;
+      return reply(200, { ok: true });
+    }
+    if (url.endsWith("/api/devices")) return reply(200, { serverRunner: false, devices: [] });
+    if (url.includes("/api/devices/d1/terminal")) {
+      if (server.locked) return reply(423, { error: "The terminal is locked. Unlock it with your passkey.", code: "TERMINAL_LOCKED" });
+      if (op === "status") return reply(200, { roots: ["/work"], home: "/work" });
+      if (op === "cd") return reply(200, { cwd: "/work", scope: "/work" });
+    }
+    return reply(404, { error: "unexpected" });
+  }) as typeof fetch;
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { gcTime: 0 } } });
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(
+      <QueryClientProvider client={client}>
+        <Terminal target={{ kind: "device", deviceId: "d1" }} onClose={() => {}} />
+      </QueryClientProvider>,
+    );
+  });
+  await settle();
+  return {
+    host,
+    calls,
+    signedOut: () => signOuts,
+    done: async () => {
+      await act(async () => root.unmount());
+      host.remove();
+      client.clear();
+      globalThis.fetch = realFetch;
+      window.removeEventListener(SIGNED_OUT_EVENT, onSignedOut);
+    },
+  };
+}
+
+async function settle(): Promise<void> {
+  for (let i = 0; i < 6; i += 1) {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+  }
+}
+
+test("Lock now shows the locked terminal at once and never signs you out", async () => {
+  setTestUrl("https://app.ensemblework.com/code");
+  const server = { locked: false };
+  const view = await mountUnlockedDevice(server);
+  try {
+    assert.ok(view.calls.some((call) => call.op === "cd"), "the unlocked terminal opened its folder");
+    const lockButton = view.host.querySelector<HTMLButtonElement>('button[title="Lock now"]');
+    assert.ok(lockButton, "the unlocked terminal has a lock button");
+    const before = view.calls.length;
+    await act(async () => lockButton.click());
+    await settle();
+    const after = view.calls.slice(before);
+    assert.ok(after.some((call) => call.url.includes("/api/web-terminal/lock")));
+    assert.deepEqual(after.filter((call) => call.url.includes("/api/devices/d1/terminal")), [], "nothing is sent to the locked session");
+    assert.equal(view.signedOut(), 0, "locking the terminal is not signing out");
+    assert.equal(window.location.pathname, "/code");
+    assert.ok(view.host.textContent?.includes("Unlock with passkey"));
+    assert.equal(view.host.querySelector('button[title="Lock now"]'), null);
+  } finally {
+    await view.done();
+    setTestUrl("http://localhost/");
+  }
+});
+
+test("an unlock that ran out on the server shows the unlock button, not the sign-in page", async () => {
+  setTestUrl("https://app.ensemblework.com/code");
+  // The lock's own status still says unlocked; the computer's status call finds it expired.
+  const view = await mountUnlockedDevice({ locked: true, statusSaysUnlocked: true });
+  try {
+    assert.ok(view.calls.some((call) => call.op === "status"));
+    assert.equal(view.signedOut(), 0);
+    assert.equal(view.host.querySelector('[role="alert"]'), null, "not an error either");
+    assert.ok(view.host.textContent?.includes("Unlock with passkey"));
+  } finally {
+    await view.done();
+    setTestUrl("http://localhost/");
+  }
+});
+
+test("a terminal refusal (423 TERMINAL_LOCKED) through the shared request() is not a signed-out session", async () => {
+  let signOuts = 0;
+  const onSignedOut = () => {
+    signOuts += 1;
+  };
+  window.addEventListener(SIGNED_OUT_EVENT, onSignedOut);
+  setTestUrl("https://app.ensemblework.com/code");
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ error: "The terminal is locked. Unlock it with your passkey.", code: "TERMINAL_LOCKED" }), { status: 423, headers: { "Content-Type": "application/json" } })) as typeof fetch;
+  try {
+    await assert.rejects(api.deviceTerminal("d1", { op: "cd", cwd: "/work", path: "." }), (failure: unknown) => {
+      assert.ok(failure instanceof ApiError);
+      assert.equal(terminalLocked(failure), true);
+      return true;
+    });
+    await assert.rejects(api.deviceTerminalOutput("d1", "run-1", -1), (failure: unknown) => terminalLocked(failure));
+    assert.equal(signOuts, 0);
+    assert.equal(window.location.pathname, "/code");
+    // A 401 is still a sign-in that ended.
+    assert.equal(terminalLocked(new ApiError("Sign in to Ensemble first.", 401)), false);
+  } finally {
+    globalThis.fetch = realFetch;
+    window.removeEventListener(SIGNED_OUT_EVENT, onSignedOut);
     setTestUrl("http://localhost/");
   }
 });

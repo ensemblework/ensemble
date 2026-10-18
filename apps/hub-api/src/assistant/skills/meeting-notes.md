@@ -22,6 +22,6 @@ Write
 
 Rules
 - Use only what the notes or transcript say. Name owners only when the text does.
-- Writes wait for Apply.
+- A write either runs now or waits for Apply; report what its result says.
 
 Other record maintenance → hub_manage_record (restore one trashed record, page/task conversion, supported plot/diagram/dataset actions, file tags and internal comments). Use the relevant real ID; it preserves the app's existing access and deletion rules.

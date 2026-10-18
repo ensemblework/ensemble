@@ -22,7 +22,7 @@ Follow the root [README](../README.md) for prerequisites and setup. `pnpm dev` s
 | --- | --- | --- |
 | Today | Profession desk, briefing, focus/triage, reminders, add/remove/rearrange/resize tiles | Profile desk and alternate widgets are distinct layout systems |
 | Board | Task creation, priority/order, filters, grouping, assignment and overview tiles | Overview strip: at most four fixed-size tiles |
-| Tasks and pages | Rich structured editor, nested standalone pages, mentions, comments/AI blocks, file/diagram/plot embeds | Referenced resources retain their own space/access rules |
+| Tasks and pages | Rich structured editor, nested standalone pages, kind-tinted mention chips, links that open on click (hover or Alt+Enter to edit), comments/AI blocks, file/diagram/plot embeds | Referenced resources retain their own space/access rules |
 | History and templates | Page checkpoints with author/time, preview/restore, duplicate and private templates | Up to 30 checkpoints, five-minute coalescing; up to 50 templates per space/profile; owner-only history/templates |
 | Context | Saved people/identities, projects, repos, preferences, graph and profile-specific records/tabs | Graph reflects saved data; it is not an automatic provider crawler |
 | Meeting notes | Editable manual notes, imported source notes, source links, requested summaries/action-item tasks and task links | Imported source notes are read-only; no recording/transcription service |
@@ -37,7 +37,8 @@ The Hub assistant operates the app through typed tools. Built-in Markdown playbo
 
 | Capability | Implemented behavior |
 | --- | --- |
-| Tasks and records | Create/update work, people, projects, repositories and supported profession records; manage supported comments, Trash, conversions and resource history |
+| Tasks and records | Create/update work, people, projects, repositories and supported profession records; manage supported comments, Trash, conversions and resource history. Clearing a board or a filtered set of tasks is one `hub_delete_tasks` change with one Undo |
+| Agent assignment | Assign a task to Ensemble's agent, Claude Code, Codex or Cursor's agent on a paired computer or this server, under the default or a named run profile; waits for Apply, then goes through the normal job queue |
 | Open workspace | Read supported surface IDs, selected/visible records, filters and document selection through scoped APIs |
 | Layouts | Manage native Today desks, Context panels, Board overview and alternate widget layouts with the relevant version checks |
 | Precise documents | Read block paths/revision; replace exact text or insert/replace/delete blocks after schema validation |
@@ -49,7 +50,7 @@ The Hub assistant operates the app through typed tools. Built-in Markdown playbo
 | Settings/models | Find/read/update allowlisted settings and choose available provider/model/effort; appearance updates apply live |
 | Calendars | Google/Outlook list/create/update/cancel/RSVP, attendees/invites, supported recurrence and availability reads |
 
-A proposed action waits for Apply when its policy requires it. Starting an import is not finishing it. An unknown interrupted workflow step is not replayed automatically. External calendar invitations can notify guests; general native mail/Teams/Slack sending is not offered.
+Hub writes run at once by default ("Just do it (undoable)" in Settings → Assistant); with Preview or Needs me they wait. Connected-app writes, settings changes, workflows and agent assignments always wait for Apply. Starting an import is not finishing it. An unknown interrupted workflow step is not replayed automatically. External calendar invitations can notify guests; general native mail/Teams/Slack sending is not offered.
 
 Surface context is structured app state, not screenshots or unrestricted DOM access. Security credentials, account deletion, sharing permissions, folder trust and similar controls remain human settings. “Manage records” means supported domain operations, not arbitrary database access.
 
@@ -69,7 +70,7 @@ The full connector catalog is a connection inventory, not a promise that every a
 
 ## Files, diagrams and plots
 
-[Files](32_FILES.md) stores private originals with format-aware previews and extraction. Supported text/Office/sheet edits preserve the file record and use stale-content checks. Page conversion and export are available; browser export-back can preserve a supported source template, while assistant server export rebuilds a document. Complex spreadsheets and original Office edits have explicit restrictions.
+[Files](32_FILES.md) stores private originals with format-aware previews and extraction. Supported text/Office/sheet edits preserve the file record and use stale-content checks. Page conversion and export are available; browser downloads keep tables (a real grid in PDFs) and inline formatting, browser export-back can preserve a supported source template, while assistant server export rebuilds a document. Complex spreadsheets and original Office edits have explicit restrictions.
 
 [Diagrams](21_BLOCK_DIAGRAMS_DSL.md) has a source language, parsing/layout, visual editing, Mermaid import and SVG export. Small windows show a read-only pan/zoom/preview; full editing needs 1024 × 640 CSS pixels. [Plots](20_PLOTS_DESIGN.md) supports datasets, saved figure specs, code and exports; hosted browser plotting uses its browser runtime, with a separate server/native worker path.
 

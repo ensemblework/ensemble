@@ -50,7 +50,7 @@ const BLOCKS: Block[] = [
   { type: "paragraph", runs: [{ text: "Not a link", href: "javascript:alert(1)" }] },
   { type: "list", ordered: false, items: [[{ text: "First" }], [{ text: "Second" }]] },
   { type: "list", ordered: true, items: [[{ text: "Step one" }]] },
-  { type: "table", rows: [["Name", "Amount"], ["Mira Chen", "£1,200"]] },
+  { type: "table", rows: [[[{ text: "Name" }], [{ text: "Amount" }]], [[{ text: "Mira Chen", italic: true }], [{ text: "£1,200" }]]] },
   { type: "code", text: "total = 1200\nprint(total)" },
 ];
 
@@ -90,7 +90,8 @@ test("paragraphs use the original's own styles: Title first, headings, list para
   assert.match(doc, /<w:pStyle w:val="berschrift2"\/><\/w:pPr><w:r><w:t xml:space="preserve">Terms &amp; conditions<\/w:t>/);
   assert.equal((doc.match(/<w:pStyle w:val="Listenabsatz"\/><w:numPr>/g) ?? []).length, 3);
   assert.match(doc, /<w:tblStyle w:val="Tabellenraster"\/>/);
-  assert.match(doc, /<w:r><w:rPr><w:b\/><w:bCs\/><\/w:rPr><w:t xml:space="preserve">Name<\/w:t><\/w:r>/);
+  assert.match(doc, /<w:tr><w:trPr><w:tblHeader\/><\/w:trPr><w:tc><w:tcPr><w:tcW w:w="\d+" w:type="dxa"\/><\/w:tcPr><w:p><w:r><w:rPr><w:b\/><w:bCs\/><\/w:rPr><w:t xml:space="preserve">Name<\/w:t><\/w:r>/);
+  assert.match(doc, /<w:r><w:rPr><w:i\/><w:iCs\/><\/w:rPr><w:t xml:space="preserve">Mira Chen<\/w:t><\/w:r>/, "table cells keep their formatting");
   assert.match(doc, /<w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"\/><w:sz w:val="20"\/>/);
   assert.match(doc, /<w:rPr><w:b\/><w:bCs\/><\/w:rPr><w:t xml:space="preserve">sign<\/w:t>/);
   assert.match(doc, /<w:rPr><w:i\/><w:iCs\/><\/w:rPr><w:t xml:space="preserve"> here.<\/w:t>/);

@@ -5,6 +5,7 @@ import { Menu, MoreHorizontal, PanelRight, PanelRightDashed, Redo2, RefreshCw, U
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { sidebarRailForced } from "@/lib/sidebar-rail";
 import { useModKey } from "@/lib/platform";
 import { editingText, undoButtonLabel } from "@/lib/undo-ui";
 import { useLive } from "../live";
@@ -77,11 +78,14 @@ function useSidebarExpanded(drawerOpen: boolean): boolean {
   const [state, setState] = useState({ narrow: false, rail: false });
   useEffect(() => {
     const media = window.matchMedia("(max-width: 767px)");
-    const read = () => setState({ narrow: media.matches, rail: document.documentElement.dataset.sidebar === "rail" });
+    const read = () => {
+      const root = document.documentElement;
+      setState({ narrow: media.matches, rail: root.dataset.sidebar === "rail" || sidebarRailForced(root) });
+    };
     read();
     media.addEventListener("change", read);
     const observer = new MutationObserver(read);
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-sidebar"] });
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-sidebar", "data-sidebar-auto", "data-pages-panel"] });
     return () => {
       media.removeEventListener("change", read);
       observer.disconnect();
@@ -152,7 +156,7 @@ export function TopBar({ onToggleSidebar, drawerOpen = false }: { onToggleSideba
   return (
     <header className="topbar relative grid h-11 shrink-0 grid-cols-[minmax(max-content,1fr)_minmax(0,560px)_minmax(max-content,1fr)] items-center gap-3 border-b border-line px-3 max-md:grid-cols-[auto_minmax(0,1fr)_auto]">
       <div className="flex min-w-0 items-center gap-2">
-        <button type="button" className="icon-btn" onClick={onToggleSidebar} aria-label="Toggle sidebar" aria-expanded={sidebarExpanded}>
+        <button type="button" className="topbar-sidebar-toggle icon-btn" onClick={onToggleSidebar} aria-label="Toggle sidebar" aria-expanded={sidebarExpanded}>
           <Menu size={16} />
         </button>
         <HomeLogoLink size={24} wordmark={false} className="md:hidden" />

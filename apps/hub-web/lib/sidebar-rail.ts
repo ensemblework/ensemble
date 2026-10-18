@@ -26,6 +26,14 @@ export function sidebarIsRail(): boolean {
   return document.documentElement.dataset.sidebar === "rail";
 }
 
+/**
+ * Auto-collapse, or the Pages panel docked on the left, keeps the sidebar a rail whatever the
+ * toggle says (the rail rules in globals.css), so the toggle and the rail's Expand button are hidden then.
+ */
+export function sidebarRailForced(root: HTMLElement = document.documentElement): boolean {
+  return root.dataset.sidebarAuto === "true" || root.dataset.pagesPanel === "left";
+}
+
 /** CSS owns the width. React state stays out of the page tree so the toggle does not reconcile it. */
 export function setSidebarRail(rail: boolean): void {
   if (rail) document.documentElement.dataset.sidebar = "rail";

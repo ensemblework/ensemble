@@ -5,6 +5,9 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MarkdownText } from "./markdown-text.js";
 
+// next/link schedules its prefetch with self.requestIdleCallback.
+Object.defineProperty(globalThis, "self", { configurable: true, value: window });
+
 async function render(text: string): Promise<{ root: Root; host: HTMLDivElement }> {
   const host = document.createElement("div");
   document.body.appendChild(host);
@@ -121,4 +124,64 @@ test("a heading keeps a # that belongs to its text", async () => {
   const headings = [...mounted.host.querySelectorAll("h3, h4")].map((node) => node.textContent);
   assert.deepEqual(headings, ["Notes on C#", "Done"]);
   await unmount(mounted);
+});
+
+test("bare addresses become links that open in a new tab; code and existing links stay as they are", async () => {
+  const notion = "https://app.notion.com/p/Launch-plan-2f3c9a1b?pvs=204";
+  const mounted = await render(
+    [
+      "Your pages:",
+      `- Launch plan: ${notion}`,
+      "- Wiki (https://en.wikipedia.org/wiki/Python_(programming_language)).",
+      "- **Docs: www.example.com/docs** and _see https://example.com/a_b_c_",
+      "- Mail mira@fieldnote.example or <https://example.com/angle>",
+      "- Code `https://example.com/in-code` and [named](https://example.com/named) and [in app](/tasks/1)",
+      "- javascript:alert(1) stays text",
+    ].join("\n"),
+  );
+  const anchors = [...mounted.host.querySelectorAll("a")];
+  const hrefs = anchors.map((anchor) => anchor.getAttribute("href"));
+  assert.deepEqual(hrefs, [
+    notion,
+    "https://en.wikipedia.org/wiki/Python_(programming_language)",
+    "https://www.example.com/docs",
+    "https://example.com/a_b_c",
+    "mailto:mira@fieldnote.example",
+    "https://example.com/angle",
+    "https://example.com/named",
+    "/tasks/1",
+  ]);
+  for (const anchor of anchors.filter((item) => item.getAttribute("href")!.startsWith("https://"))) {
+    assert.equal(anchor.getAttribute("target"), "_blank");
+    assert.equal(anchor.getAttribute("rel"), "noopener noreferrer");
+  }
+  const inApp = anchors.find((anchor) => anchor.getAttribute("href") === "/tasks/1")!;
+  assert.equal(inApp.getAttribute("target"), null, "an in-app link stays in this tab");
+  assert.equal(anchors[0]!.textContent, notion);
+  assert.match(anchors[0]!.className, /overflow-wrap:anywhere/, "a long address wraps");
+  assert.equal(mounted.host.querySelector("code")?.textContent, "https://example.com/in-code");
+  assert.equal(mounted.host.querySelector("code a"), null);
+  assert.ok(mounted.host.textContent?.includes("language))."), "the closing bracket and full stop after an address stay text");
+  assert.equal(mounted.host.textContent?.includes("<https://"), false, "angle brackets around an address are not shown");
+  assert.equal(mounted.host.querySelector("strong a")?.getAttribute("href"), "https://www.example.com/docs");
+  await unmount(mounted);
+});
+
+test("with saved mentions, their @kind:Label shows as a chip; without them it stays text", async () => {
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  await act(async () => {
+    root.render(<MarkdownText text="Ask @people:Mira Chen about @task:Ship it, see https://example.com" mentions={[{ kind: "people", id: "p-mira", label: "Mira Chen" }]} />);
+  });
+  const chip = host.querySelector<HTMLAnchorElement>("a.mention");
+  assert.ok(chip);
+  assert.equal(chip.dataset.kind, "people");
+  assert.equal(chip.getAttribute("href"), "/context?tab=people&search=Mira%20Chen");
+  assert.equal(chip.textContent, "@Mira Chen");
+  assert.equal(host.querySelectorAll(".mention").length, 1, "an unknown mention is not guessed");
+  assert.match(host.textContent ?? "", /@task:Ship it/);
+  assert.equal(host.querySelector('a[href="https://example.com"]')?.getAttribute("target"), "_blank");
+  await act(async () => root.unmount());
+  host.remove();
 });

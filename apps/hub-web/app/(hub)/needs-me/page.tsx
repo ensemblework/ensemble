@@ -13,6 +13,7 @@ import { Held } from "@/components/motion/held";
 import { Empty, PageHeader, SkeletonRows } from "@/components/ui";
 import { api, type ApprovalRecord } from "@/lib/api";
 import { relative } from "@/lib/format";
+import { LinkifiedText } from "@/components/linkified-text";
 import { useWarmEditors, warmTask } from "@/lib/warm";
 
 const KIND_LABEL: Record<string, string> = {
@@ -105,7 +106,7 @@ function ApprovalCard({ approval }: { approval: ApprovalRecord }) {
         />
       ) : (
         <pre className="mt-3 max-h-72 overflow-auto whitespace-pre-wrap rounded-md border border-line bg-raised p-3 text-[13px] leading-5">
-          {original}
+          <LinkifiedText text={original} />
         </pre>
       )}
       <input

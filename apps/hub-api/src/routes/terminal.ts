@@ -29,7 +29,7 @@ import { readCookie, verifyPassword, accountIdOf } from "../lib/auth.js";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings } from "../lib/settings.js";
 import { declareModule } from "../lib/module-gate.js";
-import { humanOnlyRefusal } from "../lib/terminal-human.js";
+import { humanOnlyRefusal, TERMINAL_LOCKED } from "../lib/terminal-human.js";
 import { passkeyResponse, RegistrationCredential, UnlockCredential, verifying } from "../lib/passkey-shape.js";
 import { GuardError, workspaceRoot } from "../workspace/guard.js";
 import { killGroup, runCommand } from "../workspace/runner.js";
@@ -239,9 +239,9 @@ export async function terminalRoutes(app: FastifyInstance): Promise<void> {
   });
 
   /** Resolves `cd`: relative paths stay in the current scope; absolute ones may jump to another allowed root. */
-  app.post("/api/terminal/cd", async (request) => {
+  app.post("/api/terminal/cd", async (request, reply) => {
     humanOnly(request);
-    if (!unlocked(request)) throw new GuardError("The terminal is locked.");
+    if (!unlocked(request)) return reply.code(423).send({ error: "The terminal is locked.", code: TERMINAL_LOCKED });
     const body = z.object({ cwd: z.string(), path: z.string().default("") }).parse(request.body);
     return resolveCd(await terminalRoots(prisma, request.userId), body.cwd, body.path);
   });
@@ -249,7 +249,7 @@ export async function terminalRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/terminal/run", async (request: FastifyRequest, reply: FastifyReply) => {
     humanOnly(request);
     const token = unlocked(request);
-    if (!token) return reply.code(401).send({ error: "The terminal is locked. Unlock with Touch ID." });
+    if (!token) return reply.code(423).send({ error: "The terminal is locked. Unlock with Touch ID.", code: TERMINAL_LOCKED });
     const settings = await loadSettings(prisma, request.userId);
     if (!settings.terminal.enabled) throw new GuardError("The terminal is turned off in Settings.");
     const body = z.object({ cwd: z.string(), line: z.string().min(1).max(4000), confirmed: z.boolean().default(false) }).parse(request.body);

@@ -48,6 +48,7 @@ import { fileEditTools } from "./tools/file-edits.js";
 import { recordTools } from "./tools/records.js";
 import { surfaceTools } from "./tools/surfaces.js";
 import { recordActionTools } from "./tools/record-actions.js";
+import { agentAssignTools } from "./tools/agent-assign.js";
 
 const ALL: readonly AnyHubTool[] = [
   ...howToTools,
@@ -81,6 +82,7 @@ const ALL: readonly AnyHubTool[] = [
   ...activityTools,
   ...settingsTools,
   ...workspaceTools,
+  ...agentAssignTools,
 ];
 
 export const TOOLS: ReadonlyMap<string, AnyHubTool> = new Map(ALL.map((tool) => [tool.name, tool]));
@@ -121,9 +123,12 @@ const DIAGRAM_TOOLS = new Set<string>([...diagramTools, ...diagramContextTools].
 const PLOT_TOOLS = new Set<string>(plotTools.map((tool) => tool.name));
 /** Reading a repo's files is code-space work. Without Code a diagram still draws, it just cannot read a repo. */
 const CODE_TOOLS = new Set<string>([...repoReadTools, ...workspaceTools].map((tool) => tool.name));
+/** Assigning to an agent is the Workspace feature, as /api/agent/assign is. */
+const AGENT_TOOLS = new Set<string>(agentAssignTools.map((tool) => tool.name));
 
 /** The optional module a tool belongs to, or null for a core tool. */
 export function toolModule(tool: AnyHubTool): OptionalModule | null {
+  if (AGENT_TOOLS.has(tool.name)) return "workspace";
   if (tool.area === "skills" || tool.area === "runs") return tool.area;
   if (DIAGRAM_TOOLS.has(tool.name)) return "diagrams";
   if (PLOT_TOOLS.has(tool.name)) return "plots";

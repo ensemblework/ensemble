@@ -23,7 +23,8 @@ export type MentionMenu<T extends Field = Field> = ReturnType<typeof useMentionM
  * call `onKeyDown` first in the box's own key handler (it returns true when the
  * menu used the key), and render `<MentionPopover menu={…} />` next to it.
  * Picking writes `@people:Mira Chen ` into the text; `takeMentions(text)` gives
- * back the ids of the picked mentions still in it.
+ * back the ids of the picked mentions still in it. For a textarea,
+ * `<MentionTextarea menu={…} />` (mention-field.tsx) does the spreading and tints the mentions.
  */
 export function useMentionMenu<T extends Field = HTMLTextAreaElement>(options: {
   value: string;
@@ -95,6 +96,8 @@ export function useMentionMenu<T extends Field = HTMLTextAreaElement>(options: {
     active,
     listId,
     optionId: (index: number) => `${listId}-option-${index}`,
+    /** The token being picked for, from its `@` to the caret, while the menu is open. */
+    typing: open && token && caret !== null ? { from: token.at, to: caret } : null,
     setActive: (index: number) => setActiveState({ key, index }),
     pick,
     inputProps: {

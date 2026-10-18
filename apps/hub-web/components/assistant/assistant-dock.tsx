@@ -21,13 +21,15 @@ import { isSilentCancellation } from "@/lib/fetch-cancel";
 import { readSse } from "@/lib/sse";
 import { applyNotice, applyRepliesToCache, refreshAfterAssistantWrite } from "@/lib/assistant-apply";
 import { useAutoGrow } from "@/lib/auto-grow";
-import { relative } from "@/lib/format";
+import { plural, relative } from "@/lib/format";
 import { markModelOutOfQuota, quotaMessage, quotaSuffix, useQuotaMarks } from "@/lib/model-quota";
 import { includedLocalOnly, includedNote, includedRefusal, INCLUDED_USAGE_KEY, needsConnection, refreshIncluded, tierModelLabel, tierModelName, useIncludedUsage } from "@/lib/included";
 import { IncludedLocalOnly } from "@/components/metrics/included-credits";
 import { AssistantAnswer, splitCutOffReply } from "./cut-off-notice";
 import { MarkdownText, choiceLines } from "../markdown-text";
 import { MentionPopover, useMentionMenu } from "../mentions/mention-menu";
+import { MentionTextarea } from "../mentions/mention-field";
+import { LinkifiedText } from "../linkified-text";
 import { useModKey } from "@/lib/platform";
 import { usePersistentState } from "@/lib/prefs";
 import { useLive } from "../live";
@@ -37,6 +39,7 @@ import { BrandMorph } from "@/components/motion/brand-morph";
 import { ThinkingStatus } from "@/components/motion/slot";
 import { cx } from "../ui";
 import { AddAppItemToMessage } from "../app-items/add-to-message";
+import { PANEL_EDGES, usePanelSize } from "./use-panel-size";
 
 /** 48 px mark in the empty reply. Settles to the mark, then leaves, once tokens arrive. */
 function ReplyMorph({ waiting }: { waiting: boolean }) {
@@ -232,7 +235,7 @@ export function Message({
   if (message.role === "user") {
     return (
       <div className="assistant-turn assistant-user-turn">
-        <div className="assistant-user-message">{message.content}</div>
+        <div className="assistant-user-message"><LinkifiedText text={message.content} mentions={message.mentions} /></div>
       </div>
     );
   }
@@ -248,7 +251,7 @@ export function Message({
       <div className="assistant-message-heading"><span className="assistant-message-avatar"><Mark size={18} /></span><span>Ensemble</span></div>
       {message.toolCalls?.length ? (
         <details className="assistant-activity" open={pending.length > 0 || message.toolCalls.some((call) => call.state === "failed")} >
-          <summary>{failed ? <CircleAlert size={13} /> : <Check size={13} />}<span>{pending.length ? `${pending.length} actions to review` : failed ? `${failed} steps need attention` : `${message.toolCalls.length} steps completed`}</span><ChevronDown size={13} /></summary>
+          <summary>{failed ? <CircleAlert size={13} /> : <Check size={13} />}<span>{pending.length ? `${plural(pending.length, "action")} to review` : failed ? `${plural(failed, "step")} ${failed === 1 ? "needs" : "need"} attention` : `${plural(message.toolCalls.length, "step")} completed`}</span><ChevronDown size={13} /></summary>
           <div className="space-y-1.5">
           {pending.length > 1 ? (
             <ApplyAll calls={pending} conversationId={conversationId} />
@@ -370,6 +373,8 @@ export function AssistantDock() {
   const { setWorking, working } = useLive();
   const [open, setOpen] = usePersistentState("ensemble.assistant.open", false);
   const [expanded, setExpanded] = usePersistentState("ensemble.assistant.expanded", false);
+  const panel = useRef<HTMLDivElement>(null);
+  const panelSize = usePanelSize(panel, !expanded);
   const [conversationId, setConversationId] = usePersistentState<string | null>("ensemble.assistant.conversation", null);
   const conversationRef = useRef(conversationId);
   useEffect(() => {
@@ -462,7 +467,7 @@ export function AssistantDock() {
     setStreaming("");
     setLiveTools([]);
     setWorking("Assistant is thinking…");
-    setOptimistic([{ id: `local-${Date.now()}`, role: "user", content: text, toolCalls: [], model: null, createdAt: new Date().toISOString() }]);
+    setOptimistic([{ id: `local-${Date.now()}`, role: "user", content: text, mentions, toolCalls: [], model: null, createdAt: new Date().toISOString() }]);
     let nextId = conversationId;
     const held: { reply: { messageId?: string; content: string; failed?: boolean } | null } = { reply: null };
     try {
@@ -663,14 +668,16 @@ export function AssistantDock() {
     <LayerFloor.Provider value={ASSISTANT_LAYER}>
     {launcher}
     <div
+      ref={panel}
       data-assistant-surface
-      style={{ zIndex: ASSISTANT_LAYER }}
+      style={{ zIndex: ASSISTANT_LAYER, ...panelSize.style }}
       onKeyDown={event => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); event.stopPropagation(); setOpen(false); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('button[aria-label="Ask Ensemble"]')?.focus()); } }}
       className={cx(
         "assistant-window pop-in fixed flex flex-col overflow-hidden border border-line-strong shadow-pop",
         expanded ? "inset-x-[5vw] bottom-6 top-[5vh]" : "bottom-5 right-5 h-[min(720px,85vh)] w-[min(660px,94vw)]",
       )}
     >
+      {panelSize.enabled ? PANEL_EDGES.map((edge) => <div key={edge} {...panelSize.handleProps(edge)} />) : null}
       <div className="assistant-window-header flex shrink-0 items-center gap-2 px-4">
         <BrandMorph size={24} state="once" kind="unfurl" />
         <div className="min-w-0 flex-1"><span className="text-[14px] font-semibold">Ensemble assistant</span><span className="assistant-header-hint">Your workspace, in conversation</span></div>
@@ -719,7 +726,7 @@ export function AssistantDock() {
           <EmptyAssistant pathname={pathname} name={shell.data?.user?.name ?? null} onPick={(text) => void sendText(text)} />
         ) : (
           all.map((message, index) => (
-            <Message key={message.id} message={message} conversationId={conversationId} onChoose={(choice) => void sendText(choice)} onRetry={pending ? undefined : () => { const previous = all.slice(0, index).reverse().find(row => row.role === "user"); if (previous) void sendText(previous.content); }} />
+            <Message key={message.id} message={message} conversationId={conversationId} onChoose={(choice) => void sendText(choice)} onRetry={pending ? undefined : () => { const previous = all.slice(0, index).reverse().find(row => row.role === "user"); if (previous) void sendText(previous.content, previous.mentions ?? []); }} />
           ))
         )}
         {pending ? (
@@ -749,11 +756,10 @@ export function AssistantDock() {
         <MentionPopover menu={mention} />
         {turnError && !all.some(message => message.role === "error" && assistantErrorText(message.content) === assistantErrorText(turnError)) ? <AssistantFailure message={turnError} onRetry={pending ? undefined : () => { const request = lastRequest.current; if (request) void sendText(request.text, request.mentions); }} /> : null}
         <div className="assistant-composer tile flex items-end gap-2 px-4 py-3">
-          <textarea
-            ref={input}
+          <MentionTextarea
+            menu={mention}
             rows={1}
             value={draft}
-            {...mention.inputProps}
             onKeyDown={(event) => {
               if (mention.onKeyDown(event)) return;
               if (event.key === "Enter" && !event.shiftKey) {
@@ -762,7 +768,8 @@ export function AssistantDock() {
               }
             }}
             placeholder="Ask, or tell me what to change. @ to mention…"
-            className="box-border min-h-6 flex-1 resize-none overflow-hidden bg-transparent py-0 text-[13.5px] leading-6 outline-none placeholder:text-faint"
+            fieldClassName="flex-1"
+            className="box-border min-h-6 resize-none overflow-hidden bg-transparent py-0 text-[13.5px] leading-6 outline-none placeholder:text-faint"
           />
           <button
             type="button"

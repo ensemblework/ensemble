@@ -123,7 +123,11 @@ const EntityMention = Mention.extend<MentionOptions & { diagramsOn: () => boolea
         dom.dataset.id = String(node.attrs.id ?? "");
         dom.dataset.kind = kind;
         dom.dataset.label = String(node.attrs.label ?? "");
-        dom.textContent = `@${node.attrs.label ?? ""}`;
+        const at = document.createElement("span");
+        at.className = "mention-at";
+        at.setAttribute("aria-hidden", "true");
+        at.textContent = "@";
+        dom.append(at, String(node.attrs.label ?? ""));
         return { dom };
       }
       const dom = document.createElement("span");

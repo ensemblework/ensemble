@@ -14,6 +14,7 @@ const groups: Array<[SettingsTab, string, string, Array<string | [string, string
   ["assistant", "watchers", "Watching for you", [["Watching for you", "watchers monitor follow up tell me when"]]],
   ["assistant", "autonomy", "Autonomy", [["Autonomy level", "ask review only unattended"], ["Daily action safety limit", "high risk write limit spending safety"], ["Network for sandboxed commands", "internet sandbox network"], ["Run commands in the Ensemble workspace without asking", "run without asking auto approval"]]],
   ["assistant", "orchestration", "Orchestration", [["Tasks that run at once", "parallel concurrency job limit"], ["Model turns per task", "turn limit agent"], ["Minutes per task", "timeout duration time limit"], ["Sandbox by default", "execution native isolation"], ["Internet for agent commands by default", "network sandbox"]]],
+  ["assistant", "run-profiles", "Run profiles", [["Run profiles", "assign agent default profile quick assign star favourite favorite claude code codex cursor"], ["Default run profile", "default assign agent profile star"]]],
   ["assistant", "quiet", "Quiet hours", [["Quiet hours", "do not disturb notifications"], "Quiet hours start", "Quiet hours end"]],
   ["assistant", "prompts", "Prompts", [["Prompts", "system instructions model requests"]]],
   ["connections", "connections", "Connected apps", [["Connections", "connectors integrations apps", "Connected apps"]]],

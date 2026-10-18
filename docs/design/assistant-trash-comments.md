@@ -591,7 +591,7 @@ Order of commits after this document:
 4. Phase 4 — `@ensemble`.
 5. Carry-over performance and accessibility.
 
-No feature flag. The default write policy stays `preview`, so existing accounts do not gain silent writes. `defaultTier` changes from `easy` to `medium` only when the stored settings omit it; a saved `easy` is left alone. Retention behaviour changes on the next process start (catch-up). Trash contents already soft-deleted stay restorable.
+No feature flag. The default write policy stayed `preview` at the time (since 18 Oct 2026 it is `immediate`, see [11 §6](../11_HOW_THE_ASSISTANT_WORKS.md#6-apply-undo-and-dependent-actions)). `defaultTier` changes from `easy` to `medium` only when the stored settings omit it; a saved `easy` is left alone. Retention behaviour changes on the next process start (catch-up). Trash contents already soft-deleted stay restorable.
 
 ## 18. Non-goals
 

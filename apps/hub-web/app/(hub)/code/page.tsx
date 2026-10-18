@@ -13,6 +13,7 @@ import { ShareButton } from "@/components/sharing/share-dialog";
 import { Empty, PageHeader, QueryError, SkeletonRows, Tag } from "@/components/ui";
 import { ApiError, api, hostOnly, type ReviewSummary } from "@/lib/api";
 import { dateTime } from "@/lib/format";
+import { useHostCode } from "@/lib/use-module";
 
 function ReviewRow({ review }: { review: ReviewSummary }) {
   const state = review.completedAt ? { label: "Reviewed", tone: "green" as const } : review.decisions ? { label: "In review", tone: "yellow" as const } : { label: "Not reviewed", tone: "blue" as const };
@@ -47,20 +48,23 @@ export default function CodePage() {
   const router = useRouter();
   const [filter, setFilter] = useState<"needs" | "reviewed" | "all">("needs");
   const [expired, setExpired] = useState(false);
-  const reviews = useQuery({ queryKey: ["reviews", filter, expired], queryFn: () => api.reviews(filter, expired) });
-  const repos = useQuery({ queryKey: ["code-repos"], queryFn: api.codeRepos });
+  const hostCode = useHostCode();
+  const reviews = useQuery({ queryKey: ["reviews", filter, expired], queryFn: () => api.reviews(filter, expired), enabled: hostCode !== false });
+  const repos = useQuery({ queryKey: ["code-repos"], queryFn: api.codeRepos, enabled: hostCode !== false });
+  // Ensemble on the web: this server's folders belong to its operator; your agents' changes are on your computers.
+  // The shell says so up front; the API's refusal is the fallback while it has not.
+  const onComputers = hostCode === false || hostOnly(reviews.error);
+  const loading = !onComputers && (reviews.isPending || repos.isPending);
   const [terminal, setTerminal] = useState(false);
   const scrolledSection = useRef<string|null>(null);
   useEffect(() => {
     const section = window.location.hash.slice(1);
-    if (reviews.isPending || repos.isPending || !["reviews", "local-repositories"].includes(section) || scrolledSection.current === section) return;
+    if (loading || !["reviews", "local-repositories"].includes(section) || scrolledSection.current === section) return;
     document.getElementById(section)?.scrollIntoView({ block:"start" });
     scrolledSection.current = section;
-  }, [reviews.isPending, repos.isPending]);
+  }, [loading]);
   const access = useSpaceAccess();
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
-  // Ensemble on the web: this server's folders belong to its operator; your agents' changes are on your computers.
-  const onComputers = hostOnly(reviews.error);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.ctrlKey && event.key === "`" && !access.guest) {

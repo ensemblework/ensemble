@@ -14,6 +14,7 @@ import { dateTime, relative } from "@/lib/format";
 import { emitToast } from "@/lib/toast-bus";
 import { BrandLogo } from "../connectors/brand-logo";
 import { MarkdownText } from "../markdown-text";
+import { LinkifiedText } from "@/components/linkified-text";
 import { Dialog, Empty, QueryError, SkeletonRows, Spinner, cx } from "../ui";
 
 /** Artifact kinds (prisma ArtifactKind), as one item and as a filter. */
@@ -221,7 +222,7 @@ function AppItemReader({ id, onClose, onOpenFile }: { id: string; onClose: () =>
             ) : MARKDOWN.has(item.kind) || attached(item) ? (
               <MarkdownText text={item.text} />
             ) : (
-              <div className="whitespace-pre-wrap break-words text-[13.5px] leading-[1.6]">{item.text}</div>
+              <div className="whitespace-pre-wrap break-words text-[13.5px] leading-[1.6]"><LinkifiedText text={item.text} /></div>
             )}
           </div>
           <Dialog open={asking} onClose={() => setAsking(false)} title="Remove this item?" width={460}>

@@ -7,6 +7,7 @@ import { WIDGET_REGISTRY, type TileConfig, type WidgetId } from "@ensemble/share
 import { api } from "@/lib/api";
 import { shortDate } from "@/lib/format";
 import { personInitials } from "@/lib/initials";
+import { useHostCode } from "@/lib/use-module";
 
 type Feed = Awaited<ReturnType<typeof api.widgetFeed>>;
 type Task = Feed["tasks"][number];
@@ -153,10 +154,11 @@ function LogRow({ taskType, unit }: { taskType: string; unit: string }) {
 
 export function LensTile({ type, config }: { type: WidgetId; config?: TileConfig }) {
   const feed = useFeed();
+  const hostCode = useHostCode();
   const reviews = useQuery({
     queryKey: ["reviews", "needs"],
     queryFn: () => api.reviews("needs", false),
-    enabled: type === "review-queue",
+    enabled: type === "review-queue" && hostCode === true,
     staleTime: 30_000,
   });
   const plots = useQuery({
@@ -172,6 +174,8 @@ export function LensTile({ type, config }: { type: WidgetId; config?: TileConfig
     return <Rows rows={rows} cap={6} />;
   }
   if (type === "review-queue") {
+    // This server's reviews are its operator's on Ensemble on the web; everyone else reviews a paired computer's in Code.
+    if (hostCode === false) return <Empty type={type} hint="Changes on your paired computers are reviewed in Code." />;
     const rows = (reviews.data?.reviews ?? []).slice(0, 8).map((row) => ({ id: row.id, title: row.repoPath.split("/").pop() || row.repoPath, href: "/code" }));
     if (!reviews.data) return <p className="text-[13px] text-muted">Looking…</p>;
     if (!rows.length) return <Empty type={type} />;

@@ -147,6 +147,7 @@ test("every assistant tool stays inside the open space", async () => {
       hub_update_page: [{ pageId: ids.page, matchTitle: `${MARK} page`, mode: "append", markdown: "Added from another space" }],
       hub_delete_page: [{ pageId: ids.page }],
       hub_delete_pages: [{ pageIds: [ids.page] }],
+      hub_delete_tasks: [{ taskIds: [ids.task] }, { query: MARK }],
       hub_delete_entity: [{ kind: "project", id: ids.project }, { kind: "document", id: ids.file }],
       hub_restore_entity: [{ kind: "task", id: ids.task }],
       hub_diagram_context: [{ taskId: ids.task }, { projectId: ids.project }, { deliverableId: ids.deliverable }],

@@ -16,6 +16,7 @@ import { useDelayedFlag } from "@/lib/motion/use-delayed-flag";
 import { useModuleOn } from "@/lib/use-module";
 import { PriorityTag, Spinner, Tag, cx } from "../ui";
 import { MarkdownText } from "../markdown-text";
+import { LinkifiedText } from "../linkified-text";
 import { sameModel, usd } from "@/lib/run-trace";
 
 export const JOB_STATE: Record<AgentJob["status"], { label: string; tone: "green" | "red" | "yellow" | "gray" | "blue" | "orange" }> = {
@@ -280,11 +281,11 @@ export function TaskAgentPanel({ taskId }: { taskId: string }) {
           )}
         </div>
       ) : null}
-      {!live && job.error ? <div className="mt-1.5 text-muted">{job.error}</div> : null}
+      {!live && job.error ? <div className="mt-1.5 break-words text-muted"><LinkifiedText text={job.error} /></div> : null}
       {!live && job.summary && job.summary !== job.error ? <AgentOutput key={job.id} job={job} /> : null}
       {live && detail.data?.log ? (
         <pre data-testid="job-live-log" className="mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap rounded border border-line bg-panel p-2 font-mono text-[11px] leading-4 text-muted">
-          {detail.data.log.slice(-4000)}
+          <LinkifiedText text={detail.data.log.slice(-4000)} />
         </pre>
       ) : null}
       <JobResults job={job} />
@@ -312,14 +313,14 @@ export function TaskAgentPanel({ taskId }: { taskId: string }) {
             return (
               <div key={event.id} className="flex gap-2">
                 <span className="w-[62px] shrink-0 text-faint">{EVENT_LABEL[event.kind] ?? event.kind}</span>
-                <span className={cx("min-w-0 flex-1 break-words", event.kind === "command" && "font-mono text-[11.5px]", data.ok === false && "text-danger")}>{text}</span>
+                <span className={cx("min-w-0 flex-1 break-words", event.kind === "command" && "font-mono text-[11.5px]", data.ok === false && "text-danger")}><LinkifiedText text={text} /></span>
               </div>
             );
           })}
           {detail.data && !detail.data.events.length && !logs.data?.chunks.length ? <div className="text-muted">Nothing yet.</div> : null}
           {(logs.data?.chunks ?? []).map((chunk) => (
             <pre key={chunk.seqFrom} className="whitespace-pre-wrap break-words font-mono text-[11.5px] text-muted">
-              {chunk.text}
+              <LinkifiedText text={chunk.text} />
             </pre>
           ))}
         </div>

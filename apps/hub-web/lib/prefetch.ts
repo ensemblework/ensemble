@@ -2,6 +2,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { api } from "./api";
 import { isoDate } from "./format";
 import { loadToday, seedToday, workWeek } from "./home";
+import { hostCodeFrom } from "./use-module";
 
 const recent = new Map<string, number>();
 const RECENT_MAX = 32;
@@ -73,10 +74,13 @@ function jobsFor(client: QueryClient, href: string): Array<[unknown[], () => Pro
               : href === "/workspace"
                 ? [[["workspace"], api.workspace]]
                 : href === "/code"
-                  ? [
-                      [["code-repos"], api.codeRepos],
-                      [["reviews", "needs", false], () => api.reviews("needs", false)],
-                    ]
+                  ? // This server's own folders, which Ensemble on the web refuses (403) to anyone but its operator.
+                    hostCodeFrom(client.getQueryData(["shell"])) === true
+                    ? [
+                        [["code-repos"], api.codeRepos],
+                        [["reviews", "needs", false], () => api.reviews("needs", false)],
+                      ]
+                    : []
                   : href === "/diagrams"
                     ? [[["diagrams"], api.diagrams]]
                   : href === "/metrics"

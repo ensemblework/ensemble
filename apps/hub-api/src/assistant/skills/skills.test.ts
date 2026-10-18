@@ -69,6 +69,9 @@ test("routing picks the playbook for the owner's example requests", () => {
   assert.deepEqual(routed("What is 17 times 23?"), [], "a plain question loads nothing");
   assert.ok(routed("hello", { path: "/diagrams/abc" }).includes("diagrams"), "the open page routes");
   assert.ok(routed("make it bigger", { mentions: [{ kind: "plot" }] }).includes("plots"), "a mention routes");
+  assert.ok(routed("@task:Clone a repo do this on my machine", { mentions: [{ kind: "task" }] }).includes("agents"), "a task to run on their computer");
+  assert.ok(routed("assign this task to an agent with my Careful profile").includes("agents"));
+  assert.ok(routed("delete all tasks from the board").includes("tasks"));
   assert.ok(routed("x".repeat(10) + " diagram chart meeting email task recap").length <= 2, "at most two");
 });
 

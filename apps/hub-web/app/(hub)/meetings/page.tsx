@@ -9,6 +9,7 @@ import { MeetingNoteDetail } from "@/components/meetings/imported-notes";
 import { useToast } from "@/components/toast";
 import { connectedApi } from "@/lib/api-connected";
 import { api } from "@/lib/api";
+import { LinkifiedText } from "@/components/linkified-text";
 import { MeetingNotesFields } from "@/components/meetings/notes-fields";
 import { ChevronLeft, MessageSquare, Plus, Search } from "lucide-react";
 import { meetingWhen, newMeetingTitle, newestFirst } from "@/components/meetings/meeting-time";
@@ -154,7 +155,7 @@ function MeetingsBody() {
             {session.recap ? (
               <section className="meeting-recap mt-5">
                 <h3 className="text-[13px] font-semibold">Recap</h3>
-                <p className="mt-1 whitespace-pre-wrap text-[13.5px] leading-6">{session.recap}</p>
+                <p className="mt-1 whitespace-pre-wrap text-[13.5px] leading-6"><LinkifiedText text={session.recap} /></p>
               </section>
             ) : null}
             {detail.data?.openTasks.length ? (

@@ -153,14 +153,11 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
       void (async () => {
         for (const href of WARM) {
           if (cancelled) return;
-          const shared = client.getQueryData<{ space?: { shared?: unknown } }>(["shell"])?.space?.shared;
-          if (shared && (href === "/today" || href === "/metrics")) continue;
+          const data = client.getQueryData<Awaited<ReturnType<typeof api.shell>>>(["shell"]);
+          if (data?.space?.shared && (href === "/today" || href === "/metrics")) continue;
           const gate = moduleForPath(href);
-          if (gate) {
-            const modules = client.getQueryData<{ modules?: string | null }>(["shell"])?.modules;
-            // An off module answers 404. Don't warm it; the link is hidden once the shell loads.
-            if (!hasModule(modules, gate)) continue;
-          }
+          // An off module answers 404, and one the profile is not offered has no link. Don't warm either.
+          if (gate && !(hasModule(data?.modules, gate) && moduleFitsProfile(gate, shellProfile(data)))) continue;
           prefetchHref(client, href);
           await new Promise((resolve) => window.setTimeout(resolve, 300));
         }

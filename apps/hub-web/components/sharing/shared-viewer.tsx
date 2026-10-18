@@ -13,6 +13,7 @@ import { STATUS } from "@/lib/format";
 import { Avatar } from "./people";
 import { PagePeople } from "./page-people";
 import { Tag } from "@/components/ui";
+import { LinkifiedText } from "@/components/linkified-text";
 import { useToast } from "@/components/toast";
 
 const NotePage = dynamic(() => import("@/components/pages/note-page").then((mod) => mod.NotePage), { ssr: false });
@@ -262,7 +263,7 @@ function SharedMeeting({ id }: { id: string }) {
     <div className="mx-auto w-full max-w-[820px] px-6 py-8">
       <h1 className="text-[28px] font-semibold tracking-tight">{data.title || "Meeting"}</h1>
       <p className="mt-1 text-[13px] text-muted">{new Date(data.when).toLocaleString()}</p>
-      {data.body ? <div className="mt-6 whitespace-pre-wrap text-[14.5px] leading-6">{data.body}</div> : <p className="mt-6 text-muted">No notes were written.</p>}
+      {data.body ? <div className="mt-6 whitespace-pre-wrap text-[14.5px] leading-6"><LinkifiedText text={data.body} /></div> : <p className="mt-6 text-muted">No notes were written.</p>}
       {data.decisions.length ? (
         <section className="mt-8">
           <h2 className="text-[13px] font-semibold uppercase tracking-wide text-faint">Decisions</h2>

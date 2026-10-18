@@ -138,7 +138,7 @@ test("unsafe, unknown and malformed changes are refused with the link instead", 
   // One bad change stops the whole batch.
   await assert.rejects(() => call("hub_update_settings", ctx(mira.id), { changes: [{ key: "timezone", value: "UTC" }, { key: "account.password", value: "x" }] }), /Change password/);
   const settings = await loadSettings(db, mira.id);
-  assert.equal(settings.assistant.writePolicy, "preview");
+  assert.equal(settings.assistant.writePolicy, "immediate");
   assert.equal(settings.timezone, "Asia/Kolkata");
   assert.equal(settings.email, "you@ensemble.local");
 });
