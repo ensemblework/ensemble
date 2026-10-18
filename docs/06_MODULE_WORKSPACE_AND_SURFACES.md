@@ -12,7 +12,7 @@ The assignment dialog and `workspace/assign.ts` persist a `WorkspaceJob`. Changi
 
 | Choice | Current behavior |
 | --- | --- |
-| Run profile | Up to three saved profiles plus a built-in Quick profile; update/save/rename/delete/default controls |
+| Run profile | Up to three saved profiles plus a built-in Quick profile; update/save/rename/delete controls, and a star on each saved profile to make it the default. The default is the starred one, else the first saved, else Quick; Quick assign, the CLI and the assistant (`hub_assign_to_agent`) all use it unless another is named. Settings → Assistant → Run profiles also sets the default, renames and deletes |
 | Kind | Research & writing (web/paper tools, writes the task page) or Code (works in a folder) |
 | Run on | Permitted local/server execution or a paired computer; offline devices keep queued work |
 | Engine | Ensemble, Claude Code, Codex or Cursor; own-app/terminal handoff is a separate option with the other tool's controls |

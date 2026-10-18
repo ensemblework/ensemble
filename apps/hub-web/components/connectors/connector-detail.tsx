@@ -4,9 +4,18 @@ import { BrandMorph } from "@/components/motion/brand-morph";
 /** @jsxImportSource react */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, FileUp, KeyRound, Plug, RefreshCw, Wrench } from "lucide-react";
-import { useState } from "react";
-import { CONNECTOR_CATEGORIES, type ConnectorProduct, type Settings } from "@ensemble/shared-types";
+import { ChevronRight, ExternalLink, FileUp, KeyRound, Plug, RefreshCw, Wrench } from "lucide-react";
+import { useId, useState } from "react";
+import {
+  CONNECTOR_CATEGORIES,
+  connectorGuide,
+  guideParts,
+  hasWrittenGuide,
+  IMPORT_TIPS,
+  type ConnectorGuide,
+  type ConnectorProduct,
+  type Settings,
+} from "@ensemble/shared-types";
 import { api } from "@/lib/api";
 import { CONNECTOR_QUERY, connectorsApi, needsReconnect, type CatalogEntry, type McpConnection } from "@/lib/api-connectors";
 import { relative, type Tone } from "@/lib/format";
@@ -15,10 +24,10 @@ import { useToast } from "../toast";
 import { Spinner, Tag, Toggle, cx } from "../ui";
 import { BrandLogo } from "./brand-logo";
 import { browser } from "./browser";
-import { connectorUses, entryStatus, oauthReady, statusLabel, usableAuth, type EntryStatus } from "./catalog-view";
+import { connectorUses, entryStatus, oauthReady, PEOPLE_SYNC_SOURCES, statusLabel, usableAuth, type EntryStatus } from "./catalog-view";
 import { McpTokenPrompt, useMcpConnect } from "./mcp-connect";
 import { McpConnectWay } from "./mcp-way";
-import { tokenFields, tokenFormReady, tokenHelp } from "./token-forms";
+import { tokenFields, tokenFormReady, tokenHelp, type TokenField } from "./token-forms";
 import { useRefreshConnections, useSetEntryState } from "./use-connectors";
 
 type Patch = (value: Record<string, unknown>) => void;
@@ -69,8 +78,9 @@ const SOURCE_NAMES: Record<string, string> = {
   notion: "Notion",
 };
 
-/** The short name people use: "Notion", not "Notion Labs"; "Atlassian" for Jira. */
+/** The short name people use: "Notion", not "Notion Labs"; "Atlassian" for Jira; "Hugging Face" whole. */
 export function brand(entry: Pick<CatalogEntry, "name" | "vendor">): string {
+  if (entry.vendor === entry.name) return entry.name;
   const first = entry.name.split(" ")[0];
   return entry.vendor.split(" ")[0] === first && first ? first : entry.vendor;
 }
@@ -192,6 +202,14 @@ function ConnectPanel({ entry, mcpKnown, onImport }: { entry: CatalogEntry; mcpK
     return true;
   });
   const picked = products.filter((product) => chosen[product.id]).map((product) => product.id);
+  // One guide per panel: the written one (pasted credential, MCP token or address), else what sign-in does on the first way.
+  const mcpWaiting = Boolean(entry.mcp?.client && entry.state.mcpReady === false);
+  const guided = ways.filter((kind): kind is "oauth" | "token" | "mcp" => kind !== "file" && !(kind === "mcp" && mcpWaiting));
+  const guideWay = guided.find((kind) => hasWrittenGuide(entry, kind)) ?? guided.find((kind) => kind !== "token");
+  const guideFor = (kind: "oauth" | "token" | "mcp") => {
+    const guide = kind === guideWay ? connectorGuide(entry, kind) : undefined;
+    return guide ? <ConnectGuide guide={guide} defaultOpen /> : null;
+  };
   const start = useMutation({
     mutationFn: () =>
       connectorsApi.start(entry.provider ?? entry.id, { products: products.length ? picked : undefined, returnTo: browser.returnTo(entry.id) }),
@@ -218,7 +236,7 @@ function ConnectPanel({ entry, mcpKnown, onImport }: { entry: CatalogEntry; mcpK
           const primary = index === 0 ? "btn-primary" : "btn";
           if (kind === "oauth") {
             return (
-              <Way key={kind} title={`Sign in with ${brand(entry)}`} detail={`Approve access on ${brand(entry)}'s page. You come straight back here.`}>
+              <Way key={kind} title={`Sign in with ${brand(entry)}`} detail={`Approve access on ${brand(entry)}'s page. You come straight back here.`} guide={guideFor(kind)}>
                 {entry.provider === "google" ? (
                   <SignInWithGoogle pending={start.isPending} onClick={() => (picked.length || !products.length ? start.mutate() : undefined)} />
                 ) : (
@@ -231,17 +249,24 @@ function ConnectPanel({ entry, mcpKnown, onImport }: { entry: CatalogEntry; mcpK
             );
           }
           if (kind === "token") {
-            const help = tokenHelp(entry);
+            const term = connectorGuide(entry, "token")?.term;
+            const several = Boolean(term?.includes(" and "));
             return (
               <Way
                 key={kind}
-                title={tokenFields(entry.provider).length > 1 ? "Use an API token" : "Paste a token"}
-                detail={help.hint ?? `Create a token in ${entry.name}, then paste it here. It is stored encrypted.`}
+                title={term ? `Paste your ${term}` : tokenFields(entry.provider).length > 1 ? "Use an API token" : "Paste a token"}
+                detail={
+                  term
+                    ? `Create ${several ? "them" : `${article(term)} ${term}`} in ${brand(entry)}, then paste ${several ? "them" : "it"} here. ${several ? "They are" : "It is"} checked with ${brand(entry)} and stored encrypted.`
+                    : (tokenHelp(entry).hint ?? `Create a token in ${entry.name}, then paste it here. It is stored encrypted.`)
+                }
+                guide={guideFor(kind)}
                 below={tokenOpen ? <TokenForm entry={entry} onDone={() => setTokenOpen(false)} /> : null}
               >
                 {tokenOpen ? null : (
                   <button type="button" className={primary} aria-expanded={tokenOpen} onClick={() => setTokenOpen(true)}>
-                    <KeyRound size={12} /> Paste a token
+                    <KeyRound size={12} /> {term ? (several ? "Paste them" : "Paste it") : "Paste a token"}
+                    {term ? <span className="sr-only">: your {term}</span> : null}
                   </button>
                 )}
               </Way>
@@ -253,6 +278,7 @@ function ConnectPanel({ entry, mcpKnown, onImport }: { entry: CatalogEntry; mcpK
                 key={kind}
                 title={`Use ${entry.name}'s own tools`}
                 detail={mcpDetail(entry)}
+                guide={guideFor(kind)}
                 below={<McpConnectWay entry={entry} primary={index === 0} />}
               >
                 {null}
@@ -286,10 +312,12 @@ function mcpDetail(entry: CatalogEntry): string {
   if (mcp.connection) return `Gives the assistant ${who}'s own tools through ${who}'s MCP server, signed in with your ${who} connection. Changes wait for your Apply.`;
   if (mcp.token?.only) return `Connects ${who}'s MCP server with a token you create in ${who}. Choose which tools the assistant may use; changes wait for your Apply.`;
   if (mcp.fields?.length) return `Connects ${who}'s MCP server for your account. You approve on ${who}'s site, then choose which tools the assistant may use.`;
+  if (mcp.open) return `Connects ${who}'s public MCP server. No account or sign-in; choose which tools the assistant may use.`;
+  if (mcp.token) return `Connects ${who}'s MCP server with your ${who} account: sign in on ${who}'s site, or paste a token. Then choose which tools the assistant may use.`;
   return `Connects ${who}'s MCP server. You approve on ${who}'s site, then choose which tools the assistant may use. Changes wait for your Apply.`;
 }
 
-function Way({ title, detail, children, below }: { title: string; detail: string; children: React.ReactNode; below?: React.ReactNode }) {
+function Way({ title, detail, children, guide, below }: { title: string; detail: string; children: React.ReactNode; guide?: React.ReactNode; below?: React.ReactNode }) {
   return (
     <li className="px-3 py-3 sm:px-4">
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
@@ -299,8 +327,96 @@ function Way({ title, detail, children, below }: { title: string; detail: string
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">{children}</div>
       </div>
+      {guide}
       {below}
     </li>
+  );
+}
+
+function article(term: string): string {
+  return /^[aeiou]/i.test(term) ? "an" : "a";
+}
+
+/** Text with its https addresses as links that open in a new tab. */
+function GuideText({ text }: { text: string }) {
+  return (
+    <>
+      {guideParts(text).map((part, index) =>
+        part.href ? (
+          <a key={index} href={part.href} target="_blank" rel="noreferrer" className="break-all text-accent underline-offset-2 hover:underline">
+            {part.text}
+            <ExternalLink size={10} aria-hidden className="ml-0.5 inline align-[-1px]" />
+            <span className="sr-only"> (opens in a new tab)</span>
+          </a>
+        ) : (
+          <span key={index}>{part.text}</span>
+        ),
+      )}
+    </>
+  );
+}
+
+const CALLOUT_EDGE = { ok: "border-ok/60", warn: "border-warn/70", plain: "border-line-strong" } as const;
+
+function Callout({ label, tone, text }: { label: string; tone: keyof typeof CALLOUT_EDGE; text: string }) {
+  return (
+    <div className={cx("flex flex-wrap gap-x-3 gap-y-0.5 border-l-2 py-0.5 pl-2.5", CALLOUT_EDGE[tone])}>
+      <dt className="w-[86px] shrink-0 pt-px text-[10.5px] font-semibold uppercase tracking-[0.08em] text-faint">{label}</dt>
+      <dd className="min-w-0 flex-1 basis-[200px] text-ink/85">
+        <GuideText text={text} />
+      </dd>
+    </div>
+  );
+}
+
+/** The numbered "how to connect" steps for one way of connecting, in a disclosure. */
+function ConnectGuide({ guide, defaultOpen = false }: { guide: ConnectorGuide; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  const id = useId();
+  const callouts = [
+    guide.looksLike ? { label: "Looks like", tone: "ok" as const, text: guide.looksLike } : null,
+    guide.notThis ? { label: "Not this", tone: "warn" as const, text: guide.notThis } : null,
+    guide.scopes ? { label: "Permissions", tone: "plain" as const, text: guide.scopes } : null,
+    guide.whereToFind ? { label: "More help", tone: "plain" as const, text: guide.whereToFind } : null,
+  ].filter((row) => row !== null);
+  return (
+    <div className="mt-2.5 rounded-lg border border-line" data-testid="connect-guide">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12.5px] transition-colors hover:bg-hover"
+      >
+        <ChevronRight size={13} aria-hidden className={cx("shrink-0 text-muted transition-transform motion-reduce:transition-none", open && "rotate-90")} />
+        <span className="shrink-0 font-medium">Step-by-step guide</span>
+        {guide.title ? <span className="hidden min-w-0 truncate text-muted sm:inline">· {guide.title}</span> : null}
+        <span className="ml-auto shrink-0 pl-2 text-[11.5px] tabular-nums text-faint">{guide.steps.length} steps</span>
+      </button>
+      {open ? (
+        <div id={id} className="border-t border-line px-3 pb-3 pt-2.5">
+          <ol className="space-y-2" aria-label={guide.title ?? "Steps"}>
+            {guide.steps.map((step, index) => (
+              <li key={step} className="flex gap-2.5 text-[12.5px] leading-[18px]">
+                <span aria-hidden className="mt-px flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full border border-line-strong text-[10.5px] font-semibold tabular-nums text-muted">
+                  {index + 1}
+                </span>
+                <span className="min-w-0 pt-px">
+                  <GuideText text={step} />
+                </span>
+              </li>
+            ))}
+          </ol>
+          {callouts.length ? (
+            <dl className="mt-3 space-y-1.5 text-[12px] leading-[17px]">
+              {callouts.map((row) => (
+                <Callout key={row.label} label={row.label} tone={row.tone} text={row.text} />
+              ))}
+            </dl>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -341,9 +457,9 @@ function TokenForm({ entry, onDone }: { entry: CatalogEntry; onDone: () => void 
       onDone();
       refresh();
     },
-    onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
   const ready = tokenFormReady(fields, values);
+  const errorId = useId();
   return (
     <form
       className="mt-3 space-y-2 rounded-lg bg-raised p-3"
@@ -359,21 +475,34 @@ function TokenForm({ entry, onDone }: { entry: CatalogEntry; onDone: () => void 
         </a>
       ) : null}
       {fields.map((field, index) => (
-        <label key={field.name} className="block text-[12.5px] font-medium">
-          {field.label}
-          <input
-            autoFocus={index === 0}
-            name={field.name}
-            type={field.secret ? "password" : (field.type ?? "text")}
-            autoComplete="off"
-            spellCheck={false}
-            value={values[field.name] ?? ""}
-            placeholder={field.placeholder}
-            onChange={(event) => setValues((current) => ({ ...current, [field.name]: event.target.value }))}
-            className={cx("field mt-1 w-full", field.secret && "font-mono")}
-          />
-        </label>
+        <div key={field.name}>
+          <label className="block text-[12.5px] font-medium">
+            {field.label}
+            <input
+              autoFocus={index === 0}
+              name={field.name}
+              type={field.secret ? "password" : (field.type ?? "text")}
+              autoComplete="off"
+              spellCheck={false}
+              value={values[field.name] ?? ""}
+              placeholder={field.placeholder}
+              aria-invalid={save.isError || undefined}
+              aria-describedby={save.isError ? errorId : undefined}
+              onChange={(event) => {
+                if (save.isError) save.reset();
+                setValues((current) => ({ ...current, [field.name]: event.target.value }));
+              }}
+              className={cx("field mt-1 w-full", field.secret && "font-mono")}
+            />
+          </label>
+          {field.link ? <FieldLink link={field.link} values={values} /> : null}
+        </div>
       ))}
+      {save.isError ? (
+        <p id={errorId} role="alert" className="text-[12.5px] text-danger" data-testid="token-error">
+          {(save.error as Error).message}
+        </p>
+      ) : null}
       <div className="flex flex-wrap items-center justify-end gap-2 pt-1">
         <span className="mr-auto text-[12px] text-muted">Checked with {brand(entry)}, then stored encrypted.</span>
         <button type="button" className="btn-ghost" onClick={onDone}>
@@ -384,6 +513,28 @@ function TokenForm({ entry, onDone }: { entry: CatalogEntry; onDone: () => void 
         </button>
       </div>
     </form>
+  );
+}
+
+/** A vendor page built from the fields, e.g. Trello's token page for the key typed above. */
+function FieldLink({ link, values }: { link: NonNullable<TokenField["link"]>; values: Record<string, string> }) {
+  const href = link.href(values);
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[12px] text-muted">
+      {href ? (
+        <a href={href} target="_blank" rel="noreferrer" className="btn py-0.5 text-[12px]">
+          {link.label} <ExternalLink size={11} aria-hidden />
+          <span className="sr-only"> (opens in a new tab)</span>
+        </a>
+      ) : (
+        <>
+          <button type="button" className="btn py-0.5 text-[12px]" disabled>
+            {link.label}
+          </button>
+          <span>{link.hint}</span>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -467,7 +618,7 @@ function ConnectedPanel({ entry, settings, patch }: { entry: CatalogEntry; setti
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
   const waiting = products.filter((product) => entry.state.needsConsent?.includes(product.id));
-  const sources = Object.entries(entry.state.sources ?? {}).filter(([id]) => ["gmail", "outlook", "slack", "teams", "github", "google_calendar", "outlook_calendar"].includes(id));
+  const sources = Object.entries(entry.state.sources ?? {}).filter(([id]) => PEOPLE_SYNC_SOURCES.has(id));
   return (
     <section className="rounded-xl border border-line" aria-label={`${entry.name} connection`}>
       <div className="flex flex-wrap items-center justify-between gap-3 px-3 py-3 sm:px-4">
@@ -614,6 +765,8 @@ export function McpPanel({ entry, connection }: { entry: Pick<CatalogEntry, "id"
   const status = connection?.status ?? entry.state.mcp?.status;
   const lastError = connection?.lastError ?? entry.state.mcp?.lastError ?? null;
   const custom = Boolean(connection && (!connection.serverId || connection.serverId.startsWith("custom-")));
+  const publicOnly = status === "connected" && !custom && (connection?.auth ?? entry.state.mcp?.auth) === "none" && Boolean(entry.mcp) && !entry.mcp?.open;
+  const account = connection?.account ?? entry.state.mcp?.account ?? null;
   const add = useMcpConnect({
     target: () =>
       custom && connection
@@ -658,13 +811,17 @@ export function McpPanel({ entry, connection }: { entry: Pick<CatalogEntry, "id"
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2 text-[13.5px] font-medium">
             <Wrench size={13} className="text-muted" aria-hidden /> Tools from {entry.name}
-            {status === "connected" ? <Tag tone="green">connected</Tag> : status === "pending" ? <Tag tone="blue">waiting for approval</Tag> : status === "error" ? <Tag tone="red">error</Tag> : status === "disabled" ? <Tag tone="gray">off</Tag> : null}
+            {status === "connected" ? (
+              publicOnly ? <Tag tone="orange">connected · public data only</Tag> : <Tag tone="green">connected</Tag>
+            ) : status === "pending" ? <Tag tone="blue">waiting for approval</Tag> : status === "error" ? <Tag tone="red">error</Tag> : status === "disabled" ? <Tag tone="gray">off</Tag> : null}
           </div>
           <div className="text-[12.5px] text-muted">
             {status === "connected"
-              ? tools.length
-                ? `${on} of ${tools.length} tools on. Tools that change things wait for your Apply.`
-                : `${entry.state.mcp?.toolCount ?? 0} tools. Tools that change things wait for your Apply.`
+              ? `${publicOnly ? "Public data only — sign in to use your account. " : account ? `Signed in as ${account}. ` : ""}${
+                  tools.length
+                    ? `${on} of ${tools.length} tools on. Tools that change things wait for your Apply.`
+                    : `${entry.state.mcp?.toolCount ?? 0} tools. Tools that change things wait for your Apply.`
+                }`
               : status === "pending"
                 ? `Finish approving on ${brand(entry)}'s site to turn the tools on.`
                 : status === "error"
@@ -692,9 +849,14 @@ export function McpPanel({ entry, connection }: { entry: Pick<CatalogEntry, "id"
           ) : null}
         </div>
       </div>
-      {entry.mcp && !custom && (!status || ((status === "pending" || status === "error") && entry.mcp.token?.only)) ? (
+      {entry.mcp && entry.auth && !custom && status !== "connected" && hasWrittenGuide(entry as CatalogEntry, "mcp") ? (
+        <div className="px-3 pb-2 sm:px-4">
+          <ConnectGuide guide={connectorGuide(entry as CatalogEntry, "mcp")!} />
+        </div>
+      ) : null}
+      {entry.mcp && !custom && (!status || publicOnly || ((status === "pending" || status === "error") && entry.mcp.token?.only)) ? (
         <div className="px-3 pb-3 sm:px-4">
-          <McpConnectWay entry={entry as CatalogEntry} primary={!status} />
+          <McpConnectWay entry={entry as CatalogEntry} primary={!status || publicOnly} />
         </div>
       ) : null}
       {add.problem ? (
@@ -758,6 +920,7 @@ function ImportPanel({ entry, onImport }: { entry: CatalogEntry; onImport: (sour
               <li key={line}>· {line}</li>
             ))}
           </ul>
+          {IMPORT_TIPS[entry.id] ? <p className="mt-1.5 text-[12.5px] text-ink/85">{IMPORT_TIPS[entry.id]}</p> : null}
           <p className="mt-1 text-[12px] text-faint">
             {ways.length ? `Uses ${ways.join(" or ")}. ` : ""}Running it again updates what came across and never makes duplicates.
           </p>

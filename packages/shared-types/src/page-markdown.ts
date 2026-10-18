@@ -52,14 +52,24 @@ function tableNode(rows: string[][]): PageNode {
       type: "tableRow",
       content: Array.from({ length: width }, (_, column) => ({
         type: index === 0 ? "tableHeader" : "tableCell",
-        content: [paragraph(row[column] ?? "")],
+        content: [brokenParagraph((row[column] ?? "").split(/<br\s*\/?>/i).map((line) => line.trim()))],
       })),
     })),
   };
 }
 
-/** A table's header rule: `| --- | :-: |`. */
+/** A table's header rule: `| --- | :-: |`, or `--- | ---` without the outer pipes. */
 const TABLE_RULE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/;
+
+/** A header row followed by its rule starts a table, with or without pipes at the ends. */
+const startsTable = (lines: string[], i: number) => Boolean(lines[i]?.includes("|") && lines[i + 1]?.includes("|") && TABLE_RULE.test(lines[i + 1]!));
+
+function tableCells(row: string): string[] {
+  let line = row.trim();
+  if (line.startsWith("|")) line = line.slice(1);
+  if (line.endsWith("|") && !line.endsWith("\\|")) line = line.slice(0, -1);
+  return line.split(/(?<!\\)\|/).map((cell) => cell.trim().replace(/\\\|/g, "|"));
+}
 
 /**
  * `lineBreaks`: each line of a paragraph keeps its own line (a hard break), as pasted text such
@@ -113,12 +123,10 @@ export function markdownToNodes(markdown: string, options: { lineBreaks?: boolea
       i += 1;
       continue;
     }
-    if (line.trim().startsWith("|") && lines[i + 1]?.includes("|") && TABLE_RULE.test(lines[i + 1]!)) {
-      const rows: string[][] = [];
-      const cells = (row: string) => row.trim().replace(/^\|/, "").replace(/\|$/, "").split(/(?<!\\)\|/).map((cell) => cell.trim().replace(/\\\|/g, "|"));
-      rows.push(cells(line));
+    if (startsTable(lines, i)) {
+      const rows: string[][] = [tableCells(line)];
       i += 2;
-      while (i < lines.length && lines[i]!.trim().startsWith("|")) rows.push(cells(lines[i++]!));
+      while (i < lines.length && lines[i]!.trim() && lines[i]!.includes("|")) rows.push(tableCells(lines[i++]!));
       nodes.push(tableNode(rows));
       continue;
     }
@@ -157,7 +165,7 @@ export function markdownToNodes(markdown: string, options: { lineBreaks?: boolea
     const keep = (text: string) => (options.lineBreaks ? text.trimEnd() : text.trim());
     const body: string[] = [keep(line.trimStart())];
     i += 1;
-    while (i < lines.length && lines[i]!.trim() && !/^(#{1,6}\s|```|>|\s*([-*+]|\d+[.)])\s|\|)/.test(lines[i]!)) body.push(keep(lines[i++]!));
+    while (i < lines.length && lines[i]!.trim() && !/^(#{1,6}\s|```|>|\s*([-*+]|\d+[.)])\s|\|)/.test(lines[i]!) && !startsTable(lines, i)) body.push(keep(lines[i++]!));
     nodes.push(options.lineBreaks ? brokenParagraph(body) : paragraph(body.join(" ")));
   }
   return nodes.length ? nodes : [{ type: "paragraph" }];
@@ -173,6 +181,6 @@ const INLINE_SYNTAX = /\*\*[^*\s][^*]*\*\*|(?<![\p{L}\p{N}])__[^_\s][^_]*__|~~[^
  */
 export function looksLikeMarkdown(text: string): boolean {
   const lines = text.replace(/\r\n?/g, "\n").split("\n");
-  if (lines.some((line) => BLOCK_SYNTAX.test(line))) return true;
+  if (lines.some((line, index) => BLOCK_SYNTAX.test(line) || startsTable(lines, index))) return true;
   return INLINE_SYNTAX.test(text);
 }

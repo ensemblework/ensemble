@@ -34,7 +34,7 @@ Due reminders create in-app notifications through `dispatchDueReminders`. Browse
 
 | Path | Current control |
 | --- | --- |
-| Hub assistant local writes | Per-tool classification, allowed write areas, module and sharing checks; preview/Apply according to tool and configured write policy |
+| Hub assistant local writes | Per-tool classification, allowed write areas, module and sharing checks; preview/Apply according to tool and configured write policy (default "Just do it": Hub writes run at once and are undoable; connected-app writes, settings and agent assignments always wait for Apply) |
 | Sensitive assistant actions | Calendar/app writes, dependent workflows, skills and supported settings changes require their tool's explicit Apply path |
 | Connected MCP writes | Server/tool enablement, schema validation and confirmation; read-only annotations influence classification but do not grant access |
 | Assigned research/code jobs | Saved run profile, tool availability, folder trust, Ask/Review only/Unattended mode, sandbox, network/git permissions and limits |

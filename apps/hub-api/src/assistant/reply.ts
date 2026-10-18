@@ -15,6 +15,16 @@ function lineOf(call: ReplyCall): string {
   return (call.summary || call.error || call.name || "a change").trim();
 }
 
+/** "Not added" only for writes that add something; the same failure many times is one line with a count. */
+function failedLines(failed: ReplyCall[]): string[] {
+  const counts = new Map<string, number>();
+  for (const call of failed) {
+    const line = `${/create|import|add_/.test(call.name ?? "") ? "Not added" : "Not done"}: ${call.error || call.summary || "That change was rejected."}`;
+    counts.set(line, (counts.get(line) ?? 0) + 1);
+  }
+  return [...counts].map(([line, count]) => (count > 1 ? `${line} (${count} times)` : line));
+}
+
 /**
  * Drop a boast that work was added or proposed when the tool rows say otherwise,
  * and append the validation errors the model skipped.
@@ -28,7 +38,7 @@ export function reflectProposals(text: string, calls: ReplyCall[]): string {
   const facts = [
     ...pending.map((call) => `Proposed, not applied yet: ${lineOf(call)}`),
     ...done.map((call) => `Done: ${lineOf(call)}`),
-    ...failed.map((call) => `Not added: ${call.error || call.summary || "That change was rejected."}`),
+    ...failedLines(failed),
   ];
   const body = text.trim();
   const claimsAdded = ADDED.test(body);
@@ -43,7 +53,7 @@ export function reflectProposals(text: string, calls: ReplyCall[]): string {
     (failed.length > 0 && (claimsAdded || claimsProposed) && !failureNoted);
   if (overclaims) return facts.join("\n");
   const missing = facts.filter((line) => {
-    const detail = line.replace(/^(Proposed, not applied yet: |Done: |Not added: )/, "");
+    const detail = line.replace(/^(Proposed, not applied yet: |Done: |Not added: |Not done: )/, "").replace(/ \(\d+ times\)$/, "");
     return detail.length > 0 && !body.includes(detail.slice(0, Math.min(24, detail.length)));
   });
   if (!missing.length) return body;

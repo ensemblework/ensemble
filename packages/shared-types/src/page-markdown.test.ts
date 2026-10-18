@@ -68,3 +68,24 @@ test("plain prose and a lone link do not read as Markdown; Markdown structure do
     assert.equal(looksLikeMarkdown(markdown), true, markdown);
   }
 });
+
+test("tables without pipes at the ends are tables too, even right after a paragraph", () => {
+  const nodes = markdownToNodes(["Papers to read:", "Name | Status", "--- | :-:", "Survey **one** | Promising", "a \\| b |", "", "after"].join("\n"));
+  assert.deepEqual(nodes.map((node) => node.type), ["paragraph", "table", "paragraph"]);
+  const rows = nodes[1]!.content!;
+  assert.equal(rows.length, 3);
+  assert.deepEqual(rows[0]!.content!.map((cell) => cell.type), ["tableHeader", "tableHeader"]);
+  assert.deepEqual(rows[1]!.content![0]!.content![0]!.content, [text("Survey "), text("one", "bold")]);
+  assert.deepEqual(rows[2]!.content!.map((cell) => cell.content![0]!.content?.[0]?.text), ["a | b", undefined]);
+});
+
+test("a <br> in a table cell is a line break", () => {
+  const cell = markdownToNodes("| A |\n| --- |\n| one<br>two |")[0]!.content![1]!.content![0]!;
+  assert.deepEqual(cell.content![0]!.content, [text("one"), { type: "hardBreak" }, text("two")]);
+});
+
+test("a pipe in prose is not a table without the rule under it", () => {
+  assert.deepEqual(markdownToNodes("this | that\nnext line").map((node) => node.type), ["paragraph"]);
+  assert.equal(looksLikeMarkdown("this | that"), false);
+  assert.equal(looksLikeMarkdown("Name | Status\n--- | ---\nA | done"), true);
+});

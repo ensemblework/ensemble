@@ -2,7 +2,7 @@ import "../components/ui-test-dom.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { AppearanceSettings } from "@ensemble/shared-types";
-import { COLOR_THEMES, COLOR_THEME_STYLES, colorTheme } from "./color-themes";
+import { COLOR_THEMES, COLOR_THEME_STYLES, colorTheme, colorThemeTokens } from "./color-themes";
 import { ACCENT_PRESETS, APPEARANCE_BOOT, resolveAccent } from "./accent";
 import { completeAppearance, DEFAULT_APPEARANCE, applyAppearance } from "./prefs";
 
@@ -70,4 +70,33 @@ test("legacy motion choices normalize to Expressive without disabling accessibil
     assert.equal(completeAppearance({ motion } as never).motion, "expressive");
   }
   assert.equal(AppearanceSettings.parse({}).accent, "gold");
+});
+
+/**
+ * The canvas paints its image once, in a tile anchored to the top-right of the page (globals.css
+ * `[data-theme-canvas]`). A tile's top and right sides are the page's own edges; its left and bottom
+ * sides are in the middle of the page, so a gradient must fade out before it reaches them.
+ */
+test("no theme's background glow ends in a hard edge inside the page", () => {
+  for (const theme of COLOR_THEMES) for (const mode of ["dark", "light"] as const) {
+    const tokens = colorThemeTokens(theme, mode);
+    const image = tokens["--theme-canvas-image"]!;
+    const size = tokens["--theme-canvas-size"]!;
+    const radials = [...image.matchAll(/radial-gradient\(ellipse at (\d+)% (\d+)%,.*?transparent (\d+)%\)/g)];
+    assert.equal(radials.length, (image.match(/radial-gradient\(/g) ?? []).length, `${theme.id}: every gradient is one this test understands`);
+    if (!radials.length || size === "100% 100%") continue;
+    const tile = size.match(/^(\d+)px (\d+)px$/);
+    assert.ok(tile, `${theme.id} ${mode}: a gradient in a fixed tile, ${size}`);
+    const [width, height] = [Number(tile[1]), Number(tile[2])];
+    for (const [, x, y, stop] of radials) {
+      const cx = (Number(x) / 100) * width;
+      const cy = (Number(y) / 100) * height;
+      // An ellipse sized to the farthest corner, with the farthest sides' proportions, faded out at `stop`.
+      const rx = Math.max(cx, width - cx) * Math.SQRT2 * (Number(stop) / 100);
+      const ry = Math.max(cy, height - cy) * Math.SQRT2 * (Number(stop) / 100);
+      assert.ok(cx - rx > 0, `${theme.id} ${mode}: a glow at ${x}% ${y}% reaches the tile's left side`);
+      assert.ok(cy + ry < height, `${theme.id} ${mode}: a glow at ${x}% ${y}% reaches the tile's bottom side`);
+    }
+  }
+  assert.ok(COLOR_THEMES.some((theme) => theme.colorful), "a theme with gradients exists");
 });

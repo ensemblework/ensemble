@@ -57,9 +57,9 @@ export async function buildHubState(prisma: PrismaClient, userId: string, module
 
 /** Offered when the diagrams module is on. The repo half needs the code module too. */
 const DIAGRAM_RULE =
-  "- Diagrams: follow the diagrams playbook. Call hub_diagram_context for a task, project, or deliverable, and hub_repo_overview for a repository (a link is enough). Refine with hub_edit_diagram. Call hub_validate_diagram, then hub_create_diagram or hub_edit_diagram. Never invent facts about their own work; a well-known system they name (a transformer, OAuth) is drawn from its standard design. A diagram write waits for Apply.";
+  "- Diagrams: follow the diagrams playbook. Call hub_diagram_context for a task, project, or deliverable, and hub_repo_overview for a repository (a link is enough). Refine with hub_edit_diagram. Call hub_validate_diagram, then hub_create_diagram or hub_edit_diagram. Never invent facts about their own work; a well-known system they name (a transformer, OAuth) is drawn from its standard design. A diagram write may wait for Apply; report what its result says.";
 const DIAGRAM_RULE_NO_REPOS =
-  "- Diagrams: follow the diagrams playbook. Call hub_diagram_context for a task, project, or deliverable. Reading a repository is not part of this template, so draw a repo only from what the person tells you. Refine with hub_edit_diagram. Call hub_validate_diagram, then hub_create_diagram or hub_edit_diagram. Never invent facts about their own work; a well-known system they name is drawn from its standard design. A diagram write waits for Apply.";
+  "- Diagrams: follow the diagrams playbook. Call hub_diagram_context for a task, project, or deliverable. Reading a repository is not part of this template, so draw a repo only from what the person tells you. Refine with hub_edit_diagram. Call hub_validate_diagram, then hub_create_diagram or hub_edit_diagram. Never invent facts about their own work; a well-known system they name is drawn from its standard design. A diagram write may wait for Apply; report what its result says.";
 
 /**
  * The opening of the system prompt. It describes where the conversation is and
@@ -215,7 +215,7 @@ export function buildSystemPrompt(
     "Enabled skills:",
     ...skills,
     ...(options.apps ? ["", options.apps] : []),
-    ...(options.plots ? ["", "Plots: when the person asks for a chart, follow the plots playbook: hub_list_datasets or hub_import_dataset (pasted rows or a file in Files), then hub_create_plot or hub_update_plot. Use column names from the dataset. A plot write waits for Apply. Do not invent a file path."] : []),
+    ...(options.plots ? ["", "Plots: when the person asks for a chart, follow the plots playbook: hub_list_datasets or hub_import_dataset (pasted rows or a file in Files), then hub_create_plot or hub_update_plot. Use column names from the dataset. A plot write may wait for Apply; report what its result says. Do not invent a file path."] : []),
     ...(extra ? ["", extra] : []),
   ];
   return lines.filter((line) => line !== "").join("\n");

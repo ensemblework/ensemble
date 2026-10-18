@@ -2,7 +2,7 @@ import { z } from "zod";
 import { Priority, TaskStatus } from "@ensemble/shared-types";
 import { inferComplexity } from "../../lib/complexity.js";
 import { createTask, labelPriority, labelStatus, taskChangePreview, titlesMatch, updateTask } from "../../services/tasks.js";
-import { softDelete } from "../../services/records.js";
+import { softDelete, trashTasks } from "../../services/records.js";
 import { defineTool, inTransaction, toolOk, type ToolContext } from "../types.js";
 import { MAX_MARKDOWN, appendToTaskPage, droppedNote } from "./pages.js";
 
@@ -49,6 +49,9 @@ const TaskDraftInput = z.preprocess(foldIntoPage, z
   })
   .strict());
 
+const MAX_BULK_TASKS = 500;
+const BULK_PREVIEW_TITLES = 8;
+
 export const taskTools = [
   defineTool({
     name: "hub_list_tasks",
@@ -94,7 +97,18 @@ export const taskTools = [
         }),
         ctx.prisma.task.count({ where }),
       ]);
-      return toolOk(`Listed ${tasks.length} of ${total} task(s).`, { tasks, total, offset: input.offset, limit: input.limit });
+      // total first and empty fields left out: a long list must still carry every id in full.
+      const rows = tasks.map((task) => ({
+        id: task.id,
+        title: task.title,
+        status: task.status,
+        owner: task.owner,
+        priority: task.priority,
+        ...(task.due ? { due: task.due.toISOString().slice(0, 10) } : {}),
+        ...(task.projectId ? { projectId: task.projectId } : {}),
+        ...(task.labels.length ? { labels: task.labels } : {}),
+      }));
+      return toolOk(`Listed ${tasks.length} of ${total} task(s).`, { total, offset: input.offset, limit: input.limit, tasks: rows });
     },
   }),
   defineTool({
@@ -249,18 +263,59 @@ export const taskTools = [
   defineTool({
     name: "hub_delete_task",
     area: "tasks",
-    description: "Move a task to Trash. It can be restored. Do not use this when the person meant a different entity.",
+    description: "Move one task to Trash. It can be restored. For more than one task use hub_delete_tasks. Do not use this when the person meant a different entity.",
     input: z.object({ taskId: z.string().uuid() }).strict(),
     isWrite: true,
     risk: "medium",
     undoable: true,
     async preview(ctx, input) {
-      const task = await ctx.prisma.task.findFirst({ where: { id: input.taskId, userId: ctx.userId }, select: { title: true } });
-      return `Move “${task?.title ?? input.taskId}” to Trash`;
+      const task = await ctx.prisma.task.findFirst({ where: { id: input.taskId, userId: ctx.userId, deletedAt: null }, select: { title: true } });
+      if (!task) throw Object.assign(new Error("That task is not on your board. Call hub_list_tasks and use an id it returns."), { statusCode: 404 });
+      return `Move “${task.title}” to Trash`;
     },
     async run(ctx, input) {
       const result = await inTransaction(ctx, (tx) => softDelete(tx, ctx.userId, "task", input.taskId, "agent"));
       return toolOk(`Moved “${result.label}” to Trash.`, { ok: true }, { invalidate: ["tasks"] });
+    },
+  }),
+  defineTool({
+    name: "hub_delete_tasks",
+    area: "tasks",
+    description:
+      "Move many tasks to Trash in one change (they can be restored, and one Undo brings them all back). For “delete all my tasks” or “clear the board” pass all: true. To narrow it, pass status, owner, label, projectId or query instead of ids. Or pass taskIds copied from hub_list_tasks. Use this instead of several hub_delete_task calls.",
+    input: z
+      .object({
+        taskIds: z.array(z.string().uuid()).min(1).max(MAX_BULK_TASKS).optional().describe("Exact ids from hub_list_tasks. Leave out when using a filter."),
+        all: z.boolean().optional().describe("Every task on the board (not already in Trash)."),
+        status: TaskStatus.optional(),
+        owner: z.enum(["me", "agent", "unassigned"]).optional(),
+        label: z.string().min(1).max(40).optional().describe("Only tasks with this tag."),
+        projectId: z.string().uuid().optional(),
+        query: z.string().min(1).max(200).optional().describe("Only tasks whose title, description or notes contain this."),
+      })
+      .strict()
+      .refine((input) => Boolean(input.taskIds?.length || input.all || input.status || input.owner || input.label || input.projectId || input.query), {
+        message: "Pass taskIds, or all: true, or a filter (status, owner, label, projectId, query).",
+      }),
+    isWrite: true,
+    risk: "medium",
+    undoable: true,
+    async prepare(ctx, input) {
+      return { taskIds: await bulkTaskIds(ctx, input) };
+    },
+    async preview(ctx, input) {
+      const ids = await bulkTaskIds(ctx, input);
+      const rows = await ctx.prisma.task.findMany({ where: { userId: ctx.userId, id: { in: ids }, deletedAt: null }, select: { id: true, title: true } });
+      if (rows.length !== ids.length) throw Object.assign(new Error(`${ids.length - rows.length} of those tasks are not on your board. List the tasks again, or pass a filter such as all: true.`), { statusCode: 404 });
+      const shown = rows.slice(0, BULK_PREVIEW_TITLES).map((row) => `- ${row.title}`);
+      const more = rows.length > BULK_PREVIEW_TITLES ? [`- …and ${rows.length - BULK_PREVIEW_TITLES} more`] : [];
+      return rows.length === 1 ? `Move “${rows[0]!.title}” to Trash` : [`Move ${rows.length} tasks to Trash:`, ...shown, ...more].join("\n");
+    },
+    async run(ctx, input) {
+      const ids = await bulkTaskIds(ctx, input);
+      const { titles } = await inTransaction(ctx, (tx) => trashTasks(tx, ctx.userId, ids, "agent"));
+      const summary = titles.length === 1 ? `Moved “${titles[0]}” to Trash.` : `Moved ${titles.length} tasks to Trash.`;
+      return toolOk(summary, { moved: titles.length }, { invalidate: ["tasks"] });
     },
   }),
   defineTool({
@@ -287,6 +342,38 @@ export const taskTools = [
     },
   }),
 ];
+
+type BulkTaskInput = { taskIds?: string[]; all?: boolean; status?: z.infer<typeof TaskStatus>; owner?: "me" | "agent" | "unassigned"; label?: string; projectId?: string; query?: string };
+
+/** The exact tasks a bulk change means: the ids given, or every task on the board that matches the filter. */
+async function bulkTaskIds(ctx: ToolContext, input: BulkTaskInput): Promise<string[]> {
+  if (input.taskIds?.length) return [...new Set(input.taskIds)];
+  const rows = await ctx.prisma.task.findMany({
+    where: {
+      userId: ctx.userId,
+      deletedAt: null,
+      ...(input.status ? { status: input.status } : {}),
+      ...(input.owner ? { owner: input.owner } : {}),
+      ...(input.label ? { labels: { has: input.label } } : {}),
+      ...(input.projectId ? { projectId: input.projectId } : {}),
+      ...(input.query
+        ? {
+            OR: [
+              { title: { contains: input.query, mode: "insensitive" as const } },
+              { description: { contains: input.query, mode: "insensitive" as const } },
+              { notes: { contains: input.query, mode: "insensitive" as const } },
+            ],
+          }
+        : {}),
+    },
+    orderBy: [{ boardOrder: "asc" }, { createdAt: "asc" }],
+    take: MAX_BULK_TASKS + 1,
+    select: { id: true },
+  });
+  if (!rows.length) throw Object.assign(new Error("No tasks on the board match that."), { statusCode: 404 });
+  if (rows.length > MAX_BULK_TASKS) throw Object.assign(new Error(`More than ${MAX_BULK_TASKS} tasks match. Narrow it with status, label or projectId and do it in parts.`), { statusCode: 400 });
+  return rows.map((row) => row.id);
+}
 
 /** A project proposed earlier in this batch can be named before it exists in the database. */
 export function proposedProjectName(call: { name: string; state?: string; input?: Record<string, unknown> }): string | null {

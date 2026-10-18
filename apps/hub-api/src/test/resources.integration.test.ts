@@ -769,11 +769,13 @@ test("OAuth-only sessions remain real shell accounts, and unverified hosted brow
   await harness.prisma.user.update({ where: { id: oauth.id }, data: { passwordHash: null, emailVerifiedAt: null } });
   await harness.prisma.authIdentity.create({ data: { userId: oauth.id, provider: "google", subject: `fixture-${oauth.id}`, email: oauth.email } });
   const originalNodeEnv = process.env.NODE_ENV;
+  assert.equal((await check(oauth, "GET", "/api/shell", 200, "happy-path")).hostCode, true, "a self-hosted Ensemble's own Code folders");
   process.env.NODE_ENV = "production";
   try {
     const shell = await check(oauth, "GET", "/api/shell", 200, "happy-path");
     assert.deepEqual(shell.user, { id: oauth.id, email: oauth.email, name: "HTTP test user", avatar: null, emailVerified: false, hasPassword: false });
     assert.equal(shell.verificationRequired, true);
+    assert.equal(shell.hostCode, false, "hosted, not the operator: no /api/code calls");
     assert.equal(shell.via, "session");
     assert.equal((await check(b, "GET", "/api/shell", 200, "isolation")).user.id, b.id);
     const page = (await check(oauth, "POST", "/api/pages", 201, "happy-path")).page;

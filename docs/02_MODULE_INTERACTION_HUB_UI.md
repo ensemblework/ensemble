@@ -8,7 +8,7 @@ Use the existing task/page/record identity across views. Show saved, pending, fa
 
 ## 2. Information architecture & navigation
 
-`app/(hub)` contains authenticated routes. `components/shell` provides the rail, phone navigation, space switcher, page tree, top-bar search and floating assistant. `/` enters the authenticated/onboarding flow. Search and Jump to share Cmd/Ctrl+K. Pages sits beneath Today and can collapse while retaining its add action.
+`app/(hub)` contains authenticated routes. `components/shell` provides the rail, phone navigation, space switcher, page tree, top-bar search and floating assistant. The top bar's sidebar button switches the sidebar between full and rail (on a phone it opens the navigation drawer). With *Auto-collapse sidebar* on, or the Pages panel docked on the left, the sidebar stays a rail (with auto-collapse, pointing at it or focusing its controls opens it), so on a computer that button and the rail's Expand button are hidden (`sidebarRailForced` in `lib/sidebar-rail.ts`, rules in `app/globals.css`). `/` enters the authenticated/onboarding flow. Search and Jump to share Cmd/Ctrl+K. Pages sits beneath Today and can collapse while retaining its add action.
 
 Navigation follows the signup profession, enabled modules and access scope. Code, Workspace, Runs and Skills are offered to engineer and Builder profiles; other profiles retain applicable Context records, Diagrams, Plots and Metrics. Optional features/tabs can be hidden without deleting data. A manually entered URL still undergoes module and server authorization checks.
 
@@ -93,7 +93,11 @@ The assistant can find/read/change **allowlisted** settings after Apply and choo
 
 #### Connector store
 
-`components/connectors` consumes `GET /api/connectors/catalog`. Entries distinguish configured operator app, the person's connection, products/granted scopes, last sync/error and vendor MCP state/tools. Turning on a product without sufficient scopes offers reconnect/consent. Login identity and connector grants are separate. Connecting does not import content; Sync people updates bounded metadata only. Native search, file/board import and MCP tools have separate coverage ([03](03_MODULE_CONTEXT_ENGINE.md), [31](31_CONNECTORS_IN_USE.md)).
+`components/connectors` consumes `GET /api/connectors/catalog`. Entries distinguish configured operator app, the person's connection, products/granted scopes, last sync/error and vendor MCP state/tools. Turning on a product without sufficient scopes offers reconnect/consent. A vendor MCP connection made without an account to a server that holds the person's data shows as "Connected · public data only", with sign-in and token still offered; where the vendor names the account (Hugging Face) the badge reads "Connected as <account>". Hugging Face offers **Sign in with Hugging Face** and **Paste an access token**, never an anonymous Connect. Login identity and connector grants are separate. Connecting does not import content; Sync people updates bounded metadata only. Native search, file/board import and MCP tools have separate coverage ([03](03_MODULE_CONTEXT_ENGINE.md), [31](31_CONNECTORS_IN_USE.md)).
+
+Connected apps come first wherever connectors are listed: the store grid (in every category and search), and the five-app short list in Settings → Connections. "Connected" means signed in, a saved token, or the vendor's MCP server connected; connected custom MCP servers join them at the top of the grid. Otherwise catalog order holds (`filterEntries`, `featuredEntries`, `storeCards` in `components/connectors/catalog-view.ts`). The API still returns catalog order.
+
+The detail page's connect panel has one **Step-by-step guide** disclosure, open by default, inside the way it describes (a button with `aria-expanded`; numbered steps, links open in a new tab, with "Looks like", "Not this", "Permissions" and "More help" notes). Pasted credentials and MCP servers that take a token, an address or the organisation's own app have written guides in `packages/shared-types/src/connector-guides.ts` (`CONNECTOR_GUIDES`); sign-in gets a short guide on what happens and what to approve (`connectorGuide`). Guides, field labels and the way's title use the vendor's own word for the credential (Notion internal integration secret, GitHub fine-grained personal access token, Slack user OAuth token, Linear personal API key, Trello API key and token). Trello's form has **Get a token**, which opens Trello's authorize page for the typed key. A refused token is shown under the fields. **In Ensemble** lists only what the code does for that app ([31 §2](31_CONNECTORS_IN_USE.md#2-what-ensemble-does-with-a-connected-app)).
 
 ### 3.10 Files
 
@@ -102,6 +106,8 @@ Files lists uploaded originals and explicitly saved/imported app content. Format
 ## 4. Interaction patterns
 
 Dialogs manage keyboard focus; tabs support keyboard navigation. Drag/drop and resize controls persist real layout state. Blank titles restore the saved name or fail validation rather than saving empty records. Text scaling changes typography without scaling the entire root layout. Phone actions wrap within the viewport.
+
+Notices (toasts, `components/toast.tsx`) appear at the bottom centre and close themselves after 3 seconds (`TOAST_MS` in `lib/toast-bus.ts`); the accent bar along the bottom runs down over that time. Pointing at a notice or focusing it pauses the bar and the timer, so an Undo button stays reachable; × closes it at once. A caller can ask for longer only for instructions that need reading (the PDF print fallback).
 
 Confirmations are specific to the action. Moving recoverable pages to Trash offers Undo; permanent deletion, account removal, sharing revocation and sensitive device permissions have their own confirmations. Do not add a universal confirmation to ordinary autosave.
 
@@ -117,6 +123,7 @@ The checked-in route inventory and route modules are authoritative; this table g
 
 | Area | Routes / implementation |
 | --- | --- |
+| Shell and Today | `/api/shell` (account, open space, counts, modules, `hostCode`: whether this account may read this server's own Code and workspace folders), `/api/today/home`; `routes/views.ts` |
 | Tasks and board | `/api/tasks`, `/api/tasks/:id`, `/api/tasks/:id/move`; `routes/tasks.ts`, `board.ts` |
 | Task documents | `/api/tasks/:id/page`, `/api/tasks/:id/page/collab`; task and collaboration routes |
 | Standalone pages | `/api/pages`, `/api/pages/:id`, `/api/pages/delete-many`; `routes/pages.ts` and `pages/` |
@@ -150,13 +157,17 @@ Internal service routes require internal credentials; device routes require a sc
 
 `packages/brand` owns marks, palettes and motion. [BRAND](BRAND.md) describes the current system. Reduced motion is independent of theme. Menus/dialogs opened from the floating assistant use a layer above their parent, so model and mention menus stay clickable.
 
+Mentions use one chip everywhere: page mentions, mentions in sent assistant messages and in comments (`.mention` in `app/globals.css`, `components/mentions/mention-chip.tsx`). Each kind takes its hue from the `--kind-*` tokens, mixed soft and tuned separately for light and dark, so it reads under every color theme; the chip is inline and does not change its line's height. Text boxes with the @ menu (assistant composer, comments, Quick capture) use `components/mentions/mention-field.tsx`: a copy of the text behind the transparent box tints picked mentions, a bare `@people:` prefix and the token being picked, while caret, selection, undo and IME stay the browser's.
+
+Addresses in text are links. `lib/linkify.ts` finds http(s) URLs, `www.` hosts and email addresses (never other schemes), trimming sentence punctuation and unbalanced closing brackets; `components/linkified-text.tsx` renders them in raw text (sent assistant messages, run trace thinking/errors/tool input and output, live job logs and events, task short descriptions, plain-text files, app item text, meeting recaps, Morning brief, approval previews). `MarkdownText` also links bare and `<…>` addresses, but not inside code. Web addresses open in a new tab with `noopener noreferrer`; in-app paths stay in the tab. A click on a link inside a clickable row or a click-to-edit field opens only the link.
+
 ## 9. Verification
 
 Use `pnpm --filter @ensemble/hub-web test` and relevant API tests for behavior changes. Browser scripts under `e2e` and `scripts` have individual prerequisites; a historical screenshot or mock does not verify today's production page. The route inventory checks registered endpoints, not every happy-path contract. This documentation audit does not rerun the complete UI/provider matrix.
 
 ## 10. The Hub assistant
 
-The floating dock remains the shared conversation surface, including over task peeks. Typed mentions send kind/ID references; names without IDs are resolved conservatively in the current space. A From your apps picker can add a source URL for explicit live reading. Model menus choose the available tier/model and identify the funding source. Unavailable turns persist as errors with Retry, not successful assistant messages.
+The floating dock remains the shared conversation surface, including over task peeks. Floating, it resizes from its left edge, top edge or top-left corner (it stays anchored bottom-right): drag, or focus an edge and use the arrow keys; double-click or Home goes back to the default size. The size is kept in this browser (`ensemble.assistant.size`), never below 380 × 440 px and never past the window less a 20 px margin, and is fitted again when the window changes (`components/assistant/use-panel-size.ts`). Expanded, and on phones (640 px wide or less), it has no handles and keeps its fixed layout. Typed mentions send kind/ID references; names without IDs are resolved conservatively in the current space. The composer tints mentions while typing, and a sent message shows its saved mentions as chips that open the record in the app ([11](11_HOW_THE_ASSISTANT_WORKS.md#3-context-and-prompt-size)). A From your apps picker can add a source URL for explicit live reading. Model menus choose the available tier/model and identify the funding source. Unavailable turns persist as errors with Retry, not successful assistant messages.
 
 [11](11_HOW_THE_ASSISTANT_WORKS.md) owns routing, tool execution and Apply. [34](34_ASSISTANT_ACTIONS.md) owns the current action map.
 
@@ -192,7 +203,9 @@ Duplicate creates independent writing. Save as template snapshots for the owner'
 
 ### Blocks and mentions
 
-Slash commands insert supported writing blocks; `@` links real entities by ID and can request Ensemble. Embedded files, plots and diagrams retain their resource identity. Plot/diagram height is saved on the mention; removing the embed does not delete the resource. The mention menu must finish entity selection before Enter can send an inline request.
+Slash commands insert supported writing blocks; `@` links real entities by ID and can request Ensemble. Mentions render as kind-tinted chips; embedded files, plots and diagrams render as cards and retain their resource identity. Plot/diagram height is saved on the mention; removing the embed does not delete the resource. The mention menu must finish entity selection before Enter can send an inline request.
+
+Links in an editable page open on a click: in-app paths, `ensemble://` record links and link-to-page blocks in place, everything else in a new tab (Cmd/Ctrl+click always uses a new tab). Resting the pointer on a link for about half a second, or Alt+Enter with the caret in one, shows a card to open, edit or remove it (`components/editor/link-popover.tsx`); selecting part of a link with a drag or Shift+click does not open it. Read-only pages use ordinary links that open in a new tab.
 
 ### Saving and concurrent edits
 
@@ -210,7 +223,7 @@ Inline requests use the normal assistant loop and scoped tools. Newly requested 
 
 ### Manual and imported meeting notes
 
-Manual meeting sessions use the block editor and serialized debounced saving. Typed content also has a Markdown projection used by search/recap. Failed drafts remain in browser memory across SPA navigation, not a full reload. Imported notes share the shelf but are source records and read-only. Meetings do not record the microphone or transcribe audio. [03](03_MODULE_CONTEXT_ENGINE.md#7-meeting-context) describes the actual routes.
+Manual meeting sessions use the block editor and serialized debounced saving. Each card on the shelf shows a Move to Trash button on hover or keyboard focus (always shown on touch screens), which confirms, uses `DELETE /api/meetings/sessions/:id` like Delete notes inside a note, and offers Undo. Typed content also has a Markdown projection used by search/recap. Failed drafts remain in browser memory across SPA navigation, not a full reload. Imported notes share the shelf but are source records and read-only. Meetings do not record the microphone or transcribe audio. [03](03_MODULE_CONTEXT_ENGINE.md#7-meeting-context) describes the actual routes.
 
 ### Context graph
 

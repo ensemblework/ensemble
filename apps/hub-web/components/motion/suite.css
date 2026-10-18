@@ -312,7 +312,7 @@ html[data-motion-enter="1"] .page-head h1 { animation: m-rise var(--m-dur-ui) va
   transform-origin: left;
   background: var(--accent);
   opacity: calc(0.35 + var(--m-ornament) * 0.4);
-  animation: m-drain linear var(--m-ease-exit) forwards;
+  animation: m-drain linear forwards;
 }
 @keyframes m-toast-in { from { transform: translateY(var(--m-amp)); opacity: 0; } }
 @keyframes m-drain { to { transform: scaleX(0); } }

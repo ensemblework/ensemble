@@ -13,7 +13,7 @@ import { envDevTools } from "../lib/dev-tools.js";
 import { loadSettings } from "../lib/settings.js";
 import { undoState } from "../lib/undo.js";
 import { serializeTask } from "./tasks.js";
-import { isHosted } from "../lib/hosted-access.js";
+import { canUseHostCredentials, isHosted } from "../lib/hosted-access.js";
 import { defaultSpaceName } from "../spaces/store.js";
 import { accountIdOf, ownsOpenSpace } from "../lib/auth.js";
 import { displayName, initialsOf } from "../sharing/store.js";
@@ -31,7 +31,7 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/shell", async (request, reply) => {
     const userId = request.userId;
-    const [user, approvals, decisions, settings, sync, undo, members, recipients] = await Promise.all([
+    const [user, approvals, decisions, settings, sync, undo, members, recipients, hostCode] = await Promise.all([
       prisma.user.findUnique({ where: { id: userId } }),
       countOrZero(prisma.approval.count({ where: { userId, decision: null } })),
       countOrZero(prisma.agentDecision.count({ where: { userId, status: "pending" } })),
@@ -40,6 +40,8 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
       undoState(prisma, userId).catch(() => ({ canUndo: false, canRedo: false, undoLabel: null, redoLabel: null })),
       countOrZero(prisma.spaceMember.count({ where: { spaceId: userId } })),
       prisma.share.findMany({ where: { spaceId: userId }, distinct: ["recipientId"], select: { recipientId: true } }).catch(() => []),
+      // The same check as `requireHostAccess` in front of `/api/code/*`.
+      canUseHostCredentials(userId).catch(() => false),
     ]);
     if (!user && request.authVia !== "bypass") return reply.code(401).send({ error: "Sign in." });
     // Inside a space, `user` is the space. Who you are (name, email, verification) is the signed-in account.
@@ -110,6 +112,8 @@ export async function viewRoutes(app: FastifyInstance): Promise<void> {
           : null,
       devTools: envDevTools() || Boolean(account?.tester),
       pageWidth: settings.pageWidth,
+      /** May use this server's own Code folders (`/api/code/*`). False on Ensemble on the web except for its operator: Code works on paired computers there. */
+      hostCode,
     };
   });
 

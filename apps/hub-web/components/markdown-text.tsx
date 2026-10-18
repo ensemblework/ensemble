@@ -2,18 +2,31 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
-import { Fragment, useState, type ReactNode } from "react";
+import type { PageMention } from "@ensemble/shared-types";
+import Link from "next/link";
+import { Fragment, createContext, useContext, useState, type ReactNode } from "react";
+import { ADDRESS_SOURCE, addressLink } from "@/lib/linkify";
+import { LINK_CLASS, LinkifiedText, TextLink, linkify } from "./linkified-text";
+
+const Mentions = createContext<PageMention[] | null>(null);
 
 /**
  * Small safe Markdown for model output: headings, paragraphs, bold, italics, code, links, bullet,
  * numbered and task lists (nested by indent), quotes, fenced code, tables and rules. No raw HTML.
+ * Bare addresses become links. With `mentions`, `@kind:Label` for those exact mentions shows as a chip.
  */
-export function MarkdownText({ text, className }: { text: string; className?: string }) {
+export function MarkdownText({ text, className, mentions }: { text: string; className?: string; mentions?: PageMention[] | null }) {
   return (
     <div className={className ?? "space-y-2 text-[13.5px] leading-[1.6]"}>
-      <Blocks blocks={parseBlocks(text)} />
+      <Mentions.Provider value={mentions?.length ? mentions : null}>
+        <Blocks blocks={parseBlocks(text)} />
+      </Mentions.Provider>
     </div>
   );
+}
+
+function Plain({ text }: { text: string }) {
+  return <LinkifiedText text={text} mentions={useContext(Mentions)} />;
 }
 
 type ListItem = { text: string; checked: boolean | null; ordered: boolean; start: number; children: ListItem[] };
@@ -293,35 +306,67 @@ function lineBreaks(lines: string[]): ReactNode {
   ));
 }
 
+// Code and bold win over italics. Italics do not match snake_case or spaced multiplication.
+// A bare address is matched here too, so emphasis never cuts through one.
+const INLINE = new RegExp(
+  [
+    "(`[^`]+`)",
+    String.raw`(\*\*[^*]+\*\*)`,
+    String.raw`(\[([^\]]+)\]\(((?:https?:\/\/|\/(?![\/\\]))(?:[^()\s\\]|\([^()\s\\]*\))*)\))`,
+    String.raw`(?<![A-Za-z0-9])\*(?!\*|\s)([^*\n]*?[^\s*])\*(?!\*)(?![A-Za-z0-9])`,
+    String.raw`(?<![A-Za-z0-9])_(?!_|\s)([^_\n]*?[^\s_])_(?!_)(?![A-Za-z0-9])`,
+    "(~~[^~]+~~)",
+    String.raw`<((?:https?:\/\/|mailto:)[^\s<>]+|[\w.%+-]+@[^\s<>@]+)>`,
+    `(${ADDRESS_SOURCE})`,
+  ].join("|"),
+  "gu",
+);
+
 function inline(text: string): ReactNode[] {
   const nodes: ReactNode[] = [];
-  // Code and bold win over italics. Italics do not match snake_case or spaced multiplication.
-  const pattern =
-    /(`[^`]+`)|(\*\*[^*]+\*\*)|(\[[^\]]+\]\((?:https?:\/\/|\/(?![\/\\]))[^)\s\\]*\))|(?<![A-Za-z0-9])\*(?!\*|\s)([^*\n]*?[^\s*])\*(?!\*)(?![A-Za-z0-9])|(?<![A-Za-z0-9])_(?!_|\s)([^_\n]*?[^\s_])_(?!_)(?![A-Za-z0-9])|(~~[^~]+~~)/g;
+  const pattern = new RegExp(INLINE.source, INLINE.flags);
   let last = 0;
   let match: RegExpExecArray | null;
   let key = 0;
+  const plain = (value: string) => nodes.push(<Plain key={key++} text={value} />);
   while ((match = pattern.exec(text))) {
-    if (match.index > last) nodes.push(text.slice(last, match.index));
-    const token = match[0];
-    if (match[1]) nodes.push(<code key={key++} className="rounded bg-panel px-1 font-mono text-[12px]">{token.slice(1, -1)}</code>);
-    else if (match[2]) nodes.push(<strong key={key++}>{token.slice(2, -2)}</strong>);
-    else if (match[4] || match[5]) nodes.push(<em key={key++}>{match[4] ?? match[5]}</em>);
-    else if (match[6]) nodes.push(<del key={key++}>{token.slice(2, -2)}</del>);
-    else {
-      const link = /\[([^\]]+)\]\(((?:https?:\/\/|\/(?![\/\\]))[^)\s\\]*)\)/.exec(token);
-      if (link) {
-        const external = /^https?:\/\//.test(link[2]!);
-        nodes.push(
-          <a key={key++} href={link[2]} {...(external ? { target: "_blank", rel: "noreferrer noopener" } : {})} className="text-accent underline">
-            {link[1]}
-          </a>,
-        );
-      }
+    let end = match.index + match[0].length;
+    if (match[10]) {
+      const link = addressLink(match[10]);
+      if (!link) continue;
+      end = match.index + link.text.length;
+      pattern.lastIndex = end;
+      if (match.index > last) plain(text.slice(last, match.index));
+      nodes.push(<TextLink key={key++} href={link.href}>{link.text}</TextLink>);
+      last = end;
+      continue;
     }
-    last = match.index + token.length;
+    if (match.index > last) plain(text.slice(last, match.index));
+    const token = match[0];
+    if (match[1]) nodes.push(<code key={key++} className="rounded bg-panel px-1 font-mono text-[12px] [overflow-wrap:anywhere]">{token.slice(1, -1)}</code>);
+    else if (match[2]) nodes.push(<strong key={key++}>{linkify(token.slice(2, -2))}</strong>);
+    else if (match[6] || match[7]) nodes.push(<em key={key++}>{linkify(match[6] ?? match[7]!)}</em>);
+    else if (match[8]) nodes.push(<del key={key++}>{linkify(token.slice(2, -2))}</del>);
+    else if (match[9]) {
+      const inner = match[9];
+      const link = addressLink(inner);
+      const href = /^(?:https?:\/\/[\p{L}\p{N}[]|mailto:)/iu.test(inner) ? inner : link?.text === inner ? link.href : null;
+      nodes.push(href ? <TextLink key={key++} href={href}>{inner}</TextLink> : <Plain key={key++} text={token} />);
+    } else if (match[3]) {
+      const href = match[5]!;
+      nodes.push(
+        /^https?:\/\//i.test(href) ? (
+          <TextLink key={key++} href={href}>{match[4]}</TextLink>
+        ) : (
+          <Link key={key++} href={href} className={LINK_CLASS}>
+            {match[4]}
+          </Link>
+        ),
+      );
+    }
+    last = end;
   }
-  if (last < text.length) nodes.push(text.slice(last));
+  if (last < text.length) plain(text.slice(last));
   return nodes;
 }
 

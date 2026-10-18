@@ -4,6 +4,7 @@
 
 import { useMemo, useState } from "react";
 import { MarkdownText } from "../../markdown-text";
+import { LinkifiedText } from "@/components/linkified-text";
 import { Segmented } from "../../ui";
 import { Toolbar, type ViewerProps } from "./shared";
 
@@ -45,7 +46,7 @@ export default function TextViewer({ file, format, bytes, compact }: ViewerProps
         </pre>
       </div>
     ) : (
-      <pre className="whitespace-pre-wrap break-words px-4 py-3 font-mono text-[12.5px] leading-[1.6] text-ink">{shown}</pre>
+      <pre className="whitespace-pre-wrap break-words px-4 py-3 font-mono text-[12.5px] leading-[1.6] text-ink"><LinkifiedText text={shown} /></pre>
     );
 
   return (

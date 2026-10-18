@@ -39,10 +39,10 @@ export function AssistantSection({ settings, patch }: Props) {
   return (
     <SectionCard title="The assistant" description="How the chat in the corner talks to you, and what it may change on its own.">
       <div className="divide-y divide-[var(--line)]">
-        <SettingRow title="When it wants to change something" description="Preview shows what it wants to change and waits for you to press Apply in the chat.">
+        <SettingRow title="When it wants to change something" description="Just do it makes the change at once; Undo in the top bar reverts it. Preview waits for you to press Apply in the chat. Changes in connected apps and settings always wait for Apply.">
           <select aria-label="Write policy" value={assistant.writePolicy} onChange={(event) => patch({ assistant: { writePolicy: event.target.value } })} className="field">
-            <option value="preview">Show me a preview first</option>
             <option value="immediate">Just do it (undoable)</option>
+            <option value="preview">Show me a preview first</option>
             <option value="needs-me">Queue it on Needs me</option>
           </select>
         </SettingRow>

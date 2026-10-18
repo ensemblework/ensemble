@@ -9,6 +9,12 @@ import { DESKTOP_WEBVIEW_ORIGINS } from "./desktop-guard.js";
 export const TERMINAL_DESKTOP_REFUSAL =
   "The terminal isn't available in the desktop app yet. It needs a Touch ID or Windows Hello check that the app can't run yet.";
 
+/**
+ * The code on a locked or expired terminal's refusal, which is a 423 and never a 401: the web
+ * treats a 401 as a sign-in that ended and sends the tab to the login page.
+ */
+export const TERMINAL_LOCKED = "TERMINAL_LOCKED";
+
 const WEBVIEW: ReadonlySet<string> = new Set(DESKTOP_WEBVIEW_ORIGINS);
 
 /**

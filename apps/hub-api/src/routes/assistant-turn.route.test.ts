@@ -16,7 +16,7 @@ import { assistantRoutes } from "./assistant.js";
 
 const USER = "new-chat-stop-user";
 
-type Saved = { id: string; role: string; content: string; conversationId: string };
+type Saved = { id: string; role: string; content: string; conversationId: string; mentions?: unknown };
 
 function stubPrisma(ollamaUrl: string) {
   const saved: Saved[] = [];
@@ -63,7 +63,7 @@ function stubPrisma(ollamaUrl: string) {
         if (prop === "assistantMessage") {
           return {
             create: async ({ data }: { data: Saved }) => {
-              const row = { id: randomUUID(), role: data.role, content: data.content, conversationId: data.conversationId };
+              const row = { id: randomUUID(), role: data.role, content: data.content, conversationId: data.conversationId, mentions: data.mentions };
               saved.push(row);
               return { ...row, toolCalls: [], model: null, createdAt: new Date() };
             },
@@ -280,6 +280,34 @@ test("unreachable runtime saves an error turn without developer commands", { tim
     assert.equal(saved.filter(row => row.role === "assistant").length, 0);
     assert.equal(saved.filter(row => row.role === "error").length, 1);
     assert.match(response.body, /"failed":true/);
+  } finally {
+    setCredentialResolverForTests(null);
+    (env as { AGENT_RUNTIME_URL: string }).AGENT_RUNTIME_URL = previousUrl;
+    if (previousFlag === undefined) delete process.env.ENSEMBLE_INPROCESS_RUNTIME; else process.env.ENSEMBLE_INPROCESS_RUNTIME = previousFlag;
+    await app.close();
+  }
+});
+
+test("the user message keeps the mentions it was sent with, so the dock can show them after a reload", { timeout: 20_000 }, async () => {
+  const previousFlag = process.env.ENSEMBLE_INPROCESS_RUNTIME, previousUrl = env.AGENT_RUNTIME_URL;
+  process.env.ENSEMBLE_INPROCESS_RUNTIME = "0";
+  (env as { AGENT_RUNTIME_URL: string }).AGENT_RUNTIME_URL = "http://127.0.0.1:1";
+  const { prisma, saved } = stubPrisma("http://127.0.0.1:9");
+  setCredentialResolverForTests(async (_userId, provider) => ({ provider, secret: "", source: "none", baseUrl: null }));
+  const app = Fastify({ logger: false });
+  app.decorate("prisma", prisma as never); app.decorate("redis", memoryRedis() as never);
+  app.addHook("onRequest", async request => { request.userId = USER; request.modules = null; });
+  await app.register(assistantRoutes);
+  try {
+    const mention = { kind: "task", id: "task-1", label: "Clone a repo" };
+    const response = await app.inject({ method: "POST", url: "/api/assistant/turn", payload: { message: "@task:Clone a repo do this on my machine", mentions: [mention] } });
+    assert.equal(response.statusCode, 200);
+    const user = saved.filter(row => row.role === "user");
+    assert.equal(user.length, 1);
+    assert.deepEqual(user[0]!.mentions, [mention]);
+    const plain = await app.inject({ method: "POST", url: "/api/assistant/turn", payload: { message: "No mentions here" } });
+    assert.equal(plain.statusCode, 200);
+    assert.deepEqual(saved.filter(row => row.role === "user")[1]!.mentions, []);
   } finally {
     setCredentialResolverForTests(null);
     (env as { AGENT_RUNTIME_URL: string }).AGENT_RUNTIME_URL = previousUrl;

@@ -53,7 +53,7 @@ The host stores device identity/capabilities, task and job spec, lease state, de
 
 ### 4.4 Web UI
 
-Assignment offers available computers and their shared labels/capabilities. Cards report last contact, queue/run/wait/interruption, model and result evidence. A run's review ID can open Code on its executing computer. Failure to load capabilities is an explicit error; it is not a permission grant.
+Assignment offers available computers and their shared labels/capabilities. The assistant can queue the same job from chat ("do this on my machine") with `hub_assign_to_agent`, after the person presses Apply; it goes through `createJob` like the dialog, so the computer's checks are unchanged ([11 §8.3](11_HOW_THE_ASSISTANT_WORKS.md#83-running-work-code-and-settings)). Cards report last contact, queue/run/wait/interruption, model and result evidence. A run's review ID can open Code on its executing computer. Failure to load capabilities is an explicit error; it is not a permission grant.
 
 ### 4.5 Attachments and task context
 

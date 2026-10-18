@@ -21,3 +21,18 @@ export function useModuleState(id: OptionalModule): boolean | null {
 export function useModuleOn(id: OptionalModule): boolean {
   return useModuleState(id) === true;
 }
+
+/**
+ * Whether this account may use this server's own folders: `/api/code/*` and `/api/workspace/*` (the
+ * shell's `hostCode`). False on Ensemble on the web except for its operator; the Code tab works on
+ * paired computers there. Null while the shell loads; a server that does not say is taken as yes.
+ */
+export function hostCodeFrom(shell: { hostCode?: boolean } | null | undefined): boolean | null {
+  return shell ? shell.hostCode !== false : null;
+}
+
+export function useHostCode(): boolean | null {
+  const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000, enabled: !inItemView() });
+  if (!shell.data || inItemView()) return null;
+  return hostCodeFrom(shell.data);
+}

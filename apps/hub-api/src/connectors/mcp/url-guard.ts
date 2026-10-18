@@ -16,6 +16,7 @@ import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
 import type { FetchLike } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { isBlockedAddress } from "../../plots/ssrf.js";
 import { isHosted } from "../../lib/hosted-access.js";
+import { MCP_USER_AGENT } from "./config.js";
 
 const MAX_REDIRECTS = 4;
 const AUTH_FETCH_TIMEOUT_MS = 30_000;
@@ -245,7 +246,8 @@ function requestUrl(input: string | URL | Request): URL {
  * A fetch for the MCP SDK. Each request and each redirect hop is checked with
  * assertMcpUrlAllowed. Redirects are followed by hand so a public server cannot
  * bounce a request to a private address; Authorization is dropped when a
- * redirect leaves the origin. Requests without their own signal get a timeout.
+ * redirect leaves the origin. Requests without their own signal get a timeout,
+ * and requests without a User-Agent get Ensemble's.
  */
 export function guardedFetch(options: GuardedFetchOptions = {}): FetchLike {
   const hosted = options.hosted ?? isHosted();
@@ -254,7 +256,9 @@ export function guardedFetch(options: GuardedFetchOptions = {}): FetchLike {
     (hosted ? pinnedFetch({ ...(options.lookup ? { lookup: options.lookup } : {}), ...(options.isBlocked ? { isBlocked: options.isBlocked } : {}) }) : (url, init) => fetch(url, init));
   return async (input, init) => {
     let url = requestUrl(input as string | URL);
-    let current: RequestInit = { ...(init ?? {}), redirect: "manual" };
+    const headers = new Headers(init?.headers);
+    if (!headers.has("user-agent")) headers.set("user-agent", MCP_USER_AGENT);
+    let current: RequestInit = { ...(init ?? {}), headers, redirect: "manual" };
     if (!current.signal) current.signal = AbortSignal.timeout(AUTH_FETCH_TIMEOUT_MS);
     for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
       await assertMcpUrlAllowed(url, { ...options, hosted });

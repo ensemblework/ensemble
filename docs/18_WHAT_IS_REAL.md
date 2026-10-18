@@ -22,7 +22,7 @@ Follow the root [README](../README.md) for prerequisites and setup. `pnpm dev` s
 | --- | --- | --- |
 | Today | Profession desk, briefing, focus/triage, reminders, add/remove/rearrange/resize tiles | Profile desk and alternate widgets are distinct layout systems |
 | Board | Task creation, priority/order, filters, grouping, assignment and overview tiles | Overview strip: at most four fixed-size tiles |
-| Tasks and pages | Rich structured editor, nested standalone pages, mentions, comments/AI blocks, file/diagram/plot embeds | Referenced resources retain their own space/access rules |
+| Tasks and pages | Rich structured editor, nested standalone pages, kind-tinted mention chips, links that open on click (hover or Alt+Enter to edit), comments/AI blocks, file/diagram/plot embeds | Referenced resources retain their own space/access rules |
 | History and templates | Page checkpoints with author/time, preview/restore, duplicate and private templates | Up to 30 checkpoints, five-minute coalescing; up to 50 templates per space/profile; owner-only history/templates |
 | Context | Saved people/identities, projects, repos, preferences, graph and profile-specific records/tabs | Graph reflects saved data; it is not an automatic provider crawler |
 | Meeting notes | Editable manual notes, imported source notes, source links, requested summaries/action-item tasks and task links | Imported source notes are read-only; no recording/transcription service |
@@ -37,11 +37,13 @@ The Hub assistant operates the app through typed tools. Built-in Markdown playbo
 
 | Capability | Implemented behavior |
 | --- | --- |
-| Tasks and records | Create/update work, people, projects, repositories and supported profession records; manage supported comments, Trash, conversions and resource history |
+| Tasks and records | Create/update work, people, projects, repositories and supported profession records; manage supported comments, Trash, conversions and resource history. Clearing a board or a filtered set of tasks is one `hub_delete_tasks` change with one Undo |
+| Agent assignment | Assign a task to Ensemble's agent, Claude Code, Codex or Cursor's agent on a paired computer or this server, under the default or a named run profile; waits for Apply, then goes through the normal job queue |
 | Open workspace | Read supported surface IDs, selected/visible records, filters and document selection through scoped APIs |
 | Layouts | Manage native Today desks, Context panels, Board overview and alternate widget layouts with the relevant version checks |
 | Precise documents | Read block paths/revision; replace exact text or insert/replace/delete blocks after schema validation |
 | Dependent actions | `hub_run_workflow`: 2–12 ordered writes, one Apply, backward result references and durable successful-step receipts |
+| Connected apps | Every prompt names the apps connected in the space (how, account, which tools reach each); `hub_list_connections` lists them in detail without tokens. A message naming a connected app loads its tools. Not shown to guests in a shared space |
 | Connected relationships | Search/read, attach/detach/refresh, turn items into tasks, import people, link/unlink project containers and merge people |
 | Board imports | Preview connected-source or uploaded-export imports, start after Apply, read progress, cancel/undo |
 | Files | Read supported text, hash-checked original-file edits, supported sheet edits, convert to pages and export pages into Files |
@@ -49,7 +51,7 @@ The Hub assistant operates the app through typed tools. Built-in Markdown playbo
 | Settings/models | Find/read/update allowlisted settings and choose available provider/model/effort; appearance updates apply live |
 | Calendars | Google/Outlook list/create/update/cancel/RSVP, attendees/invites, supported recurrence and availability reads |
 
-A proposed action waits for Apply when its policy requires it. Starting an import is not finishing it. An unknown interrupted workflow step is not replayed automatically. External calendar invitations can notify guests; general native mail/Teams/Slack sending is not offered.
+Hub writes run at once by default ("Just do it (undoable)" in Settings → Assistant); with Preview or Needs me they wait. Connected-app writes, settings changes, workflows and agent assignments always wait for Apply. Starting an import is not finishing it. An unknown interrupted workflow step is not replayed automatically. External calendar invitations can notify guests; general native mail/Teams/Slack sending is not offered.
 
 Surface context is structured app state, not screenshots or unrestricted DOM access. Security credentials, account deletion, sharing permissions, folder trust and similar controls remain human settings. “Manage records” means supported domain operations, not arbitrary database access.
 
@@ -57,11 +59,11 @@ Surface context is structured app state, not screenshots or unrestricted DOM acc
 
 | Path | Current behavior | Guide |
 | --- | --- | --- |
-| Connect an account | Save that person's grant/token; no automatic content import | [03](03_MODULE_CONTEXT_ENGINE.md) |
+| Connect an account | Save that person's grant/token; no automatic content import. The store lists connected apps first and shows a step-by-step guide for each way of connecting; guide steps follow vendor pages as known in Oct 2026 and were not re-checked live | [03](03_MODULE_CONTEXT_ENGINE.md), [31 §3](31_CONNECTORS_IN_USE.md#3-ways-to-connect) |
 | Sync people | Bounded contact metadata from Gmail, Outlook, calendars, Slack, Teams and GitHub; filters service/bulk identities | [03 §2](03_MODULE_CONTEXT_ENGINE.md#2-connectors) |
 | Scheduled fetch | Returns without provider reads, even if a legacy fetch slot is enabled | [05 §2](05_MODULE_TASK_ORCHESTRATOR.md#2-scheduled-work) |
-| Native connected items | Explicit search/read, attach to task/project, add task, people and supported source updates | [31](31_CONNECTORS_IN_USE.md) |
-| Vendor MCP | Connected vendor's enabled tools, with schema/approval/access checks | Catalog availability and vendor grants vary; not equivalent to native sync/import |
+| Native connected items | Explicit search/read, attach to task/project, add task, people and supported source updates (for example Zotero references and reading-list collections, with notes posted back; Zotero is tested against documented API shapes only) | [31](31_CONNECTORS_IN_USE.md) |
+| Vendor MCP | Connected vendor's enabled tools, with schema/approval/access checks. A catalog server that holds your data is signed in to (or given a token); if it answers without an account and has no sign-in it shows as "Connected · public data only". Only AWS Knowledge, Context7 and Exa connect with no account by design. Hugging Face shows the signed-in username; a web page from a vendor's sign-in (Meta's) is reported by host. These were checked against in-process fakes, not the live vendors | Catalog availability and vendor grants vary; not equivalent to native sync/import. [03 §2.2](03_MODULE_CONTEXT_ENGINE.md#22-remote-mcp-connectors) |
 | Board imports | Native supported board/container sources and uploaded exports; preview, mapping, background progress, rerun/undo | [27](27_IMPORTS.md) |
 | Meeting imports | Explicit supported API-key adapters or vendor tools; source attribution and bounded batch import | [03](03_MODULE_CONTEXT_ENGINE.md#23-meeting-notes-sources) |
 
@@ -69,7 +71,7 @@ The full connector catalog is a connection inventory, not a promise that every a
 
 ## Files, diagrams and plots
 
-[Files](32_FILES.md) stores private originals with format-aware previews and extraction. Supported text/Office/sheet edits preserve the file record and use stale-content checks. Page conversion and export are available; browser export-back can preserve a supported source template, while assistant server export rebuilds a document. Complex spreadsheets and original Office edits have explicit restrictions.
+[Files](32_FILES.md) stores private originals with format-aware previews and extraction. Supported text/Office/sheet edits preserve the file record and use stale-content checks. Page conversion and export are available; browser downloads keep tables (a real grid in PDFs) and inline formatting, browser export-back can preserve a supported source template, while assistant server export rebuilds a document. Complex spreadsheets and original Office edits have explicit restrictions.
 
 [Diagrams](21_BLOCK_DIAGRAMS_DSL.md) has a source language, parsing/layout, visual editing, Mermaid import and SVG export. Small windows show a read-only pan/zoom/preview; full editing needs 1024 × 640 CSS pixels. [Plots](20_PLOTS_DESIGN.md) supports datasets, saved figure specs, code and exports; hosted browser plotting uses its browser runtime, with a separate server/native worker path.
 

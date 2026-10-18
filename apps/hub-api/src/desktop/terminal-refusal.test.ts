@@ -84,9 +84,9 @@ test("the desktop sidecar refuses the desktop token on every terminal route", { 
     const verify = await call(port, "POST", "/api/terminal/unlock/verify", faked, { response: { id: "x" } });
     assert.equal(verify.status, 403, verify.body);
     const run = await call(port, "POST", "/api/terminal/run", faked, { cwd: "/", line: "ls" });
-    assert.equal(run.status, 401, run.body);
+    assert.equal(run.status, 423, run.body);
     const cd = await call(port, "POST", "/api/terminal/cd", faked, { cwd: "/", path: "" });
-    assert.equal(cd.status, 403, cd.body);
+    assert.equal(cd.status, 423, cd.body);
     assert.equal(error(cd.body), "The terminal is locked.");
   } catch (failure) {
     throw new Error(`${(failure as Error).message}\n--- sidecar log ---\n${logs.slice(-4000)}`, { cause: failure });

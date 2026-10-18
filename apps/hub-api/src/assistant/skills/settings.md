@@ -2,7 +2,7 @@
 name: settings
 title: Settings and finding your way around
 when: where a setting is, how to change something in Ensemble (theme, time zone, notifications, models, features, connections, shortcuts, spaces, sharing), and changing the safe ones
-tools: hub_find_setting, hub_get_settings, hub_update_settings, hub_list_model_choices, hub_choose_model
+tools: hub_find_setting, hub_get_settings, hub_update_settings, hub_list_model_choices, hub_choose_model, hub_list_connections
 match: \b(settings?|preferences?|configure|config|turn (on|off)|enable|disable|switch (on|off)|dark mode|light mode|theme|time ?zone|working hours|quiet hours|notifications?|models?|api keys?|shortcuts?|password|sign ?in|account|features?|modules?|where (is|do i|can i)|how do i (change|set|find))\b
 paths: /settings
 ---
@@ -14,7 +14,7 @@ Help them find it, then change it if it is safe.
 4. Everything else (passwords, sign-in, API keys and model keys, connecting or removing apps, sharing and space members, sandbox and security, deleting data): never change it. Give the link and the steps.
 
 Notes
-- Connecting an app: [Settings → Connections](/settings?tab=connections) → pick the app → Connect → approve in the app's window. Turning on a product (Gmail, Drive, Calendar) is a switch on the same card.
+- Connecting an app: [Settings → Connections](/settings?tab=connections) → pick the app → Connect → approve in the app's window. Turning on a product (Gmail, Drive, Calendar) is a switch on the same card. What is connected now, how and as which account: the Connected apps list in this prompt, or hub_list_connections.
 - Spaces: the switcher at the top of the sidebar; manage them at [Spaces](/spaces).
 - Keyboard shortcuts: press `?` anywhere, or [Settings → Shortcuts](/settings?tab=shortcuts).
 - Appearance settings can be changed with hub_update_settings; the active browser applies approved changes.

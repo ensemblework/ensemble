@@ -38,7 +38,8 @@ function install(app: FastifyInstance): void {
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof ZodError) return reply.code(400).send({ error: error.issues.map((issue) => issue.message).join("; ") });
     const statusCode = (error as { statusCode?: number }).statusCode ?? 500;
-    return reply.code(statusCode).send({ error: error instanceof Error ? error.message : String(error) });
+    const code = (error as { code?: string }).code;
+    return reply.code(statusCode).send({ error: error instanceof Error ? error.message : String(error), ...(code ? { code } : {}) });
   });
   app.addHook("onRequest", async (request, reply) => {
     const path = request.url.split("?")[0] ?? request.url;
@@ -211,9 +212,11 @@ test("the web's Code tab and terminal reach the owner's computer only, through i
     assert.match((await code(browser(), { method: "GET", path: "/api/code/reviews" })).body, /offline/);
     await prisma.device.update({ where: { id: device.id }, data: { lastSeenAt: new Date() } });
 
-    // The terminal is locked until a passkey unlocks it.
+    // The terminal is locked until a passkey unlocks it: a 423 with its own code, never the 401 that means signed out.
     const terminal = (headers: Record<string, string>, payload: unknown) => app.inject({ method: "POST", url: `/api/devices/${device.id}/terminal`, headers, payload: payload as object });
-    assert.equal((await terminal(browser(), { op: "status" })).statusCode, 401);
+    const lockedAtFirst = await terminal(browser(), { op: "status" });
+    assert.equal(lockedAtFirst.statusCode, 423, lockedAtFirst.body);
+    assert.equal((lockedAtFirst.json() as { code?: string }).code, "TERMINAL_LOCKED");
     const status = await app.inject({ method: "GET", url: "/api/web-terminal/status", headers: browser() });
     assert.deepEqual((status.json() as { unlocked: boolean; passkeys: unknown[]; password: boolean }).unlocked, false);
 
@@ -272,7 +275,11 @@ test("the web's Code tab and terminal reach the owner's computer only, through i
 
     // Lock now: the cookie no longer opens anything.
     await app.inject({ method: "POST", url: "/api/web-terminal/lock", headers: open(), payload: {} });
-    assert.equal((await terminal(open(), { op: "status" })).statusCode, 401);
+    const lockedAfter = await terminal(open(), { op: "status" });
+    assert.equal(lockedAfter.statusCode, 423, lockedAfter.body);
+    assert.equal((lockedAfter.json() as { code?: string }).code, "TERMINAL_LOCKED");
+    const outputAfter = await app.inject({ method: "GET", url: `/api/devices/${device.id}/terminal/output?run=${runId}&after=-1`, headers: sameOrigin });
+    assert.equal(outputAfter.statusCode, 423, outputAfter.body);
 
     // An account with no password confirms a new passkey with a code mailed to it.
     const mailed: string[] = [];

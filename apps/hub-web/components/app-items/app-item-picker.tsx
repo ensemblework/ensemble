@@ -9,6 +9,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { APP_ITEM_KIND_LABEL, type AppItem, type AppItemKind, type AppItemSourceInfo } from "@ensemble/shared-types";
 import { APP_ITEM_QUERY, appItemsApi, type AppItemRef } from "@/lib/api-app-items";
 import { plural } from "@/lib/format";
+import { LinkifiedText } from "@/components/linkified-text";
 import { BrandLogo, brandName } from "../connectors/brand-logo";
 import { Dialog, SkeletonRows, Spinner, cx } from "../ui";
 import { sourceInfo, useAppItemSources } from "./use-app-items";
@@ -396,7 +397,7 @@ function Preview({ item }: { item: AppItem }) {
         <>
           {facts.length ? <p className="mb-1 text-muted">{facts.map(([name, value]) => `${name}: ${value}`).join(" · ")}</p> : null}
           <p className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words leading-5 text-ink/85">
-            {text ? (text.length > PREVIEW_CHARS ? `${text.slice(0, PREVIEW_CHARS).trimEnd()}…` : text) : "No text in this item."}
+            {text ? <LinkifiedText text={text.length > PREVIEW_CHARS ? `${text.slice(0, PREVIEW_CHARS).trimEnd()}…` : text} /> : "No text in this item."}
           </p>
         </>
       )}

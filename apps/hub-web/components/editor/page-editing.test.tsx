@@ -11,7 +11,7 @@ import { PAGE_DRAG_TYPE } from "@/lib/page-drag";
 import { editorExtensions } from "./extensions";
 import { applyBlock, inTable } from "./editor-commands";
 import { pastedPageHtml, plainTextOf } from "./clipboard";
-import { LinkPopover } from "./link-popover";
+import { HOVER_DELAY, LinkPopover, inAppPath } from "./link-popover";
 import { insertAnswer } from "../comments/ensemble-view";
 
 Object.defineProperty(globalThis, "self", { configurable: true, value: window });
@@ -232,8 +232,16 @@ test("an image that cannot load keeps a visible placeholder naming it", () => {
   } finally { done(editor); }
 });
 
-test("clicking a link offers Open, Edit and Remove; Cmd/Ctrl+click opens it in a new tab", async () => {
-  const editor = make({ type: "paragraph", content: [{ type: "text", text: "Read " }, { type: "text", text: "the docs", marks: [{ type: "link", attrs: { href: "https://example.com" } }] }] });
+test("a click opens a link: other sites in a new tab, app pages in place; Cmd/Ctrl+click always uses a new tab", async () => {
+  const editor = make({
+    type: "paragraph",
+    content: [
+      { type: "text", text: "Read " },
+      { type: "text", text: "the docs", marks: [{ type: "link", attrs: { href: "https://example.com" } }] },
+      { type: "text", text: " or " },
+      { type: "text", text: "the board", marks: [{ type: "link", attrs: { href: "/board" } }] },
+    ],
+  });
   const host = document.createElement("div");
   document.body.appendChild(host);
   const root = createRoot(host);
@@ -243,12 +251,40 @@ test("clicking a link offers Open, Edit and Remove; Cmd/Ctrl+click opens it in a
   const navigated: string[] = [];
   try {
     await act(async () => root.render(<LinkPopover editor={editor} navigate={(path) => navigated.push(path)} />));
-    const anchor = () => editor.view.dom.querySelector("a")!;
-    await act(async () => { anchor().dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true, metaKey: true })); });
+    const [docs, board] = [...editor.view.dom.querySelectorAll("a")];
+    const click = (anchor: Element, init: MouseEventInit = {}) => act(async () => { anchor.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true, ...init })); });
+    await click(docs!);
     assert.deepEqual(opened, ["https://example.com"]);
-    assert.equal(document.querySelector("[role='dialog']"), null);
+    assert.equal(document.querySelector("[role='dialog']"), null, "a click opens the link, not the card");
+    await click(board!);
+    assert.deepEqual(navigated, ["/board"]);
+    await click(board!, { ctrlKey: true });
+    assert.deepEqual(opened, ["https://example.com", "/board"]);
+    assert.equal(inAppPath("ensemble://task/task-1"), "/tasks/task-1");
+    assert.equal(inAppPath("//evil.example"), null);
+  } finally {
+    window.open = realOpen;
+    await act(async () => root.unmount());
+    host.remove();
+    done(editor);
+  }
+});
 
-    await act(async () => { anchor().dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true })); });
+test("resting on a link offers Open, Edit and Remove, and Alt+Enter in a link reaches the same card from the keyboard", async () => {
+  const editor = make({ type: "paragraph", content: [{ type: "text", text: "Read " }, { type: "text", text: "the docs", marks: [{ type: "link", attrs: { href: "https://example.com" } }] }] });
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  const settle = (ms: number) => act(async () => { await new Promise((resolve) => setTimeout(resolve, ms)); });
+  try {
+    await act(async () => root.render(<LinkPopover editor={editor} navigate={() => undefined} />));
+    const anchor = () => editor.view.dom.querySelector("a")!;
+    const hover = async () => {
+      await act(async () => { anchor().dispatchEvent(new window.MouseEvent("mouseover", { bubbles: true })); });
+      assert.equal(document.querySelector("[role='dialog']"), null, "the card waits for the pointer to rest");
+      await settle(HOVER_DELAY + 60);
+    };
+    await hover();
     const card = document.querySelector<HTMLElement>("[role='dialog']");
     assert.ok(card);
     assert.match(card.textContent ?? "", /https:\/\/example\.com/);
@@ -260,13 +296,21 @@ test("clicking a link offers Open, Edit and Remove; Cmd/Ctrl+click opens it in a
     await act(async () => { field.form!.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true })); });
     assert.equal(anchor().getAttribute("href"), "https://example.org/new");
     assert.equal(anchor().textContent, "the docs");
+    assert.equal(document.querySelector("[role='dialog']"), null);
 
-    await act(async () => { anchor().dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true })); });
+    await hover();
+    await act(async () => { anchor().dispatchEvent(new window.MouseEvent("mouseout", { bubbles: true, relatedTarget: document.body })); });
+    await settle(320);
+    assert.equal(document.querySelector("[role='dialog']"), null, "the card leaves with the pointer");
+
+    cursorIn(editor, "the docs", 3);
+    await act(async () => { editor.view.dom.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", altKey: true, bubbles: true, cancelable: true })); });
+    assert.ok(document.querySelector("[role='dialog']"), "Alt+Enter with the caret in a link shows its card");
+    assert.equal(document.activeElement, button("Open"), "and moves focus into it");
     await act(async () => button("Remove").click());
     assert.equal(editor.view.dom.querySelector("a"), null);
     assert.equal(editor.state.doc.textContent, "Read the docs");
   } finally {
-    window.open = realOpen;
     await act(async () => root.unmount());
     host.remove();
     done(editor);

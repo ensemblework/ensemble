@@ -91,12 +91,15 @@ export async function applyHeldCalls(
   const hub = planned.map((item, index) => ({ ...item, index })).filter((item) => !isOutsideWrite(item.tool));
   let undoEntryId: string | null = null;
   if (hub.length) {
-    const grouped = await app.prisma.$transaction((tx) =>
-      withUndoGroup(tx, { userId: base.userId, actor: "agent", subject: hub[0]!.tool.name }, async () => {
-        const rows: ToolResult[] = [];
-        for (const item of hub) rows.push(await item.tool.run({ ...base, tx }, item.input as never));
-        return rows;
-      }),
+    // A batch can be dozens of writes (a cleared board); Prisma's 5 s default would roll it all back.
+    const grouped = await app.prisma.$transaction(
+      (tx) =>
+        withUndoGroup(tx, { userId: base.userId, actor: "agent", subject: hub[0]!.tool.name }, async () => {
+          const rows: ToolResult[] = [];
+          for (const item of hub) rows.push(await item.tool.run({ ...base, tx }, item.input as never));
+          return rows;
+        }),
+      { timeout: 30_000, maxWait: 10_000 },
     );
     grouped.result.forEach((result, position) => {
       outcomes[hub[position]!.index] = { ok: true, result };

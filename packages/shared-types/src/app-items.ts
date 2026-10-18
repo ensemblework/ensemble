@@ -31,7 +31,9 @@ export type AppItemKind =
   | "record"
   | "meeting"
   | "video"
-  | "attachment";
+  | "attachment"
+  | "reference"
+  | "collection";
 
 export const APP_ITEM_KIND_LABEL: Readonly<Record<AppItemKind, string>> = {
   page: "Page",
@@ -60,10 +62,12 @@ export const APP_ITEM_KIND_LABEL: Readonly<Record<AppItemKind, string>> = {
   meeting: "Meeting",
   video: "Video",
   attachment: "Email attachment",
+  reference: "Reference",
+  collection: "Collection",
 };
 
 /** Kinds that become an Ensemble task when brought in ("Add as task"). */
-export const TASK_LIKE_KINDS: ReadonlySet<AppItemKind> = new Set<AppItemKind>(["issue", "pull_request", "card", "task", "ticket", "work_item", "conversation"]);
+export const TASK_LIKE_KINDS: ReadonlySet<AppItemKind> = new Set<AppItemKind>(["issue", "pull_request", "card", "task", "ticket", "work_item", "conversation", "reference"]);
 
 /** One search hit. `id` is the app's own id; the pair (source, kind, id) names it. */
 export interface AppItem {

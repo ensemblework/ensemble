@@ -70,3 +70,17 @@ test("nothing applied leaves the reply as it was", () => {
     { name: "hub_create_tasks", state: "failed", error: "No project.", isWrite: true },
   ]), content);
 });
+
+test("a failed delete says not done, and the same failure many times is one line", () => {
+  const failure = { name: "hub_delete_task", state: "failed", error: "That task was not found.", isWrite: true };
+  const text = reflectProposals("I moved them to Trash.", [
+    { name: "hub_delete_task", state: "ok", summary: "Moved “EMQX UI” to Trash.", isWrite: true },
+    failure,
+    failure,
+    failure,
+  ]);
+  assert.match(text, /Done: Moved “EMQX UI” to Trash\./);
+  assert.match(text, /Not done: That task was not found\. \(3 times\)/);
+  assert.equal(text.match(/That task was not found/g)?.length, 1);
+  assert.equal(text.includes("Not added"), false);
+});

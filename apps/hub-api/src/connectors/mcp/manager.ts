@@ -20,8 +20,9 @@ import {
   UnauthorizedClientError,
 } from "@modelcontextprotocol/sdk/server/auth/errors.js";
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
-import { catalogEntry } from "@ensemble/shared-types";
+import { catalogEntry, ENSEMBLE_VERSION } from "@ensemble/shared-types";
 import { redactText } from "../../lib/redact.js";
+import { mcpAccount } from "./account.js";
 import { DEFAULT_RETURN_TO, mcpClientMetadataUrl, mcpRedirectUrl, safeReturnTo } from "./config.js";
 import { McpAuthUnsupported, McpReconnectRequired, RowOAuthProvider } from "./provider.js";
 import { readEnvelope, readTokens, sealJson, type McpClientEnvelope, type McpStatus, type McpToolSpec } from "./store.js";
@@ -71,8 +72,44 @@ export function setMcpDepsForTests(deps: McpDeps | null): void {
   defaultDeps = deps ?? {};
 }
 
-function fetchFor(deps: McpDeps): FetchLike {
-  return guardedFetch({ fetch: deps.fetch, hosted: deps.hosted, lookup: deps.lookup });
+/** A server or its sign-in answered with a web page (a sign-in wall, a block or browser-check page) where the SDK expects JSON. */
+export class McpUnreadableResponse extends Error {
+  constructor(
+    readonly url: URL,
+    readonly status: number,
+  ) {
+    super(`${url.host} answered HTTP ${status} with a web page instead of JSON.`);
+    this.name = "McpUnreadableResponse";
+  }
+}
+
+/** The guarded fetch; remembers the last sign-in request (anything but the MCP endpoint) so a parse error can name it. */
+export type McpFetch = FetchLike & { lastSignInUrl?: URL };
+
+function sameEndpoint(a: URL, b: URL): boolean {
+  return a.origin === b.origin && a.pathname.replace(/\/+$/, "") === b.pathname.replace(/\/+$/, "");
+}
+
+/**
+ * guardedFetch, where a web page that the SDK would parse as JSON becomes McpUnreadableResponse.
+ * The MCP endpoint's own error statuses pass through: the transport reads them (401 starts sign-in, 404/405 falls back to SSE).
+ */
+function fetchFor(deps: McpDeps, serverUrl?: string): McpFetch {
+  const base = guardedFetch({ fetch: deps.fetch, hosted: deps.hosted, lookup: deps.lookup });
+  const server = serverUrl ? new URL(serverUrl) : undefined;
+  const watched: McpFetch = async (input, init) => {
+    const url = new URL(input instanceof URL ? input.href : String(input));
+    const toServer = Boolean(server && sameEndpoint(url, server));
+    if (!toServer) watched.lastSignInUrl = url;
+    const response = await base(input, init);
+    const html = /text\/html|application\/xhtml\+xml/i.test(response.headers.get("content-type") ?? "");
+    if (html && (response.ok || (!toServer && (init?.method ?? "GET").toUpperCase() === "POST"))) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new McpUnreadableResponse(url, response.status);
+    }
+    return response;
+  };
+  return watched;
 }
 
 function now(deps: McpDeps): number {
@@ -80,7 +117,7 @@ function now(deps: McpDeps): number {
 }
 
 function newClient(): Client {
-  return new Client({ name: "Ensemble", version: "1.0.0" }, { capabilities: {} });
+  return new Client({ name: "Ensemble", version: ENSEMBLE_VERSION }, { capabilities: {} });
 }
 
 type OpenOptions = {
@@ -89,10 +126,12 @@ type OpenOptions = {
   authProvider?: OAuthClientProvider;
   bearer?: string;
   deps: McpDeps;
+  /** Defaults to fetchFor(deps, url); pass one to read its lastSignInUrl after a failure. */
+  fetch?: McpFetch;
 };
 
 function makeTransport(kind: McpTransportKind, options: OpenOptions) {
-  const fetchFn = fetchFor(options.deps);
+  const fetchFn = options.fetch ?? fetchFor(options.deps, options.url);
   const requestInit: RequestInit | undefined = options.bearer ? { headers: { Authorization: `Bearer ${options.bearer}` } } : undefined;
   if (kind === "sse") {
     return new SSEClientTransport(new URL(options.url), { authProvider: options.authProvider, requestInit, fetch: fetchFn });
@@ -241,9 +280,53 @@ async function connectionToken(userId: string, provider: string | undefined): Pr
   return token.token;
 }
 
+const HTML_TEXT = /<!doctype html|<html[\s>]/i;
+
+/** Where a request went, for the server log: no query string (it can carry keys). */
+function forLog(url: URL): string {
+  return `${url.origin}${url.pathname}`;
+}
+
+/**
+ * A readable error when a server or its sign-in answered with a web page, or with
+ * something else that is not the JSON the protocol needs; undefined for any other error.
+ * The address is logged without its query string; the message names only the host.
+ */
+export function unreadableFailure(error: unknown, name: string, serverUrl: string, lastSignInUrl?: URL): McpConnectionError | undefined {
+  const server = new URL(serverUrl);
+  let url: URL;
+  let what: string;
+  let status: number | undefined;
+  if (error instanceof McpUnreadableResponse) {
+    url = error.url;
+    what = "a web page instead of data";
+    status = error.status;
+  } else if (error instanceof StreamableHTTPError && HTML_TEXT.test(error.message)) {
+    url = server;
+    what = "a web page instead of data";
+    status = error.code;
+  } else if (error instanceof SyntaxError || (error instanceof Error && error.name === "ZodError")) {
+    url = lastSignInUrl ?? server;
+    what = "data Ensemble could not read";
+  } else if (error instanceof OAuthError && /Invalid OAuth error response/.test(error.message)) {
+    url = lastSignInUrl ?? server;
+    what = "an error Ensemble could not read";
+  } else {
+    return undefined;
+  }
+  const signIn = !sameEndpoint(url, server);
+  console.warn(`[mcp] ${name}: ${signIn ? "sign-in" : "server"} returned ${what} from ${forLog(url)}${status ? ` (HTTP ${status})` : ""}`);
+  const message = signIn
+    ? `${name}'s sign-in returned ${what} (${url.host}). ${name} may not offer this sign-in to your account yet, or turned the request away. Try again later.`
+    : `${name}'s MCP server returned ${what} (${url.host}). Check the address, or try again later.`;
+  return new McpConnectionError(message, 502, "MCP_BAD_RESPONSE");
+}
+
 /** Maps a failure to what the person sees, and marks the row when it needs a reconnect. */
 async function failure(db: Db, row: McpConnection, error: unknown): Promise<Error> {
   if (error instanceof McpConnectionError || error instanceof McpUrlError || error instanceof McpAuthUnsupported) return error;
+  const unreadable = unreadableFailure(error, row.name, row.url);
+  if (unreadable) return unreadable;
   const kind = classifyMcpError(error);
   if (kind === "auth") {
     const message = reconnectMessage(row, readEnvelope(row));
@@ -266,7 +349,7 @@ async function freshRow(db: Db, row: McpConnection, deps: McpDeps): Promise<McpC
   if (!current.expiresAt || current.expiresAt.getTime() - now(deps) > REFRESH_MARGIN_MS || !tokens.refresh_token) return current;
   const job = (async () => {
     const provider = new RowOAuthProvider(db, current, "background", { now: deps.now });
-    const result = await auth(provider, { serverUrl: current.url, fetchFn: fetchFor(deps) });
+    const result = await auth(provider, { serverUrl: current.url, fetchFn: fetchFor(deps, current.url) });
     if (result !== "AUTHORIZED") throw new McpReconnectRequired();
   })();
   refreshing.set(row.id, job);
@@ -346,7 +429,15 @@ export type ConnectInput = {
   connection?: string;
 };
 
-export type ConnectOutcome = { id: string; status: McpStatus; authorizeUrl?: string };
+export type ConnectOutcome = {
+  id: string;
+  status: McpStatus;
+  authorizeUrl?: string;
+  /** Whose account a pasted token is, when the vendor's API says. */
+  account?: string;
+  /** Connected without an account to a catalog server that is not public by design. */
+  publicOnly?: true;
+};
 
 const CLEAR_SIGN_IN = { oauthState: null, stateExpiresAt: null, codeVerifier: null } as const;
 
@@ -361,8 +452,10 @@ function reusableClient(previous: McpClientEnvelope | undefined): Pick<McpClient
   return {};
 }
 
-function connectFailure(error: unknown, name: string, bearer: boolean): Error {
+function connectFailure(error: unknown, name: string, bearer: boolean, url: string, fetchFn: McpFetch): Error {
   if (error instanceof McpUrlError || error instanceof McpAuthUnsupported || error instanceof McpConnectionError) return error;
+  const unreadable = unreadableFailure(error, name, url, fetchFn.lastSignInUrl);
+  if (unreadable) return unreadable;
   const message = error instanceof Error ? error.message : String(error);
   if (/does not support dynamic client registration/i.test(message)) {
     return new McpAuthUnsupported(
@@ -384,27 +477,35 @@ function connectFailure(error: unknown, name: string, bearer: boolean): Error {
 
 /**
  * Starts connecting one server for this person.
- * - token: checked by listing tools, then stored encrypted. Connected at once.
- * - otherwise: probes the server. No sign-in needed → connected. A 401 starts
- *   OAuth (discovery, CIMD or DCR, PKCE, resource) and returns authorizeUrl.
+ * - token: checked by listing tools (and against the vendor's account API where
+ *   there is one), then stored encrypted. Connected at once.
+ * - otherwise: probes the server. A 401 starts OAuth (discovery, CIMD or DCR,
+ *   PKCE, resource) and returns authorizeUrl. A server that answers with no
+ *   credentials is connected as is only when it is a custom server or public by
+ *   design (`mcp.open`); any other catalog server is sent to its sign-in, and
+ *   saved as public data only when it has none.
  */
 export async function startConnection(db: Db, userId: string, input: ConnectInput, deps: McpDeps = defaultDeps): Promise<ConnectOutcome> {
   const url = (await assertMcpUrlAllowed(input.url, deps)).href;
   const returnTo = safeReturnTo(input.returnTo);
   const transport = input.transport ?? transportFor(input.serverId);
   const existing = await db.mcpConnection.findUnique({ where: { userId_serverId: { userId, serverId: input.serverId } } });
+  const fetchFn = fetchFor(deps, url);
 
   if (input.token || input.connection) {
     let client: Client | undefined;
     try {
       const bearer = input.token ?? (await connectionToken(userId, input.connection));
-      client = await openClient({ url, transport, bearer, deps });
+      client = await openClient({ url, transport, bearer, deps, fetch: fetchFn });
       const tools = await listAllTools(client);
+      const who = input.token ? await mcpAccount(input.serverId, input.token, fetchFn) : null;
+      if (who && "refused" in who) throw new McpConnectionError(`${input.name} refused that token. Check it and paste it again.`, 400, "MCP_TOKEN_REFUSED");
+      const account = who?.account;
       const data = {
         name: input.name,
         url,
         status: "connected",
-        clientInfo: sealJson((input.token ? { auth: "bearer" } : { auth: "connection", provider: input.connection }) satisfies McpClientEnvelope),
+        clientInfo: sealJson((input.token ? { auth: "bearer", ...(account ? { account } : {}) } : { auth: "connection", provider: input.connection }) satisfies McpClientEnvelope),
         tokens: input.token ? sealJson({ access_token: input.token, token_type: "Bearer" }) : null,
         expiresAt: null,
         ...CLEAR_SIGN_IN,
@@ -416,10 +517,10 @@ export async function startConnection(db: Db, userId: string, input: ConnectInpu
       const row = existing
         ? await db.mcpConnection.update({ where: { id: existing.id }, data })
         : await db.mcpConnection.create({ data: { userId, serverId: input.serverId, ...data } });
-      return { id: row.id, status: "connected" };
+      return { id: row.id, status: "connected", ...(account ? { account } : {}) };
     } catch (error) {
       if (error instanceof McpReconnectRequired) throw new McpConnectionError(error.message, 409, "MCP_RECONNECT");
-      throw connectFailure(error, input.name, true);
+      throw connectFailure(error, input.name, true, url, fetchFn);
     } finally {
       await client?.close().catch(() => undefined);
     }
@@ -448,11 +549,19 @@ export async function startConnection(db: Db, userId: string, input: ConnectInpu
     ? await db.mcpConnection.update({ where: { id: existing.id }, data })
     : await db.mcpConnection.create({ data: { userId, serverId: input.serverId, ...data } });
 
+  const mcp = catalogEntry(input.serverId)?.mcp;
+  const wantsAccount = Boolean(mcp && !mcp.open);
   const provider = new RowOAuthProvider(db, row, "connect", { returnTo, now: deps.now });
   let client: Client | undefined;
   try {
-    client = await openClient({ url, transport, authProvider: provider, deps });
+    client = await openClient({ url, transport, authProvider: provider, deps, fetch: fetchFn });
     const tools = await listAllTools(client);
+    if (wantsAccount) {
+      await client.close().catch(() => undefined);
+      client = undefined;
+      await offerSignIn(provider, url, fetchFn, input.name);
+      if (provider.authorizationUrl) return { id: row.id, status: "pending", authorizeUrl: provider.authorizationUrl.href };
+    }
     await db.mcpConnection.update({
       where: { id: row.id },
       data: {
@@ -464,11 +573,15 @@ export async function startConnection(db: Db, userId: string, input: ConnectInpu
         lastError: null,
       },
     });
-    return { id: row.id, status: "connected" };
+    return { id: row.id, status: "connected", ...(wantsAccount ? { publicOnly: true as const } : {}) };
   } catch (error) {
     if (provider.authorizationUrl) return { id: row.id, status: "pending", authorizeUrl: provider.authorizationUrl.href };
-    const mapped = connectFailure(error, input.name, false);
-    if (existing) {
+    const mapped = connectFailure(error, input.name, false, url, fetchFn);
+    if (existing && existing.status === "connected" && previous?.auth === "none") {
+      // A sign-in that fails from a public-only connection leaves that connection working as it was.
+      const { url: keptUrl, status, clientInfo, tokens, expiresAt, lastError } = existing;
+      await db.mcpConnection.update({ where: { id: row.id }, data: { url: keptUrl, status, clientInfo, tokens, expiresAt, lastError, ...CLEAR_SIGN_IN } }).catch(() => undefined);
+    } else if (existing) {
       await db.mcpConnection.update({ where: { id: row.id }, data: { status: "error", lastError: mapped.message, ...CLEAR_SIGN_IN } }).catch(() => undefined);
     } else {
       await db.mcpConnection.delete({ where: { id: row.id } }).catch(() => undefined);
@@ -476,6 +589,19 @@ export async function startConnection(db: Db, userId: string, input: ConnectInpu
     throw mapped;
   } finally {
     await client?.close().catch(() => undefined);
+  }
+}
+
+/**
+ * A catalog server that answered without credentials may still have a sign-in:
+ * start it as a 401 would. With none (no OAuth metadata, no PKCE, a refused
+ * registration) the connection stays public data only, and the reason is logged.
+ */
+async function offerSignIn(provider: RowOAuthProvider, serverUrl: string, fetchFn: McpFetch, name: string): Promise<void> {
+  try {
+    await auth(provider, { serverUrl, fetchFn });
+  } catch (error) {
+    console.warn(`[mcp] ${name} answered without an account and offers no sign-in Ensemble can use: ${plainMessage(error)}`);
   }
 }
 
@@ -491,7 +617,7 @@ export type CallbackInput = {
 };
 
 export type CallbackOutcome =
-  | { ok: true; userId: string; connectionId: string; serverId: string; name: string; returnTo: string; toolCount: number }
+  | { ok: true; userId: string; connectionId: string; serverId: string; name: string; returnTo: string; toolCount: number; account?: string }
   | { ok: false; userId?: string; connectionId?: string; serverId?: string; name?: string; returnTo: string; message: string };
 
 function vendorRefusal(name: string, error: string | undefined, description: string | undefined): string {
@@ -534,10 +660,13 @@ export async function finishConnection(db: Db, input: CallbackInput, deps: McpDe
   if (input.error || !input.code) return fail(vendorRefusal(row.name, input.error, input.errorDescription));
 
   const provider = new RowOAuthProvider(db, row, "callback", { now: deps.now });
+  const fetchFn = fetchFor(deps, row.url);
   try {
-    const result = await auth(provider, { serverUrl: row.url, authorizationCode: input.code, fetchFn: fetchFor(deps) });
+    const result = await auth(provider, { serverUrl: row.url, authorizationCode: input.code, fetchFn });
     if (result !== "AUTHORIZED") return fail(`${row.name} did not finish the sign-in. Connect again.`);
   } catch (error) {
+    const unreadable = unreadableFailure(error, row.name, row.url, fetchFn.lastSignInUrl);
+    if (unreadable) return fail(unreadable.message);
     const kind = classifyMcpError(error);
     if (kind === "network" || kind === "timeout") return fail(`Could not reach ${row.name} to finish the sign-in. Connect again.`);
     return fail(`${row.name} did not accept the sign-in: ${plainMessage(error)}`);
@@ -550,11 +679,21 @@ export async function finishConnection(db: Db, input: CallbackInput, deps: McpDe
   } catch (error) {
     return fail(error instanceof Error ? error.message : String(error));
   }
+  const latest = (await db.mcpConnection.findUnique({ where: { id: row.id } })) ?? signedIn;
+  const accessToken = readTokens(latest)?.access_token;
+  const who = accessToken ? await mcpAccount(row.serverId, accessToken, fetchFn) : null;
+  const account = who && "account" in who ? who.account : undefined;
   await db.mcpConnection.update({
     where: { id: row.id },
-    data: { status: "connected", tools: tools as unknown as Prisma.InputJsonValue, toolsSyncedAt: new Date(now(deps)), lastError: null },
+    data: {
+      status: "connected",
+      ...(account ? { clientInfo: sealJson({ ...readEnvelope(latest), account } satisfies McpClientEnvelope) } : {}),
+      tools: tools as unknown as Prisma.InputJsonValue,
+      toolsSyncedAt: new Date(now(deps)),
+      lastError: null,
+    },
   });
-  return { ok: true, ...base, toolCount: tools.length };
+  return { ok: true, ...base, toolCount: tools.length, ...(account ? { account } : {}) };
 }
 
 /** Re-lists a connection's tools and caches them. */

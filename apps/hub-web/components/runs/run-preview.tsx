@@ -37,6 +37,7 @@ import Link from "next/link";
 import { createPortal } from "react-dom";
 import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
 import { MarkdownText } from "@/components/markdown-text";
+import { LinkifiedText } from "@/components/linkified-text";
 import { Spinner, Tag, Tabs, cx } from "@/components/ui";
 import { api, type RunDetail, type RunJob } from "@/lib/api";
 import { friendlyDateTime, plural } from "@/lib/format";
@@ -163,7 +164,7 @@ function RunSheet({ run, job, onClose, fullscreen, onFullscreen }: { run: RunDet
         {run.error ? (
           <div className="mt-3 flex gap-2 rounded-md border border-danger/35 bg-danger/[0.07] px-3 py-2 text-[13px]">
             <AlertTriangle size={14} className="mt-0.5 shrink-0 text-danger" />
-            <span className="min-w-0 break-words">{run.error}</span>
+            <span className="min-w-0 break-words"><LinkifiedText text={run.error} /></span>
           </div>
         ) : null}
         <div className="mt-4">
@@ -406,7 +407,7 @@ function TraceRow({ entry, defaultOpen }: { entry: TraceEntry; defaultOpen: bool
         <div className="space-y-2.5 border-t border-line px-3 py-2.5">
           {entry.reasoning ? (
             <Section label="Thinking" icon={<Brain size={12} />}>
-              <div className="whitespace-pre-wrap text-[12.5px] italic leading-5 text-muted">{entry.reasoning}</div>
+              <div className="whitespace-pre-wrap text-[12.5px] italic leading-5 text-muted [overflow-wrap:anywhere]"><LinkifiedText text={entry.reasoning} /></div>
             </Section>
           ) : null}
           {entry.calls.map((call) => (
@@ -421,7 +422,7 @@ function TraceRow({ entry, defaultOpen }: { entry: TraceEntry; defaultOpen: bool
               <MarkdownText text={entry.text} className="space-y-2 text-[13px] leading-[1.55]" />
             )
           ) : null}
-          {entry.error && entry.error !== entry.text ? <div className="whitespace-pre-wrap text-[12.5px] text-danger">{entry.error}</div> : null}
+          {entry.error && entry.error !== entry.text ? <div className="whitespace-pre-wrap text-[12.5px] text-danger [overflow-wrap:anywhere]"><LinkifiedText text={entry.error} /></div> : null}
         </div>
       ) : null}
     </li>
@@ -478,7 +479,7 @@ function CodeView({ label, text, danger }: { label: string; text: string; danger
           <Copy size={11} /> {copied ? "Copied" : "Copy"}
         </button>
       </div>
-      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words bg-bg p-2 font-mono text-[11.5px] leading-[1.5]">{text}</pre>
+      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words bg-bg p-2 font-mono text-[11.5px] leading-[1.5]"><LinkifiedText text={text} /></pre>
     </div>
   );
 }
@@ -563,5 +564,5 @@ export function RunWhere({ where, deviceName }: { where?: RunJob["where"] | null
 function RunFeedback({ run }: { run: RunDetail }) {
   const [open,setOpen]=useState(false); const [text,setText]=useState(""); const client=useQueryClient();
   const save=useMutation({mutationFn:(start:boolean)=>api.runFeedback(run.id,text,start),onSuccess:()=>{setOpen(false);setText("");void client.invalidateQueries({queryKey:["run",run.id]});void client.invalidateQueries({queryKey:["runs"]});void client.invalidateQueries({queryKey:["workspace"]});}});
-  return <section className="mt-5 space-y-3 border-t border-line pt-4">{run.feedback?.map(tag=><div key={tag.id} className="rounded-lg border border-line bg-panel p-3"><span className="text-[11px] uppercase tracking-wide text-accent">Feedback</span><p className="mt-1 whitespace-pre-wrap break-words text-[13px]">{tag.text}</p></div>)}{!open?<button className="text-[13px] text-muted underline-offset-4 hover:text-ink hover:underline" onClick={()=>setOpen(true)}>Didn’t like this output?</button>:<div className="space-y-3"><label className="block text-[13px] font-medium">What should change?<textarea className="field mt-2 min-h-28 w-full" maxLength={4000} value={text} onChange={e=>setText(e.target.value)} placeholder="Describe what went wrong and what you want instead…"/></label><p className="text-[12px] text-muted">Your feedback stays on this run. A new run includes the original task and these instructions.</p><div className="flex flex-wrap gap-2"><button className="btn-primary" disabled={!text.trim()||save.isPending} onClick={()=>save.mutate(true)}>Start a new run</button><button className="btn" disabled={!text.trim()||save.isPending} onClick={()=>save.mutate(false)}>Tag only</button><button className="btn" disabled={save.isPending} onClick={()=>setOpen(false)}>Cancel</button></div></div>}{save.error&&<p role="alert" className="text-[13px] text-danger">{save.error.message}</p>}{save.isSuccess&&<p role="status" className="text-[13px] text-ok">{save.data.jobId?"Feedback saved. A new run is queued and will appear separately in Runs.":"Feedback saved. No new run was started."}</p>}</section>;
+  return <section className="mt-5 space-y-3 border-t border-line pt-4">{run.feedback?.map(tag=><div key={tag.id} className="rounded-lg border border-line bg-panel p-3"><span className="text-[11px] uppercase tracking-wide text-accent">Feedback</span><p className="mt-1 whitespace-pre-wrap break-words text-[13px]"><LinkifiedText text={tag.text} /></p></div>)}{!open?<button className="text-[13px] text-muted underline-offset-4 hover:text-ink hover:underline" onClick={()=>setOpen(true)}>Didn’t like this output?</button>:<div className="space-y-3"><label className="block text-[13px] font-medium">What should change?<textarea className="field mt-2 min-h-28 w-full" maxLength={4000} value={text} onChange={e=>setText(e.target.value)} placeholder="Describe what went wrong and what you want instead…"/></label><p className="text-[12px] text-muted">Your feedback stays on this run. A new run includes the original task and these instructions.</p><div className="flex flex-wrap gap-2"><button className="btn-primary" disabled={!text.trim()||save.isPending} onClick={()=>save.mutate(true)}>Start a new run</button><button className="btn" disabled={!text.trim()||save.isPending} onClick={()=>save.mutate(false)}>Tag only</button><button className="btn" disabled={save.isPending} onClick={()=>setOpen(false)}>Cancel</button></div></div>}{save.error&&<p role="alert" className="text-[13px] text-danger">{save.error.message}</p>}{save.isSuccess&&<p role="status" className="text-[13px] text-ok">{save.data.jobId?"Feedback saved. A new run is queued and will appear separately in Runs.":"Feedback saved. No new run was started."}</p>}</section>;
 }

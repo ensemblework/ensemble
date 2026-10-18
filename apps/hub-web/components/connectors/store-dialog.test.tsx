@@ -199,8 +199,12 @@ test("Notion detail: MCP, sign-in and token each call the right endpoint", async
     assert.equal(url.searchParams.get("returnTo"), "/settings?tab=connections&connector=notion");
     assert.equal(view.assigned.at(-1), "https://api.notion.com/v1/oauth/authorize?x=1");
 
-    await click(button(/Paste a token/, detail!));
+    const guides = detail!.querySelectorAll<HTMLElement>('[data-testid="connect-guide"]');
+    assert.equal(guides.length, 1, "one guide: the written one, for the pasted secret");
+    assert.match(guides[0]!.closest("li")!.textContent ?? "", /Paste your internal integration secret/);
+    await click(button(/^Paste it: your internal integration secret$/, detail!));
     const form = document.querySelector<HTMLFormElement>('[data-testid="token-form"]')!;
+    assert.match(form.textContent ?? "", /Internal integration secret/);
     assert.ok(form.querySelector('a[href="https://www.notion.so/profile/integrations"]'), "links to where the token comes from");
     await type(form.querySelector<HTMLInputElement>('input[name="token"]')!, "ntn_secret_value_123");
     await click(button(/Check and connect/, form));
@@ -227,7 +231,7 @@ test("Jira's token form sends email, token and site", async () => {
     handle: (call) => (call.url === "/api/connectors/atlassian/token" ? { ok: true, account: "mira@fieldnote.example" } : undefined),
   });
   try {
-    await click(button(/Paste a token/));
+    await click(button(/^Paste it: your API token$/));
     const form = document.querySelector<HTMLFormElement>('[data-testid="token-form"]')!;
     await type(form.querySelector<HTMLInputElement>('input[name="email"]')!, "mira@fieldnote.example");
     await type(form.querySelector<HTMLInputElement>('input[name="token"]')!, "ATATT3xFfGF0-test-token");
@@ -427,5 +431,98 @@ test("Escape closes the store and a missing server app explains itself", async (
     assert.equal(view.dialog(), null);
   } finally {
     await view.done();
+  }
+});
+
+test("connected apps lead the grid, and connected custom servers sit with them", async () => {
+  const view = await mount({
+    states: { trello: { connected: true, account: "mirachen" }, granola: { mcp: { status: "connected", toolCount: 4, lastError: null } } },
+    mcp: [
+      { id: "m1", serverId: null, name: "Fieldnote tools", url: "https://mcp.fieldnote.example/mcp", status: "connected", toolCount: 2, tools: [], disabledTools: [], lastError: null, updatedAt: "2026-10-07T00:00:00.000Z" },
+      { id: "m2", serverId: null, name: "Fieldnote drafts", url: "https://drafts.fieldnote.example/mcp", status: "error", toolCount: 0, tools: [], disabledTools: [], lastError: "Refused", updatedAt: "2026-10-07T00:00:00.000Z" },
+    ],
+  });
+  try {
+    const order = cards();
+    assert.deepEqual(order.slice(0, 3), ["trello", "granola", "mcp:m1"]);
+    assert.equal(order.at(-1), "mcp:m2");
+  } finally {
+    await view.done();
+  }
+});
+
+test("Trello: an open step-by-step guide, a Get a token button for the typed key, and Trello's refusal under the fields", async () => {
+  const view = await mount({
+    start: { store: "all", connector: "trello" },
+    handle: (call) =>
+      call.url === "/api/connectors/trello/token"
+        ? json({ error: "That looks like your Power-Up's Secret. Trello's token comes from the Token link next to your API key, and starts with ATTA." }, 400)
+        : undefined,
+  });
+  try {
+    const detail = document.querySelector<HTMLElement>('[data-testid="connector-detail"]')!;
+    const guide = detail.querySelector<HTMLElement>('[data-testid="connect-guide"]')!;
+    const toggle = button(/Step-by-step guide/, guide);
+    assert.equal(toggle.getAttribute("aria-expanded"), "true", "open by default when not connected");
+    const steps = Array.from(guide.querySelectorAll("ol > li")).map((row) => row.textContent ?? "");
+    assert.ok(steps.length >= 5);
+    assert.match(steps[0]!, /trello\.com\/power-ups\/admin/);
+    assert.ok(steps.some((step) => /Token link/.test(step)));
+    assert.match(guide.textContent ?? "", /Not this.*Secret/);
+    assert.match(guide.textContent ?? "", /Looks like.*ATTA/);
+    for (const link of Array.from(guide.querySelectorAll("a"))) {
+      assert.match(link.getAttribute("href") ?? "", /^https:\/\//);
+      assert.equal(link.getAttribute("target"), "_blank");
+    }
+    assert.match(detail.textContent ?? "", /Export as JSON/, "the file-export tip sits in the Import section");
+    assert.ok(detail.querySelector('section[aria-label="Import from Trello"]')?.textContent?.includes("Export as JSON"));
+
+    await click(toggle);
+    assert.equal(toggle.getAttribute("aria-expanded"), "false");
+    assert.equal(guide.querySelector("ol"), null);
+    await click(toggle);
+
+    await click(button(/^Paste them: your API key and token$/, detail));
+    const form = document.querySelector<HTMLFormElement>('[data-testid="token-form"]')!;
+    assert.match(form.textContent ?? "", /Token \(from the Token link, starts with ATTA\)/);
+    assert.equal(button(/Get a token/, form).disabled, true, "needs the key first");
+    const key = "0123456789abcdef0123456789abcdef";
+    await type(form.querySelector<HTMLInputElement>('input[name="key"]')!, key);
+    const get = Array.from(form.querySelectorAll("a")).find((link) => /Get a token/.test(link.textContent ?? ""))!;
+    assert.ok(get, "Get a token is a link once a key is typed");
+    assert.equal(get.getAttribute("target"), "_blank");
+    const url = new URL(get.getAttribute("href")!);
+    assert.equal(url.origin + url.pathname, "https://trello.com/1/authorize");
+    assert.equal(url.searchParams.get("key"), key);
+    assert.equal(url.searchParams.get("scope"), "read,write");
+
+    await type(form.querySelector<HTMLInputElement>('input[name="token"]')!, "a".repeat(64));
+    await click(button(/Check and connect/, form));
+    assert.deepEqual(view.calls.find((call) => call.url === "/api/connectors/trello/token")?.body, { key, token: "a".repeat(64) });
+    const error = form.querySelector('[data-testid="token-error"]');
+    assert.equal(error?.getAttribute("role"), "alert");
+    assert.match(error?.textContent ?? "", /Power-Up's Secret/);
+    assert.equal(form.querySelector('input[name="token"]')?.getAttribute("aria-describedby"), error?.id);
+  } finally {
+    await view.done();
+  }
+});
+
+test("an MCP server that takes a token shows its written guide; sign-in-only apps say what to approve", async () => {
+  const view = await mount({ start: { store: "all", connector: "render" } });
+  try {
+    const guide = document.querySelector<HTMLElement>('[data-testid="connect-guide"]')!;
+    assert.match(guide.textContent ?? "", /Create API Key/);
+    assert.match(guide.textContent ?? "", /rnd_/);
+  } finally {
+    await view.done();
+  }
+  const signIn = await mount({ start: { store: "all", connector: "miro" } });
+  try {
+    const guide = document.querySelector<HTMLElement>('[data-testid="connect-guide"]')!;
+    assert.match(guide.textContent ?? "", /Click Connect tools/);
+    assert.match(guide.textContent ?? "", /approve access/);
+  } finally {
+    await signIn.done();
   }
 });

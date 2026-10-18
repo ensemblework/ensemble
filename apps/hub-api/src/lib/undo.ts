@@ -349,6 +349,21 @@ export async function recordUndoInTransaction(
   return writeEntry(db, { ...input, patches });
 }
 
+/** Many rows changed by one action ("Moved 41 tasks to Trash"): one label and one stack entry for all of them. */
+export async function recordUndoBatch(
+  db: Prisma.TransactionClient,
+  input: { userId: string; label: string; kind: UndoKind; actor?: Actor; subject: string; href?: string; forward: UndoOp[] },
+): Promise<string> {
+  const patches = input.forward.flatMap((op) => patchesFromCall(input.kind, op));
+  const group = groups.getStore();
+  if (group) {
+    group.patches.push(...patches);
+    group.labels.push(input.label);
+    return "grouped";
+  }
+  return writeEntry(db, { userId: input.userId, label: input.label, kind: input.kind, actor: input.actor, subject: input.subject, href: input.href, patches });
+}
+
 /** Several writes inside one transaction become one stack entry. */
 export async function withUndoGroup<T>(db: Prisma.TransactionClient, meta: { userId: string; actor?: Actor; subject: string; href?: string }, fn: () => Promise<T>): Promise<{ result: T; undoEntryId: string | null }> {
   if (groups.getStore()) return { result: await fn(), undoEntryId: null };

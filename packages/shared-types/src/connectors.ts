@@ -106,6 +106,11 @@ export interface ConnectorMcp {
   ownClient?: { hint: string; url?: string };
   /** Signs in with the person's existing connection to this provider (an oauth_tokens provider) instead of a separate sign-in. */
   connection?: string;
+  /**
+   * Public by design: the server needs no account and holds nothing of the person's (AWS Knowledge, Context7, Exa).
+   * Any other catalog server that answers without credentials is sent to its sign-in, or saved as "public data only".
+   */
+  open?: boolean;
 }
 
 /** What Ensemble can do with an app's items once it is connected (hub-api connectors/items). */
@@ -178,6 +183,8 @@ const mcpApp = (
   ...(notes ? { notes } : {}),
 });
 
+const publicMcp = (entry: ConnectorCatalogEntry): ConnectorCatalogEntry => ({ ...entry, mcp: { ...entry.mcp!, open: true } });
+
 /** Popular apps with an official remote MCP server that registers clients on its own (checked 7 Oct 2026). */
 const MORE_MCP_APPS: readonly ConnectorCatalogEntry[] = [
   mcpApp("calendly", "Calendly", "Calendly", "mail_calendar", "https://mcp.calendly.com", "Event types, bookings and availability.", ["Scheduled events and invitees"], ["Scheduling links and event changes"]),
@@ -191,7 +198,10 @@ const MORE_MCP_APPS: readonly ConnectorCatalogEntry[] = [
   mcpApp("attio", "Attio", "Attio", "sales_support", "https://mcp.attio.com/mcp", "CRM records, lists and notes.", ["Records, lists and notes"], ["Records and notes"], ["Included on Attio's free plan."]),
   mcpApp("close", "Close", "Close", "sales_support", "https://mcp.close.com/mcp", "Leads, opportunities and activity.", ["Leads, contacts and opportunities"], ["Leads and tasks"]),
   mcpApp("customerio", "Customer.io", "Customer.io", "sales_support", "https://mcp.customer.io/mcp", "Campaigns, segments and customer profiles.", ["Campaigns and people"], [], ["Needs a paid Customer.io plan."]),
-  mcpApp("whatsapp", "WhatsApp Business", "Meta", "chat", "https://mcp.facebook.com/whatsapp_business_tools", "Business messaging templates and conversations.", ["Templates and business account details"], ["Messages, billed by Meta per conversation"], ["Sending needs a verified Meta business account."]),
+  mcpApp("whatsapp", "WhatsApp Business", "Meta", "chat", "https://mcp.facebook.com/whatsapp_business_tools", "Business messaging templates and conversations.", ["Templates and business account details"], ["Messages, billed by Meta per conversation"], [
+    "Sending needs a verified Meta business account.",
+    "Meta is still rolling out its WhatsApp Business MCP server. If Meta's sign-in says your business has no access, or shows an error page, connect again once Meta has turned it on for you.",
+  ]),
   mcpApp("posthog", "PostHog", "PostHog", "analytics", "https://mcp.posthog.com", "Product analytics, feature flags and errors.", ["Insights, events, flags and errors"], ["Feature flags and annotations"]),
   mcpApp("mixpanel", "Mixpanel", "Mixpanel", "analytics", "https://mcp.mixpanel.com/mcp", "Ask questions about your product analytics.", ["Events, reports and cohorts"], []),
   mcpApp("amplitude", "Amplitude", "Amplitude", "analytics", "https://mcp.amplitude.com/mcp", "Charts, dashboards and user behaviour.", ["Charts, cohorts and events"], []),
@@ -211,7 +221,7 @@ const MORE_MCP_APPS: readonly ConnectorCatalogEntry[] = [
   mcpApp("planetscale", "PlanetScale", "PlanetScale", "developer", "https://mcp.pscale.dev/mcp/planetscale", "Databases, branches and insights.", ["Databases, branches and query insights"], ["Branches and deploy requests"]),
   mcpApp("prisma", "Prisma Postgres", "Prisma", "developer", "https://mcp.prisma.io/mcp", "Prisma Postgres databases and backups.", ["Databases and backups"], ["Databases"]),
   mcpApp("postman", "Postman", "Postman", "developer", "https://mcp.postman.com/minimal", "Workspaces, collections and APIs.", ["Workspaces, collections and environments"], ["Collections and requests"], ["Postman's hosted MCP server serves US-region accounts."]),
-  mcpApp("context7", "Context7", "Upstash", "developer", "https://mcp.context7.com/mcp", "Current documentation for libraries and frameworks, for agents and the assistant.", ["Library documentation"], []),
+  publicMcp(mcpApp("context7", "Context7", "Upstash", "developer", "https://mcp.context7.com/mcp", "Current documentation for libraries and frameworks, for agents and the assistant.", ["Library documentation"], [])),
   mcpApp("jam", "Jam", "Jam", "developer", "https://mcp.jam.dev/mcp", "Bug reports with console logs, network requests and repro steps.", ["Bug reports, logs and recordings"], []),
   mcpApp("resend", "Resend", "Resend", "developer", "https://mcp.resend.com/mcp", "Email sending, domains and audiences.", ["Emails, domains and audiences"], ["Emails and contacts"]),
   mcpApp("datadog", "Datadog", "Datadog", "analytics", "https://mcp.datadoghq.com/v1/mcp", "Metrics, logs, traces, monitors and incidents.", ["Metrics, logs, traces, monitors and dashboards"], ["Monitors and notebooks"], ["Datadog asks an org admin to allow new sign-in addresses; if Connect is refused, ask them to allow api.ensemblework.com."]),
@@ -229,7 +239,7 @@ const MORE_MCP_APPS: readonly ConnectorCatalogEntry[] = [
   mcpApp("klaviyo", "Klaviyo", "Klaviyo", "sales_support", "https://mcp.klaviyo.com/mcp", "Email and SMS campaigns, flows and audiences.", ["Campaigns, flows, lists and metrics"], ["Campaigns and lists"]),
   mcpApp("typeform", "Typeform", "Typeform", "analytics", "https://api.typeform.com/mcp", "Forms and their responses.", ["Forms and responses"], ["Forms"]),
   mcpApp("wix", "Wix", "Wix", "design", "https://mcp.wix.com/mcp", "Sites, pages, store and bookings.", ["Sites, pages, products and bookings"], ["Site content"]),
-  mcpApp("exa", "Exa", "Exa", "research", "https://mcp.exa.ai/mcp", "Web search built for AI: pages, papers and companies.", ["Public web pages"], []),
+  publicMcp(mcpApp("exa", "Exa", "Exa", "research", "https://mcp.exa.ai/mcp", "Web search built for AI: pages, papers and companies.", ["Public web pages"], [])),
   mcpApp("perplexity", "Perplexity", "Perplexity", "research", "https://api.perplexity.ai/mcp", "Answers from the web with citations.", ["Public web search"], [], ["Uses your Perplexity API credits."]),
   mcpApp("tavily", "Tavily", "Tavily", "research", "https://mcp.tavily.com/mcp/", "Web search and page extraction.", ["Public web pages"], [], ["Uses your Tavily API credits."]),
   mcpApp("firecrawl", "Firecrawl", "Firecrawl", "research", "https://mcp.firecrawl.dev/v2/mcp", "Scrape and crawl websites into clean Markdown.", ["Public web pages"], [], ["Uses your Firecrawl credits."]),
@@ -342,6 +352,26 @@ const MORE_APPS: readonly ConnectorCatalogEntry[] = [
     status: "ready",
     notes: ["Xero has no hosted MCP server; Ensemble uses Xero's API (read only).", "Xero limits how many organisations an uncertified app can connect."],
     docsUrl: "https://developer.xero.com/documentation/",
+  },
+  {
+    id: "zotero",
+    name: "Zotero",
+    vendor: "Corporation for Digital Scholarship",
+    category: "research",
+    featured: false,
+    logo: "zotero",
+    tagline: "Your papers and reading lists: attach references with their notes and an APA citation, or turn them into reading tasks.",
+    auth: ["token"],
+    provider: "zotero",
+    reads: ["Your library: items, notes, collections, tags", "Group libraries the key can read"],
+    writes: ["Notes on an item, when you post one (needs write access on the key)"],
+    items: { kinds: ["reference", "collection"], comments: true },
+    status: "ready",
+    notes: [
+      "Ensemble reads Zotero through its web API, so it sees what Zotero has synced to zotero.org. Turn on sync in Zotero's settings if your library only lives on this computer.",
+      "Searches your own library and up to five group libraries the key can read. Attachments are listed by name; their files are not downloaded.",
+    ],
+    docsUrl: "https://www.zotero.org/support/dev/web_api/v3/start",
   },
 ];
 
@@ -527,7 +557,7 @@ export const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
       files: ["json"],
       api: true,
       tokenUrl: "https://trello.com/power-ups/admin",
-      tokenHint: "Easiest: board menu → Print, export and share → Export as JSON, then upload the file.",
+      tokenHint: "Open your Power-Up → API key tab and copy the API key. Then click the Token link next to it, click Allow, and copy the token (it starts with ATTA). The Secret is not the token.",
       brings: ["Boards as projects", "Cards as tasks with due dates, labels and members", "Checklists in the task page"],
     },
     status: "ready",
@@ -924,6 +954,31 @@ export const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
     notes: ["Tactiq has no REST API; the MCP server is the only way in."],
   },
   {
+    id: "wispr_flow",
+    name: "Wispr Flow",
+    vendor: "Wispr",
+    category: "meetings",
+    featured: false,
+    logo: "wisprflow",
+    tagline: "Ask about your Wispr Flow meeting notes, transcripts, tasks and Scratchpad.",
+    auth: ["mcp"],
+    reads: [
+      "Meeting summaries, notes, transcripts and attendees",
+      "Tasks and Scratchpad notes",
+      "Calendar events with their recordings, upcoming meetings with pre-reads, and recurring meetings",
+      "Shared-note links and your account name",
+    ],
+    writes: [],
+    mcp: MCP("https://api.wisprflow.ai/connect/mcp"),
+    status: "ready",
+    notes: [
+      "Read only: Wispr Flow's MCP server cannot change anything.",
+      "Your Wispr Flow account needs Notetaker and MCP access (Wispr Flow → Settings → MCP). Your organisation's policy can switch MCP off.",
+      "Accounts with an active HIPAA BAA cannot use Wispr Flow's MCP server.",
+    ],
+    docsUrl: "https://docs.wisprflow.ai/articles/9551372685-connect-an-mcp-client-to-wispr-flow-remote-mcp-server",
+  },
+  {
     id: "loom",
     name: "Loom",
     vendor: "Atlassian",
@@ -1046,12 +1101,24 @@ export const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
     category: "developer",
     featured: false,
     logo: "huggingface",
-    tagline: "Search models, datasets and Spaces.",
+    tagline: "Search models, datasets, Spaces and papers as your Hugging Face account, with the tools you picked.",
     auth: ["mcp"],
-    reads: ["Models, datasets, Spaces and papers"],
-    writes: [],
-    mcp: MCP("https://huggingface.co/mcp"),
+    reads: ["Models, datasets, Spaces, papers and Hub docs, including private repos your account can see", "The Spaces tools you added in your Hugging Face MCP settings"],
+    writes: ["Repos, Jobs and sandboxes, when you switch those tools on in your Hugging Face MCP settings"],
+    // ?login makes the server answer 401 so sign-in starts; without it, a request with no token gets the anonymous tool set.
+    mcp: MCP("https://huggingface.co/mcp?login", undefined, {
+      token: {
+        label: "Hugging Face access token",
+        url: "https://huggingface.co/settings/tokens",
+        hint: "A Read token is enough to search and read your models, datasets and Spaces; use Write only if you want the assistant to create repos.",
+      },
+    }),
     status: "ready",
+    notes: [
+      "Ensemble connects Hugging Face with your account only, by sign-in or an access token.",
+      "Pick extra tools and Spaces at huggingface.co/settings/mcp, then press Refresh tools here.",
+    ],
+    docsUrl: "https://huggingface.co/docs/hub/hf-mcp-server",
   },
   {
     id: "zapier",
@@ -1222,7 +1289,7 @@ export const CONNECTOR_CATALOG: readonly ConnectorCatalogEntry[] = [
     auth: ["mcp"],
     reads: ["AWS documentation and knowledge"],
     writes: [],
-    mcp: MCP("https://knowledge-mcp.global.api.aws"),
+    mcp: MCP("https://knowledge-mcp.global.api.aws", undefined, { open: true }),
     status: "ready",
     docsUrl: "https://aws.amazon.com/about-aws/whats-new/2025/10/aws-knowledge-mcp-server-generally-available/",
   },

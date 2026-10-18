@@ -5,8 +5,11 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { PathnameContext } from "next/dist/shared/lib/hooks-client-context.shared-runtime.js";
-import { AssistantDock } from "./assistant-dock.js";
+import { AssistantDock, Message } from "./assistant-dock.js";
 import { quotaFor } from "@/lib/model-quota";
+
+// next/link schedules its prefetch with self.requestIdleCallback; mention chips in sent messages are links.
+Object.defineProperty(globalThis, "self", { configurable: true, value: window });
 
 const CONVERSATION = "11111111-1111-4111-8111-111111111111";
 
@@ -566,5 +569,40 @@ test("the model menu offers the included models: a pick is sent with the turn on
     globalThis.fetch = original;
     client.clear();
     window.localStorage.removeItem("ensemble.assistant.open");
+  }
+});
+
+test("a sent message shows its saved mentions as chips and its addresses as links; an older message without saved mentions guesses none", async () => {
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root: Root = createRoot(host);
+  const content = "@task:Clone a repo do this on my machine, see https://app.notion.com/p/Plan-2f3c?pvs=204.";
+  try {
+    await act(async () => {
+      root.render(<Message conversationId={null} message={{ id: "u1", role: "user", content, mentions: [{ kind: "task", id: "task-1", label: "Clone a repo" }], toolCalls: [], model: null, createdAt: "2026-10-18T09:00:00.000Z" }} />);
+    });
+    const bubble = host.querySelector(".assistant-user-message")!;
+    const chip = bubble.querySelector<HTMLAnchorElement>("a.mention");
+    assert.ok(chip, bubble.innerHTML);
+    assert.equal(chip.dataset.kind, "task");
+    assert.equal(chip.getAttribute("href"), "/tasks/task-1");
+    assert.equal(chip.textContent, "@Clone a repo");
+    assert.equal(chip.getAttribute("target"), null, "a mention opens in the app");
+    assert.match(bubble.textContent ?? "", /^@Clone a repo do this on my machine, see /);
+    const link = bubble.querySelector<HTMLAnchorElement>("a:not(.mention)")!;
+    assert.equal(link.getAttribute("href"), "https://app.notion.com/p/Plan-2f3c?pvs=204");
+    assert.equal(link.getAttribute("target"), "_blank");
+    assert.equal(link.getAttribute("rel"), "noopener noreferrer");
+    assert.ok(bubble.textContent?.endsWith("pvs=204."));
+
+    await act(async () => {
+      root.render(<Message conversationId={null} message={{ id: "u0", role: "user", content, toolCalls: [], model: null, createdAt: "2026-10-01T09:00:00.000Z" }} />);
+    });
+    const old = host.querySelector(".assistant-user-message")!;
+    assert.equal(old.querySelector(".mention"), null, "no saved mentions: the label's end is unknown, so no chip");
+    assert.ok(old.querySelector('a[href^="https://app.notion.com"]'), "its links still work");
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
   }
 });

@@ -25,6 +25,7 @@ import { accountIdOf, readCookie, verifyPassword } from "../lib/auth.js";
 import { emailConfigured, newPasskeyCode, sendPasskeyCode } from "../lib/auth-email.js";
 import { appendLedger } from "../lib/ledger.js";
 import { passkeyResponse, RegistrationCredential, UnlockCredential, verifying } from "../lib/passkey-shape.js";
+import { TERMINAL_LOCKED } from "../lib/terminal-human.js";
 import { publishDeviceFrame } from "./revoke-notify.js";
 
 export const WEB_TERMINAL_COOKIE = "ensemble_web_terminal";
@@ -47,6 +48,7 @@ class Refused extends Error {
   constructor(
     readonly statusCode: number,
     message: string,
+    readonly code?: string,
   ) {
     super(message);
   }
@@ -111,11 +113,11 @@ export function expiresAt(session: Session): string {
   return new Date(Math.min(session.lastUsed + IDLE_MS, session.created + MAX_MS)).toISOString();
 }
 
-/** The unlocked session for this request, its idle clock reset; or a 401. Every terminal call goes through here. */
+/** The unlocked session for this request, its idle clock reset; or a 423 `TERMINAL_LOCKED`. Every terminal call goes through here. */
 export async function requireUnlocked(redis: Redisish, request: FastifyRequest): Promise<{ token: string; session: Session }> {
   requireWebPerson(request);
   const found = await readSession(redis, request);
-  if (!found) throw new Refused(401, "The terminal is locked. Unlock it with your passkey.");
+  if (!found) throw new Refused(423, "The terminal is locked. Unlock it with your passkey.", TERMINAL_LOCKED);
   found.session.lastUsed = Date.now();
   await writeSession(redis, found.token, found.session);
   return found;

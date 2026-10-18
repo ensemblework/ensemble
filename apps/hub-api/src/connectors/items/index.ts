@@ -315,13 +315,16 @@ const TASK_SOURCE: Record<string, TaskSource> = {
   slack: "slack",
 };
 
+/** A paper on a reading list becomes "Read: <title>". */
+const TASK_TITLE_PREFIX: Partial<Record<AppItemKind, string>> = { reference: "Read: " };
+
 /** Turns an issue, card or ticket into an Ensemble task, with the item attached as its context. Adding it again updates the same task. */
 export async function taskFromItem(
   userId: string,
   input: { source: string; kind: AppItemKind; id: string; projectId?: string | null },
   db: Db = defaultPrisma,
 ): Promise<{ taskId: string; created: boolean }> {
-  if (!TASK_LIKE_KINDS.has(input.kind) && input.kind !== "page") throw new ItemError("Only issues, cards, tickets and pages become tasks.", 400);
+  if (!TASK_LIKE_KINDS.has(input.kind) && input.kind !== "page") throw new ItemError("Only issues, cards, tickets, references and pages become tasks.", 400);
   await requireTarget(db, userId, { projectId: input.projectId });
   const content = await readItem(userId, input);
   const externalSource = `app:${content.source}`;
@@ -329,7 +332,7 @@ export async function taskFromItem(
   const existing = await db.task.findUnique({ where: { userId_externalSource_externalId: { userId, externalSource, externalId } }, select: { id: true, deletedAt: true } });
   const due = content.facts?.Due && /^\d{4}-\d{2}-\d{2}/.test(content.facts.Due) ? new Date(`${content.facts.Due.slice(0, 10)}T00:00:00.000Z`) : null;
   const data = {
-    title: content.title.slice(0, 300),
+    title: `${TASK_TITLE_PREFIX[content.kind] ?? ""}${content.title}`.slice(0, 300),
     sourceKind: TASK_SOURCE[content.source] ?? ("other" as TaskSource),
     sourceRef: `${content.source}:${content.kind}:${content.id}`.slice(0, 300),
     sourceUrl: content.url ?? null,

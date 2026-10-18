@@ -56,7 +56,8 @@ export function colorThemeTokens(theme: ColorTheme, mode: ColorMode): Record<str
     "--elev-tile": dark ? "inset 0 1px 0 rgb(255 255 255 / .035), 0 12px 28px -22px rgb(0 0 0 / .6)" : "inset 0 1px 0 rgb(255 255 255 / .8), 0 10px 26px -22px rgb(0 0 0 / .18)",
     "--theme-canvas-image": theme.artwork ? `url('/themes/${theme.artwork}.svg')` : theme.colorful ? `radial-gradient(ellipse at 100% 0%, rgb(152 114 221 / ${dark ? ".12" : ".09"}), transparent 60%), radial-gradient(ellipse at 0% 100%, rgb(83 175 188 / ${dark ? ".08" : ".065"}), transparent 60%)` : "none",
     "--theme-canvas-blend": theme.artwork ? "difference" : "normal",
-    "--theme-canvas-size": theme.artwork === "juniper" ? "540px 540px" : "900px 600px",
+    // Gradients cover the whole canvas: in a smaller tile, a glow centred on the tile's inner corner would end in a hard edge mid-page.
+    "--theme-canvas-size": theme.artwork === "juniper" ? "540px 540px" : !theme.artwork && theme.colorful ? "100% 100%" : "900px 600px",
   });
   return tokens;
 }

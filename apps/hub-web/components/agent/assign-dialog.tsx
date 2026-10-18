@@ -12,7 +12,7 @@ import { desktopShell } from "@/lib/desktop-param";
 import { computerName, folderPlace, freshCloneHint } from "@/lib/device-copy";
 import { usePersistentState } from "@/lib/prefs";
 import { setFeature } from "@/lib/features";
-import { useModuleState } from "@/lib/use-module";
+import { useHostCode, useModuleState } from "@/lib/use-module";
 import { useQuickAssign } from "./use-quick-assign";
 import { canAddProfile, defaultProfile, differs, newProfileId, profileChoices, profileSummary, quickProfile, removeProfile, upsertProfile, type ProfileFields } from "@/lib/run-profiles";
 import { useToast } from "../toast";
@@ -126,7 +126,7 @@ function OutsideFolder({ value, onChange }: { value: "none" | "read" | "read-wri
 }
 
 /** The saved profiles as chips, with save, update, rename, default and delete. Max three. */
-function ProfileBar({
+export function ProfileBar({
   profiles,
   saved,
   activeId,
@@ -151,31 +151,49 @@ function ProfileBar({
 }) {
   const [editing, setEditing] = useState<{ id?: string; name: string } | null>(null);
   const input = useRef<HTMLInputElement>(null);
+  // Keyed on which profile is open, not on the draft: selecting on every keystroke would replace each typed letter.
+  const editingKey = editing ? (editing.id ?? "new") : null;
   useEffect(() => {
-    if (editing) window.setTimeout(() => input.current?.select(), 20);
-  }, [editing]);
+    if (editingKey) window.setTimeout(() => input.current?.select(), 20);
+  }, [editingKey]);
   const active = profiles.find((row) => row.id === activeId);
   const isSaved = saved.some((row) => row.id === activeId);
   return (
     <div className="space-y-1.5" data-testid="run-profiles">
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="mr-0.5 text-[12px] font-medium text-muted">Profile</span>
-        {profiles.map((profile) => (
-          <button
-            key={profile.id}
-            type="button"
-            onClick={() => onPick(profile)}
-            title={profileSummary(profile)}
-            className={cx(
-              "flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[12.5px] transition-colors",
-              profile.id === activeId ? "border-accent bg-[var(--accent-soft)] text-ink" : "border-line text-muted hover:text-ink",
-            )}
-          >
-            {profile.id === defaultId ? <Star size={11} className="fill-current text-accent" aria-label="Default" /> : null}
-            {profile.name}
-            {profile.id === activeId && modified ? <span className="text-faint">· modified</span> : null}
-          </button>
-        ))}
+        {profiles.map((profile) => {
+          const isDefault = profile.id === defaultId;
+          const canStar = saved.some((row) => row.id === profile.id);
+          return (
+            <span
+              key={profile.id}
+              className={cx(
+                "group flex items-center rounded-full border text-[12.5px] transition-colors",
+                profile.id === activeId ? "border-accent bg-[var(--accent-soft)] text-ink" : "border-line text-muted hover:text-ink",
+              )}
+            >
+              <button type="button" onClick={() => onPick(profile)} title={profileSummary(profile)} className={cx("flex items-center gap-1 rounded-l-full py-0.5 pl-2.5", canStar ? "pr-1" : "rounded-r-full pr-2.5")}>
+                {!canStar && isDefault ? <Star size={11} className="fill-current text-accent" aria-label="Default" /> : null}
+                {profile.name}
+                {profile.id === activeId && modified ? <span className="text-faint">· modified</span> : null}
+              </button>
+              {canStar ? (
+                <button
+                  type="button"
+                  className="grid h-full place-items-center rounded-r-full py-0.5 pl-0.5 pr-2 disabled:cursor-default"
+                  aria-pressed={isDefault}
+                  aria-label={isDefault ? `“${profile.name}” is the default profile` : `Make “${profile.name}” the default profile`}
+                  title={isDefault ? "Default: Quick assign and the assistant use this profile" : "Make this the default"}
+                  disabled={busy || isDefault}
+                  onClick={() => onDefault(profile.id)}
+                >
+                  <Star size={11} className={isDefault ? "fill-current text-accent" : "text-faint opacity-50 transition-opacity group-hover:opacity-100"} />
+                </button>
+              ) : null}
+            </span>
+          );
+        })}
         {editing ? (
           <form
             className="flex items-center gap-1"
@@ -220,11 +238,6 @@ function ProfileBar({
                 <button type="button" className="btn-ghost h-7 px-1.5" title="Rename" aria-label="Rename profile" disabled={busy} onClick={() => setEditing({ id: active.id, name: active.name })}>
                   <Pencil size={12} />
                 </button>
-                {active.id !== defaultId ? (
-                  <button type="button" className="btn-ghost h-7 px-1.5" title="Use for Quick assign" aria-label="Make default" disabled={busy} onClick={() => onDefault(active.id)}>
-                    <Star size={12} />
-                  </button>
-                ) : null}
                 <button type="button" className="btn-ghost h-7 px-1.5" title="Delete profile" aria-label="Delete profile" disabled={busy} onClick={() => onRemove(active.id)}>
                   <Trash2 size={12} />
                 </button>
@@ -346,8 +359,10 @@ export function AssignDialog({
   const task = useQuery({ queryKey: ["task", taskId], queryFn: () => api.task(taskId), enabled: open && Boolean(taskId) });
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings, enabled: open });
   const catalog = useQuery({ queryKey: ["model-catalog"], queryFn: api.models, enabled: open, staleTime: 5 * 60_000 });
-  const repos = useQuery({ queryKey: ["code-repos"], queryFn: api.codeRepos, enabled: open && kind === "code" });
-  const checkouts = useQuery({ queryKey: ["checkouts"], queryFn: api.checkouts, enabled: open && kind === "code" });
+  // This server's folders: refused on Ensemble on the web to anyone but its operator.
+  const hostCode = useHostCode() === true;
+  const repos = useQuery({ queryKey: ["code-repos"], queryFn: api.codeRepos, enabled: open && kind === "code" && hostCode });
+  const checkouts = useQuery({ queryKey: ["checkouts"], queryFn: api.checkouts, enabled: open && kind === "code" && hostCode });
   const board = useQuery({ queryKey: ["workspace"], queryFn: api.workspace, enabled: open });
   const computers = useQuery({ queryKey: ["devices"], queryFn: api.devices, enabled: open, refetchInterval: open ? 15_000 : false });
   const selectedDevice = (computers.data?.devices ?? []).find((device) => device.id === runOn) ?? null;
@@ -370,7 +385,7 @@ export function AssignDialog({
   const quick = useMemo(() => quickProfile(orchestration), [orchestration]);
   const profiles = profileChoices(savedProfiles, quick);
   const defaultChoice = defaultProfile(savedProfiles, settings.data?.settings.defaultRunProfileId, quick);
-  const trustedFolders = useQuery({ queryKey: ["workspace-trust"], queryFn: api.trustedFolders, enabled: open && kind === "code" });
+  const trustedFolders = useQuery({ queryKey: ["workspace-trust"], queryFn: api.trustedFolders, enabled: open && kind === "code" && hostCode });
 
   const fields: ProfileFields = {
     kind,
@@ -723,7 +738,7 @@ export function AssignDialog({
             saveProfiles.mutate({ runProfiles: list, ...(settings.data?.settings.defaultRunProfileId === id ? { defaultRunProfileId: list[0]?.id ?? null } : {}) });
             setProfileId("");
           }}
-          onDefault={(id) => saveProfiles.mutate({ defaultRunProfileId: id }, { onSuccess: () => toast("Quick assign uses this profile now.", { tone: "ok" }) })}
+          onDefault={(id) => saveProfiles.mutate({ defaultRunProfileId: id }, { onSuccess: () => toast("This is your default profile now: Quick assign and the assistant use it.", { tone: "ok" }) })}
         />
 
         <div className="grid grid-cols-2 gap-2">

@@ -269,6 +269,55 @@ test("an issue becomes a task once, and the update goes back to that issue", asy
   assert.equal(unlinked.statusCode, 409, unlinked.body);
 });
 
+test("a Zotero paper becomes a reading task, and the update goes back as a note on the paper", async () => {
+  resetMocks();
+  const mira = await verified("mira.zotero@fieldnote.example");
+  await saveAccount(mira.id, "zotero", {
+    accessToken: "P9xKfieldnoteMiraKey0001",
+    account: "mira_chen",
+    meta: { via: "token", userID: 4412001, username: "mira_chen", library: true, notes: true, write: true, groups: [] },
+  });
+  mock("https://api.zotero.org/users/4412001/items", (_url, init) =>
+    init?.method === "POST" ? json({ successful: { "0": { key: "NOTE0003" } }, success: { "0": "NOTE0003" }, unchanged: {}, failed: {} }) : json({ message: "not mocked" }, 404),
+  );
+  mock("https://api.zotero.org/users/4412001/items/ABCD2345", () =>
+    json({
+      key: "ABCD2345",
+      links: { alternate: { href: "https://www.zotero.org/mira_chen/items/ABCD2345" } },
+      meta: { creatorSummary: "Chen and Rao", parsedDate: "2025", numChildren: 0 },
+      data: { key: "ABCD2345", itemType: "journalArticle", title: "Field notes at scale", creators: [{ creatorType: "author", firstName: "Mira", lastName: "Chen" }], DOI: "10.5555/fieldnote.2025.42", publicationTitle: "Journal of Field Methods" },
+      citation: "<span>(Chen &amp; Rao, 2025)</span>",
+    }),
+  );
+
+  const sources = await call(mira, "GET", "/api/app-items/sources", "/api/app-items/sources", "happy-path");
+  assert.deepEqual(sources.json<{ sources: Array<{ id: string; kinds: string[]; comments: boolean }> }>().sources.find((row) => row.id === "zotero"), {
+    id: "zotero",
+    name: "Zotero",
+    logo: "zotero",
+    kinds: ["reference", "collection"],
+    people: false,
+    comments: true,
+  });
+
+  const made = await call(mira, "POST", "/api/app-items/task", "/api/app-items/task", "happy-path", { source: "zotero", kind: "reference", id: "ABCD2345" });
+  assert.equal(made.statusCode, 200, made.body);
+  const task = await harness.prisma.task.findUniqueOrThrow({ where: { id: made.json<{ taskId: string }>().taskId } });
+  assert.equal(task.title, "Read: Field notes at scale");
+  assert.equal(task.sourceKind, "other");
+  assert.equal(task.sourceUrl, "https://www.zotero.org/mira_chen/items/ABCD2345");
+  assert.match(task.excerpt ?? "", /DOI: https:\/\/doi\.org\/10\.5555\/fieldnote\.2025\.42/);
+
+  const target = await call(mira, "GET", `/api/app-items/update-target?taskId=${task.id}`, "/api/app-items/update-target", "happy-path");
+  assert.deepEqual(target.json<{ target: unknown }>().target, { source: "zotero", kind: "reference", id: "ABCD2345", title: "Field notes at scale", url: "https://www.zotero.org/mira_chen/items/ABCD2345" });
+
+  const posted = await call(mira, "POST", "/api/app-items/update", "/api/app-items/update", "happy-path", { taskId: task.id, body: "Finished reading. Cite in chapter 2." });
+  assert.equal(posted.statusCode, 200, posted.body);
+  assert.deepEqual(posted.json(), { source: "zotero", url: "https://www.zotero.org/mira_chen/items/ABCD2345" });
+  const note = calls.find((row) => row.url === "https://api.zotero.org/users/4412001/items" && row.init?.method === "POST")!;
+  assert.deepEqual(JSON.parse(String(note.init?.body)), [{ itemType: "note", parentItem: "ABCD2345", note: "<p>Finished reading. Cite in chapter 2.</p>", tags: [] }]);
+});
+
 test("people from an app join People, matched by handle the second time", async () => {
   resetMocks();
   mockGithub();

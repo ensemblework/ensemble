@@ -91,7 +91,7 @@ export function FileScreen({ id }: { id: string }) {
       void client.invalidateQueries({ queryKey: ["pages"] });
       void client.invalidateQueries({ queryKey: FILE_QUERY.one(file.id) });
       router.push(`/pages/${result.pageId}`);
-      toast(result.notice, { tone: "ok", durationMs: 3500 });
+      toast(result.notice, { tone: "ok" });
     } catch (error) {
       toast(error instanceof Error ? error.message : "Could not make a page from this file.", { tone: "error" });
     } finally {

@@ -1,6 +1,6 @@
 /**
  * App item sources for Figma, Vercel, Azure DevOps, Zendesk, Front, HubSpot, Dropbox,
- * Box, Xero and Discord: request shapes, mapping, comment payloads and refusals,
+ * Box, Xero, Discord and Zotero: request shapes, mapping, comment payloads and refusals,
  * against a fetch passed in through the item context. Nothing reaches the vendors.
  */
 import assert from "node:assert/strict";
@@ -19,6 +19,7 @@ import { MORE_ITEM_SOURCES } from "./sources/more.js";
 import { vercelItems, vercelLogLines } from "./sources/vercel.js";
 import { xeroDate, xeroItems } from "./sources/xero.js";
 import { zendeskItems } from "./sources/zendesk.js";
+import { zoteroDoi, zoteroItems, zoteroNoteHtml, zoteroRef } from "./sources/zotero.js";
 import { ItemError, type ItemContext } from "./types.js";
 
 interface Seen {
@@ -70,7 +71,7 @@ afterEach(() => {
 test("the new sources are listed in order with their own providers", () => {
   assert.deepEqual(
     MORE_ITEM_SOURCES.map((source) => source.id),
-    ["figma", "vercel", "azure_devops", "zendesk", "front", "hubspot", "dropbox", "box", "xero", "discord"],
+    ["figma", "vercel", "azure_devops", "zendesk", "front", "hubspot", "dropbox", "box", "xero", "discord", "zotero"],
   );
   for (const source of MORE_ITEM_SOURCES) assert.equal(source.provider, source.id);
 });
@@ -589,3 +590,208 @@ test("Discord install: a second server is added for the same Discord user, a dif
   assert.deepEqual(discordGuilds({ guild: { id: "333333333333", name: "Other" } }, { discordUserId: "555000111", guilds: second }, "777000222"), [{ id: "333333333333", name: "Other" }]);
   assert.deepEqual(discordGuilds({ guild: { id: "../../x", name: "Bad" } }, {}, "555000111"), []);
 });
+
+const ZOTERO_PAPER = {
+  key: "ABCD2345",
+  links: { alternate: { href: "https://www.zotero.org/mira_chen/items/ABCD2345" } },
+  meta: { creatorSummary: "Chen and Rao", parsedDate: "2025-03-01", numChildren: 3 },
+  data: {
+    key: "ABCD2345",
+    itemType: "journalArticle",
+    title: "Field notes at scale: offline-first data collection",
+    creators: [
+      { creatorType: "author", firstName: "Mira", lastName: "Chen" },
+      { creatorType: "author", firstName: "Arjun", lastName: "Rao" },
+    ],
+    date: "March 2025",
+    DOI: "https://doi.org/10.5555/fieldnote.2025.42",
+    publicationTitle: "Journal of Field Methods",
+    volume: "12",
+    issue: "3",
+    pages: "45-67",
+    url: "https://journal.example/field-notes-at-scale",
+    abstractNote: "We describe how a small team collects field notes without a network.",
+    tags: [{ tag: "offline" }, { tag: "methods" }],
+    collections: ["COLL2345"],
+    dateAdded: "2026-09-01T10:00:00Z",
+    dateModified: "2026-10-01T10:00:00Z",
+  },
+};
+
+const ZOTERO_GROUP_PAPER = {
+  key: "GRPP2345",
+  links: { alternate: { href: "https://www.zotero.org/groups/fieldnote_reading/items/GRPP2345" } },
+  meta: { creatorSummary: "Park", parsedDate: "2024" },
+  data: { key: "GRPP2345", itemType: "conferencePaper", title: "Sync conflicts in the wild", proceedingsTitle: "Proceedings of FieldConf", extra: "DOI: 10.5555/fieldconf.2024.7", dateModified: "2026-10-05T10:00:00Z" },
+};
+
+test("Zotero: recent references across the library and groups, search with collections, links and DOIs", async () => {
+  const token = "P9xKfieldnoteMiraKey0001";
+  const meta = { userID: 4412001, username: "mira_chen", groups: [{ id: 99001, name: "Fieldnote Reading Group", write: false }] };
+  const { ctx, seen } = context({ token, meta }, ({ url }) => {
+    const path = url.replace("https://api.zotero.org", "");
+    if (path.startsWith("/users/4412001/items/top?")) {
+      return json([ZOTERO_PAPER, { key: "NOTE0001", meta: {}, data: { key: "NOTE0001", itemType: "note", note: "<p>Standalone</p>", dateModified: "2026-10-09T10:00:00Z" } }]);
+    }
+    if (path.startsWith("/groups/99001/items/top?")) return json([ZOTERO_GROUP_PAPER]);
+    if (path === "/users/4412001/collections?limit=100") {
+      return json([
+        { key: "COLL2345", meta: { numItems: 3 }, data: { key: "COLL2345", name: "Offline methods" } },
+        { key: "COLL9999", meta: { numItems: 1 }, data: { key: "COLL9999", name: "Archive" } },
+      ]);
+    }
+    if (path === "/groups/99001/collections?limit=100") return json([]);
+    if (path === "/users/4412001/items/ABCD2345") return json(ZOTERO_PAPER);
+    if (path === "/groups/99001/items/GRPP2345") return json(ZOTERO_GROUP_PAPER);
+    return json({}, 404);
+  });
+
+  const recent = await zoteroItems.search(ctx, { q: "", limit: 10 });
+  assert.deepEqual(
+    recent.map((item) => [item.kind, item.id, item.title]),
+    [
+      ["reference", "99001/GRPP2345", "Sync conflicts in the wild"],
+      ["reference", "ABCD2345", "Field notes at scale: offline-first data collection"],
+    ],
+    "newest first across libraries; standalone notes are not references",
+  );
+  assert.equal(recent[1]!.subtitle, "Chen and Rao · 2025 · Journal of Field Methods · doi:10.5555/fieldnote.2025.42");
+  assert.equal(recent[0]!.subtitle, "Park · 2024 · Proceedings of FieldConf · doi:10.5555/fieldconf.2024.7 · Fieldnote Reading Group");
+  assert.equal(recent[1]!.url, "https://www.zotero.org/mira_chen/items/ABCD2345");
+  assert.ok(seen.some((request) => request.url === "https://api.zotero.org/users/4412001/items/top?limit=10&sort=dateModified&direction=desc&itemType=-attachment"));
+  assert.ok(!seen.some((request) => request.url.includes("/collections")), "an empty search lists references only");
+  assert.ok(seen.every((request) => request.headers["zotero-api-key"] === token && request.headers["zotero-api-version"] === "3"));
+
+  seen.length = 0;
+  const found = await zoteroItems.search(ctx, { q: "offline", limit: 10 });
+  assert.ok(seen.some((request) => request.url.endsWith("/users/4412001/items/top?limit=10&sort=dateModified&direction=desc&itemType=-attachment&q=offline&qmode=everything")));
+  assert.deepEqual(found.at(-1), { source: "zotero", kind: "collection", id: "COLL2345", title: "Offline methods", subtitle: "3 items · My Library", url: "https://www.zotero.org/mira_chen/collections/COLL2345" });
+
+  seen.length = 0;
+  await zoteroItems.search(ctx, { q: "https://doi.org/10.5555/fieldnote.2025.42", kind: "reference", limit: 5 });
+  assert.ok(seen.some((request) => request.url.includes("&q=10.5555%2Ffieldnote.2025.42&qmode=everything")), "a DOI link searches for the DOI");
+
+  const collections = await zoteroItems.search(ctx, { q: "", kind: "collection", limit: 10 });
+  assert.deepEqual(collections.map((item) => item.title), ["Archive", "Offline methods"]);
+
+  const byLink = await zoteroItems.search(ctx, { q: "https://www.zotero.org/mira_chen/items/ABCD2345/item-details", limit: 5 });
+  assert.deepEqual(byLink.map((item) => item.id), ["ABCD2345"]);
+  const byGroupName = await zoteroItems.search(ctx, { q: "https://www.zotero.org/groups/fieldnote_reading/items/GRPP2345", limit: 5 });
+  assert.deepEqual(byGroupName.map((item) => item.id), ["99001/GRPP2345"], "a link naming the group is found in the saved groups");
+  assert.deepEqual(await zoteroItems.search(ctx, { q: "https://www.zotero.org/mira_chen/items/ABCD2345", kind: "collection", limit: 5 }), []);
+
+  assert.deepEqual(zoteroRef("zotero://select/groups/99001/items/GRPP2345"), { kind: "reference", id: "99001/GRPP2345" });
+  assert.deepEqual(zoteroRef("zotero://select/library/collections/COLL2345"), { kind: "collection", id: "COLL2345" });
+  assert.deepEqual(zoteroRef("https://www.zotero.org/groups/99001/fieldnote_reading/collections/COLL2345/items/GRPP2345/item-list"), { kind: "reference", id: "99001/GRPP2345" });
+  assert.deepEqual(zoteroRef("https://www.zotero.org/mira_chen/items/itemKey/ABCD2345"), { kind: "reference", id: "ABCD2345" });
+  assert.equal(zoteroRef("https://www.zotero.org/groups/fieldnote_reading/items/GRPP2345"), null, "a group link without its number cannot be resolved");
+  assert.equal(zoteroRef("https://www.zotero.org/support/dev/web_api/v3/start"), null);
+  assert.equal(zoteroItems.fromUrl!("https://www.zotero.org/mira_chen/collections/COLL2345"), null, "updates go on references only");
+  assert.deepEqual(zoteroItems.fromUrl!("https://www.zotero.org/mira_chen/items/ABCD2345"), { kind: "reference", id: "ABCD2345" });
+  assert.equal(zoteroDoi("doi: 10.1000/xyz123."), "10.1000/xyz123");
+  assert.deepEqual(await zoteroItems.search(ctx, { q: "x", kind: "issue", limit: 5 }), []);
+
+  const noUser = context({ token, meta: {} }, () => json({}, 500));
+  await assert.rejects(zoteroItems.search(noUser.ctx, { q: "", limit: 5 }), /Connect Zotero again/);
+  assert.equal(noUser.seen.length, 0);
+});
+
+test("Zotero: a reference reads with its APA citation, abstract, notes and attachments; a collection reads as a reading list", async () => {
+  const token = "P9xKfieldnoteMiraKey0001";
+  const { ctx, seen } = context({ token, meta: { userID: 4412001, username: "mira_chen" } }, ({ url }) => {
+    const path = url.replace("https://api.zotero.org", "");
+    if (path === "/users/4412001/items/ABCD2345?include=data,bib,citation&style=apa") {
+      return json({
+        ...ZOTERO_PAPER,
+        bib: '<div class="csl-bib-body"><div class="csl-entry">Chen, M., &amp; Rao, A. (2025). Field notes at scale: Offline-first data collection. <i>Journal of Field Methods</i>, <i>12</i>(3), 45–67. https://doi.org/10.5555/fieldnote.2025.42</div></div>',
+        citation: "<span>(Chen &amp; Rao, 2025)</span>",
+      });
+    }
+    if (path === "/users/4412001/items/ABCD2345/children?limit=100") {
+      return json([
+        { key: "NOTE0002", data: { key: "NOTE0002", itemType: "note", dateAdded: "2026-10-03T09:00:00Z", note: '<h1>Reading notes</h1><p>Strong on sync; weak on <a href="https://example.org/conflicts">conflict handling</a>.</p>' } },
+        { key: "NOTE0001", data: { key: "NOTE0001", itemType: "note", dateAdded: "2026-09-02T09:00:00Z", note: "<p>First pass &amp; questions</p>" } },
+        { key: "PDF00001", data: { key: "PDF00001", itemType: "attachment", title: "Full Text PDF", contentType: "application/pdf", linkMode: "imported_url" } },
+      ]);
+    }
+    if (path === "/users/4412001/collections?limit=100") return json([{ key: "COLL2345", data: { key: "COLL2345", name: "Offline methods" } }]);
+    if (path === "/users/4412001/collections/COLL2345") return json({ key: "COLL2345", meta: { numItems: 3, numCollections: 1 }, data: { key: "COLL2345", name: "Offline methods" } });
+    if (path === "/users/4412001/collections/COLL2345/items/top?limit=50&sort=title&direction=asc&itemType=-attachment&include=data,bib&style=apa") {
+      return json([
+        { ...ZOTERO_PAPER, bib: '<div class="csl-entry">Chen, M., &amp; Rao, A. (2025). Field notes at scale. <i>Journal of Field Methods</i>.</div>' },
+        { key: "OTHR2345", meta: { creatorSummary: "Lena Park", parsedDate: "2023" }, data: { key: "OTHR2345", itemType: "book", title: "Notebooks", publisher: "Fieldnote Press", DOI: "10.5555/books.1" } },
+      ]);
+    }
+    if (path === "/users/4412001/collections/COLL2345/collections?limit=50") return json([{ key: "SUBC2345", data: { key: "SUBC2345", name: "Sync conflicts" } }]);
+    return json({}, 404);
+  });
+
+  const paper = await zoteroItems.read(ctx, { kind: "reference", id: "ABCD2345" });
+  assert.equal(paper.title, "Field notes at scale: offline-first data collection");
+  assert.equal(paper.url, "https://www.zotero.org/mira_chen/items/ABCD2345");
+  assert.deepEqual(paper.facts, {
+    Type: "Journal article",
+    Authors: "Chen, Mira; Rao, Arjun",
+    Year: "2025",
+    "Published in": "Journal of Field Methods",
+    Volume: "12",
+    Issue: "3",
+    Pages: "45-67",
+    DOI: "https://doi.org/10.5555/fieldnote.2025.42",
+    URL: "https://journal.example/field-notes-at-scale",
+    Tags: "offline, methods",
+    Collections: "Offline methods",
+    Added: "2026-09-01",
+    Notes: "2",
+    Citation: "(Chen & Rao, 2025)",
+  });
+  assert.match(paper.text, /## Citation \(APA\)\n\nChen, M\., & Rao, A\. \(2025\)\. Field notes at scale: Offline-first data collection\. _Journal of Field Methods_, _12_\(3\), 45–67\. https:\/\/doi\.org\/10\.5555\/fieldnote\.2025\.42/);
+  assert.match(paper.text, /## Abstract\n\nWe describe how a small team/);
+  assert.match(paper.text, /### Note \(2026-10-03\)\n\n#### Reading notes\nStrong on sync; weak on \[conflict handling\]\(https:\/\/example\.org\/conflicts\)\./);
+  assert.ok(paper.text.indexOf("First pass & questions") < paper.text.indexOf("Reading notes"), "notes read oldest first");
+  assert.match(paper.text, /## Attachments\n\n- Full Text PDF \(PDF\)/);
+  assert.deepEqual(paper.people, [
+    { name: "Mira Chen", title: "author" },
+    { name: "Arjun Rao", title: "author" },
+  ]);
+
+  const list = await zoteroItems.read(ctx, { kind: "collection", id: "COLL2345" });
+  assert.equal(list.title, "Offline methods");
+  assert.deepEqual(list.facts, { Items: "3", Subcollections: "Sync conflicts", Library: "My Library" });
+  assert.match(list.text, /## Reading list \(APA\)\n\n- Chen, M\., & Rao, A\. \(2025\)\. Field notes at scale\. _Journal of Field Methods_\. \(\[Zotero\]\(https:\/\/www\.zotero\.org\/mira_chen\/items\/ABCD2345\)\)/);
+  assert.match(list.text, /- \*\*Notebooks\*\* Lena Park \(2023\) _Fieldnote Press_ https:\/\/doi\.org\/10\.5555\/books\.1 \(\[Zotero\]\(https:\/\/www\.zotero\.org\/mira_chen\/items\/OTHR2345\)\)/);
+  assert.match(list.text, /… 1 more in Zotero\./);
+
+  await assert.rejects(zoteroItems.read(ctx, { kind: "reference", id: "../keys/current" }), /not a Zotero id/);
+  await assert.rejects(zoteroItems.read(ctx, { kind: "reference", id: "99001/abcd2345" }), /not a Zotero id/);
+  assert.ok(seen.every((request) => request.url.startsWith("https://api.zotero.org/")));
+});
+
+test("Zotero: posting an update adds an escaped child note, and a read-only key is told what to change", async () => {
+  const token = "P9xKfieldnoteMiraKey0001";
+  let reply: (request: { url: string }) => Response = () => json({ successful: { "0": { key: "NOTE0003" } }, success: { "0": "NOTE0003" }, unchanged: {}, failed: {} });
+  const { ctx, seen } = context({ token, meta: { userID: 4412001, username: "mira_chen", groups: [{ id: 99001, name: "Fieldnote Reading Group", write: false }] } }, (request) => reply(request));
+
+  const posted = await zoteroItems.comment!(ctx, { kind: "reference", id: "ABCD2345" }, "Read it & liked the <sync> part.\nSee ch. 2\n\nNext: cite in the review");
+  assert.deepEqual(posted, { url: "https://www.zotero.org/mira_chen/items/ABCD2345" });
+  assert.equal(seen[0]!.method, "POST");
+  assert.equal(seen[0]!.url, "https://api.zotero.org/users/4412001/items");
+  assert.deepEqual(seen[0]!.body, [{ itemType: "note", parentItem: "ABCD2345", note: "<p>Read it &amp; liked the &lt;sync&gt; part.<br>See ch. 2</p>\n<p>Next: cite in the review</p>", tags: [] }]);
+  assert.match(seen[0]!.headers["zotero-write-token"] ?? "", /^[0-9a-f]{32}$/);
+  assert.equal(seen[0]!.headers["zotero-api-key"], token);
+
+  reply = () => json({ code: 403, message: `Write access denied for ${token}` }, 403);
+  const denied = await refusedWith(zoteroItems.comment!(ctx, { kind: "reference", id: "99001/GRPP2345" }, "Shared note"), /can't add notes in Fieldnote Reading Group\. At zotero\.org\/settings\/keys, edit the key and tick Allow write access for this group/, token);
+  assert.equal(denied.statusCode, 403);
+  assert.equal(seen.at(-1)!.url, "https://api.zotero.org/groups/99001/items");
+
+  reply = () => json({ successful: {}, success: {}, unchanged: {}, failed: { "0": { key: "", code: 400, message: "Parent item ZZZZ2345 not found" } } });
+  await refusedWith(zoteroItems.comment!(ctx, { kind: "reference", id: "ZZZZ2345" }, "Hello"), /did not save the note: Parent item ZZZZ2345 not found/);
+
+  const before = seen.length;
+  await refusedWith(zoteroItems.comment!(ctx, { kind: "collection", id: "COLL2345" }, "Hello"), /go on a reference/);
+  await refusedWith(zoteroItems.comment!(ctx, { kind: "reference", id: "ABCD2345" }, "  \n\n "), /Write the note first/);
+  assert.equal(seen.length, before, "nothing is sent for a refused note");
+  assert.equal(zoteroNoteHtml("One\n\n\nTwo"), "<p>One</p>\n<p>Two</p>");
+});
+

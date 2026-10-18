@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
+import { LinkifiedText } from "@/components/linkified-text";
 import { useSpaceAccess } from "@/lib/access";
 import { Dialog, PageHeader } from "./ui";
 
@@ -127,8 +128,11 @@ export function MorningBriefPage() {
       {view.data ? (
         <>
           <article className="tile mb-6 whitespace-pre-wrap rounded-xl p-5 text-[14px]">
-            {view.data.notification?.body ??
-              "Your first brief arrives the morning after signup, at the time set in Settings → Notifications."}
+            {view.data.notification?.body != null ? (
+              <LinkifiedText text={view.data.notification.body} />
+            ) : (
+              "Your first brief arrives the morning after signup, at the time set in Settings → Notifications."
+            )}
           </article>
           <BriefPreferences />
           <div className="mt-5 flex gap-3">
@@ -151,7 +155,7 @@ export function MorningBriefPage() {
           ) : null}
           {preview.data ? (
             <article className="tile mt-4 whitespace-pre-wrap rounded-xl p-5 text-[14px]">
-              {preview.data.body}
+              <LinkifiedText text={preview.data.body} />
             </article>
           ) : null}
         </>

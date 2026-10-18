@@ -23,7 +23,7 @@ Write
 Good pages
 - Lead with the point, then sections. Keep the person's words and facts; do not pad.
 - Dates are absolute ("Oct 14"), not "tomorrow".
-- Writes wait for Apply: say "Ready to apply — press Apply to create the page".
+- A write awaiting approval: say "Ready to apply — press Apply to create the page". A write whose result says ok has happened: link the page.
 
 Precise edit: hub_read_page_blocks returns revision, paths and exact block Markdown. hub_edit_page takes these plus replace, replace_text, insert_before, insert_after or delete. Unchanged blocks stay intact. Use replace_text for a phrase while preserving its formatting. Paths in multiple edits refer to the document after the preceding edit.
 Move a page → hub_move_page. Export → hub_export_page_file. Dependent creates → hub_run_workflow.

@@ -12,6 +12,7 @@ import { useToast } from "../toast";
 import { streamEnsemble } from "./ensemble-view";
 import { useInlineEnsemble } from "./inline-ensemble";
 import { MentionPopover, useMentionMenu } from "../mentions/mention-menu";
+import { MentionTextarea } from "../mentions/mention-field";
 import { COMMENT_BLOCK_EVENT } from "../editor/block-controls";
 
 function clampBox(top: number, left: number, width: number, height: number) {
@@ -294,11 +295,10 @@ export function CommentLayer({
         >
           <div className="mb-1 line-clamp-2 text-[12px] text-muted">“{selection.text}”</div>
           <MentionPopover menu={draftMentions} />
-          <textarea
-            ref={draftMentions.ref}
+          <MentionTextarea
+            menu={draftMentions}
             autoFocus
             value={draft}
-            {...draftMentions.inputProps}
             onKeyDown={(event) => {
               if (draftMentions.onKeyDown(event) || event.key !== "Escape") return;
               event.preventDefault();
@@ -339,10 +339,9 @@ export function CommentLayer({
               }}
             >
               <MentionPopover menu={pageMentions} />
-              <textarea
-                ref={pageMentions.ref}
+              <MentionTextarea
+                menu={pageMentions}
                 value={pageDraft}
-                {...pageMentions.inputProps}
                 onKeyDown={pageMentions.onKeyDown}
                 aria-label="Page comment"
                 placeholder="A note on the whole page. @ensemble can answer."
@@ -478,11 +477,11 @@ function Thread({
       {editing ? (
         <>
           <MentionPopover menu={editMentions} />
-          <textarea ref={editMentions.ref} aria-label="Edit comment" value={text} {...editMentions.inputProps} onKeyDown={editKey} className="field min-h-16 w-full" />
+          <MentionTextarea menu={editMentions} aria-label="Edit comment" value={text} onKeyDown={editKey} className="field min-h-16 w-full" />
           {empty ? <p className="mt-1 text-[12px] text-muted">A comment can't be empty. To remove it, use Delete.</p> : null}
         </>
       ) : (
-        <MarkdownText text={textOf(row.body)} />
+        <MarkdownText text={textOf(row.body)} mentions={row.authorKind === "human" ? row.mentions : null} />
       )}
       {canComment ? (
         confirming ? (

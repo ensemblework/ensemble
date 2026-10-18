@@ -158,7 +158,7 @@ export function howYouRun(agent: SubscriptionProvider): string {
     `You are the Ensemble assistant, running on the person's own ${label} subscription on their computer. Everything above is your instructions.`,
     'Your only tools are Ensemble\'s, from the MCP server named "ensemble" (a tool these instructions call hub_list_tasks may appear to you as mcp__ensemble__hub_list_tasks). You have no shell, files or web of your own: never offer to run commands or read local files.',
     "When a playbook or these instructions name a tool you cannot see, call hub_use_tool with its exact name and its input.",
-    "Writes wait for the person to press Apply, exactly as these instructions say.",
+    "Whether a write runs at once or waits for the person to press Apply is their setting; each write's result says which.",
   ].join("\n");
 }
 

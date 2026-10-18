@@ -5,7 +5,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Actor, Prisma, PrismaClient } from "@prisma/client";
 import { isHmTime, isIsoDate, nextNotificationAt, parseDue } from "../lib/clock.js";
-import { recordUndoInTransaction } from "../lib/undo.js";
+import { recordUndoBatch, recordUndoInTransaction } from "../lib/undo.js";
 import { syncFileText } from "../files/visibility.js";
 
 type Tx = Prisma.TransactionClient;
@@ -359,6 +359,38 @@ export async function softDelete(tx: Tx, userId: string, kind: TrashKind, id: st
     },
   });
   return { label };
+}
+
+/**
+ * Several tasks to Trash at once: one statement and one undo entry, so a whole board fits in a
+ * single Apply. Every id must be the person's and not already in Trash, or nothing moves.
+ */
+export async function trashTasks(tx: Tx, userId: string, ids: readonly string[], actor: Actor): Promise<{ titles: string[] }> {
+  const unique = [...new Set(ids)];
+  if (!unique.length) return { titles: [] };
+  const existing = await tx.task.findMany({ where: { userId, id: { in: unique }, deletedAt: null } });
+  if (existing.length !== unique.length) {
+    const missing = unique.length - existing.length;
+    throw notFound(`${missing} of those ${unique.length} tasks ${missing === 1 ? "is" : "are"} not on the board (already in Trash, or a wrong id).`);
+  }
+  await tx.task.updateMany({ where: { userId, id: { in: unique }, deletedAt: null }, data: { deletedAt: new Date() } });
+  const after = new Map((await tx.task.findMany({ where: { userId, id: { in: unique } } })).map((row) => [row.id, row]));
+  const titles = existing.map((row) => row.title);
+  await recordUndoBatch(tx, {
+    userId,
+    label: existing.length === 1 ? `Moved “${titles[0]}” to Trash` : `Moved ${existing.length} tasks to Trash`,
+    kind: "delete",
+    actor,
+    subject: "task",
+    forward: existing.map((row) => ({
+      op: "update" as const,
+      model: "task" as const,
+      id: row.id,
+      before: row as unknown as Record<string, unknown>,
+      after: after.get(row.id) as unknown as Record<string, unknown>,
+    })),
+  });
+  return { titles };
 }
 
 export async function restoreOne(db: Db, userId: string, kind: TrashKind, id: string): Promise<void> {

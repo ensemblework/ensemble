@@ -1,6 +1,6 @@
 {
   "name": "@ensemble/shared-types",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "private": true,
   "type": "module",
   "main": "./src/index.ts",
@@ -24,7 +24,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/shortcuts.test.ts src/plots.test.ts src/plots-pack.test.ts src/plots-pool.test.ts src/plots-sample.test.ts src/cookie-site.test.ts src/desktop-discovery.test.ts src/ensemble-hook.test.ts src/release-versions.test.ts src/settings-map.test.ts src/model-efforts.test.ts src/included.test.ts src/avatars.test.ts src/account.test.ts src/page-markdown.test.ts src/page-merge.test.ts src/files.test.ts"
+    "test": "node --import tsx --test src/shortcuts.test.ts src/plots.test.ts src/plots-pack.test.ts src/plots-pool.test.ts src/plots-sample.test.ts src/cookie-site.test.ts src/desktop-discovery.test.ts src/ensemble-hook.test.ts src/release-versions.test.ts src/settings-map.test.ts src/model-efforts.test.ts src/included.test.ts src/avatars.test.ts src/account.test.ts src/page-markdown.test.ts src/page-merge.test.ts src/files.test.ts src/connector-guides.test.ts"
   },
   "dependencies": {
     "zod": "^3.24.2"

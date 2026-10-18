@@ -6,7 +6,7 @@ import { startAuthentication, startRegistration } from "@simplewebauthn/browser"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Fingerprint, Laptop, Lock, Mail, Maximize2, Minimize2, TerminalSquare, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { API, api } from "@/lib/api";
+import { API, api, terminalLocked } from "@/lib/api";
 import type { CodeTarget } from "@/lib/code-target";
 import { TerminalMark, TerminalSvg } from "@/components/motion/terminal-mark";
 import { QueryError, Spinner, cx } from "../ui";
@@ -85,7 +85,7 @@ const localBackend: Backend = {
       body: JSON.stringify({ cwd, line, confirmed }),
     });
     if (response.status === 428) return { confirm: ((await response.json()) as { confirm: string }).confirm };
-    if (response.status === 401) return { locked: true };
+    if (response.status === 423 || response.status === 401) return { locked: true };
     if (!response.ok || !response.body) return { error: await errorText(response) };
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -115,8 +115,13 @@ function deviceBackend(deviceId: string): Backend {
       const lock = await api.webTerminalStatus();
       const base = { enabled: true, unlocked: lock.unlocked, expiresAt: lock.expiresAt, passkeys: lock.passkeys, password: lock.password, emailCode: lock.emailCode, roots: [] as string[], home: "" };
       if (!lock.unlocked) return base;
-      const there = await api.deviceTerminal<{ roots: string[]; home: string }>(deviceId, { op: "status" });
-      return { ...base, roots: there.roots, home: there.home };
+      try {
+        const there = await api.deviceTerminal<{ roots: string[]; home: string }>(deviceId, { op: "status" });
+        return { ...base, roots: there.roots, home: there.home };
+      } catch (failure) {
+        if (terminalLocked(failure)) return { ...base, unlocked: false, expiresAt: null };
+        throw failure;
+      }
     },
     enrolOptions: (proof) => api.webTerminalPasskeyOptions(proof),
     enrolVerify: (response, label) => api.webTerminalPasskeyVerify(response, label),
@@ -133,7 +138,7 @@ function deviceBackend(deviceId: string): Backend {
         body: JSON.stringify({ op: "run", cwd, line, confirmed }),
       });
       if (response.status === 428) return { confirm: ((await response.json()) as { confirm: string }).confirm };
-      if (response.status === 401) return { locked: true };
+      if (response.status === 423 || response.status === 401) return { locked: true };
       if (!response.ok) return { error: await errorText(response) };
       const { runId } = (await response.json()) as { runId: string };
       current = runId;
@@ -149,8 +154,7 @@ function deviceBackend(deviceId: string): Backend {
           if (out.done) return { exitCode: out.exitCode === null ? null : String(out.exitCode) };
         }
       } catch (failure) {
-        const status = (failure as { status?: number }).status;
-        return status === 401 ? { locked: true } : { error: (failure as Error).message };
+        return terminalLocked(failure) ? { locked: true } : { error: (failure as Error).message };
       } finally {
         current = null;
       }
@@ -175,7 +179,7 @@ export function Terminal({ initialCwd, target, fontSize, onClose }: { initialCwd
   const desktop = useDesktopShell();
   const deviceId = target?.kind === "device" ? target.deviceId : null;
   const backend = useMemo(() => (deviceId ? deviceBackend(deviceId) : localBackend), [deviceId]);
-  const statusKey = deviceId ? ["terminal-status", "device", deviceId] : ["terminal-status"];
+  const statusKey = useMemo(() => (deviceId ? ["terminal-status", "device", deviceId] : ["terminal-status"]), [deviceId]);
   const status = useQuery({ queryKey: statusKey, queryFn: () => backend.status(), refetchInterval: 60_000, enabled: desktop === false, retry: false });
   const computers = useQuery({ queryKey: ["devices"], queryFn: api.devices, enabled: Boolean(deviceId), staleTime: 60_000 });
   const computerName = deviceId ? computers.data?.devices.find((row) => row.id === deviceId)?.name ?? "your computer" : null;
@@ -196,6 +200,14 @@ export function Terminal({ initialCwd, target, fontSize, onClose }: { initialCwd
   const field = useRef<HTMLInputElement>(null);
   const data = status.data;
 
+  // Shows the lock at once: while the cached status still said unlocked, clearing the folder would send a `cd` to the locked session.
+  const showLocked = useCallback(async () => {
+    await client.cancelQueries({ queryKey: statusKey });
+    client.setQueryData<Status>(statusKey, (current) => (current ? { ...current, unlocked: false, expiresAt: null } : current));
+    setCwd("");
+    setScope("");
+  }, [client, statusKey]);
+
   useEffect(() => {
     if (!data?.unlocked || cwd) return;
     const start = initialCwd && data.roots.some((root) => initialCwd.startsWith(root)) ? initialCwd : data.home;
@@ -205,11 +217,12 @@ export function Terminal({ initialCwd, target, fontSize, onClose }: { initialCwd
         setCwd(result.cwd);
         setScope(result.scope);
       })
-      .catch(() => {
+      .catch((failure) => {
+        if (terminalLocked(failure)) return void showLocked().then(() => client.invalidateQueries({ queryKey: ["terminal-status"] }));
         setCwd(data.home);
         setScope(data.home);
       });
-  }, [backend, data?.unlocked, data?.home, data?.roots, initialCwd, cwd]);
+  }, [backend, client, showLocked, data?.unlocked, data?.home, data?.roots, initialCwd, cwd]);
 
   useEffect(() => {
     out.current?.scrollTo({ top: out.current.scrollHeight });
@@ -253,9 +266,12 @@ export function Terminal({ initialCwd, target, fontSize, onClose }: { initialCwd
   });
 
   const lock = async () => {
-    await backend.lock();
-    setCwd("");
-    void client.invalidateQueries({ queryKey: ["terminal-status"] });
+    await showLocked();
+    try {
+      await backend.lock();
+    } finally {
+      void client.invalidateQueries({ queryKey: ["terminal-status"] });
+    }
   };
 
   const run = async (line: string, confirmed = false) => {
@@ -278,6 +294,10 @@ export function Terminal({ initialCwd, target, fontSize, onClose }: { initialCwd
         setScope(result.scope);
       } catch (failure) {
         print({ kind: "err", text: (failure as Error).message });
+        if (terminalLocked(failure)) {
+          await showLocked();
+          void client.invalidateQueries({ queryKey: ["terminal-status"] });
+        }
       }
       return;
     }
@@ -299,7 +319,7 @@ export function Terminal({ initialCwd, target, fontSize, onClose }: { initialCwd
         print({ kind: "info", text: `${result.confirm} Type yes to run it, anything else to cancel.` });
       } else if ("locked" in result) {
         print({ kind: "err", text: "Locked. Unlock with your passkey." });
-        setCwd("");
+        await showLocked();
         void client.invalidateQueries({ queryKey: ["terminal-status"] });
       } else if ("error" in result) {
         print({ kind: "err", text: result.error });

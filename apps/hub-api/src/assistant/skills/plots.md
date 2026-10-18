@@ -8,7 +8,7 @@ match: \b(plots?|charts?|graphs? of|bar (chart|graph|plot)|histograms?|scatter|l
 paths: /plots
 mentions: plot, dataset
 ---
-A plot is drawn from a dataset (a table in Plots). Steps: get the data in, read its columns, then create the plot. Plot writes wait for Apply.
+A plot is drawn from a dataset (a table in Plots). Steps: get the data in, read its columns, then create the plot. A plot write may wait for Apply; report what its result says.
 
 1. Get the data
 - Already a dataset: hub_list_datasets (query), or the dataset id from a mention.

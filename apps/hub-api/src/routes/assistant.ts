@@ -331,12 +331,16 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
         });
     if (!conversation) return reply.code(404).send({ error: "Conversation not found." });
 
+    // `@people:Mira Chen` typed without an id (by hand, pasted, from the terminal app) gets one when it names one record here.
+    // Saved on the message, so the dock shows these exact mentions after a reload.
+    const mentions = await resolveTypedMentions(app.prisma, request.userId, request.modules, message, body.mentions);
     const userMessage = await app.prisma.assistantMessage.create({
       data: {
         conversationId: conversation.id,
         userId: request.userId,
         role: "user",
         content: message,
+        mentions: mentions as never,
       },
     });
 
@@ -391,9 +395,6 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
     }
     const modelName = explicitModel ?? tierSetting.model;
     if (!refused && !modelName) refused = `No model is set for the ${tierName} tier. Pick one in Settings → Models.`;
-    // `@people:Mira Chen` typed without an id (by hand, pasted, from the terminal app) gets one when it names one record here.
-    const mentions = await resolveTypedMentions(app.prisma, request.userId, request.modules, message, body.mentions);
-
     if (!refused && callProvider === INCLUDED_PROVIDER) {
       // No credits or the shared budget used up: say so before any model work starts.
       try {

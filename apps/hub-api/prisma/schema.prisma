@@ -1436,6 +1436,8 @@ model AssistantMessage {
   role           String
   content        String                @default("")
   toolCalls      Json                  @default("[]") @map("tool_calls")
+  /// On the person's own messages: the mentions it named, `[{ kind, id, label }]`, so the dock shows exact chips after a reload.
+  mentions       Json                  @default("[]") @map("mentions")
   model          String?
   credentialSource String? @map("credential_source")
   credits        Float?

@@ -46,6 +46,8 @@ import { reflectProposals } from "./reply.js";
 import { statusFor } from "./status-line.js";
 import { toolAllowedFor, chatToolSpecs, responsesToolSpecs } from "./registry.js";
 import { appsPrompt, ensureAppAccess, loadAppGrants, toolsForTurn, writeRefusal } from "./apps.js";
+import { loadConnections } from "./connections.js";
+import { isGuestIn } from "../sharing/context.js";
 import { advertisedTools, playbookText, appMap, findPlaybook, playbookIndex, playbooksFor, routePlaybooks, type Playbook } from "./skills/index.js";
 import { hasModule, INCLUDED_PROVIDER, INCLUDED_SOURCE, isSubscriptionProvider } from "@ensemble/shared-types";
 import type { ToolAnswer } from "../subscriptions/bridge.js";
@@ -223,11 +225,16 @@ async function drive(
   // and in Ensemble Code the folder's read tools and agent runs. Any of these may run.
   const tools = [...(await toolsForTurn(ctx, grants)), ...(args.code ? codeTools : [])];
   const byName = new Map(tools.map((tool) => [tool.name, tool]));
+  // Every app connected in this space, for the prompt and for routing; empty for a guest.
+  const connections = await loadConnections(ctx, tools);
   // The model sees core tools and the playbooks in play; Code also keeps its local tools.
   // (skills/index.ts): the ones the page, mentions and words point at, and any it loads with hub_how_to.
   const playbooks = playbooksFor(args.modules);
   const active = new Map<string, Playbook>(
-    routePlaybooks({ message: args.message, path: openPage?.path ?? args.page?.path, mentions: args.mentions }, playbooks).map((playbook) => [playbook.name, playbook]),
+    routePlaybooks(
+      { message: args.message, path: openPage?.path ?? args.page?.path, mentions: args.mentions, apps: connections.connected },
+      playbooks,
+    ).map((playbook) => [playbook.name, playbook]),
   );
   const shown = () => {
     const selected = advertisedTools(tools, active.values(), args.message);
@@ -246,7 +253,8 @@ async function drive(
     weekday: clock.weekday,
     timezone: settings.timezone,
     persona,
-    apps: appsPrompt(tools, grants, settings) || undefined,
+    // A guest's prompt already says the owner's apps are private.
+    apps: isGuestIn(userId) ? undefined : appsPrompt(connections, settings),
     map: appMap() || undefined,
     playbooks: playbookIndex(playbooks, [...active.values()]),
     loaded: [...active.values()].map((playbook) => `## Playbook: ${playbook.title}\n${playbookText(playbook, args.message)}`).join("\n\n") || undefined,
@@ -255,6 +263,7 @@ async function drive(
 
   const messages: ModelMessage[] = [
     { role: "system", content: system },
+    { role: "system", content: writeModeNote(settings.assistant.writePolicy) },
     ...(args.preamble
       ? [{ role: "system" as const, content: truncateText(args.preamble, 2000) }]
       : []),
@@ -609,6 +618,15 @@ interface CallOutcome {
   forModel: unknown;
 }
 
+/** Playbooks speak of Apply; this says which writes actually wait under the person's setting. */
+export function writeModeNote(policy: AssistantTurnArgs["settings"]["assistant"]["writePolicy"]): string {
+  if (policy === "immediate") {
+    return "Write mode: Just do it. Writes in Ensemble run as soon as you call them and the person can undo them, so when a write's result says ok, say it is done. Writes to connected apps and settings changes still wait for Apply: report those as ready to apply.";
+  }
+  if (policy === "needs-me") return "Write mode: every write waits on the person's Needs me page until they approve it. Never say it is done.";
+  return "Write mode: Preview. Writes wait until the person presses Apply: for a result awaiting approval say it is ready to apply, never that it is done.";
+}
+
 /** Whether a write waits for Apply. Writes to connected apps, and tools marked alwaysHold, always do, whatever the policy. */
 export function holdsAssistantWrite(
   policy: AssistantTurnArgs["settings"]["assistant"]["writePolicy"],
@@ -648,6 +666,14 @@ async function runOne(
     // Handed back rather than thrown: a schema mistake is recoverable.
     const call = failed(requested, tool.area, describe(error));
     return { call, forModel: { error: call.error, hint: "Fix the arguments and call again." } };
+  }
+  if (tool.prepare) {
+    try {
+      input = await tool.prepare(ctx, input);
+    } catch (error) {
+      const call = failed(requested, tool.area, describe(error), tool.isWrite);
+      return { call, forModel: { error: call.error } };
+    }
   }
 
   const held = tool.isWrite && holdsAssistantWrite(ctx.settings.assistant.writePolicy, tool.name, args.inlineArtifacts, tool.area, tool.alwaysHold);
@@ -793,10 +819,38 @@ function trim(data: unknown): Record<string, unknown> {
   const json = JSON.stringify(data);
   if (json === undefined) return {};
   if (json.length <= MAX_TOOL_RESULT_CHARS) return { data };
+  const fitted = fitList(data);
+  if (fitted) return fitted;
   return {
     truncated: true,
     note: "The full result was too long to return. This is the first part of it, as text. Narrow your query and call again if you need the rest.",
     preview: truncateText(json, MAX_TOOL_RESULT_CHARS),
+  };
+}
+
+/**
+ * A list result cut at whole items, so every id the model sees is complete and it knows where to
+ * continue. Only for results with exactly one list in them (hub_list_tasks and the like).
+ */
+export function fitList(data: unknown, limit = MAX_TOOL_RESULT_CHARS): Record<string, unknown> | null {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const lists = Object.entries(data).filter(([, value]) => Array.isArray(value));
+  if (lists.length !== 1) return null;
+  const [key, list] = lists[0] as [string, unknown[]];
+  const room = limit - 400;
+  let shown = 0;
+  let high = list.length;
+  while (shown < high) {
+    const middle = Math.ceil((shown + high) / 2);
+    if (JSON.stringify({ ...data, [key]: list.slice(0, middle) }).length <= room) shown = middle;
+    else high = middle - 1;
+  }
+  if (!shown) return null;
+  const offset = typeof (data as { offset?: unknown }).offset === "number" ? (data as { offset: number }).offset : 0;
+  return {
+    data: { ...data, [key]: list.slice(0, shown) },
+    truncated: true,
+    note: `Only the first ${shown} of the ${list.length} ${key} returned fit here. Call again with offset ${offset + shown} for the next ones, or narrow the query. For a change to all of them, use a tool that takes a filter instead of ids.`,
   };
 }
 

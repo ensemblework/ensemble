@@ -264,7 +264,7 @@ export function rebuildDocx(original: Uint8Array, blocks: Block[]): Uint8Array {
         const rows = block.rows
           .map(
             (row, rowIndex) =>
-              `<${w}:tr>${Array.from({ length: width }, (_, cell) => `<${w}:tc><${w}:tcPr><${w}:tcW ${w}:w="${col}" ${w}:type="dxa"/></${w}:tcPr>${paragraph(runs([{ text: row[cell] ?? "", bold: rowIndex === 0 || undefined }]))}</${w}:tc>`).join("")}</${w}:tr>`,
+              `<${w}:tr>${rowIndex === 0 && block.rows.length > 1 ? `<${w}:trPr><${w}:tblHeader/></${w}:trPr>` : ""}${Array.from({ length: width }, (_, cell) => `<${w}:tc><${w}:tcPr><${w}:tcW ${w}:w="${col}" ${w}:type="dxa"/></${w}:tcPr>${paragraph(runs(row[cell] ?? [], rowIndex === 0 ? { bold: true } : {}))}</${w}:tc>`).join("")}</${w}:tr>`,
           )
           .join("");
         body.push(

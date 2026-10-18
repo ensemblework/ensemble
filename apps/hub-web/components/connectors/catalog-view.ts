@@ -17,22 +17,31 @@ export function isStoreCategory(value: string | null | undefined): value is Stor
   return Boolean(value) && STORE_CATEGORIES.some((category) => category.id === value);
 }
 
+/** The featured short list: connected apps first, then FEATURED_ORDER. */
 export function featuredEntries(entries: readonly CatalogEntry[]): CatalogEntry[] {
   const rank = (id: string) => {
     const index = (FEATURED_ORDER as readonly string[]).indexOf(id);
     return index === -1 ? FEATURED_ORDER.length : index;
   };
-  return entries.filter((entry) => entry.featured).sort((a, b) => rank(a.id) - rank(b.id));
+  return entries.filter((entry) => entry.featured).sort((a, b) => Number(isConnected(b)) - Number(isConnected(a)) || rank(a.id) - rank(b.id));
 }
 
 export function mcpConnected(entry: CatalogEntry): boolean {
   return entry.state.mcp?.status === "connected";
 }
 
+/** Connected without an account to a vendor server that holds the person's data (not `mcp.open`): only its public tools work. */
+export function mcpPublicOnly(entry: Pick<CatalogEntry, "mcp" | "state">): boolean {
+  return entry.state.mcp?.status === "connected" && entry.state.mcp.auth === "none" && !entry.mcp?.open;
+}
+
 /** Signed in, a token saved, or the vendor's MCP server connected. */
 export function isConnected(entry: CatalogEntry): boolean {
   return entry.state.connected || mcpConnected(entry);
 }
+
+/** Sync sources that Sync people reads (names and addresses only). */
+export const PEOPLE_SYNC_SOURCES: ReadonlySet<string> = new Set(["gmail", "outlook", "slack", "teams", "github", "google_calendar", "outlook_calendar"]);
 
 /** Browser sign-in is set up on this server (the operator registered the provider's app). */
 export function oauthReady(entry: CatalogEntry): boolean {
@@ -66,32 +75,53 @@ const KIND_WORDS: Partial<Record<AppItemKind, string>> = {
   deployment: "deployments",
   work_item: "work items",
   invoice: "invoices",
+  reference: "references",
+  collection: "collections",
+  attachment: "attachments",
+  dashboard: "dashboards",
+  record: "records",
+  meeting: "meetings",
+  video: "videos",
 };
 
 function words(list: readonly string[]): string {
   return list.length > 1 ? `${list.slice(0, -1).join(", ")} and ${list[list.length - 1]}` : (list[0] ?? "");
 }
 
-/** What Ensemble does with an app once it is connected, in the order people meet it. */
+/** Built-in assistant tools for apps with no item search or MCP server of their own. */
+const BUILT_IN_TOOLS: Readonly<Record<string, string>> = {
+  zoom: "Ask the assistant about your Zoom meetings, recordings, summaries and transcripts.",
+  docusign: "Ask the assistant which envelopes are waiting for whom, and what was completed.",
+};
+
+/** What Ensemble does with an app once it is connected, in the order people meet it. Only what the code does today. */
 export function connectorUses(entry: CatalogEntry): string[] {
   const uses: string[] = [];
-  const brandName = entry.name.split(" ")[0] ?? entry.name;
-  const synced = Object.keys(entry.state.sources ?? {}).length > 0;
-  if (synced) uses.push("Syncs into your context, and asks addressed to you become proposed todos on Today.");
-  if (entry.category === "meetings" && entry.auth.includes("token")) uses.push("Meeting notes arrive in Meetings, matched to your calendar; your action items become proposed todos.");
+  const brandName = entry.vendor === entry.name ? entry.name : (entry.name.split(" ")[0] ?? entry.name);
+  if (Object.keys(entry.state.sources ?? {}).some((id) => PEOPLE_SYNC_SOURCES.has(id))) {
+    uses.push("Sync people adds the people you work with here to People. Messages and files are saved only when you ask.");
+  }
+  if (entry.category === "meetings" && entry.auth.includes("token")) {
+    uses.push("With an API key, ask the assistant to import recent notes into Meetings (up to 20 at a time), matched to your calendar. Action items become proposed todos only if you ask.");
+  }
+  const builtIn = BUILT_IN_TOOLS[entry.id];
+  if (builtIn) uses.push(builtIn);
   const items = entry.items;
   if (items) {
     const kinds = items.kinds.filter((kind) => kind !== "person").map((kind) => KIND_WORDS[kind] ?? kind);
     if (kinds.length) uses.push(`Attach ${words(kinds)} to a task or project. The assistant and agents working on it read them.`);
     if (items.kinds.some((kind) => TASK_LIKE_KINDS.has(kind))) uses.push(`Turn ${words(items.kinds.filter((kind) => TASK_LIKE_KINDS.has(kind)).map((kind) => KIND_WORDS[kind] ?? kind))} into tasks, and hand them to an agent.`);
-    if (items.comments) uses.push("Post an update back when the work is done. Nothing is posted until you press Post or Apply.");
+    if (items.comments) {
+      const where = entry.id === "atlassian" ? " to Jira (when connected with an API token)" : "";
+      uses.push(`Post an update back${where} when the work is done. Nothing is posted until you press Post or Apply.`);
+    }
     if (items.people) uses.push("Add its people to People, so mentions, mail and meetings point to the same person.");
     uses.push(`Ask the assistant: it searches and reads ${entry.name} for you.`);
   }
   if (entry.id === "github") uses.push("Agents can clone the repositories you pick, using this connection.");
   if (entry.import) uses.push(`Import into Ensemble: ${words(entry.import.brings.map((line) => line.charAt(0).toLowerCase() + line.slice(1)))}. Running it again updates instead of duplicating.`);
   if (entry.mcp) uses.push(`The assistant can use ${brandName}'s own tools. Anything that changes ${brandName} waits for your Apply.`);
-  if (entry.products?.some((product) => product.write)) uses.push(`The assistant can ${words(entry.writes.map((line) => line.charAt(0).toLowerCase() + line.slice(1)))} for you, after your Apply.`);
+  if (entry.products?.some((product) => product.write)) uses.push(`After your Apply, the assistant can change these for you: ${entry.writes.join("; ")}.`);
   return uses;
 }
 
@@ -110,9 +140,12 @@ export function entryStatus(entry: CatalogEntry): EntryStatus {
 export function statusLabel(entry: CatalogEntry): string {
   const status = entryStatus(entry);
   switch (status) {
-    case "connected":
+    case "connected": {
       if (entry.auth.includes("builtin") && !entry.state.connected) return "Built in";
-      return entry.state.account ? `Connected as ${entry.state.account}` : "Connected";
+      const account = entry.state.account ?? (mcpConnected(entry) ? entry.state.mcp?.account : null);
+      if (account) return `Connected as ${account}`;
+      return !entry.state.connected && mcpPublicOnly(entry) ? "Connected · public data only" : "Connected";
+    }
     case "attention":
       return entry.state.account ? `${entry.state.account} · needs attention` : "Needs attention";
     case "pending":
@@ -142,7 +175,13 @@ function haystack(entry: CatalogEntry): string {
     .toLowerCase();
 }
 
-/** Every word of the query must appear somewhere in the entry. Ready entries come before "soon" ones. */
+/** Connected first, then ready, then "soon"; catalog order within each. */
+function storeRank(entry: CatalogEntry): number {
+  if (entry.status === "soon") return 2;
+  return isConnected(entry) ? 0 : 1;
+}
+
+/** Every word of the query must appear somewhere in the entry. Connected entries come first and "soon" ones last. */
 export function filterEntries(entries: readonly CatalogEntry[], options: { query?: string; category?: StoreCategory }): CatalogEntry[] {
   const words = (options.query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
   const category = options.category ?? "all";
@@ -156,7 +195,7 @@ export function filterEntries(entries: readonly CatalogEntry[], options: { query
   });
   return matches
     .map((entry, index) => ({ entry, index }))
-    .sort((a, b) => Number(a.entry.status === "soon") - Number(b.entry.status === "soon") || a.index - b.index)
+    .sort((a, b) => storeRank(a.entry) - storeRank(b.entry) || a.index - b.index)
     .map((row) => row.entry);
 }
 
@@ -169,6 +208,15 @@ export function categoryCounts(entries: readonly CatalogEntry[]): Record<StoreCa
     if (entry.import) counts.import += 1;
   }
   return counts;
+}
+
+export type StoreCard = { kind: "entry"; entry: CatalogEntry } | { kind: "custom"; connection: McpConnection };
+
+/** The grid in order: connected apps and connected custom servers first, then the rest of each. */
+export function storeCards(entries: readonly CatalogEntry[], custom: readonly McpConnection[]): StoreCard[] {
+  const on = (card: StoreCard) => (card.kind === "entry" ? isConnected(card.entry) : card.connection.status === "connected");
+  const cards: StoreCard[] = [...entries.map((entry) => ({ kind: "entry" as const, entry })), ...custom.map((connection) => ({ kind: "custom" as const, connection }))];
+  return [...cards.filter(on), ...cards.filter((card) => !on(card))];
 }
 
 /** Custom servers added by URL (no catalog entry). */

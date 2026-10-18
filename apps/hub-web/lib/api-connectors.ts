@@ -4,10 +4,16 @@ import { API, ApiError, del, get, patch, post, put } from "./api";
 /** One sync source a connector feeds (settings.connections key). */
 export type ConnectorSourceState = { enabled: boolean; lastSyncAt: string | null; lastError: string | null };
 
+/** How an MCP connection signs in. "none" on a catalog server that is not `mcp.open` means public data only. */
+export type McpAuthKind = "oauth" | "bearer" | "connection" | "none";
+
 export type ConnectorMcpState = {
   status: "pending" | "connected" | "error" | "disabled";
   toolCount: number;
   lastError: string | null;
+  auth?: McpAuthKind;
+  /** Whose account it is, when the vendor says (Hugging Face). */
+  account?: string | null;
 };
 
 /** What hub-api knows about one connector for the signed-in person. */
@@ -38,6 +44,8 @@ export type McpConnection = {
   name: string;
   url: string;
   status: "pending" | "connected" | "error" | "disabled";
+  auth?: McpAuthKind;
+  account?: string | null;
   toolCount: number;
   tools: McpTool[];
   disabledTools: string[];
@@ -93,7 +101,15 @@ export type McpConnectInput = ({ serverId: string } | { url: string; name: strin
   useConnection?: boolean;
 };
 
-export type McpConnectResult = { id: string; authorizeUrl?: string | null; status: McpConnection["status"] };
+export type McpConnectResult = {
+  id: string;
+  authorizeUrl?: string | null;
+  status: McpConnection["status"];
+  /** Whose account a pasted token is, when the vendor says. */
+  account?: string;
+  /** Connected without an account to a server that has your data: only its public tools work. */
+  publicOnly?: boolean;
+};
 
 /** MCP connect failures hub-api names, so the form can ask for what is missing. */
 export type McpErrorCode = "MCP_URL_REFUSED" | "MCP_TOKEN_REQUIRED" | "MCP_PKCE_UNSUPPORTED" | "MCP_TOKEN_REFUSED" | "MCP_FIELD" | "MCP_APP_MISSING" | (string & {});

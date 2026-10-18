@@ -1,5 +1,5 @@
 import type { IdeTheme, ThemeDirectoryExtension } from "@ensemble/ide-theme";
-import { emptyWorkspace, type IncludedUsage, type ModelMeta, type PageDocument, type Settings, type SubscriptionAgent, type SubscriptionProvider, type TaskPageContent } from "@ensemble/shared-types";
+import { emptyWorkspace, type IncludedUsage, type ModelMeta, type PageDocument, type PageMention, type Settings, type SubscriptionAgent, type SubscriptionProvider, type TaskPageContent } from "@ensemble/shared-types";
 import type { LayoutDocument } from "@ensemble/shared-types/widgets";
 
 import { bindClient, currentExternalSignal, isRequestCancelled, RequestCancelledError, trackRequest, isPageUnloading } from "./fetch-cancel";
@@ -43,6 +43,9 @@ export class ApiError extends Error {
 
 /** True when the API refused because the route needs this server's own folders (Ensemble on the web, not the operator). */
 export const hostOnly = (error: unknown) => error instanceof ApiError && error.status === 403 && error.code === "HOST_ACCESS_DENIED";
+
+/** True when the terminal refused because it is locked or its unlock ran out (a 423, never the 401 of a sign-in that ended). */
+export const terminalLocked = (error: unknown) => error instanceof ApiError && (error.status === 423 || error.code === "TERMINAL_LOCKED");
 
 function errorCode(text: string): string | null {
   try {
@@ -970,6 +973,8 @@ export type AssistantMessageRecord = {
   id: string;
   role: "user" | "assistant" | string;
   content: string;
+  /** On the person's own messages: the mentions it named, with their exact labels. Older messages have none. */
+  mentions?: PageMention[];
   toolCalls: AssistantToolCallRecord[];
   model: string | null;
   createdAt: string;
@@ -1183,6 +1188,8 @@ export const api = bindClient({
       seasonEnded?: { id: string; name: string } | null;
       devTools?: boolean;
       pageWidth?: number;
+      /** May use this server's own Code folders (`/api/code/*`). False on Ensemble on the web except for its operator. */
+      hostCode?: boolean;
     }>("/api/shell"),
   todayHome: (from: string, to: string) =>
     get<{
@@ -2021,6 +2028,8 @@ export type PageComment = {
   conversationId: string | null;
   error: string | null;
   anchor: { orphaned?: boolean; quote?: string } | null;
+  /** The mentions the comment was written with. */
+  mentions?: PageMention[];
   createdAt: string;
 };
 

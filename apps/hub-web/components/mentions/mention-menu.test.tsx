@@ -6,6 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { PageMention } from "@ensemble/shared-types";
 import { MentionPopover, useMentionMenu } from "./mention-menu.js";
+import { MentionTextarea } from "./mention-field.js";
 
 const ENTITIES = [
   { kind: "people", id: "p-alerts", label: "alerts", detail: "alerts@bank.example" },
@@ -191,5 +192,84 @@ test("Esc closes the menu so Enter sends; emails do not open it; a deleted menti
     assert.deepEqual(ui.sent[1], { text: "never mind", mentions: [] });
   } finally {
     await ui.cleanup();
+  }
+});
+
+function HighlightHost() {
+  const [value, setValue] = useState("");
+  const menu = useMentionMenu({ value, onValue: setValue });
+  return (
+    <div>
+      <MentionPopover menu={menu} />
+      <MentionTextarea menu={menu} value={value} onKeyDown={(event) => void menu.onKeyDown(event)} aria-label="Message" className="field w-full" />
+    </div>
+  );
+}
+
+test("the box tints mentions as they are typed: the token being picked, a picked mention and a bare prefix", async () => {
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = String(input);
+    const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+    if (url.includes("/api/entities")) return json({ entities: ENTITIES });
+    if (url.includes("/api/shell")) return json({ modules: "diagrams,plots" });
+    return json({});
+  }) as typeof fetch;
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false, gcTime: 0 } } });
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root: Root = createRoot(host);
+  try {
+    await act(async () => {
+      root.render(
+        <QueryClientProvider client={client}>
+          <HighlightHost />
+        </QueryClientProvider>,
+      );
+    });
+    const box = host.querySelector("textarea")!;
+    const mirror = host.querySelector<HTMLElement>("[data-mention-mirror]")!;
+    assert.equal(mirror.getAttribute("aria-hidden"), "true");
+    assert.equal(mirror.nextElementSibling, box, "the copy sits behind the box");
+    assert.match(box.className, /mention-field-input/);
+    assert.match(mirror.className, /field/, "the copy has the box's own classes, so it wraps the same way");
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")!.set!;
+    const type = async (text: string) => {
+      await act(async () => {
+        box.focus();
+        setter.call(box, box.value + text);
+        box.setSelectionRange(box.value.length, box.value.length);
+        box.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await settle();
+    };
+    const marks = () => [...mirror.querySelectorAll<HTMLElement>(".mention-mark")].map((mark) => [mark.textContent, mark.dataset.kind ?? null]);
+    await type("Ping @anik");
+    await type("");
+    assert.deepEqual(marks(), [["@anik", null]], "the token being picked for");
+    await act(async () => {
+      box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    });
+    await settle();
+    assert.equal(box.value, "Ping @people:Anika Rao ");
+    assert.deepEqual(marks(), [["@people:Anika Rao", "people"]]);
+    await type("and @task:");
+    assert.deepEqual(marks(), [["@people:Anika Rao", "people"], ["@task:", "task"]]);
+    assert.equal(mirror.textContent, `${box.value}\u200b`, "the copy holds the same text as the box");
+    await act(async () => {
+      box.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    });
+    await act(async () => {
+      setter.call(box, "Ping @people:Anika");
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await settle();
+    await act(async () => box.blur());
+    assert.deepEqual(marks(), [["@people:", "people"]], "an edited mention is no longer the picked one; its prefix stays tinted");
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+    globalThis.fetch = original;
+    client.clear();
   }
 });

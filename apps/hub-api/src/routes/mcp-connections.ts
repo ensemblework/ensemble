@@ -88,12 +88,17 @@ export function fillMcpUrl(entry: ConnectorCatalogEntry, values: Record<string, 
   return url;
 }
 
-/** A pasted address that is a catalog server connects as that entry. Loom shares Atlassian's server; the first entry wins. */
+/**
+ * A pasted address that is a catalog server connects as that entry. Loom shares Atlassian's server; the first entry wins.
+ * The address without its query counts too: Hugging Face's entry adds ?login to the same server.
+ */
 const CATALOG_BY_URL = new Map<string, ConnectorCatalogEntry>();
 for (const entry of CONNECTOR_CATALOG) {
   if (!entry.mcp || entry.status !== "ready" || entry.mcp.fields?.length) continue;
-  const key = canonicalMcpUrl(new URL(entry.mcp.url));
-  if (!CATALOG_BY_URL.has(key)) CATALOG_BY_URL.set(key, entry);
+  const url = new URL(entry.mcp.url);
+  const bare = new URL(url.href);
+  bare.search = "";
+  for (const key of [canonicalMcpUrl(url), canonicalMcpUrl(bare)]) if (!CATALOG_BY_URL.has(key)) CATALOG_BY_URL.set(key, entry);
 }
 
 /** The field values a stored address was built from, so a reconnect does not ask again. */

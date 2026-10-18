@@ -281,6 +281,12 @@
     "fit": "fill",
     "source": "Tactiq's own site icon, https://cdn.prod.website-files.com/61120cb2509e011efcf0b1e4/675659f30393924f83fb1f3b_Tactiq%20Webclip%20(1).png (resized to 96 px)"
   },
+  "wisprflow": {
+    "name": "Wispr Flow",
+    "file": "wisprflow.svg",
+    "fit": "fill",
+    "source": "Placeholder lettermark drawn for Ensemble: a “W” on a dark tile, not Wispr's logo. Replace with Wispr Flow's own icon from wisprflow.ai."
+  },
   "docusign": {
     "name": "Docusign",
     "file": "docusign.webp",
@@ -778,5 +784,11 @@
     "file": "brex.webp",
     "fit": "pad",
     "source": "Brex's own site icon, the vendor's website (resized to 96 px)"
+  },
+  "zotero": {
+    "name": "Zotero",
+    "file": "zotero.svg",
+    "fit": "pad",
+    "source": "Placeholder lettermark drawn for Ensemble: a “Z” in Zotero's red (#CC2936). Replace with Zotero's own icon from zotero.org."
   }
 }

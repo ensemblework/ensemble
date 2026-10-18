@@ -9,7 +9,7 @@ import type { CatalogEntry, McpConnection } from "@/lib/api-connectors";
 import { Modal } from "@/components/settings/modal";
 import { QueryError, SkeletonRows, cx } from "../ui";
 import { BrandLogo, TRADEMARK_NOTICE } from "./brand-logo";
-import { categoryCounts, customConnections, filterEntries, isStoreCategory, STORE_CATEGORIES, type StoreCategory } from "./catalog-view";
+import { categoryCounts, customConnections, filterEntries, isStoreCategory, STORE_CATEGORIES, storeCards, type StoreCategory } from "./catalog-view";
 import { ConnectorDetail, StatusBadge } from "./connector-detail";
 import { CustomConnectionDetail, CustomConnectorForm } from "./custom-connector";
 import { useCatalog, useMcpConnections } from "./use-connectors";
@@ -264,6 +264,7 @@ function Browse({
   const words = query.trim().toLowerCase();
   const shownCustom = category === "connected" || category === "all" ? custom.filter((row) => !words || `${row.name} ${row.url}`.toLowerCase().includes(words)) : [];
   const label = STORE_CATEGORIES.find((row) => row.id === category)?.label ?? "All";
+  const ordered = storeCards(shown, shownCustom);
   return (
     <div className="flex h-full min-h-0">
       <nav aria-label="Categories" className="hidden w-52 shrink-0 overflow-y-auto border-r border-line p-2 md:block">
@@ -341,45 +342,51 @@ function Browse({
           </div>
         ) : (
           <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {shown.map((entry) => (
-              <li key={entry.id}>
-                <button
-                  type="button"
-                  data-store-card={entry.id}
-                  onClick={() => onOpen(entry.id)}
-                  className={cx(
-                    "tile flex h-full w-full items-start gap-3 rounded-xl bg-panel p-3 text-left transition-colors hover:bg-hover focus-visible:border-accent focus-visible:outline-none",
-                    entry.status === "soon" && "opacity-70",
-                  )}
-                >
-                  <BrandLogo id={entry.logo} name={entry.name} size={36} decorative />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[13.5px] font-medium">{entry.name}</span>
-                    <span className="mt-0.5 line-clamp-2 block text-[12px] leading-4 text-muted">{entry.tagline}</span>
-                    <span className="mt-1.5 block">
-                      <StatusBadge entry={entry} />
+            {ordered.map((card) => {
+              if (card.kind === "custom") {
+                const row = card.connection;
+                return (
+                  <li key={`mcp:${row.id}`}>
+                    <button
+                      type="button"
+                      data-store-card={`mcp:${row.id}`}
+                      onClick={() => onOpen(`mcp:${row.id}`)}
+                      className="tile flex h-full w-full items-start gap-3 rounded-xl bg-panel p-3 text-left transition-colors hover:bg-hover focus-visible:border-accent focus-visible:outline-none"
+                    >
+                      <BrandLogo id="custom" name={row.name} size={36} decorative />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[13.5px] font-medium">{row.name}</span>
+                        <span className="mt-0.5 block truncate font-mono text-[11.5px] text-muted">{row.url}</span>
+                        <span className="mt-1.5 block text-[11.5px] text-faint">Custom · {row.status === "connected" ? `${row.toolCount} tools` : row.status}</span>
+                      </span>
+                    </button>
+                  </li>
+                );
+              }
+              const entry = card.entry;
+              return (
+                <li key={entry.id}>
+                  <button
+                    type="button"
+                    data-store-card={entry.id}
+                    onClick={() => onOpen(entry.id)}
+                    className={cx(
+                      "tile flex h-full w-full items-start gap-3 rounded-xl bg-panel p-3 text-left transition-colors hover:bg-hover focus-visible:border-accent focus-visible:outline-none",
+                      entry.status === "soon" && "opacity-70",
+                    )}
+                  >
+                    <BrandLogo id={entry.logo} name={entry.name} size={36} decorative />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[13.5px] font-medium">{entry.name}</span>
+                      <span className="mt-0.5 line-clamp-2 block text-[12px] leading-4 text-muted">{entry.tagline}</span>
+                      <span className="mt-1.5 block">
+                        <StatusBadge entry={entry} />
+                      </span>
                     </span>
-                  </span>
-                </button>
-              </li>
-            ))}
-            {shownCustom.map((row) => (
-              <li key={row.id}>
-                <button
-                  type="button"
-                  data-store-card={`mcp:${row.id}`}
-                  onClick={() => onOpen(`mcp:${row.id}`)}
-                  className="tile flex h-full w-full items-start gap-3 rounded-xl bg-panel p-3 text-left transition-colors hover:bg-hover focus-visible:border-accent focus-visible:outline-none"
-                >
-                  <BrandLogo id="custom" name={row.name} size={36} decorative />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-[13.5px] font-medium">{row.name}</span>
-                    <span className="mt-0.5 block truncate font-mono text-[11.5px] text-muted">{row.url}</span>
-                    <span className="mt-1.5 block text-[11.5px] text-faint">Custom · {row.status === "connected" ? `${row.toolCount} tools` : row.status}</span>
-                  </span>
-                </button>
-              </li>
-            ))}
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         )}
         <p className="mt-6 text-[11.5px] leading-4 text-faint md:hidden">{TRADEMARK_NOTICE}</p>

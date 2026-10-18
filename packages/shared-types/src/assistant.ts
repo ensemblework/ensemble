@@ -81,7 +81,7 @@ export type ActAs = z.infer<typeof ActAs>;
 
 export const AssistantSettings = z.object({
   allowedWriteAreas: z.array(AssistantToolArea).default([...ASSISTANT_WRITE_AREAS]),
-  writePolicy: AssistantWritePolicy.default("preview"),
+  writePolicy: AssistantWritePolicy.default("immediate"),
   model: z.string().default("auto"),
   reasoningEffort: z.string().optional(),
   defaultTier: z.enum(["easy", "medium", "high", "max"]).default("medium"),
@@ -289,14 +289,14 @@ export function quickRunProfile(orchestration?: { defaultExecution?: string; san
   };
 }
 
-/** The profile a run uses: the one named (by id or name), else the default, else Quick. */
+/** The profile a run uses: the one named (by id or name), else the default, else the first saved, else Quick. */
 export function pickRunProfile(
   settings: { runProfiles: RunProfile[]; defaultRunProfileId: string | null; orchestration?: { defaultExecution?: string; sandboxNetwork?: boolean } | null },
   wanted?: string | null,
 ): RunProfile {
   const key = wanted?.trim().toLowerCase();
   const named = key ? settings.runProfiles.find((profile) => profile.id.toLowerCase() === key || profile.name.toLowerCase() === key) : undefined;
-  return named ?? settings.runProfiles.find((profile) => profile.id === settings.defaultRunProfileId) ?? quickRunProfile(settings.orchestration);
+  return named ?? settings.runProfiles.find((profile) => profile.id === settings.defaultRunProfileId) ?? settings.runProfiles[0] ?? quickRunProfile(settings.orchestration);
 }
 
 // ── sources & schedule ─────────────────────────────────────────────────────

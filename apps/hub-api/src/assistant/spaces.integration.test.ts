@@ -98,6 +98,9 @@ test("every assistant tool stays inside the open space", async () => {
   const datasetId = (dataset.dataset?.id ?? dataset.id)!;
   const plot = (await run(there, "hub_create_plot", { title: `${MARK} chart`, datasetId, config: { chart: "bar", x: "region", series: [{ y: "revenue" }] } })).data as { plot?: { id: string }; id?: string };
   const artifact = await db.artifact.create({ data: { userId: other, kind: "email", externalId: `${MARK}-mail`, ts: new Date("2026-10-10T09:00:00Z"), title: `${MARK} mail`, text: `${MARK} wants the budget.` } });
+  // Connections are per space: the other space's apps must not be listed here.
+  await db.authToken.create({ data: { userId: other, provider: "vercel", accessToken: "sealed-and-never-read", expiresAt: new Date("2100-01-01T00:00:00Z"), account: `${MARK}-vercel` } });
+  await db.mcpConnection.create({ data: { userId: other, serverId: "custom-zephyrine", name: `${MARK} server`, url: "https://mcp.example.test/mcp", status: "connected" } });
   const task = await db.task.findFirstOrThrow({ where: { userId: other, title: `${MARK} task` } });
   const person = await db.person.findFirstOrThrow({ where: { userId: other, name: `${MARK} Bee` } });
   const deliverable = await db.deliverable.findFirstOrThrow({ where: { userId: other, title: `${MARK} deliverable` } });
@@ -117,7 +120,7 @@ test("every assistant tool stays inside the open space", async () => {
     artifact: artifact.id,
   };
   // The other space's records: their ids and the words stored in them (a tool echoing the search word is not a leak).
-  const stored = `${MARK} (task|project|Bee|detail|deliverable|reminder|page|sync|data|mail|space|contract|decided|wants|flow|step|chart)|${MARK}\\.txt|Secret ${MARK}|${MARK},10`;
+  const stored = `${MARK} (task|project|Bee|detail|deliverable|reminder|page|sync|data|mail|space|contract|decided|wants|flow|step|chart|server)|${MARK}-vercel|${MARK}\\.txt|Secret ${MARK}|${MARK},10`;
   const secret = new RegExp([stored, ...Object.values(ids)].join("|"), "i");
 
   const checked: string[] = [];
@@ -147,6 +150,7 @@ test("every assistant tool stays inside the open space", async () => {
       hub_update_page: [{ pageId: ids.page, matchTitle: `${MARK} page`, mode: "append", markdown: "Added from another space" }],
       hub_delete_page: [{ pageId: ids.page }],
       hub_delete_pages: [{ pageIds: [ids.page] }],
+      hub_delete_tasks: [{ taskIds: [ids.task] }, { query: MARK }],
       hub_delete_entity: [{ kind: "project", id: ids.project }, { kind: "document", id: ids.file }],
       hub_restore_entity: [{ kind: "task", id: ids.task }],
       hub_diagram_context: [{ taskId: ids.task }, { projectId: ids.project }, { deliverableId: ids.deliverable }],
@@ -187,7 +191,7 @@ test("every assistant tool stays inside the open space", async () => {
   }
 
   // The control: the same reads do find the other space's records when run inside it.
-  for (const name of ["hub_list_tasks", "hub_list_projects", "hub_list_people", "hub_list_pages", "hub_read_page", "hub_list_files", "hub_read_file", "hub_search_context", "hub_list_meeting_notes", "hub_read_meeting_note", "hub_list_datasets", "hub_get_diagram", "hub_get_plot", "hub_diagram_context"]) {
+  for (const name of ["hub_list_tasks", "hub_list_projects", "hub_list_people", "hub_list_pages", "hub_read_page", "hub_list_files", "hub_read_file", "hub_search_context", "hub_list_meeting_notes", "hub_read_meeting_note", "hub_list_datasets", "hub_get_diagram", "hub_get_plot", "hub_diagram_context", "hub_list_connections"]) {
     assert.ok(seenThere.includes(name), `${name} finds the records inside their own space (saw: ${seenThere.join(", ")})`);
   }
   const unchecked = [...TOOLS.values()].filter((tool) => !SKIP.has(tool.name) && !checked.includes(tool.name)).map((tool) => `${tool.name}${tool.isWrite ? "(w)" : ""}`);
