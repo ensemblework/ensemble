@@ -1,5 +1,7 @@
 # Ensemble main @ d2e73f6: research map
 
+Historical design record, partly implemented or superseded; **not a current feature/status guide**. Original dates and checklists below describe that earlier work. Use the [design index](../README.md) and current feature guides before implementing or relying on these details.
+
 *Read-only research, 30 Sep 2026, 19:25–19:40 IST.* Code was read from my own detached worktree `/workspace/ensemble/main-d2e73f6` at origin/main d2e73f6. All paths below are relative to that worktree unless noted. Feature-2 was read only through git objects (`git show 2bfcde5:…`, `git show fd14604:…`). I did not touch the live checkout `/workspace/ensemble/repo` (feature-2 @2bfcde5) or `/workspace/ensemble/rebase-wt` (f2-rebase).
 
 **Deviation from the brief.** `/workspace/ensemble/main-wt` already existed as a clean but stale worktree at 8e8a89c that someone else owns. I left it alone and added `/workspace/ensemble/main-d2e73f6` instead. There I ran `pnpm install --filter @ensemble/hub-web...` and `next build` for the bundle numbers (logs: `/tmp/main-install.log`, `/tmp/main-build.log`). I did not start main's app: the live DB and API are feature-2, and `/api/diagrams` needs main's diagram migrations. Everything below comes from code and the build output.

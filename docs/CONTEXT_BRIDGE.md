@@ -4,7 +4,7 @@ Read-only MCP server so a coding agent can read Ensemble (tasks, projects, repos
 
 The server is `apps/context-bridge`. It speaks MCP and calls `hub-api` over HTTP. It does not open Postgres. There are no tools that create, update, delete, or send anything.
 
-`docs/13_MODULE_CONTEXT_BRIDGE.md` is the original design. This page is what this tree actually runs.
+Code inspected 18 Oct 2026. [13](13_MODULE_CONTEXT_BRIDGE.md) explains the current architecture and access boundaries; this page covers setup.
 
 ## Three ways to reach it
 
@@ -14,7 +14,7 @@ The server is `apps/context-bridge`. It speaks MCP and calls `hub-api` over HTTP
 | **Hosted URL** | Editors that accept a URL; nothing to install | `POST https://api.ensemblework.com/mcp` with `Authorization: Bearer ens_…` (a key from Connect your apps). Served by hub-api (`src/routes/mcp.ts`), stateless Streamable HTTP. [26 §5](26_CLI.md#5-mcp-local-cli-or-hosted-url) |
 | **From source** | Developers running this repository | `pnpm bridge:build`, then the editor launches `node apps/context-bridge/dist/index.js` (below) |
 
-All three use `buildServer` in `apps/context-bridge/src/server.ts` (exported as `@ensemble/context-bridge/server`, with `./hub` and `./config`), so the tool list is the same. The hosted endpoint passes a git detector that returns no repository, so `ensemble_brief` needs `repo` and `branch` there; the CLI and the source build read them from the editor's folder. Where the design names modules that were not rebuilt (`retrieval.ts`, `context/pack.ts`, embeddings), the bridge reads the tables that exist and says so in `ensemble_gaps`.
+All three use `buildServer` in `apps/context-bridge/src/server.ts` (exported as `@ensemble/context-bridge/server`, with `./hub` and `./config`), so the tool list is the same. The hosted endpoint passes a git detector that returns no repository, so `ensemble_brief` needs `repo` and `branch` there; the CLI and the source build read them from the editor's folder. Reads use `bridge/service.ts` and the stored records. Semantic ranking is not wired; some legacy `ensemble_gaps` diagnostics also need code cleanup ([13 §7](13_MODULE_CONTEXT_BRIDGE.md#7-known-diagnostics-limitation)).
 
 ## Run it
 
@@ -32,7 +32,7 @@ pnpm bridge:verify         # typecheck, MCP client tests, smoke
 The guided setup for every app is in the Hub at **Connect your apps** (`/connect`). That page creates a read-only key, fills in this computer’s paths, and offers one-click install where the app supports it (VS Code and Cursor). The samples below are the same configuration.
 
 1. In the Hub: **Connect your apps → Create a read-only key**. The value starts with `ens_` and is shown once. It can only read `/api/bridge`. A key made under **Settings → Editors & agents** still works, and that one can also drive editor hooks.
-2. If creating a key fails on an older database, run `pnpm db:push` once so the read-only scope can be stored.
+2. If an older database is missing required schema, apply `pnpm db:migrate`; do not reset data or use `db:push` as the upgrade path.
 3. Export it where the editor can see it:
 
 ```bash
@@ -62,6 +62,8 @@ Do not do that on a shared network.
 | `ensemble_tasks` | `ensemble://tasks`, `ensemble://tasks/{id}` | Tasks |
 | `ensemble_projects` | `ensemble://projects`, `ensemble://projects/{id}` | Projects |
 | `ensemble_repos` | `ensemble://repos`, `ensemble://repos/{id}` | Repositories |
+| `ensemble_repo_overview`, `ensemble_repo_file` | — | Permitted repository outline/source reads; protected paths remain excluded |
+| `ensemble_diagrams`, `ensemble_plots` | — | Saved diagrams and plot context |
 | `ensemble_skills` | `ensemble://skills`, `ensemble://skills/{id}` | Current skill only |
 | `ensemble_deliverables` | `ensemble://deliverables` | Deliverables |
 | `ensemble_meetings` | `ensemble://meetings` | Upcoming calendar events (`Artifact` kind `event`) |
@@ -74,17 +76,11 @@ Do not do that on a shared network.
 
 Mail, chat, GitHub text, calendar invites, approval previews, and editor tool inputs are labelled `trust: "untrusted"`. Skills are `trusted`. The brief repeats that retrieved text is not instructions.
 
-### Not in this build
+### Limits
 
-Reported by `ensemble_gaps` instead of being invented:
+Semantic/embedding ranking is not implemented; search uses bounded case-insensitive matches. Private reminders, UI layouts, historical skill bodies as instructions and all write/approval operations are excluded. Files return supported extracted text, not original bytes or OCR/audio/video understanding.
 
-- Semantic / embedding search and the context-pack ranker designed in [docs/13](13_MODULE_CONTEXT_BRIDGE.md). `searchVector` and `embedding` columns exist and are unused. Search is a case-insensitive substring match.
-- Outlook, Outlook calendar, and Teams.
-- Saved M365 answers. Meeting notes are `MeetingNote` rows.
-- A `redactSecrets` helper. Stored text is returned as stored, and labelled.
-- Private reminders. They exist on Today and are excluded here.
-- Skill version history. Only the current body is returned.
-- Any write.
+The `ensemble_gaps` payload still includes obsolete connector/redaction messages. Outlook/Teams connectors and redaction helpers now exist; those diagnostic strings need a separate code correction. Do not use them as the product's connector inventory. [03](03_MODULE_CONTEXT_ENGINE.md) and [31](31_CONNECTORS_IN_USE.md) describe current acquisition paths.
 
 ## Transports
 

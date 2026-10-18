@@ -1,21 +1,18 @@
-# 03 · Module M2 — Context Engine (connectors, Engineer Graph, context packs)
+# 03 · Context, connectors and saved relationships
 
-**Purpose:** Connect the people and work the person chooses to keep in Ensemble. Exposes a **Context Pack API** that every worker and the "Help me" surface consume.
+Context is the work a person explicitly keeps in Ensemble: people, projects, repositories, preferences, pages, meetings and saved source content. Shared retrieval and agent briefs use this stored context; connected-app tools can read live content separately.
 
----
+**Code inspected 18 Oct 2026.** The earlier automatic mail-to-proposal graph/ranking design is not the current implementation. [31](31_CONNECTORS_IN_USE.md) describes app operations; [27](27_IMPORTS.md) board/page imports; [32](32_FILES.md) originals and extracted text.
 
 ## 1. Responsibilities
 
-1. **Read contact metadata on manual sync**; save other connected content only through explicit upload, import or assistant actions.
-2. **Normalize** into a common `Artifact` shape with people, time, project and repo links.
-3. **Extract** commitments, asks, decisions, action items, deadlines (LLM, structured output).
-4. **Maintain the Engineer Graph** — a small personal knowledge graph: People, Projects, Repos, WorkItems, Meetings, Threads, Preferences — with evidence and confidence.
-5. **Build Context Packs** on demand for a task, a meeting, a chat, or a coding session (bounded, ranked, cited).
-6. **Publish changes** to refresh the people, files and work the person explicitly saved.
+- Keep content and relationships scoped to the open space and sharing permissions.
+- Normalize explicitly saved source items with provenance and stable external IDs.
+- Maintain conservative person identities and project/container links.
+- Provide bounded retrieval, task briefs, source citations and saved entity/mention links.
+- Preserve user removals through soft deletion and relevant suppression/identity tombstones.
 
-Everything here is scoped by `user_id`. An Ensemble space is its own user id, so each space has its own connectors, graph, artifacts and context packs, and nothing is retrieved across spaces ([28](28_ENSEMBLE_SPACES.md)).
-
----
+There is no background graph crawler, automatic nightly relationship inference or implemented semantic context-pack ranker. Schema fields and legacy helpers do not establish a running pipeline.
 
 ## 2. Connectors
 
@@ -37,9 +34,9 @@ Files and artifacts enter through an explicit upload, import, attach/save operat
 
 ### 2.1 Connector store, OAuth apps, products and tokens
 
-The store lists every app in `CONNECTOR_CATALOG` (`packages/shared-types/src/connectors.ts`). `GET /api/connectors/catalog` (`src/connectors/catalog.ts`) adds each person's state: `connected` and `account` from their own `oauth_tokens` row, `appReady` (the operator set up what the entry needs, or it can connect by token, MCP or file), `oauthReady`, `products` (saved toggles over the catalog defaults), `needsConsent` (products that are on but not granted yet), `sources` (`settings.connections` plus `sync_state` last sync and error), and `mcp` (status, tool count and last error from `mcp_connections`).
+The store lists the apps in `CONNECTOR_CATALOG` (`packages/shared-types/src/connectors.ts`). `GET /api/connectors/catalog` (`src/connectors/catalog.ts`) adds each person's state: `connected` and `account` from their own `oauth_tokens` row, `appReady` (the operator set up what the entry needs, or it can connect by token, MCP or file), `oauthReady`, `products` (saved toggles over the catalog defaults), `needsConsent` (products that are on but not granted yet), `sources` (`settings.connections` plus `sync_state` last sync and error), and `mcp` (status, tool count and last error from `mcp_connections`).
 
-**OAuth apps.** `oauthApp` in `src/connectors/accounts.ts` picks, in order: the connector's own `<PROVIDER>_CLIENT_ID`/`_SECRET`, an app the operator saved in Settings → Connections (`connector_apps`, encrypted), and for Google, Microsoft and GitHub the sign-in app (`AUTH_GOOGLE_*`, `AUTH_MICROSOFT_*`, `AUTH_GITHUB_*`). The redirect URI is `${HUB_API_PUBLIC_URL}/api/connectors/<provider>/callback`; a borrowed sign-in app needs that URI added. GitHub supports multiple callback URLs: register both exact paths, `/api/auth/oauth/github/callback` for sign-in and `/api/connectors/github/callback` for the connector, with wildcard matching disabled. Registering only `/api` is not sufficient without wildcard matching ([GitHub rules](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#redirect-urls), checked 17 Oct 2026). Flows in `src/connectors/oauth.ts` use a 10-minute in-memory state (one API process) and PKCE S256 for Google, Microsoft, GitHub, Linear, Zoom and Docusign. On hosted servers each flow is bound to the browser that pressed Connect (RFC 6749 §10.12): `/start` sets an HttpOnly, SameSite=Lax `ensemble_connect_<provider>` cookie (on `ENSEMBLE_COOKIE_DOMAIN` like the session), and the callback exchanges the code only when that cookie matches and the browser's Ensemble session is the account that started. Anything else redirects back with an error and saves nothing. Desktop and local runs skip this check; the system browser there has no Ensemble session.
+**OAuth apps.** `oauthApp` in `src/connectors/accounts.ts` picks, in order: the connector's own `<PROVIDER>_CLIENT_ID`/`_SECRET`, an app the operator saved in Settings → Connections (`connector_apps`, encrypted), and for Google, Microsoft and GitHub the sign-in app (`AUTH_GOOGLE_*`, `AUTH_MICROSOFT_*`, `AUTH_GITHUB_*`). The redirect URI is `${HUB_API_PUBLIC_URL}/api/connectors/<provider>/callback`; a borrowed sign-in app needs that URI added. Register the exact login and connector callback paths required by the configured provider/client. A broad `/api` callback is not a substitute; use separate clients when the provider registration cannot serve both flows. Flows in `src/connectors/oauth.ts` use a 10-minute in-memory state (one API process) and PKCE S256 for Google, Microsoft, GitHub, Linear, Zoom and Docusign. On hosted servers each flow is bound to the browser that pressed Connect (RFC 6749 §10.12): `/start` sets an HttpOnly, SameSite=Lax `ensemble_connect_<provider>` cookie (on `ENSEMBLE_COOKIE_DOMAIN` like the session), and the callback exchanges the code only when that cookie matches and the browser's Ensemble session is the account that started. Anything else redirects back with an error and saves nothing. Desktop and local runs skip this check; the system browser there has no Ensemble session.
 
 | Provider | Authorize / token | Scopes asked | Saved with the token |
 |---|---|---|---|
@@ -62,7 +59,7 @@ The store lists every app in `CONNECTOR_CATALOG` (`packages/shared-types/src/con
 | Suite product | Scopes | Feeds |
 |---|---|---|
 | `gmail` | `gmail.readonly` (restricted) | `gmail` |
-| `calendar` | `calendar.events` (sensitive; read, create and update events with invites), `calendar.calendarlist.readonly` | `google_calendar` |
+| `calendar` | `calendar.events`, `calendar.calendarlist.readonly`; optional additional `calendar.freebusy` on new consent | `google_calendar` |
 | `drive_docs` (on by default) | `drive.file` (non-sensitive; files the person picks or Ensemble creates; Docs, Sheets, Slides) | Google Picker, assistant tools |
 | `drive_search` (off by default) | `drive.readonly` (restricted: public servers need Google verification) | assistant tools |
 | `outlook_mail` | `Mail.Read` | `outlook` |
@@ -71,7 +68,7 @@ The store lists every app in `CONNECTOR_CATALOG` (`packages/shared-types/src/con
 | `onedrive` | `Files.Read` | assistant tools |
 | `office` | `Files.ReadWrite` (Word, Excel, PowerPoint; covers OneDrive read) | assistant tools |
 
-Google Calendar sync reads the calendars shown in Google Calendar (`calendarList`, up to 10) when the list scope is granted, otherwise `primary`. Tokens granted the older `calendar.readonly` keep working.
+Explicit calendar reads use the person’s granted calendars. Generic Sync people reads only attendee metadata. Tokens with older supported calendar read grants retain their permitted reads; writing and availability require their own grants.
 
 **Tokens for code.** Tools, importers and syncs get tokens only through `src/connectors/tokens.ts`: `providerAccessToken` refreshes tokens within a minute of expiry (Google, Microsoft, Atlassian, Zoom, Docusign, and Linear or Slack when they issue refresh tokens), saves rotated refresh tokens, and returns `extra` with the saved details (Atlassian `site`/`cloudId`/`auth`, Trello `key`, Docusign `accountId`/`baseUri`). Scope checks (`hasScopes`, `requireProviderToken`) ignore case and Graph's `https://graph.microsoft.com/` prefix, and accept broader grants (`Files.ReadWrite` covers `Files.Read`).
 
@@ -156,15 +153,15 @@ Code: `apps/hub-api/src/connectors/mcp/` (`manager.ts` connect/callback/calls, `
 
 Meeting tools with a personal API key have explicit import adapters for Meeting notes (`apps/hub-api/src/connectors/meetings/`). Each is a token connector (group `notes`) in `src/connectors/base.ts`, a `ConnectorId` in `packages/shared-types/src/assistant.ts`, and a `CONNECTOR_CATALOG` entry in category `meetings`. Generic Sync people does not run these transcript adapters. `hub_import_meeting_notes` saves a requested batch (up to 20 meetings since a date) after Apply; it proposes action-item tasks only when explicitly requested. Specific single-meeting reads remain available through supported app tools. The legacy adapter bounds a requested batch to 20 meetings.
 
-| Source id | API (checked against the vendor docs on 7 Oct 2026) | Key and plan |
+| Source id | Implemented API requests | Access |
 |---|---|---|
-| `fireflies` | GraphQL `api.fireflies.ai/graphql`: `transcripts(fromDate)` with sentences, attendees, `summary.overview` and `summary.action_items` | Integrations → Fireflies API. The free plan's API allowance is small. |
-| `fathom` | `GET api.fathom.ai/external/v1/meetings?created_after&include_transcript&include_summary&include_action_items`, `X-Api-Key` | Settings → API Access; the free plan has a key |
-| `granola` | `GET public-api.granola.ai/v1/notes?updated_after`, then `/v1/notes/{id}?include=transcript` (a 413 keeps the summary only) | Settings → Connectors → API keys; Business plan. Granola's MCP server is separate (§2.2). |
-| `tldv` | `GET pasta.tldv.io/v1alpha1/meetings?from`, `/meetings/{id}/transcript`, `/meetings/{id}/notes`, `x-api-key` | The meeting organiser needs Pro or Business |
-| `krisp` | `GET meeting-api.krisp.ai/v1/meetings?from`, `/meetings/{id}?fields=…,transcript,notes` (409 while processing is skipped) | Integrations → API (`krsp_u_…`); Core or Advanced |
-| `jamie` | `GET beta-api.meetjamie.ai/v1/me/meetings.list` and `meetings.get` (`input={"json":…}`), `x-api-key` | Personal key (`jk_…`); Pro, Team or Enterprise |
-| `otter` | `GET api.otter.ai/v1/conversations`, `/conversations/{id}?include=action_items,transcript,outline` | Integrations → Developer; Enterprise workspaces only |
+| `fireflies` | GraphQL `api.fireflies.ai/graphql`: `transcripts(fromDate)` with sentences, attendees, `summary.overview` and `summary.action_items` | Personal API key; vendor access required. |
+| `fathom` | `GET api.fathom.ai/external/v1/meetings?created_after&include_transcript&include_summary&include_action_items`, `X-Api-Key` | Personal API key; vendor access required. |
+| `granola` | `GET public-api.granola.ai/v1/notes?updated_after`, then `/v1/notes/{id}?include=transcript` (a 413 keeps the summary only) | Personal API key; Granola MCP is separate (§2.2). |
+| `tldv` | `GET pasta.tldv.io/v1alpha1/meetings?from`, `/meetings/{id}/transcript`, `/meetings/{id}/notes`, `x-api-key` | Personal API key; vendor access required. |
+| `krisp` | `GET meeting-api.krisp.ai/v1/meetings?from`, `/meetings/{id}?fields=…,transcript,notes` (409 while processing is skipped) | Personal API key; vendor access required. |
+| `jamie` | `GET beta-api.meetjamie.ai/v1/me/meetings.list` and `meetings.get` (`input={"json":…}`), `x-api-key` | Personal API key; vendor access required. |
+| `otter` | `GET api.otter.ai/v1/conversations`, `/conversations/{id}?include=action_items,transcript,outline` | Personal API key; vendor access required. |
 
 Read AI (OAuth only, no personal keys), Avoma, Gong, Grain, Fellow, Supernormal, MeetGeek, Bluedot and Tactiq are MCP-only catalog entries, and so are the MCP sides of Fireflies, Fathom, Krisp, Jamie and Otter. Loom has no public transcript API; its catalog entry connects Atlassian's Rovo MCP server, whose Loom tools return a video's transcript, comments and AI summary when the Loom workspace is linked to an Atlassian site.
 
@@ -172,9 +169,9 @@ Every vendor maps its response into one `MeetingRecord` (`meetings/types.ts`); `
 
 1. **Transcript** → `Artifact(kind transcript, externalId "<vendor>:<id>")`: speaker lines with timestamps, trimmed to 18,000 characters with a note to open the rest in the vendor; metadata keeps the vendor id, end time, duration, summary and action items. Secrets are redacted as for every artifact.
 2. **People**: attendees and speakers with an address go through `upsertPerson` (§4.7) and become the note's `personIds`. A speaker with only a name is linked to an existing person of exactly that full name, never created.
-3. **Calendar match** (`meetings/match.ts`): the vendor's calendar event id wins when it names a stored event (Google event id, or the Graph id behind `outlook:<id>`). Otherwise an event within 12 hours must fit in time (at least half of the shorter of the two overlaps, or it starts within 10 minutes) and is scored `0.5·time + 0.3·shared attendees (not counting me) + 0.2·title words`. The best event also needs a shared attendee, a title overlap of 0.3, or to be the only close fit. If the runner-up is within 0.1 the meeting stays unmatched (ambiguous). Notes from the last 14 days that are still unmatched are tried again on the next sync, once the calendar has caught up.
+3. **Calendar match** (`meetings/match.ts`): the vendor's calendar event id wins when it names a stored event (Google event id, or the Graph id behind `outlook:<id>`). Otherwise an event within 12 hours must fit in time (at least half of the shorter of the two overlaps, or it starts within 10 minutes) and is scored `0.5·time + 0.3·shared attendees (not counting me) + 0.2·title words`. The best event also needs a shared attendee, a title overlap of 0.3, or to be the only close fit. If the runner-up is within 0.1 the meeting stays unmatched (ambiguous). Notes from the last 14 days that are still unmatched are tried again on a subsequent requested import, when matching saved events are available.
 4. **Meeting note**: one `MeetingNote` per `(user, external_source, external_id)` with `source = "connector"`, the vendor summary as `answer`, `event_artifact_id`, `transcript_artifact_id`, and `extraction = { via, summary, decisions, actionItems, waitingOn, eventMatch }`. Decisions come from the vendor where it has them, plus bullets under a "Decisions"/"Agreed" heading of the summary. A note the person deleted stays deleted.
-5. **Action items**: an item is mine when its assignee's address is one of mine (the account email, `settings.email`, connected-account emails, the vendor account), or, with no address, when the name is my full name or my first name alone. Fireflies' grouped text and Markdown "Action items"/"Next steps" sections are parsed for owners (`**Name**` groups, `Name:` prefixes). My open items become proposed todos (`sourceKind meeting`, `meeting_note_id`, excerpt, the vendor's link to that moment or the meeting, else the calendar event), keyed `meeting:<vendor>:<id>:<hash>` so a re-sync, or a todo the person dismissed, never proposes the same item again. Everyone else's open items are kept on the note as `waitingOn`.
+5. **Action items**: an item is mine when its assignee's address is one of mine (the account email, `settings.email`, connected-account emails, the vendor account), or, with no address, when the name is my full name or my first name alone. Fireflies' grouped text and Markdown "Action items"/"Next steps" sections are parsed for owners (`**Name**` groups, `Name:` prefixes). When the explicit import requests `proposeTasks`, my open items become proposed todos (`sourceKind meeting`, `meeting_note_id`, excerpt, the vendor's link to that moment or the meeting, else the calendar event), keyed `meeting:<vendor>:<id>:<hash>` so a re-sync, or a todo the person dismissed, never proposes the same item again. Everyone else's open items are kept on the note as `waitingOn`.
 
 Disconnect with *delete what was read* removes the transcripts and the meeting notes from that source; todos stay. Checked with mocked vendor responses on 7 Oct 2026 (`src/connectors/meetings/meetings.test.ts`, `src/routes/connected-data.integration.test.ts`); not yet run against live vendor accounts.
 
@@ -182,352 +179,105 @@ Disconnect with *delete what was read* removes the transcripts and the meeting n
 
 ## 3. Normalized model
 
-```ts
-type Artifact = {
-  id: string;
-  kind: 'email' | 'chat_msg' | 'channel_msg' | 'event' | 'transcript' | 'transcript_segment'
-      | 'file' | 'pr' | 'pr_comment' | 'commit' | 'workitem' | 'issue';
-  externalId: string; url?: string; ts: string;
-  actor?: PersonRef; participants: PersonRef[];
-  title?: string;
-  text: string;                    // cleaned text
-  threadId?: string;               // conversation / PR / meeting grouping
-  parentId?: string;
-  projectIds: string[]; repoId?: string; workItemIds: string[];
-  meta: Record<string, unknown>;
-  chunks?: { idx: number; text: string; embedding?: number[] }[];
-};
+The authoritative shapes are `apps/hub-api/prisma/schema.prisma` and shared domain types. An `Artifact` is stored source/reference content with kind, external ID, title/text, URL/time, metadata and relationship IDs. Uploaded files have separate original bytes plus a text Artifact; a source URL alone is not an uploaded file.
 
-type Extraction = {
-  artifactId: string;
-  items: Array<
-    | { type: 'ask';         who: PersonRef; toMe: boolean; text: string; due?: string; confidence: number }
-    | { type: 'commitment';  byMe: boolean; text: string; due?: string; confidence: number }
-    | { type: 'decision';    text: string; owners: PersonRef[]; confidence: number }
-    | { type: 'action_item'; owner: PersonRef; text: string; due?: string; sourceSpan: [number, number]; confidence: number }
-    | { type: 'fyi';         text: string }
-  >;
-};
-```
+| Entity | Current role |
+| --- | --- |
+| Person and PersonIdentity | A saved person and their normalized email/handle/provider identities |
+| Project / Deliverable | Editable work context, notes, relationships, status and linked milestones |
+| Repo | A saved/tracked repository reference; code reads/execution use their own authorization |
+| Preference | Keyed user or feature state; not every preference is an inferred personal habit |
+| Artifact / Extraction | Saved content and its explicit extraction metadata |
+| ContextSuppression | Natural identity a user removed and does not want recreated |
+| TaskPage / mention index | Structured writing and typed references used by views/search/briefs |
+| MeetingSession / MeetingNote | Manual meeting writing and saved/imported source notes |
 
-> Later kinds referenced elsewhere: `meeting_note` (saved M365 answers, [13 §11.1](13_MODULE_CONTEXT_BRIDGE.md#111-saved-m365-answers-and-renames-2026-09-23)); `Extraction.method: 'manual'` with empty items for notes and uploaded documents (§12, §13).
+Graph views derive edges from these records and mentions; they do not require a separate graph database. Confidence/evidence metadata is not a measured correctness guarantee.
 
-**Engineer Graph nodes/edges** (Postgres tables, not a graph DB — small scale):
-
-- `Person(id, upn, name, role, team, relationshipWeight, typicalResponseHours, lastInteraction)`
-- `Project(id, name, summary, notes, status, aliases[], workItemRoot?, createdBy)` — a page, see §8
-- `Repo(id, fullName, provider: 'github' | 'ado', url, description, defaultBranch, tracked, myRole, languages[], prStats, codeownersPaths[])`
-- `Deliverable(id, projectId, title, status: 'upcoming' | 'completed', due?, owner?, sourceRef?)`
-- `ProjectPerson(projectId, personId, role?)` • `ProjectRepo(projectId, repoId)` — the edges that make a project page
-- `Preference(key, value, evidence[], confidence)` — e.g. `working_hours`, `focus_block_pref`, `email_tone`, `pr_size_pref`, `review_turnaround`
-- **Edges:** `works_with(person, project, weight)`, `mentions(artifact, node)`, `owns(person, repo/path)`, `derived_from(node, artifact)`
-
-Inferred fields still carry **evidence and confidence in the database**, and a correction sets `confidence = 1.0, source = 'user'`. **Neither is shown in the UI.** They describe how a row got here rather than what it says; on the cards they appeared as a percentage badge and "inferred from 1 artifacts" on every node of every kind, and no decision was ever made from either.
-
----
-
-## 4. Pipelines
+## 4. Content and relationship pipelines
 
 ### 4.1 Explicit content ingestion
 
-Uploads and requested app imports normalize content into artifacts and link saved people/projects. `connectors/ingest.ts` retains the common redaction and suppression helpers for explicit adapters. `connectors/sync.ts` calls only `syncPeople`, not the legacy content-reading adapters.
+`connectors/items`, requested meeting imports, file uploads/imports and board importers have separate entry points. `connectors/ingest.ts` supplies common redaction/suppression helpers where used. Generic `sync.ts` calls `syncPeople`, not the legacy body-reading adapters. A transient live search is not a workspace-wide save.
 
-### 4.2 Extraction
+### 4.2 Extraction and proposals
 
-The triage helper (`connectors/triage.ts`) can classify explicitly selected content. Manual contact sync never calls it or creates todo proposals. Meeting summaries and action-item extraction happen only on the person's request; writes continue to wait for Apply.
+`connectors/triage.ts` can classify requested/selected source content. Explicit meeting import proposes tasks only when `proposeTasks` is requested. Assistant-created action items use the note's actual owners/dates and normal write policy. Contact sync creates no artifacts or proposals and spends no model tokens. There is no active `context.deltas` → Todo Proposer service in the current normal flow.
 
 ### 4.3 Meeting processing
 
-Selected meeting imports retain source attribution and the source's transcript/decisions. Manual meeting notes remain editable; imported source notes remain read-only. Recaps and task proposals use the selected note and never invent owners or dates. The next workflow is described in [the meeting-notes design](design/real-world-next.md#meeting-notes-next-improvements).
+API adapters normalize to `MeetingRecord`, then `meetings/ingest.ts` stores transcript/source metadata, matches existing saved calendar events conservatively and records source-attributed notes. Ambiguous calendar matches remain unmatched. A transcript excerpt is bounded; the source link is required for more. Manual notes and imported notes retain different editing rights (§7).
 
 ### 4.4 Graph maintenance
 
-The graph is derived on read from saved people, projects and work. It does not start an afternoon provider fetch or automatically infer new artifacts. Deleted entries remain suppressed (§4.6).
+`routes/context.ts`, `context/people-view.ts`, `people/identity.ts` and `projects/links.ts` provide current views/relationships. User corrections and hiding a tab do not launch a provider fetch. Profile records have their own route/service types; do not treat every record as a generic graph node.
 
-### 4.5 Delta emitter
+### 4.5 Changes and live views
 
-Publishes to Redis stream `context.deltas`: `{ type: 'new_ask' | 'pr_comment' | 'wi_state_change' | 'meeting_recap' | 'deadline_near', artifactId, summary }` — consumed by the orchestrator's todo proposer and the UI's *What changed*.
+Writes publish scoped SSE invalidations for affected UI data. The database remains authoritative. The old Redis-stream delta/ranking architecture is not the current acquisition path.
 
-User-uploaded documents are **not** inputs to this extraction/proposal pipeline. They publish real text and an empty manual extraction atomically, never a delta. Their optional enrichment only summarises and matches existing entities (§13).
+### 4.6 Deletion and suppressions
 
-### 4.6 Deletion, and why it needs its own table
+Soft deletion hides a record immediately while retaining recovery through Trash. `context_suppressions` records relevant natural identities so a later ingest does not recreate what the person removed. Person identity tombstones also guard metadata sync. Purge uses `jobs/retention.ts`; it is separate from display windows.
 
-Every card in the Context explorer has a delete button, and it has **no confirmation dialog**. This is inferred data, the engineer is the one who knows it is wrong, and the right answer to *"that mailing list is not a colleague"* is for it to disappear.
+Saved app Artifact removal (`DELETE /api/artifacts/:id`) records an artifact suppression. Explicit reattachment can clear it and restore the source row. Uploaded-file text follows its Document and must be removed through the file operation, not by independently deleting its Artifact. [32](32_FILES.md#11-connected-items-opened-explicitly).
 
-**Deleting the row is not enough.** Everything in the graph is derived from artifacts that are still there, so the next fetch recreates it and the button becomes a lie. `context_suppressions` records the **natural identity** the extractors key on — a person's UPN, a repo's full name, a project's name, a preference key — and **every creation path checks it first**:
-
-| Path | Where the check lives |
-|---|---|
-| Graph ingest | `scripts/ingest-real.ts` → `upsertPeople` |
-| Copilot bridge | `scripts/copilot-sync.ts` → `ingestPeople`, `upsertPerson` |
-| File import | `scripts/import-files.ts` → `upsertPeople` |
-| Preference inference | `context/graph.ts` → `inferPreferences` |
-
-A suppression is a **statement about what the engineer wants**, not a tombstone on a row. The row is not gone the moment you press delete: since soft delete landed, deleting sets `deleted_at`, the row leaves every ordinary query, and it is restorable from *Settings → Deleted items* for the configured 15, 30, 45 or 60 days (default 30) before durable daily cleanup removes eligible rows (`lib/retention.ts`, [docs/07 §1.1](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#11-completed-and-deleted-data-retention)). The suppression is the other half and is **unconditional** — it stops the next fetch from recreating what you removed, whether or not the row itself has been purged yet. `DELETE /api/context/suppressions/:id` forgets the deletion if they ever want the node back. Both the deletion and the suppression are written to the audit ledger.
-
-**Items from connected apps.** Files → From your apps removes one synced or attached Artifact (`DELETE /api/artifacts/:id`, `routes/context.ts`, owner only): it sets `deleted_at` and records a suppression with kind `artifact` and key `<artifact kind>:<externalId>` (`context/artifacts.ts`). `upsertArtifact` (`connectors/ingest.ts`) checks that key whenever the row is missing or already deleted and returns null, so every sync (Gmail, Google Calendar, Outlook, Teams, Slack, GitHub, Linear, meeting-notes sources) skips the item: no item count, todo proposal, triage or meeting note. A calendar sync's own soft delete of events that left the window records nothing, so those events come back when they are seen again. Attaching the same item again from an app (`saveContent`, `connectors/items/index.ts`) clears the suppression and restores the row. Uploaded files' text Artifacts are refused with 409 and go with their file. The ledger action is `artifact.remove`. Details: [32 §11](32_FILES.md#11-connected-items-opened-explicitly).
+Suppressions are operation-specific; inspect the actual creation path before promising that every legacy helper observes the same rule. Current helper paths are `connectors/ingest.ts`, `context/artifacts.ts`, `people/identity.ts` and the relevant import writer, not the removed prototype scripts.
 
 ### 4.7 One person across sources (identities)
 
-`person_identities` (`PersonIdentity`) holds every address and handle a person is known by: `kind` (`email`, `slack`, `github`, `linear`, `jira`, `teams`, `zoom`, `phone`, `name`), a normalised lowercase `value`, the `source` that saw it first, and `verified`; `(user, kind, value)` is unique. The migration `20261007140000_identities_links_meetings` backfilled emails from `people.email`/`upn` and handles from `slack:`/`teams:` upns.
-
-`upsertPerson` in `src/connectors/ingest.ts` (all mail, calendar, chat, GitHub, Linear and meeting syncs) resolves a person by email first, then handles (`src/people/identity.ts`); names never resolve on their own. It records every identity it saw with the person: Gmail/Outlook addresses, Slack and Teams user ids with their emails, GitHub logins of PR and issue authors, Linear issue creators (email and user id), calendar attendees and meeting speakers. **It merges existing rows for the same normalized address or a provider-confirmed Slack/Teams/Linear user ID paired with an address.** When an identity of one person shows up next to another person's address, the identity stays where it is and `suggested_person_id` records the other person.
-
-Adding a person by hand (`POST /api/people`, `routes/context.ts`) does not make a second copy: it answers `409 person_exists` with the person already saved when one has the same email in any case, in `email`, `upn` or an email identity, or, when no email is given, the same name (any case, spaces collapsed). The address goes into `upn` lowercase, as ingest writes it, so a later sync finds the same row. If someone removed earlier still holds that `upn`, the new row is saved without one.
-
-`GET /api/people/identity-suggestions` lists probable pairs, computed on read: seen together at ingest, the same full name, or a handle that equals another person's email local part. `POST /api/people/identity-suggestions/dismiss` stores the pair as a `person-merge` suppression so it does not come back. `POST /api/people/:id/merge { otherId }` keeps `:id` and, in one transaction, moves identities (including the other's legacy upn and email), task `people` (ids, and the other's name on older rows), `meeting_notes.person_ids`, `meeting_sessions.person_ids`, document person tags, project membership, artifact `actor_id` and attendance marks, then deletes the other person. Both are written to the ledger.
+`PersonIdentity` stores normalized kind/value/source and verification metadata; the same space/kind/value is unique. Exact addresses and provider-confirmed stable IDs can reuse/merge existing identities. A display name alone never causes an automatic person merge. Conflicts produce merge suggestions; user-approved merging moves related IDs through the existing people routes. Removed identities are not automatically restored by generic sync.
 
 ### 4.8 Project links
 
-`project_links` (`ProjectLink`) maps a source container to a project once: `(user, source, container_id) → project`, with `container_name` and `created_by` (`me` or `import`). Containers are Slack channel ids, GitHub `owner/repo` (lowercase), Linear project and team ids, Jira project ids, Notion database ids, Trello board ids and the other importers' project ids (`src/projects/links.ts`).
+`projects/links.ts` maps a source container to a saved project. `LINK_SOURCES` and provider item-search source IDs are distinct namespaces (for example Jira item search uses Atlassian connection metadata). A model must use the actual returned source/container IDs, not invent them from display names.
 
-- **At ingest** a connector passes `containers` to `upsertArtifact` (Slack channels, GitHub repos, Linear project then team). They are stored as `metadata.containers`, and the first container with a link sets `artifacts.project_id`. `createProposals` gives each proposed todo its artifact's project unless the proposal names one.
-- **Imports** (`src/imports/apply.ts` → `ensureProject`) use an existing link to a live project before making a new one, and remember the container of every project they create or reuse. The migration linked projects earlier imports had created (CSV excepted).
-- **Routes**: `GET /api/project-links?projectId=`, `POST /api/project-links { projectId, source, containerId, containerName? }` (also moves items that already arrived from that container and have no project, and their proposed todos), `DELETE /api/project-links/:id`, and `GET /api/project-links/containers?source=` (containers seen in synced artifacts, imported projects and existing links, with counts and the linked project). The project page shows them as *Linked sources* (`apps/hub-web/components/project/linked-sources.tsx`).
+The assistant's `hub_list_app_relationships` lists sources, attachments, links, containers and merge suggestions. `hub_manage_app_relationship` performs supported attach/detach/refresh/add-as-task/people import/link/unlink/merge operations after Apply. These are explicit relationship changes, not continuous bidirectional sync.
 
----
+## 5. Shared retrieval and briefs
 
-## 5. Context Pack builder (the API everyone calls)
+`bridge/service.ts` implements bounded task/project/people/skill search and reads. Search uses case-insensitive matching on stored fields. `Artifact.searchVector`, `ArtifactChunk.embedding` and `ContextPack` schema do not imply a working embed/rank/compress pipeline: no semantic retrieval is wired into the current bridge.
 
-```python
-def build_context_pack(intent: Intent, budget_tokens: int = 6000) -> ContextPack: ...
+Workspace briefs (`workspace/agent.ts`, `pages/agent-context.ts`) assemble the assigned task, its page, linked context, selected skills, attached items and file excerpts under explicit limits. Source citations retain IDs/URLs. Tools can read longer content in parts. The assistant separately starts with a small snapshot and uses its typed readers. These consumers share data/access rules, not one universal persisted context-pack algorithm.
 
-# Intent examples:
-TaskIntent(task_id)                              # → for a worker or "Help me"
-MeetingPrepIntent(event_id)                      # → prep card
-ChatComposeIntent(chat_id)                       # → Teams compose assist
-CodingIntent(repo, branch, file?, symbol?)       # → workspace help
-```
+## 6. Profile and preferences in context
 
-**Algorithm:**
+Profile, timezone, profession and selected personal instructions inform applicable requests. The implementation does not generate the old daily “Who I am” paragraph containing inferred colleagues, sprint ownership and tone for every worker. Settings and personal skill bodies remain the explicit authority for declared preferences.
 
-1. **Seed** from intent: the task's source artifact(s), linked people/repo/WI/project.
-2. **Expand:** same thread (full), same project (last 7 days), same repo (open PRs I own + recent review comments), same people (last 5 exchanges), meetings with those people (recaps).
-3. **Retrieve:** hybrid search (pgvector cosine + BM25 via `tsvector`) using task title + description, top-k 40.
-4. **Rank:** `score = 0.4·semantic + 0.25·recency + 0.2·graph_proximity + 0.15·source_priority` (`meeting_action_item > direct_ask > cc`).
-5. **Compress:** full text for top items; LLM one-line summaries for the tail; keep per-item citation (`artifactId`, `url`, `excerpt`).
-6. **Suggest skills:** Skill Router returns skills whose scope matches (repo, channel, person, task type).
-7. **Assemble** `ContextPack(summary (5 lines), items[], skillsSuggested[], people[], openQuestions[])` and **persist** (for audit + replay).
+## 7. Meeting context
 
-The pack is shown to the user as **chips** in the UI (editable: remove an item, pin an item) — the human can correct the context before the agent uses it.
+`routes/cowork.ts` serves `/api/meetings/sessions` (manual notes), their end/attach/recap actions and `/api/meetings/summarize`. `routes/meeting-notes.ts` serves `/api/meetings/imported` and `/api/meetings/notes/:id`. The old `/api/meetings/:id/extract` and `/apply` examples are not current endpoints.
 
----
-
-## 6. "Who I am" block (identity prompt fragment)
-
-Generated daily from the graph and prepended to every worker prompt:
-
-```text
-You are acting for Mira Chen (mira@fieldnote.example), Software Engineer, Fieldnote, Bengaluru (IST).
-Works most with: Priya Nair (eng), Rahul Mehta (eng), Alex Chen (design).
-Owns repos: fieldnote/relay (maintainer). Current sprint: S42 (ends Fri).
-Active deliverables: retry-policy rollout (due today), partner webhook docs, load-test report.
-Working hours 09:30–18:30 IST; prefers focus blocks 11–13. Tone: concise, friendly, no fluff.
-```
-
----
-
-## 7. Meeting context — from connectors, not a Copilot paste
-
-**Not a Copilot paste:** in the Hackweek tenant, Teams/transcript Graph scopes were admin-only, so the demo drove M365 Copilot in a browser and asked the engineer to paste the answer into *Context → M365*. That path is **retired**. Ensemble connects mail, calendar, and Teams (and later other meeting sources) directly.
-
-The **extract → review → apply** pipeline below is still the right shape for *any* meeting-shaped text (a connector recap, a pasted note, an uploaded transcript). Keep the invariants; drop the Copilot-specific UI and `m365_copilot_ask`.
-
-### 7.1 Extract is not a formality
-
-A meeting recap (from a connector or a human note) is prose: headings, hedging, *"I found 11 matching calendar entries"*. Useful to read, useless to store. The extractor keeps only what belongs somewhere — people, project, repo, todos, dates — and is told **never to invent a fact the source did not say**. An invented deadline is worse than a missing one, because a missing one is visible.
-
-It runs at **high** complexity. This is the step that decides what lands on the board, and a cheap model that drops a date costs far more than the difference in credits.
-
-### 7.2 The same thing works in the assistant
-
-The assistant can take the same recap. A **file this as source material** flag (old name: `M365_DIGEST_DIRECTIVE`) treats the turn as something to extract, not a question to answer. The flag is **the engineer's assertion, never inferred**. Guessing "digest" from ordinary chat would file todos out of a sentence.
-
-### 7.3 Extract and apply are separate
-
-`POST /api/meetings/:id/extract` produces a proposal; `POST /api/meetings/:id/apply` is what writes it. They were deliberately two presses.
-
-Extraction is no longer one of them. It now **runs automatically** as soon as the answer lands, because an answer nobody extracted is prose in a box — the "decision" only ever had one answer. **Applying stays manual**, because that one has a real second answer.
-
-Everywhere else in Ensemble the input is the engineer's own mail or calendar. Here it is a summary of a meeting that was itself never transcribed — two steps from the source — and the failure mode is a confident, plausible task nobody ever agreed to. So the extraction is shown in full, with the sentence each todo came from, and nothing moves until the engineer says so.
-
-Applying twice is safe; tasks are deduped on `sourceRef = meeting:<id>` plus title.
-
-### 7.4 What it will and will not create
-
-| Thing | Behaviour |
-|---|---|
-| **Todos** | Created as *proposed*, owned by nobody, with the evidence sentence as the excerpt |
-| **Project** | Matched by name or alias; created at confidence 0.6 if genuinely new |
-| **Repository** | Matched, or created only if it looks like `owner/name`. A local path (`~/dev/thing`) or a bare word is refused |
-| **People** | **Matched only, never created.** A Person row invented from "Karthik" pollutes the relationship weighting that decides whose message matters |
-| **Deleted nodes** | Respected. A project or repo in `context_suppressions` is not recreated (§4.6) |
-
----
+Manual notes use the page editor, saved `content` plus Markdown `notes`, and attendee/event links. Imported source notes are read-only. Summaries, decisions and tasks must be grounded in the selected note. No microphone recording, audiovisual understanding or Copilot-paste bridge is implemented. The assistant can read notes, explicitly import a bounded batch, create/edit manual notes and propose tasks when asked. See [34](34_ASSISTANT_ACTIONS.md).
 
 ## 8. Project pages
 
-A project is the unit of context in Ensemble, so it gets a page: `/projects/<id>`, served by `routes/projects.ts`.
-
-### 8.1 What is on it
-
-Everything already linked to the project, in one place:
-
-| Section | Source |
-|---|---|
-| Name, one-line summary, status, notes | The page's own columns. Notes are the engineer's, and go into exported context |
-| Repos (optional, many) | `project_repos` → `repos`. Paste a URL to link one; it is fetched from the provider before the row is written |
-| People (tags) | `project_people` → `people`. Matched against the graph, never invented from a string |
-| Deliverables (upcoming / completed) | `deliverables`. A row, not a string, because "is it done" and "when is it due" need somewhere to live |
-| Tasks | `tasks.projectId` |
-| Meetings | `meeting_notes.projectId` |
-| Recent activity | `artifacts.projectId` |
-
-Nothing else. The card used to carry aliases, channels, a confidence badge and an evidence count behind a disclosure triangle — four fields, three of them string arrays nobody edited, and a percentage that changed no decision. Aliases survive as a hidden matching aid for the linker; channels are gone.
-
-### 8.2 People are tags, not pages
-
-Every colleague could have had a page. None does. "Who is on this" is a property of the work, and a page per person is filing for its own sake — the Context explorer's people list already answers the questions anyone asks of it.
-
-### 8.3 Projects can be created by hand
-
-The graph infers projects from what it has read, which is useful and always incomplete: the thing you started this morning has no artifacts yet. A hand-made project is `createdBy: "me"`, and **creating one clears any earlier suppression** — deleting a project meant *stop inferring this*, not *never let me have it*.
-
-### 8.4 Applying a meeting fills the page in
-
-`POST /api/meetings/:id/apply` no longer only writes tasks. It also tags the matched people onto the project, links the repo, and records the extracted deliverables. That is the point of having pages: the next time the project is opened, the context is already there rather than sitting inside one note.
-
-Every write is **idempotent** — upserts for the links, a title match for the deliverables — because re-extracting after a comment is a normal thing to do.
-
----
+Projects keep name, summary/notes, status, people/repository relationships and linked work. Their page assembles saved related tasks/deliverables/files/source items. Relationships can be edited manually or through supported assistant tools. People remain identity/context records; adding an attendee is not an automatic invented-person workflow.
 
 ## 9. Storage & performance
 
-- Tables in schema `context` *(as built: `context_`-prefixed tables in `public`, see [01 §5](01_TECH_STACK_AND_ENVIRONMENT.md#5-data-storage-design-postgres))*; `artifact_chunks` with HNSW (`vector_cosine_ops`) *(not possible at 3072-d — see §10)*, `tsvector` GIN index.
-- **Retention is per user:** 15/30/45/60 days, default 30, for deleted context and completed work. Live people, repositories, preferences, skills, artifacts and documents do not expire from inactivity. PII: only the user's own mailbox/chats via delegated scopes.
-- **Targets:** new email → todo candidate in < 60 s; context pack build < 2 s (cached expansions).
+Prisma manages ordinary tables in PostgreSQL's `public` schema; desktop uses the compatible embedded store. Logical areas such as context/audit are not separate Prisma database schemas. Retrieval is bounded; no HNSW/full-text performance claim is made for unused schema columns. Live records do not expire from inactivity. Completed/Trash/history retention have separate settings ([07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#11-completed-and-deleted-data-retention)).
 
----
+## 10. Verification and known limits
 
-## 10. Dev checklist
+Use connector/item/identity/import HTTP tests and the shared retrieval suites for their contracts. Mocks establish request handling, not current vendor plan entitlement, consent readiness or production token access. Catalog endpoint definitions and OAuth scopes must be checked against code before changes. Operator registration steps live in the ignored private runbooks.
 
-> Unchecked means not re-verified against this tree. [18](18_WHAT_IS_REAL.md) records what is.
-
-- [ ] `connectors/mail.py|ts` with delta + HTML→text (`html-to-text`)
-- [ ] `connectors/teams_chat`, `connectors/calendar`, `connectors/transcripts` (VTT parser + speaker resolution)
-- [ ] `connectors/github` via GitHub MCP; `connectors/ado` via ADO MCP (feature-flagged)
-- [ ] Linker with people/repo/WI/project resolution + unit tests on fixtures
-- [ ] Extractor prompt + JSON schema + 20 golden emails/transcripts in `eval/extraction/`
-- [ ] `meeting_recap` pipeline on 3 seeded meetings
-- [ ] Graph tables + nightly job + corrections API
-- [ ] `context_pack.build()` + cache + UI chips
-- [ ] Deltas stream → orchestrator
-
-### Notes from the earlier prototype
-
-These notes describe how an earlier prototype met the checklist. Most of the files they name are not in this tree; [17](17_REPOSITORY_STRUCTURE.md) and [18](18_WHAT_IS_REAL.md) describe what is.
-
-| Item | Where | Notes |
-|---|---|---|
-| Connectors | `apps/hub-api/src/connectors/` | Mail, Teams, calendar, GitHub, ADO over REST. Every body is cleaned (HTML→text, quoted history stripped) and secret-redacted on write — a token in the store becomes a token in a prompt. |
-| Auth for dev tools | `connectors/cli-auth.ts` *(inferred from 00 §11)* | GitHub and ADO borrow the sign-in you already have: `gh auth token`, and `az account get-access-token` for ADO's resource id. No PAT to mint, paste or rotate, and nothing written to disk. An explicit `GITHUB_TOKEN`/`ADO_PAT` still wins — an explicit choice should. |
-| Tracked repos | `context/repos.ts` + `connectors/devtools.ts` | Paste a URL: it is parsed, fetched from the provider, and only then written. A row that cannot be fetched is worse than none — the connector would retry it forever and the graph would show a live repo as dormant. Local paths like `~/dev/thing` are refused (6 tests). Generic contact sync does not fetch repository content. Repository content is read explicitly through the repository and app tools. |
-| Transcripts | `connectors/vtt.ts` + `transcripts.ts` | Parsing is split from fetching so VTT handling is unit-testable without a tenant (19 tests). Cues are merged into speaker turns, because raw VTT fragments are useless as evidence. Ambiguous speakers are left unresolved rather than guessed — mis-attributing an action item is worse than leaving it unowned. |
-| Linker | `context/linker.ts` | 17 tests. Conservative by design: full names only (a bare first name is too collision-prone), and `#1234` counts as a work item only outside a repo context, where it means an issue. |
-| Extractor | `context/extractor.ts` | Two paths behind one shape: LLM structured output, and a cue-phrase fallback that works with no credential. The fallback is the demo path today and the regression baseline the LLM must beat. |
-| Golden set | `eval/extraction/golden.json` | 20 labelled cases scored by property, not string match. Heuristic baseline: 19/20 (95%); the one gap (an ask aimed at someone else in a CC'd thread) is marked `knownGap` and scored separately rather than quietly relaxed. |
-| Retrieval | `context/pack.ts` | Hybrid: Postgres `tsvector` (weighted title/body, GIN) plus the documented ranking `0.4·semantic + 0.25·recency + 0.2·proximity + 0.15·source_priority`. The pgvector half is wired but dark until Azure OpenAI is configured. |
-| Graph | `context/graph.ts` | `relationshipWeight = directness × recency`, so a daily pair outranks a distant manager. Inference never overwrites a user correction (`source = 'user'` wins), and never recreates a node the engineer deleted (§4.6). |
-| Deletion | `context/suppression.ts` | `context_suppressions` keyed by the identity the extractors use. Loaded once per ingest pass; a list that cannot be read degrades to "suppress nothing" rather than failing the sync — a resurrected node is an annoyance, a failed sync is a silent outage. |
-| Deltas | `context/pipeline.ts` | Redis **stream**, not pub/sub, so a restarted consumer replays instead of dropping a day of asks. |
-
-**MCP note.** GitHub and ADO ingestion uses their REST APIs directly rather than the MCP servers. Read-side ingestion needs two endpoints; adding two MCP server processes (and two more packages through a restricted registry) bought nothing. MCP remains the plan for agent tool calls, where the uniform interface is the point — see [docs/01 §1](01_TECH_STACK_AND_ENVIRONMENT.md#1-stack-at-a-glance).
-
-**pgvector index.** `text-embedding-3-large` is 3072-d, above pgvector's 2000-d index limit, so **no HNSW index is created**. The column is queryable by exact scan, which is comfortably inside the 2 s budget at demo scale. The migration documents how to enable the index with a ≤ 2000-d model.
-
----
+`bridge/gaps.ts` still contains old missing-connector/redaction diagnostics. Those strings lag the current source; this documentation pass does not change runtime code. Retrieval's semantic-ranking gap and read-only bridge boundary remain real.
 
 ## 11. Seed data: opt-in only
 
-A fresh database is empty, and the Hub stays empty until you add a task or connect a source. Sample data is never written by `pnpm dev` or `pnpm db:migrate`.
-
-Two seeds exist for trying the product and for screenshots. Both are run by hand:
-
-| Command | Script | What it writes |
-|---|---|---|
-| `pnpm db:seed` | `apps/hub-api/prisma/seed.ts` | Sample people, tasks, documents and decisions for `ENSEMBLE_DEV_USER_ID`, plus five local checkouts under `ENSEMBLE_WORKSPACE_ROOT/samples` |
-| `pnpm seed:demo` | `apps/hub-api/prisma/demo-branch.ts` | The Branch desk demo ([DEMO_DATA.md](DEMO_DATA.md)). `-- --remove` takes it out again |
-
-Each seed marks what it writes (`seed:` / `demo:` source refs, `Seed:` / `Sample:` title prefixes) and re-running replaces only rows with those markers — **never heuristically**, because deleting real context for mentioning a word would be a far worse failure than leaving a demo row behind. Do not mix seeded rows with real mail in a database you rely on: a card citing a sample repository is indistinguishable, at a glance, from one citing a repository that exists.
-
----
+A fresh database is empty. `pnpm dev` and `pnpm db:migrate` never seed sample work. `pnpm db:seed` and `pnpm seed:demo` are explicit fixture/demo commands. [DEMO_DATA](DEMO_DATA.md) describes what they write and how demo reset is scoped.
 
 ## 12. Task pages and connected notes
 
-Tasks now hold a Markdown **notes** body, optional `deliverableId`, explicit `skillIds`, and their existing project/repo/people references. The task editor validates every selected relationship against the current user's data. The detail endpoint resolves all linked people, not only the first page of the Context list. Legacy IDs whose people were deleted are flagged for review and can be cleared explicitly: **saving notes never recreates a suppressed person**.
+`pages/store.ts`, `markdown.ts`, `agent-context.ts` and the shared page schema own structured documents, Markdown projections and mention indexes. Documents are read on demand, not included in every board response. Task notes mirrored as reference content remain distinct from immutable run evidence.
 
-`context/notes.ts` mirrors task, project and deliverable notes into ordinary file artifacts with stable `ensemble:*:notes` identities. Task note artifacts have a real task foreign key, project/repo references, and the selected people as participants. Explicit task people are also linked to the project. Saves and mirrors occur **in the same transaction**, are secret-redacted, and clear the mirror when the notes are emptied. An empty manual extraction prevents a note from being re-proposed as another inbox task.
-
-`buildContextPack(taskId)` now resolves the task's actual relationships itself. It prioritizes its saved notes, project notes/people/repos/deliverables and linked deliverable notes before ordinary lexical retrieval, including short notes that the old 40-character substance filter would have discarded. These remain bounded context excerpts, not an unlimited copy of every page. Explicit task skills rank first and still respect the global enabled switch.
-
-Delegated jobs and Help/workspace context use this same builder. The planner receives the selected source bodies, not merely the sentence saying how many sources were assembled, and the run records the context-pack ID. Board list responses omit note bodies so adding long notes does not bloat every board load.
-
-### Structured task documents
-
-`GET /api/tasks/:id/page` returns `TaskPageContent`. A task without a document has revision `0`, null content/update time and its existing Markdown notes. `PUT` accepts only `SaveTaskPage`: the expected revision, expected notes, optional restricted document JSON and source-bound human annotations.
-
-- Requests are limited to **1 MiB** in total, and the rendered notes to **100,000 characters**.
-- Revision conflicts, and notes conflicts on a supplied root body, return **409**, never a last-writer-wins overwrite.
-- Ordered-list `start` and `type` attributes, including `type: null`, round-trip unchanged in page and annotation JSON. The shared Markdown helper produces canonical numbered-list syntax for the root notes mirror.
-
-The Hub does not `PUT` a task page while you type: it edits it live through `/api/tasks/:id/page/collab` ([29 §5](29_SHARING.md#5-live-presence)). The live document is written back by `writeCollabPage` in `apps/hub-api/src/pages/store.ts`: the next revision, the mention index and search text, and which authority and version wrote it (`collab_epoch`, `collab_version`, `collab_revision`), under the task's and page's row locks, with no undo entry (typing is undone in the editor), also into a task in Trash. Every page save's mention index leaves out a mention of a kind it does not know rather than failing the save. A task page never written is shown from the task's notes, one paragraph per line, until its first write-back creates the row. A `PUT` (or any other write) on a task page open live is taken into the live document rather than overwritten.
-
-The additive `task_pages` row and normalized `task_page_mentions` identities cascade with the task. They are not included in board/list responses. Document saves lock the task, redact text before storing JSON, and mirror changed root instructions using the existing transactional note-artifact path. A secret split across separate blocks or mention markup is **explicitly refused** if it cannot be redacted without changing the document's meaning. Annotation-only and no-op saves do not update task notes, their mirror or `task.updatedAt`. An external notes edit sets `notesChangedExternally`; unchanged rich text is never copied over those newer notes. A merged root edit must acknowledge the current notes through `expectedNotes`.
-
-**Omitting `content` is the explicit annotation-only signal**; `content: null` is not a write instruction. No root Markdown conversion runs on this path. The first annotation can create a page with null content while preserving legacy notes byte-for-byte, including CRLF, spacing and trailing paragraphs, even during an active workspace job. Existing root JSON and note snapshots are retained. The revision is still checked, but a newer external notes value cannot block an annotation-only save because that request cannot write notes; the response carries the actual notes and external-change flag. A client must retain its imported local document when the returned content is null. Sending a full canonicalized body remains an instruction edit and still receives the normal workspace 409; annotations never turn that failure into success.
-
-Annotations retain their original run/workspace job, source hash and anchor. Every source must belong to the task and user, and an existing annotation ID cannot be rebound to different output. No result/evidence is writable here. **Live workspace jobs block changed instructions with a clear 409**, while human annotations remain editable. Assignment and page writes share the same workspace queue lock so a racing assignment cannot bypass that check.
-
-The @ menu reads `GET /api/entities` (`apps/hub-api/src/routes/context.ts`): the space's people, projects, repositories, tasks (not dropped), deliverables and files, plus skills, diagrams, plots and data files when those modules are on. Each list is capped (300 people and tasks, 200 projects, repositories, deliverables and files, 100 of the rest). The browser filters and ranks them ([02 §13](02_MODULE_INTERACTION_HUB_UI.md#blocks-and-mentions)). Previously saved deleted references stay unavailable without recreating entities or changing primary task relationships. Date mentions accept only calendar-valid `YYYY-MM-DD` or offset ISO datetimes and never set a due date.
-
-One page save creates **one transactional undo entry**, including root JSON, annotations, mention identities and changed notes/mirrors. Journal failure rolls the save back. Undo/redo also respects external edits and workspace locks, and advances the revision rather than reviving an old optimistic token.
-
-After selecting the intended `DATABASE_URL`, deployment is coordinated explicitly; tests do not migrate the application database:
-
-```powershell
-pnpm --filter @ensemble/shared-types build
-pnpm --filter @ensemble/hub-api exec prisma generate
-pnpm --filter @ensemble/hub-api exec prisma migrate deploy
-pnpm --filter @ensemble/hub-api typecheck
-```
-
-Migration: `20260919190000_task_pages`. Focused verification:
-
-```powershell
-pnpm --filter @ensemble/hub-api exec vitest run src\pages\content.test.ts src\pages\store.test.ts src\lib\undo.test.ts
-$env:ENSEMBLE_PAGE_INTEGRATION = "1"
-pnpm --filter @ensemble/hub-api exec vitest run src\pages\pages.integration.test.ts
-```
-
-The opt-in integration suite uses `DATABASE_URL` (or the root `.env`) only to create a unique `ensemble_pages_test_*` database. It deploys migrations there, uses synthetic users and an in-process Fastify app with a stub queue and refused fetch calls, then disconnects and drops that database. It starts no workers, uses no live model/connector or Redis, and changes no real user rows. The database role needs permission to create/drop that isolated test database.
-
----
+Task page API saves use revision/expected-notes checks; changed instructions are blocked during live workspace work while source-bound human annotations can remain editable. Live collaboration reconciles external writes through its authority. A mention references a real same-space entity; a date mention does not itself set the task's due date. The editor, history, conversion and comment behavior is documented once in [02 §13](02_MODULE_INTERACTION_HUB_UI.md#13-document-style-pages).
 
 ## 13. Files as context
 
-Uploaded and imported files are described in [32](32_FILES.md): formats, previews, edits, pages made from files, limits, imports from apps, and how agents read them. What matters for the context engine:
+Original bytes, format previews, extraction and caps are owned by [32](32_FILES.md). A readable file has a bounded text Artifact (`file:<documentId>`), redacted by the file pipeline. Scanned PDFs can have no text; there is no OCR. Search, assistant readers, agent briefs and the bridge read supported extracted text rather than arbitrary original bytes.
 
-- **Reference, not work.** Uploading, importing, reading or summarising a file never creates tasks, todos, projects, people, repos or deliverables, and never runs the connector sync.
-- **Text.** Each file's readable text is one file `Artifact` (`externalId = file:<documentId>`, up to 400,000 characters, secret-redacted, `authoredByMe: false`), read once per upload by `apps/hub-api/src/files/extract.ts` (PDF in a worker thread; Word, PowerPoint and Excel through `lib/office`; text, code and CSV directly). Scanned PDFs have no text and carry a warning; there is no OCR. Search, `hub_search_context`, the Context Bridge and agent briefs read this Artifact.
-- **Summary.** Once text exists, `context/enrich-documents.ts` asks the person's easy-tier model for one short summary (`context/summarize.ts`, first 16,000 characters). Unverified hosted accounts are skipped; `ENSEMBLE_DOCUMENT_ENRICHMENT=off` turns it off. Edits do not ask again.
-- **Tags.** `PATCH /api/documents/:id/tags` links a file to projects, people, repos and tasks (`projectIds`, `personIds`, `repoIds`, `taskIds`); files tagged with a task are among the task's files for agents.
-- **Isolation and removal.** Every read and change is limited to the person (or the space they are in). Removing a file hides the Document and its Artifact together; restoring brings both back; emptying the Trash and the retention purge erase both. Downloads are attachment-only with `nosniff`.
-- **Limits.** Hosted accounts keep 10 files and 50 MB combined (`ENSEMBLE_MAX_DOCUMENTS`, `ENSEMBLE_MAX_DOCUMENT_BYTES`; removed files do not count), 25 MB per file, under `ENSEMBLE_FILES_TOTAL_MAX_BYTES` for the whole server. Desktop and local servers have no file caps.
+Uploading/importing a file does not create people, projects, repos or todos. Optional enrichment summarizes existing extracted text and matches existing tags; `ENSEMBLE_DOCUMENT_ENRICHMENT=off` disables it. Explicit tags can link tasks/projects/people/repos. Deletion/restoration follows the Document and its text together.
 
-Notion imports (15 Oct 2026): `imports/api/notion.ts` reads child pages recursively, and `imports/notion-content.ts` preserves native page blocks and rich text. Databases become ordinary editable tables in pages, with row pages and property values; they do not create an Ensemble database, project or board. The assistant's `hub_save_app_item_as_page` uses the same importer. See [27](27_IMPORTS.md) for limits and mock-test evidence.
-
-Connector proposal context is written as a task page (`connectors/triage.ts`), leaving the short description for a person. Files no longer opens a connected-item feed automatically: app browsing/import is explicit, and existing `/files?view=apps` links still reach connected items.
-
-### Explicit relationships and calendar access (18 Oct 2026)
-
-The assistant now exposes the existing scoped Attach/Refresh/Remove/Add as task/People import/project source-link/merge routes through `assistant/tools/relationships.ts`; whole-board imports through `board-imports.ts`. These remain explicit requests, never background acquisition. Google new consent requests the additional `calendar.freebusy` scope for availability. `connectors/products.ts` distinguishes additional consent scopes from the required scopes for existing product features, so an older Calendar grant continues to read/create events; availability asks the person to reconnect when access is missing. The action inventory and boundaries are in [34](34_ASSISTANT_ACTIONS.md).
+Notion page import preserves supported native blocks/rich text, nested pages and ordinary editable tables; it does not create a new Ensemble database or turn every table into a task board. Whole-board imports use their separate preview/mapping workflow ([27](27_IMPORTS.md)).

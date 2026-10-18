@@ -6,7 +6,7 @@ The Hub is a website. A website only sees the keyboard while its tab is focused,
 
 `apps/quick-capture` is a small [Tauri 2](https://v2.tauri.app/) shell: a system webview, a tray icon, and a global shortcut. It posts the sentence to `POST /api/capture` on loopback. Turning “remind Priya about the contract Friday” into a task happens in hub-api (`apps/hub-api/src/cowork/capture.ts`). The shell does not parse reminders.
 
-This is the shell a later native port can grow, not a Mac-only helper and not a second browser.
+This is a separate companion to the existing desktop app. Its tray/global shortcut are not implicitly part of the main desktop shell.
 
 | Decision | Why it stays portable |
 |---|---|
@@ -31,7 +31,7 @@ Linux note: a left-click on the tray icon does not emit a click on every desktop
 
 ## Run it
 
-Install Rust 1.90 or newer and the Tauri system libraries for your OS (WebView2 on Windows, WebKitGTK 4.1 on Linux). Create a personal token in Settings → Editors & agents (it starts with `ens_`). It needs a full key, not the read-only Connect key.
+Use a current stable Rust toolchain compatible with the checked-in lockfile and the Tauri system libraries for your OS (WebView2 on Windows, WebKitGTK 4.1 on Linux). Create a personal token in Settings → Editors & agents (it starts with `ens_`). It needs a full key, not the read-only Connect key.
 
 ```bash
 cargo run --manifest-path apps/quick-capture/src-tauri/Cargo.toml -- --check
@@ -42,7 +42,7 @@ cargo run --manifest-path apps/quick-capture/src-tauri/Cargo.toml
 
 `ENSEMBLE_TOKEN` and `ENSEMBLE_API` override `capture.json`. `--check` prints the chord for this OS and exits. It does not open a window.
 
-macOS will ask for Accessibility permission the first time the shortcut is registered. If the OS refuses the shortcut, the tray menu and the Hub tab shortcut still work.
+System shortcut permissions and conflicts depend on the OS/configuration. If the OS refuses the shortcut, the tray menu and the Hub tab shortcut still work.
 
 ## What it does not do
 

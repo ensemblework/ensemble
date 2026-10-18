@@ -1,6 +1,6 @@
 # 17 · Repository structure
 
-What lives where in this repo. For *what* to build, start with [`00_PROJECT_OVERVIEW.md`](00_PROJECT_OVERVIEW.md). For what runs today, see [`18_WHAT_IS_REAL.md`](18_WHAT_IS_REAL.md). Checked against `main` on 5 Oct 2026; the CLI entries on 6 Oct 2026.
+What lives where in this repo. For the product and domain model, start with [`00_PROJECT_OVERVIEW.md`](00_PROJECT_OVERVIEW.md). For what runs today, see [`18_WHAT_IS_REAL.md`](18_WHAT_IS_REAL.md). Directory map reviewed 18 Oct 2026. Historical design notes and operational runbooks are separate from current guides.
 
 ---
 
@@ -12,7 +12,7 @@ ensemble/
 │   ├── hub-web/           Next.js 15 (App Router) — the Hub UI
 │   ├── landing/           Static landing page for ensemblework.com (Next.js export, no API calls)
 │   ├── hub-api/           Fastify + Prisma API, scheduler, workspace queue, assistant
-│   ├── agent-runtime/     Python FastAPI service that holds model keys (port 5055)
+│   ├── agent-runtime/     Python hosted model adapters and plot service (port 5055)
 │   ├── context-bridge/    Read-only MCP server for editors (stdio + loopback HTTP); hub-api serves it at /mcp
 │   ├── cli/               The `ensemble` CLI (npm name ensemblework): runner + MCP, docs/26
 │   ├── desktop/           Tauri 2 desktop app (static export + local hub-api sidecar)
@@ -30,7 +30,8 @@ ensemble/
 │   └── deploy/            Ubuntu VM setup: Caddy, systemd units, backups, pull-based autodeploy
 ├── scripts/               Dev, desktop build, CLI packaging, measurement and hook scripts (§3)
 ├── packaging/             CLI release metadata renderer: Homebrew, Scoop, winget, nfpm, AUR (docs/26 §7)
-├── docs/                  Design and operating docs (start at docs/README.md)
+├── docs/                  Current guides and separate historical/planned designs (docs/README.md)
+├── private/               Ignored local operator runbooks and archived plans; never publish secrets
 ├── design/                Icon and motion design sources (not shipped code)
 ├── .github/               CI and deploy workflows, Copilot agent, agent skills, desktop build workflow
 ├── data/import/           Local, git-ignored import drop zone
@@ -96,11 +97,11 @@ apps/hub-api/src/
 apps/hub-api/prisma/          schema.prisma, migrations/, seed.ts, demo-branch.ts
 
 apps/agent-runtime/ensemble_agent/
-├── main.py                   FastAPI app: /health, /api/chat/tools, model and key routes
+├── main.py                   FastAPI app: health, model-turn/stream and credential routes
 ├── models.py                 Provider adapters (Gemini, OpenAI, Anthropic, Copilot, …)
 ├── credentials.py, vault.py  Per-user encrypted keys
-├── orchestrator/             Planner and executor (docs/05)
-├── workers/planned.py        Built-in plans by task type
+├── orchestrator/             Retained legacy planner and executor; not normal workspace assignment
+├── workers/planned.py        Retained legacy task-type plans
 ├── tools/                    Tool catalog, guarded writes
 ├── plots/                    Matplotlib export worker
 └── audit/                    Ledger writer
@@ -149,7 +150,7 @@ apps/skill-forge/             pyproject.toml + ensemble_forge/__init__.py; miner
 | Page, component, styling, or browser behaviour | `apps/hub-web/` |
 | The public landing page | `apps/landing/` |
 | REST/SSE endpoint, persistence, connector, scheduled job, or assistant tool | `apps/hub-api/` |
-| Model provider, planner, plot export | `apps/agent-runtime/` (and `apps/hub-api/src/runtime/` for the desktop in-process path) |
+| Model provider and plot export | `apps/agent-runtime/` (and `apps/hub-api/src/runtime/` for the desktop in-process path) |
 | Shared API / domain shape | `packages/shared-types/` |
 | Editor access to Ensemble context | `apps/context-bridge/`, `apps/hub-api/src/bridge/`, `apps/hub-api/src/routes/mcp.ts` (hosted `/mcp`) |
 | The `ensemble` CLI, its installers and releases | `apps/cli/`, `scripts/package-cli.mjs`, `packaging/`, `apps/landing/public/`, `.github/workflows/cli-release.yml` |

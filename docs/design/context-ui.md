@@ -1,5 +1,7 @@
 # Context redesign
 
+Historical design record, partly implemented or superseded; **not a current feature/status guide**. Original dates and checklists below describe that earlier work. Use the [design index](README.md) and current feature guides before implementing or relying on these details.
+
 ## Round 5
 
 A long press keeps the drag: once it arms, the card blocks the browser pan, and a swipe before that still scrolls. Lane snapping is off while a card is dragged, so the row auto-scrolls at the edge, easing from about 120 px/s up to 450. A new toast replaces the one on screen. The graph legend names each kind, and the count reads “28 nodes · 34 links” (a short count with that tooltip on a phone). On the board, Edit layout and New task stay on one row. “Drop to link” sits on the top edge of a project card.

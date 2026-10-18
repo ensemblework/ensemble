@@ -1,278 +1,93 @@
-# 05 · Module M4 — Task Orchestrator (scheduled jobs, planner, workers, HITL)
+# 05 · Task orchestration and scheduled product jobs
 
-**Purpose:** The engine that turns **signals into proposed todos**, **delegated todos into plans**, **plans into tool actions** — with explicit human control points, retries, and a full trace. The planner, executor and workers live in `apps/agent-runtime/ensemble_agent/{orchestrator,workers,tools}`. hub-api drives them: the in-process scheduler (`apps/hub-api/src/jobs/scheduler.ts`) runs fetches, and the Postgres-backed workspace queue (`apps/hub-api/src/workspace/worker.ts`) runs delegated jobs.
+The normal assignment path is a **Postgres-backed workspace queue in hub-api**, executed locally or claimed by a paired computer. Research and code agents use model tools or supported external engines. Python supplies hosted model calls and plot work; its retained planner/worker modules are not the architecture of the current assignment UI.
 
-**Run only one agent-runtime instance**; two consumers on the same queue leave jobs stuck.
+Code inspected **18 Oct 2026**. See [06](06_MODULE_WORKSPACE_AND_SURFACES.md) for assignment/execution details, [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md) for device leases and [30](30_ENGINES.md) for external engines.
 
-For hosted public accounts, email verification is required before scheduled model/connector/agent work. Public users do not receive the operator's environment or CLI credentials. Host filesystem execution is operator-only; verified users can still queue work to their own paired device. Keep `ENSEMBLE_SERVER_RUNNER=off` for open hosted signup; production startup refuses an unrestricted runner.
-
----
-
-## 1. Architecture
+## 1. Current execution path
 
 ```text
- Scheduled fetch (BullMQ)                     context.deltas (Redis stream)
- ├─ morning_fetch 09:00                                  │
- ├─ evening_fetch 16:00                                  │
- └─ Fetch now (button)                                   │
-            │                                            │
-            └──────────────┬─────────────────────────────┘
-                           ▼
-                    Todo Proposer ──► Task (status = proposed)
-                           │
-                           ▼   (engineer triages; owner = agent)
-        proposed → todo → in_progress → waiting_approval → done
-                           │
-                           ▼
- Planner:  task + context pack + skills → PlanStep[] (structured),
-           on the model the task's complexity picked
-                           │
-                           ▼
- Executor: step loop, retries, HITL gates, ledger
-                           │
-                           ▼
- Workers (Agent Framework agents + tools):
-   email_reply · pr_author · meeting_actions · day_planner ·
-   workitem_sync · doc_author · teams_reply · research
-                           │
-                           ▼
- Guarded tools (MCP): graph · github · ado · workspace
+Task / deliverable / assistant assignment
+    → workspace/assign.ts persists WorkspaceJob
+    → workspace/queue-policy.ts claims an eligible job
+    → local workspace/worker.ts OR paired device claims it
+    → workspace/agent.ts executes research/code or an engine
+    → tools, decisions, RunSteps and changed-file evidence
+    → saved output / review / publishing continuation / completion
 ```
 
----
+`Run` is an attempt and its evidence; `WorkspaceJob` is durable execution state. A pending proposal or a queued job is not completed work. Jobs sharing a project, repository, folder/resource or unfinished continuation are serialized.
+
+Hosted public users need verified email for model/connector/agent features. Host filesystem execution is restricted to verified operators; ordinary accounts run on their own paired computers. Open hosting uses `ENSEMBLE_SERVER_RUNNER=off`. A device claim does not grant permission to run on the host.
 
 ## 2. Scheduled work
 
-`jobs/scheduler.ts` still dispatches reminders, the morning brief, stale notices, watchers, device lease sweeps and retention. Generic connector fetching is manual. `fetchAll(..., "schedule")` returns without reading a provider; old fetch times and `ENSEMBLE_SCHEDULED_FETCH` do not enable content ingestion.
-
-**Sync people** runs `connectors/people-sync.ts` through `POST /api/fetch` or `POST /api/connections/:id/sync`. It reads bounded contact metadata, filters services/newsletters/bots with fixed rules and upserts real people. It saves no artifacts and makes no model call. Files, messages and transcripts are read/saved through explicit requests ([03 §2](03_MODULE_CONTEXT_ENGINE.md#2-connectors)).
+`jobs/scheduler.ts` runs an in-process minute tick. Postgres claims in `jobs/claim.ts` make daily slots idempotent across API processes. It visits accounts even when no settings row has yet been saved.
 
-## 3. Todo Proposer
+| Job | Current behavior |
+| --- | --- |
+| Private reminders | Dispatch due in-app reminders; platform notifications depend on a running app and permission |
+| Morning brief | Deliver from the local day after account creation, once per local day, using current brief instructions/context |
+| Stale notices and watchers | Evaluate the implemented product conditions, not arbitrary user programs |
+| Device lease sweep | Detect expired remote claims and settle interrupted work |
+| Retention | Catch up daily cleanup at/after 03:30 local time; notice and skill learning precede completed-work retirement |
+| Account-deletion logs | Remove expired minimal logs |
+| Legacy connector fetch slots | `fetchAll(..., "schedule")` returns without reading any provider |
 
-Input: `TodoCandidates` (from extractions, deltas). Steps:
+`ENSEMBLE_SCHEDULER=off` stops the scheduler. `ENSEMBLE_SCHEDULED_FETCH=on` can make the legacy fetch slot due, but does **not** bypass the no-content-read branch in `connectors/sync.ts`. Sync people is a separate explicit metadata-only action. There is no BullMQ scheduler, `context.deltas` consumer or automatic mail-to-task pipeline in the normal product path.
 
-1. **Dedupe:** embedding similarity ≥ 0.88 with existing open tasks, or same source artifact → merge (append evidence).
-2. **Classify** (classifier model, JSON):
-   - `taskType ∈ {reply_email, reply_teams, open_pr, review_pr, write_doc, update_workitem, schedule, research, code_change, other}`
-   - `priority` (deadline, asker seniority/relationship, explicit words)
-   - `estimate` (S/M/L)
-   - `complexity ∈ {easy, medium, high, max}`
-   - `agentSuitability` 0–1 with reason (*"routine data reply → high"*; *"design judgement → low"*)
-3. **Suggest owner:** default *unassigned*; pre-highlight *Agent* when suitability ≥ 0.7 and risk is low.
-4. **Create** `Task(status='proposed', createdBy='agent')` with provenance, confidence and complexity; emit SSE `task.created`.
-
-**Quality guard:** cap proposals to 12/day; below confidence 0.5 → shown muted, auto-dropped after 3 days.
-
-### Complexity, and why it is not priority
-
-`complexity` is **how much reasoning the work needs**; `priority` is **how soon it matters**. They are deliberately orthogonal: an urgent easy task is still easy, and spending a bigger model on it buys nothing.
+Local schedules need the local runtime running. Hosted schedules do not wake a sleeping paired computer. Arbitrary recurring workflows/routines are not implemented.
 
-Every task gets one on creation — from the classifier when a model is available, otherwise from the rules in `lib/complexity.ts` — and carries `complexitySource` so the board can say who decided. Setting it yourself pins it to `me`, and **nothing re-infers a tier the engineer has chosen**.
+## 3. Task state and model selection
 
-The tier resolves to a model through the mapping in Settings. hub-api resolves it and puts the answer on the job; agent-runtime **re-checks it against the approved set** rather than trusting a payload that arrived over a queue.
+The real transition table is `lib/state-machine.ts`:
 
----
+- `proposed` can become Todo, Dropped or In progress.
+- Todo can start, complete, drop or return to Proposed.
+- In progress can wait for approval, block, complete, return to Todo or drop.
+- Waiting for approval and Blocked have explicit recovery transitions.
+- Done reopens to Todo; Dropped can return to Proposed or Todo.
 
-## 4. Task state machine
+Snooze is `snoozedUntil`, not a separate persisted task status. Owner (`me`, `agent`, `unassigned`), status, priority and complexity are separate properties.
 
-```text
-                   ┌──(Me)─────► todo (owner = me)
-                   │
- proposed ─────────┼──(Agent)──► todo (owner = agent) → in_progress → waiting_approval → done
-                   │
-                   ├──(Later)──► snoozed
-                   └──(Drop)───► dropped
+Complexity selects Low/Medium/High/Max model profiles. A person-chosen complexity is not silently reclassified. Assignment freezes the requested model/effort and execution settings for that attempt. Discovered capabilities and effort are validated before spending; changing Settings later does not rewrite queued work or old evidence. Included-model funding and personal keys are separate sources ([01](01_TECH_STACK_AND_ENVIRONMENT.md#6-model-usage-policy), [33](33_INCLUDED_AI.md)).
 
- in_progress ──► blocked(needs_info) ──(me answers)──► in_progress
- in_progress(agent) ──(me: Take over)──► in_progress(me)   [agent draft attached]
-```
+## 4. Queue slots and limits
 
-> The "Me" branch follows 02 §3.
+`workspace/queue-policy.ts` serializes claims on the space's user row. Eligible work is considered in assignment sequence; unrelated work can pass a conflicting job.
 
-Transitions are logged with **actor + reason**. `blocked(needs_info)` produces a **question card** in Needs Me (structured: options + free text), never an open-ended chat.
+- `orchestration.maxConcurrentJobs`: 1–8, default **3**.
+- Claimed, Running, Stopping and Waiting jobs consume slots.
+- A Needs me request/publishing approval unanswered for at least **60 minutes** permits one extra task, at most **N+1** total. It does not continually refill the extra slot.
+- Answering continues the same work; it does not consume another slot.
+- Once the extra task starts, new work waits until fewer than N jobs remain.
 
----
+Per-run minutes, model turns and tool calls are independent budgets. Waiting on a human does not consume the active-time budget. Runtime model requests additionally share a separate limiter/cancellation path; queue capacity is not the same as provider request concurrency.
 
-## 5. Planner
+## 5. Decisions and publishing
 
-**Prompt inputs:** identity block, task, context pack summary + item list, suggested skills, available tools with risk levels, autonomy setting for this task.
+Needs me combines saved approvals, structured missing-information questions, workspace tool-permission decisions and interrupted older attempts. Exact choice IDs and the pending operation are retained. A vague prose question is not automatically converted into a decision.
 
-**Output (structured):**
+Workspace checkpoints save messages, exact tool arguments, counters, receipts and working-tree identity. Answering requeues the same job, returns the answer to the saved continuation and does not replay completed writes. A changed tree or stale decision invalidates the permission. In a shared space, only the person whose computer runs the job may answer its execution decisions.
 
-```json
-{
-  "goal": "…",
-  "successCriteria": ["…"],
-  "steps": [
-    { "id": "s1", "title": "Gather latency numbers from dashboard link in thread",
-      "tool": "graph.mail.read|web.fetch", "risk": "low" },
-    { "id": "s2", "title": "Draft reply in Akash's tone",
-      "tool": "llm.draft", "skill": "email-reply.default", "risk": "low" },
-    { "id": "s3", "title": "Send reply to Priya",
-      "tool": "graph.mail.send", "risk": "high", "gate": "approval" },
-    { "id": "s4", "title": "Add comment to WI 8812 with numbers",
-      "tool": "ado.workitem.comment", "risk": "medium", "gate": "policy" }
-  ],
-  "questionsForUser": []
-}
-```
+Publishing resumes from the saved reviewed payload/approval, rather than replanning a new publish operation. Missing historical continuations require an explicit new attempt. An approval is not permission for arbitrary later writes.
 
-**Rules:** ≤ 8 steps; every write step names its gate; if a required fact is missing and not in context → add a `questionsForUser` entry instead of guessing (becomes `blocked(needs_info)`).
+## 6. Stop, interruption and retry
 
----
+Pause prevents new work and cancels active model/command activity through the relevant controllers. Stop one task affects that task; Stop everything also cancels queued work. Saved partial files and evidence remain. A request already accepted by an external service may still finish; stopping is not a remote rollback.
 
-## 6. Executor
+On restart, a server job left Running/Stopping/Waiting becomes interrupted and waits for an explicit retry. Remote jobs retain device ownership until lease handling settles them. Unknown mid-command outcomes are not silently replayed. A stopped checkout can remain reserved until cleanup/reassignment is safe.
 
-```python
-for step in plan.steps:
-    ledger.step_started(run, step)
-    if step.gate == 'approval' or policy.requires_approval(step, autonomy):
-        preview = worker.preview(step)                       # exact payload as it will be executed
-        approval = await hitl.request(run, step, preview)    # SSE Needs Me card; awaits decision
-                                                             # (with timeout → stays waiting)
-        if approval.decision == 'rejected':
-            ledger.rejected(...); mark_task_blocked(); break
-        payload = approval.editedPayload or preview
-        skills.feedback(step, preview, payload, approval)    # learning signal
-    result = await guarded_tools.call(step.tool, payload, run=run, approval=approval)  # writes ledger row
-    if result.failed:
-        retry(step, max=2, backoff=True)
-    else:
-        mark_done(step)
-        sse.emit('run.step', ...)
-```
+Retrying after failure is different from resuming an exact saved decision. The UI must report which applies.
 
-- **Run is resumable:** state persisted after each step; process restart continues.
-- **Pause agent** (global) or per task → executor checkpoints and stops before the next tool call.
-- **Concurrency:** max 3 agent tasks in progress; queue the rest (visible on board as "queued").
+## 7. Evidence and feedback
 
-**Repository execution** now uses the durable **Workspace queue** in hub-api, rather than the Python planner's fixed PR-author template. Per-assignment sandbox/native and unattended/review choices, conflict locks, process cleanup, publish-only approval continuation and verified task/deliverable completion are documented in [docs/06 A1–A6](06_MODULE_WORKSPACE_AND_SURFACES.md#a-coding-workspace). Postgres coordinates execution slots with legacy workers; busy legacy jobs return to the queue without making model calls. All model entry points additionally share a three-request Redis limiter and the global stop controls.
+`RunStep` stores tool/message/reasoning events appropriate to the engine. Job evidence includes model used, measured tokens or reported/estimated cost where available, changed-file metadata, result and run ID. Secrets-file contents are excluded from previews. Requested model and actual reported model are distinct; unknown pricing stays unknown.
 
----
+Run feedback is bounded (up to 100 entries of 4,000 characters) and can create a linked follow-up job. It does not overwrite the original attempt. Completed-work learning is the bounded retention pass in [04](04_MODULE_SKILL_FORGE.md#4-completed-work-learning), not a nightly general worker.
 
-## 7. Workers (v1)
+## 8. Legacy Python modules and verification
 
-| Worker | Plan template | Tools | Skills | Gate |
-|---|---|---|---|---|
-| `email_reply` | read thread → gather facts (context/dashboards/docs) → draft → send | `graph.mail.*`, `web.fetch`, `graph.files.read` | `email-reply.*` | send = approval (default) |
-| `teams_reply` | read chat → draft → post | `graph.chat.*` | `teams-reply.*` | post = approval |
-| `pr_author` | clone/branch → apply change (scripted or LLM patch) → run tests → commit (style skill) → open PR (description skill) → notify reviewer | `workspace.*`, `github.*` | `commit-message.*`, `pr-description.<repo>`, `coding-prefs.*` | PR open = approval; push to branch = policy (low) |
-| `meeting_actions` | transcript → recap → action items → create todos → (optional) send notes to attendees | `graph.transcripts`, `graph.mail.send` | `meeting-notes.default` | send notes = approval |
-| `day_planner` | calendar + tasks + prefs → plan → (optional) create focus blocks | `graph.calendar.*` | `day-planning.default` | create events = approval |
-| `workitem_sync` | task done → propose WI state/comments | `ado.*` | — | update = policy (medium → approval unless autonomous) |
-| `doc_author` (P1) | ADR/status update from context → draft in OneDrive | `graph.files.write` | `docs.*` | share = approval |
-| `research` | gather + summarize (read-only) | `web.search` *(plus other read tools — partly illegible)* | none | none |
+`apps/agent-runtime/ensemble_agent/orchestrator`, `workers` and `tools` retain planner/executor/policy code and tests. Do not infer from those files that assigning a task launches an email sender, Teams sender, day planner or work-item sync worker. Trace the actual HTTP/assignment entry point before documenting a capability.
 
-Each worker = a Microsoft Agent Framework `Agent` with a **bounded toolset**: workers are single-purpose so traces stay readable. Multi-agent split (Researcher → Drafter → Reviewer) is an optional P2 upgrade for `email_reply` and `pr_author`.
-
----
-
-## 8. Autonomy levels & gates (see [07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#2-action-policy-the-gates) for policy detail)
-
-| Level (per task, default from settings) | Read tools | Drafts | Low-risk writes (branch push, WI comment) | High-risk writes (send mail, post Teams, open PR, WI state) |
-|---|---|---|---|---|
-| `assist` | auto | auto | approval | approval |
-| `supervised` (default) | auto | auto | auto + ledger | approval |
-| `autonomous` (per-task opt-in) | auto | auto | auto | auto, with 5-min undo window where possible + digest notification |
-
----
-
-## 9. Failure handling
-
-- **Needs me** combines persisted publishing/external-write approvals, structured planner questions, workspace tool-permission/question checkpoints and genuinely interrupted older attempts. Workspace decisions retain exact choice IDs/labels and optional custom text; resuming uses the saved continuation, not a newly planned command. See [docs/06 A5](06_MODULE_WORKSPACE_AND_SURFACES.md#a5-durable-queue-and-global-stop). In a shared space, everyone there sees a run's questions, but only the person whose computer runs it may answer (`canAnswer` from `lib/decisions.ts`, checked in `applyAnswer`); hosted-run approvals and the owner's own editor prompts stay the owner's ([29 §4](29_SHARING.md#4-agent-runs-in-a-shared-space)).
-- **Tool errors:** retry ×2 with backoff; Graph 429 honours `Retry-After`.
-- **LLM structured-output validation failure:** re-ask once with error, then mark step failed with readable message.
-- **Missing info** → `blocked(needs_info)` question card (options grounded in context).
-- **Stale context** (thread updated during run) → re-build pack, re-plan from current step; note in trace.
-- **Everything failed** → task returns to *todo (agent)* with "needs attention" badge; **never silently dropped**.
-- An ordinary prose response implying *"tell me X/Y/Z before I can continue"* is **not** automatically turned into a decision. Leave that for a later conversation — do not invent an implicit-question parser now.
-
----
-
-## 10. Observability
-
-OpenTelemetry spans: `job.*`, `proposer`, `plan`, `run.step`, `tool.call`, `llm.call` (model, prompt version, tokens). Trace id stored on `Run` → "Open trace" link in the Runs page (Foundry tracing / App Insights).
-
----
-
-## 11. Dev checklist
-
-> Unchecked means not re-verified against this tree. [18](18_WHAT_IS_REAL.md) records what is.
-
-- [ ] BullMQ job definitions + cron; `agent.status` SSE
-- [ ] Redis stream consumer → Todo Proposer (dedupe, classify prompt + schema)
-- [ ] Task state machine (transitions table + guards)
-- [ ] Planner prompt/schema; tool catalog with risk levels
-- [ ] Executor with HITL await (Postgres approvals + SSE) and resumability
-- [ ] Workers: `email_reply`, `pr_author`, `meeting_actions`, `day_planner` (P0); `teams_reply`, `workitem_sync` (P1)
-- [ ] Guarded tool layer → ledger
-- [ ] Golden scenario test: ingested mail → proposals → delegate → approvals → mail sent
-
----
-
-## 12. As built
-
-| Area | Where | Notes |
-|---|---|---|
-| Fetch cycle | `apps/hub-api/src/jobs/fetch.ts` | One function behind both scheduled fetches and the button. `nextFetchAt` takes the timezone as a parameter rather than reading the environment, so the rollover logic is pure and pinned by tests in both directions. |
-| Schedule | `apps/hub-api/src/jobs/scheduler.ts`, `jobs/claim.ts` | In-process scheduler. Legacy fetch slots perform no provider read. Contact metadata sync is manual. `claim.ts` takes a Postgres claim so two API processes do not run the same slot twice. |
-| Complexity | `apps/hub-api/src/lib/complexity.ts` | Rules used when no classifier model answers. Deliberately shallow: a wrong tier costs a slightly better or worse model on one task, and pretending to more precision than that would cost more. |
-| Tool catalog | `apps/agent-runtime/ensemble_agent/tools/catalog.py` | Single source of truth for risk, gate, reversibility and undo window. The planner's gate output is **recomputed from here and never trusted from the model**, so a hallucinated `"gate": "none"` on a send cannot slip past. |
-| State | `apps/hub-api/src/lib/state-machine.ts` | `ALLOWED` transition table plus guards. `/triage`, `/delegate`, `/takeover` and `/answer` all route through `transitionTask`, so every move is logged with actor and reason. |
-| Planner | `apps/agent-runtime/ensemble_agent/orchestrator/planner.py` | Structured JSON plan with a template fallback per task type, on the task's own model. |
-| Executor | `apps/agent-runtime/ensemble_agent/orchestrator/executor.py` | Gated step loop with retries, `Retry-After` backoff, pause and resume-at-step. |
-| Workers | `apps/agent-runtime/ensemble_agent/workers/planned.py` | Seven workers routed by `taskType`. |
-
-### Every run names its model, and what it cost
-
-A finished run records **the model that produced each step and the credits it was billed at**. Both are per step rather than per run, because the model that answers is not always the one that was asked for: an unavailable model is substituted mid-run, and pricing the whole run at the requested rate would quietly misreport the spend. `runs.complexity` and `runs.requested_model` are **pinned when the run starts**, so a finished piece of work still names the tier and the model it was produced under after the Settings mapping is changed.
-
-Credits are an **estimate** and are labelled as one in the UI. The Copilot API reports tokens and never credits, so the number comes from a per-model multiplier — overridable with `ENSEMBLE_MODEL_CREDITS` — rather than from the provider.
-
-### Run outcomes are five, not three
-
-`success | failed | cancelled` could not express what the agent actually does. A run that stopped to ask a question was recorded as *failed*, and a run parked at an approval gate as *cancelled* — so the Runs page painted correct, careful behaviour as breakage. `RunOutcome` now also has:
-
-- **`needs_info`** — the planner refused to guess a missing fact (§5). The question is persisted on `tasks.blocked_question` and rendered **amber, not red**.
-- **`waiting_approval`** — the executor stopped at a gate and will resume when the engineer decides.
-
-### The planner cannot silently do nothing
-
-Two guards sit between the model and the executor:
-
-- **Answered questions are dropped.** A resumed run passes the engineer's answer back into the prompt. Models re-ask anyway, so once an answer exists the questions are cleared — otherwise answering loops forever.
-- **Reply-shaped tasks must contain a write step.** If a plan for `reply_email` / `reply_teams` / `open_pr` / `update_workitem` / `schedule` contains no write tool, it is discarded for the template. Without this a `reply_teams` task could be marked done having sent nothing at all. A *blocked* plan is exempt: it omits steps on purpose, and falling back would make the agent act on the guess it just refused to make.
-
-### Known gaps
-
-`research` and `write_doc` tasks block on `needs_info` readily. That is correct behaviour, but a demo wants well-specified tasks or pre-answered questions.
-
----
-
-## 13. Decisions are actionable, not just run statuses
-
-**Questions:** *Needs me* reads actual `blockedQuestion` data as well as approval rows. The question is also saved on the run. Answering verifies that the question is still current and queues grounded work using the answer and saved task context. If enqueueing fails, the question is **restored for retry** rather than disappearing into an apparently running task.
-
-**Approvals:** the worker now calls `POST /api/internal/runs/:runId/approval` before reporting a parked run. The approval and exact continuation (plan, step index, payload, gathered context, autonomy) are **persisted together**. A `(runId, stepIndex)` key prevents duplicate cards. The queue-completion bridge remains compatible with older workers but cannot create a second card for the same saved step.
-
-Approving or editing queues a **durable, approval-ID-keyed continuation** instead of publishing a notification with no subscriber. The worker reuses the same run, validates the saved plan against the tool catalog, skips completed steps, and uses the exact reviewed payload **without re-planning** or spending planner credits again.
-
-A Graph draft-save step is preceded by real drafting when the plan omitted it; the approval must not preview placeholder text.
-
-**Older interrupted attempts:** some runs predate saved continuations. Their approval may already be decided, or a card was never persisted. The UI labels these **Interrupted**, explains the missing continuation, and offers explicit retry/takeover. It **never guesses a missing approved payload** or automatically replays an old action.
-
-This is approval-checkpoint recovery, not a claim of arbitrary mid-step crash recovery.
-
-The Runs overview is limited to eight recent attempts and a disclosure for the previous ten *(02 §3.4 says 10; check `apps/hub-web/app/(hub)/runs`)*. The database history and per-task run-history pagination remain intact.
-
-## Queue and completed-work learning (16 Oct 2026)
-
-Code inspection: `workspace/queue-policy.ts` serializes claims on the user row for both server and device claims. Eligible jobs are visited by assignment sequence. Claimed, running, stopping and waiting jobs count toward `orchestration.maxConcurrentJobs` (1–8, default 3). A pending Needs me question or publishing approval at least 60 minutes old permits one extra task, at most N+1 total. Answering does not take a second slot. After the extra task starts, nothing new starts until fewer than N jobs remain; one unanswered request cannot repeatedly refill that extra slot. The same project or repository, the same computer’s resource keys, and unfinished continuation chains remain mutually exclusive.
-
-`jobs/skill-mining.ts` warns in the bell at least 24 hours before learning from expired completed work. The daily retention pass uses the **High** model, validates structured skills, versions updates, then writes completion records and moves the batch to Trash atomically. A failed/offline model, pin, reopen, active job or conflicting skill edit preserves the work for a later pass. Batches contain at most 50 tasks and 50 deliverables; the notice state is a per-space `hub.retention-mining` preference. Trash is purged using the existing trash retention setting, including the completion records made when it entered Trash.
-
-The scheduler visits all accounts, including those with no saved settings row. Morning briefs begin on the local day after account creation, use the profession default/personal skill, and are idempotent per local day. The native app/local runtime must be running for local schedules.
-
-### First-brief introduction lifecycle
-
-Delivery starts on the local day after signup. The introduction belongs to the account, and `cowork/brief-prompt.ts` records its first offer before the Hub opens it. Dismissal, saving and later deliveries do not reset it. A data-only migration retires introductions for existing accounts that already received a brief. Scheduling and the permanent `/morning-brief` editor are unchanged. Code inspection and focused regressions, 17 Oct 2026.
+Queue, state-machine, checkpoint, retention and device tests live beside the owning modules. CI exercises API integration with Postgres/Redis and sandbox paths on multiple systems. Test fixtures do not prove a live provider accepted an external write. Full implementation and residual execution boundaries are in [06](06_MODULE_WORKSPACE_AND_SURFACES.md) and [24](24_DESKTOP_SANDBOXING.md).

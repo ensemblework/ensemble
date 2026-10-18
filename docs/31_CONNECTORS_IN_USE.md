@@ -1,40 +1,26 @@
 # 31 · Connectors in use
 
-What Ensemble does with an app once it is connected, how that compares with other AI apps, and every connector in the store. Connecting itself (OAuth apps, tokens, remote MCP, sync) is in [03 §2](03_MODULE_CONTEXT_ENGINE.md#2-connectors); imports are in [27](27_IMPORTS.md); the assistant's tools are in [11](11_HOW_THE_ASSISTANT_WORKS.md).
+What Ensemble does with an app once it is connected, and the connector catalog. Connecting itself (OAuth apps, tokens, remote MCP, sync) is in [03 §2](03_MODULE_CONTEXT_ENGINE.md#2-connectors); imports are in [27](27_IMPORTS.md); the assistant's tools are in [11](11_HOW_THE_ASSISTANT_WORKS.md).
 
-Written 12 Oct 2026 from the code and from the vendors' own documentation. Everything here is tested against mocked vendor responses (tests at the end); no vendor API was called with a real account for the new parts.
+Implementation reviewed from current source; provider tests use mocked responses unless stated otherwise. This audit does not reauthorize live vendor accounts.
 
-## 1. How other AI apps use connectors
+## 1. Connection is not acquisition
 
-Researched 12 Oct 2026 from each product's documentation. The products converge on the same handful of patterns.
-
-| Pattern | Who does it | How it looks |
-|---|---|---|
-| Live tools in chat | Claude, ChatGPT, Cursor, Grok, Perplexity | Each connector is a remote MCP server. The model calls it while it answers; reads run, writes ask first. Claude lets a person set every tool to always allow, needs approval or blocked ([Claude connectors](https://claude.com/docs/connectors/getting-started.md)). |
-| Synced index | ChatGPT (Drive, SharePoint, Notion, Linear, Box, Dropbox), Notion AI, Glean, Microsoft 365 Copilot | Content is indexed ahead of time with the source's permissions; answers cite it. Hours of lag. |
-| Attach one item | Claude (add from Google Drive or GitHub to a chat or project), ChatGPT project sources | The person picks a file or repository; it becomes context, refreshed on demand ("Sync now"). |
-| Hand a ticket to an agent | Cursor, Codex, GitHub Copilot, Devin, Claude for Jira, Linear's Agent API | Assign the issue or @mention the agent; progress shows on the issue; the agent finishes with a pull request and a comment ([Cursor + Linear](https://cursor.com/docs/integrations/linear), [Linear agents](https://linear.app/developers/agent-interaction)). |
-| Start from chat | Claude in Slack, @ChatGPT, @Cursor, Devin | Mention the agent in a thread; it posts a plan, then the result, in the thread. |
-| Choose the repository | Cursor (`[repo=owner/repo]`, a repo label), Codex (Linear suggests one) | The tracker or the message names the repository the agent should clone. |
-| People | Slack's MCP server, Microsoft 365, Glean | Directory lookups exposed as tools, so "who owns billing?" has an answer. |
-| Meeting notes → actions | Granola, ChatGPT Record, Notion meeting notes | A summary, then action items, then tasks in a tracker. |
-| Write confirmation | Everyone | Read tools run; anything that changes the outside app asks, and admins can force "ask" or block a tool. |
-
-Directories, for scale: Claude about 935 connectors, ChatGPT 1,400+ plugins, Cursor's marketplace several hundred, Grok about 28 plus custom MCP servers.
+Code inspected 18 Oct 2026. Native item adapters, board/file importers and vendor MCP are separate capabilities. Connecting an app saves a grant; it does not index all its content. Search results remain transient until an explicit save/attach/import. Vendor availability and required plans can change independently of this code.
 
 ## 2. What Ensemble does with a connected app
 
 Each connector's detail page (Settings → Connections → Browse connectors) lists these under **In Ensemble** (`connectorUses` in `apps/hub-web/components/connectors/catalog-view.ts`).
 
-### 2.1 Sync: context and proposed todos
+### 2.1 Sync people and explicit imports
 
-Gmail, Outlook, Teams, Google and Outlook calendars, Slack, GitHub and Linear sync into the person's context, and asks addressed to them become **proposed todos** on Today. Meeting-note apps (Granola, Fireflies, Fathom, tl;dv, Krisp, Jamie, Otter) bring notes into Meetings and the person's action items become proposed todos. As before: [03 §2](03_MODULE_CONTEXT_ENGINE.md#2-connectors), [18](18_WHAT_IS_REAL.md).
+Manual Sync people reads bounded contact metadata from supported mail/calendar/chat/GitHub sources, filters automated identities and saves real people. It stores no message bodies, Artifacts or proposed tasks and makes no model call. Generic scheduled fetch returns without provider reads. Meeting-note imports and requested action-item tasks are explicit separate operations. [03 §2](03_MODULE_CONTEXT_ENGINE.md#2-connectors).
 
 ### 2.2 The assistant
 
 - **Built-in tools** for Google Workspace, Microsoft 365, Zoom, Docusign and Jira ([11 §8.2](11_HOW_THE_ASSISTANT_WORKS.md)).
 - **`apps_search` and `apps_read`** search and read every connected app Ensemble can search itself (§2.3): Notion pages, GitHub repositories and issues, Linear issues, Jira issues and Confluence pages, Trello cards, Slack channels and people, Drive and OneDrive files, Zendesk tickets, Vercel deployments, and the rest in the table in §4. A pasted link (a GitHub URL, `ENG-42`, a Notion URL) finds that item. Offered only when one of those apps is connected (`apps/hub-api/src/assistant/tools/app-items.ts`).
-- **`hub_search_context` and `hub_read_context`** search what Ensemble already keeps: synced mail, chats, events, pull requests and issues, meeting transcripts, and attached items (`apps/hub-api/src/assistant/tools/context.ts`).
+- **`hub_search_context` and `hub_read_context`** search what Ensemble already keeps: explicitly saved mail/chat/event/issue content, imported meeting transcripts and attached items (`apps/hub-api/src/assistant/tools/context.ts`).
 - **The vendor's own tools** through its remote MCP server (`mcp_<app>_<tool>`), with each tool switchable in the connector's detail page.
 - **`apps_post_update`** posts a comment on the issue, card or ticket a task came from.
 - **`hub_import_app_file`** saves a Drive, OneDrive, Dropbox or Box file, or a Gmail or Outlook attachment, in Files; **`hub_save_app_item_as_page`** saves an item as an Ensemble page that says where it came from and links back. Notion reads retain tables and collapsible Markdown structure; imports use native blocks. For Notion it imports the complete accessible child-page tree with native formatting, and databases become ordinary tables with linked row pages (`imports/api/notion.ts`, `imports/notion-content.ts`). Both take `source`, `kind` and `id` from an `apps_search` hit and run after Apply ([11 §8.4](11_HOW_THE_ASSISTANT_WORKS.md)).
@@ -90,14 +76,14 @@ The MCP variants are fields on the catalog entry's `mcp` (`packages/shared-types
 
 Every entry in the store can be connected; nothing is listed as coming soon. Logos are each vendor's own mark ([§5](#5-logos)).
 
-112 entries, generated from `CONNECTOR_CATALOG` on 12 Oct 2026. "MCP sign-in" means the vendor’s own server with no setup on either side.
+`CONNECTOR_CATALOG` in shared types owns the entries and connection metadata. The table below is a connection/reference map; “MCP sign-in” means the vendor OAuth path supported by Ensemble. Vendor policy, scopes and workspace configuration can still be required. It does not promise automatic ingestion or a native importer for every app.
 
 **Google & Microsoft**
 
 | App | Connects by | In Ensemble |
 |---|---|---|
-| Google Workspace | sign in | sync → proposed todos · attach files and conversations · assistant writes (Apply) |
-| Microsoft 365 | sign in | sync → proposed todos · attach files and conversations · assistant writes (Apply) |
+| Google Workspace | sign in | explicit source reads / imports · attach files and conversations · assistant writes (Apply) |
+| Microsoft 365 | sign in | explicit source reads / imports · attach files and conversations · assistant writes (Apply) |
 
 **Mail & calendar**
 
@@ -118,7 +104,7 @@ Every entry in the store can be connected; nothing is listed as coming soon. Log
 
 | App | Connects by | In Ensemble |
 |---|---|---|
-| Linear | sign in · token · MCP via your Linear connection | sync → proposed todos · attach issues and projects · post updates · people · import · assistant tools |
+| Linear | sign in · token · MCP via your Linear connection | explicit source reads / imports · attach issues and projects · post updates · people · import · assistant tools |
 | Jira & Confluence | sign in · token · MCP sign-in | attach issues, projects and pages · post updates · people · import · assistant tools |
 | Trello | token · file | attach cards and boards · post updates · import |
 | Asana | token · MCP (operator registers an app) · file | attach tasks and projects · post updates · people · import · assistant tools |
@@ -146,14 +132,14 @@ Every entry in the store can be connected; nothing is listed as coming soon. Log
 
 | App | Connects by | In Ensemble |
 |---|---|---|
-| Granola | token · MCP sign-in | meeting notes → action items · assistant tools |
-| Zoom | sign in |  |
-| Fireflies.ai | token · MCP sign-in | meeting notes → action items · assistant tools |
-| Fathom | token · MCP sign-in | meeting notes → action items · assistant tools |
-| tl;dv | token | meeting notes → action items |
-| Krisp | token · MCP sign-in | meeting notes → action items · assistant tools |
-| Jamie | token · MCP sign-in | meeting notes → action items · assistant tools |
-| Otter.ai | token · MCP sign-in | meeting notes → action items · assistant tools |
+| Granola | token · MCP sign-in | requested meeting-note import · optional requested tasks · assistant tools |
+| Zoom | sign in | assistant meeting/summary/transcript/recording tools |
+| Fireflies.ai | token · MCP sign-in | requested meeting-note import · optional requested tasks · assistant tools |
+| Fathom | token · MCP sign-in | requested meeting-note import · optional requested tasks · assistant tools |
+| tl;dv | token | requested meeting-note import · optional requested tasks |
+| Krisp | token · MCP sign-in | requested meeting-note import · optional requested tasks · assistant tools |
+| Jamie | token · MCP sign-in | requested meeting-note import · optional requested tasks · assistant tools |
+| Otter.ai | token · MCP sign-in | requested meeting-note import · optional requested tasks · assistant tools |
 | Read AI | MCP sign-in | assistant tools |
 | Avoma | MCP sign-in | assistant tools |
 | Gong | MCP sign-in | assistant tools |
@@ -169,7 +155,7 @@ Every entry in the store can be connected; nothing is listed as coming soon. Log
 
 | App | Connects by | In Ensemble |
 |---|---|---|
-| Slack | sign in · token · MCP (operator registers an app) | sync → proposed todos · attach channels · people · assistant tools |
+| Slack | sign in · token · MCP (operator registers an app) | explicit source reads / imports · attach channels · people · assistant tools |
 | WhatsApp Business | MCP sign-in | assistant tools |
 | Discord | sign in | attach channels |
 
@@ -177,7 +163,7 @@ Every entry in the store can be connected; nothing is listed as coming soon. Log
 
 | App | Connects by | In Ensemble |
 |---|---|---|
-| GitHub | sign in · token · MCP via your GitHub connection | sync → proposed todos · attach repositories, issues and pull requests · post updates · people · repositories for agents · import · assistant tools |
+| GitHub | sign in · token · MCP via your GitHub connection | explicit source reads / imports · attach repositories, issues and pull requests · post updates · people · repositories for agents · import · assistant tools |
 | Sentry | MCP sign-in | assistant tools |
 | Supabase | MCP sign-in | assistant tools |
 | Hugging Face | MCP sign-in | assistant tools |
@@ -264,7 +250,7 @@ Every entry in the store can be connected; nothing is listed as coming soon. Log
 
 | App | Connects by | In Ensemble |
 |---|---|---|
-| Docusign | sign in |  |
+| Docusign | sign in | assistant envelope/template tools |
 
 **Cloud**
 
@@ -328,6 +314,6 @@ Sign-in and AI provider/model marks share `components/connectors/provider-logo.t
 
 Generic manual sync now saves real contact metadata only (`connectors/people-sync.ts`); it does not invoke item adapters, download files or create artifacts/proposals. Existing explicit search, preview, Attach, import and refresh actions keep their current behavior and permissions. Search matches are transient until the person chooses a save/import/attach. Metadata rules filter automated senders before storage, without a model.
 
-## Relationships from the assistant (18 Oct 2026)
+## Relationships from the assistant
 
 `hub_list_app_relationships` and `hub_manage_app_relationship` in `assistant/tools/relationships.ts` now expose the same Attach, Remove, Refresh, Add as task, Add people, project source-link and explicit People merge operations as the app. They use the original authenticated request to call the existing scoped routes, retaining their permissions, verification, limits and deduplication. Changes wait for Apply. `hub_run_workflow` can link newly created records using earlier results. This adds no general email or chat-sending tools. Full action map: [34](34_ASSISTANT_ACTIONS.md).

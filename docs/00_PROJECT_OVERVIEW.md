@@ -1,293 +1,112 @@
-# 00 · Project Overview — Ensemble
+# 00 · Ensemble overview
 
-> **Name:** **Ensemble**. An engineer and their agent, in the same key: stronger together.
->
-> **Owner:** Akash Sharma
->
-> **One-liner:** A persistent, context-rich home page where a software engineer and their personal agent share the same picture of the work — todos, deliverables, meetings, code, people — so the agent can do work autonomously, and help without being told the context every time.
->
-> **What this is:** a **source-available, localhost-first** digital coworker (licensed [FSL-1.1-MIT](../LICENSE.md): free to use, including at work, but not to offer as a competing product; each release becomes MIT after two years). It started as a Microsoft Hackweek 2026 demo and is now built for anyone to run with their own accounts and model keys.
+Ensemble is a shared workspace for a person and their agents: tasks, pages, projects, people, files, meetings and code in one place. The web app, desktop app, CLI and editor bridge use the same work context. It is source available under [FSL-1.1-MIT](../LICENSE.md).
 
----
+This guide describes the implementation inspected on **18 Oct 2026**. It is a code review, not a claim that every external account, installer or model was tested live. [What is real](18_WHAT_IS_REAL.md) summarizes the boundaries; individual guides explain the implementation.
 
 ## Direction
 
-These rules override any Microsoft-only, Dev-Box, or hackathon detail that still appears in the module docs.
+1. **Keep the work and its context together.** A task can link a project, repository, people, files, meeting notes and personal skills. Its document and run history stay with it.
+2. **Support local and hosted use.** Local development uses Postgres and Redis. Desktop and CLI use a local API with PGlite. Hosted accounts keep separate data and run code on their own paired computers.
+3. **Let the person choose what enters the workspace.** Connecting an app does not import its contents. Sync people reads contact metadata; content arrives through explicit search, attachment, upload or import.
+4. **Offer several ways to work.** The Hub assistant operates the app. Assigned agents perform research or code work. The CLI and external editors can use the same context.
+5. **Keep model choice explicit.** Use personal API keys, supported subscriptions on a paired computer, or operator-provided included models. Included AI has a monthly account allowance; it is not unlimited inference.
+6. **Make changes reviewable.** Assistant proposals, run permissions, publishing approvals, revision checks, Undo and retained run evidence have different jobs. A chat reply is not evidence that an action succeeded.
+7. **Document current behavior.** Public guides describe implemented behavior with source paths. Planned changes belong in `docs/design/` with a clear status. Hosting credentials and operational runbooks stay in the ignored `private/` folder.
 
-1. **Source available.** The code is public under [FSL-1.1-MIT](../LICENSE.md). The module docs are implementation guidelines, not a description of a private demo.
-2. **Localhost first.** Local development comes first. The VM deploy scripts are in `infra/deploy/`; the desktop app is in [DESKTOP.md](DESKTOP.md).
-   The hosted Hub also accepts public per-user accounts; it is not an invite-only personal instance. Public users bring their own keys, and host execution/credentials are restricted to verified operators. See [02 §16](02_MODULE_INTERACTION_HUB_UI.md#16-accounts-and-public-signup).
-3. **Connectors are pluggable, not Microsoft-shaped.** First wave: **Gmail + Outlook** (mail), **GitHub** (code; Azure DevOps connects only for search, attach and updates, [31](31_CONNECTORS_IN_USE.md)), **Teams** (messages / task context), plus calendar from the mail provider. Later: Notion, Linear, and office suites (Word / PPTX / Excel and Google Docs / Slides / Sheets). What is connected today is in [18](18_WHAT_IS_REAL.md#connectors-read-only).
-4. **No M365 Copilot.** The hackathon used a paste/browser path because Teams/transcripts were blocked in that tenant. Ensemble connects sources directly.
-5. **Many model providers.** GitHub Copilot remains one option. Also **Cursor, Gemini, Claude, OpenAI** (and later anything that speaks the same chat/tools contract). Complexity still picks a `{provider, model, effort?}` profile — the engineer is not locked to one vendor.
-6. **UI starts Notion-like.** Pages, properties, and a kanban board. Refine the look as it matures.
-7. **Future ideas stay out of the docs** until you lay them out. Do not invent a STATUS file, a remote-access guide, or a Copilot-API probe doc.
+## 1. Product surfaces
 
-Module files contain *as-built* notes (paths, invariants, bugs we already paid for). Read those as **"this is how the hard parts were solved"**. [18 · What is real](18_WHAT_IS_REAL.md) says which parts run today.
+| Surface | What it does now | Guide |
+| --- | --- | --- |
+| Today | Profession desk, briefing, focus tasks, reminders and configurable tiles | [Hub](02_MODULE_INTERACTION_HUB_UI.md) |
+| Board and task pages | Triage, prioritize, group, assign, document and review work | [Hub](02_MODULE_INTERACTION_HUB_UI.md), [runs](05_MODULE_TASK_ORCHESTRATOR.md) |
+| Context and projects | Maintain people, identities, projects, repositories, preferences and profession-specific records | [Context](03_MODULE_CONTEXT_ENGINE.md) |
+| Pages and meeting notes | Structured documents, nested pages, comments, history, templates, mentions and collaboration | [Hub](02_MODULE_INTERACTION_HUB_UI.md#13-document-style-pages) |
+| Files | Original uploads, previews, supported edits, app imports and conversion to pages | [Files](32_FILES.md) |
+| Diagrams and Plots | Editable diagram sources and datasets/figures with export | [Diagrams](21_BLOCK_DIAGRAMS_DSL.md), [Plots](20_PLOTS_DESIGN.md) |
+| Assistant | Read supported open surfaces and propose typed app or connected-app actions | [Architecture](11_HOW_THE_ASSISTANT_WORKS.md), [action map](34_ASSISTANT_ACTIONS.md) |
+| Workspace, Code and Needs me | Durable agent jobs, decisions, code review, source control and a human-unlocked terminal | [Workspace](06_MODULE_WORKSPACE_AND_SURFACES.md), [Code](16_CODE_TAB.md) |
+| Skills and morning brief | Versioned personal instructions, brief personalization and completed-work learning | [Skills](04_MODULE_SKILL_FORGE.md) |
+| Spaces and sharing | Separate workspaces, membership, item shares, public links and presence | [Spaces](28_ENSEMBLE_SPACES.md), [sharing](29_SHARING.md) |
+| Connect and settings | App grants, MCP connections, model choices, profiles, appearance, devices and data controls | [Hub](02_MODULE_INTERACTION_HUB_UI.md), [connectors](31_CONNECTORS_IN_USE.md) |
 
----
+The public app includes signup and recovery. This is no longer a single-account hackathon demo or an engineer-only prototype. Profession/module choices affect which surfaces and records appear.
 
-## 1. The problem (why chat is the wrong primary interface)
-
-Today an engineer's interaction with an agent looks like this:
-
-```text
-Engineer has a goal → opens chat → types a request (loses 80% of context)
-        → Agent guesses intent → wrong output → re-explain context → wrong goal
-        → (or: "forget it, I'll do it myself")
-```
-
-**Root causes:**
-
-1. **Context starvation.** The agent doesn't know what I'm working on, why, with whom, or how I like it done. All of that already exists in mail, chat, meeting notes, calendar, issues and repos — but it is never assembled.
-2. **Chat is pull-only and stateless.** I must remember to ask; the agent can't proactively surface *"here's what you owe from yesterday's design review."*
-3. **No memory of my way of working.** Every PR description, commit message, email reply, or chat answer is re-generated from scratch in a generic style, so it needs rework.
-4. **No shared workboard.** I can't see what the agent is doing, how far it is, what it plans next, or where it needs a decision from me.
-
-**Thesis:** If engineers and agents had co-existed from day one, the interface would not be a chat box. It would be a **shared workspace**: a board of tasks, a live context model of the engineer, a library of personal skills, and a set of scheduled agent jobs — with chat demoted to one of several input channels.
-
----
-
-## 2. The vision in one picture
+## 2. How work flows
 
 ```text
- Scheduled jobs (2 fetches a day + a button — see 05 §2)
- ┌──────────────────────────────────────────────────────────────────────┐
- │ Mail (Gmail / Outlook) · Chat (Teams, later more) · Calendar ·       │
- │ GitHub · (later: Notion, Linear, office docs)                        │
- └──────────────────────────────────┬───────────────────────────────────┘
-                                    ▼
- ┌──────────────────────── ENSEMBLE HUB (the interaction page) ─────────────────────┐
- │  Today / Morning Briefing │ Task Board (Kanban: Me / Agent / Needs me) │       │
- │  Agent Run Timeline + Approvals │ Context Pane (people, repos, docs)           │
- │  Notion-like document pages                                                    │
- └───────────┬─────────────────────────┬──────────────────────────┬───────────────┘
-             ▼                         ▼                          ▼
-   Task Orchestrator            Skill Forge                 Context Engine
-   (plans, runs, HITL gates)    (personal skills mined      (Engineer Graph: people,
-                                 from history)               projects, repos, prefs)
-                                                                  │
-                    Connector plugins (OAuth per source) + model-provider plugins
-
- Surfaces: Coding Workspace (sandbox / native) · Hub assistant (every page) ·
-           Context Bridge (read-only MCP for editors)
+Person adds work / explicitly imports content
+    → tasks, pages, files and linked context
+    → Hub assistant actions OR an assigned research/code job
+    → review / Apply / Needs me when required
+    → saved result, run evidence and history
 ```
 
----
+The assistant uses typed tools, selected by request and surface; built-in playbooks explain the calls. Personal skills are saved user instructions. Neither is a general-purpose scheduler. The scheduler currently handles specific product jobs such as reminders, morning briefs, retention and device leases. Arbitrary recurring workflows are not implemented.
 
-## 3. A day in the life (target experience)
+## 3. Where Ensemble runs
 
-**08:55 — Morning briefing (before I even ask).** I open the Hub. The agent has already:
+| Form | Storage and execution |
+| --- | --- |
+| Local development | Next.js UI, Fastify API, Python model/plot service; Postgres and Redis in Docker |
+| Hosted web | Public per-account API and web UI; code/terminal use a paired computer for ordinary accounts |
+| Desktop | Tauri shell, static Hub UI and a local Node API with embedded PGlite and in-process model adapters |
+| CLI | Terminal UI and the same local runtime; device pairing, agent chat, task execution and MCP setup |
+| Context Bridge | Read-only context tools over stdio or HTTP, including the hosted `/mcp` endpoint |
 
-- Read overnight mail (Gmail or Outlook) and chat, and turned 4 of them into proposed todos (*"Reply to Priya re: latency regression — she asked for numbers by EOD"*).
-- Processed yesterday's *"Ranker design review"* notes: my action items are extracted, attributed (*"you agreed to write the ADR; Rahul owns the load-test"*), and linked to the source.
-- Pulled my open GitHub PRs; flagged one PR with a stale review comment from 3 days ago.
-- Drafted a plan for the day honouring my calendar (2 focus blocks, 3 meetings).
+Desktop/CLI pairing is not a bidirectional replication of the entire hosted database. See [desktop](23_LOCAL_DESKTOP_DESIGN.md) and [remote tasks](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md).
 
-**09:00 — Triage in 2 minutes, not 20.** Each proposed todo has three buttons: **I'll do it · Agent does it · Later/Drop**. I assign:
+## 4. Current limits
 
-- *"Reply to Priya with latency numbers"* → **Agent** (it knows which dashboard, knows my reply tone from 200 past replies).
-- *"Write the ADR"* → **Me** (with the agent as a helper).
-- *"Bump the retry lib in service-X"* → **Agent**, with the PR gated on my approval.
+- Native connectors, board importers and vendor MCP tools have different coverage. A catalog entry alone does not promise native search or an importer.
+- Generic contact sync does not ingest mail/chat/calendar bodies or create tasks. Scheduled connector fetching currently reads nothing.
+- The Hub assistant has no native email, Slack or Teams message-send action. Some connected-item update tools and vendor MCP tools can write after approval; these are separate capabilities.
+- Surface awareness is structured application state, not a screenshot reader or arbitrary browser controller.
+- File text extraction is not OCR, audio transcription or video understanding. Original-file edits are format-specific.
+- Semantic/vector retrieval, a full historical Skill Forge mining pipeline, hosted OAuth authorization for external MCP clients and arbitrary recurring workflows are not built.
 
-**09:05–11:30 — I code; the agent works in parallel.** The board shows agent tasks moving: *Gathering context → Drafting → Waiting for approval → Done*. When I click **"Help me"** inside my coding workspace, the agent already has: the ADR template I used last time, the design-review notes, the related PRs, and my writing-style skill. I never type a paragraph of context.
+## 5. Modules and source ownership
 
-**11:30 — Control points.** Two cards wait in **Needs Me**: (1) the drafted reply to Priya (approve / edit / send), (2) a PR ready to open, with a description written in my PR style for that repo. I approve both in 40 seconds.
-
-**Throughout — the Hub assistant.** A floating chat on every page that can operate the Hub: *"add a todo for the load test"*, *"what did Shachee ask me for?"*, *"sync my mail"*. It reads the same context the briefing does and writes through the same code paths the buttons use ([docs/11](11_HOW_THE_ASSISTANT_WORKS.md)). Side cards inside Teams/Outlook were tried and deleted — see [docs/06 §B](06_MODULE_WORKSPACE_AND_SURFACES.md#b-surface-assist--designed-built-then-deleted).
-
-**17:30 — Wrap-up.** The agent posts a day summary to the Hub, notes what slipped, and pre-plans tomorrow. Every agent action is in an audit timeline with the inputs it used and the approvals it received.
-
----
-
-## 4. Scope
-
-| Tier | Scope | Goal |
-|---|---|---|
-| **P0 – Must** | Hub UI (Notion-like pages + Briefing + Task Board + Needs-Me + Run Timeline) · Context Engine with **Gmail, Outlook, GitHub, calendar** · Orchestrator with two daily fetches + a button and 2 autonomous task types (email reply, PR description/opening) · Skill Forge v1 (PR & commit style + email tone) · Audit log · Pluggable model providers (at least one of Copilot / OpenAI / Claude / Gemini / Cursor) | A stranger can clone, run on localhost, connect *their* mail + GitHub, and live a day in the product |
-| **P1 – Should** | **Teams** messages · Hub assistant that operates the app · Coding-workspace "Help me" + sandbox execution · Context Bridge (read-only MCP for VS Code / Cursor / Copilot CLI) | Beyond chat, multi-surface, still local |
-| **P2 – Could** | Notion / Linear import · Google Docs / Sheets / Slides and Word / PPTX / Excel as context · Skill Forge v2 (auto-discover skills) · Multi-agent split (Researcher / Drafter / Reviewer) · Production hosting | Useful for more of the public; still optional |
-
-**Explicitly out of scope for now:** production multi-tenant SaaS, mobile, Azure DevOps sync and publishing, M365 Copilot, Dev Box / remote tunnels, Agent 365.
-
----
-
-## 5. Modules (each has its own plan file)
-
-| ID | Module | Plan file | Summary |
-|---|---|---|---|
-| M1 | Interaction Hub (UI) | [`02_MODULE_INTERACTION_HUB_UI.md`](02_MODULE_INTERACTION_HUB_UI.md) | The shared page: briefing, task board, approvals, agent timeline, context pane, coding-workspace entry. Notion-like document pages. |
-| M2 | Context Engine | [`03_MODULE_CONTEXT_ENGINE.md`](03_MODULE_CONTEXT_ENGINE.md) | Pluggable connectors, normalization, the Engineer Graph, context-pack builder |
-| M3 | Skill Forge | [`04_MODULE_SKILL_FORGE.md`](04_MODULE_SKILL_FORGE.md) | Mines historic artefacts to produce personal, versioned skills; skill router |
-| M4 | Task Orchestrator | [`05_MODULE_TASK_ORCHESTRATOR.md`](05_MODULE_TASK_ORCHESTRATOR.md) | Scheduled jobs, todo proposal, task lifecycle, agent workers, planner/executor, HITL gates, retries |
-| M5 | Coding Workspace | [`06_MODULE_WORKSPACE_AND_SURFACES.md`](06_MODULE_WORKSPACE_AND_SURFACES.md) | Agent workboard, durable queue, sandbox/native execution, verified PR/completion. Surface-assist cards were deleted — §B |
-| M6 | Governance, Audit & Metrics | [`07_MODULE_GOVERNANCE_AUDIT_METRICS.md`](07_MODULE_GOVERNANCE_AUDIT_METRICS.md) | Identity, permission scopes, action policy, audit ledger, before/after measurement |
-| M7 | Context Bridge | [`13_MODULE_CONTEXT_BRIDGE.md`](13_MODULE_CONTEXT_BRIDGE.md) | Read-only MCP so editors (VS Code, Cursor, Copilot CLI, …) retrieve the same briefs and skills |
-
-Other documents:
-
-| Topic | File | Summary |
-|---|---|---|
-| Tech stack | [`01_TECH_STACK_AND_ENVIRONMENT.md`](01_TECH_STACK_AND_ENVIRONMENT.md) | Languages, frameworks, services, local env, secrets, model providers |
-| How the assistant works | [`11_HOW_THE_ASSISTANT_WORKS.md`](11_HOW_THE_ASSISTANT_WORKS.md) | Hub Action Layer: how a chat message becomes a row |
-| Code tab | [`16_CODE_TAB.md`](16_CODE_TAB.md) | Review, rewrite, commit — and a guarded terminal |
-| Repository structure | [`17_REPOSITORY_STRUCTURE.md`](17_REPOSITORY_STRUCTURE.md) | What lives where in this repo |
-| What is real | [`18_WHAT_IS_REAL.md`](18_WHAT_IS_REAL.md) | Built and tested vs. still a placeholder |
-
----
+| Area | Main implementation | Guide |
+| --- | --- | --- |
+| Hub | `apps/hub-web/app`, `components`, `lib` | [02](02_MODULE_INTERACTION_HUB_UI.md) |
+| Context and connected apps | `apps/hub-api/src/context`, `connectors`, `people`, `projects` | [03](03_MODULE_CONTEXT_ENGINE.md), [31](31_CONNECTORS_IN_USE.md) |
+| Personal skills | `apps/hub-api/src/routes/skills.ts`, `jobs/skill-mining.ts`, `cowork/morning-skill.ts` | [04](04_MODULE_SKILL_FORGE.md) |
+| Agent execution | `apps/hub-api/src/workspace`, `devices`, `remote` | [05](05_MODULE_TASK_ORCHESTRATOR.md), [06](06_MODULE_WORKSPACE_AND_SURFACES.md) |
+| Access, audit and retention | `apps/hub-api/src/lib`, `sharing`, `jobs` | [07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md) |
+| Assistant | `apps/hub-api/src/assistant` | [11](11_HOW_THE_ASSISTANT_WORKS.md) |
+| Editor context | `apps/context-bridge`, `apps/hub-api/src/bridge` | [13](13_MODULE_CONTEXT_BRIDGE.md) |
 
 ## 6. Repository structure
 
-Monorepo, **pnpm workspaces** for TS + a **Python service** for agent workers (Python has the richest agent SDKs; TypeScript owns the UI and the API).
-
-The annotated tree lives in [`17_REPOSITORY_STRUCTURE.md`](17_REPOSITORY_STRUCTURE.md).
-
----
+See [17](17_REPOSITORY_STRUCTURE.md) for the directory map and [01](01_TECH_STACK_AND_ENVIRONMENT.md) for configuration, development and checks. Root [README](../README.md) is the setup entry point. `AGENTS.md` defines which docs must move with a code change.
 
 ## 7. Core domain model (shared across modules)
 
-Accounts are `User` rows scoped by `userId`, not organizations. An account can own **Ensemble spaces**: more `User` rows with `ownerId` set to the account. Every record is scoped by `userId`, so a space shares nothing with its siblings; requests carry `userId` (the open space) and `accountId` (who signed in). See [28](28_ENSEMBLE_SPACES.md). A space can be shared: `SpaceMember` (whole space, viewer or editor), `Share` (one item), `Contact` (who an account shares with) and `SpaceTransfer` (the one change of owner), and `PublicLink` (one page, task, diagram or meeting notes anyone with the link can open). `User.avatar` is an optional picture avatar. A member's request still runs as the space, with `request.access` saying how they got in; see [29](29_SHARING.md). `User.emailVerifiedAt` gates hosted agent/connector/model use. `User.gender`, `profession`, `organization`, `heardFrom`, and `profileCompletedAt` hold the optional "About you" profile step. `Session` stores hashed browser-cookie tokens; `AuthIdentity` stores unique provider/subject login mappings (distinct from connector `AuthToken`), `EmailToken` stores hashed password-reset tokens and hashed 4-character verification codes with attempt counts, and `AuthFlow` stores short-lived PKCE/nonce state for browser-bound social login. Schema: `apps/hub-api/prisma/schema.prisma`.
+The authoritative shapes are `apps/hub-api/prisma/schema.prisma` and `packages/shared-types/src/`. This table describes their roles rather than maintaining a second incomplete TypeScript schema.
 
-The SQL migration `20261006010000_account_data_lifetime` adds cascading account-lifetime foreign keys to legacy `user_id` tables. They are `NOT VALID` so old placeholder/orphan data is preserved, but new writes require a live account. This stops in-flight work from recreating rows after account erasure; it is not row-level security. These keys exist only in SQL, not in `schema.prisma`, so `prisma migrate dev` and `prisma migrate diff` propose `DROP CONSTRAINT "<table>_account_lifetime_fkey"` for each one: delete those lines from any generated migration. `src/workspace/constraints.integration.test.ts` allows exactly that difference and fails on any other drift. Dev bypass creates a real local placeholder account before handling requests.
+| Records | Role |
+| --- | --- |
+| `User`, `Session`, `AuthIdentity`, `EmailToken`, `AuthFlow` | Account/profile, hashed login sessions, external login identities and recovery/verification flows |
+| Additional `User` rows with `ownerId` | Separate Ensemble spaces. Request `userId` is the open space; `accountId` is the signed-in person |
+| `SpaceMember`, `Share`, `Contact`, `SpaceTransfer`, `PublicLink` | Membership, item shares, sharing contacts, ownership transfer and public read links |
+| `Task`, `TaskPage`, `PageRevision`, `PageTemplate` | Work and its structured documents; task or standalone pages, nested pages, revisions and private templates |
+| `Person`, `PersonIdentity`, `Project`, `Repo`, `Deliverable`, project links | Saved context and relationships; external identities are distinct from display names |
+| `Artifact`, `ArtifactChunk`, `Extraction`, `ContextSuppression` | Saved source content, extracted metadata and deletion suppressions. Vector columns exist but semantic retrieval is not wired |
+| `Skill`, `SkillVersion`, `SkillFeedback` | Current personal instruction, retained versions and feedback; current body is authoritative |
+| `WorkspaceJob`, `Run`, `RunStep`, approvals and decisions | Durable assignment, attempts, evidence and exact continuations |
+| `AssistantConversation`, `AssistantMessage`, `AssistantWorkflow` | Chat state, tool proposals/receipts and ordered dependent-write checkpoints |
+| Files, meetings, plots, diagrams and desk records | Feature-owned content; their owning guides document storage and limits |
+| `AuditLedger`, `MetricEvent`, included usage/period records | Action history, observations and metered included-model usage |
 
-The migration `20261007140000_identities_links_meetings` adds `person_identities` (every address and handle a person is known by), `project_links` (a source container mapped to a project), the calendar event, transcript and vendor id on `meeting_notes`, and `tasks.meeting_note_id` for action items that cite their meeting ([03 §2.3, §4.7, §4.8](03_MODULE_CONTEXT_ENGINE.md#23-meeting-notes-sources)).
+Most content is scoped by the open space's `userId`; sharing policy further limits what a guest may read/write. Credentials, personal reminders and personal settings do not become shared just because an item is shared. [28](28_ENSEMBLE_SPACES.md) and [29](29_SHARING.md) define these boundaries.
 
-```ts
-// packages/shared-types/src/domain.ts (abridged — keep, then generalize source kinds)
-type Task = {
-  id: string; title: string; description: string;
-  source: {
-    kind: 'email' | 'chat' | 'meeting' | 'github' | 'manual' | 'notion' | 'linear' | 'other';
-    provider?: string; // 'gmail' | 'outlook' | 'teams' | …
-    ref: string; excerpt?: string;
-  };
-  owner: 'me' | 'agent' | 'unassigned';
-  status: 'proposed' | 'todo' | 'in_progress' | 'waiting_approval' | 'blocked' | 'done' | 'dropped';
-  priority: 'critical' | 'p0' | 'p1' | 'p2'; // Critical, High, Medium, Low
-  assigneeAccountId?: string; // shared spaces: the member an owner:'me' task is with (null = the space's owner)
-  due?: string; project?: string; people: string[]; repo?: string;
-  agentPlan?: PlanStep[]; runIds: string[];
-  createdBy: 'agent' | 'me'; createdAt: string; updatedAt: string;
-};
+SQL account-lifetime foreign keys in migration `20261006010000_account_data_lifetime` stop late writes after account deletion. They are `NOT VALID` to preserve legacy rows and are intentionally absent from Prisma's relation model. Do not accept generated migration statements dropping them; `workspace/constraints.integration.test.ts` checks the allowed difference. This is not database row-level security.
 
-type PlanStep = {
-  id: string; title: string;
-  status: 'pending' | 'running' | 'done' | 'failed' | 'needs_approval';
-  toolCalls?: ToolCallRef[];
-};
+## 8. Evidence and product measurement
 
-type Run = {
-  id: string; taskId: string; worker: string; skillIds: string[]; contextPackId: string;
-  steps: RunStep[]; approvals: Approval[]; startedAt: string; endedAt?: string;
-  outcome?: 'success' | 'failed' | 'cancelled';
-};
+Run traces and usage records are evidence about actual work; sample data and historical design targets are not measured productivity results. The Metrics page uses recorded events and identifies insufficient observations. Included AI credits are metered separately from provider cost estimates. See [07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md) and [33](33_INCLUDED_AI.md).
 
-type Approval = {
-  id: string; runId: string;
-  kind: 'send_email' | 'open_pr' | 'post_chat' | 'other';
-  preview: unknown;
-  decision?: 'approved' | 'edited' | 'rejected'; decidedAt?: string; editedPayload?: unknown;
-};
+## 9. Reading order
 
-type ContextPack = {
-  id: string; taskId?: string; summary: string; items: ContextItem[];
-  skillsSuggested: string[]; builtAt: string;
-};
-
-type Skill = {
-  id: string; name: string;
-  scope: { repo?: string; channel?: string; person?: string };
-  version: number; body: string /* SKILL.md */; evidence: string[]; confidence: number;
-};
-```
-
-> **Fields added on top of the core model:**
->
-> - **Task:** `complexity` (`easy | medium | high | max`) + `complexitySource` (05 §3), `notes` (Markdown body), `deliverableId`, `skillIds` (03 §12), `todayFocus` (`auto | keep | hidden`, 02 §3.1), `boardOrder` (02 §3.2), `blockedQuestion` (05 §12), `completedAt` / `deletedAt` (07 §1.1), `sourceRef`.
-> - **TaskPage:** document content, revision, mentions and annotations; `historySavedAt` and `editorAccountId` support bounded saved history. `PageRevision` keeps at most 30 checkpoints with author and timestamp and cascades with its page; both history and template rows follow account-deletion cascades; `PageTemplate` holds up to 50 private snapshots per space/profile (migration `20261017093000_page_versions_and_templates`, [02 §13](02_MODULE_INTERACTION_HUB_UI.md#page-history-copies-and-private-templates)); nullable `taskId` for standalone notes, and nullable `parentId` for nested pages (migration `20261015000000_nested_pages`). `collabEpoch`, `collabVersion` and `collabRevision` (migration `20261016120000_collab_marker`) record which live-editing authority wrote the content ([29 §5](29_SHARING.md#5-live-presence)). Child pages remain normal page rows; imported Notion tables remain normal blocks. `deletedAt` (migration `20261009073000_note_trash`) keeps deleted standalone notes recoverable through Trash; task documents follow their parent task. See [02 §13](02_MODULE_INTERACTION_HUB_UI.md#standalone-notes).
-> - **Run:** `outcome` also allows `needs_info` and `waiting_approval` (05 §12); `complexity`, `requestedModel`, `skillSignatures` (id, version, SHA-256), `checkpoint` (04 §4, 04 §10); per-step `model` and `credits` (01 §6.3).
-
----
-
-## 8. Product principles (what we will be judged on)
-
-| Principle | How Ensemble demonstrates it |
-|---|---|
-| **Beyond chat** | The primary surface is a board + briefing + approvals; chat is one optional input. Agent completes tasks (sends reply, opens PR). |
-| **Smart orchestration** | Scheduled jobs → todo proposals → planner → workers → HITL gates → mail/GitHub (and later other) actions. |
-| **Measurable before/after** | Minutes to triage morning, context re-typing avoided, drafts accepted without edit, PRs opened by agent. |
-| **Trustworthy by default** | Least-privilege OAuth per connector, per-action policy, tamper-evident audit ledger, replayable runs. No silent high-risk writes. |
-| **Human-in-the-loop** | Explicit control points: task assignment, approval cards with preview, "pause agent", per-action risk levels, undo where possible. |
-| **Works for anyone** | Localhost, your accounts, your model keys. Not a single-vendor tenant. |
-
----
-
-## 9. Success metrics
-
-- **Morning triage:** 20 min → < 3 min
-- **Context re-typing before asking for help:** ~150 words typed → 0 (one click)
-- **Agent-drafted replies/PR descriptions accepted with ≤ minor edits:** ≥ 70%
-- **Meeting action items captured without manual note-taking:** ≥ 90% recall on test meetings
-- **Every autonomous action:** 100% audited, 0 high-risk actions without approval
-
----
-
-## 10. Reading order
-
-1. `00_PROJECT_OVERVIEW.md` (this) — especially **Direction**
-2. [`18_WHAT_IS_REAL.md`](18_WHAT_IS_REAL.md)
-3. `01_TECH_STACK_AND_ENVIRONMENT.md`
-4. `17_REPOSITORY_STRUCTURE.md`
-5. `02`–`07` and `13` module plans
-6. [`11_HOW_THE_ASSISTANT_WORKS.md`](11_HOW_THE_ASSISTANT_WORKS.md)
-7. [`16_CODE_TAB.md`](16_CODE_TAB.md)
-
----
-
-## 11. Feature index
-
-Where each hard feature lives in this tree. Built-or-not status per feature is in [18](18_WHAT_IS_REAL.md).
-
-| Feature | Doc | Code |
-|---|---|---|
-| Morning briefing (Today) | 02 §3.1 | `apps/hub-web/app/(hub)/today/`, `apps/hub-web/components/today/`, `apps/hub-api/src/routes/cowork.ts`, `apps/hub-api/src/cowork/` |
-| Private reminders, desktop notifications, fixed snooze | 02 §14, 07 §1.2 | `apps/hub-api/src/routes/system.ts`, `apps/hub-api/src/routes/board.ts`, `apps/hub-api/src/assistant/tools/reminders.ts`, `apps/hub-web/components/shell/notifier.tsx` |
-| Task board, triage, assignment | 02 §3 | `apps/hub-web/app/(hub)/board/`, `apps/hub-web/components/board/`, `apps/hub-api/src/routes/board.ts`, `apps/hub-api/src/routes/tasks.ts`, `apps/hub-api/src/connectors/triage.ts` |
-| Approvals and blocked questions | 07 §2 | `apps/hub-web/app/(hub)/needs-me/`, `apps/hub-api/src/routes/misc.ts`, `apps/hub-api/src/routes/board.ts` |
-| Editor permission prompts and exact-choice questions | 06 A5 | `apps/hub-api/src/lib/decisions.ts`, `apps/hub-api/src/routes/decisions.ts`, `apps/hub-web/components/needs-me/editor-decisions.tsx`, `scripts/ensemble-hook.mjs` |
-| Agent run timeline, reasoning, cost | 05 §12 | `apps/hub-web/app/(hub)/runs/`, `apps/hub-api/src/routes/runs.ts` |
-| Engineer Graph (people, projects, repos, preferences) | 03 | `apps/hub-web/app/(hub)/context/`, `apps/hub-web/components/context/`, `apps/hub-api/src/routes/context.ts`, `apps/hub-api/src/context/` |
-| Interactive context graph | 02 §13 | `apps/hub-web/components/context/graph.tsx`, `apps/hub-web/lib/graph-layout.ts` |
-| Skill library, editing, improvement | 04 | `apps/hub-web/app/(hub)/skills/`, `apps/hub-api/src/routes/skills.ts`, `apps/hub-api/src/assistant/tools/skills.ts` |
-| Agent workboard and repository execution | 06 A1–A6 | `apps/hub-web/app/(hub)/workspace/`, `apps/hub-api/src/workspace/` |
-| Code review tab, guarded terminal | 16 | `apps/hub-web/app/(hub)/code/`, `apps/hub-web/components/code/`, `apps/hub-api/src/routes/code.ts`, `apps/hub-api/src/routes/terminal.ts` |
-| Metrics (before/after) | 07 §6 | `apps/hub-web/app/(hub)/metrics/`, `apps/hub-api/src/routes/runs.ts`, `apps/hub-api/src/lib/metrics.ts` |
-| Settings: models, connectors, autonomy | 02, 01 §6 | `apps/hub-web/app/(hub)/settings/`, `apps/hub-web/components/settings/`, `apps/hub-api/src/routes/settings.ts`, `apps/hub-api/src/routes/connectors.ts` |
-| Document pages, @ mentions as real links | 02 §13 | `apps/hub-web/components/editor/`, `apps/hub-web/components/task/task-page.tsx`, `apps/hub-api/src/pages/`, `apps/hub-api/src/routes/tasks.ts` |
-| Selection comments and inline agent replies | 02 §13 | `apps/hub-web/components/comments/`, `apps/hub-api/src/routes/comments.ts` |
-| Prompt transparency | 02 | Settings → Prompts (`apps/hub-web/components/settings/sections.tsx`), `GET /api/prompts` in `apps/hub-api/src/routes/system.ts` |
-| Ensemble context inside an editor (M7) | 13 | `apps/context-bridge/`, `apps/hub-api/src/bridge/`, `apps/hub-web/components/connect/` |
-| Hub assistant and the Action Layer | 11, 02 §10 | `apps/hub-api/src/assistant/`, `apps/hub-api/src/routes/assistant.ts`, `apps/hub-web/components/assistant/` |
-| Undo / redo, including the agent's writes | 02 §11, 11 §6 | `apps/hub-api/src/lib/undo.ts`, `apps/hub-api/src/routes/misc.ts` |
-| Completed/deleted retention and restore window | 07 §1.1 | `apps/hub-api/src/jobs/retention.ts`, `apps/hub-api/src/routes/system.ts`, `apps/hub-web/app/(hub)/trash/` |
-| Three recent skill versions | 04, 13 §5.3 | `apps/hub-api/src/routes/skills.ts` (`KEEP_VERSIONS`). Skill Forge miners are not built (`apps/skill-forge` is a stub) |
-| Context suppression (deletions survive a fetch) | 03 §4.6 | `apps/hub-api/src/connectors/ingest.ts` |
-| Audit ledger (hash-chained, INSERT-only) | 07 §3 | `apps/hub-api/src/lib/ledger.ts`, `apps/agent-runtime/ensemble_agent/audit/ledger.py` |
-| Scheduled fetching at set times plus a button | 05 §2 | `apps/hub-api/src/jobs/scheduler.ts`, `apps/hub-api/src/connectors/sync.ts` |
-| Capability-aware model/thinking presets | 01 §6, 02 §13 | `apps/hub-api/src/lib/complexity.ts`, `apps/hub-api/src/runtime/models.ts`, `packages/shared-types/src/assistant.ts` |
-| Waiting animations and reduced motion | 02 §15 | `apps/hub-web/components/motion/`, `packages/brand/` |
-| GitHub via existing CLI login | 03 §10 | `apps/hub-api/src/connectors/accounts.ts` (`gh auth token`), `apps/hub-api/src/lib/git-auth.ts` |
-| Plots | [20](20_PLOTS_DESIGN.md) | `apps/hub-web/app/(hub)/plots/`, `apps/hub-api/src/plots/`, `apps/agent-runtime/ensemble_agent/plots/` |
-| Block diagrams | [21](21_BLOCK_DIAGRAMS_DSL.md), [22](22_BLOCK_DIAGRAMS_FOR_AGENTS.md) | `packages/block-diagrams/`, `apps/hub-web/app/(hub)/diagrams/`, `apps/hub-api/src/diagrams/` |
-| Desktop app (local sidecar) | [DESKTOP](DESKTOP.md), [23](23_LOCAL_DESKTOP_DESIGN.md) | `apps/desktop/`, `apps/hub-api/src/desktop/` |
-| Remote tasks on a paired computer | [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md) | `apps/hub-api/src/remote/`, `apps/hub-api/src/devices/` |
-| Templates, desks and marketplace | [design/](design/) | `apps/hub-web/app/(hub)/marketplace/`, `apps/hub-web/components/desk/`, `apps/hub-api/src/marketplace/`, `apps/hub-api/src/layouts/` |
-
-**Verification:** isolate fixtures (safe databases, mocked external/model calls) from live checks. A fixture test does not claim that an external PR, model action or desktop notice was actually sent.
-
-
-`AssistantMessage.credentialSource` (16 Oct 2026, code inspection) is an optional display label recording whether a dock reply used an API credential or a subscription on a named computer. The additive migration is `20261016100000_assistant_credential_source`; older messages have no label.
-
-### Run feedback
-
-`Run.feedback` is a bounded JSON list (up to 100 tags of 4,000 characters), with ID, text, author, time and optional follow-up job ID. Follow-up `WorkspaceJob.context.feedbackOnRun` links back to the source run; runs remain separate. The profile-change migration is a design only ([plan](design/real-world-next.md)).
+Start with this overview, [current capabilities](18_WHAT_IS_REAL.md), [setup](01_TECH_STACK_AND_ENVIRONMENT.md) and [repository map](17_REPOSITORY_STRUCTURE.md), then the guide for the feature you are changing. [The documentation index](README.md) lists current guides and historical designs separately.

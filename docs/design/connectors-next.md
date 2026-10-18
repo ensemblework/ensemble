@@ -1,5 +1,7 @@
 # Connectors: what could come next
 
+Historical design record, partly implemented or superseded; **not a current feature/status guide**. Original dates and checklists below describe that earlier work. Use the [design index](README.md) and current feature guides before implementing or relying on these details.
+
 **Design note, not built.** Options for the owner to review after [31](../31_CONNECTORS_IN_USE.md) shipped on 12 Oct 2026. Each idea says what other AI apps do, what it would take here, and what it would cost on the current hosting (one small VM, Vercel Hobby). Nothing below is planned until it moves into the roadmap.
 
 ## 1. Hand an issue to Ensemble from the tracker itself

@@ -1,27 +1,31 @@
-# Caching
+# Caching and transient state
 
-Ensemble does not keep a second copy of tasks, pages, or diagrams in Redis, and authenticated JSON is not given a `Cache-Control` max-age. Those choices are in `docs/UI_PERF_DESIGN.md`. The caches that do exist are process-local maps with a bound.
+Code inspected **18 Oct 2026**. Ensemble uses several kinds of caches; it is no longer accurate to describe all of them as process-local maps. Domain records remain authoritative in the database. Authenticated content must not be treated as public CDN data.
 
-## What is cached
+## Cache map
 
-| Cache | Where | Bound | TTL | Invalidation |
-|---|---|---|---|---|
-| Git changed-file stats | `apps/hub-api/src/routes/code.ts` | 200 entries, least recently used | 8 seconds | A miss after the TTL re-reads git. Editing a file is visible on the next miss. |
-| Discovered repo lists | `apps/hub-api/src/lib/git.ts` | 32 keys, least recently used | 20 seconds | Expired keys are dropped on the next lookup. |
-| Suppressed context keys | `apps/hub-api/src/connectors/ingest.ts` | 64 keys, least recently used | 60 seconds | The timer deletes the key. A full suppression set is at most one entry per user and kind. |
-| Sidebar prefetch dedupe | `apps/hub-web/lib/prefetch.ts` | 32 hrefs, least recently used | 20 seconds | The next hover after the window refetches. |
-| OAuth `state` values | `apps/hub-api/src/connectors/oauth.ts` | 64 in flight | 10 minutes | Expired states are deleted when a new sign-in starts. The state is single use. |
-| SSE tickets | `apps/hub-api/src/routes/misc.ts` | 200 | 60 seconds | Deleted when the stream connects, and expired tickets are swept when a new one is issued. |
-| Terminal sessions and passkey challenges | `apps/hub-api/src/routes/terminal.ts` | 100 sessions, 100 challenges | idle 30 minutes, max 8 hours, challenges 2–5 minutes | Expired rows are removed when a new session or challenge is created. |
-| Repo mirror checkouts | `apps/hub-api/src/repo/mirror.ts` | one in-flight promise per checkout | the promise is removed when it settles | Not a result cache. |
-| React Query | hub-web | the library's garbage collection | per-query `staleTime` | Mutations call `invalidateQueries` for the keys they change. |
+| Area | Storage / lifetime | Invalidation or boundary |
+| --- | --- | --- |
+| UI queries | React Query, per-query stale/GC settings | Scoped query keys and mutation/SSE invalidation; not durable offline synchronization |
+| Navigation prefetch | Browser route/query prefetch dedupe | Short bounded href window; route-specific behavior |
+| Provider discovery | `model_catalogs` database plus runtime caches | Credential fingerprint/key change, weekly freshness, failed-fetch retry and explicit refresh; metadata-only |
+| Git stats/repository lists | Bounded process maps in Code/Git helpers | Short TTLs; edits are reflected on refresh/miss, not a second checkout cache |
+| Repository mirror preparation | In-flight promise plus managed temporary checkout | Promise removed when settled; not cached private API JSON |
+| Context suppressions | Bounded helper cache | Short TTL/invalidation around suppression changes |
+| OAuth state, SSE tickets and passkey challenges | Short-lived single-use state in the owning store | Redeemed/expired; authorization state, not reusable content |
+| Remote file/code/subscription relays | Bounded Redis transient request/answer state | Timeouts, ownership/token checks and expiry; not arbitrary durable file backup |
+| Included catalog/credits on paired runtime | Short local read cache of the account's host response | Host remains authoritative for every reservation/call; not a local credit grant |
+| Version/update discovery | API's bounded update-result cache | Five minutes, shorter after failure; signed packages/manifest still validated |
+| Plot data/render preparation | Feature-specific bounded caches | Dataset/spec identity and owning plot implementation; [20](20_PLOTS_DESIGN.md#6-caching) |
 
-The pause flag `ensemble:paused:<userId>` in Redis has no TTL on purpose. Expiring it would resume model calls the person had stopped. It is one key per user and it is deleted on resume.
+Pause flags intentionally do not expire into automatic Resume. Device leases, user sessions and terminal unlocks have independent expiry; none is a generic data cache.
 
-## What was not added
+## Assistant prompts and cached tokens
 
-Diagram clicks were slow because the list imported the diagram package barrel (which loads the layout engine) and the editor statically imported both the canvas and CodeMirror. In development that route compiled elk, xyflow, and CodeMirror before the page could paint. The list now imports `@ensemble/block-diagrams/templates`. CodeMirror loads in its own chunk after the canvas is up. The canvas stays in the editor chunk: a separate canvas chunk added a round trip and made a production open slower (392 ms, 251 KB, against 224 ms and 226 KB before the split). No diagram payload cache was added: the wait was script and compile, not a repeated API read.
+`assistant/skills/index.ts` routes a small set of playbooks/tools; `state.ts` places stable instructions before live data. Personal skill bodies are read on demand. This can improve provider prefix reuse and reduce input compared with advertising every tool/body, but actual cache hits depend on the provider, prompt and timing. Usage uses reported cached-token counts; it does not invent a cache discount.
 
-Page width is one integer on the account settings document, plus one localStorage key so the first paint can use it. It is not a cache of page contents.
+Private tool results are not shared across accounts as a prompt/result cache. Tool visibility, input schema and authorization are rechecked normally. Included-model reservations remain conservative even when a future call might hit the provider's prompt cache ([33](33_INCLUDED_AI.md)).
 
-The assistant places stable playbooks/action guidance before live state, advertises only routed tools, and reads personal skill bodies on demand (`assistant/skills/index.ts`, `state.ts`). This improves provider prompt-cache reuse without caching private tool results across requests. Usage/credits still use the provider's actual cached-token counts. Checked 18 Oct 2026 with the synthetic GPT-5 mini evaluation; cache hits are conditional, not guaranteed.
+## Performance changes and measurement
+
+Lazy-loading heavy editor/rendering modules and bounding reads are different from caching domain JSON. [UI_PERF_DESIGN](UI_PERF_DESIGN.md) explains current ownership and how to measure. Historical bundle/latency figures are explicitly historical and must not be quoted as today's production measurements.

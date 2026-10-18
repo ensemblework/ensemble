@@ -1,22 +1,16 @@
 # 33. Included AI and Ensemble credits
 
-On a hosted Ensemble the operator can run four models on Azure AI Foundry and pay for them. Every
+A hosted operator can offer the supported configured Azure AI Foundry deployments and pay for their calls. Every
 verified account then gets **20,000 Ensemble credits a month** to spend on them, with no key of its
 own. People see credits only, never dollars. Once the operator's monthly ceiling is reached, every
 included call stops for everyone until the 1st, even for accounts that still have credits.
 
-Built 17 Oct 2026. Checked with unit and integration tests (`apps/hub-api/src/included/*.test.ts`,
-`apps/hub-api/src/runtime/included.test.ts`, `apps/agent-runtime/tests/test_included.py`) on 17 Oct
-2026; **not yet checked against live Azure deployments**. Off until the operator sets the Azure
-variables (§8).
+Implementation reviewed 18 Oct 2026 in `apps/hub-api/src/included/` and both model runtimes. Focused unit/HTTP tests cover metering and transport contracts with fixtures. This documentation audit does not verify live Azure quota, current deployments or portal billing. Availability depends on the configured Azure variables (§8).
 
 ## 1. The models
 
 Provider id `ensemble`, shown as **Included with Ensemble** (`packages/shared-types/src/included.ts`).
-Each model id is also the Azure deployment name. All four are **Global Standard** deployments of
-Foundry Models *sold by Azure*: Microsoft bills them per token, with no hourly or fixed charge, and
-Azure credits can pay for them. Claude is not offered, because Azure sells it through the Marketplace
-and credits cannot pay for it.
+Each model ID maps to the configured Azure deployment name and transport below. This table describes the checked-in catalog (`packages/shared-types/src/included.ts`), not a live Azure availability, quota or marketplace-entitlement check. Operators must verify their actual resource/deployments; private setup notes record the deployment-specific details.
 
 | Model | Shown as | API on Azure | Thinking | Typical cost |
 |---|---|---|---|---|
@@ -25,9 +19,7 @@ and credits cannot pay for it.
 | `gpt-6.1-sol` | GPT-6.1 Sol (2026-09-29) | Responses, `openai.azure.com` | Auto (Medium), Low, Medium, High | about 20× |
 | `grok-4.7` | Grok 4.7 | Responses, `https://{resource}.services.ai.azure.com/openai/v1/responses` | Auto (High), Low, Medium, High | about 20× |
 
-**For an Azure free account** two more models can be offered, only when `ENSEMBLE_INCLUDED_MODELS`
-names them: Microsoft's free quota tier ("Tier 0") gives the four above no tokens, and gives these
-500K and 200K tokens a minute.
+**Additional supported deployments:** the following appear only when enabled in `ENSEMBLE_INCLUDED_MODELS`. Offering them does not establish an Azure free-tier entitlement or token-per-minute quota.
 
 | Model | Shown as | API on Azure | Thinking | Typical cost |
 |---|---|---|---|---|
@@ -40,11 +32,10 @@ runtimes send the key in the `api-key` header, no temperature or `top_p`, and no
 
 **Thinking levels** are Auto, Low, Medium and High (`modelEfforts("ensemble", …)` in
 `model-efforts.ts`); Extra high and Max are not offered and are refused if sent. Auto sends no level,
-so the model uses its own default. The level goes in `reasoning.effort`. Microsoft documents no
-thinking setting for DeepSeek V4 Flash on Azure, so it offers Auto only and never receives a level.
+so the model uses its own default. The level goes in `reasoning.effort`. The checked-in catalog defines no
+thinking setting for DeepSeek V4 Flash, so it offers Auto only and never receives a level.
 
-**Context** is each model's Azure default (1.05M tokens for GPT-6, 1M for DeepSeek V4 Flash, 500K for
-Grok 4.7); nothing trims the prompt. Each call carries a **reply cap**,
+**Context** follows the configured model/transport; there is no user-selectable context-size tier. Existing caller/tool-result bounds still apply. Each call carries a **reply cap**,
 `ENSEMBLE_INCLUDED_MAX_OUTPUT_TOKENS` (default 16,000; `max_output_tokens`, or `max_completion_tokens`
 on Chat Completions). Reasoning tokens count against it, it bounds what a call can cost before it runs
 (§3), and Azure counts it against the deployment's tokens-per-minute quota when the request starts.
@@ -200,7 +191,7 @@ CLI the row comes from the account's server, or is unavailable with `code: "incl
 |---|---|---|
 | `AZURE_FOUNDRY_RESOURCE` | (none) | The Foundry resource name, such as `ensemble-ai`, not a URL |
 | `AZURE_FOUNDRY_API_KEY` | (none) | The resource's key. Server-only: never returned by `/api/credentials`, the catalog or any page |
-| `ENSEMBLE_INCLUDED_MODELS` | the four in §1 | Comma list of the deployments to offer (the four, and `gpt-5-mini` / `gpt-4.1-mini` for a free account), or `off` (the kill switch). A wrong value (an id Ensemble does not include, a URL as the resource) turns included AI off and is logged by hub-api ("Included AI is off: …") |
+| `ENSEMBLE_INCLUDED_MODELS` | the four in §1 | Comma list of the deployments to offer (the default catalog or the additional supported `gpt-5-mini` / `gpt-4.1-mini` deployments), or `off` (the kill switch). A wrong value (an id Ensemble does not include, a URL as the resource) turns included AI off and is logged by hub-api ("Included AI is off: …") |
 | `ENSEMBLE_INCLUDED_MONTHLY_CREDITS` | 20000 | Credits per account per month |
 | `ENSEMBLE_INCLUDED_TOTAL_MONTHLY_USD` | 180 | Model cost across every account per month, in USD |
 | `ENSEMBLE_INCLUDED_MAX_OUTPUT_TOKENS` | 16000 | Reply cap per call, reasoning included (max 128000) |

@@ -2,7 +2,7 @@
 
 People bring almost any common file into Ensemble — uploaded from their computer or imported from a connected app — then preview it, edit it where that makes sense, turn it into a page, attach it inside pages, and let the assistant and agents read it.
 
-Written 12 Oct 2026 from the code; every claim below is covered by the tests listed at the end. No vendor API and no real browser were used for these tests (vendor calls are mocked; viewers are tested with generated files in a DOM test environment).
+Code inspected 18 Oct 2026. The tests below cover specific contracts with generated files/mocked providers; they do not establish perfect fidelity for every document or live vendor account.
 
 ## 1. What each kind of file can do
 
@@ -11,20 +11,20 @@ The table is `FILE_FORMATS` in `packages/shared-types/src/files.ts`; the format 
 | Kind | Formats | Preview | Edit | Becomes a page | Agents read |
 |---|---|---|---|---|---|
 | PDF | pdf | Pages rendered with pdf.js (its legacy build, so Safari and the macOS desktop app work too); Full screen | Convert to a page first | In the browser; export back to PDF with the original's page size, margins, sizes and colours | Text of the first 300 pages |
-| Word | docx | docx-preview | Convert to a page first | In the browser; export back to Word into the original file (its styles, fonts, page setup, headers and footers) | Paragraphs, tables, headers, footers, notes |
-| Slides | pptx | Ensemble's own slide renderer; Present | — | — | Slide text and speaker notes |
+| Word | docx | Reading view or original page view | Assistant exact text replacements; page conversion for broader writing | In the browser; export back to Word into the original file (its styles, fonts, page setup, headers and footers) | Paragraphs, tables, headers, footers, notes |
+| Slides | pptx | Ensemble's own slide renderer; Present | Assistant exact text replacements | — | Slide text and speaker notes |
 | Spreadsheets | xlsx, xlsm | Grid with sheet tabs | Cells, rows; saved into the original file | — | Each sheet as CSV (2,000 rows per sheet) |
 | | csv, tsv | Grid | Cells, rows; saved as CSV/TSV | Server: a table (first 200 rows) | The text |
 | | xls, ods, numbers | Grid | After "Make an editable .xlsx copy" | — | No (agents are told to use .xlsx) |
 | Images | png, jpg, gif, webp, avif, svg, bmp, ico | Image (SVG only as an image) | — | — | No text |
-| Text | txt, md, log | Text | — | Server: Markdown keeps its structure; text as paragraphs | The text |
-| Code | json, yaml, toml, xml, html, css, js/ts, py, java, go, rust, sql, shell and more | Code with line numbers | — | Server: one code block in its language | The text |
+| Text | txt, md, log | Text | Assistant exact text replacements | Server: Markdown keeps its structure; text as paragraphs | The text |
+| Code | json, yaml, toml, xml, html, css, js/ts, py, java, go, rust, sql, shell and more | Code with line numbers | Assistant exact text replacements | Server: one code block in its language | The text |
 | Audio, video | mp3, wav, m4a, ogg, flac, mp4, mov, webm | The browser's own player | — | — | No text |
 | Not previewable | doc, odt, rtf, ppt, odp, key, heic, tiff, anything else except programs and raw binaries, which are refused (§3) | Details, a note on how to make it previewable, Download | — | — | No (a warning says which format to save as) |
 
 Every file, previewable or not, can be attached to pages and downloaded.
 
-**Present and Full screen.** On a file's own screen (`components/files/file-screen.tsx`), slides have **Present**: one slide at a time, fitted to the screen on black (`components/files/viewers/present.tsx`). It starts at the slide in view, skips slides marked hidden in PowerPoint, draws the next one ahead, and leaves the viewer where the presentation stopped. → ↓ Space PageDown Enter N go forward; ← ↑ PageUp Backspace P go back; Home and End jump to the first and last; a click on the left third goes back, anywhere else forward; F leaves or re-enters the browser's fullscreen; Esc stops. The controls and the cursor hide after 2 seconds without the mouse moving. PDFs, Word files, spreadsheets, images, video, text and code have **Full screen** instead: the same viewer, with its zoom (− / + and Fit width for PDFs and Word files) and unsaved edits, fills the screen under a bar with the file name and an × that leaves; Esc leaves too. PDFs presented one page at a time until 13 Oct 2026. Both ask the browser for fullscreen and use an in-page layer where it is refused ([docs/02 §3.10](02_MODULE_INTERACTION_HUB_UI.md#310-files)).
+**Present and Full screen.** On a file's own screen (`components/files/file-screen.tsx`), slides have **Present**: one slide at a time, fitted to the screen on black (`components/files/viewers/present.tsx`). It starts at the slide in view, skips slides marked hidden in PowerPoint, draws the next one ahead, and leaves the viewer where the presentation stopped. → ↓ Space PageDown Enter N go forward; ← ↑ PageUp Backspace P go back; Home and End jump to the first and last; a click on the left third goes back, anywhere else forward; F leaves or re-enters the browser's fullscreen; Esc stops. The controls and the cursor hide after 2 seconds without the mouse moving. PDFs, Word files, spreadsheets, images, video, text and code have **Full screen** instead: the same viewer, with its zoom (− / + and Fit width for PDFs and Word files) and unsaved edits, fills the screen under a bar with the file name and an × that leaves; Esc leaves too. Both ask the browser for fullscreen and use an in-page layer where it is refused ([docs/02 §3.10](02_MODULE_INTERACTION_HUB_UI.md#310-files)).
 
 ## 2. Where files live
 
@@ -153,7 +153,7 @@ Checked 12 Oct 2026 with `artifacts.integration.test.ts` for the list, the graph
 Paired-run original-file transfer is included in CLI 0.3.11 and desktop 0.3.8; update older receivers to get the original bytes and local file-ID remapping.
 
 
-## Word previews on phones (17 Oct 2026)
+## Word reading view
 
 `components/files/viewers/docx-viewer.tsx` defaults to **Reading view** when its preview pane is below 600 px. Text flows at a readable size with normal paragraph/bullet spacing and one column. **Page view** retains the original document geometry with Fit width and zoom controls. Scaling uses a transform on the rendered page wrapper and disables browser text inflation inside the sandboxed iframe; it no longer applies CSS zoom to the document body. Reading view affects only the preview, never the stored file or exports. Compact thumbnails retain the page view.
 
@@ -163,7 +163,7 @@ Checked 17 Oct 2026 in local Chrome at 320 px and 390 px viewports with a synthe
 
 Connecting an app or running Sync people adds no file or artifact. Files are saved through an explicit upload, app import/attach/save or requested assistant action. Previously saved artifacts are kept. The Overview invitation says to add a file rather than promising connected content will arrive automatically.
 
-## Assistant edits and exports (18 Oct 2026)
+## Assistant edits and exports
 
 `assistant/tools/file-edits.ts` adds `hub_file_edit_info` and `hub_edit_file`: read the current SHA-256, then change one unique passage in Word/PowerPoint/text/code/CSV, or edit supported spreadsheet cells/rows. Office passage edits preserve the rest of the package and run through the existing bounded worker (`files/office-edit.ts`, `files/extract-worker.ts`). File IDs stay fixed. `PUT /api/documents/:id/content` and cell patches accept `expectedSha256`; `replaceFileBytes` checks it under the existing storage lock and refuses stale writes.
 

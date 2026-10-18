@@ -1,6 +1,6 @@
 # Desk design
 
-The design work for the Today desk: widgets, persona desks, the template gallery, and the apply flow.
+Historical September design collection for the Today desk. Mockups and checklists are reference material, not the current tile catalog or unbuilt backlog. See [the design status index](../README.md) and [current Hub guide](../../02_MODULE_INTERACTION_HUB_UI.md) for implemented behavior.
 
 | Path | What |
 |---|---|

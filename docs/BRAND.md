@@ -53,9 +53,7 @@ Checks cover palette contrast, legacy motion normalization, no obsolete picker d
 
 Builds and browser checks are reported with the implementation change. Generating source assets does not publish a website or release a native/CLI binary; installed apps receive the identity through the usual release/update process.
 
-Checked 14 Oct 2026: 422 Hub tests, all-package TypeScript checks, 53 shared-type tests, 57 CLI/package tests, the shared brand/controller and catalogue checks, landing static build, desktop static export, 15 desktop Rust tests, Quick capture `cargo check`, and all 90 generated asset hashes/ICO/ICNS containers. Subsequent small UI changes passed their focused checks. Browser inspection used an isolated in-memory test workspace to verify Deep Petrol, Aubergine, light-mode ink marks, the removed motion picker, assistant opening and reduced motion. The production-controller gallery and landing replay were checked through completion and settling. Native installers were not launched on all three operating systems, before release. CLI 0.3.6 and desktop 0.3.3 carry this identity; production deployment runs after main CI succeeds.
-
-The favicon follow-up was checked with the production landing build: rendered metadata advertises content-hashed PNG/ICO/SVG URLs and no unversioned `/favicon.ico` link. Anonymous asset tests verify these URLs work before sign-in.
+Verification covers generated brand hashes, icon containers, controller behavior, reduced motion and consumer integration. Use `pnpm brand:check`, the brand/controller tests and affected app builds. Earlier screenshot/test-count/release observations belong to their PR; they are not a current all-platform installer claim. Root `release.json` owns release metadata.
 
 ## Agent mark
 

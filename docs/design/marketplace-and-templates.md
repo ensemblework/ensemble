@@ -1,5 +1,7 @@
 # Marketplace and per-persona templates
 
+Historical design record, partly implemented or superseded; **not a current feature/status guide**. Original dates and checklists below describe that earlier work. Use the [design index](README.md) and current feature guides before implementing or relying on these details.
+
 Design only. Nothing in this document is built yet. It sits on top of the widget canvas and the 25 signup templates in `docs/design/widgets-and-templates-plan.md`, and on the Context board in `docs/design/context-ui.md`. Reuse those. Do not add a second layout engine, a second persona system, or a second home page.
 
 Ensemble is the planner between a task list and an IDE. The thing people pay for is the Context graph. A template is a resolved view of that graph for one person: which modules exist, what the chrome calls them, which widgets sit on which page, and how `@ensemble` speaks. It is not a theme pack and it is not a plugin.
