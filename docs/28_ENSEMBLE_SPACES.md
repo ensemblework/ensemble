@@ -1,14 +1,14 @@
 # 28 · Ensemble spaces
 
-A person can keep separate lines of work in separate **spaces**, for example a startup and personal chores. Spaces share nothing: no tasks, pages, people, graph, files, plots, diagrams, connected apps, assistant history, API keys for editors, or settings, unless the person chooses to share settings.
+A person can keep separate lines of work in separate **spaces**, for example a startup and personal chores. Each space has separate tasks, pages, people, graph, files, plots, diagrams, connected apps and assistant history. Settings/eligible credentials can be copied or synced explicitly (§4); account-level quotas, identity and included credits remain account-wide.
 
 A space can also be shared with other people, whole or one item at a time. That is [29 · Sharing](29_SHARING.md).
 
-Read from the code and checked with the HTTP suite and headless browser runs on 8 Oct 2026 (see [18](18_WHAT_IS_REAL.md)).
+Space behavior reviewed from source on 18 Oct 2026; original HTTP/browser checks were scoped to their feature PR. [Current capability inventory](18_WHAT_IS_REAL.md).
 
 ## 1. How a space is stored
 
-A space is a row in `users` whose `owner_id` is the signed-in account (migration `apps/hub-api/prisma/migrations/20261008120000_ensemble_spaces`). The account row is itself the first space. Every table in Ensemble is scoped by `user_id`, so a space is isolated by the same filters that already isolate two accounts. No query had to learn about spaces.
+A space is a row in `users` whose `owner_id` is the signed-in account (migration `apps/hub-api/prisma/migrations/20261008120000_ensemble_spaces`). The account row is itself the first space. Space-owned content uses the same `user_id` filters as account content. Account-level identity, usage/quotas, keys-for-actor and sharing logic still have explicit account/space handling; not every table is an independent space record.
 
 | Column | On | Meaning |
 |---|---|---|

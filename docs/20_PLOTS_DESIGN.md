@@ -6,20 +6,11 @@ Hosted arbitrary Python plot execution requires a verified operator (`lib/hosted
 
 Caching below follows [CACHING.md](CACHING.md) and [UI_PERF_DESIGN.md](UI_PERF_DESIGN.md): measure first, keep any cache small, and invalidate it when the bytes change.
 
-The desk already reserves plot *slots* behind the `desk.plots` preference (`docs/design/desk/SPEC.md` §8). Those slots stay lightweight static tiles. The product is a module, `plots`, default **off**, with the same Enable landing as Code and Block diagrams.
+Desk plot slots use the `desk.plots` preference in the current desk/widget code. Plots is an optional module; effective availability follows the profile/template and saved module settings. Historical desk specs are not the current tile catalog.
 
 ## 1. Charting library
 
-Compared for a commercial or freemium product. All of these are open source with a licence that allows that use.
-
-| Library | Licence | Interactivity | Dual Y | Large data | Export | Bundle | Theming | Native later |
-|---|---|---|---|---|---|---|---|---|
-| **Apache ECharts 5** | Apache-2.0 | Zoom, pan, brush, tooltip, legend toggle, click, axis pointer | First-class `yAxis[]` | Canvas, progressive render, built-in LTTB / average / min / max sampling | Canvas PNG via `getDataURL`; a second instance with the SVG renderer for vector SVG | ~1 MB minified, ~300 KB gzip, loaded only on `/plots` | Theme object; CSS variables mapped in | JSON option is portable. A later Mac/Windows/Linux shell can host the same page in a webview. Publication files come from matplotlib, which is already native |
-| Plotly.js | MIT | Excellent, including box and violin | Yes | `scattergl` is WebGL; most other traces are SVG and stall | PNG/SVG in the browser; PDF needs Kaleido, a native extra | ~3 MB minified. Painful even when lazy | Yes | Plotly.py is native, but the JS bundle is the problem |
-| Vega-Lite | BSD-3 | Needs Vega embed; brush and zoom are extra specs | Awkward (`resolve` + layers) | SVG/canvas, not happy at 100k points | SVG | Medium-large (Vega + Vega-Lite) | Yes | A grammar, not a widget. Still a browser runtime |
-| Observable Plot | ISC | Facets and pointers; thinner zoom and brush | Not a first-class pair of scales | SVG. 100k points is the wrong tool | SVG is the render | Smaller than Plotly | Marks, not a theme engine | Browser only |
-| uPlot | MIT | Zoom and cursor, built for series | A second scale is manual | Canvas, the fastest small library here (~50 KB) | Canvas bitmap | Tiny | CSS | No pie, heatmap, violin, or box without writing them |
-| Recharts / visx | MIT | Recharts is a React SVG wrapper. visx is marks, so every interaction is ours | Recharts yes. visx is DIY | SVG. Both fall over well before 100k | SVG | Recharts is moderate. visx depends on how much we write | React props | Browser only |
+The current renderer is ECharts; the earlier comparison of alternative chart libraries is no longer a current market/bundle-size claim.
 
 **Choice: Apache ECharts**, lazy-loaded from the Plots studio only. Other routes do not import it.
 
@@ -34,7 +25,7 @@ Why this one:
 
 Plotly's scientific traces are better out of the box (violin, error bars). The bundle and the Kaleido PDF dependency are not. uPlot is the wrong shape for a one-stop tab. Vega-Lite and Observable Plot are grammars for articles, not for this editor.
 
-The chart *spec* Ensemble stores is our own JSON (`PlotConfig` in `@ensemble/shared-types`). ECharts is a renderer. Matplotlib is the other renderer. A future native shell does not have to embed ECharts if it can draw the same spec.
+The chart *spec* Ensemble stores is our own JSON (`PlotConfig` in `@ensemble/shared-types`). ECharts is a renderer. Matplotlib is the other renderer. The desktop Hub reuses the same spec/rendering UI; export execution depends on the chosen browser/local worker path.
 
 ### Pseudo-3D
 

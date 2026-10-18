@@ -1,5 +1,7 @@
 # Desk design direction: high-fidelity mockups before any more building
 
+Historical design record, partly implemented or superseded; **not a current feature/status guide**. Original dates and checklists below describe that earlier work. Use the [design index](../README.md) and current feature guides before implementing or relying on these details.
+
 ## Why
 Prajwal rejected the marketplace visuals. Today tiles were huge boxes with one row each, the Context widgets were empty, and everything looked like "a simple HTML/CSS list". His words: "Please have a good UI UX, don't just have templates for the sake of it. Pour in your imagination, design some good templates and design."
 His standing taste: a rich, board-style, distinctive UI that is better than Notion, with no "AI chat app" feel, subtle modern effects, dark by default, and speed that matters as much as looks. He dislikes bare lists.

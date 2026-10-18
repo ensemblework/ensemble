@@ -1,5 +1,7 @@
 # Ensemble Desk: design spec (mockup phase)
 
+Historical design record, partly implemented or superseded; **not a current feature/status guide**. Original dates and checklists below describe that earlier work. Use the [design index](../README.md) and current feature guides before implementing or relying on these details.
+
 This spec goes with the PNGs in `out/`. Source is in `src/` (Vite + React + TS). Run `./build-all.sh` to rebuild every PNG. Everything here is design intent. The product repo is untouched.
 
 ## 1. Tokens

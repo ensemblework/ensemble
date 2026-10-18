@@ -1,5 +1,7 @@
 # Assistant, trash, comments, and @ensemble
 
+Historical design record, partly implemented or superseded; **not a current feature/status guide**. Original dates and checklists below describe that earlier work. Use the [design index](README.md) and current feature guides before implementing or relying on these details.
+
 System design for the LLM stack, retention, text comments, and inline Ensemble replies. This document is the contract for the implementation that follows it. It is written against `main` at `8e8a89c` and the audit in the companion report (bugs B-1..B-23, N-1..N-16).
 
 B-3 (Gemini rejecting OpenAPI tool schemas) was **refuted live** and is not implemented. B-23 (unused embeddings, planner, skill-forge) stays deferred: the embedding column and the planner tests remain, and this design does not delete them. B-2's client already prefers a JSON `error` string; the remaining hole is nested provider JSON and a 500 from the Next proxy while the API is still working (N-8, N-12).

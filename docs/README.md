@@ -1,70 +1,62 @@
-# Ensemble docs
+# Ensemble documentation
 
-Design and operating docs for Ensemble, the source-available, localhost-first digital coworker ([FSL-1.1-MIT](../LICENSE.md)).
+Current product and implementation guides for Ensemble. Start with [the overview](00_PROJECT_OVERVIEW.md), [what works today](18_WHAT_IS_REAL.md), then the guide for the area you need. The October 2026 audit separates current guides from historical designs; a design proposal is not evidence that a feature shipped.
 
-**Start at [`00`](00_PROJECT_OVERVIEW.md)** for the product direction, then [`18`](18_WHAT_IS_REAL.md) for what the code actually does today. Module docs (`02`–`07`, `13`) mix design intent with as-built notes. When a module doc and `18` disagree, `18` and the code win.
+Root [README](../README.md) covers setup. [AGENTS](../AGENTS.md) requires docs to change with behavior. Operator-specific hosting/account setup and credentials belong in the ignored `private/` folder.
 
-Keeping these files current is part of every change. See [`AGENTS.md`](../AGENTS.md).
+## Product and architecture
 
-## Product and modules
-
-| # | File | Module |
-|---|---|---|
-| 00 | [Project overview](00_PROJECT_OVERVIEW.md) | Vision, direction, domain model, feature index |
-| 01 | [Tech stack & environment](01_TECH_STACK_AND_ENVIRONMENT.md) | Languages, services, local env, pluggable models |
-| 02 | [Interaction Hub UI](02_MODULE_INTERACTION_HUB_UI.md) | M1 — Notion-like pages, board, approvals, assistant chrome |
-| 03 | [Context Engine](03_MODULE_CONTEXT_ENGINE.md) | M2 — pluggable connectors, Engineer Graph, context packs |
-| 04 | [Skill Forge](04_MODULE_SKILL_FORGE.md) | M3 — personal skills, morning briefs and completed-work mining |
-| 05 | [Task Orchestrator](05_MODULE_TASK_ORCHESTRATOR.md) | M4 — scheduled jobs, planner, workers, HITL |
-| 06 | [Workspace & surfaces](06_MODULE_WORKSPACE_AND_SURFACES.md) | M5 — coding workspace |
-| 07 | [Governance, audit & metrics](07_MODULE_GOVERNANCE_AUDIT_METRICS.md) | M6 — identity, policy, ledger, before/after |
-| 11 | [How the assistant works](11_HOW_THE_ASSISTANT_WORKS.md) | Hub Action Layer walkthrough |
-| 13 | [Context Bridge design](13_MODULE_CONTEXT_BRIDGE.md) | M7 — design for the read-only MCP server |
-| 16 | [Code tab](16_CODE_TAB.md) | Review, rewrite, commit, guarded terminal |
-| 17 | [Repository structure](17_REPOSITORY_STRUCTURE.md) | What lives where in this repo |
-| 18 | [What is real](18_WHAT_IS_REAL.md) | Built and tested vs. still a placeholder |
-
-## Features
-
-| # | File | Topic |
-|---|---|---|
-| 20 | [Plots](20_PLOTS_DESIGN.md) | The Plots tab: chart model, matplotlib export |
-| 20 | [Quick capture](20_QUICK_CAPTURE.md) | Tauri tray app and global shortcut |
-| 21 | [Block diagrams](21_BLOCK_DIAGRAMS_DSL.md) | Diagram language, shapes, layout, examples |
-| — | [Diagram cheat sheet](21_BLOCK_DIAGRAMS_CHEATSHEET.md) | Short prompt for an agent writing a diagram |
-| 22 | [Block diagrams for agents](22_BLOCK_DIAGRAMS_FOR_AGENTS.md) | The diagram skill the assistant loads |
-| 28 | [Ensemble spaces](28_ENSEMBLE_SPACES.md) | Separate spaces per account: storage, isolation, switching, settings copy and sync |
-| 29 | [Sharing](29_SHARING.md) | Sharing a space or one item: contacts, roles, what stays private, runs on your own computer, live presence |
-| 30 | [Engines](30_ENGINES.md) | Who does the work (Ensemble's agent or your own Claude Code), how each tool call is judged by the run's rules, and how Claude Code, Codex, Copilot and Cursor questions reach Needs me |
-| 27 | [Imports](27_IMPORTS.md) | Import from Notion, Linear, Jira, Trello, Asana, Todoist, ClickUp, monday.com, GitHub and spreadsheets; re-runs and undo |
-| 31 | [Connectors in use](31_CONNECTORS_IN_USE.md) | What Ensemble does with each connected app (attach, add as task, post updates, people, repositories for agents, the assistant's tools), how other AI apps use connectors, every connector and how it connects |
-| 32 | [Files](32_FILES.md) | Upload or import almost any file, preview it, edit spreadsheets, turn PDF/Word/text/code into pages and export back, attach files in pages, limits, and how agents and MCP read them |
-| 34 | [Assistant actions](34_ASSISTANT_ACTIONS.md) | Current action map, view awareness, tile systems, dependent workflows and small-model validation |
-| 33 | [Included AI and Ensemble credits](33_INCLUDED_AI.md) | Four Azure-hosted models the operator pays for, monthly Ensemble credits per account, the operator's monthly ceiling, how each call is reserved and settled, what people see |
-| — | [Context Bridge setup](CONTEXT_BRIDGE.md) | What the bridge runs, and editor config |
-| — | [Demo data](DEMO_DATA.md) | The Branch desk demo and `pnpm seed:demo` |
-
-## Desktop, hosting and platform
-
-| # | File | Topic |
-|---|---|---|
-| 19 | [Cross-platform readiness](19_CROSS_PLATFORM.md) | macOS / Windows / Linux findings |
-| 23 | [Local-first desktop design](23_LOCAL_DESKTOP_DESIGN.md) | Local-only Tauri app: install, architecture, permissions, build order |
-| 24 | [Desktop sandboxing](24_DESKTOP_SANDBOXING.md) | OS-native sandboxes, trusted folders, unattended mode, stacked tasks |
-| 25 | [Remote tasks on your computer](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md) | Hosted assign, run on the person's Mac: device claim, lease, approvals |
-| 26 | [Ensemble CLI](26_CLI.md) | `ensemble`: install channels, runner, `ensemble mcp`, hosted `/mcp`, editor setup, releases |
-| — | [Desktop app](DESKTOP.md) | How to run and build `apps/desktop` |
-| — | [Mac checklist](desktop/MAC_CHECKLIST.md) | Hand test for the unsigned `.dmg` |
-| — | [Brand and motion](BRAND.md) | Woven Chorus, Satin Gold palettes, shared motions and icon generation |
-| — | [UI and performance](UI_PERF_DESIGN.md) | Measured baseline and the perf design |
-| — | [Caching](CACHING.md) | Which caches exist, and which deliberately do not |
-
-## Design notes
-
-[`design/`](design/) holds design specs and working notes for larger features (assistant and trash, Context redesign, widgets and templates, marketplace, the Today desk, what could come next for connectors). They record intent at the time they were written; check the code before relying on them.
-
-## Planned follow-on work
-
-| Design | Scope |
+| Guide | Contents |
 | --- | --- |
-| [Real-world testing follow-on designs](design/real-world-next.md) | Skill mining review, explicit connector fetching, one-time profession change, unified requests and meeting notes; not built |
+| [00 · Overview](00_PROJECT_OVERVIEW.md) | Product surfaces, deployment forms, current boundaries and domain model |
+| [01 · Environment](01_TECH_STACK_AND_ENVIRONMENT.md) | Stack, configuration, models, migration/testing and CI/deployment |
+| [02 · Hub](02_MODULE_INTERACTION_HUB_UI.md) | Navigation, Today/Board/Context, documents, settings, accounts and API map |
+| [03 · Context](03_MODULE_CONTEXT_ENGINE.md) | Explicit acquisition, identities, relationships, meetings and retrieval |
+| [04 · Personal skills](04_MODULE_SKILL_FORGE.md) | Versioned instructions, routing, brief personalization and retention learning |
+| [05 · Orchestration](05_MODULE_TASK_ORCHESTRATOR.md) | Durable jobs, queue slots, product schedules, decisions and recovery |
+| [06 · Workspace](06_MODULE_WORKSPACE_AND_SURFACES.md) | Assignment, execution, publishing and run evidence |
+| [07 · Governance](07_MODULE_GOVERNANCE_AUDIT_METRICS.md) | Access, Apply, audit limits, retention, erasure and measured usage |
+| [11 · Assistant architecture](11_HOW_THE_ASSISTANT_WORKS.md) | Prompt/tool routing, context, validation, Apply and extension |
+| [13 · Context Bridge architecture](13_MODULE_CONTEXT_BRIDGE.md) | Read-only MCP tools, retrieval, transports and exclusions |
+| [17 · Repository map](17_REPOSITORY_STRUCTURE.md) | Applications, packages and change ownership |
+| [18 · Current capabilities](18_WHAT_IS_REAL.md) | Implemented paths and explicit limits, without historical release-note clutter |
+
+## Feature references
+
+| Guide | Contents |
+| --- | --- |
+| [16 · Code](16_CODE_TAB.md) | Review/edit, source control and human terminal |
+| [20 · Plots](20_PLOTS_DESIGN.md) | Datasets, specs, browser/native computation and export |
+| [20 · Quick capture](20_QUICK_CAPTURE.md) | Separate tray app/global shortcut |
+| [21 · Diagram language](21_BLOCK_DIAGRAMS_DSL.md) | Grammar, shapes, layout, JSON and editor |
+| [21 · Diagram cheat sheet](21_BLOCK_DIAGRAMS_CHEATSHEET.md) | Compact authoring reference |
+| [22 · Diagrams for agents](22_BLOCK_DIAGRAMS_FOR_AGENTS.md) | Mirrored diagram skill instructions |
+| [27 · Imports](27_IMPORTS.md) | Preview, mapping, supported sources, background jobs, rerun and Undo |
+| [28 · Spaces](28_ENSEMBLE_SPACES.md) | Separate workspaces, scope, settings and export |
+| [29 · Sharing](29_SHARING.md) | Roles, public links, private boundaries, presence and live writing |
+| [30 · Engines and subscriptions](30_ENGINES.md) | Managed external engines, own-app handoffs, prompts and assistant subscriptions |
+| [31 · Connected apps](31_CONNECTORS_IN_USE.md) | Native item actions, catalog connection methods and vendor MCP |
+| [32 · Files](32_FILES.md) | Originals, format previews/edits, extraction, conversion, export and caps |
+| [33 · Included AI](33_INCLUDED_AI.md) | Configured models, 20,000-credit allowance, reservations and device access |
+| [34 · Assistant actions](34_ASSISTANT_ACTIONS.md) | Exact action/tool map, surface/layout awareness and dependent workflows |
+| [Context Bridge setup](CONTEXT_BRIDGE.md) | Build, auth, transports and editor configuration |
+| [Demo data](DEMO_DATA.md) | Explicit sample-data commands and fixtures |
+
+## Desktop, CLI and shared systems
+
+| Guide | Contents |
+| --- | --- |
+| [Desktop build/run](DESKTOP.md) | Native shell, local API, packaging and updater |
+| [19 · Cross-platform support](19_CROSS_PLATFORM.md) | Current OS/build/backend matrix and verification boundaries |
+| [23 · Desktop architecture](23_LOCAL_DESKTOP_DESIGN.md) | Static Hub, shared local runtime, PGlite, pairing and limits |
+| [24 · Sandboxing](24_DESKTOP_SANDBOXING.md) | Actual OS backends, trust, outside access, git and residual limits |
+| [25 · Remote tasks](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md) | Pairing, leases, files, Code, terminal and local authority |
+| [26 · CLI](26_CLI.md) | Installation, terminal UI, commands, runner, MCP and releases |
+| [Mac hand checklist](desktop/MAC_CHECKLIST.md) | Installer/platform regression checks |
+| [Brand](BRAND.md) | Shared artwork, palettes, motion and generated assets |
+| [Caching](CACHING.md) | Current caches, transient relay state and prompt reuse |
+| [UI performance](UI_PERF_DESIGN.md) | Measurement method and current performance ownership |
+
+## Plans and historical design
+
+[Design index](design/README.md) identifies planned versus historical/partly implemented notes and points back to current guides. [Real-world follow-ons](design/real-world-next.md) records the explicitly planned unbuilt skill-review, profession-change, permissions and meeting improvements. Historical measurements are preserved with their original scope; they are not today's benchmark.

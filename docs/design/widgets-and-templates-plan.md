@@ -1,5 +1,7 @@
 # Widgets and role templates
 
+Historical design record, partly implemented or superseded; **not a current feature/status guide**. Original dates and checklists below describe that earlier work. Use the [design index](README.md) and current feature guides before implementing or relying on these details.
+
 Implemented on `feature-2` after the owner approved this spec. The sections below are the contract the code follows.
 
 ## Changes in this revision

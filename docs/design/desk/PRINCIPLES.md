@@ -1,5 +1,7 @@
 # One desk, one app
 
+Historical design record, partly implemented or superseded; **not a current feature/status guide**. Original dates and checklists below describe that earlier work. Use the [design index](../README.md) and current feature guides before implementing or relying on these details.
+
 Every desk uses the same shell. A Chambers account and a Bench account differ by accent and by the words on the tiles. They do not get a different font, a different sidebar, or a different way of moving.
 
 ## Mark

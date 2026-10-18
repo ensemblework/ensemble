@@ -22,7 +22,7 @@ Checked 7 Oct 2026 with the tests listed at the end. Vendor APIs were checked ag
 | Notion | Connected account or internal integration secret (share the pages with the integration) | Markdown & CSV zip, or a database CSV | Databases → ordinary tables in pages; rows → linked child pages; nested pages → nested Ensemble pages | All table columns and values are retained, with property type metadata from the API. Rich text marks, nested lists, checklists, code, quotes/callouts, collapsible blocks, tables, dividers and linked child pages become native page blocks. API images remain images; other media remain source links. No database, board or alternative-view feature is introduced. |
 | Linear | Connected account or personal API key | CSV | Issues → tasks; project → project | Title, description (Markdown), status name and state type, priority, labels, cycle as a label, assignee, due date, link; sub-issues note their parent. Containers: "Issues assigned to me" and each team |
 | Jira Cloud | Connected account (OAuth or email + API token) or email + API token + site | CSV (all fields) | Issues → tasks; Jira project → project | Summary, description (Atlassian Document Format → Markdown), due date, labels, issue type (except Task/Sub-task) as a label, status and status category, priority, assignee, parent/epic noted in the description. Containers: "Issues assigned to me" and each project, with approximate counts |
-| Trello | Connected account or API key + token | Board JSON (free on every plan) | Boards → projects, cards → tasks | Name, description, due and start, "due complete" → done, labels (name, or colour when unnamed), members, list name → status (Done list → done), checklists → a to-do list on the task page. Archived cards and lists are skipped |
+| Trello | Connected account or API key + token | Board JSON export | Boards → projects, cards → tasks | Name, description, due and start, "due complete" → done, labels (name, or colour when unnamed), members, list name → status (Done list → done), checklists → a to-do list on the task page. Archived cards and lists are skipped |
 | Asana | Connected account or personal access token | Project CSV | Projects → projects, tasks → tasks | Name, notes, due date or time, start date, completed, tags, assignee, section → status, subtask parent noted. Containers: each project and "My tasks" per workspace |
 | Todoist | Connected account or API token (unified API v1) | Project template CSV | Projects → projects, tasks → tasks | Content, description, deadline (else the due date) as due, recurring rule noted, priority (API 4 / CSV 1 = urgent), labels, section as a label, assignee for shared projects, completed tasks from the last 90 days |
 | ClickUp | Connected account or personal token | CSV export | Lists → projects, tasks → tasks | Name, Markdown description, status and status type, priority, tags, assignees, due and start dates, closed date |
@@ -39,7 +39,7 @@ The dialog shows these next to the upload box (`EXPORT_HELP` in `src/imports/sou
 - **Notion:** Settings → General → Export all workspace content (or ••• on a page → Export), choose **Markdown & CSV** and include subpages, then upload the zip as downloaded. Notion often wraps the export in a second zip; Ensemble opens one level of that.
 - **Linear:** Settings → Administration → Import / export → Export CSV. The file arrives by email.
 - **Jira:** Filters → View all issues, pick the issues, then Export → Export CSV (all fields).
-- **Trello:** board menu (•••) → Print, export and share → Export as JSON. (Trello's CSV export needs a paid plan; JSON does not.)
+- **Trello:** board menu (•••) → Print, export and share → Export as JSON. (Choose the JSON export supported by the importer.)
 - **Asana:** the arrow next to the project name → Export/Print → CSV.
 - **Todoist:** project ••• → Export as a template → Download as CSV file.
 - **ClickUp:** Settings → Import/Export → Export, or a List view's ••• → Export view → CSV.
@@ -108,12 +108,12 @@ Checked 15 Oct 2026 with mocked Notion API responses and in-memory HTTP tests: n
 
 Fixtures (fictional Fieldnote data) are in `apps/hub-api/src/imports/fixtures/`.
 
-## 8. Not built yet
+## 8. Current limits
 
 - No scheduled re-sync; imports run when you start them.
 - Comments, attachments (other than links) and sub-task trees are not imported; parents are noted in the description.
 - Notion relations and rollups come across as text in the page's property list.
 
-## Importing a whole board from chat (18 Oct 2026)
+## Importing a whole board from chat
 
 The assistant can run this same flow: `hub_preview_board_import` lists connected containers, or previews an export already uploaded in Files (`fileId`). A second preview with the selected containers returns sample rows/statuses. `hub_start_board_import` waits for Apply and starts the existing job; `hub_read_import` reports progress and `hub_manage_import` cancels/undoes. Tokens are not accepted in tool arguments. Existing mapping, expiry, caps and re-import behavior remain in force. A started job is not reported as completed. Tools live in `assistant/tools/board-imports.ts`.

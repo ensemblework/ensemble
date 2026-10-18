@@ -1,239 +1,71 @@
-# 04 · Module M3 — Skill Forge (personal skills mined from my history)
+# 04 · Personal skills and learning
 
-**Purpose:** Turn how I actually work — my PR descriptions per repo, my commit messages, how I reply to email and Teams, the libraries and patterns I reach for — into **versioned, inspectable personal skills** the agent loads automatically. This is what makes agent output land in *"approve"* instead of *"rewrite"*.
+Personal skills are editable, versioned Markdown instructions stored in the current Ensemble space. They help an assistant or assigned agent follow the person's preferences. They are not implementations of app actions: typed tools and built-in assistant playbooks perform that role ([11](11_HOW_THE_ASSISTANT_WORKS.md)).
 
----
-
-## 1. What a skill is
-
-A folder in `skills/<skill-id>/` in the **SKILL.md convention** (same shape as Copilot/agent skills, so it is readable by a human, diff-able in git, and loadable by any agent runtime):
-
-```text
-skills/pr-description.service-x/
-├── SKILL.md          # front-matter + instructions + few-shot examples
-├── examples/         # 3–6 exemplar artifacts (redacted) used as few-shots
-├── evidence.json     # artifact ids this was mined from + stats
-└── tests/            # golden inputs → expected properties (not exact text)
-```
+**Status:** code inspected 18 Oct 2026. The working skill library, routing and completed-work miner live in `apps/hub-api`; `apps/skill-forge` is a package stub. There are no working `forge:mine`, `forge:bootstrap`, `forge:declare` or `ensemble-forge` commands in this repository.
 
-**Skill kinds for v1:**
+## 1. Storage and editing
 
-| Skill id pattern | Mined from | Used by worker |
-|---|---|---|
-| `pr-description.<repo>` | my merged PRs in repo + my edits/rejections | `pr_author` |
-| `commit-message.<repo\|default>` | my commits (conventional-commits? scopes? length) | `pr_author` *(inferred)* |
-| `code-review.<repo>` | my review comments (what I flag, tone, severity words) | `pr_reviewer` (P1) |
-| `email-reply.<default\|person>` | my sent mail (greeting, length, sign-off, formality per recipient) | `email_reply` *(inferred)* |
-| `teams-reply.<default\|chat>` | my sent Teams messages (brevity, emoji use, @-mention habits) | `teams_reply` *(inferred)* |
-| `coding-prefs.<language>` | my repos (libs, test framework, lint config, patterns) | workspace help |
-| `docs.adr` / `docs.status-update` | my past ADRs / weekly updates in SharePoint/OneDrive | `doc_author` |
-| `meeting-notes.default` | how I structure notes I've sent after meetings | `meeting_actions` |
-| `day-planning.default` | calendar habits (focus blocks, meeting-free hours) | `day_planner` |
+`Skill` holds the current body, name, scope, enabled/deleted state, version and learning metadata. `SkillVersion` retains **three versions total**, including current. Bodies live in the database, not a generated `skills/<id>/` directory or OneDrive.
 
-### Example `SKILL.md`
+The Skills page (`apps/hub-web/app/(hub)/skills`) edits the body with a 900 ms autosave delay. Restoration creates a new current version; it does not rewind the version counter. Deleted skills enter Trash. Disabled or deleted skills are omitted from active routing even if an older task references them.
 
-```markdown
----
-id: pr-description.service-x
-name: PR description style — service-x
-version: 3
-scope: { repo: "ensemble-demo/service-x", taskTypes: ["open_pr", "update_pr"] }
-confidence: 0.86
-minedFrom: 27 PRs (2025-11 → 2026-09), 4 user edits
-lastAcceptedRate: 0.78
----
+`routes/skills.ts` and the shared version guard serialize updates. Optional `expectedVersion` rejects an edit based on an outdated body. The current Markdown body remains authoritative if older extracted style metadata disagrees with a hand edit.
 
-## When to use
-Drafting or revising a pull request title/body for `service-x`.
+## 2. Using skills
 
-## Style rules (observed)
-- Title: "<area>: <imperative summary>", ≤ 70 chars, area ∈ {ranker, api, infra, tests}.
-  Example: "ranker: bump retry lib to 2.4 and cap backoff".
-- Body sections in this order: **Why**, **What changed**, **Testing**, **Risk / rollback**, optional **Follow-ups**.
-- Always link the work item as "AB#<id>" on the first line of Why.
-- Testing lists concrete commands run (`make test-ranker`) and perf numbers when latency-related.
-- Tone: terse, bullets, no emojis. Mention reviewers to ping only when touching /ranker/cache/* (Rahul).
+Tasks can explicitly link `skillIds`. Shared retrieval ranks applicable skills and puts selected instructions into the execution context; explicit selection does not override disabling a skill. A run records skill IDs and, for new runs, signatures containing ID, version and body SHA-256. Pruning an old body does not change the historical signature.
 
-## Anti-patterns (from rejected drafts)
-- Don't paraphrase the diff line by line. Don't add "This PR…" openers.
+The Hub assistant initially receives a compact skill index. It can read the relevant body with `hub_read_skill` rather than adding every skill to every prompt. The Context Bridge returns current bodies only; it does not expose version history as current instructions.
 
-## Examples
-(see examples/ — 3 full PR bodies)
-```
+A saved skill is reference guidance, not a permission grant, a credential or a scheduled program. Per-tool authorization and execution rules still apply.
 
----
+## 3. Morning brief skill
 
-## 2. Mining pipeline (offline, re-runnable)
+`cowork/morning-skill.ts` creates the `morning-brief` personal skill using profession defaults. `/morning-brief` edits the person's instructions; normal versioning applies. The first delivered brief offers personalization once per account. Dismissal, saving and later deliveries do not reset that introduction.
 
-```text
-collect → redact → cluster → extract style (LLM) → synthesize SKILL.md → self-test + version → publish
-```
+Scheduled delivery begins on the local day after account creation and is idempotent per local day. A local/desktop runtime must be running for local delivery. Preview uses current Today context and the saved skill; it does not send messages or take calendar actions.
 
-1. **Collect** (`miners/<kind>.py`): pull my authored artifacts from the Context Engine (already normalized: e.g. `Artifact.kind = 'pr' AND actor = me AND repo = …`, sent mail (from = me), Teams messages (from = me)).
-2. **Redact:** strip secrets, customer names (regex + LLM pass); skills only need *shape*.
-3. **Cluster** when a kind has natural sub-scopes (per repo, per recipient/group). **Minimum support: 8 artifacts** for a scoped skill, else fall back to default.
-4. **Extract style** (`gpt-4.1`, structured output) — prompt asks for *observable, checkable* rules: structure, length distribution, vocabulary, greeting/sign-off, formatting, linking habits, what is always/never present, tone descriptors, notable exceptions. Output JSON `StyleProfile`.
-5. **Synthesize** `SKILL.md` from `StyleProfile` + 3–6 exemplar artifacts (shortest diverse set) using a template.
-6. **Self-test:** generate a draft for 3 held-out inputs with the skill; an LLM judge scores rule adherence + similarity to the real artifact (structure & tone, not text). Publish only if score ≥ threshold; otherwise flag "low confidence".
-7. **Version:** atomically advance the current database version and retain the two preceding bodies. Together with current, this is **three versions total**: after v7, v5/v6/v7 remain. API edits, accepted proposals, assistant edits, Forge publication and undo share the database guard; undo creates a new version rather than rewinding the counter. A proposal does not advance the published version until accepted.
+## 4. Completed-work learning
 
-**Schedule:** full mine on first run (`ensemble-forge mine --all`), then nightly incremental refresh using new artifacts + new feedback.
+The implemented miner is `jobs/skill-mining.ts`, invoked by daily retention:
 
----
+1. Select eligible, unpinned completed tasks and deliverables, at most 50 of each per batch.
+2. Give at least **24 hours' notice** before learning and moving the work to Trash.
+3. Call the person's **High** model with bounded completed-work evidence and current skill bodies.
+4. Validate structured results. Create/version reusable guidance, preserving existing instructions when appending additions. The miner never changes `morning-brief`.
+5. Write completion summaries and move the eligible batch to Trash atomically with the successful changes.
 
-## 3. Learning from feedback (the loop that makes it personal)
+An empty learning result is allowed. A failed/offline model, concurrent skill edit, reopened/pinned record or active job preserves the original work for a later pass. The notice state is the per-space `hub.retention-mining` preference. Trash purge then follows its separate retention window ([07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#11-completed-and-deleted-data-retention)).
 
-Signals captured by the Hub (see [02 §4](02_MODULE_INTERACTION_HUB_UI.md#4-interaction-patterns-details-worth-getting-right)) into `skills.evidence`:
+**Current behavior:** validated retention learning publishes versions directly after notice. The proposed review/accept workflow is [not built](design/real-world-next.md#skill-mining). There is no first-run bulk historical mining, nightly mailbox mining, automatic procedural-skill discovery or scheduled workflow creation.
 
-- **`edited_before_approve`** — diff between agent draft and user's edited version → miner extracts rules implied by edits (*"user always removes 'Hope you're well'"*).
-- **`rejected`** with reason (free text).
-- **`accepted_as_is`** — reinforces current rules.
-- **Context corrections** (e.g. *"Rahul is not on ranker anymore"*).
+## 5. Assistant management
 
-The current learning pass is tied to completed-work retention (§10), not a nightly feedback-folding service. It gives a day’s notice, uses the High model, preserves existing instructions when appending learned guidance, and publishes a new skill version before the completed items enter Trash. `Skill.proposedBody` remains in the schema, but this retention pass writes the versioned body directly.
+| Request | Tool |
+| --- | --- |
+| Find current or disabled skills | `hub_list_skills` |
+| Read body in chunks and retained version metadata | `hub_read_skill` |
+| Create, edit, enable, disable, restore a version or move to Trash | `hub_manage_skill` |
 
-The Skills editor autosaves body edits after a 900 ms pause through `PATCH /api/skills/:id`. Current bodies are read by the assistant and retrieval; the route includes the latest three versions for human inspection and restoration. `POST /api/skills/:id/score` checks a supplied draft’s machine-checkable rules. `POST /api/skills/:id/test` generates a preview without taking external actions. A Morning brief preview uses current Today context and its saved personal instructions.
+Management waits for Apply and uses the existing skill routes. Reads are bounded; updates use `expectedVersion`. Creation accepts the initial body in one action. These tools do not trigger a model preview or mining pass.
 
-## 4. Skill Router (runtime)
+## 6. API
 
-```python
-def route(intent: Intent, ctx: ContextPack) -> list[Skill]:
-    candidates = registry.match(
-        task_type=intent.type,
-        repo=ctx.repo,
-        person=ctx.primary_person,
-        channel=ctx.channel,
-        language=ctx.language,
-    )
-    # specificity order: person/repo-scoped > default; ties → higher confidence & acceptance rate
-    return top_n(candidates, n=3, max_tokens=2500)
-```
+| Method | Route | Behavior |
+| --- | --- | --- |
+| GET | `/api/skills`, `/api/skills/:id` | Current records and up to three retained versions |
+| POST | `/api/skills` | Create, optionally with an initial body |
+| PATCH | `/api/skills/:id` | Edit metadata/body/enabled state; optional version precondition |
+| POST | `/api/skills/:id/restore` | Publish a retained version as a new version |
+| POST | `/api/skills/:id/test` | Generate a model preview without external actions |
+| POST | `/api/skills/:id/score` | Check a supplied draft against supported machine-checkable rules |
+| DELETE | `/api/skills/:id` | Move to Trash |
 
-The router's choice is recorded in `Run.skillIds`. New runs also freeze `Run.skillSignatures` (id, exact version, SHA-256 of the body); pruning a historical body does not rewrite that audit signature. Legacy runs with no signature are not relabelled with today's version.
+`/score` supports the implemented regex, section and word-count checks; it is not a semantic judge or a measured similarity score. Model preview requires an available model and consumes its normal usage.
 
-**Loading:** the worker prompt = identity block + task + context pack + `SKILL.md` bodies (examples included only if token budget allows). The **current body is authoritative** even if a hand edit leaves the mined `styleProfile` out of date. Job payloads, the workspace reader, the shared retrieval tools and the Context Bridge read current rows only; the Python registry also excludes soft-deleted skills. Already-authorized continuation snapshots remain private execution/audit state, not history retrieval endpoints.
+## 7. Verification and privacy
 
-**Task-level selection:** a task page can link explicit `skillIds`. These are validated as the user's own skills, ranked ahead of automatically suggested ones by the shared router, and included in the job/context pack. A disabled skill remains disabled even if an older task still references it.
+Skills are space-scoped and subject to module/sharing access. Do not assume skill bodies are anonymized or safe to publish: the person may put private instructions in them, and learned guidance comes from their work. Account export/deletion and Trash apply through the normal data controls.
 
----
-
-## 5. Auto-discovering new skills (P2, but design it now)
-
-Detect repeated behaviours that are not yet skills:
-
-- **Repeated task shapes** in the ledger (e.g. every Friday I send a status mail to Shachee with the same sections) → propose `docs.status-update.weekly` with a scheduled job attached.
-- **Repeated manual sequences** in the workspace (branch → edit `version.yaml` → run `make bump` → PR) → propose a procedural skill with a `scripts/` step list.
-- **Repeated corrections** of the same kind across skills → propose a global preference.
-
-Proposals appear as cards: *"I noticed you did X 4 times. Make it a skill?"*
-
----
-
-## 6. Evaluation
-
-`eval/skills/` holds, per skill, **≥ 5 held-out real artifacts**. Metrics:
-
-- **Rule adherence** (checkable rules → regex/structure checks, e.g. has "Why" section, title ≤ 70 chars).
-- **Judge similarity** (0–1) vs. the real artifact.
-- **Live acceptance rate** = `accepted_as_is / (accepted + edited + rejected)` from the ledger — this is the headline before/after number (*"generic prompt 31% → personal skill 78%"*).
-
----
-
-## 7. Safety & privacy
-
-- Skills contain style rules and redacted exemplars only, never credentials or customer data. Redaction test in CI.
-- Skills are per-user, stored in the user's repo/OneDrive folder; not shared unless the user exports them.
-- A skill can be disabled instantly from the UI; disabled skills are excluded by the router.
-
----
-
-## 8. Dev checklist
-
-> Unchecked means not re-verified against this tree. [18](18_WHAT_IS_REAL.md) records what is.
-
-- [ ] `ensemble_forge/miners/{pr_style, commit_style, email_tone, teams_tone, code_prefs}.py`
-- [ ] `StyleProfile` pydantic model + extraction prompt (`packages/prompts/forge/extract_style.md`)
-- [ ] `SKILL.md` synthesizer template + `evidence.json`
-- [ ] Self-test judge + threshold config
-- [ ] `skills/registry.py` (load, index by scope, version) + `router.py`
-- [ ] Feedback folding (`miners/feedback.py`) + "proposed version" flow
-- [ ] Hub Skills page hooks (`GET/PUT /api/skills`, `/regenerate`, `/test`)
-- [ ] Seed: ship 4+ skills before the demo
-
----
-
-## 9. Cold start — how a skill works before there is any history
-
-The mining design above assumes 8–27 authored artifacts per skill. On a real first run there are none, so the Forge is built around a **visible confidence ladder** rather than an all-or-nothing mine:
-
-| Rung | Confidence | What it means |
-|---|---|---|
-| `bootstrap` | ≤ 0.45 | Hand-written sensible defaults. Nothing has been learned about you yet, and the `SKILL.md` says so in the body. |
-| `provisional` | 0.45 – 0.69 | Learned from a thin sample (≥ 2 artifacts) or from your feedback. Real but not yet trustworthy. |
-| `mined` | ≥ 0.70 | Backed by ≥ 8 of your own artifacts. |
-| `declared` | ≥ 0.80 | You stated it. Not inferred at all. |
-
-**`declared` sits outside the ladder** rather than at the top of it. The other three are degrees of evidence about what you *did*; a declared skill is what you *said you want*, which is different information and better information — someone who asks for plain English is describing the mail they meant to send, not the mail they sent at 23:00 under deadline.
-
-Consequences:
-
-- its rules are **pinned**, so folding feedback can add to them and reorder them but never erode them;
-- it **outranks mined** in the router (`provenance_bonus` 1.5 vs 1.0), so an observed habit cannot quietly override a stated preference;
-- it is installed by `pnpm forge:declare`, separately from `forge:bootstrap`, because it is not a guess to be outgrown. `declared.py` is the catalogue of what Ensemble *can* declare, not what any one engineer has asked for, so `forge:declare` takes `--only`:
-
-```bash
-ensemble-forge declare --only email-writing.declared --only teams-reply.declared
-```
-
-Installing the whole catalogue on a hub that wanted two of them buries the two, and a skill the engineer never asked for still outranks a mined one in the router — which is the same failure as fabricating a preference.
-
-**A skill is never fabricated at high confidence** — presenting a default as an observation is the fastest way to lose trust the first time the engineer notices.
-
-Three things make cold start work:
-
-1. **Bootstrap skills ship immediately** (`pnpm forge:bootstrap`): five profiles with checkable rules and real few-shot examples. During cold start the few-shots do most of the work — two concrete samples beat a page of inferred rules.
-2. **Thin history is still mined.** One artifact is an anecdote and is ignored; two or more produce a provisional skill, and the engineer's real artifacts immediately replace the invented exemplars.
-3. **Every decision teaches.** Approve, edit or reject in the Hub and the signal is written to `skill_feedback` against the skills that shaped the draft. `ensemble-forge fold` turns those into rules:
-   - an edit that deletes filler → an anti-pattern (*"Hope you're well"*),
-   - a consistently shortened draft → a measured length rule,
-   - a rejection reason → an anti-pattern,
-   - an explicit instruction → a pinned rule that never decays.
-
-The first edit alone promotes a skill from bootstrap to provisional.
-
-The earlier prototype folded approval edits into proposed skill versions. The current completed-work miner is described in §10.
-
-### Notes from the earlier prototype
-
-These notes describe how an earlier prototype met the checklist. Most of the files they name are not in this tree; [17](17_REPOSITORY_STRUCTURE.md) and [18](18_WHAT_IS_REAL.md) describe what is.
-
-| Component | Where |
-|---|---|
-| `StyleProfile`, confidence ladder | `apps/skill-forge/ensemble_forge/style.py` |
-| Declared skills (`pnpm forge:declare`) | `apps/skill-forge/ensemble_forge/declared.py` |
-| Bootstrap profiles | `ensemble_forge/bootstrap.py` |
-| Miners | `ensemble_forge/miners/extract.py` |
-| Feedback folding | `ensemble_forge/miners/feedback.py` |
-| `SKILL.md` synth + judge | `ensemble_forge/synth/__init__.py` |
-| Registry + router | `ensemble_forge/registry.py` |
-| Hub API | `apps/hub-api/src/routes/skills.ts` |
-
-**Commands:** `pnpm forge:bootstrap`, `pnpm forge:mine`, `pnpm forge:fold`, `pnpm forge:list`, and `ensemble-forge test <slug> --file draft.md`.
-
-**Judge scope.** Only rules with a machine-checkable form (`regex:`, `sections:`, `maxwords:`) are scored; a rule the judge cannot verify must not be allowed to inflate the score. The Hub re-implements the same three checks in TypeScript so `/api/skills/:id/score` needs no round trip to Python — note that rules are authored with Python's inline `(?i)` flag, which JavaScript rejects, so the Hub translates it rather than silently skipping the rule.
-
-**Deferred.** The LLM style-extraction pass (§2 step 4) and the LLM-judge similarity score (§2 step 6) need a model credential; the structured miners and the rule-adherence judge cover both today and the prompt is written and ready at `packages/prompts/forge/extract_style.md`.
-
----
-
-## 10. Completed-work learning and morning briefs
-
-Code inspection, 16 Oct 2026: `apps/hub-api/src/jobs/skill-mining.ts` runs as part of daily retention. It gives at least 24 hours’ notice, calls the user’s **High** model with bounded completed-work evidence and current skills, validates structured output, and creates or updates versioned skills before the work moves to Trash. Pinning keeps an item out. Failed mining or a concurrent skill edit leaves the completed items intact. The current miner is a bounded model completion, not the earlier proposed tool-driven `skill_improver` worker. An empty result means the model found no reusable pattern.
-
-`apps/hub-api/src/cowork/morning-skill.ts` creates the `morning-brief` skill using profession-specific defaults. The first delivered brief offers personalization; `/morning-brief` saves those instructions as a new skill version. Ordinary Skills editing and version restoration apply. `POST /api/skills/:id/test` generates a preview without taking external actions; Morning brief previews use the current Today briefing. The existing `/score` endpoint checks a supplied draft against machine-checkable rules. The miner never edits `morning-brief`.
-
-The next skill-mining review workflow is a written design in [real-world-next](design/real-world-next.md#skill-mining), not an implemented approval screen. Current retention mining still validates and applies additions after its notice window.
-
-## Personal skills through the assistant (18 Oct 2026)
-
-`assistant/tools/skills.ts` exposes create/update/enable/disable/restore/Trash through `hub_manage_skill`, always after Apply. `hub_read_skill` reads the current body in parts and can list the retained versions. Updates take `expectedVersion`; `PATCH /api/skills/:id` checks it while holding the row lock. `POST /api/skills` accepts an optional initial `body`, so creation does not need a second write. These tools reuse the existing versioned routes and module/sharing checks; they do not run mining or a model test. Built-in assistant playbooks are separate from these personal skills.
+Focused regressions live alongside `routes/skills.ts`, `jobs/skill-mining.ts`, the assistant tools and shared retrieval. Mocked tests establish version/retention behavior; they do not establish a live model's style quality. No held-out skill corpus, numerical acceptance baseline or LLM similarity evaluation is claimed by this guide.

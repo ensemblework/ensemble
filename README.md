@@ -1,10 +1,10 @@
 # Ensemble
 
-A localhost-first digital coworker: a shared board, Notion-like task pages, and an agent that works the same context you do.
+A workspace for your tasks, pages, files and connected context, with an assistant and agents that work alongside you. Use the hosted web app, run locally, or use the desktop app and CLI.
 
 **Website: [ensemblework.com](https://ensemblework.com)** · **App: [app.ensemblework.com](https://app.ensemblework.com)** · an AI notes app and workspace where you [plan your day with AI](https://ensemblework.com/plan-your-day-with-ai), keep [AI context](https://ensemblework.com/ai-context-management) in one place, and [work with AI agents](https://ensemblework.com/work-with-ai-agents).
 
-Design and operating docs live in [`docs/`](docs/README.md). [`docs/18_WHAT_IS_REAL.md`](docs/18_WHAT_IS_REAL.md) says what works today. Coding agents (and people) changing the code should read [`AGENTS.md`](AGENTS.md) first.
+Current implementation guides live in [`docs/`](docs/README.md). [`docs/18_WHAT_IS_REAL.md`](docs/18_WHAT_IS_REAL.md) maps current capabilities and limits. [Assistant actions](docs/34_ASSISTANT_ACTIONS.md) lists the typed action/tool map; [historical designs](docs/design/README.md) are labeled separately. Coding agents (and people) changing the code should read [`AGENTS.md`](AGENTS.md) first.
 
 ## Run locally (Mac)
 
@@ -60,7 +60,7 @@ The healthy body is `{"ok":true,"service":"agent-runtime"}`.
 
 Open http://localhost:3000. The first screen is **login**. In local development, the first account claims placeholder data and lands on **/start**. Hosted signup is open by default and never gives the first registrant existing localhost data. Email/password, Google, GitHub and Microsoft login are supported; OAuth buttons appear when their separate `AUTH_*` clients are configured. Hosted email signup requires Resend and Turnstile; see [Accounts and public signup](docs/02_MODULE_INTERACTION_HUB_UI.md#16-accounts-and-public-signup). **Connect** creates the read-only `ens_…` key (`ENSEMBLE_BRIDGE_TOKEN`) for editors.
 
-Public hosted accounts use their own model keys, or the **included models** when the operator offers them: four Azure-hosted models paid for by the operator, metered in 20,000 Ensemble credits per account per month with a monthly ceiling for everyone ([docs/33](docs/33_INCLUDED_AI.md); `AZURE_FOUNDRY_RESOURCE`, `AZURE_FOUNDRY_API_KEY`, `ENSEMBLE_INCLUDED_*`). Only exact verified `ENSEMBLE_OPERATOR_EMAILS` accounts can use other host credentials or host filesystem execution; the hosted server's own terminal defaults to off. Everyone's Code tab works on their own paired computer instead: review and edit code, Source control, and a terminal unlocked with a passkey ([docs/16](docs/16_CODE_TAB.md)). Notes and context do not require a local app. Verify email before using hosted model, connector, or agent features.
+Public hosted accounts use their own model keys, or the **included models** when the operator offers them: configured supported Azure deployments paid for by the operator, metered in 20,000 Ensemble credits per account per month with a monthly ceiling for everyone ([docs/33](docs/33_INCLUDED_AI.md); `AZURE_FOUNDRY_RESOURCE`, `AZURE_FOUNDRY_API_KEY`, `ENSEMBLE_INCLUDED_*`). Only exact verified `ENSEMBLE_OPERATOR_EMAILS` accounts can use other host credentials or host filesystem execution; the hosted server's own terminal defaults to off. Everyone's Code tab works on their own paired computer instead: review and edit code, Source control, and a terminal unlocked with a passkey ([docs/16](docs/16_CODE_TAB.md)). Notes and context do not require a local app. Verify email before using hosted model, connector, or agent features.
 
 The API baseline check is `pnpm --filter @ensemble/hub-api test:public`: real Fastify HTTP/auth with an isolated migrated in-memory PGlite database and mocked providers (no model quota). The normal API `test` includes it. `route:inventory:check` checks every registered hosted/desktop route against the checked-in inventory; explicit happy-path/resource coverage gaps remain warning-only, not a claim of a complete API audit. See [API regression tests](docs/01_TECH_STACK_AND_ENVIRONMENT.md#9-api-regression-tests).
 
@@ -149,7 +149,7 @@ pnpm cli:package --target darwin-arm64 --out dist/cli   # full archive for this 
 apps/hub-web            Next.js 15 — Notion-like shell (Today, Board, Needs me, pages, Code, Plots, Diagrams)
 apps/landing            static site for ensemblework.com: home, topic pages, /download (pnpm --filter @ensemble/landing dev, port 3100)
 apps/hub-api            Fastify + Prisma — tasks, pages, undo, SSE, scheduler, workspace queue, assistant
-apps/agent-runtime      Python — model adapters, planner, plot export
+apps/agent-runtime      Python — hosted model adapters and plot export; retained legacy planner modules
 apps/skill-forge        Python miners (stub)
 apps/context-bridge     read-only MCP server (stdio + loopback Streamable HTTP); hub-api serves it at /mcp
 apps/cli                the `ensemble` terminal app, runner and `ensemble mcp` (npm name ensemblework)

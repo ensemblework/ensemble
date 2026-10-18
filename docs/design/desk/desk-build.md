@@ -1,5 +1,7 @@
 # Build brief: implement the approved Desk mockups (feature-2, PR #8)
 
+Historical design record, partly implemented or superseded; **not a current feature/status guide**. Original dates and checklists below describe that earlier work. Use the [design index](../README.md) and current feature guides before implementing or relying on these details.
+
 Prajwal approved the attached high-fidelity mockups ("Looks great, build it as designed"). Build them faithfully in the product, on branch feature-2 (PR #8). Do not merge.
 
 Attached:

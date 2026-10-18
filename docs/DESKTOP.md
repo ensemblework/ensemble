@@ -1,8 +1,8 @@
 # Desktop app
 
-Desktop 0.3.3 carries the Woven Chorus icons, shared Hub themes and Expressive motion.
+Code inspected 18 Oct 2026. Root `release.json` supplies the installed/build version. The bundled app uses the shared Hub, brand and runtime.
 
-`apps/desktop` is a [Tauri 2](https://v2.tauri.app/) window that runs Ensemble on this computer. It serves a static export of `apps/hub-web` and starts one Node sidecar (hub-api, the worker, and the scheduler) against an embedded PGlite database. There is no Docker, no hosted server, and no Postgres install.
+`apps/desktop` is a [Tauri 2](https://v2.tauri.app/) window that runs Ensemble on this computer. It serves a static export of `apps/hub-web` and starts one Node sidecar (hub-api, the worker, and the scheduler) against an embedded PGlite database. Local use needs no Docker, hosted account or Postgres installation. Pairing enables separate hosted account features.
 
 `pnpm dev` and `pnpm --filter @ensemble/hub-web build` are unchanged. The export is a separate target (`ENSEMBLE_DESKTOP_EXPORT=1`). Set `ENSEMBLE_SITE_URL` to open a hosted site instead of the local bundle.
 
@@ -40,7 +40,7 @@ On a Mac, `pnpm desktop:dmg` builds an unsigned disk image locally. [desktop/MAC
 
 The window loads `ensemble://localhost` (on Windows, `http://ensemble.localhost`). The webview rewrites `/api` to the random loopback port and sends the launch token. It does not receive shell or filesystem permissions. Other origins, `mailto:`, and `tel:` open in the system browser. `javascript:` and `file:` are dropped.
 
-**Moving between pages.** Links go through Next's router, so the sidebar, board and Files switch pages in place without repainting the app (`desktop_init_script` in `src/site.rs`). Until 13 Oct 2026 the init script turned every link click into a full page load, which flashed the whole window on each page change. A dynamic route (`/tasks/<id>`, `/pages/<id>`, `/files/<id>`, `/projects/<id>` and the rest) has one placeholder page in the export, `<route>/_/`; `src/assets.rs` serves it for any id, and its route data `<route>/_/index.txt` for `<route>/<id>/index.txt`, so these open in place too. The page reads the real id from the address on each render (`useDesktopParam` in `apps/hub-web/lib/desktop-param.ts`) and is keyed by it, so going from one task to another starts fresh as it does on the web. Checked with the Rust tests and the hub-web DOM tests; the WebKit and Chromium clicks in `src/desktop/desktop-ui.e2e.test.ts` need `pnpm desktop:e2e` and were not run on 13 Oct 2026.
+**Moving between pages.** Links go through Next's router, so the sidebar, board and Files switch pages in place without repainting the app (`desktop_init_script` in `src/site.rs`). A dynamic route (`/tasks/<id>`, `/pages/<id>`, `/files/<id>`, `/projects/<id>` and the rest) has one placeholder page in the export, `<route>/_/`; `src/assets.rs` serves it for any id, and its route data `<route>/_/index.txt` for `<route>/<id>/index.txt`, so these open in place too. The page reads the real id from the address on each render (`useDesktopParam` in `apps/hub-web/lib/desktop-param.ts`) and is keyed by it, so going from one task to another starts fresh as it does on the web. Checked with the Rust tests and the hub-web DOM tests; the WebKit and Chromium clicks in `src/desktop/desktop-ui.e2e.test.ts` need `pnpm desktop:e2e` and were not run on 13 Oct 2026.
 
 **PATH.** A GUI app gets the system's bare PATH, so at start the sidecar takes the person's login-shell PATH and the usual install folders (`apps/hub-api/src/desktop/user-path.ts`, [26](26_CLI.md) §4): Claude Code, Codex, Cursor's agent, git and node are found as in their terminal.
 
@@ -89,7 +89,7 @@ To bake a hosted origin into a build (still overridden by a saved URL or a runti
 ENSEMBLE_SITE_URL=https://your-host.example pnpm desktop:build
 ```
 
-The hosted site will be `https://app.ensemblework.com`. Until it is live, leave the default and point a build at it once it answers.
+The official hosted UI is `https://app.ensemblework.com`. An override uses that origin’s backend/authentication rather than migrating local data.
 
 `ENSEMBLE_DESKTOP_EXTERNAL_LOG=/path/to/log` appends each URL handed to the system browser, one per line. It is for checking the navigation rule, not a user setting.
 
@@ -99,25 +99,17 @@ The mark is **Woven Chorus** on a Deep Petrol tile. `scripts/build-ensemble-bran
 
 ## Known limits
 
-- The default build ships the static export and the Node sidecar. `ENSEMBLE_SITE_URL` points the window at a hosted or dev site instead; the limits below about origins apply to that mode.
-- Live updates inside the site still follow `NEXT_PUBLIC_HUB_API` baked into that site. Locally that is `http://127.0.0.1:4000`, which is a different origin from `http://localhost:3000` and is not rewritten. That is existing site behaviour, not a second desktop client.
-- `http://localhost:3000` and `http://127.0.0.1:3000` are different origins. The session cookie belongs to the origin you configured. A link to the other one opens in the browser.
-- Terminal passkeys and the code sandbox stay as they are on the server. This shell does not change them.
-- macOS and Windows bundles are produced by CI and have not been launched here. Linux is the runtime that was exercised.
-- The updater (`tauri-plugin-updater`) only installs signed updates, so CI builds without `TAURI_SIGNING_PRIVATE_KEY` cannot self-update. No code signing, no tray, no global shortcut. Quick capture remains `apps/quick-capture`.
-- If the hosted site later sends a Content-Security-Policy that blocks the `motion` image, the shell stops receiving theme updates. The offline page still shows Woven Chorus; Expressive is the only supported motion system.
+- Local storage and hosted data are separate; pairing is not full synchronization.
+- Model prompts still go to the chosen provider; included models need a paired account.
+- The Python model runtime is not bundled; native plot export can need installed Python dependencies.
+- OS code signing/notarization is separate from updater signatures and is not configured.
+- The desktop shell has no tray/global capture shortcut; Quick capture is a separate app.
+- Unsupported/unavailable OS sandbox capability is reported explicitly; see [24](24_DESKTOP_SANDBOXING.md).
+- Mobile native packaging is not implemented. The old future static-export phase is already shipped and is no longer a build plan.
 
-## Phase 1b and mobile
+Use [23](23_LOCAL_DESKTOP_DESIGN.md) for architecture, [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md) for pairing/Code/terminal and [desktop/MAC_CHECKLIST](desktop/MAC_CHECKLIST.md) for manual checks. This documentation audit does not certify a fresh install on every OS.
 
-**Phase 1b** is a later change to the hub, not a flag in this crate: a static export (or other client bundle) plus a client-side auth guard and bearer tokens, so the app can ship without a Next server in front. Do not start that by stripping middleware out of `apps/hub-web` from this shell. The session cookie, startup checks, `decrypt()`, and build env on the API stay untouched here so they do not collide with that work.
-
-The local shell page is not the hosted origin. Tauri 2 serves it from `https://tauri.localhost` on macOS and Linux, and from `http://tauri.localhost` on Windows and Android unless `useHttpsScheme` is set. `tauri://localhost` is only for deep links, not the documented webview origin. This shell treats the `tauri.localhost` host and the `tauri:` scheme as the local page, so both forms stay in the window. On the Linux WebKit build exercised here, the offline page's location was `tauri://localhost`. A client bundle in phase 1b has to treat that webview origin as the app, and it still will not share `localStorage` with the hosted site.
-
-**Mobile** (Tauri 2 Android, iOS, iPadOS) should reuse `src/site.rs` (URL choice and in-app vs browser) and `ui/` (the offline page). Keep new windowing code out of those files. Desktop-only pieces are already behind `cfg` for Android and iOS: the single-instance plugin, the menu, and window placement (`src/desktop.rs`). A mobile shell still needs its own WebView, a place to store `site.json`, and the same rule that the hosted origin gets no IPC. Signing, store listings, and a real host URL are separate from this phase.
-
-Desktop 0.3.8 includes the paired-run attachment handoff: original PDF/Office files and embedded diagram source are copied into the local runtime before the job starts. It shares the same 100 MB limit and lease checks as CLI 0.3.11 ([25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)). The Hub UI uses the dedicated Pages browser, Appearance settings and default-profile quick assignment.
-
-## Platform integration (16 Oct 2026)
+## Platform integration
 
 Code inspection: the local web UI uses the installed Tauri dialog plugin via `core.invoke("plugin:dialog|open", { options })` for Code folders. The selected path still passes the existing API path checks. `tauri-plugin-notification` provides native reminder notifications after system permission; a running app is required. Browser sessions keep browser notifications. The shell grants only the local page the dialog and notification capabilities.
 
