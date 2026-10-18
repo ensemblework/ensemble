@@ -149,12 +149,12 @@ test("tabs switch by click and arrow keys, and every tab is a real link", async 
   }
 });
 
-test("Connections shows the five featured apps, and a connector link opens the store on it", async () => {
+test("Connections shows the five featured apps, connected first, and a connector link opens the store on it", async () => {
   const view = await mount("http://localhost/settings?tab=connections&connector=github");
   try {
     await until(() => Boolean(document.querySelector('[data-testid="featured-connectors"]')), "the featured list");
     const rows = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="featured-connectors"] [data-connector]')).map((row) => row.dataset.connector);
-    assert.deepEqual(rows, ["google_workspace", "microsoft_365", "notion", "linear", "github"]);
+    assert.deepEqual(rows, ["github", "google_workspace", "microsoft_365", "notion", "linear"], "connected apps come first");
     assert.match(document.querySelector('[data-connector="github"]')!.textContent ?? "", /Connected as mira-chen/);
     await until(() => Boolean(document.querySelector('[data-testid="connector-detail"]')), "the GitHub detail");
     assert.equal(document.querySelector<HTMLElement>('[data-testid="connector-detail"]')!.dataset.connector, "github");

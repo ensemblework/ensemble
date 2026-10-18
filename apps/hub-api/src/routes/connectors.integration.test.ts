@@ -108,7 +108,7 @@ function connectCookie(response: { headers: Record<string, unknown> }, provider:
 
 const scopeList = (url: string): string[] => (new URL(url).searchParams.get("scope") ?? "").split(" ").filter(Boolean);
 
-type Entry = { id: string; state: { connected: boolean; account: string | null; appReady: boolean; oauthReady: boolean; products: Record<string, boolean>; needsConsent: string[]; sources: Record<string, { enabled: boolean; lastSyncAt: string | null; lastError: string | null }>; mcp?: { status: string; toolCount: number; lastError: string | null } } };
+type Entry = { id: string; state: { connected: boolean; account: string | null; appReady: boolean; oauthReady: boolean; products: Record<string, boolean>; needsConsent: string[]; sources: Record<string, { enabled: boolean; lastSyncAt: string | null; lastError: string | null }>; mcp?: { status: string; toolCount: number; lastError: string | null; auth: string; account: string | null } } };
 
 test("catalog merges the shared list with each person's own state", async () => {
   resetMocks();
@@ -149,7 +149,7 @@ test("catalog merges the shared list with each person's own state", async () => 
   assert.equal(zoom.state.appReady, false, "no Zoom app on this server");
   const notion = entries.find((row) => row.id === "notion")!;
   assert.equal(notion.state.appReady, true, "Notion can still connect with a token or MCP");
-  assert.deepEqual(notion.state.mcp, { status: "connected", toolCount: 2, lastError: null });
+  assert.deepEqual(notion.state.mcp, { status: "connected", toolCount: 2, lastError: null, auth: "oauth", account: null });
 
   const theirs = await call(arjun, "GET", "/api/connectors/catalog", "/api/connectors/catalog", "isolation");
   assert.equal(theirs.statusCode, 200, theirs.body);

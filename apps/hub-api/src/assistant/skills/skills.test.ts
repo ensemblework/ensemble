@@ -6,10 +6,11 @@
 import assert from "node:assert/strict";
 import test, { afterEach } from "node:test";
 import "../../runtime/test-env.js";
-import { DEFAULT_SETTINGS, type Settings } from "@ensemble/shared-types";
+import { DEFAULT_SETTINGS, catalogEntry, type Settings } from "@ensemble/shared-types";
 import type { FastifyInstance } from "fastify";
 import { setAskRuntimeStreamForTests, type RuntimeTurn } from "../../lib/model-turn.js";
 import { runAssistantTurn } from "../agent.js";
+import { appNames } from "../connections.js";
 import { APP_TOOL_LIST, TOOL_NAMES, getTool } from "../registry.js";
 import { buildSystemPrompt } from "../state.js";
 import type { AnyHubTool } from "../types.js";
@@ -73,6 +74,28 @@ test("routing picks the playbook for the owner's example requests", () => {
   assert.ok(routed("assign this task to an agent with my Careful profile").includes("agents"));
   assert.ok(routed("delete all tasks from the board").includes("tasks"));
   assert.ok(routed("x".repeat(10) + " diagram chart meeting email task recap").length <= 2, "at most two");
+});
+
+test("a message naming a connected app, or a meeting while a meeting app is connected, also loads the apps playbook", () => {
+  const app = (id: string, meetings = false) => ({ names: appNames(catalogEntry(id)!), meetings });
+  const route = (message: string, apps: Array<{ names: string[]; meetings?: boolean }>) => routePlaybooks({ message, apps }, playbooksFor(undefined)).map((playbook) => playbook.name);
+  const hf = [app("huggingface")];
+  assert.ok(route("Search Hugging Face for small speech models", hf).includes("apps"));
+  assert.ok(route("what does huggingface say about whisper?", hf).includes("apps"), "its id works too");
+  assert.equal(route("Search Hugging Face for small speech models", []).includes("apps"), false, "not when it is not connected");
+  const vercel = route("can you see that Vercel is connected? can you list the projects on Vercel?", [app("vercel")]);
+  assert.ok(vercel.includes("apps") && vercel.includes("tasks"), vercel.join(", "));
+  const crowded = route("Add a task from my diagram chart email recap in Hugging Face", hf);
+  assert.equal(crowded.length, 3, "the app adds a third playbook rather than pushing one out");
+  assert.equal(crowded.at(-1), "apps");
+  const close = [app("close")];
+  assert.equal(route("close the deck task", close).includes("apps"), false, "an everyday word needs its capital");
+  assert.ok(route("show my open deals in Close", close).includes("apps"));
+  const notes = route("Summarise yesterday's meeting notes", [app("granola", true)]);
+  assert.ok(notes.includes("meeting-notes") && notes.includes("apps"), notes.join(", "));
+  assert.equal(route("Summarise yesterday's meeting notes", [app("vercel")]).includes("apps"), false);
+  for (const message of ["what's connected?", "Which apps are connected here?", "Is Asana connected?", "list my connections"]) assert.ok(routed(message).includes("apps"), message);
+  assert.ok(findPlaybook("apps")!.tools.includes("hub_list_connections") && findPlaybook("settings")!.tools.includes("hub_list_connections"));
 });
 
 test("module playbooks follow the person's modules", () => {

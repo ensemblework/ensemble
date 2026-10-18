@@ -24,6 +24,7 @@ export const TOKEN_PROVIDERS = [
   "zendesk",
   "front",
   "hubspot",
+  "zotero",
   ...MEETING_VENDORS,
 ] as const;
 export type TokenProvider = (typeof TOKEN_PROVIDERS)[number];
@@ -185,14 +186,28 @@ export async function validateToken(provider: TokenProvider, input: TokenBody): 
       };
     }
     case "trello": {
-      if (!input.key) throw new TokenRejectedError("Enter your Trello API key as well as the token.");
-      if (!/^[A-Za-z0-9]+$/.test(input.key) || !/^[A-Za-z0-9]+$/.test(token)) throw new TokenRejectedError("That Trello key or token has characters Trello never uses.");
+      const key = input.key;
+      if (!key) throw new TokenRejectedError("Enter your Trello API key as well as the token.");
+      if (/^ATTA/i.test(key)) throw new TokenRejectedError("That's a Trello token in the API key field. The API key is the 32-character code on your Power-Up's API key tab; the token goes in Token.");
+      if (key === token || /^[0-9a-f]{32}$/i.test(token)) {
+        throw new TokenRejectedError("That's your API key in the Token field. Trello's token comes from the Token link next to your API key, and starts with ATTA.");
+      }
+      if (!/^[A-Za-z0-9]+$/.test(key) || !/^[A-Za-z0-9]+$/.test(token)) throw new TokenRejectedError("That Trello API key or token has characters Trello never uses.");
+      // A Power-Up's Secret is 64 hex characters, but so are tokens made before Trello's ATTA format, so Trello decides and its refusal names the Secret.
+      const secretLike = /^[0-9a-f]{64}$/i.test(token);
       const res = await call("https://api.trello.com/1/members/me?fields=username,fullName", {
-        headers: { Authorization: `OAuth oauth_consumer_key="${input.key}", oauth_token="${token}"`, Accept: "application/json" },
+        headers: { Authorization: `OAuth oauth_consumer_key="${key}", oauth_token="${token}"`, Accept: "application/json" },
       });
+      if (res.status === 401) {
+        throw new TokenRejectedError(
+          secretLike
+            ? "That looks like your Power-Up's Secret. Trello's token comes from the Token link next to your API key, and starts with ATTA."
+            : "Trello didn't accept that API key and token together. Make sure the token was made with the Token link for this same API key.",
+        );
+      }
       if (!res.ok) rejected("Trello", res.status);
       const body = res.body as { username?: string; fullName?: string };
-      return { secret: token, account: body.username ?? body.fullName ?? "Trello", meta: { via: "token", key: input.key } };
+      return { secret: token, account: body.username ?? body.fullName ?? "Trello", meta: { via: "token", key } };
     }
     case "asana": {
       const res = await call("https://app.asana.com/api/1.0/users/me", { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } });
@@ -295,8 +310,48 @@ export async function validateToken(provider: TokenProvider, input: TokenBody): 
       const uiDomain = body.uiDomain && /^app(-[a-z0-9]+)?\.hubspot\.com$/.test(body.uiDomain) ? body.uiDomain : "app.hubspot.com";
       return { secret: token, account: `HubSpot ${body.portalId}`, meta: { via: "token", portalId: body.portalId, uiDomain } };
     }
+    case "zotero":
+      return zoteroKey(token);
   }
   throw new TokenRejectedError("That service does not take a pasted token.");
+}
+
+interface ZoteroAccess {
+  library?: boolean;
+  notes?: boolean;
+  write?: boolean;
+}
+
+/** Group libraries saved at connect; searches cover the first few (connectors/items/sources/zotero.ts). */
+const ZOTERO_MAX_GROUPS = 10;
+
+async function zoteroKey(token: string): Promise<ValidatedToken> {
+  if (!/^[A-Za-z0-9]{10,64}$/.test(token)) throw new TokenRejectedError("That doesn't look like a Zotero API key. Copy the key zotero.org shows after you save it: letters and digits only.");
+  const headers = { "Zotero-API-Key": token, "Zotero-API-Version": "3", Accept: "application/json" };
+  const res = await call("https://api.zotero.org/keys/current", { headers });
+  if (res.status === 403 || res.status === 401) throw new TokenRejectedError("Zotero didn't accept that API key.");
+  if (!res.ok) rejected("Zotero", res.status);
+  const body = (res.body ?? {}) as { userID?: number; username?: string; displayName?: string; access?: { user?: ZoteroAccess; groups?: Record<string, { library?: boolean; write?: boolean }> } };
+  const userID = Number(body.userID);
+  if (!Number.isSafeInteger(userID) || userID <= 0) throw new TokenRejectedError("Zotero didn't say whose key that is. Try again, or create a new key.");
+  const user = body.access?.user ?? {};
+  const grants = body.access?.groups ?? {};
+  const readable = (id: number) => Boolean(grants.all?.library || grants[String(id)]?.library);
+  let groups: Array<{ id: number; name: string; write: boolean }> = [];
+  if (Object.values(grants).some((grant) => grant?.library)) {
+    const listed = await call(`https://api.zotero.org/users/${userID}/groups?limit=100`, { headers });
+    const rows = listed.ok && Array.isArray(listed.body) ? (listed.body as Array<{ id?: number; data?: { name?: string } }>) : [];
+    groups = rows
+      .filter((row): row is { id: number; data?: { name?: string } } => typeof row?.id === "number" && Number.isSafeInteger(row.id) && row.id > 0 && readable(row.id))
+      .slice(0, ZOTERO_MAX_GROUPS)
+      .map((row) => ({ id: row.id, name: String(row.data?.name ?? `Group ${row.id}`).slice(0, 120), write: Boolean(grants.all?.write || grants[String(row.id)]?.write) }));
+  }
+  if (!user.library && !groups.length) throw new TokenRejectedError("This key can't read your library. Edit the key and tick Allow library access.");
+  return {
+    secret: token,
+    account: body.username || body.displayName || `Zotero user ${userID}`,
+    meta: { via: "token", userID, username: body.username ?? null, library: Boolean(user.library), notes: Boolean(user.notes), write: Boolean(user.write), groups },
+  };
 }
 
 export const isTokenProvider = (value: string): value is TokenProvider & AccountProvider => (TOKEN_PROVIDERS as readonly string[]).includes(value);

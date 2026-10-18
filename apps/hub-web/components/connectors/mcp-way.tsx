@@ -3,7 +3,7 @@
 /** @jsxImportSource react */
 
 import { useQuery } from "@tanstack/react-query";
-import { ExternalLink, KeyRound, Link2, Wrench } from "lucide-react";
+import { ExternalLink, KeyRound, Link2, LogIn, Wrench } from "lucide-react";
 import { useState } from "react";
 import { api } from "@/lib/api";
 import type { CatalogEntry } from "@/lib/api-connectors";
@@ -12,10 +12,17 @@ import { Spinner, cx } from "../ui";
 import { browser } from "./browser";
 import { McpTokenPrompt, useMcpConnect, type McpConnectExtra } from "./mcp-connect";
 
-/** The short name people use for the vendor. */
+/** The short name people use for the vendor: "Notion" for Notion Labs, "Hugging Face" whole. */
 function brandOf(entry: Pick<CatalogEntry, "name" | "vendor">): string {
+  if (entry.vendor === entry.name) return entry.name;
   const first = entry.name.split(" ")[0];
   return entry.vendor.split(" ")[0] === first && first ? first : entry.vendor;
+}
+
+/** "an access token" for "Hugging Face access token": the label without the brand, with its article. */
+export function tokenPhrase(label: string, brand: string): string {
+  const bare = label.toLowerCase().startsWith(`${brand.toLowerCase()} `) ? label.slice(brand.length + 1) : label;
+  return `${/^[aeiou]/i.test(bare) ? "an" : "a"} ${bare}`;
 }
 
 /** "Set up once" for the registered client a vendor's MCP server needs; nothing for everyone else. */
@@ -43,6 +50,8 @@ export function McpConnectWay({ entry, primary }: { entry: CatalogEntry; primary
   const withFields = (extra: McpConnectExtra = {}): McpConnectExtra => (mcp.fields?.length ? { ...extra, fields } : extra);
   const fieldsReady = (mcp.fields ?? []).every((field) => (fields[field.name] ?? "").trim().length > 0);
   const button = primary ? "btn-primary" : "btn";
+  /** Both a browser sign-in and a token: name each plainly. */
+  const signIn = Boolean(mcp.token && !mcp.token.only && !mcp.open);
 
   if (mcp.client && entry.state.mcpReady === false) {
     return (
@@ -106,12 +115,12 @@ export function McpConnectWay({ entry, primary }: { entry: CatalogEntry; primary
             )
           ) : mcp.token?.only ? null : (
             <button type="button" className={button} disabled={connect.pending || !fieldsReady} onClick={() => connect.connect(withFields())}>
-              {connect.pending ? <Spinner size={12} /> : <Wrench size={12} />} Connect tools
+              {connect.pending ? <Spinner size={12} /> : signIn ? <LogIn size={12} /> : <Wrench size={12} />} {signIn ? `Sign in with ${brand}` : "Connect tools"}
             </button>
           )}
           {mcp.token && !tokenOpen ? (
             <button type="button" className="btn-ghost text-[12.5px]" onClick={() => setTokenOpen(true)}>
-              <KeyRound size={12} /> Paste {mcp.token.label.toLowerCase().startsWith(brand.toLowerCase()) ? "a token" : `a ${mcp.token.label}`} instead
+              <KeyRound size={12} /> Paste {tokenPhrase(mcp.token.label, brand)}
             </button>
           ) : null}
         </div>

@@ -1,4 +1,4 @@
-/** Item sources for apps added with the connectors that used to be listed as coming soon (Figma, Zendesk, Vercel…). */
+/** Item sources for apps added with the connectors that used to be listed as coming soon (Figma, Zendesk, Vercel…), and Zotero. */
 import type { ItemSource } from "../types.js";
 import { azureDevopsItems } from "./azure-devops.js";
 import { boxItems } from "./box.js";
@@ -10,6 +10,7 @@ import { hubspotItems } from "./hubspot.js";
 import { vercelItems } from "./vercel.js";
 import { xeroItems } from "./xero.js";
 import { zendeskItems } from "./zendesk.js";
+import { zoteroItems } from "./zotero.js";
 
 export const MORE_ITEM_SOURCES: readonly ItemSource[] = [
   figmaItems,
@@ -22,4 +23,5 @@ export const MORE_ITEM_SOURCES: readonly ItemSource[] = [
   boxItems,
   xeroItems,
   discordItems,
+  zoteroItems,
 ];

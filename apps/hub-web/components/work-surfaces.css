@@ -40,6 +40,11 @@
 .meeting-shelf { display: flex; flex-direction: column; gap: 9px; max-height: 80vh; overflow-y: auto; scrollbar-width: thin; }
 .meeting-note-card { display: flex; flex-direction: column; gap: 10px; width: 100%; text-align: left; padding: 15px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
 .meeting-note-card:hover { border-color: var(--line-strong); }
+.meeting-shelf-item { position: relative; }
+.meeting-card-delete { position: absolute; bottom: 9px; right: 9px; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 7px; color: var(--muted); background: var(--panel); border: 1px solid var(--line); opacity: 0; transition: opacity var(--dur-fast, 120ms) ease, color var(--dur-fast, 120ms) ease, border-color var(--dur-fast, 120ms) ease; }
+.meeting-shelf-item:is(:hover, :focus-within) .meeting-card-delete { opacity: 1; }
+.meeting-card-delete:hover, .meeting-card-delete:focus-visible { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }
+@media (hover: none) { .meeting-card-delete { opacity: 1; } }
 .meeting-note-card[data-active="true"] { background: var(--hover); border-color: var(--line-strong); }
 .meeting-card-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 10px; color: var(--muted); }
 .meeting-card-meta svg { color: var(--chart-blue); }

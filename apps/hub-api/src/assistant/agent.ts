@@ -46,6 +46,8 @@ import { reflectProposals } from "./reply.js";
 import { statusFor } from "./status-line.js";
 import { toolAllowedFor, chatToolSpecs, responsesToolSpecs } from "./registry.js";
 import { appsPrompt, ensureAppAccess, loadAppGrants, toolsForTurn, writeRefusal } from "./apps.js";
+import { loadConnections } from "./connections.js";
+import { isGuestIn } from "../sharing/context.js";
 import { advertisedTools, playbookText, appMap, findPlaybook, playbookIndex, playbooksFor, routePlaybooks, type Playbook } from "./skills/index.js";
 import { hasModule, INCLUDED_PROVIDER, INCLUDED_SOURCE, isSubscriptionProvider } from "@ensemble/shared-types";
 import type { ToolAnswer } from "../subscriptions/bridge.js";
@@ -223,11 +225,16 @@ async function drive(
   // and in Ensemble Code the folder's read tools and agent runs. Any of these may run.
   const tools = [...(await toolsForTurn(ctx, grants)), ...(args.code ? codeTools : [])];
   const byName = new Map(tools.map((tool) => [tool.name, tool]));
+  // Every app connected in this space, for the prompt and for routing; empty for a guest.
+  const connections = await loadConnections(ctx, tools);
   // The model sees core tools and the playbooks in play; Code also keeps its local tools.
   // (skills/index.ts): the ones the page, mentions and words point at, and any it loads with hub_how_to.
   const playbooks = playbooksFor(args.modules);
   const active = new Map<string, Playbook>(
-    routePlaybooks({ message: args.message, path: openPage?.path ?? args.page?.path, mentions: args.mentions }, playbooks).map((playbook) => [playbook.name, playbook]),
+    routePlaybooks(
+      { message: args.message, path: openPage?.path ?? args.page?.path, mentions: args.mentions, apps: connections.connected },
+      playbooks,
+    ).map((playbook) => [playbook.name, playbook]),
   );
   const shown = () => {
     const selected = advertisedTools(tools, active.values(), args.message);
@@ -246,7 +253,8 @@ async function drive(
     weekday: clock.weekday,
     timezone: settings.timezone,
     persona,
-    apps: appsPrompt(tools, grants, settings) || undefined,
+    // A guest's prompt already says the owner's apps are private.
+    apps: isGuestIn(userId) ? undefined : appsPrompt(connections, settings),
     map: appMap() || undefined,
     playbooks: playbookIndex(playbooks, [...active.values()]),
     loaded: [...active.values()].map((playbook) => `## Playbook: ${playbook.title}\n${playbookText(playbook, args.message)}`).join("\n\n") || undefined,

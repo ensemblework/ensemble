@@ -2,8 +2,9 @@
  * McpConnection rows: what is stored, how secrets are sealed, and what the Hub sees.
  *
  * clientInfo holds an encrypted envelope: how the connection authenticates,
- * the OAuth client (registered, CIMD or pre-registered) and the cached
- * discovery result (resource metadata and authorization server metadata).
+ * the OAuth client (registered, CIMD or pre-registered), the cached
+ * discovery result (resource metadata and authorization server metadata)
+ * and, where the vendor says, whose account the token belongs to.
  * tokens holds the encrypted OAuth tokens, or the pasted bearer token.
  */
 import type { McpConnection } from "@prisma/client";
@@ -28,6 +29,8 @@ export type McpClientEnvelope = {
   /** The person typed in this client's id (and secret); keep it across reconnects. */
   preRegistered?: boolean;
   discovery?: OAuthDiscoveryState;
+  /** Whose account the token is, from the vendor's API (connectors/mcp/account.ts), for "Connected as …". */
+  account?: string;
 };
 
 export type McpToolAnnotations = {
@@ -54,6 +57,7 @@ export type McpConnectionView = {
   url: string;
   status: McpStatus;
   auth: McpAuthKind;
+  account: string | null;
   toolCount: number;
   tools: Array<{ name: string; title: string | null; description: string | null; readOnly: boolean }>;
   disabledTools: string[];
@@ -85,6 +89,7 @@ export function readEnvelope(row: Pick<McpConnection, "clientInfo">): McpClientE
     ...(stored?.client ? { client: stored.client } : {}),
     ...(stored?.preRegistered ? { preRegistered: true } : {}),
     ...(stored?.discovery ? { discovery: stored.discovery } : {}),
+    ...(typeof stored?.account === "string" && stored.account ? { account: stored.account } : {}),
   };
 }
 
@@ -142,13 +147,15 @@ export function toolReadOnly(tool: McpToolSpec): boolean {
 
 export function connectionView(row: McpConnection): McpConnectionView {
   const tools = cachedTools(row);
+  const envelope = readEnvelope(row);
   return {
     id: row.id,
     serverId: row.serverId,
     name: row.name,
     url: row.url,
     status: asStatus(row.status),
-    auth: readEnvelope(row).auth,
+    auth: envelope.auth,
+    account: envelope.account ?? null,
     toolCount: tools.length,
     tools: tools.map((tool) => ({
       name: tool.name,

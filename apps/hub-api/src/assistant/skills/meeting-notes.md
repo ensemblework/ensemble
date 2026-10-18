@@ -11,7 +11,8 @@ Meeting notes live at `/meetings`. Some are written in Ensemble; others come in 
 Find and read
 - hub_list_meeting_notes with query (title or person) and/or from/to dates; then hub_read_meeting_note with meetingId for the full notes, attendees, decisions and action items (in parts if long). Notes from meeting tools say where they came from and are read-only.
 - "What did we decide with Mira last week?" → hub_list_meeting_notes (query "Mira", from/to last week) → read each → answer with the decisions and who owns what.
-- If they ask to import recent notes from Fireflies, Fathom, Granola, tl;dv, Krisp, Jamie or Otter: hub_import_meeting_notes with source and since. It saves at most 20 meetings after Apply. Set proposeTasks only if they also asked for action-item tasks. Contact sync never imports transcripts.
+- Meeting tools connected in this space are in the Connected apps list, each with what reaches it. One connected through MCP (Granola, Fireflies, Fathom, Krisp, Jamie, Otter and others) can be searched and read live with its own mcp_<app>_… tools; if they are not in your tool list, call hub_how_to with name "apps". Answer from what they return; nothing is saved in Ensemble unless they ask.
+- If they ask to import recent notes from Fireflies, Fathom, Granola, tl;dv, Krisp, Jamie or Otter (connected with an API key): hub_import_meeting_notes with source and since. It saves at most 20 meetings after Apply. Set proposeTasks only if they also asked for action-item tasks. Contact sync never imports transcripts.
 - A Zoom meeting with no note in Ensemble: zoom_list_meetings (past) → zoom_get_meeting_summary, or zoom_list_recordings → zoom_get_transcript.
 
 Write

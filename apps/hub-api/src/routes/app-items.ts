@@ -49,6 +49,8 @@ const KINDS = [
   "meeting",
   "video",
   "attachment",
+  "reference",
+  "collection",
 ] as const satisfies readonly AppItemKind[];
 
 const Kind = z.enum(KINDS);

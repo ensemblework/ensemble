@@ -4,7 +4,7 @@ import { assistantRequest } from "../request.js";
 import { defineTool, toolOk } from "../types.js";
 
 export const surfaceTools = [defineTool({
-  name: "hub_read_surface", area: "context", description: "Read the open Ensemble surface and its current filters/selection: Today, Board, Context, pages/tasks/projects, meeting notes, Files, plots, diagrams, skills, settings, Needs me, runs, Code, Completed, Trash, recap, spaces or sharing. Defaults to the person's open page. Returns bounded data and next tools; never screen pixels.",
+  name: "hub_read_surface", area: "context", description: "Read the open Ensemble surface and its current filters/selection: Today, Board, Context, pages/tasks/projects, meeting notes, Files, plots, diagrams, skills, settings (on the Connections tab: the apps connected in this space), Needs me, runs, Code, Completed, Trash, recap, spaces or sharing. Defaults to the person's open page. Returns bounded data and next tools; never screen pixels.",
   input: z.object({ path: z.string().max(500).optional() }), isWrite: false, risk: "low",
   async run(ctx, input) {
     const url = new URL(input.path ?? (ctx.page?.taskId ? `/tasks/${ctx.page.taskId}` : ctx.page?.path) ?? "/today", "https://ensemble.invalid");
@@ -24,7 +24,7 @@ export const surfaceTools = [defineTool({
       case "diagrams": data = id ? await run("hub_get_diagram", { diagramId: id }) : await run("hub_list_diagrams", {}); break;
       case "plots": data = id ? await run("hub_get_plot", { plotId: id }) : await run("hub_list_plots", {}); break;
       case "meetings": { const meetingId = ctx.page?.meetingId ?? url.searchParams.get("session") ?? url.searchParams.get("note"); data = meetingId ? await run("hub_read_meeting_note", { meetingId }) : await run("hub_list_meeting_notes", {}); break; }
-      case "settings": data = { tab: url.searchParams.get("tab"), values: await run("hub_get_settings", {}), next: "hub_find_setting with the requested setting; hub_update_settings to change allowed keys" }; break;
+      case "settings": data = url.searchParams.get("tab") === "connections" ? { tab: "connections", connections: await run("hub_list_connections", {}), next: "Connecting, reconnecting and removing apps is the person's own step on this tab" } : { tab: url.searchParams.get("tab"), values: await run("hub_get_settings", {}), next: "hub_find_setting with the requested setting; hub_update_settings to change allowed keys" }; break;
       case "skills": { const skillId = id ?? url.searchParams.get("skill"); data = skillId ? await run("hub_read_skill", { skillId }) : await run("hub_list_skills", { includeDisabled: true }); break; }
       case "needs-me": data = await run("hub_list_approvals", {}); break;
       case "runs": { const runId = id ?? url.searchParams.get("run"); data = runId ? await run("hub_get_run", { runId }) : await run("hub_list_runs", {}); break; }

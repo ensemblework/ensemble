@@ -93,7 +93,11 @@ The assistant can find/read/change **allowlisted** settings after Apply and choo
 
 #### Connector store
 
-`components/connectors` consumes `GET /api/connectors/catalog`. Entries distinguish configured operator app, the person's connection, products/granted scopes, last sync/error and vendor MCP state/tools. Turning on a product without sufficient scopes offers reconnect/consent. Login identity and connector grants are separate. Connecting does not import content; Sync people updates bounded metadata only. Native search, file/board import and MCP tools have separate coverage ([03](03_MODULE_CONTEXT_ENGINE.md), [31](31_CONNECTORS_IN_USE.md)).
+`components/connectors` consumes `GET /api/connectors/catalog`. Entries distinguish configured operator app, the person's connection, products/granted scopes, last sync/error and vendor MCP state/tools. Turning on a product without sufficient scopes offers reconnect/consent. A vendor MCP connection made without an account to a server that holds the person's data shows as "Connected · public data only", with sign-in and token still offered; where the vendor names the account (Hugging Face) the badge reads "Connected as <account>". Hugging Face offers **Sign in with Hugging Face** and **Paste an access token**, never an anonymous Connect. Login identity and connector grants are separate. Connecting does not import content; Sync people updates bounded metadata only. Native search, file/board import and MCP tools have separate coverage ([03](03_MODULE_CONTEXT_ENGINE.md), [31](31_CONNECTORS_IN_USE.md)).
+
+Connected apps come first wherever connectors are listed: the store grid (in every category and search), and the five-app short list in Settings → Connections. "Connected" means signed in, a saved token, or the vendor's MCP server connected; connected custom MCP servers join them at the top of the grid. Otherwise catalog order holds (`filterEntries`, `featuredEntries`, `storeCards` in `components/connectors/catalog-view.ts`). The API still returns catalog order.
+
+The detail page's connect panel has one **Step-by-step guide** disclosure, open by default, inside the way it describes (a button with `aria-expanded`; numbered steps, links open in a new tab, with "Looks like", "Not this", "Permissions" and "More help" notes). Pasted credentials and MCP servers that take a token, an address or the organisation's own app have written guides in `packages/shared-types/src/connector-guides.ts` (`CONNECTOR_GUIDES`); sign-in gets a short guide on what happens and what to approve (`connectorGuide`). Guides, field labels and the way's title use the vendor's own word for the credential (Notion internal integration secret, GitHub fine-grained personal access token, Slack user OAuth token, Linear personal API key, Trello API key and token). Trello's form has **Get a token**, which opens Trello's authorize page for the typed key. A refused token is shown under the fields. **In Ensemble** lists only what the code does for that app ([31 §2](31_CONNECTORS_IN_USE.md#2-what-ensemble-does-with-a-connected-app)).
 
 ### 3.10 Files
 
@@ -102,6 +106,8 @@ Files lists uploaded originals and explicitly saved/imported app content. Format
 ## 4. Interaction patterns
 
 Dialogs manage keyboard focus; tabs support keyboard navigation. Drag/drop and resize controls persist real layout state. Blank titles restore the saved name or fail validation rather than saving empty records. Text scaling changes typography without scaling the entire root layout. Phone actions wrap within the viewport.
+
+Notices (toasts, `components/toast.tsx`) appear at the bottom centre and close themselves after 3 seconds (`TOAST_MS` in `lib/toast-bus.ts`); the accent bar along the bottom runs down over that time. Pointing at a notice or focusing it pauses the bar and the timer, so an Undo button stays reachable; × closes it at once. A caller can ask for longer only for instructions that need reading (the PDF print fallback).
 
 Confirmations are specific to the action. Moving recoverable pages to Trash offers Undo; permanent deletion, account removal, sharing revocation and sensitive device permissions have their own confirmations. Do not add a universal confirmation to ordinary autosave.
 
@@ -217,7 +223,7 @@ Inline requests use the normal assistant loop and scoped tools. Newly requested 
 
 ### Manual and imported meeting notes
 
-Manual meeting sessions use the block editor and serialized debounced saving. Typed content also has a Markdown projection used by search/recap. Failed drafts remain in browser memory across SPA navigation, not a full reload. Imported notes share the shelf but are source records and read-only. Meetings do not record the microphone or transcribe audio. [03](03_MODULE_CONTEXT_ENGINE.md#7-meeting-context) describes the actual routes.
+Manual meeting sessions use the block editor and serialized debounced saving. Each card on the shelf shows a Move to Trash button on hover or keyboard focus (always shown on touch screens), which confirms, uses `DELETE /api/meetings/sessions/:id` like Delete notes inside a note, and offers Undo. Typed content also has a Markdown projection used by search/recap. Failed drafts remain in browser memory across SPA navigation, not a full reload. Imported notes share the shelf but are source records and read-only. Meetings do not record the microphone or transcribe audio. [03](03_MODULE_CONTEXT_ENGINE.md#7-meeting-context) describes the actual routes.
 
 ### Context graph
 

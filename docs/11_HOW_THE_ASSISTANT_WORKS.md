@@ -32,7 +32,8 @@ All paths below are relative to `apps/hub-api/src/` unless qualified.
 | `assistant/skills/index.ts`, `skills/*.md` | Intent routing, area index and exact tool recipes |
 | `assistant/registry.ts` | Hub tools, built-in connected-app tools, module filtering and schemas |
 | `assistant/types.ts`, `tools/` | `defineTool`, input/output contracts, previews and domain operations |
-| `assistant/apps.ts`, `mcp-tools.ts` | Per-person grants/products, dynamic connected-item/MCP tools and resolution |
+| `assistant/apps.ts`, `mcp-tools.ts` | Per-person grants/products, dynamic connected-item/MCP tools and resolution, the Connected apps prompt block |
+| `assistant/connections.ts`, `tools/connections.ts` | Every app connected in the space with how, account and tools, for the prompt, routing and `hub_list_connections` |
 | `assistant/apply.ts` | Transactional Hub batches and sequential outside writes |
 | `assistant/request.ts` | Internal route calls preserving the original server-only request credentials |
 | `assistant/reply.ts`, `batch.ts` | Proposal-aware reply/receipt and grouped-write behavior |
@@ -44,7 +45,9 @@ All paths below are relative to `apps/hub-api/src/` unless qualified.
 
 `buildHubState` reads a bounded summary, not the whole account. `loadOpenPage` resolves the actual open task/page/project/meeting ID; current excerpts, linked records, embedded diagram source and attached-file summaries are bounded. Typed mentions retain kind/ID; names without IDs are resolved in the current scope. An ID is an exact lookup key, not a search phrase. `routes/assistant.ts` resolves them before it saves the person's message and stores the result as `[{ kind, id, label }]` in `assistant_messages.mentions` (migration `20261018130000_assistant_message_mentions`). `GET /api/assistant/conversations/:id/messages` returns that column, only for the conversation's owner, so the dock draws exact mention chips after a reload. Messages saved before the column have `[]` and show their `@kind:Label` text as typed, because the end of an unknown label cannot be told from the words after it.
 
-The prompt places stable instructions/playbooks before changing workspace state. Personal skills start as name/description entries; relevant bodies are read on demand. Connected app availability is a compact grant/product description. Settings → Prompts exposes the actual prompt sources; `packages/prompts` is not the working prompt store.
+The prompt places stable instructions/playbooks before changing workspace state. Personal skills start as name/description entries; relevant bodies are read on demand. Settings → Prompts exposes the actual prompt sources; `packages/prompts` is not the working prompt store.
+
+Every turn's prompt carries a "Connected apps in this space" block (`appsPrompt` in `apps.ts`, built from `loadConnections` in `connections.ts`). It names every connected app by its catalog name, one line each: how it is connected (sign-in, token, MCP sign-in, MCP token, MCP without sign-in, which only sees public data), the account label, and what reaches it, for example `- Vercel (token, as mira-chen): deployments and projects via apps_search/apps_read app "vercel".` It covers token and OAuth accounts (`oauth_tokens`, item sources from `connectedItemSources`), the built-in Google/Microsoft/Zoom/Docusign/Jira tools with the products switched on, connected MCP servers with how many of their tools the turn offers, and meeting-notes apps (`hub_import_meeting_notes`). MCP servers that were added but are pending or failing get one "not working" line. Apps that are not connected are not listed; the block says that an app it does not name is not connected in this space and points to Settings → Connections. At most 30 apps are listed (the rest through `hub_list_connections`), each line at most 400 characters. A guest in a shared space gets no block: the owner's connections are private, and `loadConnections` returns nothing for a guest. Tokens are never read for it.
 
 `AssistantPageContext.surface` can carry surface kind/tab, filters, selected/visible IDs and supported layout state. `hub_read_surface` reads current scoped data for supported views. It does not read pixels, arbitrary DOM, another app's window or every record that exists outside the current view.
 
@@ -52,6 +55,7 @@ The prompt places stable instructions/playbooks before changing workspace state.
 
 - `routePlaybooks` scores request intent and path; explicit request intent wins over path-only matches.
 - At most **two** playbooks are preloaded. The area index/map names the routes and action tools.
+- A message that names an app connected in this space also loads the `apps` playbook, as a third, so the app's tools (`apps_search`, its `mcp_*` tools…) are shown. The names come from that turn's connections (`appNames`: catalog name, id, vendor, the parts of a combined name such as "Jira & Confluence"), not a fixed list; app names that are everyday words ("Box", "Close", "Front") count only with a capital. A meeting-notes request while a meeting-notes app is connected loads it too. Questions such as "what's connected?" or "is Asana connected?" match the playbook's own words.
 - `hub_how_to` loads another recipe and makes its tools available during the same loop.
 - A simple todo request gets a short recipe and only the relevant create/list/how-to tools. It need not scan every feature manual.
 - Hub and Ensemble Code use the same routing; Code retains its local tools.
@@ -63,7 +67,7 @@ This reduces input and can improve reuse of a stable prompt prefix. Provider cac
 
 A `defineTool` entry specifies name, area, description, Zod input, write/read flag, risk, optional Undo, optional preview and `run`. Optional fields must remain optional in the provider schema. Chat and Responses have different envelopes; Responses tools deliberately send `strict: false` so optional arguments are not converted into required fabricated values by strict schema normalization.
 
-`toolsFor` removes disabled write areas and unavailable modules. `apps.ts` offers built-in app tools only for the actual grants/products/scopes, adds supported dynamic item tools and wraps enabled vendor MCP tools. A missing tool cannot be invoked by inventing its name.
+`toolsFor` removes disabled write areas and unavailable modules. `apps.ts` offers built-in app tools only for the actual grants/products/scopes, adds supported dynamic item tools and wraps enabled vendor MCP tools. A turn offers at most `MAX_APP_TOOLS` (80) app tools: built-in ones first, then `apps_search`/`apps_read`/`apps_post_update`, then MCP tools. The `apps_*` tools are never dropped to make room for MCP tools, since they are the only reach into apps such as Vercel or Todoist. A missing tool cannot be invoked by inventing its name.
 
 Before running, the server validates input and current access. Read tools still enforce scope. Existing API-backed tools use `assistant/request.ts` to preserve route auth, quotas, module and sharing checks. Original request headers remain server-only and are never model input. Stale page revisions, skill versions, file hashes and layout versions cause a readable failure instead of overwriting new work.
 
@@ -113,7 +117,7 @@ Task/page creation and precise block edits use real IDs, revisions and schema va
 
 ### 8.2 Connected apps
 
-Search/read is explicit. Attach saves a source copy; refresh updates that copy when supported. Source/container IDs are provider-specific, and project-link source IDs can differ from item-search provider IDs. Whole-board imports preview/map before Apply starts a background job. Progress must be checked separately. Native Google/Outlook calendars support current event operations and supported recurrence/availability; unavailable free/busy is not free time.
+What is connected comes from the prompt's Connected apps block and `hub_list_connections` (§3), which also answers "what's on my screen" on Settings → Connections through `hub_read_surface`. Search/read is explicit. Attach saves a source copy; refresh updates that copy when supported. Source/container IDs are provider-specific, and project-link source IDs can differ from item-search provider IDs. Whole-board imports preview/map before Apply starts a background job. Progress must be checked separately. Native Google/Outlook calendars support current event operations and supported recurrence/availability; unavailable free/busy is not free time.
 
 Native mail/Slack/Teams sending is not offered. Supported connected-item updates and enabled vendor MCP tools may have their own writes after Apply. A catalog entry is not proof that a particular action exists. [31](31_CONNECTORS_IN_USE.md).
 

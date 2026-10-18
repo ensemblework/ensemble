@@ -8,6 +8,7 @@
  * with Dynamic Client Registration.
  */
 import type { OAuthClientMetadata } from "@modelcontextprotocol/sdk/shared/auth.js";
+import { ENSEMBLE_VERSION } from "@ensemble/shared-types";
 
 export const MCP_CALLBACK_PATH = "/api/mcp-connections/callback";
 export const MCP_CLIENT_METADATA_PATH = "/api/mcp-client-metadata.json";
@@ -17,6 +18,8 @@ export const MCP_PUBLIC_PATHS: readonly string[] = [MCP_CALLBACK_PATH, MCP_CLIEN
 
 export const MCP_CLIENT_NAME = "Ensemble";
 export const MCP_CLIENT_URI = "https://ensemblework.com";
+/** Sent on every MCP and OAuth request. Some sign-in servers (Meta's) answer a request without one with a web page instead of JSON. */
+export const MCP_USER_AGENT = `${MCP_CLIENT_NAME}/${ENSEMBLE_VERSION} (+${MCP_CLIENT_URI})`;
 
 export function publicApiUrl(): string {
   return (process.env.HUB_API_PUBLIC_URL?.trim() || `http://localhost:${process.env.HUB_API_PORT?.trim() || 4000}`).replace(/\/+$/, "");

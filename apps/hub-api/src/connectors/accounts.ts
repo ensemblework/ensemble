@@ -49,6 +49,7 @@ export const ACCOUNT_PROVIDERS = [
   "box",
   "xero",
   "discord",
+  "zotero",
 ] as const;
 
 export type AccountProvider = (typeof ACCOUNT_PROVIDERS)[number];

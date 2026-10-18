@@ -119,6 +119,28 @@ export function playbookIndex(playbooks: readonly Playbook[], loaded: readonly P
 
 const MAX_ROUTED = 2;
 
+/** A connected app as routing sees it: the names a message may use, and whether it holds meeting notes. */
+export interface ConnectedAppNames {
+  names: readonly string[];
+  meetings?: boolean;
+}
+
+/** App names that are also everyday words count only when written with a capital: "Box", "Close", "Front". */
+const EVERYDAY = new Set(["box", "close", "front", "jam", "render", "square", "pitch", "loom", "clay", "ramp", "grain", "fellow", "gamma", "hex", "neon", "guru", "mercury", "paddle", "railway", "resend", "monday"]);
+
+const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** True when the text names one of these apps as a whole word. `anyCase` also accepts everyday words in lowercase. */
+export function namesApp(text: string, names: readonly string[], anyCase = false): boolean {
+  for (const name of names) {
+    if (!name) continue;
+    const everyday = !anyCase && EVERYDAY.has(name);
+    const word = everyday ? `${name[0]!.toUpperCase()}${escape(name.slice(1))}` : escape(name);
+    if (new RegExp(`(?<![\\p{L}\\p{N}])${word}(?![\\p{L}\\p{N}])`, everyday ? "u" : "iu").test(text)) return true;
+  }
+  return false;
+}
+
 /** How strongly a message's words point at a playbook: 0, or 2 plus up to 1 for longer and more matches. */
 function wordScore(playbook: Playbook, message: string): number {
   if (!playbook.match) return 0;
@@ -131,10 +153,12 @@ function wordScore(playbook: Playbook, message: string): number {
 /**
  * The playbooks a turn starts with: what the open page is, what the person mentioned, and the
  * words of the message (a longer, more specific phrase wins: "meeting notes" over "meeting"),
- * strongest first, at most two.
+ * strongest first, at most two. A message that names one of the person's connected apps, or
+ * asks about meetings while a meeting-notes app is connected, also gets the apps playbook, on
+ * top of those two: without it that app's tools are not shown.
  */
 export function routePlaybooks(
-  turn: { message: string; path?: string; mentions?: ReadonlyArray<{ kind: string }> },
+  turn: { message: string; path?: string; mentions?: ReadonlyArray<{ kind: string }>; apps?: readonly ConnectedAppNames[] },
   playbooks: readonly Playbook[],
 ): Playbook[] {
   const kinds = new Set((turn.mentions ?? []).map((mention) => mention.kind));
@@ -150,7 +174,12 @@ export function routePlaybooks(
     .filter((row) => row.score > 0)
     .sort((a, b) => b.score - a.score || a.order - b.order);
   const candidates = scored.some(row => row.intent > 0) ? scored.filter(row => row.intent > 0) : scored;
-  return candidates.slice(0, MAX_ROUTED).map((row) => row.playbook);
+  const routed = candidates.slice(0, MAX_ROUTED).map((row) => row.playbook);
+  const apps = playbooks.find((playbook) => playbook.name === "apps");
+  if (!apps || routed.includes(apps) || !turn.apps?.length) return routed;
+  const named = turn.apps.some((app) => namesApp(turn.message, app.names));
+  const meetings = routed.some((playbook) => playbook.name === "meeting-notes") && turn.apps.some((app) => app.meetings);
+  return named || meetings ? [...routed, apps] : routed;
 }
 
 /** Always advertised, whatever the playbooks: the reads most requests start with, and hub_how_to. */
@@ -184,7 +213,17 @@ export function advertisedTools(offered: readonly AnyHubTool[], active: Iterable
   const names = new Set(CORE_TOOLS);
   let apps = false;
   const playbooks = [...active];
-  const mentionedServers = message ? new Set(offered.flatMap(tool => { const server = /^mcp_([^_]+)_/.exec(tool.name)?.[1]; return server && message.toLowerCase().includes(server) ? [server] : []; })) : new Set<string>();
+  const lowered = message?.toLowerCase() ?? "";
+  // A server counts as named by its tool slug ("huggingface") or its own name ("Hugging Face").
+  const mentionedServers = message
+    ? new Set(
+        offered.flatMap((tool) => {
+          const server = /^mcp_([^_]+)_/.exec(tool.name)?.[1];
+          const name = (tool as { mcp?: { serverName?: string } }).mcp?.serverName?.toLowerCase();
+          return server && (lowered.includes(server) || (name && name.length >= 3 && lowered.includes(name))) ? [server] : [];
+        }),
+      )
+    : new Set<string>();
   for (const playbook of playbooks) {
     for (const name of playbook.tools) names.add(name);
     apps ||= playbook.appTools;

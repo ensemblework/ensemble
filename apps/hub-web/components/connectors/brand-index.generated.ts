@@ -501,6 +501,10 @@ export const BRAND_INDEX: Readonly<Record<string, { name: string; fit: BrandFit 
     "name": "WhatsApp",
     "fit": "pad"
   },
+  "wisprflow": {
+    "name": "Wispr Flow",
+    "fit": "fill"
+  },
   "wix": {
     "name": "Wix",
     "fit": "pad"
@@ -523,6 +527,10 @@ export const BRAND_INDEX: Readonly<Record<string, { name: string; fit: BrandFit 
   },
   "zoom": {
     "name": "Zoom",
+    "fit": "pad"
+  },
+  "zotero": {
+    "name": "Zotero",
     "fit": "pad"
   }
 };

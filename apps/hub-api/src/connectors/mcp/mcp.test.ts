@@ -6,8 +6,10 @@ import { gzipSync } from "node:zlib";
 import type { McpConnection } from "@prisma/client";
 import { isPublicAuthPath } from "../../lib/auth-public.js";
 import { buildMcpTools, fairShare, mcpJsonSchema, mcpToolName, MCP_TOOL_NAME_MAX, MCP_TOOLS_PER_SERVER, MCP_TOOLS_TOTAL, serverSlug, shortArgs } from "../../assistant/mcp-tools.js";
-import { DEFAULT_RETURN_TO, MCP_PUBLIC_PATHS, mcpClientMetadataDocument, mcpClientMetadataUrl, safeReturnTo } from "./config.js";
-import { classifyMcpError, MAX_RESULT_TEXT_CHARS, normalizeToolResult } from "./manager.js";
+import { DEFAULT_RETURN_TO, MCP_PUBLIC_PATHS, MCP_USER_AGENT, mcpClientMetadataDocument, mcpClientMetadataUrl, safeReturnTo } from "./config.js";
+import { StreamableHTTPError } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { ENSEMBLE_VERSION } from "@ensemble/shared-types";
+import { classifyMcpError, MAX_RESULT_TEXT_CHARS, McpConnectionError, McpUnreadableResponse, normalizeToolResult, unreadableFailure } from "./manager.js";
 import { assertPkceS256, McpAuthUnsupported, McpReconnectRequired } from "./provider.js";
 import { providerSafeSchema } from "./schema.js";
 import type { McpToolSpec } from "./store.js";
@@ -293,4 +295,48 @@ test("short previews never dump whole arguments", () => {
   const text = shortArgs({ body: "x".repeat(500), a: 1, b: 2, c: 3, d: 4, e: 5, f: 6 });
   assert.ok(text.length < 400);
   assert.match(text, /…/);
+});
+
+test("every MCP and sign-in request names Ensemble, on every redirect hop, unless the caller set its own", async () => {
+  assert.equal(MCP_USER_AGENT, `Ensemble/${ENSEMBLE_VERSION} (+https://ensemblework.com)`);
+  const agents: Array<string | null> = [];
+  const fake = async (url: string | URL, init?: RequestInit) => {
+    agents.push(new Headers(init?.headers).get("user-agent"));
+    return String(url).endsWith("/start") ? new Response(null, { status: 302, headers: { location: "/next" } }) : new Response("{}");
+  };
+  const guarded = guardedFetch({ hosted: true, lookup: publicLookup, fetch: fake });
+  await guarded("https://www.fieldnote.example/start", { headers: { accept: "application/json" } });
+  await guarded("https://www.fieldnote.example/next", { headers: { "User-Agent": "Fieldnote-Probe/1" } });
+  assert.deepEqual(agents, [MCP_USER_AGENT, MCP_USER_AGENT, "Fieldnote-Probe/1"]);
+});
+
+test("a web page or unreadable answer from a server or its sign-in becomes a plain message naming the host", () => {
+  const server = "https://mcp.fieldnote.example/tools?key=secret";
+  const original = console.warn;
+  const logged: string[] = [];
+  console.warn = (line: string) => void logged.push(line);
+  try {
+    const signIn = unreadableFailure(new McpUnreadableResponse(new URL("https://www.fieldnote.example/.well-known/oauth-authorization-server/tools?ref=1"), 200), "Fieldnote", server);
+    assert.ok(signIn instanceof McpConnectionError);
+    assert.equal(signIn.code, "MCP_BAD_RESPONSE");
+    assert.match(signIn.message, /^Fieldnote's sign-in returned a web page instead of data \(www\.fieldnote\.example\)\./);
+    assert.equal(logged.at(-1), "[mcp] Fieldnote: sign-in returned a web page instead of data from https://www.fieldnote.example/.well-known/oauth-authorization-server/tools (HTTP 200)");
+
+    const ownPage = unreadableFailure(new StreamableHTTPError(404, "Error POSTing to endpoint: <!DOCTYPE html><html>Not found</html>"), "Fieldnote", server);
+    assert.match(ownPage!.message, /^Fieldnote's MCP server returned a web page instead of data \(mcp\.fieldnote\.example\)\. Check the address/);
+    assert.equal(logged.at(-1), "[mcp] Fieldnote: server returned a web page instead of data from https://mcp.fieldnote.example/tools (HTTP 404)");
+
+    let parse: unknown;
+    try {
+      JSON.parse("<!DOCTYPE html>");
+    } catch (error) {
+      parse = error;
+    }
+    const parsed = unreadableFailure(parse, "Fieldnote", server, new URL("https://auth.fieldnote.example/register"));
+    assert.match(parsed!.message, /^Fieldnote's sign-in returned data Ensemble could not read \(auth\.fieldnote\.example\)\./);
+    assert.doesNotMatch(logged.join("\n"), /secret|ref=1/);
+    assert.equal(unreadableFailure(new Error("Something else"), "Fieldnote", server), undefined);
+  } finally {
+    console.warn = original;
+  }
 });

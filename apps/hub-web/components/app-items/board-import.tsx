@@ -48,7 +48,7 @@ export function BoardImport() {
       >
         {(close) => (
           <>
-            <MenuItem hint="Issues, cards" onClick={() => (close(), setPicking(true))}>
+            <MenuItem hint="Issues, cards, papers" onClick={() => (close(), setPicking(true))}>
               Add from apps…
             </MenuItem>
             <MenuItem hint="Trello, Jira, Asana" onClick={() => (close(), setImporting(true))}>

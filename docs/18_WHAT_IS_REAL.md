@@ -43,6 +43,7 @@ The Hub assistant operates the app through typed tools. Built-in Markdown playbo
 | Layouts | Manage native Today desks, Context panels, Board overview and alternate widget layouts with the relevant version checks |
 | Precise documents | Read block paths/revision; replace exact text or insert/replace/delete blocks after schema validation |
 | Dependent actions | `hub_run_workflow`: 2–12 ordered writes, one Apply, backward result references and durable successful-step receipts |
+| Connected apps | Every prompt names the apps connected in the space (how, account, which tools reach each); `hub_list_connections` lists them in detail without tokens. A message naming a connected app loads its tools. Not shown to guests in a shared space |
 | Connected relationships | Search/read, attach/detach/refresh, turn items into tasks, import people, link/unlink project containers and merge people |
 | Board imports | Preview connected-source or uploaded-export imports, start after Apply, read progress, cancel/undo |
 | Files | Read supported text, hash-checked original-file edits, supported sheet edits, convert to pages and export pages into Files |
@@ -58,11 +59,11 @@ Surface context is structured app state, not screenshots or unrestricted DOM acc
 
 | Path | Current behavior | Guide |
 | --- | --- | --- |
-| Connect an account | Save that person's grant/token; no automatic content import | [03](03_MODULE_CONTEXT_ENGINE.md) |
+| Connect an account | Save that person's grant/token; no automatic content import. The store lists connected apps first and shows a step-by-step guide for each way of connecting; guide steps follow vendor pages as known in Oct 2026 and were not re-checked live | [03](03_MODULE_CONTEXT_ENGINE.md), [31 §3](31_CONNECTORS_IN_USE.md#3-ways-to-connect) |
 | Sync people | Bounded contact metadata from Gmail, Outlook, calendars, Slack, Teams and GitHub; filters service/bulk identities | [03 §2](03_MODULE_CONTEXT_ENGINE.md#2-connectors) |
 | Scheduled fetch | Returns without provider reads, even if a legacy fetch slot is enabled | [05 §2](05_MODULE_TASK_ORCHESTRATOR.md#2-scheduled-work) |
-| Native connected items | Explicit search/read, attach to task/project, add task, people and supported source updates | [31](31_CONNECTORS_IN_USE.md) |
-| Vendor MCP | Connected vendor's enabled tools, with schema/approval/access checks | Catalog availability and vendor grants vary; not equivalent to native sync/import |
+| Native connected items | Explicit search/read, attach to task/project, add task, people and supported source updates (for example Zotero references and reading-list collections, with notes posted back; Zotero is tested against documented API shapes only) | [31](31_CONNECTORS_IN_USE.md) |
+| Vendor MCP | Connected vendor's enabled tools, with schema/approval/access checks. A catalog server that holds your data is signed in to (or given a token); if it answers without an account and has no sign-in it shows as "Connected · public data only". Only AWS Knowledge, Context7 and Exa connect with no account by design. Hugging Face shows the signed-in username; a web page from a vendor's sign-in (Meta's) is reported by host. These were checked against in-process fakes, not the live vendors | Catalog availability and vendor grants vary; not equivalent to native sync/import. [03 §2.2](03_MODULE_CONTEXT_ENGINE.md#22-remote-mcp-connectors) |
 | Board imports | Native supported board/container sources and uploaded exports; preview, mapping, background progress, rerun/undo | [27](27_IMPORTS.md) |
 | Meeting imports | Explicit supported API-key adapters or vendor tools; source attribution and bounded batch import | [03](03_MODULE_CONTEXT_ENGINE.md#23-meeting-notes-sources) |
 

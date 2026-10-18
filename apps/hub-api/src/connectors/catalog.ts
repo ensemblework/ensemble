@@ -9,6 +9,7 @@ import type { PrismaClient } from "@prisma/client";
 import { loadSettings } from "../lib/settings.js";
 import { isAccountProvider, oauthApp, type AccountProvider } from "./accounts.js";
 import { listConnectors } from "./base.js";
+import { readEnvelope, type McpAuthKind } from "./mcp/store.js";
 import { OAUTH_PROVIDERS } from "./oauth.js";
 import { productState, suiteById } from "./products.js";
 import { missingScopes } from "./tokens.js";
@@ -32,7 +33,8 @@ export interface ConnectorState {
   /** Products that are on but whose access was not approved yet. Connect again to approve them. */
   needsConsent: string[];
   sources: Record<string, SourceState>;
-  mcp?: { status: "pending" | "connected" | "error" | "disabled"; toolCount: number; lastError: string | null };
+  /** auth "none" on a catalog server without `mcp.open` is shown as public data only. account: whose account it is, when the vendor says. */
+  mcp?: { status: "pending" | "connected" | "error" | "disabled"; toolCount: number; lastError: string | null; auth: McpAuthKind; account: string | null };
 }
 
 export type CatalogEntryWithState = ConnectorCatalogEntry & { state: ConnectorState };
@@ -76,7 +78,7 @@ interface UserView {
   settings: Settings;
   tokens: Map<string, { account: string | null; scopes: string[] }>;
   sync: Map<string, { lastSyncAt: Date | null; lastError: string | null }>;
-  mcp: Map<string, { status: string; tools: unknown; lastError: string | null }>;
+  mcp: Map<string, { status: string; tools: unknown; lastError: string | null; clientInfo: string | null }>;
   apps: Map<string, Promise<boolean>>;
 }
 
@@ -86,8 +88,8 @@ async function userView(prisma: PrismaClient, userId: string): Promise<UserView>
     prisma.authToken.findMany({ where: { userId }, select: { provider: true, account: true, scopes: true } }),
     prisma.syncState.findMany({ where: { userId }, select: { connector: true, lastSyncAt: true, lastError: true } }),
     prisma.mcpConnection
-      .findMany({ where: { userId }, select: { serverId: true, status: true, tools: true, lastError: true } })
-      .catch(() => [] as Array<{ serverId: string; status: string; tools: unknown; lastError: string | null }>),
+      .findMany({ where: { userId }, select: { serverId: true, status: true, tools: true, lastError: true, clientInfo: true } })
+      .catch(() => [] as Array<{ serverId: string; status: string; tools: unknown; lastError: string | null; clientInfo: string | null }>),
   ]);
   return {
     settings,
@@ -154,10 +156,13 @@ async function stateFor(entry: ConnectorCatalogEntry, view: UserView): Promise<C
   if (entry.auth.includes("mcp")) {
     const row = view.mcp.get(entry.id);
     if (row) {
+      const envelope = readEnvelope(row);
       state.mcp = {
         status: (MCP_STATUSES.has(row.status) ? row.status : "error") as NonNullable<ConnectorState["mcp"]>["status"],
         toolCount: Array.isArray(row.tools) ? row.tools.length : 0,
         lastError: row.lastError,
+        auth: envelope.auth,
+        account: envelope.account ?? null,
       };
     }
   }

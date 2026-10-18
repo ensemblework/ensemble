@@ -43,7 +43,8 @@ export function useMcpConnect({
         browser.assign(result.authorizeUrl);
         return;
       }
-      toast(`${label} tools connected.`, { tone: "ok" });
+      if (result.publicOnly) toast(`${label} connected with public data only. Sign in or paste a token to use your account.`, { tone: "info" });
+      else toast(result.account ? `${label} connected as ${result.account}.` : `${label} tools connected.`, { tone: "ok" });
       refresh();
       onConnected?.(result);
     },

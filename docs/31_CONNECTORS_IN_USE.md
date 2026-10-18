@@ -18,11 +18,14 @@ Manual Sync people reads bounded contact metadata from supported mail/calendar/c
 
 ### 2.2 The assistant
 
+Every turn the assistant's prompt lists the apps connected in the open space by their catalog names, how each is connected (sign-in, token, MCP sign-in, MCP token, MCP without sign-in, which only sees public data), the account label (for a Vercel token, the Vercel username), and which of the tools below reach it. Apps that are not connected are left out, and the assistant says an app it does not see listed is not connected in this space. `hub_list_connections` gives the same list in detail; it never returns a token. A message that names a connected app loads the assistant's connected-apps playbook, so that app's tools are offered ([11 §3](11_HOW_THE_ASSISTANT_WORKS.md#3-context-and-prompt-size)). In a space shared with you the owner's connections are not listed or reachable.
+
 - **Built-in tools** for Google Workspace, Microsoft 365, Zoom, Docusign and Jira ([11 §8.2](11_HOW_THE_ASSISTANT_WORKS.md)).
-- **`apps_search` and `apps_read`** search and read every connected app Ensemble can search itself (§2.3): Notion pages, GitHub repositories and issues, Linear issues, Jira issues and Confluence pages, Trello cards, Slack channels and people, Drive and OneDrive files, Zendesk tickets, Vercel deployments, and the rest in the table in §4. A pasted link (a GitHub URL, `ENG-42`, a Notion URL) finds that item. Offered only when one of those apps is connected (`apps/hub-api/src/assistant/tools/app-items.ts`).
+- **`apps_search` and `apps_read`** search and read every connected app Ensemble can search itself (§2.3): Notion pages, GitHub repositories and issues, Linear issues, Jira issues and Confluence pages, Trello cards, Slack channels and people, Drive and OneDrive files, Zendesk tickets, Vercel deployments, Zotero references and collections, and the rest in the table in §4. A pasted link (a GitHub URL, `ENG-42`, a Notion URL, a zotero.org or `zotero://select/…` link, a DOI) finds that item. An empty query lists recent items (Vercel: projects and the latest deployments; Todoist: today and overdue; Linear, Jira, Azure DevOps, Zendesk: open work assigned to you; GitHub: open issues and pull requests that involve you), and for the assistant so does a query that only names a kind and the app ("projects", "all my Vercel deployments"), which also becomes the kind (`listingRequest` in `apps/hub-api/src/assistant/tools/app-items.ts`; the "From your apps" picker still searches for the words typed). Figma without a saved team link lists nothing for an empty query; paste a file link instead. Offered only when one of those apps is connected (`apps/hub-api/src/assistant/tools/app-items.ts`), and never crowded out by MCP tools.
 - **`hub_search_context` and `hub_read_context`** search what Ensemble already keeps: explicitly saved mail/chat/event/issue content, imported meeting transcripts and attached items (`apps/hub-api/src/assistant/tools/context.ts`).
 - **The vendor's own tools** through its remote MCP server (`mcp_<app>_<tool>`), with each tool switchable in the connector's detail page.
 - **`apps_post_update`** posts a comment on the issue, card or ticket a task came from.
+- **`hub_import_meeting_notes`** brings recent notes from Fireflies, Fathom, Granola, tl;dv, Krisp, Jamie or Otter (connected with an API key) into Meeting notes after Apply; through MCP the same apps are searched live with their own tools.
 - **`hub_import_app_file`** saves a Drive, OneDrive, Dropbox or Box file, or a Gmail or Outlook attachment, in Files; **`hub_save_app_item_as_page`** saves an item as an Ensemble page that says where it came from and links back. Notion reads retain tables and collapsible Markdown structure; imports use native blocks. For Notion it imports the complete accessible child-page tree with native formatting, and databases become ordinary tables with linked row pages (`imports/api/notion.ts`, `imports/notion-content.ts`). Both take `source`, `kind` and `id` from an `apps_search` hit and run after Apply ([11 §8.4](11_HOW_THE_ASSISTANT_WORKS.md)).
 - Everything that changes an outside app waits for **Apply** and is written to the ledger; app content is passed to the model as information, not instructions.
 
@@ -40,9 +43,9 @@ Code: `apps/hub-api/src/connectors/items/` (one file per app in `sources/`, the 
 
 ### 2.4 Hand work to an agent, and report back
 
-- **Add as task**: an issue, pull request, card, ticket, work item or conversation becomes an Ensemble task with the item attached and its link as the task's source. Adding the same item again updates that task (`external_source = app:<app>`). From the Board's **Add from apps**, or `POST /api/app-items/task`.
+- **Add as task**: an issue, pull request, card, ticket, work item, conversation or Zotero reference becomes an Ensemble task with the item attached and its link as the task's source. A Zotero reference becomes a reading task titled "Read: <title>", with its authors, year, venue and DOI in the excerpt. Adding the same item again updates that task (`external_source = app:<app>`). From the Board's **Add from apps**, or `POST /api/app-items/task`.
 - **Repositories from GitHub**: the Assign dialog's **Pick from GitHub** lists the repositories the GitHub connection can reach. A clone with no Settings git token now uses the GitHub connection (an OAuth grant with `repo` scope, or a pasted token) before falling back to `gh` (`apps/hub-api/src/lib/git-auth.ts`). GitHub's own MCP server can sign in with the same connection.
-- **Post an update**: when a task came from (or has attached) an issue, card or ticket in GitHub, Linear, Jira (API-token connections), Trello, Asana, Todoist, ClickUp, monday.com, Azure DevOps, Zendesk (an internal note), Front (an internal comment), HubSpot (a note on the record), Figma or Notion, the task page offers **Post an update to …**. Pressing Post is the approval; the comment is written to the ledger as `apps.post_update`. The assistant can propose the same with `apps_post_update`, which waits for Apply.
+- **Post an update**: when a task came from (or has attached) an issue, card or ticket in GitHub, Linear, Jira (API-token connections), Trello, Asana, Todoist, ClickUp, monday.com, Azure DevOps, Zendesk (an internal note), Front (an internal comment), HubSpot (a note on the record), Zotero (a child note on the reference), Figma or Notion, the task page offers **Post an update to …**. Pressing Post is the approval; the comment is written to the ledger as `apps.post_update`. The assistant can propose the same with `apps_post_update`, which waits for Apply.
 
 ### 2.5 Import boards and pages
 
@@ -61,20 +64,25 @@ Files themselves (a PDF in Drive, a spreadsheet attached to an email, a deck in 
 | Way | Who sets it up | Used by |
 |---|---|---|
 | Sign in with the app (OAuth) | Whoever runs Ensemble registers one app per vendor, once (Settings → Connections → the connector → Set up once) | Google, Microsoft, GitHub, Linear, Notion, Atlassian, Slack, Zoom, Docusign, Dropbox, Box, Xero, Discord |
-| Paste a token | The person | GitHub, Slack, Linear, Notion, Jira, Trello, Asana, Todoist, ClickUp, monday.com, Figma, Vercel, Azure DevOps, Zendesk, Front, HubSpot, meeting-note apps |
+| Paste a token | The person | GitHub, Slack, Linear, Notion, Jira, Trello, Asana, Todoist, ClickUp, monday.com, Figma, Vercel, Azure DevOps, Zendesk, Front, HubSpot, Zotero, meeting-note apps |
 | Vendor MCP server, open sign-in (DCR or CIMD) | Nobody | Most MCP connectors |
-| Vendor MCP server with a token | The person | Intercom, Render, Smartsheet, Wrike (token only); Cloudflare and Stripe (token as an alternative) |
+| Vendor MCP server with a token | The person | Intercom, Render, Smartsheet, Wrike (token only); Cloudflare, Stripe and Hugging Face (token as an alternative to signing in) |
+| Vendor MCP server that needs no account | Nobody | AWS Knowledge, Context7, Exa (`mcp.open`). Any other catalog server that answers without an account is sent to its sign-in, or shown as **Connected · public data only** when it has none |
 | Vendor MCP server with your account's address | The person types it | Grafana Cloud (stack), AWS (Region) |
 | Vendor MCP server with an app the operator registers | Whoever runs Ensemble, once | HubSpot, Asana, Slack, Dropbox |
 | Vendor MCP server with your organisation's own app | The person's admin | Salesforce, Front |
 | Vendor MCP server through an existing connection | Nobody | GitHub, Linear |
 | Upload an export | The person | Imports |
 
-The MCP variants are fields on the catalog entry's `mcp` (`packages/shared-types/src/connectors.ts`: `fields`, `token`, `client`, `ownClient`, `connection`) and are handled by `POST /api/mcp-connections` (`apps/hub-api/src/routes/mcp-connections.ts`) and `apps/hub-api/src/connectors/mcp/manager.ts`. A connection that signs in through another connection stores no token of its own; every call reads the current token of that connection.
+The MCP variants are fields on the catalog entry's `mcp` (`packages/shared-types/src/connectors.ts`: `fields`, `token`, `client`, `ownClient`, `connection`, `open`) and are handled by `POST /api/mcp-connections` (`apps/hub-api/src/routes/mcp-connections.ts`) and `apps/hub-api/src/connectors/mcp/manager.ts`. A connection that signs in through another connection stores no token of its own; every call reads the current token of that connection.
+
+**Step-by-step guides.** Every way above has a guide in the connector's detail page, in plain steps for people who have never made a token (`packages/shared-types/src/connector-guides.ts`). `CONNECTOR_GUIDES` holds a written guide for every connector that takes a pasted credential and every MCP server that takes a token, an address or the organisation's own app; `connectorGuide(entry, way)` adds a short guide for sign-in and plain MCP sign-in (what opens, what to approve). Each guide names the credential with the vendor's word (`term`), and the form's field label uses the same words. Tests check that every token connector and every MCP token/address/own-app connector has a guide and that every link is `https://` (`connector-guides.test.ts`, `catalog-view.test.ts`, `token-providers-more.test.ts`). The steps follow each vendor's pages as they were known in October 2026; they were written without re-checking the live pages, and vendors rename buttons.
+
+**Trello** takes an API key and a token. Both come from Trello's Power-Up admin page (`https://trello.com/power-ups/admin`): open or create a Power-Up, copy the API key from its API key tab, then click the Token link next to it (or **Get a token** in Ensemble's form, which opens `https://trello.com/1/authorize?expiration=never&scope=read,write&response_type=token&name=Ensemble&key=<key>`), click Allow and copy the token, which starts with `ATTA`. Write scope is what lets Ensemble post updates as card comments. The Power-Up's Secret is not a token: when Trello refuses a 64-character hex token, Ensemble says it looks like the Secret. A one-off import needs no key: the board's JSON export (board menu → Print, export and share → Export as JSON) can be uploaded instead.
 
 ## 4. Every connector
 
-Every entry in the store can be connected; nothing is listed as coming soon. Logos are each vendor's own mark ([§5](#5-logos)).
+Every entry in the store can be connected; nothing is listed as coming soon. Logos are each vendor's own mark, except the Zotero and Wispr Flow placeholders ([§5](#5-logos)).
 
 `CONNECTOR_CATALOG` in shared types owns the entries and connection metadata. The table below is a connection/reference map; “MCP sign-in” means the vendor OAuth path supported by Ensemble. Vendor policy, scopes and workspace configuration can still be required. It does not promise automatic ingestion or a native importer for every app.
 
@@ -149,6 +157,7 @@ Every entry in the store can be connected; nothing is listed as coming soon. Log
 | MeetGeek | MCP sign-in | assistant tools |
 | Bluedot | MCP sign-in | assistant tools |
 | Tactiq | MCP sign-in | assistant tools |
+| Wispr Flow | MCP sign-in (read only; needs Notetaker and MCP access) | assistant tools |
 | Loom | MCP sign-in | assistant tools |
 
 **Chat**
@@ -156,7 +165,7 @@ Every entry in the store can be connected; nothing is listed as coming soon. Log
 | App | Connects by | In Ensemble |
 |---|---|---|
 | Slack | sign in · token · MCP (operator registers an app) | explicit source reads / imports · attach channels · people · assistant tools |
-| WhatsApp Business | MCP sign-in | assistant tools |
+| WhatsApp Business | MCP sign-in (Meta is still rolling access out) | assistant tools |
 | Discord | sign in | attach channels |
 
 **Developer**
@@ -166,7 +175,7 @@ Every entry in the store can be connected; nothing is listed as coming soon. Log
 | GitHub | sign in · token · MCP via your GitHub connection | explicit source reads / imports · attach repositories, issues and pull requests · post updates · people · repositories for agents · import · assistant tools |
 | Sentry | MCP sign-in | assistant tools |
 | Supabase | MCP sign-in | assistant tools |
-| Hugging Face | MCP sign-in | assistant tools |
+| Hugging Face | MCP sign-in · MCP with an access token (never anonymous) | assistant tools |
 | Zapier | MCP sign-in | assistant tools |
 | Vercel | token | attach deployments and projects |
 | Azure DevOps | token | attach work items, pull requests and repositories · post updates |
@@ -178,7 +187,7 @@ Every entry in the store can be connected; nothing is listed as coming soon. Log
 | PlanetScale | MCP sign-in | assistant tools |
 | Prisma Postgres | MCP sign-in | assistant tools |
 | Postman | MCP sign-in | assistant tools |
-| Context7 | MCP sign-in | assistant tools |
+| Context7 | MCP, no account | assistant tools |
 | Jam | MCP sign-in | assistant tools |
 | Resend | MCP sign-in | assistant tools |
 | incident.io | MCP sign-in | assistant tools |
@@ -258,21 +267,22 @@ Every entry in the store can be connected; nothing is listed as coming soon. Log
 |---|---|---|
 | Cloudflare | MCP sign-in | assistant tools |
 | Grafana Cloud | MCP (your stack) | assistant tools |
-| AWS Knowledge | MCP sign-in | assistant tools |
+| AWS Knowledge | MCP, no account | assistant tools |
 | AWS | MCP (your region) | assistant tools |
 
 **Web & research**
 
 | App | Connects by | In Ensemble |
 |---|---|---|
-| Exa | MCP sign-in | assistant tools |
+| Exa | MCP, no account | assistant tools |
 | Perplexity | MCP sign-in | assistant tools |
 | Tavily | MCP sign-in | assistant tools |
 | Firecrawl | MCP sign-in | assistant tools |
+| Zotero | token | attach references (APA citation, abstract, notes) and collections (reading lists, which the assistant can also save as a page) · references as reading tasks · post notes |
 
 ## 5. Logos
 
-Each connector shows its vendor's own logo. The files are in `apps/hub-web/components/connectors/brands/` with their source in `manifest.json` (the vendor's own site icon, or the Iconify "logos", "devicon" and "vscode-icons" sets, or Simple Icons in the brand colour). `node scripts/build-brand-logos.mjs` turns them into `brand-index.generated.ts` (names and fits, loaded with the page) and `brand-images.generated.ts` (data URIs, loaded once in a separate chunk when a logo is first shown). `--check` fails when the generated files are stale. Names and logos belong to their owners and identify the service being connected; the store shows a trademark notice.
+Each connector shows its vendor's own logo. The files are in `apps/hub-web/components/connectors/brands/` with their source in `manifest.json` (the vendor's own site icon, or the Iconify "logos", "devicon" and "vscode-icons" sets, or Simple Icons in the brand colour). `node scripts/build-brand-logos.mjs` turns them into `brand-index.generated.ts` (names and fits, loaded with the page) and `brand-images.generated.ts` (data URIs, loaded once in a separate chunk when a logo is first shown). `--check` fails when the generated files are stale. Zotero's `zotero.svg` is a placeholder lettermark (a red "Z") until Zotero's own icon is added, and so is Wispr Flow's `wisprflow.svg` (a "W" on a dark tile); their manifest entries say so. Names and logos belong to their owners and identify the service being connected; the store shows a trademark notice.
 
 ## 6. API
 
@@ -296,15 +306,18 @@ All routes need a verified email on hosted servers, act only on the person's own
 
 - Each app's search is what its API offers: Slack has no message search with the scopes Ensemble asks for (channels and people only), Google Drive with `drive.file` sees only files Ensemble created or the person picked, ClickUp has no full-text search (recent tasks are filtered by name), Figma has no file search (a link, or a team's projects when the team link was given).
 - Attached text is a copy from when it was attached or refreshed. Nothing re-reads it on a schedule.
+- Zotero is read through its web API, so Ensemble sees what Zotero has synced to zotero.org. Searches cover the person's own library and the first five group libraries the key can read (up to ten are saved at connect). A pasted group link that names the group only by name (`zotero.org/groups/<name>/items/<key>`) is looked up in those searched groups. Attachments are listed by name, without their files. A collection reads its first 50 items.
 - An item attached to a second task moves to that task (one artifact per item).
 - Posting updates to Linear needs a connection that may write comments: personal API keys can; OAuth connections made before 12 Oct 2026 asked only for `read` and must connect again. Jira OAuth connections are read only; an API-token connection can comment.
 - Ideas that are not built are in [design/connectors-next.md](design/connectors-next.md).
 
 ## 8. Tests
 
-- `apps/hub-api/src/routes/app-items.integration.test.ts`: sources per person, search with one failing app, a pasted link, attach / list / refresh / remove and isolation, an issue as a task (once), the update target and a posted comment with its ledger entry, people added and matched again, hosted verification.
+- `apps/hub-api/src/routes/app-items.integration.test.ts`: sources per person, search with one failing app, a pasted link, attach / list / refresh / remove and isolation, an issue as a task (once), the update target and a posted comment with its ledger entry, a Zotero reference as a "Read:" task with a note posted back, people added and matched again, hosted verification.
 - `apps/hub-api/src/routes/mcp-connections.integration.test.ts`: sign-in through an existing connection (no copied token, rotation and removal), address fields, missing operator apps and connection checks before any network call.
-- `apps/hub-api/src/connectors/items/work-sources.test.ts` and `more-sources.test.ts`: each app's search, read, comment and people calls against recorded vendor shapes.
+- `apps/hub-api/src/connectors/items/work-sources.test.ts` and `more-sources.test.ts`: each app's search, read, comment and people calls against recorded vendor shapes. The Zotero cases (and `token-providers-more.test.ts` for its key check) follow the Zotero Web API v3 documentation; they have not been run against zotero.org.
+- `apps/hub-api/src/routes/mcp-sign-in.integration.test.ts`: with in-process fakes of the vendors (no port, no network): Hugging Face sign-in on `?login`, a pasted token checked with whoami and shown as the account, an older anonymous connection kept when an upgrade fails, sign-in started for a catalog server that answered without an account, public data only when it has no sign-in, open servers left alone, Ensemble's User-Agent on every request, and Meta's web pages reported by host.
+- `apps/hub-web/components/connectors/mcp-way.test.tsx`: Hugging Face offers **Sign in with Hugging Face** and **Paste an access token** (no anonymous Connect), a public-only connection says so and offers both, and the store labels ("Connected as …", "Connected · public data only").
 - `apps/hub-web/components/connectors/brand-logo.test.tsx`, `catalog-view.test.ts`: every catalog entry has its vendor's logo and a way in, and says what Ensemble does with it.
 - `apps/hub-web/components/app-items/*.test.tsx`: the picker and the attached list.
 

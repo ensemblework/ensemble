@@ -49,6 +49,7 @@ import { recordTools } from "./tools/records.js";
 import { surfaceTools } from "./tools/surfaces.js";
 import { recordActionTools } from "./tools/record-actions.js";
 import { agentAssignTools } from "./tools/agent-assign.js";
+import { connectionTools } from "./tools/connections.js";
 
 const ALL: readonly AnyHubTool[] = [
   ...howToTools,
@@ -81,6 +82,7 @@ const ALL: readonly AnyHubTool[] = [
   ...importTools,
   ...activityTools,
   ...settingsTools,
+  ...connectionTools,
   ...workspaceTools,
   ...agentAssignTools,
 ];

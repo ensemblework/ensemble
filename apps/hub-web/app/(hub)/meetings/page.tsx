@@ -11,7 +11,8 @@ import { connectedApi } from "@/lib/api-connected";
 import { api } from "@/lib/api";
 import { LinkifiedText } from "@/components/linkified-text";
 import { MeetingNotesFields } from "@/components/meetings/notes-fields";
-import { ChevronLeft, MessageSquare, Plus, Search } from "lucide-react";
+import { ChevronLeft, MessageSquare, Plus, Search, Trash2 } from "lucide-react";
+import { confirmAction } from "@/components/ask-dialog";
 import { meetingWhen, newMeetingTitle, newestFirst } from "@/components/meetings/meeting-time";
 
 function MeetingsBody() {
@@ -77,6 +78,26 @@ function MeetingsBody() {
     onSuccess: () => void client.invalidateQueries({ queryKey: ["meeting-session", active] }),
     onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
+  const trash = useMutation({
+    mutationFn: (id: string) => api.deleteMeeting(id),
+    onSuccess: (_, id) => {
+      if (id === active) choose("");
+      void client.invalidateQueries({ queryKey: ["meeting-sessions"] });
+      toast("Meeting notes moved to Trash.", {
+        action: {
+          label: "Undo",
+          run: () => {
+            void api.restoreDeleted({ kind: "meeting", id }).then(() => client.invalidateQueries({ queryKey: ["meeting-sessions"] })).catch((error: Error) => toast(error.message, { tone: "error" }));
+          },
+        },
+      });
+    },
+    onError: (error) => toast((error as Error).message, { tone: "error" }),
+  });
+  const removeNotes = async (row: { id: string; title: string }) => {
+    if (!(await confirmAction({ title: `Delete “${row.title}”?`, body: "Move these notes to Trash? You can restore them until the retention period expires.", confirm: "Move to Trash", danger: true }))) return;
+    trash.mutate(row.id);
+  };
   const session = detail.data?.session;
   const sessions = useMemo(() => newestFirst(list.data?.sessions ?? []), [list.data]);
   const importedNotes = imported.data?.notes ?? [];
@@ -108,7 +129,7 @@ function MeetingsBody() {
         <ul className="meeting-shelf">
           {sessions.length === 0 ? <li className="text-[13px] text-muted">No meeting notes yet.</li> : null}
           {visible.map((row) => (
-            <li key={row.id}>
+            <li key={row.id} className="meeting-shelf-item">
               <button
                 type="button"
                 className="meeting-note-card"
@@ -120,6 +141,9 @@ function MeetingsBody() {
                 <strong>{row.title}</strong>
                 <p>{row.notes.trim().slice(0, 110) || "A fresh page for this conversation."}</p>
                 <span className="meeting-card-footer">{row.recap?.trim() ? "Recap ready" : "Meeting notes"}</span>
+              </button>
+              <button type="button" className="meeting-card-delete" aria-label={`Delete “${row.title}”`} title="Move to Trash" disabled={trash.isPending} onClick={() => void removeNotes(row)}>
+                <Trash2 size={14} />
               </button>
             </li>
           ))}

@@ -1,11 +1,12 @@
 /**
- * Pasted tokens for Figma, Vercel, Azure DevOps, Zendesk, Front and HubSpot: what is
+ * Pasted tokens for Figma, Vercel, Azure DevOps, Zendesk, Front, HubSpot, Trello and Zotero: what is
  * checked, what is stored, and refusals. Fetch is mocked; nothing reaches the vendors.
  */
 import assert from "node:assert/strict";
 import test, { afterEach, beforeEach } from "node:test";
 import "../runtime/test-env.js";
-import { azureOrg, figmaTeamId, TokenRejectedError, validateToken, zendeskHost } from "./token-providers.js";
+import { CONNECTOR_CATALOG, CONNECTOR_GUIDES } from "@ensemble/shared-types";
+import { azureOrg, figmaTeamId, TOKEN_PROVIDERS, TokenRejectedError, validateToken, zendeskHost } from "./token-providers.js";
 
 interface Seen {
   method: string;
@@ -164,4 +165,104 @@ test("HubSpot: the portal id names the account and the UI host is kept for links
 
   respond = () => json({ status: "error", message: "Authentication credentials not found." }, 401);
   await refused(validateToken("hubspot", { token }), token, /HubSpot rejected that token \(Authentication credentials not found\.\)/);
+});
+
+test("Trello: the API key and token go together in Trello's OAuth header, and the key is kept", async () => {
+  const key = "0123456789abcdef0123456789abcdef";
+  const token = "ATTA0f1e2d3c4b5a69788796a5b4c3d2e1f00112233445566778899aabbccddeeff0011223344";
+  respond = ({ url }) => (url.startsWith("https://api.trello.com/1/members/me") ? json({ username: "mirachen", fullName: "Mira Chen" }) : json({}, 404));
+  const saved = await validateToken("trello", { token, key });
+  assert.deepEqual(saved, { secret: token, account: "mirachen", meta: { via: "token", key } });
+  assert.equal(seen[0]!.headers.authorization, `OAuth oauth_consumer_key="${key}", oauth_token="${token}"`);
+});
+
+test("Trello: a pasted Power-Up Secret is named as the Secret; a token for another key is explained", async () => {
+  const key = "0123456789abcdef0123456789abcdef";
+  const secret = "a".repeat(32) + "0123456789abcdef0123456789abcdef";
+  respond = () => new Response("invalid token", { status: 401 });
+  await refused(validateToken("trello", { token: secret, key }), secret, /That looks like your Power-Up's Secret\. Trello's token comes from the Token link next to your API key, and starts with ATTA\./);
+
+  const otherKeysToken = "ATTA99887766554433221100ffeeddccbbaa99887766554433221100ffeeddccbbaa9988";
+  await refused(
+    validateToken("trello", { token: otherKeysToken, key }),
+    otherKeysToken,
+    /Trello didn't accept that API key and token together\. Make sure the token was made with the Token link for this same API key\./,
+  );
+
+  // Tokens from before the ATTA format are 64 hex characters too; Trello still decides.
+  respond = () => json({ username: "mirachen" });
+  assert.equal((await validateToken("trello", { token: secret, key })).account, "mirachen");
+});
+
+test("Trello: a key and token in the wrong fields are caught before Trello is asked", async () => {
+  const key = "0123456789abcdef0123456789abcdef";
+  const token = "ATTA0f1e2d3c4b5a69788796a5b4c3d2e1f00112233445566778899aabbccddeeff0011223344";
+  await refused(validateToken("trello", { token: key, key: token }), token, /token in the API key field/);
+  await refused(validateToken("trello", { token: key, key }), "ATTA-not-sent", /That's your API key in the Token field/);
+  await refused(validateToken("trello", { token }), token, /Enter your Trello API key/);
+  assert.equal(seen.length, 0, "Trello was not called");
+});
+
+test("every provider that takes a pasted token has a step-by-step guide", () => {
+  for (const provider of TOKEN_PROVIDERS) {
+    const entry = CONNECTOR_CATALOG.find((row) => row.provider === provider && row.auth.includes("token"));
+    assert.ok(entry, `${provider} is in the catalog with a token option`);
+    assert.ok(CONNECTOR_GUIDES[entry.id]?.steps.length, `${provider} has a guide`);
+  }
+});
+
+test("Zotero: the key names its owner, keeps its library, notes and write access, and the group libraries it can read", async () => {
+  const token = "P9xKfieldnoteMiraKey0001";
+  respond = ({ url }) => {
+    if (url === "https://api.zotero.org/keys/current") {
+      return json({
+        key: token,
+        userID: 4412001,
+        username: "mira_chen",
+        displayName: "Mira Chen",
+        access: { user: { library: true, notes: true, write: false, files: true }, groups: { all: { library: true, write: false } } },
+      });
+    }
+    if (url === "https://api.zotero.org/users/4412001/groups?limit=100") return json([{ id: 99001, data: { name: "Fieldnote Reading Group" } }, { id: "nope", data: { name: "Broken" } }]);
+    return json({}, 404);
+  };
+  const saved = await validateToken("zotero", { token });
+  assert.deepEqual(saved, {
+    secret: token,
+    account: "mira_chen",
+    meta: { via: "token", userID: 4412001, username: "mira_chen", library: true, notes: true, write: false, groups: [{ id: 99001, name: "Fieldnote Reading Group", write: false }] },
+  });
+  assert.equal(seen[0]!.headers["zotero-api-key"], token);
+  assert.equal(seen[0]!.headers["zotero-api-version"], "3");
+  assert.ok(seen.every((request) => !request.url.includes(token)), "the key only travels in a header");
+
+  // Per-group grants: only the groups the key may read, each with its own write access.
+  respond = ({ url }) => {
+    if (url === "https://api.zotero.org/keys/current") {
+      return json({ userID: 4412001, username: "mira_chen", access: { user: { library: true, notes: false, write: true }, groups: { "99002": { library: true, write: true } } } });
+    }
+    if (url === "https://api.zotero.org/users/4412001/groups?limit=100") return json([{ id: 99001, data: { name: "Not shared with the key" } }, { id: 99002, data: { name: "Thesis lab" } }]);
+    return json({}, 404);
+  };
+  const lab = await validateToken("zotero", { token });
+  assert.deepEqual(lab.meta.groups, [{ id: 99002, name: "Thesis lab", write: true }]);
+  assert.equal(lab.meta.write, true);
+  assert.equal(lab.meta.notes, false);
+});
+
+test("Zotero: refuses a key it can't use, with what to change", async () => {
+  const token = "P9xKfieldnoteMiraKey0002";
+  respond = () => json({ userID: 4412001, username: "mira_chen", access: { user: { library: false, notes: false, write: false } } });
+  await refused(validateToken("zotero", { token }), token, /This key can't read your library\. Edit the key and tick Allow library access\./);
+  assert.equal(seen.length, 1, "no group lookup without group access");
+
+  respond = () => new Response("Invalid key", { status: 403 });
+  await refused(validateToken("zotero", { token }), token, /Zotero didn't accept that API key\./);
+
+  respond = () => json({ access: { user: { library: true } } });
+  await refused(validateToken("zotero", { token }), token, /didn't say whose key/);
+
+  seen = [];
+  await refused(validateToken("zotero", { token: "my zotero password" }), "my zotero password", /doesn't look like a Zotero API key/);
+  assert.equal(seen.length, 0, "Zotero was not called");
 });
