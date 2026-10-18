@@ -43,7 +43,7 @@ export async function nativeLayout(ctx: ToolContext, surface: string, view?: "wi
   }
   const definition = catalog.desks[desk!]!;
   const extraPref = await db.preference.findFirst({ where: { userId: ctx.userId, key: "desk.extras", deletedAt: null }, select: { value: true } });
-  const extras = Array.isArray(extraPref?.value) ? extraPref!.value.filter((item): item is string => typeof item === "string") : desk === "exam" ? ["deadlines"] : desk === "classes" ? ["learning"] : desk === "bench" ? ["bench"] : [];
+  const extras = Array.isArray(extraPref?.value) ? extraPref!.value.filter((item): item is string => typeof item === "string") : desk === "exam" ? ["deadlines"] : desk === "classes" ? ["learning"] : [];
   const defaults = surface === "context" ? catalog.contexts[desk!]?.[tab] ?? [] : [...definition.base, ...catalog.extras.filter(extra => extras.includes(extra.id)).flatMap(extra => (catalog.roles[role] ?? definition.available).filter(tile => tile.key === extra.tile && !definition.base.some(row => row.key === tile.key)))];
   const available = surface === "context" ? defaults : [...new Map([...(catalog.roles[role] ?? definition.available), ...defaults].map(tile => [tile.key, tile])).values()];
   const raw = readLayout(pref?.value) ?? { v: 1 as const, tiles: defaults.map(({ key, c, r }) => ({ key, c, r })), hidden: [] };

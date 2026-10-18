@@ -178,6 +178,7 @@ export function classifyRateLimit(method: string, path: string): RateBucket | nu
   if (method === "POST" && (path === "/api/assistant/turn" || path === "/api/models/test")) return "model";
   if (method === "GET" && path === "/api/models") return "model";
   if (method === "PUT" && /^\/api\/model-keys\/[^/]+$/.test(path)) return "model";
+  if (method === "POST" && path === "/api/devices/self/included/turn") return "model";
   if (method === "POST" && isTokenMint(path)) return "token";
   if (method === "POST" && isDeviceWrite(path)) return "device";
   if (method === "POST" && isDeviceFiles(path)) return "deviceFiles";

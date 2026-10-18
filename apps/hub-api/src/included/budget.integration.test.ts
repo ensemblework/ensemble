@@ -275,3 +275,49 @@ test("hosted: picking another included model in Settings sticks, on an account s
     delete process.env.ENSEMBLE_INCLUDED_MODELS;
   }
 });
+
+test("a computer connected to an account runs its included calls here, on that account's credits", async () => {
+  await setCeiling(200);
+  const user = await harness.asUser();
+  const computer = await harness.asToken(user, "device");
+  await db.device.create({ data: { userId: user.id, tokenId: computer.id, name: "Desk Mac", platform: "macos" } });
+  const status = await computer.inject({ method: "GET", url: "/api/devices/self/included" });
+  assert.equal(status.statusCode, 200, status.body);
+  assert.deepEqual([status.json().catalog.provider, status.json().catalog.available, status.json().usage.limit, status.json().usage.used], ["ensemble", true, 100, 0]);
+  claim("GET /api/devices/self/included", "happy-path");
+  assert.equal((await user.inject({ method: "GET", url: "/api/devices/self/included" })).statusCode, 403, "a browser session is not the computer");
+  claim("GET /api/devices/self/included", "isolation");
+
+  const { setRuntimeFetchForTests } = await import("../runtime/http.js");
+  const sent: string[] = [];
+  setRuntimeFetchForTests((async (input: Parameters<typeof fetch>[0]) => {
+    sent.push(String(input));
+    const reply = { status: "completed", model: "gpt-6-luna", output: [{ type: "message", role: "assistant", content: [{ type: "output_text", text: "Hello from Azure." }] }], usage: { input_tokens: 1_000, output_tokens: 50 } };
+    return new Response(JSON.stringify(reply), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch);
+  const ask = { model: "gpt-6-luna", messages: [{ role: "user", content: "Hi" }], purpose: "Assistant" };
+  try {
+    const turn = await computer.inject({ method: "POST", url: "/api/devices/self/included/turn", payload: ask });
+    assert.equal(turn.statusCode, 200, turn.body);
+    assert.equal(turn.json().turn.text, "Hello from Azure.");
+    assert.ok(turn.json().turn.credits > 0, "the ledger charged the call");
+    assert.match(sent[0]!, /^https:\/\/ensemble-ai-test\.openai\.azure\.com\/openai\/v1\/responses$/);
+    const row = await db.includedUsage.findFirstOrThrow({ where: { accountId: user.id } });
+    assert.deepEqual([row.status, row.userId, row.purpose], ["settled", user.id, "Assistant"]);
+    claim("POST /api/devices/self/included/turn", "happy-path");
+
+    assert.equal((await computer.inject({ method: "POST", url: "/api/devices/self/included/turn", payload: { ...ask, messages: "Hi" } })).statusCode, 400);
+    claim("POST /api/devices/self/included/turn", "invalid-input");
+    assert.equal((await user.inject({ method: "POST", url: "/api/devices/self/included/turn", payload: ask })).statusCode, 403);
+    claim("POST /api/devices/self/included/turn", "isolation");
+
+    // The account's credits are used up: the computer gets the same refusal as the web, and Azure is not called.
+    await db.includedUsage.create({ data: { accountId: user.id, userId: user.id, period, model: "gpt-6-luna", status: "settled", estimatedInputTokens: 0, maxOutputTokens: 1, reservedUsd: 0.1, usd: 0.1 } });
+    const refused = await computer.inject({ method: "POST", url: "/api/devices/self/included/turn", payload: ask });
+    assert.equal(refused.statusCode, 429, refused.body);
+    assert.deepEqual([refused.json().code, refused.json().resetsAt], ["included_credits_used", resetsAt]);
+    assert.equal(sent.length, 1);
+  } finally {
+    setRuntimeFetchForTests(null);
+  }
+});

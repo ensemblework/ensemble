@@ -1,5 +1,6 @@
 import { deleteWorkspaceData } from "../lib/workspace-data.js";
 import { includedCatalogEntry } from "../included/catalog.js";
+import { deviceIncludedCatalogEntry, onDevice } from "../included/device.js";
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import { ASSISTANT_INSTRUCTIONS } from "../assistant/state.js";
@@ -164,6 +165,10 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
 
   // ── models & prompts ────────────────────────────────────────────────────
 
+  // In the desktop app and the CLI the included row comes from Ensemble on the web, for a computer
+  // connected to an account; a local-only computer lists it as unavailable, with the reason.
+  const includedRow = async () => (onDevice() ? deviceIncludedCatalogEntry() : includedCatalogEntry());
+
   const modelsPayload = async (userId: string, refresh?: boolean | string[]) => {
     const settings = await loadSettings(prisma, userId);
     try {
@@ -183,13 +188,13 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
         }
         return { ...row, notes };
       });
-      const included = includedCatalogEntry();
+      const included = await includedRow();
       const payload = { providers: included ? [included, ...providers] : providers, runtime: true, updatedAt: catalog.refreshedAt ?? new Date().toISOString(), fetchedAt: catalog.fetchedAt };
       writeModelCatalog(userId, payload);
       return payload;
     } catch (error) {
       if (error instanceof HostedAccessError) throw error;
-      const included = includedCatalogEntry();
+      const included = await includedRow();
       const payload = {
         providers: included ? [included] : [],
         runtime: false,

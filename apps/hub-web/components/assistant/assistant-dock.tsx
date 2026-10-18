@@ -4,16 +4,16 @@ import { createPortal } from "react-dom";
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
-import { Popover } from "../ui";
+import { LayerFloor, Popover } from "../ui";
 import { ModelLogo } from "../connectors/provider-logo";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowUp, Check, ChevronDown, CircleAlert, Copy, Clock3, History, Maximize2, Minimize2, Plus, X } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, CircleAlert, Copy, Clock3, History, Maximize2, Minimize2, Plus, Unplug, X } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Mark } from "../mark";
 import { AskLauncher } from "./ask-launcher";
-import { assistantErrorText, ASSISTANT_UNAVAILABLE, formatChord, INCLUDED_LABEL, INCLUDED_PROVIDER, includedModelName, isSubscriptionProvider, SUBSCRIPTION_INFO, type PageMention } from "@ensemble/shared-types";
+import { assistantErrorText, ASSISTANT_UNAVAILABLE, CONNECT_COMPUTER_HREF, formatChord, INCLUDED_LABEL, INCLUDED_PROVIDER, INCLUDED_SOURCE, includedModelName, isSubscriptionProvider, SUBSCRIPTION_INFO, type PageMention } from "@ensemble/shared-types";
 import { isApplePlatform } from "@/lib/platform";
 import { useShortcuts } from "@/lib/shortcut-store";
 import { API, ApiError, api, type AssistantMessageRecord, type AssistantToolCallRecord, type Complexity, type ConversationRecord } from "@/lib/api";
@@ -23,7 +23,8 @@ import { applyNotice, applyRepliesToCache, refreshAfterAssistantWrite } from "@/
 import { useAutoGrow } from "@/lib/auto-grow";
 import { relative } from "@/lib/format";
 import { markModelOutOfQuota, quotaMessage, quotaSuffix, useQuotaMarks } from "@/lib/model-quota";
-import { includedNote, includedRefusal, INCLUDED_USAGE_KEY, refreshIncluded, tierModelLabel, tierModelName, useIncludedUsage } from "@/lib/included";
+import { includedLocalOnly, includedNote, includedRefusal, INCLUDED_USAGE_KEY, needsConnection, refreshIncluded, tierModelLabel, tierModelName, useIncludedUsage } from "@/lib/included";
+import { IncludedLocalOnly } from "@/components/metrics/included-credits";
 import { AssistantAnswer, splitCutOffReply } from "./cut-off-notice";
 import { MarkdownText, choiceLines } from "../markdown-text";
 import { MentionPopover, useMentionMenu } from "../mentions/mention-menu";
@@ -67,6 +68,9 @@ export function greeting(name: string | null | undefined, now = new Date()): str
   const part = hour < 5 ? "Hello" : hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
   return first ? `${part}, ${first}` : part;
 }
+
+/** The assistant window floats above the page; menus and dialogs it opens start above it. */
+const ASSISTANT_LAYER = 2000;
 
 const TIER_LABEL: Record<Complexity, string> = { easy: "Low", medium: "Medium", high: "High", max: "Max" };
 
@@ -210,7 +214,8 @@ function CopyReply({ content }: { content: string }) {
 }
 
 export function AssistantFailure({ message, onRetry }: { message: string; onRetry?: () => void }) {
-  return <div role="alert" className="m-3 rounded-xl border border-danger/40 bg-danger/10 p-3 text-[13px] text-ink"><div className="flex items-start gap-2"><CircleAlert size={16} className="mt-0.5 shrink-0 text-danger" /><p className="flex-1">{assistantErrorText(message)}</p></div>{onRetry ? <button type="button" className="btn mt-3" onClick={onRetry}>Retry</button> : null}{/key|provider|model.*configure/i.test(message) ? <a className="btn ml-2 mt-3 inline-flex" href="/settings?tab=assistant#models">Open model settings</a> : null}</div>;
+  const connect = needsConnection(message);
+  return <div role="alert" className="m-3 rounded-xl border border-danger/40 bg-danger/10 p-3 text-[13px] text-ink"><div className="flex items-start gap-2">{connect ? <Unplug size={16} className="mt-0.5 shrink-0 text-danger" /> : <CircleAlert size={16} className="mt-0.5 shrink-0 text-danger" />}<p className="flex-1">{assistantErrorText(message)}</p></div>{onRetry && !connect ? <button type="button" className="btn mt-3" onClick={onRetry}>Retry</button> : null}{connect ? <a className="btn btn-primary mt-3 inline-flex" href={CONNECT_COMPUTER_HREF}>Connect this computer</a> : null}{/key|provider|model.*configure/i.test(message) ? <a className="btn ml-2 mt-3 inline-flex" href="/settings?tab=assistant#models">Open model settings</a> : null}</div>;
 }
 
 export function Message({
@@ -235,6 +240,9 @@ export function Message({
   const pending = (message.toolCalls ?? []).filter((call) => call.state === "awaiting_approval" && call.isWrite !== false);
   const failed = (message.toolCalls ?? []).filter((call) => call.state === "failed").length;
   const answer = splitCutOffReply(message.content);
+  // Replies saved before 18 Oct 2026 named included credits as an API key.
+  const included = message.credentialSource === INCLUDED_SOURCE || message.credentialSource === `API key · ${INCLUDED_PROVIDER}`;
+  const source = included ? INCLUDED_SOURCE : message.credentialSource;
   return (
     <article className="assistant-turn assistant-answer-turn">
       <div className="assistant-message-heading"><span className="assistant-message-avatar"><Mark size={18} /></span><span>Ensemble</span></div>
@@ -260,8 +268,8 @@ export function Message({
           ))
         : null}
       <div className="assistant-message-footer">
-        {message.model ? <span className="inline-flex items-center gap-1.5"><ModelLogo model={message.model} size={11} />{message.model}</span> : null}
-        {message.credentialSource ? <span className="min-w-0 break-words">{message.credentialSource}</span> : null}
+        {message.model ? <span className="inline-flex items-center gap-1.5"><ModelLogo model={message.model} provider={included ? INCLUDED_PROVIDER : undefined} size={11} />{included ? includedModelName(message.model) : message.model}</span> : null}
+        {source ? <span className="min-w-0 break-words">{source}</span> : null}
         <CopyReply content={message.content} />
       </div>
     </article>
@@ -388,6 +396,7 @@ export function AssistantDock() {
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings, enabled: open });
   const catalog = useQuery({ queryKey: ["models"], queryFn: api.models, enabled: open, staleTime: 60_000 });
   const includedModels = catalog.data?.providers?.find((row) => row.provider === INCLUDED_PROVIDER && row.available)?.models ?? [];
+  const localOnly = includedLocalOnly(catalog.data);
   const usage = useIncludedUsage(open && includedModels.length > 0);
   const picked = includedPick && includedModels.includes(includedPick) ? includedPick : null;
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
@@ -651,13 +660,14 @@ export function AssistantDock() {
   if (!open) return launcher;
 
   return createPortal(
-    <>
+    <LayerFloor.Provider value={ASSISTANT_LAYER}>
     {launcher}
     <div
       data-assistant-surface
+      style={{ zIndex: ASSISTANT_LAYER }}
       onKeyDown={event => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); event.stopPropagation(); setOpen(false); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('button[aria-label="Ask Ensemble"]')?.focus()); } }}
       className={cx(
-        "assistant-window pop-in fixed z-[2000] flex flex-col overflow-hidden border border-line-strong shadow-pop",
+        "assistant-window pop-in fixed flex flex-col overflow-hidden border border-line-strong shadow-pop",
         expanded ? "inset-x-[5vw] bottom-6 top-[5vh]" : "bottom-5 right-5 h-[min(720px,85vh)] w-[min(660px,94vw)]",
       )}
     >
@@ -772,6 +782,7 @@ export function AssistantDock() {
               const next = event.key === "ArrowDown" ? (index + 1) % options.length : event.key === "ArrowUp" ? (index + options.length - 1) % options.length : event.key === "Home" ? 0 : event.key === "End" ? options.length - 1 : -1;
               if (next >= 0) { event.preventDefault(); options[next]?.focus(); }
             }}>{(Object.keys(TIER_LABEL) as Complexity[]).map(key => <button key={key} type="button" role="option" aria-selected={!picked && tier === key} className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-[13px] text-ink hover:bg-hover" onClick={() => { setIncludedPick(null); setTierOverride(key); close(); }}><span><strong className="font-medium">{TIER_LABEL[key]}</strong><small className="mt-1 block text-muted">{tierModelLabel(tiers?.[key]) ?? "Automatic"}{quotaSuffix(tiers?.[key].model, quotas)}</small></span>{!picked && tier === key ? <Check size={14} /> : null}</button>)}
+              {!includedModels.length && localOnly ? <div className="mt-1 border-t border-line pt-2"><IncludedLocalOnly compact onNavigate={close} /></div> : null}
               {includedModels.length ? <div role="group" aria-label={INCLUDED_LABEL} className="mt-1 border-t border-line pt-2">
                 <div className="px-3 pb-1 text-[11.5px] text-muted">{INCLUDED_LABEL}{usage.data?.available ? ` · ${includedNote(usage.data)}` : ""}</div>
                 {includedModels.map(model => <button key={model} type="button" role="option" aria-selected={picked === model} className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-[13px] text-ink hover:bg-hover" onClick={() => { setIncludedPick(model); close(); }}><span className="inline-flex items-center gap-2"><ModelLogo model={model} provider={INCLUDED_PROVIDER} size={13} />{includedModelName(model)}</span>{picked === model ? <Check size={14} /> : null}</button>)}
@@ -787,6 +798,6 @@ export function AssistantDock() {
         </div>
       </div>
     </div>
-    </>, document.body
+    </LayerFloor.Provider>, document.body
   );
 }

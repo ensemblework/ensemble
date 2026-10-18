@@ -1,13 +1,36 @@
 /**
- * Picture avatars: 15 per profession (5 women, 5 men, 5 gender-neutral), drawn in the Hub
+ * Picture avatars: 30 per profession (10 women, 10 men, 10 gender-neutral), drawn in the Hub
  * from the id alone (`components/avatars/persona.tsx`). An id is `role.gender.n`, for example
- * `lawyer.f.3`. A person without one shows their initials.
+ * `lawyer.f.3`, with an optional background colour after it: `lawyer.f.3.mint`. Without one the
+ * profession's own colour is used. A person without an avatar shows their initials.
  */
 export const AVATAR_ROLES = ["engineer", "lawyer", "teacher", "student", "manager", "vibe"] as const;
 export type AvatarRole = (typeof AVATAR_ROLES)[number];
 export const AVATAR_GENDERS = ["f", "m", "n"] as const;
 export type AvatarGender = (typeof AVATAR_GENDERS)[number];
-export const AVATARS_PER_GROUP = 5;
+export const AVATARS_PER_GROUP = 10;
+
+/** The background colours a person can put behind their avatar. */
+export const AVATAR_BACKGROUNDS = ["sky", "mint", "peach", "rose", "slate"] as const;
+export type AvatarBackground = (typeof AVATAR_BACKGROUNDS)[number];
+
+export const AVATAR_BACKGROUND_LABEL: Record<AvatarBackground, string> = {
+  sky: "Blue",
+  mint: "Green",
+  peach: "Peach",
+  rose: "Rose",
+  slate: "Slate",
+};
+
+/** The background an avatar gets when none was picked: the profession's own colour. */
+export const AVATAR_ROLE_BACKGROUND: Record<AvatarRole, AvatarBackground> = {
+  engineer: "sky",
+  lawyer: "slate",
+  teacher: "peach",
+  student: "sky",
+  manager: "mint",
+  vibe: "rose",
+};
 
 export const AVATAR_ROLE_LABEL: Record<AvatarRole, string> = {
   engineer: "Engineer",
@@ -20,24 +43,49 @@ export const AVATAR_ROLE_LABEL: Record<AvatarRole, string> = {
 
 export const AVATAR_GENDER_LABEL: Record<AvatarGender, string> = { f: "Women", m: "Men", n: "Neutral" };
 
-export type AvatarParts = { role: AvatarRole; gender: AvatarGender; n: number };
+/** `background` is null when none was picked (the profession's own colour). */
+export type AvatarParts = { role: AvatarRole; gender: AvatarGender; n: number; background: AvatarBackground | null };
 
 export function parseAvatar(id: string | null | undefined): AvatarParts | null {
   if (!id) return null;
-  const [role, gender, raw] = id.split(".");
+  const parts = id.split(".");
+  if (parts.length < 3 || parts.length > 4) return null;
+  const [role, gender, raw, background] = parts;
   const n = Number(raw);
   if (!(AVATAR_ROLES as readonly string[]).includes(role ?? "")) return null;
   if (!(AVATAR_GENDERS as readonly string[]).includes(gender ?? "")) return null;
-  if (!Number.isInteger(n) || n < 1 || n > AVATARS_PER_GROUP) return null;
-  return { role: role as AvatarRole, gender: gender as AvatarGender, n };
+  if (!/^\d+$/.test(raw ?? "") || !Number.isInteger(n) || n < 1 || n > AVATARS_PER_GROUP) return null;
+  if (background !== undefined && !(AVATAR_BACKGROUNDS as readonly string[]).includes(background)) return null;
+  return { role: role as AvatarRole, gender: gender as AvatarGender, n, background: (background as AvatarBackground | undefined) ?? null };
 }
 
 export function isAvatarId(id: unknown): id is string {
   return typeof id === "string" && parseAvatar(id) !== null;
 }
 
-export function avatarIds(role: AvatarRole, gender: AvatarGender): string[] {
-  return Array.from({ length: AVATARS_PER_GROUP }, (_, index) => `${role}.${gender}.${index + 1}`);
+/** The face part of an id (`role.gender.n`), without its background. */
+export function avatarFace(id: string): string {
+  return id.split(".").slice(0, 3).join(".");
+}
+
+/** The background an avatar shows: the one picked, else the profession's own. */
+export function avatarBackground(parts: AvatarParts): AvatarBackground {
+  return parts.background ?? AVATAR_ROLE_BACKGROUND[parts.role];
+}
+
+/** An id with a background. The profession's own colour is written without one, so older ids keep reading the same. */
+export function withAvatarBackground(id: string, background: AvatarBackground): string {
+  const parts = parseAvatar(id);
+  if (!parts) return id;
+  const face = avatarFace(id);
+  return background === AVATAR_ROLE_BACKGROUND[parts.role] ? face : `${face}.${background}`;
+}
+
+export function avatarIds(role: AvatarRole, gender: AvatarGender, background?: AvatarBackground): string[] {
+  return Array.from({ length: AVATARS_PER_GROUP }, (_, index) => {
+    const id = `${role}.${gender}.${index + 1}`;
+    return background ? withAvatarBackground(id, background) : id;
+  });
 }
 
 /** The avatar set that fits a signup role or a free-text profession. */

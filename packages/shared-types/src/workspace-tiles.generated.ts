@@ -2939,12 +2939,6 @@ export const WORKSPACE_TILES = {
           "title": "Milestone",
           "c": 3,
           "r": 2
-        },
-        {
-          "key": "hold",
-          "title": "On the bench",
-          "c": 6,
-          "r": 3
         }
       ],
       "available": [
@@ -7890,19 +7884,28 @@ export const WORKSPACE_TILES = {
       "id": "deadlines",
       "tile": "deadlines",
       "label": "Deadlines",
-      "line": "Dated deadlines, as a timeline. On for Exam season until you turn it off."
+      "line": "Dated deadlines, as a timeline.",
+      "profiles": [
+        "student",
+        "teacher"
+      ]
     },
     {
       "id": "learning",
       "tile": "concepts",
       "label": "Learning",
-      "line": "A tab for what you yourself are learning. On for Classes until you turn it off."
+      "line": "A Today tile for what you yourself are learning.",
+      "profiles": [
+        "student",
+        "teacher"
+      ]
     },
     {
       "id": "bench",
       "tile": "hold",
       "label": "On the bench",
-      "line": "What is clamped right now, and the next check. On for Bench until you turn it off."
+      "line": "What is clamped right now, and the next check.",
+      "profiles": []
     }
   ],
   "board": {

@@ -1,6 +1,6 @@
 import { useQuery, type QueryClient } from "@tanstack/react-query";
-import { INCLUDED_LABEL, INCLUDED_MODELS, INCLUDED_PROVIDER, includedModel, includedModelName, isIncludedErrorCode, type IncludedUsage } from "@ensemble/shared-types";
-import { api } from "./api";
+import { INCLUDED_LABEL, INCLUDED_LOCAL_ONLY, INCLUDED_MODELS, INCLUDED_PROVIDER, includedModel, includedModelName, isIncludedErrorCode, type IncludedUsage } from "@ensemble/shared-types";
+import { api, type ModelCatalog } from "./api";
 
 export const INCLUDED_USAGE_KEY = ["included-usage"] as const;
 
@@ -72,6 +72,16 @@ export function includedRefusal(body: unknown): string | null {
   if (!isIncludedErrorCode(record.code)) return null;
   for (const text of [record.message, record.error]) if (typeof text === "string" && text.trim()) return text.trim();
   return "Included AI could not run this call.";
+}
+
+/** The desktop app or CLI is local only: the included models are listed, but cannot run without an account. */
+export function includedLocalOnly(catalog: ModelCatalog | undefined): boolean {
+  return Boolean(catalog?.providers?.some((row) => row.provider === INCLUDED_PROVIDER && !row.available && row.code === INCLUDED_LOCAL_ONLY));
+}
+
+/** A refusal that a local-only computer gets: the fix is connecting it to an account. */
+export function needsConnection(message: string): boolean {
+  return /connected to your Ensemble account|This computer is no longer connected/i.test(message);
 }
 
 /** After an included refusal the credits, the pause and the model list may all have changed. */

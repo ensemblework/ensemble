@@ -7,6 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useShortcuts } from "@/lib/shortcut-store";
 import { shortcutHelp } from "@/lib/shortcut-help";
 import { hasModule } from "@ensemble/shared-types/modules";
+import { shellProfile } from "@/components/desk/tile-catalog";
 import { DESK_IDS, DESKS, MARKET_ID } from "@/components/desk/desks";
 import { api } from "@/lib/api";
 import { switchSpace } from "@/lib/spaces";
@@ -94,7 +95,7 @@ export function CommandPalette({ open, onClose }: { open: boolean; onClose: () =
       hint: action.hint,
       run: action.run,
     }));
-    const destinations = navigationDestinations(query, { modules, guest:Boolean(shell.data?.space?.shared), template:shell.data?.activeTemplateId, boardLabel:shell.data?.labels?.board }).map(row => ({ id:row.href, label:row.label, hint:row.hint, run:()=>{
+    const destinations = navigationDestinations(query, { modules, guest:Boolean(shell.data?.space?.shared), template:shell.data?.activeTemplateId, boardLabel:shell.data?.labels?.board, profile:shellProfile(shell.data) }).map(row => ({ id:row.href, label:row.label, hint:row.hint, run:()=>{
       const url = new URL(row.href, window.location.origin);
       if (url.href === window.location.href) {
         const key = decodeURIComponent(url.hash.slice(1)), setting = SETTINGS_DESTINATION_BY_ID.get(key);

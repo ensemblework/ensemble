@@ -25,7 +25,8 @@ import { HomeLogoLink } from "../motion/brand-morph";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef } from "react";
-import { hasModule, moduleForPath, type OptionalModule } from "@ensemble/shared-types/modules";
+import { hasModule, moduleFitsProfile, moduleForPath, type OptionalModule } from "@ensemble/shared-types/modules";
+import { shellProfile } from "@/components/desk/tile-catalog";
 import { api } from "@/lib/api";
 import { startDevWarm } from "@/lib/dev-warm";
 import { prefetchHref } from "@/lib/prefetch";
@@ -180,7 +181,7 @@ export function Sidebar({ mobile = false }: { mobile?: boolean }) {
     // Optional modules wait for the shell: when it fails, a link the space has
     // turned off must not appear and lead to a 404.
     if (!shell.data) return false;
-    return hasModule(modules, gate as OptionalModule);
+    return hasModule(modules, gate as OptionalModule) && moduleFitsProfile(gate as OptionalModule, shellProfile(shell.data));
   };
   const waiting = (shell.data?.approvals ?? 0) + (shell.data?.decisions ?? 0);
   const withMe = useQuery({ queryKey: ["shared-with-me"], queryFn: api.sharedWithMe, staleTime: 60_000, enabled: Boolean(shell.data) });

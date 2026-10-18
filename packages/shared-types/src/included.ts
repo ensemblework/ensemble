@@ -7,6 +7,8 @@
 /** The provider id a tier stores when it uses an included model. */
 export const INCLUDED_PROVIDER = "ensemble" as const;
 export const INCLUDED_LABEL = "Included with Ensemble";
+/** How an answer paid from included credits names where it came from (the assistant's reply footer). */
+export const INCLUDED_SOURCE = "Ensemble included";
 
 /** Monthly credits per account when ENSEMBLE_INCLUDED_MONTHLY_CREDITS is unset. */
 export const DEFAULT_MONTHLY_CREDITS = 20_000;
@@ -96,19 +98,27 @@ export const INCLUDED_CREDITS_USED = "included_credits_used" as const;
 export const INCLUDED_PAUSED = "included_paused" as const;
 /** Included models are not set up on this server, or are switched off. */
 export const INCLUDED_UNAVAILABLE = "included_unavailable" as const;
-export type IncludedErrorCode = typeof INCLUDED_CREDITS_USED | typeof INCLUDED_PAUSED | typeof INCLUDED_UNAVAILABLE;
+/**
+ * The desktop app or the CLI is local only: not connected to an Ensemble account, so it has no
+ * credits to spend. Included models run on Ensemble's server, for a connected computer only.
+ */
+export const INCLUDED_LOCAL_ONLY = "included_local_only" as const;
+export type IncludedErrorCode = typeof INCLUDED_CREDITS_USED | typeof INCLUDED_PAUSED | typeof INCLUDED_UNAVAILABLE | typeof INCLUDED_LOCAL_ONLY;
 
 export function isIncludedErrorCode(value: unknown): value is IncludedErrorCode {
-  return value === INCLUDED_CREDITS_USED || value === INCLUDED_PAUSED || value === INCLUDED_UNAVAILABLE;
+  return value === INCLUDED_CREDITS_USED || value === INCLUDED_PAUSED || value === INCLUDED_UNAVAILABLE || value === INCLUDED_LOCAL_ONLY;
 }
+
+/** Where a local-only desktop app connects to an Ensemble account (Settings → Account → This computer). */
+export const CONNECT_COMPUTER_HREF = "/settings?tab=account#this-mac";
 
 export type IncludedErrorBody = {
   code: IncludedErrorCode;
   error: string;
   message: string;
-  /** When the credits or the shared budget reset. Null for INCLUDED_UNAVAILABLE. */
+  /** When the credits or the shared budget reset. Null for INCLUDED_UNAVAILABLE and INCLUDED_LOCAL_ONLY. */
   resetsAt: string | null;
-  status: 429 | 503;
+  status: 403 | 429 | 503;
 };
 
 export type IncludedUsageRow = {
@@ -127,6 +137,8 @@ export type IncludedUsageRow = {
 export type IncludedUsage = {
   /** False when the operator has not set up included models. The rest is then empty. */
   available: boolean;
+  /** A desktop app or CLI not connected to an Ensemble account: it has no credits to show. */
+  localOnly?: boolean;
   models: Array<Pick<IncludedModel, "id" | "label" | "vendor" | "azureVersion" | "efforts" | "autoEffort" | "relativeCost" | "role">>;
   period: string;
   resetsAt: string;

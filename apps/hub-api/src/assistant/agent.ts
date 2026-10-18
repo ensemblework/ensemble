@@ -47,7 +47,7 @@ import { statusFor } from "./status-line.js";
 import { toolAllowedFor, chatToolSpecs, responsesToolSpecs } from "./registry.js";
 import { appsPrompt, ensureAppAccess, loadAppGrants, toolsForTurn, writeRefusal } from "./apps.js";
 import { advertisedTools, playbookText, appMap, findPlaybook, playbookIndex, playbooksFor, routePlaybooks, type Playbook } from "./skills/index.js";
-import { hasModule, isSubscriptionProvider } from "@ensemble/shared-types";
+import { hasModule, INCLUDED_PROVIDER, INCLUDED_SOURCE, isSubscriptionProvider } from "@ensemble/shared-types";
 import type { ToolAnswer } from "../subscriptions/bridge.js";
 import { agentConversation, runSubscriptionTurn, USE_TOOL } from "../subscriptions/turn.js";
 import { pastScheduleWarning, withPastScheduleWarning } from "./schedule.js";
@@ -288,7 +288,7 @@ async function drive(
   const calls: AssistantToolCall[] = [];
   let credits: number | null = 0;
   let answered = args.model;
-  let credentialSource = args.provider === "ollama" ? "Local Ollama" : `API key · ${args.provider}`;
+  let credentialSource = args.provider === "ollama" ? "Local Ollama" : args.provider === INCLUDED_PROVIDER ? INCLUDED_SOURCE : `API key · ${args.provider}`;
   let mutated = false;
   let text = "";
   let nudged = false;

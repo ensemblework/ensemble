@@ -12,7 +12,7 @@ import type { IncludedTokens } from "../included/pricing.js";
 import { PROVIDERS } from "./credentials.js";
 import { dispatchRuntime } from "./dispatch.js";
 import { ProviderError, noKeyMessage } from "./errors.js";
-import { INCLUDED_HOSTED_ONLY, anthropicUsage, chatUsage, clearIncludedThinkingForTests, rememberTurn, responsesUsage, withoutThinking } from "./included.js";
+import { anthropicUsage, chatUsage, clearIncludedThinkingForTests, rememberTurn, responsesUsage, withoutThinking } from "./included.js";
 import { completeText, completeWithTools, setRuntimeFetchForTests, streamWithTools } from "./models.js";
 import { resetBuckets, setRuntimeSleepForTests } from "./pace.js";
 import type { Json } from "./payload.js";
@@ -410,7 +410,7 @@ test("a cancelled call settles without usage", async () => {
   assert.deepEqual(book.settles, [{ id: "res-1", usage: null, answeredBy: null }]);
 });
 
-test("included needs the server set up; a paired computer says so", async () => {
+test("included needs the server set up", async () => {
   const sent = azure(() => json(GPT_REPLY));
   const book = ledger();
   const body = { provider: "ensemble", model: "gpt-6-luna", userId: "u1", prompt: "Hi" };
@@ -420,7 +420,7 @@ test("included needs the server set up; a paired computer says so", async () => 
   delete process.env.AZURE_FOUNDRY_API_KEY;
   await assert.rejects(completeText(body), (error) => {
     assert.ok(error instanceof IncludedLimitError);
-    assert.deepEqual([error.code, error.statusCode, error.message], [INCLUDED_UNAVAILABLE, 503, INCLUDED_HOSTED_ONLY]);
+    assert.deepEqual([error.code, error.statusCode, error.message], [INCLUDED_UNAVAILABLE, 503, "Included AI is not set up on this server. Add your own API key or AI plan in Settings → Models."]);
     return true;
   });
   assert.equal(sent.length, 0);

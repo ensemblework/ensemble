@@ -6,7 +6,7 @@ import { useState } from "react";
 import { Held } from "@/components/motion/held";
 import { MetricsSkeleton } from "@/components/motion/skeletons";
 import { INCLUDED_LABEL, INCLUDED_PROVIDER, includedModelName } from "@ensemble/shared-types";
-import { IncludedCreditsCard } from "@/components/metrics/included-credits";
+import { IncludedCreditsCard, IncludedLocalOnly } from "@/components/metrics/included-credits";
 import { Empty, PageHeader, Tag } from "@/components/ui";
 import { api, type MetricsSummary } from "@/lib/api";
 import { dateTime } from "@/lib/format";
@@ -169,7 +169,7 @@ export default function MetricsPage() {
       />
       <Held pending={metrics.isLoading || !shown} fallback={<MetricsSkeleton />}>
         {shown ? <div className="space-y-4">
-          {credits.data?.available ? <IncludedCreditsCard usage={credits.data} /> : null}
+          {credits.data?.available ? <IncludedCreditsCard usage={credits.data} /> : credits.data?.localOnly ? <IncludedLocalOnly /> : null}
           <DailySpend days={shown.days} />
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div className="tile rounded-lg bg-panel p-4">

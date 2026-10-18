@@ -46,7 +46,9 @@ The window loads `ensemble://localhost` (on Windows, `http://ensemble.localhost`
 
 **Downloads and version.** Every surface reads root `release.json`, checked by `scripts/release-version.mjs`. Settings → Account → About Ensemble shows the native version (from Tauri initialization metadata) and the interface version. It can check and install updates without a terminal. Local and hosted native windows share the same About component.
 
-The download guide uses the canonical version for `Ensemble_<v>_aarch64.dmg`, `Ensemble_<v>_x64.dmg`, `Ensemble_<v>_x64-setup.exe`, `Ensemble_<v>_x64_en-US.msi`, `Ensemble_<v>_amd64.AppImage` and `Ensemble_<v>_amd64.deb`. Publish matching desktop and CLI tags after the merged build passes.
+The download guide uses the canonical version for `Ensemble_<v>_aarch64.dmg`, `Ensemble_<v>_x64.dmg`, `Ensemble_<v>_x64-setup.exe`, `Ensemble_<v>_x64_en-US.msi`, `Ensemble_<v>_amd64.AppImage`, `Ensemble_<v>_amd64.deb` and (since 0.4.2) `Ensemble-<v>-1.x86_64.rpm` for Fedora, RHEL and openSUSE; the AppImage runs on any other distribution. Publish matching desktop and CLI tags after the merged build passes.
+
+**Included models** (0.4.2, [33 §4](33_INCLUDED_AI.md#4-where-included-models-run)): connected to an account (Settings → Account → This computer), the app lists the account's included models and runs each call on Ensemble's server on the account's credits. Local only, it shows *Included models need your Ensemble account* with **Connect this computer**.
 
 The updater calls `GET /api/desktop/update/:target/:arch/:current`, which resolves only the latest published **desktop** tag, independently of CLI releases. The API validates the manifest version and official asset URLs; Tauri verifies its signature. About’s only native command is `install_update`, permitted for the bundled app and official hosted origin, with no filesystem or shell permission. Active local jobs block installation until the person finishes or stops them. Successful installation restarts the app.
 

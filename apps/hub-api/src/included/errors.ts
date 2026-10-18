@@ -1,12 +1,15 @@
 /**
- * Why an included call did not run. hub-api answers 429 (credits or the shared budget used up)
- * or 503 (not set up), and the sentence is not stored as something the assistant said.
+ * Why an included call did not run. hub-api answers 429 (credits or the shared budget used up),
+ * 503 (not set up) or 403 (a local-only desktop app or CLI), and the sentence is not stored as
+ * something the assistant said.
  */
 import {
   INCLUDED_CREDITS_USED,
+  INCLUDED_LOCAL_ONLY,
   INCLUDED_PAUSED,
   INCLUDED_UNAVAILABLE,
   includedResetsAt,
+  isIncludedErrorCode,
   type IncludedErrorBody,
   type IncludedErrorCode,
 } from "@ensemble/shared-types";
@@ -27,7 +30,22 @@ export function includedMessage(code: IncludedErrorCode, resetsAt: Date | null, 
     }
     return `You've used this month's Ensemble credits. They reset on ${when}. To keep going now, add your own API key or AI plan in Settings → Models.`;
   }
+  if (code === INCLUDED_LOCAL_ONLY) {
+    return "Included models need this computer connected to your Ensemble account: they run on Ensemble's server and use your account's credits. Connect it in Settings → Account → This computer, or use your own API key or AI plan (Settings → Models).";
+  }
   return "Included AI is not set up on this server. Add your own API key or AI plan in Settings → Models.";
+}
+
+const STATUS: Record<IncludedErrorCode, 403 | 429 | 503> = {
+  [INCLUDED_CREDITS_USED]: 429,
+  [INCLUDED_PAUSED]: 429,
+  [INCLUDED_UNAVAILABLE]: 503,
+  [INCLUDED_LOCAL_ONLY]: 403,
+};
+
+/** Codes that have no reset time: the call cannot run until something is set up. */
+function resets(code: IncludedErrorCode): boolean {
+  return code === INCLUDED_CREDITS_USED || code === INCLUDED_PAUSED;
 }
 
 export class IncludedLimitError extends RuntimeError {
@@ -35,15 +53,15 @@ export class IncludedLimitError extends RuntimeError {
   readonly resetsAt: string | null;
 
   constructor(code: IncludedErrorCode, message?: string, resetsAt?: string | null) {
-    const reset = code === INCLUDED_UNAVAILABLE ? null : (resetsAt ?? includedResetsAt().toISOString());
-    super(message ?? includedMessage(code, reset ? new Date(reset) : null), code === INCLUDED_UNAVAILABLE ? 503 : 429, false, code === INCLUDED_UNAVAILABLE ? "auth" : "credits");
+    const reset = resets(code) ? (resetsAt ?? includedResetsAt().toISOString()) : null;
+    super(message ?? includedMessage(code, reset ? new Date(reset) : null), STATUS[code], false, resets(code) ? "credits" : "auth");
     this.name = "IncludedLimitError";
     this.code = code;
     this.resetsAt = reset;
   }
 
   toJSON(): IncludedErrorBody {
-    return { code: this.code, error: this.message, message: this.message, resetsAt: this.resetsAt, status: this.statusCode === 503 ? 503 : 429 };
+    return { code: this.code, error: this.message, message: this.message, resetsAt: this.resetsAt, status: STATUS[this.code] };
   }
 }
 
@@ -53,6 +71,6 @@ export function includedErrorFrom(value: unknown): IncludedLimitError | null {
   const record = value as { code?: unknown; message?: unknown; resetsAt?: unknown; detail?: unknown };
   if (record.detail && typeof record.detail === "object") return includedErrorFrom(record.detail);
   const code = record.code;
-  if (code !== INCLUDED_CREDITS_USED && code !== INCLUDED_PAUSED && code !== INCLUDED_UNAVAILABLE) return null;
+  if (!isIncludedErrorCode(code)) return null;
   return new IncludedLimitError(code, typeof record.message === "string" && record.message ? record.message : undefined, typeof record.resetsAt === "string" ? record.resetsAt : null);
 }

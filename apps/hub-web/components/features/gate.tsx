@@ -3,7 +3,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { usePathname } from "next/navigation";
 import { useEffect, useSyncExternalStore } from "react";
-import { hasModule, moduleForPath, type OptionalModule } from "@ensemble/shared-types/modules";
+import { FEATURES } from "@ensemble/shared-types/features";
+import { hasModule, moduleFitsProfile, moduleForPath, type OptionalModule } from "@ensemble/shared-types/modules";
+import { shellProfile } from "@/components/desk/tile-catalog";
 import { SkeletonRows } from "@/components/ui";
 import { api } from "@/lib/api";
 import { readModuleCache, syncModuleCache } from "@/lib/tab-session";
@@ -62,6 +64,11 @@ export function FeatureGate({ children }: { children: React.ReactNode }) {
         <SkeletonRows count={5} />
       </div>
     );
+  }
+  // Code, Workspace, Runs and Skills are for people who build software: a lawyer's or teacher's
+  // profile is not offered them, so there is nothing to turn on here.
+  if (shell.data && !moduleFitsProfile(gate, shellProfile(shell.data))) {
+    return <Closed title={`${FEATURES[gate].label} isn't part of your profile`} detail={`${FEATURES[gate].label} is for people who build software. The rest of Ensemble works the same without it.`} />;
   }
   if (!hasModule(modules, gate)) return <FeatureLanding id={gate} />;
   return children;

@@ -244,6 +244,17 @@ export function SectionCard({
 
 export const ModalScope = createContext<string | undefined>(undefined);
 
+/**
+ * The stacking floor for floating layers (menus, dialogs) opened inside a raised surface. The assistant
+ * window sits above the page, so a menu or dialog it opens has to start above it, or it opens unseen behind it.
+ */
+export const LayerFloor = createContext(0);
+
+/** The z-index for a floating layer: its usual place, lifted above the surface it was opened from. */
+export function useLayerZ(base: number): number {
+  return useContext(LayerFloor) + base;
+}
+
 export function Tabs<T extends string>({
   tabs,
   value,
@@ -333,6 +344,7 @@ export function Popover({
   fill?: boolean;
 }) {
   const owner = useContext(ModalScope);
+  const z = useLayerZ(120);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
@@ -424,14 +436,14 @@ export function Popover({
               ref={panelRef}
               data-popover=""
               data-modal-owner={owner}
-              className="pop-in z-[120] overflow-auto rounded-lg bg-raised p-1 shadow-pop"
+              className="pop-in overflow-auto rounded-lg bg-raised p-1 shadow-pop"
               style={{
                 position: "fixed",
                 top: box?.top ?? 0,
                 left: box?.left ?? 0,
                 width: box?.width ?? width,
                 maxHeight: box ? Math.min(box.maxHeight, 340) : 340,
-                zIndex: 120,
+                zIndex: z,
                 visibility: box ? "visible" : "hidden",
               }}
             >
@@ -492,12 +504,14 @@ export function Dialog({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const titleId = useId();
+  const z = useLayerZ(70);
   useModalFocus(ref, open, onClose);
   if (!open || typeof document === "undefined") return null;
   return createPortal(
     <ModalScope.Provider value={titleId}>
     <div ref={ref} data-modal-layer={titleId} tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={titleId}
-      className="fixed inset-0 z-[70] flex items-start justify-center bg-black/50 px-3 pt-[8dvh]"
+      className="fixed inset-0 flex items-start justify-center bg-black/50 px-3 pt-[8dvh]"
+      style={{ zIndex: z }}
       onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
 
       <div

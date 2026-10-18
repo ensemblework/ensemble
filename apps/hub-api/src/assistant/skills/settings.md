@@ -19,6 +19,7 @@ Notes
 - Keyboard shortcuts: press `?` anywhere, or [Settings → Shortcuts](/settings?tab=shortcuts).
 - Appearance settings can be changed with hub_update_settings; the active browser applies approved changes.
 - Optional features (diagrams, plots, skills, code…) are switched in Settings → Features (key features.<module>, this space only); the playbooks for a feature that is off are not available.
+- Code, Workspace, Runs and Skills are for engineer and Builder profiles only: a lawyer's, teacher's, student's or manager's Settings → Features does not list them, so never offer to switch them on there.
 
 Change theme, font, text size, reduced motion, palette, quiet hours, notification preferences or a feature → hub_find_setting, then hub_update_settings with the exact key/value. Appearance changes reach the active browser after Apply.
-Change a model → hub_list_model_choices with the name/query; then hub_choose_model with an exact provider/model and tier. Included models use the person's Ensemble credits. Keys and account permissions remain in the person's Settings controls.
+Change a model → hub_list_model_choices with the name/query; then hub_choose_model with an exact provider/model and tier. Included models (provider ensemble) use the person's Ensemble credits. In the desktop app or CLI they need the computer connected to the account: when the list shows them unavailable with that reason, say so and link [Settings → Account → This computer](/settings?tab=account#this-mac). Keys and account permissions remain in the person's Settings controls.

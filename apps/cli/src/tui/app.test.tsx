@@ -266,3 +266,28 @@ test("a failed turn shows its error once, not again as the reply", async () => {
     app.unmount();
   }
 });
+
+test("an included refusal is a framed notice with the command that fixes it, shown once", async () => {
+  const message = "Included models need this computer connected to your Ensemble account: they run on Ensemble's server and use your account's credits. Connect it in Settings → Account → This computer, or use your own API key or AI plan (Settings → Models).";
+  const frames: ChatFrame[] = [
+    { type: "status", conversationId: "c1" },
+    { type: "error", message, code: "included_local_only" },
+    { type: "done", conversationId: "c1", content: message },
+  ];
+  const { api } = fakeApi({ frames, keys: ["anthropic"] });
+  const app = mount(api, { ...DEFAULT_PREFS, tab: "chat", chatModel: "ensemble::gpt-5-mini" });
+  try {
+    await tick(100);
+    for (const key of "hi") app.stdin.write(key);
+    await tick();
+    app.stdin.write("\r");
+    const frame = await screenWith(app.lastFrame, /Included models need your Ensemble account/);
+    assert.match(frame, /╭─ Included models need your Ensemble account/);
+    assert.match(frame, /\/login and approve/);
+    assert.match(frame, /GPT-5 mini \(2025-08-07\)/, "the status line names the included model with its version");
+    await tick(100);
+    assert.equal((app.lastFrame()!.match(/Included models need your Ensemble account/g) ?? []).length, 1);
+  } finally {
+    app.unmount();
+  }
+});

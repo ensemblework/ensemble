@@ -12,6 +12,19 @@ export const FULL_MODULE_SET = "code,diagrams,metrics,runs,skills,workspace";
 
 export const MODULE_DENIED = "Not part of this template.";
 
+/**
+ * Modules for people who build software: the Code tab, the agent's workspace, its runs and its
+ * saved skills. A lawyer's, teacher's, student's or manager's profile is not offered them; every
+ * profile keeps Diagrams, Plots and Metrics (where Ensemble credits are counted).
+ */
+export const BUILDER_MODULES: readonly OptionalModule[] = ["code", "workspace", "runs", "skills"];
+const BUILDER_PROFILES = new Set(["engineer", "vibe"]);
+
+/** Whether a profile is offered a module. With no profile known, every module is. */
+export function moduleFitsProfile(module: OptionalModule, profile: string | null | undefined): boolean {
+  return !profile || BUILDER_PROFILES.has(profile) || !BUILDER_MODULES.includes(module);
+}
+
 export class BadPathError extends Error {
   constructor() {
     super("Malformed path.");

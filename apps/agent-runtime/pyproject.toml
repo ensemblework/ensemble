@@ -1,6 +1,6 @@
 [project]
 name = "ensemble-agent-runtime"
-version = "0.4.1"
+version = "0.4.2"
 description = "Ensemble agent orchestration and guarded tool execution"
 requires-python = ">=3.11"
 dependencies = [

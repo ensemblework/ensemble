@@ -1,5 +1,5 @@
 import { CONNECTOR_CATALOG, CONNECTOR_CATEGORIES } from "@ensemble/shared-types";
-import { hasModule, moduleForPath } from "@ensemble/shared-types/modules";
+import { hasModule, moduleFitsProfile, moduleForPath } from "@ensemble/shared-types/modules";
 import { contextTabs, tabKey } from "../desk/context-tabs";
 import { deskIdFromTemplate } from "../desk/desks";
 import { SETTINGS_TABS } from "../settings/url-state";
@@ -38,7 +38,7 @@ export function navigationScore(query:string, label:string, hint:string, keyword
   return name===needle ? 100 : name.startsWith(needle) ? 80 : name.includes(needle) ? 60 : words.every(word=>name.includes(word)) ? 50 : 20;
 }
 
-export function navigationDestinations(query:string, options:{modules?:string|null; guest?:boolean; template?:string|null; boardLabel?:string}): NavigationDestination[] {
+export function navigationDestinations(query:string, options:{modules?:string|null; guest?:boolean; template?:string|null; boardLabel?:string; profile?:string|null}): NavigationDestination[] {
   const desk=deskIdFromTemplate(options.template) ?? "default";
   const contextual=contextTabs(desk).map(label=>({href:`/context?tab=${tabKey(label)}`,label,hint:`Context › ${label}`,keywords:label==="People"?"contacts team directory":label==="Graph"?"relationships knowledge graph network":""}));
   const sections=SETTINGS_TABS.map(tab=>({href:`/settings?tab=${tab.id}`,label:tab.label,hint:`Settings › ${tab.label}`,keywords:tab.hint,ownerOnly:tab.id==="connections"||tab.id==="data"}));
@@ -52,7 +52,7 @@ export function navigationDestinations(query:string, options:{modules?:string|nu
   const seen=new Set<string>();
   return all.filter(row=>{
     if (options.guest&&row.ownerOnly) return false;
-    const gate=moduleForPath(row.href); if (gate&&!hasModule(options.modules,gate)) return false;
+    const gate=moduleForPath(row.href); if (gate&&(!hasModule(options.modules,gate)||!moduleFitsProfile(gate,options.profile))) return false;
     const key=`${row.href}:${row.label}`; if (seen.has(key)) return false; seen.add(key); return true;
   }).map(row=>row.href==="/board"&&options.boardLabel?{...row,label:options.boardLabel,keywords:`board ${row.keywords}`}:row).map(row=>({row,score:navigationScore(query,row.label,row.hint,row.keywords)})).filter(hit=>hit.score>0).sort((a,b)=>b.score-a.score).map(hit=>hit.row).filter((row,i,list)=>list.findIndex(other=>other.href===row.href)===i);
 }

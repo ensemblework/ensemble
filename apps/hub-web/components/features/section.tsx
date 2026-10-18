@@ -3,14 +3,14 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { FEATURES } from "@ensemble/shared-types/features";
-import { OPTIONAL_MODULES, hasModule, type OptionalModule } from "@ensemble/shared-types/modules";
+import { OPTIONAL_MODULES, hasModule, moduleFitsProfile, type OptionalModule } from "@ensemble/shared-types/modules";
 import { SectionCard, SettingRow, Toggle } from "@/components/ui";
 import { api } from "@/lib/api";
 import { setFeature } from "@/lib/features";
 import { deskIdFromTemplate } from "@/components/desk/desks";
-import { DESK_EXTRAS, resolveExtras, type DeskExtraId } from "@/lib/desk-extras";
+import { DESK_EXTRAS, defaultExtras, extrasForProfile, resolveExtras, type DeskExtraId } from "@/lib/desk-extras";
 import { layoutKey, readLayout } from "@/components/desk/layout";
-import { deskRole, tileFitsRole } from "@/components/desk/tile-catalog";
+import { shellProfile } from "@/components/desk/tile-catalog";
 import { useToast } from "@/components/toast";
 
 export function FeaturesSection() {
@@ -23,6 +23,11 @@ export function FeaturesSection() {
   const deskId = deskIdFromTemplate(shell.data?.activeTemplateId ?? null);
   const extraValue = prefs.data?.preferences.find((row) => row.key === "desk.extras")?.value;
   const extras = resolveExtras(deskId, prefs.isSuccess ? extraValue : undefined);
+  // Only what fits this profile: no Code for a lawyer, no exam deadlines for an engineer.
+  const profile = shellProfile(shell.data);
+  const modules = OPTIONAL_MODULES.filter((id) => moduleFitsProfile(id, profile));
+  const offered = extrasForProfile(profile);
+  const onByDefault = new Set(defaultExtras(deskId));
   const toggle = async (id: OptionalModule, on: boolean) => {
     setBusy(id);
     try {
@@ -67,7 +72,7 @@ export function FeaturesSection() {
       description="Turn a part of Ensemble on or off. Turning one off hides it. Notes, diagrams, and reviews stay where they are."
     >
       <div data-features>
-        {OPTIONAL_MODULES.map((id) => {
+        {modules.map((id) => {
           const feature = FEATURES[id];
           const on = hasModule(shell.data?.modules, id);
           return (
@@ -82,20 +87,22 @@ export function FeaturesSection() {
           );
         })}
       </div>
-      <div className="mt-4 border-t border-line pt-3" data-desk-extras>
-        <div data-jump-label="Desk extras" className="text-[13px] font-medium">Desk extras</div>
-        <p className="mt-0.5 text-[12.5px] text-muted">Optional tiles for your current profile. Turning one off hides it. The rows stay.</p>
-        {DESK_EXTRAS.filter((extra) => tileFitsRole(extra.tile, deskRole(deskId ?? "default", shell.data?.onboardingTemplateId))).map((extra) => (
-          <SettingRow key={extra.id} title={extra.label} description={extra.line}>
-            <Toggle
-              checked={extras.has(extra.id)}
-              disabled={!prefs.isSuccess || extraBusy === extra.id}
-              label={extra.label}
-              onChange={(value) => void toggleExtra(extra.id, value)}
-            />
-          </SettingRow>
-        ))}
-      </div>
+      {offered.length ? (
+        <div className="mt-4 border-t border-line pt-3" data-desk-extras>
+          <div data-jump-label="Desk extras" className="text-[13px] font-medium">Desk extras</div>
+          <p className="mt-0.5 text-[12.5px] text-muted">Optional tiles for your current profile. Turning one off hides it. The rows stay.</p>
+          {offered.map((extra) => (
+            <SettingRow key={extra.id} title={extra.label} description={onByDefault.has(extra.id) ? `${extra.line} On for this desk until you turn it off.` : extra.line}>
+              <Toggle
+                checked={extras.has(extra.id)}
+                disabled={!prefs.isSuccess || extraBusy === extra.id}
+                label={extra.label}
+                onChange={(value) => void toggleExtra(extra.id, value)}
+              />
+            </SettingRow>
+          ))}
+        </div>
+      ) : null}
     </SectionCard>
   );
 }

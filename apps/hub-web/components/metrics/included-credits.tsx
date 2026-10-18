@@ -2,8 +2,9 @@
 /** @jsxRuntime automatic */
 /** @jsxImportSource react */
 
-import { INCLUDED_PROVIDER, includedModelName, type IncludedUsage } from "@ensemble/shared-types";
-import { CircleAlert } from "lucide-react";
+import { CONNECT_COMPUTER_HREF, INCLUDED_PROVIDER, includedModelName, type IncludedUsage } from "@ensemble/shared-types";
+import { CircleAlert, Unplug } from "lucide-react";
+import Link from "next/link";
 import { creditAmount, includedBlocked, resetDay, tokenCount, wholeCredits } from "@/lib/included";
 import { ProviderLogo } from "../connectors/provider-logo";
 import { cx, Empty } from "../ui";
@@ -49,6 +50,30 @@ function CreditsPerDay({ usage }: { usage: IncludedUsage }) {
       <div className="mt-1 flex justify-between text-2xs text-faint">
         <span>{days[0] ? dayLabel(days[0].day) : ""}</span>
         <span>{days.length ? dayLabel(days[days.length - 1]!.day) : ""}</span>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A local-only desktop app or CLI. The included models and the monthly credits belong to an
+ * Ensemble account and run on Ensemble's server, so they wait until this computer is connected.
+ * `compact`: the assistant's model menu.
+ */
+export function IncludedLocalOnly({ compact = false, onNavigate }: { compact?: boolean; onNavigate?: () => void }) {
+  return (
+    <div role="note" data-testid="included-local-only" className={cx("flex items-start gap-2.5 rounded-lg border border-line bg-raised", compact ? "px-3 py-2" : "mt-3 px-3 py-2.5")}>
+      <span className="grid size-7 shrink-0 place-items-center rounded-full bg-accent/15 text-accent" aria-hidden>
+        <Unplug size={14} />
+      </span>
+      <div className="min-w-0 flex-1 text-[12.5px]">
+        <div className="font-medium text-ink">Included models need your Ensemble account</div>
+        <p className="mt-0.5 text-muted">
+          This computer is local only. Connect it to your account to use the included models and your monthly Ensemble credits. Your own API keys and AI plans work either way.
+        </p>
+        <Link href={CONNECT_COMPUTER_HREF} className="btn mt-2 inline-flex" onClick={onNavigate}>
+          Connect this computer
+        </Link>
       </div>
     </div>
   );
