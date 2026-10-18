@@ -9,7 +9,8 @@ import Link from "next/link";
 import { INCLUDED_LABEL, INCLUDED_PROVIDER, isSubscriptionProvider, SUBSCRIPTION_INFO, SUBSCRIPTION_PROVIDERS, type IncludedUsage, type ModelMeta, type ModelProvider, type Settings, type SubscriptionAgent } from "@ensemble/shared-types";
 import { api, type Complexity, type ModelCatalog } from "@/lib/api";
 import { relative } from "@/lib/format";
-import { includedBlocked, includedNote, resetDay, useIncludedUsage, wholeCredits } from "@/lib/included";
+import { includedBlocked, includedLocalOnly, includedNote, resetDay, useIncludedUsage, wholeCredits } from "@/lib/included";
+import { IncludedLocalOnly } from "@/components/metrics/included-credits";
 import { useQuotaMarks } from "@/lib/model-quota";
 import { FetchGlyph } from "@/components/motion/slot";
 import { ProviderLogo } from "../connectors/provider-logo";
@@ -162,7 +163,7 @@ export function ModelsSection({ settings, patch }: Props) {
       description="Power the assistant with the AI plan you already have, or with API keys. A task's complexity picks the tier, and the chat starts on the default preset above."
     >
       <SubscriptionsCard settings={settings} patch={patch} />
-      {usage ? <IncludedCreditsLine usage={usage} /> : null}
+      {usage ? <IncludedCreditsLine usage={usage} /> : includedLocalOnly(catalog.data) ? <IncludedLocalOnly /> : null}
       <div className="row-tile mt-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-raised px-3 py-2.5" data-testid="model-keys-row">
         <div className="flex min-w-0 items-start gap-2.5">
           <KeyRound size={15} className="mt-0.5 shrink-0 text-muted" aria-hidden />

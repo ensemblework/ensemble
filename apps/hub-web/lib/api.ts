@@ -1005,6 +1005,8 @@ export type ModelCatalog = {
     chat: boolean;
     cheapest: string | null;
     error: string | null;
+    /** Why an unavailable row cannot be used, as an included code: "included_local_only" in a desktop app or CLI with no account. */
+    code?: string | null;
     /** When this provider's list was fetched; lists are kept a week. */
     fetchedAt?: string | null;
   }>;

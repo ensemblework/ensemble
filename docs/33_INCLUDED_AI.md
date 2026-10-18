@@ -108,11 +108,19 @@ Before a chat opens its stream, `POST /api/assistant/turn` makes the cheap versi
 - The hosted assistant (chat, Ask, page and comment answers) and `complete()` callers on the server.
   In hosted production that is the Python runtime (`ensemble_agent/included.py`); the desktop sidecar
   has a TypeScript copy (`apps/hub-api/src/runtime/included.ts`) used in development and tests.
-- **The hosted web app only.** The desktop app and the CLI talk to their own local runtime and do not
-  offer included models; bringing them there is a later step.
-- **Not on paired computers.** The Azure key never leaves the server, so a task that runs on your
-  computer with an included tier fails with "Included models run on Ensemble's hosted assistant only.
-  For tasks on your computer, pick your own API key or AI plan in Settings → Models."
+- **The desktop app and the CLI, on a computer connected to an account** (paired: Settings → Account →
+  This computer in the app, `ensemble login` with *Run tasks* approved in the CLI; docs/25). They hold
+  no Azure key and no ledger. Their local server (`apps/hub-api/src/included/device.ts`) reads the
+  account's included models and credits from `GET /api/devices/self/included` (held for a minute) and
+  sends each included call to `POST /api/devices/self/included/turn` with its device token. Ensemble's
+  server runs it with `includedTurn` on that account's credits, under the same monthly ceiling as the
+  web, and answers the turn or the refusal (§5). Chats, the assistant's model menu, Settings → Models,
+  Metrics and the CLI's `/model` all list them there; a computer's tiers are its own and are not
+  switched to included models by themselves (pick one in Settings → Models or the model menu).
+- **Not on a local-only computer.** A desktop app or CLI that is not connected to an account lists the
+  included models as unavailable (`code: "included_local_only"` on the `/api/models` row) and refuses
+  every included call with `included_local_only` (§5): the app shows *Included models need your
+  Ensemble account* with **Connect this computer**, and the CLI a framed notice pointing at `/login`.
 - Server workspace jobs stay operator-only, as before ([06](06_MODULE_WORKSPACE_AND_SURFACES.md)).
 
 For a Claude deployment (§1, not in the catalog today), a tool round sends back the exact content
@@ -127,6 +135,7 @@ and thinking off for that request.
 | `included_credits_used` | 429 | The account's credits for the month are used up, or this call could pass them | "You've used this month's Ensemble credits. They reset on Nov 1. To keep going now, add your own API key or AI plan in Settings → Models." (or how many credits the call could need and how many are left) |
 | `included_paused` | 429 | The operator's monthly ceiling is reached | "Ensemble's included AI is paused for everyone until Nov 1: this month's shared budget is used up, even for accounts with credits left. Your own API keys and AI plans still work (Settings → Models)." |
 | `included_unavailable` | 503 | Not set up on this server, switched off, a model the operator did not deploy, or hub-api could not be asked | "Included AI is not set up on this server…" |
+| `included_local_only` | 403 | A desktop app or CLI that is not connected to an Ensemble account, or one whose computer was removed | "Included models need this computer connected to your Ensemble account: they run on Ensemble's server and use your account's credits. Connect it in Settings → Account → This computer, or use your own API key or AI plan (Settings → Models)." |
 
 The body is `{code, error, message, resetsAt, status}` (`IncludedErrorBody`), as an HTTP response or as
 the assistant stream's `error` frame. Like a provider quota, the sentence is shown in the chat but not
@@ -151,7 +160,11 @@ stored as something the assistant said.
 - **When a call cannot run**, the chat and *Ask Ensemble* on a page show the server's sentence (§5) in
   their error banner. It is not stored as a message, does not mark the model "out of quota", and the
   credits and model list refresh.
-- Nothing about credits appears when the server offers no included models.
+- **The reply footer** names where an included answer came from as *Ensemble included*, with the
+  model's name and version (replies saved earlier said "API key · ensemble" and read the same way now).
+- Nothing about credits appears when the server offers no included models. A local-only desktop app or
+  CLI shows the *Included models need your Ensemble account* notice instead, in Settings → Models, on
+  Metrics and in the assistant's model menu (`IncludedLocalOnly` in `components/metrics/included-credits.tsx`).
 - **The assistant's model menu** (the Low/Medium/High/Max button under the chat box) lists the included
   models under *Included with Ensemble*, with the credits left. Picking one sends that model with each
   message of the chat on Auto thinking (`model`, `provider: "ensemble"`, `reasoningEffort: "default"` on
@@ -173,9 +186,13 @@ stored as something the assistant said.
 | GET | `/api/metrics/credits` | Signed-in account (class `personal`: in a shared space, your own) | `IncludedUsage`: `available`, `models`, `period`, `resetsAt`, `limit`, `used`, `remaining`, `paused`, `totals`, `byModel`, `byPurpose`, `days`. Credits only |
 | POST | `/api/internal/included/reserve` | agent-runtime, `x-ensemble-internal` + `x-ensemble-user` | `{model, inputTokens, maxOutputTokens, purpose?}` → `{id}`, or the 429/503 body above |
 | POST | `/api/internal/included/settle` | agent-runtime | `{id, usage: {inputTokens, cacheReadTokens, cacheWriteTokens, outputTokens} \| null, answeredBy?}` → `{credits}` |
+| GET | `/api/devices/self/included` | A paired computer's device token only | `{catalog, usage}`: the `/api/models` row and `IncludedUsage` for the computer's account |
+| POST | `/api/devices/self/included/turn` | A paired computer's device token only (rate bucket `model`, body up to 16 MB) | `{model, messages, items?, jsonMode?, reasoningEffort?, chatTools?, responsesTools?, purpose?}` → `{turn}` with `credits`, or the 403/429/503 body above. The account comes from the token, never the body |
 
 `GET /api/models` lists the included models as one more provider (`source: "included"`, levels Low to
-High in `meta`) when the server offers them; it carries no key and no price.
+High in `meta`) when the server offers them; it carries no key and no price. In the desktop app and the
+CLI the row comes from the account's server, or is unavailable with `code: "included_local_only"`.
+`GET /api/metrics/credits` there answers the account's credits, or `available: false, localOnly: true`.
 
 ## 8. Operator settings
 

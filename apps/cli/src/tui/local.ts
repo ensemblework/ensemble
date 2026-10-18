@@ -64,7 +64,8 @@ export type Decision = {
   canAnswer?: boolean;
 };
 
-export type ModelRow = { provider: string; available: boolean; models: string[]; chat: boolean; cheapest: string | null; source: string };
+/** `code`: why an unavailable row cannot be used ("included_local_only": included models on a computer with no account). */
+export type ModelRow = { provider: string; available: boolean; models: string[]; chat: boolean; cheapest: string | null; source: string; error?: string | null; code?: string | null };
 
 export type Settings = {
   runProfiles: RunProfile[];
@@ -81,7 +82,7 @@ export type ChatFrame =
   | { type: "delta"; text: string }
   | { type: "tool"; call: ToolCall }
   | { type: "pending"; call: ToolCall; preview: string }
-  | { type: "error"; message?: string; error?: string }
+  | { type: "error"; message?: string; error?: string; code?: string; resetsAt?: string | null }
   | { type: "done"; conversationId: string; content: string; model?: string; interrupted?: boolean };
 
 export type CodeSession = { folder: string; engine?: string; profileId?: string | null; runModel?: string | null; outsideAccess?: string };
@@ -149,13 +150,16 @@ export class LocalApi {
     if (!response.ok || !response.body) {
       const text = await response.text().catch(() => "");
       let message = text;
+      let code: string | undefined;
       try {
-        const parsed = JSON.parse(text) as { error?: string; message?: string };
+        const parsed = JSON.parse(text) as { error?: string; message?: string; code?: string };
         message = parsed.message ?? parsed.error ?? text;
+        code = typeof parsed.code === "string" ? parsed.code : undefined;
       } catch {
         // plain text
       }
-      throw new Error(message || `${response.status} ${response.statusText}`);
+      // The code lets an included refusal show as a notice ("connect this computer").
+      throw Object.assign(new Error(message || `${response.status} ${response.statusText}`), code ? { code } : {});
     }
     const decoder = new TextDecoder();
     let buffer = "";

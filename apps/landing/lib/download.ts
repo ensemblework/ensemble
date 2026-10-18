@@ -23,6 +23,7 @@ export function desktopFiles(version = DESKTOP_VERSION): Record<OsId, DesktopFil
     linux: [
       { label: "Download AppImage", file: `Ensemble_${version}_amd64.AppImage`, note: "x64; make it executable and run it", primary: true },
       { label: ".deb package", file: `Ensemble_${version}_amd64.deb`, note: "Ubuntu 22.04+, Debian 12+" },
+      { label: ".rpm package", file: `Ensemble-${version}-1.x86_64.rpm`, note: "Fedora, RHEL 9+, openSUSE" },
     ],
   };
 }

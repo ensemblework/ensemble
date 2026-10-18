@@ -11,6 +11,7 @@ import { mentionInsertText, mentionItems, type MentionMenuItem } from "@/lib/men
 import { keptMentions, mentionAt, replaceMention } from "@/lib/mentions/text";
 import { placeAnchoredPanel, type Side } from "@/lib/place-layer";
 import { useModuleState } from "@/lib/use-module";
+import { useLayerZ } from "../ui";
 import { mentionBadge, mentionIcon } from "./mention-icons";
 
 type Field = HTMLTextAreaElement | HTMLInputElement;
@@ -146,6 +147,7 @@ export function MentionPopover<T extends Field>({ menu }: { menu: MentionMenu<T>
   const side = useRef<Side | null>(null);
   const [place, setPlace] = useState<{ top: number; left: number; maxHeight: number } | null>(null);
   const { open, items, active, ref } = menu;
+  const z = useLayerZ(90);
 
   useLayoutEffect(() => {
     if (!open) {
@@ -183,8 +185,8 @@ export function MentionPopover<T extends Field>({ menu }: { menu: MentionMenu<T>
   return createPortal(
     <div
       ref={panel}
-      className="pop-in fixed z-[90] flex flex-col overflow-hidden rounded-lg bg-raised shadow-pop"
-      style={{ width: PANEL_WIDTH, maxWidth: "calc(100vw - 16px)", top: place?.top ?? -9999, left: place?.left ?? 0, maxHeight: Math.min(place?.maxHeight ?? 340, 340) }}
+      className="pop-in fixed flex flex-col overflow-hidden rounded-lg bg-raised shadow-pop"
+      style={{ zIndex: z, width: PANEL_WIDTH, maxWidth: "calc(100vw - 16px)", top: place?.top ?? -9999, left: place?.left ?? 0, maxHeight: Math.min(place?.maxHeight ?? 340, 340) }}
       onMouseDown={(event) => event.preventDefault()}
     >
       <div id={menu.listId} role="listbox" aria-label="Mentions" className="min-h-0 flex-1 overflow-y-auto p-1.5">

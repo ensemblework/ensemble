@@ -283,6 +283,11 @@ test("account validation, signup kill switches and password changes have explici
   assert.equal(identity.statusCode, 200, identity.body);
   assert.equal(identity.json().settings.email, "mira@fieldnote.example");
   assert.equal(identity.json().settings.timezone, "Europe/London");
+  // Avatars: ten faces a group and an optional background; anything else is refused.
+  const avatar = await owner.inject({ method: "PATCH", url: "/api/auth/me", payload: { avatar: "lawyer.f.10.mint" } });
+  assert.equal(avatar.statusCode, 200, avatar.body);
+  assert.equal(avatar.json().user.avatar, "lawyer.f.10.mint");
+  for (const bad of ["lawyer.f.11", "lawyer.f.3.purple", "lawyer.f.3.mint.x"]) assert.equal((await owner.inject({ method: "PATCH", url: "/api/auth/me", payload: { avatar: bad } })).statusCode, 400, bad);
   assert.equal((await owner.inject({ method: "PATCH", url: "/api/auth/me", payload: { password: "new-password-123", current: "wrong" } })).statusCode, 400);
   const changed = await owner.inject({ method: "PATCH", url: "/api/auth/me", payload: { name: "Updated Mira", password: "new-password-123", current: password } });
   assert.equal(changed.statusCode, 200, changed.body);

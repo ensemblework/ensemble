@@ -541,6 +541,10 @@ test("the model menu offers the included models: a pick is sent with the turn on
     await act(async () => root.render(<PathnameContext.Provider value="/today"><QueryClientProvider client={client}><AssistantDock /></QueryClientProvider></PathnameContext.Provider>));
     for (let attempt = 0; attempt < 20 && !document.body.querySelector("textarea"); attempt += 1) await wait();
     let list = await menu();
+    // The menu is portalled to the page: it must stack above the assistant window, or it opens unseen behind it.
+    const dock = document.querySelector<HTMLElement>("[data-assistant-surface]")!;
+    const panel = list.closest<HTMLElement>("[data-popover]")!;
+    assert.ok(Number(panel.style.zIndex) > Number(dock.style.zIndex), `menu z ${panel.style.zIndex} is above the assistant's ${dock.style.zIndex}`);
     for (let attempt = 0; attempt < 20 && !list.querySelector('[role="group"]'); attempt += 1) { await wait(); list = document.querySelector('[role="listbox"][aria-label="Response complexity"]')!; }
     let group = list.querySelector('[role="group"]')!;
     for (let attempt = 0; attempt < 20 && !/credits left/.test(group.textContent ?? ""); attempt += 1) { await wait(); group = document.querySelector('[role="listbox"] [role="group"]')!; }

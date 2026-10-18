@@ -14,7 +14,7 @@ import { terminalBrand } from "@ensemble/brand/cli";
 import { WorkingMark } from "./brand.js";
 import { Box, Text, useApp, useInput, useStdout, type Key } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { pickRunProfile, type RunProfile } from "@ensemble/shared-types";
+import { INCLUDED_LABEL, INCLUDED_LOCAL_ONLY, INCLUDED_PROVIDER, pickRunProfile, type RunProfile } from "@ensemble/shared-types";
 import { PROVIDERS } from "../local-commands.js";
 import type { ChatFrame, CodeSession, Decision, JobDetail, LocalApi, ModelRow, Settings, ToolCall, Workspace } from "./local.js";
 import { hit, isMouse, parseMouse, type Region } from "./mouse.js";
@@ -44,9 +44,12 @@ import {
   type Item,
 } from "./model.js";
 import { ENGINE_LABEL, type Engine, type Prefs } from "./prefs.js";
+import { includedNotice, localOnlyRow, modelLabel, type IncludedNotice } from "./included.js";
 import { cellWidth, markdown, pad, plain, truncate, wrapLine, type Line, type Segment } from "./text.js";
 
 const ACCENT = terminalBrand(process.env, Boolean(process.stdout.isTTY)).color;
+/** The picker row a local-only computer gets for the included models: picking it says how to connect. */
+const LOCAL_ONLY_PICK = "\u0000included";
 const MUTED = "gray";
 
 export type Account = { email: string | null; paired: boolean; apiBase: string };
@@ -62,7 +65,7 @@ export type Ops = {
   connectedHooks: () => Promise<string[]>;
 };
 
-type Entry = { id: string; kind: "user" | "assistant" | "agent" | "tool" | "failed" | "pending" | "note" | "error"; text: string };
+type Entry = { id: string; kind: "user" | "assistant" | "agent" | "tool" | "failed" | "pending" | "note" | "error" | "included"; text: string; notice?: IncludedNotice };
 
 type Overlay =
   | { kind: "picker"; title: string; hint?: string; items: Array<{ id: string; label: string; detail?: string; active?: boolean }>; index: number; onPick: (id: string) => void }
@@ -74,6 +77,11 @@ type Notice = { text: string; tone: "info" | "ok" | "error" };
 
 let entrySeq = 0;
 const entry = (kind: Entry["kind"], text: string): Entry => ({ id: `e${(entrySeq += 1)}`, kind, text });
+/** An error entry, or a notice when it is an included refusal ("connect this computer", "credits used"). */
+const failure = (text: string, code?: string | null): Entry => {
+  const notice = includedNotice(code, text);
+  return notice ? { ...entry("included", notice.text), notice } : entry("error", text);
+};
 
 export function App(props: { api: LocalApi; folder: string; version: string; updateNotice?: string | null; account: Account; prefs: Prefs; ops: Ops }) {
   const { api, folder, ops } = props;
@@ -182,11 +190,12 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
   const engine: Engine = prefs.engine ?? profile.engine;
   // Claude Code, Codex or Cursor: Chat is that agent, on the person's own sign-in.
   const agentChat = engine !== "ensemble";
-  const tierModel = settings?.models[settings.assistant.defaultTier ?? "medium"]?.model ?? "";
+  const tierSetting = settings?.models[settings.assistant.defaultTier ?? "medium"];
+  const tierModel = tierSetting ? modelLabel(tierSetting.provider, tierSetting.model) : "";
   const chatModelLabel = agentChat
     ? `${prefs.agentModel ?? "default model"} · your sign-in`
     : prefs.chatModel
-      ? prefs.chatModel.split("::")[1]!
+      ? modelLabel(prefs.chatModel.split("::")[0], prefs.chatModel.split("::")[1]!)
       : tierModel
         ? `${tierModel} (default)`
         : "chat default model";
@@ -297,7 +306,8 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
         } else if (frame.type === "error") {
           failed = frame.message ?? frame.error ?? "Something went wrong.";
           const text = failed;
-          setEntries((current) => [...current, entry("error", text)]);
+          const code = frame.code;
+          setEntries((current) => [...current, failure(text, code)]);
         } else if (frame.type === "done") {
           setConversationId(frame.conversationId);
           if (failed && frame.content?.trim() === failed.trim()) {
@@ -320,7 +330,7 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
           abort.signal,
         );
       } catch (error) {
-        if (!abort.signal.aborted) setEntries((current) => [...current, entry("error", chatError(error))]);
+        if (!abort.signal.aborted) setEntries((current) => [...current, failure(chatError(error), (error as { code?: string }).code)]);
       } finally {
         setEntries((current) => current.filter((item, index) => !(item.kind === "assistant" && !item.text.trim() && index === current.length - 1)));
         setStreaming(false);
@@ -537,16 +547,26 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
     }
     const catalog = await api.models().catch(() => null);
     const rows: ModelRow[] = (catalog?.providers ?? []).filter((row) => row.available && row.chat && row.models.length);
+    const localOnly = localOnlyRow(catalog?.providers ?? []);
     if (!rows.length) {
       say(
         account.email
           ? "No model keys yet. Add one on the web (Settings → Models, your account's keys work here too) or here with /keys; or chat with Claude Code, Codex or Cursor: /agent."
-          : "No model keys yet. Add one with /keys, or /login to use the keys on your Ensemble account; or chat with Claude Code, Codex or Cursor: /agent.",
+          : "No model keys yet. Add one with /keys, or /login to use the keys and included models on your Ensemble account; or chat with Claude Code, Codex or Cursor: /agent.",
         "error",
       );
       return;
     }
-    const choices = rows.flatMap((row) => row.models.slice(0, 25).map((model) => ({ id: `${row.provider}::${model}`, label: model, detail: `${row.provider}${row.cheapest === model ? " · cheapest" : ""}` })));
+    const choices = [
+      ...rows.flatMap((row) =>
+        row.models.slice(0, 25).map((model) => ({
+          id: `${row.provider}::${model}`,
+          label: modelLabel(row.provider, model),
+          detail: row.provider === INCLUDED_PROVIDER ? `${INCLUDED_LABEL} · your credits` : `${row.provider}${row.cheapest === model ? " · cheapest" : ""}`,
+        })),
+      ),
+      ...(localOnly ? [{ id: LOCAL_ONLY_PICK, label: INCLUDED_LABEL, detail: "connect this computer first: /login" }] : []),
+    ];
     setOverlay({
       kind: "picker",
       title: "Ensemble Code's model",
@@ -555,8 +575,13 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
       items: [{ id: "", label: "Chat default", detail: settings ? `${settings.models[settings.assistant.defaultTier ?? "medium"]?.provider ?? ""} ${settings.models[settings.assistant.defaultTier ?? "medium"]?.model ?? ""}` : "", active: !prefs.chatModel }, ...choices.map((choice) => ({ ...choice, active: prefs.chatModel === choice.id }))],
       index: Math.max(0, choices.findIndex((choice) => choice.id === prefs.chatModel) + 1),
       onPick: (id) => {
+        if (id === LOCAL_ONLY_PICK) {
+          setEntries((current) => [...current, failure("", INCLUDED_LOCAL_ONLY)]);
+          return;
+        }
         setPrefs({ chatModel: id || null });
-        say(`Ensemble Code chats with ${id ? `${id.split("::")[1]} (${id.split("::")[0]})` : "the chat default model"}.`, "ok");
+        const [provider, model] = id.split("::");
+        say(`Ensemble Code chats with ${id ? (provider === INCLUDED_PROVIDER ? `${modelLabel(provider, model!)} (${INCLUDED_LABEL})` : `${model} (${provider})`) : "the chat default model"}.`, "ok");
       },
     });
   };
@@ -1247,11 +1272,24 @@ function chatPane(
     else if (item.kind === "failed") lines.push(...wrapLine([{ text: "  ✗ ", color: "red" }, { text: item.text, color: "red" }], width, "    "));
     else if (item.kind === "pending") lines.push([], [{ text: "  ◇ Waiting for Apply", color: "yellow", bold: true }], ...markdown(item.text, width - 4).map((line) => [{ text: "    " }, ...line]));
     else if (item.kind === "note") lines.push(...wrapLine([{ text: `  ${item.text}`, dim: true, italic: true }], width));
+    else if (item.kind === "included" && item.notice) lines.push([], ...noticeLines(item.notice, width));
     else lines.push([], ...wrapLine([{ text: "  ✗ ", color: "red" }, { text: item.text, color: "red" }], width, "    "));
   }
   if (context.decision) lines.push([], ...decisionLines(context.decision, width));
   else if (streaming) lines.push([{ text: "  ⠿ working…", color: ACCENT, dim: true }]);
   return lines;
+}
+
+/** An included refusal as a framed notice: what happened, why, and the command that fixes it. */
+function noticeLines(notice: IncludedNotice, width: number): Line[] {
+  const color = notice.tone === "warn" ? "yellow" : ACCENT;
+  const bar = { text: "  │ ", color };
+  return [
+    [{ text: "  ╭─ ", color }, { text: notice.title, bold: true }],
+    ...wrapLine([bar, { text: notice.text }], width, "  │ "),
+    ...wrapLine([bar, { text: "→ ", color, bold: true }, { text: notice.hint, dim: true }], width, "  │   "),
+    [{ text: "  ╰─", color }],
+  ];
 }
 
 /** An agent's reply as its run logged it: what it said, and a line for each thing it did ("· Run npm test"). */

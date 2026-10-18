@@ -5,11 +5,13 @@
  * the OpenAI v1 endpoint of the Foundry host it is documented at, on the Responses or the Chat
  * Completions API; Foundry's Anthropic Messages endpoint is supported too, though no model in the
  * catalog uses it. The Azure key comes from the environment only: it is never a credential, never
- * listed, and never returned.
+ * listed, and never returned. Hosted Ensemble also runs here the included calls of the desktop
+ * apps and CLIs connected to an account (routes/included.ts).
  */
 import { INCLUDED_PROVIDER, INCLUDED_UNAVAILABLE, includedModelName, type IncludedEffort, type IncludedModel } from "@ensemble/shared-types";
 import { reserveIncluded, settleIncluded } from "../included/budget.js";
 import { anthropicBase, includedConfig, openaiBase, type IncludedConfig } from "../included/config.js";
+import { deviceIncludedTurn, onDevice } from "../included/device.js";
 import { IncludedLimitError } from "../included/errors.js";
 import type { IncludedTokens } from "../included/pricing.js";
 import { ModelUnreachableError } from "../lib/model-reach.js";
@@ -20,9 +22,6 @@ import { pace } from "./pace.js";
 import { anthropicTools, buildChatPayload, effortFor, fromAnthropic, fromOpenAi, toAnthropic, type Json } from "./payload.js";
 import { buildResponsesPayload, cleanItems, itemsFromChat, toolsFor, turnFromResponse } from "./responses-api.js";
 
-/** The desktop sidecar never holds the operator's Azure key, so included models cannot run here. */
-export const INCLUDED_HOSTED_ONLY =
-  "Included models run on Ensemble's hosted assistant only. For tasks on your computer, pick your own API key or AI plan in Settings → Models.";
 
 /** How a Claude model answers without thinking, at effort high or below. */
 const THINKING_OFF: Record<string, Json> = {
@@ -41,7 +40,7 @@ export function clearIncludedThinkingForTests(): void {
 
 function configured(model: string): { config: IncludedConfig; entry: IncludedModel } {
   const config = includedConfig();
-  if (!config) throw new IncludedLimitError(INCLUDED_UNAVAILABLE, INCLUDED_HOSTED_ONLY);
+  if (!config) throw new IncludedLimitError(INCLUDED_UNAVAILABLE);
   const entry = config.models.find((item) => item.id === model);
   if (!entry) throw new IncludedLimitError(INCLUDED_UNAVAILABLE, `${includedModelName(model)} is not offered on this server. Pick another included model in Settings → Models.`);
   return { config, entry };
@@ -196,13 +195,17 @@ async function settled(
   return result.turn;
 }
 
-/** One turn on an included model, in the runtime's turn shape, with `credits` from the ledger. */
+/**
+ * One turn on an included model, in the runtime's turn shape, with `credits` from the ledger. In the
+ * desktop app and the CLI, which hold no Azure key, Ensemble's server runs it (included/device.ts).
+ */
 export async function includedTurn(
   body: Json,
   model: string,
   messages: Json[],
   options: { items?: unknown[] | null; jsonMode?: boolean; signal?: AbortSignal; timeoutMs: number },
 ): Promise<Json> {
+  if (onDevice()) return deviceIncludedTurn(body, model, messages, options);
   const { config, entry } = configured(model);
   const userId = typeof body.userId === "string" && body.userId ? body.userId : null;
   if (!userId) throw new IncludedLimitError(INCLUDED_UNAVAILABLE, "A signed-in account is required to use included models.");

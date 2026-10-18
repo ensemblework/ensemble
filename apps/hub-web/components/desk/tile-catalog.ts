@@ -1,5 +1,5 @@
 import { templateCard } from "@ensemble/shared-types/manifest";
-import type { DeskId } from "./desks";
+import { deskIdFromTemplate, type DeskId } from "./desks";
 import type { Role } from "../onboarding/roles";
 
 export const TILE_CATEGORIES = ["All tiles", "Progress & insights", "Planning & calendar", "People & meetings", "Work & resources"] as const;
@@ -19,6 +19,12 @@ export function deskRole(desk: DeskId, onboardingId?: string | null): Role {
   const card = onboardingId ? templateCard(onboardingId) : undefined;
   if (card) return card.role;
   return ({ default: "engineer", semester: "student", exam: "student", literature: "student", classes: "teacher", chambers: "lawyer", staff: "manager", branch: "engineer", bench: "vibe" } as const)[desk];
+}
+
+/** The profile the shell's templates describe: the sign-up card's role, else the desk's. Null before the shell loads. */
+export function shellProfile(shell: { activeTemplateId?: string | null; onboardingTemplateId?: string | null } | null | undefined): Role | null {
+  if (!shell) return null;
+  return deskRole(deskIdFromTemplate(shell.activeTemplateId ?? null) ?? "default", shell.onboardingTemplateId);
 }
 
 export function tileFitsRole(key: string, role: Role): boolean {

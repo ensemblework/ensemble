@@ -129,6 +129,7 @@ jobs:
           if-no-files-found: error
           path: |
             apps/desktop/src-tauri/target/**/bundle/deb/*.deb
+            apps/desktop/src-tauri/target/**/bundle/rpm/*.rpm
             apps/desktop/src-tauri/target/**/bundle/appimage/*.AppImage
             apps/desktop/src-tauri/target/**/bundle/msi/*.msi
             apps/desktop/src-tauri/target/**/bundle/nsis/*.exe

@@ -21,6 +21,7 @@ import { requireVerifiedUser } from "../lib/hosted-access.js";
 import { CREDITS_PER_USD, includedConfig, type IncludedConfig } from "./config.js";
 import { IncludedLimitError, includedMessage } from "./errors.js";
 import { includedCost, worstCaseUsd, type IncludedTokens } from "./pricing.js";
+import { assertDeviceIncludedOpen, onDevice } from "./device.js";
 
 type Tx = Prisma.TransactionClient;
 
@@ -199,6 +200,7 @@ export async function settleIncluded(args: { id: string; usage: IncludedTokens |
  * runtime's reservation is still the check that counts.
  */
 export async function assertIncludedOpen(userId: string, model: string): Promise<void> {
+  if (onDevice()) return assertDeviceIncludedOpen();
   const config = configured(model);
   const now = new Date();
   const period = includedPeriod(now);

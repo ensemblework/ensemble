@@ -473,8 +473,6 @@ export function TaskPage({
           )}
           {!shared && canEditProperties ? <button type="button" className="btn-ghost text-accent" disabled={quickAssign.isPending} title="Use the default run profile · ⌘/Ctrl+Shift+A" onClick={() => quickAssign.mutate(taskId)}><Orbit size={13} /> {quickAssign.isPending ? "Assigning…" : "Quick assign"}</button> : null}
         </PropertyRow>
-        {shared ? null : <TaskAgentPanel taskId={taskId} />}
-        {shared ? null : <TaskHandoffs taskId={taskId} />}
 
         <PropertyRow icon={Gauge} label="Priority">
           <Popover
@@ -727,6 +725,11 @@ export function TaskPage({
         <>
           <AttachedItems taskId={taskId} className="mt-4" />
           <PostUpdate taskId={taskId} className="mt-2" />
+          {/* The agent's run sits right above the page it worked on. */}
+          <div inert={!canEditProperties || undefined}>
+            <TaskAgentPanel taskId={taskId} />
+            <TaskHandoffs taskId={taskId} />
+          </div>
         </>
       )}
 
