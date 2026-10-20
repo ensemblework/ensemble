@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Check, ChevronRight, Code2, FileText, FolderOpen, GitBranch, Lock, Monitor, Pencil, ShieldCheck, Star, Trash2, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { INCLUDED_LABEL, INCLUDED_PROVIDER, type ReasoningEffort, type RunProfile } from "@ensemble/shared-types";
 import { api, type AssignInput, type Complexity, type HandoffApp } from "@/lib/api";
 import { tierModelName } from "@/lib/included";
@@ -153,8 +153,10 @@ export function ProfileBar({
   const input = useRef<HTMLInputElement>(null);
   // Keyed on which profile is open, not on the draft: selecting on every keystroke would replace each typed letter.
   const editingKey = editing ? (editing.id ?? "new") : null;
-  useEffect(() => {
-    if (editingKey) window.setTimeout(() => input.current?.select(), 20);
+  useLayoutEffect(() => {
+    if (!editingKey) return;
+    input.current?.focus();
+    input.current?.select();
   }, [editingKey]);
   const active = profiles.find((row) => row.id === activeId);
   const isSaved = saved.some((row) => row.id === activeId);

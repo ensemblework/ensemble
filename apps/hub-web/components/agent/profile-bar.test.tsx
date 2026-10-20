@@ -40,12 +40,11 @@ test("a new profile name keeps every letter typed, not only the last one", async
   const saved: Array<{ id?: string; name: string }> = [];
   const { host, root } = render((value) => saved.push(value));
   const add = [...host.querySelectorAll("button")].find((button) => button.textContent === "Save as profile")!;
-  await act(async () => {
-    add.click();
-    await wait(40);
-  });
+  act(() => add.click());
   const input = host.querySelector<HTMLInputElement>('input[aria-label="Profile name"]')!;
-  for (const key of "XYZ team") {
+  act(() => press(input, "X"));
+  await act(async () => { await wait(40); });
+  for (const key of "YZ team") {
     await act(async () => {
       press(input, key);
       await wait(40);

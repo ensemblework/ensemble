@@ -57,7 +57,7 @@ export function appItemTools(sources: readonly AppItemSourceInfo[]): AnyHubTool[
   const search = defineTool({
     name: "apps_search",
     area: "apps",
-    description: `Search the person's connected apps (${names(sources)}) for pages, repositories, issues and more (${kinds}). Leave app empty to search them all. A link or id (a GitHub URL, ENG-42, a Notion URL) finds that item. Then read a hit with apps_read.`,
+    description: `Search the person's connected apps (${names(sources)}) for pages, repositories, issues and more (${kinds}), only when they explicitly request connected-app content. A connection or general file request is not permission; use saved Ensemble files by default. Leave app empty only when they request searching across connected apps. A link or id (a GitHub URL, ENG-42, a Notion URL) finds that item. Then read a hit with apps_read.`,
     input: z.object({
       query: z.string().max(300).describe("Words to look for, or a link or id. Empty lists recent items."),
       app: z.enum(ids).optional().describe("One app to search"),

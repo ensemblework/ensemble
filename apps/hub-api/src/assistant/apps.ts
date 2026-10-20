@@ -209,11 +209,12 @@ export function appsPrompt(connections: Connections, settings: Settings): string
     ].join("\n");
   }
   const rules = settings.assistant.connectedAppWrites
-    ? "Use these tools for mail, calendars, files and items in those apps, not the Hub tools. A change in a connected app (an event, an invite, a document, a comment) always waits for Apply, even when Hub changes do not: say exactly what will happen and who gets an email, and after Apply share the link the tool returns. If a product is switched off or lacks access, the tool says so; pass that on."
+    ? "For explicitly requested connected-app content, use these app tools. For saved Ensemble files and context, use the Hub tools. A change in a connected app (an event, an invite, a document, a comment) always waits for Apply, even when Hub changes do not: say exactly what will happen and who gets an email, and after Apply share the link the tool returns. If a product is switched off or lacks access, the tool says so; pass that on."
     : "Changes in connected apps are switched off in their settings, so you can only read them. If they ask for a change there, say it can be switched on in Settings.";
   return [
     "Connected apps in this space (the complete list):",
     ...lines,
+    "Only search, read, list recent items, sync or import connected-app content when the person explicitly requests content from that app, explicitly asks to search connected apps, or provides a link to that app's item. This also applies to remote MCP tools. A connection, app inventory, open attachment picker or general question about files does not authorize reading app content. Use saved Ensemble files and stored Hub context by default, including files originally imported from an app. If the requested source is unclear, ask before querying a connector.",
     `If they name an app that is not in this list, it is not connected in this space: say so, and that it can be connected in ${SETTINGS_LINK}.`,
     `${connected.some((app) => app.tools.includes("apps_search")) ? "apps_search finds items in these apps (app and kind narrow it; an empty query lists recent ones) and apps_read reads one. " : ""}If a tool named here is not in your tool list, call hub_how_to with name "apps" to load it. hub_list_connections gives the details of each connection.`,
     rules,

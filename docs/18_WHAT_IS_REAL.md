@@ -131,3 +131,7 @@ One code follow-up remains: `bridge/gaps.ts` contains old diagnostic messages ab
 - Independent monthly HMAC-keyed balances prevent workspace erasure or same-email account recreation from renewing the default 20,000-credit allowance. Legacy charges are recovered only where surviving metric evidence supports them. The public privacy page describes this short-lived credit-enforcement record.
 - Metrics filters the daily chart, model/purpose totals and recent calls by provider and date. Calls lacking token reports remain visible. Local/subscription response data is used where available; external plan balances and usage outside Ensemble are not queried.
 - The board toolbar has a bounded compact search field. Web and packaged native UI share these components.
+
+The assistant’s connected-app instructions explicitly require a request for remote content or an app item link before searches, reads, recent-item listings, sync/import or MCP content access. General file questions default to saved Ensemble data; connection metadata alone grants no content request (`assistant/apps.ts`, `assistant/tools/app-items.ts`).
+
+Run-profile naming in Assign uses synchronous focus/selection so immediate typing retains the first character; the regression deliberately types before any timer can run.
