@@ -22,7 +22,7 @@ Hosted public users need verified email for model/connector/agent features. Host
 
 ## 2. Scheduled work
 
-`jobs/scheduler.ts` runs an in-process minute tick. Postgres claims in `jobs/claim.ts` make daily slots idempotent across API processes. When file originals are in blob storage, the tick also runs `sweepOrphanOriginals` at most hourly ([32](32_FILES.md#2-where-files-live)). It visits accounts even when no settings row has yet been saved.
+`jobs/scheduler.ts` runs an in-process minute tick. Postgres claims in `jobs/claim.ts` make daily slots idempotent across API processes. When the server's blob store is on, the tick also runs `jobs/blob-sweep.ts` at most hourly: it removes file originals and plot tables nothing uses and moves plot tables still on disk into the store ([32](32_FILES.md#2-where-files-live), [20](20_PLOTS_DESIGN.md#2-data-ingestion)). It visits accounts even when no settings row has yet been saved.
 
 | Job | Current behavior |
 | --- | --- |

@@ -11,7 +11,7 @@ import type { Device, Prisma } from "@prisma/client";
 import { requireBrowserSession } from "../bridge/auth.js";
 import { isPaused } from "../lib/activity.js";
 import { newApiToken, sha256 } from "../lib/auth.js";
-import { requireVerifiedUser } from "../lib/hosted-access.js";
+import { keepsRunFileText, requireVerifiedUser } from "../lib/hosted-access.js";
 import { decisionBus, publicDecision, waitFor } from "../lib/decisions.js";
 import { appendLedger } from "../lib/ledger.js";
 import { loadSettings } from "../lib/settings.js";
@@ -444,6 +444,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
       return {
         id: next.id,
         protocol: PROTOCOL,
+        ...(keepsRunFileText() ? {} : { keepsFileText: false }),
         leaseToken,
         leaseUntil: leaseUntil.toISOString(),
         taskId: next.taskId,
@@ -672,6 +673,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
   });
 
   // The text of the files a run changed (protocol 3), sent before complete while the lease is held.
+  // Ensemble on the web keeps none of it: the web reads a file from the computer when it is opened.
   app.post("/api/devices/self/jobs/:id/files", async (request, reply) => {
     const device = await ownDevice(app, request, reply);
     if (!device) return;
@@ -679,6 +681,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     const body = Files.parse(request.body);
     const held = await holdLease(app, device, id, body.leaseToken);
     if (!held.ok) return reply.code(held.status).send({ error: held.message });
+    if (!keepsRunFileText()) return { stored: 0 };
     // The computer's limits are checked again here: files and bytes per run, and which paths may be kept.
     const kept = await prisma.jobFile.findMany({ where: { jobId: held.job.id }, select: { path: true, content: true } });
     const bytesOf = (text: string | null) => (text ? Buffer.byteLength(text) : 0);

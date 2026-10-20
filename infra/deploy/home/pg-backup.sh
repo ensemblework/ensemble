@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # Nightly backup for the home server (ensemble-pg-backup.timer): a pg_dump of the database and a
-# tarball of the state on disk (plot datasets in app/.ensemble, workspace, paired-computer state).
-# Seven days stay in ~/ensemble-host/backups. With AZURE_STORAGE_CONNECTION_STRING set, each copy
-# also goes to the ENSEMBLE_BACKUP_CONTAINER container (default ensemble-backups) under db/ and
-# state/; a lifecycle rule on that container can expire them. File originals in blob storage are
-# not copied: they already live off this machine.
+# tarball of the small state on disk (workspace, paired-computer state, and plot datasets on a server
+# that keeps them on disk). Seven days stay in ~/ensemble-host/backups. With
+# AZURE_STORAGE_CONNECTION_STRING set, each copy also goes to the ENSEMBLE_BACKUP_CONTAINER container
+# (default ensemble-backups) under db/ and state/; a lifecycle rule on that container can expire them.
+# What is already in the blob store (file originals, plot tables) is not copied again.
+#
+# update.sh runs it with --local before every migration: the same dump, kept here only.
 #
 # ENSEMBLE_SECRET_KEY is not in any of these. Without the same key, saved model keys and connector
 # tokens in a restored dump do not decrypt. Keep the key in a password manager.
@@ -22,6 +24,8 @@ main() {
   refuse_root
   home_path
   load_home_env
+  local local_only=false
+  [ "${1:-}" = "--local" ] && local_only=true
   umask 077
   local dest="$ENSEMBLE_HOME_DIR/backups" stamp dump state
   mkdir -p "$dest"
@@ -43,7 +47,7 @@ main() {
   find "$dest" -maxdepth 1 -type f \( -name 'ensemble-*.dump' -o -name 'state-*.tar.gz' \) -mtime +6 -delete
   echo "Wrote $(basename "$dump") and $(basename "$state")."
 
-  if [ -n "${AZURE_STORAGE_CONNECTION_STRING:-}" ]; then
+  if ! $local_only && [ -n "${AZURE_STORAGE_CONNECTION_STRING:-}" ]; then
     if ! command -v az >/dev/null 2>&1; then
       echo "The Azure CLI (az) is not installed, so the backup stayed on this machine." >&2
       exit 1

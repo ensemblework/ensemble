@@ -1302,6 +1302,23 @@ test("a run's changed files are stored and shown; its folder is read live throug
     const kept = await prisma.jobFile.findMany({ where: { jobId: job.id, path: { in: ["deploy/.env.production", ".GIT/config"] } } });
     assert.deepEqual(kept.map((row) => row.content), [null, null]);
     assert.ok(kept.every((row) => row.skipped), "kept as names only, with the reason");
+    // Ensemble on the web keeps no file text from a run; the web reads the computer when a file is opened.
+    const environment = process.env.NODE_ENV;
+    await prisma.user.update({ where: { id: user.id }, data: { emailVerifiedAt: new Date() } });
+    process.env.NODE_ENV = "production";
+    try {
+      const hosted = await app.inject({
+        method: "POST",
+        url: `/api/devices/self/jobs/${job.id}/files`,
+        headers: bearer(deviceToken),
+        payload: { leaseToken: "files", files: [{ path: "notes/hosted.md", status: "added", size: 5, content: "hello" }] },
+      });
+      assert.equal(hosted.statusCode, 200, hosted.body);
+      assert.deepEqual(hosted.json(), { stored: 0 });
+      assert.equal(await prisma.jobFile.count({ where: { jobId: job.id, path: "notes/hosted.md" } }), 0);
+    } finally {
+      process.env.NODE_ENV = environment;
+    }
     // At most UPLOAD_FILES_MAX files a run, whatever the computer sends.
     for (let batch = 0; batch < 5; batch += 1) {
       await app.inject({

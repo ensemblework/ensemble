@@ -3,6 +3,7 @@ import {
   MAX_STORED_ROWS,
   MAX_UPLOAD_BYTES,
   PICKLE_REJECTION,
+  UPLOAD_TOO_LARGE,
   defaultPlotConfig,
   columnSchema,
   parseDate,
@@ -16,6 +17,9 @@ import { readOriginal, readTable, removeDatasetFiles, storedTableBytes, writeTab
 import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
 import { checkDatasetBytes, withHostedUserLock } from "../lib/hosted-limits.js";
 import { fetchPublicTable } from "./ssrf.js";
+
+/** Writing a table can upload it to the blob store from a slow home uplink. */
+const STORE_TIMEOUT_MS = 120_000;
 
 const TEXT = new Set(["csv", "tsv", "txt", "json", "jsonl", "paste"]);
 const BINARY = new Set(["xlsx", "xls", "xlsm", "ods", "numbers", "parquet", "feather"]);
@@ -72,7 +76,7 @@ type Parsed = {
 async function parseBytes(userId: string, filename: string, bytes: Uint8Array, sheet?: string): Promise<Parsed> {
   const format = formatFromName(filename);
   if (format === "pickle") throw Object.assign(new Error(PICKLE_REJECTION), { statusCode: 400 });
-  if (bytes.byteLength > MAX_UPLOAD_BYTES) throw Object.assign(new Error("That file is larger than 32 MB."), { statusCode: 400 });
+  if (bytes.byteLength > MAX_UPLOAD_BYTES) throw Object.assign(new Error(UPLOAD_TOO_LARGE), { statusCode: 413 });
   if (TEXT.has(format) || format === "csv") {
     const text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
     const parsed = parseTableText(text, format === "paste" ? "paste" : (format as "csv"), undefined);
@@ -150,7 +154,9 @@ export async function ingestDataset(
   }
   if (!table.columns.length) throw Object.assign(new Error(warnings[0] || "Nothing to plot in that file."), { statusCode: 400 });
   const name = (input.name || filename.replace(/\.[^.]+$/, "") || "Dataset").slice(0, 200);
-  const byteSize = storedTableBytes(table, bytes);
+  // The original is kept only to pick another sheet later; a table is all a plot needs.
+  const original = sheets.length > 1 ? bytes : undefined;
+  const byteSize = storedTableBytes(table, original);
   let createdId: string | undefined;
   const row = await withHostedUserLock(prisma, userId, async (tx) => {
     await checkDatasetBytes(tx, userId, byteSize);
@@ -168,10 +174,14 @@ export async function ingestDataset(
       },
     });
     createdId = created.id;
-    const hash = writeTable(userId, created.id, table, bytes);
+    const hash = await writeTable(userId, created.id, table, original);
     return tx.plotDataset.update({ where: { id: created.id }, data: { contentHash: hash } });
-  }).catch((error: unknown) => {
-    if (createdId) removeDatasetFiles(userId, createdId);
+  }, true, STORE_TIMEOUT_MS).catch(async (error: unknown) => {
+    if (createdId) {
+      await removeDatasetFiles(userId, createdId);
+      // Without a hosted transaction (desktop, local servers) the row was already saved.
+      await prisma.plotDataset.deleteMany({ where: { id: createdId } }).catch(() => undefined);
+    }
     throw error;
   });
   return { id: row.id, name, columns: table.columns, rowCount: table.rows.length, warnings, sheets, sheet, format };
@@ -196,34 +206,34 @@ export function configOf(value: unknown): PlotConfig {
 
 export async function loadOwnedTable(prisma: PrismaClient, userId: string, datasetId: string): Promise<{ name: string; table: StoredTable; hash: string; sheet: string; sheets: string[] }> {
   const row = await ownedDataset(prisma, userId, datasetId);
-  const table = readTable(userId, row.id, row.contentHash);
+  const table = await readTable(userId, row.id, row.contentHash, Array.isArray(row.columns) ? (row.columns as PlotColumn[]) : undefined);
   return { name: row.name, table, hash: row.contentHash, sheet: row.sheet, sheets: Array.isArray(row.sheets) ? (row.sheets as string[]) : [] };
 }
 
 export async function reparseSheet(prisma: PrismaClient, userId: string, datasetId: string, sheet: string) {
   const row = await ownedDataset(prisma, userId, datasetId);
-  const original = readOriginal(userId, datasetId);
+  const original = await readOriginal(userId, datasetId);
   if (!original) throw Object.assign(new Error("The original file is not kept for this dataset, so the sheet cannot be changed."), { statusCode: 400 });
   const parsed = await parseBytes(userId, `${row.name}.${row.format}`, original, sheet);
   const table = { columns: parsed.columns, rows: parsed.rows };
   const byteSize = storedTableBytes(table, original);
   await withHostedUserLock(prisma, userId, async (tx) => {
     await checkDatasetBytes(tx, userId, byteSize, row.id);
-    const hash = writeTable(userId, row.id, table, original);
+    const hash = await writeTable(userId, row.id, table, original);
     await tx.plotDataset.update({
       where: { id: row.id },
       data: { columns: parsed.columns as Prisma.InputJsonValue, rowCount: parsed.rows.length, byteSize, contentHash: hash, sheet: parsed.sheet || sheet, sheets: parsed.sheets },
     });
-  });
+  }, true, STORE_TIMEOUT_MS);
   return { columns: parsed.columns, rowCount: parsed.rows.length, sheet: parsed.sheet || sheet, warnings: parsed.warnings };
 }
 
 export async function deleteDataset(prisma: PrismaClient, userId: string, id: string) {
   await ownedDataset(prisma, userId, id);
   await withHostedUserLock(prisma, userId, async (tx) => {
-    removeDatasetFiles(userId, id);
     await tx.plotDataset.update({ where: { id }, data: { deletedAt: new Date(), byteSize: 0 } });
   }, false);
+  await removeDatasetFiles(userId, id);
 }
 
 export async function updateDatasetColumns(prisma: PrismaClient, userId: string, id: string, columns: PlotColumn[], name?: string) {
@@ -231,11 +241,11 @@ export async function updateDatasetColumns(prisma: PrismaClient, userId: string,
   const loaded = await loadOwnedTable(prisma, userId, id);
   if (columns.length !== loaded.table.columns.length) throw Object.assign(new Error("Column list does not match this dataset."), { statusCode: 400 });
   const table = { columns, rows: loaded.table.rows };
-  const original = readOriginal(userId, id);
+  const original = await readOriginal(userId, id);
   const byteSize = storedTableBytes(table, original ?? undefined);
   await withHostedUserLock(prisma, userId, async (tx) => {
     await checkDatasetBytes(tx, userId, byteSize, id);
-    const hash = writeTable(userId, id, table);
+    const hash = await writeTable(userId, id, table);
     await tx.plotDataset.update({ where: { id }, data: { columns: columns as Prisma.InputJsonValue, byteSize, contentHash: hash, ...(name ? { name } : {}) } });
-  });
+  }, true, STORE_TIMEOUT_MS);
 }

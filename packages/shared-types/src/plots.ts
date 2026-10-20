@@ -56,7 +56,10 @@ export type FigureSize = (typeof FIGURE_SIZES)[number];
 
 export const MAX_STORED_ROWS = 200_000;
 export const PREVIEW_ROWS = 80;
-export const MAX_UPLOAD_BYTES = 32 * 1024 * 1024;
+/** One file, paste or link for Plots, checked in the browser and again on the server. */
+export const MAX_UPLOAD_MB = 20;
+export const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024;
+export const UPLOAD_TOO_LARGE = `Files for plots can be up to ${MAX_UPLOAD_MB} MB.`;
 
 export const columnSchema = z.object({
   name: z.string().min(1).max(200),

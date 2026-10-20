@@ -452,7 +452,7 @@ test("exports isolate users and omit secrets; erasure revokes tokens and blocks 
   const { writeTable, readOriginal } = await import("../plots/store.js");
   const datasetId = randomUUID();
   const table = { columns: [], rows: [] };
-  const hash = writeTable(owner.id, datasetId, table, new Uint8Array([1, 2, 3]));
+  const hash = await writeTable(owner.id, datasetId, table, new Uint8Array([1, 2, 3]));
   await harness.prisma.plotDataset.create({
     data: { id: datasetId, userId: owner.id, name: "Test upload", format: "csv", columns: [], rowCount: 0, byteSize: 3, contentHash: hash },
   });
@@ -469,7 +469,7 @@ test("exports isolate users and omit secrets; erasure revokes tokens and blocks 
   assert.equal((await owner.inject({ method: "GET", url: "/api/auth/me" })).statusCode, 401);
   assert.equal((await key.inject({ method: "GET", url: "/api/tasks" })).statusCode, 401);
   assert.equal(await harness.prisma.task.count({ where: { userId: owner.id } }), 0);
-  assert.equal(readOriginal(owner.id, datasetId), null);
+  assert.equal(await readOriginal(owner.id, datasetId), null);
   await assert.rejects(harness.prisma.metricEvent.create({ data: { userId: owner.id, kind: "late model usage" } }), /foreign key/i);
   await assert.rejects(harness.prisma.auditLedger.create({ data: { userId: owner.id, actor: "system", action: "late completion", hash: "test" } }), /foreign key/i);
   assert.equal(await harness.prisma.task.count({ where: { userId: other.id } }), 1);

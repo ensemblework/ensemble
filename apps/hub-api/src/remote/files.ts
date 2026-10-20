@@ -123,7 +123,7 @@ export async function changedFileUploads(root: string, evidence: unknown): Promi
 
 /** Before complete (protocol 3): the changed files' text, in batches of about 1 MB. */
 export async function uploadChangedFiles(client: HostedClient, job: HeldJob, local: WorkspaceJob): Promise<void> {
-  if ((job.protocol ?? 1) < 3 || !loadSettings().browseFiles) return;
+  if ((job.protocol ?? 1) < 3 || job.keepsFileText === false || !loadSettings().browseFiles) return;
   const folder = folderOf(local);
   const root = folder ? await offeredRoot(folder) : null;
   if (!root) return;

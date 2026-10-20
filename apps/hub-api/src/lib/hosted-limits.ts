@@ -55,6 +55,8 @@ export async function withHostedUserLock<T>(
   userId: string,
   work: (tx: Prisma.TransactionClient) => Promise<T>,
   verify = true,
+  /** Longer than Prisma's 5 s default when the work uploads to the blob store. */
+  timeoutMs?: number,
 ): Promise<T> {
   if (!isHosted()) return work(db);
   if (verify) await requireVerifiedUser(userId);
@@ -66,7 +68,7 @@ export async function withHostedUserLock<T>(
   return (db as PrismaClient).$transaction(async (tx) => {
     await lockUserTransaction(tx, (await quotaScope(tx, userId)).account);
     return work(tx);
-  }, { isolationLevel: "ReadCommitted" });
+  }, { isolationLevel: "ReadCommitted", ...(timeoutMs ? { timeout: timeoutMs } : {}) });
 }
 
 export async function createCappedJob(db: PrismaClient, userId: string, args: Prisma.WorkspaceJobCreateArgs) {

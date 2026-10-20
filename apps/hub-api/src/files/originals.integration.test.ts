@@ -8,13 +8,14 @@ import assert from "node:assert/strict";
 import test, { after, beforeEach } from "node:test";
 import type { FileRecord } from "@ensemble/shared-types";
 import { createHttpHarness, type HttpHarness, type HttpUser } from "../test/http.js";
-import { fileStorageProblem, setOriginalStoreForTests, sweepOrphanOriginals, type OriginalStore } from "./originals.js";
+import { fileStorageProblem, setBlobStoreForTests, type BlobStore } from "../lib/blob-store.js";
+import { sweepOrphanOriginals } from "./originals.js";
 
 const harness: HttpHarness = await createHttpHarness();
 const db = harness.prisma;
 const { fileTextSettled } = await import("./extract.js");
 
-class MemoryStore implements OriginalStore {
+class MemoryStore implements BlobStore {
   readonly blobs = new Map<string, { bytes: Buffer; mediaType: string; modifiedAt: Date }>();
   failing = false;
   async put(key: string, bytes: Uint8Array, mediaType: string) {
@@ -23,9 +24,7 @@ class MemoryStore implements OriginalStore {
   }
   async get(key: string) {
     if (this.failing) throw new Error("connection refused");
-    const blob = this.blobs.get(key);
-    if (!blob) throw new Error("BlobNotFound");
-    return blob.bytes;
+    return this.blobs.get(key)?.bytes ?? null;
   }
   async delete(key: string) {
     this.blobs.delete(key);
@@ -38,10 +37,10 @@ class MemoryStore implements OriginalStore {
 let store = new MemoryStore();
 beforeEach(() => {
   store = new MemoryStore();
-  setOriginalStoreForTests(store);
+  setBlobStoreForTests(store);
 });
 after(async () => {
-  setOriginalStoreForTests(undefined);
+  setBlobStoreForTests(undefined);
   await harness.close();
 });
 
@@ -91,9 +90,9 @@ test("replacing writes a new blob; the sweep removes the old one once it is old,
   assert.equal(second.original, null);
   assert.ok(store.blobs.has(first), "the replaced version waits for the sweep");
 
-  assert.equal(await sweepOrphanOriginals(db, { force: true }), 0, "nothing is swept inside the first hour");
+  assert.equal(await sweepOrphanOriginals(db, {}), 0, "nothing is swept inside the first hour");
   const later = Date.now() + 2 * 60 * 60_000;
-  assert.equal(await sweepOrphanOriginals(db, { force: true, now: later }), 1);
+  assert.equal(await sweepOrphanOriginals(db, { now: later }), 1);
   assert.deepEqual([...store.blobs.keys()], [second.blobKey]);
 
   const read = await user.inject({ method: "GET", url: `/api/documents/${file.id}/original` });
@@ -107,10 +106,10 @@ test("a blob whose file is purged is swept, and a removed file keeps its blob un
   const removed = await user.inject({ method: "DELETE", url: `/api/documents/${file.id}` });
   assert.ok(removed.statusCode === 200 || removed.statusCode === 204, removed.body);
   const later = Date.now() + 2 * 60 * 60_000;
-  assert.equal(await sweepOrphanOriginals(db, { force: true, now: later }), 0, "a removed file can still be restored");
+  assert.equal(await sweepOrphanOriginals(db, { now: later }), 0, "a removed file can still be restored");
   assert.ok(store.blobs.has(key));
   await db.document.delete({ where: { id: file.id } });
-  assert.equal(await sweepOrphanOriginals(db, { force: true, now: later }), 1);
+  assert.equal(await sweepOrphanOriginals(db, { now: later }), 1);
   assert.equal(store.blobs.size, 0);
 });
 
@@ -125,12 +124,12 @@ test("unreachable storage refuses the upload with 503 and saves no row", async (
 
 test("files kept on the row before blob storage was turned on still read", async () => {
   const user = await person();
-  setOriginalStoreForTests(null);
+  setBlobStoreForTests(null);
   const file = await upload(user, "before.txt", "Kept on the row");
   const row = await db.document.findUniqueOrThrow({ where: { id: file.id }, select: { original: true, blobKey: true } });
   assert.equal(row.blobKey, null);
   assert.equal(Buffer.from(row.original!).toString(), "Kept on the row");
-  setOriginalStoreForTests(store);
+  setBlobStoreForTests(store);
   const read = await user.inject({ method: "GET", url: `/api/documents/${file.id}/original` });
   assert.equal(read.body, "Kept on the row");
 });

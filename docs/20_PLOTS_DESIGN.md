@@ -33,7 +33,7 @@ There is no pseudo-3D mode. Extruded bars and tilted pies change how large a val
 
 ## 2. Data ingestion
 
-A dataset is an account object: id, name, column list, row count, content hash. The bytes live under the server's data directory, keyed by user id and dataset id. The API never returns that path. `load("sales")` in the sandbox resolves the name the user picked; the runtime copies the table into a temp directory under a private filename.
+A dataset is an account object: id, name, column list, row count, content hash. Its parsed table (and, for a workbook with several sheets read on the server, the original file, so another sheet can be picked later) is kept by `plots/store.ts`: in the server's blob store when it is on (`ENSEMBLE_FILE_STORAGE=azure-blob`, `lib/blob-store.ts`; keys `plots/<userId>/<datasetId>.json.gz` and `.bin`), otherwise under `.ensemble/plots/<userId>/` on disk. A CSV, TSV, TXT, JSON or paste keeps only its table, never the text it came from; a file read in the browser (Ensemble on the web) never reaches the server at all, only its table does. The API never returns a path or key. Files kept on disk before the blob store was turned on move into it on the next hourly sweep (`moveLocalDatasetsToBlob`, `jobs/blob-sweep.ts`) and are read from disk until then; the same sweep removes tables of deleted datasets, and deleting a dataset or an account removes its tables at once (best effort; the sweep catches what a failed delete leaves). Hosted, a write to the store may take up to 2 minutes inside the account's quota lock (`STORE_TIMEOUT_MS`). `load("sales")` in the sandbox resolves the name the user picked; the runtime copies the table into a temp directory under a private filename.
 
 ### Where parsing happens
 
@@ -67,7 +67,7 @@ The user is told to export Parquet or Feather. Both are columnar, typed, and rea
 
 ### Limits
 
-- Upload body: 32 MB.
+- One file, paste or link: **20 MB** (`MAX_UPLOAD_BYTES`, `UPLOAD_TOO_LARGE` in `packages/shared-types/src/plots.ts`). The upload dialog refuses a larger file before reading it, so it never fills the browser's memory; the server refuses it again once decoded (413 "Files for plots can be up to 20 MB."). The request body may be up to 34 MB (base64, JSON escaping, or a table the browser read).
 - Stored rows: 200,000. Past that, the import keeps the first 200,000 and shows the count it dropped.
 - Preview table: first 80 rows. The chart still aggregates the stored rows.
 - Draw: lines and areas use LTTB down to about 4,000 points per series for the on-screen series. Bars, pies, and heatmaps aggregate first, then cap categories (40, pie slices 8 plus Other). Scatter at 100k uses ECharts large mode.
@@ -93,7 +93,7 @@ Rejected before any connection:
 - Non-https, missing host, username/password in the URL.
 - IP literals and DNS answers in loopback, private, link-local, CGNAT (`100.64/10`), multicast, or the cloud metadata address `169.254.169.254`, including IPv4-mapped IPv6.
 - Hosts outside the allowlist, including a redirect onto one.
-- Bodies over 32 MB, or slower than 15 seconds.
+- Bodies over 20 MB, or slower than 15 seconds.
 
 ## 3. Figure defaults
 
@@ -189,7 +189,7 @@ The server says whether it runs plot Python for the account (`GET /api/plots/run
 
 ## 6. Caching
 
-Parsed tables are not stored in Redis. They are a file plus a Postgres row of metadata.
+Parsed tables are not stored in Redis. They are a blob (or a file on disk) plus a Postgres row of metadata. A read served from the cache below does not touch the store.
 
 One in-process LRU in hub-api holds up to 8 parsed tables, at most 64 MB together, for 10 minutes, keyed by dataset id and content hash. It exists because export, matplotlib, and the mention card all reread the same table during one editing session, and a 100k-row JSON parse showed up as the slow part of that path. Replacing or deleting a dataset drops the entry. Chart config is a small JSON column and is not cached. The browser keeps the open table in memory for the studio only.
 

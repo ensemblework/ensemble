@@ -1,7 +1,8 @@
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { MAX_UPLOAD_BYTES, UPLOAD_TOO_LARGE } from "@ensemble/shared-types";
 
-const MAX_BYTES = 32 * 1024 * 1024;
+const MAX_BYTES = MAX_UPLOAD_BYTES;
 const MAX_REDIRECTS = 4;
 const TIMEOUT_MS = 15_000;
 
@@ -127,14 +128,14 @@ export async function fetchPublicTable(
     let total = 0;
     if (!reader) {
       const buffer = new Uint8Array(await response.arrayBuffer());
-      if (buffer.byteLength > MAX_BYTES) throw new SsrfError("That file is larger than 32 MB.");
+      if (buffer.byteLength > MAX_BYTES) throw new SsrfError(UPLOAD_TOO_LARGE);
       return { bytes: buffer, filename: filenameFrom(url, contentType), contentType };
     }
     while (true) {
       const step = await reader.read();
       if (step.done) break;
       total += step.value.byteLength;
-      if (total > MAX_BYTES) throw new SsrfError("That file is larger than 32 MB.");
+      if (total > MAX_BYTES) throw new SsrfError(UPLOAD_TOO_LARGE);
       chunks.push(step.value);
     }
     const bytes = new Uint8Array(total);

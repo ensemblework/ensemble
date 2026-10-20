@@ -1,7 +1,7 @@
 /**
  * In-process scheduler (docs/05 §2): the fetch times each person set (paused
  * unless ENSEMBLE_SCHEDULED_FETCH=on), a daily retention pass, expiry of
- * editor decisions nobody answered, and an hourly sweep of file blobs no file uses.
+ * editor decisions nobody answered, and an hourly sweep of blobs nothing uses (jobs/blob-sweep.ts).
  *
  * One minute tick. A slot runs once per user per local day, recorded in
  * sync_state so a restart inside the same minute does not run it twice.
@@ -15,7 +15,7 @@ import { retentionDue } from "../lib/clock.js";
 import { evaluateWatchers } from "../ensemble/watchers.js";
 import { deliverMorningBrief, ensureStaleNotice } from "../cowork/service.js";
 import { sweepExpiredDeviceLeases } from "../devices/lease.js";
-import { sweepOrphanOriginals } from "../files/originals.js";
+import { sweepStoredBlobs } from "./blob-sweep.js";
 import { claimSlot } from "./claim.js";
 import { dispatchDueReminders, runRetention } from "./retention.js";
 import { markSchedulerEnabled, markSchedulerTick } from "./scheduler-clock.js";
@@ -61,7 +61,11 @@ async function tick(app: FastifyInstance): Promise<void> {
   await app.prisma.includedCreditBalance.deleteMany({ where: { period: { lt: new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 7) } } });
   await expireStale();
   await sweepExpiredDeviceLeases(app).catch((error: unknown) => app.log.error({ err: error }, "device lease sweep failed"));
-  void sweepOrphanOriginals(app.prisma).catch((error: unknown) => app.log.error({ err: error }, "file blob sweep failed"));
+  void sweepStoredBlobs(app.prisma)
+    .then((swept) => {
+      if (swept && (swept.moved || swept.originals || swept.datasets)) app.log.info(swept, "blob sweep");
+    })
+    .catch((error: unknown) => app.log.error({ err: error }, "blob sweep failed"));
   const users = (await app.prisma.user.findMany({ select: { id: true } })).map((user) => ({ userId: user.id }));
   for (const { userId } of users) {
     try {

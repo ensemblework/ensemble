@@ -2,7 +2,7 @@
 
 import { UploadCloud } from "lucide-react";
 import { useRef, useState } from "react";
-import { stagePercent, type LinkChoice } from "@ensemble/shared-types";
+import { MAX_UPLOAD_BYTES, UPLOAD_TOO_LARGE, stagePercent, type LinkChoice } from "@ensemble/shared-types";
 import { API, ApiError, api } from "@/lib/api";
 import { parseTableInBrowser, usePythonStatus } from "@/lib/plots/browser-python";
 import { plotsRunOnServer } from "@/lib/plots/render";
@@ -167,6 +167,11 @@ export function UploadDialog({
   };
 
   const sendFile = async (file: File) => {
+    // Refused before it is read, so a large file never fills the browser's memory.
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setError(UPLOAD_TOO_LARGE);
+      return;
+    }
     setBusy(true);
     setError("");
     setPending(null);
@@ -301,6 +306,7 @@ export function UploadDialog({
           >
             <UploadCloud size={22} className="text-muted" aria-hidden />
             <span className="block text-[14px] font-medium">Drop a file here</span>
+            <span className="block text-[12px] text-muted">Up to {MAX_UPLOAD_BYTES / (1024 * 1024)} MB</span>
             <button type="button" className="btn-primary" onClick={() => fileInput.current?.click()}>Choose a file</button>
             <span className="flex flex-wrap justify-center gap-1">
               {FORMATS.map((format) => <span key={format} className="rounded-full border border-line px-2 py-0.5 text-[11px] text-muted">{format}</span>)}
@@ -352,6 +358,10 @@ export function UploadDialog({
             className="btn"
             disabled={!paste.trim()}
             onClick={() => {
+              if (new Blob([paste]).size > MAX_UPLOAD_BYTES) {
+                setError(UPLOAD_TOO_LARGE);
+                return;
+              }
               setBusy(true);
               setError("");
               void scanText(paste, report).then(() => postDataset({ text: paste, filename: "pasted.csv" }, report)).then(finish).catch((reason: unknown) => {
