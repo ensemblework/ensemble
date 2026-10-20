@@ -223,3 +223,5 @@ Checked **20 Oct 2026** with isolated HTTP tests for repeated workspace erasure,
 - Included calls are not streamed token by token: the reply arrives whole and the chat shows it in
   pieces.
 - Credits are monthly only; there is no paid top-up or plan with more credits yet.
+
+Opening Metrics repairs stale pre-erasure usage left by the older deletion behavior: monthly charges are adopted/recovered before those metric events and baselines are removed. Later calls and workspace content are retained (`repairErasedUsage` in `lib/workspace-data.ts`). Repeated reads keep the same balance.

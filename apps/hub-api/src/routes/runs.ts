@@ -11,6 +11,7 @@ import { repeatAssignment } from "../workspace/repeat.js";
 import { runnerRefusal } from "./agents.js";
 import { isPaused } from "../lib/activity.js";
 import { actorFor } from "../sharing/context.js";
+import { repairErasedUsage } from "../lib/workspace-data.js";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -259,6 +260,7 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/metrics/summary", async (request) => {
     const userId = request.userId;
+    await repairErasedUsage(prisma, userId);
     const query = z.object({ days: z.coerce.number().int().min(1).max(90).default(14), provider: z.string().max(100).optional() }).parse(request.query);
     const since = new Date();
     since.setUTCHours(0, 0, 0, 0);

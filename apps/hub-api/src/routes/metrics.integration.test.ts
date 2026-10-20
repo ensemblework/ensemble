@@ -53,3 +53,32 @@ test("context erasure handles linked files and people repeatedly and rejects ema
   assert.equal(await h.prisma.document.count({ where: { userId: user.id } }), 0);
   assert.ok(await h.prisma.project.findUnique({ where: { id: project.id } }));
 });
+
+test("reading Metrics repairs history left by older erasure, preserves later work, and recovers charges first", async () => {
+  process.env.AZURE_FOUNDRY_RESOURCE = "ensemble-repair-test";
+  process.env.AZURE_FOUNDRY_API_KEY = "fake-not-a-real-key";
+  const user = await h.asUser();
+  const other = await h.asUser();
+  const cutoff = new Date(Date.now() - 5000);
+  const before = new Date(cutoff.getTime() - 1000);
+  const after = new Date(cutoff.getTime() + 1000);
+  await h.prisma.auditLedger.create({ data: { userId: user.id, actor: "me", action: "data.delete.everything", ts: cutoff, hash: "test-receipt" } });
+  await h.prisma.metricEvent.create({ data: { userId: user.id, kind: "model.call", ts: before, payload: { provider: "ensemble", model: "gpt-6-luna", credits: 2.5, tokensIn: 100, tokensOut: 20, title: "Erased history" } } });
+  await h.prisma.metricBaseline.create({ data: { userId: user.id, kind: "old prototype", seconds: 30, createdAt: before } });
+  await h.prisma.metricEvent.create({ data: { userId: other.id, kind: "model.call", ts: before, payload: { title: "Other account" } } });
+  await h.prisma.includedUsage.create({ data: { id: crypto.randomUUID(), userId: user.id, accountId: user.id, period: after.toISOString().slice(0, 7), model: "gpt-6-luna", status: "settled", reservedUsd: 0.001, usd: 0.001, estimatedInputTokens: 100, maxOutputTokens: 100, createdAt: after } });
+  await h.prisma.metricEvent.create({ data: { userId: user.id, kind: "model.call", ts: after, payload: { provider: "ensemble", model: "gpt-6-luna", credits: 1, tokensIn: 100, tokensOut: 10, title: "New work" } } });
+  const task = await h.prisma.task.create({ data: { userId: user.id, title: "Keep this new task", createdBy: "me" } });
+  for (let i = 0; i < 2; i++) {
+    const response = await user.inject({ method: "GET", url: "/api/metrics/summary" });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(response.json().recent.map((call: { title: string }) => call.title), ["New work"]);
+    const credits = (await user.inject({ method: "GET", url: "/api/metrics/credits" })).json();
+    assert.equal(credits.used, 3.5, "old and new charges survive repair without duplication");
+    assert.equal(credits.erasedCredits, 2.5);
+  }
+  assert.equal(await h.prisma.metricEvent.count({ where: { userId: user.id } }), 1);
+  assert.equal(await h.prisma.metricBaseline.count({ where: { userId: user.id } }), 0);
+  assert.equal(await h.prisma.metricEvent.count({ where: { userId: other.id } }), 1);
+  assert.ok(await h.prisma.task.findUnique({ where: { id: task.id } }));
+});

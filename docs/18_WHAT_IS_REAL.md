@@ -135,3 +135,5 @@ One code follow-up remains: `bridge/gaps.ts` contains old diagnostic messages ab
 The assistant’s connected-app instructions explicitly require a request for remote content or an app item link before searches, reads, recent-item listings, sync/import or MCP content access. General file questions default to saved Ensemble data; connection metadata alone grants no content request (`assistant/apps.ts`, `assistant/tools/app-items.ts`).
 
 Run-profile naming in Assign uses synchronous focus/selection so immediate typing retains the first character; the regression deliberately types before any timer can run.
+
+Opening Metrics automatically retires usage left behind by an older Everything deletion, after preserving known monthly charges; later work survives and no second workspace deletion is required. An empty provider result also retains the actual selected provider in the dropdown. Checked 20 Oct 2026 with HTTP/UI regressions.

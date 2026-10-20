@@ -123,11 +123,11 @@ const SUMMARY = {
   governance: { ledgerEntries: 0 },
 };
 
-async function mountPage(credits: IncludedUsage) {
+async function mountPage(credits: IncludedUsage, summaryFor: (url: URL) => typeof SUMMARY = () => SUMMARY) {
   const realFetch = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const path = String(input);
-    const body = path.startsWith("/api/metrics/summary") ? SUMMARY : path === "/api/metrics/credits" ? credits : { error: "not found" };
+    const body = path.startsWith("/api/metrics/summary") ? summaryFor(new URL(path, "http://localhost")) : path === "/api/metrics/credits" ? credits : { error: "not found" };
     return new Response(JSON.stringify(body), { status: body && typeof body === "object" && "error" in body ? 404 : 200, headers: { "Content-Type": "application/json" } });
   }) as typeof fetch;
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
@@ -191,5 +191,20 @@ test("erased call details are explained while monthly consumption stays visible"
     assert.match(view.host.querySelector('[data-testid="erased-credits-notice"]')?.textContent ?? "", /500 credits used before/);
     assert.match(view.host.querySelector('[title*="deleted previous usage"]')?.getAttribute("title") ?? "", /credits already used still count/);
     assert.match(view.host.querySelector('[data-testid="credits-left"]')?.textContent ?? "", /14,259/);
+  } finally { await view.done(); }
+});
+
+
+test("a selected provider remains selected when the refreshed period has no matching calls", async () => {
+  const view = await mountPage({ ...USAGE, available: false }, url => url.searchParams.get("provider") === "openai" ? { ...SUMMARY, providers: [], days: [], byModel: [], byPurpose: [], recent: [] } : SUMMARY);
+  try {
+    const provider = view.host.querySelector<HTMLSelectElement>('[aria-label="Provider"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value")!.set!.call(provider, "openai");
+      provider.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    for (let i = 0; i < 40 && view.host.querySelector("[data-model-row]"); i++) await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+    assert.equal(view.host.querySelector("[data-model-row]"), null);
+    assert.equal(provider.value, "openai", "the dropdown must not display All providers for an active OpenAI filter");
   } finally { await view.done(); }
 });

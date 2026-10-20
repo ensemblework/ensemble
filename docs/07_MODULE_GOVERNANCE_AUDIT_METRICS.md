@@ -85,3 +85,5 @@ Checked **20 Oct 2026** with isolated HTTP regression tests for repeated erasure
 ## 7. Verification
 
 API auth/isolation/public-signup suites use real Fastify requests with an isolated migrated database and mocked providers. Postgres/Redis CI covers integration and constraints. OS tests exercise sandbox boundaries. These checks do not prove live external notifications, calendar writes or provider billing. There is no populated `eval/` corpus or recorded productivity baseline in this tree.
+
+`GET /api/metrics/summary` also repairs usage left by an older Everything erasure (`repairErasedUsage` in `lib/workspace-data.ts`). It finds the latest deletion receipt, preserves/adopts monthly credit charges before removing their evidence, then removes metric events and baselines at or before that receipt. Work and usage created afterward remain. A private preference records the repaired receipt so repeated reads do not repeat the cleanup. Checked 20 Oct 2026 with HTTP regressions for retained credit amounts, later work, account isolation and repeat reads.

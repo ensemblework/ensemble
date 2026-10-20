@@ -65,6 +65,7 @@ export default function MetricsPage() {
   const metrics = useQuery({ queryKey: ["metrics", provider, windowDays], queryFn: () => api.metrics(provider, windowDays), placeholderData: keepPreviousData });
   const credits = useIncludedUsage();
   const data = metrics.data;
+  const providerChoices = [...new Set([...(data?.providers ?? []), ...(provider === "all" ? [] : [provider])])];
   const calls = data?.byModel.reduce((sum, row) => sum + row.calls, 0) ?? 0;
   const input = data?.byModel.reduce((sum, row) => sum + row.tokensIn, 0) ?? 0;
   const output = data?.byModel.reduce((sum, row) => sum + row.tokensOut, 0) ?? 0;
@@ -72,7 +73,7 @@ export default function MetricsPage() {
   const maxCalls = Math.max(1, ...data?.byModel.map(row => row.calls) ?? []);
   return <div className="mx-auto max-w-[1200px] px-4 pb-24 pt-8 sm:px-8">
     <PageHeader title="Metrics" description="Understand the AI you use through Ensemble. Your personal activity in other apps stays private." actions={<div className="flex flex-wrap items-center gap-2">
-      <select aria-label="Provider" value={provider} onChange={event => { setProvider(event.target.value); setMore(false); }} className="field text-sm"><option value="all">All providers</option>{(data?.providers ?? []).map(id => <option key={id} value={id}>{providerName(id)}</option>)}</select>
+      <select aria-label="Provider" value={provider} onChange={event => { setProvider(event.target.value); setMore(false); }} className="field text-sm"><option value="all">All providers</option>{providerChoices.map(id => <option key={id} value={id}>{providerName(id)}</option>)}</select>
       <select aria-label="Usage period" value={windowDays} onChange={event => setWindowDays(Number(event.target.value))} className="field text-sm"><option value={14}>Last 14 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option></select>
       <button type="button" className="icon-btn" aria-label="Refresh usage" disabled={metrics.isFetching} onClick={() => { void metrics.refetch(); void credits.refetch(); }}><RefreshCw size={15} className={metrics.isFetching ? "animate-spin" : ""} /></button>
     </div>} />
