@@ -133,6 +133,8 @@ export function useMentionMenu<T extends Field = HTMLTextAreaElement>(options: {
       }
       return false;
     },
+    /** Register a mention selected by another saved-content picker. */
+    remember: (mention: PageMention) => { picked.current = [...picked.current, mention]; },
     /** The picked mentions still written in `text`. */
     takeMentions: (text = value) => keptMentions(text, picked.current),
     /** Forget picked mentions, after the text was sent. */

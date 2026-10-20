@@ -35,6 +35,7 @@ export function callCost(
   credits?: number | null,
 ): { estimatedUsd: number | null; credits?: number | null } {
   if (provider === "ensemble") return { estimatedUsd: null, credits: credits ?? null };
+  if (["claude-code", "codex", "copilot-cli", "cursor-agent", "copilot", "cursor", "ollama"].includes(provider ?? "")) return { estimatedUsd: null };
   return { estimatedUsd: estimateUsd(model, tokensIn, tokensOut) };
 }
 

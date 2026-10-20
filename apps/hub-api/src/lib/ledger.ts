@@ -4,7 +4,7 @@ import { prisma } from "./prisma.js";
 import { lockUserTransaction } from "./user-lock.js";
 import { actorFor } from "../sharing/context.js";
 
-export async function appendLedger(input: {
+type LedgerInput = {
   userId: string;
   actor: Actor;
   action: string;
@@ -12,7 +12,13 @@ export async function appendLedger(input: {
   runId?: string;
   approvalId?: string;
   payload?: Prisma.InputJsonValue;
-}): Promise<void> {
+};
+
+export async function appendLedger(input: LedgerInput): Promise<void> {
+  await prisma.$transaction(tx => appendLedgerInTransaction(tx, input));
+}
+
+export async function appendLedgerInTransaction(tx: Prisma.TransactionClient, input: LedgerInput): Promise<void> {
   // Someone the space is shared with: the entry says who it was.
   const by = actorFor(input.userId);
   if (by) {
@@ -20,34 +26,32 @@ export async function appendLedger(input: {
     const base = plain ? (input.payload as Record<string, Prisma.InputJsonValue>) : input.payload === undefined ? {} : { value: input.payload };
     input = { ...input, payload: { ...base, byAccountId: by } };
   }
-  await prisma.$transaction(async (tx) => {
-    await lockUserTransaction(tx, input.userId);
-    const prev = await tx.auditLedger.findFirst({
-      where: { userId: input.userId },
-      orderBy: [{ ts: "desc" }, { id: "desc" }],
-      select: { hash: true, ts: true },
-    });
-    const body = JSON.stringify({
+  await lockUserTransaction(tx, input.userId);
+  const prev = await tx.auditLedger.findFirst({
+    where: { userId: input.userId },
+    orderBy: [{ ts: "desc" }, { id: "desc" }],
+    select: { hash: true, ts: true },
+  });
+  const body = JSON.stringify({
+    action: input.action,
+    taskId: input.taskId ?? null,
+    runId: input.runId ?? null,
+    payload: input.payload ?? {},
+    prev: prev?.hash ?? "",
+  });
+  const hash = createHash("sha256").update(body).digest("hex");
+  await tx.auditLedger.create({
+    data: {
+      userId: input.userId,
+      actor: input.actor,
       action: input.action,
-      taskId: input.taskId ?? null,
-      runId: input.runId ?? null,
+      taskId: input.taskId,
+      runId: input.runId,
+      approvalId: input.approvalId,
+      prevHash: prev?.hash,
+      hash,
+      ts: new Date(Math.max(Date.now(), (prev?.ts.getTime() ?? 0) + 1)),
       payload: input.payload ?? {},
-      prev: prev?.hash ?? "",
-    });
-    const hash = createHash("sha256").update(body).digest("hex");
-    await tx.auditLedger.create({
-      data: {
-        userId: input.userId,
-        actor: input.actor,
-        action: input.action,
-        taskId: input.taskId,
-        runId: input.runId,
-        approvalId: input.approvalId,
-        prevHash: prev?.hash,
-        hash,
-        ts: new Date(Math.max(Date.now(), (prev?.ts.getTime() ?? 0) + 1)),
-        payload: input.payload ?? {},
-      },
-    });
+    },
   });
 }

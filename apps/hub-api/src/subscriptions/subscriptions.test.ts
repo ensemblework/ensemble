@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { agentProblem, answerCodexTurn, answerCursorTurn, claudeArgs, copilotArgs } from "./agents.js";
+import { copilotOutput } from "./copilot-output.js";
 import { bridgeFor, callThroughBridge, openBridge } from "./bridge.js";
 import { claudeAppCopy, claudeEfforts, codexModels, copilotEfforts, firstVersion, newestFirst, parseClaudeStatus, parseCopilotModels, parseCursorStatus, parseModelLines } from "./detect.js";
 import { LOGIN_ARGS } from "./signin.js";
@@ -272,4 +273,14 @@ test("on the desktop runtime the computer is this one", async () => {
     if (previous === undefined) delete process.env.ENSEMBLE_DESKTOP;
     else process.env.ENSEMBLE_DESKTOP = previous;
   }
+});
+
+
+test("Copilot context snapshots, invalid counts and billing units never become call tokens or dollars", () => {
+  const output = copilotOutput(null, () => {});
+  output.line(JSON.stringify({ type: "session.usage_info", data: { currentTokens: 100000, tokenLimit: 200000 } }));
+  output.line(JSON.stringify({ type: "assistant.usage", data: { inputTokens: -1, outputTokens: "200", cost: 5 } }));
+  output.line("not JSON");
+  output.line(JSON.stringify({ type: "assistant.message", data: { content: "Ready." } }));
+  assert.deepEqual(output.finish(), { text: "Ready.", model: null, tokensIn: null, tokensOut: null, costUsd: null });
 });

@@ -259,24 +259,27 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
 
   app.get("/api/metrics/summary", async (request) => {
     const userId = request.userId;
-    const since = new Date(Date.now() - 14 * DAY);
+    const query = z.object({ days: z.coerce.number().int().min(1).max(90).default(14), provider: z.string().max(100).optional() }).parse(request.query);
+    const since = new Date();
+    since.setUTCHours(0, 0, 0, 0);
+    since.setUTCDate(since.getUTCDate() - query.days + 1);
     const [steps, notes, usageEvents, baselines, events, approvals, runs, ledgerCount, waiting] = await Promise.all([
       prisma.runStep.findMany({
         where: { run: { userId }, startedAt: { gte: since } },
-        select: { model: true, credits: true, tokensIn: true, tokensOut: true, startedAt: true, run: { select: { task: { select: { title: true } } } } },
+        select: { title: true, model: true, credits: true, tokensIn: true, tokensOut: true, startedAt: true, run: { select: { task: { select: { title: true } }, workspaceJob: { select: { provider: true } } } } },
         orderBy: { startedAt: "desc" },
-        take: 400,
+        take: 5000,
       }),
       prisma.meetingNote.findMany({
         where: { userId, extractedAt: { gte: since } },
         select: { extractionModel: true, extractedAt: true, title: true, extraction: true },
-        take: 200,
+        take: 5000,
       }),
       prisma.metricEvent.findMany({
         where: { userId, kind: "model.call", ts: { gte: since } },
         select: { ts: true, payload: true },
         orderBy: { ts: "desc" },
-        take: 400,
+        take: 5000,
       }),
       prisma.metricBaseline.findMany({ where: { userId } }),
       prisma.metricEvent.groupBy({
@@ -290,7 +293,7 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
         where: { userId, startedAt: { gte: since } },
         select: { startedAt: true, endedAt: true, outcome: true },
         orderBy: { startedAt: "desc" },
-        take: 200,
+        take: 5000,
       }),
       prisma.auditLedger.count({ where: { userId } }),
       prisma.approval.count({ where: { userId, decision: null } }),
@@ -324,14 +327,12 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
         model,
         tokensIn,
         tokensOut,
-        estimatedUsd: included ? null : (num(row.estimatedUsd) ?? estimateUsd(model, tokensIn, tokensOut)),
+        estimatedUsd: included || ["claude-code", "codex", "copilot-cli", "cursor-agent", "copilot", "cursor", "ollama"].includes(provider) ? null : (num(row.estimatedUsd) ?? estimateUsd(model, tokensIn, tokensOut)),
         credits: included ? num(row.credits) : null,
         at,
       };
     };
-    const recorded = usageEvents
-      .map((event) => fromEvent(event.payload, event.ts))
-      .filter((call) => call.tokensIn != null || call.tokensOut != null);
+    const recorded = usageEvents.map((event) => fromEvent(event.payload, event.ts));
     const coveredKeys = new Set<string>();
     for (const call of recorded) {
       const bucket = Math.floor(call.at.getTime() / 20_000);
@@ -340,17 +341,18 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
       coveredKeys.add(`${call.purpose}:${bucket + 1}`);
     }
     const covered = (at: Date, purpose: string) => coveredKeys.has(`${purpose}:${Math.floor(at.getTime() / 20_000)}`);
-    const priced = (model: string, tokensIn: number | null, tokensOut: number | null, at: Date, title: string, purpose: string): Call | null => {
-      if (tokensIn == null && tokensOut == null) return null;
-      const provider = providerFor(model);
-      if (provider === "unknown") return null;
-      return { title, purpose, provider, model, tokensIn, tokensOut, estimatedUsd: estimateUsd(model, tokensIn, tokensOut), credits: null, at };
+    const priced = (model: string, tokensIn: number | null, tokensOut: number | null, at: Date, title: string, purpose: string, givenProvider?: string | null, credits?: number | null): Call | null => {
+      if (!model) return null;
+      const provider = providerFor(model, credits != null ? "ensemble" : givenProvider);
+      return { title, purpose, provider, model, tokensIn, tokensOut, estimatedUsd: provider === "ensemble" || ["claude-code", "codex", "copilot-cli", "cursor-agent", "copilot", "cursor", "ollama"].includes(provider) ? null : estimateUsd(model, tokensIn, tokensOut), credits: provider === "ensemble" ? credits ?? null : null, at };
     };
-    const calls: Call[] = [
+    const allCalls: Call[] = [
       ...recorded,
       ...steps
+        // External-engine Result carries the whole run; intermediate Message snapshots overlap it.
+        .filter(step => !ENGINES[step.run.workspaceJob?.provider ?? ""] || step.title === "Result")
         .filter((step) => !covered(step.startedAt ?? new Date(0), "Delegated tasks"))
-        .map((step) => priced(step.model ?? "", step.tokensIn, step.tokensOut, step.startedAt ?? new Date(0), step.run.task.title, "Delegated tasks")),
+        .map((step) => priced(step.model ?? "", step.tokensIn, step.tokensOut, step.startedAt ?? new Date(0), step.run.task.title, "Delegated tasks", step.run.workspaceJob?.provider, step.credits)),
       ...notes
         .filter((note) => !covered(note.extractedAt ?? new Date(0), "Meeting extraction"))
         .map((note) => {
@@ -368,8 +370,10 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
       .filter((call): call is Call => call != null)
       .sort((a, b) => b.at.getTime() - a.at.getTime());
 
+    const providers = [...new Set(allCalls.map(call => call.provider))].sort();
+    const calls = allCalls.filter(call => !query.provider || query.provider === "all" || call.provider === query.provider);
     const days: Array<{ day: string; calls: number; tokensIn: number; tokensOut: number; estimatedUsd: number | null; credits: number | null }> = [];
-    for (let i = 13; i >= 0; i -= 1) {
+    for (let i = query.days - 1; i >= 0; i -= 1) {
       const day = new Date(Date.now() - i * DAY).toISOString().slice(0, 10);
       days.push({ day, calls: 0, tokensIn: 0, tokensOut: 0, estimatedUsd: null, credits: null });
     }
@@ -386,7 +390,7 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
         day.estimatedUsd = addUsd(day.estimatedUsd, call.estimatedUsd);
         day.credits = addUsd(day.credits, call.credits);
       }
-      const modelKey = `${call.provider === "ensemble" ? "ensemble" : ""}:${call.model}`;
+      const modelKey = `${call.provider}:${call.model}`;
       const model = byModel.get(modelKey) ?? { model: call.model, provider: call.provider, calls: 0, tokensIn: 0, tokensOut: 0, estimatedUsd: null, credits: null };
       model.calls += 1;
       model.tokensIn += call.tokensIn ?? 0;
@@ -414,7 +418,10 @@ export async function runRoutes(app: FastifyInstance): Promise<void> {
       byModel: [...byModel.values()].sort((a, b) => b.calls - a.calls),
       byPurpose: [...byPurpose.entries()].map(([purpose, row]) => ({ purpose, ...row })),
       recent: calls.slice(0, 40).map((call) => ({ ...call, at: call.at.toISOString() })),
-      providers: [...new Set(calls.map((call) => call.provider))].sort(),
+      providers,
+      windowDays: query.days,
+      truncated: steps.length === 5000 || notes.length === 5000 || usageEvents.length === 5000,
+      reporting: { calls: calls.length, withInput: calls.filter(call => call.tokensIn != null).length, withOutput: calls.filter(call => call.tokensOut != null).length },
       baselines: baselines.map((row) => {
         const current = events.find((event) => event.kind === row.kind);
         return {

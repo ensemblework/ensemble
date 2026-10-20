@@ -51,7 +51,7 @@ in the catalog uses it today.
 - Credits belong to the **account**: a space spends its owner's credits, and in a space shared with you
   the call is yours, as with model keys ([28](28_ENSEMBLE_SPACES.md), [29](29_SHARING.md)).
 - The month is the **UTC calendar month**; credits reset at 00:00 UTC on the 1st. Unused credits do not
-  carry over.
+  carry over. Deleting workspace data, switching spaces/devices, or deleting and recreating an account with the same email does not renew the allowance.
 - Background work that runs on an included tier (document summaries, skill mining, the model test)
   spends the same credits as the chat.
 - How a call's cost splits between input and output does not matter to the allowance; the Metrics page
@@ -59,8 +59,7 @@ in the catalog uses it today.
 
 ## 3. How a call is metered
 
-`apps/hub-api/src/included/budget.ts`, tables `included_usage` and `included_periods`
-(migration `20261017180000_included_credits`).
+`apps/hub-api/src/included/budget.ts` and `included/accounting.ts`, tables `included_usage`, `included_periods` and `included_credit_balances` (migrations `20261017180000_included_credits` and `20261020090000_credit_balances`). The separate balance contains only a purpose-separated HMAC key, UTC month and used amount (including reservations). Legacy call charges are adopted once under the month lock before any erasure. When older erasure already removed call billing rows, surviving positively recorded included-call metrics before the erasure recover the known charges once; missing evidence is not estimated.
 
 1. **Reserve.** Before calling Azure, the runtime asks hub-api to reserve the most the call could cost:
    every input token uncached plus the full reply cap, at the model's rates. Input is counted as the
@@ -145,7 +144,7 @@ stored as something the assistant said.
 - **Metrics**: an **Ensemble credits** card (`GET /api/metrics/credits`): credits left of the month's
   allowance, the reset date, whether the shared budget is paused, input and output credits with their
   token counts (and how many input tokens came from the prompt cache), credits by model, by purpose and
-  by day (`components/metrics/included-credits.tsx`). In the call lists, the daily tooltip and the
+  by day in expandable details (`components/metrics/included-credits.tsx`). A focusable information icon explains credits used before deleted usage history; these charges still reduce the allowance. In the call lists, the daily tooltip and the
   purposes, included calls show credits instead of a dollar estimate, and the provider filter lists
   *Included with Ensemble*.
 - **When a call cannot run**, the chat and *Ask Ensemble* on a page show the server's sentence (§5) in
@@ -174,7 +173,7 @@ stored as something the assistant said.
 
 | Method | Path | Who | What |
 |---|---|---|---|
-| GET | `/api/metrics/credits` | Signed-in account (class `personal`: in a shared space, your own) | `IncludedUsage`: `available`, `models`, `period`, `resetsAt`, `limit`, `used`, `remaining`, `paused`, `totals`, `byModel`, `byPurpose`, `days`. Credits only |
+| GET | `/api/metrics/credits` | Signed-in account (class `personal`: in a shared space, your own) | `IncludedUsage`: `available`, `models`, `period`, `resetsAt`, `limit`, `used`, `erasedCredits`, `remaining`, `paused`, `totals`, `byModel`, `byPurpose`, `days`. Credits only |
 | POST | `/api/internal/included/reserve` | agent-runtime, `x-ensemble-internal` + `x-ensemble-user` | `{model, inputTokens, maxOutputTokens, purpose?}` → `{id}`, or the 429/503 body above |
 | POST | `/api/internal/included/settle` | agent-runtime | `{id, usage: {inputTokens, cacheReadTokens, cacheWriteTokens, outputTokens} \| null, answeredBy?}` → `{credits}` |
 | GET | `/api/devices/self/included` | A paired computer's device token only | `{catalog, usage}`: the `/api/models` row and `IncludedUsage` for the computer's account |
@@ -203,10 +202,11 @@ resource, as a second net. The deployment runbook lives with the other private r
 ## 9. Data and retention
 
 `included_usage` keeps one row per included call: account, space, month, model, purpose, status,
-token counts, and the dollar cost the credits come from. It holds no prompt or reply text. Rows are
-kept, and deleted with the account. `included_periods` keeps each month's total across all accounts and
+token counts, and the dollar cost the credits come from. It holds no prompt or reply text. Deleting everything scrubs model, purpose, token counts, answer source and input/output cost splits; a pending reservation keeps only the values required to settle, then scrubs those too. Scrubbed records do not appear in any detailed usage aggregate. Call rows are deleted with the account. The monthly `included_credit_balances` amount survives independently, keyed by a purpose-separated HMAC of the account email, so account recreation cannot refresh credits. The scheduler removes ended balance months after a two-day settlement grace period; it contains no prompts, replies, readable email or workspace content. `included_periods` keeps each month's total across all accounts and
 is not deleted with an account, so deleting an account does not hand its spend back to the ceiling
 ([07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md)).
+
+Checked **20 Oct 2026** with isolated HTTP tests for repeated workspace erasure, account recreation, concurrency, late settlement and legacy recovery. These tests use model fixtures, not live Azure calls.
 
 ## 10. Honest limits
 

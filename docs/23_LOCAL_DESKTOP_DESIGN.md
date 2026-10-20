@@ -70,3 +70,5 @@ Tauri verifies signed updater packages; OS code signing/notarization is a separa
 No full local/hosted data replication, mobile native app, Rust-only execution broker, shared system-wide network-domain approval proxy, bundled Python model runtime or keychain master-key store is claimed here. Supported sandbox capability varies by OS/kernel/setup and is reported explicitly.
 
 Use native Rust tests, `pnpm desktop:e2e`, sidecar/CLI tests and [the Mac checklist](desktop/MAC_CHECKLIST.md) for the affected path. Passing a static export or mock test does not prove a released installer launched successfully on every OS. This documentation pass reads source; release/physical-machine evidence belongs to its specific PR/build.
+
+Monthly included-credit balances are independent of erasable call history. The shared API uses a month-scoped HMAC key to retain consumption across data erasure and same-email account recreation. The desktop still receives credits from the paired account, and does not fetch external plan balances or personal usage outside Ensemble. See [33](33_INCLUDED_AI.md).

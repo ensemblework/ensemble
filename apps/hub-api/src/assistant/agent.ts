@@ -373,7 +373,7 @@ async function drive(
           tokensIn: done.tokensIn,
           tokensOut: done.tokensOut,
           // The person's own plan pays; nothing is billed through Ensemble.
-          estimatedUsd: 0,
+          estimatedUsd: null,
           computer: done.computer,
           title: truncateText(args.message, 80),
         },

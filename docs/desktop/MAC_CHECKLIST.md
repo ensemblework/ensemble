@@ -65,3 +65,5 @@ These are manual release checks; compilation or simulated HTTP tests alone do no
 Check About Ensemble against root `release.json`. Confirm the installer matches the Mac’s chip, the same version appears in the CLI, and About can check for updates. An active task must block installing an update. A 0.3.x install needs one manual installer download to bootstrap the signed updater.
 
 Intel disk images use the APFS packager and a simple app/Applications layout. Verify the image opens and the bundle’s version matches the canonical release before publication. CI also creates/verifies a fixture image without Finder automation.
+
+- In a disposable space, attach an existing file from the assistant and confirm it becomes an `@file:` mention without a connector search. Verify the compact board toolbar and Metrics provider/date filters. Exercise the Data Danger zone (typed phrase, no paste/drop, then final confirmation); deleting everything must clear local usage details while retaining account credit consumption.

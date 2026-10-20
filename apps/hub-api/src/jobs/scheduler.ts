@@ -56,6 +56,8 @@ function claimSchedule(app: FastifyInstance, userId: string, slot: string): Prom
 
 async function tick(app: FastifyInstance): Promise<void> {
   await app.prisma.accountDeletionLog.deleteMany({ where: { expiresAt: { lte: new Date() } } });
+  // Allow two days for late settlement across a UTC month boundary.
+  await app.prisma.includedCreditBalance.deleteMany({ where: { period: { lt: new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 7) } } });
   await expireStale();
   await sweepExpiredDeviceLeases(app).catch((error: unknown) => app.log.error({ err: error }, "device lease sweep failed"));
   const users = (await app.prisma.user.findMany({ select: { id: true } })).map((user) => ({ userId: user.id }));

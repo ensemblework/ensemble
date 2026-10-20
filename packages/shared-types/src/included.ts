@@ -144,6 +144,8 @@ export type IncludedUsage = {
   resetsAt: string;
   limit: number;
   used: number;
+  /** Credits whose call details were erased; these still count toward the monthly allowance. */
+  erasedCredits?: number;
   remaining: number;
   /** The shared monthly budget is used up: included calls stop for everyone until resetsAt. */
   paused: boolean;

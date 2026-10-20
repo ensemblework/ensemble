@@ -454,15 +454,13 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
     const body = z
       .object({ scope: z.enum(["context", "everything"]), confirm: z.string() })
       .parse(request.body);
-    const settings = await loadSettings(prisma, request.userId);
-    if (body.confirm.trim().toLowerCase() !== settings.email.toLowerCase()) {
-      return reply.code(400).send({ error: `Type ${settings.email} to confirm.` });
+    const phrase = body.scope === "everything" ? "delete everything" : "delete people and app information";
+    if (body.confirm !== phrase) {
+      return reply.code(400).send({ error: `Type ${phrase} to confirm.` });
     }
     const userId = request.userId;
     if ((await listActivities(app.redis, userId)).length) return reply.code(409).send({ error: "Stop active agent activity before deleting your data." });
     await deleteWorkspaceData(prisma, userId, body.scope);
-    // The ledger records that a deletion happened, and nothing about what was deleted.
-    await appendLedger({ userId, actor: "me", action: `data.delete.${body.scope}` });
     return { ok: true };
   });
 }

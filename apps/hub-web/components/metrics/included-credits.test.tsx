@@ -123,11 +123,11 @@ const SUMMARY = {
   governance: { ledgerEntries: 0 },
 };
 
-async function mountPage(credits: unknown) {
+async function mountPage(credits: IncludedUsage) {
   const realFetch = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const path = String(input);
-    const body = path === "/api/metrics/summary" ? SUMMARY : path === "/api/metrics/credits" ? credits : { error: "not found" };
+    const body = path.startsWith("/api/metrics/summary") ? SUMMARY : path === "/api/metrics/credits" ? credits : { error: "not found" };
     return new Response(JSON.stringify(body), { status: body && typeof body === "object" && "error" in body ? 404 : 200, headers: { "Content-Type": "application/json" } });
   }) as typeof fetch;
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
@@ -136,7 +136,7 @@ async function mountPage(credits: unknown) {
       <MetricsPage />
     </QueryClientProvider>,
   );
-  for (let i = 0; i < 40 && !view.host.textContent?.includes("Most recent calls"); i += 1) {
+  for (let i = 0; i < 40 && (!view.host.querySelector("[data-model-row]") || (credits.available && !view.host.querySelector('[data-testid="ensemble-credits"]'))); i += 1) {
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
     });
@@ -162,11 +162,12 @@ test("the Metrics page leads with the credits card and shows credits, not dollar
     assert.doesNotMatch(included.textContent ?? "", /\$/);
     assert.match(own.textContent ?? "", /gpt-6-luna.*2 calls · \$0\.12/);
     const calls = Array.from(view.host.querySelectorAll("[data-call-provider]"));
-    assert.match(calls[0]!.textContent ?? "", /Included with Ensemble · GPT-6 Luna \(2026-09-22\).*0\.4 credits$/);
-    assert.match(calls[1]!.textContent ?? "", /openai · gpt-6-luna.*\$0\.06$/);
-    assert.match(text, /2026-10-17: 1 call · 1100 tokens · 0\.4 credits/, "the daily tooltip shows credits, not a dollar dash");
-    assert.match(text, /2026-10-16: 3 calls · 3300 tokens · \$0\.12 · 12 credits/);
-    assert.match(text, /Hub chat · 4 calls · 4400 tokens · \$0\.12 · 13 credits/);
+    assert.match(calls[0]!.querySelector("summary")!.textContent ?? "", /Included with Ensemble · GPT-6 Luna \(2026-09-22\).*0\.4 credits$/);
+    assert.match(calls[1]!.querySelector("summary")!.textContent ?? "", /OpenAI · gpt-6-luna.*\$0\.06$/);
+    assert.ok(view.host.querySelector('[aria-label="Daily AI activity"]'));
+    assert.match(text, /Input tokens/);
+    assert.match(text, /Output tokens/);
+    assert.doesNotMatch(text, /Verify hash chain|Baselines are|eval\/baseline/);
     assert.ok(Array.from(view.host.querySelectorAll("option")).some((node) => node.textContent === "Included with Ensemble"), "the provider filter names it");
   } finally {
     await view.done();
@@ -181,4 +182,14 @@ test("the Metrics page shows nothing about credits when included models are not 
   } finally {
     await view.done();
   }
+});
+
+
+test("erased call details are explained while monthly consumption stays visible", async () => {
+  const view = await render(<IncludedCreditsCard usage={{ ...USAGE, erasedCredits: 500 }} />);
+  try {
+    assert.match(view.host.querySelector('[data-testid="erased-credits-notice"]')?.textContent ?? "", /500 credits used before/);
+    assert.match(view.host.querySelector('[title*="deleted previous usage"]')?.getAttribute("title") ?? "", /credits already used still count/);
+    assert.match(view.host.querySelector('[data-testid="credits-left"]')?.textContent ?? "", /14,259/);
+  } finally { await view.done(); }
 });

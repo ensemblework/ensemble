@@ -3,7 +3,7 @@
 /** @jsxImportSource react */
 
 import { CONNECT_COMPUTER_HREF, INCLUDED_PROVIDER, includedModelName, type IncludedUsage } from "@ensemble/shared-types";
-import { CircleAlert, Unplug } from "lucide-react";
+import { CircleAlert, Info, Unplug } from "lucide-react";
 import Link from "next/link";
 import { creditAmount, includedBlocked, resetDay, tokenCount, wholeCredits } from "@/lib/included";
 import { ProviderLogo } from "../connectors/provider-logo";
@@ -36,12 +36,12 @@ function CreditsPerDay({ usage }: { usage: IncludedUsage }) {
       </div>
       <div className="flex h-16 items-end gap-[2px] border-b border-line">
         {days.map((day) => (
-          <div key={day.day} className="group relative flex h-full flex-1 items-end justify-center" data-day={day.day}>
+          <div key={day.day} className="group relative flex h-full flex-1 items-end justify-center" tabIndex={0} aria-label={`${dayLabel(day.day)}: ${creditAmount(day.credits)}, ${day.calls} calls`} data-day={day.day}>
             <div
               className="w-full max-w-[24px] rounded-t-[4px] bg-accent opacity-80 transition-opacity group-hover:opacity-100"
               style={{ height: `${peak ? Math.max((day.credits / peak) * 100, day.credits ? 4 : 0) : 0}%` }}
             />
-            <div className="pointer-events-none absolute -top-7 z-10 hidden whitespace-nowrap rounded bg-raised px-1.5 py-0.5 text-2xs shadow-pop group-hover:block">
+            <div className="pointer-events-none absolute -top-7 z-10 hidden whitespace-nowrap rounded bg-raised px-1.5 py-0.5 text-2xs shadow-pop group-hover:block group-focus:block">
               {dayLabel(day.day)}: {creditAmount(day.credits)} · {day.calls === 1 ? "1 call" : `${day.calls} calls`}
             </div>
           </div>
@@ -89,7 +89,7 @@ export function IncludedCreditsCard({ usage }: { usage: IncludedUsage }) {
   const share = usage.limit > 0 ? Math.min(1, Math.max(0, usage.used / usage.limit)) : 1;
   const { totals } = usage;
   return (
-    <section className="tile rounded-lg bg-panel p-4" data-testid="ensemble-credits" data-state={usage.paused ? "paused" : blocked ? "used" : "ok"} aria-labelledby="ensemble-credits-title">
+    <section className="tile rounded-xl bg-panel p-5" data-testid="ensemble-credits" data-state={usage.paused ? "paused" : blocked ? "used" : "ok"} aria-labelledby="ensemble-credits-title">
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2 text-[13px]">
         <h2 id="ensemble-credits-title" className="inline-flex items-center gap-2 font-semibold">
           <ProviderLogo id={INCLUDED_PROVIDER} size={15} /> Ensemble credits
@@ -119,6 +119,12 @@ export function IncludedCreditsCard({ usage }: { usage: IncludedUsage }) {
         </p>
       ) : null}
 
+      {(usage.erasedCredits ?? 0) > 0 ? <div className="mt-3 flex items-center gap-2 text-xs text-muted" data-testid="erased-credits-notice">
+        <span tabIndex={0} role="img" aria-label="Previously used credits" title="You deleted previous usage data. Those call details no longer appear, but the credits already used still count toward this month's allowance." className="cursor-help"><Info size={14} /></span>
+        {creditAmount(usage.erasedCredits ?? 0)} used before your usage data was deleted.
+      </div> : null}
+      <p className="mt-3 text-xs text-muted">{creditAmount(usage.used)} used · monthly allowance across all your spaces and devices</p>
+      <details className="mt-4 border-t border-line pt-3"><summary className="cursor-pointer text-xs font-medium text-muted">Explore included usage this month</summary>
       <div className="mt-4 grid gap-1 text-[12.5px]" data-testid="credits-split">
         <div>
           <span className="font-medium">Input</span> · {tokenCount(totals.inputTokens)} tokens{totals.cachedTokens ? ` (${tokenCount(totals.cachedTokens)} cached)` : ""} · {creditAmount(totals.inputCredits)}
@@ -160,7 +166,7 @@ export function IncludedCreditsCard({ usage }: { usage: IncludedUsage }) {
           )}
         </div>
         <div>
-          <div className="mb-1.5 text-[12.5px] font-medium">What asked for it</div>
+          <div className="mb-1.5 text-[12.5px] font-medium">Usage by purpose</div>
           {usage.byPurpose.length === 0 ? (
             <Empty>Nothing yet.</Empty>
           ) : (
@@ -179,8 +185,9 @@ export function IncludedCreditsCard({ usage }: { usage: IncludedUsage }) {
       </div>
 
       <div className="mt-4">
-        <CreditsPerDay usage={usage} />
+        {usage.days.length ? <CreditsPerDay usage={usage} /> : <p className="text-xs text-muted">No retained daily usage details this month.</p>}
       </div>
+      </details>
     </section>
   );
 }

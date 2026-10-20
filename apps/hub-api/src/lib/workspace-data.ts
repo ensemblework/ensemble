@@ -1,3 +1,6 @@
+import { preserveCreditAccounting, eraseIncludedDetails } from "../included/accounting.js";
+import { lockUserTransaction } from "./user-lock.js";
+import { appendLedgerInTransaction } from "./ledger.js";
 import { randomUUID } from "node:crypto";
 import { Prisma, type PrismaClient } from "@prisma/client";
 
@@ -15,9 +18,7 @@ const KEPT_MODELS = new Set([
   "CliAuthRequest",
   "ConnectorApp",
   "McpConnection",
-  "AuditLedger",
-  "MetricEvent",
-  "MetricBaseline",
+  "IncludedUsage",
   "TerminalSettings",
   "Preference",
 ]);
@@ -42,7 +43,8 @@ export async function deleteWorkspaceData(
 ): Promise<void> {
   await prisma.$transaction(
     async (tx) => {
-      await tx.$queryRaw`SELECT id FROM users WHERE id = ${userId} FOR UPDATE`;
+      await preserveCreditAccounting(tx, userId);
+      await lockUserTransaction(tx, userId);
       const active = await tx.workspaceJob.count({
         where: {
           userId,
@@ -80,6 +82,7 @@ export async function deleteWorkspaceData(
         );
       }
       if (scope === "everything") {
+        await eraseIncludedDetails(tx, userId);
         // Undo payloads and learned preferences can contain the erased content.
         await tx.preference.deleteMany({
           where: {
@@ -96,6 +99,7 @@ export async function deleteWorkspaceData(
         create: { userId, key: "hub.data-erasure", value, source: "system" },
         update: { value, deletedAt: null },
       });
+      await appendLedgerInTransaction(tx, { userId, actor: "me", action: `data.delete.${scope}` });
     },
     { timeout: 60_000 },
   );

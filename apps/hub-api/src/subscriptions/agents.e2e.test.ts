@@ -134,3 +134,35 @@ test("Claude Code runs an assistant turn with only Ensemble's tools, called thro
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("Copilot streams its own JSON events and reports only the token usage for the Ensemble turn", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ensemble-copilot-output-"));
+  const bin = join(root, "bin"); mkdirSync(bin);
+  const program = join(bin, "copilot");
+  writeFileSync(program, `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args.includes('--help')) { console.log('Copilot'); process.exit(0); }
+if (args.includes('--version')) { console.log('1.0.89'); process.exit(0); }
+if (args[args.indexOf('--output-format') + 1] !== 'json') process.exit(7);
+const say = (type, data) => console.log(JSON.stringify({type, data}));
+say('session.usage_info', {currentTokens:999999, tokenLimit:1000000});
+say('assistant.message_delta', {deltaContent:'Plan '});
+say('assistant.message_delta', {deltaContent:'ready.'});
+say('assistant.message', {content:'Plan ready.'});
+say('assistant.usage', {model:'gpt-copilot-test', inputTokens:123, outputTokens:12, cost:1});
+say('assistant.usage', {model:'gpt-copilot-test', inputTokens:10, outputTokens:2, cost:1});
+`);
+  chmodSync(program, 0o755);
+  const saved = { PATH: process.env.PATH, ENSEMBLE_DESKTOP: process.env.ENSEMBLE_DESKTOP };
+  process.env.PATH = `${bin}:${process.env.PATH ?? ""}`;
+  process.env.ENSEMBLE_DESKTOP = "1";
+  const deltas: string[] = [];
+  try {
+    const result = await runAgentTurn({ agent: "copilot-cli", model: "default", effort: null, system: "Ensemble", prompt: "Plan my task", tools: [], maxTurns: 8 }, { call: async () => ({ text: "{}" }), onDelta: text => deltas.push(text), signal: new AbortController().signal });
+    assert.deepEqual(result, { text: "Plan ready.", model: "gpt-copilot-test", tokensIn: 133, tokensOut: 14, costUsd: null });
+    assert.equal(deltas.join(""), "Plan ready.");
+  } finally {
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    rmSync(root, { recursive: true, force: true });
+  }
+});
