@@ -27,7 +27,8 @@ ensemble/
 ├── infra/
 │   ├── docker-compose.yml Local Postgres 16 + pgvector and Redis 7, loopback only
 │   ├── sql/init.sql       Extensions (vector, pg_trgm, uuid-ossp)
-│   └── deploy/            Ubuntu VM setup: Caddy, systemd units, backups, pull-based autodeploy
+│   └── deploy/            Ubuntu VM setup: Caddy, systemd units, backups, pull-based autodeploy;
+│                          home/ is the no-root home-server install (Docker, Cloudflare Tunnel, user units, cron watchdog)
 ├── scripts/               Dev, desktop build, CLI packaging, measurement and hook scripts (§3)
 ├── packaging/             CLI release metadata renderer: Homebrew, Scoop, winget, nfpm, AUR (docs/26 §7)
 ├── docs/                  Current guides and separate historical/planned designs (docs/README.md)
@@ -159,7 +160,7 @@ apps/skill-forge/             pyproject.toml + ensemble_forge/__init__.py; miner
 | Live co-editing of pages and task pages | `apps/hub-api/src/pages/collab.ts` (authority, write-back), `collab-core.ts`, `live.ts` (the process's hub), `schema.ts`, `page-diff.ts`, `routes/collab.ts`; `apps/hub-web/components/editor/collab.ts`, `page-diff.ts`, `components/pages/use-collab.ts`; the editor schema as data in `packages/shared-types/src/page-schema.json` (`pnpm --filter @ensemble/hub-web page-schema`) ([29 §5](29_SHARING.md#5-live-presence)) |
 | Database schema change | a new migration in `apps/hub-api/prisma/` |
 | Desktop shell | `apps/desktop/` |
-| Local infrastructure or VM deploy | `infra/` |
+| Local infrastructure, VM or home-server deploy | `infra/` |
 | CI checks, production deploys, CLI releases | `.github/workflows/` (`ci.yml`, `deploy.yml`, `desktop.yml`, `cli-release.yml`) |
 | Product behaviour documentation | `docs/` — in the same change, see [AGENTS.md](../AGENTS.md) |
 

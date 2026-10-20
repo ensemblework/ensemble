@@ -1,8 +1,8 @@
 name: deploy
 
 # Ships main to production after ci passes on it:
-#   1. moves the `production` branch to that commit (the VM follows it, see
-#      infra/deploy/autodeploy.sh),
+#   1. moves the `production` branch to that commit (the API server follows it, see
+#      infra/deploy/home/autodeploy.sh, or infra/deploy/autodeploy.sh on a VM),
 #   2. waits until the API reports that commit on /health and is ready,
 #   3. publishes the Hub and the landing page on Vercel.
 # Does nothing until the repository variable DEPLOY_ENABLED is "true".
@@ -79,7 +79,7 @@ jobs:
         run: git push origin "$SHA:refs/heads/production"
 
   api:
-    name: Wait for the API on the VM
+    name: Wait for the API server
     needs: promote
     if: needs.promote.outputs.current == 'true' && contains(fromJSON('["all","api"]'), needs.promote.outputs.target)
     runs-on: ubuntu-latest
@@ -94,11 +94,11 @@ jobs:
             echo "::error::Set the ENSEMBLE_API_URL repository secret."
             exit 1
           fi
-          # The VM checks every minute; install, migrate and restart take a few more.
+          # The server checks every minute; install, migrate and restart take a few more.
           deadline=$((SECONDS + 25 * 60))
           until [ "$(curl -fsS --max-time 10 "$API_URL/health" 2>/dev/null | jq -r '.commit // empty' 2>/dev/null)" = "$SHA" ]; do
             if [ "$SECONDS" -ge "$deadline" ]; then
-              echo "::error::The API did not report $SHA within 25 minutes. On the VM: sudo journalctl -u ensemble-autodeploy -n 200 --no-pager"
+              echo "::error::The API did not report $SHA within 25 minutes. On the server: journalctl --user -u ensemble-autodeploy -n 200 --no-pager (home server) or sudo journalctl -u ensemble-autodeploy -n 200 --no-pager (VM)"
               exit 1
             fi
             sleep 15
