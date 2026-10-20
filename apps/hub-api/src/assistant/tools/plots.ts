@@ -3,6 +3,7 @@ import { fileFormat, isWorkspace, plotConfigSchema, workspaceSchema } from "@ens
 import { defineTool, inTransaction, toolOk, type ToolContext } from "../types.js";
 import { configOf, ingestDataset, loadOwnedTable, ownedPlot } from "../../plots/service.js";
 import { decodeText } from "../../files/extract.js";
+import { ORIGINAL_SELECT, originalBytes } from "../../files/originals.js";
 import type { Prisma } from "@prisma/client";
 
 export const plotTools = [
@@ -222,14 +223,14 @@ function workbookSheets(text: string): Array<{ name: string; csv: string }> {
 async function fileTable(ctx: ToolContext, fileId: string, sheet?: string): Promise<{ text: string; parseAs: string; name: string; filename: string; sheet: string; sheets: string[]; warnings: string[] }> {
   const row = await ctx.prisma.document.findFirst({
     where: { id: fileId, userId: ctx.userId, deletedAt: null },
-    select: { filename: true, original: true, parseStatus: true, warnings: true, artifact: { select: { text: true } } },
+    select: { filename: true, ...ORIGINAL_SELECT, parseStatus: true, warnings: true, artifact: { select: { text: true } } },
   });
   if (!row) throw Object.assign(new Error("No file with that id in Files. Call hub_list_files and use an id it returns."), { statusCode: 404 });
   const format = fileFormat(row.filename).ext;
   const base = row.filename.replace(/\.[^.]+$/, "") || "Dataset";
   if (TEXT_TABLES.has(format)) {
     if (sheet) throw Object.assign(new Error(`${row.filename} has no sheets; leave sheet out.`), { statusCode: 400 });
-    const text = decodeText(row.original);
+    const text = decodeText(await originalBytes(row));
     return { text, parseAs: format === "tsv" ? `${base}.tsv` : `${base}.csv`, name: base, filename: row.filename, sheet: "", sheets: [], warnings: [] };
   }
   if (!WORKBOOKS.has(format)) {

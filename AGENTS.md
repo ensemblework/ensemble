@@ -24,7 +24,7 @@ Where a change usually needs a doc update:
 | A new app, package, or top-level folder | `README.md` (Layout), [`docs/17`](docs/17_REPOSITORY_STRUCTURE.md), [`docs/README.md`](docs/README.md) if it has a doc |
 | Hub pages and components (`apps/hub-web/app`, `components`) | [`docs/02`](docs/02_MODULE_INTERACTION_HUB_UI.md), `docs/18` |
 | Landing page (`apps/landing`) | `README.md` (Layout), [`docs/17`](docs/17_REPOSITORY_STRUCTURE.md), `docs/18` |
-| CI and deploy workflows (`.github/workflows`, `.github/actions`, `infra/deploy/autodeploy.sh`) | [`docs/01` §8](docs/01_TECH_STACK_AND_ENVIRONMENT.md#8-ci-and-deploys), `README.md` (CI and deploys) |
+| CI and deploy workflows (`.github/workflows`, `.github/actions`, `infra/deploy/autodeploy.sh`, `infra/deploy/home`) | [`docs/01` §8](docs/01_TECH_STACK_AND_ENVIRONMENT.md#8-ci-and-deploys), `README.md` (CI and deploys) |
 | API routes (`apps/hub-api/src/routes`) | The API tables in [`docs/02`](docs/02_MODULE_INTERACTION_HUB_UI.md), plus the module doc for that area |
 | The Hub assistant (`apps/hub-api/src/assistant`, `components/assistant`) | [`docs/11`](docs/11_HOW_THE_ASSISTANT_WORKS.md) |
 | Connectors, triage, sync, remote MCP connections (`apps/hub-api/src/connectors`, `routes/connectors.ts`, `routes/mcp-connections.ts`, `packages/shared-types/src/connectors.ts`) | [`docs/03`](docs/03_MODULE_CONTEXT_ENGINE.md), the connector table in `docs/18`, the connector store in [`docs/02` §3.9](docs/02_MODULE_INTERACTION_HUB_UI.md) |

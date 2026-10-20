@@ -1,0 +1,7 @@
+[Unit]
+Description=Deploy a new Ensemble commit to the home server when the deploy branch moves
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash %h/ensemble-host/app/infra/deploy/home/autodeploy.sh
+TimeoutStartSec=30min

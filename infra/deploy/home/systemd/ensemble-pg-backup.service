@@ -1,0 +1,7 @@
+[Unit]
+Description=Nightly Ensemble database and state backup (home server)
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash %h/ensemble-host/app/infra/deploy/home/pg-backup.sh
+TimeoutStartSec=30min

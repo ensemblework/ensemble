@@ -1,0 +1,23 @@
+[Unit]
+Description=Ensemble hub-api (home server, user unit)
+# The scheduler is a timer inside this process. Postgres and Redis are Docker containers that
+# Docker starts at boot; until they answer, the API keeps restarting and watchdog.sh checks it.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=%h/ensemble-host/app/apps/hub-api
+EnvironmentFile=%h/ensemble-host/ensemble.env
+# ENSEMBLE_COMMIT, written by update.sh. /health reports it and deploy.yml waits for it.
+EnvironmentFile=-%h/ensemble-host/ensemble.commit
+Environment=NODE_ENV=production
+Environment=PATH=%h/ensemble-host/node/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/ensemble-host/node/bin/node %h/ensemble-host/app/apps/hub-api/node_modules/tsx/dist/cli.mjs src/index.ts
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+LimitNOFILE=65535
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

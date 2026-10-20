@@ -1,6 +1,6 @@
 /**
- * Storing files: caps (hosted accounts only), the original bytes on the
- * Document row, and its text on a file Artifact for agents and search.
+ * Storing files: caps (hosted accounts only), the original bytes (on the Document row, or in blob
+ * storage: originals.ts), and its text on a file Artifact for agents and search.
  * Every way a file arrives (upload, import from an app) goes through saveFile.
  */
 import { createHash, randomUUID } from "node:crypto";
@@ -11,6 +11,7 @@ import { assertFileRoom, createCappedDocument, hostedLimits, quotaScope, sizeLab
 import { appendLedger } from "../lib/ledger.js";
 import { sseHub } from "../lib/sse.js";
 import { immediateText, PARSER_VERSION, queueFileText, summarizeFile, writeFileText } from "./extract.js";
+import { discardOriginal, storeOriginal } from "./originals.js";
 
 const MIB = 1024 * 1024;
 export const HOSTED_MAX_FILE_BYTES = 25 * MIB;
@@ -186,15 +187,18 @@ export async function saveFile(db: PrismaClient, userId: string, file: NewFile, 
     repoIds: options.tags?.repoIds ?? [],
     taskIds: options.tags?.taskIds ?? [],
   };
+  const mediaType = mediaTypeFor(filename, file.mediaType);
+  const hash = sha256(original);
+  const stored = await storeOriginal(userId, id, hash, original, mediaType);
   const row = await createCappedDocument(db, userId, {
     data: {
       id,
       userId,
       filename,
-      mediaType: mediaTypeFor(filename, file.mediaType),
+      mediaType,
       byteSize: original.byteLength,
-      sha256: sha256(original),
-      original,
+      sha256: hash,
+      ...stored,
       format: format.ext,
       parseStatus: known?.status ?? "queued",
       parserVersion: PARSER_VERSION,
@@ -223,6 +227,9 @@ export async function saveFile(db: PrismaClient, userId: string, file: NewFile, 
         : undefined,
     },
     select: FILE_SELECT,
+  }).catch(async (error: unknown): Promise<never> => {
+    await discardOriginal(stored.blobKey);
+    throw error;
   });
   await appendLedger({
     userId,
@@ -255,6 +262,10 @@ export async function replaceFileBytes(
   const format = fileFormat(filename);
   const original = Buffer.from(input.bytes.buffer as ArrayBuffer, input.bytes.byteOffset, input.bytes.byteLength);
   const known = immediateText(filename, original);
+  const mediaType = input.filename || input.mediaType ? mediaTypeFor(filename, input.mediaType ?? existing.mediaType) : existing.mediaType;
+  const hash = sha256(original);
+  // The replaced version's blob is left to sweepOrphanOriginals, which checks nothing points at it.
+  const stored = await storeOriginal(userId, id, hash, original, mediaType);
   const row = await db.$transaction((tx) =>
     withHostedUserLock(tx, userId, async (inner) => {
       const current = await inner.document.findFirst({ where: { id, userId, deletedAt: null }, select: { id: true, sha256: true } });
@@ -266,10 +277,10 @@ export async function replaceFileBytes(
         data: {
           filename,
           format: format.ext,
-          mediaType: input.filename || input.mediaType ? mediaTypeFor(filename, input.mediaType ?? existing.mediaType) : existing.mediaType,
-          original,
+          mediaType,
+          ...stored,
           byteSize: original.byteLength,
-          sha256: sha256(original),
+          sha256: hash,
           generation: { increment: 1 },
           parseStatus: "queued",
           warnings: [],

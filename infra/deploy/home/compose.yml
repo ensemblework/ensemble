@@ -1,0 +1,56 @@
+# Postgres, Redis and the Cloudflare Tunnel for the API on one home machine (setup.sh in this folder).
+# Every port is loopback only and differs from infra/docker-compose.yml, so `pnpm dev` and this
+# install can run on the same machine. Docker starts these at boot (restart: unless-stopped) and
+# watchdog.sh starts any that were stopped by hand.
+#
+# setup.sh and update.sh export the variables below from the env file:
+#   ENSEMBLE_HOME_PG_PORT, ENSEMBLE_HOME_REDIS_PORT  ports in DATABASE_URL and REDIS_URL
+#   ENSEMBLE_REDIS_PASSWORD                          the password in REDIS_URL
+#   ENSEMBLE_HOME_DIR, ENSEMBLE_HOME_UID/GID         ~/ensemble-host and its owner
+# Postgres user and password are ensemble / ensemble, as on the VM: the port is on 127.0.0.1 only.
+name: ensemble-home
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: ensemble-home-postgres
+    environment:
+      POSTGRES_USER: ensemble
+      POSTGRES_PASSWORD: ensemble
+      POSTGRES_DB: ensemble
+    ports:
+      - "127.0.0.1:${ENSEMBLE_HOME_PG_PORT:-15432}:5432"
+    volumes:
+      - ensemble_home_pg:/var/lib/postgresql/data
+      - ../../sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ensemble -d ensemble"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # Rate limits, pub/sub and caches only. Nothing in it needs to survive a restart.
+  redis:
+    image: redis:7-alpine
+    container_name: ensemble-home-redis
+    command: ["redis-server", "--requirepass", "${ENSEMBLE_REDIS_PASSWORD:?set by setup.sh}", "--appendonly", "no", "--save", ""]
+    ports:
+      - "127.0.0.1:${ENSEMBLE_HOME_REDIS_PORT:-16379}:6379"
+    restart: unless-stopped
+
+  # Dials out to Cloudflare, so the API needs no open port, router rule or fixed IP.
+  # setup.sh writes config.yml next to the tunnel's credentials file.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: ensemble-home-cloudflared
+    network_mode: host
+    user: "${ENSEMBLE_HOME_UID:-1000}:${ENSEMBLE_HOME_GID:-1000}"
+    command: ["tunnel", "--no-autoupdate", "--config", "/etc/cloudflared/config.yml", "run"]
+    volumes:
+      - ${ENSEMBLE_HOME_DIR:?set by setup.sh}/cloudflared:/etc/cloudflared:ro
+    restart: unless-stopped
+
+volumes:
+  ensemble_home_pg:
+    name: ensemble_home_pg

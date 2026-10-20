@@ -14,6 +14,7 @@ import { createStandalonePage } from "../pages/store.js";
 import { assertOwned } from "../services/records.js";
 import { configureFileText, fileTextRunning, patchWorkbook, queueFileText } from "../files/extract.js";
 import { pageFromFile, pageTitle, serverPageFormat } from "../files/page.js";
+import { ORIGINAL_SELECT, originalBytes } from "../files/originals.js";
 import { assertNewFile, FILE_SELECT, FileError, fileRecord, fileStyle, fileTooLarge, fileUsage, filenameProblem, maxFileBytes, replaceFileBytes, saveFile, type FileRow } from "../files/store.js";
 
 const TEXT_DEFAULT = 6000;
@@ -180,9 +181,9 @@ export async function fileRoutes(app: FastifyInstance): Promise<void> {
       .header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
       .header("Accept-Ranges", "bytes");
     if (etagMatches(request.headers["if-none-match"], etag)) return reply.code(304).send();
-    const row = await prisma.document.findFirst({ where: owned(id, request.userId), select: { original: true } });
+    const row = await prisma.document.findFirst({ where: owned(id, request.userId), select: ORIGINAL_SELECT });
     if (!row) return notFound(reply);
-    const bytes = Buffer.from(row.original.buffer, row.original.byteOffset, row.original.byteLength);
+    const bytes = await originalBytes(row);
     const format = fileFormat(head.filename);
     reply.header("Content-Type", format.kind === "other" ? "application/octet-stream" : format.mime).header("Content-Disposition", contentDisposition(head.filename));
     const range = /^bytes=(\d*)-(\d*)$/.exec(String(request.headers.range ?? "").trim());
@@ -232,8 +233,8 @@ export async function fileRoutes(app: FastifyInstance): Promise<void> {
     if (row.byteSize > CELLS_MAX_BYTES) {
       return reply.code(413).send({ error: "This workbook is too large to edit here (over 15 MB). Edit it in Excel and upload it again." });
     }
-    const current = await prisma.document.findFirstOrThrow({ where: owned(id, request.userId), select: { original: true } });
-    const bytes = await patchWorkbook(current.original, patch);
+    const current = await prisma.document.findFirstOrThrow({ where: owned(id, request.userId), select: ORIGINAL_SELECT });
+    const bytes = await patchWorkbook(await originalBytes(current), patch);
     const file = await replaceFileBytes(prisma, request.userId, id, { bytes, expectedSha256: patch.expectedSha256 }, "document.cells");
     if (!file) return notFound(reply);
     return { file };
@@ -249,8 +250,8 @@ export async function fileRoutes(app: FastifyInstance): Promise<void> {
     if (!content) {
       if (format.toPage === "browser") return reply.code(400).send({ error: `${format.label} files become pages in your browser. Open the file in Ensemble and make the page from there.` });
       if (!serverPageFormat(row.filename)) return reply.code(400).send({ error: "This kind of file cannot become a page." });
-      const original = await prisma.document.findFirstOrThrow({ where: owned(id, request.userId), select: { original: true } });
-      content = pageFromFile(row.filename, original.original);
+      const original = await prisma.document.findFirstOrThrow({ where: owned(id, request.userId), select: ORIGINAL_SELECT });
+      content = pageFromFile(row.filename, await originalBytes(original));
     }
     if (body.style) {
       if (body.style.source !== format.ext) return reply.code(400).send({ error: `This formatting was read from a ${body.style.source.toUpperCase()} file, not this one.` });

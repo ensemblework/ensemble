@@ -41,7 +41,7 @@ test("uploaded-document quotas are per-user, transactional, and retain no reject
     const rows = await harness.prisma.document.findMany({ where: { userId: user.id } });
     assert.equal(rows.length, 1);
     assert.equal(rows[0]!.byteSize, 5);
-    assert.equal(rows[0]!.original.byteLength, 5);
+    assert.equal(rows[0]!.original!.byteLength, 5);
     assert.equal(await harness.prisma.document.count({ where: { userId: user.id, sha256: digest(rejectedBytes) } }), 0);
     assert.equal(await harness.prisma.artifact.count({ where: { userId: user.id, kind: "file" } }), 1);
     assert.equal(await harness.prisma.auditLedger.count({ where: { userId: user.id, action: "document.upload" } }), 1);
@@ -60,7 +60,7 @@ test("uploaded-document quotas are per-user, transactional, and retain no reject
     const rows = await harness.prisma.document.findMany({ where: { userId: user.id } });
     assert.equal(rows.length, 2);
     assert.equal(rows.reduce((sum, row) => sum + row.byteSize, 0), 5);
-    assert.equal(rows.reduce((sum, row) => sum + row.original.byteLength, 0), 5);
+    assert.equal(rows.reduce((sum, row) => sum + row.original!.byteLength, 0), 5);
     const rejectedIndex = responses.findIndex((response) => response.statusCode === 429);
     assert.equal(await harness.prisma.document.count({ where: { userId: user.id, sha256: digest(candidates[rejectedIndex]!.original) } }), 0);
     assert.equal(await harness.prisma.artifact.count({ where: { userId: user.id, kind: "file" } }), 2);
@@ -83,7 +83,7 @@ test("uploaded-document quotas are per-user, transactional, and retain no reject
     assert.equal(deleted.statusCode, 204, deleted.body);
     const retained = await harness.prisma.document.findUniqueOrThrow({ where: { id } });
     assert.notEqual(retained.deletedAt, null);
-    assert.deepEqual(Buffer.from(retained.original), original, "the original stays for restoring from Deleted items");
+    assert.deepEqual(Buffer.from(retained.original!), original, "the original stays for restoring from Deleted items");
     const freed = await upload(user, "freed.txt", Buffer.from("uv"));
     assert.equal(freed.statusCode, 201, freed.body);
   });

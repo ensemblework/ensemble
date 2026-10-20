@@ -1,0 +1,11 @@
+[Unit]
+Description=Nightly Ensemble backup at 02:30 local time
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+RandomizedDelaySec=10min
+# Runs at the next start when the machine was off at 02:30.
+Persistent=true
+
+[Install]
+WantedBy=timers.target
