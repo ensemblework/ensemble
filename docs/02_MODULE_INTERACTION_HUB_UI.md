@@ -262,3 +262,5 @@ Page/task exports, original-file downloads, space archives and account exports a
 Checked **20 Oct 2026**: regression tests cover the saved-file picker without connector requests, the two-stage deletion dialog and credit-deletion notice. The board toolbar uses a bounded compact search field (`components/board/board.tsx`).
 
 Run-profile name editors focus and select the existing name synchronously when opened (`components/agent/assign-dialog.tsx`). There is no delayed selection that can replace a character typed immediately after opening. Checked 20 Oct 2026 with the immediate-typing regression in `components/agent/profile-bar.test.tsx`.
+
+Metrics repairs stale usage from a previous Everything deletion automatically when read, preserving known charges first and keeping later work. The provider selector retains its selected value even when a date change or refresh returns no calls for that provider, so the displayed selection still matches the active filter. Checked 20 Oct 2026 with HTTP and UI regressions.

@@ -118,3 +118,27 @@ export async function dataErasureVersion(
   });
   return typeof row?.value === "string" ? row.value : null;
 }
+
+/** Retire usage left by an earlier Everything erasure, preserving charges before their evidence. */
+export async function repairErasedUsage(prisma: PrismaClient, userId: string): Promise<void> {
+  const erased = await prisma.auditLedger.findFirst({
+    where: { userId, action: "data.delete.everything" },
+    orderBy: [{ ts: "desc" }, { id: "desc" }],
+    select: { id: true, ts: true },
+  });
+  if (!erased) return;
+  const key = "hub.usage-erasure-repair";
+  const marker = await prisma.preference.findUnique({ where: { userId_key: { userId, key } } });
+  if (marker?.value === erased.id) return;
+  await prisma.$transaction(async tx => {
+    await preserveCreditAccounting(tx, userId);
+    await lockUserTransaction(tx, userId);
+    await tx.metricEvent.deleteMany({ where: { userId, ts: { lte: erased.ts } } });
+    await tx.metricBaseline.deleteMany({ where: { userId, createdAt: { lte: erased.ts } } });
+    await tx.preference.upsert({
+      where: { userId_key: { userId, key } },
+      create: { userId, key, value: erased.id, source: "system" },
+      update: { value: erased.id, deletedAt: null },
+    });
+  }, { timeout: 60_000 });
+}
