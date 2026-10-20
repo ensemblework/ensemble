@@ -22,6 +22,7 @@ import { RpcConnection } from "../workspace/engines/rpc.js";
 import { hookScriptPath, localApiUrl } from "../workspace/engines/registry.js";
 import { openBridge, type ToolAnswer, type ToolSpec } from "./bridge.js";
 import { agentBinary, agentEnv, refreshAgent } from "./detect.js";
+import { copilotOutput } from "./copilot-output.js";
 
 export type AgentTurnSpec = {
   agent: SubscriptionProvider;
@@ -381,11 +382,10 @@ export function copilotArgs(input: { prompt: string; mcpFile: string; model: str
   return [
     "-p",
     prompt,
-    "--silent",
     "--stream",
     "on",
     "--output-format",
-    "text",
+    "json",
     // Prompt mode needs tools allowed up front; the denials win over it.
     "--allow-all-tools",
     "--deny-tool",
@@ -414,13 +414,9 @@ const runCopilot: Driver = async ({ spec, io, bin, folder, mcp }) => {
   });
   const stop = () => stopChild(child);
   io.signal.addEventListener("abort", stop, { once: true });
-  let text = "";
+  const output = copilotOutput(chosen(spec.model), io.onDelta);
   let stderr = "";
-  child.stdout.on("data", (chunk: Buffer) => {
-    const piece = chunk.toString("utf8");
-    text += piece;
-    io.onDelta(piece);
-  });
+  createInterface({ input: child.stdout }).on("line", line => output.line(line));
   child.stderr.on("data", (chunk: Buffer) => {
     stderr = (stderr + chunk.toString("utf8")).slice(-4000);
   });
@@ -428,7 +424,7 @@ const runCopilot: Driver = async ({ spec, io, bin, folder, mcp }) => {
     const code = await new Promise<number>((done) => child.once("close", (value) => done(value ?? 1)));
     if (io.signal.aborted) throw aborted();
     if (code !== 0) throw agentProblem("copilot-cli", stderr.trim().split("\n").slice(-6).join(" ") || `exit ${code}`);
-    return { text: text.trim(), model: chosen(spec.model), tokensIn: null, tokensOut: null, costUsd: null };
+    return output.finish();
   } finally {
     io.signal.removeEventListener("abort", stop);
     stop();

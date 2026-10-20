@@ -321,3 +321,105 @@ test("a computer connected to an account runs its included calls here, on that a
     setRuntimeFetchForTests(null);
   }
 });
+
+test("workspace erasure clears usage details and metrics while retaining allowance, even after repeated deletion", async () => {
+  await setCeiling(200);
+  const user = await harness.asUser();
+  const other = await harness.asUser();
+  const held = await reserveIncluded({ userId: user.id, model: "gpt-6-luna", inputTokens: 1000, maxOutputTokens: 1000, purpose: "Hub chat" });
+  await settleIncluded({ id: held.id, usage: { inputTokens: 900, outputTokens: 300, cacheReadTokens: 0, cacheWriteTokens: 0 } });
+  await db.metricEvent.create({ data: { userId: user.id, kind: "model.call", payload: { provider: "ensemble", model: "gpt-6-luna", title: "Erase this title", tokensIn: 900, tokensOut: 300 } } });
+  await db.metricBaseline.create({ data: { userId: user.id, kind: "old baseline", seconds: 30 } });
+  await db.metricEvent.create({ data: { userId: other.id, kind: "keep" } });
+  const before = (await user.inject({ method: "GET", url: "/api/metrics/credits" })).json();
+  assert.ok(before.used > 0);
+  for (let n = 0; n < 2; n++) {
+    const erased = await user.inject({ method: "POST", url: "/api/data/delete", payload: { scope: "everything", confirm: "delete everything" } });
+    assert.equal(erased.statusCode, 200, erased.body);
+    const after = (await user.inject({ method: "GET", url: "/api/metrics/credits" })).json();
+    assert.equal(after.used, before.used);
+    assert.equal(after.remaining, before.remaining);
+    assert.equal(after.erasedCredits, before.used);
+    assert.equal(after.totals.calls, 0);
+    assert.deepEqual(after.byModel, []);
+    assert.deepEqual(after.byPurpose, []);
+    assert.deepEqual(after.days, []);
+    const summary = (await user.inject({ method: "GET", url: "/api/metrics/summary" })).json();
+    assert.deepEqual(summary.recent, []);
+    assert.ok(summary.days.every((day: { calls: number }) => day.calls === 0));
+    assert.deepEqual(summary.baselines, []);
+    assert.deepEqual(summary.events, []);
+    const row = await db.includedUsage.findUniqueOrThrow({ where: { id: held.id } });
+    assert.equal(row.model, "");
+    assert.equal(row.purpose, null);
+    assert.equal(row.inputTokens, 0);
+  }
+  assert.equal(await db.metricEvent.count({ where: { userId: other.id } }), 1);
+  const refusal = await reserve(user, { model: "gpt-6.1-sol", inputTokens: 1000000, maxOutputTokens: 16000 });
+  assert.equal(refusal.statusCode, 429, refusal.body);
+});
+
+test("an erased reservation can settle and retry without restoring its call details or refunding credits", async () => {
+  await setCeiling(200);
+  const user = await harness.asUser();
+  const held = await reserveIncluded({ userId: user.id, model: "gpt-6-luna", inputTokens: 1000, maxOutputTokens: 1000 });
+  const erased = await user.inject({ method: "POST", url: "/api/data/delete", payload: { scope: "everything", confirm: "delete everything" } });
+  assert.equal(erased.statusCode, 200, erased.body);
+  const usage = { inputTokens: 100, outputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0 };
+  const charged = await settleIncluded({ id: held.id, usage });
+  assert.ok(Math.abs((await settleIncluded({ id: held.id, usage })).credits - charged.credits) < 1e-10);
+  const view = (await user.inject({ method: "GET", url: "/api/metrics/credits" })).json();
+  assert.equal(view.used, Math.round(charged.credits * 100) / 100);
+  assert.deepEqual(view.byModel, []);
+  assert.equal((await db.includedUsage.findUniqueOrThrow({ where: { id: held.id } })).model, "");
+});
+
+test("account deletion and signing up again cannot renew the same email's monthly allowance", async () => {
+  await setCeiling(200);
+  const user = await harness.asUser();
+  const held = await reserveIncluded({ userId: user.id, model: "gpt-6-luna", inputTokens: 1000, maxOutputTokens: 1000 });
+  await settleIncluded({ id: held.id, usage: { inputTokens: 900, outputTokens: 300, cacheReadTokens: 0, cacheWriteTokens: 0 } });
+  const before = (await user.inject({ method: "GET", url: "/api/metrics/credits" })).json();
+  const { deleteAccountData } = await import("../lib/account-data.js");
+  await deleteAccountData(db, user.id);
+  assert.equal(await db.includedUsage.count({ where: { accountId: user.id } }), 0);
+  const recreated = await harness.asUser(user.email);
+  const after = (await recreated.inject({ method: "GET", url: "/api/metrics/credits" })).json();
+  assert.equal(after.used, before.used);
+  assert.equal(after.remaining, before.remaining);
+  assert.equal(after.erasedCredits, before.used);
+});
+
+test("legacy charges are adopted before deletion and simultaneous reservations share one allowance", async () => {
+  await setCeiling(200);
+  const user = await harness.asUser();
+  await db.includedUsage.create({ data: { id: crypto.randomUUID(), accountId: user.id, userId: user.id, period, model: "gpt-6-luna", status: "settled", estimatedInputTokens: 1, maxOutputTokens: 1, reservedUsd: 0.09, usd: 0.09 } });
+  const erased = await user.inject({ method: "POST", url: "/api/data/delete", payload: { scope: "everything", confirm: "delete everything" } });
+  assert.equal(erased.statusCode, 200, erased.body);
+  assert.equal((await user.inject({ method: "GET", url: "/api/metrics/credits" })).json().used, 90);
+  const results = await Promise.all(Array.from({ length: 5 }, () => reserve(user, { model: "gpt-6-luna", inputTokens: 10000, maxOutputTokens: 16000 })));
+  const accepted = results.filter(row => row.statusCode === 200);
+  assert.ok(accepted.length > 0 && accepted.length < results.length);
+  assert.ok(results.filter(row => row.statusCode !== 200).every(row => row.statusCode === 429));
+  const usage = (await user.inject({ method: "GET", url: "/api/metrics/credits" })).json();
+  assert.ok(usage.used <= 100);
+  assert.ok(usage.used >= 90);
+});
+
+
+test("recover charges from retained metrics when an older Delete everything already erased billing rows", async () => {
+  await setCeiling(200);
+  const user = await harness.asUser();
+  const { appendLedger } = await import("../lib/ledger.js");
+  await db.metricEvent.create({ data: { userId: user.id, kind: "model.call", ts: new Date(Date.now() - 5000), payload: { provider: "ensemble", model: "gpt-6-luna", credits: 12.5, title: "Previously erased" } } });
+  await appendLedger({ userId: user.id, actor: "me", action: "data.delete.everything" });
+  // Deletion must recover the charge even if nobody opens Metrics before erasing again.
+  const wiped = await user.inject({ method: "POST", url: "/api/data/delete", payload: { scope: "everything", confirm: "delete everything" } });
+  assert.equal(wiped.statusCode, 200, wiped.body);
+  for (let i = 0; i < 2; i++) {
+    const usage = (await user.inject({ method: "GET", url: "/api/metrics/credits" })).json();
+    assert.equal(usage.used, 12.5);
+    assert.equal(usage.erasedCredits, 12.5);
+    assert.equal(usage.remaining, 87.5);
+  }
+});

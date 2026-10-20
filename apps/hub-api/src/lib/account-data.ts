@@ -1,9 +1,10 @@
+import { preserveCreditAccounting } from "../included/accounting.js";
 import { privateIdentifier } from "./secrets.js";
 import { Prisma, type PrismaClient } from "@prisma/client";
 
 const scopedModels = Prisma.dmmf.datamodel.models.filter((model) => model.fields.some((field) => field.name === "userId" && field.kind === "scalar"));
 const PRIVATE_TABLES = new Set(["sessions", "api_tokens", "oauth_tokens", "model_credentials", "email_tokens", "auth_flows", "terminal_passkeys", "device_pairings"]);
-const PRIVATE_COLUMNS = ["password_hash", "secret", "access_token", "refresh_token", "token_hash", "code_verifier", "nonce"];
+const PRIVATE_COLUMNS = ["credit_key", "password_hash", "secret", "access_token", "refresh_token", "token_hash", "code_verifier", "nonce"];
 const SECRET_FIELDS = new Set(["secret", "password", "passwordhash", "clientsecret", "token", "accesstoken", "refreshtoken", "apikey", "apitoken", "tokenhash", "codeverifier", "nonce", "credentials", "pat"]);
 
 function withoutSecrets(value: Prisma.JsonValue): Prisma.JsonValue {
@@ -74,6 +75,7 @@ export async function exportAccountData(prisma: PrismaClient, userId: string) {
 export async function deleteAccountData(prisma: PrismaClient, userId: string): Promise<void> {
   const scopes = [userId];
   await prisma.$transaction(async (tx) => {
+    await preserveCreditAccounting(tx, userId);
     const user = await tx.user.update({ where: { id: userId }, data: { id: userId } });
     const owned = await tx.user.findMany({ where: { ownerId: userId }, select: { id: true } });
     scopes.push(...owned.map(row => row.id));

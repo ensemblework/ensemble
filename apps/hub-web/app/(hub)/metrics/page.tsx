@@ -1,290 +1,102 @@
 "use client";
 
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { Info, ShieldCheck } from "lucide-react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { ArrowDownLeft, ArrowUpRight, ChevronDown, Info, RefreshCw, Search } from "lucide-react";
 import { useState } from "react";
-import { Held } from "@/components/motion/held";
-import { MetricsSkeleton } from "@/components/motion/skeletons";
 import { INCLUDED_LABEL, INCLUDED_PROVIDER, includedModelName } from "@ensemble/shared-types";
 import { IncludedCreditsCard, IncludedLocalOnly } from "@/components/metrics/included-credits";
-import { Empty, PageHeader, Tag } from "@/components/ui";
-import { api, type MetricsSummary } from "@/lib/api";
+import { Empty, PageHeader, cx } from "@/components/ui";
+import { api, type MetricsSummary, type UsageCall } from "@/lib/api";
 import { dateTime } from "@/lib/format";
 import { creditAmount, useIncludedUsage } from "@/lib/included";
 
-function countNoun(count: number, singular: string, plural = `${singular}s`): string {
-  return `${count} ${count === 1 ? singular : plural}`;
+const PROVIDERS: Record<string, string> = { ensemble: INCLUDED_LABEL, openai: "OpenAI", anthropic: "Anthropic", google: "Google", "claude-code": "Claude Code", codex: "Codex", "copilot-cli": "GitHub Copilot", "cursor-agent": "Cursor", copilot: "GitHub Copilot", cursor: "Cursor", ollama: "Ollama (local)", unknown: "Unreported provider" };
+const providerName = (id: string) => PROVIDERS[id] ?? id;
+const modelName = (provider: string, model: string) => provider === INCLUDED_PROVIDER ? includedModelName(model) : model;
+const count = (value: number | null) => value == null ? "Not reported" : value.toLocaleString("en-US");
+function money(value: number): string { return value === 0 ? "$0" : `$${value.toFixed(value < 0.01 ? 4 : 2)}`; }
+function spent(row: { estimatedUsd: number | null; credits?: number | null }): string {
+  return [row.estimatedUsd == null ? null : money(row.estimatedUsd), row.credits == null ? null : creditAmount(row.credits)].filter(Boolean).join(" · ") || "Not reported";
+}
+function callCost(call: UsageCall) {
+  if (call.provider === "ollama") return "Local model";
+  if (["claude-code", "codex", "copilot-cli", "cursor-agent", "copilot", "cursor"].includes(call.provider)) return "Your AI plan";
+  return spent(call);
 }
 
-function minutesLabel(seconds: number, digits: number): string {
-  const minutes = Math.max(0, seconds / 60);
-  const text = minutes.toFixed(digits);
-  return text.startsWith("-") ? (0).toFixed(digits) : text;
-}
-
-const PURPOSE_COLORS: Record<string, string> = {
-  "Hub chat": "rgb(var(--accent-rgb))",
-  "Delegated tasks": "color-mix(in srgb, rgb(var(--accent-rgb)) 55%, rgb(var(--ok-rgb)))",
-  "Meeting extraction": "color-mix(in srgb, rgb(var(--accent-rgb)) 45%, rgb(var(--warn-rgb)))",
-};
-
-function money(value: number | null): string {
-  if (value == null) return "-";
-  if (value === 0) return "$0";
-  if (value < 0.01) return `$${value.toFixed(4)}`;
-  return `$${value.toFixed(2)}`;
-}
-
-/** Dollars for people's own keys, credits for included models, both when a row has both. */
-function spent(row: { estimatedUsd: number | null; credits?: number | null } | undefined): string {
-  const parts = [row?.estimatedUsd != null ? money(row.estimatedUsd) : null, row?.credits != null ? creditAmount(row.credits) : null].filter(Boolean);
-  return parts.length ? parts.join(" · ") : "-";
-}
-
-const modelName = (provider: string, model: string) => (provider === INCLUDED_PROVIDER ? includedModelName(model) : model);
-const providerName = (provider: string) => (provider === INCLUDED_PROVIDER ? INCLUDED_LABEL : provider);
-
-function DailySpend({ days }: { days: MetricsSummary["days"] }) {
-  const peak = Math.max(...days.map((day) => day.calls), 0);
-  const scale = peak || 1;
-  return (
-    <div className="tile rounded-lg bg-panel p-4">
-      <div className="mb-3 flex items-center justify-between text-[13px]">
-        <span className="font-semibold">Calls per day</span>
-        <span className="text-muted">peak {countNoun(peak, "call")}</span>
-      </div>
-      <div className="relative flex h-36 items-end gap-1.5 border-b border-dashed border-line-strong">
-        {days.map((day) => (
-          <div key={day.day} className="group relative flex flex-1 flex-col items-center justify-end" style={{ height: "100%" }}>
-            <div
-              className="w-full rounded-t bg-accent opacity-80 transition-opacity group-hover:opacity-100"
-              style={{ height: `${Math.max((day.calls / scale) * 100, day.calls ? 3 : 0)}%` }}
-            />
-            <div className="pointer-events-none absolute -top-7 hidden whitespace-nowrap rounded bg-raised px-1.5 py-0.5 text-2xs shadow-pop group-hover:block">
-              {day.day}: {countNoun(day.calls, "call")} · {day.tokensIn + day.tokensOut} tokens · {spent(day)}
-            </div>
-          </div>
-        ))}
-      </div>
-      <div className="mt-1 flex justify-between text-2xs text-faint">
-        <span>{days[0]?.day}</span>
-        <span>{days[days.length - 1]?.day}</span>
+function ActivityChart({ days }: { days: MetricsSummary["days"] }) {
+  const [mode, setMode] = useState<"calls" | "tokensIn" | "tokensOut" | "credits">("calls");
+  const [selected, setSelected] = useState<string | null>(null);
+  const peak = Math.max(1, ...days.map(day => day[mode] ?? 0));
+  const current = days.find(day => day.day === selected);
+  return <section className="tile rounded-xl bg-panel p-5" aria-label="Daily AI activity">
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div><h2 className="text-sm font-semibold">Your AI activity</h2><p className="mt-1 text-xs text-muted">Explore a day to see how you used AI. Dates are in UTC.</p></div>
+      <div className="flex flex-wrap gap-1 rounded-lg bg-raised p-1" aria-label="Chart measure">
+        {([ ["calls", "Calls"], ["tokensIn", "Input tokens"], ["tokensOut", "Output tokens"], ["credits", "Credits"] ] as const).map(([key, label]) => <button key={key} type="button" aria-pressed={mode === key} onClick={() => setMode(key)} className={cx("rounded-md px-2.5 py-1.5 text-xs", mode === key ? "bg-panel font-medium text-ink shadow-sm" : "text-muted hover:text-ink")}>{label}</button>)}
       </div>
     </div>
-  );
+    <div className="mt-6 flex h-36 items-end gap-1 border-b border-line" role="group" aria-label="Activity by day">
+      {days.map(day => <button key={day.day} type="button" className="group relative flex h-full min-w-0 flex-1 items-end rounded-t outline-offset-2" aria-label={`${day.day}: ${day.calls} calls, ${count(day.tokensIn)} input tokens, ${count(day.tokensOut)} output tokens, ${spent(day)}`} aria-pressed={selected === day.day} onMouseEnter={() => setSelected(day.day)} onFocus={() => setSelected(day.day)} onClick={() => setSelected(day.day)}>
+        <span className={cx("w-full rounded-t transition-all", selected === day.day ? "bg-accent" : "bg-accent/55 group-hover:bg-accent")} style={{ height: `${day[mode] ? Math.max(3, ((day[mode] ?? 0) / peak) * 100) : 0}%` }} />
+      </button>)}
+    </div>
+    <div className="mt-2 flex justify-between text-xs text-faint"><span>{days[0]?.day}</span><span>{days.at(-1)?.day}</span></div>
+    <p className="mt-4 min-h-5 text-xs text-muted" aria-live="polite">{current ? `${current.day}: ${current.calls} ${current.calls === 1 ? "call" : "calls"} · ${count(current.tokensIn + current.tokensOut)} tokens · ${spent(current)}` : "Hover, focus or select a day for its calls, tokens and cost."}</p>
+  </section>;
 }
 
-function Donut({ rows }: { rows: MetricsSummary["byPurpose"] }) {
-  const calls = rows.reduce((sum, row) => sum + row.calls, 0);
-  const total = calls;
-  const radius = 44;
-  const circumference = 2 * Math.PI * radius;
-  let offset = 0;
-  return (
-    <div className="flex items-center gap-6">
-      <svg width="120" height="120" viewBox="0 0 120 120">
-        <circle cx="60" cy="60" r={radius} fill="none" stroke="var(--raised)" strokeWidth="14" />
-        {rows.map((row) => {
-          const fraction = calls ? row.calls / calls : 0;
-          const dash = fraction * circumference;
-          const element = (
-            <circle
-              key={row.purpose}
-              cx="60"
-              cy="60"
-              r={radius}
-              fill="none"
-              stroke={PURPOSE_COLORS[row.purpose] ?? "var(--tag-gray-fg)"}
-              strokeWidth="14"
-              strokeDasharray={`${dash} ${circumference - dash}`}
-              strokeDashoffset={-offset}
-              transform="rotate(-90 60 60)"
-            />
-          );
-          offset += dash;
-          return element;
-        })}
-        <text x="60" y="58" textAnchor="middle" className="fill-[rgb(var(--ink-rgb))] text-[18px] font-bold">
-          {calls}
-        </text>
-        <text x="60" y="74" textAnchor="middle" className="fill-[rgb(var(--muted-rgb))] text-[10px]">
-          {calls === 1 ? "call" : "calls"}
-        </text>
-      </svg>
-      <div className="space-y-1 text-[12.5px]">
-        {["Hub chat", "Delegated tasks", "Meeting extraction"].map((purpose) => {
-          const row = rows.find((item) => item.purpose === purpose);
-          return (
-            <div key={purpose} className="flex items-center gap-2">
-              <span className="h-2.5 w-2.5 rounded-sm" style={{ background: PURPOSE_COLORS[purpose] }} />
-              {purpose} · {countNoun(row?.calls ?? 0, "call")} · {(row?.tokensIn ?? 0) + (row?.tokensOut ?? 0)} tokens · {spent(row)}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function Stat({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="tile rounded-lg bg-panel p-4 text-[12.5px]">
-      <div className="mb-1.5 text-[14px] font-semibold">{title}</div>
-      <div className="space-y-0.5 text-muted">{children}</div>
-    </div>
-  );
+function RecentCall({ call }: { call: UsageCall }) {
+  return <details className="group border-t border-line" data-call-provider={call.provider}>
+    <summary className="flex cursor-pointer list-none flex-wrap items-center gap-x-4 gap-y-3 py-4 marker:content-none [&::-webkit-details-marker]:hidden">
+      <div className="min-w-0 flex-[2] basis-56"><p className="truncate text-sm font-medium" title={call.title}>{call.title}</p><p className="mt-1 text-xs text-muted">{providerName(call.provider)} · {modelName(call.provider, call.model)}</p></div>
+      <div className="flex min-w-0 flex-1 basis-48 justify-between gap-4 text-xs tabular-nums"><span><span className="block text-faint">Input tokens</span><strong className="mt-1 block font-medium">{count(call.tokensIn)}</strong></span><span><span className="block text-faint">Output tokens</span><strong className="mt-1 block font-medium">{count(call.tokensOut)}</strong></span></div>
+      <div className="ml-auto flex items-center gap-3"><span className="min-w-24 text-right text-sm font-medium">{callCost(call)}</span><ChevronDown size={14} className="text-muted transition-transform group-open:rotate-180" /></div>
+    </summary>
+    <div className="mb-4 rounded-lg bg-raised p-4 text-xs leading-5 text-muted"><p>{call.purpose} · {dateTime(call.at)}</p><p className="mt-2">{call.purpose === "Delegated tasks" ? "An external agent may report one total for its run, which can include multiple model calls. " : ""}Input is the context sent to the model, including instructions, conversation and attachments. Output is what the model generated, including reasoning when the provider counts it.</p>{call.tokensIn == null || call.tokensOut == null ? <p className="mt-2">This provider did not report every token count for this call. Unreported values are excluded from token totals.</p> : null}<p className="mt-2">{call.provider === "ensemble" ? "This call used your monthly Ensemble credits." : call.provider === "ollama" ? "This call ran on your local model. Ensemble does not measure your computer’s electricity or hardware costs." : ["claude-code", "codex", "copilot-cli", "cursor-agent", "copilot", "cursor"].includes(call.provider) ? "This call used your AI plan. Plan balance and usage outside Ensemble are not read." : call.estimatedUsd == null ? "The price for this model is unavailable; no cost is assumed." : "Cost is an estimate at the model’s published list price, not an invoice."}</p></div>
+  </details>;
 }
 
 export default function MetricsPage() {
-  const metrics = useQuery({ queryKey: ["metrics"], queryFn: api.metrics });
-  const credits = useIncludedUsage();
-  const [more, setMore] = useState(false);
   const [provider, setProvider] = useState("all");
-  const verify = useMutation({ mutationFn: api.verifyLedger });
+  const [windowDays, setWindowDays] = useState(14);
+  const [search, setSearch] = useState("");
+  const [more, setMore] = useState(false);
+  const metrics = useQuery({ queryKey: ["metrics", provider, windowDays], queryFn: () => api.metrics(provider, windowDays), placeholderData: keepPreviousData });
+  const credits = useIncludedUsage();
   const data = metrics.data;
-  const shown = data
-    ? {
-        ...data,
-        byModel: data.byModel.filter((row) => provider === "all" || row.provider === provider),
-        recent: data.recent.filter((row) => provider === "all" || row.provider === provider),
-      }
-    : null;
-  const maxModel = Math.max(...(shown?.byModel.map((row) => row.calls) ?? [1]), 1);
-
-  return (
-    <div className="mx-auto max-w-[1100px] px-4 pb-24 pt-8 sm:px-10">
-      <PageHeader
-        title="Metrics"
-        description="Calls, models, tokens and estimated cost over the last 14 days. Dollar amounts use published list prices when we know them. Token counts are what the provider returned."
-        actions={
-          <select aria-label="Provider" value={provider} onChange={(event) => setProvider(event.target.value)} className="field">
-            <option value="all">All providers</option>
-            {(data?.providers ?? []).filter((name) => name !== "unknown").map((name) => (
-              <option key={name} value={name}>
-                {providerName(name)}
-              </option>
-            ))}
-          </select>
-        }
-      />
-      <Held pending={metrics.isLoading || !shown} fallback={<MetricsSkeleton />}>
-        {shown ? <div className="space-y-4">
-          {credits.data?.available ? <IncludedCreditsCard usage={credits.data} /> : credits.data?.localOnly ? <IncludedLocalOnly /> : null}
-          <DailySpend days={shown.days} />
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <div className="tile rounded-lg bg-panel p-4">
-              <div className="mb-3 text-[13px] font-semibold">By model</div>
-              {shown.byModel.length === 0 ? (
-                <Empty>No model calls yet.</Empty>
-              ) : (
-                <div className="space-y-2">
-                  {shown.byModel.map((row) => (
-                    <div key={`${row.provider}:${row.model}`} className="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_150px] items-center gap-3 text-[12.5px]" data-model-row={`${row.provider}:${row.model}`}>
-                      <span className="truncate" title={row.provider === INCLUDED_PROVIDER ? INCLUDED_LABEL : undefined}>{modelName(row.provider, row.model)}</span>
-                      <div className="h-2.5 overflow-hidden rounded bg-raised">
-                        <div className="h-full rounded bg-accent" style={{ width: `${(row.calls / maxModel) * 100}%` }} />
-                      </div>
-                      <span className="text-right text-muted">
-                        {countNoun(row.calls, "call")} · {spent(row)}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="tile rounded-lg bg-panel p-4">
-              <div className="mb-3 text-[13px] font-semibold">What asked for it</div>
-              <Donut rows={shown.byPurpose} />
-            </div>
-          </div>
-
-          <div className="tile rounded-lg bg-panel p-4">
-            <div className="mb-2 text-[13px] font-semibold">Most recent calls</div>
-            {shown.recent.length === 0 ? (
-              <Empty>No calls recorded.</Empty>
-            ) : (
-              <>
-                {shown.recent.slice(0, more ? 40 : 5).map((call, index) => (
-                  <div key={`${call.at}-${index}`} className="row-tile flex items-center gap-3 rounded border-b border-b-line px-2 py-1.5 text-[12.5px]" data-call-provider={call.provider}>
-                    <span className="min-w-0 flex-1 truncate font-medium">{call.title}</span>
-                    <span className="text-muted">
-                      {providerName(call.provider)} · {modelName(call.provider, call.model)} · in {call.tokensIn ?? "-"} · out {call.tokensOut ?? "-"} · {dateTime(call.at)}
-                    </span>
-                    <span className="min-w-16 whitespace-nowrap text-right text-muted">{spent(call)}</span>
-                  </div>
-                ))}
-                {shown.recent.length > 5 ? (
-                  <button type="button" className="mt-2 text-[12.5px] text-accent hover:underline" onClick={() => setMore(!more)}>
-                    {more ? "Show fewer" : `Show ${Math.min(35, shown.recent.length - 5)} more (${shown.recent.length - 5} left)`}
-                  </button>
-                ) : null}
-              </>
-            )}
-            <div className="mt-3 flex items-start gap-2 rounded-md border border-line bg-raised p-2 text-[12px] text-muted">
-              <Info size={13} className="mt-0.5 shrink-0" />
-              Token counts come back from the provider on each call. A dollar figure is an estimate from that vendor&apos;s published list price, and only when Ensemble knows the price for that exact model. Your invoice is in the provider&apos;s billing page. Calls on models included with Ensemble show the credits they used instead.
-            </div>
-          </div>
-
-          <div>
-            <div className="mb-2 text-[12.5px] text-muted">
-              Baselines are self-measured stopwatch samples · <Tag tone="orange">provisional</Tag> small samples until you have a few working days of data
-            </div>
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-3">
-              {shown.baselines.length === 0 ? (
-                <Stat title="Morning triage">
-                  <div>No baseline captured yet.</div>
-                  <div>Record one in eval/baseline.md, then the Hub compares against it.</div>
-                </Stat>
-              ) : (
-                shown.baselines.map((row) => (
-                  <Stat key={row.kind} title={row.kind}>
-                    <div className="text-[18px] font-bold text-ink">
-                      <span className="text-muted line-through">{Math.max(0, Math.round(row.baselineSeconds / 60))}</span> →{" "}
-                      {row.currentSeconds !== null ? `${minutesLabel(row.currentSeconds, 1)} min` : "not enough data"}
-                    </div>
-                    {row.currentSeconds !== null && row.currentSeconds < row.baselineSeconds ? <Tag tone="green">Improved</Tag> : null}
-                    <div>{row.observations} observations · baseline n={row.sampleSize}</div>
-                    {row.note ? <div>{row.note}</div> : null}
-                  </Stat>
-                ))
-              )}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <Stat title="Agent throughput">
-              <div>{countNoun(shown.throughput.completed, "task")} completed in this window</div>
-              <div>{shown.throughput.failed} failed</div>
-              <div>Median time to completion: {shown.throughput.medianMinutes === null ? "not enough data" : `${minutesLabel(shown.throughput.medianMinutes * 60, 0)} min`}</div>
-              <div>{shown.throughput.waitingOnYou} waiting on you now</div>
-            </Stat>
-            <Stat title="Trust">
-              <div>
-                {shown.trust.approved} approved as-is · {shown.trust.edited} edited · {shown.trust.rejected} rejected
-              </div>
-              <div>
-                {shown.trust.approved + shown.trust.edited + shown.trust.rejected
-                  ? `${Math.round((shown.trust.approved / (shown.trust.approved + shown.trust.edited + shown.trust.rejected)) * 100)}% accepted without edits`
-                  : "Nothing delegated yet"}
-              </div>
-            </Stat>
-            <Stat title="Governance">
-              <div>{shown.governance.ledgerEntries} actions recorded in the ledger</div>
-              <div className="mt-1 flex items-center gap-2">
-                <button type="button" className="btn py-0.5" onClick={() => verify.mutate()} disabled={verify.isPending}>
-                  <ShieldCheck size={12} /> Verify hash chain
-                </button>
-                {verify.data ? (
-                  <Tag tone={verify.data.ok ? "green" : "red"}>
-                    {verify.data.ok ? `intact · ${verify.data.checked} rows` : `broken at ${verify.data.brokenAt?.slice(0, 8)}`}
-                  </Tag>
-                ) : null}
-              </div>
-            </Stat>
-          </div>
-        </div> : null}
-      </Held>
+  const calls = data?.byModel.reduce((sum, row) => sum + row.calls, 0) ?? 0;
+  const input = data?.byModel.reduce((sum, row) => sum + row.tokensIn, 0) ?? 0;
+  const output = data?.byModel.reduce((sum, row) => sum + row.tokensOut, 0) ?? 0;
+  const recent = data?.recent.filter(call => `${call.title} ${call.model} ${call.purpose}`.toLowerCase().includes(search.toLowerCase())) ?? [];
+  const maxCalls = Math.max(1, ...data?.byModel.map(row => row.calls) ?? []);
+  return <div className="mx-auto max-w-[1200px] px-4 pb-24 pt-8 sm:px-8">
+    <PageHeader title="Metrics" description="Understand the AI you use through Ensemble. Your personal activity in other apps stays private." actions={<div className="flex flex-wrap items-center gap-2">
+      <select aria-label="Provider" value={provider} onChange={event => { setProvider(event.target.value); setMore(false); }} className="field text-sm"><option value="all">All providers</option>{(data?.providers ?? []).map(id => <option key={id} value={id}>{providerName(id)}</option>)}</select>
+      <select aria-label="Usage period" value={windowDays} onChange={event => setWindowDays(Number(event.target.value))} className="field text-sm"><option value={14}>Last 14 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option></select>
+      <button type="button" className="icon-btn" aria-label="Refresh usage" disabled={metrics.isFetching} onClick={() => { void metrics.refetch(); void credits.refetch(); }}><RefreshCw size={15} className={metrics.isFetching ? "animate-spin" : ""} /></button>
+    </div>} />
+    {metrics.error ? <p role="alert" className="mb-4 rounded-lg border border-danger/40 p-3 text-sm text-danger">{metrics.error.message}</p> : null}
+    <div className="space-y-5">
+      {credits.data?.available ? <IncludedCreditsCard usage={credits.data} /> : credits.data?.localOnly ? <IncludedLocalOnly /> : credits.error ? <p role="alert" className="text-sm text-danger">Could not load credits: {credits.error.message}</p> : null}
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted"><span>{provider === "all" ? "All Ensemble activity" : providerName(provider)} · last {windowDays} days</span><span>{metrics.isFetching ? "Updating usage…" : "Provider and date filters apply below. Credits above cover the UTC calendar month."}</span></div>
+      {data?.truncated ? <p role="note" className="text-sm text-muted">This window exceeds 5,000 records from a usage source. Choose a shorter period for complete totals.</p> : null}
+      <div className={cx("space-y-5 transition-opacity", metrics.isPlaceholderData && "pointer-events-none opacity-50")} aria-busy={metrics.isFetching}>
+        <div className="grid gap-3 sm:grid-cols-3">
+          {[{ title: "AI calls", value: calls, detail: "Requests made through Ensemble", icon: Info }, { title: "Input tokens", value: input, detail: "Context you sent to your models", icon: ArrowUpRight }, { title: "Output tokens", value: output, detail: "Content generated by your models", icon: ArrowDownLeft }].map(stat => <div key={stat.title} className="tile rounded-xl bg-panel p-5"><div className="flex items-center justify-between text-xs text-muted">{stat.title}<stat.icon size={15} /></div><div className="mt-3 text-3xl font-semibold tabular-nums">{metrics.isLoading ? "…" : count(stat.value)}</div><p className="mt-2 text-xs text-faint">{stat.detail}</p></div>)}
+        </div>
+        {data?.reporting && (data.reporting.withInput < calls || data.reporting.withOutput < calls) ? <p className="flex items-start gap-2 text-xs text-muted"><Info size={14} className="shrink-0" />Token totals include reported values only. Input counts: {data.reporting.withInput} of {calls} calls; output counts: {data.reporting.withOutput} of {calls} calls.</p> : null}
+        {data ? <ActivityChart days={data.days} /> : null}
+        <div className="grid gap-4 md:grid-cols-2">
+          <section className="tile rounded-xl bg-panel p-5"><h2 className="mb-4 text-sm font-semibold">Models you used</h2>{!data?.byModel.length ? <Empty>No model calls recorded in this period.</Empty> : <div className="space-y-4">{data.byModel.map(row => <div key={`${row.provider}:${row.model}`} data-model-row={`${row.provider}:${row.model}`}><div className="flex items-start justify-between gap-3 text-xs"><span className="min-w-0"><span className="block truncate font-medium">{modelName(row.provider, row.model)}</span><span className="mt-1 block text-faint">{providerName(row.provider)}</span></span><span className="shrink-0 text-right text-muted">{row.calls} calls · {spent(row)}</span></div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-raised"><div className="h-full rounded-full bg-accent" style={{ width: `${row.calls / maxCalls * 100}%` }} /></div></div>)}</div>}</section>
+          <section className="tile rounded-xl bg-panel p-5"><h2 className="mb-4 text-sm font-semibold">Where your usage went</h2>{!data?.byPurpose.length ? <Empty>No activity recorded.</Empty> : <div className="space-y-4">{data.byPurpose.filter(row => row.calls > 0).map(row => <div key={row.purpose} className="flex items-start justify-between gap-3 border-b border-line pb-3 text-xs"><div><strong className="font-medium">{row.purpose}</strong><p className="mt-1 text-faint">{count(row.tokensIn + row.tokensOut)} reported tokens</p></div><span className="text-right text-muted">{row.calls} calls<br /><span className="mt-1 block">{spent(row)}</span></span></div>)}</div>}</section>
+        </div>
+        <section className="tile rounded-xl bg-panel p-5"><div className="mb-3 flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-semibold">Most recent calls</h2><p className="mt-1 text-xs text-muted">Open a call for its time, purpose and how usage is counted.</p></div><label className="flex items-center gap-2 rounded-lg border border-line px-3 py-2"><Search size={14} className="shrink-0 text-muted" /><input type="search" aria-label="Search recent calls" placeholder="Find a call…" value={search} onChange={event => setSearch(event.target.value)} className="w-40 min-w-0 bg-transparent text-xs outline-none" /></label></div>
+          {!recent.length ? <Empty>{search ? "No recent calls match." : "No calls recorded in this period."}</Empty> : recent.slice(0, more ? 40 : 5).map((call, index) => <RecentCall key={`${call.at}-${index}`} call={call} />)}
+          {recent.length > 5 ? <button type="button" className="mt-3 text-xs text-accent" onClick={() => setMore(!more)}>{more ? "Show fewer" : `Show ${recent.length - 5} more calls`}</button> : null}
+          <p className="mt-4 flex items-start gap-2 border-t border-line pt-4 text-xs leading-5 text-muted"><Info size={14} className="mt-0.5 shrink-0" />Only calls routed through Ensemble appear here. Token counts come from each call’s response. AI plan balances and usage in other apps are never fetched. Missing counts or prices mean “not reported”, rather than zero.</p>
+        </section>
+      </div>
     </div>
-  );
+  </div>;
 }

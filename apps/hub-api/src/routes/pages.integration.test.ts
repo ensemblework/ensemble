@@ -396,7 +396,7 @@ test("delete everything removes standalone notes and linked pages from the list,
     const wiped = await app.inject({
       method: "POST",
       url: "/api/data/delete",
-      payload: { scope: "everything", confirm: "you@ensemble.local" },
+      payload: { scope: "everything", confirm: "delete everything" },
     });
     assert.equal(wiped.statusCode, 200);
 

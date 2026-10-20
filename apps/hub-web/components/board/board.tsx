@@ -491,7 +491,9 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
       </div>
       <div className="flex w-full min-w-0 flex-wrap items-center gap-2 px-4 pb-3 pt-2 sm:px-6">
         <SearchQuery
-          className="min-w-0 flex-1 basis-[9rem]"
+          className="w-full min-w-0 sm:w-64 sm:max-w-sm"
+          pill
+          overlay
           value={search}
           onValue={setSearch}
           placeholder="Search tasks or #label…"

@@ -70,7 +70,7 @@ Code opens a review or folder, changed-file diff, editor and Source control. On 
 
 ### 3.8 Metrics
 
-Metrics shows recorded model usage, included credits, events, throughput and available baseline observations. Unknown prices and insufficient data stay explicit. It does not infer measured time savings from task counts. [07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md) and [33](33_INCLUDED_AI.md).
+Metrics shows calls routed through Ensemble, input/output token totals, an interactive activity chart, usage by model/purpose and expandable recent calls with dates and usage explanations. Provider and 14/30/90-day filters apply to every activity aggregate. Missing token counts and prices stay explicit; calls without token counts remain visible. The separate credits card always covers the UTC calendar month and explains retained charges after usage erasure. Prototype baselines and ledger verification are absent from the page. It does not infer measured time savings from task counts. [07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md) and [33](33_INCLUDED_AI.md).
 
 ### 3.9 Settings
 
@@ -84,7 +84,7 @@ Settings is available as a page/dialog, with URL-addressable tabs (`components/s
 | Connections | Connector catalog, suite-product grants, MCP servers/tools, paired computers and supported local integrations |
 | Notifications | In-app/platform notices, permission and quiet hours |
 | Shortcuts | Supported key bindings, conflict checks and reset |
-| Data | Retention, Trash, downloads and workspace data erasure |
+| Data | Retention, Trash, downloads and a Danger zone for erasure: scope-specific typed phrase, paste/drop disabled, then a separate final modal confirmation; credit consumption is retained |
 | Spaces / Sharing | Owned spaces, settings copy/sync, membership, contacts and outgoing access |
 
 Exact subcontrols depend on profile, local/hosted mode and permissions. `GET/PATCH /api/settings` uses partial patches; an unrelated save must not reset other settings. `PUT /api/settings/modules` controls allowed modules. Automatic time zone detection and a searchable manual picker are supported; explicit choices persist.
@@ -137,7 +137,7 @@ The checked-in route inventory and route modules are authoritative; this table g
 | Files | `/api/documents`, `/api/documents/:id`, `/original`, `/text`, `/content`, `/cells`, `/page`, `/style`, `/tags`; `routes/files.ts` |
 | Imports | `/api/imports/*`; [27](27_IMPORTS.md#6-api) owns the preview/job/undo contract |
 | Skills | `/api/skills`, `/api/skills/:id`, `/restore`, `/test`, `/score`; `routes/skills.ts` |
-| Runs/metrics | `/api/runs`, `/api/runs/:id`, `/api/runs/:id/feedback`, `/api/metrics/summary`, `/api/metrics/credits`, `/api/ledger/verify` |
+| Runs/metrics | `/api/runs`, `/api/runs/:id`, `/api/runs/:id/feedback`, `/api/metrics/summary?provider=<id>&days=14` (1–90 days), `/api/metrics/credits`, `/api/ledger/verify` |
 | Assistant | `/api/assistant/tools`, `/conversations`, `/conversations/:id/messages`, `/turn`, `/apply`, `/conversations/:id/stop`; `routes/assistant.ts` |
 | Layouts | `/api/layouts/:surface`, `/api/layouts/:surface/reset`; `routes/layouts.ts`; native desks instead use preferences |
 | Workspace/agent | `/api/workspace`, `/api/agent/assign` and job/control routes; `routes/agents.ts`, `job-files.ts` |
@@ -167,7 +167,7 @@ Use `pnpm --filter @ensemble/hub-web test` and relevant API tests for behavior c
 
 ## 10. The Hub assistant
 
-The floating dock remains the shared conversation surface, including over task peeks. Floating, it resizes from its left edge, top edge or top-left corner (it stays anchored bottom-right): drag, or focus an edge and use the arrow keys; double-click or Home goes back to the default size. The size is kept in this browser (`ensemble.assistant.size`), never below 380 × 440 px and never past the window less a 20 px margin, and is fitted again when the window changes (`components/assistant/use-panel-size.ts`). Expanded, and on phones (640 px wide or less), it has no handles and keeps its fixed layout. Typed mentions send kind/ID references; names without IDs are resolved conservatively in the current space. The composer tints mentions while typing, and a sent message shows its saved mentions as chips that open the record in the app ([11](11_HOW_THE_ASSISTANT_WORKS.md#3-context-and-prompt-size)). A From your apps picker can add a source URL for explicit live reading. Model menus choose the available tier/model and identify the funding source. Unavailable turns persist as errors with Retry, not successful assistant messages.
+The floating dock remains the shared conversation surface, including over task peeks. Floating, it resizes from its left edge, top edge or top-left corner (it stays anchored bottom-right): drag, or focus an edge and use the arrow keys; double-click or Home goes back to the default size. The size is kept in this browser (`ensemble.assistant.size`), never below 380 × 440 px and never past the window less a 20 px margin, and is fitted again when the window changes (`components/assistant/use-panel-size.ts`). Expanded, and on phones (640 px wide or less), it has no handles and keeps its fixed layout. Typed mentions send kind/ID references; names without IDs are resolved conservatively in the current space. The composer tints mentions while typing, and a sent message shows its saved mentions as chips that open the record in the app ([11](11_HOW_THE_ASSISTANT_WORKS.md#3-context-and-prompt-size)). The **Attach file** picker lists only files already saved in Files and inserts an ID-backed `@file:` mention (`components/files/add-to-message.tsx`). Opening or searching it never searches connected apps. Live connected-app reads require a separate explicit request. Model menus choose the available tier/model and identify the funding source. Unavailable turns persist as errors with Retry, not successful assistant messages.
 
 [11](11_HOW_THE_ASSISTANT_WORKS.md) owns routing, tool execution and Apply. [34](34_ASSISTANT_ACTIONS.md) owns the current action map.
 
@@ -247,7 +247,7 @@ Hosted email signup needs Resend delivery (`EMAIL_PROVIDER`, `EMAIL_API_KEY`, `E
 
 New accounts complete profession/profile and template setup. The tour uses a preview canvas rather than navigating/mutating real work; Ask opens a draft without sending. A one-time profession change remains a design, not a general Settings control.
 
-Account settings manage linked login methods/password, avatar, export and deletion. Sensitive method removal/deletion requires a recent session or password confirmation. Social-only accounts can add their first password. Sign-out uses confirmation and returns to login. Account deletion retains only the separate minimal operational log described in [07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#6-data-erasure), not a profile snapshot or feedback survey.
+Account settings manage linked login methods/password, avatar, export and deletion. Sensitive method removal/deletion requires a recent session or password confirmation. Social-only accounts can add their first password. Sign-out uses confirmation and returns to login. Account deletion retains the separate monthly credit-enforcement amount and minimal operational log described in [07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#6-data-erasure), not a profile snapshot or feedback survey.
 
 ## 17. Linking a computer, and connecting editors
 
@@ -258,3 +258,5 @@ Connect guides offer CLI setup, a hosted read-only MCP URL/key or a source bridg
 ## 18. Downloads
 
 Page/task exports, original-file downloads, space archives and account exports are different operations. Exported timestamps retain an explicit timezone offset where the format includes local time. A file-backed page can use supported browser export-back; server assistant exports rebuild supported documents. [32](32_FILES.md) owns format limitations, [28](28_ENSEMBLE_SPACES.md#5-deleting-and-exporting) space archives, and Account owns full export. Download availability is subject to the same resource access checks as reading.
+
+Checked **20 Oct 2026**: regression tests cover the saved-file picker without connector requests, the two-stage deletion dialog and credit-deletion notice. The board toolbar uses a bounded compact search field (`components/board/board.tsx`).

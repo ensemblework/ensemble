@@ -175,13 +175,13 @@ export function withShare<T>(share: string | null, fn: () => T): T {
   }
 }
 
-export async function request<T>(path: string, init?: RequestInit & { json?: unknown; surviveNavigation?: boolean }): Promise<T> {
-  const { json, signal: explicit, surviveNavigation, ...rest } = init ?? {};
+export async function request<T>(path: string, init?: RequestInit & { json?: unknown; surviveNavigation?: boolean; direct?: boolean }): Promise<T> {
+  const { json, signal: explicit, surviveNavigation, direct, ...rest } = init ?? {};
   const external = explicit ?? currentExternalSignal();
   const tracked = trackRequest(external, path, surviveNavigation);
   let response: Response;
   try {
-    response = await fetch(`${API}${path}`, {
+    response = await fetch(`${direct ? HUB_API : API}${path}`, {
       ...rest,
       signal: tracked.signal,
       body: json === undefined ? rest.body : JSON.stringify(json),
@@ -935,6 +935,9 @@ export type UsageCall = {
 };
 
 export type MetricsSummary = {
+  windowDays?: number;
+  truncated?: boolean;
+  reporting?: { calls: number; withInput: number; withOutput: number };
   days: Array<{ day: string; calls: number; tokensIn: number; tokensOut: number; estimatedUsd: number | null; credits: number | null }>;
   byModel: Array<{ model: string; provider: string; calls: number; tokensIn: number; tokensOut: number; estimatedUsd: number | null; credits: number | null }>;
   byPurpose: Array<{ purpose: string; calls: number; tokensIn: number; tokensOut: number; estimatedUsd: number | null; credits: number | null }>;
@@ -1512,7 +1515,7 @@ export const api = bindClient({
   actions: (repo: string) => get<ActionsResult>(`/api/code/actions${qs({ repo })}`),
 
   // metrics
-  metrics: () => get<MetricsSummary>("/api/metrics/summary"),
+  metrics: (provider = "all", days = 14) => get<MetricsSummary>(`/api/metrics/summary${qs({ provider, days })}`),
   /** This account's included credits this month. `available` is false when the server has no included models. */
   includedUsage: () => get<IncludedUsage>("/api/metrics/credits"),
   verifyLedger: () => post<{ ok: boolean; checked: number; brokenAt?: string }>("/api/ledger/verify"),
@@ -1534,7 +1537,7 @@ export const api = bindClient({
     }>("/api/deleted"),
   restoreDeleted: (data: { kind?: string; id?: string } = {}) => post<{ restored: number }>("/api/deleted/restore", data),
   emptyDeleted: () => post<{ removed: number }>("/api/deleted/empty"),
-  deleteMyData: (scope: "context" | "everything", confirm: string) => post("/api/data/delete", { scope, confirm }),
+  deleteMyData: (scope: "context" | "everything", confirm: string) => request("/api/data/delete", { method: "POST", json: { scope, confirm }, direct: true, surviveNavigation: true }),
   activity: () => get<{ activities: Array<{ id: string; kind: string; label: string; detail?: string }> }>("/api/activity"),
 
   // assistant

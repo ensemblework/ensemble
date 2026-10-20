@@ -4,6 +4,7 @@
  * operator's monthly ceiling can be overrun by calls in flight. One row in `included_periods` per
  * month is the lock all reservations and settlements take (docs/33).
  */
+import { accountBalance } from "./accounting.js";
 import { randomUUID } from "node:crypto";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import {
@@ -77,7 +78,10 @@ async function expireStale(tx: Tx, period: string, now: Date): Promise<void> {
   const rows = await tx.$queryRaw<Array<{ total: string | null }>>`
     WITH stale AS (
       UPDATE included_usage
-         SET status = 'expired', usd = reserved_usd, settled_at = ${now}
+         SET status = 'expired', usd = reserved_usd, settled_at = ${now},
+             model = CASE WHEN erased_at IS NOT NULL THEN '' ELSE model END,
+             estimated_input_tokens = CASE WHEN erased_at IS NOT NULL THEN 0 ELSE estimated_input_tokens END,
+             max_output_tokens = CASE WHEN erased_at IS NOT NULL THEN 0 ELSE max_output_tokens END
        WHERE period = ${period} AND status = 'reserved' AND created_at < ${before}
    RETURNING reserved_usd
     )
@@ -89,14 +93,6 @@ async function expireStale(tx: Tx, period: string, now: Date): Promise<void> {
          SET reserved_usd = GREATEST(reserved_usd - ${total}::numeric, 0), spent_usd = spent_usd + ${total}::numeric, updated_at = ${now}
        WHERE period = ${period}`;
   }
-}
-
-/** USD an account has spent or holds in reservations this month. */
-async function accountUsedUsd(client: PrismaClient | Tx, account: string, period: string): Promise<number> {
-  const rows = await client.$queryRaw<Array<{ used: string | null }>>`
-    SELECT SUM(CASE WHEN status = 'reserved' THEN reserved_usd ELSE usd END)::text AS used
-      FROM included_usage WHERE account_id = ${account} AND period = ${period}`;
-  return num(rows[0]?.used);
 }
 
 function refusal(code: typeof INCLUDED_CREDITS_USED | typeof INCLUDED_PAUSED, resetsAt: Date, detail?: { need?: number; left?: number }): IncludedLimitError {
@@ -133,14 +129,16 @@ export async function reserveIncluded(args: {
       await expireStale(tx, period, now);
       const total = await lockPeriod(tx, period);
       if (total.spent + total.reserved + need > config.totalMonthlyUsd) throw refusal(INCLUDED_PAUSED, resetsAt);
-      const used = await accountUsedUsd(tx, account, period);
+      const balance = await accountBalance(tx, account, period);
+      const used = balance.used;
       if (used + need > limitUsd) {
         throw refusal(INCLUDED_CREDITS_USED, resetsAt, { need: need * CREDITS_PER_USD, left: Math.max(0, limitUsd - used) * CREDITS_PER_USD });
       }
       const id = randomUUID();
       await tx.$executeRaw`
-        INSERT INTO included_usage (id, account_id, user_id, period, model, purpose, status, estimated_input_tokens, max_output_tokens, reserved_usd, created_at)
-        VALUES (${id}, ${account}, ${args.userId}, ${period}, ${args.model}, ${args.purpose ?? null}, 'reserved', ${inputTokens}, ${maxOutputTokens}, ${need}::numeric, ${now})`;
+        INSERT INTO included_usage (id, account_id, user_id, period, model, purpose, status, estimated_input_tokens, max_output_tokens, reserved_usd, created_at, credit_key)
+        VALUES (${id}, ${account}, ${args.userId}, ${period}, ${args.model}, ${args.purpose ?? null}, 'reserved', ${inputTokens}, ${maxOutputTokens}, ${need}::numeric, ${now}, ${balance.key})`;
+      await tx.$executeRaw`UPDATE included_credit_balances SET used_usd = used_usd + ${need}::numeric WHERE credit_key = ${balance.key} AND period = ${period}`;
       await tx.$executeRaw`
         UPDATE included_periods SET reserved_usd = reserved_usd + ${need}::numeric, updated_at = ${now} WHERE period = ${period}`;
       return { id };
@@ -156,15 +154,16 @@ export async function reserveIncluded(args: {
  */
 export async function settleIncluded(args: { id: string; usage: IncludedTokens | null; answeredBy?: string | null }): Promise<{ credits: number }> {
   if (fake) return fake.settle(args);
-  const head = await db.includedUsage.findUnique({ where: { id: args.id }, select: { period: true } });
+  const head = await db.includedUsage.findUnique({ where: { id: args.id }, select: { period: true, accountId: true } });
   if (!head) throw new Error("Unknown included reservation.");
   const now = new Date();
   return db.$transaction(
     async (tx) => {
       await lockPeriod(tx, head.period);
+      const balance = await accountBalance(tx, head.accountId, head.period);
       const rows = await tx.$queryRaw<
-        Array<{ model: string; status: string; reserved: string; usd: string; est_in: number; max_out: number }>
-      >`SELECT model, status, reserved_usd::text AS reserved, usd::text AS usd, estimated_input_tokens AS est_in, max_output_tokens AS max_out
+        Array<{ model: string; status: string; reserved: string; usd: string; est_in: number; max_out: number; erased: Date | null }>
+      >`SELECT model, status, reserved_usd::text AS reserved, usd::text AS usd, estimated_input_tokens AS est_in, max_output_tokens AS max_out, erased_at AS erased
           FROM included_usage WHERE id = ${args.id} FOR UPDATE`;
       const row = rows[0];
       if (!row) throw new Error("Unknown included reservation.");
@@ -174,20 +173,24 @@ export async function settleIncluded(args: { id: string; usage: IncludedTokens |
       const cost = usage
         ? includedCost(row.model, usage)
         : includedCost(row.model, { inputTokens: row.est_in, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: row.max_out });
-      const tokens = usage ?? { inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0 };
+      const tokens = (row.erased ? null : usage) ?? { inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0 };
       // Cannot happen while Azure stops each reply at the cap; it is charged as reported if it does.
       if (cost.usd > reserved + 1e-9) console.error(`Included call ${args.id} on ${row.model} settled above its reservation: $${cost.usd.toFixed(6)} > $${reserved.toFixed(6)}.`);
       await tx.$executeRaw`
         UPDATE included_usage
-           SET status = ${usage ? "settled" : "unreported"}, usd = ${cost.usd}::numeric, input_usd = ${cost.inputUsd}::numeric, output_usd = ${cost.outputUsd}::numeric,
+           SET status = ${usage ? "settled" : "unreported"}, usd = ${cost.usd}::numeric, input_usd = ${row.erased ? 0 : cost.inputUsd}::numeric, output_usd = ${row.erased ? 0 : cost.outputUsd}::numeric,
                input_tokens = ${Math.max(0, Math.floor(tokens.inputTokens))}, cache_read_tokens = ${Math.max(0, Math.floor(tokens.cacheReadTokens))},
                cache_write_tokens = ${Math.max(0, Math.floor(tokens.cacheWriteTokens))}, output_tokens = ${Math.max(0, Math.floor(tokens.outputTokens))},
-               answered_by = ${args.answeredBy ?? null}, settled_at = ${now}
+               answered_by = ${row.erased ? null : args.answeredBy ?? null}, settled_at = ${now},
+               model = CASE WHEN erased_at IS NOT NULL THEN '' ELSE model END,
+               estimated_input_tokens = CASE WHEN erased_at IS NOT NULL THEN 0 ELSE estimated_input_tokens END,
+               max_output_tokens = CASE WHEN erased_at IS NOT NULL THEN 0 ELSE max_output_tokens END
          WHERE id = ${args.id}`;
       await tx.$executeRaw`
         UPDATE included_periods
            SET reserved_usd = GREATEST(reserved_usd - ${reserved}::numeric, 0), spent_usd = spent_usd + ${cost.usd}::numeric, updated_at = ${now}
          WHERE period = ${head.period}`;
+      await tx.$executeRaw`UPDATE included_credit_balances SET used_usd = GREATEST(0, used_usd + ${cost.usd - reserved}::numeric) WHERE credit_key = ${balance.key} AND period = ${head.period}`;
       return { credits: cost.usd * CREDITS_PER_USD };
     },
     { isolationLevel: "ReadCommitted" },
@@ -207,7 +210,11 @@ export async function assertIncludedOpen(userId: string, model: string): Promise
   const resetsAt = includedResetsAt(now);
   const totals = await db.includedPeriod.findUnique({ where: { period } });
   if (totals && num(totals.spentUsd) + num(totals.reservedUsd) >= config.totalMonthlyUsd) throw refusal(INCLUDED_PAUSED, resetsAt);
-  const used = await accountUsedUsd(db, await accountOf(db, userId), period);
+  const account = await accountOf(db, userId);
+  const used = await db.$transaction(async tx => {
+    await lockPeriod(tx, period);
+    return (await accountBalance(tx, account, period)).used;
+  });
   if (used >= config.monthlyCredits / CREDITS_PER_USD) throw refusal(INCLUDED_CREDITS_USED, resetsAt);
 }
 
@@ -239,25 +246,30 @@ export async function includedUsage(userId: string, now = new Date()): Promise<I
   const account = await accountOf(db, userId);
   // A reservation still in flight counts at what it holds; its tokens are not known yet.
   const charged = `CASE WHEN status = 'reserved' THEN reserved_usd ELSE usd END`;
-  const grouped = (by: string) => db.$queryRawUnsafe<Grouped[]>(
+  const grouped = (tx: Tx, by: string) => tx.$queryRawUnsafe<Grouped[]>(
     `SELECT ${by} AS key, COUNT(*)::int AS calls, SUM(input_tokens)::text AS input_tokens, SUM(cache_read_tokens)::text AS cached,
             SUM(output_tokens)::text AS output_tokens,
             SUM(CASE WHEN status = 'reserved' THEN 0 ELSE input_usd END)::text AS input_usd,
             SUM(CASE WHEN status = 'reserved' THEN 0 ELSE output_usd END)::text AS output_usd,
             SUM(${charged})::text AS usd
-       FROM included_usage WHERE account_id = $1 AND period = $2 GROUP BY 1 ORDER BY 1`,
+       FROM included_usage WHERE account_id = $1 AND period = $2 AND erased_at IS NULL GROUP BY 1 ORDER BY 1`,
     account,
     period,
   );
-  const [models, purposes, days, all, totals] = await Promise.all([
-    grouped("model"),
-    grouped("COALESCE(purpose, 'Other')"),
-    // created_at holds UTC wall time (timestamp without time zone), so the day is read as stored.
-    grouped("to_char(created_at, 'YYYY-MM-DD')"),
-    grouped("'all'"),
-    db.includedPeriod.findUnique({ where: { period } }),
-  ]);
-  const usedUsd = num(all[0]?.usd);
+  const [models, purposes, days, all, totals, balance] = await db.$transaction(async tx => {
+    await lockPeriod(tx, period);
+    const balance = await accountBalance(tx, account, period);
+    return Promise.all([
+      grouped(tx, "model"),
+      grouped(tx, "COALESCE(purpose, 'Other')"),
+      // created_at holds UTC wall time (timestamp without time zone), so the day is read as stored.
+      grouped(tx, "to_char(created_at, 'YYYY-MM-DD')"),
+      grouped(tx, "'all'"),
+      tx.includedPeriod.findUnique({ where: { period } }),
+      balance,
+    ] as const);
+  });
+  const usedUsd = balance.used;
   const usedCredits = round(usedUsd * CREDITS_PER_USD);
   return {
     available: true,
@@ -266,6 +278,7 @@ export async function includedUsage(userId: string, now = new Date()): Promise<I
     resetsAt,
     limit: config.monthlyCredits,
     used: usedCredits,
+    erasedCredits: round(Math.max(0, usedUsd - num(all[0]?.usd)) * CREDITS_PER_USD),
     remaining: Math.max(0, round(config.monthlyCredits - usedCredits)),
     paused: totals ? num(totals.spentUsd) + num(totals.reservedUsd) >= config.totalMonthlyUsd : false,
     totals: usageRow(all[0]),

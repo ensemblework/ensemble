@@ -1344,6 +1344,8 @@ model IncludedUsage {
   id                   String    @id @default(uuid())
   /// The account that pays: a space resolves to its owner.
   accountId            String    @map("account_id")
+  creditKey            String?   @map("credit_key")
+  erasedAt             DateTime? @map("erased_at")
   /// The space or account the call ran for.
   userId               String    @map("user_id")
   /// UTC calendar month, "2026-10".
@@ -1370,6 +1372,18 @@ model IncludedUsage {
   @@index([accountId, period])
   @@index([status, createdAt])
   @@map("included_usage")
+}
+
+/// Monthly allowance enforcement, independent of erasable workspace/call history.
+/// The key is a purpose-separated HMAC of the account email, never the address itself.
+model IncludedCreditBalance {
+  creditKey String  @map("credit_key")
+  period    String
+  usedUsd   Decimal @default(0) @map("used_usd") @db.Decimal(20, 10)
+
+  @@id([creditKey, period])
+  @@index([period])
+  @@map("included_credit_balances")
 }
 
 /// The operator's spend across every account for one month. Its row is the lock every reservation

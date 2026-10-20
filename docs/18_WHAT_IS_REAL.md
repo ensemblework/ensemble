@@ -123,3 +123,11 @@ Historical designs under [design/](design/) may contain partly shipped or supers
 This documentation pass reads source and checks documentation links, referenced paths and consistency; it does not run external provider writes or release new application code. Prior feature verification remains in PR/CI evidence. Automated fixture/HTTP tests establish their tested contracts, not universal live-provider success or small-model reliability on every prompt.
 
 One code follow-up remains: `bridge/gaps.ts` contains old diagnostic messages about connector/redaction availability. Those messages lag the current code; the bridge itself remains read-only. This Markdown-only cleanup does not change its runtime diagnostics.
+
+## Data controls and usage (checked 20 Oct 2026)
+
+- The assistant attachment button lists saved Files and inserts an ID-backed file mention; it makes no connector search. Task/project live app-item searches remain explicit actions.
+- Settings → Data uses a Danger zone with a scope-specific phrase typed by hand and a separate final modal confirmation. Deletion/receipt are transactional. Everything erases usage details, metrics, baselines and old audit payloads; credits already consumed remain charged.
+- Independent monthly HMAC-keyed balances prevent workspace erasure or same-email account recreation from renewing the default 20,000-credit allowance. Legacy charges are recovered only where surviving metric evidence supports them. The public privacy page describes this short-lived credit-enforcement record.
+- Metrics filters the daily chart, model/purpose totals and recent calls by provider and date. Calls lacking token reports remain visible. Local/subscription response data is used where available; external plan balances and usage outside Ensemble are not queried.
+- The board toolbar has a bounded compact search field. Web and packaged native UI share these components.

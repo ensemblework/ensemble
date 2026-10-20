@@ -312,7 +312,7 @@ test("Delete my data erases standalone pages, diagrams, skills and histories, is
   const res = await a.inject({
     method: "POST",
     url: "/api/data/delete",
-    payload: { scope: "everything", confirm: a.email },
+    payload: { scope: "everything", confirm: "delete everything" },
   });
   assert.equal(res.statusCode, 200, res.body);
   for (const model of [

@@ -97,7 +97,7 @@ The authoritative shapes are `apps/hub-api/prisma/schema.prisma` and `packages/s
 | `WorkspaceJob`, `Run`, `RunStep`, approvals and decisions | Durable assignment, attempts, evidence and exact continuations |
 | `AssistantConversation`, `AssistantMessage`, `AssistantWorkflow` | Chat state, tool proposals/receipts and ordered dependent-write checkpoints |
 | Files, meetings, plots, diagrams and desk records | Feature-owned content; their owning guides document storage and limits |
-| `AuditLedger`, `MetricEvent`, included usage/period records | Action history, observations and metered included-model usage |
+| `AuditLedger`, `MetricEvent`, included usage/period/balance records | Action history, observations, metered included-model usage and independent monthly allowance enforcement |
 
 Most content is scoped by the open space's `userId`; sharing policy further limits what a guest may read/write. Credentials, personal reminders and personal settings do not become shared just because an item is shared. [28](28_ENSEMBLE_SPACES.md) and [29](29_SHARING.md) define these boundaries.
 

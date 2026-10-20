@@ -330,3 +330,5 @@ Generic manual sync now saves real contact metadata only (`connectors/people-syn
 ## Relationships from the assistant
 
 `hub_list_app_relationships` and `hub_manage_app_relationship` in `assistant/tools/relationships.ts` now expose the same Attach, Remove, Refresh, Add as task, Add people, project source-link and explicit People merge operations as the app. They use the original authenticated request to call the existing scoped routes, retaining their permissions, verification, limits and deduplication. Changes wait for Apply. `hub_run_workflow` can link newly created records using earlier results. This adds no general email or chat-sending tools. Full action map: [34](34_ASSISTANT_ACTIONS.md).
+
+The assistant composer uses **Attach file**, a saved-Files picker, rather than this live connected-app picker (`components/files/add-to-message.tsx`). It inserts a file mention with its ID and never requests connected-app search on open. Live searches remain available when explicitly requested through connected-app actions or the task/project picker.

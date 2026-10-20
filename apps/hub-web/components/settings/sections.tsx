@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, RotateCcw, Trash2, X } from "lucide-react";
+import { AlertTriangle, ChevronRight, RotateCcw, Trash2, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import type { Settings } from "@ensemble/shared-types";
@@ -17,6 +17,7 @@ import { pickFolderNative } from "@/lib/desktop-dialog";
 import { InfoTip, SectionCard, SettingRow, Spinner, Tag, Toggle, cx } from "../ui";
 import { confirmAction } from "@/components/ask-dialog";
 import { isEmailAddress } from "@ensemble/shared-types";
+import { Modal } from "./modal";
 import { TimezonePicker } from "./timezone-picker";
 import { NumberField } from "./number-field";
 import { askNotificationPermission, notificationNote, readNotificationState, refreshNotificationPermission, showNotification, type NotificationState } from "./reminders";
@@ -724,42 +725,53 @@ export function DeletedSection() {
   );
 }
 
-export function DeleteDataSection({ settings }: { settings: Settings }) {
+export function DeleteDataSection({ settings: _settings }: { settings: Settings }) {
   const toast = useToast();
   const client = useQueryClient();
   const [scope, setScope] = useState<"context" | "everything">("context");
   const [confirm, setConfirm] = useState("");
+  const [step, setStep] = useState<"type" | "review" | null>(null);
+  const phrase = scope === "everything" ? "delete everything" : "delete people and app information";
+  const label = scope === "everything" ? "Everything in this space" : "People and app information";
   const remove = useMutation({
     mutationFn: () => api.deleteMyData(scope, confirm),
+    onMutate: () => client.cancelQueries(),
     onSuccess: () => {
-      toast(scope === "context" ? "People and app information deleted." : "Everything deleted.");
+      setStep(null);
       setConfirm("");
-      void client.invalidateQueries();
+      toast(scope === "context" ? "People and app information deleted." : "Workspace data deleted. Monthly credits are unchanged.");
+      void client.resetQueries();
     },
-    onError: (error) => toast((error as Error).message, { tone: "error" }),
   });
+  const close = () => { if (!remove.isPending) { setStep(null); setConfirm(""); remove.reset(); } };
   return (
-    <SectionCard
-      title="Delete my data"
-      description="Remove saved emails, messages, meeting notes, people, repository details and their links. Everything also removes your pages, tasks and other workspace content. Your account, sign-ins, computers, connected apps, model keys and settings stay. We keep a record that you deleted data, without its contents. Stop active agent tasks first."
-    >
-      <select aria-label="Data deletion scope" disabled={remove.isPending} value={scope} onChange={(event) => setScope(event.target.value as "context" | "everything")} className="field w-full">
-        <option value="context">People and app information</option>
-        <option value="everything">Everything (tasks, projects, skills, chats too)</option>
-      </select>
-      <div className="mt-3 text-[12.5px] text-muted">
-        Type <span className="font-mono text-ink">{settings.email}</span> to confirm. This cannot be undone.
+    <section className="overflow-hidden rounded-xl border border-danger/50" aria-labelledby="data-danger-title">
+      <div className="border-b border-danger/25 bg-danger/5 px-5 py-4">
+        <h2 id="data-danger-title" className="flex items-center gap-2 text-[15px] font-semibold"><AlertTriangle size={17} className="text-danger" /> Danger zone</h2>
+        <p className="mt-1 text-[13px] text-muted">Permanently delete data from this Ensemble space. These actions cannot be undone.</p>
       </div>
-      <input aria-label="Confirm data deletion with your email" disabled={remove.isPending} value={confirm} onChange={(event) => setConfirm(event.target.value)} className="field mt-1.5 w-full" />
-      <button
-        type="button"
-        className="btn mt-3 border-danger/60 text-[#ffb4ae]"
-        disabled={confirm.trim().toLowerCase() !== settings.email.toLowerCase() || remove.isPending}
-        onClick={() => remove.mutate()}
-      >
-        Delete {scope === "context" ? "people and app information" : "everything"}
-      </button>
-    </SectionCard>
+      <div className="space-y-4 bg-panel p-5">
+        <div className="grid gap-2 sm:grid-cols-2">
+          {([ ["context", "People and app information", "Saved people, files, imported messages, meeting notes and repository context."], ["everything", "Everything in this space", "All workspace content, including tasks, projects, pages, skills, chats and usage history."] ] as const).map(([value, title, detail]) => <label key={value} className={cx("flex cursor-pointer gap-3 rounded-lg border p-3", scope === value ? "border-danger/50 bg-danger/5" : "border-line")}>
+            <input type="radio" name="delete-scope" value={value} checked={scope === value} onChange={() => { setScope(value); setConfirm(""); }} className="mt-1 accent-[rgb(var(--danger-rgb))]" />
+            <span><strong className="block text-[13px] font-medium">{title}</strong><span className="mt-1 block text-xs leading-5 text-muted">{detail}</span></span>
+          </label>)}
+        </div>
+        <p className="text-xs leading-5 text-muted">Your account, sign-ins, computers, connections, model keys and settings stay. Credits already used still count toward your monthly allowance. Stop active agent work before continuing.</p>
+        <button type="button" className="btn border-danger/50 text-danger" onClick={() => { remove.reset(); setStep("type"); }}><Trash2 size={14} /> Delete selected data…</button>
+      </div>
+      <Modal open={step !== null} onClose={close} title={step === "review" ? "Permanently delete this data?" : "Confirm data deletion"} footer={<div className="flex justify-end gap-2">
+        <button type="button" className="btn" disabled={remove.isPending} onClick={close}>Cancel</button>
+        {step === "type" ? <button type="button" className="btn border-danger/50 text-danger" disabled={confirm !== phrase} onClick={() => setStep("review")}>Review deletion</button> : <button type="button" className="btn border-danger bg-danger text-white" disabled={remove.isPending || confirm !== phrase} onClick={() => remove.mutate()}>{remove.isPending ? "Deleting…" : "Permanently delete"}</button>}
+      </div>}>
+        <div className="flex items-start gap-3 rounded-lg border border-danger/30 bg-danger/5 p-3"><AlertTriangle size={20} className="mt-0.5 shrink-0 text-danger" /><div><p className="text-sm font-semibold">{label}</p><p className="mt-1 text-xs leading-5 text-muted">{scope === "everything" ? "Your workspace content and usage details will be removed permanently." : "Your saved people, files and imported app information will be removed permanently."} Monthly credit consumption will be retained.</p></div></div>
+        {step === "type" ? <label className="mt-4 block text-sm">Type <strong className="select-none font-mono">{phrase}</strong> to continue.
+          <input aria-label="Deletion confirmation phrase" className="field mt-2 w-full" value={confirm} autoComplete="off" spellCheck={false} onChange={event => setConfirm(event.target.value)} onPaste={event => event.preventDefault()} onDrop={event => event.preventDefault()} />
+          <span className="mt-2 block text-xs text-muted">Enter the phrase by hand. Pasting is disabled.</span>
+        </label> : <p className="mt-4 text-sm leading-6">You have confirmed the deletion phrase. Select <strong>Permanently delete</strong> to finish. There is no recovery or undo.</p>}
+        {remove.error ? <p role="alert" className="mt-3 text-sm text-danger">{remove.error.message}</p> : null}
+      </Modal>
+    </section>
   );
 }
 

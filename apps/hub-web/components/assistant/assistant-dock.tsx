@@ -38,7 +38,8 @@ import { useToast } from "../toast";
 import { BrandMorph } from "@/components/motion/brand-morph";
 import { ThinkingStatus } from "@/components/motion/slot";
 import { cx } from "../ui";
-import { AddAppItemToMessage } from "../app-items/add-to-message";
+import { AddFileToMessage } from "../files/add-to-message";
+import { mentionToken } from "@ensemble/shared-types";
 import { PANEL_EDGES, usePanelSize } from "./use-panel-size";
 
 /** 48 px mark in the empty reply. Settles to the mark, then leaves, once tokens arrive. */
@@ -795,8 +796,10 @@ export function AssistantDock() {
                 {includedModels.map(model => <button key={model} type="button" role="option" aria-selected={picked === model} className="flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-[13px] text-ink hover:bg-hover" onClick={() => { setIncludedPick(model); close(); }}><span className="inline-flex items-center gap-2"><ModelLogo model={model} provider={INCLUDED_PROVIDER} size={13} />{includedModelName(model)}</span>{picked === model ? <Check size={14} /> : null}</button>)}
               </div> : null}</div>}
           </Popover>
-          <AddAppItemToMessage
-            onInsert={(line) => {
+          <AddFileToMessage
+            onInsert={(file) => {
+              mention.remember(file);
+              const line = mentionToken(file.kind, file.label);
               setDraft((current) => (current.trim() ? `${current.trimEnd()} ${line} ` : `${line} `));
               window.setTimeout(() => input.current?.focus(), 30);
             }}
