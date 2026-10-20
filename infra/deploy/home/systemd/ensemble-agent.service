@@ -1,0 +1,18 @@
+[Unit]
+Description=Ensemble agent-runtime (home server, user unit)
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=%h/ensemble-host/app/apps/agent-runtime
+EnvironmentFile=%h/ensemble-host/ensemble.env
+Environment=NODE_ENV=production
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=%h/ensemble-host/app/apps/agent-runtime/.venv/bin/uvicorn ensemble_agent.main:app --host 127.0.0.1 --port ${AGENT_RUNTIME_PORT}
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

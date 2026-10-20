@@ -10,6 +10,7 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 import { redact } from "../connectors/ingest.js";
 import { sseHub } from "../lib/sse.js";
 import type { WorkerJob, WorkerReply, WorkerText } from "./extract-worker.js";
+import { ORIGINAL_SELECT, originalBytes } from "./originals.js";
 
 export const MAX_TEXT_CHARS = 400_000;
 const WORKER_TIMEOUT_MS = 30_000;
@@ -251,11 +252,13 @@ export function queueFileText(db: PrismaClient, id: string, again = false): Prom
   if (running && !again) return running;
   const job: Promise<void> = (async () => {
     if (running) await running;
-    const row = await db.document.findFirst({ where: { id, deletedAt: null }, select: { userId: true, filename: true, original: true, generation: true } });
+    const row = await db.document.findFirst({ where: { id, deletedAt: null }, select: { userId: true, filename: true, generation: true, ...ORIGINAL_SELECT } });
     if (!row) return;
+    // Outside the try: storage that cannot be reached leaves the file queued, and listing Files queues it again.
+    const bytes = await originalBytes(row);
     let result: FileText;
     try {
-      result = await readFileText(row.filename, row.original);
+      result = await readFileText(row.filename, bytes);
     } catch (error) {
       hooks.onError?.(error, id);
       result = { status: "failed", text: "", pageCount: null, warnings: ["This file could not be read, so agents cannot read it."] };

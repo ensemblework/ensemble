@@ -156,8 +156,9 @@ export async function createCappedDocument<T extends Prisma.DocumentCreateArgs>(
   args: Prisma.SelectSubset<T, Prisma.DocumentCreateArgs>,
 ) {
   if (args.data.userId !== userId) throw new Error("The document account does not match its quota account.");
-  const bytes = args.data.original.byteLength;
-  if (args.data.byteSize !== bytes) throw new Error("The document size does not match its original bytes.");
+  const bytes = args.data.byteSize;
+  if (args.data.original && args.data.original.byteLength !== bytes) throw new Error("The document size does not match its original bytes.");
+  if (!args.data.original && !args.data.blobKey) throw new Error("The document has neither original bytes nor a blob key.");
   return withHostedUserLock(db, userId, async (tx) => {
     await assertFileRoom(tx, userId, { files: 1, bytes });
     return tx.document.create(args);

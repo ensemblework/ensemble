@@ -1,4 +1,5 @@
 import { crossOriginCookieProblem } from "@ensemble/shared-types/cookie-site";
+import { fileStorageProblem } from "../files/originals.js";
 import { isHosted } from "./hosted-access.js";
 import { hostedLimits } from "./hosted-limits.js";
 import { signupMode } from "./signup.js";
@@ -99,6 +100,8 @@ export function productionProblems(env: NodeJS.ProcessEnv, surface: ProductionSu
         problems.push("Hosted open signup requires ENSEMBLE_SERVER_RUNNER=off. Server execution cannot be exposed to public signup.");
       }
     }
+    const storage = fileStorageProblem(env);
+    if (storage) problems.push(storage);
     if (truthyFlag(env.ENSEMBLE_DEV_TOOLS)) {
       problems.push("ENSEMBLE_DEV_TOOLS is on. The desk switcher and developer routes stay off in production. Unset it before starting.");
     }

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { strToU8 } from "fflate";
 import { jsPDF } from "jspdf";
 import { patchOfficeText } from "../../files/extract.js";
+import { ORIGINAL_SELECT, originalBytes } from "../../files/originals.js";
 import { fileFormat } from "@ensemble/shared-types";
 import { markdownToDocx } from "../../lib/office/docx.js";
 import { editablePage } from "../../pages/store.js";
@@ -14,7 +15,7 @@ import { defineTool, toolOk, type ToolContext } from "../types.js";
 async function original(ctx: ToolContext, id: string) {
   // The same route gate controls shared-file access before server-side bytes are opened.
   const details = await assistantRequest(ctx, "GET", `/api/documents/${id}`);
-  const row = await ctx.prisma.document.findFirst({ where: { id, userId: ctx.userId, deletedAt: null }, select: { original: true, filename: true, sha256: true, byteSize: true } });
+  const row = await ctx.prisma.document.findFirst({ where: { id, userId: ctx.userId, deletedAt: null }, select: { ...ORIGINAL_SELECT, filename: true, sha256: true, byteSize: true } });
   if (!row) throw new Error("File not found.");
   if (row.byteSize > 15 * 1024 * 1024) throw new Error("This file is too large for an assistant edit. Edit it in its original app and upload it again.");
   return { row, file: details.file };
@@ -35,9 +36,10 @@ export const fileEditTools = [
       else {
         if (!input.find) throw new Error("Send the exact passage to replace.");
         const format = fileFormat(row.filename);
+        const current = await originalBytes(row);
         let bytes: Uint8Array;
-        if (format.ext === "docx" || format.ext === "pptx") bytes = await patchOfficeText(row.original, format.ext, input.find, input.replacement ?? "");
-        else if (["text", "code", "csv", "tsv"].includes(format.kind) || ["csv", "tsv"].includes(format.ext)) { const body = new TextDecoder("utf-8", { fatal: true }).decode(row.original); if (body.indexOf(input.find) < 0 || body.indexOf(input.find) !== body.lastIndexOf(input.find)) throw new Error("Choose an exact passage that occurs once."); bytes = strToU8(body.replace(input.find, () => input.replacement ?? "")); }
+        if (format.ext === "docx" || format.ext === "pptx") bytes = await patchOfficeText(current, format.ext, input.find, input.replacement ?? "");
+        else if (["text", "code", "csv", "tsv"].includes(format.kind) || ["csv", "tsv"].includes(format.ext)) { const body = new TextDecoder("utf-8", { fatal: true }).decode(current); if (body.indexOf(input.find) < 0 || body.indexOf(input.find) !== body.lastIndexOf(input.find)) throw new Error("Choose an exact passage that occurs once."); bytes = strToU8(body.replace(input.find, () => input.replacement ?? "")); }
         else throw new Error("Use spreadsheet cell edits, or convert this document to a page and export it. This format cannot be edited as text.");
         result = await assistantRequest(ctx, "PUT", `/api/documents/${input.fileId}/content`, { dataBase64: Buffer.from(bytes).toString("base64"), expectedSha256: input.expectedSha256 });
       }

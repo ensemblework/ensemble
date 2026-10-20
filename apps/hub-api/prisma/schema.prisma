@@ -1130,7 +1130,10 @@ model Document {
   mediaType          String    @map("media_type")
   byteSize           Int       @map("byte_size")
   sha256             String
-  original           Bytes
+  /// The bytes, unless they are in blob storage (blobKey); one of the two is always set.
+  original           Bytes?
+  /// Key in the ENSEMBLE_FILE_STORAGE blob container (files/originals.ts).
+  blobKey            String?   @map("blob_key")
   format             String
   parseStatus        String    @default("queued") @map("parse_status")
   parseError         Json?     @map("parse_error")
@@ -1176,6 +1179,7 @@ model Document {
   @@index([taskIds], type: Gin)
   @@index([workItemIds], type: Gin)
   @@index([deliverableIds], type: Gin)
+  @@index([blobKey])
   @@map("context_documents")
 }
 

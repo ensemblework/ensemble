@@ -159,7 +159,7 @@ test("a Drive file comes in once; bringing it in again returns the same file", a
   assert.equal(file.byteSize, Buffer.byteLength("# Field guide\n\nCalibrate the sensor first."));
   const row = await harness.prisma.document.findUniqueOrThrow({ where: { id: file.id }, select: { userId: true, original: true, source: true } });
   assert.equal(row.userId, mira.id);
-  assert.equal(Buffer.from(row.original).toString("utf8"), "# Field guide\n\nCalibrate the sensor first.");
+  assert.equal(Buffer.from(row.original!).toString("utf8"), "# Field guide\n\nCalibrate the sensor first.");
   assert.equal((row.source as { externalId?: string }).externalId, "google_workspace:file:1DocFieldnote01");
   const download = calls.find((row) => row.url.includes("alt=media"))!;
   assert.equal(new Headers(download.init?.headers).get("authorization"), `Bearer ${SECRET}`);

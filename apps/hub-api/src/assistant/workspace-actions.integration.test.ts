@@ -140,16 +140,16 @@ test("original text and Word edits preserve IDs, enforce content hashes and leav
  const file = await saveFile(h.prisma, u.id, { filename: "plan.md", mediaType: "text/markdown", bytes: Buffer.from("A unique old date.\nKeep this.") }, { summarize: false });
  const info = (await run(u, "hub_file_edit_info", { fileId: file.id })).data as any;
  await run(u, "hub_edit_file", { fileId: file.id, expectedSha256: info.expectedSha256, action: "replace_text", find: "old date", replacement: "new date" });
- const saved = await h.prisma.document.findUniqueOrThrow({ where: { id: file.id } }); assert.equal(Buffer.from(saved.original).toString(), "A unique new date.\nKeep this.");
+ const saved = await h.prisma.document.findUniqueOrThrow({ where: { id: file.id } }); assert.equal(Buffer.from(saved.original!).toString(), "A unique new date.\nKeep this.");
  await assert.rejects(run(u, "hub_edit_file", { fileId: file.id, expectedSha256: info.expectedSha256, action: "replace_text", find: "new date", replacement: "other date" }), /changed/);
  const bytes = await markdownToDocx("# Agreement\n\nKeep **bold** formatting.\n\nReplace old clause.");
  const word = await saveFile(h.prisma, u.id, { filename: "agreement.docx", mediaType: "application/octet-stream", bytes }, { summarize: false });
  await fileTextSettled(word.id);
  const wordInfo = (await run(u, "hub_file_edit_info", { fileId: word.id })).data as any;
  await run(u, "hub_edit_file", { fileId: word.id, expectedSha256: wordInfo.expectedSha256, action: "replace_text", find: "old clause", replacement: "new clause" });
- const updated = await h.prisma.document.findUniqueOrThrow({ where: { id: word.id } }); assert.match(docxText(updated.original), /new clause/);
+ const updated = await h.prisma.document.findUniqueOrThrow({ where: { id: word.id } }); assert.match(docxText(updated.original!), /new clause/);
  const { unzipSync, strFromU8 } = await import("fflate");
- const originalXml = strFromU8(unzipSync(bytes)["word/document.xml"]!); const nextXml = strFromU8(unzipSync(updated.original)["word/document.xml"]!);
+ const originalXml = strFromU8(unzipSync(bytes)["word/document.xml"]!); const nextXml = strFromU8(unzipSync(updated.original!)["word/document.xml"]!);
  assert.ok(originalXml.includes("w:b")); assert.ok(nextXml.includes("w:b"));
  assert.throws(() => replaceOfficeText(bytes, "docx", "absent", "x"), /matched 0/);
 });
@@ -161,7 +161,7 @@ test("spreadsheet edits keep other cells and refuse stale hashes", async () => {
  const info = (await run(u, "hub_file_edit_info", { fileId: file.id })).data as any;
  await run(u, "hub_edit_file", { fileId: file.id, expectedSha256: info.expectedSha256, action: "edit_cells", sheets: [{ name: "Budget", set: [{ row: 2, col: 2, value: 15 }] }] });
  const updated = await h.prisma.document.findUniqueOrThrow({ where: { id: file.id } });
- const rows = await xlsxToRows(updated.original); assert.equal(rows[0]!.rows[1]![1], 15); assert.equal(rows[0]!.rows[2]![1], 20);
+ const rows = await xlsxToRows(updated.original!); assert.equal(rows[0]!.rows[1]![1], 15); assert.equal(rows[0]!.rows[2]![1], 20);
 });
 
 test("profile-list updates retain IDs, validate status and can be undone", async () => {
@@ -231,9 +231,9 @@ test("a CSV export already in Files can be previewed, imported as a whole board 
 test("exporting a page creates a real Word or PDF file and respects a replacement's content hash", async () => {
  const u = await h.asUser(); const page = (await run(u, "hub_create_page", { title: "Status", markdown: "# Status\n\nLaunch is ready." })).data as any;
  const word = (await run(u, "hub_export_page_file", { pageId: page.id, format: "docx", filename: "status.docx" })).data as any;
- const original = await h.prisma.document.findUniqueOrThrow({ where: { id: word.id } }); assert.match(docxText(original.original), /Launch is ready/);
+ const original = await h.prisma.document.findUniqueOrThrow({ where: { id: word.id } }); assert.match(docxText(original.original!), /Launch is ready/);
  const pdf = (await run(u, "hub_export_page_file", { pageId: page.id, format: "pdf", filename: "status.pdf" })).data as any;
- const pdfRow = await h.prisma.document.findUniqueOrThrow({ where: { id: pdf.id } }); assert.ok(Buffer.from(pdfRow.original).subarray(0, 4).toString() === "%PDF");
+ const pdfRow = await h.prisma.document.findUniqueOrThrow({ where: { id: pdf.id } }); assert.ok(Buffer.from(pdfRow.original!).subarray(0, 4).toString() === "%PDF");
  await assert.rejects(run(u, "hub_export_page_file", { pageId: page.id, format: "docx", filename: "status.docx", replaceFileId: word.id, expectedSha256: "0".repeat(64) }), /changed/);
 });
 

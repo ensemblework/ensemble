@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { fileFormat, type FileKind, type FileTextStatus } from "@ensemble/shared-types";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { clip } from "../lib/office/text.js";
+import { ORIGINAL_SELECT, originalBytes } from "./originals.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
@@ -149,8 +150,8 @@ export async function findFile(db: Db, userId: string, ref: string, among: Attac
 
 /** The original bytes. Null when the file is not this person's. */
 export async function fileOriginal(db: Db, userId: string, id: string): Promise<{ filename: string; bytes: Uint8Array } | null> {
-  const row = await db.document.findFirst({ where: { id, userId, deletedAt: null }, select: { filename: true, original: true } });
-  return row ? { filename: row.filename, bytes: row.original } : null;
+  const row = await db.document.findFirst({ where: { id, userId, deletedAt: null }, select: { filename: true, ...ORIGINAL_SELECT } });
+  return row ? { filename: row.filename, bytes: await originalBytes(row) } : null;
 }
 
 /** A name that is safe as one path segment on every system. */
