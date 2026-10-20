@@ -82,3 +82,5 @@ The source still contains legacy `workspace/executor.ts` and Python planner/work
 ## C. Verification
 
 Use queue/assignment/tool/decision/engine and device tests for the affected path. API integration runs against isolated fixtures or dedicated Postgres/Redis; OS escape tests use the platform backend. Real-model/browser/installed-engine checks need their own environment. This documentation-only audit did not start agents, publish code, call external calendar accounts or change real task data.
+
+The Assign dialog selects a profile name when its editor opens, before the person can type; subsequent keystrokes do not reselect the draft. This avoids delayed selection overwriting the first character (`components/agent/assign-dialog.tsx`; checked 20 Oct 2026 with the immediate-typing regression).

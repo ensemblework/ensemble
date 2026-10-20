@@ -143,7 +143,11 @@ test("the prompt describes the situation, the person and the connected apps inst
   assert.doesNotMatch(apps, /Microsoft 365|Zoom|Docusign|Not connected/, "apps that are not connected are not listed");
   assert.match(apps, /If they name an app that is not in this list, it is not connected in this space/);
   assert.match(apps, /always waits for Apply/);
+  assert.match(apps, /Only search, read, list recent items, sync or import connected-app content when the person explicitly requests/);
+  assert.match(apps, /general question about files does not authorize reading app content/);
+  assert.match(apps, /Use saved Ensemble files and stored Hub context by default/);
   const readOnly = settings({ connectedAppWrites: false });
+  assert.match(appsPrompt(await loadConnections(ctx(readOnly, [GOOGLE]), tools.filter((tool) => !tool.isWrite)), readOnly), /This also applies to remote MCP tools/);
   assert.match(appsPrompt(await loadConnections(ctx(readOnly, [GOOGLE]), tools.filter((tool) => !tool.isWrite)), readOnly), /switched off/);
   assert.match(appsPrompt(await loadConnections(ctx(settings()), []), settings()), /^Connected apps in this space: none\.\nIf they ask about an app, say it is not connected in this space/);
   const zoomGrant: AppGrant = { provider: "zoom", account: "mira@fieldnote.example", scopes: [] };
