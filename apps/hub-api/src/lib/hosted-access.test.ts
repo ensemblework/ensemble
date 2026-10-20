@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createHostedAccessPolicy, isHosted, operatorEmail } from "./hosted-access.js";
+import { createHostedAccessPolicy, isHosted, keepsRunFileText, operatorEmail } from "./hosted-access.js";
 
 const env = { NODE_ENV: "production", ENSEMBLE_OPERATOR_EMAILS: "operator@example.test, second@example.test" };
 const users = {
@@ -45,4 +45,10 @@ test("unknown and unverified users fail closed; database errors propagate", asyn
   const unavailable = createHostedAccessPolicy(async () => { throw new Error("database unavailable"); }, env);
   await assert.rejects(unavailable.canUseHostCredentials("operator"), /database unavailable/);
   await assert.rejects(unavailable.requireVerifiedUser("operator"), /database unavailable/);
+});
+
+test("Ensemble on the web keeps no file text from runs; the desktop and local servers do", () => {
+  assert.equal(keepsRunFileText({ NODE_ENV: "production" }), false);
+  assert.equal(keepsRunFileText({ NODE_ENV: "production", ENSEMBLE_DESKTOP: "1" }), true);
+  assert.equal(keepsRunFileText({ NODE_ENV: "development" }), true);
 });

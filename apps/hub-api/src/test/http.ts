@@ -104,7 +104,7 @@ export async function createHttpHarness(options: BuildAppOptions = {}) {
         await prisma.$disconnect();
         await closeDatabase();
         const { eraseUserDatasetFiles } = await import("../plots/store.js");
-        for (const userId of users) eraseUserDatasetFiles(userId);
+        for (const userId of users) await eraseUserDatasetFiles(userId);
       },
     };
   } catch (error) {

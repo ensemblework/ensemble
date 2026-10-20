@@ -46,6 +46,8 @@ main() {
   pnpm --filter @ensemble/hub-api exec prisma generate >/dev/null
   home_compose up -d --remove-orphans
   wait_postgres
+  # A dump before any migration runs; a deploy whose dump fails stops here.
+  bash "$APP/infra/deploy/home/pg-backup.sh" --local
   pnpm db:migrate
   ensure_agent_venv
   install_units

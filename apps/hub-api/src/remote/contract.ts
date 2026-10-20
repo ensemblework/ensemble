@@ -142,6 +142,8 @@ export const JobSpec = z
     leaseUntil: text(64).nullish(),
     /** The server's device protocol (`PROTOCOL`); servers before 14 Oct 2026 omit it (1). */
     protocol: z.number().int().min(1).max(1000).optional(),
+    /** False when the server keeps no text of the files a run changed (Ensemble on the web): skip sending it. */
+    keepsFileText: z.boolean().optional(),
   })
   .passthrough();
 export type JobSpec = z.infer<typeof JobSpec>;

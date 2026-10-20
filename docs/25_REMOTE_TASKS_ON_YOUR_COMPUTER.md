@@ -45,7 +45,7 @@ The event stream wakes the device; persisted job/lease state is authoritative. F
 
 ### 4.2 Stored model and job data
 
-The host stores device identity/capabilities, task and job spec, lease state, decisions, progress/log/evidence and result. Local secrets stay local, except the explicit supported user-key transfer protocol when enabled. The old blanket claim “the host never stores any file contents” is false: changed-file review copies and transient relays are implemented below.
+The host stores device identity/capabilities, task and job spec, lease state, decisions, progress/log/evidence and result. Local secrets stay local, except the explicit supported user-key transfer protocol when enabled. Ensemble on the web stores no file contents from a computer: the files a run changed are listed by name and line counts, and their text is read from the computer when opened (§4.6). A desktop app or local server does keep changed-file copies; relays are transient everywhere.
 
 ### 4.3 Local routes
 
@@ -61,7 +61,7 @@ Claims carry bounded task/page/source/skill context. Embedded owned diagrams pro
 
 ### 4.6 A task's files on the web
 
-`remote/files.ts` sends supported changed-file text before completion: at most **100 files**, **256 KB/file**, **3 MB/run**. The server rechecks paths/redaction and stores `JobFile` copies for at most **30 days**. Metadata reports additions/deletions/line counts; renames can appear as delete+add. Unsafe cloned Git configuration is not executed just to inspect changes.
+`remote/files.ts` sends supported changed-file text before completion: at most **100 files**, **256 KB/file**, **3 MB/run**. The server rechecks paths/redaction and stores `JobFile` copies for at most **30 days**, except **Ensemble on the web, which keeps none** (`keepsRunFileText` in `lib/hosted-access.ts`): its claim carries `keepsFileText: false` so a computer sends no text, and `POST /api/devices/self/jobs/:id/files` drops any that an older computer still sends (answer `{ stored: 0 }`). There, `GET /api/agent/jobs/:id/file` always reads live. Metadata reports additions/deletions/line counts; renames can appear as delete+add. Unsafe cloned Git configuration is not executed just to inspect changes.
 
 Live `GET /api/agent/jobs/:id/tree` and `/file` relays request the computer's current authorized folder through `devices/file-relay.ts`. They time out rather than becoming remote shell access. Text views are bounded and redacted; secrets, Git internals, outside links, hard links and unsafe path races are refused by `workspace/folder-read.ts` on both ends.
 

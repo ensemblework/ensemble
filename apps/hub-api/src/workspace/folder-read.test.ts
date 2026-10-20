@@ -12,7 +12,7 @@ import { agentChanges, parseNumstat, parseRaw, parseStatus } from "./changed-fil
 import { folderPath, listFolder, readFolderFile, refusedPath } from "./folder-read.js";
 
 process.env.REDIS_URL ??= "memory://local";
-const { changedFileUploads } = await import("../remote/files.js");
+const { changedFileUploads, uploadChangedFiles } = await import("../remote/files.js");
 const { askDevice, storeAnswer } = await import("../devices/file-relay.js");
 const { sseHub } = await import("../lib/sse.js");
 const { memoryRedis } = await import("../lib/memory-redis.js");
@@ -152,6 +152,14 @@ test("a run's changes: files it wrote, not a repository it cloned, but its edits
   assert.equal(sent[".env"]?.content, null);
   assert.match(sent[".env"]?.skipped ?? "", /secrets/);
   assert.equal(sent["gone.txt"]?.content, null);
+});
+
+test("a computer sends no file text to a server that keeps none (Ensemble on the web)", async () => {
+  let calls = 0;
+  const client = { uploadFiles: async () => void (calls += 1) } as unknown as Parameters<typeof uploadChangedFiles>[0];
+  const job = { hostedId: "job", leaseToken: "lease", protocol: 4, keepsFileText: false } as unknown as Parameters<typeof uploadChangedFiles>[1];
+  await uploadChangedFiles(client, job, {} as Parameters<typeof uploadChangedFiles>[2]);
+  assert.equal(calls, 0);
 });
 
 test("a rename is a deletion and an addition; a clone whose git config runs programs is not read; links do not hang the count", async () => {

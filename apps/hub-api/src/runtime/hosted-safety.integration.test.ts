@@ -21,7 +21,7 @@ test("hosted gates preserve core data and paired execution, with durable transac
   await prisma.user.update({ where: { id: unverified.id }, data: { passwordHash: null } });
   const datasets: string[] = [];
   t.after(async () => {
-    for (const id of datasets) removeDatasetFiles(member.id, id);
+    for (const id of datasets) await removeDatasetFiles(member.id, id);
     await harness.close();
     for (const key of Object.keys(process.env)) if (!(key in before)) delete process.env[key];
     Object.assign(process.env, before);

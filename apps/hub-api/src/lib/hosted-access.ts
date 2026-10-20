@@ -14,6 +14,15 @@ export function isHosted(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.NODE_ENV === "production" && env.ENSEMBLE_DESKTOP !== "1";
 }
 
+/**
+ * Ensemble on the web keeps no text of the files a run on someone's computer changed (docs/25 §4.6):
+ * the web reads a file from that computer when it is opened. The desktop app and local servers keep
+ * copies for 30 days.
+ */
+export function keepsRunFileText(env: NodeJS.ProcessEnv = process.env): boolean {
+  return !isHosted(env);
+}
+
 export function operatorEmail(email: string, env: NodeJS.ProcessEnv = process.env): boolean {
   return (env.ENSEMBLE_OPERATOR_EMAILS ?? "").split(",").map((value) => value.trim()).filter(Boolean).includes(email);
 }

@@ -55,6 +55,7 @@ import { Spinner, cx } from "@/components/ui";
 import { useSpaceAccess } from "@/lib/access";
 import { api, ApiError, type ChangedFile, type CodeTreeEntry, type CodeVersions } from "@/lib/api";
 import { useCodeApi, type Source } from "@/lib/code-target";
+import { openTab } from "@/lib/code-tabs";
 import { dateTime, languageFor } from "@/lib/format";
 import { usePersistentState } from "@/lib/prefs";
 
@@ -163,6 +164,10 @@ export function CodeIde({ source }: { source: Source }) {
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const buffers = useRef(new Map<string, Buffer>());
   const timers = useRef(new Map<string, number>());
+  const openTabs = useRef<string[]>([]);
+  useEffect(() => {
+    openTabs.current = tabs;
+  }, [tabs]);
   const editor = useRef<ReviewEditorHandle>(null);
 
   const changed: ChangedFile[] = useMemo(() => info.data?.files ?? [], [info.data]);
@@ -224,26 +229,44 @@ export function CodeIde({ source }: { source: Source }) {
     [save, setState],
   );
 
+  /** Drops a closed file's text from the browser once it is saved; an unsaved edit stays until it is. */
+  const release = useCallback(
+    (path: string) => {
+      if (openTabs.current.includes(path) || buffers.current.get(path)?.dirty) return;
+      window.clearTimeout(timers.current.get(path));
+      timers.current.delete(path);
+      buffers.current.delete(path);
+      client.removeQueries({ queryKey: ["code-versions", key, source, path] });
+    },
+    [client, key, source],
+  );
+
   const open = useCallback(
     (path: string, line?: number) => {
+      const next = openTab(tabs, path, active, (row) => Boolean(buffers.current.get(row)?.dirty) || saveState[row] === "saving");
+      if ("refused" in next) {
+        toast(next.refused, { tone: "error" });
+        return;
+      }
       if (active && active !== path) void save(active);
-      setTabs((current) => (current.includes(path) ? current : [...current, path]));
+      openTabs.current = next.tabs;
+      setTabs(next.tabs);
+      if (next.closed) release(next.closed);
       setActive(path);
       if (line) setReveal({ path, line, nonce: Date.now() });
     },
-    [active, save],
+    [active, release, save, saveState, tabs, toast],
   );
 
   const close = useCallback(
     (path: string) => {
-      void save(path);
-      setTabs((current) => {
-        const next = current.filter((row) => row !== path);
-        if (active === path) setActive(next[Math.max(0, current.indexOf(path) - 1)] ?? null);
-        return next;
-      });
+      const next = tabs.filter((row) => row !== path);
+      openTabs.current = next;
+      setTabs(next);
+      if (active === path) setActive(next[Math.max(0, tabs.indexOf(path) - 1)] ?? null);
+      void save(path).finally(() => release(path));
     },
-    [active, save],
+    [active, release, save, tabs],
   );
 
   const reload = useCallback(

@@ -1,5 +1,5 @@
 import { crossOriginCookieProblem } from "@ensemble/shared-types/cookie-site";
-import { fileStorageProblem } from "../files/originals.js";
+import { fileStorageProblem } from "./blob-store.js";
 import { isHosted } from "./hosted-access.js";
 import { hostedLimits } from "./hosted-limits.js";
 import { signupMode } from "./signup.js";

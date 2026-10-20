@@ -68,6 +68,7 @@ export async function acceptClaimed(app: FastifyInstance, client: HostedClient, 
     logSeq: 0,
     decisions: {},
     protocol: spec.protocol ?? 1,
+    ...(spec.keepsFileText === false ? { keepsFileText: false } : {}),
   };
   const userId = env.ENSEMBLE_DEV_USER_ID;
   const plan = planLocalJob(spec, loadSettings(), (hostedId) => loadHeld()[hostedId]?.localJobId ?? null);

@@ -16,7 +16,7 @@ const AGENT = ["export const name = 'new';", "export const kept = true;", "// en
 
 type Call = { method: string; url: string; body: Record<string, unknown> | null };
 
-function server(options: { conflictOnce?: boolean } = {}) {
+function server(options: { conflictOnce?: boolean; notes?: number } = {}) {
   const calls: Call[] = [];
   let conflict = options.conflictOnce ?? false;
   const real = globalThis.fetch;
@@ -34,7 +34,10 @@ function server(options: { conflictOnce?: boolean } = {}) {
     if (path.endsWith("/api/code/versions")) {
       return json({ path: "src/name.ts", kind: "review", start: START, agent: AGENT, original: START, current: AGENT, exists: { start: true, agent: true, current: true }, binary: false, tooLarge: false, eol: "lf", bom: false, hash: "h1" });
     }
-    if (path.endsWith("/api/code/tree")) return json({ path: "", entries: [{ name: "src", kind: "dir", size: null }, { name: "README.md", kind: "file", size: 10 }], truncated: false });
+    if (path.endsWith("/api/code/tree")) {
+      const notes = Array.from({ length: options.notes ?? 0 }, (_, index) => ({ name: `note-${index}.md`, kind: "file", size: 10 }));
+      return json({ path: "", entries: [{ name: "src", kind: "dir", size: null }, { name: "README.md", kind: "file", size: 10 }, ...notes], truncated: false });
+    }
     if (path.endsWith("/api/code/scm")) return json({ repo: "/work/app", name: "app", branch: "ensemble/job-1", upstream: null, ahead: 2, behind: 0, staged: [], unstaged: [], untracked: [], log: [], remote: "", github: null });
     if (path.endsWith("/api/code/file") && method === "PUT") {
       if (conflict) {
@@ -157,6 +160,32 @@ test("F4 shows the whole file, Ctrl+B hides the explorer, ? lists the shortcuts,
     assert.ok(view.host.firstElementChild?.className.includes("fixed inset-0") || view.host.querySelector(".fixed.inset-0"), "full screen");
     await press("Escape");
     assert.ok(view.host.querySelector('button[aria-label="Full screen"]'), "Esc leaves full screen");
+  } finally {
+    await view.done();
+    fake.restore();
+  }
+});
+
+test("at most ten files stay open: the eleventh closes the oldest saved one", async () => {
+  // An earlier test hid the explorer (Ctrl+B), which the IDE remembers.
+  window.localStorage.clear();
+  const fake = server({ notes: 10 });
+  const view = await mount();
+  try {
+    for (let index = 0; index < 10; index += 1) {
+      let entry = view.host.querySelector<HTMLButtonElement>(`button[title="note-${index}.md"]`);
+      for (let round = 0; !entry && round < 40; round += 1) {
+        await settle(1);
+        entry = view.host.querySelector<HTMLButtonElement>(`button[title="note-${index}.md"]`);
+      }
+      assert.ok(entry, `note-${index}.md in the explorer`);
+      await act(async () => entry.click());
+      await settle(2);
+    }
+    const tabs = [...view.host.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent ?? "");
+    assert.equal(tabs.length, 10);
+    assert.ok(!tabs.some((tab) => tab.includes("name.ts")), "the run's file, opened first and saved, was closed");
+    assert.ok(tabs.at(-1)?.includes("note-9.md"));
   } finally {
     await view.done();
     fake.restore();

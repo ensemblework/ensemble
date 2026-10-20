@@ -103,7 +103,7 @@ export async function deleteAccountData(prisma: PrismaClient, userId: string): P
   }, { timeout: 60_000 });
   try {
     const { eraseUserDatasetFiles } = await import("../plots/store.js");
-    for (const id of scopes) eraseUserDatasetFiles(id);
+    for (const id of scopes) await eraseUserDatasetFiles(id);
   } catch (cause) {
     throw Object.assign(new Error("Account records were removed, but uploaded dataset file cleanup failed. Contact the operator to finish removing the stored files.", { cause }), {
       statusCode: 503, expose: true, code: "ACCOUNT_FILES_CLEANUP_FAILED",

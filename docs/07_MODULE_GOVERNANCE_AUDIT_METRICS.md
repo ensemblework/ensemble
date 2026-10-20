@@ -19,7 +19,8 @@ Account export/deletion uses `lib/account-data.ts`. Deletion includes owned spac
 | `completedRetentionDays` | 60 days, configurable 1–365; eligible unpinned completed work gets at least 24 hours' notice and successful skill learning before moving to Trash |
 | `retentionDays` | 30 days, configurable 1–365; soft-deleted content is permanently purged after this Trash window |
 | `historyRetentionDays` | 90 days; audit/status history cleanup |
-| Remote log chunks and changed job files | Fixed 30 days |
+| Remote log chunks and changed job files | Fixed 30 days (Ensemble on the web keeps no changed-file text, [25 §4.6](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#46-a-tasks-files-on-the-web)) |
+| Blobs nothing uses (file originals, plot tables) | Removed hourly once an hour old (`jobs/blob-sweep.ts`); the storage account's own soft delete keeps them 7 more days |
 | Code reviews | Expire after 14 days; associated snapshots unpinned |
 
 Pinning, reopening, active jobs, mining failure or conflicting skill changes keep completed items intact. Batches contain at most 50 tasks and 50 deliverables. Completion summaries created at retirement expire with the Trash window. Board completed count and Context review window are display choices, not retention settings.

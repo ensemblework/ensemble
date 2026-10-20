@@ -11,6 +11,8 @@ import { useInProcessRuntime } from "../runtime/mode.js";
 import { matplotlibSource } from "@ensemble/shared-types";
 import { configOf, deleteDataset, ingestDataset, loadOwnedTable, ownedPlot, reparseSheet, updateDatasetColumns } from "../plots/service.js";
 
+// A file is checked against MAX_UPLOAD_BYTES once decoded (plots/service.ts). The body is larger:
+// base64, JSON escaping, or a table the browser already read.
 const limit = { bodyLimit: 34 * 1024 * 1024 };
 
 function datasetPayload(error: unknown, empty = "Could not read that file."): { statusCode: number; body: { error: string; retry?: boolean; code?: string } } {
@@ -132,10 +134,10 @@ export async function plotRoutes(app: FastifyInstance): Promise<void> {
       .object({
         name: z.string().max(200).optional(),
         filename: z.string().max(200).optional(),
-        text: z.string().max(MAX_TEXT).optional(),
+        text: z.string().max(limit.bodyLimit).optional(),
         url: z.string().max(2000).optional(),
         sheet: z.string().max(200).optional(),
-        fileBase64: z.string().max(48_000_000).optional(),
+        fileBase64: z.string().max(limit.bodyLimit).optional(),
         delimiter: z.string().max(4).optional(),
         columns: z.array(z.object({ name: z.string(), type: z.enum(["number", "date", "category", "text"]) })).max(64).optional(),
         rows: z.array(z.array(z.union([z.string(), z.number(), z.null()]))).max(200_000).optional(),
@@ -377,4 +379,3 @@ export async function plotRoutes(app: FastifyInstance): Promise<void> {
   });
 }
 
-const MAX_TEXT = 12_000_000;
