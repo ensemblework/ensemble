@@ -42,9 +42,13 @@ if ! docker info >/dev/null 2>&1; then
   log "docker is not reachable; containers cannot be checked (sudo systemctl start docker)"
 elif ! home_compose up -d >>"$LOG" 2>&1; then
   log "docker compose up failed"
+elif observability_installed && ! obs_compose up -d >>"$LOG" 2>&1; then
+  log "monitoring: docker compose up failed"
 fi
 
-for unit in ensemble-agent.service ensemble-api.service ensemble-autodeploy.timer ensemble-pg-backup.timer; do
+units=(ensemble-agent.service ensemble-api.service ensemble-autodeploy.timer ensemble-pg-backup.timer)
+observability_installed && units+=(ensemble-azure-metrics.timer)
+for unit in "${units[@]}"; do
   if ! systemctl --user is-active --quiet "$unit"; then
     log "$unit was $(systemctl --user is-active "$unit" 2>/dev/null); starting it"
     systemctl --user start "$unit" >>"$LOG" 2>&1 || log "could not start $unit"

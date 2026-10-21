@@ -105,7 +105,7 @@ export async function deleteWorkspaceData(
   );
   if (scope === "everything") {
     const { eraseUserDatasetFiles } = await import("../plots/store.js");
-    eraseUserDatasetFiles(userId);
+    await eraseUserDatasetFiles(userId);
   }
 }
 

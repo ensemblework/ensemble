@@ -1,5 +1,6 @@
 "use client";
 
+import { track } from "@/lib/telemetry";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
@@ -60,6 +61,11 @@ export function PeekProvider({ children }: { children: React.ReactNode }) {
   const kind = asKind(params.get("kind"));
   const [fullscreen, setFullscreen] = usePersistentState("ensemble.peek.fullscreen", false);
   const [mode, setMode] = usePersistentState<PeekMode>("ensemble.peek.mode", "side");
+  const peeked = useRef<string | null>(null);
+  useEffect(() => {
+    if (peekId && peekId !== peeked.current) track("peek.open", { kind, mode });
+    peeked.current = peekId;
+  }, [peekId, kind, mode]);
 
   const withPeek = useCallback(
     (id: string | null, nextKind: PeekKind = "task") => {

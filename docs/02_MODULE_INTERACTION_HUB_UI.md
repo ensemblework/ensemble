@@ -138,6 +138,7 @@ The checked-in route inventory and route modules are authoritative; this table g
 | Imports | `/api/imports/*`; [27](27_IMPORTS.md#6-api) owns the preview/job/undo contract |
 | Skills | `/api/skills`, `/api/skills/:id`, `/restore`, `/test`, `/score`; `routes/skills.ts` |
 | Runs/metrics | `/api/runs`, `/api/runs/:id`, `/api/runs/:id/feedback`, `/api/metrics/summary?provider=<id>&days=14` (1–90 days), `/api/metrics/credits`, `/api/ledger/verify` |
+| Interaction log | `POST /api/telemetry` (the Hub's own usage events, signed-in browser sessions only; [07 §1.3](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#13-the-operators-interaction-log-and-dashboards)) |
 | Assistant | `/api/assistant/tools`, `/conversations`, `/conversations/:id/messages`, `/turn`, `/apply`, `/conversations/:id/stop`; `routes/assistant.ts` |
 | Layouts | `/api/layouts/:surface`, `/api/layouts/:surface/reset`; `routes/layouts.ts`; native desks instead use preferences |
 | Workspace/agent | `/api/workspace`, `/api/agent/assign` and job/control routes; `routes/agents.ts`, `job-files.ts` |

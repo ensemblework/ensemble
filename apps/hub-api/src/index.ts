@@ -1,3 +1,4 @@
+import { startMetricsServer } from "./analytics/prometheus.js";
 import { env } from "./config.js";
 import { buildApp } from "./app.js";
 import { hubCorsPolicy } from "./lib/hub-cors.js";
@@ -93,6 +94,8 @@ export async function startHub(): Promise<HubServer> {
     app.log.warn({ host }, "hub-api is bound to every network interface");
   }
   await app.listen({ host, port: env.HUB_API_PORT });
+  const metrics = startMetricsServer();
+  if (metrics) app.log.info({ port: Number(process.env.ENSEMBLE_METRICS_PORT) }, "metrics listening on 127.0.0.1");
   // After listen, so /health/ready does not wait. update.sh and the desktop sidecar both reach this.
   stopPageSearchBackfill = startPageSearchBackfill(prisma, app.log).stop;
   const bound = app.server.address();

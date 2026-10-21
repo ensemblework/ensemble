@@ -63,6 +63,7 @@ const RULES: Rule[] = [
   ["*", "/api/notifications*", "personal"],
   ["*", "/api/metrics/*", "personal"],
   ["*", "/api/activity*", "personal"],
+  ["POST", "/api/telemetry", "personal"],
   ["GET", "/api/devices", "personal"],
   ["DELETE", "/api/devices/:id", "personal"],
   ["PATCH", "/api/devices/:id", "personal"],

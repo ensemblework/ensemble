@@ -16,11 +16,13 @@ import { evaluateWatchers } from "../ensemble/watchers.js";
 import { deliverMorningBrief, ensureStaleNotice } from "../cowork/service.js";
 import { sweepExpiredDeviceLeases } from "../devices/lease.js";
 import { sweepStoredBlobs } from "./blob-sweep.js";
+import { purgeInteractionEvents } from "../analytics/telemetry.js";
 import { claimSlot } from "./claim.js";
 import { dispatchDueReminders, runRetention } from "./retention.js";
 import { markSchedulerEnabled, markSchedulerTick } from "./scheduler-clock.js";
 
 const RETENTION_TIME = "03:30";
+let lastInteractionPurge = 0;
 
 /**
  * Scheduled fetching is paused product-wide until routines replace it, whatever
@@ -61,6 +63,10 @@ async function tick(app: FastifyInstance): Promise<void> {
   await app.prisma.includedCreditBalance.deleteMany({ where: { period: { lt: new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 7) } } });
   await expireStale();
   await sweepExpiredDeviceLeases(app).catch((error: unknown) => app.log.error({ err: error }, "device lease sweep failed"));
+  if (Date.now() - lastInteractionPurge > 86_400_000) {
+    lastInteractionPurge = Date.now();
+    void purgeInteractionEvents(app.prisma).catch((error: unknown) => app.log.error({ err: error }, "interaction log purge failed"));
+  }
   void sweepStoredBlobs(app.prisma)
     .then((swept) => {
       if (swept && (swept.moved || swept.originals || swept.datasets)) app.log.info(swept, "blob sweep");

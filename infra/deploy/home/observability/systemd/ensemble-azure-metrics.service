@@ -1,0 +1,10 @@
+[Unit]
+Description=Ensemble: Azure cost and blob storage for the dashboards
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/ensemble-host/ensemble.env
+Environment=ENSEMBLE_OBS_DIR=%h/ensemble-host/observability
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/python3 %h/ensemble-host/app/infra/deploy/home/observability/azure-metrics.py
+TimeoutStartSec=30min

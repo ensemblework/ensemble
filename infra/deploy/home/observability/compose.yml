@@ -1,0 +1,85 @@
+# The operator's monitoring on the home server (setup.sh in this folder, docs/07 §1.3). Every service
+# listens on 127.0.0.1 only (host networking with loopback addresses); Grafana is reached from other
+# devices through `tailscale serve`, never the public tunnel. Data stays on this machine in volumes.
+#   Grafana          127.0.0.1:3300   dashboards (Postgres analytics views + Prometheus)
+#   Prometheus       127.0.0.1:19090  hub-api :14090, node-exporter, postgres-exporter; kept 2 years
+#   node-exporter    127.0.0.1:19100  CPU, RAM, disk, network, temperatures, CPU package power (RAPL),
+#                                     and the Azure cost/storage file azure-metrics.py writes
+#   postgres-exporter 127.0.0.1:19187 database size, connections, activity
+# setup.sh exports ENSEMBLE_OBS_DIR (~/ensemble-host/observability) and the secrets in
+# ~/ensemble-host/observability.env.
+name: ensemble-observability
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.7.2
+    container_name: ensemble-prometheus
+    network_mode: host
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=730d
+      - --web.listen-address=127.0.0.1:19090
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ensemble_prometheus:/prometheus
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana-oss:13.0.2
+    container_name: ensemble-grafana
+    network_mode: host
+    environment:
+      GF_SERVER_HTTP_ADDR: 127.0.0.1
+      GF_SERVER_HTTP_PORT: "3300"
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set by setup.sh}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/ensemble-overview.json
+      GRAFANA_DB_PASSWORD: ${GRAFANA_DB_PASSWORD:?set by setup.sh}
+      ENSEMBLE_PG_PORT: ${ENSEMBLE_HOME_PG_PORT:-15432}
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ${ENSEMBLE_OBS_DIR:?set by setup.sh}/dashboards:/var/lib/grafana/dashboards:ro
+      - ensemble_grafana:/var/lib/grafana
+    restart: unless-stopped
+
+  node-exporter:
+    image: prom/node-exporter:v1.10.2
+    container_name: ensemble-node-exporter
+    network_mode: host
+    pid: host
+    # Root inside the container: CPU package power (/sys/class/powercap) is readable only by root.
+    user: root
+    command:
+      - --path.rootfs=/host
+      # Docker masks the RAPL energy files under its own /sys; the host's are read through /host.
+      - --path.sysfs=/host/sys
+      - --web.listen-address=127.0.0.1:19100
+      - --collector.textfile.directory=/textfile
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|run|sys|var/lib/docker/.+|var/lib/containerd/.+|snap/.+)($|/)
+    volumes:
+      - /:/host:ro,rslave
+      - ${ENSEMBLE_OBS_DIR:?set by setup.sh}/textfile:/textfile:ro
+    restart: unless-stopped
+
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.18.1
+    container_name: ensemble-postgres-exporter
+    network_mode: host
+    environment:
+      DATA_SOURCE_NAME: postgresql://ensemble:ensemble@127.0.0.1:${ENSEMBLE_HOME_PG_PORT:-15432}/ensemble?sslmode=disable
+    command:
+      - --web.listen-address=127.0.0.1:19187
+    restart: unless-stopped
+
+volumes:
+  ensemble_prometheus:
+    name: ensemble_prometheus
+  ensemble_grafana:
+    name: ensemble_grafana
