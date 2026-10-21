@@ -74,6 +74,8 @@ const RULES: Rule[] = [
   ["POST", "/api/devices/:id/terminal", "personal"],
   ["GET", "/api/devices/:id/terminal/output", "personal"],
   ["*", "/api/web-terminal/*", "personal"],
+  // Ensemble Node: the signed-in person's own nodes and rooms, whichever space is open (docs/35).
+  ["*", "/api/node/*", "personal"],
 
   ["*", "/api/assistant/*", "assistant"],
   ["POST", "/api/ask", "assistant"],

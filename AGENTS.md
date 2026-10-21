@@ -44,6 +44,7 @@ Where a change usually needs a doc update:
 | Quick capture (`apps/quick-capture`) | [`docs/20_QUICK_CAPTURE.md`](docs/20_QUICK_CAPTURE.md) |
 | Desktop app (`apps/desktop`, `src/desktop`, `scripts/*desktop*`, `scripts/build-mac-dmg.sh`) | [`docs/DESKTOP.md`](docs/DESKTOP.md), [`docs/desktop/MAC_CHECKLIST.md`](docs/desktop/MAC_CHECKLIST.md) |
 | Remote tasks and devices (`src/remote`, `src/devices`) | [`docs/25`](docs/25_REMOTE_TASKS_ON_YOUR_COMPUTER.md) |
+| Ensemble Node (`apps/hub-api/src/node`, `lib/node-origin.ts`, `GET /api/bridge/node`, the CLI's Node tab `apps/cli/src/tui/node.ts`). The website is the separate `ensemblework/ensemble-node` repository | [`docs/35`](docs/35_ENSEMBLE_NODE.md), the API table in `docs/02`, `docs/26` for the CLI tab |
 | The CLI, its installers and releases (`apps/cli`, `scripts/package-cli.mjs`, `packaging/`, `apps/landing/public/install.*`, `.github/workflows/cli-release.yml`, `routes/cli-auth.ts`, `routes/mcp.ts`) | [`docs/26`](docs/26_CLI.md), the download guide in `apps/landing/lib/download.ts`, and the Connect guides in `apps/hub-web/lib/connect/` |
 | Hosting, production config (`infra/deploy`, `lib/production.ts`) | The comments in `infra/deploy/` and `ensemble.env.example`. Deployment runbooks live in the git-ignored `private/` folder, never in `docs/` |
 | Caches, perf budgets | [`docs/CACHING.md`](docs/CACHING.md) |

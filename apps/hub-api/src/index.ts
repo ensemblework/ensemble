@@ -18,6 +18,7 @@ import { ensureDesktopUser } from "./lib/desktop-user.js";
 import { upgradeCodeFolders } from "./lib/code-folders.js";
 import { writeDiscoveryFile } from "./lib/desktop-discovery-file.js";
 import { startPageSearchBackfill } from "./pages/search-backfill.js";
+import { startNode } from "./node/runs.js";
 
 export type HubServer = {
   port: number;
@@ -46,11 +47,13 @@ export async function startHub(): Promise<HubServer> {
   }
 
   let stopPageSearchBackfill = () => {};
+  let stopNode = () => {};
   let exiting = false;
   const close = async (exit: boolean) => {
     if (exiting) return;
     exiting = true;
     stopPageSearchBackfill();
+    stopNode();
     stopScheduler();
     stopEnrichment();
     await stopRemote();
@@ -98,6 +101,8 @@ export async function startHub(): Promise<HubServer> {
   if (metrics) app.log.info({ port: Number(process.env.ENSEMBLE_METRICS_PORT) }, "metrics listening on 127.0.0.1");
   // After listen, so /health/ready does not wait. update.sh and the desktop sidecar both reach this.
   stopPageSearchBackfill = startPageSearchBackfill(prisma, app.log).stop;
+  // Ensemble Node (docs/35) lives on the hosted server; a computer's own runtime has no rooms.
+  if (!desktop && process.env.ENSEMBLE_NODE !== "off") stopNode = startNode(app);
   const bound = app.server.address();
   const port = bound && typeof bound === "object" ? bound.port : env.HUB_API_PORT;
   setLocalPort(port);

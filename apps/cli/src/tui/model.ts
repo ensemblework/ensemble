@@ -5,14 +5,16 @@
  */
 import type { RunProfile } from "@ensemble/shared-types";
 import type { Decision, JobCard, Workspace } from "./local.js";
+import type { Tab } from "./prefs.js";
 
 // ── slash commands ──────────────────────────────────────────────────────────────────────────
 
-export type Command = { name: string; args?: string; description: string; aliases?: string[]; tab?: "tasks" | "chat" };
+export type Command = { name: string; args?: string; description: string; aliases?: string[]; tab?: Tab };
 
 export const COMMANDS: readonly Command[] = [
   { name: "tasks", description: "Agent runs, and what needs you" },
   { name: "chat", description: "Chat with your agent" },
+  { name: "node", description: "Ensemble Node: your nodes, rooms, approvals and runs (read-only here)" },
   { name: "new", description: "Start a new chat", tab: "chat" },
   { name: "run", args: "<what to do>", description: "Start your agent on it as a task, in this folder, with your run profile" },
   { name: "allow", args: "[once|task|always]", description: "Allow what the selected run is asking", tab: "tasks" },
@@ -39,7 +41,7 @@ export const COMMANDS: readonly Command[] = [
 ];
 
 /** Commands whose name starts with what was typed after the slash, best first. */
-export function matchCommands(typed: string, tab: "tasks" | "chat"): Command[] {
+export function matchCommands(typed: string, tab: Tab): Command[] {
   const word = typed.replace(/^\//, "").split(/\s/)[0]!.toLowerCase();
   const all = COMMANDS.filter((command) => [command.name, ...(command.aliases ?? [])].some((name) => name.startsWith(word)));
   // This tab's own commands first.

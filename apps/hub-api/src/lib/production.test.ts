@@ -110,6 +110,14 @@ test("production refuses a site and API that cannot share the session cookie", (
   assert.equal(productionProblems({ ...good, HUB_API_PUBLIC_URL: "https://hub.example" }).length, 0);
 });
 
+test("production refuses an Ensemble Node site that is not https or cannot share the session cookie", () => {
+  const split = { ...good, HUB_WEB_ORIGIN: "https://app.example.com", HUB_API_PUBLIC_URL: "https://api.example.com", ENSEMBLE_COOKIE_DOMAIN: ".example.com" };
+  assert.deepEqual(productionProblems({ ...split, ENSEMBLE_NODE_WEB_ORIGIN: "https://node.example.com" }), []);
+  assert.match(productionProblems({ ...split, ENSEMBLE_NODE_WEB_ORIGIN: "http://node.example.com" }).join("\n"), /ENSEMBLE_NODE_WEB_ORIGIN must be one https origin/);
+  assert.match(productionProblems({ ...split, ENSEMBLE_NODE_WEB_ORIGIN: "https://node.example.com/app" }).join("\n"), /ENSEMBLE_NODE_WEB_ORIGIN must be one https origin/);
+  assert.match(productionProblems({ ...split, ENSEMBLE_NODE_WEB_ORIGIN: "https://node.elsewhere.dev" }).join("\n"), /Ensemble Node: /);
+});
+
 test("the error names every problem", () => {
   assert.throws(() => assertProductionSafe({ NODE_ENV: "production", ENSEMBLE_INTERNAL_TOKEN: "dev-internal-token" }), (error: unknown) => {
     assert.ok(error instanceof Error);

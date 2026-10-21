@@ -4,6 +4,9 @@ import { readJsonFile, resolveCliPaths, writeJsonFile, type CliPaths } from "../
 
 export type Engine = "ensemble" | "claude-code" | "codex" | "cursor-agent";
 
+export const TABS = ["tasks", "chat", "node"] as const;
+export type Tab = (typeof TABS)[number];
+
 export type Prefs = {
   /** `provider::model` for Ensemble Code's own replies, or null for the task tier's model. */
   chatModel: string | null;
@@ -14,7 +17,7 @@ export type Prefs = {
   /** Run profile id or name; null is the default profile. */
   profileId: string | null;
   /** The last tab open. */
-  tab: "tasks" | "chat";
+  tab: Tab;
   sidebar: boolean;
 };
 
@@ -24,7 +27,8 @@ const file = (paths: CliPaths) => join(paths.configDir, "app.json");
 
 export async function loadPrefs(paths: CliPaths = resolveCliPaths()): Promise<Prefs> {
   const saved = (await readJsonFile<Partial<Prefs>>(file(paths)).catch(() => null)) ?? {};
-  return { ...DEFAULT_PREFS, ...saved };
+  const prefs = { ...DEFAULT_PREFS, ...saved };
+  return TABS.includes(prefs.tab) ? prefs : { ...prefs, tab: DEFAULT_PREFS.tab };
 }
 
 export async function savePrefs(prefs: Prefs, paths: CliPaths = resolveCliPaths()): Promise<void> {

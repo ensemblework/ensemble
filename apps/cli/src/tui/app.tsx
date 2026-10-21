@@ -1,11 +1,13 @@
 /**
- * Ensemble in the terminal: two tabs.
+ * Ensemble in the terminal: three tabs.
  *
  *   Tasks  agent runs on this computer, and everything that needs you, answered right here
  *          (click a button, press its number, or type /allow, /deny, /answer …).
  *   Chat   your agent. Claude Code, Codex or Cursor's agent on your own sign-in, working in the
  *          folder you opened it in under your run profile (each message continues its session),
  *          or Ensemble Code (Ensemble's agent, a model with your key).
+ *   Node   Ensemble Node at a glance, read-only: your nodes, rooms, approvals waiting for you
+ *          and the computer runs they started. Chatting with nodes is on the Node website.
  *
  * One input router handles keys, the mouse and the slash-command menu. The layout is fixed rows
  * (tabs, main, actions, composer, status), so every click maps to a region computed here.
@@ -43,7 +45,8 @@ import {
   type Answer,
   type Item,
 } from "./model.js";
-import { ENGINE_LABEL, type Engine, type Prefs } from "./prefs.js";
+import { ENGINE_LABEL, TABS, type Engine, type Prefs } from "./prefs.js";
+import { nodePane, nodeSidebar, nodeWebUrl, type NodeOverview, type NodeState } from "./node.js";
 import { includedNotice, localOnlyRow, modelLabel, type IncludedNotice } from "./included.js";
 import { cellWidth, markdown, pad, plain, truncate, wrapLine, type Line, type Segment } from "./text.js";
 
@@ -63,6 +66,10 @@ export type Ops = {
   savePrefs: (prefs: Prefs) => void;
   connectHook: (tool: string, remove: boolean) => Promise<string>;
   connectedHooks: () => Promise<string[]>;
+  /** The Node tab's read-only overview from the signed-in account. */
+  nodeOverview?: () => Promise<NodeOverview>;
+  /** Where people chat with their nodes. */
+  nodeUrl?: string;
 };
 
 type Entry = { id: string; kind: "user" | "assistant" | "agent" | "tool" | "failed" | "pending" | "note" | "error" | "included"; text: string; notice?: IncludedNotice };
@@ -149,6 +156,26 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
     const timer = setInterval(() => void refresh(), 1500);
     return () => clearInterval(timer);
   }, [refresh]);
+
+  // Ensemble Node: often while its tab is open, now and then otherwise for the tab's badge.
+  const [nodeState, setNodeState] = useState<NodeState>({ data: null, error: null, loading: false });
+  const nodeUrl = ops.nodeUrl ?? nodeWebUrl(null);
+  useEffect(() => {
+    if (!ops.nodeOverview || !account.email) return;
+    let live = true;
+    const load = () => {
+      setNodeState((current) => ({ ...current, loading: true }));
+      ops.nodeOverview!()
+        .then((data) => live && setNodeState({ data, error: null, loading: false }))
+        .catch((error: Error) => live && setNodeState((current) => ({ ...current, error: error.message, loading: false })));
+    };
+    load();
+    const timer = setInterval(load, tab === "node" ? 10_000 : 60_000);
+    return () => {
+      live = false;
+      clearInterval(timer);
+    };
+  }, [ops, account.email, tab]);
 
   const loadSettings = useCallback(async () => {
     setSettings(await api.settings().catch(() => null));
@@ -624,7 +651,7 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
     const width = Math.min(size.cols - 6, 96);
     const lines: Line[] = [
       [{ text: "Keys", bold: true }],
-      [{ text: "  Tab            ", color: ACCENT }, { text: "switch between Tasks and Chat" }],
+      [{ text: "  Tab            ", color: ACCENT }, { text: "switch between Tasks, Chat and Node" }],
       [{ text: "  ↑ ↓            ", color: ACCENT }, { text: "pick a run (Tasks) · scroll (Chat)" }],
       [{ text: "  1–9 · ← → ⏎    ", color: ACCENT }, { text: "press an answer button (when the prompt is empty)" }],
       [{ text: "  /              ", color: ACCENT }, { text: "commands; ↑ ↓ to choose, Tab or ⏎ to use" }],
@@ -685,6 +712,7 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
     switch (name) {
       case "tasks":
       case "chat":
+      case "node":
         return setPrefs({ tab: name });
       case "new":
         if (streaming) return say("Stop the reply first (Esc), then start a new chat.");
@@ -785,6 +813,7 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
     setHistoryAt(-1);
     setText("");
     if (text.startsWith("/")) return void runCommand(text);
+    if (tab === "node") return say(`The Node tab only shows what your nodes are doing. Talk to them at ${nodeUrl}.`);
     if (tab === "tasks" && selectedDecision) {
       const reply = commandAnswer(selectedDecision, "answer", text);
       return typeof reply === "string" ? say(reply, "error") : void answer(reply);
@@ -815,9 +844,11 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
   for (const [id, label] of [
     ["tasks", needs ? ` Tasks · ${needs} need${needs === 1 ? "s" : ""} you ` : " Tasks "],
     ["chat", streaming ? " Chat · writing… " : " Chat "],
+    ["node", nodeState.data?.approvals.length ? ` Node · ${nodeState.data.approvals.length} waiting ` : " Node "],
   ] as const) {
     const active = tab === id;
-    tabLine.push({ text: label, ...(active ? { backgroundColor: ACCENT, color: "black", bold: true } : { color: id === "tasks" && needs ? "yellow" : undefined }) });
+    const waiting = (id === "tasks" && needs) || (id === "node" && Boolean(nodeState.data?.approvals.length));
+    tabLine.push({ text: label, ...(active ? { backgroundColor: ACCENT, color: "black", bold: true } : { color: waiting ? "yellow" : undefined }) });
     const start = x;
     x += cellWidth(label);
     regions.push({ x1: start, x2: x - 1, y1: 0, y2: 0, onClick: () => setPrefs({ tab: id }) });
@@ -865,6 +896,9 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
       if (!items.length) left.push([{ text: " Nothing yet.", dim: true }], [], ...wrapLine([{ text: " Type /run and what to do, or ask in Chat. Tasks you assign to this computer on ensemblework.com show up here.", dim: true }], sidebarWidth - 1, " "));
     }
     paneLines.push(...taskPane({ item: selected, detail, width: paneWidth, now, agentsOff, offline }));
+  } else if (tab === "node") {
+    if (sidebarWidth) left.push(...nodeSidebar(nodeState, sidebarWidth, nodeUrl));
+    paneLines.push(...nodePane(nodeState, paneWidth, now, Boolean(account.email), nodeUrl));
   } else {
     if (sidebarWidth) {
       left.push([{ text: agentChat ? ` ${ENGINE_LABEL[engine].toUpperCase()}` : " ENSEMBLE CODE", bold: true, color: MUTED }]);
@@ -948,15 +982,17 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
   const placeholder =
     overlay?.kind === "input"
       ? ""
-      : tab === "chat"
-        ? chatDecision?.event === "question"
-          ? "Type your answer, or / for commands"
-          : agentChat
-            ? `Message ${ENGINE_LABEL[engine]}, or type / for commands`
-            : "Ask Ensemble Code, or type / for commands"
-        : selectedDecision?.event === "question"
-          ? "Type your answer, or / for commands"
-          : "Type / for commands, or describe a task and press ⏎ to plan it in Chat";
+      : tab === "node"
+        ? `Read-only: chat with your nodes at ${nodeUrl} · / for commands`
+        : tab === "chat"
+          ? chatDecision?.event === "question"
+            ? "Type your answer, or / for commands"
+            : agentChat
+              ? `Message ${ENGINE_LABEL[engine]}, or type / for commands`
+              : "Ask Ensemble Code, or type / for commands"
+          : selectedDecision?.event === "question"
+            ? "Type your answer, or / for commands"
+            : "Type / for commands, or describe a task and press ⏎ to plan it in Chat";
   const composerValue = overlay?.kind === "input" ? (overlay.secret ? "•".repeat(overlay.value.length) : overlay.value) : value;
   const composerCursor = overlay?.kind === "input" ? overlay.value.length : cursor;
   const inner = cols - 6;
@@ -1058,7 +1094,7 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
       if (composer.current.value) return setText("");
       return;
     }
-    if (key.tab) return setPrefs({ tab: tab === "tasks" ? "chat" : "tasks" });
+    if (key.tab) return setPrefs({ tab: TABS[(TABS.indexOf(tab) + 1) % TABS.length]! });
     if (key.return) return submit();
     if (key.pageUp || key.pageDown) {
       const delta = key.pageUp ? -1 : 1;
@@ -1070,6 +1106,7 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
       // An empty prompt: arrows and numbers drive the list and the buttons.
       if (key.upArrow || key.downArrow) {
         if (tab === "chat") return setChatScroll((current) => Math.max(0, current + (key.upArrow ? 1 : -1)));
+        if (tab === "node") return setDetailScroll((current) => Math.max(0, current + (key.upArrow ? -1 : 1)));
         const index = items.findIndex((item) => item.key === selected?.key);
         const next = items[Math.max(0, Math.min(items.length - 1, index + (key.upArrow ? -1 : 1)))];
         if (next) {

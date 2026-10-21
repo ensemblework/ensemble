@@ -20,6 +20,8 @@ Dock / inline question / Ensemble Code
 
 The model never clicks the UI or writes SQL. A call runs only if the turn offered that tool (a lookup by name) and its input passes the schema. Folder tools exist only in Ensemble Code ([30](30_ENGINES.md)).
 
+Ensemble Node turns enter the same loop from `node/brain.ts` with three extra `runAssistantTurn` arguments: `agentPersona` (the node's identity, charter and room, in place of the person's persona), `extraTools` (the node's room tools, checked like every tool) and `purpose` (metrics and credits). None changes permissions ([35](35_ENSEMBLE_NODE.md#5-a-node-turn)).
+
 ## 2. Source map
 
 Paths are under `apps/hub-api/src/` unless qualified.

@@ -87,6 +87,7 @@ apps/hub-api/src/
 ├── marketplace/, layouts/, desk/   Templates, Today layouts, desk entries
 ├── ensemble/                 @ensemble surfaces, citations, watchers
 ├── themes/                   Open VSX theme fetch for the Code tab
+├── node/                     Ensemble Node: rooms, routing, node turns, approvals, run reports (docs/35)
 ├── services/                 Shared task and record writes
 ├── test/                     HTTP harness, route coverage, temporary folders
 └── lib/                      auth, undo, ledger, redis, sse, prisma, secrets, blob store, office, …
@@ -140,6 +141,7 @@ apps/quick-capture/           src-tauri/ + ui/
 | Model provider, plot export | `apps/agent-runtime/`, and `apps/hub-api/src/runtime/` for the in-process path |
 | Shared API or domain shape | `packages/shared-types/` |
 | Editor access to context | `apps/context-bridge/`, `apps/hub-api/src/bridge/`, `apps/hub-api/src/routes/mcp.ts` (hosted `/mcp`) |
+| Ensemble Node (nodes, rooms, node turns) | `apps/hub-api/src/node/`, the CLI's Node tab in `apps/cli/src/tui/node.ts`; the website is the separate `ensemblework/ensemble-node` repository ([35](35_ENSEMBLE_NODE.md)) |
 | CLI, installers, releases | `apps/cli/`, `scripts/package-cli.mjs`, `packaging/`, `apps/landing/public/`, `.github/workflows/cli-release.yml` |
 | Spaces | `apps/hub-api/src/spaces/`, the space cookie in `apps/hub-api/src/lib/auth.ts`, `apps/hub-web/components/shell/space-switcher.tsx`, `apps/hub-web/app/(hub)/spaces/` ([28](28_ENSEMBLE_SPACES.md)) |
 | Sharing, contacts, presence | `apps/hub-api/src/sharing/` (`policy.ts` classes every route), `apps/hub-web/components/sharing/`, `app/(hub)/shared/`, `app/shared/[id]/`, `app/p/[token]/`, `apps/hub-web/lib/{access,presence}.ts` ([29](29_SHARING.md)) |

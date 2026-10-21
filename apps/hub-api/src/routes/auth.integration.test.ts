@@ -403,6 +403,50 @@ test("new OAuth users with unverified provider email receive a code and land on 
   createdIds.push(me.json().user.id);
 });
 
+test("a provider sign-in started on Ensemble Node returns there; linking never does", async () => {
+  process.env.ENSEMBLE_NODE_WEB_ORIGIN = "http://node.example.test";
+  try {
+    profile = { subject: randomUUID(), email: address(), name: "Mira", verified: true };
+    const started = await harness.app.inject({ method: "GET", url: "/api/auth/oauth/google/start?return=node" });
+    assert.equal(started.statusCode, 302, started.body);
+    const state = new URL(String(started.headers.location)).searchParams.get("state")!;
+    const headers = { cookie: `${cookie(started, "ensemble_login_flow")}; ${cookie(started, "ensemble_login_return")}` };
+    const back = await harness.app.inject({ method: "GET", url: `/api/auth/oauth/google/callback?code=fake-code&state=${encodeURIComponent(state)}`, headers });
+    const location = new URL(String(back.headers.location));
+    assert.equal(location.origin, "http://node.example.test");
+    assert.equal(location.pathname, "/welcome");
+    const me = await harness.app.inject({ method: "GET", url: "/api/auth/me", headers: { cookie: cookie(back) } });
+    assert.equal(me.statusCode, 200, me.body);
+    createdIds.push(me.json().user.id);
+
+    const again = await harness.app.inject({ method: "GET", url: "/api/auth/oauth/google/start?return=node" });
+    const state2 = new URL(String(again.headers.location)).searchParams.get("state")!;
+    const returning = await harness.app.inject({
+      method: "GET",
+      url: `/api/auth/oauth/google/callback?code=fake-code&state=${encodeURIComponent(state2)}`,
+      headers: { cookie: `${cookie(again, "ensemble_login_flow")}; ${cookie(again, "ensemble_login_return")}` },
+    });
+    assert.equal(new URL(String(returning.headers.location)).pathname, "/", "an existing account lands on Node's home");
+
+    const failed = await harness.app.inject({ method: "GET", url: `/api/auth/oauth/google/callback?code=fake-code&state=${encodeURIComponent(state2)}`, headers: { cookie: cookie(again, "ensemble_login_return") } });
+    const error = new URL(String(failed.headers.location));
+    assert.equal(error.origin, "http://node.example.test");
+    assert.equal(error.pathname, "/login");
+    assert.ok(error.searchParams.get("error"));
+
+    const unknown = await harness.app.inject({ method: "GET", url: "/api/auth/oauth/google/start?return=https://evil.example" });
+    assert.equal(unknown.statusCode, 400, "only the named Node return is accepted");
+  } finally {
+    delete process.env.ENSEMBLE_NODE_WEB_ORIGIN;
+  }
+  const hub = await oauth("google");
+  profile = { subject: randomUUID(), email: address(), name: "Mira", verified: true };
+  const hubBack = await harness.app.inject({ method: "GET", url: hub.callback, headers: hub.headers });
+  assert.equal(new URL(String(hubBack.headers.location)).origin, "http://hub.example.test", "without a Node origin everything returns to the Hub");
+  const meHub = await harness.app.inject({ method: "GET", url: "/api/auth/me", headers: { cookie: cookie(hubBack) } });
+  createdIds.push(meHub.json().user.id);
+});
+
 test("unverified provider emails cannot auto-link existing accounts; verified identities link safely", async () => {
   const owner = await harness.asUser();
   await harness.prisma.user.update({ where: { id: owner.id }, data: { emailVerifiedAt: new Date() } });

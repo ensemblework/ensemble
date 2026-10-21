@@ -8,7 +8,8 @@ import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { render } from "ink";
 import { connectedHooks, connectHook, type HookTool } from "../approvals.js";
-import { loadConfig } from "../config.js";
+import { loadConfig, loadToken } from "../config.js";
+import { bearerHeaders, fetchJson, HttpError } from "../http.js";
 import { commandWithSubcommand, resolveLauncherCommand } from "../launcher.js";
 import { signIn, signOut } from "../login.js";
 import { resolveCliPaths } from "../paths.js";
@@ -18,6 +19,7 @@ import { VERSION } from "../version.js";
 import { App, type Ops } from "./app.js";
 import { LocalApi } from "./local.js";
 import { MOUSE_OFF, MOUSE_ON } from "./mouse.js";
+import { nodeWebUrl, type NodeOverview } from "./node.js";
 import { loadPrefs, savePrefs } from "./prefs.js";
 import { RENDER_OPTIONS, takeScreen } from "./screen.js";
 
@@ -64,6 +66,18 @@ export async function runApp(): Promise<void> {
     savePrefs: (next) => void savePrefs(next, paths).catch(() => undefined),
     connectHook: (tool, remove) => connectHook(runner, tool as HookTool, remove).then((result) => result.message),
     connectedHooks: () => connectedHooks(runner),
+    nodeUrl: nodeWebUrl(config.appUrl),
+    async nodeOverview() {
+      const token = await loadToken(paths);
+      if (!token) throw new Error("Sign in first: /login");
+      const { apiBase } = await loadConfig(paths);
+      try {
+        return await fetchJson<NodeOverview>(`${apiBase}/api/bridge/node`, { headers: bearerHeaders(token) });
+      } catch (error) {
+        if (error instanceof HttpError && error.status === 404) throw new Error("This Ensemble server does not have Ensemble Node yet.");
+        throw error;
+      }
+    },
     async runnerService(install) {
       if (!install) {
         const message = await uninstallRunnerService({ home: homedir() });

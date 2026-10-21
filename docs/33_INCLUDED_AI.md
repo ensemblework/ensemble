@@ -31,6 +31,7 @@ The transports also support Foundry's Anthropic Messages endpoint (`api: "anthro
 - Credits belong to the **account**: a space spends its owner's credits; in a space shared with you, the call is yours, as with model keys ([28](28_ENSEMBLE_SPACES.md), [29](29_SHARING.md)).
 - The month is the **UTC calendar month**; credits reset at 00:00 UTC on the 1st and do not carry over. Deleting workspace data, switching spaces or devices, or recreating an account with the same email does not renew the allowance.
 - Background work on an included tier (document summaries, skill mining, the model test) spends the same credits as chat.
+- Ensemble Node spends the same account credits: node turns are recorded with purpose `Ensemble Node` and group routing with `Ensemble Node routing` ([35](35_ENSEMBLE_NODE.md#5-a-node-turn)). The Hub, the desktop app, the CLI and Node draw on one allowance.
 
 ## 3. How a call is metered
 

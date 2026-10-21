@@ -1,16 +1,21 @@
 import type { FastifyCorsOptions } from "@fastify/cors";
 import { DESKTOP_WEBVIEW_ORIGINS } from "./desktop-guard.js";
 
-/** Browser origins allowed to read credentialed hub-api responses. */
-export function webOrigins(hubWebOrigin: string): Set<string> {
+/**
+ * Browser origins allowed to read credentialed hub-api responses: the Hub, and Ensemble Node's
+ * site when one is configured (docs/35). Both are first-party sites sharing the session cookie.
+ */
+export function webOrigins(hubWebOrigin: string, otherOrigins: readonly string[] = []): Set<string> {
   const origins = new Set<string>();
   const add = (value: string) => {
     const trimmed = value.trim();
     if (trimmed && trimmed !== "*") origins.add(trimmed);
   };
-  add(hubWebOrigin);
-  add(hubWebOrigin.replaceAll("localhost", "127.0.0.1"));
-  add(hubWebOrigin.replaceAll("127.0.0.1", "localhost"));
+  for (const origin of [hubWebOrigin, ...otherOrigins]) {
+    add(origin);
+    add(origin.replaceAll("localhost", "127.0.0.1"));
+    add(origin.replaceAll("127.0.0.1", "localhost"));
+  }
   return origins;
 }
 
@@ -25,8 +30,8 @@ export function isDesktopMode(): boolean {
  * The desktop webview origins are added only in desktop mode; the hosted
  * build allows the web origin alone.
  */
-export function allowedOrigins(hubWebOrigin: string, desktop: boolean = isDesktopMode()): Set<string> {
-  const origins = webOrigins(hubWebOrigin);
+export function allowedOrigins(hubWebOrigin: string, desktop: boolean = isDesktopMode(), otherOrigins: readonly string[] = []): Set<string> {
+  const origins = webOrigins(hubWebOrigin, desktop ? [] : otherOrigins);
   if (desktop) {
     for (const origin of DESKTOP_WEBVIEW_ORIGINS) origins.add(origin);
   }
@@ -67,8 +72,8 @@ export type CorsPolicy = {
   readonly origins: ReadonlySet<string>;
 };
 
-export function corsPolicy(hubWebOrigin: string, desktop: boolean = isDesktopMode()): CorsPolicy {
-  return Object.freeze({ desktop, origins: allowedOrigins(hubWebOrigin, desktop) });
+export function corsPolicy(hubWebOrigin: string, desktop: boolean = isDesktopMode(), otherOrigins: readonly string[] = []): CorsPolicy {
+  return Object.freeze({ desktop, origins: allowedOrigins(hubWebOrigin, desktop, otherOrigins) });
 }
 
 /** Options for @fastify/cors, from the same policy the hijacked responses use. */

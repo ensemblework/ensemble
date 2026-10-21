@@ -3,6 +3,7 @@ import { fileStorageProblem } from "./blob-store.js";
 import { isHosted } from "./hosted-access.js";
 import { hostedLimits } from "./hosted-limits.js";
 import { signupMode } from "./signup.js";
+import { nodeWebOrigin } from "./node-origin.js";
 
 /**
  * Production boot checks shared by hub-api. agent-runtime keeps the same
@@ -123,6 +124,16 @@ export function productionProblems(env: NodeJS.ProcessEnv, surface: ProductionSu
       cookieDomain: env.ENSEMBLE_COOKIE_DOMAIN,
     });
     if (cookie) problems.push(cookie);
+    const node = env.ENSEMBLE_NODE_WEB_ORIGIN?.trim();
+    if (node) {
+      const exact = nodeWebOrigin(env);
+      if (!exact || !exact.startsWith("https://")) {
+        problems.push(`ENSEMBLE_NODE_WEB_ORIGIN must be one https origin with no path in production (got "${node}").`);
+      } else {
+        const shared = crossOriginCookieProblem({ webOrigin: exact, apiOrigin: env.HUB_API_PUBLIC_URL, cookieDomain: env.ENSEMBLE_COOKIE_DOMAIN });
+        if (shared) problems.push(`Ensemble Node: ${shared}`);
+      }
+    }
   }
   return problems;
 }
