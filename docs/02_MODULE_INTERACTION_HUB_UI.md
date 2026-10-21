@@ -1,16 +1,16 @@
 # 02 · The Hub: surfaces, settings and API map
 
-The Hub is the browser UI in `apps/hub-web`, also exported into the desktop shell. It organizes work into documents, tasks, linked context and agent runs. This guide describes code inspected **18 Oct 2026**, including current profile/module restrictions. It is not a build-order proposal.
+The Hub is the browser UI in `apps/hub-web`, also loaded by the desktop shell. It organizes work into documents, tasks, linked context and agent runs.
 
 ## 1. Interaction principles
 
-Use the existing task/page/record identity across views. Show saved, pending, failed and completed states distinctly. Autosave writing without triggering model calls; keep model sends, imports, approvals and irreversible actions explicit. Preserve drafts on conflicts and errors. Do not show a queued job or held assistant proposal as completed work.
+Tasks, pages and records keep one identity across views. Saved, pending, failed and completed states look different. Writing autosaves without calling a model; model sends, imports, approvals and irreversible actions are explicit. Drafts survive conflicts and errors. A queued job or a held assistant proposal is never shown as completed work.
 
 ## 2. Information architecture & navigation
 
-`app/(hub)` contains authenticated routes. `components/shell` provides the rail, phone navigation, space switcher, page tree, top-bar search and floating assistant. The top bar's sidebar button switches the sidebar between full and rail (on a phone it opens the navigation drawer). With *Auto-collapse sidebar* on, or the Pages panel docked on the left, the sidebar stays a rail (with auto-collapse, pointing at it or focusing its controls opens it), so on a computer that button and the rail's Expand button are hidden (`sidebarRailForced` in `lib/sidebar-rail.ts`, rules in `app/globals.css`). `/` enters the authenticated/onboarding flow. Search and Jump to share Cmd/Ctrl+K. Pages sits beneath Today and can collapse while retaining its add action.
+`app/(hub)` holds the signed-in routes. `components/shell` provides the rail, phone navigation, space switcher, page tree, top-bar search and floating assistant. The top bar's sidebar button switches the sidebar between full and rail (on a phone it opens the navigation drawer). With *Auto-collapse sidebar* on, or the Pages panel docked on the left, the sidebar stays a rail (with auto-collapse, pointing at it or focusing its controls opens it), so on a computer that button and the rail's Expand button are hidden (`sidebarRailForced` in `lib/sidebar-rail.ts`, rules in `app/globals.css`). `/` enters the sign-in/onboarding flow. Search and Jump to share Cmd/Ctrl+K. Pages sits beneath Today and can collapse while keeping its add action.
 
-Navigation follows the signup profession, enabled modules and access scope. Code, Workspace, Runs and Skills are offered to engineer and Builder profiles; other profiles retain applicable Context records, Diagrams, Plots and Metrics. Optional features/tabs can be hidden without deleting data. A manually entered URL still undergoes module and server authorization checks.
+Navigation follows the signup profession, enabled modules and access. Code, Workspace, Runs and Skills are offered to engineer and Builder profiles; other profiles get their applicable Context records, Diagrams, Plots and Metrics. Optional features and tabs can be hidden without deleting data. A typed URL still goes through module and server authorization.
 
 | Route | Purpose |
 | --- | --- |
@@ -23,58 +23,58 @@ Navigation follows the signup profession, enabled modules and access scope. Code
 | `/skills`, `/morning-brief`, `/recap`, `/metrics` | Personal instructions, briefing preferences, recap and usage |
 | `/completed`, `/trash` | Completed work and recoverable deletion |
 | `/connect`, `/connect/[app]`, `/settings` | Editor connection guides and settings |
-| `/spaces`, `/spaces/new`, `/shared`, `/shared-by-me` | Workspace and sharing management |
+| `/spaces`, `/spaces/new`, `/shared`, `/shared-by-me` | Spaces and sharing |
 | `/start`, `/welcome`, `/marketplace`, `/marketplace/[id]` | Setup, tour and built-in template catalog |
 
-Public authentication routes include `/login`, `/signup`, `/forgot`, `/reset`, `/verify` and computer approval `/link`. `/p/[token]` serves public item links; `/shared/[id]` opens authenticated item sharing.
+Public routes: `/login`, `/signup`, `/forgot`, `/reset`, `/verify` and computer approval `/link`. `/p/[token]` serves public item links; `/shared/[id]` opens an item shared with a signed-in person.
 
 ## 3. Screens
 
 ### 3.1 Today (Morning Briefing)
 
-Today combines the active profession desk, briefing, focus tasks, triage, reminders and relevant calendar/work records. Morning brief delivery starts the local day after signup; the introduction is offered once per account. `/morning-brief` remains available for later personalization. Delivery does not silently fetch all connected content.
+Today combines the profession desk, briefing, focus tasks, triage, reminders and relevant calendar/work records. Morning brief delivery starts the local day after signup; the introduction is offered once per account, and `/morning-brief` personalizes it later. Delivery does not fetch connected content.
 
-Native desks store geometry in `desk.layout.<desk>` preferences; Context panels use `desk.context.<desk>.<tab>`. Alternate widget views use `/api/layouts/:surface`. These are different persistence/rendering systems. The assistant reads/edits the one actually displayed ([34](34_ASSISTANT_ACTIONS.md)). Add-tile choices retain the profession filter. Hiding a tile does not remove its records.
+Native desks store geometry in `desk.layout.<desk>` preferences; Context panels use `desk.context.<desk>.<tab>`. Alternate widget views use `/api/layouts/:surface`. These are separate storage and rendering systems; the assistant reads and edits the one on screen ([34](34_ASSISTANT_ACTIONS.md)). Add-tile choices keep the profession filter. Hiding a tile does not remove its records.
 
-Task `todayFocus` controls automatic/kept/hidden inclusion. Snooze uses saved date/time rather than another task status. Private reminder visibility and notices follow §14.
+Task `todayFocus` (`auto`, `keep` or `hidden`) controls whether a task appears in focus. Snooze saves a date/time, not another task status. Private reminders: §14.
 
 ### 3.2 Board (Kanban)
 
-Board supports task creation, priority, ordering, filters/grouping, lifecycle actions and assignment. New task creates an editable document; owner, due date, project, repository, people and skills can be set on it. Changing owner alone does not start an agent: Run with agent opens the assignment flow.
+Board supports task creation, priority, ordering, filters/grouping, lifecycle actions and assignment, with a compact bounded search field in the toolbar (`components/board/board.tsx`). New task creates an editable document where owner, due date, project, repository, people and skills are set. Changing the owner alone does not start an agent: Run with agent opens the assignment flow.
 
-Task peeks use the same document as `/tasks/[id]`. The floating assistant receives the peek's task ID. The Board overview strip is stored in `desk.board.insights` and supports at most **four fixed-size tiles**, reorder/collapse and WIP cap. It is not an unrestricted resizable widget canvas.
+A task peek uses the same document as `/tasks/[id]`, and the floating assistant receives its task ID. The overview strip is saved in `desk.board.insights`: at most **four fixed-size tiles** (`MAX_INSIGHTS`), reorder/collapse and a WIP cap (1–50). It is not a resizable widget canvas.
 
 ### 3.3 Needs Me (Approval Queue)
 
-Needs me presents publishing approvals, structured questions, execution permission requests and interrupted older attempts. Cards retain exact options and pending payloads. Device permissions can require confirmation on that computer. In shared spaces, people may see run progress while only the executing person may answer. [05](05_MODULE_TASK_ORCHESTRATOR.md) and [29](29_SHARING.md) describe recovery and authority.
+Needs me lists publishing approvals, structured questions, execution permission requests and interrupted attempts. Cards keep the exact options and pending payloads. Device permissions can require confirmation on that computer. In shared spaces others may see run progress, but only the person running the job may answer. Recovery and authority: [05](05_MODULE_TASK_ORCHESTRATOR.md), [29](29_SHARING.md).
 
 ### 3.4 Runs (Agent Timeline / Trace)
 
-Run sheets show Results, Files and Traces, with resize/fullscreen controls. They retain model/tool/thinking events and changed-file metadata without turning historical output into editable evidence. Feedback can be a tag only or a separately linked follow-up job using the saved execution choices. History is paginated/bounded by the route, not deleted when a short overview is shown.
+Run sheets show Results, Files and Traces, with resize/fullscreen. They keep model, tool and thinking events and changed-file metadata; past output is not editable. Feedback is a tag or a separately linked follow-up job using the saved execution choices. The route paginates history; a short overview deletes nothing.
 
 ### 3.5 Context
 
-Context tabs are profession-specific. Engineer defaults include Overview, People, Projects, Repos and Graph; other profiles get their applicable records. Optional tabs can be added/hidden persistently. Student Assignments are board tasks; Engineer Mocks are mock services/test doubles. Learning/Hearings and other specialized records remain accessible without a Today tile. Phone Graph uses a searchable connection list. Data behavior: [03](03_MODULE_CONTEXT_ENGINE.md).
+Context tabs depend on profession. Engineer defaults are Overview, People, Projects, Repos and Graph; other profiles get their own records. Optional tabs can be added or hidden. Student Assignments are board tasks; Engineer Mocks are mock services/test doubles. Learning, Hearings and other specialized records stay reachable without a Today tile. On a phone, Graph is a searchable connection list. Data behaviour: [03](03_MODULE_CONTEXT_ENGINE.md).
 
 ### 3.6 Skills
 
-Skills edits the current personal instruction body, enablement and retained versions. Model previews are explicit. The separate morning-brief editor uses the same personal skill/versioning rules. Retention learning and its current direct-publication behavior are documented in [04](04_MODULE_SKILL_FORGE.md).
+Skills edits each personal instruction body, its enablement and retained versions. Model previews are explicit. The `/morning-brief` editor uses the same skill versioning. Details and completed-work learning: [04](04_MODULE_SKILL_FORGE.md).
 
 ### 3.7 Workspace
 
-Workspace is the agent workboard for queued, active, waiting, stopped and recent completed work. Every account can see its own jobs, including paired-device jobs; server folder/checkout access remains operator-only. Errors show Retry or paired-computer guidance. Assignment uses saved profiles and explicit execution choices ([06](06_MODULE_WORKSPACE_AND_SURFACES.md)).
+Workspace is the agent workboard: queued, active, waiting, stopped and recently completed work. Every account sees its own jobs, including paired-device jobs; server folder/checkout access is operator-only. Errors offer Retry or paired-computer guidance. Assignment uses saved run profiles and explicit execution choices ([06](06_MODULE_WORKSPACE_AND_SURFACES.md)). Opening a run-profile name editor focuses and selects the name synchronously, so a character typed at once is not lost (`components/agent/assign-dialog.tsx`).
 
 #### 3.7.1 Code
 
-Code opens a review or folder, changed-file diff, editor and Source control. On the hosted app ordinary users control their paired computer. The terminal is for the person, requires passkey unlock, and is not an assistant tool. [16](16_CODE_TAB.md) owns details.
+Code opens a review or folder with changed-file diff, editor and Source control. On the hosted app ordinary users work on their paired computer. The terminal is for the person only, needs passkey unlock, and is not an assistant tool. Details: [16](16_CODE_TAB.md).
 
 ### 3.8 Metrics
 
-Metrics shows calls routed through Ensemble, input/output token totals, an interactive activity chart, usage by model/purpose and expandable recent calls with dates and usage explanations. Provider and 14/30/90-day filters apply to every activity aggregate. Missing token counts and prices stay explicit; calls without token counts remain visible. The separate credits card always covers the UTC calendar month and explains retained charges after usage erasure. Prototype baselines and ledger verification are absent from the page. It does not infer measured time savings from task counts. [07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md) and [33](33_INCLUDED_AI.md).
+Metrics shows calls routed through Ensemble: token totals, an activity chart, usage by model and purpose, and expandable recent calls. The provider filter and 14/30/90-day period apply to every aggregate; the provider selector keeps its value when a period has no calls for it. Missing token counts and prices are stated, and such calls still appear. The credits card covers the UTC calendar month and shows credits used before a usage erasure. Reading the summary repairs usage left by an earlier Everything deletion, keeping known charges and later work (`repairErasedUsage`). No time-saved estimate is shown. See [07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md), [33](33_INCLUDED_AI.md).
 
 ### 3.9 Settings
 
-Settings is available as a page/dialog, with URL-addressable tabs (`components/settings/navigation.ts`, `url-state.ts`).
+Settings opens as a page or dialog with URL-addressable tabs (`components/settings/navigation.ts`, `url-state.ts`).
 
 | Tab | Controls |
 | --- | --- |
@@ -83,185 +83,187 @@ Settings is available as a page/dialog, with URL-addressable tabs (`components/s
 | Assistant | Allowed actions/write policy, default tier/persona, model profiles/effort, API keys, subscriptions, run profiles/orchestration and prompt transparency |
 | Connections | Connector catalog, suite-product grants, MCP servers/tools, paired computers and supported local integrations |
 | Notifications | In-app/platform notices, permission and quiet hours |
-| Shortcuts | Supported key bindings, conflict checks and reset |
-| Data | Retention, Trash, downloads and a Danger zone for erasure: scope-specific typed phrase, paste/drop disabled, then a separate final modal confirmation; credit consumption is retained |
+| Shortcuts | Key bindings, conflict checks and reset |
+| Data | Retention, Trash, downloads and a Danger zone: erasure needs a scope-specific typed phrase (paste/drop disabled), then a separate final confirmation; credit consumption is kept |
 | Spaces / Sharing | Owned spaces, settings copy/sync, membership, contacts and outgoing access |
 
-Exact subcontrols depend on profile, local/hosted mode and permissions. `GET/PATCH /api/settings` uses partial patches; an unrelated save must not reset other settings. `PUT /api/settings/modules` controls allowed modules. Automatic time zone detection and a searchable manual picker are supported; explicit choices persist.
+Subcontrols depend on profile, local/hosted mode and permissions. `GET/PATCH /api/settings` takes partial patches, so one save never resets other settings. `PUT /api/settings/modules` sets allowed modules. Time zone is detected automatically or picked from a searchable list; an explicit choice persists.
 
-The assistant can find/read/change **allowlisted** settings after Apply and choose a catalog model/effort. It can change supported appearance live. Keys, account deletion, sharing, folder trust, sandbox/permission grants and other sensitive controls require the human UI. See [34](34_ASSISTANT_ACTIONS.md).
+The assistant can find, read and change **allowlisted** settings after Apply and pick a catalog model/effort; supported appearance changes apply live. Keys, account deletion, sharing, folder trust, sandbox/permission grants and other sensitive controls need the human UI ([34](34_ASSISTANT_ACTIONS.md)).
 
 #### Connector store
 
-`components/connectors` consumes `GET /api/connectors/catalog`. Entries distinguish configured operator app, the person's connection, products/granted scopes, last sync/error and vendor MCP state/tools. Turning on a product without sufficient scopes offers reconnect/consent. A vendor MCP connection made without an account to a server that holds the person's data shows as "Connected · public data only", with sign-in and token still offered; where the vendor names the account (Hugging Face) the badge reads "Connected as <account>". Hugging Face offers **Sign in with Hugging Face** and **Paste an access token**, never an anonymous Connect. Login identity and connector grants are separate. Connecting does not import content; Sync people updates bounded metadata only. Native search, file/board import and MCP tools have separate coverage ([03](03_MODULE_CONTEXT_ENGINE.md), [31](31_CONNECTORS_IN_USE.md)).
+`components/connectors` reads `GET /api/connectors/catalog`: operator app configured, the person's connection, products and granted scopes, last sync/error, vendor MCP state/tools. Turning on a product without enough scope offers reconnect/consent. A vendor MCP server holding the person's data but connected without an account shows "Connected · public data only", still offering sign-in and token; where the vendor names the account the badge reads "Connected as <account>". Hugging Face offers **Sign in with Hugging Face** and **Paste an access token**, never an anonymous Connect. Login identity and connector grants are separate. Connecting imports nothing; Sync people updates bounded metadata only ([03](03_MODULE_CONTEXT_ENGINE.md), [31](31_CONNECTORS_IN_USE.md)).
 
-Connected apps come first wherever connectors are listed: the store grid (in every category and search), and the five-app short list in Settings → Connections. "Connected" means signed in, a saved token, or the vendor's MCP server connected; connected custom MCP servers join them at the top of the grid. Otherwise catalog order holds (`filterEntries`, `featuredEntries`, `storeCards` in `components/connectors/catalog-view.ts`). The API still returns catalog order.
+Connected apps come first wherever connectors are listed: the store grid (every category and search) and the five-app short list in Settings → Connections (`FEATURED_ORDER`: Google Workspace, Microsoft 365, Notion, Linear, GitHub). "Connected" means signed in, a saved token, or the vendor's MCP server connected; connected custom MCP servers join them at the top of the grid. Otherwise catalog order holds (`filterEntries`, `featuredEntries`, `storeCards` in `components/connectors/catalog-view.ts`). The API returns catalog order.
 
-The detail page's connect panel has one **Step-by-step guide** disclosure, open by default, inside the way it describes (a button with `aria-expanded`; numbered steps, links open in a new tab, with "Looks like", "Not this", "Permissions" and "More help" notes). Pasted credentials and MCP servers that take a token, an address or the organisation's own app have written guides in `packages/shared-types/src/connector-guides.ts` (`CONNECTOR_GUIDES`); sign-in gets a short guide on what happens and what to approve (`connectorGuide`). Guides, field labels and the way's title use the vendor's own word for the credential (Notion internal integration secret, GitHub fine-grained personal access token, Slack user OAuth token, Linear personal API key, Trello API key and token). Trello's form has **Get a token**, which opens Trello's authorize page for the typed key. A refused token is shown under the fields. **In Ensemble** lists only what the code does for that app ([31 §2](31_CONNECTORS_IN_USE.md#2-what-ensemble-does-with-a-connected-app)).
+The detail page's connect panel has one **Step-by-step guide** disclosure, open by default (`aria-expanded` button; numbered steps, links in a new tab, "Looks like", "Not this", "Permissions" and "More help" notes). Token, address and own-app ways have written guides in `packages/shared-types/src/connector-guides.ts` (`CONNECTOR_GUIDES`); sign-in gets a short what-to-approve guide (`connectorGuide`). Guides and field labels use the vendor's name for the credential (Notion internal integration secret, GitHub fine-grained personal access token, Slack user OAuth token, Linear personal API key, Trello API key and token). Trello's **Get a token** opens Trello's authorize page for the typed key. A refused token is shown under the fields. **In Ensemble** lists only what the code does for that app ([31 §2](31_CONNECTORS_IN_USE.md#2-what-ensemble-does-with-a-connected-app)).
 
 ### 3.10 Files
 
-Files lists uploaded originals and explicitly saved/imported app content. Format viewers offer supported previews, original download, text/cell editing and page conversion/export. Files and their extracted text are distinct from a transient connected-item search result. [32](32_FILES.md) defines caps, formats and edit limitations.
+Files lists uploaded originals and app content the person explicitly saved or imported. Viewers offer supported previews, original download, text/cell editing and page conversion/export. A saved file and its extracted text are distinct from a transient connected-item search result. Caps, formats and edit limits: [32](32_FILES.md).
 
 ## 4. Interaction patterns
 
-Dialogs manage keyboard focus; tabs support keyboard navigation. Drag/drop and resize controls persist real layout state. Blank titles restore the saved name or fail validation rather than saving empty records. Text scaling changes typography without scaling the entire root layout. Phone actions wrap within the viewport.
+Dialogs manage focus; tabs support keyboard navigation. Drag/drop and resize persist layout. A blank title restores the saved name or fails validation. Text scaling changes typography, not the root layout. Phone actions wrap within the viewport.
 
-Notices (toasts, `components/toast.tsx`) appear at the bottom centre and close themselves after 3 seconds (`TOAST_MS` in `lib/toast-bus.ts`); the accent bar along the bottom runs down over that time. Pointing at a notice or focusing it pauses the bar and the timer, so an Undo button stays reachable; × closes it at once. A caller can ask for longer only for instructions that need reading (the PDF print fallback).
+Notices (`components/toast.tsx`) appear bottom centre and close after 3 seconds (`TOAST_MS` in `lib/toast-bus.ts`); the accent bar runs down over that time. Pointing at or focusing a notice pauses it, so Undo stays reachable; × closes it at once. A caller can ask for longer only for instructions that need reading (the PDF print fallback).
 
-Confirmations are specific to the action. Moving recoverable pages to Trash offers Undo; permanent deletion, account removal, sharing revocation and sensitive device permissions have their own confirmations. Do not add a universal confirmation to ordinary autosave.
+Confirmations are specific to the action. Moving pages to Trash offers Undo; permanent deletion, account removal, sharing revocation and sensitive device permissions have their own confirmations. Ordinary autosave has none.
 
 ## 5. State & data flow
 
-React Query caches scoped API responses. SSE events invalidate/refetch relevant queries and drive progress; they are not the database. Live editor collaboration additionally has its own authority/version protocol. Saved preferences hold layouts and UI choices; browser-only draft/position state has a different lifetime.
+React Query caches scoped API responses. SSE events invalidate/refetch queries and drive progress; they are not the database. Live editing has its own authority/version protocol (§13). Preferences hold layouts and UI choices; browser-only draft/position state is shorter-lived.
 
-`lib/api.ts` centralizes requests and readable errors, including off-module errors. `lib/assistant-surface.ts` and view components publish bounded IDs, filters, selection and layout information. This context carries no additional authorization.
+`lib/api.ts` centralizes requests and readable errors, including off-module errors. `lib/assistant-surface.ts` and view components publish bounded IDs, filters, selection and layout to the assistant; this context grants no authorization.
 
 ## 6. API contract (hub-api → UI, abridged)
 
-The checked-in route inventory and route modules are authoritative; this table groups the current entry points. Sharing classification is enforced separately in `src/sharing/policy.ts`.
+`apps/hub-api/scripts/route-inventory.json` (checked by `pnpm --filter @ensemble/hub-api route:inventory:check`) lists every registered route. This table groups the main entry points; files are under `apps/hub-api/src`. Sharing access is classed separately in `sharing/policy.ts`.
 
 | Area | Routes / implementation |
 | --- | --- |
 | Shell and Today | `/api/shell` (account, open space, counts, modules, `hostCode`: whether this account may read this server's own Code and workspace folders), `/api/today/home`; `routes/views.ts` |
-| Tasks and board | `/api/tasks`, `/api/tasks/:id`, `/api/tasks/:id/move`; `routes/tasks.ts`, `board.ts` |
-| Task documents | `/api/tasks/:id/page`, `/api/tasks/:id/page/collab`; task and collaboration routes |
-| Standalone pages | `/api/pages`, `/api/pages/:id`, `/api/pages/delete-many`; `routes/pages.ts` and `pages/` |
-| Context and entities | `/api/context/board`, `/api/context/graph`, `/api/entities`, `/api/context/search`; `routes/context.ts`, `cowork.ts` |
+| Tasks and board | `/api/tasks`, `/api/tasks/:id`, `/api/tasks/:id/move`, `/pin`, `/reopen`, `/api/deliverables`, `/api/completed`; `routes/tasks.ts`, `board.ts`, `completed.ts` |
+| Task documents | `/api/tasks/:id/page`, `/api/tasks/:id/page/collab`; `routes/tasks.ts`, `collab.ts` |
+| Standalone pages | `/api/pages`, `/api/pages/:id`, `/api/pages/:id/collab`, `/api/pages/delete-many`, `/api/pages/:kind/:id/convert`; `routes/pages.ts` |
+| Page history, copies, templates | `/api/page-versions`, `/api/page-versions/:id/restore`, `/api/pages/:id/duplicate`, `/api/pages/:id/template`, `/api/page-templates`, `/api/page-templates/:id/create`; `pages/version-routes.ts` |
+| Comments and inline requests | `/api/pages/:kind/:id/comments`, `/api/comments/:id`, `/api/comments/:id/reply`, `/api/pages/:kind/:id/ensemble`, `/api/ensemble/replies`; `routes/comments.ts`, `ensemble.ts` |
+| Context and entities | `/api/context/board`, `/api/context/graph`, `/api/entities`, `/api/people`, `/api/people/:id/merge`, `/api/projects`, `/api/repos`, `/api/artifacts`, `/api/preferences/:key`; `routes/context.ts`. `/api/context/search`; `routes/cowork.ts`. `/api/project-links`; `routes/project-links.ts` |
 | Morning brief/capture | `/api/brief/today`, `/api/brief/skill`, `/api/brief/prompt`, `/api/capture/preview`, `/api/capture`; `routes/cowork.ts` |
-| Meetings | `/api/meetings/sessions`, `/api/meetings/imported`, `/api/meetings/notes/:id`; `cowork.ts`, `meeting-notes.ts` |
-| Settings/models | `/api/settings`, `/api/settings/modules`, `/api/models`, `/api/models/refresh`, `/api/models/test`, `/api/model-keys/:provider`; `settings.ts`, `system.ts` |
-| Connectors | `/api/connectors/catalog`, `/api/connectors/:provider/start`, `/api/connectors/:provider/callback`, `/api/connectors/:provider/token`, `/api/connections/:id/sync`, `/api/fetch`; connector/system routes |
-| Vendor MCP | `/api/mcp-connections`, `/api/mcp-connections/:id`, callback and refresh-tools; `routes/mcp-connections.ts` |
-| Connected items | `/api/app-items/*`; [31](31_CONNECTORS_IN_USE.md#6-api) lists actual operations |
-| Files | `/api/documents`, `/api/documents/:id`, `/original`, `/text`, `/content`, `/cells`, `/page`, `/style`, `/tags`; `routes/files.ts` |
-| Imports | `/api/imports/*`; [27](27_IMPORTS.md#6-api) owns the preview/job/undo contract |
+| Meetings | `/api/meetings/sessions`, `/api/meetings/imported`, `/api/meetings/notes/:id`; `routes/cowork.ts`, `meeting-notes.ts` |
+| Needs me, reminders, notices | `/api/decisions`, `/api/decisions/:id/decide`, `/api/approvals/:id/decide`, `/api/reminders`, `/api/notifications`; `routes/decisions.ts`, `misc.ts`, `board.ts`, `cowork.ts` |
+| Live updates | `/api/events` (SSE), `/api/events/ticket`; `routes/misc.ts` |
+| Settings/models | `/api/settings`, `/api/settings/modules`, `/api/models`, `/api/models/refresh`, `/api/models/test`, `/api/model-keys/:provider`; `routes/settings.ts`, `system.ts` |
+| Spaces | `/api/spaces`, `/api/spaces/:id`, `/api/spaces/:id/switch`, `/api/spaces/settings/copy`, `/api/spaces/settings/sync`; `spaces/routes.ts`, [28 §3](28_ENSEMBLE_SPACES.md#3-routes) |
+| Connectors | `/api/connectors/catalog`, `/api/connectors/:provider/start`, `/callback`, `/token`, `DELETE /api/connectors/:provider`, `PUT /api/connectors/:id/products`, `/api/connectors/apps`; `routes/connectors.ts`. `/api/connections/:id/sync`, `/api/fetch`; `routes/system.ts` |
+| Vendor MCP | `/api/mcp-connections`, `/api/mcp-connections/:id`, `/api/mcp-connections/callback`, `/api/mcp-connections/:id/refresh-tools`; `routes/mcp-connections.ts` |
+| Connected items | `/api/app-items/*`; operations in [31](31_CONNECTORS_IN_USE.md#6-api) |
+| Files | `/api/documents`, `/api/documents/:id`, `/original`, `/text`, `/content`, `/cells`, `/page`, `/style`, `/tags`; `routes/files.ts`. `/api/documents/import`; `routes/file-imports.ts` |
+| Imports | `/api/imports/*`; preview/job/undo contract in [27](27_IMPORTS.md#6-api) |
+| Plots and diagrams | `/api/plots/*`, `/api/diagrams/*`; `routes/plots.ts`, `diagrams.ts`, [20](20_PLOTS_DESIGN.md) |
 | Skills | `/api/skills`, `/api/skills/:id`, `/restore`, `/test`, `/score`; `routes/skills.ts` |
-| Runs/metrics | `/api/runs`, `/api/runs/:id`, `/api/runs/:id/feedback`, `/api/metrics/summary?provider=<id>&days=14` (1–90 days), `/api/metrics/credits`, `/api/ledger/verify` |
-| Interaction log | `POST /api/telemetry` (the Hub's own usage events, signed-in browser sessions only; [07 §1.3](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#13-the-operators-interaction-log-and-dashboards)) |
+| Runs/metrics | `/api/runs`, `/api/runs/:id`, `/api/runs/:id/feedback`, `/api/metrics/summary?provider=<id>&days=14` (1–90 days), `/api/ledger/verify`; `routes/runs.ts`. `/api/metrics/credits`; `routes/included.ts` |
+| Interaction log | `POST /api/telemetry` (the Hub's own usage events, signed-in browser sessions only; [07 §1.3](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#13-the-operators-interaction-log-and-dashboards)); `analytics/telemetry.ts` |
 | Assistant | `/api/assistant/tools`, `/conversations`, `/conversations/:id/messages`, `/turn`, `/apply`, `/conversations/:id/stop`; `routes/assistant.ts` |
-| Layouts | `/api/layouts/:surface`, `/api/layouts/:surface/reset`; `routes/layouts.ts`; native desks instead use preferences |
+| Layouts | `/api/layouts/:surface`, `/api/layouts/:surface/reset`; `routes/layouts.ts` (native desks use preferences instead) |
 | Workspace/agent | `/api/workspace`, `/api/agent/assign` and job/control routes; `routes/agents.ts`, `job-files.ts` |
-| Code/terminal | `routes/code*.ts`, `terminal*.ts`; [16](16_CODE_TAB.md) and [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md) |
+| Code/terminal | `routes/code*.ts`, `terminal*.ts`; [16](16_CODE_TAB.md), [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md) |
 | Trash/data | `/api/deleted`, `/api/deleted/restore`, `/api/deleted/empty`, `/api/data/delete`; `routes/system.ts` |
 | Undo/redo | `/api/undo`, `/api/redo`; `routes/misc.ts`, `lib/undo.ts` |
-| Sharing/presence | `sharing/routes.ts`, [29](29_SHARING.md#6-routes) |
+| Sharing/presence | `sharing/routes.ts`; [29](29_SHARING.md#6-routes) |
 | Device login/editor MCP | `routes/cli-auth.ts`, `routes/mcp.ts`; [26](26_CLI.md) |
 
-Internal service routes require internal credentials; device routes require a scoped device token. They are not public alternatives to an app's normal authorization. File bytes, model keys and cookie/session headers must never be placed in model prompts.
+Internal service routes need internal credentials; device routes need a scoped device token. Neither bypasses an app's normal authorization. File bytes, model keys and cookie/session headers never go into model prompts.
 
 ## 7. Component ownership
 
-`components/editor`, `pages`, `task` and `comments` own documents; `board`, `desk`, `widgets`, `context` and `today` own work views; `assistant` owns chat/proposals; `agent`, `needs-me`, `code` own execution/review; `settings`, `connectors`, `sharing` own account/app controls. Shared primitives live in `components/ui.tsx`; shared models/validation live in `packages/shared-types`.
+`components/editor`, `pages`, `task` and `comments` own documents; `board`, `desk`, `widgets`, `context` and `today` own work views; `assistant` owns chat/proposals; `agent`, `needs-me`, `code` own execution/review; `settings`, `connectors`, `sharing` own account/app controls. Shared primitives live in `components/ui.tsx`; shared models/validation in `packages/shared-types`.
 
 ## 8. Visual style
 
-`packages/brand` owns marks, palettes and motion. [BRAND](BRAND.md) describes the current system. Reduced motion is independent of theme. Menus/dialogs opened from the floating assistant use a layer above their parent, so model and mention menus stay clickable.
+`packages/brand` owns marks, palettes and motion ([BRAND](BRAND.md)). Reduced motion is independent of theme. Menus and dialogs opened from the floating assistant sit on a layer above it, so model and mention menus stay clickable.
 
-Mentions use one chip everywhere: page mentions, mentions in sent assistant messages and in comments (`.mention` in `app/globals.css`, `components/mentions/mention-chip.tsx`). Each kind takes its hue from the `--kind-*` tokens, mixed soft and tuned separately for light and dark, so it reads under every color theme; the chip is inline and does not change its line's height. Text boxes with the @ menu (assistant composer, comments, Quick capture) use `components/mentions/mention-field.tsx`: a copy of the text behind the transparent box tints picked mentions, a bare `@people:` prefix and the token being picked, while caret, selection, undo and IME stay the browser's.
+Mentions use one chip everywhere: pages, sent assistant messages and comments (`.mention` in `app/globals.css`, `components/mentions/mention-chip.tsx`). Each kind takes its hue from the `--kind-*` tokens, mixed soft and tuned for light and dark, so it reads under every color theme; the chip is inline and does not change line height. Text boxes with the @ menu (assistant composer, comments, Quick capture) use `components/mentions/mention-field.tsx`: a copy of the text behind the transparent box tints picked mentions, a bare `@people:` prefix and the token being picked, while caret, selection, undo and IME stay native.
 
-Addresses in text are links. `lib/linkify.ts` finds http(s) URLs, `www.` hosts and email addresses (never other schemes), trimming sentence punctuation and unbalanced closing brackets; `components/linkified-text.tsx` renders them in raw text (sent assistant messages, run trace thinking/errors/tool input and output, live job logs and events, task short descriptions, plain-text files, app item text, meeting recaps, Morning brief, approval previews). `MarkdownText` also links bare and `<…>` addresses, but not inside code. Web addresses open in a new tab with `noopener noreferrer`; in-app paths stay in the tab. A click on a link inside a clickable row or a click-to-edit field opens only the link.
+Addresses in text are links. `lib/linkify.ts` finds http(s) URLs, `www.` hosts and email addresses (no other schemes), trimming sentence punctuation and unbalanced closing brackets; `components/linkified-text.tsx` renders them in raw text (sent assistant messages, run trace thinking/errors/tool input and output, live job logs and events, task short descriptions, plain-text files, app item text, meeting recaps, Morning brief, approval previews). `MarkdownText` also links bare and `<…>` addresses, but not inside code. Web addresses open in a new tab with `noopener noreferrer`; in-app paths stay in the tab. Clicking a link inside a clickable row or click-to-edit field opens only the link.
 
-## 9. Verification
+## 9. Tests
 
-Use `pnpm --filter @ensemble/hub-web test` and relevant API tests for behavior changes. Browser scripts under `e2e` and `scripts` have individual prerequisites; a historical screenshot or mock does not verify today's production page. The route inventory checks registered endpoints, not every happy-path contract. This documentation audit does not rerun the complete UI/provider matrix.
+`pnpm --filter @ensemble/hub-web test` plus the relevant API tests cover behaviour changes. Browser scripts in `apps/hub-web/e2e` and `apps/hub-web/scripts` have their own prerequisites. The route inventory check covers registered endpoints, not every happy path.
 
 ## 10. The Hub assistant
 
-The floating dock remains the shared conversation surface, including over task peeks. Floating, it resizes from its left edge, top edge or top-left corner (it stays anchored bottom-right): drag, or focus an edge and use the arrow keys; double-click or Home goes back to the default size. The size is kept in this browser (`ensemble.assistant.size`), never below 380 × 440 px and never past the window less a 20 px margin, and is fitted again when the window changes (`components/assistant/use-panel-size.ts`). Expanded, and on phones (640 px wide or less), it has no handles and keeps its fixed layout. Typed mentions send kind/ID references; names without IDs are resolved conservatively in the current space. The composer tints mentions while typing, and a sent message shows its saved mentions as chips that open the record in the app ([11](11_HOW_THE_ASSISTANT_WORKS.md#3-context-and-prompt-size)). The **Attach file** picker lists only files already saved in Files and inserts an ID-backed `@file:` mention (`components/files/add-to-message.tsx`). Opening or searching it never searches connected apps. Live connected-app reads require a separate explicit request. Model menus choose the available tier/model and identify the funding source. Unavailable turns persist as errors with Retry, not successful assistant messages.
+The floating dock is the shared conversation surface, including over task peeks. Floating, it resizes from its left edge, top edge or top-left corner (anchored bottom-right): drag, or focus an edge and use the arrow keys; double-click or Home restores the default size. The size is kept in this browser (`ensemble.assistant.size`), never below 380 × 440 px or past the window less a 20 px margin, and refitted when the window changes (`components/assistant/use-panel-size.ts`). Expanded, and on phones (640 px wide or less), it has no handles and a fixed layout.
 
-[11](11_HOW_THE_ASSISTANT_WORKS.md) owns routing, tool execution and Apply. [34](34_ASSISTANT_ACTIONS.md) owns the current action map.
+Typed mentions send kind/ID references; names without IDs are resolved conservatively in the current space. The composer tints mentions while typing, and a sent message shows its saved mentions as chips that open the record ([11](11_HOW_THE_ASSISTANT_WORKS.md#3-context-and-prompt-size)). **Attach file** lists only files already saved in Files and inserts an ID-backed `@file:` mention (`components/files/add-to-message.tsx`); it never searches connected apps. Live connected-app reads need a separate explicit request. Model menus choose the tier/model and show who pays. A failed turn is saved as an error with Retry, not as an assistant answer.
+
+Routing, tool execution and Apply: [11](11_HOW_THE_ASSISTANT_WORKS.md). Action map: [34](34_ASSISTANT_ACTIONS.md).
 
 ## 11. Undo / redo
 
-`lib/undo.ts` records supported Hub writes transactionally, including grouped assistant changes. Undo/redo replays journaled operations rather than invoking the model again. It cannot reverse arbitrary external calls, invitations, imports already consumed elsewhere or filesystem side effects. Specific tools report whether Undo is supported. Conversion/history operations preserve document identity and apply their own safeguards.
+`apps/hub-api/src/lib/undo.ts` journals supported Hub writes transactionally, including grouped assistant changes. Undo/redo replays the journal; it does not call the model. It cannot reverse arbitrary external calls, invitations, imports already consumed elsewhere or filesystem side effects; each tool reports whether it supports Undo. Conversions and history restores keep document identity and have their own safeguards.
 
 ## 12. Live agent activity and the stop button
 
-Activity state and SSE show work actually running/waiting. Pause stops new jobs and cancels current model/command work; Stop everything also cancels the queue. A remote request already accepted can finish. Cancellation does not undo an external write or guarantee a billing refund. [05](05_MODULE_TASK_ORCHESTRATOR.md#6-stop-interruption-and-retry) explains saved work and explicit retry.
+Activity state and SSE show work actually running or waiting. Pause stops new jobs and cancels current model/command work; Stop everything also clears the queue. A remote request already accepted can finish. Cancelling does not undo an external write or guarantee a billing refund. Saved work and retry: [05 §6](05_MODULE_TASK_ORCHESTRATOR.md#6-stop-interruption-and-retry).
 
 ## 13. Document-style pages
 
-The TipTap editor uses the shared page schema (`packages/shared-types/src/page-schema.json`). A page is writing with structured blocks, not a second chat. Task properties and execution controls sit around the document. A task document and a standalone note share the editor but retain different identities.
+The TipTap editor uses the shared page schema (`packages/shared-types/src/page-schema.json`). A page is writing with structured blocks, not a chat. Task properties and execution controls sit around the document. Task documents and standalone notes share the editor but keep separate identities.
 
 ### Creation and properties
 
-Titles/properties edit in place. Task descriptions, detailed page content, linked context and immutable run evidence have different roles. Assigning ownership does not execute. Focus mode provides a reading-width document with save state and exit control.
+Titles and properties edit in place. Task descriptions, page content, linked context and immutable run evidence have different roles. Assigning an owner does not run anything. Focus mode gives a reading-width document with save state and an exit control.
 
 ### Standalone notes
 
-A standalone note is a `TaskPage` with null `taskId`; nullable `parentId` supports nested pages. Page saves/renames lock the row and reject stale revisions. Saved search text is refreshed for retrieval. A standalone note is not automatically a task or project.
+A standalone note is a `TaskPage` with null `taskId`; nullable `parentId` nests pages. Saves and renames lock the row and reject stale revisions, and refresh the saved search text. A note is not a task or project.
 
-Delete soft-deletes the note and descendants with Undo after pending saves finish. Trash retains content, mentions, discussions and history until purge. Deleted links show a read-only restore state; a missing/purged ID shows a missing-item screen. Shared/public views do not expose owner-only recovery controls.
+Delete soft-deletes the note and its descendants, with Undo, after pending saves finish. Trash keeps content, mentions, discussions and history until purge. A link to a deleted page shows a read-only restore state; a missing or purged ID shows a missing-item screen. Shared and public views hide owner-only recovery controls.
 
-Add to board attaches the existing page to a new task. Convert to page detaches the document and trashes the old task. Content, mentions and discussion identity survive; converting back creates a new task rather than restoring old execution properties. Conversion rejects stale content and active inline/agent work.
+Add to board attaches the existing page to a new task. Convert to page detaches the document and trashes the old task. Content, mentions and discussions keep their identity; converting back creates a new task without the old execution properties. Conversion rejects stale content and active inline/agent work.
 
 ### Page history, copies and private templates
 
-`pages/history.ts` coalesces checkpoints within five minutes and keeps at most 30. Restore first preserves current work and reconciles an open live editor. Author/time are retained; old unattributed entries are labeled accordingly. Stale restoration fails with 409.
+`pages/history.ts` coalesces checkpoints within five minutes and keeps at most 30. Restore first saves current work and reconciles an open live editor. Versions show their author when recorded. A stale restore fails with 409.
 
-Duplicate creates independent writing. Save as template snapshots for the owner's current profile in the space, at most 50. Copies/templates omit discussions, shares and active AI bindings; static AI output becomes text. Embedded resources remain same-space references; source-file export associations are not copied. History, duplication and templates are owner-only.
+Duplicate creates independent writing. Save as template snapshots the page for the owner's current profile in the space, at most 50 templates. Copies and templates omit discussions, shares and active AI bindings; static AI output becomes text. Embedded resources stay same-space references; source-file export associations are not copied. History, duplication and templates are owner-only.
 
 ### Blocks and mentions
 
-Slash commands insert supported writing blocks; `@` links real entities by ID and can request Ensemble. Mentions render as kind-tinted chips; embedded files, plots and diagrams render as cards and retain their resource identity. Plot/diagram height is saved on the mention; removing the embed does not delete the resource. The mention menu must finish entity selection before Enter can send an inline request.
+Slash commands insert writing blocks; `@` links real entities by ID and can request Ensemble. Mentions render as kind-tinted chips; embedded files, plots and diagrams render as cards that keep their resource identity. Plot/diagram height is saved on the mention; removing the embed does not delete the resource. The mention menu must finish selecting an entity before Enter can send an inline request.
 
-Links in an editable page open on a click: in-app paths, `ensemble://` record links and link-to-page blocks in place, everything else in a new tab (Cmd/Ctrl+click always uses a new tab). Resting the pointer on a link for about half a second, or Alt+Enter with the caret in one, shows a card to open, edit or remove it (`components/editor/link-popover.tsx`); selecting part of a link with a drag or Shift+click does not open it. Read-only pages use ordinary links that open in a new tab.
+Links in an editable page open on click: in-app paths, `ensemble://` record links and link-to-page blocks in place, everything else in a new tab (Cmd/Ctrl+click always uses a new tab). Resting the pointer on a link for about half a second, or Alt+Enter with the caret in one, shows a card to open, edit or remove it (`components/editor/link-popover.tsx`); selecting part of a link by drag or Shift+click does not open it. Read-only pages use ordinary links that open in a new tab.
 
 ### Saving and concurrent edits
 
-Live page/task editing uses `pages/collab.ts`, `collab-core.ts` and collaboration routes, with epoch/version markers. Legacy full-document saves are reconciled through that authority. Revision conflicts keep the draft. Annotation-only saves do not rewrite task notes or running instructions. A model action uses current bounded document context and can read more through tools.
+Live page/task editing uses `pages/collab.ts`, `collab-core.ts` and `routes/collab.ts`, with epoch/version markers. Whole-document saves and conversions flush the live session first, so they include what others typed. A revision conflict keeps the draft. Annotation-only saves do not rewrite task notes or running instructions. A model action gets bounded current document context and can read more through tools.
 
 ### Agent output and human notes
 
-Run output remains immutable evidence. Human annotations keep their run/output anchors. Request changes or Redo creates a new assignment/attempt rather than rewriting a historical answer. Saved output, annotations and current task instructions are distinguished in context.
+Run output is immutable evidence. Human annotations keep their run/output anchors. Request changes or Redo creates a new assignment/attempt instead of rewriting an answer. Context keeps saved output, annotations and current task instructions apart.
 
 ### Selection comments and inline questions
 
-Selection comments retain quote/context anchors and report ambiguous or changed text. Owners/editors can edit/resolve/delete according to access; viewers cannot write comments or ask the assistant. `@ensemble` plus Enter explicitly sends a request; typing, autosaving, reopening and reading a previous answer do not run a model.
+Selection comments keep quote/context anchors and report ambiguous or changed text. Owners and editors edit/resolve/delete according to access; viewers cannot comment or ask the assistant. `@ensemble` plus Enter explicitly sends a request; typing, autosaving, reopening and reading an earlier answer never run a model.
 
-Inline requests use the normal assistant loop and scoped tools. Newly requested diagrams/plots can be created/attached in that inline flow under its existing policy; other held writes still need Apply. Request IDs prevent retries from starting duplicate discussion work. Failed drafts remain visible. A final answer is required; tool activity alone is not a successful-looking reply. These paths are implemented in `components/comments`, `ensemble/` and `routes/comments.ts`.
+Inline requests use the normal assistant loop and scoped tools. Newly requested diagrams/plots can be created and attached inline under the existing policy; other held writes still need Apply. Request IDs stop retries from starting duplicate work. Failed drafts stay visible. A request needs a final answer; tool activity alone does not count as a reply. Code: `components/comments`, `apps/hub-api/src/ensemble/`, `routes/comments.ts`.
 
 ### Manual and imported meeting notes
 
-Manual meeting sessions use the block editor and serialized debounced saving. Each card on the shelf shows a Move to Trash button on hover or keyboard focus (always shown on touch screens), which confirms, uses `DELETE /api/meetings/sessions/:id` like Delete notes inside a note, and offers Undo. Typed content also has a Markdown projection used by search/recap. Failed drafts remain in browser memory across SPA navigation, not a full reload. Imported notes share the shelf but are source records and read-only. Meetings do not record the microphone or transcribe audio. [03](03_MODULE_CONTEXT_ENGINE.md#7-meeting-context) describes the actual routes.
+Manual meeting sessions use the block editor with serialized, debounced saving. Each shelf card shows Move to Trash on hover or keyboard focus (always on touch screens); it confirms, calls `DELETE /api/meetings/sessions/:id` like Delete notes inside a note, and offers Undo. Typed content also gets a Markdown projection for search and recap. Failed drafts stay in browser memory across in-app navigation, not a full reload. Imported notes share the shelf but are read-only source records. Meetings do not record the microphone or transcribe audio. Routes: [03 §7](03_MODULE_CONTEXT_ENGINE.md#7-meeting-context).
 
 ### Context graph
 
-Graph derives connections from saved records and mentions; it does not start provider ingestion. A phone uses the list presentation. [03](03_MODULE_CONTEXT_ENGINE.md) owns data/suppression details.
+Graph derives connections from saved records and mentions; it never starts a provider fetch. Phones use the list view. Data and suppression: [03](03_MODULE_CONTEXT_ENGINE.md).
 
 ## 14. Private reminders
 
-Reminders belong to the person, not shared task context. Due reminders create notifications. Platform delivery needs permission and a running browser tab or desktop app; quiet hours and OS Focus still apply. Snooze saves a real next time. They are excluded from Context Bridge/search briefs. [07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#12-private-reminders-and-platform-notifications).
+Reminders belong to the person, not to shared task context. A due reminder creates a notification. Platform delivery needs permission and a running browser tab or desktop app; quiet hours and OS Focus still apply. Snooze saves a real next time. Reminders are excluded from Context Bridge and search briefs. See [07 §1.2](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#12-private-reminders-and-platform-notifications).
 
 ## 15. Waiting, previews and quiet status
 
-Saving, waiting for a person, queued, active and failed states have distinct copy and indicators. Error turns do not enter model history as valid answers. Pending proposals keep Apply; failed dependent work offers Retry remaining steps without relabeling it Applied. Reduced motion keeps the same status semantics without animation.
+Saving, waiting for a person, queued, active and failed each have their own indicator; reduced motion keeps them without animation. Error turns never enter model history. Pending proposals keep Apply; failed dependent work offers Retry remaining steps and is not labelled Applied.
 
 ## 16. Accounts and public signup
 
-`routes/auth.ts` and `auth-oauth.ts` support scrypt passwords and hashed-cookie sessions. `ENSEMBLE_SIGNUP_MODE` is open/allowlist/closed; allowlist uses `ENSEMBLE_SIGNUP_ALLOWLIST`. Local first-account placeholder adoption is separate from hosted registration, which never claims old localhost data.
+`routes/auth.ts` and `auth-oauth.ts` provide scrypt passwords and hashed-cookie sessions. `ENSEMBLE_SIGNUP_MODE` is `open`, `allowlist` or `closed`; allowlist reads `ENSEMBLE_SIGNUP_ALLOWLIST`. Local first-account adoption of placeholder data is separate from hosted registration, which never claims localhost data.
 
-Social buttons require configured `AUTH_<PROVIDER>_CLIENT_ID/SECRET`. Login uses browser-bound PKCE/nonce/single-use state and identity validation. It stores login mappings, not connector tokens. Verified provider email can link only under the implemented ownership rules; Microsoft email/username alone is not email verification.
+Social buttons need `AUTH_<PROVIDER>_CLIENT_ID`/`_SECRET`. Login uses browser-bound PKCE/nonce/single-use state and identity validation, and stores login mappings, not connector tokens. A verified provider email links accounts only under the ownership rules; a Microsoft email or username alone is not email verification.
 
-Hosted email signup needs Resend delivery (`EMAIL_PROVIDER`, `EMAIL_API_KEY`, `EMAIL_FROM`) and both Turnstile keys. Verification codes are hashed, expire after 30 minutes and count attempts; requesting a new one invalidates the old. Unverified users can write local workspace content but cannot use hosted models/connectors/agents. Signup readiness and registration policy are separate.
+Hosted email signup needs Resend delivery (`EMAIL_PROVIDER=resend`, `EMAIL_API_KEY`, `EMAIL_FROM`) and both Turnstile keys (`TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`). Verification codes are hashed, expire after 30 minutes and count attempts; a new code invalidates the old one. Unverified users can write workspace content but cannot use hosted models, connectors or agents. Signup readiness and registration policy are separate.
 
-New accounts complete profession/profile and template setup. The tour uses a preview canvas rather than navigating/mutating real work; Ask opens a draft without sending. A one-time profession change remains a design, not a general Settings control.
+New accounts pick a profession/profile and a template. The tour uses a preview canvas and never changes real work; Ask opens a draft without sending. Settings has no control to change the signup role.
 
-Account settings manage linked login methods/password, avatar, export and deletion. Sensitive method removal/deletion requires a recent session or password confirmation. Social-only accounts can add their first password. Sign-out uses confirmation and returns to login. Account deletion retains the separate monthly credit-enforcement amount and minimal operational log described in [07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#6-data-erasure), not a profile snapshot or feedback survey.
+Account settings manage login methods/password, avatar, export and deletion. Removing a method or deleting the account needs a recent session or password confirmation. Social-only accounts can add a first password. Sign-out confirms and returns to login. Account deletion keeps only the monthly credit-enforcement amount and a minimal operational log ([07 §6](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#6-data-erasure)); no profile snapshot or survey.
 
 ## 17. Linking a computer, and connecting editors
 
-`/link` approves a CLI login with the actual computer/platform/access requested and returns correctly after sign-in. Editor access and task-running access are distinct; hosted task access needs verification. Settings' Connect this computer dialog shares pairing steps, a ten-minute code and renewal/error state across connection/subscription entry points.
+`/link` approves a CLI login showing the computer, platform and access requested, and returns correctly after sign-in. Editor access and task-running access are distinct; hosted task access needs a verified account. Settings' Connect this computer dialog shares pairing steps, a ten-minute code and renewal/error state across its entry points.
 
-Connect guides offer CLI setup, a hosted read-only MCP URL/key or a source bridge. Device trust, lease lifetime, subscription calls and approval routing are in [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md). Assignment choices/profiles are in [06](06_MODULE_WORKSPACE_AND_SURFACES.md), engine/handoff behavior in [30](30_ENGINES.md). Pairing does not expose the hosted server filesystem.
+Connect guides offer CLI setup, a hosted read-only MCP URL/key or a source bridge. Device trust, lease lifetime, subscription calls and approvals: [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md). Assignment choices/profiles: [06](06_MODULE_WORKSPACE_AND_SURFACES.md). Engines and handoff: [30](30_ENGINES.md). Pairing never exposes the hosted server's filesystem.
 
 ## 18. Downloads
 
-Page/task exports, original-file downloads, space archives and account exports are different operations. Exported timestamps retain an explicit timezone offset where the format includes local time. A file-backed page can use supported browser export-back; server assistant exports rebuild supported documents. [32](32_FILES.md) owns format limitations, [28](28_ENSEMBLE_SPACES.md#5-deleting-and-exporting) space archives, and Account owns full export. Download availability is subject to the same resource access checks as reading.
-
-Checked **20 Oct 2026**: regression tests cover the saved-file picker without connector requests, the two-stage deletion dialog and credit-deletion notice. The board toolbar uses a bounded compact search field (`components/board/board.tsx`).
-
-Run-profile name editors focus and select the existing name synchronously when opened (`components/agent/assign-dialog.tsx`). There is no delayed selection that can replace a character typed immediately after opening. Checked 20 Oct 2026 with the immediate-typing regression in `components/agent/profile-bar.test.tsx`.
-
-Metrics repairs stale usage from a previous Everything deletion automatically when read, preserving known charges first and keeping later work. The provider selector retains its selected value even when a date change or refresh returns no calls for that provider, so the displayed selection still matches the active filter. Checked 20 Oct 2026 with HTTP and UI regressions.
+Page/task exports, original-file downloads, space archives and account exports are separate operations. Exported timestamps carry an explicit offset where the format includes local time. A file-backed page can export back from the browser where supported; server assistant exports rebuild supported documents. Format limits: [32](32_FILES.md). Space archives: [28 §5](28_ENSEMBLE_SPACES.md#5-deleting-and-exporting). Full export: Account. Downloads use the same access checks as reading.

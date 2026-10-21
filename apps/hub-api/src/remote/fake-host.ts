@@ -1,6 +1,6 @@
 /**
  * A minimal hosted API for the desktop tests. It implements the device routes
- * in docs/25 §4.3 and nothing else: pair, heartbeat, claim, progress, ask,
+ * in docs/25 §4.1 and nothing else: pair, heartbeat, claim, progress, ask,
  * the decision long-poll, complete, and the event stream.
  */
 import { randomBytes, randomUUID } from "node:crypto";

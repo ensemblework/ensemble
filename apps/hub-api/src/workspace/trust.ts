@@ -1,5 +1,5 @@
 /**
- * Folder trust and unattended checks (doc 24 §5.8–5.11).
+ * Folder trust and unattended checks (doc 24 §4).
  *
  * Trust is a path, on this device, stored as a DecisionRule with toolName
  * `path`. The workspace root is trusted without a row. A folder

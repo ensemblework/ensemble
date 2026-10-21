@@ -1,6 +1,6 @@
 /**
  * Asking a paired computer for one folder's entries or one file's text, for the person looking at a
- * task on the web (docs/25 §4.3, protocol 3), and, the same way, for one call to its Code API or its
+ * task on the web (docs/25 §4.6, protocol 3), and, the same way, for one call to its Code API or its
  * terminal (protocol 4, `devices/code-routes.ts`). The request goes to the computer's event stream as
  * `files.request`; the computer reads its own folder and posts the answer back; the web request that
  * asked waits up to `ASK_MS`. Requests and answers live in Redis for a minute and are then gone: the

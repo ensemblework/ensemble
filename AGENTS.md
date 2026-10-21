@@ -13,7 +13,7 @@ Before you finish:
 1. Search the docs for the names you touched: `rg -n "<route|script|env var|file name>" README.md docs/ AGENTS.md`.
 2. Fix every statement that is now wrong. Delete statements about things that no longer exist rather than leaving them with a caveat.
 3. If you added something a reader would look for (a page, a route, a script, an env variable, a package), add it where the table below says.
-4. If the change alters what works today, update [`docs/18_WHAT_IS_REAL.md`](docs/18_WHAT_IS_REAL.md).
+4. If the change alters what works today, update the capability tables in [`docs/00_PROJECT_OVERVIEW.md`](docs/00_PROJECT_OVERVIEW.md).
 5. Mention the doc changes in your PR description. If you checked and no doc needed to change, say so.
 
 Where a change usually needs a doc update:
@@ -22,41 +22,41 @@ Where a change usually needs a doc update:
 |---|---|
 | Root `package.json` scripts, `scripts/dev.mjs`, `scripts/doctor.sh`, `scripts/agent-dev.sh`, ports, `.env.example` | `README.md`, [`docs/01`](docs/01_TECH_STACK_AND_ENVIRONMENT.md) |
 | A new app, package, or top-level folder | `README.md` (Layout), [`docs/17`](docs/17_REPOSITORY_STRUCTURE.md), [`docs/README.md`](docs/README.md) if it has a doc |
-| Hub pages and components (`apps/hub-web/app`, `components`) | [`docs/02`](docs/02_MODULE_INTERACTION_HUB_UI.md), `docs/18` |
-| Landing page (`apps/landing`) | `README.md` (Layout), [`docs/17`](docs/17_REPOSITORY_STRUCTURE.md), `docs/18` |
+| Hub pages and components (`apps/hub-web/app`, `components`) | [`docs/02`](docs/02_MODULE_INTERACTION_HUB_UI.md), `docs/00` |
+| Landing page (`apps/landing`) | `README.md` (Layout), [`docs/17`](docs/17_REPOSITORY_STRUCTURE.md), `docs/00` |
 | CI and deploy workflows (`.github/workflows`, `.github/actions`, `infra/deploy/autodeploy.sh`, `infra/deploy/home`) | [`docs/01` §8](docs/01_TECH_STACK_AND_ENVIRONMENT.md#8-ci-and-deploys), `README.md` (CI and deploys) |
 | API routes (`apps/hub-api/src/routes`) | The API tables in [`docs/02`](docs/02_MODULE_INTERACTION_HUB_UI.md), plus the module doc for that area |
 | The Hub assistant (`apps/hub-api/src/assistant`, `components/assistant`) | [`docs/11`](docs/11_HOW_THE_ASSISTANT_WORKS.md) |
-| Connectors, triage, sync, remote MCP connections (`apps/hub-api/src/connectors`, `routes/connectors.ts`, `routes/mcp-connections.ts`, `packages/shared-types/src/connectors.ts`) | [`docs/03`](docs/03_MODULE_CONTEXT_ENGINE.md), the connector table in `docs/18`, the connector store in [`docs/02` §3.9](docs/02_MODULE_INTERACTION_HUB_UI.md) |
+| Connectors, triage, sync, remote MCP connections (`apps/hub-api/src/connectors`, `routes/connectors.ts`, `routes/mcp-connections.ts`, `packages/shared-types/src/connectors.ts`) | [`docs/03`](docs/03_MODULE_CONTEXT_ENGINE.md), the connector table in [`docs/31`](docs/31_CONNECTORS_IN_USE.md), the connector store in [`docs/02` §3.9](docs/02_MODULE_INTERACTION_HUB_UI.md) |
 | Ensemble spaces (`apps/hub-api/src/spaces`, the space cookie in `src/lib/auth.ts`, `components/shell/space-switcher.tsx`, `app/(hub)/spaces`, `components/settings/tab-spaces.tsx`, `lib/spaces.ts`) | [`docs/28`](docs/28_ENSEMBLE_SPACES.md), [`docs/00` §7](docs/00_PROJECT_OVERVIEW.md#7-core-domain-model-shared-across-modules) |
 | Sharing and presence (`apps/hub-api/src/sharing`, the share header in `src/lib/auth.ts`, audiences in `src/lib/sse.ts`, `components/sharing`, `app/(hub)/shared`, `app/shared`, `components/settings/tab-sharing.tsx`, `lib/access.ts`, `lib/presence.ts`) | [`docs/29`](docs/29_SHARING.md). A new route is owner-only until it is classed in `src/sharing/policy.ts`; say which class in the PR |
 | Imports from other apps (`apps/hub-api/src/imports`, `routes/imports.ts`, `components/imports`) | [`docs/27`](docs/27_IMPORTS.md) |
-| Files: upload, previews, edits, pages from files, file imports, attachments in pages (`apps/hub-api/src/files`, `routes/files.ts`, `routes/file-imports.ts`, `apps/hub-web/components/files`, `lib/files`, `lib/api-files.ts`, `app/(hub)/files`, `packages/shared-types/src/files.ts`) | [`docs/32`](docs/32_FILES.md), `docs/18` |
-| Using connected apps: items, attach, people, updates (`apps/hub-api/src/connectors/items`, `routes/app-items.ts`, `assistant/tools/app-items.ts`, `components/app-items`), the catalog's `items`/`mcp` options, connector logos (`components/connectors/brands`, `scripts/build-brand-logos.mjs`) | [`docs/31`](docs/31_CONNECTORS_IN_USE.md), the connector table in `docs/18` |
+| Files: upload, previews, edits, pages from files, file imports, attachments in pages (`apps/hub-api/src/files`, `routes/files.ts`, `routes/file-imports.ts`, `apps/hub-web/components/files`, `lib/files`, `lib/api-files.ts`, `app/(hub)/files`, `packages/shared-types/src/files.ts`) | [`docs/32`](docs/32_FILES.md), `docs/00` |
+| Using connected apps: items, attach, people, updates (`apps/hub-api/src/connectors/items`, `routes/app-items.ts`, `assistant/tools/app-items.ts`, `components/app-items`), the catalog's `items`/`mcp` options, connector logos (`components/connectors/brands`, `scripts/build-brand-logos.mjs`) | [`docs/31`](docs/31_CONNECTORS_IN_USE.md) |
 | Assistant tools for connected apps (`apps/hub-api/src/assistant/tools/google*`, `microsoft*`, `mcp-tools.ts`, `apps.ts`, `apply.ts`, `src/lib/office`) | [`docs/11`](docs/11_HOW_THE_ASSISTANT_WORKS.md) |
 | Scheduler, planner, workers (`src/jobs`, `apps/agent-runtime/ensemble_agent/orchestrator`, `workers`) | [`docs/05`](docs/05_MODULE_TASK_ORCHESTRATOR.md) |
 | Workspace jobs, sandbox, Code tab, terminal (`src/workspace`, `src/repo`, `routes/code*`, `routes/terminal*`) | [`docs/06`](docs/06_MODULE_WORKSPACE_AND_SURFACES.md), [`docs/16`](docs/16_CODE_TAB.md), [`docs/24`](docs/24_DESKTOP_SANDBOXING.md) |
 | Policy, ledger, metrics, retention | [`docs/07`](docs/07_MODULE_GOVERNANCE_AUDIT_METRICS.md) |
 | Skills, Skill Forge (`apps/skill-forge`, `routes/skills.ts`) | [`docs/04`](docs/04_MODULE_SKILL_FORGE.md) |
-| Context Bridge (`apps/context-bridge`, `apps/hub-api/src/bridge`) | [`docs/CONTEXT_BRIDGE.md`](docs/CONTEXT_BRIDGE.md), [`docs/13`](docs/13_MODULE_CONTEXT_BRIDGE.md) |
+| Context Bridge (`apps/context-bridge`, `apps/hub-api/src/bridge`) | [`docs/CONTEXT_BRIDGE.md`](docs/CONTEXT_BRIDGE.md) |
 | Plots (`app/(hub)/plots`, `src/plots`, `ensemble_agent/plots`) | [`docs/20_PLOTS_DESIGN.md`](docs/20_PLOTS_DESIGN.md) |
 | Block diagrams (`packages/block-diagrams`) | [`docs/21`](docs/21_BLOCK_DIAGRAMS_DSL.md), [`docs/21` cheat sheet](docs/21_BLOCK_DIAGRAMS_CHEATSHEET.md), [`docs/22`](docs/22_BLOCK_DIAGRAMS_FOR_AGENTS.md) and `.github/skills/block-diagrams/SKILL.md` (22 and the skill are the same text) |
 | Quick capture (`apps/quick-capture`) | [`docs/20_QUICK_CAPTURE.md`](docs/20_QUICK_CAPTURE.md) |
-| Desktop app (`apps/desktop`, `src/desktop`, `scripts/*desktop*`, `scripts/build-mac-dmg.sh`) | [`docs/DESKTOP.md`](docs/DESKTOP.md), [`docs/desktop/MAC_CHECKLIST.md`](docs/desktop/MAC_CHECKLIST.md), [`docs/23`](docs/23_LOCAL_DESKTOP_DESIGN.md) |
+| Desktop app (`apps/desktop`, `src/desktop`, `scripts/*desktop*`, `scripts/build-mac-dmg.sh`) | [`docs/DESKTOP.md`](docs/DESKTOP.md), [`docs/desktop/MAC_CHECKLIST.md`](docs/desktop/MAC_CHECKLIST.md) |
 | Remote tasks and devices (`src/remote`, `src/devices`) | [`docs/25`](docs/25_REMOTE_TASKS_ON_YOUR_COMPUTER.md) |
 | The CLI, its installers and releases (`apps/cli`, `scripts/package-cli.mjs`, `packaging/`, `apps/landing/public/install.*`, `.github/workflows/cli-release.yml`, `routes/cli-auth.ts`, `routes/mcp.ts`) | [`docs/26`](docs/26_CLI.md), the download guide in `apps/landing/lib/download.ts`, and the Connect guides in `apps/hub-web/lib/connect/` |
 | Hosting, production config (`infra/deploy`, `lib/production.ts`) | The comments in `infra/deploy/` and `ensemble.env.example`. Deployment runbooks live in the git-ignored `private/` folder, never in `docs/` |
-| Caches, perf budgets | [`docs/CACHING.md`](docs/CACHING.md), [`docs/UI_PERF_DESIGN.md`](docs/UI_PERF_DESIGN.md) |
+| Caches, perf budgets | [`docs/CACHING.md`](docs/CACHING.md) |
 | Seeds and demo data (`prisma/seed.ts`, `prisma/demo-branch.ts`) | [`docs/DEMO_DATA.md`](docs/DEMO_DATA.md), [`docs/03` §11](docs/03_MODULE_CONTEXT_ENGINE.md#11-seed-data-opt-in-only) |
 | Prisma schema shape | [`docs/00` §7](docs/00_PROJECT_OVERVIEW.md#7-core-domain-model-shared-across-modules) when a core type changes, and the module doc that owns the table |
 
-New docs go in `docs/` and get a row in [`docs/README.md`](docs/README.md). Design notes for a feature that is not built yet go in `docs/design/` and say so in their first paragraph.
+New docs go in `docs/` and get a row in [`docs/README.md`](docs/README.md). Plans for unbuilt work do not go in `docs/`: keep them in issues or pull requests.
 
 ## How to write docs here
 
 - Describe what the code does now, with the file path that does it. Quote real route names, scripts, and env variables.
-- When you verified something by running it, say so and give the date ("Checked 5 Oct 2026"). When you only read the code, say that.
-- Do not document future ideas until they are planned ([`docs/00`](docs/00_PROJECT_OVERVIEW.md#direction), rule 7).
+- Describe only the current state. No history or evolution ("previously", "no longer", "added in 0.3", release notes, PR numbers), no dated audit notes ("Checked 5 Oct 2026"), no plans or "not yet". When behaviour changes, rewrite the statement; do not append what changed.
+- Be concise and precise: paths, routes, settings, limits and commands, in short sentences or tables. Do not restate the same fact in several docs; link to the owning doc.
 - No personal information: no personal email addresses, private machine paths, or details about individuals beyond a name where it is needed. Example people and companies should be fictional (the demo uses Mira Chen at Fieldnote).
 - Keep PR evidence (screenshots, recordings) in the PR, not in the repo. `docs/screenshots/` is git-ignored for that reason.
 

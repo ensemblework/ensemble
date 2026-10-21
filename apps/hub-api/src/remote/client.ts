@@ -1,5 +1,5 @@
 /**
- * The Mac's calls to Ensemble on the web. Doc 25 §4.3, and only those routes.
+ * The Mac's calls to Ensemble on the web. Doc 25 §4.1, and only those routes.
  * The device token stays in this process; it is never written to a child environment.
  */
 import { ROUTES, type CodeAnswer, type FileAnswer, type Outcome, type ResultLink, type RunTotals, type TerminalChunk, type UploadedFile, type UploadedStep } from "./contract.js";

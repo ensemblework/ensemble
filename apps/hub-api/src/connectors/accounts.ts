@@ -3,7 +3,7 @@
  *
  * Tokens are encrypted at rest. A signed-in person's own account always wins;
  * env vars are the localhost-developer fallback, and GitHub can borrow
- * `gh auth token` as docs/01 §2.3 allows.
+ * `gh auth token` (docs/16 §3, docs/CACHING.md).
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";

@@ -1,30 +1,26 @@
 # 25 · Remote tasks on your computer
 
-The hosted app can assign work to a person's paired computer, using the same local runtime as desktop and CLI. The host stores assignments, progress, decisions, results and supported bounded review data; the computer enforces local execution rules. **Implemented source inspected 18 Oct 2026**, replacing the old pre-shipping draft.
+Ensemble on the web can assign work to a person's paired computer, which runs it with the same local runtime as the desktop app and CLI. The host stores assignments, progress, decisions, results and bounded review metadata; the computer enforces its own execution rules. [06](06_MODULE_WORKSPACE_AND_SURFACES.md) covers execution; [24](24_DESKTOP_SANDBOXING.md) covers confinement.
 
 ## 1. Execution and ownership
 
-`WorkspaceJob.deviceId` targets a paired computer. The host worker/recovery path filters those jobs out; it must not execute or fail a device's work as if it were a host job. The computer claims a hosted assignment, creates a local job and runs the normal queue/agent/engine path. Its local `deviceId` is null because the local process owns execution.
+`WorkspaceJob.deviceId` targets a paired computer. The host worker and its recovery path skip those jobs. The computer claims the assignment, creates a local job (local `deviceId` null) and runs the normal queue, agent and engine path.
 
-The host's spec contains task/context and supported execution choices, not arbitrary shell argv or a raw path into another computer. Published folder labels resolve against locally shared folders. Hosted email verification and account quotas apply. An offline device leaves its job queued; there is no fallback onto the server or another device.
-
-`remote/client.ts`, `accept.ts`, `policy.ts`, `store.ts` and `devices/routes.ts` implement this boundary. [06](06_MODULE_WORKSPACE_AND_SURFACES.md) owns normal execution; [24](24_DESKTOP_SANDBOXING.md) owns confinement.
+The host's spec carries task context and execution choices, never shell argv or a raw path on the computer; folder labels resolve against folders the computer shares. Hosted email verification and account quotas apply. An offline computer leaves its job queued; work never falls back to the server or another device. `remote/client.ts`, `accept.ts`, `policy.ts`, `store.ts` and `devices/routes.ts` implement this boundary.
 
 ## 2. Pairing and local state
 
-The desktop's This computer settings or `ensemble login` pairs through an explicit browser approval/code flow. Editor context access and permission to run tasks are separate. A hosted browser logout does not uninstall/unpair a separate runtime; CLI logout, unpair and revocation do.
+The desktop app's This computer settings or `ensemble login` pairs through a browser approval code. Editor context access and permission to run tasks are separate. A web logout does not unpair a computer; CLI logout, unpair and revocation do.
 
-The device token is stored encrypted in local credential storage. `remote.json` holds switches, labels and local mappings; `api.json` discovers the loopback API. Never commit either file or expose the token. The local runtime connects outward to the configured `ENSEMBLE_REMOTE_API`; `ENSEMBLE_SITE_URL` selects the UI origin and is not the remote-task API setting.
-
-The desktop and CLI share a runtime lock/discovery path, not two competing local databases. Pairing is not complete hosted/local workspace replication.
+The device token is an encrypted `model_credentials` row in the local database (`remote/store.ts`). `remote.json` holds switches, labels and folder mappings; `api.json` lets the CLI and desktop app find the loopback API. Never commit either file or expose the token. The runtime connects outward to `ENSEMBLE_REMOTE_API`; `ENSEMBLE_SITE_URL` sets the UI origin, not the remote API. Desktop and CLI share one runtime lock and discovery path, not two databases. Pairing is not hosted/local workspace replication.
 
 ## 3. Lease, heartbeat and interruption
 
-`devices/constants.ts` defines a **120-second lease** and **90-second recent-contact window**. Heartbeats/progress extend only the held lease. The scheduler sweeps expiry; the displayed interruption can lag expiry until that sweep.
+`devices/constants.ts` sets a **120-second lease** and a **90-second online window**; the computer heartbeats every 30 s (`remote/contract.ts`). Heartbeats and progress extend only a held lease, and the scheduler sweeps expiry, so the interruption shown can lag the expiry by up to a minute.
 
-Claims and writes are fenced by device and lease token. Another device or stale token cannot report completion for the job. A missed lease marks the attempt Interrupted, settles open run/decision state and preserves partial work. It is not automatically replayed. Sleep/wake, application exit and network loss must be treated as interruptions, not proof of completion.
+Claims and writes are fenced by device and lease token: another device or a stale token cannot complete the job. A missed lease marks the attempt Interrupted, settles open run and decision state and keeps partial work; it is never replayed automatically. Sleep, app exit and network loss are interruptions, not completion.
 
-The event stream wakes the device; persisted job/lease state is authoritative. File/code/subscription relays have their own scoped channels and bounded transient storage. Do not assume an in-memory stream alone coordinates multiple servers. Deployment topology/credentials live in private runbooks.
+The event stream only wakes the computer; persisted job and lease state is authoritative. File and code relays use scoped Redis keys with short lifetimes; assistant turns on a subscription live in the API process's memory (`subscriptions/relay.ts`). Decision waits also poll the database, because a second API process does not share the in-memory bus.
 
 ## 4. Hosted interfaces
 
@@ -32,91 +28,99 @@ The event stream wakes the device; persisted job/lease state is authoritative. F
 
 | Method | Route | Purpose |
 | --- | --- | --- |
-| POST | `/api/devices/pair`, `/api/devices/register` | Issue/redeem pairing code |
-| GET | `/api/devices` | List the person's computers and capabilities |
-| PATCH / DELETE | `/api/devices/:id` | Rename or revoke owned computer |
+| POST | `/api/devices/pair`, `/api/devices/register` | Issue / redeem a pairing code |
+| GET | `/api/devices` | The person's computers and capabilities |
+| PATCH / DELETE | `/api/devices/:id` | Rename / revoke an owned computer |
+| POST, GET | `/api/devices/:id/code`, `/api/devices/:id/terminal`, `/api/devices/:id/terminal/output` | Browser Code and terminal relay (§4.7) |
 | DELETE | `/api/devices/self` | Device-initiated removal |
-| POST | `/api/devices/self/heartbeat`, `/api/devices/self/claim` | Refresh state/leases and claim eligible work |
-| POST | `/api/devices/self/jobs/:id/progress`, `/ask`, `/complete` | Report held work, ask a saved question, settle result |
-| GET / POST | `/api/devices/self/decisions/:id`, `/api/devices/self/decisions/:id/close` | Read answer / close a mirrored decision |
-| GET | `/api/devices/self/events` | Device wake-up stream |
+| POST | `/api/devices/self/heartbeat`, `/api/devices/self/claim` | Refresh state and leases; claim eligible work |
+| GET | `/api/devices/self/jobs/:id/attachments/:fileId` | Download an attached original (§4.5) |
+| POST | `/api/devices/self/jobs/:id/progress`, `/ask`, `/files`, `/complete` | Report, ask a saved question, send changed-file text (§4.6), settle |
+| GET / POST | `/api/devices/self/decisions/:id`, `/api/devices/self/decisions/:id/close` | Read an answer / close a decision answered locally |
+| POST | `/api/devices/self/file-requests/:id`, `/code-requests/:id`, `/terminal-runs/:runId/output` | The computer's answers to relayed requests |
+| GET | `/api/devices/self/model-keys` | The account's model keys (§4.2) |
+| GET / POST | `/api/devices/self/included`, `/api/devices/self/included/turn` | Included models (§4.9) |
+| GET / POST | `/api/devices/self/assistant-turns/:id` and `/tool`, `/stream`, `/done` | Assistant turns on a subscription (§4.9) |
+| GET | `/api/devices/self/events` | Wake-up stream |
 
-`scope=device` is not a full account token. Its own route allowlist/authentication applies. Browser-created token APIs require their human/session authorization; pairing does not permit arbitrary token minting.
+`scope=device` is not an account token; device routes have their own allowlist and authentication. Pairing does not allow minting other tokens.
 
 ### 4.2 Stored model and job data
 
-The host stores device identity/capabilities, task and job spec, lease state, decisions, progress/log/evidence and result. Local secrets stay local, except the explicit supported user-key transfer protocol when enabled. Ensemble on the web stores no file contents from a computer: the files a run changed are listed by name and line counts, and their text is read from the computer when opened (§4.6). A desktop app or local server does keep changed-file copies; relays are transient everywhere.
+The host stores device identity and capabilities, the task and job spec, lease state, decisions, progress, logs, evidence and result. Ensemble on the web stores no file contents from a computer: the files a run changed are listed by name and line counts, and their text is read from the computer when opened (§4.6). A desktop app or local server does keep changed-file copies; relays are transient everywhere.
+
+Local secrets stay local. The exception runs the other way: with *Settings → Models* `keysOnComputers` on (the default), `GET /api/devices/self/model-keys` gives the computer the account's model keys for its own model calls, except keys with a custom base URL; the ledger records once a day which providers' keys a computer read.
 
 ### 4.3 Local routes
 
-`GET /api/remote`, `POST /api/remote/pair`, `/unpair`, `/folders`, and `DELETE /api/remote/folders/:label` manage the runtime locally. Code allowed folders, trust, web control and run-branch push settings cannot be invented by a hosted job. [26](26_CLI.md) lists CLI front ends.
+`GET /api/remote`, `POST /api/remote/pair`, `/unpair`, `/folders`, and `DELETE /api/remote/folders/:label` manage the runtime locally. A hosted job cannot set Code folders, trust, web-control or run-branch push settings. [26](26_CLI.md) lists the CLI commands.
 
 ### 4.4 Web UI
 
-Assignment offers available computers and their shared labels/capabilities. The assistant can queue the same job from chat ("do this on my machine") with `hub_assign_to_agent`, after the person presses Apply; it goes through `createJob` like the dialog, so the computer's checks are unchanged ([11 §8.3](11_HOW_THE_ASSISTANT_WORKS.md#83-running-work-code-and-settings)). Cards report last contact, queue/run/wait/interruption, model and result evidence. A run's review ID can open Code on its executing computer. Failure to load capabilities is an explicit error; it is not a permission grant.
+Assign offers available computers with their shared labels and capabilities. The assistant can queue the same job from chat ("do this on my machine") with `hub_assign_to_agent` after the person presses Apply; it goes through `createJob` like the dialog, so the computer's checks are unchanged ([11 §8.3](11_HOW_THE_ASSISTANT_WORKS.md#83-running-work-code-and-settings)). Cards show last contact, queue/run/wait/interruption state, model and result. A run's review opens Code on the computer that ran it. Failure to load capabilities shows an error and grants nothing.
 
 ### 4.5 Attachments and task context
 
-Claims carry bounded task/page/source/skill context. Embedded owned diagrams provide source, not a screenshot. `remote/accept.ts` downloads only attached originals authorized by the current lease, at most **100 MB total**, then remaps supported hosted page references to local context. Older clients without this receiver need an update; they can still have a readable brief but cannot claim all originals were copied.
+Claims carry bounded task, page, source and skill context; embedded owned diagrams come as source. `remote/accept.ts` downloads only the attached originals the current lease authorizes, at most **100 MB total**, then remaps hosted page references to the local copies.
 
 ### 4.6 A task's files on the web
 
-`remote/files.ts` sends supported changed-file text before completion: at most **100 files**, **256 KB/file**, **3 MB/run**. The server rechecks paths/redaction and stores `JobFile` copies for at most **30 days**, except **Ensemble on the web, which keeps none** (`keepsRunFileText` in `lib/hosted-access.ts`): its claim carries `keepsFileText: false` so a computer sends no text, and `POST /api/devices/self/jobs/:id/files` drops any that an older computer still sends (answer `{ stored: 0 }`). There, `GET /api/agent/jobs/:id/file` always reads live. Metadata reports additions/deletions/line counts; renames can appear as delete+add. Unsafe cloned Git configuration is not executed just to inspect changes.
+`remote/files.ts` sends changed-file text before completion: at most **100 files**, **256 KB/file**, **3 MB/run**. The server rechecks paths and redaction and stores `JobFile` copies for at most **30 days**, except **Ensemble on the web, which keeps none** (`keepsRunFileText` in `lib/hosted-access.ts`): its claim carries `keepsFileText: false` so a computer sends no text, and `POST /api/devices/self/jobs/:id/files` drops any that an older computer still sends (answer `{ stored: 0 }`). There, `GET /api/agent/jobs/:id/file` always reads live. Metadata reports additions, deletions and line counts; renames can appear as delete + add. Unsafe cloned Git configuration is never run to inspect changes.
 
-Live `GET /api/agent/jobs/:id/tree` and `/file` relays request the computer's current authorized folder through `devices/file-relay.ts`. They time out rather than becoming remote shell access. Text views are bounded and redacted; secrets, Git internals, outside links, hard links and unsafe path races are refused by `workspace/folder-read.ts` on both ends.
+Live `GET /api/agent/jobs/:id/tree` and `/file` ask the computer for its current authorized folder through `devices/file-relay.ts` and time out rather than act as remote shell access. Text views are bounded and redacted; secrets, Git internals, links leading outside, hard links and unsafe path races are refused by `workspace/folder-read.ts` on both ends.
 
-Only the person whose computer ran the job can read its file text; other shared-space members see metadata. The computer must still offer the task folder and the request must satisfy its age/access checks. `browseFiles` (Show task files on the web, `ensemble browse on|off`) is checked again locally; disabling it hides existing copies and refuses live reads.
+Only the person whose computer ran the job reads its file text; other shared-space members see metadata. The computer must still offer the task folder. `browseFiles` (*Show task files on the web*, `ensemble browse on|off`) is checked again locally; turning it off hides stored copies and refuses live reads.
 
 ### 4.7 The Code tab and terminal on the web
 
-`POST /api/devices/:id/code` accepts only the calls enumerated in `remote/contract.ts`. `remote/code.ts` executes supported review, file, source-control and terminal calls through the local API. It is a browser-session/origin route for the computer's owner, not a tool endpoint for an assistant, bridge key or arbitrary API token. Relays hold bounded transient request/answer/output state, not a second checkout.
+`POST /api/devices/:id/code` accepts only the calls listed in `remote/contract.ts`; `remote/code.ts` runs them through the local API. It is a browser-session route for the computer's owner, never for the assistant, a bridge key or an API token. Relays hold transient request, answer and output state, never a second checkout.
 
-The local switches are `browseFiles`, `webEdit` and `webTerminal`, on by default and rechecked for each applicable call. Secret paths are refused; redacted file views cannot be written back as if their masks were original code. Binary/oversized data follows explicit view/refusal limits. Code's allowed folders are set on the computer.
+The local switches `browseFiles`, `webEdit` and `webTerminal` are on by default and checked on every call. Secret paths are refused, and redacted views cannot be written back. Binary and oversized files follow the view and refusal limits in [16](16_CODE_TAB.md). Code's allowed folders are set on the computer.
 
-The web terminal requires a **passkey unlock** with user verification for the hosted origin. Unlock expires after **30 minutes idle** and **8 hours maximum**. Lock now ends that session and stops its commands. Commands follow `workspace/terminal-exec.ts`: allowed program/arguments/folders, hardened Git, destructive-action confirmation, OS confinement and time/output bounds. It is not a raw interactive shell or an assistant command tool. See [16](16_CODE_TAB.md#5-the-terminal--for-you-only).
+The web terminal needs a **passkey unlock** with user verification for the web's origin, ending after **30 minutes idle** or **8 hours** (`devices/web-unlock.ts`). *Lock now* ends the session and stops its commands. Commands follow `workspace/terminal-exec.ts`: allowed programs, arguments and folders, hardened Git, confirmation for destructive actions, OS confinement, time and output limits. It is not a raw shell or an assistant tool. See [16](16_CODE_TAB.md#5-the-terminal--for-you-only).
 
 ### 4.8 Protocol and compatibility
 
-`remote/contract.ts` and current receiver code determine supported operations. Do not use a version table from an old PR as permission to send a new operation. UI checks advertised capabilities and reports an unavailable/outdated device. Existing jobs retain their own protocol/evidence; updating a client does not rewrite old execution.
+`remote/contract.ts` and the computer's receiver define the supported operations; each job records its protocol (changed-file text needs protocol 3, Code and terminal relays protocol 4). The server and UI check advertised capabilities and name the update an outdated computer needs. Existing jobs keep their own protocol and evidence.
 
 ### 4.9 Subscriptions and included models
 
-The assistant can use supported subscriptions signed in on a paired computer through `subscriptions/` and the remote bridge. Offline sign-ins are not advertised as usable. These are distinct from external engine assignment and personal API keys ([30](30_ENGINES.md)).
+The assistant can run turns on AI subscriptions signed in on a paired computer through `subscriptions/` and the assistant-turn routes; this needs CLI 0.3.10+ or desktop app 0.3.7+ there. Offline sign-ins are not offered. This is separate from engine assignment and personal API keys ([30](30_ENGINES.md)).
 
-A paired desktop/CLI can call included models via `/api/devices/self/included` and `/api/devices/self/included/turn`. The token determines the account; Azure credentials stay on the host and usage shares that account's credits/global ceiling. Local-only use is refused with connection guidance ([33](33_INCLUDED_AI.md)).
+A paired desktop app or CLI calls included models through `/api/devices/self/included` and `/api/devices/self/included/turn`. The device token identifies the account; Azure credentials stay on the host, and usage counts against that account's credits and the global ceiling ([33](33_INCLUDED_AI.md)).
 
 ## 5. Local execution and permissions
 
-`planLocalJob` validates the hosted spec against published folders, local settings, available engine/model and code/sandbox/git rules. The same conflict locks and budgets apply as local assignments. A server-provided “trusted” word is not a new local trust grant.
+`planLocalJob` validates the hosted spec against shared folders, local settings, available engines and models, and code, sandbox and Git rules. Local conflict locks and budgets apply. A "trusted" flag from the server is not local trust.
 
 ### 5.1 Phone approvals
 
-`acceptWebApprovals` (Accept approvals from the web and phone) is **on by default**. When on, the selected web run settings apply and the person can confirm supported risky decisions remotely. When off, risky answers stay on the computer and web settings can only narrow local permissions. The device checks its own pending decision and action hash; first valid answer wins. Timeouts do not silently allow.
+`acceptWebApprovals` (*Accept approvals from the web and phone*, `ensemble approvals`) is **on by default**. When on, the web's run settings apply and supported risky decisions can be confirmed remotely. When off, risky answers stay on the computer and web settings can only narrow local permissions. The computer checks its own pending decision and action hash; the first valid answer wins, and a timeout never allows.
 
-`runBranchPush` is separately **off by default**, controlled on the computer. It authorizes the bounded trusted run-branch push path, not arbitrary branch/force pushes. Application helpers use Git credentials outside the agent child environment. The existing git gate remains authoritative.
+`runBranchPush` is **off by default** and set on the computer. It allows only the trusted run-branch push, never arbitrary or force pushes; Git credentials stay outside the agent's environment and the Git gate still decides.
 
-An authenticated web confirmation is not a separately implemented device-verified WebAuthn signature over every job/decision. The terminal's passkey protects its own terminal session, not all ordinary remote approvals.
+A web confirmation is an authenticated session action, not a device-verified WebAuthn signature over each decision; the terminal passkey protects only the terminal.
 
 ### 5.2 Rate limits
 
-Pairing, heartbeat/progress, file browsing, code, subscriptions and model calls have route-specific buckets in `lib/rate-limit.ts` and their relay implementations. Read defaults/environment overrides there rather than treating old draft values as a protocol. Per-account quotas and device/lease checks still apply after rate limiting.
+Pairing, heartbeat and progress, file browsing, code, subscriptions and model calls have their own buckets in `lib/rate-limit.ts` and the relays. Account quotas and device/lease checks still apply.
 
 ## 6. Shared spaces
 
-A run can belong to a shared space while executing on a member's own computer. Space members see permitted progress/results, but execution decisions and private file reads belong to the executing person. Revocation, sharing access and the computer's local switches are independently checked. [29](29_SHARING.md#4-agent-runs-in-a-shared-space).
+A run can belong to a shared space while running on a member's own computer. Members see permitted progress and results; execution decisions and file text belong to the person running it. Revocation, sharing access and the computer's switches are each checked ([29](29_SHARING.md#4-agent-runs-in-a-shared-space)).
 
 ## 7. What synchronizes
 
-Assignments, bounded context/attachments, progress, decisions, result, usage and supported review data cross the device protocol. The complete local database, arbitrary folder contents, full local ledger and every private credential do not. Where user-key transfer is enabled, its explicit account/device route is a separate exception; do not describe it as general secret replication.
+Assignments, bounded context and attachments, progress, decisions, results, usage and review metadata cross the protocol, plus model keys as described in §4.2. The local database, arbitrary folder contents, the local ledger and other credentials do not.
 
 ## 8. Device lifetime and removal
 
-Rename is owner-only and heartbeats preserve the saved display name. Revoke/unpair stops remote-originated work/turns and forgets the device token; local-origin work is handled by its own lifecycle. Network unreachability is distinct from a 401/revocation.
+Rename is owner-only and heartbeats keep the saved name. Revoke or unpair stops remote-originated work and turns and forgets the device token; local work follows its own lifecycle. An unreachable network is different from a 401/revocation.
 
-Packaged launchers set `ENSEMBLE_INSTALL_PATH`; the runtime checks it on heartbeat. Removing the installed executable stops remote activity, attempts revocation and drops pairing even if the host is unreachable. Older clients need an update for that check. A hosted recent-contact indicator can remain until its heartbeat window expires; browser logout does not identify a surviving local installation.
+Packaged launchers set `ENSEMBLE_INSTALL_PATH`; on each heartbeat the runtime checks it, and if the executable is gone it stops remote work, tries to revoke itself and drops the pairing even when the host is unreachable (`remote/loop.ts`). The web's online dot can stay until the heartbeat window passes.
 
-## 9. Verification and residual limits
+## 9. Tests and limits
 
-API/device/remote tests cover lease fencing, ownership, local-policy narrowing, decisions, attachments, file/code relays and revocation. Native sleep/wake, physical passkeys, provider subscriptions and installed release behavior still require their specific environment. A mocked round trip is not evidence of all of them.
+API, device and remote tests cover lease fencing, ownership, local-policy narrowing, decisions, attachments, file and code relays and revocation. Sleep/wake, physical passkeys, provider subscriptions and installed releases need their own environment.
 
-No automatic migration to another computer, full database sync, universal mid-command replay or inbound remote-shell/tunnel service is implemented. A compromised browser session can exercise permissions that computer deliberately accepts; local approval switches and OS rules matter. Logs/redaction are bounded protections, not proof that arbitrary user content contains no sensitive data.
+There is no automatic move to another computer, full database sync, mid-command replay or inbound remote shell or tunnel. A compromised browser session can use whatever the computer's switches allow; local switches and OS rules are the boundary. Redaction is bounded and does not prove content has no sensitive data.

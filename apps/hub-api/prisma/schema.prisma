@@ -598,7 +598,7 @@ model DevicePairing {
 
 /// Redacted run output a device uploaded, in batches. 64 KB per chunk, 2 MB per job.
 /// Retention deletes chunks by `createdAt`; WorkspaceEvent stays the place for milestones.
-/// The text of a file a device run changed, sent when the run ended (docs/25 §4.3). Kept 30 days.
+/// The text of a file a device run changed, sent when the run ended (docs/25 §4.6). Kept 30 days; Ensemble on the web keeps none.
 model JobFile {
   id        String       @id @default(uuid())
   jobId     String       @map("job_id")

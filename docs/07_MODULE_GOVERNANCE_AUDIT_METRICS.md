@@ -1,35 +1,35 @@
 # 07 · Access, approvals, audit, retention and metrics
 
-This guide describes the current enforcement paths, not the original autonomy design. Code inspected **18 Oct 2026**. The Hub assistant, assigned agent, external engine and read-only Context Bridge have different permissions; one policy table does not govern all four.
+The Hub assistant, assigned agents, external engines and the read-only Context Bridge have different permissions; no single policy table governs all four.
 
 ## 1. Identity & access
 
-Browser authentication uses hashed session cookies, password or configured Google/GitHub/Microsoft login, and separate verification/recovery tokens. Identity login does not grant connector access. Hosted model, connector and agent operations require verified email. Host credentials/filesystem execution are operator-restricted (`lib/hosted-access.ts`); ordinary users pair their own computer.
+Browser sign-in uses hashed session cookies, a password or configured Google/GitHub/Microsoft login, and separate verification and recovery tokens. Signing in with a provider does not grant connector access. Hosted model, connector and agent operations require a verified email. Host credentials and filesystem execution are operator-only (`lib/hosted-access.ts`); everyone else pairs their own computer.
 
-An open space scopes content by `userId`; the actor is `accountId`. Sharing adds route/resource checks in `sharing/policy.ts`, `gate.ts` and `context.ts`. Unclassified routes remain owner-only. Viewer/editor role is not permission to use the owner's private credentials, reminders or account settings. See [28](28_ENSEMBLE_SPACES.md) and [29](29_SHARING.md).
+A space scopes content by `userId`; the actor is `accountId`. Sharing adds route and resource checks in `sharing/policy.ts`, `gate.ts` and `context.ts`; unclassified routes stay owner-only. A viewer or editor never uses the owner's private credentials, reminders or account settings ([28](28_ENSEMBLE_SPACES.md), [29](29_SHARING.md)).
 
-Account export/deletion uses `lib/account-data.ts`. Deletion includes owned spaces and checks active work, including a run on the person's computer in a shared space. SQL account-lifetime foreign keys prevent late writes from recreating erased rows. Third-party copies and infrastructure backups have separate lifetimes.
+Account export and deletion use `lib/account-data.ts`. Deletion includes owned spaces and checks for active work, including a run on the person's computer in a shared space. Account-lifetime foreign keys stop late writes from recreating erased rows. Third-party copies and infrastructure backups have their own lifetimes.
 
 ### 1.1 Completed and deleted data retention
 
-`jobs/retention.ts` and `jobs/skill-mining.ts` implement independent windows:
+`jobs/retention.ts` and `jobs/skill-mining.ts` apply these windows:
 
-| Setting/data | Default and behavior |
+| Setting / data | Default and behaviour |
 | --- | --- |
-| `completedRetentionDays` | 60 days, configurable 1–365; eligible unpinned completed work gets at least 24 hours' notice and successful skill learning before moving to Trash |
-| `retentionDays` | 30 days, configurable 1–365; soft-deleted content is permanently purged after this Trash window |
-| `historyRetentionDays` | 90 days; audit/status history cleanup |
+| `completedRetentionDays` | 60 days (1–365). Unpinned completed work gets at least 24 hours' notice and a successful skill-learning pass, then moves to Trash |
+| `retentionDays` | 30 days (1–365). Trash is purged permanently after this |
+| `historyRetentionDays` | 90 days (30–365). Audit ledger and task status history |
 | Remote log chunks and changed job files | Fixed 30 days (Ensemble on the web keeps no changed-file text, [25 §4.6](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#46-a-tasks-files-on-the-web)) |
 | Blobs nothing uses (file originals, plot tables) | Removed hourly once an hour old (`jobs/blob-sweep.ts`); the storage account's own soft delete keeps them 7 more days |
-| Code reviews | Expire after 14 days; associated snapshots unpinned |
+| Code reviews | Expire after 14 days; their snapshots are unpinned |
 
-Pinning, reopening, active jobs, mining failure or conflicting skill changes keep completed items intact. Batches contain at most 50 tasks and 50 deliverables. Completion summaries created at retirement expire with the Trash window. Board completed count and Context review window are display choices, not retention settings.
+Pinning, reopening, active jobs, a failed mining pass or a conflicting skill change keep completed items. A batch holds at most 50 tasks and 50 deliverables. Completion summaries created at retirement expire with the Trash window. The board's completed count and Context's review window are display choices, not retention.
 
-`/api/deleted` lists/restores/empties Trash in the current space. Standalone notes retain document and discussions until purge; task pages follow their task. Routine retention does not remove workspace checkouts. Live people, skills, files and projects do not expire merely from inactivity.
+`/api/deleted` lists, restores and empties Trash in the current space. Standalone notes keep their document and discussions until purge; task pages follow their task. Retention never removes workspace checkouts. People, skills, files and projects do not expire from inactivity.
 
 ### 1.2 Private reminders and platform notifications
 
-Due reminders create in-app notifications through `dispatchDueReminders`. Browser notifications require an open tab and granted permission; native notifications require the desktop app running and system permission. Quiet hours defer ordinary popups; Needs me can notify urgently. This is not an operating-system alarm service while Ensemble is closed. Private reminders are excluded from shared context and the editor bridge.
+`dispatchDueReminders` turns due reminders into in-app notifications. Browser notifications need an open tab and permission; native ones need the desktop app running and system permission. Quiet hours defer ordinary popups; Needs me can notify urgently. Nothing alarms while Ensemble is closed. Private reminders are excluded from shared context and the editor bridge.
 
 ### 1.3 The operator's interaction log and dashboards
 
@@ -43,58 +43,50 @@ Ensemble on the web logs how signed-in people use the Hub, for the operator's ow
 
 ## 2. Action policy (the gates)
 
-| Path | Current control |
+| Path | Control |
 | --- | --- |
-| Hub assistant local writes | Per-tool classification, allowed write areas, module and sharing checks; preview/Apply according to tool and configured write policy (default "Just do it": Hub writes run at once and are undoable; connected-app writes, settings and agent assignments always wait for Apply) |
-| Sensitive assistant actions | Calendar/app writes, dependent workflows, skills and supported settings changes require their tool's explicit Apply path |
-| Connected MCP writes | Server/tool enablement, schema validation and confirmation; read-only annotations influence classification but do not grant access |
-| Assigned research/code jobs | Saved run profile, tool availability, folder trust, Ask/Review only/Unattended mode, sandbox, network/git permissions and limits |
-| Publishing | Exact saved approval/payload and dedicated continuation checks |
-| Human terminal | Passkey unlock and separate terminal rules; not an assistant tool |
-| Context Bridge | Read-only tools, scoped bearer key/session and bounded retrieval |
+| Hub assistant local writes | Per-tool classification, allowed write areas, module and sharing checks. Default write policy "Just do it": Hub writes run at once and are undoable; connected-app writes, settings and agent assignments always wait for Apply |
+| Sensitive assistant actions | Calendar/app writes, dependent workflows, skills and settings changes go through their tool's Apply path |
+| Connected MCP writes | Server/tool enablement, schema validation and confirmation; read-only annotations affect classification but grant nothing |
+| Assigned research/code jobs | Saved run profile, tools, folder trust, Ask / Review only / Unattended mode, sandbox, network and Git permissions, budgets |
+| Publishing | The exact saved approval and payload, with continuation checks |
+| Human terminal | Passkey unlock and its own rules; not an assistant tool ([16 §5](16_CODE_TAB.md#5-the-terminal--for-you-only)) |
+| Context Bridge | Read-only tools, scoped bearer key or session, bounded retrieval |
 
-`assistant/apply.ts` validates approved proposals. An edited proposal is revalidated, not treated as arbitrary executable input. Tools routed through `assistant/request.ts` reuse existing API authentication, quotas and resource checks. A guest never acquires owner connection access through a workflow.
+`assistant/apply.ts` validates approved proposals; an edited proposal is revalidated. Tools routed through `assistant/request.ts` reuse API authentication, quotas and resource checks. A guest never gains the owner's connections through a workflow.
 
-`workspace/policy.ts`, `guard.ts`, `trust.ts`, `git-gate.ts`, engine adapters and OS sandbox backends enforce assigned-run rules. Review only is a run mode for fewer permission prompts, **not the read-only file-access mode**. Unattended chooses configured/recommended decisions and reports them; it does not grant new filesystem rights.
-
-The retained Python `policy.py` and guarded-tool catalog govern their own legacy calls. Their risk/autonomy matrix is not a universal guarantee that every product action can run autonomously. There is no general promise of an undo window for sends or other external writes.
+`workspace/policy.ts`, `guard.ts`, `trust.ts`, `git-gate.ts`, engine adapters and the OS sandbox enforce assigned-run rules ([24](24_DESKTOP_SANDBOXING.md)). Review only means fewer prompts, **not read-only file access**. Unattended picks recommended answers and reports them; it grants no new filesystem rights. There is no undo window for sends or other external writes.
 
 ## 3. Audit ledger
 
-`lib/ledger.ts` writes `audit_ledger` through one serialized per-user transaction. It stores actor, action, task/run/approval links, payload, previous hash and SHA-256 hash. The next timestamp is monotonic within that chain. Shared-space actions add `payload.byAccountId`; metrics are recorded on the actor's own account.
+`lib/ledger.ts` appends to `audit_ledger` in one serialized per-user transaction: actor, action, task/run/approval links, payload, previous hash and SHA-256 hash, with a monotonic timestamp. Shared-space actions add `payload.byAccountId`; metrics go to the actor's own account.
 
-`POST /api/ledger/verify` checks predecessor links in timestamp order; it does not recompute each row’s payload hash. A successful response therefore verifies link continuity only.
+`POST /api/ledger/verify` checks only that each row's `prevHash` matches the previous row's `hash` in timestamp order; it does not recompute payload hashes.
 
-Python's `audit/ledger.py` posts to the internal API rather than independently hashing rows. The row shape is the Prisma model, not the old planned schema with input/output hashes, blob refs and trace IDs.
-
-**Limits:** this is application-written hash-linked history. The repository does not ship a `verify-ledger` or `db:harden` command, a permanent INSERT-only database role, OpenTelemetry export, or an immutable audit storage service. Routine configured retention and account deletion can delete history. Do not call this compliance-grade immutable storage.
+**Limits:** this is application-written, hash-linked history. There is no `verify-ledger` or `db:harden` command, INSERT-only database role, OpenTelemetry export or immutable audit store. Configured retention and account deletion delete history. It is not compliance-grade immutable storage.
 
 ## 4. Reliability and dependent actions
 
-Safety is specific to the operation. Revision/hash/version preconditions protect page, file and skill edits. Scoped task/source IDs support import deduplication. Saved run checkpoints avoid repeating completed work when resuming a decision. These are not a blanket exactly-once guarantee for every network call.
+Revision/hash/version preconditions protect page, file and skill edits. Scoped task/source IDs deduplicate imports. Run checkpoints avoid repeating completed work when a decision resumes. None of this is exactly-once delivery for every network call.
 
-`assistant_workflows` stores ordered action receipts scoped by space, actor, conversation and call ID. `hub_run_workflow` validates the approved saved plan, resolves only backward references and rechecks permissions/settings at each step. Successful steps are not replayed after later failure. An interrupted Running step has an uncertain outcome and requires inspection instead of automatic replay. Export/deletion discovers the user-scoped table through Prisma metadata. See [34](34_ASSISTANT_ACTIONS.md).
+`assistant_workflows` stores ordered action receipts scoped by space, actor, conversation and call ID. `hub_run_workflow` validates the approved plan, resolves only backward references and rechecks permissions and settings at each step. Successful steps are not replayed after a later failure; an interrupted Running step needs inspection, not automatic replay ([34](34_ASSISTANT_ACTIONS.md)).
 
-Health/readiness expose API and dependency state. The scheduler records its tick state. There is no documented hourly production canary, universal dead-letter screen or automatic mid-command crash recovery.
+Health and readiness report API and dependency state; the scheduler records its tick. There is no production canary, dead-letter screen or automatic mid-command crash recovery.
 
 ## 5. Metrics and included AI
 
-`lib/metrics.ts` records `MetricEvent`; `routes/runs.ts` serves aggregates. Metrics belong to the person, including work performed in a shared space. The UI focuses on AI calls: 14/30/90-day windows, provider filters applied before every aggregate, reported input/output tokens, interactive daily activity, models, purposes and expandable recent calls. It does not show baseline experiments or ledger verification controls. Calls without token reports still count; missing counts/prices are explicit. Local models and subscription calls use only response data from work routed through Ensemble, without reading external plan balances or personal usage. Copilot assistant turns capture per-call `assistant.usage` JSON events from the Ensemble-started CLI process; context-window snapshots and vendor billing units do not become token/cost estimates. Historical prototype targets are not live productivity measurements; no measured minutes-saved or acceptance-rate claim should be inferred from seeded counts.
+`lib/metrics.ts` records `MetricEvent`; `GET /api/metrics/summary` (`routes/runs.ts`) serves aggregates. Metrics belong to the person, including work in a shared space. The UI shows AI calls over 14/30/90 days with provider filters applied before every aggregate: reported tokens, daily activity, models, purposes and recent calls. Calls without token reports still count, and missing counts or prices show as missing. Local models and subscriptions report only what responses to Ensemble-routed work contained; Copilot assistant turns read per-call `assistant.usage` events from the CLI process Ensemble started, and context-window snapshots or vendor billing units never become token or cost estimates.
 
-Run evidence distinguishes measured tokens, provider-reported cost, estimates and unknown rates. Included AI is different: `included/budget.ts` reserves and settles account usage and the operator's global ceiling. `included_usage` retains call metadata/token counts, not prompts or replies, until workspace erasure or account deletion. Workspace erasure scrubs call details and keeps minimal settlement records; `included_credit_balances` independently enforces the allowance using an email-derived HMAC key, month and charged amount. It survives account deletion/recreation with the same email until the scheduler removes ended months after a two-day settlement grace period. `included_periods` retains aggregate operator spend. [33](33_INCLUDED_AI.md) documents credit calculation and limits.
+Included AI is separate: `included/budget.ts` reserves and settles each account's usage and the operator's global ceiling. `included_usage` keeps call metadata and token counts, not prompts or replies, until workspace erasure or account deletion; erasure scrubs call details and keeps minimal settlement records. `included_credit_balances` enforces the allowance by an email-derived HMAC key, month and charged amount, survives account deletion and re-signup with the same email, and is removed by the scheduler two days after its month ends. `included_periods` keeps aggregate operator spend ([33](33_INCLUDED_AI.md)).
 
 ## 6. Data erasure
 
-Settings data-erasure scopes use `lib/workspace-data.ts` and current Prisma metadata. Everything removes workspace content, metrics, baselines, old audit history and plot dataset files while preserving authentication, devices, connector/model configuration, settings and monthly credit consumption. Only a content-free deletion receipt remains in the ledger. The deletion and receipt commit together, using the shared `FOR NO KEY UPDATE` user lock to avoid conflicts with concurrent foreign-key inserts. The web client sends this potentially long request directly to the API, avoiding the web rewrite proxy. Active jobs block erasure with 409. Account deletion is a separate broader action. Settings → Data presents a Danger zone: choose a scope, type `delete everything` or `delete people and app information` (paste/drop disabled), then explicitly confirm the permanent deletion in an accessible modal. The server validates the exact scope-specific phrase.
+Settings → Data offers erasure scopes through `lib/workspace-data.ts`, driven by current Prisma metadata. **Everything** removes workspace content, metrics, baselines, audit history and plot dataset files, and keeps authentication, devices, connector and model configuration, settings and monthly credit consumption; the ledger keeps only a content-free deletion receipt. Deletion and receipt commit together under the shared `FOR NO KEY UPDATE` user lock. The web client sends the request straight to the API, not through the web rewrite proxy. Active jobs block erasure with a 409. The Danger zone asks for a scope, the typed phrase `delete everything` or `delete people and app information` (paste and drop disabled), then a confirmation dialog; the server checks the exact phrase. Account deletion is a separate, broader action.
 
-A separate `account_deletion_logs` row retains only an HMAC-derived email key, deletion time and expiry time. It has no readable email, profile snapshot, feedback or account foreign key. The same email overwrites the prior entry; signup again is permitted. The existing stable secret-key mechanism derives the purpose-separated HMAC.
+`GET /api/metrics/summary` first runs `repairErasedUsage`: once per Everything receipt (tracked in the `hub.usage-erasure-repair` preference) it preserves monthly credit charges, then removes metric events and baselines at or before that receipt. Later usage stays.
 
-Expiry is **90 days**, purged by the scheduler even when no accounts remain. Restoring a backup or disabling the scheduler requires an operator cleanup check. The private runbook documents the deletion-log erasure command (`pnpm --filter @ensemble/hub-api deletion-log:erase`), which reads an address from stdin without printing it. The public privacy policy discloses the log. This guide describes code behavior, not a legal-compliance certification.
+`account_deletion_logs` keeps only an HMAC-derived email key, deletion time and expiry, with no readable email, profile, feedback or account link. The same email overwrites the earlier entry and may sign up again. Entries expire after **90 days**; the scheduler purges them even when no accounts remain. After restoring a backup or with the scheduler off, the operator must check this cleanup. `pnpm --filter @ensemble/hub-api deletion-log:erase` removes one entry, reading the address from stdin without printing it. The public privacy policy discloses the log. This guide describes code behaviour, not legal compliance.
 
-Checked **20 Oct 2026** with isolated HTTP regression tests for repeated erasure, retained credit consumption, account recreation, legacy-charge adoption/recovery and provider/date isolation. Legacy charges can be recovered from surviving included-call metrics before an older erasure; charges whose evidence was already destroyed cannot be reconstructed.
+## 7. Tests
 
-## 7. Verification
-
-API auth/isolation/public-signup suites use real Fastify requests with an isolated migrated database and mocked providers. Postgres/Redis CI covers integration and constraints. OS tests exercise sandbox boundaries. These checks do not prove live external notifications, calendar writes or provider billing. There is no populated `eval/` corpus or recorded productivity baseline in this tree.
-
-`GET /api/metrics/summary` also repairs usage left by an older Everything erasure (`repairErasedUsage` in `lib/workspace-data.ts`). It finds the latest deletion receipt, preserves/adopts monthly credit charges before removing their evidence, then removes metric events and baselines at or before that receipt. Work and usage created afterward remain. A private preference records the repaired receipt so repeated reads do not repeat the cleanup. Checked 20 Oct 2026 with HTTP regressions for retained credit amounts, later work, account isolation and repeat reads.
+API auth, isolation and public-signup suites send real Fastify requests to an isolated migrated database with mocked providers; Postgres/Redis CI covers integration and constraints; OS tests exercise sandbox boundaries. They do not prove live notifications, calendar writes or provider billing. There is no `eval/` corpus or productivity baseline in the repo.

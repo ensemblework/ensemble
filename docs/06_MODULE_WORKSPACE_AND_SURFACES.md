@@ -1,86 +1,60 @@
 # 06 · Workspace and assigned agents
 
-Workspace is the execution/review view for work assigned from a task, deliverable, Today, assistant or CLI. **Code inspected 18 Oct 2026.** The normal runner is `workspace/agent.ts` behind the durable queue, not a fixed Python PR-author template or the older executor's tool names.
+Workspace is where work assigned from a task, deliverable, Today, the assistant or the CLI runs and is reviewed. The runner is `workspace/agent.ts` behind the durable queue in [05](05_MODULE_TASK_ORCHESTRATOR.md). [24](24_DESKTOP_SANDBOXING.md) owns sandboxing and permissions; [30](30_ENGINES.md) owns external engines and handoff.
 
-Hosted accounts can see their own job board. Host folder/checkout execution is operator-only; ordinary verified users target their own paired computer. `GET /api/workspace` can return a null host root/unavailable host sandbox without hiding their device jobs. Failed queries show Retry and device guidance.
+Hosted accounts see their own job board. Running in host folders or checkouts is operator-only; other verified users target their own paired computer ([25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)). `GET /api/workspace` can return a null host root or unavailable host sandbox without hiding device jobs. A failed query shows Retry and device guidance.
 
-## A. Coding Workspace
+## 1. Assigning
 
-### A1. Assign once, then leave it working
+The Assign dialog (`components/agent/assign-dialog.tsx`) and `workspace/assign.ts` persist a `WorkspaceJob`. Setting the owner to Agent does not start anything by itself.
 
-The assignment dialog and `workspace/assign.ts` persist a `WorkspaceJob`. Changing owner to Agent alone is not execution authorization. The dialog explains the actual saved choices:
-
-| Choice | Current behavior |
+| Choice | Behaviour |
 | --- | --- |
-| Run profile | Up to three saved profiles plus a built-in Quick profile; update/save/rename/delete controls, and a star on each saved profile to make it the default. The default is the starred one, else the first saved, else Quick; Quick assign, the CLI and the assistant (`hub_assign_to_agent`) all use it unless another is named. Settings → Assistant → Run profiles also sets the default, renames and deletes |
+| Run profile | Up to three saved profiles plus built-in Quick. The default is the starred profile, else the first saved, else Quick; Quick assign, the CLI and the assistant (`hub_assign_to_agent`) use it unless another is named. Settings → Assistant → Run profiles also sets the default, renames and deletes. Opening the name editor selects the name, so typing replaces it |
 | Kind | Research & writing (web/paper tools, writes the task page) or Code (works in a folder) |
-| Run on | Permitted local/server execution or a paired computer; offline devices keep queued work |
-| Engine | Ensemble, Claude Code, Codex or Cursor; own-app/terminal handoff is a separate option with the other tool's controls |
-| Model/thinking | Task tier or explicit available override; engine-specific model selection when applicable |
-| Place | Fresh run folder/clone, continuation of earlier work or an explicitly granted folder |
-| Branch | Existing/as-is/new where supported; paired execution follows its advertised contract |
-| Git | Local only, Commit or Commit + push; optional Ask before each commit |
-| Mode | Ask, Review only or Run unattended; trusted-folder requirements apply |
-| Sandbox/network/outside access | Actual OS capability and internet choice; read/read-write/none outside the work folder |
-| Completion | Move task to Done or leave it for the person, according to the saved assignment |
-| Budgets | Minutes, tool calls and model turns; waiting on a human is excluded from active time |
+| Run on | Permitted server execution or a paired computer; an offline computer keeps the job queued |
+| Engine | Ensemble, Claude Code, Codex or Cursor. Opening the work in the tool's own app or a terminal is a separate option that uses that tool's controls |
+| Model / thinking | Task tier or an available override; engine-specific models where applicable |
+| Place | Fresh run folder or clone, continuation of earlier work, or an explicitly granted folder |
+| Branch | As is, existing or new ([16 §4](16_CODE_TAB.md#4-which-branch-the-agent-works-on)); a paired computer follows its advertised support |
+| Git | Local only, Commit, or Commit + push; optional Ask before each commit |
+| Mode | Ask, Review only or Run unattended; trusted-folder rules apply |
+| Sandbox / network / outside access | The OS capability actually present, internet on/off, and read / read-write / none outside the work folder |
+| Completion | Move the task to Done or leave it for the person |
+| Budgets | Minutes, tool calls, model turns; time waiting on a person is excluded |
 
-Some per-run controls (such as outside access) are not stored in the reusable profile. The dialog/API validate the chosen combination rather than invent a missing folder/engine/model. No-repository code work can use a fresh empty run folder. Profile/module restrictions still apply. [30](30_ENGINES.md) owns engine/handoff details.
+Some per-run controls, such as outside access, are not stored in the profile. The dialog and API validate the combination rather than invent a missing folder, engine or model. Code work without a repository can use a fresh empty folder.
 
-### A2. Context and preparation
+## 2. Context and preparation
 
-`brief()` in `workspace/agent.ts` assembles the title, description, instructions, actual task page, linked project/repo, source link, selected skills and relevant earlier attempt. `pages/agent-context.ts` adds owned embedded diagram source under a separate bound. Source IDs distinguish a saved task from a live connected-app item.
+`brief()` in `workspace/agent.ts` assembles the title, description, instructions, task page, linked project/repo, source link, selected skills and the relevant earlier attempt. `pages/agent-context.ts` adds owned embedded diagram source under its own bound. Source IDs distinguish a saved task from a live connected-app item.
 
-Attached app items from the task/project are included as bounded reference text (up to 12,000 characters locally; the device claim has its own bound). Supported file attachments are listed with excerpts; `read_attachment` reads in parts and `save_attachment` copies an original through the folder rules. External engines receive authorized temporary file copies. Device attachment transfer is lease-scoped and capped ([32](32_FILES.md), [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#45-attachments-and-task-context)).
+Connected-app items attached to the task or project are included as reference text, up to 12,000 characters (a device claim has its own bound). File attachments are listed with excerpts; `read_attachment` reads them in parts and `save_attachment` copies an original into the folder under the folder rules. External engines get authorized temporary copies. Device transfer is lease-scoped and capped ([32](32_FILES.md), [25 §4.5](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#45-attachments-and-task-context)).
 
-Fresh code work uses a new folder under the configured workspace; a requested repository is cloned through the trusted helper. A private clone resolves the person's configured Git credential/connection, not a token handed to the agent command. A fresh empty folder can be initialized; an existing user folder is not silently initialized/reset just to run a task.
+Fresh code work gets a new folder under the workspace; a requested repository is cloned by the trusted helper with the person's configured Git credential, never handed to the agent. An existing user folder is never initialized or reset to run a task. Continuations reuse the earlier folder, branch and context; they do not recover uncommitted work from a fresh clone. Paths and permissions are rechecked, and a missing, moved or refused folder blocks the job.
 
-Continuations reuse the earlier retained folder/branch and context. They do not recover uncommitted work by cloning a new copy. Folder resolution rechecks current paths/permissions; an absent, moved or refused directory is a blocker.
+## 3. Execution
 
-### A3. Filesystem boundary and external editors
+`executeJob` creates a Run and calls the selected engine or Ensemble's model/tool loop with the tools in `workspace/tools.ts`: file operations, commands, context and attachments, questions, page output and finish. `guard.ts`, `trust.ts`, `git-gate.ts` and the OS backend enforce folder, command and Git rules ([24](24_DESKTOP_SANDBOXING.md)). An external folder can be worked in place and need not be a Git repository.
 
-`guard.ts` canonicalizes the work folder and refuses broad/system/secret/application-control locations. `tools.ts`, `trust.ts` and the OS backend enforce typed reads/edits/commands and outside-folder grants. An external folder can be worked in place and need not be a Git repository for non-Git work. Git evidence/actions are available only when applicable.
+Mode and trust decide which operations wait. A denied call returns a readable result, not a hint to try another path. Budgets stop work and keep partial progress. Unattended picks recommended answers and reports them; it gains no filesystem or Git authority. Engines launched by Ensemble keep its tool-call enforcement; a tool opened in its own app or terminal uses its own settings. Another editor writing the same folder can change it, so do not edit a folder an active task holds.
 
-Sandbox on/off, outside read/read-write/none, local trust and mode are independent choices. Review only is a mode that can edit, not the read-only access grant. Network on is not a universal domain allowlist. [24](24_DESKTOP_SANDBOXING.md) is the authoritative backend/capability reference.
+Queue slots, checkpoints, Stop and interruption are in [05 §4–§6](05_MODULE_TASK_ORCHESTRATOR.md#4-queue-slots-and-limits).
 
-External engines launched inside Ensemble retain supported tool-call/permission enforcement. Opening work in the agent's own app or terminal uses that tool's own runtime settings. A separate editor reading the checkout can change it, so do not concurrently edit a folder reserved by another active task. The removed Teams/Outlook side-card prototype is not a supported surface.
+Success and output are saved before the UI reports them. Research saves the deliverable on the page. Task completion follows the saved assignment; source checkouts stay for review. Deleting Hub records never deletes a person's source folder. A pushed branch is not a merged PR or proof that remote CI passed.
 
-### A4. Execution and completion
+## 4. Evidence and review
 
-`executeJob` creates a Run and calls the selected engine or Ensemble's bounded model/tool loop. The agent uses the actual tools from `workspace/tools.ts`: file operations, command execution, context/attachments, questions, page output and finish. The old `workspace_*` catalog examples are not a contract for the current runner.
+Job cards and the task's Agent output link to the Run. `RunStep` stores the engine's tool, thinking and message events; secrets-file read previews are omitted. Evidence keeps the reported model, tokens, reported or estimated cost, bounded changed-file status and line counts, result and run ID; unknown prices stay unknown.
 
-Mode/trust determines which operations wait. A denied tool call returns a readable result; it is not a license to try a different path around the rule. Budgets stop work while retaining partial progress. Unattended selects recommended structured decisions and reports them; it does not get additional filesystem/git authority.
+`changed-files.ts` compares start and end snapshots without rename detection and never runs unsafe Git configuration to inspect a cloned repository. `planted.ts` flags changed files that may run later; a flag does not certify the rest as safe.
 
-Git permissions are enforced independently: local-only work cannot produce commits through another Git operation; unapproved script-made commits can be undone while keeping file changes. Trusted helpers prepare/publish permitted branches without exposing the credential to child commands. Exact saved publishing decisions can continue without replanning unrelated work. A pushed branch is not a merged PR or proof remote CI passed.
+`routes/job-files.ts` serves authorized job files. For a paired job only the person who ran it reads file text; other shared-space members see metadata. Code opens the run's review on that computer ([16](16_CODE_TAB.md), [25 §4.7](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#47-the-code-tab-and-terminal-on-the-web)).
 
-Success and final output are persisted before the UI reports the result. Research saves the actual deliverable on the page. Task/deliverable completion follows the saved assignment and owning completion logic; source checkouts remain available for review. Deleting Hub records does not silently delete a person's source folder.
+Run feedback is a tag or a linked follow-up attempt; it never edits recorded output. Run sheets show Results, Files and Traces with resizing, fullscreen and bounded history.
 
-### A5. Durable queue and global stop
+## 5. Related interfaces
 
-`workspace/worker.ts` executes what `queue-policy.ts` claims. Claims serialize on the space user row; jobs sharing a project/repo, device resource/folder or unfinished continuation wait. The configured limit is 1–8, default 3. Claimed/Running/Stopping/Waiting jobs count. After a request waits 60 minutes, one extra task can start (N+1); nothing refills it until below N. [05](05_MODULE_TASK_ORCHESTRATOR.md#4-queue-slots-and-limits).
+The Hub assistant has its own typed app-action loop ([11](11_HOW_THE_ASSISTANT_WORKS.md)). The Context Bridge is read-only ([CONTEXT_BRIDGE](CONTEXT_BRIDGE.md)). Engine MCP/chat tools use a run-scoped credential ([30](30_ENGINES.md)). Assigning a task does not send mail, Teams or Slack messages, run arbitrary routines or replay crashed commands.
 
-Pause prevents new work and cancels owned active model/command activity; Stop everything also cancels queued jobs. Partial files/evidence remain. A provider may finish a request already accepted; cancellation is not external rollback.
-
-Exact tool/question checkpoints save messages, arguments, counters, receipts and tree identity. Answer requeues the same job/continuation; stale tree/decision state is refused. Server restart and device lease expiry mark unknown interrupted work for explicit retry, not silent mid-command replay. A resource can remain reserved until cleanup/reassignment is safe.
-
-### A6. UI and retained evidence
-
-Workspace/job cards and task Agent output link to Run evidence. `RunStep` stores the engine's supported tool, thinking and message events; it is not a fabricated inner monologue. Secrets-file read previews are omitted. Job evidence retains actual reported model, tokens/reported or estimated cost when available, bounded changed-file status/line counts, results and run ID. Unknown price remains unknown.
-
-`changed-files.ts` compares start/end snapshots without rename detection and handles edits inside cloned repositories conservatively. Unsafe Git configuration is not executed merely to inspect it. `planted.ts` flags files that may run later. These flags do not certify the rest of a repository as safe.
-
-`routes/job-files.ts` serves authorized stored/live job files. For paired jobs, text belongs to the executing person while other shared members can see permitted metadata. Code opens the device review ID and relays supported review/edit/source-control/terminal calls. [16](16_CODE_TAB.md), [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#47-the-code-tab-and-terminal-on-the-web).
-
-Run feedback is either a tag or a separately linked follow-up attempt. It does not edit recorded output. Run sheets keep Results, Files and Traces visible with resizing/fullscreen and bounded history.
-
-## B. Related interfaces and limits
-
-The Hub assistant uses a separate typed app-action loop ([11](11_HOW_THE_ASSISTANT_WORKS.md)). Ensemble Code can read a local folder and start an assigned agent; it does not directly execute every filesystem operation. The external Context Bridge is read-only ([13](13_MODULE_CONTEXT_BRIDGE.md)). Task-specific engine MCP/chat tools have a distinct run-scoped credential ([30](30_ENGINES.md)).
-
-The source still contains legacy `workspace/executor.ts` and Python planner/worker code. Read the actual route/assignment path before treating a legacy tool name or endpoint as a current product capability. The normal queue is implemented; general mail/Teams/Slack sending, arbitrary routines and universal crash-replay are not promised by assigning a task.
-
-## C. Verification
-
-Use queue/assignment/tool/decision/engine and device tests for the affected path. API integration runs against isolated fixtures or dedicated Postgres/Redis; OS escape tests use the platform backend. Real-model/browser/installed-engine checks need their own environment. This documentation-only audit did not start agents, publish code, call external calendar accounts or change real task data.
-
-The Assign dialog selects a profile name when its editor opens, before the person can type; subsequent keystrokes do not reselect the draft. This avoids delayed selection overwriting the first character (`components/agent/assign-dialog.tsx`; checked 20 Oct 2026 with the immediate-typing regression).
+Queue, assignment, tool, decision, engine and device tests sit beside their modules; OS escape tests use the platform backend. Real models, browsers and installed engines need their own environment.
