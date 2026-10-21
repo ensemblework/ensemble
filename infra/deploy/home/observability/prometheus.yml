@@ -1,0 +1,18 @@
+# Scraped every 30 s; kept 730 days (compose.yml). All targets are loopback on this machine.
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+scrape_configs:
+  - job_name: hub-api
+    static_configs:
+      - targets: ["127.0.0.1:14090"]
+  - job_name: node
+    static_configs:
+      - targets: ["127.0.0.1:19100"]
+  - job_name: postgres
+    static_configs:
+      - targets: ["127.0.0.1:19187"]
+  - job_name: prometheus
+    static_configs:
+      - targets: ["127.0.0.1:19090"]

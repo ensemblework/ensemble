@@ -38,6 +38,7 @@ import { loadFailureKind } from "@/lib/load-failure";
 import { clearBrowserTabSession } from "@/lib/tab-session";
 import { switchSpace } from "@/lib/spaces";
 import { ShellLabelsProvider } from "@/lib/shell-labels";
+import { InteractionTracker, useTrackOpen } from "@/lib/telemetry";
 import { peekPanel, warmPeek } from "@/lib/warm";
 
 const OnboardingTour = dynamic(() => import("@/components/onboarding/guided-tour").then((module) => module.OnboardingTour), { ssr: false });
@@ -85,6 +86,11 @@ function Frame({ children }: { children: React.ReactNode }) {
   const [palette, setPalette] = useState(false);
   const [shortcuts, setShortcuts] = useState(false);
   const [capture, setCapture] = useState(false);
+  useTrackOpen("palette.open", palette);
+  useTrackOpen("shortcuts.open", shortcuts);
+  useTrackOpen("capture.open", capture);
+  useTrackOpen("nav.drawer.open", drawer);
+  useTrackOpen("pages.panel.open", pagesOpen);
   const { peekId, kind, fullscreen } = usePeek();
   const area = useRef<HTMLDivElement>(null);
   const { width, dragging, onPointerDown, onKeyDown, reset, min, max } = useResizablePeek(area);
@@ -318,6 +324,7 @@ export default function HubLayout({ children }: { children: React.ReactNode }) {
     <Suspense fallback={null}>
       <AuthGate>
         <LiveProvider>
+          <InteractionTracker />
           <Notifier />
           <PresenceHost />
           <FollowHost />

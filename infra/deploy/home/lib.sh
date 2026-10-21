@@ -173,3 +173,44 @@ install_crontab() {
     printf '@reboot sleep 60 && /bin/bash %s --boot >/dev/null 2>&1 # ensemble-home\n' "$watchdog"
   } | crontab -
 }
+
+# ── Monitoring (observability/, docs/07 §1.3) ───────────────────────────────
+OBS_SECRETS="$ENSEMBLE_HOME_DIR/observability.env"
+
+observability_installed() {
+  [ -f "$OBS_SECRETS" ]
+}
+
+obs_compose() {
+  (
+    set -a
+    # shellcheck disable=SC1090
+    . "$OBS_SECRETS"
+    set +a
+    export ENSEMBLE_OBS_DIR="$ENSEMBLE_HOME_DIR/observability"
+    docker compose -f "$APP/infra/deploy/home/observability/compose.yml" "$@"
+  )
+}
+
+# The analytics views would block a migration that changes a column they read: drop them first.
+drop_analytics_views() {
+  observability_installed || return 0
+  docker exec ensemble-home-postgres psql -q -U ensemble -d ensemble -c 'DROP SCHEMA IF EXISTS analytics CASCADE' >/dev/null
+}
+
+# Views and read-only role, dashboards, units, then the containers. After migrations.
+refresh_observability() {
+  observability_installed || return 0
+  local obs="$APP/infra/deploy/home/observability" password
+  password="$(sed -n 's/^GRAFANA_DB_PASSWORD=//p' "$OBS_SECRETS")"
+  local output
+  # A broken view must not stop a deploy: the app is fine, only a dashboard panel is not.
+  if ! output="$(docker exec -i ensemble-home-postgres psql -q -U ensemble -d ensemble -v reader_password="$password" <"$obs/analytics.sql" 2>&1)"; then
+    echo "WARNING: the analytics views did not apply; dashboards that read the database are empty until fixed:" >&2
+    printf '%s\n' "$output" | grep -v -e '^NOTICE' -e '^DETAIL' -e '^drop cascades' >&2
+  fi
+  mkdir -p "$ENSEMBLE_HOME_DIR/observability/textfile"
+  "$ENSEMBLE_HOME_DIR/node/bin/node" "$obs/build-dashboards.mjs" "$ENSEMBLE_HOME_DIR/observability/dashboards" >/dev/null
+  install -m 0644 "$obs"/systemd/*.service "$obs"/systemd/*.timer "$HOME/.config/systemd/user/"
+  obs_compose up -d --remove-orphans
+}

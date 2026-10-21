@@ -1,4 +1,5 @@
 "use client";
+import { useTrackOpen } from "@/lib/telemetry";
 import { assistantSurface } from "@/lib/assistant-surface";
 import { createPortal } from "react-dom";
 /** @jsxRuntime automatic */
@@ -373,6 +374,7 @@ export function AssistantDock() {
   const mod = useModKey();
   const { setWorking, working } = useLive();
   const [open, setOpen] = usePersistentState("ensemble.assistant.open", false);
+  useTrackOpen("assistant.open", open);
   const [expanded, setExpanded] = usePersistentState("ensemble.assistant.expanded", false);
   const panel = useRef<HTMLDivElement>(null);
   const panelSize = usePanelSize(panel, !expanded);

@@ -91,6 +91,13 @@ class SseHub {
     if (set.size === 0) this.channels.delete(userId);
   }
 
+  /** Open streams and the channels (spaces) they listen on, for /metrics. */
+  stats(): { streams: number; channels: number } {
+    let streams = 0;
+    for (const set of this.channels.values()) streams += set.size;
+    return { streams, channels: this.channels.size };
+  }
+
   unsubscribe(userId: string, reply: FastifyReply): void {
     const set = this.channels.get(userId);
     if (!set) return;

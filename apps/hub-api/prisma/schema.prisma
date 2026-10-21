@@ -1690,6 +1690,7 @@ model User {
   /// A picture avatar, `role.gender.n` (packages/shared-types/src/avatars.ts). Null: initials.
   avatar                String?
   sessions              Session[]
+  interactionEvents     InteractionEvent[]
   authIdentities        AuthIdentity[]
   emailTokens           EmailToken[]
   authFlows             AuthFlow[]
@@ -2312,4 +2313,36 @@ model PageTemplate {
 
   @@index([userId, profile, createdAt])
   @@map("page_templates")
+}
+
+/// What a person did in the Hub, for the operator's own analysis (docs/07 §1.3): which screen and for
+/// how long it was actively in use, and named actions. Never content: no titles, text, file names or
+/// ids from the page. Written by POST /api/telemetry; deleted with the account and after
+/// ENSEMBLE_INTERACTION_RETENTION_DAYS (730 by default).
+model InteractionEvent {
+  id         BigInt   @id @default(autoincrement())
+  userId     String   @map("user_id")
+  /// Random per browser tab, so one visit's events read in order.
+  sessionKey String   @map("session_key")
+  at         DateTime
+  receivedAt DateTime @default(now()) @map("received_at")
+  /// view (a screen and its active time) | action (a named action) | session (tab opened)
+  kind       String
+  /// board, pages, meetings, plots, files, code, assistant, settings…
+  surface    String
+  /// The route with ids replaced, e.g. /pages/:id.
+  route      String
+  action     String?
+  /// Active time on the screen, for kind=view.
+  durationMs Int?     @map("duration_ms")
+  /// Small, named, non-content details (counts, modes, sizes).
+  props      Json     @default("{}")
+  client     String   @default("web")
+  viewport   String?
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, at])
+  @@index([at])
+  @@index([surface, at])
+  @@map("interaction_events")
 }

@@ -48,9 +48,11 @@ main() {
   wait_postgres
   # A dump before any migration runs; a deploy whose dump fails stops here.
   bash "$APP/infra/deploy/home/pg-backup.sh" --local
+  drop_analytics_views
   pnpm db:migrate
   ensure_agent_venv
   install_units
+  refresh_observability
 
   systemctl --user restart ensemble-agent.service
   systemctl --user restart ensemble-api.service

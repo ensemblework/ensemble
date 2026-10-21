@@ -1,0 +1,24 @@
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://127.0.0.1:19090
+    isDefault: true
+    jsonData:
+      timeInterval: 30s
+  # The read-only role: only the analytics schema (analytics.sql).
+  - name: Ensemble DB
+    uid: ensemble-db
+    type: grafana-postgresql-datasource
+    access: proxy
+    url: 127.0.0.1:${ENSEMBLE_PG_PORT}
+    user: ensemble_grafana
+    jsonData:
+      database: ensemble
+      sslmode: disable
+      postgresVersion: 1600
+      timescaledb: false
+    secureJsonData:
+      password: ${GRAFANA_DB_PASSWORD}
