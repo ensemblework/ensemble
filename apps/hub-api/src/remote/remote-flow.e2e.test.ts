@@ -1,5 +1,5 @@
 /**
- * The real desktop sidecar against a fake hosted API (doc 25 §4.3).
+ * The real desktop sidecar against a fake hosted API (doc 25 §4.1).
  * Pair, claim, run, answer from the web, refuse a server that answers the
  * wrong question or a push to another branch, stop on 401, and do not re-run
  * after the lease expires while the app is quit.

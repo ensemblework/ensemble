@@ -2,7 +2,7 @@ import type { IconName } from "@/components/icon";
 import type { Faq } from "@/lib/schema";
 
 // One page per search people make. Each says only what the product does today
-// (docs/18_WHAT_IS_REAL.md); change the copy when the feature changes.
+// (docs/00_PROJECT_OVERVIEW.md); change the copy when the feature changes.
 export type Topic = {
   slug: string;
   /** The <title>. Under about 60 characters. */

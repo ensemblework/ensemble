@@ -1,93 +1,71 @@
-# 05 · Task orchestration and scheduled product jobs
+# 05 · Task orchestration and scheduled jobs
 
-The normal assignment path is a **Postgres-backed workspace queue in hub-api**, executed locally or claimed by a paired computer. Research and code agents use model tools or supported external engines. Python supplies hosted model calls and plot work; its retained planner/worker modules are not the architecture of the current assignment UI.
+Assigned work runs through a **Postgres-backed workspace queue in hub-api**, on the server (operators only) or on the person's paired computer. The Python runtime supplies hosted model calls and plot work; it does not plan or run assignments. See [06](06_MODULE_WORKSPACE_AND_SURFACES.md) for execution, [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md) for device leases and [30](30_ENGINES.md) for external engines.
 
-Code inspected **18 Oct 2026**. See [06](06_MODULE_WORKSPACE_AND_SURFACES.md) for assignment/execution details, [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md) for device leases and [30](30_ENGINES.md) for external engines.
-
-## 1. Current execution path
+## 1. Execution path
 
 ```text
-Task / deliverable / assistant assignment
-    → workspace/assign.ts persists WorkspaceJob
+Task / deliverable / assistant / CLI assignment
+    → workspace/assign.ts persists a WorkspaceJob
     → workspace/queue-policy.ts claims an eligible job
-    → local workspace/worker.ts OR paired device claims it
-    → workspace/agent.ts executes research/code or an engine
-    → tools, decisions, RunSteps and changed-file evidence
-    → saved output / review / publishing continuation / completion
+    → workspace/worker.ts (server) or a paired computer runs it
+    → workspace/agent.ts: Ensemble's model/tool loop or an external engine
+    → RunSteps, decisions, changed-file evidence → output, review, completion
 ```
 
-`Run` is an attempt and its evidence; `WorkspaceJob` is durable execution state. A pending proposal or a queued job is not completed work. Jobs sharing a project, repository, folder/resource or unfinished continuation are serialized.
-
-Hosted public users need verified email for model/connector/agent features. Host filesystem execution is restricted to verified operators; ordinary accounts run on their own paired computers. Open hosting uses `ENSEMBLE_SERVER_RUNNER=off`. A device claim does not grant permission to run on the host.
+`WorkspaceJob` is durable execution state; `Run` is one attempt and its evidence. Hosted model, connector and agent features need a verified email. Host filesystem execution is limited to verified operators (`lib/hosted-access.ts`); open signup requires `ENSEMBLE_SERVER_RUNNER=off` (`lib/production.ts`). A device claim never grants permission to run on the host.
 
 ## 2. Scheduled work
 
-`jobs/scheduler.ts` runs an in-process minute tick. Postgres claims in `jobs/claim.ts` make daily slots idempotent across API processes. When the server's blob store is on, the tick also runs `jobs/blob-sweep.ts` at most hourly: it removes file originals and plot tables nothing uses and moves plot tables still on disk into the store ([32](32_FILES.md#2-where-files-live), [20](20_PLOTS_DESIGN.md#2-data-ingestion)). It visits accounts even when no settings row has yet been saved.
+`jobs/scheduler.ts` ticks once a minute in-process (`ENSEMBLE_SCHEDULER=off` disables it). Postgres claims in `jobs/claim.ts` make daily slots idempotent across API processes. Per-account jobs skip accounts without a verified email; an account with no settings row uses defaults.
 
-| Job | Current behavior |
+| Job | Behaviour |
 | --- | --- |
-| Private reminders | Dispatch due in-app reminders; platform notifications depend on a running app and permission |
-| Morning brief | Deliver from the local day after account creation, once per local day, using current brief instructions/context |
-| Stale notices and watchers | Evaluate the implemented product conditions, not arbitrary user programs |
-| Device lease sweep | Detect expired remote claims and settle interrupted work |
-| Retention | Catch up daily cleanup at/after 03:30 local time; notice and skill learning precede completed-work retirement |
-| Account-deletion logs | Remove expired minimal logs |
-| Legacy connector fetch slots | `fetchAll(..., "schedule")` returns without reading any provider |
+| Housekeeping | Expired account-deletion logs, credit months ended over two days ago, pending decisions past `expiresAt`; interaction-log purge once a day ([07 §1.3](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#13-the-operators-interaction-log-and-dashboards)) |
+| Device leases | `devices/lease.ts` settles expired remote claims as interrupted |
+| Blob sweep | At most hourly, only when the server's blob store is on (`jobs/blob-sweep.ts`): removes file originals and plot tables nothing uses once an hour old, and moves plot tables still on disk into the store ([32](32_FILES.md#2-where-files-live), [20](20_PLOTS_DESIGN.md#2-data-ingestion)) |
+| Reminders | Dispatch due in-app reminders, including ones missed while down |
+| Morning brief | Once per local day at/after its set time, from the day after account creation |
+| Stale notices, watchers | Built-in conditions only, not user programs |
+| Retention | Daily at/after 03:30 local time; a missed day catches up ([07 §1.1](07_MODULE_GOVERNANCE_AUDIT_METRICS.md#11-completed-and-deleted-data-retention)) |
+| Scheduled fetch | Due only with `ENSEMBLE_SCHEDULED_FETCH=on`; even then `fetchAll(..., "schedule")` in `connectors/sync.ts` reads no provider |
 
-`ENSEMBLE_SCHEDULER=off` stops the scheduler. `ENSEMBLE_SCHEDULED_FETCH=on` can make the legacy fetch slot due, but does **not** bypass the no-content-read branch in `connectors/sync.ts`. Sync people is a separate explicit metadata-only action. There is no BullMQ scheduler, `context.deltas` consumer or automatic mail-to-task pipeline in the normal product path.
-
-Local schedules need the local runtime running. Hosted schedules do not wake a sleeping paired computer. Arbitrary recurring workflows/routines are not implemented.
+Sync people is a separate, explicit, metadata-only action. There is no BullMQ scheduler, mail-to-task pipeline or user-defined routine. Local schedules need the local runtime running; hosted schedules do not wake a sleeping computer.
 
 ## 3. Task state and model selection
 
-The real transition table is `lib/state-machine.ts`:
+`lib/state-machine.ts` allows: Proposed → Todo/Dropped/In progress; Todo → In progress/Dropped/Done/Proposed; In progress → Waiting for approval/Blocked/Done/Todo/Dropped; Waiting for approval → In progress/Done/Blocked/Dropped; Blocked → Todo/In progress/Dropped; Done → Todo; Dropped → Proposed/Todo. Other moves are a 409. Snooze is `snoozedUntil`, not a status. Owner (`me`, `agent`, `unassigned`), status, priority and complexity are separate.
 
-- `proposed` can become Todo, Dropped or In progress.
-- Todo can start, complete, drop or return to Proposed.
-- In progress can wait for approval, block, complete, return to Todo or drop.
-- Waiting for approval and Blocked have explicit recovery transitions.
-- Done reopens to Todo; Dropped can return to Proposed or Todo.
-
-Snooze is `snoozedUntil`, not a separate persisted task status. Owner (`me`, `agent`, `unassigned`), status, priority and complexity are separate properties.
-
-Complexity selects Low/Medium/High/Max model profiles. A person-chosen complexity is not silently reclassified. Assignment freezes the requested model/effort and execution settings for that attempt. Discovered capabilities and effort are validated before spending; changing Settings later does not rewrite queued work or old evidence. Included-model funding and personal keys are separate sources ([01](01_TECH_STACK_AND_ENVIRONMENT.md#6-model-usage-policy), [33](33_INCLUDED_AI.md)).
+Complexity picks the Low/Medium/High/Max model profile; a complexity the person set is never reclassified. Assignment freezes model, effort and execution settings for that attempt, validated before spending; later Settings changes do not rewrite queued work or evidence. Included models and personal keys are separate sources ([01](01_TECH_STACK_AND_ENVIRONMENT.md#6-model-usage-policy), [33](33_INCLUDED_AI.md)).
 
 ## 4. Queue slots and limits
 
-`workspace/queue-policy.ts` serializes claims on the space's user row. Eligible work is considered in assignment sequence; unrelated work can pass a conflicting job.
+`workspace/queue-policy.ts` serializes claims on the space's user row and takes eligible jobs in assignment order. Jobs sharing a project, repository, folder/device resource or unfinished continuation wait for each other; unrelated work can pass.
 
-- `orchestration.maxConcurrentJobs`: 1–8, default **3**.
-- Claimed, Running, Stopping and Waiting jobs consume slots.
-- A Needs me request/publishing approval unanswered for at least **60 minutes** permits one extra task, at most **N+1** total. It does not continually refill the extra slot.
-- Answering continues the same work; it does not consume another slot.
-- Once the extra task starts, new work waits until fewer than N jobs remain.
+- `orchestration.maxConcurrentJobs`: 1–8, default **3**. Claimed, Running, Stopping and Waiting jobs use a slot.
+- When a Needs me question or publishing approval has waited **60 minutes**, one extra job may start (**N+1** total). It is not refilled until fewer than N jobs remain.
+- Answering continues the same job without taking another slot.
 
-Per-run minutes, model turns and tool calls are independent budgets. Waiting on a human does not consume the active-time budget. Runtime model requests additionally share a separate limiter/cancellation path; queue capacity is not the same as provider request concurrency.
+Minutes, model turns and tool calls are separate per-run budgets; waiting on a person does not use minutes. Provider request concurrency has its own limiter.
 
 ## 5. Decisions and publishing
 
-Needs me combines saved approvals, structured missing-information questions, workspace tool-permission decisions and interrupted older attempts. Exact choice IDs and the pending operation are retained. A vague prose question is not automatically converted into a decision.
+Needs me combines saved approvals, structured questions, tool-permission decisions and interrupted attempts, with exact choice IDs and the pending operation. A checkpoint saves messages, tool arguments, counters, receipts and the working-tree identity. Answering requeues the same job and resumes without replaying completed writes; a changed tree or stale decision voids the permission. In a shared space only the person whose computer runs the job answers its execution decisions.
 
-Workspace checkpoints save messages, exact tool arguments, counters, receipts and working-tree identity. Answering requeues the same job, returns the answer to the saved continuation and does not replay completed writes. A changed tree or stale decision invalidates the permission. In a shared space, only the person whose computer runs the job may answer its execution decisions.
-
-Publishing resumes from the saved reviewed payload/approval, rather than replanning a new publish operation. Missing historical continuations require an explicit new attempt. An approval is not permission for arbitrary later writes.
+Publishing resumes from the reviewed payload and approval instead of replanning. An approval does not cover later, different writes.
 
 ## 6. Stop, interruption and retry
 
-Pause prevents new work and cancels active model/command activity through the relevant controllers. Stop one task affects that task; Stop everything also cancels queued work. Saved partial files and evidence remain. A request already accepted by an external service may still finish; stopping is not a remote rollback.
+Pause stops new work and cancels active model and command activity. Stop on a task affects that task; Stop everything also cancels queued jobs. Partial files and evidence remain. An external request already accepted may still complete; stopping is not a remote rollback.
 
-On restart, a server job left Running/Stopping/Waiting becomes interrupted and waits for an explicit retry. Remote jobs retain device ownership until lease handling settles them. Unknown mid-command outcomes are not silently replayed. A stopped checkout can remain reserved until cleanup/reassignment is safe.
-
-Retrying after failure is different from resuming an exact saved decision. The UI must report which applies.
+On restart, a server job left Running, Stopping or Waiting becomes interrupted and waits for an explicit retry. Remote jobs stay with their device until lease handling settles them. Unknown mid-command outcomes are never replayed. A stopped checkout can stay reserved until cleanup is safe. Retry starts a new attempt; answering a saved decision resumes the old one, and the UI says which.
 
 ## 7. Evidence and feedback
 
-`RunStep` stores tool/message/reasoning events appropriate to the engine. Job evidence includes model used, measured tokens or reported/estimated cost where available, changed-file metadata, result and run ID. Secrets-file contents are excluded from previews. Requested model and actual reported model are distinct; unknown pricing stays unknown.
+`RunStep` stores the tool, message and reasoning events the engine reports. Job evidence holds the reported model, measured tokens, reported or estimated cost, changed-file metadata, result and run ID; unknown pricing stays unknown. Secrets-file contents are left out of previews.
 
-Run feedback is bounded (up to 100 entries of 4,000 characters) and can create a linked follow-up job. It does not overwrite the original attempt. Completed-work learning is the bounded retention pass in [04](04_MODULE_SKILL_FORGE.md#4-completed-work-learning), not a nightly general worker.
+Run feedback (`POST /api/runs/:id/feedback`) holds up to 100 entries of 4,000 characters and can start a linked follow-up job; it never edits the original. Completed-work learning is part of retention ([04](04_MODULE_SKILL_FORGE.md#4-completed-work-learning)).
 
-## 8. Legacy Python modules and verification
+## 8. Code not on this path
 
-`apps/agent-runtime/ensemble_agent/orchestrator`, `workers` and `tools` retain planner/executor/policy code and tests. Do not infer from those files that assigning a task launches an email sender, Teams sender, day planner or work-item sync worker. Trace the actual HTTP/assignment entry point before documenting a capability.
-
-Queue, state-machine, checkpoint, retention and device tests live beside the owning modules. CI exercises API integration with Postgres/Redis and sandbox paths on multiple systems. Test fixtures do not prove a live provider accepted an external write. Full implementation and residual execution boundaries are in [06](06_MODULE_WORKSPACE_AND_SURFACES.md) and [24](24_DESKTOP_SANDBOXING.md).
+The Python `orchestrator/`, `workers/`, `tools/`, `policy.py` and `audit/ledger.py` in `apps/agent-runtime/ensemble_agent` are used only by their tests; assigning a task never runs them. `apps/hub-api/src/workspace/executor.ts` is not imported. Trace the HTTP or assignment entry point before documenting a capability.

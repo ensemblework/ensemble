@@ -1,5 +1,5 @@
 /**
- * Folder trust, shared with the person's other AI tools on this computer (doc 24 §5.8).
+ * Folder trust, shared with the person's other AI tools on this computer (doc 24 §4).
  *
  * A folder trusted in Ensemble is marked trusted in Claude Code, Codex, GitHub Copilot CLI,
  * Cursor's agent and Gemini CLI too, in the same files their apps and CLIs read, so a task

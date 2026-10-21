@@ -1,124 +1,219 @@
 # Desktop app
 
-Code inspected 18 Oct 2026. Root `release.json` supplies the installed/build version. The bundled app uses the shared Hub, brand and runtime.
+`apps/desktop` is a [Tauri 2](https://v2.tauri.app/) window that runs Ensemble on this computer. It serves a static export of `apps/hub-web` and starts one Node sidecar (hub-api, the worker and the scheduler) on an embedded PGlite database. Local use needs no Docker, Postgres, Redis, Python model process or hosted account. Pairing with an account is a separate, explicit step.
 
-`apps/desktop` is a [Tauri 2](https://v2.tauri.app/) window that runs Ensemble on this computer. It serves a static export of `apps/hub-web` and starts one Node sidecar (hub-api, the worker, and the scheduler) against an embedded PGlite database. Local use needs no Docker, hosted account or Postgres installation. Pairing enables separate hosted account features.
+Sandboxing: [24](24_DESKTOP_SANDBOXING.md). Pairing, remote tasks, Code tab and terminal: [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md). The CLI runs the same sidecar without a window: [26](26_CLI.md). Hand test: [desktop/MAC_CHECKLIST.md](desktop/MAC_CHECKLIST.md).
 
-`pnpm dev` and `pnpm --filter @ensemble/hub-web build` are unchanged. The export is a separate target (`ENSEMBLE_DESKTOP_EXPORT=1`). Set `ENSEMBLE_SITE_URL` to open a hosted site instead of the local bundle.
+## 1. Modes
 
-The Python agent-runtime is not bundled. With `ENSEMBLE_DESKTOP=1` the sidecar answers model calls in-process (`apps/hub-api/src/runtime/`, switch with `ENSEMBLE_INPROCESS_RUNTIME`), so chat and agent tasks work with a key pasted in Settings → Models. Plots export still needs the computer's own `python3` with matplotlib.
+| Mode | What runs where |
+| --- | --- |
+| Bundled (default) | Tauri loads the static Hub; one local Node API owns PGlite, model adapters, jobs and the scheduler |
+| Hosted window | `ENSEMBLE_SITE_URL` opens a hosted or dev UI instead; backend, sign-in and data are that origin's (§9) |
+| Paired to an account | Hosted assignments, AI subscriptions and included-model calls reach the computer through the device protocol ([25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)) |
+| CLI runner | The same runtime without a window; the desktop app attaches to it (§3.3) |
 
-## Run it
+Local storage does not mean offline inference: model prompts go to the provider the person chose.
 
-Install Rust 1.87 or newer and the Tauri system libraries (WebKitGTK 4.1 on Linux, WebView2 on Windows, the system WebKit on macOS). The Edit menu's Cut, Copy, Paste and Select All items need libxdo on Linux. Building needs `libxdo-dev` (`libxdo-devel` on Fedora). At run time the `.deb` declares `libxdo3` and the `.rpm` declares `libxdo` (Fedora, or EPEL on RHEL). The AppImage carries its own copy. From the repo root:
+## 2. Run it
+
+Install Rust 1.87 or newer and the Tauri system libraries (WebKitGTK 4.1 on Linux, WebView2 on Windows, the system WebKit on macOS). On Linux the Edit menu (Cut, Copy, Paste, Select All) needs libxdo: build with `libxdo-dev` (`libxdo-devel` on Fedora). From the repo root:
 
 ```bash
-pnpm desktop:export
+pnpm desktop:export              # static Hub export (ENSEMBLE_DESKTOP_EXPORT=1)
 pnpm --filter @ensemble/desktop dev
 ```
 
-A dev build runs the sidecar from the workspace with `node --import tsx`. A packaged build uses `pnpm desktop:sidecar` first, which copies Node and a deployed hub-api into the bundle. The window opens at 1200×800. A second launch focuses the existing window.
+`pnpm dev` and `pnpm --filter @ensemble/hub-web build` do not set `ENSEMBLE_DESKTOP_EXPORT`, so they are unaffected by the export. A dev build runs the sidecar from the workspace with `node --import tsx`. The window opens at 1200×800; a second launch focuses the existing window.
 
-The sidecar binds `127.0.0.1` on a random port and writes `api.json` (mode 0600) in the OS app-data folder for `com.ensemblework.desktop`. The Context Bridge and `scripts/ensemble-hook.mjs` read that file and otherwise keep `http://127.0.0.1:4000`.
-
-The Ensemble CLI's runner uses the same folder and the same sidecar (doc [26](26_CLI.md) §4), so a computer has one runtime. A `runtime.lock` keeps a second sidecar off the database: the shell attaches to a CLI runner that is already running (`api.json` answers `/health` with its token), leaves it running on quit, and starts its own on the same port and token if that runner stops. The packaged sidecar carries `scripts/ensemble-hook.mjs` and `scripts/ensemble-ask-mcp.mjs` at `app/scripts/hooks/`, and on Linux the Landlock helper at `bin/landrun` (built from pinned source with Go; release builds require it).
-
-## Build
-
-```bash
-pnpm desktop:build
-```
-
-Release bundles are written under `apps/desktop/src-tauri/target/<target>/release/bundle/`. `.github/workflows/desktop.yml` builds separate macOS arm64 and x64 installers on matching native hosts, plus Windows x64 and Linux x64. The Node and Prisma sidecar architecture matches each app. Artifacts are `ensemble-desktop-macos-arm64`, `ensemble-desktop-macos-x64`, `ensemble-desktop-windows` and `ensemble-desktop-linux`.
-
-A `desktop-v<version>` tag matching root `release.json` publishes the release after every platform succeeds. `scripts/desktop-release.mjs` checks all four updater packages/signatures, gives the two Mac archives distinct names and writes `latest.json`. Installers and signed updater packages are uploaded to a draft before publication. Updater signing uses `TAURI_SIGNING_PRIVATE_KEY`; publishing fails when signed packages are missing. PR builds may omit update signatures.
-
-OS code-signing certificates are not configured: macOS Gatekeeper and Windows SmartScreen may warn on first install. Tauri updater signatures authenticate later in-app updates; they do not replace Apple notarization or Authenticode.
-On a Mac, `pnpm desktop:dmg` builds an unsigned disk image locally. [desktop/MAC_CHECKLIST.md](desktop/MAC_CHECKLIST.md) is the hand test for it.
-
-## Local API
-
-The window loads `ensemble://localhost` (on Windows, `http://ensemble.localhost`). The webview rewrites `/api` to the random loopback port and sends the launch token. It does not receive shell or filesystem permissions. Other origins, `mailto:`, and `tel:` open in the system browser. `javascript:` and `file:` are dropped.
-
-**Moving between pages.** Links go through Next's router, so the sidebar, board and Files switch pages in place without repainting the app (`desktop_init_script` in `src/site.rs`). A dynamic route (`/tasks/<id>`, `/pages/<id>`, `/files/<id>`, `/projects/<id>` and the rest) has one placeholder page in the export, `<route>/_/`; `src/assets.rs` serves it for any id, and its route data `<route>/_/index.txt` for `<route>/<id>/index.txt`, so these open in place too. The page reads the real id from the address on each render (`useDesktopParam` in `apps/hub-web/lib/desktop-param.ts`) and is keyed by it, so going from one task to another starts fresh as it does on the web. Checked with the Rust tests and the hub-web DOM tests; the WebKit and Chromium clicks in `src/desktop/desktop-ui.e2e.test.ts` need `pnpm desktop:e2e` and were not run on 13 Oct 2026.
-
-**PATH.** A GUI app gets the system's bare PATH, so at start the sidecar takes the person's login-shell PATH and the usual install folders (`apps/hub-api/src/desktop/user-path.ts`, [26](26_CLI.md) §4): Claude Code, Codex, Cursor's agent, git and node are found as in their terminal.
-
-**Downloads and version.** Every surface reads root `release.json`, checked by `scripts/release-version.mjs`. Settings → Account → About Ensemble shows the native version (from Tauri initialization metadata) and the interface version. It can check and install updates without a terminal. Local and hosted native windows share the same About component.
-
-The download guide uses the canonical version for `Ensemble_<v>_aarch64.dmg`, `Ensemble_<v>_x64.dmg`, `Ensemble_<v>_x64-setup.exe`, `Ensemble_<v>_x64_en-US.msi`, `Ensemble_<v>_amd64.AppImage`, `Ensemble_<v>_amd64.deb` and (since 0.4.2) `Ensemble-<v>-1.x86_64.rpm` for Fedora, RHEL and openSUSE; the AppImage runs on any other distribution. Publish matching desktop and CLI tags after the merged build passes.
-
-**Included models** (0.4.2, [33 §4](33_INCLUDED_AI.md#4-where-included-models-run)): connected to an account (Settings → Account → This computer), the app lists the account's included models and runs each call on Ensemble's server on the account's credits. Local only, it shows *Included models need your Ensemble account* with **Connect this computer**.
-
-The updater calls `GET /api/desktop/update/:target/:arch/:current`, which resolves only the latest published **desktop** tag, independently of CLI releases. The API validates the manifest version and official asset URLs; Tauri verifies its signature. About’s only native command is `install_update`, permitted for the bundled app and official hosted origin, with no filesystem or shell permission. Active local jobs block installation until the person finishes or stops them. Successful installation restarts the app.
-
-Desktop releases before 0.4.0 need one download/install to move to the working signed updater channel. Their old channel had no published update manifest. The Ensemble menu also exports redacted diagnostics.
-Migrations run on launch. An existing database is copied into `backups/` first. A database written by a newer build is refused.
-
-The key that encrypts saved model keys and the device token lives beside the data folder (`secret.key` next to `pglite/`), set by `src/desktop/main.ts` through `ENSEMBLE_SECRET_KEY_FILE`. A key left by an older build at `<app>/.ensemble/secret.key` is copied there once. The install folder is never written, so a read-only or replaced install keeps its saved keys. The `ensemble` CLI runs this same sidecar without the window ([26](26_CLI.md)); `scripts/assemble-desktop-sidecar.mjs --dest <dir>` packs it for the CLI.
-
-`ENSEMBLE_SITE_URL` still opens a hosted origin instead of the local bundle. The packaged default does not.
-
-## Logo and motion
-
-The native shell and exported Hub use **Woven Chorus / Satin Gold**. `packages/brand` owns the approved artwork, five Expressive motions and the shared controller. `pnpm brand:build` generates `apps/desktop/ui/ensemble-morph.js`, `morph.css`, the static fallback and packaged icons. The default dark surface is Deep Petrol; the Hub also offers Smoked Aubergine and light mode.
-
-The first connection uses Infinity after its slot's 180 ms delay. Failure stops the loop and shows the still logo with retry guidance. The OS reduced-motion preference shows the still mark. In the Hub, the separate account/browser Reduce motion setting is also honored. Native startup does not synchronize that toggle from the hosted origin; it follows the OS. Reconnecting replaces and destroys the previous controller.
-
-Expressive is the single motion system. For compatibility, the read-only probe still reads `localStorage["ensemble.appearance"].motion` and stores a normalized `expressive` value in `motion.json`; legacy Quiet/Dot values map to Expressive. Unknown values are ignored. The official hosted page receives only the signed-update command; other shell commands remain unavailable. The desktop app has no tray; Quick capture's tray uses the generated monochrome/contrast-aware mark.
-
-Config directories, from the identifier `com.ensemblework.desktop`:
-
-| OS | Path |
-|---|---|
-| macOS | `~/Library/Application Support/com.ensemblework.desktop` |
-| Windows | `%APPDATA%\com.ensemblework.desktop` |
-| Linux | `$XDG_CONFIG_HOME/com.ensemblework.desktop` or `~/.config/com.ensemblework.desktop` |
-
-Webview cookies live in the app data directory (`~/Library/Application Support/…` on macOS, `%APPDATA%\…` on Windows, `~/.local/share/…` on Linux), which is separate from `site.json` on Linux.
-
-For a one-off local run:
+To point the window at the dev site instead of the bundle:
 
 ```bash
 ENSEMBLE_SITE_URL=http://localhost:3000 pnpm desktop:dev
 ```
 
-To bake a hosted origin into a build (still overridden by a saved URL or a runtime variable):
+## 3. Architecture
 
-```bash
-ENSEMBLE_SITE_URL=https://your-host.example pnpm desktop:build
+```text
+Tauri window + static Hub
+    → random loopback port, launch bearer token
+    → hub-api sidecar: PGlite + model adapters + scheduler + workspace queue
+    → workspace runner → detected OS sandbox → task commands
+
+CLI → same discovery file and runtime lock → same sidecar
+Paired host ← device token / claims / progress / bounded files → local remote loop
 ```
 
-The official hosted UI is `https://app.ensemblework.com`. An override uses that origin’s backend/authentication rather than migrating local data.
+| Path | Owns |
+| --- | --- |
+| `apps/desktop/src-tauri/src/lib.rs` | Window, single-instance lock, site resolution, commands |
+| `src/desktop.rs` | Menu (Export diagnostics, Check for updates, Reload, Quit; Edit), updater |
+| `src/site.rs` | Navigation rules, `desktop_init_script` (API rewrite and token) |
+| `src/assets.rs` | The `ensemble` protocol serving the static export |
+| `src/sidecar.rs` | Starting, attaching to and stopping the sidecar |
+| `src/diagnostics.rs` | Redacted diagnostics report |
+| `apps/hub-api/src/desktop/main.ts` | Sidecar entry: environment, runtime lock, secret key, PATH, PGlite, `startHub` |
+| `apps/hub-api/src/desktop/runtime-lock.ts`, `user-path.ts` | One runtime per data folder; the person's PATH |
+| `apps/hub-api/src/lib/pglite-engine.ts` | PGlite open, backups, migrations |
 
-`ENSEMBLE_DESKTOP_EXTERNAL_LOG=/path/to/log` appends each URL handed to the system browser, one per line. It is for checking the navigation rule, not a user setting.
+Sandboxed commands start from TypeScript (`workspace/runner.ts`, `workspace/sandbox/spawn.ts`); there is no separate Rust execution broker.
 
-## Icon
+### 3.1 Shell and webview
 
-The mark is **Woven Chorus** on a Deep Petrol tile. `scripts/build-ensemble-brand.mjs` generates PNG (32, 128, 256, 512), multi-size ICO and ICNS assets from `packages/brand`; ICNS uses the inset macOS tile. SVG sources are `icons/source/woven-chorus.svg` and `woven-chorus-macos.svg`. `tauri.conf.json` references the generated filenames. Run `pnpm brand:build`, `pnpm brand:check` and `node scripts/check-icons.mjs` after an identity change. The OS launcher icon remains static.
+The window loads `ensemble://localhost` (`http://ensemble.localhost` on Windows). `desktop_init_script` rewrites `/api` and `/health` requests (and baked `http://127.0.0.1:4000` / `http://localhost:4000` URLs) to the sidecar's loopback port and adds the launch token. The webview has no shell or filesystem permission.
 
-## Known limits
+Navigation: in-app URLs stay in the window; other `http`, `https`, `mailto:` and `tel:` URLs open in the system browser; `javascript:`, `file:` and other schemes are dropped. On Linux, `target="_blank"` clicks are turned into `window.open` so the same rule applies.
 
-- Local storage and hosted data are separate; pairing is not full synchronization.
-- Model prompts still go to the chosen provider; included models need a paired account.
-- The Python model runtime is not bundled; native plot export can need installed Python dependencies.
-- OS code signing/notarization is separate from updater signatures and is not configured.
-- The desktop shell has no tray/global capture shortcut; Quick capture is a separate app.
-- Unsupported/unavailable OS sandbox capability is reported explicitly; see [24](24_DESKTOP_SANDBOXING.md).
-- Mobile native packaging is not implemented. The old future static-export phase is already shipped and is no longer a build plan.
+Links go through Next's router, so pages switch in place. Each dynamic route (`/tasks/<id>`, `/pages/<id>`, `/files/<id>`, `/projects/<id>` and the rest) has one placeholder page in the export, `<route>/_/`; `src/assets.rs` serves it for any id, and `<route>/_/index.txt` for `<route>/<id>/index.txt`. The page reads the real id from the address (`useDesktopParam` in `apps/hub-web/lib/desktop-param.ts`) and is keyed by it.
 
-Use [23](23_LOCAL_DESKTOP_DESIGN.md) for architecture, [25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md) for pairing/Code/terminal and [desktop/MAC_CHECKLIST](desktop/MAC_CHECKLIST.md) for manual checks. This documentation audit does not certify a fresh install on every OS.
+Capabilities (`src-tauri/capabilities/`): the local page may call `shell_state`, `connect_to` and `install_update`, open the folder dialog (`dialog:allow-open`) and use notifications. The official hosted origin `https://app.ensemblework.com` may call only `install_update`.
 
-## Platform integration
+### 3.2 Local API
 
-Code inspection: the local web UI uses the installed Tauri dialog plugin via `core.invoke("plugin:dialog|open", { options })` for Code folders. The selected path still passes the existing API path checks. `tauri-plugin-notification` provides native reminder notifications after system permission; a running app is required. Browser sessions keep browser notifications. The shell grants only the local page the dialog and notification capabilities.
+The sidecar binds `127.0.0.1` on a random port with a random launch token and writes `api.json` (port, token, pid, which launcher started it, version; mode 0600) in the data folder (§4). The Context Bridge, `scripts/ensemble-hook.mjs` and the CLI read that file; without it they use `http://127.0.0.1:4000`. `ENSEMBLE_DISCOVERY_FILE` overrides the path.
 
-The sidecar receives `ENSEMBLE_INSTALL_PATH` pointing to the installed desktop executable. If that executable disappears while its runtime survives, the next remote heartbeat stops remote tasks/assistant turns, revokes when reachable and forgets the pairing. The hosted online indicator otherwise expires after the heartbeat window. The UI detects phones and hides shortcut settings there; desktop shortcuts keep the host platform’s modifier keys.
+The sidecar sets `ENSEMBLE_DESKTOP=1`, turns off `ENSEMBLE_DEV_AUTH_BYPASS`, uses an in-memory Redis replacement and replaces a default `ENSEMBLE_INTERNAL_TOKEN` with a random one. Local mode signs in through the desktop authorization path, not hosted signup.
 
-### Intel Mac disk-image recovery
+### 3.3 One runtime per computer
 
-`desktop-targets.mjs` selects the release matrix. Intel builds use Tauri’s `app` bundle (including the signed updater archive) and then `package-mac-dmg.mjs` creates a compressed APFS image with the app and an Applications link. It validates the app’s version and verifies the image, with bounded tool timeouts. No Finder automation or read-write volume resizing is needed. A workflow dispatch with `target: macos-x64` rebuilds only that artifact; branch recovery builds do not publish releases. Normal tags still build every platform. This packaging change does not alter the application version or runtime code.
+The desktop app and the CLI runner share the data folder, so a computer has one database, one pairing, one trusted-folder list and one sandbox setup. `runtime.lock` keeps a second sidecar off the database; the second one exits with code 75. The shell attaches to a CLI runner that is already running (its `api.json` answers `/health` with its token), leaves it running on quit, and starts its own on the same port and token if that runner stops. A desktop-owned runtime stops with the app.
 
-Recovery publication runs on GitHub rather than downloading large installers through the operator’s connection. Supply `recovery_source_run` and `recovery_intel_run` to the desktop workflow on `main`; build jobs are skipped. The publisher rejects incomplete Intel runs, mismatched tag/source trees and invalid signatures. `scripts/verify-desktop-signatures.mjs` builds a temporary verifier from `verify-desktop-signatures.rs`, using Tauri’s signature library and the configured public key. The release stays a draft until all packages have uploaded.
+The packaged sidecar carries `scripts/ensemble-hook.mjs`, `scripts/ensemble-ask-mcp.mjs` and `desktop-discovery.mjs` at `app/scripts/hooks/`, and on Linux the Landlock helper at `bin/landrun` (built from pinned source with Go; release builds require it).
 
-The packaged Hub uses the same saved-Files assistant picker, Metrics provider/date filters and Data Danger zone as the web UI. Monthly credit enforcement lives on the account server; deleting local or hosted workspace data cannot renew the allowance. See [07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md) and [33](33_INCLUDED_AI.md).
+### 3.4 Storage, keys and migrations
+
+The database is PGlite through the Prisma adapter, in `pglite/` under the data folder (`ENSEMBLE_DATA_DIR` overrides). Migrations run on launch. An existing database is copied into `backups/` first (`ENSEMBLE_BACKUP_DIR` overrides); these same-disk copies are not off-machine backups. A database written by a newer build is refused: *This Ensemble database was written by a newer version of the app … Install that newer Ensemble, or restore a backup from the backups folder.*
+
+The key that encrypts saved model keys and the device token is `secret.key` next to `pglite/`, passed as `ENSEMBLE_SECRET_KEY_FILE`. A key at hub-api's default location, `<app>/.ensemble/secret.key`, is copied there once. The install folder is never written, so a read-only or replaced install keeps its saved keys. The OS keychain is not used for this key.
+
+The default workspace is `~/ensemble-workspace` (`ENSEMBLE_WORKSPACE_ROOT` overrides), shared with the CLI.
+
+### 3.5 Models, tools and PATH
+
+The Python agent-runtime is not bundled. The sidecar answers model calls in-process (`apps/hub-api/src/runtime/`); `ENSEMBLE_INPROCESS_RUNTIME=0` switches to the Python HTTP runtime. Chat and agent tasks work with a key pasted in Settings → Assistant → Models. Plots export needs the computer's own `python3` with matplotlib.
+
+A GUI app gets the system's bare PATH, so at start the sidecar takes the login shell's PATH and the usual install folders (`apps/hub-api/src/desktop/user-path.ts`, [26](26_CLI.md) §4). Claude Code, Codex, Cursor's agent, git and node are found as in the person's terminal. Their subscriptions and other tools are not bundled.
+
+### 3.6 Pairing and included models
+
+The remote loop uses a device token and a lease, not inbound shell access. Jobs targeted at a device wait while it is offline; they never fall back to running on the host ([25](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md)).
+
+Connected to an account (Settings → Account → This computer), the app lists the account's included models and runs each call on Ensemble's server on the account's monthly credits ([33 §4](33_INCLUDED_AI.md#4-where-included-models-run)). Local only, it shows *Included models need your Ensemble account* with **Connect this computer**. Credit enforcement lives on the account server; deleting local or hosted data does not renew the allowance.
+
+### 3.7 Dialogs, notifications, install path
+
+Code folders use the Tauri dialog plugin (`core.invoke("plugin:dialog|open", { options })`, `apps/hub-web/lib/desktop-dialog.ts`); the chosen path still passes the API's path checks. `tauri-plugin-notification` shows reminder notifications after system permission while the app runs; browser sessions use browser notifications. Shortcuts use the host platform's modifier keys.
+
+The sidecar receives `ENSEMBLE_INSTALL_PATH`, the installed executable. If that file disappears while the runtime survives, the next remote heartbeat stops remote tasks and assistant turns, revokes the device when reachable and forgets the pairing.
+
+The Ensemble menu's **Export diagnostics** writes a redacted report to `diagnostics/ensemble-diagnostics-<time>.txt` in the data folder.
+
+## 4. Folders
+
+From the identifier `com.ensemblework.desktop`:
+
+| OS | Data (`api.json`, `runtime.lock`, `pglite/`, `secret.key`, `backups/`, `remote.json`, `logs/sidecar.log`, `diagnostics/`; mode 0700 on Unix) | Config (`site.json`, `motion.json`) |
+|---|---|---|
+| macOS | `~/Library/Application Support/com.ensemblework.desktop` | same |
+| Windows | `%APPDATA%\com.ensemblework.desktop` | same |
+| Linux | `$XDG_DATA_HOME/com.ensemblework.desktop` or `~/.local/share/com.ensemblework.desktop` | `$XDG_CONFIG_HOME/com.ensemblework.desktop` or `~/.config/com.ensemblework.desktop` |
+
+Webview cookies and storage are kept by the system webview, separate from `site.json`.
+
+## 5. Platforms
+
+| Area | macOS | Windows | Linux |
+| --- | --- | --- | --- |
+| Desktop build | Apple silicon and Intel | x64 | x64 |
+| CLI package | arm64 and x64 | x64 | arm64 and x64 |
+| Local database | PGlite | PGlite | PGlite |
+| OS sandbox ([24](24_DESKTOP_SANDBOXING.md)) | Seatbelt | Separate sandbox account after one elevated setup; local-drive work folders | bubblewrap, else Landlock |
+| Folder picker | Native dialog | Native dialog | Native dialog |
+| Notifications | System permission, app running | System permission, app running | Desktop notification service and permission, app running |
+
+A missing sandbox backend is reported explicitly. On Linux the capability depends on kernel and namespaces; Landlock does not hide Unix sockets and needs TCP rule support to turn the network off. Path and argument checks do not replace OS confinement. The terminal's passkey unlock depends on the browser and the configured origin; IP-address aliases are not interchangeable ([16](16_CODE_TAB.md)).
+
+Mobile native apps, the Mac App Store and Flatpak are not targets.
+
+## 6. Build and package
+
+```bash
+pnpm desktop:export     # static Hub → apps/hub-web/out (bundled as web/)
+pnpm desktop:sidecar    # Node + deployed hub-api → apps/desktop/src-tauri/resources/sidecar/
+pnpm desktop:build      # tauri build
+```
+
+`pnpm desktop:sidecar` runs `scripts/assemble-desktop-sidecar.mjs`; `--dest <dir>` packs the same sidecar for the CLI. Bundles land in `apps/desktop/src-tauri/target/<target>/release/bundle/`.
+
+`.github/workflows/desktop.yml` builds on pull requests, the `desktop` branch, `desktop-v*` tags and manual dispatch (`target`: all, `macos-arm64`, `macos-x64`, `windows`, `linux`). `scripts/desktop-targets.mjs` defines the matrix:
+
+| Target | Runner | Bundles | Artifact |
+| --- | --- | --- | --- |
+| `macos-arm64` | `macos-14` | app, dmg | `ensemble-desktop-macos-arm64` |
+| `macos-x64` | `macos-15-intel` | app, then `scripts/package-mac-dmg.mjs` | `ensemble-desktop-macos-x64` |
+| `windows` | `windows-latest` | msi, nsis | `ensemble-desktop-windows` |
+| `linux` | `ubuntu-22.04` | deb, rpm, AppImage | `ensemble-desktop-linux` |
+
+The Node and Prisma sidecar matches each app's architecture. On Linux the `.deb` depends on `libxdo3` and the `.rpm` on `libxdo` (Fedora, or EPEL on RHEL); the AppImage carries its own copy.
+
+The Intel disk image: `package-mac-dmg.mjs` creates a compressed APFS image with the app and an Applications link, checks the app's version and verifies the image, with bounded tool timeouts and no Finder automation.
+
+On a Mac, `pnpm desktop:dmg` (`scripts/build-mac-dmg.sh`) builds an unsigned disk image for that Mac's chip.
+
+Download names (`apps/landing/lib/download.ts`): `Ensemble_<v>_aarch64.dmg`, `Ensemble_<v>_x64.dmg`, `Ensemble_<v>_x64-setup.exe`, `Ensemble_<v>_x64_en-US.msi`, `Ensemble_<v>_amd64.AppImage`, `Ensemble_<v>_amd64.deb` and `Ensemble-<v>-1.x86_64.rpm` (Fedora, RHEL, openSUSE). The AppImage runs on other distributions.
+
+## 7. Releases and updates
+
+Root `release.json` is the version for the native app, the interface, the API and the CLI; `scripts/release-version.mjs` checks every manifest against it.
+
+A `desktop-v<version>` tag matching `tauri.conf.json` publishes after every platform builds. `scripts/desktop-release.mjs` checks the four updater packages and signatures, gives the two Mac archives distinct names (`Ensemble_<v>_darwin-aarch64.app.tar.gz`, `…_darwin-x86_64.app.tar.gz`) and writes `latest.json`. Everything uploads to a draft release, which is then published. Updater signing uses `TAURI_SIGNING_PRIVATE_KEY` (applied with `src-tauri/tauri.signing.json`); publishing fails without signed packages, and PR builds may omit them.
+
+Recovery: a dispatch with `target: macos-x64` rebuilds only the Intel artifact and does not publish. On `main`, `recovery_source_run` and `recovery_intel_run` skip the builds and run `scripts/publish-desktop-recovery.mjs`, which rejects incomplete Intel runs, mismatched tag and source trees and invalid signatures. `scripts/verify-desktop-signatures.mjs` builds a verifier from `verify-desktop-signatures.rs` with Tauri's signature library and the configured public key.
+
+OS code signing is not configured: Gatekeeper and SmartScreen may warn on first install. Updater signatures authenticate in-app updates only; they do not replace Apple notarization or Authenticode.
+
+The updater calls `GET https://api.ensemblework.com/api/desktop/update/:target/:arch/:current` (`apps/hub-api/src/routes/misc.ts`), which resolves only the latest published desktop tag, independent of CLI releases. The API validates the manifest version and official asset URLs; Tauri verifies the signature.
+
+Settings → Account → About Ensemble shows the native and interface versions and can check for and install updates (the hosted window shares the same About). `install_update` takes no URL or path. Active local jobs block installation (*Finish or stop your active tasks, then update again*); a successful install restarts the app. Installs older than 0.4.0 cannot update in-app; install the current version once.
+
+## 8. Logo, icon and motion
+
+The shell and the exported Hub use **Woven Chorus** in Satin Gold ([BRAND](BRAND.md)). `pnpm brand:build` generates `apps/desktop/ui/ensemble-morph.js`, `morph.css`, the static fallback and the packaged icons (PNG, multi-size ICO, and ICNS with the inset macOS tile) from `packages/brand`. SVG sources: `src-tauri/icons/source/woven-chorus.svg` and `woven-chorus-macos.svg`. After an identity change run `pnpm brand:build`, `pnpm brand:check` and `node scripts/check-icons.mjs`. The launcher icon is static.
+
+The first connection plays Infinity after a 180 ms delay. Failure stops the loop and shows the still mark with retry guidance. The OS reduced-motion preference shows the still mark; the Hub's own Reduce motion setting is not copied into the native startup screen. The shell keeps a copy of the Hub's motion style in `motion.json` (`expressive`; `minimal-quiet` and `minimal-dot` map to it, other values are ignored).
+
+The desktop app has no tray or global shortcut; Quick capture is a separate app ([20](20_QUICK_CAPTURE.md)).
+
+## 9. Hosted origin override
+
+The window URL is resolved in order: runtime `ENSEMBLE_SITE_URL`, the saved value in `site.json`, then a value baked in at build time. The packaged default is the local bundle.
+
+```bash
+ENSEMBLE_SITE_URL=https://your-host.example pnpm desktop:build   # bake a hosted origin
+```
+
+The official hosted UI is `https://app.ensemblework.com`. An override uses that origin's backend and sign-in; local data is not migrated, and the hosted origin's cookies and storage are not the local app's.
+
+`ENSEMBLE_DESKTOP_EXTERNAL_LOG=/path/to/log` appends each URL handed to the system browser, one per line, for testing the navigation rule.
+
+## 10. Tests
+
+| Check | Command |
+| --- | --- |
+| Shell unit tests (navigation, assets, sidecar, diagnostics) | `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml` |
+| Sidecar, runtime lock, user PATH | `pnpm --filter @ensemble/hub-api test` |
+| WebKit and Chromium clicks against the export | `pnpm desktop:e2e` |
+| Release scripts | `node --test scripts/desktop-release.test.mjs scripts/desktop-targets.test.mjs scripts/package-mac-dmg.test.mjs` |
+| Installed app on a Mac | [desktop/MAC_CHECKLIST.md](desktop/MAC_CHECKLIST.md) |
+
+CI (`ci.yml`) runs sandbox escape tests on macOS Seatbelt, Linux Landlock, Linux bubblewrap and the Windows sandbox account; `desktop.yml` also runs the macOS escape, trust and git-gate tests and verifies the Mac image packager.
+
+## 11. Limits
+
+- Local and hosted data are separate; pairing is not full synchronization.
+- Included models need a paired account; other model calls go to the chosen provider.
+- The Python model runtime is not bundled; plot export needs local Python with matplotlib.
+- No OS code signing or notarization.
+- No tray or global capture shortcut in the main app.
+- OS sandbox capability varies by OS and setup and is reported explicitly ([24](24_DESKTOP_SANDBOXING.md)).
+- No mobile native app.

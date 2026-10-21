@@ -121,7 +121,7 @@ export function blockedReason(real: string): string | null {
 }
 
 /**
- * A path outside the work folder that a run is about to use (doc 24 §5.8).
+ * A path outside the work folder that a run is about to use (doc 24 §3).
  * Whatever the mode and whether or not the sandbox is on, an agent never
  * reaches Ensemble's own data or code, the dotfiles and app folders in the
  * home folder (keys, shell start-up files, browser and editor data), or

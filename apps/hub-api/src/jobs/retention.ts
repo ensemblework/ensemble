@@ -22,7 +22,7 @@ export interface RetentionCounts {
   reviewsExpired?: number;
 }
 
-/** Remote-task log chunks. Fixed, not a per-user setting. See docs/25 §3.3. */
+/** Remote-task log chunks. Fixed, not a per-user setting. See docs/07 §1.1. */
 const LOG_CHUNK_RETENTION_DAYS = 30;
 const LOG_CHUNK_BATCH = 200;
 
@@ -166,7 +166,7 @@ export async function runRetention(
   }
   const logCutoff = new Date(now.getTime() - LOG_CHUNK_RETENTION_DAYS * 86_400_000);
   counts.logChunksPurged = await deleteOldLogChunks(app.prisma, userId, logCutoff, options.logChunkBatchSize);
-  // The text of files device runs changed (docs/25 §4.3) is kept as long as their logs.
+  // The text of files device runs changed (docs/25 §4.6) is kept as long as their logs.
   counts.jobFilesPurged = (await app.prisma.jobFile.deleteMany({ where: { createdAt: { lt: logCutoff }, job: { userId } } })).count;
   // Code reviews past their 14 days: their snapshots are unpinned and they move to "expired" (docs/16 §2).
   const expired = await app.prisma.codeReview.findMany({ where: { userId, expiredAt: null, expiresAt: { lt: now } }, select: { id: true, jobId: true, repoPath: true }, take: 200 });

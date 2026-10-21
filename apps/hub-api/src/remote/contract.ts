@@ -1,5 +1,5 @@
 /**
- * The device side of doc 25 §4.3, matched to ensemble-app's remote-tasks-api
+ * The device side of doc 25 §4.1, matched to ensemble-app's remote-tasks-api
  * (PR #47). Routes stay the §4 list. Shapes the server defines are enforced
  * here: claim is a bare job (a `{job}` wrapper is still accepted), leaseToken
  * is a JSON field, ask uses `tier`, progress status is only `running`, complete

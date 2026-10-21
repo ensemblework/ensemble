@@ -1,4 +1,4 @@
-/** Lease, heartbeat, and online-dot timings from docs/25 §4.3 and §3.3. */
+/** Lease, heartbeat, and online-dot timings from docs/25 §3 and §4.1. */
 export const LEASE_MS = 120_000;
 export const ONLINE_MS = 90_000;
 export const PAIRING_MS = 10 * 60_000;

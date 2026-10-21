@@ -1,6 +1,6 @@
 import { claimQueuedJob } from "../workspace/queue-policy.js";
 /**
- * Device routes from docs/25 §4.3. Shapes here are the contract the desktop
+ * Device routes from docs/25 §4.1. Shapes here are the contract the desktop
  * client codes against. A device token reaches only `/api/devices/self/*`,
  * and only the device that token belongs to.
  */

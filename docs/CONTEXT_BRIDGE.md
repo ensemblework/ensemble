@@ -1,128 +1,141 @@
 # Context Bridge
 
-Read-only MCP server so a coding agent can read Ensemble (tasks, projects, repositories, skills, deliverables, calendar, people, Needs me, and a cited brief for the current branch).
+The Context Bridge is Ensemble's read-only MCP server. A coding agent in an editor uses it to read Ensemble: tasks, projects, repositories, skills, deliverables, calendar, people, Needs me, files, diagrams, plots and a cited brief for the current branch.
 
-The server is `apps/context-bridge`. It speaks MCP and calls `hub-api` over HTTP. It does not open Postgres. There are no tools that create, update, delete, or send anything.
+The server is `apps/context-bridge`. It calls hub-api's `/api/bridge` routes over HTTP. It never opens the database or holds model keys, and it has no tool that creates, updates, deletes, sends or approves anything. The editor runs its own model; Ensemble supplies reference material.
 
-Code inspected 18 Oct 2026. [13](13_MODULE_CONTEXT_BRIDGE.md) explains the current architecture and access boundaries; this page covers setup.
+## 1. Three ways to reach it
 
-## Three ways to reach it
-
-| Way | Who it is for | How |
+| Way | For | How |
 |---|---|---|
-| **Ensemble CLI** | Anyone using the hosted site, on any OS | Install the CLI, `ensemble login`, then `ensemble mcp setup`. Editors run `ensemble mcp` (stdio), which calls `https://api.ensemblework.com/api/bridge/*` with the CLI's read-only key. [26](26_CLI.md) |
-| **Hosted URL** | Editors that accept a URL; nothing to install | `POST https://api.ensemblework.com/mcp` with `Authorization: Bearer ens_…` (a key from Connect your apps). Served by hub-api (`src/routes/mcp.ts`), stateless Streamable HTTP. [26 §5](26_CLI.md#5-mcp-local-cli-or-hosted-url) |
-| **From source** | Developers running this repository | `pnpm bridge:build`, then the editor launches `node apps/context-bridge/dist/index.js` (below) |
+| **Ensemble CLI** | Hosted-site users on any OS | Install the CLI, `ensemble login`, then `ensemble mcp setup`. Editors run `ensemble mcp` (stdio), which calls `https://api.ensemblework.com/api/bridge/*` with the CLI's read-only key ([26](26_CLI.md)) |
+| **Hosted URL** | Editors that accept a URL; nothing to install | `POST https://api.ensemblework.com/mcp` with `Authorization: Bearer ens_…` (a key from Connect your apps). Served by hub-api (`src/routes/mcp.ts`), stateless Streamable HTTP ([26 §5](26_CLI.md#5-mcp-local-cli-or-hosted-url)) |
+| **From source** | Developers running this repository | `pnpm bridge:build`, then the editor launches `node apps/context-bridge/dist/index.js` (§3) |
 
-All three use `buildServer` in `apps/context-bridge/src/server.ts` (exported as `@ensemble/context-bridge/server`, with `./hub` and `./config`), so the tool list is the same. The hosted endpoint passes a git detector that returns no repository, so `ensemble_brief` needs `repo` and `branch` there; the CLI and the source build read them from the editor's folder. Reads use `bridge/service.ts` and the stored records. Semantic ranking is not wired; some legacy `ensemble_gaps` diagnostics also need code cleanup ([13 §7](13_MODULE_CONTEXT_BRIDGE.md#7-known-diagnostics-limitation)).
+All three use `buildServer` from `apps/context-bridge/src/server.ts` (exported as `@ensemble/context-bridge/server`, with `./hub` and `./config`), so the tools are the same. The hosted endpoint cannot see the editor's folder, so `ensemble_brief` needs `repo` and `branch` there; the CLI and the source build read them from the working directory (`git rev-parse` and `origin`).
 
-## Run it
+## 2. Architecture
+
+```text
+Editor / MCP client
+    → stdio bridge | loopback HTTP bridge | hosted /mcp
+    → apps/context-bridge/src/server.ts (buildServer)
+    → hub-api /api/bridge routes, scoped to the key's account and space
+    → bridge/service.ts over saved workspace records
+```
+
+| Path | Responsibility |
+| --- | --- |
+| `apps/context-bridge/src/server.ts` | MCP tools and resources, read-only annotations |
+| `apps/context-bridge/src/hub.ts` | HTTP client for hub-api, auth and errors |
+| `apps/context-bridge/src/config.ts` | Environment, token rules, local runtime discovery |
+| `apps/context-bridge/src/git.ts` | Repository and branch from the working directory |
+| `apps/hub-api/src/bridge/routes.ts` | Read-only bridge routes |
+| `apps/hub-api/src/bridge/service.ts` | Queries, reads, brief assembly, pagination |
+| `apps/hub-api/src/bridge/resolve.ts` | Repository, branch and task resolution |
+| `apps/hub-api/src/bridge/auth.ts` | Which credentials the bridge accepts |
+| `apps/hub-api/src/bridge/gaps.ts` | Exclusion and missing-data text for `ensemble_gaps` (§7) |
+| `apps/hub-api/src/routes/mcp.ts` | Hosted Streamable HTTP |
+
+MCP server-info reports the release version from `@ensemble/shared-types/version`.
+
+## 3. Run it from source
 
 ```bash
 pnpm bridge:build          # tsc → apps/context-bridge/dist
 pnpm bridge:start          # stdio (what editors launch)
 pnpm bridge:http           # Streamable HTTP on 127.0.0.1:4010
-pnpm bridge:verify         # typecheck, MCP client tests, smoke
+pnpm bridge:verify         # hub-api bridge tests, then typecheck, MCP tests, build, smoke
 ```
 
-`hub-api` has to be up (`pnpm dev`) or every tool returns: `Ensemble is not running. Start it with `pnpm dev`.`
+hub-api has to be up (`pnpm dev`), or every tool returns: ``Ensemble is not running. Start it with `pnpm dev`.``
 
-## Token
+The bridge calls `HUB_API_URL`, else the local desktop or CLI runtime from its `api.json` ([DESKTOP](DESKTOP.md) §3.2), else `http://$HUB_API_HOST:$HUB_API_PORT` (default `127.0.0.1:4000`).
 
-The guided setup for every app is in the Hub at **Connect your apps** (`/connect`). That page creates a read-only key, fills in this computer’s paths, and offers one-click install where the app supports it (VS Code and Cursor). The samples below are the same configuration.
+## 4. Token
 
-1. In the Hub: **Connect your apps → Create a read-only key**. The value starts with `ens_` and is shown once. It can only read `/api/bridge`. A key made under **Settings → Editors & agents** still works, and that one can also drive editor hooks.
-2. If an older database is missing required schema, apply `pnpm db:migrate`; do not reset data or use `db:push` as the upgrade path.
-3. Export it where the editor can see it:
+The Hub's **Connect your apps** page (`/connect`) creates a read-only key, fills in this computer's paths and offers one-click install for VS Code and Cursor.
+
+1. **Connect your apps → Create a read-only key.** The value starts with `ens_` and is shown once. It can only read `/api/bridge`, call `/mcp` and revoke itself at `/api/cli/logout`. A key made under Settings → Connections → Editors & agents also works and can drive editor hooks.
+2. Export it where the editor can see it:
 
 ```bash
 export ENSEMBLE_BRIDGE_TOKEN=ens_...
 ```
 
-The bridge does not use `ENSEMBLE_INTERNAL_TOKEN`. That value defaults to `dev-internal-token`, which hub-api warns about at startup and which the bridge rejects. It is the service credential for agent-runtime. Set a private one (`openssl rand -hex 32`) if anything besides this machine can reach port 4000.
+`ENSEMBLE_BRIDGE_TOKEN` must start with `ens_`. With no token and no `HUB_API_URL`, the bridge uses a running desktop or CLI runtime's launch token from `api.json`. Otherwise every tool returns a configuration error; the bridge never falls back to the default internal token.
 
-`ENSEMBLE_DEV_AUTH_BYPASS` is also rejected on `/api/bridge/*`.
+hub-api's `ENSEMBLE_INTERNAL_TOKEN` is the agent-runtime service credential and defaults to `dev-internal-token`, which hub-api warns about at startup. The bridge uses it only with `ENSEMBLE_BRIDGE_USE_INTERNAL_TOKEN=true`, and refuses the default value unless `ENSEMBLE_BRIDGE_ALLOW_DEFAULT_INTERNAL_TOKEN=true` is also set (local demos only, never on a shared network). Set a private one (`openssl rand -hex 32`) if anything besides this machine can reach port 4000. `ENSEMBLE_DEV_AUTH_BYPASS` is refused on `/api/bridge/*`.
 
-A local demo can opt into the default internal token with both:
+Creating and revoking keys is a signed-in account action; a bridge key cannot mint another key.
 
-```bash
-export ENSEMBLE_BRIDGE_USE_INTERNAL_TOKEN=true
-export ENSEMBLE_BRIDGE_ALLOW_DEFAULT_INTERNAL_TOKEN=true
-```
-
-Do not do that on a shared network.
-
-## What a model can read
+## 5. Tools and resources
 
 | Tool | Resource | Data |
 |---|---|---|
-| `ensemble_brief` | — | Current task from repo + branch, project, people, deliverables, files attached to the task, your skills (`howIWork`), cited excerpts |
-| `ensemble_search` | — | Substring search across tasks, projects, people, skills, repos, artifacts, meeting notes and files (kind `document`, by name and text) |
-| `ensemble_read` | `ensemble://items/{kind}/{id}` | One item in full (paginated); a `document` is a file's text with its name, format and pages ([32](32_FILES.md)); a task or page also lists its files. Original bytes are never sent |
+| `ensemble_brief` | — | Current task from repo + branch, project, people, deliverables, files attached to the task, current skills (`howIWork`), cited excerpts |
+| `ensemble_search` | — | Case-insensitive substring search across tasks, projects, people, skills, repos, artifacts, meeting notes and files (kind `document`, by name and text) |
+| `ensemble_read` | `ensemble://items/{kind}/{id}` | One item in full, paginated with `offset` and `limit`. Kinds: task, project, repo, skill, deliverable, person, artifact, document, meeting_note, approval, decision, diagram, plot, page |
 | `ensemble_tasks` | `ensemble://tasks`, `ensemble://tasks/{id}` | Tasks |
 | `ensemble_projects` | `ensemble://projects`, `ensemble://projects/{id}` | Projects |
 | `ensemble_repos` | `ensemble://repos`, `ensemble://repos/{id}` | Repositories |
-| `ensemble_repo_overview`, `ensemble_repo_file` | — | Permitted repository outline/source reads; protected paths remain excluded |
+| `ensemble_repo_overview`, `ensemble_repo_file` | — | Outline and source of a checkout the person already allowed; secrets and protected paths are skipped |
 | `ensemble_diagrams`, `ensemble_plots` | — | Saved diagrams and plot context |
-| `ensemble_skills` | `ensemble://skills`, `ensemble://skills/{id}` | Current skill only |
+| `ensemble_skills` | `ensemble://skills`, `ensemble://skills/{id}` | Current enabled skills; one skill's current body |
 | `ensemble_deliverables` | `ensemble://deliverables` | Deliverables |
 | `ensemble_meetings` | `ensemble://meetings` | Upcoming calendar events (`Artifact` kind `event`) |
 | `ensemble_people` | `ensemble://people`, `ensemble://people/{id}` | Engineer Graph people |
-| `ensemble_decisions` | `ensemble://decisions` | Needs me: pending approvals and editor prompts |
+| `ensemble_decisions` | `ensemble://decisions` | Needs me: pending approvals and editor prompts (read only) |
 | `ensemble_today` | `ensemble://today` | Focus, proposed todos, deliverables, meetings, Needs-me counts |
-| `ensemble_gaps` | `ensemble://gaps` | What this build does not have |
+| `ensemble_gaps` | `ensemble://gaps` | What the bridge cannot see or refuses to expose |
 
-`ensemble_brief` reads `repo` and `branch` from the process working directory when the caller omits them (`git rev-parse` and `origin`).
+A resource URI is an MCP identifier, not permission to open local files. Reads are scoped to the key's account and space ([28](28_ENSEMBLE_SPACES.md)), and module and sharing checks still apply.
 
-Mail, chat, GitHub text, calendar invites, approval previews, and editor tool inputs are labelled `trust: "untrusted"`. Skills are `trusted`. The brief repeats that retrieved text is not instructions.
+- **Files.** A `document` is a file's extracted text with its name, format and page count ([32](32_FILES.md)); a task or page also lists its files. Original bytes are never sent.
+- **Pages.** `apps/hub-api/src/pages/agent-context.ts` adds the source of diagrams embedded in task and standalone pages, with space ownership checks. For the bridge, page bodies are bounded at 15,000 characters and diagram source at 20,000, then paginated. Converted source documents appear in the page's file citations (`files/attached.ts`).
+- **Skills.** Only the current body is returned. Older `SkillVersion` bodies are not exposed, and disabled or deleted skills are left out of briefs ([04](04_MODULE_SKILL_FORGE.md)).
+- **Trust labels.** Mail, chat, GitHub text, calendar invites, approval previews and editor tool inputs are labelled `trust: "untrusted"`; skills are `trusted`. The brief repeats that retrieved text is reference material, not instructions.
+- **Resolution.** A branch that matches no task, or several, is reported as such; the bridge never picks a similarly named task.
 
-### Limits
+## 6. Limits
 
-Semantic/embedding ranking is not implemented; search uses bounded case-insensitive matches. Private reminders, UI layouts, historical skill bodies as instructions and all write/approval operations are excluded. Files return supported extracted text, not original bytes or OCR/audio/video understanding.
+- Search is bounded substring matching. `Artifact.searchVector` and `ArtifactChunk.embedding` exist in the schema but nothing fills or queries them; enabling an embedding provider does not change this.
+- Excluded: private reminders, widget layouts, older skill bodies, and every write or approval.
+- Files return supported extracted text only, not original bytes, OCR, audio or video.
+- Connected-app copies can be stale until refreshed; bridge reads do not call vendor search.
+- The bridge returns stored text without a new redaction pass; ingest and file paths have their own redaction.
+- There is no OAuth authorization-server flow for external MCP clients. Use stdio or a static `Authorization` header.
 
-The `ensemble_gaps` payload still includes obsolete connector/redaction messages. Outlook/Teams connectors and redaction helpers now exist; those diagnostic strings need a separate code correction. Do not use them as the product's connector inventory. [03](03_MODULE_CONTEXT_ENGINE.md) and [31](31_CONNECTORS_IN_USE.md) describe current acquisition paths.
+The task-scoped `scripts/ensemble-ask-mcp.mjs` server used inside managed engine runs can ask questions for its run. It is not the Context Bridge and does not widen an editor's `ens_` key ([30](30_ENGINES.md)).
 
-## Transports
+## 7. Known diagnostics limitation
 
-- **stdio** (default). No port. Editors launch `node apps/context-bridge/dist/index.js`, or `ensemble mcp` with the CLI.
-- **Hosted Streamable HTTP** at `https://api.ensemblework.com/mcp` (hub-api). Bearer `ens_` key required (bridge or full scope); cookies, device keys and missing keys are refused; `GET`/`DELETE` return 405.
-- **Streamable HTTP** on `127.0.0.1` only (`--http`, port `4010`, `CONTEXT_BRIDGE_PORT` to change it). `CONTEXT_BRIDGE_HOST` must be `127.0.0.1`, `localhost`, or `::1`. Endpoint: `http://127.0.0.1:4010/mcp`. Optional `CONTEXT_BRIDGE_HTTP_TOKEN` requires `Authorization: Bearer` on that endpoint. The Hub token stays in the bridge process.
+`apps/hub-api/src/bridge/gaps.ts` still says the Outlook, Outlook calendar and Teams connectors and a secret-redaction helper are missing. Those strings are stale: `connectors/microsoft.ts` and `lib/redact.ts` exist ([03](03_MODULE_CONTEXT_ENGINE.md), [31](31_CONNECTORS_IN_USE.md)). Do not treat `ensemble_gaps` as the connector inventory. Its semantic-retrieval, private-reminder, layout, skill-history and read-only entries are accurate.
 
-`hub-api` listens on `HUB_API_HOST` (default `127.0.0.1`, not `0.0.0.0`). Postgres and Redis from `infra/docker-compose.yml` are the same idea: host ports `5432` and `6379` are bound to `127.0.0.1` and `::1`, not every interface. `localhost` in `DATABASE_URL` and `REDIS_URL` still reaches them.
+## 8. Transports
 
-## Client setup
+- **stdio** (default). No port. Editors launch `node apps/context-bridge/dist/index.js`, or `ensemble mcp` from the CLI.
+- **Hosted Streamable HTTP** at `https://api.ensemblework.com/mcp`. A `Bearer ens_` key (bridge or full scope) is required; cookies, device keys and missing keys are refused; `GET` and `DELETE` return 405.
+- **Local Streamable HTTP** (`--http`) at `http://127.0.0.1:4010/mcp`. `CONTEXT_BRIDGE_PORT` changes the port; `CONTEXT_BRIDGE_HOST` must be `127.0.0.1`, `localhost` or `::1`, or the bridge refuses to start. Optional `CONTEXT_BRIDGE_HTTP_TOKEN` requires `Authorization: Bearer` on that endpoint. The Hub token stays in the bridge process.
 
-Prefer **Connect your apps** in the Hub, or `ensemble mcp setup` from the CLI. Connect your apps has a CLI, a hosted URL and a from-source guide for VS Code, Cursor, Windsurf, Claude Code, Claude Desktop, Codex, Gemini CLI, GitHub Copilot CLI, Zed, Visual Studio, JetBrains, Cline, Continue and opencode on macOS, Windows and Linux (`apps/hub-web/lib/connect/configs.ts`). The samples below are the from-source configuration.
+hub-api listens on `HUB_API_HOST` (default `127.0.0.1`). `infra/docker-compose.yml` publishes Postgres (`5432`) and Redis (`6379`) on `127.0.0.1` only, so use `127.0.0.1`, not `localhost`, in `DATABASE_URL` and `REDIS_URL`.
 
-Build first (`pnpm bridge:build`). Replace `ens_PASTE_TOKEN` and absolute paths. Do not commit a real token. Project files that are already in the repo use `${env:ENSEMBLE_BRIDGE_TOKEN}` or `${ENSEMBLE_BRIDGE_TOKEN}` so the token stays in the environment. `${input:…}` is avoided because it drops the server from VS Code's Agent Host. One-click install links (`vscode:mcp/install` and `cursor://anysphere.cursor-deeplink/mcp/install`) also keep the key in the environment and do not put it in the URL.
+## 9. Client setup
 
-Samples also live in `apps/context-bridge/clients/`.
+Prefer **Connect your apps** in the Hub or `ensemble mcp setup`. Connect your apps has CLI, hosted-URL and from-source guides for VS Code, Cursor, Windsurf, Claude Code, Claude Desktop, Codex, Gemini CLI, GitHub Copilot CLI, Zed, Visual Studio, JetBrains, Cline, Continue and opencode on macOS, Windows and Linux (`apps/hub-web/lib/connect/configs.ts`).
 
-### VS Code (GitHub Copilot agent mode)
+The from-source samples are in `apps/context-bridge/clients/`. Build first (`pnpm bridge:build`), use absolute paths and never commit a real token. Committed project files use `${env:ENSEMBLE_BRIDGE_TOKEN}` or `${ENSEMBLE_BRIDGE_TOKEN}`. `${input:…}` is avoided because it drops the server from VS Code's Agent Host. One-click links (`vscode:mcp/install`, `cursor://anysphere.cursor-deeplink/mcp/install`) keep the key in the environment, not the URL.
 
-Committed: `.vscode/mcp.json` (`servers`). Same file: `apps/context-bridge/clients/vscode.mcp.json`.
-
-User-level (every folder): VS Code profile `mcp.json`, same `servers` shape, with an absolute `args` path.
-
-Reload the window. In the Chat tools list, enable the Ensemble server. Agent mode can call the tools.
-
-### GitHub Copilot CLI
-
-`~/.copilot/mcp-config.json` uses `mcpServers`, not `servers`. `.vscode/mcp.json` is not read. Paste `apps/context-bridge/clients/copilot-cli.mcp.json`.
-
-```bash
-copilot mcp add ensemble -- node "$PWD/apps/context-bridge/dist/index.js"
-```
-
-Then confirm the token is in that file's `env`. In a session: `/mcp`.
-
-### Cursor
-
-`.cursor/mcp.json` is committed (`mcpServers`). Cursor also reads `~/.cursor/mcp.json`. Sample: `apps/context-bridge/clients/cursor.mcp.json`.
-
-### Claude Code
-
-Committed: `.mcp.json`. Or:
+| Client | Config | Sample |
+|---|---|---|
+| VS Code (Copilot agent mode) | Committed `.vscode/mcp.json` (`servers`); or the profile `mcp.json` with an absolute path. Reload, then enable the server in the Chat tools list | `vscode.mcp.json` |
+| GitHub Copilot CLI | `~/.copilot/mcp-config.json` (`mcpServers`; it does not read `.vscode/mcp.json`). Or `copilot mcp add ensemble -- node "$PWD/apps/context-bridge/dist/index.js"`, then put the token in that file's `env`. `/mcp` in a session lists it | `copilot-cli.mcp.json` |
+| Cursor | Committed `.cursor/mcp.json`, or `~/.cursor/mcp.json` (`mcpServers`) | `cursor.mcp.json` |
+| Claude Code | Committed `.mcp.json`, or the command below | `claude-code.mcp.json` |
+| Claude Desktop | `mcpServers` in `claude_desktop_config.json`: `~/Library/Application Support/Claude/` (macOS), `~/.config/Claude/` (Linux), `%APPDATA%\Claude\` (Windows). Absolute path; restart the app | `claude-desktop.mcp.json` |
+| Codex CLI | Merge into `~/.codex/config.toml` | `codex.config.toml` |
+| Windsurf | `~/.codeium/windsurf/mcp_config.json` | `windsurf.mcp.json` |
+| Any client, local HTTP | Run `pnpm bridge:http`; `type: "http"`, `url: "http://127.0.0.1:4010/mcp"` (`servers` for VS Code, `mcpServers` elsewhere) | `http.mcp.json` |
 
 ```bash
 claude mcp add --transport stdio \
@@ -131,64 +144,35 @@ claude mcp add --transport stdio \
   ensemble -- node "$PWD/apps/context-bridge/dist/index.js"
 ```
 
-Sample: `apps/context-bridge/clients/claude-code.mcp.json`.
+The repo also ships `.github/agents/ensemble.md` (a custom agent that calls `ensemble_brief` and cites sources) and `.github/skills/ensemble-context/SKILL.md` (copy the folder to `~/.copilot/skills/ensemble-context/` to load it in Copilot CLI everywhere).
 
-### Claude Desktop
+## 10. Failure behaviour
 
-Paste `mcpServers` from `apps/context-bridge/clients/claude-desktop.mcp.json` into `claude_desktop_config.json`:
-
-- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
-- Linux: `~/.config/Claude/claude_desktop_config.json`
-- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
-
-Use an absolute path to `dist/index.js`. Restart Claude Desktop.
-
-### OpenAI Codex CLI
-
-Add `apps/context-bridge/clients/codex.config.toml` to `~/.codex/config.toml` (merge, do not replace the rest of the file).
-
-### Windsurf
-
-Paste `apps/context-bridge/clients/windsurf.mcp.json` into `~/.codeium/windsurf/mcp_config.json`.
-
-### Streamable HTTP
-
-Start `pnpm bridge:http`, then use `type: "http"` and `url: "http://127.0.0.1:4010/mcp"`. Shapes for VS Code (`servers`) and for everyone else (`mcpServers`) are in `apps/context-bridge/clients/http.mcp.json`.
-
-## Packaging the model already has
-
-- `.github/agents/ensemble.md` — custom agent. Ask it to call `ensemble_brief` and cite sources.
-- `.github/skills/ensemble-context/SKILL.md` — project skill. Copy the folder to `~/.copilot/skills/ensemble-context/` if you want Copilot CLI to load it from the user profile as well.
-
-## Failure behaviour
-
-| Situation | What you get |
+| Situation | Result |
 |---|---|
-| hub-api down | `Ensemble is not running. Start it with `pnpm dev`.` |
-| Token missing or still the default internal token | A configuration error. No empty brief. |
-| Repo not tracked | Says so, and searches only if you passed a query. |
-| Branch matches no open task | Repo and project context, no guessed task. |
-| Branch matches several tasks | The candidates. None is chosen. |
-| Nothing relevant | Says so. |
-| Long body | Excerpt plus `ensemble_read`. |
+| hub-api down | ``Ensemble is not running. Start it with `pnpm dev`.`` |
+| Token missing, not `ens_`, or the default internal token | A configuration error, never an empty brief |
+| Repo not tracked | Says so; searches only if a query was passed |
+| Branch matches no open task | Repo and project context, no guessed task |
+| Branch matches several tasks | The candidates; none is chosen |
+| Nothing relevant | Says so |
+| Long body | Excerpt plus `ensemble_read` |
 
-## Tests
+## 11. Tests
 
 ```bash
 pnpm --filter @ensemble/hub-api test:bridge    # resolution, auth, no write methods
-pnpm --filter @ensemble/context-bridge test    # in-memory MCP client, stdio, streamable HTTP, mocked hub-api
-pnpm bridge:verify                           # typecheck + those tests + dist smoke
-pnpm bridge:e2e                              # live Postgres, hub-api, both transports, security
+pnpm --filter @ensemble/context-bridge test    # in-memory MCP client, stdio, Streamable HTTP, mocked hub-api
+pnpm bridge:verify                             # both, plus typecheck, build and dist smoke
+pnpm bridge:e2e                                # live Postgres, hub-api, both transports, security
 ```
 
-The smoke script is the stand-in for MCP Inspector: it speaks MCP to the built server and checks `tools/list`, a tool call, and resources. It uses a mocked hub-api.
+The smoke script (`apps/context-bridge/scripts/smoke.ts`) speaks MCP to the built server against a mocked hub-api and checks `tools/list`, a tool call and resources.
 
-`pnpm bridge:e2e` is the live test. It creates the external `ensemble_pg` volume if needed, starts `infra/docker-compose.yml` (Postgres with pgvector, and Redis), writes a gitignored `.env` when one is missing, runs `db:generate`, `db:push`, and `db:seed`, builds the bridge, starts hub-api on `127.0.0.1:4000` with `ENSEMBLE_DEV_AUTH_BYPASS=true`, and mints a real `ens_` key through `POST /api/connect/token`. `pnpm db:push` loads that `.env` (the Prisma CLI does not, on its own). Seed data covers every status, a task linked to `encode/httpx` on branch `docs/default-timeout`, two tasks on `retry-helper`, upcoming deliverables, calendar events in the next 14 days, meeting notes, a file and a document, and a pending editor decision. The script also uploads `latency-readout.md` and opens one Needs-me prompt through the Hub APIs.
+`pnpm bridge:e2e` (`scripts/live-e2e.ts`) creates the `ensemble_pg` volume if needed, starts `infra/docker-compose.yml`, writes a gitignored `.env` when missing, runs `db:generate`, `db:push` and `db:seed`, builds the bridge, starts hub-api on `127.0.0.1:4000` with `ENSEMBLE_DEV_AUTH_BYPASS=true`, and mints a real `ens_` key through `POST /api/connect/token`. The seed covers every status, a task linked to `encode/httpx` on branch `docs/default-timeout`, two tasks on `retry-helper`, deliverables, calendar events in the next 14 days, meeting notes, a file and a document, and a pending editor decision; the script also uploads `latency-readout.md` and opens a Needs-me prompt.
 
-It then connects with the official MCP SDK the way the editor configs do (`node apps/context-bridge/dist/index.js` over stdio, with `HUB_API_URL` and `ENSEMBLE_BRIDGE_TOKEN`) and over Streamable HTTP at `http://127.0.0.1:4010/mcp`. Every tool is called, every fixed resource is read, and every item template is read with a real id. Payloads are compared to the live database (counts, ids, titles, trust labels). Security checks cover bridge-token writes (403 on the rest of hub-api, 405 on `/api/bridge`), token minting, rejection of `ENSEMBLE_DEV_AUTH_BYPASS` and `dev-internal-token` on bridge routes, loopback binds, a non-loopback host refusal, missing and invalid tokens, hub-api down, and Postgres/Redis not accepting connections on non-loopback addresses.
+It then connects with the MCP SDK over stdio (as the editor configs do) and over Streamable HTTP at `http://127.0.0.1:4010/mcp`, calls every tool, reads every resource and item template, and compares payloads with the database (counts, ids, titles, trust labels). Security checks cover bridge-key writes (403 elsewhere in hub-api, 405 on `/api/bridge`), key minting, refusal of `ENSEMBLE_DEV_AUTH_BYPASS` and `dev-internal-token` on bridge routes, loopback binds, refusal of a non-loopback host, missing and invalid tokens, hub-api down, and Postgres/Redis refusing non-loopback connections.
 
-The script leaves hub-api and the HTTP bridge running. Logs are under `/tmp/ensemble-bridge-e2e/`. A JSON summary is written to `bridge-e2e-report.json`. The token is not printed.
+The script leaves hub-api and the HTTP bridge running, writes logs under `/tmp/ensemble-bridge-e2e/` and a JSON summary to `bridge-e2e-report.json` in the repo root, and never prints the token.
 
-Page context (15 Oct 2026): `apps/hub-api/src/pages/agent-context.ts` supplies the source of diagrams embedded in saved task and standalone pages to `ensemble_read`, with space ownership checks. Page bodies and diagram source have separate bounds (15,000 and 20,000 characters for the bridge), then use the existing offset/nextOffset pagination. Converted source documents also appear in the page's file citations through `files/attached.ts`.
-
-MCP server-info reports the same release version as the CLI/web/native builds, read from `@ensemble/shared-types/version`.
+A passing handshake does not show that an editor picks the right tool or that a remote client supports bearer headers.

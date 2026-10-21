@@ -1,5 +1,5 @@
 /**
- * One undo stack per user (docs/design/assistant-trash-comments.md §20).
+ * One undo stack per user (docs/11_HOW_THE_ASSISTANT_WORKS.md, Apply and Undo).
  *
  * An entry stores the fields that changed, plus the row's updatedAt after the
  * write. Undo and redo touch only those fields, and only when they still hold
