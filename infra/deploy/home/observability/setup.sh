@@ -41,7 +41,8 @@ main() {
 
   local name
   name="$(tailscale status --json 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))' 2>/dev/null || true)"
-  if [ -n "$name" ] && tailscale serve --bg --https=443 http://127.0.0.1:3300 >/dev/null 2>&1; then
+  # With Serve off for the tailnet, `tailscale serve` waits for it to be turned on: do not wait.
+  if [ -n "$name" ] && timeout 20 tailscale serve --bg --https=443 http://127.0.0.1:3300 </dev/null >/dev/null 2>&1; then
     echo "Grafana on your Tailscale devices: https://$name/"
   else
     echo "Grafana is on http://127.0.0.1:3300. For your other devices, turn on Tailscale Serve for the tailnet, then:"
