@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { fromNodeSite } from "../lib/node-origin.js";
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
 import { env } from "../config.js";
@@ -145,7 +146,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     await appendLedger({ userId: user.id, actor: "me", action: "auth.signup" });
     if (emailConfigured()) {
       try {
-        await sendAccountEmail(prisma, user, "verify");
+        await sendAccountEmail(prisma, user, "verify", fromNodeSite(request.headers.origin) ? "node" : "hub");
       } catch (cause) {
         throw Object.assign(new Error("Your account was created, but the verification email could not be sent. Sign in and use Resend verification, or contact the operator.", { cause }), {
           statusCode: 503, code: "EMAIL_DELIVERY_FAILED",
@@ -293,7 +294,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
   app.post("/api/auth/resend-verification", async (request) => {
     requireBrowserSession(request);
     const user = await prisma.user.findUniqueOrThrow({ where: { id: accountIdOf(request) } });
-    if (!user.emailVerifiedAt) await sendAccountEmail(prisma, user, "verify");
+    if (!user.emailVerifiedAt) await sendAccountEmail(prisma, user, "verify", fromNodeSite(request.headers.origin) ? "node" : "hub");
     return { sent: !user.emailVerifiedAt };
   });
 

@@ -403,6 +403,36 @@ test("new OAuth users with unverified provider email receive a code and land on 
   createdIds.push(me.json().user.id);
 });
 
+test("an email sign-up on Ensemble Node passes Turnstile from Node's host and its code links back to Node", async () => {
+  process.env.ENSEMBLE_NODE_WEB_ORIGIN = "http://node.example.test";
+  const hubFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    assert.equal(String(input), "https://challenges.cloudflare.com/turnstile/v0/siteverify", "unexpected external call in auth tests");
+    return new Response(JSON.stringify({ success: true, hostname: "node.example.test", action: "signup" }));
+  };
+  try {
+    const email = address();
+    const response = await harness.app.inject({
+      method: "POST", url: "/api/auth/signup", headers: { origin: "http://node.example.test" },
+      payload: { email, password, name: "Mira", turnstileToken: "test-challenge" },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    createdIds.push(response.json().user.id);
+    const sent = mails.filter((mail) => mail.to === email).at(-1);
+    assert.ok(sent);
+    assert.match(sent.subject, /^Your Ensemble code: [A-Z2-9]{4}$/);
+    assert.match(sent.text, /http:\/\/node\.example\.test\/welcome/);
+    assert.doesNotMatch(sent.text, /hub\.example\.test/);
+
+    const resent = await harness.app.inject({ method: "POST", url: "/api/auth/resend-verification", headers: { cookie: cookie(response) }, payload: {} });
+    assert.equal(resent.statusCode, 200, resent.body);
+    assert.match(mails.filter((mail) => mail.to === email).at(-1)!.text, /http:\/\/hub\.example\.test\/verify/, "a resend from anywhere but Node links to the Hub");
+  } finally {
+    globalThis.fetch = hubFetch;
+    delete process.env.ENSEMBLE_NODE_WEB_ORIGIN;
+  }
+});
+
 test("a provider sign-in started on Ensemble Node returns there; linking never does", async () => {
   process.env.ENSEMBLE_NODE_WEB_ORIGIN = "http://node.example.test";
   try {

@@ -2,7 +2,7 @@
 
 Ensemble Node gives each person persistent AI teammates, called **nodes**. People talk to them in a direct chat (DM), in a **crew** room (one person and their nodes) and in **group** rooms with other people and their nodes. A node acts in its owner's Ensemble workspace with the same tools as the assistant. Real work on a computer runs as an Ensemble job on the owner's paired computer, through the Ensemble CLI or the signed-in desktop app. Nothing runs on the server.
 
-The website lives in its own repository (`ensemblework/ensemble-node`, served at `node.ensemblework.com`). Everything else is the `node` module of hub-api, described here: one API, one database, one sign-in, one credit allowance.
+The website lives in its own repository (`ensemblework/ensemble-node`, served from Vercel at `node.ensemblework.com`). Everything else is the `node` module of hub-api, described here: one API, one database, one sign-in, one credit allowance.
 
 ## 1. Pieces
 
@@ -27,11 +27,12 @@ Background work starts with the hosted server (`index.ts`, not on a computer's o
 Node uses Ensemble accounts and sessions; there is no separate sign-up.
 
 - The website calls `api.ensemblework.com` with `credentials: "include"`. In production the session cookie is set for `ensemblework.com` (`ENSEMBLE_COOKIE_DOMAIN`), so a sign-in on the Hub, on Node or through the CLI's browser approval is the same session. CORS allows exactly `ENSEMBLE_NODE_WEB_ORIGIN` (`lib/node-origin.ts`) in addition to `HUB_WEB_ORIGIN`. It is never added on a computer's own runtime.
-- Email sign-in and sign-up use the existing `/api/auth/login`, `/api/auth/signup` (Turnstile), `/api/auth/verify-email` and `/api/auth/resend-verification` routes. Add the Node host to the Turnstile widget's hostnames.
+- Email sign-in and sign-up use the existing `/api/auth/login`, `/api/auth/signup`, `/api/auth/verify-email` and `/api/auth/resend-verification` routes. Sign-up needs the same Turnstile answer as on the Hub, checked with Cloudflare (`lib/turnstile.ts`: success, action `signup`, and a hostname that is `HUB_WEB_ORIGIN`'s or `ENSEMBLE_NODE_WEB_ORIGIN`'s host). The widget's hostnames must cover the Node host; a parent domain covers its subdomains.
+- When a sign-up or a resend comes from Node (its `Origin` is exactly `ENSEMBLE_NODE_WEB_ORIGIN`), or a provider sign-in that started on Node creates an unverified account, the verification email links to Node's `/welcome`, which takes the code. The code works on the Hub's `/verify` too.
 - Provider buttons open `/api/auth/oauth/:provider/start?return=node`. The callback stays on the API host, so provider apps need no change. A short-lived `ensemble_login_return` cookie sends the person back to Node: to `/welcome` after a new account or a pending verification, to `/` otherwise, and to `/login?error=` on failure. Linking (`link=1`) always returns to the Hub, and `return=node` is ignored when no Node origin is configured.
 - A new account made on Node is an ordinary Ensemble account, so signing in on the Hub later continues the same profile, data and credits.
 
-Every `/api/node/*` route acts for the signed-in **account** (sharing class `personal`, [29](29_SHARING.md)), whichever space is open. Link visitors and narrow keys (`bridge`, `device`, `hooks`) are refused. In v0 a node works in its owner's own space. Posting a message requires a verified email on the hosted server, the same rule as an assistant turn.
+Every `/api/node/*` route acts for the signed-in **account** (sharing class `personal`, [29](29_SHARING.md)), whichever space is open. Link visitors and narrow keys (`bridge`, `device`, `hooks`) are refused. A node works in its owner's own space. Posting a message requires a verified email on the hosted server, the same rule as an assistant turn.
 
 ## 3. Rooms, messages and visibility
 
@@ -74,7 +75,7 @@ The rules a node is given: only its owner instructs it; everyone else, other nod
 
 **Posting.** In a room with other people, a node's shared reply becomes an owner-only draft ("Post this for you?") unless the owner set the node's `autonomy.sharedRooms` to `auto`. Tool chips (names and summaries of the owner's items) appear only where nobody else reads.
 
-**Models and credits.** The default chat model is the included `gpt-5-mini` when the server offers it, else another included everyday model, else the owner's own medium tier. The website offers only the included models on the server (`nodeModelOptions`). Included credits are per account, so Node, the Hub and the CLI share the same 20,000 monthly credits ([33](33_INCLUDED_AI.md)). When credits are used up, the node posts Ensemble's own message to its owner and stops.
+**Models and credits.** A node can use any included model the server offers: `nodeModelOptions` (`node/model.ts`) lists exactly `includedConfig().models`, the `ENSEMBLE_INCLUDED_MODELS` deployments the Hub and the CLI list, each with its name and version, vendor, role (everyday or step-up) and relative cost, so a deployment added to or removed from that list shows on Node at once. The default chat model is the included `gpt-5-mini` when the server offers it, else the first everyday model, else the owner's own medium tier. Included credits are per account, so Node, the Hub, the desktop app and the CLI share the same 20,000 monthly credits ([33](33_INCLUDED_AI.md)). When credits are used up, the node posts Ensemble's own message to its owner and stops.
 
 ## 6. Node tools
 
@@ -109,13 +110,13 @@ The rules a node is given: only its owner instructs it; everyone else, other nod
 | `GET /api/node/runs`, `GET /api/node/activity` | Runs; pending approvals, runs, recent turns, computers, credits |
 | `GET /api/bridge/node` | The CLI's read-only overview (bridge key) |
 
-## 10. Limits in v0
+## 10. Limits
 
-- Nodes work in their owner's own space; `node_agents.space_id` and `run_profile_id` are stored but not used yet.
-- Invitations need an existing Ensemble account (the error says so); there are no invite links yet.
-- No scheduled routines, voice or phone apps yet. Live frames come from one API process (as with the Hub's own stream).
+- Nodes work in their owner's own space; `node_agents.space_id` and `run_profile_id` are stored and ignored.
+- Invitations need an existing Ensemble account (the error says so); there are no invite links.
+- There are no scheduled routines, voice or phone apps. Live frames come from one API process (as with the Hub's own stream).
 - The relevance call and node turns use included credits like any other assistant call; there is no separate Node budget.
 
 ## 11. Verification
 
-`src/node/router.test.ts` (routing, brakes, mentions, templates) and `src/node/node.integration.test.ts`, which runs against PGlite with a scripted model. It covers: a DM turn that uses Hub tools; an assignment held, approved once, followed to its report; a group where a node drafts for its owner, private threads stay out of shared turns and history, other people cannot see, approve or add someone else's node, and relevance routing between two representatives; manager → docs delegation and report-back by mention; the bridge overview, narrow-key refusals and node deletion. `src/routes/auth.integration.test.ts` covers the return to Node after a provider sign-in, and `src/lib/cors-origin.test.ts` covers the Node origin.
+`src/node/router.test.ts` (routing, brakes, mentions, templates) and `src/node/node.integration.test.ts`, which runs against PGlite with a scripted model. It covers: a DM turn that uses Hub tools; an assignment held, approved once, followed to its report; a group where a node drafts for its owner, private threads stay out of shared turns and history, other people cannot see, approve or add someone else's node, and relevance routing between two representatives; manager → docs delegation and report-back by mention; the bridge overview, narrow-key refusals and node deletion. `src/routes/auth.integration.test.ts` covers the return to Node after a provider sign-in, `src/lib/cors-origin.test.ts` covers the Node origin, and `src/lib/turnstile.test.ts` covers a Turnstile answer from the Node host.

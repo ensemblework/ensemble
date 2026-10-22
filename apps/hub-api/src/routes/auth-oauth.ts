@@ -153,7 +153,7 @@ export async function authOAuthRoutes(app: FastifyInstance, options: { exchange?
       });
       let verificationSent = false;
       if (created && !user.emailVerifiedAt && emailConfigured()) {
-        await sendAccountEmail(prisma, user, "verify");
+        await sendAccountEmail(prisma, user, "verify", node ? "node" : "hub");
         verificationSent = true;
       }
       await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });

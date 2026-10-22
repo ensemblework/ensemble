@@ -2,7 +2,7 @@
  * Which chat model a node talks with. Default: the included gpt-5-mini (credits shared with the
  * Hub and the CLI), else another included everyday model, else the owner's own medium tier.
  */
-import { INCLUDED_PROVIDER, type Settings } from "@ensemble/shared-types";
+import { INCLUDED_PROVIDER, includedModelName, type IncludedModel, type Settings } from "@ensemble/shared-types";
 import { includedConfig, includedModelOn } from "../included/config.js";
 import { ModelChoiceError, providerForModel } from "../lib/model-choice.js";
 
@@ -36,10 +36,33 @@ export function chatModelFor(node: { provider: string | null; model: string | nu
   return defaultChatModel(settings) ?? { error: "No chat model is available. Included AI is off on this server and no model is set in Ensemble → Settings → Models." };
 }
 
-/** The models the Node web app offers: the included ones on this server. */
-export function nodeModelOptions(): Array<{ provider: string; model: string; label: string; default: boolean }> {
+export type NodeModelOption = {
+  provider: string;
+  model: string;
+  /** Name and version, as the Hub shows it: "GPT-6 Luna (2026-09-22)". */
+  label: string;
+  vendor: string;
+  role: IncludedModel["role"];
+  /** A typical turn's credits relative to the catalog's 1× model, as on the Hub's cost badge. */
+  relativeCost: number;
+  default: boolean;
+};
+
+/**
+ * The models the Node web app offers: exactly the included models this server offers
+ * (ENSEMBLE_INCLUDED_MODELS), so the Hub, the CLI and Node list the same ones.
+ */
+export function nodeModelOptions(): NodeModelOption[] {
   const included = includedConfig();
   if (!included) return [];
-  const fallback = included.models.find((row) => row.id === NODE_DEFAULT_MODEL) ?? included.models[0];
-  return included.models.map((row) => ({ provider: INCLUDED_PROVIDER, model: row.id, label: row.label, default: row.id === fallback?.id }));
+  const fallback = included.models.find((row) => row.id === NODE_DEFAULT_MODEL) ?? included.models.find((row) => row.role === "everyday") ?? included.models[0];
+  return included.models.map((row) => ({
+    provider: INCLUDED_PROVIDER,
+    model: row.id,
+    label: includedModelName(row.id),
+    vendor: row.vendor,
+    role: row.role,
+    relativeCost: row.relativeCost,
+    default: row.id === fallback?.id,
+  }));
 }

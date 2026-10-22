@@ -15,3 +15,9 @@ export function nodeWebOrigin(env: NodeJS.ProcessEnv = process.env): string | nu
     return null;
   }
 }
+
+/** True when a browser request comes from Ensemble Node's site (its Origin header is exactly the configured origin). */
+export function fromNodeSite(origin: string | string[] | undefined, env: NodeJS.ProcessEnv = process.env): boolean {
+  const node = nodeWebOrigin(env);
+  return Boolean(node && typeof origin === "string" && origin === node);
+}

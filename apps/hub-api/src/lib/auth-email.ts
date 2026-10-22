@@ -1,4 +1,5 @@
 import { randomBytes, randomInt } from "node:crypto";
+import { nodeWebOrigin } from "./node-origin.js";
 import type { PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import { sha256 } from "./auth.js";
@@ -73,7 +74,11 @@ export function verifyCodeTokenId(userId: string, code: string): string {
   return sha256(`verify:${userId}:${code}`);
 }
 
-export async function sendAccountEmail(prisma: PrismaClient, user: { id: string; email: string }, kind: EmailKind): Promise<void> {
+/**
+ * site "node": the person signed up on Ensemble Node, so the code link opens Node's welcome page
+ * (ENSEMBLE_NODE_WEB_ORIGIN) instead of the Hub's verify page. The code works on either.
+ */
+export async function sendAccountEmail(prisma: PrismaClient, user: { id: string; email: string }, kind: EmailKind, site: "hub" | "node" = "hub"): Promise<void> {
   requireEmailConfigured();
   const token = kind === "verify" ? newVerifyCode() : randomBytes(32).toString("base64url");
   const lifetime = 30 * 60_000;
@@ -90,7 +95,8 @@ export async function sendAccountEmail(prisma: PrismaClient, user: { id: string;
       },
     });
   });
-  const url = new URL(kind === "verify" ? "/verify" : "/reset", authWebOrigin());
+  const node = kind === "verify" && site === "node" ? nodeWebOrigin() : null;
+  const url = node ? new URL("/welcome", node) : new URL(kind === "verify" ? "/verify" : "/reset", authWebOrigin());
   if (kind === "reset") {
     // The fragment is not sent in proxy logs or Referer headers.
     url.hash = new URLSearchParams({ token }).toString();
@@ -99,7 +105,7 @@ export async function sendAccountEmail(prisma: PrismaClient, user: { id: string;
     to: user.email,
     subject: kind === "verify" ? `Your Ensemble code: ${token}` : "Reset your Ensemble password",
     text: kind === "verify"
-      ? `Your Ensemble verification code is ${token}.\n\nIt expires in 30 minutes. Enter it on the Ensemble verify page:\n\n${url}\n\nIf you did not sign up for Ensemble, ignore this email.`
+      ? `Your Ensemble verification code is ${token}.\n\nIt expires in 30 minutes. Enter it on ${node ? "Ensemble Node" : "the Ensemble verify page"}:\n\n${url}\n\nIf you did not sign up for Ensemble, ignore this email.`
       : `Reset your Ensemble password:\n\n${url}\n\nThis link expires in 30 minutes and can be used once. If you did not request this reset, ignore this email.`,
   });
 }

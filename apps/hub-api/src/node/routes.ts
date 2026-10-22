@@ -197,7 +197,10 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       rooms,
       computers: devices,
       credits: usage,
-      models: { default: NODE_DEFAULT_MODEL, options: nodeModelOptions() },
+      models: (() => {
+        const options = nodeModelOptions();
+        return { default: options.find((row) => row.default)?.model ?? NODE_DEFAULT_MODEL, options };
+      })(),
       templates: { nodes: NODE_TEMPLATES, crews: CREW_TEMPLATES },
     };
   });
