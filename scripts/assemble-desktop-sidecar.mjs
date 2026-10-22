@@ -3,7 +3,7 @@
  * Dev builds skip this and run `node --import tsx` from the workspace.
  */
 import { spawnSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmdirSync, rmSync, unlinkSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, normalize, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildLandrun } from "./build-landrun.mjs";
@@ -19,7 +19,20 @@ const appDir = join(dest, "app");
 rmSync(dest, { recursive: true, force: true });
 mkdirSync(dest, { recursive: true });
 
-const generate = run("pnpm", ["--filter", "@ensemble/hub-api", "exec", "prisma", "generate"], { cwd: root });
+// Prisma picks the build machine's engine for "native", and a machine with both OpenSSL 1.1 and 3
+// installed (GitHub's Linux runners) reports 1.1. A package carrying only that engine stops at its
+// first query on Ubuntu 22.04+, Debian 12+ and Fedora, which have only OpenSSL 3. Linux packages
+// therefore carry every engine their architecture can need.
+const LINUX_ENGINES = {
+  x64: ["debian-openssl-1.1.x", "debian-openssl-3.0.x", "rhel-openssl-3.0.x"],
+  arm64: ["linux-arm64-openssl-1.1.x", "linux-arm64-openssl-3.0.x"],
+};
+const linuxEngines = process.platform === "linux" ? LINUX_ENGINES[process.arch] : null;
+if (process.platform === "linux" && !linuxEngines) {
+  console.error(`No Prisma query engines are listed for Linux ${process.arch}.`);
+  process.exit(1);
+}
+const generate = generatePrismaClient(linuxEngines);
 if (generate !== 0) process.exit(generate);
 
 const deploy = run("pnpm", ["--filter", "@ensemble/hub-api", "deploy", appDir], { cwd: root });
@@ -31,6 +44,14 @@ if (deploy !== 0) process.exit(deploy);
 console.log("materializing sidecar node_modules");
 materializeNodeModules(appDir);
 copyGeneratedPrismaClient(appDir);
+if (linuxEngines) {
+  const client = join(appDir, "node_modules", ".prisma", "client");
+  const missing = linuxEngines.filter((engine) => !existsSync(join(client, `libquery_engine-${engine}.so.node`)));
+  if (missing.length) {
+    console.error(`The sidecar's Prisma client has no query engine for ${missing.join(", ")}.`);
+    process.exit(1);
+  }
+}
 
 const nodeName = process.platform === "win32" ? "node.exe" : "node";
 const nodeSrc = realpathSync(process.execPath);
@@ -57,23 +78,55 @@ if (process.platform === "linux") {
   buildLandrun({ out: join(dest, "bin", "landrun"), arch: process.arch });
 }
 
-const imported = run(
-  nodeDest,
-  [
-    "--import",
-    "tsx",
-    "-e",
-    // Constructing the client fails on the "did not initialize yet" stub; importing it does not.
-    "await import('fastify'); const { PrismaClient } = await import('@prisma/client'); new PrismaClient(); await import('@electric-sql/pglite'); console.log('sidecar-import-ok')",
-  ],
-  { cwd: appDir, encoding: "utf8", stdio: "pipe", env: { ...process.env, DATABASE_URL: process.env.DATABASE_URL || "postgresql://sidecar:check@127.0.0.1:1/check" } },
-);
-if (imported !== 0) {
-  console.error("The bundled sidecar cannot import tsx.");
-  process.exit(imported);
-}
+checkImports();
+// The OpenSSL 3 engine is the one most Linux computers load. Load it explicitly, since this build
+// machine may pick the 1.1 engine for itself.
+const openssl3 = linuxEngines?.find((engine) => engine.endsWith("openssl-3.0.x") && !engine.startsWith("rhel-"));
+if (openssl3) checkImports(join(appDir, "node_modules", ".prisma", "client", `libquery_engine-${openssl3}.so.node`));
 
 console.log(`sidecar assembled at ${dest}`);
+
+/**
+ * Imports the sidecar's main packages with its own Node, and loads Prisma's query engine: constructing
+ * the client fails on the "did not initialize yet" stub, and connecting (to a closed port) fails before
+ * the network when the engine cannot load.
+ */
+function checkImports(engineLibrary) {
+  const script = [
+    "await import('fastify');",
+    "const { PrismaClient } = await import('@prisma/client');",
+    "await new PrismaClient().$connect().catch((error) => { if (/query engine|libquery/i.test(String(error?.message))) throw error; });",
+    "await import('@electric-sql/pglite');",
+    "console.log('sidecar-import-ok')",
+  ].join(" ");
+  const env = { ...process.env, DATABASE_URL: process.env.DATABASE_URL || "postgresql://sidecar:check@127.0.0.1:1/check" };
+  if (engineLibrary) env.PRISMA_QUERY_ENGINE_LIBRARY = engineLibrary;
+  const status = run(nodeDest, ["--import", "tsx", "-e", script], { cwd: appDir, encoding: "utf8", stdio: "pipe", env });
+  if (status !== 0) {
+    console.error(`The bundled sidecar cannot import its packages or load Prisma's query engine${engineLibrary ? ` (${basename(engineLibrary)})` : ""}.`);
+    process.exit(status);
+  }
+}
+
+/** `prisma generate`, with every Linux engine when `engines` is set (a copy of the schema that lists them). */
+function generatePrismaClient(engines) {
+  const args = ["--filter", "@ensemble/hub-api", "exec", "prisma", "generate"];
+  if (!engines) return run("pnpm", args, { cwd: root });
+  const schema = join(root, "apps", "hub-api", "prisma", "schema.prisma");
+  const packageSchema = join(dirname(schema), "schema.package.prisma");
+  const source = readFileSync(schema, "utf8");
+  const withTargets = source.replace(/(generator client \{\n)/, `$1  binaryTargets   = ${JSON.stringify(["native", ...engines])}\n`);
+  if (withTargets === source) {
+    console.error("Could not find `generator client {` in schema.prisma.");
+    return 1;
+  }
+  writeFileSync(packageSchema, withTargets);
+  try {
+    return run("pnpm", [...args, "--schema", packageSchema], { cwd: root });
+  } finally {
+    rmSync(packageSchema, { force: true });
+  }
+}
 
 function parseArgs(args) {
   const defaultDest = join(root, "apps/desktop/src-tauri/resources/sidecar");
