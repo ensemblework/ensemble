@@ -154,7 +154,7 @@ pnpm desktop:build      # tauri build
 | `windows` | `windows-latest` | msi, nsis | `ensemble-desktop-windows` |
 | `linux` | `ubuntu-22.04` | deb, rpm, AppImage | `ensemble-desktop-linux` |
 
-The Node and Prisma sidecar matches each app's architecture. On Linux the `.deb` depends on `libxdo3` and the `.rpm` on `libxdo` (Fedora, or EPEL on RHEL); the AppImage carries its own copy.
+The Node and Prisma sidecar matches each app's architecture. On Linux it carries Prisma's query engines for OpenSSL 3 and 1.1 (x64: Debian/Ubuntu and RHEL/Fedora builds; arm64: one of each OpenSSL), since a build machine's own pick can be the wrong one (`LINUX_ENGINES` in `scripts/assemble-desktop-sidecar.mjs`, which also loads the OpenSSL 3 engine before it finishes). On Linux the `.deb` depends on `libxdo3` and the `.rpm` on `libxdo` (Fedora, or EPEL on RHEL); the AppImage carries its own copy.
 
 The Intel disk image: `package-mac-dmg.mjs` creates a compressed APFS image with the app and an Applications link, checks the app's version and verifies the image, with bounded tool timeouts and no Finder automation.
 
