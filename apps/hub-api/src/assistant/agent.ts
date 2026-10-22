@@ -143,6 +143,15 @@ export interface AssistantTurnArgs {
   inlineArtifacts?: boolean;
   /** Ensemble Code in the terminal on the person's own computer: its folder, engine and run profile. */
   code?: CodeSession;
+  /**
+   * An Ensemble Node turn (node/brain.ts): the node's own identity, charter and room. Replaces the
+   * person's persona for this turn. Not a permission change.
+   */
+  agentPersona?: string;
+  /** Tools added to this turn and always shown (Ensemble Node's room tools). Same checks as every tool. */
+  extraTools?: AnyHubTool[];
+  /** Metrics and credit purpose for the model calls. Default "Hub chat". */
+  purpose?: string;
 }
 
 export interface AssistantTurnResult {
@@ -223,7 +232,7 @@ async function drive(
   const grants = await loadAppGrants(ctx);
   // The per-turn list: Hub tools for these settings plus this person's connected-app tools,
   // and in Ensemble Code the folder's read tools and agent runs. Any of these may run.
-  const tools = [...(await toolsForTurn(ctx, grants)), ...(args.code ? codeTools : [])];
+  const tools = [...(await toolsForTurn(ctx, grants)), ...(args.code ? codeTools : []), ...(args.extraTools ?? [])];
   const byName = new Map(tools.map((tool) => [tool.name, tool]));
   // Every app connected in this space, for the prompt and for routing; empty for a guest.
   const connections = await loadConnections(ctx, tools);
@@ -238,11 +247,11 @@ async function drive(
   );
   const shown = () => {
     const selected = advertisedTools(tools, active.values(), args.message);
-    const ordered = args.code ? [...codeTools, ...selected] : selected;
+    const ordered = [...(args.code ? codeTools : []), ...(args.extraTools ?? []), ...selected];
     return [...new Map(ordered.map(tool => [tool.name, tool])).values()].slice(0, 128);
   };
   const persona =
-    args.preamble !== undefined && args.actAs === undefined
+    args.agentPersona !== undefined || (args.preamble !== undefined && args.actAs === undefined)
       ? undefined
       : personaBlock(personaFor(args.actAs ?? settings.assistant.actAs, state.user.onboardingRole), state.user.firstName);
   const system = buildSystemPrompt(state, openPage, undefined, {
@@ -264,6 +273,7 @@ async function drive(
   const messages: ModelMessage[] = [
     { role: "system", content: system },
     { role: "system", content: writeModeNote(settings.assistant.writePolicy) },
+    ...(args.agentPersona ? [{ role: "system" as const, content: truncateText(args.agentPersona, 12_000) }] : []),
     ...(args.preamble
       ? [{ role: "system" as const, content: truncateText(args.preamble, 2000) }]
       : []),
@@ -369,7 +379,7 @@ async function drive(
         meta: {
           provider: agent,
           model: answered,
-          purpose: "Hub chat",
+          purpose: args.purpose ?? "Hub chat",
           tokensIn: done.tokensIn,
           tokensOut: done.tokensOut,
           // The person's own plan pays; nothing is billed through Ensemble.
@@ -415,7 +425,7 @@ async function drive(
         chatTools: finalAnswer ? [] : chatTools,
         responsesTools: finalAnswer ? [] : responsesTools,
         signal: stop.signal,
-        purpose: "Hub chat",
+        purpose: args.purpose ?? "Hub chat",
         onDelta(piece) {
           streamed += piece;
           args.emit({ type: "delta", text: piece });
@@ -438,7 +448,7 @@ async function drive(
             meta: {
               provider: args.provider ?? null,
               model,
-              purpose: "Hub chat",
+              purpose: args.purpose ?? "Hub chat",
               tokensIn: known.tokensIn,
               tokensOut: known.tokensOut,
               ...callCost(args.provider, model, known.tokensIn, known.tokensOut),
@@ -472,7 +482,7 @@ async function drive(
         meta: {
           provider: args.provider ?? null,
           model: answered,
-          purpose: "Hub chat",
+          purpose: args.purpose ?? "Hub chat",
           tokensIn: turn.tokensIn,
           tokensOut: turn.tokensOut,
           ...callCost(args.provider, answered, turn.tokensIn, turn.tokensOut, turn.credits),

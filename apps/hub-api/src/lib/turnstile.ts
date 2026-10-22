@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { nodeWebOrigin } from "./node-origin.js";
 
 export function turnstileSiteKey(): string | null {
   return process.env.TURNSTILE_SITE_KEY?.trim() || null;
@@ -29,8 +30,15 @@ export async function verifyTurnstile(token: string | undefined, remoteIp: strin
   }
   if (!response.ok) throw Object.assign(new Error("Signup verification is temporarily unavailable. Try again shortly."), { statusCode: 503 });
   const result = z.object({ success: z.boolean(), hostname: z.string().optional(), action: z.string().optional() }).parse(await response.json());
-  const expectedHost = new URL(process.env.HUB_WEB_ORIGIN ?? "http://localhost:3000").hostname;
-  if (!result.success || result.hostname !== expectedHost || result.action !== "signup") {
+  if (!result.success || !result.hostname || !signupHosts().includes(result.hostname) || result.action !== "signup") {
     throw Object.assign(new Error("Signup verification failed. Complete it again."), { statusCode: 400 });
   }
+}
+
+/** Sites whose sign-up form shows the widget: the Hub, and Ensemble Node when it is configured. */
+function signupHosts(): string[] {
+  const hosts = [new URL(process.env.HUB_WEB_ORIGIN ?? "http://localhost:3000").hostname];
+  const node = nodeWebOrigin();
+  if (node) hosts.push(new URL(node).hostname);
+  return hosts;
 }

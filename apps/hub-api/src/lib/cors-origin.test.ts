@@ -338,3 +338,16 @@ test("the hosted web origin is matched exactly: no trailing slash, port, case or
     assert.equal(allowOriginHeader(origin, allowed), undefined, origin);
   }
 });
+
+test("Ensemble Node's site joins the hosted allowlist, never the desktop one", async () => {
+  const { nodeWebOrigin } = await import("./node-origin.js");
+  assert.equal(nodeWebOrigin({ ENSEMBLE_NODE_WEB_ORIGIN: "https://node.example.com/" }), "https://node.example.com");
+  assert.equal(nodeWebOrigin({ ENSEMBLE_NODE_WEB_ORIGIN: "https://node.example.com/path" }), null);
+  assert.equal(nodeWebOrigin({ ENSEMBLE_NODE_WEB_ORIGIN: "*" }), null);
+  assert.equal(nodeWebOrigin({}), null);
+  const hosted = corsPolicy("https://app.example.com", false, ["https://node.example.com"]);
+  assert.ok(hosted.origins.has("https://node.example.com"));
+  assert.ok(hosted.origins.has("https://app.example.com"));
+  const desktop = corsPolicy("http://localhost:3000", true, ["https://node.example.com"]);
+  assert.equal(desktop.origins.has("https://node.example.com"), false);
+});

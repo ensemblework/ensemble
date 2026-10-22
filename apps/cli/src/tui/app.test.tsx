@@ -4,6 +4,7 @@ import { render } from "ink-testing-library";
 import { App } from "./app.js";
 import type { ChatFrame, Decision, LocalApi } from "./local.js";
 import { DEFAULT_PREFS } from "./prefs.js";
+import type { NodeOverview } from "./node.js";
 import { empty, fakeApi, job, ops, screenWith, tick, until } from "./testing.js";
 
 const mounted: Array<{ unmount: () => void }> = [];
@@ -149,9 +150,49 @@ test("clicking a tab switches to it; Tab does too", async () => {
   // " ◆ Ensemble  " is 13 cells, " Tasks " the next 7, then a space: Chat starts at column 22 (1-based).
   app.stdin.write("\u001B[<0;24;1M");
   assert.match(await screenWith(app.lastFrame, /Ensemble Code/), /Ensemble Code/);
+  await tick();
+  app.stdin.write("\t");
+  assert.match(await screenWith(app.lastFrame, /Sign in to see your nodes/), /Sign in to see your nodes/);
+  await tick();
   app.stdin.write("\t");
   assert.match(await screenWith(app.lastFrame, /Welcome to Ensemble/), /Welcome to Ensemble/);
   app.unmount();
+});
+
+test("the Node tab shows nodes, rooms, approvals and runs read-only, and points chat to the Node website", async () => {
+  const { api } = fakeApi();
+  let reads = 0;
+  const overview: NodeOverview = {
+    nodes: [{ id: "n1", slug: "manager", name: "Manager", role: "manager", status: "active", busy: true }],
+    rooms: [{ id: "r1", kind: "group", title: "Launch", unread: 2, lastMessageAt: new Date().toISOString(), last: { author: "node", body: "I'll take the login page." } }],
+    approvals: [{ id: "m1", roomId: "r1", body: "Assign “Fix the login bug” to Claude Code on Mira's laptop" }],
+    runs: [{ id: "run1", title: "Fix the login bug", status: "running", progress: "Running the tests", summary: null, computer: "Mira's laptop", createdAt: new Date().toISOString() }],
+    credits: { available: true, limit: 20000, used: 1500, remaining: 18500, resetsAt: new Date().toISOString() },
+  };
+  const app = render(
+    <App
+      api={api}
+      folder="/work/app"
+      version="0.3.0"
+      account={{ email: "mira@example.com", paired: true, apiBase: "https://x" }}
+      prefs={{ ...DEFAULT_PREFS, tab: "node" }}
+      ops={{ ...ops, nodeUrl: "https://node.example.com", nodeOverview: async () => ((reads += 1), overview) }}
+    />,
+  );
+  mounted.push(app);
+  const frame = await screenWith(app.lastFrame, /COMPUTER RUNS/);
+  assert.match(frame, /Node · 1 waiting/);
+  assert.match(frame, /WAITING FOR YOU · 1/);
+  assert.match(frame, /Launch/);
+  assert.match(frame, /2 new/);
+  assert.match(frame, /@manager/);
+  assert.match(frame, /Running the tests/);
+  assert.match(frame, /18,500 of 20,000 left this month/);
+  assert.ok(reads >= 1);
+  app.stdin.write("hello");
+  await tick();
+  app.stdin.write("\r");
+  assert.match(await screenWith(app.lastFrame, /Talk to them at https:\/\/node\.example\.com/), /only shows what your nodes are doing/);
 });
 
 test("Chat with Claude Code: a message runs it here, the reply streams in, its question is answered in Chat, and the next message continues it", async () => {

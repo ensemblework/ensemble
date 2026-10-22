@@ -3,6 +3,7 @@ import type { FastifyInstance } from "fastify";
 import { env } from "../config.js";
 import { bridgeAuthRejected } from "./auth.js";
 import { DATA_GAPS } from "./gaps.js";
+import { nodeOverview } from "../node/routes.js";
 import { fileFor, overviewFor } from "../repo/locate.js";
 import { RepoReadError } from "../repo/read.js";
 import {
@@ -59,6 +60,9 @@ export async function bridgeRoutes(app: FastifyInstance): Promise<void> {
   }));
 
   app.get("/api/bridge/today", async (request) => todayBriefing(prisma, request.userId));
+
+  /** Ensemble Node at a glance, read-only: the CLI's Node tab (docs/35 §11). */
+  app.get("/api/bridge/node", async (request) => nodeOverview(prisma, request.userId));
 
   app.get("/api/bridge/tasks", async (request) => {
     const query = z.object({ status: Status.optional(), q: z.string().optional(), limit: listLimit }).parse(request.query);

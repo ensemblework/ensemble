@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { verifyTurnstile } from "./turnstile.js";
 
-test("hosted signup cannot bypass missing Turnstile configuration or a failed/wrong-host challenge", async () => {
+test("hosted signup cannot bypass missing Turnstile configuration or a failed/wrong-host challenge, on the Hub or on Ensemble Node", async () => {
   const before = { ...process.env };
   const original = globalThis.fetch;
   try {
@@ -26,6 +26,22 @@ test("hosted signup cannot bypass missing Turnstile configuration or a failed/wr
       return new Response(JSON.stringify({ success: true, hostname: "app.example.com", action: "signup" }));
     };
     await verifyTurnstile("token", "127.0.0.1");
+
+    // Ensemble Node's sign-up form: its host passes only while ENSEMBLE_NODE_WEB_ORIGIN names it.
+    const nodeResult = { success: true, hostname: "node.example.com", action: "signup" };
+    globalThis.fetch = async () => new Response(JSON.stringify(nodeResult));
+    delete process.env.ENSEMBLE_NODE_WEB_ORIGIN;
+    await assert.rejects(verifyTurnstile("token", "127.0.0.1"), /failed/);
+    process.env.ENSEMBLE_NODE_WEB_ORIGIN = "https://node.example.com";
+    await verifyTurnstile("token", "127.0.0.1");
+    for (const result of [
+      { ...nodeResult, success: false },
+      { ...nodeResult, action: "other" },
+      { ...nodeResult, hostname: "other.example.com" },
+    ]) {
+      globalThis.fetch = async () => new Response(JSON.stringify(result));
+      await assert.rejects(verifyTurnstile("token", "127.0.0.1"), /failed/);
+    }
   } finally {
     globalThis.fetch = original;
     process.env = before;
