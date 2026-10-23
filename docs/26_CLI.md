@@ -55,7 +55,7 @@ The archive is large because it carries Node, Prisma and PGlite. The launchers s
 
 Build with `node apps/cli/scripts/build.mjs --testing`; package with `node scripts/package-cli.mjs --channel testing --target <target>`. `ENSEMBLE_TEST_CLI_VERSION` supplies `<release>-testing.<numeric-build>` without changing root `release.json`. The build-time channel (`apps/cli/src/channel.ts`) cannot be changed by a production API environment variable. `ENSEMBLE_TEST_TOKEN`, `ENSEMBLE_TEST_CONFIG_DIR` and `ENSEMBLE_TEST_DATA_HOME` are independent overrides; test launchers use `ENSEMBLE_TEST_LAUNCHER` and `ENSEMBLE_TEST_SIDECAR_DIR`. The testing runtime refuses production pairing, hosted calls and discovery belonging to the native/production runtime. Its included-model credits and account model keys come only from the test account.
 
-There is no separate testing Node website; its Node tab reads the test API and links back to the test Hub, not the production Node site.
+Its Node tab reads the test API and links to the testing Node website, `https://node-test.ensemblework.com` (`TESTING_NODE`), never the production Node site.
 
 ## 2. Using it
 

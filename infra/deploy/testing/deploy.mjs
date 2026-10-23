@@ -20,6 +20,8 @@ export function validateTestingEnv(env, home) {
     ENSEMBLE_TEST_HOME: home,
   };
   for (const [key, value] of Object.entries(expected)) if (env[key] !== value) throw new Error(`Testing isolation requires ${key}=${value}.`);
+  // Unset is allowed (no Node site); otherwise only the testing Node website may use this API.
+  if (env.ENSEMBLE_NODE_WEB_ORIGIN && env.ENSEMBLE_NODE_WEB_ORIGIN !== "https://node-test.ensemblework.com") throw new Error("Testing isolation requires ENSEMBLE_NODE_WEB_ORIGIN=https://node-test.ensemblework.com (or unset).");
   for (const key of ["ENSEMBLE_WORKSPACE_ROOT", "ENSEMBLE_MPLCONFIGDIR", "ENSEMBLE_REMOTE_STATE_DIR"]) {
     if (!env[key] || !resolve(env[key]).startsWith(`${home}/state/`)) throw new Error(`${key} must stay inside the testing state directory.`);
   }
