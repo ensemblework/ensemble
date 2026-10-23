@@ -18,7 +18,7 @@ import { publishTo } from "./events.js";
 import { chatModelFor } from "./model.js";
 import { canSee, postMessage, roomPeople, roomSettings, visibleWhere } from "./store.js";
 import { cleanReply, NO_REPLY } from "./reply.js";
-import { nodeTools, postAsNode, type Lineage } from "./tools.js";
+import { computerFilesOn, nodeTools, postAsNode, type Lineage } from "./tools.js";
 
 
 export type TurnOutcome = { status: "done" | "failed" | "skipped"; model?: string; credits?: number | null; error?: string };
@@ -73,7 +73,7 @@ async function persona(app: FastifyInstance, node: NodeAgent, room: NodeRoom, me
     `You work in ${ownerName}'s Ensemble workspace with the Ensemble tools (tasks, projects, pages, people, skills, notes). ` +
       "You never run commands yourself: work on a computer is an Ensemble task assigned to an agent on your owner's paired computer (hub_assign_to_agent); your owner approves it, and you report the result when the run ends.",
     "",
-    `Room: “${room.title}” (${room.kind === "dm" ? "a direct chat with your owner" : room.kind === "crew" ? "your owner and their nodes" : "a group with other people"}). Members:`,
+    `Room: “${room.title}” (${room.kind === "dm" ? "a direct chat with your owner" : room.kind === "crew" ? "your owner and their nodes" : "a room with other people and their nodes"}). Members:`,
     ...roster,
     teammates.length ? `Your owner's other nodes (node_delegate reaches them anywhere): ${teammates.map((row) => `@${row.slug} (${row.role})`).join(", ")}.` : "",
     `Your rooms: ${rooms.filter((row) => !row.room.archivedAt).map((row) => `“${row.room.title}” [${row.room.id}] (${row.room.kind})`).join("; ")}.`,
@@ -85,6 +85,8 @@ async function persona(app: FastifyInstance, node: NodeAgent, room: NodeRoom, me
     "- Hand work to your owner's nodes with node_delegate (one self-contained brief each). Report in another room with node_post.",
     "- When another node asked you for something, finish by mentioning it (for example @manager) with the result.",
     "- Use node_remember for lasting facts your owner tells you.",
+    "- Look things up with the Ensemble tools before answering: search the workspace for notes, pages and tasks, read connected apps (Notion, Linear, Zotero and the rest your owner connected), and search the web when the answer is outside Ensemble.",
+    computerFilesOn(node) ? "- In a chat with only your owner you may read files in the folders their paired computer shares (node_computer_files). Never quote a file in a room with other people." : "",
     `- If nothing needs saying, reply exactly ${NO_REPLY}`,
     memories.length ? `\nWhat you remember (newest first):\n${memories.map((row) => `- ${row.content}`).join("\n")}` : "",
   ];
@@ -99,6 +101,12 @@ function chips(calls: AssistantToolCall[]): Array<Record<string, unknown>> {
 
 async function ownerNotice(app: FastifyInstance, node: NodeAgent, roomId: string, text: string, data: Record<string, unknown> = {}): Promise<void> {
   await postMessage(app.prisma, { roomId, userId: node.userId, authorKind: "node", authorNodeId: node.id, kind: "error", body: text, data, visibleTo: [node.userId] });
+}
+
+/** " ↪ #12" when the message replies to another. */
+function replyMark(row: NodeMessage): string {
+  const seq = (row.data as { replyTo?: { seq?: unknown } } | null)?.replyTo?.seq;
+  return typeof seq === "number" ? ` ↪ #${seq}` : "";
 }
 
 export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: TurnDeps): Promise<TurnOutcome> {
@@ -133,7 +141,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
   });
   fresh.reverse();
   const readUpTo = fresh.reduce((max, row) => Math.max(max, row.seq), thread.cursor);
-  const transcriptRows = fresh.filter((row) => row.authorNodeId !== node.id && (row.kind === "text" || row.kind === "status"));
+  const transcriptRows = fresh.filter((row) => row.authorNodeId !== node.id && (row.kind === "text" || row.kind === "status") && !(row.data as { deleted?: unknown } | null)?.deleted);
   if (!transcriptRows.length && !turn.note) {
     await saveCursor(readUpTo);
     return { status: "skipped" };
@@ -151,7 +159,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
   const who = await namesFor(app, room, members, owner);
   const transcript = [
     `Room “${room.title}”. New messages since your last turn:`,
-    ...transcriptRows.map((row) => `[#${row.seq} ${who.label(row)}${row.visibleTo.length ? " · private" : ""}] ${truncateText(row.body, 4000)}`),
+    ...transcriptRows.map((row) => `[#${row.seq} ${who.label(row)}${row.visibleTo.length ? " · private" : ""}${replyMark(row)}] ${truncateText(row.body, 4000)}`),
     turn.note ? `\nUpdate for you: ${turn.note}` : "",
   ].filter(Boolean).join("\n");
 
@@ -186,7 +194,8 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
   }
   const userRow = await prisma.assistantMessage.create({ data: { conversationId, userId: spaceId, role: "user", content: transcript } });
 
-  const audience = privateTo ?? (await roomPeople(prisma, room.id));
+  const people = await roomPeople(prisma, room.id);
+  const audience = privateTo ?? people;
   publishTo(audience, "node.status", { roomId: room.id, nodeId: node.id, state: "thinking" });
   let result: AssistantTurnResult;
   try {
@@ -202,7 +211,7 @@ export async function runNodeTurn(app: FastifyInstance, turn: NodeTurn, deps: Tu
       requestHeaders: internalHeaders(spaceId),
       modules: user.moduleSet,
       agentPersona: await persona(app, node, room, members, ownerName, fromNonOwner),
-      extraTools: nodeTools({ prisma, node, room, lineage, privateTo, dispatch: deps.dispatch }),
+      extraTools: nodeTools({ prisma, node, room, lineage, privateTo, ownerOnly: !fromNonOwner && (Boolean(privateTo) || people.every((id) => id === owner)), redis: app.redis as never, dispatch: deps.dispatch }),
       purpose: "Ensemble Node",
       signal: deps.signal,
       emit(frame) {

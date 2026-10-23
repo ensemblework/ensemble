@@ -1,10 +1,26 @@
 /**
- * Which chat model a node talks with. Default: the included gpt-5-mini (credits shared with the
- * Hub and the CLI), else another included everyday model, else the owner's own medium tier.
+ * Which chat model a node talks with (docs/35 §5). A node may use any model its owner can: the
+ * included models this server offers (credits shared with every Ensemble app), models on the owner's
+ * own API keys, and AI plans (Claude Code, Codex, Cursor, Copilot) on a paired computer, which run the
+ * turn there. Default: the included gpt-5-mini, else another included everyday model, else the
+ * owner's own medium tier.
  */
-import { INCLUDED_PROVIDER, includedModelName, type IncludedModel, type Settings } from "@ensemble/shared-types";
+import type { PrismaClient } from "@prisma/client";
+import {
+  ASSISTANT_TURNS_API,
+  INCLUDED_PROVIDER,
+  SUBSCRIPTION_INFO,
+  includedModelName,
+  isSubscriptionProvider,
+  type IncludedModel,
+  type Settings,
+} from "@ensemble/shared-types";
 import { includedConfig, includedModelOn } from "../included/config.js";
+import { deviceOnline } from "../devices/constants.js";
+import { loadSettings } from "../lib/settings.js";
+import { modelCatalog } from "../lib/model-catalog.js";
 import { ModelChoiceError, providerForModel } from "../lib/model-choice.js";
+import { computerAgents, deviceOwners } from "../subscriptions/turn.js";
 
 export const NODE_DEFAULT_MODEL = "gpt-5-mini";
 
@@ -39,20 +55,21 @@ export function chatModelFor(node: { provider: string | null; model: string | nu
 export type NodeModelOption = {
   provider: string;
   model: string;
-  /** Name and version, as the Hub shows it: "GPT-6 Luna (2026-09-22)". */
+  /** Name and version for included models ("GPT-6 Luna (2026-09-22)"), the agent's label for AI plans. */
   label: string;
+  /** included: paid from Ensemble credits. keys: the owner's own API key. plans: an AI plan on a paired computer. */
+  group: "included" | "keys" | "plans";
   vendor: string;
-  role: IncludedModel["role"];
-  /** A typical turn's credits relative to the catalog's 1× model, as on the Hub's cost badge. */
-  relativeCost: number;
+  role?: IncludedModel["role"];
+  /** Included only: a typical turn's credits relative to the catalog's 1× model, as on the Hub's cost badge. */
+  relativeCost?: number;
+  /** Plans only: the computer the agent was found on. */
+  computer?: string;
   default: boolean;
 };
 
-/**
- * The models the Node web app offers: exactly the included models this server offers
- * (ENSEMBLE_INCLUDED_MODELS), so the Hub, the CLI and Node list the same ones.
- */
-export function nodeModelOptions(): NodeModelOption[] {
+/** The included models this server offers (ENSEMBLE_INCLUDED_MODELS): the same list as the Hub and the CLI. */
+export function includedOptions(): NodeModelOption[] {
   const included = includedConfig();
   if (!included) return [];
   const fallback = included.models.find((row) => row.id === NODE_DEFAULT_MODEL) ?? included.models.find((row) => row.role === "everyday") ?? included.models[0];
@@ -60,9 +77,69 @@ export function nodeModelOptions(): NodeModelOption[] {
     provider: INCLUDED_PROVIDER,
     model: row.id,
     label: includedModelName(row.id),
+    group: "included" as const,
     vendor: row.vendor,
     role: row.role,
     relativeCost: row.relativeCost,
     default: row.id === fallback?.id,
   }));
+}
+
+const MAX_PER_PROVIDER = 40;
+
+/**
+ * Every model the owner can give a node, grouped. Own-key lists come from Ensemble's stored model
+ * catalog (refreshed weekly, as in Settings → Models); AI plans from the paired computers that are
+ * online, signed in and new enough to run assistant turns.
+ */
+export async function nodeModelOptions(prisma: PrismaClient, accountId: string): Promise<{ options: NodeModelOption[]; problems: string[] }> {
+  const options = includedOptions();
+  const problems: string[] = [];
+  const seen = new Set(options.map((row) => `${row.provider}\n${row.model}`));
+  const add = (row: NodeModelOption) => {
+    const key = `${row.provider}\n${row.model}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    options.push(row);
+  };
+
+  try {
+    const settings = await loadSettings(prisma, accountId);
+    const catalog = await modelCatalog(accountId, settings.models.ollamaUrl);
+    for (const entry of catalog.providers) {
+      const provider = String(entry.provider ?? "");
+      if (!provider || provider === INCLUDED_PROVIDER || isSubscriptionProvider(provider) || entry.error) continue;
+      const models = Array.isArray(entry.models) ? entry.models.map(String).slice(0, MAX_PER_PROVIDER) : [];
+      for (const model of models) add({ provider, model, label: model, group: "keys", vendor: provider, default: false });
+    }
+  } catch {
+    problems.push("Your own API keys' model lists could not be read just now.");
+  }
+
+  const devices = await prisma.device.findMany({ where: { userId: { in: deviceOwners(accountId) }, revokedAt: null }, orderBy: { lastSeenAt: "desc" } });
+  for (const device of devices) {
+    if (!deviceOnline(device.lastSeenAt)) continue;
+    const caps = computerAgents(device);
+    if (caps.turns < ASSISTANT_TURNS_API) continue;
+    for (const agent of caps.agents) {
+      if (agent.signedIn === false) continue;
+      for (const model of agent.models.slice(0, MAX_PER_PROVIDER)) {
+        add({ provider: agent.id, model: model.id, label: model.label, group: "plans", vendor: SUBSCRIPTION_INFO[agent.id].label, computer: device.name, default: false });
+      }
+    }
+  }
+  return { options, problems };
+}
+
+/** Why a node may not use this model, or null when it may. */
+export async function modelProblem(prisma: PrismaClient, accountId: string, provider: string | null | undefined, model: string | null | undefined): Promise<string | null> {
+  if (!model) return null;
+  if (!provider || provider === INCLUDED_PROVIDER) {
+    return includedModelOn(model) ? null : `“${model}” is not one of the models included with Ensemble on this server.`;
+  }
+  const { options } = await nodeModelOptions(prisma, accountId);
+  if (options.some((row) => row.provider === provider && row.model === model)) return null;
+  return isSubscriptionProvider(provider)
+    ? `${SUBSCRIPTION_INFO[provider].label} with “${model}” is not available: open Ensemble on a paired computer where it is signed in.`
+    : `“${model}” is not available on your ${provider} key. Check it in Ensemble → Settings → Models.`;
 }

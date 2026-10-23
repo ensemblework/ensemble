@@ -2403,7 +2403,7 @@ model NodeAgent {
   @@map("node_agents")
 }
 
-/// A conversation: dm (a person and one node), crew (a person and their nodes) or group.
+/// A conversation: dm (a person and one node), crew (a person and their nodes) or room (people, each with their nodes).
 model NodeRoom {
   id            String           @id @default(uuid())
   /// Who created it. Deleting that account deletes the room.
@@ -2421,12 +2421,33 @@ model NodeRoom {
   members       NodeRoomMember[]
   messages      NodeMessage[]
   runs          NodeRun[]
+  invites       NodeRoomInvite[]
 
   @@index([userId])
   @@map("node_rooms")
 }
 
 /// A person or a node in a room. `userId` is the account the membership belongs to (the node's owner for a node).
+/// A request to join a room with other people (docs/35 §3). The invitee accepts with 1–3 of their
+/// nodes or declines; a declined request blocks a new one to the same person in that room for 30 days.
+/// At most one pending request per person and room (partial unique index in the migration).
+model NodeRoomInvite {
+  id          String    @id @default(uuid())
+  roomId      String    @map("room_id")
+  inviterId   String    @map("inviter_id")
+  inviteeId   String    @map("invitee_id")
+  /// pending | accepted | declined | cancelled
+  status      String    @default("pending")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  respondedAt DateTime? @map("responded_at")
+  room        NodeRoom  @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@index([roomId, inviteeId])
+  @@index([inviteeId, status])
+  @@index([inviterId])
+  @@map("node_room_invites")
+}
+
 model NodeRoomMember {
   id                    String     @id @default(uuid())
   roomId                String     @map("room_id")

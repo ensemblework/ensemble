@@ -148,10 +148,14 @@ export async function addPerson(prisma: Db, roomId: string, accountId: string, r
   const existing = await prisma.nodeRoomMember.findFirst({ where: { roomId, userId: accountId, nodeId: null } });
   if (existing) return existing;
   const handle = await personHandle(prisma, accountId, await takenHandles(prisma, roomId));
-  return prisma.nodeRoomMember.create({ data: { roomId, userId: accountId, handle, role } });
+  const room = await prisma.nodeRoom.findUnique({ where: { id: roomId }, select: { lastSeq: true } });
+  return prisma.nodeRoomMember.create({ data: { roomId, userId: accountId, handle, role, readSeq: room?.lastSeq ?? 0 } });
 }
 
-/** Adds a node; its handle is its slug, or owner-slug when that is taken in this room. */
+/**
+ * Adds a node; its handle is its slug, or owner-slug when that is taken in this room. It starts reading
+ * at the room's newest message, so joining never hands it what was said before.
+ */
 export async function addNode(prisma: Db, roomId: string, node: NodeAgent, representative = false): Promise<NodeRoomMember> {
   const existing = await prisma.nodeRoomMember.findFirst({ where: { roomId, nodeId: node.id } });
   if (existing) return existing;
@@ -161,7 +165,9 @@ export async function addNode(prisma: Db, roomId: string, node: NodeAgent, repre
     const owner = await prisma.nodeRoomMember.findFirst({ where: { roomId, userId: node.userId, nodeId: null }, select: { handle: true } });
     handle = uniqueHandle(`${owner?.handle ?? "my"}-${node.slug}`, taken);
   }
-  return prisma.nodeRoomMember.create({ data: { roomId, userId: node.userId, nodeId: node.id, handle, representative } });
+  const room = await prisma.nodeRoom.findUnique({ where: { id: roomId }, select: { lastSeq: true } });
+  const from = room?.lastSeq ?? 0;
+  return prisma.nodeRoomMember.create({ data: { roomId, userId: node.userId, nodeId: node.id, handle, representative, seenSeq: from, privateSeenSeq: from, readSeq: from } });
 }
 
 export type NodeInput = {
@@ -175,11 +181,16 @@ export type NodeInput = {
   model?: string | null;
 };
 
-/** Creates a node and its DM room. A slug already used by this account gets a number. */
+/**
+ * Creates a node and its DM room. Names are unique per account (case-insensitive): a name the caller
+ * chose must be checked first (`nodeNameTaken`); a template's default name gets a number. A slug
+ * already used by this account gets a number too.
+ */
 export async function createNode(prisma: PrismaClient, accountId: string, input: NodeInput): Promise<{ node: NodeAgent; room: NodeRoom }> {
   const template = input.templateId ? nodeTemplate(input.templateId) : undefined;
-  const name = (input.name ?? template?.name ?? "Assistant").trim().slice(0, 60) || "Assistant";
-  const existing = await prisma.nodeAgent.findMany({ where: { userId: accountId }, select: { slug: true } });
+  const wanted = (input.name ?? template?.name ?? "Assistant").trim().slice(0, 60) || "Assistant";
+  const existing = await prisma.nodeAgent.findMany({ where: { userId: accountId }, select: { slug: true, name: true } });
+  const name = numbered(wanted, new Set(existing.map((row) => row.name.trim().toLowerCase())), 60);
   const slug = uniqueHandle(input.slug ?? template?.slug ?? handleFrom(name), new Set(existing.map((row) => row.slug)));
   return prisma.$transaction(async (tx) => {
     const node = await tx.nodeAgent.create({
@@ -227,14 +238,49 @@ export function publicNode(node: NodeAgent) {
   return { id: node.id, ownerId: node.userId, slug: node.slug, name: node.name, role: node.role, avatar: node.avatar, status: node.status };
 }
 
-export type RoomSettings = { leadNodeIds: string[]; responsibilities: Record<string, string> };
+export type RoomSettings = { leadNodeIds: string[]; responsibilities: Record<string, string>; pinned: string[] };
 
 export function roomSettings(room: Pick<NodeRoom, "settings">): RoomSettings {
   const raw = (room.settings && typeof room.settings === "object" ? room.settings : {}) as Record<string, unknown>;
-  const leads = Array.isArray(raw.leadNodeIds) ? raw.leadNodeIds.filter((id): id is string => typeof id === "string") : [];
+  const ids = (value: unknown) => (Array.isArray(value) ? value.filter((id): id is string => typeof id === "string") : []);
   const duties = raw.responsibilities && typeof raw.responsibilities === "object" ? (raw.responsibilities as Record<string, unknown>) : {};
   return {
-    leadNodeIds: leads,
+    leadNodeIds: ids(raw.leadNodeIds),
     responsibilities: Object.fromEntries(Object.entries(duties).filter((entry): entry is [string, string] => typeof entry[1] === "string")),
+    pinned: ids(raw.pinned),
   };
+}
+
+/** `base`, or `base 2`, `base 3`… when a name in `taken` (lowercased) already has it. */
+export function numbered(base: string, taken: ReadonlySet<string>, max: number): string {
+  const clean = base.trim().slice(0, max);
+  if (!taken.has(clean.toLowerCase())) return clean;
+  for (let n = 2; ; n += 1) {
+    const candidate = `${clean.slice(0, max - String(n).length - 1)} ${n}`;
+    if (!taken.has(candidate.toLowerCase())) return candidate;
+  }
+}
+
+/** Whether another of this account's nodes already has this name (case-insensitive). */
+export async function nodeNameTaken(prisma: Db, accountId: string, name: string, exceptId?: string): Promise<boolean> {
+  const hit = await prisma.nodeAgent.findFirst({
+    where: { userId: accountId, name: { equals: name.trim(), mode: "insensitive" }, ...(exceptId ? { id: { not: exceptId } } : {}) },
+    select: { id: true },
+  });
+  return Boolean(hit);
+}
+
+/** Crew and room titles are unique among the crews and rooms an account made (case-insensitive). */
+export async function roomTitleTaken(prisma: Db, accountId: string, title: string, exceptId?: string): Promise<boolean> {
+  const hit = await prisma.nodeRoom.findFirst({
+    where: { userId: accountId, kind: { in: ["crew", "room"] }, archivedAt: null, title: { equals: title.trim(), mode: "insensitive" }, ...(exceptId ? { id: { not: exceptId } } : {}) },
+    select: { id: true },
+  });
+  return Boolean(hit);
+}
+
+/** A free crew or room title for this account, from `base`. */
+export async function freeRoomTitle(prisma: Db, accountId: string, base: string): Promise<string> {
+  const rows = await prisma.nodeRoom.findMany({ where: { userId: accountId, kind: { in: ["crew", "room"] }, archivedAt: null }, select: { title: true } });
+  return numbered(base, new Set(rows.map((row) => row.title.trim().toLowerCase())), 80);
 }

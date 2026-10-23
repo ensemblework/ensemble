@@ -42,16 +42,16 @@ test("a DM's node answers its person; a crew's lead answers when nobody is menti
 
 test("a private message wakes only its people's nodes, even when another node is mentioned", () => {
   const nodes = [node("mine", "mira", { representative: true }), node("bens", "ben", { representative: true })];
-  const result = whoSpeaks(message({ visibleTo: ["mira"], mentions: [{ kind: "node", id: "bens" }] }), { kind: "group", leadNodeIds: [] }, nodes, 0);
+  const result = whoSpeaks(message({ visibleTo: ["mira"], mentions: [{ kind: "node", id: "bens" }] }), { kind: "room", leadNodeIds: [] }, nodes, 0);
   assert.deepEqual(result, { reason: "none", nodeIds: [] });
-  assert.deepEqual(whoSpeaks(message({ visibleTo: ["mira"] }), { kind: "group", leadNodeIds: [] }, nodes, 0), { reason: "lead", nodeIds: ["mine"] });
+  assert.deepEqual(whoSpeaks(message({ visibleTo: ["mira"] }), { kind: "room", leadNodeIds: [] }, nodes, 0), { reason: "lead", nodeIds: ["mine"] });
 });
 
 test("in a group, one representative answers; several go to the relevance call", () => {
   const one = [node("mine", "mira", { representative: true }), node("worker", "mira")];
-  assert.deepEqual(whoSpeaks(message(), { kind: "group", leadNodeIds: [] }, one, 0), { reason: "lead", nodeIds: ["mine"] });
+  assert.deepEqual(whoSpeaks(message(), { kind: "room", leadNodeIds: [] }, one, 0), { reason: "lead", nodeIds: ["mine"] });
   const two = [node("mine", "mira", { representative: true }), node("bens", "ben", { representative: true })];
-  assert.deepEqual(whoSpeaks(message(), { kind: "group", leadNodeIds: [] }, two, 0), { reason: "relevance", nodeIds: [], candidates: ["mine", "bens"] });
+  assert.deepEqual(whoSpeaks(message(), { kind: "room", leadNodeIds: [] }, two, 0), { reason: "relevance", nodeIds: [], candidates: ["mine", "bens"] });
   const candidates = [
     { id: "mine", handle: "manager", owner: "Mira", role: "manager", focus: "backend" },
     { id: "bens", handle: "ben-manager", owner: "Ben", role: "manager", focus: "frontend" },

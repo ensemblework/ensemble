@@ -225,7 +225,7 @@ export async function dispatchMessage(app: FastifyInstance, message: NodeMessage
       mentions: (Array.isArray(message.mentions) ? message.mentions : []) as Mention[],
       botDepth: message.botDepth,
     },
-    { kind: room.kind as "dm" | "crew" | "group", leadNodeIds: roomSettings(room).leadNodeIds },
+    { kind: room.kind as "dm" | "crew" | "room", leadNodeIds: roomSettings(room).leadNodeIds },
     nodes,
     botStreak(recent),
   );
