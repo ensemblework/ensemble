@@ -44,12 +44,19 @@ async function deploy() {
     const installEnv = { ...env }; delete installEnv.NODE_ENV;
     run(join(node, "pnpm"), ["install", "--frozen-lockfile", "--reporter=silent"], { env: installEnv, stdio: "inherit" });
   }
+  run("docker", ["compose", "--env-file", join(home, "ensemble.env"), "-f", join(app, "infra/deploy/testing/compose.yml"), "up", "-d"], { stdio: "inherit" });
   run(join(node, "pnpm"), ["db:generate"], { stdio: "inherit" });
   mkdirSync(join(home, "backups"), { recursive: true });
   const dump = openSync(join(home, "backups", `before-${target}-${Date.now()}.dump`), "wx", 0o600);
   try { run("docker", ["exec", "ensemble-test-postgres", "pg_dump", "-U", "ensemble_test", "-Fc", "ensemble_test"], { stdio: ["ignore", dump, "inherit"] }); }
   finally { closeSync(dump); }
   run(join(node, "pnpm"), ["db:migrate"], { stdio: "inherit" });
+  const unitDirectory = join(homedir(), ".config/systemd/user");
+  mkdirSync(unitDirectory, { recursive: true });
+  for (const unit of ["ensemble-test-api.service", "ensemble-test-deploy.service", "ensemble-test-deploy.timer"]) {
+    run("install", ["-m", "0644", join(app, "infra/deploy/testing/systemd", unit), join(unitDirectory, unit)]);
+  }
+  run("systemctl", ["--user", "daemon-reload"]);
   writeFileSync(join(home, "ensemble.commit"), `ENSEMBLE_COMMIT=${target}\n`, { mode: 0o600 });
   run("systemctl", ["--user", "restart", "ensemble-test-api.service"], { stdio: "inherit" });
   for (let attempt = 0; attempt < 45; attempt++) {

@@ -25,6 +25,7 @@ services:
     image: cloudflare/cloudflared:latest
     container_name: ensemble-test-cloudflared
     network_mode: host
+    user: "${TEST_HOST_UID:?Set TEST_HOST_UID}:${TEST_HOST_GID:?Set TEST_HOST_GID}"
     command: ["tunnel", "--no-autoupdate", "--config", "/etc/cloudflared/config.yml", "run"]
     volumes:
       - ${ENSEMBLE_TEST_HOME:?Set ENSEMBLE_TEST_HOME}/cloudflared:/etc/cloudflared:ro

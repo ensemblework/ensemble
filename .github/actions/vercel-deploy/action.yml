@@ -26,7 +26,12 @@ runs:
         set -euo pipefail
         # Root Directory, build command and NEXT_PUBLIC_* values come from the Vercel project.
         npx --yes vercel@latest pull --yes --environment=production --token="$VERCEL_TOKEN"
-        npx --yes vercel@latest build --prod --token="$VERCEL_TOKEN"
+        # The Google Fonts fetch can fail transiently, as in the desktop export.
+        if ! npx --yes vercel@latest build --prod --token="$VERCEL_TOKEN"; then
+          echo "::warning::Vercel build failed once; retrying in 20 seconds."
+          sleep 20
+          npx --yes vercel@latest build --prod --token="$VERCEL_TOKEN"
+        fi
         # Upload only the built output, without git metadata. On the Hobby plan Vercel
         # refuses a deploy whose commit author is not the account owner (a merged PR).
         rm -rf .git
