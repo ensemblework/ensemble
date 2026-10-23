@@ -661,6 +661,15 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
       await tx.nodeRoomMember.deleteMany({ where: member.nodeId ? { id: member.id } : { roomId: room.id, userId: member.userId } });
       const next = theirs.find((row) => row.id !== member.id);
       if (member.representative && next) await tx.nodeRoomMember.update({ where: { id: next.id }, data: { representative: true } });
+      // A crew whose lead left is led by its manager, else its first remaining node.
+      const settings = roomSettings(room);
+      const gone = new Set(member.nodeId ? [member.nodeId] : theirs.map((row) => row.nodeId!));
+      if (settings.leadNodeIds.some((id) => gone.has(id))) {
+        const remaining = await tx.nodeRoomMember.findMany({ where: { roomId: room.id, nodeId: { not: null } }, include: { node: true }, orderBy: { joinedAt: "asc" } });
+        const kept = settings.leadNodeIds.filter((id) => !gone.has(id));
+        const lead = kept[0] ?? remaining.find((row) => row.node?.role === "manager")?.nodeId ?? remaining[0]?.nodeId;
+        await tx.nodeRoom.update({ where: { id: room.id }, data: { settings: { ...settings, leadNodeIds: lead ? [lead] : [] } as Prisma.InputJsonValue } });
+      }
     });
     if (member.nodeId) await stopTurns(app, [member.nodeId], room.id);
     else await stopTurns(app, theirs.map((row) => row.nodeId!), room.id);
@@ -731,6 +740,24 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     });
     if (!duplicate) inBackground(app, () => dispatchMessage(app, message));
     return reply.code(duplicate ? 200 : 201).send({ message: wireMessage(message), duplicate });
+  });
+
+  app.post("/api/node/rooms/:id/read", async (request, reply) => {
+    const accountId = nodeAccount(request);
+    const room = await roomFor(prisma, accountId, (request.params as { id: string }).id);
+    const body = z.object({ seq: z.number().int().min(0) }).strict().parse(request.body);
+    await prisma.nodeRoomMember.updateMany({ where: { roomId: room.id, userId: accountId, nodeId: null, readSeq: { lt: body.seq } }, data: { readSeq: Math.min(body.seq, room.lastSeq) } });
+    return reply.code(204).send();
+  });
+
+  app.post("/api/node/rooms/:id/stop", async (request) => {
+    const accountId = nodeAccount(request);
+    const room = await roomFor(prisma, accountId, (request.params as { id: string }).id);
+    const mine = await prisma.nodeRoomMember.findMany({ where: { roomId: room.id, userId: accountId, nodeId: { not: null } } });
+    for (const member of mine) {
+      for (const conversationId of [member.conversationId, member.privateConversationId]) if (conversationId) abortAssistantTurn(conversationId);
+    }
+    return { stopped: await stopTurns(app, mine.map((row) => row.nodeId!), room.id) };
   });
 
   /** Deletes one of my own messages: its text goes, a "deleted" line stays so replies still make sense. */

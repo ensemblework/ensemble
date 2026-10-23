@@ -343,6 +343,22 @@ test("node and crew names are unique per account; crews are made from the nodes 
   assert.equal((await lea.inject({ method: "PATCH", url: `/api/node/rooms/${other.id}`, payload: { title: "DESK" } })).statusCode, 409);
   assert.equal((await lea.inject({ method: "POST", url: `/api/node/rooms/${other.id}/nodes`, payload: { nodeId: again.id } })).statusCode, 201, "a crew grows with any of the person's nodes");
   assert.equal((await lea.inject({ method: "PATCH", url: `/api/node/nodes/${again.id}`, payload: { model: "not-a-model" } })).statusCode, 400);
+
+  const desk = json(crew).room as { id: string; leadNodeIds: string[]; members: any[] };
+  const leadMember = desk.members.find((row) => row.kind === "node" && row.node.id === desk.leadNodeIds[0])!;
+  assert.equal((await lea.inject({ method: "DELETE", url: `/api/node/rooms/${desk.id}/members/${leadMember.id}` })).statusCode, 204);
+  const after = json(await lea.inject({ method: "GET", url: `/api/node/rooms/${desk.id}` })).room;
+  assert.deepEqual(after.leadNodeIds, after.members.filter((row: any) => row.kind === "node").map((row: any) => row.node.id), "a crew whose lead left is led by a node still in it");
+
+  script = () => ({ text: "noted" });
+  await say(lea, desk.id, "hello crew");
+  const unread = async () => json(await lea.inject({ method: "GET", url: "/api/node/rooms" })).rooms.find((row: any) => row.id === desk.id);
+  const before = await unread();
+  assert.ok(before.unread > 0, "a node's answer is unread");
+  assert.equal((await lea.inject({ method: "POST", url: `/api/node/rooms/${desk.id}/read`, payload: { seq: before.lastSeq } })).statusCode, 204);
+  assert.equal((await unread()).unread, 0, "the read marker is saved");
+  const stopped = await lea.inject({ method: "POST", url: `/api/node/rooms/${desk.id}/stop` });
+  assert.equal(stopped.statusCode, 200, stopped.body);
 });
 
 test("search, the people-only view, pins, reactions, replies and deleting stay within what each person may read", async () => {
