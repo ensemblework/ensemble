@@ -1,0 +1,11 @@
+[Unit]
+Description=Deploy reviewed web testing commits
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/ensemble-test/app
+EnvironmentFile=%h/ensemble-test/ensemble.env
+Environment=PATH=%h/ensemble-host/node/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/flock --nonblock %t/ensemble-test-deploy.lock %h/ensemble-host/node/bin/node %h/ensemble-test/app/infra/deploy/testing/deploy.mjs
+TimeoutStartSec=15min
+NoNewPrivileges=true

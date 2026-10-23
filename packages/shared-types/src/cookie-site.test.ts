@@ -1,6 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { crossOriginCookieProblem, domainCoversHost, normalizeCookieDomain, sharedCookieParent } from "./cookie-site.js";
+import { crossOriginCookieProblem, domainCoversHost, ensembleCookieName, normalizeCookieDomain, sharedCookieParent } from "./cookie-site.js";
+
+test("a deployment namespace separates session, space and OAuth cookies without changing defaults", () => {
+  for (const kind of ["session", "space", "login_flow", "login_return"] as const) {
+    assert.equal(ensembleCookieName(kind), `ensemble_${kind}`);
+    assert.equal(ensembleCookieName(kind, "testing"), `ensemble_testing_${kind}`);
+  }
+  assert.throws(() => ensembleCookieName("session", "bad; cookie=value"), /COOKIE_NAMESPACE/);
+});
 
 test("a parent domain covers both hosts and a public suffix does not", () => {
   assert.equal(normalizeCookieDomain(".Example.com"), ".example.com");

@@ -11,11 +11,12 @@ import { sessionCookieHeader, sessionCookieSecure } from "../lib/cookie.js";
 import { nodeWebOrigin } from "../lib/node-origin.js";
 import { currentSignupPolicy, INVITE_ONLY, signupPermitted } from "../lib/signup.js";
 import { appendLedger } from "../lib/ledger.js";
+import { ensembleCookieName } from "@ensemble/shared-types/cookie-site";
 
-const FLOW_COOKIE = "ensemble_login_flow";
+const FLOW_COOKIE = ensembleCookieName("login_flow", process.env.ENSEMBLE_COOKIE_NAMESPACE);
 const FLOW_SECONDS = 600;
 /** Where a provider sign-in returns: absent for the Hub, "node" for Ensemble Node's site (docs/35). */
-const RETURN_COOKIE = "ensemble_login_return";
+const RETURN_COOKIE = ensembleCookieName("login_return", process.env.ENSEMBLE_COOKIE_NAMESPACE);
 
 /** Ensemble Node's site, when this server serves it. A named return, never a URL from the request. */
 function nodeOrigin(): string | null {

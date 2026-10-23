@@ -84,7 +84,7 @@ apps/quick-capture      Tauri tray app with a global shortcut
 apps/desktop            Tauri desktop app with a local API sidecar
 packages/               brand, shared-types, block-diagrams, ide-theme, prompts
 packaging/              CLI release metadata: Homebrew, Scoop, winget, nfpm, AUR
-infra/                  local docker-compose; deploy/ (VM) and deploy/home/ (home server + monitoring)
+infra/                  local docker-compose; deploy/ (VM), deploy/home/ (production), deploy/testing/ (isolated web testing)
 design/                 generated brand assets (pnpm brand:build)
 docs/                   current guides
 ```
@@ -93,7 +93,9 @@ More: [docs/17_REPOSITORY_STRUCTURE.md](docs/17_REPOSITORY_STRUCTURE.md).
 
 ## CI, deploys and releases
 
-Every pull request runs `.github/workflows/ci.yml` (typecheck, TypeScript and Python tests with hub-api against real Postgres and Redis, Hub and landing builds) and `desktop.yml`. After CI passes on `main`, `deploy.yml` moves the `production` branch; the API server (`infra/deploy/home`) pulls it, then the Hub and landing page are published on Vercel. Details: [docs/01 §8](docs/01_TECH_STACK_AND_ENVIRONMENT.md#8-ci-and-deploys).
+Web iteration uses `testing` and `test.ensemblework.com`, with a separate API, database, sessions and file storage. `test-web.yml` runs fast web/API checks and publishes only the testing web app. PRs targeting `testing` skip production and desktop CI. The workflow and agent guidance are in [docs/36](docs/36_WEB_TESTING.md).
+
+Other pull requests, including promotion from `testing` to `main`, run `.github/workflows/ci.yml` (typecheck, TypeScript and Python tests with hub-api against real Postgres and Redis, Hub and landing builds) and `desktop.yml`. After CI passes on `main`, `deploy.yml` moves the `production` branch; the API server (`infra/deploy/home`) pulls it, then the Hub and landing page are published on Vercel. Details: [docs/01 §8](docs/01_TECH_STACK_AND_ENVIRONMENT.md#8-ci-and-deploys).
 
 `release.json` is the version for web, API, desktop, quick capture and CLI: change it, run `pnpm version:sync`, commit the derived files together (`pnpm version:check` runs before typecheck and builds). A `cli-v<version>` tag runs `cli-release.yml` ([docs/26 §7](docs/26_CLI.md#7-releases)); a `desktop-v<version>` tag publishes the desktop installers ([docs/DESKTOP.md](docs/DESKTOP.md)). Brand assets come from `packages/brand` through `pnpm brand:build` / `pnpm brand:check` ([docs/BRAND.md](docs/BRAND.md)).
 

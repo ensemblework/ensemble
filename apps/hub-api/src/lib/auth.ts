@@ -11,7 +11,7 @@ import { promisify } from "node:util";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { FULL_MODULE_SET } from "@ensemble/shared-types";
 import { env } from "../config.js";
-import { normalizeCookieDomain } from "@ensemble/shared-types/cookie-site";
+import { ensembleCookieName, normalizeCookieDomain } from "@ensemble/shared-types/cookie-site";
 import { knownTokenScope } from "../bridge/auth.js";
 import { sessionCookieHeader, sessionCookieSecure } from "./cookie.js";
 import { prisma } from "./prisma.js";
@@ -24,7 +24,7 @@ import { displayName } from "../sharing/store.js";
 
 const scryptAsync = promisify(scrypt) as (password: string, salt: Buffer, length: number) => Promise<Buffer>;
 
-export const SESSION_COOKIE = "ensemble_session";
+export const SESSION_COOKIE = ensembleCookieName("session", process.env.ENSEMBLE_COOKIE_NAMESPACE);
 const SESSION_DAYS = 30;
 
 export const sha256 = (value: string): string => createHash("sha256").update(value).digest("hex");

@@ -43,6 +43,8 @@ A space is a `users` row ([28](28_ENSEMBLE_SPACES.md)) and every record is scope
 
 `identify()` and `inSpace()` in `apps/hub-api/src/lib/auth.ts` resolve this; `openableSpace()` in `spaces/store.ts` checks the cookie. Tokens, CLI keys and service calls never read the cookie or these headers.
 
+`ENSEMBLE_COOKIE_NAMESPACE` gives a deployment its own session, active-space and OAuth cookie names. Set it identically on API and web when a testing deployment shares the production parent domain; the default names above apply when it is unset ([36](36_WEB_TESTING.md)).
+
 Each request runs in an `AsyncLocalStorage` scope (`sharing/context.ts`, set by `scopeHook` in `gate.ts`):
 
 - `keysFor(userId)`: whose model keys, settings, pacing, activity and metrics apply; for a guest, their own account.

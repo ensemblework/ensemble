@@ -2,6 +2,7 @@ name: desktop
 
 on:
   pull_request:
+    branches-ignore: [testing]
   workflow_dispatch:
     inputs:
       target:

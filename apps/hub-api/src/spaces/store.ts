@@ -14,12 +14,12 @@ import { randomUUID } from "node:crypto";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { ONBOARDING_TOUR_KEY, Settings } from "@ensemble/shared-types";
-import { normalizeCookieDomain } from "@ensemble/shared-types/cookie-site";
+import { ensembleCookieName, normalizeCookieDomain } from "@ensemble/shared-types/cookie-site";
 import { sessionCookieHeader, sessionCookieSecure } from "../lib/cookie.js";
 
 type Db = PrismaClient | Prisma.TransactionClient;
 
-export const SPACE_COOKIE = "ensemble_space";
+export const SPACE_COOKIE = ensembleCookieName("space", process.env.ENSEMBLE_COOKIE_NAMESPACE);
 export const MAX_SPACES = 12;
 const COOKIE_DAYS = 400;
 

@@ -149,7 +149,7 @@ apps/quick-capture/           src-tauri/ + ui/
 | Database schema | A new migration in `apps/hub-api/prisma/migrations/` |
 | Desktop shell | `apps/desktop/` |
 | Brand assets | `packages/brand`, then `pnpm brand:build` ([BRAND](BRAND.md)) |
-| Local infrastructure, home-server or VM deploy | `infra/` |
+| Local infrastructure, home-server or VM deploy; isolated web testing | `infra/`, `infra/deploy/testing/` ([36](36_WEB_TESTING.md)) |
 | CI, deploys, CLI releases | `.github/workflows/` |
 | Documentation | `docs/`, in the same change ([AGENTS.md](../AGENTS.md)) |
 

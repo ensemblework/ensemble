@@ -1,0 +1,10 @@
+[Unit]
+Description=Check for reviewed web testing commits
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=30s
+Unit=ensemble-test-deploy.service
+
+[Install]
+WantedBy=timers.target

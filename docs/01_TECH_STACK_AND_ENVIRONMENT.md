@@ -51,7 +51,7 @@ pnpm dev
 
 | Group | Examples |
 | --- | --- |
-| Database and origins | `DATABASE_URL`, `REDIS_URL`, `HUB_API_HOST`, `HUB_API_PORT`, `HUB_WEB_ORIGIN`, `HUB_API_PUBLIC_URL`, `NEXT_PUBLIC_HUB_API`, `ENSEMBLE_COOKIE_DOMAIN`, `ENSEMBLE_NODE_WEB_ORIGIN` (the Ensemble Node website, [35](35_ENSEMBLE_NODE.md)) |
+| Database and origins | `DATABASE_URL`, `REDIS_URL`, `HUB_API_HOST`, `HUB_API_PORT`, `HUB_WEB_ORIGIN`, `HUB_API_PUBLIC_URL`, `NEXT_PUBLIC_HUB_API`, `ENSEMBLE_COOKIE_DOMAIN`, `ENSEMBLE_COOKIE_NAMESPACE` (identical on API/web; unset for default cookies), `ENSEMBLE_NODE_WEB_ORIGIN` (the Ensemble Node website, [35](35_ENSEMBLE_NODE.md)) |
 | Ensemble Node | `ENSEMBLE_NODE` (`off` stops node turns and run reports), `ENSEMBLE_NODE_PARALLEL` (node turns at once per API process, default 4) ([35](35_ENSEMBLE_NODE.md)) |
 | Signup and identity | `ENSEMBLE_SIGNUP_MODE`, `ENSEMBLE_SIGNUP_ALLOWLIST`, `AUTH_GOOGLE_*`, `AUTH_GITHUB_*`, `AUTH_MICROSOFT_*`, `EMAIL_PROVIDER` (Resend), Turnstile keys |
 | Host restrictions | `ENSEMBLE_OPERATOR_EMAILS`, `ENSEMBLE_SERVER_RUNNER`, `ENSEMBLE_TERMINAL`; dev bypass and `ENSEMBLE_DEV_TOOLS` for isolated local work only |
@@ -113,7 +113,7 @@ The `ensemble` catalog offers the enabled Azure deployments; each must exist and
 
 Workflow files are authoritative for pinned action and runtime versions.
 
-**`.github/workflows/ci.yml`** runs on every pull request and every push to `main`:
+**`.github/workflows/ci.yml`** runs on pull requests except those targeting `testing`, and every push to `main`:
 
 | Job | What it runs |
 |---|---|
@@ -128,10 +128,12 @@ Workflow files are authoritative for pinned action and runtime versions.
 
 1. **Promote.** If the commit is still the tip of `main`, the workflow fast-forwards the `production` branch to it (never a force push).
 2. **API.** The API server pulls; nothing connects in. `autodeploy.sh`, run every minute by `ensemble-autodeploy.timer`, fetches `origin/$ENSEMBLE_DEPLOY_BRANCH` and runs `update.sh` when it moved. `update.sh` writes `ENSEMBLE_COMMIT=<sha>` to the commit file, which hub-api reports as `commit` on `GET /health`. The workflow waits up to 25 minutes for `/health` to report the commit and `/health/ready` to return 200. A commit whose update fails is recorded in `autodeploy.failed` and not retried until a newer commit arrives.
-3. **Hub and landing page.** `.github/actions/vercel-deploy` runs `vercel pull`, `vercel build --prod` and `vercel deploy --prebuilt --prod` for each Vercel project, after deleting `.git` (Vercel's Hobby plan refuses a deploy whose commit author is not the account owner). The Hub waits for the API step; the landing page does not.
+3. **Hub and landing page.** `.github/actions/vercel-deploy` runs `vercel pull`, `vercel build --prod` and `vercel deploy --prebuilt --prod` for each Vercel project, after deleting `.git` (Vercel's Hobby plan refuses a deploy whose commit author is not the account owner). The build retries once after 20 seconds for transient font-fetch failures; a second failure stops the publish. The Hub waits for the API step; the landing page does not.
 4. **Search engines.** After the landing page publishes, `apps/landing/scripts/indexnow.mjs` submits the live `sitemap.xml` to IndexNow (Bing, and through it DuckDuckGo, Yahoo and Ecosia; also Yandex, Seznam and Naver). The key is public: `apps/landing/public/<key>.txt` and the script's `KEY` constant must match. The step is `continue-on-error`. Google reads the sitemap through Search Console instead.
 
 Repository secrets: `ENSEMBLE_API_URL`, `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID_APP`, `VERCEL_PROJECT_ID_LANDING`. The Vercel projects hold build settings (root `apps/hub-web` or `apps/landing`) and the Hub's `NEXT_PUBLIC_*` values. Server secrets stay in the server's env file and never go to GitHub or Vercel.
+
+**Web testing** uses `test-web.yml` on pushes and PRs to `testing`: shared/API/web typechecks, focused UI regressions, namespaced-auth and in-memory API smoke tests, deployment guards and route inventory. Successful pushes advance `testing-live`, wait for the isolated API's exact commit and readiness, then deploy the separate test Vercel project. `TEST_DEPLOY_ENABLED`, `ENSEMBLE_TEST_API_URL` and `VERCEL_PROJECT_ID_TEST` control it; the production pipelines and native/CLI releases are unchanged. `infra/deploy/testing` owns the isolated backend and refuses production resources. Workflow, purpose and promotion: [36](36_WEB_TESTING.md).
 
 ### Home server (`infra/deploy/home`) — serves `api.ensemblework.com`
 
@@ -149,7 +151,7 @@ An alternative install of the same pull loop on Ubuntu 24.04 with root: `setup.s
 
 ### Other workflows
 
-- **`.github/workflows/desktop.yml`** builds desktop installers and runs macOS sandbox tests on every pull request ([DESKTOP](DESKTOP.md)). Its *Export the desktop UI* step retries once, because the Google Fonts download sometimes fails on hosted runners.
+- **`.github/workflows/desktop.yml`** builds desktop installers and runs macOS sandbox tests on pull requests except those targeting `testing` ([DESKTOP](DESKTOP.md)). Its *Export the desktop UI* step retries once, because the Google Fonts download sometimes fails on hosted runners.
 - **`.github/workflows/cli-release.yml`** runs on a `cli-v<version>` tag (matching `apps/cli/package.json`) or by hand as a dry run. It builds and smoke-tests the CLI on macOS (arm64, Intel), Linux (x64, arm64) and Windows, builds `.deb`/`.rpm`, publishes a GitHub release with `--latest=false`, and pushes the Homebrew formula and Scoop manifest. Secrets: `HOMEBREW_TAP_DEPLOY_KEY`, `SCOOP_BUCKET_DEPLOY_KEY` (write deploy keys on `ensemblework/homebrew-tap` and `ensemblework/scoop-bucket`), optional `WINGET_TOKEN` and `NPM_TOKEN`; a job whose secret is missing is skipped with a notice ([26 §7](26_CLI.md#7-releases)).
 
 ## 9. API regression tests

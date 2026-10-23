@@ -29,6 +29,13 @@ const PUBLIC_SUFFIXES = new Set([
   "supabase.co",
 ]);
 
+/** Deployments sharing a parent domain still need separate authentication cookies. */
+export function ensembleCookieName(kind: "session" | "space" | "login_flow" | "login_return", namespace?: string): string {
+  const value = namespace?.trim() ?? "";
+  if (value && !/^[a-z][a-z0-9_]{0,31}$/.test(value)) throw new Error("ENSEMBLE_COOKIE_NAMESPACE must be 1–32 lowercase letters, digits or underscores, starting with a letter.");
+  return `ensemble_${value ? `${value}_` : ""}${kind}`;
+}
+
 export function hostOf(origin: string): string | null {
   try {
     const url = new URL(origin);

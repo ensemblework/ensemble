@@ -6,4 +6,5 @@ test("middleware clears a parent-domain session cookie on both hosts", () => {
   assert.deepEqual(sessionCookieDelete(".example.com"), { name: "ensemble_session", path: "/", domain: ".example.com" });
   assert.deepEqual(sessionCookieDelete(undefined), { name: "ensemble_session", path: "/" });
   assert.equal(sessionCookieDelete(".vercel.app").domain, undefined);
+  assert.deepEqual(sessionCookieDelete(".example.com", "testing"), { name: "ensemble_testing_session", path: "/", domain: ".example.com" });
 });
