@@ -15,7 +15,10 @@ The live test Hub and its separate `ensemble-test` CLI are the team's feedback l
 | Signup | Open, with the normal hosted verification, abuse limits and execution restrictions | Production signup policy |
 | Model runtime | In-process API adapters (`ENSEMBLE_INPROCESS_RUNTIME=1`) | Configured production runtime |
 | CLI | Separate `ensemble-test`, test backend only; `cli-testing-latest` prerelease | `ensemble`, production account and desktop-shared runtime; stable `cli-v*` releases |
-| Native app, landing page, Ensemble Node website | No testing releases or replica deployments | Existing release/deploy pipelines |
+| Ensemble Node website | `https://node-test.ensemblework.com`, Vercel project `ensemble-node-test`, from `ensemblework/ensemble-node` branch `testing`; marked Testing, not indexed | `https://node.ensemblework.com`, Vercel project `ensemble-node`, from its `main` |
+| Native app, landing page | No testing releases or replica deployments | Existing release/deploy pipelines |
+
+Each Node website talks only to its own API: the testing API's `ENSEMBLE_NODE_WEB_ORIGIN` names `node-test.`, production's names `node.`, and the Node build refuses settings that name the other environment's API or Hub. The Node repository has its own fast `test-web.yml` and promotion (its `docs/04`). Node's backend is this API's `node` module, so promote Ensemble before Node.
 
 Testing copies released **code**, not production accounts, sessions, pages, connector credentials or uploaded files. Provider/email/Turnstile services are configured privately; OAuth and connector clients require callback URLs belonging to the testing API. Tests do not promote database contents back to production.
 
@@ -60,7 +63,7 @@ Bring the released `main` back into `testing` after promotion so the next test c
 
 `.github/workflows/test-web.yml` owns fast checks and test deployment. Deployment is enabled by `TEST_DEPLOY_ENABLED=true`; it uses `ENSEMBLE_TEST_API_URL`, `VERCEL_PROJECT_ID_TEST` and the existing Vercel account credentials. No server secrets are uploaded to Vercel or GitHub.
 
-`infra/deploy/testing/compose.yml` owns distinct Postgres/Redis containers and volume plus the test tunnel; `TEST_HOST_UID`/`TEST_HOST_GID` let the tunnel read its owner's private credential files. The `ensemble-test-api` user unit runs the API; `ensemble-test-deploy.timer` checks the reviewed deployment pointer every 30 seconds. `deploy.mjs` refuses production database/Redis endpoints, a missing cookie namespace, the production file container, shared state paths or enabled server execution. It fast-forwards, installs when dependency manifests changed, refreshes only the testing containers and user units, generates Prisma, dumps the test database before migrations, restarts only the test API and records success after readiness.
+`infra/deploy/testing/compose.yml` owns distinct Postgres/Redis containers and volume plus the test tunnel; `TEST_HOST_UID`/`TEST_HOST_GID` let the tunnel read its owner's private credential files. The `ensemble-test-api` user unit runs the API; `ensemble-test-deploy.timer` checks the reviewed deployment pointer every 30 seconds. `deploy.mjs` refuses production database/Redis endpoints, a missing cookie namespace, the production file container, shared state paths, enabled server execution or a Node website other than `node-test.ensemblework.com`. It fast-forwards, installs when dependency manifests changed, refreshes only the testing containers and user units, generates Prisma, dumps the test database before migrations, restarts only the test API and records success after readiness.
 
 `ensembleCookieName` in `packages/shared-types/src/cookie-site.ts` applies the optional namespace consistently to session, active-space and OAuth-flow cookies. Middleware, server rendering and the API use the same names, so testing does not replace or clear production's cookies.
 

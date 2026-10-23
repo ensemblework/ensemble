@@ -58,7 +58,7 @@ await removeEditor("vscode", { platform: "linux", home: temp, env: {} });
 servers = JSON.parse(await readFile(vscode, "utf8")).servers;
 assert.equal(servers.ensemble.command, "production");
 assert.equal(servers["ensemble-test"], undefined);
-assert.equal(nodeWebUrl("https://app.ensemblework.com", "https://node.ensemblework.com"), "https://test.ensemblework.com");
+assert.equal(nodeWebUrl("https://app.ensemblework.com", "https://node.ensemblework.com"), "https://node-test.ensemblework.com");
 assert.ok(compareVersions("0.4.9-testing.2", "0.4.9-testing.1") > 0);
 assert.notEqual(detectInstallMethod({ bundlePath: "/opt/homebrew/Cellar/ensemble/0.4.9/libexec/lib/ensemble.mjs", platform: "darwin" }), "homebrew");
 const notice = await dailyUpdateNotice({ paths, env: {}, currentVersion: "0.4.9-testing.1", fetchImpl: async (url) => {

@@ -2,7 +2,7 @@
 
 Ensemble Node gives each person persistent AI teammates, called **nodes**. People talk to them in a direct chat (DM), in a **crew** (one person and the nodes they pick) and in **rooms** with other people, each bringing their own nodes. A node acts in its owner's Ensemble workspace with the same tools as the assistant. Real work on a computer runs as an Ensemble job on the owner's paired computer, through the Ensemble CLI or the signed-in desktop app. Nothing runs on the server.
 
-The website lives in its own repository (`ensemblework/ensemble-node`, served from Vercel at `node.ensemblework.com`). Everything else is the `node` module of hub-api, described here: one API, one database, one sign-in, one credit allowance.
+The website lives in its own repository (`ensemblework/ensemble-node`, served from Vercel at `node.ensemblework.com`, and at `node-test.ensemblework.com` for the testing environment, [36](36_WEB_TESTING.md)). Everything else is the `node` module of hub-api, described here: one API, one database, one sign-in, one credit allowance.
 
 ## 1. Pieces
 
