@@ -7,6 +7,7 @@ import { resolveHubApi } from "./hub-origin";
 import type { ApplyFailure } from "./assistant-apply";
 import type { CollabBatch, CollabJoin, CollabSend } from "@/components/editor/collab";
 import { MODULE_DENIED } from "@ensemble/shared-types/modules";
+import type { BoardPage, CreatePageBoard, DirectoryPage, PageBoardRecord, PatchPageBoard } from "@ensemble/shared-types";
 
 /** Direct hub-api origin. SSE uses this so the stream is not buffered by the Next rewrite. */
 export const HUB_API = resolveHubApi({
@@ -1206,6 +1207,17 @@ export const api = bindClient({
 
   // tasks & board
   tasks: () => get<{ tasks: TaskRecord[] }>("/api/tasks"),
+  boardTasks: () => get<{ tasks: TaskRecord[] }>("/api/tasks?board=default"),
+  boards: () => get<{ boards: PageBoardRecord[] }>("/api/boards"),
+  board: (id: string) => get<{ board: PageBoardRecord; pages: BoardPage[] }>(`/api/boards/${id}`),
+  createBoard: (data: CreatePageBoard) => post<{ board: PageBoardRecord }>("/api/boards", data),
+  patchBoard: (id: string, data: PatchPageBoard) => patch<{ board: PageBoardRecord }>(`/api/boards/${id}`, data),
+  deleteBoard: (id: string) => del<void>(`/api/boards/${id}`),
+  createBoardPage: (id: string, columnId: string) => post<{ page: BoardPage }>(`/api/boards/${id}/pages`, { columnId }),
+  assignPageBoard: (kind: "page" | "task", id: string, data: { boardId: string | null; columnId: string | null; beforeId?: string | null; afterId?: string | null }) =>
+    put<{ page: BoardPage }>(`/api/pages/${kind}/${id}/board`, data),
+  pageDirectory: () => get<{ pages: DirectoryPage[] }>("/api/pages?all=true"),
+  searchPageDirectory: (q: string) => get<{ pages: DirectoryPage[] }>(`/api/pages${qs({ all: "true", q })}`),
   task: (id: string) => get<{ task: TaskRecord }>(`/api/tasks/${id}`),
   createTask: (data: Partial<TaskRecord> & { title: string }) =>
     post<{ task: TaskRecord; undoEntryId?: string | null }>("/api/tasks", { sourceKind: "manual", ...data }),

@@ -6,6 +6,7 @@ export * from "./included.js";
 export * from "./personas.js";
 export * from "./mentions.js";
 export * from "./page-markdown.js";
+export * from "./page-boards.js";
 export * from "./connectors.js";
 export * from "./connector-guides.js";
 export * from "./app-items.js";

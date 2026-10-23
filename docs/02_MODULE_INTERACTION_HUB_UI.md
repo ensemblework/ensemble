@@ -42,7 +42,15 @@ Task `todayFocus` (`auto`, `keep` or `hidden`) controls whether a task appears i
 
 Board supports task creation, priority, ordering, filters/grouping, lifecycle actions and assignment, with a compact bounded search field in the toolbar (`components/board/board.tsx`). New task creates an editable document where owner, due date, project, repository, people and skills are set. Changing the owner alone does not start an agent: Run with agent opens the assignment flow.
 
+The Ensemble Kanban collapses independently of Board overview. Its columns are Proposed, To do, In progress and Done. Blocked and awaiting-approval tasks appear in In progress while retaining their task status and approval controls. Flow, WIP counts and the In progress overview filter use the same grouping; the attention tile can still isolate blocked and awaiting-approval work. `/api/tasks?board=default` excludes task pages assigned to custom boards; `/api/tasks` remains the complete task list.
+
+Automatic moves to Done play once per observed completion, scoped to the open space or share for the browser tab. Returning from another screen can show a new completion, but opening a peek, the assistant, or resizing the board does not replay one. Animation clones are excluded from card measurements; system motion uses a viewport layer below active peeks, menus and the assistant (`components/motion/board-drag/board-drag-dnd-kit.tsx`).
+
 A task peek uses the same document as `/tasks/[id]`, and the floating assistant receives its task ID. The overview strip is saved in `desk.board.insights`: at most **four fixed-size tiles** (`MAX_INSIGHTS`), reorder/collapse and a WIP cap (1–50). It is not a resizable widget canvas.
+
+**Custom boards** appear as cards below the Ensemble board (`components/board/custom-boards.tsx`). New board sets a name, description and 1–20 named, colored columns. Each opens at `/board?board=<id>` with its own Kanban, page search, add-existing-page picker and overview. Cards are real standalone or task pages, not copies. New page in a column creates a standalone page; drag handles support pointer, touch and keyboard column moves and ordering (`custom-board.tsx`).
+
+Board settings rename/reorder columns and remove empty columns. A column with pages, including pages in Trash, cannot be removed. Deleting a board requires confirmation and keeps its pages: notes become independent; task pages return to the Ensemble board. Board settings use revision checks to reject conflicting saves. The board's selected overview tiles are saved on `PageBoard`: page count, a column-colored donut, column breakdown and recently edited pages (`board-widgets.tsx`). They use only that board's pages and actual column names, independent of Ensemble's task status metrics.
 
 ### 3.3 Needs Me (Approval Queue)
 
@@ -125,6 +133,7 @@ React Query caches scoped API responses. SSE events invalidate/refetch queries a
 | --- | --- |
 | Shell and Today | `/api/shell` (account, open space, counts, modules, `hostCode`: whether this account may read this server's own Code and workspace folders), `/api/today/home`; `routes/views.ts` |
 | Tasks and board | `/api/tasks`, `/api/tasks/:id`, `/api/tasks/:id/move`, `/pin`, `/reopen`, `/api/deliverables`, `/api/completed`; `routes/tasks.ts`, `board.ts`, `completed.ts` |
+| Custom boards | `GET/POST /api/boards`, `GET/PATCH/DELETE /api/boards/:id`, `POST /api/boards/:id/pages`, `PUT /api/pages/:kind/:id/board`; `routes/page-boards.ts`, `pages/boards.ts`. Space viewers read; editors manage boards and membership |
 | Task documents | `/api/tasks/:id/page`, `/api/tasks/:id/page/collab`; `routes/tasks.ts`, `collab.ts` |
 | Standalone pages | `/api/pages`, `/api/pages/:id`, `/api/pages/:id/collab`, `/api/pages/delete-many`, `/api/pages/:kind/:id/convert`; `routes/pages.ts` |
 | Page history, copies, templates | `/api/page-versions`, `/api/page-versions/:id/restore`, `/api/pages/:id/duplicate`, `/api/pages/:id/template`, `/api/page-templates`, `/api/page-templates/:id/create`; `pages/version-routes.ts` |
@@ -203,7 +212,11 @@ A standalone note is a `TaskPage` with null `taskId`; nullable `parentId` nests 
 
 Delete soft-deletes the note and its descendants, with Undo, after pending saves finish. Trash keeps content, mentions, discussions and history until purge. A link to a deleted page shows a read-only restore state; a missing or purged ID shows a missing-item screen. Shared and public views hide owner-only recovery controls.
 
-Add to board attaches the existing page to a new task. Convert to page detaches the document and trashes the old task. Content, mentions and discussions keep their identity; converting back creates a new task without the old execution properties. Conversion rejects stale content and active inline/agent work.
+The page header's board picker assigns a standalone or task page to one custom board and column, moves it between boards, or removes the assignment (`components/pages/page-board-picker.tsx`). Membership is stored as `TaskPage.boardId`, `boardColumnId` and `boardOrder`, without rewriting saved content or editor revisions. Custom column moves do not change a task's agent status or runs.
+
+Choosing Ensemble board for a standalone note attaches the existing page to a new task and clears any custom-board assignment. Quick assign also uses that task conversion. Convert to page detaches the document and trashes the old task, retaining any custom-board membership. Content, mentions and discussions keep their identity; converting back creates a new task without the old execution properties. Conversion rejects stale content and active inline/agent work.
+
+`/pages` and the Pages browser show independent notes first, followed by board-named groups collapsed by default, including an Ensemble board group for default task pages. Expanding a group opens its pages; task pages link to `/tasks/:id`. Searching reveals matching pages inside groups. `/api/pages?all=true` supplies this combined directory, with `q` searching titles and saved text; `/api/pages` lists standalone notes for existing page-only pickers. Custom-board notes remain standalone pages.
 
 ### Page history, copies and private templates
 
@@ -228,6 +241,8 @@ Run output is immutable evidence. Human annotations keep their run/output anchor
 ### Selection comments and inline questions
 
 Selection comments keep quote/context anchors and report ambiguous or changed text. Owners and editors edit/resolve/delete according to access; viewers cannot comment or ask the assistant. `@ensemble` plus Enter explicitly sends a request; typing, autosaving, reopening and reading an earlier answer never run a model.
+
+Comments never reserve document width or change the focus-mode reading column. Small gutter markers show thread counts; clicking a marker or highlighted text opens one compact, viewport-bounded thread overlay. Long quotes are limited to two lines; the thread scrolls independently. Close or Escape returns to writing. Page comments and selection drafts use the same overlay, with edits, resolution and delete confirmation (`components/comments/comment-layer.tsx`, `.comment-*` rules in `app/globals.css`).
 
 Inline requests use the normal assistant loop and scoped tools. Newly requested diagrams/plots can be created and attached inline under the existing policy; other held writes still need Apply. Request IDs stop retries from starting duplicate work. Failed drafts stay visible. A request needs a final answer; tool activity alone does not count as a reply. Code: `components/comments`, `apps/hub-api/src/ensemble/`, `routes/comments.ts`.
 

@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { z } from "zod";
 import { CreateTask, PatchTask } from "@ensemble/shared-types";
 import { prisma } from "../lib/prisma.js";
 import { appendLedger } from "../lib/ledger.js";
@@ -31,12 +32,14 @@ export function serializeTask(task: {
 
 export async function taskRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/tasks", async (request) => {
+    const { board } = z.object({ board: z.enum(["default"]).optional() }).parse(request.query ?? {});
     const userId = request.userId;
     const hideStarters = await hidesSignupStarters(prisma, userId);
     const tasks = await prisma.task.findMany({
       where: {
         userId,
         deletedAt: null,
+        ...(board ? { OR: [{ page: null }, { page: { boardId: null } }] } : {}),
         ...(hideStarters ? { NOT: { sourceRef: { startsWith: "template:" } } } : {}),
       },
       orderBy: [{ boardOrder: "asc" }, { createdAt: "desc" }],

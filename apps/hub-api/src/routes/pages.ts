@@ -15,6 +15,7 @@ import {
 } from "../pages/store.js";
 import { appendLedger } from "../lib/ledger.js";
 import { collabHub } from "../pages/live.js";
+import { pageDirectory } from "../pages/boards.js";
 
 const RenamePage = z.object({
   title: z.string().trim().min(1).max(200),
@@ -42,7 +43,8 @@ export async function pageRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.get("/api/pages", async (request) => {
-    const { q } = z.object({ q: z.string().max(200).optional() }).parse(request.query ?? {});
+    const { q, all } = z.object({ q: z.string().max(200).optional(), all: z.enum(["true"]).optional() }).parse(request.query ?? {});
+    if (all) return { pages: await pageDirectory(prisma, request.userId, q?.trim() ?? "") };
     return { pages: await listStandalonePages(prisma, request.userId, q ?? "") };
   });
 

@@ -29,8 +29,9 @@ export const useLive = () => useContext(LiveContext);
 
 /** Which cached queries each server event makes stale. */
 const INVALIDATES: Record<string, string[][]> = {
-  task: [["tasks"], ["task"], ["workspace"], ["graph"], ["entities"], ["task-jobs"], ["shell"]],
-  page: [["page"]],
+  task: [["tasks"], ["task"], ["pages"], ["boards"], ["workspace"], ["graph"], ["entities"], ["task-jobs"], ["shell"]],
+  page: [["page"], ["pages"], ["boards"]],
+  board: [["boards"], ["pages"], ["tasks"]],
   workspace: [["workspace"], ["agent-state"], ["task-jobs"], ["job"], ["reviews"]],
   device: [["devices"], ["workspace"]],
   agent: [["agent-state"], ["workspace"]],

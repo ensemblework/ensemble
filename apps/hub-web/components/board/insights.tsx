@@ -15,7 +15,7 @@ import { Dialog } from "../ui";
 import { deskIdFromTemplate } from "../desk/desks";
 import { deskRole } from "../desk/tile-catalog";
 import { sampleLive } from "../onboarding/sample";
-import { ROLES, type Role } from "../onboarding/roles";
+import { type Role } from "../onboarding/roles";
 import { DEFAULT_INSIGHTS, INSIGHTS_KEY, INSIGHT_IDS, MAX_INSIGHTS, readInsightLayout, type BoardFocus, type InsightId, type InsightLayout, type OwnerContext } from "./insight-data";
 import { INSIGHT_CATALOG, INSIGHT_CATEGORIES, insightTitle } from "./insight-catalog";
 import { InsightTile } from "./insight-tile";
@@ -74,7 +74,7 @@ export function BoardInsights({ tasks, initialLayout, editing, onEditingChange, 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
   const change = (tiles: InsightId[]) => void save({ ...layout, tiles });
   return <div className="board-insights desk" data-board-strip>
-    <div className="board-insights-heading"><button type="button" className="board-insights-toggle" aria-expanded={!collapsed} aria-controls="board-insight-tiles" disabled={pending || editable && !prefs.isSuccess} onClick={() => editable ? void save({ ...layout, collapsed: !collapsed }) : setLocalCollapsed(!collapsed)}>{collapsed ? <ChevronDown size={13} /> : <ChevronUp size={13} />}Board overview</button><span>{filtered ? "Matches your filters" : inItemView() ? "Shared board" : `${ROLES.find((r) => r.id === role)!.label} workspace`}</span></div>
+    <div className="board-insights-heading"><button type="button" className="board-insights-toggle" aria-expanded={!collapsed} aria-controls="board-insight-tiles" disabled={pending || editable && !prefs.isSuccess} onClick={() => editable ? void save({ ...layout, collapsed: !collapsed }) : setLocalCollapsed(!collapsed)}>{collapsed ? <ChevronDown size={13} /> : <ChevronUp size={13} />}Board overview</button>{filtered && <span>Matches your filters</span>}</div>
     {!collapsed && <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={({ active, over }) => {
       if (over && active.id !== over.id) change(arrayMove(layout.tiles, layout.tiles.indexOf(active.id as InsightId), layout.tiles.indexOf(over.id as InsightId)));
     }}><SortableContext items={layout.tiles} strategy={rectSortingStrategy}><div id="board-insight-tiles" className="board-insight-row" data-board-scroll>

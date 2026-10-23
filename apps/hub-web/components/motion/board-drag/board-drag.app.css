@@ -28,6 +28,8 @@ html {
   background: color-mix(in srgb, var(--ink) 3%, transparent); box-shadow: inset 0 0 0 1px var(--bdg-hair); }
 [data-bdg-list][data-over]::after { opacity: 1; }
 [data-bdg-list][data-over="deny"]::after { background: color-mix(in srgb, var(--ink) 3%, transparent); box-shadow: inset 0 0 0 1px var(--bdg-hair); }
+/* Automatic moves stay below peeks, menus and the assistant; a user's held card keeps its drag layer. */
+.bdg-system-layer { z-index: 1; }
 @media (hover: hover) {
   [data-motion-theme="expressive"] .board-card { transition: translate var(--m-dur-micro, 160ms) var(--m-ease-enter, ease); }
   [data-motion-theme="expressive"] [data-motion-slot="board.drag"]:not(:has([data-bdg-ph])) .board-card:hover { translate: 0 -1px; }

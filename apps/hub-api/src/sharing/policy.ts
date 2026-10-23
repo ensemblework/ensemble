@@ -112,6 +112,7 @@ const RULES: Rule[] = [
   ["*", "/api/preferences/:key", "prefs"],
 
   ["*", "/api/tasks*", "shared"],
+  ["*", "/api/boards*", "shared"],
   ["*", "/api/pages*", "shared"],
   ["*", "/api/comments/*", "shared"],
   ["*", "/api/projects*", "shared"],

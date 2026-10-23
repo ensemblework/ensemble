@@ -5,7 +5,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { AgentIcon as Orbit } from "@/components/agent-icon";
-import { CheckSquare, FileText, Trash2 } from "lucide-react";
+import { FileText, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { EMPTY_PAGE, type PageMention } from "@ensemble/shared-types";
@@ -31,6 +31,7 @@ import { SourceFileBanner, exportBackItems } from "../files/source-file-banner";
 import { PAGE_FOCUS_CLASS, PageFocusBar, PageFocusButton, usePageFocus } from "./page-focus";
 import { collabStatusText, useCollab } from "./use-collab";
 import { KeptEdits } from "./kept-edits";
+import { PageBoardPicker } from "./page-board-picker";
 
 function useBlockEditor() {
   const [Editor, setEditor] = useState(() => blockEditor);
@@ -272,9 +273,7 @@ export function NotePage({
             </>
           ) : (
             <>
-              <button type="button" className="btn-ghost" disabled={convert.isPending} aria-label="Add to board" title="Add to board" onClick={() => convert.mutate(false)}>
-                <CheckSquare size={13} /> <span className="max-sm:hidden">Add to board</span>
-              </button>
+              <PageBoardPicker kind="page" id={pageId} disabled={convert.isPending} onDefault={() => convert.mutate(false)} />
               <button type="button" className="btn-ghost text-accent" disabled={convert.isPending} aria-label="Quick assign" title="Add to the board and use your default run profile" onClick={() => convert.mutate(true)}><Orbit size={13} /> <span className="max-sm:hidden">Quick assign</span></button>
               <button type="button" className="icon-btn" title="Delete" aria-label="Delete page" disabled={remove.isPending} onClick={() => remove.mutate()}>
                 <Trash2 size={14} />

@@ -267,6 +267,10 @@ model Task {
 }
 
 model TaskPage {
+  boardId         String?           @map("board_id")
+  boardColumnId   String?           @map("board_column_id")
+  boardOrder      Float             @default(0) @map("board_order")
+  board           PageBoard?        @relation(fields: [boardId], references: [id], onDelete: SetNull)
   historySavedAt  DateTime?         @map("history_saved_at")
   editorAccountId String?           @map("editor_account_id")
   versions        PageRevision[]
@@ -306,7 +310,24 @@ model TaskPage {
   @@index([userId, deletedAt])
   @@index([sourceFileId])
   @@index([userId, parentId])
+  @@index([userId, boardId, boardColumnId, boardOrder])
   @@map("task_pages")
+}
+
+model PageBoard {
+  id          String     @id @default(uuid())
+  userId      String     @map("user_id")
+  title       String
+  description String     @default("")
+  columns     Json
+  tiles       Json       @default("[\"count\",\"distribution\"]")
+  revision    Int        @default(1)
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
+  pages       TaskPage[]
+
+  @@index([userId, createdAt])
+  @@map("page_boards")
 }
 
 /// No entity foreign key: deleting an entity must leave its saved mention.

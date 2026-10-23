@@ -1,4 +1,5 @@
 "use client";
+import { PageBoardPicker } from "../pages/page-board-picker";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AgentIcon as Orbit } from "@/components/agent-icon";
@@ -225,7 +226,13 @@ export function TaskPage({
   }, [taskId, shared, canEdit, assigning, quickAssign.isPending, peek.peekId, variant, quickAssign.mutate]);
 
   const remove = useMutation({
-    mutationFn: () => api.deleteTask(taskId),
+    onMutate: () => setLeaving(true),
+    mutationFn: async () => {
+      if (titleSave.current) await titleSave.current;
+      while (propertiesBusy.current) await new Promise<void>((resolve) => propertyWaiters.current.push(resolve));
+      if (!(await flush())) throw new Error("Save the task page before moving it to Trash.");
+      return api.deleteTask(taskId);
+    },
     onSuccess: (result) => {
       toast("Moved to Trash.", {
         action: result?.undoEntryId
@@ -241,10 +248,24 @@ export function TaskPage({
           : undefined,
       });
       void client.invalidateQueries({ queryKey: ["tasks"] });
+      void client.invalidateQueries({ queryKey: ["pages"] });
+      void client.invalidateQueries({ queryKey: ["boards"] });
       if (variant === "peek") peek.close();
       else router.push("/board");
     },
+    onError: (error: Error) => { setLeaving(false); toast(error.message, { tone: "error" }); },
   });
+  const deleteFromPages = useRef(() => remove.mutate());
+  deleteFromPages.current = () => { if (!remove.isPending) remove.mutate(); };
+  useEffect(() => {
+    const handler = (event: Event) => {
+      if ((event as CustomEvent<{ id: string }>).detail.id !== taskId || shared || !canEdit) return;
+      event.preventDefault();
+      deleteFromPages.current();
+    };
+    window.addEventListener("ensemble:delete-task", handler);
+    return () => window.removeEventListener("ensemble:delete-task", handler);
+  }, [taskId, shared, canEdit]);
 
   const convert = useMutation({
     onMutate: () => setLeaving(true),
@@ -372,6 +393,7 @@ export function TaskPage({
           {canEditProperties ? <span className="whitespace-nowrap">{propsState === "saving" ? "Saving…" : "Properties saved"}</span> : null}
           {shared || !canEdit ? null : (
           <>
+          <PageBoardPicker kind="task" id={taskId} />
           <button
             type="button"
             className="btn-ghost"

@@ -87,6 +87,7 @@ const settle = () => act(async () => { await new Promise((resolve) => setTimeout
 const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")!.set!;
 const type = (field: HTMLTextAreaElement, value: string) => act(async () => { setter.call(field, value); field.dispatchEvent(new Event("input", { bubbles: true })); });
 const button = (label: string) => Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((item) => item.textContent === label);
+const openComment = () => act(async () => document.querySelector<HTMLButtonElement>(".comment-marker")!.click());
 const key = (target: Element, name: string) => fire(target, new KeyboardEvent("keydown", { key: name, bubbles: true, cancelable: true }));
 
 test("a block comment highlights its block even when the page changes while the comment is being written", async () => {
@@ -101,7 +102,7 @@ test("a block comment highlights its block even when the page changes while the 
     const field = document.querySelector<HTMLTextAreaElement>("textarea[aria-label='Comment']");
     assert.ok(field, "the comment form opens");
     // Someone else's edit lands above the block while the comment is being typed.
-    editor.commands.insertContentAt(0, p("New first line"));
+    await act(async () => { editor.commands.insertContentAt(0, p("New first line")); });
     await type(field, "Which beans?");
     await act(async () => {
       field.closest("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
@@ -134,10 +135,11 @@ test("blocks with no text, and stale hovers after an edit, offer no comment acti
 test("someone who can only view sees comments but nothing that writes one", async () => {
   const { editor, requests, done } = await mount([p("Plant the beans")], { canComment: false, comments: [comment("c1", "Which beans?")] });
   try {
+    await openComment();
     assert.match(document.body.textContent ?? "", /Which beans\?/);
     for (const label of ["Edit", "Delete", "Resolve"]) assert.equal(button(label), undefined, label);
     assert.equal(document.querySelector("input[aria-label='Ask Ensemble']"), null);
-    editor.commands.setTextSelection({ from: 1, to: 6 });
+    await act(async () => { editor.commands.setTextSelection({ from: 1, to: 6 }); });
     await settle();
     assert.equal(document.querySelector(".comment-selection-action"), null);
     await fire(editor.view.dom, new window.CustomEvent("ensemble:comment-block", { detail: { from: 1, to: 6 } }));
@@ -170,6 +172,7 @@ test("a comment that fails to save keeps its text", async () => {
 test("editing a comment focuses the text, can't save it empty, and Esc puts it back", async () => {
   const { requests, done } = await mount([p("Plant")], { comments: [comment("c1", "Which beans?")] });
   try {
+    await openComment();
     await act(async () => button("Edit")!.click());
     const field = document.querySelector<HTMLTextAreaElement>("textarea[aria-label='Edit comment']")!;
     assert.equal(document.activeElement, field);
@@ -191,6 +194,7 @@ test("editing a comment focuses the text, can't save it empty, and Esc puts it b
 test("Delete asks first, and a deleted comment takes its highlight off the page", async () => {
   const { editor, requests, done } = await mount([{ type: "paragraph", content: [{ type: "text", text: "Plant", marks: [{ type: "comment", attrs: { id: "m1", commentId: "c1" } }] }, { type: "text", text: " the beans" }] }], { comments: [comment("c1", "Which beans?", "m1")] });
   try {
+    await openComment();
     await act(async () => button("Delete")!.click());
     assert.equal(requests.filter((request) => request.method === "DELETE").length, 0, "nothing is deleted yet");
     assert.equal(document.activeElement?.textContent, "Delete");
@@ -207,6 +211,24 @@ test("Delete asks first, and a deleted comment takes its highlight off the page"
   } finally {
     await done();
   }
+});
+
+test("comments stay behind compact markers and open without reserving document space", async () => {
+  const quote = "A long selected paragraph. ".repeat(40);
+  const { editor, done } = await mount([{ type: "paragraph", content: [{ type: "text", text: quote, marks: [{ type: "comment", attrs: { id: "m1", commentId: "c1" } }] }] }], { comments: [{ ...comment("c1", "Keep this formatting", "m1"), quote }] });
+  try {
+    assert.equal(document.querySelector(".comment-popover"), null);
+    assert.equal(document.querySelector(".comment-host.has-comments"), null);
+    assert.equal(document.querySelectorAll(".comment-marker").length, 1);
+    await fire(editor.view.dom.querySelector("[data-comment-id]")!, new MouseEvent("click", { bubbles: true }));
+    assert.ok(document.querySelector('[role="dialog"][aria-label="Comment"]'));
+    assert.equal(document.querySelector(".comment-quote")?.textContent, quote);
+    assert.equal(document.querySelector(".comment-host")?.className, "comment-host");
+    assert.equal(editor.state.doc.textContent, quote);
+    await act(async () => document.querySelector<HTMLButtonElement>('[aria-label="Close comment"]')!.click());
+    assert.equal(document.querySelector(".comment-popover"), null);
+    assert.equal(editor.state.doc.textContent, quote);
+  } finally { await done(); }
 });
 
 test("the selection's comment button sits beside the text, or under the selection, never over the line above", () => {

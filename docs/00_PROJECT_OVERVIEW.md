@@ -55,8 +55,8 @@ The scheduler runs fixed product jobs only (reminders, morning briefs, retention
 | Surface | What works | Limits | Guide |
 | --- | --- | --- | --- |
 | Today | Profession desk, briefing, focus and triage, reminders; add, move and resize tiles | Profile desk and alternate widget layout are separate systems | [02 §3.1](02_MODULE_INTERACTION_HUB_UI.md#31-today-morning-briefing) |
-| Board | Create, prioritize, filter, group and assign tasks; overview strip; compact search | Overview strip: at most four fixed-size tiles | [02](02_MODULE_INTERACTION_HUB_UI.md) |
-| Tasks and pages | Structured editor, nested standalone pages, mentions, links (click opens; hover or Alt+Enter edits), comments, AI blocks, file/diagram/plot embeds, co-editing | Embedded resources keep their own access rules | [02 §13](02_MODULE_INTERACTION_HUB_UI.md#13-document-style-pages) |
+| Board | Collapsible Ensemble Kanban; custom page boards with named columns, drag ordering and board-scoped overview tiles | 1–20 columns per custom board; at most four overview tiles per board | [02 §3.2](02_MODULE_INTERACTION_HUB_UI.md#32-board-kanban) |
+| Tasks and pages | Structured editor, nested notes, board/column assignment, collapsed board groups in Pages, mentions, links, compact comment overlays, AI blocks, embeds, co-editing | One custom board per page; custom columns do not change task execution status; embedded resources keep their own access rules | [02 §13](02_MODULE_INTERACTION_HUB_UI.md#13-document-style-pages) |
 | Page history and templates | Checkpoints with author and time, preview, restore, duplicate, private templates | 30 checkpoints per page, five-minute coalescing; 50 templates per space and profile; owner-only | [02 §13](02_MODULE_INTERACTION_HUB_UI.md#13-document-style-pages) |
 | Context and projects | People and identities, projects, repositories, preferences, graph, profession records | The graph shows saved data only | [03](03_MODULE_CONTEXT_ENGINE.md), [02 §3.5](02_MODULE_INTERACTION_HUB_UI.md#35-context) |
 | Meeting notes | Manual and imported notes, source links, requested summaries and action-item tasks | Imported notes are read-only; no recording or transcription | [03 §7](03_MODULE_CONTEXT_ENGINE.md#7-meeting-context) |
@@ -116,7 +116,7 @@ A catalog entry is a connection option, not a promise of native search, an impor
 | `User`, `Session`, `AuthIdentity`, `EmailToken`, `AuthFlow` | Account and profile, hashed sessions, login identities, recovery and verification |
 | Extra `User` rows with `ownerId` | Spaces. Request `userId` is the open space; `accountId` is the signed-in person |
 | `SpaceMember`, `Share`, `Contact`, `SpaceTransfer`, `PublicLink` | Membership, item shares, contacts, ownership transfer, public links |
-| `Task`, `TaskPage`, `PageRevision`, `PageTemplate` | Work and its documents, nesting, revisions, private templates |
+| `Task`, `TaskPage`, `PageBoard`, `PageRevision`, `PageTemplate` | Work and its documents, page-board/column membership, board-specific overview tiles, nesting, revisions, private templates |
 | `Person`, `PersonIdentity`, `Project`, `Repo`, `Deliverable`, project links | Saved context; external identities are separate from display names |
 | `Artifact`, `ArtifactChunk`, `Extraction`, `ContextSuppression` | Saved source content, extracted metadata, deletion suppressions. Vector/tsvector columns are unused |
 | `Skill`, `SkillVersion`, `SkillFeedback` | Current personal instruction (authoritative), versions, feedback |
