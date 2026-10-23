@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 export function validateTestingEnv(env, home) {
+  if (Buffer.from(env.ENSEMBLE_SECRET_KEY ?? "", "base64").length !== 32) throw new Error("Testing requires ENSEMBLE_SECRET_KEY to be 32 bytes, base64-encoded.");
   const db = new URL(env.DATABASE_URL);
   const redis = new URL(env.REDIS_URL);
   if (!["postgres:", "postgresql:"].includes(db.protocol) || db.hostname !== "127.0.0.1" || db.port !== "25432" || db.pathname !== "/ensemble_test" || !db.password) throw new Error("Testing requires its own loopback Postgres on 25432, database ensemble_test.");

@@ -40,4 +40,6 @@ Bring the released `main` back into `testing` after promotion so the next test c
 
 `ensembleCookieName` in `packages/shared-types/src/cookie-site.ts` applies the optional namespace consistently to session, active-space and OAuth-flow cookies. Middleware, server rendering and the API use the same names, so testing does not replace or clear production's cookies.
 
+The test deploy also rejects an encryption key that is not 32 bytes encoded as base64, matching `lib/secrets.ts`. A passing liveness probe alone does not validate encrypted-credential or credit-accounting operations.
+
 Operator-specific setup, credentials, service repair and DNS values belong in the git-ignored `private/HOSTING.md`.
