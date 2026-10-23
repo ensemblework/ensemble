@@ -27,7 +27,7 @@ export type RouteMessage = {
   botDepth: number;
 };
 
-export type RouteRoom = { kind: "dm" | "crew" | "group"; leadNodeIds: readonly string[] };
+export type RouteRoom = { kind: "dm" | "crew" | "room"; leadNodeIds: readonly string[] };
 export type RouteNode = { id: string; ownerId: string; active: boolean; representative: boolean; role: string };
 
 export type RouteDecision =
