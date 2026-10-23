@@ -1,0 +1,34 @@
+# Independent from the production compose project, ports, credentials and volumes.
+name: ensemble-test
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: ensemble-test-postgres
+    environment:
+      POSTGRES_USER: ensemble_test
+      POSTGRES_DB: ensemble_test
+      POSTGRES_PASSWORD: ${TEST_POSTGRES_PASSWORD:?Set TEST_POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:25432:5432"
+    volumes:
+      - ensemble_test_pg:/var/lib/postgresql/data
+      - ../../sql/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    restart: unless-stopped
+  redis:
+    image: redis:7-alpine
+    container_name: ensemble-test-redis
+    command: ["redis-server", "--requirepass", "${TEST_REDIS_PASSWORD:?Set TEST_REDIS_PASSWORD}", "--appendonly", "no", "--save", ""]
+    ports:
+      - "127.0.0.1:26379:6379"
+    restart: unless-stopped
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: ensemble-test-cloudflared
+    network_mode: host
+    command: ["tunnel", "--no-autoupdate", "--config", "/etc/cloudflared/config.yml", "run"]
+    volumes:
+      - ${ENSEMBLE_TEST_HOME:?Set ENSEMBLE_TEST_HOME}/cloudflared:/etc/cloudflared:ro
+    restart: unless-stopped
+volumes:
+  ensemble_test_pg:
+    name: ensemble_test_pg

@@ -1,4 +1,4 @@
-import { crossOriginCookieProblem } from "@ensemble/shared-types/cookie-site";
+import { crossOriginCookieProblem, ensembleCookieName } from "@ensemble/shared-types/cookie-site";
 import { fileStorageProblem } from "./blob-store.js";
 import { isHosted } from "./hosted-access.js";
 import { hostedLimits } from "./hosted-limits.js";
@@ -71,6 +71,8 @@ function bypassNames(env: NodeJS.ProcessEnv): string[] {
 export function productionProblems(env: NodeJS.ProcessEnv, surface: ProductionSurface = "hub"): string[] {
   if (env.NODE_ENV !== "production") return [];
   const problems: string[] = [];
+  try { ensembleCookieName("session", env.ENSEMBLE_COOKIE_NAMESPACE); }
+  catch (error) { problems.push(error instanceof Error ? error.message : "Invalid cookie namespace."); }
   const rawToken = env.ENSEMBLE_INTERNAL_TOKEN?.trim() ?? "";
   if (isInsecureInternalToken(rawToken)) {
     const shown = rawToken || DEFAULT_INTERNAL_TOKEN;

@@ -2,6 +2,9 @@ import { cookies } from "next/headers";
 import { HUB_API, type BoardPayload, type MeetingCue } from "@/lib/api";
 import { desktopExport } from "@/lib/desktop-export";
 import type { LayoutDocument, LayoutSurface } from "@ensemble/shared-types/widgets";
+import { ensembleCookieName } from "@ensemble/shared-types/cookie-site";
+
+const SESSION_COOKIE = ensembleCookieName("session", process.env.ENSEMBLE_COOKIE_NAMESPACE);
 
 export type LayoutPayload = {
   surface: string;
@@ -24,7 +27,7 @@ export type TodayCues = {
 async function loadJson<T>(session: string, path: string): Promise<T | null> {
   try {
     const response = await fetch(`${HUB_API}${path}`, {
-      headers: { cookie: `ensemble_session=${session}` },
+      headers: { cookie: `${SESSION_COOKIE}=${session}` },
       cache: "no-store",
     });
     if (!response.ok) return null;
@@ -38,7 +41,7 @@ async function loadJson<T>(session: string, path: string): Promise<T | null> {
 export async function loadContextBoard(): Promise<BoardPayload | null> {
   if (desktopExport()) return null;
   const jar = await cookies();
-  const session = jar.get("ensemble_session")?.value;
+  const session = jar.get(SESSION_COOKIE)?.value;
   if (!session) return null;
   return loadJson<BoardPayload>(session, "/api/context/board");
 }
@@ -46,7 +49,7 @@ export async function loadContextBoard(): Promise<BoardPayload | null> {
 export async function loadLayout(surface: LayoutSurface): Promise<LayoutPayload | null> {
   if (desktopExport()) return null;
   const jar = await cookies();
-  const session = jar.get("ensemble_session")?.value;
+  const session = jar.get(SESSION_COOKIE)?.value;
   if (!session) return null;
   return loadJson<LayoutPayload>(session, `/api/layouts/${surface}`);
 }
@@ -60,7 +63,7 @@ export async function loadLayout(surface: LayoutSurface): Promise<LayoutPayload 
 export async function loadSampleNotice(): Promise<boolean> {
   if (desktopExport()) return false;
   const jar = await cookies();
-  const session = jar.get("ensemble_session")?.value;
+  const session = jar.get(SESSION_COOKIE)?.value;
   if (!session) return false;
   const body = await loadJson<{ present?: boolean }>(session, "/api/marketplace/samples");
   return body?.present === true;
@@ -69,7 +72,7 @@ export async function loadSampleNotice(): Promise<boolean> {
 export async function loadActiveTemplateId(): Promise<string | null> {
   if (desktopExport()) return null;
   const jar = await cookies();
-  const session = jar.get("ensemble_session")?.value;
+  const session = jar.get(SESSION_COOKIE)?.value;
   if (!session) return null;
   const shell = await loadJson<{ activeTemplateId?: string | null }>(session, "/api/shell");
   return shell?.activeTemplateId ?? null;
@@ -78,7 +81,7 @@ export async function loadActiveTemplateId(): Promise<string | null> {
 export async function loadTodayDesk(): Promise<{ layout: LayoutPayload | null; nudges: TodayNudges | null; cues: TodayCues | null }> {
   if (desktopExport()) return { layout: null, nudges: null, cues: null };
   const jar = await cookies();
-  const session = jar.get("ensemble_session")?.value;
+  const session = jar.get(SESSION_COOKIE)?.value;
   if (!session) return { layout: null, nudges: null, cues: null };
   const layout = await loadJson<LayoutPayload>(session, "/api/layouts/today");
   const types = new Set(layout?.document.placements.map((row) => row.type) ?? []);

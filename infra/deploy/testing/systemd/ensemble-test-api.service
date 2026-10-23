@@ -1,0 +1,18 @@
+[Unit]
+Description=Ensemble testing API (isolated data and in-process models)
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=%h/ensemble-test/app/apps/hub-api
+EnvironmentFile=%h/ensemble-test/ensemble.env
+EnvironmentFile=-%h/ensemble-test/ensemble.commit
+Environment=PATH=%h/ensemble-host/node/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/ensemble-host/node/bin/node %h/ensemble-test/app/apps/hub-api/node_modules/tsx/dist/cli.mjs src/index.ts
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

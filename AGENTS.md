@@ -25,6 +25,7 @@ Where a change usually needs a doc update:
 | Hub pages and components (`apps/hub-web/app`, `components`) | [`docs/02`](docs/02_MODULE_INTERACTION_HUB_UI.md), `docs/00` |
 | Landing page (`apps/landing`) | `README.md` (Layout), [`docs/17`](docs/17_REPOSITORY_STRUCTURE.md), `docs/00` |
 | CI and deploy workflows (`.github/workflows`, `.github/actions`, `infra/deploy/autodeploy.sh`, `infra/deploy/home`) | [`docs/01` §8](docs/01_TECH_STACK_AND_ENVIRONMENT.md#8-ci-and-deploys), `README.md` (CI and deploys) |
+| Web testing branch, testing deploys (`infra/deploy/testing`, `.github/workflows/test-web.yml`) | [`docs/36`](docs/36_WEB_TESTING.md), [`docs/01` §8](docs/01_TECH_STACK_AND_ENVIRONMENT.md#8-ci-and-deploys), `README.md` (CI and deploys) |
 | API routes (`apps/hub-api/src/routes`) | The API tables in [`docs/02`](docs/02_MODULE_INTERACTION_HUB_UI.md), plus the module doc for that area |
 | The Hub assistant (`apps/hub-api/src/assistant`, `components/assistant`) | [`docs/11`](docs/11_HOW_THE_ASSISTANT_WORKS.md) |
 | Connectors, triage, sync, remote MCP connections (`apps/hub-api/src/connectors`, `routes/connectors.ts`, `routes/mcp-connections.ts`, `packages/shared-types/src/connectors.ts`) | [`docs/03`](docs/03_MODULE_CONTEXT_ENGINE.md), the connector table in [`docs/31`](docs/31_CONNECTORS_IN_USE.md), the connector store in [`docs/02` §3.9](docs/02_MODULE_INTERACTION_HUB_UI.md) |
@@ -82,6 +83,12 @@ New docs go in `docs/` and get a row in [`docs/README.md`](docs/README.md). Plan
 Details: [`docs/17_REPOSITORY_STRUCTURE.md`](docs/17_REPOSITORY_STRUCTURE.md).
 
 ## Commands
+
+### Web testing and promotion
+
+Web feature/UI/fix iteration belongs on `testing`, or on a feature branch opened against `testing`, unless the user explicitly requests a production release. Its public test site uses isolated data and fast web/API checks; native and CLI release pipelines do not run there. Read [`docs/36_WEB_TESTING.md`](docs/36_WEB_TESTING.md) before changing deployment behavior.
+
+`main` is the production promotion target. Promote reviewed testing work with a PR to `main`; keep the full production CI and release checks intact. Never push `production` or `testing-live` by hand during ordinary development: their workflows advance them after checks. Never copy production users, sessions or connected-app credentials into testing. Keep operator values and runbooks in `private/`, not public docs.
 
 ```bash
 pnpm install

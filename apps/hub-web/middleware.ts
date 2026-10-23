@@ -5,6 +5,9 @@ import { isAnonymousAsset } from "@/lib/anonymous-asset";
 import { isAppRoute } from "@/lib/app-routes";
 import { resolveHubApi } from "./lib/hub-origin";
 import { sessionCookieDelete } from "./lib/session-cookie";
+import { ensembleCookieName } from "@ensemble/shared-types/cookie-site";
+
+const SESSION_COOKIE = ensembleCookieName("session", process.env.ENSEMBLE_COOKIE_NAMESPACE);
 
 const PUBLIC = new Set(["/login", "/signup", "/forgot", "/reset", "/verify"]);
 const API = resolveHubApi({
@@ -70,7 +73,7 @@ function loginRedirect(request: NextRequest, dropCookie: boolean) {
   if (next !== "/") url.searchParams.set("next", next);
   const response = NextResponse.redirect(url);
   if (dropCookie) {
-    const cookie = sessionCookieDelete(process.env.ENSEMBLE_COOKIE_DOMAIN);
+    const cookie = sessionCookieDelete(process.env.ENSEMBLE_COOKIE_DOMAIN, process.env.ENSEMBLE_COOKIE_NAMESPACE);
     response.cookies.delete(cookie);
   }
   return response;
@@ -101,7 +104,7 @@ export async function middleware(request: NextRequest) {
   if (PUBLIC.has(pathname)) return NextResponse.next();
   // Public links: anyone with the address, signed in or not (docs/29 §7).
   if (/^\/p\/[A-Za-z0-9_-]{20,64}$/.test(pathname)) return NextResponse.next();
-  const session = request.cookies.get("ensemble_session")?.value;
+  const session = request.cookies.get(SESSION_COOKIE)?.value;
   const unknown = !isAppRoute(pathname);
   // Unknown URLs are not login walls. No session rewrites to the standalone
   // page. A session rewrites to the in-shell card with status 404. Calling
@@ -116,7 +119,7 @@ export async function middleware(request: NextRequest) {
   if (isDataRequest(request) || (!unknown && !wantsHtml(request))) return NextResponse.next();
   try {
     const me = await fetch(`${API}/api/auth/me`, {
-      headers: { cookie: `ensemble_session=${session}` },
+      headers: { cookie: `${SESSION_COOKIE}=${session}` },
       cache: "no-store",
       signal: AbortSignal.timeout(1200),
     });

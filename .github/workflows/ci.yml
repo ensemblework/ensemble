@@ -4,6 +4,7 @@ name: ci
 # workflow to pass on main before it ships anything.
 on:
   pull_request:
+    branches-ignore: [testing]
   push:
     branches: [main]
   workflow_dispatch:
