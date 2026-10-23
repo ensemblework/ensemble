@@ -167,7 +167,7 @@
       input: true,                  // false: another library (dnd-kit) owns pointer/keyboard; use play() / agentMove() only
     }, options || {});
     root.setAttribute('data-motion-slot', 'board.drag');
-    const layer = document.createElement('div'); layer.className = 'bdg-layer'; layer.setAttribute('aria-hidden', 'true'); root.appendChild(layer);
+    const layer = document.createElement('div'); layer.className = o.input ? 'bdg-layer' : 'bdg-layer bdg-system-layer'; layer.setAttribute('aria-hidden', 'true'); (o.layerParent || root).appendChild(layer);
     let live = root.querySelector('.bdg-live');
     if (!live) { live = document.createElement('div'); live.className = 'bdg-live bdg-sr'; live.setAttribute('aria-live', 'assertive'); live.setAttribute('role', 'status'); root.appendChild(live); }
     let help = root.querySelector('#bdg-help');
@@ -192,10 +192,10 @@
     setState('idle');
     const announce = (msg) => { live.textContent = ''; live.textContent = msg; root.dispatchEvent(new CustomEvent('board:announce', { detail: { message: msg } })); };
     const posText = (list, card) => { const n = cardsIn(list).length; return `position ${indexIn(list, card) + 1} of ${n} in ${o.columnName(colOf(list))}`; };
-    const counts = (pop) => cols().forEach((col) => {
+    const counts = (pop) => { if (!o.input) return; cols().forEach((col) => {
       const n = col.querySelector(o.count); if (!n) return; const v = String(cardsIn(listOf(col)).length);
       if (n.textContent !== v) { n.textContent = v; if (pop && drag && drag.S.countPop && !drag.R) n.animate([{ transform: 'scale(1.35)' }, { transform: 'none' }], springEasing(260, 14)); }
-    });
+    }); };
     const setOver = (col, kind) => { for (const c of cols()) { if (c === col) c.setAttribute('data-over', kind); else c.removeAttribute('data-over'); } };
 
     /* --- overlay --- */
@@ -489,10 +489,10 @@
 
     /* --- agent and system moves --- */
     /** Move a card to a column without a user drag. kind: 'agent' (the agent picks it up) · 'done' (finished, hops to Done) · 'revert'. */
-    let queue = Promise.resolve();
-    const whenIdle = () => new Promise((res) => { const f = () => (drag || busy ? setTimeout(f, 50) : res()); f(); });
+    let queue = Promise.resolve(), destroyed = false;
+    const whenIdle = () => new Promise((res) => { const f = () => (!destroyed && (drag || busy) ? setTimeout(f, 50) : res()); f(); });
     /** Agent and system moves wait their turn: never while you're holding a card, never two at once. */
-    function enqueue(job) { const run = queue.then(whenIdle).then(job); queue = run.catch(() => {}); return run; }
+    function enqueue(job) { const run = queue.then(whenIdle).then(() => destroyed ? false : job()); queue = run.catch(() => {}); return run; }
     async function moveCard(card, toCol, index, opts) {
       opts = opts || {}; const kind = opts.kind || 'agent';
       if (drag || busy) return false; busy = true;
@@ -617,10 +617,14 @@
       /** Card finished: hop (Expressive) / glide (Quiet) / dot (Dot) to the top of that column. */
       complete: (id, col = 'done') => enqueue(() => { const c = byId(id), k = root.querySelector(`${o.column}[data-col="${col}"]`); return c && k ? moveCard(c, k, 0, { kind: 'done', owner: 'ok' }) : false; }),
       /** The DOM (React) already moved this card; play the move from where it was. kind: 'agent' | 'done'. */
-      play: (el, fromRect, kind = 'agent') => enqueue(() => moveCard(el, colOf(el), indexIn(el.parentElement, el), { kind, from: fromRect, owner: kind === 'done' ? 'ok' : undefined })),
+      play: (el, fromRect, kind = 'agent') => {
+        const target = colOf(el);
+        return enqueue(() => target && root.contains(el) && colOf(el) === target ? moveCard(el, target, indexIn(el.parentElement, el), { kind, from: fromRect, owner: kind === 'done' ? 'ok' : undefined }) : false);
+      },
       cancel: () => cancel('cancel'),
       refresh: prepare,
       destroy() {
+        destroyed = true;
         if (drag) end(); abortPending(); layer.remove();
         root.removeEventListener('pointerdown', onDown); window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp);
         window.removeEventListener('pointercancel', onCancel); window.removeEventListener('touchmove', onTouchMove); window.removeEventListener('keydown', onKey);

@@ -1,10 +1,11 @@
 "use client";
 
-import { MessageSquare } from "lucide-react";
+import { Check, MessageSquare, X } from "lucide-react";
 import type { Editor } from "@tiptap/react";
 import type { Transaction } from "@tiptap/pm/state";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { api, type PageComment } from "@/lib/api";
 import { MarkdownText } from "../markdown-text";
 import type { PageDocument, PageMention } from "@ensemble/shared-types";
@@ -14,6 +15,9 @@ import { useInlineEnsemble } from "./inline-ensemble";
 import { MentionPopover, useMentionMenu } from "../mentions/mention-menu";
 import { MentionTextarea } from "../mentions/mention-field";
 import { COMMENT_BLOCK_EVENT } from "../editor/block-controls";
+import { ModalScope, useLayerZ } from "../ui";
+import { useModalFocus } from "@/lib/modal-focus";
+import { relative } from "@/lib/format";
 
 function clampBox(top: number, left: number, width: number, height: number) {
   if (typeof window === "undefined") return { top, left };
@@ -127,6 +131,7 @@ export function CommentLayer({
     // The comment form can stay open while the page changes (typing elsewhere, someone else's save),
     // so the range it will highlight follows those edits.
     const follow = ({ transaction }: { transaction: Transaction }) => {
+      if (transaction.docChanged) setFrame((value) => value + 1);
       const range = rangeRef.current;
       if (!range || !transaction.docChanged) return;
       rangeRef.current = { from: transaction.mapping.map(range.from, 1), to: transaction.mapping.map(range.to, -1) };
@@ -145,7 +150,7 @@ export function CommentLayer({
       if ((event.metaKey || event.ctrlKey) && event.shiftKey && event.key.toLowerCase() === "m") {
         event.preventDefault();
         if (selection) setDraft("");
-        setActive("new");
+        setActive(selection ? "new" : "page");
       }
     };
     window.addEventListener("keydown", onKey);
@@ -193,7 +198,7 @@ export function CommentLayer({
       }
     });
     return ids;
-  }, [editor, comments.data]);
+  }, [editor, comments.data, frame]);
 
   const create = useMutation({
     mutationFn: (input: { quote: string; text: string; markId?: string; mentions?: PageMention[] }) =>
@@ -218,14 +223,18 @@ export function CommentLayer({
 
   const roots = (comments.data?.comments ?? []).filter((row) => !row.parentId && row.kind !== "ensemble");
   const childrenOf = (id: string) => (comments.data?.comments ?? []).filter((row) => row.parentId === id);
-  const showMargin = roots.length > 0 || active === "page";
-
+  const activeRow = roots.find((row) => row.id === active);
   useEffect(() => {
-    const host = editor?.view.dom.closest(".comment-host");
-    if (!host) return;
-    host.classList.toggle("has-comments", showMargin);
-    return () => host.classList.remove("has-comments");
-  }, [editor, showMargin]);
+    const dom = editor?.view.dom;
+    if (!dom) return;
+    const open = (event: MouseEvent) => {
+      const target = event.target instanceof Element ? event.target.closest<HTMLElement>("[data-comment-id]") : null;
+      const row = roots.find((comment) => comment.markId === target?.dataset.commentId);
+      if (row) setActive(row.id);
+    };
+    dom.addEventListener("click", open);
+    return () => dom.removeEventListener("click", open);
+  }, [editor, comments.data]);
 
   // Where the selected text is now: scrolling (which bumps `frame`) moves it.
   const placed = (() => {
@@ -241,16 +250,19 @@ export function CommentLayer({
     const host = editor?.view.dom.closest(".comment-host");
     if (!host) return placed;
     const hostTop = host.getBoundingClientRect().top;
-    let cursor = active === "page" ? 168 : 0;
-    for (const row of roots) {
-      let raw = cursor;
+    const anchors = roots.map((row) => {
+      let raw = 0;
       if (row.markId) {
         const mark = host.querySelector(`[data-comment-id="${CSS.escape(row.markId)}"]`);
         if (mark) raw = mark.getBoundingClientRect().top - hostTop;
       }
+      return { row, raw };
+    }).sort((a, b) => a.raw - b.raw);
+    let cursor = 0;
+    for (const { row, raw } of anchors) {
       const top = Math.max(cursor, raw);
       placed.set(row.id, top);
-      cursor = top + 148;
+      cursor = top + 32;
     }
     return placed;
     // frame bumps this after scroll and resize so bubbles track their marks
@@ -277,14 +289,9 @@ export function CommentLayer({
         </button>
       ) : null}
       {canComment && active === "new" && selection ? (
+        <FloatingComment editor={editor} top={(placed ?? selection).top} frame={frame} title="New comment" onClose={() => { setActive(null); setSelection(null); }}>
         <form
-          className="fixed z-40 w-72 max-w-[calc(100vw-16px)] rounded-lg border border-line bg-raised p-2 shadow-pop"
-          style={clampBox(
-            (placed ?? selection).bottom + 186 > window.innerHeight - 8 ? (placed ?? selection).top - 188 : (placed ?? selection).bottom + 6,
-            (placed ?? selection).left,
-            288,
-            180,
-          )}
+          className="comment-compose"
           onSubmit={(event) => {
             event.preventDefault();
             const markId = crypto.randomUUID();
@@ -293,7 +300,7 @@ export function CommentLayer({
             create.mutate({ quote: selection?.text || quoteRef.current, text, markId, mentions: draftMentions.takeMentions(text) }, { onSuccess: () => draftMentions.clear() });
           }}
         >
-          <div className="mb-1 line-clamp-2 text-[12px] text-muted">“{selection.text}”</div>
+          <blockquote className="comment-quote">{selection.text}</blockquote>
           <MentionPopover menu={draftMentions} />
           <MentionTextarea
             menu={draftMentions}
@@ -307,7 +314,7 @@ export function CommentLayer({
               editor?.commands.focus();
             }}
             aria-label="Comment"
-            placeholder="Comment. People can't reply, @ensemble can."
+            placeholder="Write a comment…"
             className="field min-h-16 w-full"
           />
           <div className="mt-2 flex gap-2">
@@ -318,14 +325,14 @@ export function CommentLayer({
               Cancel
             </button>
           </div>
-        </form>
+        </form></FloatingComment>
       ) : null}
-      {showMargin ? (
-        <div className="comment-margin" aria-label="Comments">
-          {active === "page" ? (
+      {roots.length > 0 && <div className="comment-margin" aria-label="Comments">
+        {roots.map((row, index) => <button key={row.id} type="button" className="comment-marker" style={{ top: bubbleTop.get(row.id) ?? 0 }} data-resolved={row.status === "resolved" || undefined} aria-label={`Open comment ${index + 1}: ${textOf(row.body).slice(0, 60)}`} aria-expanded={active === row.id} title={textOf(row.body)} onClick={() => setActive(row.id)}>{row.status === "resolved" ? <Check size={13} /> : <MessageSquare size={13} />}<span>{1 + childrenOf(row.id).length}</span></button>)}
+      </div>}
+      {canComment && active === "page" && <FloatingComment editor={editor} frame={frame} title="Page comment" onClose={() => setActive(null)}>
             <form
-              className="comment-bubble"
-              style={{ top: 0 }}
+              className="comment-compose"
               onSubmit={(event) => {
                 event.preventDefault();
                 const text = pageDraft.trim();
@@ -344,7 +351,8 @@ export function CommentLayer({
                 value={pageDraft}
                 onKeyDown={pageMentions.onKeyDown}
                 aria-label="Page comment"
-                placeholder="A note on the whole page. @ensemble can answer."
+                autoFocus
+                placeholder="A note on this page. @ensemble can answer."
                 className="field min-h-16 w-full"
               />
               <div className="mt-2 flex gap-2">
@@ -356,28 +364,57 @@ export function CommentLayer({
                 </button>
               </div>
             </form>
-          ) : null}
-          {roots.map((row) => (
-            <div key={row.id} className="comment-bubble" style={{ top: bubbleTop.get(row.id) ?? 0 }} data-comment-bubble>
+      </FloatingComment>}
+      {activeRow && <FloatingComment editor={editor} markId={activeRow.markId} frame={frame} title={activeRow.status === "resolved" ? "Resolved comment" : "Comment"} onClose={() => setActive(null)}>
+            <div data-comment-bubble>
               <Thread
-                row={row}
-                replies={childrenOf(row.id)}
-                orphan={Boolean(row.markId) && !presentMarks.has(row.markId!)}
+                key={activeRow.id}
+                row={activeRow}
+                replies={childrenOf(activeRow.id)}
+                orphan={Boolean(activeRow.markId) && !presentMarks.has(activeRow.markId!)}
                 pageKind={pageKind}
                 pageId={pageId}
-                active={active === row.id}
+                active
                 canComment={canComment}
-                onOpen={() => setActive(row.id)}
+                onOpen={() => setActive(activeRow.id)}
                 onDeleted={() => {
-                  if (editor && row.markId) removeCommentMark(editor, row.markId);
+                  if (editor && activeRow.markId) removeCommentMark(editor, activeRow.markId);
+                  setActive(null);
                 }}
               />
             </div>
-          ))}
-        </div>
-      ) : null}
+      </FloatingComment>}
+      {comments.isError && <div role="alert" className="mt-3 text-[12px] text-danger">Couldn’t load comments. <button type="button" className="underline" onClick={() => void comments.refetch()}>Try again</button></div>}
     </>
   );
+}
+
+function FloatingComment({ editor, markId, top, frame, title, children, onClose }: { editor: Editor | null; markId?: string | null; top?: number; frame: number; title: string; children: ReactNode; onClose: () => void }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [height, setHeight] = useState(300);
+  const zIndex = useLayerZ(90);
+  const owner = "page-comment";
+  useModalFocus(ref, true, onClose);
+  useEffect(() => {
+    const node = ref.current?.querySelector<HTMLElement>(".comment-popover");
+    if (!node || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => setHeight(node.getBoundingClientRect().height));
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  const host = editor?.view.dom;
+  const mark = markId ? host?.querySelector(`[data-comment-id="${CSS.escape(markId)}"]`) : null;
+  const box = host?.getBoundingClientRect();
+  const width = Math.min(336, window.innerWidth - 24);
+  const position = clampBox(top ?? mark?.getBoundingClientRect().top ?? box?.top ?? 80, (box?.right ?? window.innerWidth) + 14, width, height);
+  return createPortal(<ModalScope.Provider value={owner}>
+    <div ref={ref} className="comment-overlay" data-modal-layer={owner} style={{ zIndex }} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <section role="dialog" aria-modal="true" aria-label={title} className="comment-popover" style={{ ...position, width }} data-frame={frame} onKeyDown={(event) => { if (event.key === "Escape" && !event.defaultPrevented) { event.preventDefault(); event.stopPropagation(); onClose(); } }}>
+        <header><span><MessageSquare size={14} />{title}</span><button type="button" className="icon-btn" aria-label="Close comment" onClick={onClose}><X size={14} /></button></header>
+        {children}
+      </section>
+    </div>
+  </ModalScope.Provider>, document.body);
 }
 
 function Thread({
@@ -471,9 +508,10 @@ function Thread({
     }
   };
   return (
-    <article className={`rounded-lg px-2 py-2 ${active ? "bg-accent-soft" : ""}`} onClick={onOpen}>
-      {row.quote ? <div className="mb-1 border-l-2 border-line pl-2 text-[12px] text-muted">“{row.quote}”</div> : null}
-      {orphan ? <div className="mb-1 text-[12px] text-warn">The highlighted text was removed. “{row.quote}”</div> : null}
+    <article className="comment-thread" data-active={active || undefined} onClick={onOpen}>
+      {row.quote ? <blockquote className="comment-quote" title={row.quote}>{row.quote}</blockquote> : null}
+      {orphan ? <div className="mb-2 text-[11px] text-warn">The highlighted text was removed.</div> : null}
+      <div className="comment-byline"><span className="comment-avatar"><MessageSquare size={12} /></span><strong>{row.authorKind === "ensemble" ? "Ensemble" : "Comment"}</strong>{row.createdAt && <time dateTime={row.createdAt}>{relative(row.createdAt)}</time>}</div>
       {editing ? (
         <>
           <MentionPopover menu={editMentions} />
@@ -495,7 +533,7 @@ function Thread({
             </button>
           </div>
         ) : (
-          <div className="mt-1 flex flex-wrap gap-1">
+          <div className="comment-thread-actions">
             {editing ? (
               <>
                 <button type="button" className="btn" disabled={empty || save.isPending} onClick={() => save.mutate()}>
@@ -506,14 +544,14 @@ function Thread({
                 </button>
               </>
             ) : (
-              <button ref={editButton} type="button" className="btn" onClick={() => { setText(textOf(row.body)); setEditing(true); }}>
+              <button ref={editButton} type="button" onClick={() => { setText(textOf(row.body)); setEditing(true); }}>
                 Edit
               </button>
             )}
-            <button type="button" className="btn" onClick={() => resolve.mutate()}>
+            <button type="button" disabled={resolve.isPending} onClick={() => resolve.mutate()}>
               {row.status === "resolved" ? "Reopen" : "Resolve"}
             </button>
-            <button ref={deleteButton} type="button" className="btn" onClick={() => setConfirming(true)}>
+            <button ref={deleteButton} type="button" onClick={() => setConfirming(true)}>
               Delete
             </button>
           </div>
@@ -530,7 +568,7 @@ function Thread({
       ))}
       {canComment ? (
         <form
-          className="mt-2 flex gap-1"
+          className="comment-ask"
           onSubmit={(event) => {
             event.preventDefault();
             const prompt = String(new FormData(event.currentTarget).get("prompt") ?? ask).trim();
@@ -553,7 +591,7 @@ function Thread({
             onKeyDown={askMentions.onKeyDown}
             aria-label="Ask Ensemble"
             placeholder="@ensemble…"
-            className="field flex-1 py-1 text-[12.5px]"
+            className="field min-w-0 flex-1 py-2 text-[12.5px]"
           />
         </form>
       ) : null}

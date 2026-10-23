@@ -10,6 +10,25 @@ test("nested pages are ordered under their parent, with safe roots for missing p
   assert.deepEqual(ordered.map((page) => [page.id, page.depth]), [["orphan", 0], ["root", 0], ["child", 1], ["loop", 0]]);
 });
 
+test("board pages start collapsed, independent pages stay visible, and searching reveals task pages", async () => {
+  const pages = [
+    { id: "note", title: "Independent" },
+    { id: "experiment", title: "Bean experiment", board: { id: "research", title: "Research" } },
+    { id: "task", kind: "task" as const, title: "Review beans", board: { id: "ensemble", title: "Ensemble board" } },
+  ];
+  const mounted = await render(<PagesSection pages={pages} pathname="/pages/note" onCreate={() => {}} onRename={() => {}} onDelete={() => {}} renderLink={(props) => <Anchor {...props} />} />);
+  try {
+    assert.deepEqual([...mounted.host.querySelectorAll("a")].map((a) => a.textContent), ["Independent"]);
+    await act(async () => mounted.host.querySelector<HTMLButtonElement>('[aria-label="Expand Research pages"]')!.click());
+    assert.ok(mounted.host.querySelector('a[href="/pages/experiment"]'));
+    assert.equal(mounted.host.querySelector('a[href="/tasks/task"]'), null);
+    const field = mounted.host.querySelector<HTMLInputElement>('[aria-label="Find a page"]')!;
+    await act(async () => { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(field, "beans"); field.dispatchEvent(new Event("input", { bubbles: true })); });
+    assert.ok(mounted.host.querySelector('a[href="/tasks/task"]'));
+    assert.equal(mounted.host.querySelector('a[href="/pages/note"]'), null);
+  } finally { await unmount(mounted); }
+});
+
 test("select pages sends one bulk deletion request", async () => {
   const deleted: string[][] = [];
   const mounted = await render(<PagesSection pages={[{ id: "a", title: "First" }, { id: "b", title: "Second", parentId: "a" }]} pathname="/pages/a" onCreate={() => {}} onRename={() => {}} onDelete={() => {}} onDeleteMany={(ids) => deleted.push(ids)} renderLink={(props) => <Anchor {...props} />} />);

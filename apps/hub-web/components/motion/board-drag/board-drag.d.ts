@@ -20,6 +20,8 @@ export interface MountOptions {
   scroller?: HTMLElement | null; touch?: { delay: number; tolerance: number }; mouse?: { distance: number };
   /** false: another library owns input (dnd-kit); only play()/agentMove()/complete() run. */
   input?: boolean;
+  /** Optional viewport-level parent for automatic moves, outside board containment. */
+  layerParent?: HTMLElement;
 }
 export interface BoardDrag {
   readonly state: BoardDragState;

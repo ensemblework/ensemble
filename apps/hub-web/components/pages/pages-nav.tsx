@@ -7,7 +7,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useRef, useState } from "react";
-import { FileText } from "lucide-react";
+import { FileText, Pencil, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { useSpaceAccess } from "@/lib/access";
 import { useToast } from "../toast";
@@ -16,6 +16,7 @@ import { PAGE_DRAG_TYPE, pageIdFromHref } from "@/lib/page-drag";
 import { PageActions } from "./page-actions";
 import { NewPageDialog } from "./new-page-dialog";
 import { PagesSection, type PageLinkProps } from "./pages-section";
+import { LoadError } from "../load-error";
 
 const ImportDialog = dynamic(() => import("../imports/import-dialog").then((mod) => mod.ImportDialog), { ssr: false });
 
@@ -44,7 +45,7 @@ export function PagesBrowser() {
   const pathname = usePathname();
   const client = useQueryClient();
   const toast = useToast();
-  const pages = useQuery({ queryKey: ["pages"], queryFn: api.pages });
+  const pages = useQuery({ queryKey: ["pages", "directory"], queryFn: api.pageDirectory });
   const access = useSpaceAccess();
   const [importing, setImporting] = useState(false);
   const [newPage, setNewPage] = useState(false);
@@ -53,13 +54,15 @@ export function PagesBrowser() {
 
   return (
     <>
+      {pages.isError && <LoadError className="mx-3" what="your pages" error={pages.error} onRetry={() => void pages.refetch()} />}
       <PagesSection
+        readOnly={!access.ready || !access.canEdit}
         pages={pages.data?.pages ?? []}
         pathname={pathname}
         renderLink={(props) => <PageLink {...props} />}
         onImport={access.guest ? undefined : () => setImporting(true)}
         creating={creating}
-        renderActions={!access.guest ? (page, rename, remove) => <PageActions id={page.id} title={page.title} onRename={rename} onDelete={remove} /> : undefined}
+        renderActions={!access.guest ? (page, rename, remove) => page.kind === "task" ? <><button type="button" className="icon-btn" aria-label={`Rename ${page.title}`} onClick={rename}><Pencil size={13} /></button><button type="button" className="icon-btn" aria-label={`Delete ${page.title}`} onClick={remove}><Trash2 size={13} /></button></> : <PageActions id={page.id} title={page.title} onRename={rename} onDelete={remove} /> : undefined}
         onCreate={() => {
           if (!access.guest) { setNewPage(true); return; }
           if (createPending.current) return;
@@ -82,15 +85,29 @@ export function PagesBrowser() {
           }).catch((error: Error) => toast(error.message, { tone: "error" }));
         } : undefined}
         onRename={(id, title) => {
-          void api
-            .renamePage(id, title)
+          const page = pages.data?.pages.find((row) => row.id === id);
+          void (page?.kind === "task" ? api.patchTask(id, { title }) : api.renamePage(id, title))
             .then(() => {
               void client.invalidateQueries({ queryKey: ["pages"] });
               void client.invalidateQueries({ queryKey: ["standalone-page", id] });
+              void client.invalidateQueries({ queryKey: ["tasks"] });
+              void client.invalidateQueries({ queryKey: ["task", id] });
+              void client.invalidateQueries({ queryKey: ["boards"] });
             })
             .catch((error: Error) => toast(error.message, { tone: "error" }));
         }}
         onDelete={(id) => {
+          if (pages.data?.pages.find((row) => row.id === id)?.kind === "task") {
+            if (!window.dispatchEvent(new CustomEvent("ensemble:delete-task", { detail: { id }, cancelable: true }))) return;
+            void api.deleteTask(id).then((result) => {
+              void client.invalidateQueries({ queryKey: ["pages"] });
+              void client.invalidateQueries({ queryKey: ["tasks"] });
+              void client.invalidateQueries({ queryKey: ["boards"] });
+              toast("Task moved to Trash.", { action: { label: "Undo", run: () => { void api.undo(result.undoEntryId ?? undefined).then(() => client.invalidateQueries()).catch((error: Error) => toast(error.message, { tone: "error" })); } } });
+              if (pathname === `/tasks/${id}`) router.push("/pages");
+            }).catch((error: Error) => toast(error.message, { tone: "error" }));
+            return;
+          }
           // The open editor owns its pending saves before the page moves to Trash.
           if (!window.dispatchEvent(new CustomEvent("ensemble:delete-page", { detail: { id }, cancelable: true }))) return;
           void api

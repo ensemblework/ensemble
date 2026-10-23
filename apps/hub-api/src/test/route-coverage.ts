@@ -356,6 +356,13 @@ export const pageVersionRouteCoverage: Readonly<Record<string, readonly RouteChe
 };
 
 export const routeCoverage: Readonly<Record<string, readonly RouteCheck[]>> = {
+  "GET /api/boards": ["happy-path", "isolation"],
+  "POST /api/boards": ["happy-path", "invalid-input"],
+  "GET /api/boards/:id": ["happy-path", "isolation"],
+  "PATCH /api/boards/:id": ["happy-path", "isolation", "invalid-input"],
+  "DELETE /api/boards/:id": ["happy-path", "isolation"],
+  "POST /api/boards/:id/pages": ["happy-path", "isolation", "invalid-input", "relation-isolation"],
+  "PUT /api/pages/:kind/:id/board": ["happy-path", "isolation", "relation-isolation"],
   "POST /api/brief/prompt": ["happy-path", "isolation", "invalid-input"] as readonly RouteCheck[],
   ...pageVersionRouteCoverage,
   ...testingReportRouteCoverage,

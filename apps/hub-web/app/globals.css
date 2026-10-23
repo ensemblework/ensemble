@@ -973,18 +973,11 @@ span.mention:not(.mention-off) {
   display: block;
   min-width: 0;
 }
-.comment-host.has-comments .page-with-comments {
-  /* The comment margin (232px) plus room for a block's comment button beside the text. */
-  padding-right: 268px;
-}
 /* A page in focus mode (components/pages/page-focus.tsx): the title and the body in a reading column, nothing else. */
 .page-focus > * {
   max-width: 780px;
   margin-left: auto;
   margin-right: auto;
-}
-.page-focus:has(.comment-host.has-comments) > * {
-  max-width: 1028px;
 }
 .page-focus > :not([data-focus-keep]) {
   display: none;
@@ -992,19 +985,65 @@ span.mention:not(.mention-off) {
 .comment-margin {
   position: absolute;
   top: 0;
-  right: 0;
-  width: 232px;
+  right: -32px;
+  width: 28px;
   min-height: 1px;
 }
-.comment-bubble {
+.comment-marker {
   position: absolute;
-  left: 0;
   right: 0;
-  border: 1px solid var(--line);
-  background: var(--panel);
-  border-radius: 8px;
-  padding: 8px;
-  box-shadow: 0 10px 24px -16px rgba(20, 16, 12, 0.45);
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 27px;
+  min-height: 27px;
+  padding: 3px;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.comment-marker:hover, .comment-marker[aria-expanded="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.comment-marker[data-resolved] { opacity: .6; }
+.comment-overlay { position: fixed; inset: 0; }
+.comment-popover {
+  position: fixed;
+  max-height: min(560px, calc(100dvh - 24px));
+  overflow-y: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: var(--raised);
+  box-shadow: 0 12px 48px -12px rgb(0 0 0 / .3);
+  overflow-wrap: anywhere;
+}
+.comment-popover > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+.comment-popover > header > span { display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 500; color: var(--muted); }
+.comment-compose, .comment-thread { padding: 14px; }
+.comment-quote {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  border-left: 2px solid var(--accent);
+  padding: 1px 0 1px 9px;
+  margin-bottom: 14px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+.comment-byline { display: flex; align-items: center; gap: 7px; margin-bottom: 10px; font-size: 11px; }
+.comment-avatar { display: grid; place-items: center; width: 25px; height: 25px; border-radius: 50%; color: var(--accent); background: var(--accent-soft); }
+.comment-byline strong { font-weight: 500; }
+.comment-byline time { margin-left: auto; font-size: 10px; color: var(--muted); }
+.comment-thread-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; font-size: 11px; color: var(--muted); }
+.comment-thread-actions > button:hover { color: var(--ink); }
+.comment-ask { display: flex; gap: 4px; padding-top: 12px; margin-top: 12px; border-top: 1px solid var(--line); }
+@media (max-width: 639px) {
+  .comment-margin { right: -15px; }
+  .comment-marker { background: var(--panel); }
 }
 /* The selection's comment button (comment-layer.tsx places it beside or under the selection). */
 .comment-selection-action {
@@ -2836,8 +2875,7 @@ html[data-theme="light"] .vendor-signin-monochrome { filter: none; }
   [data-theme-canvas] { background: #fff !important; }
   .page-focus { position: static !important; overflow: visible !important; }
   #main-content *:has(> [data-focus-keep]) > :not([data-focus-keep]) { display: none !important; }
-  .block-controls, .block-comment-action, .comment-selection-action, .comment-margin, .toggle-block-trigger, .embed-resize { display: none !important; }
-  .comment-host.has-comments .page-with-comments { padding-right: 0 !important; }
+  .block-controls, .block-comment-action, .comment-selection-action, .comment-margin, .comment-overlay, .toggle-block-trigger, .embed-resize { display: none !important; }
   .ProseMirror { min-height: 0; }
   .mention { color: #111 !important; background: none !important; box-shadow: inset 0 0 0 1px #bbb !important; }
   .mention .mention-at { opacity: 1; }

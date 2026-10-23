@@ -11,6 +11,7 @@ export type OwnerBucket = "me" | "agent" | "team" | "unassigned";
 export type BoardFocus = { kind: "status"; value: string } | { kind: "owner"; value: OwnerBucket } | { kind: "ideas" | "attention" | "stale" | "deadlines" | "done" };
 export const DAY = 86_400_000;
 export const ACTIVE = new Set(["proposed", "todo", "in_progress", "waiting_approval", "blocked"]);
+export const IN_PROGRESS_STATUSES: TaskRecord["status"][] = ["in_progress", "waiting_approval", "blocked"];
 export const boardTasks = (tasks: TaskRecord[]) => tasks.filter((t) => ACTIVE.has(t.status) || t.status === "done");
 export const openTasks = (tasks: TaskRecord[]) => tasks.filter((t) => ACTIVE.has(t.status));
 export const dayKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -24,7 +25,7 @@ export function ownerBucket(task: TaskRecord, who: OwnerContext): OwnerBucket {
 
 export function matchesFocus(task: TaskRecord, focus: BoardFocus | null, who: OwnerContext, now: number): boolean {
   if (!focus) return true;
-  if (focus.kind === "status") return focus.value === "planned" ? ["proposed", "todo"].includes(task.status) : focus.value === "waiting" ? ["blocked", "waiting_approval"].includes(task.status) : task.status === focus.value;
+  if (focus.kind === "status") return focus.value === "planned" ? ["proposed", "todo"].includes(task.status) : focus.value === "in_progress" ? IN_PROGRESS_STATUSES.includes(task.status) : focus.value === "waiting" ? ["blocked", "waiting_approval"].includes(task.status) : task.status === focus.value;
   if (focus.kind === "owner") return ownerBucket(task, who) === focus.value && ACTIVE.has(task.status);
   if (focus.kind === "ideas") return task.status === "proposed";
   if (focus.kind === "attention") return ["blocked", "waiting_approval"].includes(task.status);

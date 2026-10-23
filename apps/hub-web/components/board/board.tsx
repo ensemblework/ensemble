@@ -12,11 +12,11 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, arrayMove, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, X } from "lucide-react";
+import { ChevronRight, Plus, X } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { BoardDragOverlay, useBoardDragSensors, useBoardMotion, useBoardMoveMotion } from "@/components/motion/board-drag/board-drag-dnd-kit";
-import { api, type Owner, type Priority, type TaskRecord, type TaskStatus } from "@/lib/api";
+import { api, currentShare, type Owner, type Priority, type TaskRecord, type TaskStatus } from "@/lib/api";
 import { usePeek } from "../shell/peek";
 import { useToast } from "../toast";
 import { useWarmEditors } from "@/lib/warm";
@@ -30,7 +30,7 @@ import { PagePeople } from "../sharing/page-people";
 
 import { CardBody, SortableCard, type BoardCardMotion } from "./task-card";
 import { BoardInsights } from "./insights";
-import { focusLabel, matchesFocus, type BoardFocus } from "./insight-data";
+import { focusLabel, IN_PROGRESS_STATUSES, matchesFocus, type BoardFocus } from "./insight-data";
 import "../desk/desk.css";
 import "./insights.css";
 import { CreateTaskDialog } from "./create-task-dialog";
@@ -40,14 +40,14 @@ import type { LayoutPayload } from "@/lib/server-layout";
 import { usePersistentState } from "@/lib/prefs";
 import { taskPersonId, useSpacePeople } from "@/lib/space-people";
 import { PRIORITY, PRIORITY_ORDER, PRIORITY_RANK } from "@/lib/format";
+import { CustomBoards } from "./custom-boards";
 
-type ColumnId = "proposed" | "todo" | "in_progress" | "waiting" | "done";
+type ColumnId = "proposed" | "todo" | "in_progress" | "done";
 
 const COLUMNS: Array<{ id: ColumnId; statuses: TaskStatus[]; drop: TaskStatus; pill: TaskStatus }> = [
   { id: "proposed", statuses: ["proposed"], drop: "proposed", pill: "proposed" },
   { id: "todo", statuses: ["todo"], drop: "todo", pill: "todo" },
-  { id: "in_progress", statuses: ["in_progress"], drop: "in_progress", pill: "in_progress" },
-  { id: "waiting", statuses: ["waiting_approval", "blocked"], drop: "waiting_approval", pill: "waiting_approval" },
+  { id: "in_progress", statuses: IN_PROGRESS_STATUSES, drop: "in_progress", pill: "in_progress" },
   { id: "done", statuses: ["done"], drop: "done", pill: "done" },
 ];
 
@@ -55,7 +55,7 @@ const columnOf = (status: TaskStatus): ColumnId | null =>
   COLUMNS.find((column) => column.statuses.includes(status))?.id ?? null;
 
 function columnsFromTasks(rows: TaskRecord[], completedVisible: number): Record<ColumnId, string[]> {
-  const next: Record<ColumnId, string[]> = { proposed: [], todo: [], in_progress: [], waiting: [], done: [] };
+  const next: Record<ColumnId, string[]> = { proposed: [], todo: [], in_progress: [], done: [] };
   for (const task of rows) {
     const column = columnOf(task.status);
     if (column) next[column].push(task.id);
@@ -103,7 +103,7 @@ function Column({
   filtered?: boolean;
 }) {
   const { setNodeRef } = useDroppable({ id });
-  const label = id === "waiting" ? "Waiting" : STATUS[pill].label;
+  const label = STATUS[pill].label;
   return (
     <div className="relative w-[272px] shrink-0 self-start" data-column={id} aria-label={label}>
     <div className="board-column flex flex-col rounded-lg bg-panel/70 p-2" data-empty={ids.length === 0}>
@@ -121,7 +121,7 @@ function Column({
       <div
         className="flex min-h-[60px] flex-col gap-1.5 rounded-lg p-1"
       >
-        {ids.length === 0 && <div className="board-column-empty">{filtered ? "No tasks match." : id === "proposed" ? "A place for ideas before you commit." : id === "in_progress" ? "The next task you start will land here." : id === "waiting" ? "Nothing waiting in this view." : id === "done" ? "Finished work lands here." : "Ready when you are."}</div>}
+        {ids.length === 0 && <div className="board-column-empty">{filtered ? "No tasks match." : id === "proposed" ? "A place for ideas before you commit." : id === "in_progress" ? "The next task you start will land here." : id === "done" ? "Finished work lands here." : "Ready when you are."}</div>}
         <SortableContext id={id} items={ids} strategy={verticalListSortingStrategy}>
           {ids.map((taskId) => {
             const task = tasks.get(taskId);
@@ -171,7 +171,7 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
   const peek = usePeek();
   useWarmEditors("peek");
   const [boardScroll, boardMore] = useOverflowRight();
-  const tasks = useQuery({ queryKey: ["tasks"], queryFn: api.tasks });
+  const tasks = useQuery({ queryKey: ["tasks", "board"], queryFn: api.boardTasks });
   const pages = useQuery({ queryKey: ["pages"], queryFn: api.pages });
   const shell = useQuery({ queryKey: ["shell"], queryFn: api.shell, staleTime: 30_000 });
   const settings = useQuery({ queryKey: ["settings"], queryFn: api.settings, staleTime: 60_000 });
@@ -186,12 +186,12 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
     proposed: [],
     todo: [],
     in_progress: [],
-    waiting: [],
     done: [],
   });
   const [dragId, setDragId] = useState<string | null>(null);
   const [picked, setPicked] = useState<string[]>([]);
   const [layoutEdit, setLayoutEdit] = useState(false);
+  const [collapsed, setCollapsed] = usePersistentState("ensemble.board.collapsed", false);
   const [focus, setFocus] = useState<BoardFocus | null>(null);
   const [ideaOpen, setIdeaOpen] = useState(false);
   const access = useSpaceAccess();
@@ -258,7 +258,12 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
   const sensors = useBoardDragSensors();
   const titleOf = useCallback((id: UniqueIdentifier) => byId.get(String(id))?.title ?? "Task", [byId]);
   const motion = useBoardMotion(titleOf);
-  const moveMotion = useBoardMoveMotion(boardRef, dragId !== null);
+  const moveMotion = useBoardMoveMotion(
+    boardRef,
+    dragId !== null,
+    currentShare() ? `share:${currentShare()}` : shell.data?.space?.id ?? shell.data?.user.id ?? null,
+    visible.map((task) => ({ id: task.id, column: columnOf(task.status), completion: task.status === "done" ? task.completedAt ?? "done" : null })),
+  );
   const [overColumn, setOverColumn] = useState<ColumnId | null>(null);
   const [overlayWidth, setOverlayWidth] = useState(248);
   // Freeze each column's painted height while a card is in the air. A shrink
@@ -304,13 +309,13 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
       api.moveTask(input.id, { status: input.status, beforeId: input.beforeId, afterId: input.afterId }),
     onMutate: async (input) => {
       await client.cancelQueries({ queryKey: ["tasks"] });
-      const previous = client.getQueryData<{ tasks: TaskRecord[] }>(["tasks"]);
+      const previous = client.getQueryData<{ tasks: TaskRecord[] }>(["tasks", "board"]);
       if (previous) {
         const before = input.beforeId ? previous.tasks.find((task) => task.id === input.beforeId)?.boardOrder : undefined;
         const after = input.afterId ? previous.tasks.find((task) => task.id === input.afterId)?.boardOrder : undefined;
         const order =
           before !== undefined && after !== undefined ? (before + after) / 2 : before !== undefined ? before + 1 : after !== undefined ? after - 1 : undefined;
-        client.setQueryData(["tasks"], {
+        client.setQueryData(["tasks", "board"], {
           tasks: previous.tasks.map((task) =>
             task.id === input.id ? { ...task, status: input.status, boardOrder: order ?? task.boardOrder } : task,
           ),
@@ -319,7 +324,7 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
       return { previous };
     },
     onError: (error, _input, context) => {
-      if (context?.previous) client.setQueryData(["tasks"], context.previous);
+      if (context?.previous) client.setQueryData(["tasks", "board"], context.previous);
       toast((error as Error).message, { tone: "error" });
     },
     onSettled: () => {
@@ -334,14 +339,14 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
     mutationFn: (id: string) => api.deleteTask(id),
     onMutate: async (id) => {
       await client.cancelQueries({ queryKey: ["tasks"] });
-      const previous = client.getQueryData<{ tasks: TaskRecord[] }>(["tasks"]);
-      if (previous) client.setQueryData(["tasks"], { tasks: previous.tasks.filter((task) => task.id !== id) });
+      const previous = client.getQueryData<{ tasks: TaskRecord[] }>(["tasks", "board"]);
+      if (previous) client.setQueryData(["tasks", "board"], { tasks: previous.tasks.filter((task) => task.id !== id) });
       setPicked((current) => current.filter((row) => row !== id));
       if (peek.peekId === id) peek.close();
       return { previous };
     },
     onError: (error, _id, context) => {
-      if (context?.previous) client.setQueryData(["tasks"], context.previous);
+      if (context?.previous) client.setQueryData(["tasks", "board"], context.previous);
       toast((error as Error).message, { tone: "error" });
     },
     onSuccess: (result) => {
@@ -366,7 +371,7 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
   });
 
   const created = (task: TaskRecord) => {
-    client.setQueryData<{ tasks: TaskRecord[] }>(["tasks"], (current) => ({ tasks: [...(current?.tasks ?? []), task] }));
+    client.setQueryData<{ tasks: TaskRecord[] }>(["tasks", "board"], (current) => ({ tasks: [...(current?.tasks ?? []), task] }));
     setSearch("");
     setOwner("all");
     setPriority("all");
@@ -405,7 +410,7 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
     if (!over) return null;
     const sortable = over.data.current?.sortable as { containerId?: UniqueIdentifier } | undefined;
     const raw = sortable?.containerId != null ? String(sortable.containerId) : String(over.id);
-    if (raw === "proposed" || raw === "todo" || raw === "in_progress" || raw === "waiting" || raw === "done") return raw;
+    if (raw === "proposed" || raw === "todo" || raw === "in_progress" || raw === "done") return raw;
     return containerOf(String(over.id));
   };
 
@@ -558,11 +563,12 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
       </div>
       {tasks.isError && tasks.data ? <div className="work-load-error mx-6" role="alert">Couldn't refresh the board.<button type="button" className="btn" onClick={() => void tasks.refetch()}>Try again</button></div> : null}
       {ideaOpen && <CreateTaskDialog status="proposed" title="Capture an idea" onCreated={created} onClose={() => setIdeaOpen(false)} />}
-      {tasks.isError && !tasks.data ? <LoadError className="mx-6" error={tasks.error} what="the board" retrying={tasks.isFetching} onRetry={() => void tasks.refetch()} /> : <Held
+      <button type="button" className="mx-6 mb-4 mt-2 inline-flex self-start items-center gap-2 text-[13px] font-medium" aria-expanded={!collapsed} aria-controls="ensemble-kanban" onClick={() => setCollapsed(!collapsed)}><ChevronRight size={14} className={collapsed ? undefined : "rotate-90"} />Ensemble board<span className="text-[12px] font-normal text-muted">{count}</span></button>
+      {!collapsed && <div id="ensemble-kanban">{tasks.isError && !tasks.data ? <LoadError className="mx-6" error={tasks.error} what="the board" retrying={tasks.isFetching} onRetry={() => void tasks.refetch()} /> : <Held
         pending={tasks.isLoading}
         fallback={
         <div className="flex gap-3 px-5" aria-hidden>
-          {Array.from({ length: 5 }, (_, index) => (
+          {Array.from({ length: 4 }, (_, index) => (
             <div key={index} className="w-[272px] shrink-0 space-y-2">
               <Skeleton className="h-6 w-24" />
               <Skeleton className="h-20 w-full" />
@@ -607,7 +613,7 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
                   over={overColumn === column.id && origin.current !== column.id ? "yes" : undefined}
                   motion={motion.sortable}
                   onOpen={peek.open}
-                  onCreate={() => createNewTask(column.id === "waiting" ? "blocked" : column.drop)}
+                  onCreate={() => createNewTask(column.drop)}
                   moreHref={column.id === "done" ? "/settings#completed" : undefined}
                   picked={picked}
                   onToggleSelect={togglePick}
@@ -628,7 +634,8 @@ export function Board({ initialBoardLayout = null }: { initialBoardLayout?: Layo
             {dragId && byId.get(dragId) ? <CardBody task={byId.get(dragId)!} /> : null}
           </BoardDragOverlay>
         </DndContext>
-      </Held>}
+      </Held>}</div>}
+      <CustomBoards />
     </div>
   );
 }

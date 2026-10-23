@@ -8,12 +8,30 @@ import { api, type TaskRecord } from "@/lib/api";
 import { BoardInsights, InsightGallery, insightSamples } from "./insights";
 import { completedDays, DEFAULT_INSIGHTS, INSIGHT_IDS, INSIGHTS_KEY, matchesFocus, MAX_INSIGHTS, ownerBucket, readInsightLayout, type InsightLayout } from "./insight-data";
 import { InsightTile } from "./insight-tile";
+import { BoardWidgets } from "./board-widgets";
+import type { BoardPage, PageBoardRecord, PageBoardTile } from "@ensemble/shared-types";
 
 (globalThis as { React?: typeof React }).React = React;
 const now = new Date(2026, 9, 11, 12).getTime();
 const who = { me: "member", ownerId: "owner" };
 const base = insightSamples("engineer", new Date(now))[0]!;
 const task = (extra: Partial<TaskRecord> = {}): TaskRecord => ({ ...base, id: "one", status: "todo", owner: "me", assigneeAccountId: null, updatedAt: new Date(now).toISOString(), ...extra });
+
+test("custom board charts use that board's column names and counts, and tile changes are explicit", async () => {
+  const board: PageBoardRecord = {
+    id: "research", title: "Research", description: "", revision: 1, pageCount: 2, createdAt: new Date(now).toISOString(), updatedAt: new Date(now).toISOString(),
+    columns: [{ id: "experiment", name: "On-going experiments", color: "blue" }, { id: "results", name: "Results", color: "green" }], tiles: ["distribution", "flow"],
+  };
+  const pages: BoardPage[] = ["a", "b"].map((id) => ({ id, title: `Experiment ${id}`, kind: "page", columnId: "experiment", boardOrder: 0, createdAt: new Date(now).toISOString(), updatedAt: new Date(now).toISOString() }));
+  const changes: PageBoardTile[][] = [];
+  const view = await mount(<BoardWidgets board={board} pages={pages} editable pending={false} onChange={(tiles) => changes.push(tiles)} />);
+  try {
+    assert.ok(view.host.querySelector('[role="img"][aria-label="On-going experiments: 2, Results: 0"]'));
+    assert.equal(view.host.textContent?.includes("In progress"), false);
+    await click(view.host.querySelector('[aria-label="Remove By column tile"]'));
+    assert.deepEqual(changes, [["flow"]]);
+  } finally { await view.done(); }
+});
 
 test("Me follows the viewer and assignment, including legacy shared tasks", () => {
   assert.equal(ownerBucket(task(), who), "team");
@@ -64,6 +82,17 @@ test("chart controls select a matching filter and toggle it off", async () => {
   function Harness() { const [focus, setFocus] = useState<Parameters<typeof InsightTile>[0]["focus"]>(null); return <InsightTile id="flow" role="student" tasks={[task({ status: "done" }), task({ id: "b" })]} who={who} now={now} cap={3} focus={focus} onFocus={(f) => { focuses.push(f); setFocus(f); }} />; }
   const view = await mount(<Harness />);
   try { await click(button("Done1")); await click(button("Done1")); assert.deepEqual(focuses, [{ kind: "status", value: "done" }, null]); } finally { await view.done(); }
+});
+
+test("flow, WIP and the in-progress focus include blocked and approval work in the merged column", async () => {
+  const rows = ["in_progress", "blocked", "waiting_approval", "done"].map((status, index) => task({ id: String(index), status: status as TaskRecord["status"] }));
+  const view = await mount(<><InsightTile id="flow" role="engineer" tasks={rows} who={who} now={now} cap={3} onFocus={() => {}} /><InsightTile id="capacity" role="engineer" tasks={rows} who={who} now={now} cap={3} onFocus={() => {}} /></>);
+  try {
+    assert.ok(view.host.querySelector('[role="img"][aria-label="Planned: 0, In progress: 3, Done: 1"]'));
+    assert.match(view.host.textContent ?? "", /25%/);
+    assert.match(view.host.textContent ?? "", /3 \/ 3/);
+    assert.deepEqual(rows.filter((row) => matchesFocus(row, { kind: "status", value: "in_progress" }, who, now)).map((row) => row.status), ["in_progress", "blocked", "waiting_approval"]);
+  } finally { await view.done(); }
 });
 
 test("gallery previews never change layout and the four-tile limit is enforced", async () => {
