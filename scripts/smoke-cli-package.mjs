@@ -17,9 +17,9 @@ if (!options.packageDir) {
 }
 
 const packageDir = resolve(options.packageDir);
+const testing = existsSync(join(packageDir, "CHANNEL")) && readFileSync(join(packageDir, "CHANNEL"), "utf8").trim() === "testing";
 const launcher = launcherPath(packageDir);
 const version = readFileSync(join(packageDir, "VERSION"), "utf8").trim();
-const testing = existsSync(join(packageDir, "CHANNEL")) && readFileSync(join(packageDir, "CHANNEL"), "utf8").trim() === "testing";
 const temp = mkdtempSync(join(tmpdir(), "ensemble-cli-smoke-"));
 
 try {

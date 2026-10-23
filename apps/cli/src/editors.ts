@@ -7,6 +7,7 @@ import { backupOnce, fileExists } from "./paths.js";
 import { commandWithSubcommand, isExecutableOnPath, type LauncherCommand } from "./launcher.js";
 import { confirm } from "./secret.js";
 import { envOf, homeOf, pathApi, platformOf, type PlatformInput } from "./platform.js";
+import { MCP_NAME, TOKEN_ENV } from "./channel.js";
 
 export const EDITORS = [
   "vscode",
@@ -460,4 +461,3 @@ export async function configuredEditors(input: PlatformInput = {}): Promise<Edit
   }
   return configured;
 }
-import { MCP_NAME, TOKEN_ENV } from "./channel.js";

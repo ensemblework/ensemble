@@ -1,3 +1,5 @@
+import { TESTING } from "./channel.js";
+
 export class HttpError extends Error {
   constructor(
     readonly status: number,
@@ -46,4 +48,3 @@ export async function fetchJson<T>(url: string | URL, init: RequestInit = {}, fe
 export function bearerHeaders(token: string | null | undefined): Record<string, string> {
   return token ? { authorization: `Bearer ${token}` } : {};
 }
-import { TESTING } from "./channel.js";
