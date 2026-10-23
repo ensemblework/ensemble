@@ -1,5 +1,6 @@
 import { env } from "../config.js";
 import { corsPolicy, type CorsPolicy } from "./cors-origin.js";
+import { nodeWebOrigin } from "./node-origin.js";
 
 let policy: CorsPolicy | undefined;
 
@@ -10,6 +11,7 @@ let policy: CorsPolicy | undefined;
  * cannot disagree. `desktop/main.ts` sets ENSEMBLE_DESKTOP before hub-api loads.
  */
 export function hubCorsPolicy(): CorsPolicy {
-  policy ??= corsPolicy(env.HUB_WEB_ORIGIN);
+  const node = nodeWebOrigin();
+  policy ??= corsPolicy(env.HUB_WEB_ORIGIN, undefined, node ? [node] : []);
   return policy;
 }

@@ -19,7 +19,8 @@ This page maps what works today and its limits; each row links to the guide that
 | Local development | `pnpm dev`: Hub :3000, API :4000, Python model/plot runtime :5055; Postgres and Redis in Docker | [README](../README.md), [01 §3](01_TECH_STACK_AND_ENVIRONMENT.md#3-local-development-setup) |
 | Hosted web | Public signup, per-account data. The API runs on a home server behind a Cloudflare Tunnel (`infra/deploy/home`); file originals and plot tables are in private Azure Blob storage (`ENSEMBLE_FILE_STORAGE=azure-blob`). Code and the terminal run on the person's paired computer | [01 §8](01_TECH_STACK_AND_ENVIRONMENT.md#8-ci-and-deploys), [32 §2](32_FILES.md#2-where-files-live) |
 | Desktop | Tauri shell, static Hub export, local Node API with embedded PGlite and in-process model adapters | [DESKTOP](DESKTOP.md) |
-| CLI | Terminal UI on the same local runtime: tasks, chat, pairing, profiles, runner service, updates, editor MCP setup | [26](26_CLI.md) |
+| CLI | Terminal UI on the same local runtime: tasks, chat, a read-only Ensemble Node tab, pairing, profiles, runner service, updates, editor MCP setup | [26](26_CLI.md) |
+| Ensemble Node | A separate website (`ensemblework/ensemble-node`, `node.ensemblework.com`) for persistent AI teammates in direct chats, crews and group rooms with other people. Its backend is hub-api's `node` module: same account, workspace tools, included models and credits; computer work is an ordinary job on the owner's paired computer | [35](35_ENSEMBLE_NODE.md) |
 | Context Bridge | Read-only context tools over stdio, local HTTP or hosted `/mcp` with an `ens_` key; cannot apply actions or approve runs | [CONTEXT_BRIDGE](CONTEXT_BRIDGE.md) |
 | Quick capture | Tauri tray app with a global shortcut; needs a running local API and capture authentication | [20_QUICK_CAPTURE](20_QUICK_CAPTURE.md) |
 
@@ -133,7 +134,7 @@ Migration `20261006010000_account_data_lifetime` adds SQL foreign keys that stop
 
 - Personal API keys are checked and stored encrypted per account. Provider discovery is cached with explicit refresh. Provider and model are always named together; effort levels are validated.
 - Included AI is an operator-configured provider: **20,000 credits per account per UTC month** (`DEFAULT_MONTHLY_CREDITS`), within the operator's global monthly ceiling and a per-call reservation. Enabled deployments decide which models appear.
-- Included models work on the web and on a paired desktop or CLI. A local-only computer must connect first; no Azure key is copied to it.
+- Included models work on the web, on Ensemble Node and on a paired desktop or CLI, from one list and one allowance per account. A local-only computer must connect first; no Azure key is copied to it.
 - Subscriptions on paired computers are a separate source. External coding engines use their own local sign-in.
 - Run usage separates reported tokens, included credits, estimated prices and unknown prices.
 
@@ -181,6 +182,7 @@ Details: [05](05_MODULE_TASK_ORCHESTRATOR.md), [06](06_MODULE_WORKSPACE_AND_SURF
 | Agent execution | `apps/hub-api/src/workspace`, `devices`, `remote` | [05](05_MODULE_TASK_ORCHESTRATOR.md), [06](06_MODULE_WORKSPACE_AND_SURFACES.md) |
 | Access, audit, retention | `apps/hub-api/src/lib`, `sharing`, `spaces`, `jobs` | [07](07_MODULE_GOVERNANCE_AUDIT_METRICS.md) |
 | Assistant | `apps/hub-api/src/assistant` | [11](11_HOW_THE_ASSISTANT_WORKS.md) |
+| Ensemble Node | `apps/hub-api/src/node`, `apps/cli/src/tui/node.ts`; the website in `ensemblework/ensemble-node` | [35](35_ENSEMBLE_NODE.md) |
 | Files | `apps/hub-api/src/files`, `apps/hub-web/components/files` | [32](32_FILES.md) |
 | Editor context | `apps/context-bridge`, `apps/hub-api/src/bridge` | [CONTEXT_BRIDGE](CONTEXT_BRIDGE.md) |
 

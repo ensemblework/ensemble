@@ -77,8 +77,14 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
     // `?chats=1`: the dock's chats only. Inline @ensemble answers and comment replies keep conversation rows without messages.
     const chats = (request.query as { chats?: string } | undefined)?.chats === "1";
     const conversations = await app.prisma.assistantConversation.findMany({
-      // Each person's chats are their own, even in a shared space.
-      where: { userId: request.userId, accountId: actorFor(request.userId), ...(chats ? { messages: { some: {} } } : {}) },
+      // Each person's chats are their own, even in a shared space. Ensemble Node's working
+      // conversations (startedOn "node") belong to its rooms, not to this list.
+      where: {
+        userId: request.userId,
+        accountId: actorFor(request.userId),
+        OR: [{ startedOn: null }, { startedOn: { not: "node" } }],
+        ...(chats ? { messages: { some: {} } } : {}),
+      },
       orderBy: { updatedAt: "desc" },
       take: chats ? 20 : 40,
       select: { id: true, title: true, updatedAt: true, createdAt: true },

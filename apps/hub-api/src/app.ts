@@ -78,6 +78,7 @@ import { deviceCodeRoutes } from "./devices/code-routes.js";
 import { deviceRoutes } from "./devices/routes.js";
 import { subscriptionRoutes } from "./subscriptions/routes.js";
 import { remoteRoutes } from "./remote/routes.js";
+import { nodeRoutes } from "./node/routes.js";
 import { desktopHostAllowed } from "./lib/desktop-guard.js";
 
 const PUBLIC_PATHS = new Set(["/api/version", "/health", "/health/ready", "/api/events", "/api/devices/register"]);
@@ -290,6 +291,9 @@ export async function buildApp(options: BuildAppOptions = {}) {
     if (routes === authOAuthRoutes) await app.register(authOAuthRoutes, options.authOAuth ?? {});
     else await app.register(routes);
   }
+
+  // Ensemble Node runs on the hosted server only: its rooms are shared between accounts.
+  if (!desktop) await app.register(nodeRoutes);
 
   if (desktop) {
     await app.register(remoteRoutes);

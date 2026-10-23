@@ -32,6 +32,7 @@ Guides to how Ensemble works today, with the code paths that implement it. Start
 | [31 · Connected apps](31_CONNECTORS_IN_USE.md) | Connector catalog, connection methods, item actions, MCP |
 | [32 · Files](32_FILES.md) | Originals and blob storage, previews, edits, extraction, caps |
 | [33 · Included AI](33_INCLUDED_AI.md) | Operator-provided models, monthly credits, reservations |
+| [35 · Ensemble Node](35_ENSEMBLE_NODE.md) | AI teammates in DMs, crews and group rooms: shared sign-in, credits, tools and computer jobs |
 
 ## Clients and shared systems
 

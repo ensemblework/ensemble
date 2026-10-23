@@ -55,7 +55,7 @@ Each request runs in an `AsyncLocalStorage` scope (`sharing/context.ts`, set by 
 | Class | Member | Examples |
 |---|---|---|
 | `shared` | viewers GET only, editors anything | tasks, pages, custom boards and board membership, comments, projects, deliverables, diagrams, plots, skills, documents, meeting sessions, undo/redo, people; GET of repos, context, artifacts, runs, workspace and `/api/desk/live` (without reminders or inbox) |
-| `personal` | runs on their own account | settings, model keys, models, secrets, notifications, metrics, activity, device list, rename and pairing, Code tab and terminal on their own computer |
+| `personal` | runs on their own account | settings, model keys, models, secrets, notifications, metrics, activity, device list, rename and pairing, Code tab and terminal on their own computer, Ensemble Node (`/api/node/*`: its own room membership and visibility decide what each person reads, [35](35_ENSEMBLE_NODE.md#3-rooms-messages-and-visibility)) |
 | `assistant` | own keys; viewers cannot apply writes | `/api/assistant/*`, `/api/ask`, `/api/ensemble/invoke`, inline @ensemble, meeting summaries |
 | `runner` | editors; the handler limits it to the runner | assign, stop, retry, answering a run's question, `POST /api/runs/:id/feedback` |
 | `prefs` | the handler decides per key | §3 |

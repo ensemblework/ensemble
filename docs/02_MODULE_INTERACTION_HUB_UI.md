@@ -162,6 +162,7 @@ React Query caches scoped API responses. SSE events invalidate/refetch queries a
 | Undo/redo | `/api/undo`, `/api/redo`; `routes/misc.ts`, `lib/undo.ts` |
 | Sharing/presence | `sharing/routes.ts`; [29](29_SHARING.md#6-routes) |
 | Device login/editor MCP | `routes/cli-auth.ts`, `routes/mcp.ts`; [26](26_CLI.md) |
+| Ensemble Node | `/api/node/*` (nodes, crews, rooms, messages, approvals, runs, activity, events) and `GET /api/bridge/node`; `node/routes.ts`, [35](35_ENSEMBLE_NODE.md#9-routes) |
 
 Internal service routes need internal credentials; device routes need a scoped device token. Neither bypasses an app's normal authorization. File bytes, model keys and cookie/session headers never go into model prompts.
 
@@ -265,9 +266,9 @@ Saving, waiting for a person, queued, active and failed each have their own indi
 
 `routes/auth.ts` and `auth-oauth.ts` provide scrypt passwords and hashed-cookie sessions. `ENSEMBLE_SIGNUP_MODE` is `open`, `allowlist` or `closed`; allowlist reads `ENSEMBLE_SIGNUP_ALLOWLIST`. Local first-account adoption of placeholder data is separate from hosted registration, which never claims localhost data.
 
-Social buttons need `AUTH_<PROVIDER>_CLIENT_ID`/`_SECRET`. Login uses browser-bound PKCE/nonce/single-use state and identity validation, and stores login mappings, not connector tokens. A verified provider email links accounts only under the ownership rules; a Microsoft email or username alone is not email verification.
+Social buttons need `AUTH_<PROVIDER>_CLIENT_ID`/`_SECRET`. Login uses browser-bound PKCE/nonce/single-use state and identity validation, and stores login mappings, not connector tokens. A verified provider email links accounts only under the ownership rules; a Microsoft email or username alone is not email verification. `?return=node` on the start route sends a sign-in begun on Ensemble Node back to `ENSEMBLE_NODE_WEB_ORIGIN` (never another URL); the account and session are the Hub's ([35](35_ENSEMBLE_NODE.md#2-accounts-and-sign-in)).
 
-Hosted email signup needs Resend delivery (`EMAIL_PROVIDER=resend`, `EMAIL_API_KEY`, `EMAIL_FROM`) and both Turnstile keys (`TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`). Verification codes are hashed, expire after 30 minutes and count attempts; a new code invalidates the old one. Unverified users can write workspace content but cannot use hosted models, connectors or agents. Signup readiness and registration policy are separate.
+Hosted email signup needs Resend delivery (`EMAIL_PROVIDER=resend`, `EMAIL_API_KEY`, `EMAIL_FROM`) and both Turnstile keys (`TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`). Verification codes are hashed, expire after 30 minutes and count attempts; a new code invalidates the old one. The email links to the Hub's `/verify`, or to Ensemble Node's `/welcome` for a sign-up made there ([35](35_ENSEMBLE_NODE.md#2-accounts-and-sign-in)). Turnstile answers are accepted from the Hub's host and from `ENSEMBLE_NODE_WEB_ORIGIN`'s host. Unverified users can write workspace content but cannot use hosted models, connectors or agents. Signup readiness and registration policy are separate.
 
 New accounts pick a profession/profile and a template. The tour uses a preview canvas and never changes real work; Ask opens a draft without sending. Settings has no control to change the signup role.
 

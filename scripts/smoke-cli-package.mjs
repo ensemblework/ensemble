@@ -2,7 +2,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -95,6 +95,18 @@ async function smokeMcp(command, tempDir) {
   }
 }
 
+/**
+ * Linux: run the sidecar on its OpenSSL 3 query engine, the one Ubuntu 22.04+, Debian 12+ and Fedora
+ * load. A build machine with OpenSSL 1.1 installed as well would otherwise pick, and pass on, the 1.1 engine.
+ */
+function linuxEngineEnv(appDir) {
+  if (process.platform !== "linux") return {};
+  const client = join(appDir, "node_modules", ".prisma", "client");
+  const engine = readdirSync(client).find((name) => /^libquery_engine-(debian|linux-arm64)-openssl-3\.0\.x\.so\.node$/.test(name));
+  if (!engine) throw new Error(`The package has no OpenSSL 3 Prisma query engine in ${client}.`);
+  return { PRISMA_QUERY_ENGINE_LIBRARY: join(client, engine) };
+}
+
 async function smokeSidecar(packageDir, tempDir) {
   const sidecarDir = join(packageDir, "sidecar");
   const node = join(sidecarDir, process.platform === "win32" ? "node.exe" : "node");
@@ -109,6 +121,7 @@ async function smokeSidecar(packageDir, tempDir) {
     cwd: appDir,
     env: {
       ...smokeEnv(tempDir),
+      ...linuxEngineEnv(appDir),
       ENSEMBLE_DATA_HOME: dataHome,
       ENSEMBLE_DATA_DIR: join(dataHome, "pglite"),
       ENSEMBLE_BACKUP_DIR: join(dataHome, "backups"),

@@ -2367,3 +2367,189 @@ model InteractionEvent {
   @@index([surface, at])
   @@map("interaction_events")
 }
+
+/// Ensemble Node (docs/35): a persistent AI teammate owned by one account. Its turns are
+/// assistant turns (assistant/agent.ts) with the node's charter and room, in its owner's space.
+model NodeAgent {
+  id           String           @id @default(uuid())
+  /// The owning account. Node is account-level: it never follows the open space cookie.
+  userId       String           @map("user_id")
+  /// The space it reads and writes. Null: the account's own space.
+  spaceId      String?          @map("space_id")
+  /// Lowercase handle (@manager). Unique per account; never changes.
+  slug         String
+  name         String
+  role         String           @default("assistant")
+  /// `{ shape, color, eyes }`, drawn by the Node web app.
+  avatar       Json             @default("{}")
+  charter      String           @default("")
+  /// Chat model. Null: the Node default (included gpt-5-mini).
+  provider     String?
+  model        String?
+  /// Ensemble run profile for work on a computer. Null: the person's default profile.
+  runProfileId String?          @map("run_profile_id")
+  /// `{ sharedRooms: "ask" | "auto" }`: whether it posts in rooms with other people without asking.
+  autonomy     Json             @default("{}")
+  /// active | paused
+  status       String           @default("active")
+  templateId   String?          @map("template_id")
+  createdAt    DateTime         @default(now()) @map("created_at")
+  updatedAt    DateTime         @updatedAt @map("updated_at")
+  memberships  NodeRoomMember[]
+  memories     NodeMemory[]
+  turns        NodeTurn[]
+
+  @@unique([userId, slug])
+  @@map("node_agents")
+}
+
+/// A conversation: dm (a person and one node), crew (a person and their nodes) or group.
+model NodeRoom {
+  id            String           @id @default(uuid())
+  /// Who created it. Deleting that account deletes the room.
+  userId        String           @map("user_id")
+  /// dm | crew | group
+  kind          String
+  title         String
+  /// `{ leadNodeIds, responsibilities: { accountId: text } }`
+  settings      Json             @default("{}")
+  /// Last message seq; incremented in the message insert's transaction.
+  lastSeq       Int              @default(0) @map("last_seq")
+  lastMessageAt DateTime?        @map("last_message_at")
+  createdAt     DateTime         @default(now()) @map("created_at")
+  archivedAt    DateTime?        @map("archived_at")
+  members       NodeRoomMember[]
+  messages      NodeMessage[]
+  runs          NodeRun[]
+
+  @@index([userId])
+  @@map("node_rooms")
+}
+
+/// A person or a node in a room. `userId` is the account the membership belongs to (the node's owner for a node).
+model NodeRoomMember {
+  id                    String     @id @default(uuid())
+  roomId                String     @map("room_id")
+  userId                String     @map("user_id")
+  /// Set for a node member; null for a person.
+  nodeId                String?    @map("node_id")
+  /// Unique in the room: a person's handle, a node's slug, or owner/slug in group rooms.
+  handle                String
+  /// owner | member
+  role                  String     @default("member")
+  /// The node is its owner's front door in a room shared with other people.
+  representative        Boolean    @default(false)
+  /// The node's own assistant conversation for this room's shared thread (its memory of the room, tool calls, proposals).
+  conversationId        String?    @map("conversation_id")
+  /// The newest shared message seq this node has already read.
+  seenSeq               Int        @default(0) @map("seen_seq")
+  /// The node's conversation for its owner's private thread in this room. Kept apart so nothing
+  /// said privately can reach a reply everyone reads.
+  privateConversationId String?    @map("private_conversation_id")
+  /// The newest message seq the private thread has read (it reads shared messages too).
+  privateSeenSeq        Int        @default(0) @map("private_seen_seq")
+  /// The newest message seq this person has read.
+  readSeq               Int        @default(0) @map("read_seq")
+  joinedAt              DateTime   @default(now()) @map("joined_at")
+  room                  NodeRoom   @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  node                  NodeAgent? @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, handle])
+  @@index([userId])
+  @@index([nodeId])
+  @@map("node_room_members")
+}
+
+/// Everything said in a room, including cards (approval, run, status).
+model NodeMessage {
+  id            String   @id @default(uuid())
+  roomId        String   @map("room_id")
+  seq           Int
+  /// The author's account: the person, or the node's owner.
+  userId        String   @map("user_id")
+  /// human | node | system
+  authorKind    String   @map("author_kind")
+  authorNodeId  String?  @map("author_node_id")
+  /// text | approval | run | status | error
+  kind          String   @default("text")
+  body          String   @default("")
+  /// Card data: tool chips, held proposals, run state.
+  data          Json     @default("{}")
+  /// Empty: everyone in the room. Otherwise only these accounts (and their nodes) see it.
+  visibleTo     String[] @default([]) @map("visible_to")
+  /// Resolved mentions: `[{ kind: "human" | "node", id }]`.
+  mentions      Json     @default("[]")
+  /// The person's message this bot message descends from; bot budgets count from it.
+  rootMessageId String?  @map("root_message_id")
+  botDepth      Int      @default(0) @map("bot_depth")
+  clientId      String?  @map("client_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+  room          NodeRoom @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, seq])
+  @@unique([roomId, clientId])
+  @@index([rootMessageId])
+  @@map("node_messages")
+}
+
+/// A node's work on a computer: the Ensemble job it started, followed until it ends and reported back.
+model NodeRun {
+  id         String    @id @default(uuid())
+  userId     String    @map("user_id")
+  nodeId     String    @map("node_id")
+  roomId     String    @map("room_id")
+  /// The run card in the room.
+  messageId  String?   @map("message_id")
+  jobId      String    @unique @map("job_id")
+  taskId     String    @map("task_id")
+  /// The job status last seen.
+  status     String    @default("queued")
+  reportedAt DateTime? @map("reported_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  room       NodeRoom  @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@index([status])
+  @@index([userId, createdAt])
+  @@map("node_runs")
+}
+
+/// One node turn: why it ran, how it ended. Queued rows left by a restart run again.
+model NodeTurn {
+  id               String    @id @default(uuid())
+  userId           String    @map("user_id")
+  nodeId           String    @map("node_id")
+  roomId           String?   @map("room_id")
+  /// mentioned | dm | lead | relevance | run | approval
+  reason           String
+  /// The owner's private thread in the room rather than the shared one.
+  private          Boolean   @default(false)
+  triggerMessageId String?   @map("trigger_message_id")
+  /// Extra text for the turn (a finished run's result).
+  note             String?
+  /// queued | running | done | failed
+  status           String    @default("queued")
+  model            String?
+  credits          Float?
+  error            String?
+  createdAt        DateTime  @default(now()) @map("created_at")
+  finishedAt       DateTime? @map("finished_at")
+  node             NodeAgent @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@index([nodeId, createdAt])
+  @@map("node_turns")
+}
+
+/// What a node keeps between conversations. The owner sees, edits and deletes every row.
+model NodeMemory {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  nodeId    String    @map("node_id")
+  content   String
+  createdAt DateTime  @default(now()) @map("created_at")
+  node      NodeAgent @relation(fields: [nodeId], references: [id], onDelete: Cascade)
+
+  @@index([nodeId, createdAt])
+  @@map("node_memories")
+}

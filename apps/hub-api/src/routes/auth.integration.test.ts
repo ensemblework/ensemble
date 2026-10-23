@@ -403,6 +403,80 @@ test("new OAuth users with unverified provider email receive a code and land on 
   createdIds.push(me.json().user.id);
 });
 
+test("an email sign-up on Ensemble Node passes Turnstile from Node's host and its code links back to Node", async () => {
+  process.env.ENSEMBLE_NODE_WEB_ORIGIN = "http://node.example.test";
+  const hubFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    assert.equal(String(input), "https://challenges.cloudflare.com/turnstile/v0/siteverify", "unexpected external call in auth tests");
+    return new Response(JSON.stringify({ success: true, hostname: "node.example.test", action: "signup" }));
+  };
+  try {
+    const email = address();
+    const response = await harness.app.inject({
+      method: "POST", url: "/api/auth/signup", headers: { origin: "http://node.example.test" },
+      payload: { email, password, name: "Mira", turnstileToken: "test-challenge" },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    createdIds.push(response.json().user.id);
+    const sent = mails.filter((mail) => mail.to === email).at(-1);
+    assert.ok(sent);
+    assert.match(sent.subject, /^Your Ensemble code: [A-Z2-9]{4}$/);
+    assert.match(sent.text, /http:\/\/node\.example\.test\/welcome/);
+    assert.doesNotMatch(sent.text, /hub\.example\.test/);
+
+    const resent = await harness.app.inject({ method: "POST", url: "/api/auth/resend-verification", headers: { cookie: cookie(response) }, payload: {} });
+    assert.equal(resent.statusCode, 200, resent.body);
+    assert.match(mails.filter((mail) => mail.to === email).at(-1)!.text, /http:\/\/hub\.example\.test\/verify/, "a resend from anywhere but Node links to the Hub");
+  } finally {
+    globalThis.fetch = hubFetch;
+    delete process.env.ENSEMBLE_NODE_WEB_ORIGIN;
+  }
+});
+
+test("a provider sign-in started on Ensemble Node returns there; linking never does", async () => {
+  process.env.ENSEMBLE_NODE_WEB_ORIGIN = "http://node.example.test";
+  try {
+    profile = { subject: randomUUID(), email: address(), name: "Mira", verified: true };
+    const started = await harness.app.inject({ method: "GET", url: "/api/auth/oauth/google/start?return=node" });
+    assert.equal(started.statusCode, 302, started.body);
+    const state = new URL(String(started.headers.location)).searchParams.get("state")!;
+    const headers = { cookie: `${cookie(started, "ensemble_login_flow")}; ${cookie(started, "ensemble_login_return")}` };
+    const back = await harness.app.inject({ method: "GET", url: `/api/auth/oauth/google/callback?code=fake-code&state=${encodeURIComponent(state)}`, headers });
+    const location = new URL(String(back.headers.location));
+    assert.equal(location.origin, "http://node.example.test");
+    assert.equal(location.pathname, "/welcome");
+    const me = await harness.app.inject({ method: "GET", url: "/api/auth/me", headers: { cookie: cookie(back) } });
+    assert.equal(me.statusCode, 200, me.body);
+    createdIds.push(me.json().user.id);
+
+    const again = await harness.app.inject({ method: "GET", url: "/api/auth/oauth/google/start?return=node" });
+    const state2 = new URL(String(again.headers.location)).searchParams.get("state")!;
+    const returning = await harness.app.inject({
+      method: "GET",
+      url: `/api/auth/oauth/google/callback?code=fake-code&state=${encodeURIComponent(state2)}`,
+      headers: { cookie: `${cookie(again, "ensemble_login_flow")}; ${cookie(again, "ensemble_login_return")}` },
+    });
+    assert.equal(new URL(String(returning.headers.location)).pathname, "/", "an existing account lands on Node's home");
+
+    const failed = await harness.app.inject({ method: "GET", url: `/api/auth/oauth/google/callback?code=fake-code&state=${encodeURIComponent(state2)}`, headers: { cookie: cookie(again, "ensemble_login_return") } });
+    const error = new URL(String(failed.headers.location));
+    assert.equal(error.origin, "http://node.example.test");
+    assert.equal(error.pathname, "/login");
+    assert.ok(error.searchParams.get("error"));
+
+    const unknown = await harness.app.inject({ method: "GET", url: "/api/auth/oauth/google/start?return=https://evil.example" });
+    assert.equal(unknown.statusCode, 400, "only the named Node return is accepted");
+  } finally {
+    delete process.env.ENSEMBLE_NODE_WEB_ORIGIN;
+  }
+  const hub = await oauth("google");
+  profile = { subject: randomUUID(), email: address(), name: "Mira", verified: true };
+  const hubBack = await harness.app.inject({ method: "GET", url: hub.callback, headers: hub.headers });
+  assert.equal(new URL(String(hubBack.headers.location)).origin, "http://hub.example.test", "without a Node origin everything returns to the Hub");
+  const meHub = await harness.app.inject({ method: "GET", url: "/api/auth/me", headers: { cookie: cookie(hubBack) } });
+  createdIds.push(meHub.json().user.id);
+});
+
 test("unverified provider emails cannot auto-link existing accounts; verified identities link safely", async () => {
   const owner = await harness.asUser();
   await harness.prisma.user.update({ where: { id: owner.id }, data: { emailVerifiedAt: new Date() } });

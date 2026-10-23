@@ -8,11 +8,19 @@ import { appendCookie, readCookie, SESSION_COOKIE, sha256, startSession, account
 import { authWebOrigin, emailConfigured, sendAccountEmail } from "../lib/auth-email.js";
 import { exchangeLoginCode, LoginProvider, loginAuthorizationUrl, newOAuthFlow, type LoginProfile } from "../lib/auth-oauth.js";
 import { sessionCookieHeader, sessionCookieSecure } from "../lib/cookie.js";
+import { nodeWebOrigin } from "../lib/node-origin.js";
 import { currentSignupPolicy, INVITE_ONLY, signupPermitted } from "../lib/signup.js";
 import { appendLedger } from "../lib/ledger.js";
 
 const FLOW_COOKIE = "ensemble_login_flow";
 const FLOW_SECONDS = 600;
+/** Where a provider sign-in returns: absent for the Hub, "node" for Ensemble Node's site (docs/35). */
+const RETURN_COOKIE = "ensemble_login_return";
+
+/** Ensemble Node's site, when this server serves it. A named return, never a URL from the request. */
+function nodeOrigin(): string | null {
+  return nodeWebOrigin();
+}
 
 function flowCookie(state: string): string {
   const signature = createHmac("sha256", env.ENSEMBLE_INTERNAL_TOKEN).update(state).digest("base64url");
@@ -32,6 +40,12 @@ function setFlowCookie(reply: FastifyReply, request: FastifyRequest, state: stri
   })));
 }
 
+function setReturnCookie(reply: FastifyReply, request: FastifyRequest, value: "node" | "", age: number): void {
+  appendCookie(reply, sessionCookieHeader(RETURN_COOKIE, value, age, sessionCookieSecure({
+    nodeEnv: process.env.NODE_ENV, protocol: request.protocol, forwardedProto: request.headers["x-forwarded-proto"],
+  })));
+}
+
 type CodeExchange = typeof exchangeLoginCode;
 
 export async function authOAuthRoutes(app: FastifyInstance, options: { exchange?: CodeExchange } = {}): Promise<void> {
@@ -40,7 +54,7 @@ export async function authOAuthRoutes(app: FastifyInstance, options: { exchange?
 
   app.get("/api/auth/oauth/:provider/start", async (request, reply) => {
     const { provider } = z.object({ provider: LoginProvider }).parse(request.params);
-    const { link } = z.object({ link: z.enum(["1"]).optional() }).parse(request.query);
+    const { link, return: back } = z.object({ link: z.enum(["1"]).optional(), return: z.enum(["node"]).optional() }).parse(request.query);
     let sessionId: string | null = null;
     if (link) {
       requireBrowserSession(request);
@@ -63,14 +77,18 @@ export async function authOAuthRoutes(app: FastifyInstance, options: { exchange?
       },
     });
     setFlowCookie(reply, request, flow.state, FLOW_SECONDS);
+    // Linking a provider happens in the Hub's settings; only a sign-in can return to Node.
+    setReturnCookie(reply, request, back === "node" && !link && nodeOrigin() ? "node" : "", back === "node" && !link && nodeOrigin() ? FLOW_SECONDS : 0);
     reply.header("Cache-Control", "no-store");
     return reply.redirect(url);
   });
 
   app.get("/api/auth/oauth/:provider/callback", async (request, reply) => {
-    const destination = new URL("/login", authWebOrigin());
+    const node = readCookie(request, RETURN_COOKIE) === "node" ? nodeOrigin() : null;
+    const destination = new URL("/login", node ?? authWebOrigin());
     reply.header("Cache-Control", "no-store");
     setFlowCookie(reply, request, "", 0);
+    if (node) setReturnCookie(reply, request, "", 0);
     try {
       const { provider } = z.object({ provider: LoginProvider }).parse(request.params);
       const query = z.object({ state: z.string().min(20).max(200), code: z.string().max(4096).optional(), error: z.string().max(200).optional() }).parse(request.query);
@@ -135,12 +153,18 @@ export async function authOAuthRoutes(app: FastifyInstance, options: { exchange?
       });
       let verificationSent = false;
       if (created && !user.emailVerifiedAt && emailConfigured()) {
-        await sendAccountEmail(prisma, user, "verify");
+        await sendAccountEmail(prisma, user, "verify", node ? "node" : "hub");
         verificationSent = true;
       }
       await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
       if (!flow.userId) await startSession(reply, user.id, request);
-      await appendLedger({ userId: user.id, actor: "me", action: flow.userId ? "auth.link" : "auth.oauth", payload: { provider } });
+      await appendLedger({ userId: user.id, actor: "me", action: flow.userId ? "auth.link" : "auth.oauth", payload: { provider, ...(node ? { site: "node" } : {}) } });
+      if (node && !flow.userId) {
+        // Ensemble Node: its own welcome covers a new account (and the email code when one was sent).
+        destination.pathname = created || verificationSent ? "/welcome" : "/";
+        destination.search = verificationSent ? "?verify=1" : "";
+        return reply.redirect(destination.toString());
+      }
       destination.pathname = flow.userId ? "/settings" : verificationSent ? "/verify" : user.onboardingCompletedAt ? "/today" : "/start";
       destination.search = flow.userId ? "?linked=1" : verificationSent ? "?next=/start" : "";
       return reply.redirect(destination.toString());
