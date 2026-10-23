@@ -5,6 +5,7 @@
  */
 import { ago } from "./model.js";
 import { pad, truncate, wrapLine, type Line } from "./text.js";
+import { TESTING, TESTING_APP } from "../channel.js";
 
 export type NodeOverview = {
   nodes: Array<{ id: string; slug: string; name: string; role: string; status: string; busy: boolean }>;
@@ -32,6 +33,7 @@ const RUN_GLYPH: Record<string, { glyph: string; color: string }> = {
 
 /** The Node website for this account's Ensemble: app.<domain> becomes node.<domain>. */
 export function nodeWebUrl(appUrl: string | null | undefined, override = process.env.ENSEMBLE_NODE_URL): string {
+  if (TESTING) return TESTING_APP;
   if (override?.trim()) return override.trim().replace(/\/+$/, "");
   try {
     const url = new URL(appUrl || "https://app.ensemblework.com");

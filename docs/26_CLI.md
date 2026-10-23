@@ -37,7 +37,25 @@ ensemble/sidecar/node        Node runtime
 ensemble/sidecar/app/        hub-api, as the desktop sidecar uses it
 ```
 
-The archive is large because it carries Node, Prisma and PGlite. The launchers set `ENSEMBLE_LAUNCHER` (the path as invoked) and `ENSEMBLE_SIDECAR_DIR`. Script installs are per user: `~/.local/share/ensemble-cli/<version>` with a link at `~/.local/bin/ensemble`, and `%LOCALAPPDATA%\Programs\Ensemble\<version>` plus a `current` folder on the user PATH. `ENSEMBLE_VERSION` pins a version, `ENSEMBLE_INSTALL_DIR` moves the install, and `ENSEMBLE_DOWNLOAD_BASE` points the scripts at another download location (for testing). Both scripts verify the archive against `SHA256SUMS.txt`.
+The archive is large because it carries Node, Prisma and PGlite. The launchers set `ENSEMBLE_LAUNCHER` (the path as invoked) and `ENSEMBLE_SIDECAR_DIR`. Script installs are per user: `~/.local/share/ensemble-cli/<version>` with a link at `~/.local/bin/ensemble`, and `%LOCALAPPDATA%\Programs\Ensemble\<version>` plus a `current` folder on the user PATH. `ENSEMBLE_VERSION` pins a version, `ENSEMBLE_INSTALL_DIR` moves the install, and `ENSEMBLE_DOWNLOAD_BASE` points the scripts at another download location (for packaging checks). Both scripts verify the archive against `SHA256SUMS.txt`.
+
+### 1.1 Testing CLI
+
+`ensemble-test` is a separate build of this CLI for `test.ensemblework.com`, not a flag on the production command. Install commands and testing/promotion workflow: [36](36_WEB_TESTING.md#install-the-testing-cli). It connects only to `https://api-test.ensemblework.com`; production `ensemble` defaults and native-app integration are unchanged. `ensemble-test status --json` reports `channel: "testing"` and its API. Its version contains `-testing.<build>`.
+
+| Surface | Testing identity |
+| --- | --- |
+| Command/install | `ensemble-test`; `~/.local/share/ensemble-test-cli/<version>/ensemble-test`, link `~/.local/bin/ensemble-test`; Windows `%LOCALAPPDATA%\Programs\Ensemble Testing\<version>\ensemble-test`, `current\bin` on PATH |
+| CLI config/credentials | `~/.config/ensemble-test` (or `$XDG_CONFIG_HOME/ensemble-test`); Windows `%APPDATA%\Ensemble Testing` |
+| Runtime/data | macOS `~/Library/Application Support/com.ensemblework.cli.testing`; Windows `%APPDATA%\com.ensemblework.cli.testing`; Linux `$XDG_DATA_HOME/com.ensemblework.cli.testing` or `~/.local/share/com.ensemblework.cli.testing` |
+| Workspace | `<testing-data>/workspace`; no shared production workspace |
+| Login services | `com.ensemblework.cli.testing.runner`, `ensemble-test-runner.service`, Windows `Ensemble Testing Runner` |
+| Editor MCP entry | `ensemble-test`, alongside production `ensemble` |
+| Updates | `cli-testing-latest` GitHub prerelease, generated testing installers and `channel.json`; never stable package managers or native updates |
+
+Build with `node apps/cli/scripts/build.mjs --testing`; package with `node scripts/package-cli.mjs --channel testing --target <target>`. `ENSEMBLE_TEST_CLI_VERSION` supplies `<release>-testing.<numeric-build>` without changing root `release.json`. The build-time channel (`apps/cli/src/channel.ts`) cannot be changed by a production API environment variable. `ENSEMBLE_TEST_TOKEN`, `ENSEMBLE_TEST_CONFIG_DIR` and `ENSEMBLE_TEST_DATA_HOME` are independent overrides; test launchers use `ENSEMBLE_TEST_LAUNCHER` and `ENSEMBLE_TEST_SIDECAR_DIR`. The testing runtime refuses production pairing, hosted calls and discovery belonging to the native/production runtime. Its included-model credits and account model keys come only from the test account.
+
+There is no separate testing Node website; its Node tab reads the test API and links back to the test Hub, not the production Node site.
 
 ## 2. Using it
 

@@ -9,6 +9,7 @@
 import { cp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileExists, resolveLegacyDataHome, type CliPaths } from "./paths.js";
+import { TESTING } from "./channel.js";
 
 /** The database, its backups, the key that encrypts saved credentials, and pairing state. */
 export const MOVED_ENTRIES = ["pglite", "backups", "secret.key", "remote.json", "remote-jobs.json"];
@@ -41,6 +42,7 @@ export async function migrateLegacyData(
   paths: CliPaths,
   options: { legacy?: string; legacyRunning?: (discoveryFile: string) => Promise<boolean> } = {},
 ): Promise<MigrationResult> {
+  if (TESTING) return { status: "none" };
   const legacy = options.legacy ?? resolveLegacyDataHome();
   const target = paths.dataHome;
   if (legacy === target || !(await fileExists(join(legacy, "pglite")))) return { status: "none" };

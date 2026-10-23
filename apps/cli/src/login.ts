@@ -11,6 +11,8 @@ import { bearerHeaders, fetchJson, HttpError } from "./http.js";
 import { remoteStatus } from "./local-commands.js";
 import { resolveCliPaths, type CliPaths } from "./paths.js";
 import { localJson, resolveSidecarDir, sidecarAvailable, withLocalApi } from "./sidecar.js";
+import { channelApp, TESTING } from "./channel.js";
+import { DEFAULT_APP_URL } from "./version.js";
 
 export type LoginResult = { email: string | null; paired: boolean; name: string; hasRunner: boolean };
 
@@ -25,22 +27,23 @@ export async function signIn(options: {
   paths?: CliPaths;
 }): Promise<LoginResult> {
   const paths = options.paths ?? resolveCliPaths();
-  const apiBase = normalizeApiBase(options.apiBase || process.env.ENSEMBLE_API_URL);
+  const apiBase = normalizeApiBase(options.apiBase || (TESTING ? process.env.ENSEMBLE_TEST_API_URL : process.env.ENSEMBLE_API_URL));
   const sidecarDir = resolveSidecarDir(import.meta.url);
   const hasRunner = await sidecarAvailable(sidecarDir);
   const name = options.name || hostname() || "this computer";
   const scopes = options.mcpOnly ? ["mcp"] : hasRunner ? ["mcp", "runner"] : ["mcp"];
   const start = await startDeviceFlow({ apiBase, clientName: name, platform: process.platform, scopes });
-  const url = start.verificationUriComplete || start.verificationUri;
+  const url = channelApp(start.verificationUriComplete || start.verificationUri);
   const opened = options.noBrowser ? false : openBrowser(url);
   options.onCode(start.userCode, url, opened);
   const token = await pollDeviceToken({ apiBase, deviceCode: start.deviceCode, interval: start.interval, expiresIn: start.expiresIn, signal: options.signal });
   const finalApi = normalizeApiBase(token.apiBase || apiBase);
+  const appUrl = channelApp(token.appUrl?.replace(/\/+$/, "") || DEFAULT_APP_URL);
   await saveToken(token.token, paths);
   await saveConfig(
     {
       apiBase: finalApi,
-      appUrl: token.appUrl?.replace(/\/+$/, "") || "https://ensemblework.com",
+      appUrl,
       account: token.account ?? null,
       tokenId: token.tokenId ?? null,
       deviceName: name,

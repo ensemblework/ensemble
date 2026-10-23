@@ -1,4 +1,11 @@
 import type { AppId } from "./catalog";
+import { TESTING_API } from "@ensemble/shared-types";
+
+export const TEST_CLI_DOWNLOAD = "https://github.com/ensemblework/ensemble/releases/download/cli-testing-latest";
+export function testingCliInstall(os: ConnectOs): string {
+  return os === "windows" ? `irm ${TEST_CLI_DOWNLOAD}/install.ps1 | iex` : `curl -fsSL ${TEST_CLI_DOWNLOAD}/install.sh | sh`;
+}
+export function isTestingApi(apiBase: string): boolean { return apiBase.replace(/\/+$/, "") === TESTING_API; }
 
 /**
  * Client configs for Ensemble CLI/MCP and the developer Context Bridge.

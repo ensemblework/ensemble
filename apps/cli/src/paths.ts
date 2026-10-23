@@ -5,6 +5,7 @@ import { dirname } from "node:path";
 import { randomBytes } from "node:crypto";
 import { desktopDataDir } from "@ensemble/shared-types/desktop-discovery";
 import { envOf, homeOf, pathApi, platformOf, type PlatformInput } from "./platform.js";
+import { TESTING } from "./channel.js";
 
 export type CliPaths = {
   configDir: string;
@@ -23,10 +24,10 @@ export function resolveConfigDir(input: PlatformInput = {}): string {
   const env = envOf(input);
   const home = homeOf(input) || homedir();
   const path = pathApi(platform);
-  const explicit = env.ENSEMBLE_CONFIG_DIR?.trim();
+  const explicit = (TESTING ? env.ENSEMBLE_TEST_CONFIG_DIR : env.ENSEMBLE_CONFIG_DIR)?.trim();
   if (explicit) return explicit;
-  if (platform === "win32") return path.join(env.APPDATA?.trim() || path.join(home, "AppData", "Roaming"), "Ensemble");
-  return path.join(env.XDG_CONFIG_HOME?.trim() || path.join(home, ".config"), "ensemble");
+  if (platform === "win32") return path.join(env.APPDATA?.trim() || path.join(home, "AppData", "Roaming"), TESTING ? "Ensemble Testing" : "Ensemble");
+  return path.join(env.XDG_CONFIG_HOME?.trim() || path.join(home, ".config"), TESTING ? "ensemble-test" : "ensemble");
 }
 
 /**
@@ -38,8 +39,14 @@ export function resolveDataHome(input: PlatformInput = {}): string {
   const platform = platformOf(input);
   const env = envOf(input);
   const home = homeOf(input) || homedir();
-  const explicit = env.ENSEMBLE_DATA_HOME?.trim();
+  const explicit = (TESTING ? env.ENSEMBLE_TEST_DATA_HOME : env.ENSEMBLE_DATA_HOME)?.trim();
   if (explicit) return explicit;
+  if (TESTING) {
+    const path = pathApi(platform), identifier = "com.ensemblework.cli.testing";
+    if (platform === "win32") return path.join(env.APPDATA?.trim() || path.join(home, "AppData", "Roaming"), identifier);
+    if (platform === "darwin") return path.join(home, "Library", "Application Support", identifier);
+    return path.join(env.XDG_DATA_HOME?.trim() || path.join(home, ".local", "share"), identifier);
+  }
   return desktopDataDir({ platform, home, env: { APPDATA: env.APPDATA, XDG_DATA_HOME: env.XDG_DATA_HOME } });
 }
 

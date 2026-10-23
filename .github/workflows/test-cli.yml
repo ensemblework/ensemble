@@ -1,0 +1,143 @@
+name: test-cli
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testing-cli-release
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    if: github.ref == 'refs/heads/testing' && vars.TEST_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.plan.outputs.sha }}
+      version: ${{ steps.plan.outputs.version }}
+      current: ${{ steps.plan.outputs.current }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - id: plan
+        env:
+          SHA: ${{ github.sha }}
+          BUILD: ${{ github.run_id }}
+        run: |
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "version=$(node -p 'require("./release.json").version')-testing.$BUILD" >> "$GITHUB_OUTPUT"
+          if [ "$(git rev-parse origin/testing)" = "$SHA" ] && [ "$(git rev-parse origin/testing-live)" = "$SHA" ]; then
+            echo "current=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "current=false" >> "$GITHUB_OUTPUT"
+          fi
+  build:
+    needs: plan
+    if: needs.plan.outputs.current == 'true'
+    name: Testing CLI ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: darwin-arm64
+          - os: macos-15-intel
+            target: darwin-x64
+          - os: ubuntu-22.04
+            target: linux-x64
+          - os: ubuntu-22.04-arm
+            target: linux-arm64
+          - os: windows-2022
+            target: windows-x64
+    env:
+      ENSEMBLE_TEST_CLI_VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+      - uses: pnpm/action-setup@v5
+        with:
+          version: 12.6.0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: actions/setup-go@v6.4.0
+        if: matrix.target == 'windows-x64' || startsWith(matrix.target, 'linux-')
+        with:
+          go-version: "1.24.x"
+          cache: false
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+      - name: Package testing CLI
+        env:
+          ENSEMBLE_REQUIRE_LANDRUN: ${{ startsWith(matrix.target, 'linux-') && '1' || '' }}
+        run: node scripts/package-cli.mjs --channel testing --target ${{ matrix.target }} --out dist/test-cli
+      - name: Smoke package
+        if: matrix.target != 'windows-x64'
+        run: |
+          mkdir -p dist/smoke
+          tar -xzf dist/test-cli/ensemble-test-cli-${ENSEMBLE_TEST_CLI_VERSION}-${{ matrix.target }}.tar.gz -C dist/smoke
+          node scripts/smoke-cli-package.mjs dist/smoke/ensemble-test
+      - name: Smoke Windows package
+        if: matrix.target == 'windows-x64'
+        shell: pwsh
+        run: |
+          Expand-Archive -Path "dist/test-cli/ensemble-test-cli-$env:ENSEMBLE_TEST_CLI_VERSION-windows-x64.zip" -DestinationPath dist/smoke
+          node scripts/smoke-cli-package.mjs dist/smoke/ensemble-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v6
+        with:
+          name: test-cli-${{ matrix.target }}
+          path: dist/test-cli/ensemble-test-cli-*.*
+          if-no-files-found: error
+  publish:
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: test-cli-*
+          path: dist/test-cli
+          merge-multiple: true
+      - name: Publish only the testing prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.plan.outputs.sha }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          git fetch --quiet origin testing testing-live
+          if [ "$(git rev-parse origin/testing)" != "$SHA" ] || [ "$(git rev-parse origin/testing-live)" != "$SHA" ]; then
+            echo "A newer testing snapshot owns publication."
+            exit 0
+          fi
+          node scripts/testing-cli.mjs dist/test-cli
+          node -e 'require("node:fs").writeFileSync("dist/test-cli/channel.json",JSON.stringify({channel:"testing",version:process.env.VERSION,commit:process.env.SHA,apiBase:"https://api-test.ensemblework.com",appUrl:"https://test.ensemblework.com"},null,2)+"\n")'
+          if ! gh release view cli-testing-latest >/dev/null 2>&1; then
+            gh release create cli-testing-latest --target "$SHA" --prerelease --latest=false --title "Ensemble Testing CLI" --notes "Testing only. Install ensemble-test with the attached install.sh or install.ps1. Connects only to test.ensemblework.com. Production ensemble and desktop updates are unchanged."
+          fi
+          # Keep older versioned archives: an updater that read the preceding manifest must still finish.
+          (cd dist/test-cli && sha256sum ensemble-test-cli-* > SHA256SUMS.txt)
+          gh release upload cli-testing-latest dist/test-cli/ensemble-test-cli-* dist/test-cli/install.sh dist/test-cli/install.ps1 --clobber
+          # Add old archive hashes so the previous manifest remains installable during publication.
+          if gh release view cli-testing-latest --json assets --jq '.assets[].name' | grep -qx SHA256SUMS.txt; then
+            gh release download cli-testing-latest --pattern SHA256SUMS.txt --dir dist/old-checksums
+            cat dist/old-checksums/SHA256SUMS.txt >> dist/test-cli/SHA256SUMS.txt
+            sort -u dist/test-cli/SHA256SUMS.txt -o dist/test-cli/SHA256SUMS.txt
+          fi
+          gh release upload cli-testing-latest dist/test-cli/SHA256SUMS.txt --clobber
+          gh release upload cli-testing-latest dist/test-cli/channel.json --clobber

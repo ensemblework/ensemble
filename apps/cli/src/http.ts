@@ -31,6 +31,7 @@ export function errorMessage(body: unknown, fallback: string): string {
 export async function fetchJson<T>(url: string | URL, init: RequestInit = {}, fetchImpl: FetchLike = fetch): Promise<T> {
   const response = await fetchImpl(url, {
     ...init,
+    ...(TESTING ? { redirect: "error" } : {}),
     headers: {
       accept: "application/json",
       ...(init.body === undefined ? {} : { "content-type": "application/json" }),
@@ -45,3 +46,4 @@ export async function fetchJson<T>(url: string | URL, init: RequestInit = {}, fe
 export function bearerHeaders(token: string | null | undefined): Record<string, string> {
   return token ? { authorization: `Bearer ${token}` } : {};
 }
+import { TESTING } from "./channel.js";

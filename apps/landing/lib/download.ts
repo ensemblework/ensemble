@@ -2,6 +2,8 @@ export type OsId = "mac" | "windows" | "linux";
 
 export const HOSTED_MCP_URL = "https://api.ensemblework.com/mcp";
 export const RELEASES_URL = "https://github.com/ensemblework/ensemble/releases";
+/** Testing CLI installers are a separate prerelease, never the production channels below. */
+export const TESTING_CLI_RELEASE_URL = `${RELEASES_URL}/tag/cli-testing-latest`;
 export const WINGET_ACCEPTED = false;
 export const NPM_PUBLISHED = false;
 export const AUR_AVAILABLE = false;

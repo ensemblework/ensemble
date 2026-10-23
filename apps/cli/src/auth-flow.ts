@@ -1,5 +1,6 @@
 import { VERSION } from "./version.js";
 import { fetchJson, readResponseBody, type FetchLike } from "./http.js";
+import { COMMAND, TESTING, channelApi } from "./channel.js";
 
 export type DeviceStartResponse = {
   deviceCode: string;
@@ -34,6 +35,7 @@ export async function startDeviceFlow(input: {
   scopes: string[];
   fetchImpl?: FetchLike;
 }): Promise<DeviceStartResponse> {
+  channelApi(input.apiBase);
   return fetchJson<DeviceStartResponse>(
     `${input.apiBase}/api/cli/auth/start`,
     {
@@ -60,6 +62,7 @@ export async function pollDeviceToken(input: {
   /** Stops waiting (the person closed the sign-in in the app). */
   signal?: AbortSignal;
 }): Promise<DeviceTokenResponse> {
+  channelApi(input.apiBase);
   const fetchImpl = input.fetchImpl ?? fetch;
   const wait = input.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const now = input.now ?? (() => Date.now());
@@ -72,6 +75,7 @@ export async function pollDeviceToken(input: {
       method: "POST",
       headers: { accept: "application/json", "content-type": "application/json" },
       body: JSON.stringify({ deviceCode: input.deviceCode }),
+      ...(TESTING ? { redirect: "error" } : {}),
     });
     const body = await readResponseBody(response);
     if (response.ok) return body as DeviceTokenResponse;
@@ -82,8 +86,8 @@ export async function pollDeviceToken(input: {
       continue;
     }
     if (error === "access_denied") throw new DeviceFlowError("access_denied", "Login was denied.");
-    if (error === "expired_token") throw new DeviceFlowError("expired_token", "Login code expired. Run `ensemble login` again.");
+    if (error === "expired_token") throw new DeviceFlowError("expired_token", `Login code expired. Run \`${COMMAND} login\` again.`);
     throw new DeviceFlowError("unexpected", `Login failed: ${error}`);
   }
-  throw new DeviceFlowError("expired_token", "Login code expired. Run `ensemble login` again.");
+  throw new DeviceFlowError("expired_token", `Login code expired. Run \`${COMMAND} login\` again.`);
 }

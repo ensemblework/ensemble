@@ -10,6 +10,7 @@ import { INCLUDED_CREDITS_USED, INCLUDED_LOCAL_ONLY, INCLUDED_PAUSED, INCLUDED_P
 import { IncludedLimitError, includedErrorFrom } from "./errors.js";
 import { ProviderError } from "../runtime/errors.js";
 import { loadSettings, readDeviceToken } from "../remote/store.js";
+import { checkApiBase } from "../remote/client.js";
 
 type Json = Record<string, unknown>;
 export type DeviceLink = { base: string; token: string };
@@ -49,6 +50,7 @@ export async function deviceLink(): Promise<DeviceLink | null> {
 }
 
 async function call(link: DeviceLink, method: string, path: string, body: unknown, signal: AbortSignal): Promise<{ status: number; body: Json }> {
+  checkApiBase(link.base);
   let response: Response;
   try {
     response = await fetch(`${link.base}${path}`, {
@@ -56,6 +58,7 @@ async function call(link: DeviceLink, method: string, path: string, body: unknow
       headers: { authorization: `Bearer ${link.token}`, ...(body === undefined ? {} : { "content-type": "application/json" }) },
       body: body === undefined ? undefined : JSON.stringify(body),
       signal,
+      ...(process.env.ENSEMBLE_CLI_CHANNEL === "testing" ? { redirect: "error" } : {}),
     });
   } catch (error) {
     if (signal.aborted && (signal.reason as { name?: string } | undefined)?.name !== "TimeoutError") throw error;

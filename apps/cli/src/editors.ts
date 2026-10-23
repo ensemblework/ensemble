@@ -139,7 +139,7 @@ function hostedUrl(mode: SetupMode): string {
 
 function hostedHeaders(mode: SetupMode, placeholder = false): Record<string, string> {
   if (!mode.token && !placeholder) throw new Error("Run `ensemble login` first, or set ENSEMBLE_TOKEN, before writing hosted MCP editor configs.");
-  return { Authorization: `Bearer ${placeholder ? "ENSEMBLE_TOKEN" : mode.token}` };
+  return { Authorization: `Bearer ${placeholder ? TOKEN_ENV : mode.token}` };
 }
 
 function serverValue(editor: EditorName, mode: SetupMode): unknown {
@@ -177,7 +177,7 @@ function serverValue(editor: EditorName, mode: SetupMode): unknown {
     case "copilot":
       return { type: "http", url, headers: hostedHeaders(mode), tools: ["*"] };
     case "codex":
-      return { url, bearer_token_env_var: "ENSEMBLE_TOKEN" };
+      return { url, bearer_token_env_var: TOKEN_ENV };
     case "zed":
       return { url, headers: hostedHeaders(mode) };
     case "visual-studio":
@@ -198,19 +198,19 @@ function jsonPathFor(editor: EditorName): Array<string | number> | null {
     case "vscode":
     case "vscode-insiders":
     case "visual-studio":
-      return ["servers", "ensemble"];
+      return ["servers", MCP_NAME];
     case "cursor":
     case "windsurf":
     case "claude-desktop":
     case "gemini":
     case "cline":
-      return ["mcpServers", "ensemble"];
+      return ["mcpServers", MCP_NAME];
     case "copilot":
-      return ["mcpServers", "ensemble"];
+      return ["mcpServers", MCP_NAME];
     case "zed":
-      return ["context_servers", "ensemble"];
+      return ["context_servers", MCP_NAME];
     case "opencode":
-      return ["mcp", "ensemble"];
+      return ["mcp", MCP_NAME];
     default:
       return null;
   }
@@ -248,9 +248,9 @@ function tomlString(value: string): string {
 }
 
 function codexTable(mode: SetupMode): string[] {
-  if (mode.hosted) return ["[mcp_servers.ensemble]", `url = ${tomlString(hostedUrl(mode))}`, 'bearer_token_env_var = "ENSEMBLE_TOKEN"'];
+  if (mode.hosted) return [`[mcp_servers.${MCP_NAME}]`, `url = ${tomlString(hostedUrl(mode))}`, `bearer_token_env_var = "${TOKEN_ENV}"`];
   const local = localCommand(mode);
-  return ["[mcp_servers.ensemble]", `command = ${tomlString(local.command)}`, `args = [${local.args.map(tomlString).join(", ")}]`];
+  return [`[mcp_servers.${MCP_NAME}]`, `command = ${tomlString(local.command)}`, `args = [${local.args.map(tomlString).join(", ")}]`];
 }
 
 type TomlHeader = { name: string; array: boolean };
@@ -266,7 +266,7 @@ function tomlHeader(line: string): TomlHeader | null {
   return { name, array: match[1] === "[[" };
 }
 
-const ENSEMBLE_TABLE = "mcp_servers.ensemble";
+const ENSEMBLE_TABLE = `mcp_servers.${MCP_NAME}`;
 
 function isEnsembleTable(header: TomlHeader | null): boolean {
   return Boolean(header && !header.array && header.name === ENSEMBLE_TABLE);
@@ -335,37 +335,37 @@ async function editCodex(path: string, mode: SetupMode, backup = true): Promise<
 function snippetFor(editor: EditorName, mode: SetupMode): string {
   if (editor === "jetbrains") {
     const local = localCommand(mode);
-    const value = mode.hosted ? { mcpServers: { ensemble: { url: hostedUrl(mode), headers: hostedHeaders(mode, true) } } } : { mcpServers: { ensemble: { command: local.command, args: local.args } } };
+    const value = mode.hosted ? { mcpServers: { [MCP_NAME]: { url: hostedUrl(mode), headers: hostedHeaders(mode, true) } } } : { mcpServers: { [MCP_NAME]: { command: local.command, args: local.args } } };
     return `JetBrains: Settings -> Tools -> AI Assistant -> Model Context Protocol (MCP) -> Add -> As JSON:\n${JSON.stringify(value, null, 2)}`;
   }
   if (editor === "continue") {
     const local = localCommand(mode);
-    if (mode.hosted) return `Continue (~/.continue/config.yaml):\nmcpServers:\n  - name: ensemble\n    url: ${hostedUrl(mode)}\n    headers:\n      Authorization: "Bearer ENSEMBLE_TOKEN"`;
-    return `Continue (~/.continue/config.yaml):\nmcpServers:\n  - name: ensemble\n    command: ${JSON.stringify(local.command)}\n    args: ${JSON.stringify(local.args)}`;
+    if (mode.hosted) return `Continue (~/.continue/config.yaml):\nmcpServers:\n  - name: ${MCP_NAME}\n    url: ${hostedUrl(mode)}\n    headers:\n      Authorization: "Bearer ${TOKEN_ENV}"`;
+    return `Continue (~/.continue/config.yaml):\nmcpServers:\n  - name: ${MCP_NAME}\n    command: ${JSON.stringify(local.command)}\n    args: ${JSON.stringify(local.args)}`;
   }
   if (editor === "claude-code") {
     const local = localCommand(mode);
-    if (mode.hosted) return `claude mcp add --scope user --transport http ensemble ${hostedUrl(mode)} --header "Authorization: Bearer ${mode.token ?? "ENSEMBLE_TOKEN"}"`;
-    return `claude mcp add --scope user ensemble -- ${[local.command, ...local.args].join(" ")}`;
+    if (mode.hosted) return `claude mcp add --scope user --transport http ${MCP_NAME} ${hostedUrl(mode)} --header "Authorization: Bearer ${mode.token ?? TOKEN_ENV}"`;
+    return `claude mcp add --scope user ${MCP_NAME} -- ${[local.command, ...local.args].join(" ")}`;
   }
   if (editor === "codex") return upsertCodexToml("", mode).trimEnd();
   const path = jsonPathFor(editor);
   if (!path) return "";
   const value = serverValue(editor, mode);
-  return JSON.stringify(path[0] === "servers" ? { servers: { ensemble: value } } : path[0] === "context_servers" ? { context_servers: { ensemble: value } } : path[0] === "mcp" ? { mcp: { ensemble: value } } : { mcpServers: { ensemble: value } }, null, 2);
+  return JSON.stringify(path[0] === "servers" ? { servers: { [MCP_NAME]: value } } : path[0] === "context_servers" ? { context_servers: { [MCP_NAME]: value } } : path[0] === "mcp" ? { mcp: { [MCP_NAME]: value } } : { mcpServers: { [MCP_NAME]: value } }, null, 2);
 }
 
 async function configureClaudeCode(mode: SetupMode, printOnly: boolean): Promise<EditorWriteResult> {
   const command = isExecutableOnPath("claude");
   const snippet = snippetFor("claude-code", mode);
   if (printOnly || !command) return { editor: "claude-code", changed: false, message: command ? snippet : `Claude Code CLI not found on PATH. Run:\n${snippet}` };
-  await run(command, ["mcp", "remove", "--scope", "user", "ensemble"], true);
+  await run(command, ["mcp", "remove", "--scope", "user", MCP_NAME], true);
   if (mode.hosted) {
     if (!mode.token) throw new Error("Run `ensemble login` first before configuring Claude Code hosted MCP.");
-    await run(command, ["mcp", "add", "--scope", "user", "--transport", "http", "ensemble", hostedUrl(mode), "--header", `Authorization: Bearer ${mode.token}`], false);
+    await run(command, ["mcp", "add", "--scope", "user", "--transport", "http", MCP_NAME, hostedUrl(mode), "--header", `Authorization: Bearer ${mode.token}`], false);
   } else {
     const local = localCommand(mode);
-    await run(command, ["mcp", "add", "--scope", "user", "ensemble", "--", local.command, ...local.args], false);
+    await run(command, ["mcp", "add", "--scope", "user", MCP_NAME, "--", local.command, ...local.args], false);
   }
   return { editor: "claude-code", changed: true, message: "Configured Claude Code user MCP server." };
 }
@@ -413,7 +413,7 @@ export async function removeEditor(editor: EditorName, input: PlatformInput = {}
   if (editor === "claude-code") {
     const command = isExecutableOnPath("claude", envOf(input), platformOf(input));
     if (!command) return { editor, changed: false, message: "Claude Code CLI not found on PATH." };
-    await run(command, ["mcp", "remove", "--scope", "user", "ensemble"], true);
+    await run(command, ["mcp", "remove", "--scope", "user", MCP_NAME], true);
     return { editor, changed: true, message: "Removed Claude Code Ensemble MCP server." };
   }
   if (editor === "jetbrains" || editor === "continue") return { editor, changed: false, message: `${editor} is print-only; remove the Ensemble MCP entry manually.` };
@@ -453,10 +453,11 @@ export async function configuredEditors(input: PlatformInput = {}): Promise<Edit
       throw error;
     }
     if (editor === "codex") {
-      if (/\[mcp_servers\.ensemble\]/.test(text)) configured.push(editor);
+      if (text.includes(`[mcp_servers.${MCP_NAME}]`)) configured.push(editor);
       continue;
     }
-    if (/"ensemble"\s*:/.test(text)) configured.push(editor);
+    if (text.includes(`"${MCP_NAME}"`)) configured.push(editor);
   }
   return configured;
 }
+import { MCP_NAME, TOKEN_ENV } from "./channel.js";

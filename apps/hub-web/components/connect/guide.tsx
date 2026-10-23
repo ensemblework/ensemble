@@ -11,6 +11,8 @@ import { appById } from "@/lib/connect/catalog";
 import {
   EDITORS,
   INSTALL_CHANNELS,
+  isTestingApi,
+  testingCliInstall,
   METHOD_LABELS,
   buildCommand,
   claudeCodeCommand,
@@ -252,6 +254,13 @@ function MethodGuide({
   const snippet = method === "cli" ? localCliSnippet(app.id, os) : hostedSnippet(app.id, facts, os, origin);
   const hostedUrl = hostedMcpUrl({ publicApiUrl: facts.publicApiUrl, origin });
   const headerText = `Authorization: ${["Bearer", facts.token ?? "KEY"].join(" ")}`;
+  if (method === "cli" && isTestingApi(facts.hubApiUrl)) return <section className="tile rounded-xl bg-panel p-5">
+    <div className="flex items-center justify-between gap-3"><h2 className="text-[18px] font-semibold">Ensemble Testing CLI</h2><OsTabs value={os} onChange={onOsChange} /></div>
+    <p className="my-3 text-[13px] text-muted">Install ensemble-test alongside production Ensemble. It has separate sign-in, pairing, runtime and updates, and connects only to this testing site.</p>
+    <CopyBlock label="Install testing CLI" text={testingCliInstall(os)} />
+    <CopyBlock label="Sign in and configure your editor" text={`ensemble-test login\nensemble-test mcp setup ${editor.setupId}\nensemble-test status`} />
+    <p className="mt-3 text-[12px] text-muted">Editor setup writes an ensemble-test server, leaving the production ensemble entry intact. Run ensemble-test folders add &lt;path&gt; to share a test work folder. No testing desktop app is needed.</p>
+  </section>;
   return (
     <div className="connect-rise grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
       <section className="tile rounded-xl bg-panel p-4 md:p-5">

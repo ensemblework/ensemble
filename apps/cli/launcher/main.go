@@ -28,9 +28,13 @@ func main() {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	prefix := "ENSEMBLE_"
+	if filepath.Base(executable) == "ensemble-test.exe" {
+		prefix = "ENSEMBLE_TEST_"
+	}
 	cmd.Env = withEnv(os.Environ(), map[string]string{
-		"ENSEMBLE_LAUNCHER":    invokedPath(),
-		"ENSEMBLE_SIDECAR_DIR": sidecarDir,
+		prefix + "LAUNCHER":    invokedPath(),
+		prefix + "SIDECAR_DIR": sidecarDir,
 	})
 
 	if err := cmd.Run(); err != nil {

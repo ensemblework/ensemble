@@ -8,7 +8,7 @@ export async function runMcp(input: { api?: string } = {}): Promise<void> {
   const paths = resolveCliPaths();
   const config = await loadConfig(paths);
   const token = await loadToken(paths);
-  const apiBase = normalizeApiBase(input.api || process.env.ENSEMBLE_API_URL || config.apiBase);
+  const apiBase = normalizeApiBase(input.api || config.apiBase);
   const auth = token ? ({ kind: "bearer" as const, token }) : ({ kind: "missing" as const, message: "Run `ensemble login` first." });
   const hub = createHubClient({
     hubUrl: apiBase,

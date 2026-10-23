@@ -31,6 +31,12 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm db:generate
       - run: pnpm --filter @ensemble/shared-types typecheck && pnpm --filter @ensemble/hub-api typecheck && pnpm --filter @ensemble/hub-web typecheck
+      - name: Testing CLI boundary checks
+        run: |
+          pnpm --filter ensemblework typecheck
+          pnpm --filter ensemblework exec node --import tsx --test src/testing-channel.test.ts src/paths.test.ts src/auth-flow.test.ts src/editors.test.ts src/launcher-update-services.test.ts
+          pnpm --filter @ensemble/hub-api exec tsx --test src/remote/client-channel.test.ts
+          node --test scripts/testing-cli.test.mjs
       - name: Focused web and API regressions
         run: |
           pnpm --filter @ensemble/hub-web exec node --import tsx --test components/motion/board-drag/board-move.test.tsx components/board/insights.test.tsx components/pages/pages-section.test.tsx components/comments/comment-layer.test.tsx lib/session-cookie.test.ts
@@ -90,3 +96,9 @@ jobs:
           token: ${{ secrets.VERCEL_TOKEN }}
           org-id: ${{ secrets.VERCEL_ORG_ID }}
           project-id: ${{ secrets.VERCEL_PROJECT_ID_TEST }}
+  testing-cli:
+    name: Publish matching testing CLI
+    needs: publish
+    permissions:
+      contents: write
+    uses: ./.github/workflows/test-cli.yml

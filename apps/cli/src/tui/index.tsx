@@ -22,13 +22,14 @@ import { MOUSE_OFF, MOUSE_ON } from "./mouse.js";
 import { nodeWebUrl, type NodeOverview } from "./node.js";
 import { loadPrefs, savePrefs } from "./prefs.js";
 import { RENDER_OPTIONS, takeScreen } from "./screen.js";
+import { COMMAND, DOWNLOAD_URL } from "../channel.js";
 
 export async function runApp(): Promise<void> {
   const paths = resolveCliPaths();
   const sidecarDir = resolveSidecarDir(import.meta.url);
   if (!(await sidecarAvailable(sidecarDir))) {
     console.log("This install of Ensemble only connects editors (MCP), so the app cannot run here.");
-    console.log("Install the full CLI to run tasks and use the app: https://ensemblework.com/download");
+    console.log(`Install the full CLI to run tasks and use the app: ${DOWNLOAD_URL}`);
     return;
   }
   let discovery = await runningRunner(paths);
@@ -122,5 +123,5 @@ export async function runApp(): Promise<void> {
     restore();
     process.removeListener("exit", restore);
   }
-  console.log("Ensemble keeps running tasks on this computer in the background. Run `ensemble` to come back.");
+  console.log(`Ensemble keeps running tasks on this computer in the background. Run \`${COMMAND}\` to come back.`);
 }

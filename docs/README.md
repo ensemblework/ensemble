@@ -47,7 +47,7 @@ Guides to how Ensemble works today, with the code paths that implement it. Start
 | [Context Bridge](CONTEXT_BRIDGE.md) | Read-only MCP server for editors |
 | [Brand](BRAND.md) | Shared artwork, palettes, motion, generated assets |
 | [Caching and UI performance](CACHING.md) | Caches, relay state, performance budgets |
-| [36 · Web testing](36_WEB_TESTING.md) | Isolated live testing, fast web checks, agent workflow and promotion to production |
+| [36 · Web and CLI testing](36_WEB_TESTING.md) | Isolated live Hub and testing CLI, fast checks, agent workflow and production promotion |
 | [Demo data](DEMO_DATA.md) | Explicit sample-data commands and fixtures |
 
 Operator-specific hosting, accounts and credentials are in the git-ignored `private/` folder.

@@ -35,6 +35,7 @@ import { commandWithSubcommand, isExecutableOnPath } from "./launcher.js";
 import { installRunnerService, uninstallRunnerService } from "./services.js";
 import { runMcp } from "./mcp.js";
 import { formatSandbox, sandboxSetup, sandboxStatus } from "./sandbox.js";
+import { COMMAND, DOWNLOAD_URL, TESTING } from "./channel.js";
 
 type ArgsOptions = NonNullable<ParseArgsConfig["options"]>;
 type ParsedArgs = {
@@ -42,7 +43,7 @@ type ParsedArgs = {
   positionals: string[];
 };
 
-const HELP = `Ensemble ${VERSION}: your tasks and coding agents, in the terminal.
+const HELP = `Ensemble ${TESTING ? "Testing " : ""}${VERSION}: your tasks and coding agents, in the terminal.
 
   ensemble            Open Ensemble here. Two tabs:
                         Tasks  runs on this computer, and what needs you (answer with a click,
@@ -57,7 +58,7 @@ Inside the app, type / for commands: /run, /allow, /deny, /answer, /profile, /ag
 /keys, /trust, /hooks, /login, /status, /help.
 
 Scripts and automation: ensemble help commands
-`;
+`.replace(/\bensemble\b/g, COMMAND).replace("ensemblework.com", TESTING ? "test.ensemblework.com" : "ensemblework.com");
 
 const COMMANDS_HELP = `Ensemble ${VERSION}: commands for scripts and automation (the app does all of this too).
 
@@ -81,9 +82,9 @@ Usage:
   ensemble sandbox [status] | setup
   ensemble doctor
   ensemble update
-  ensemble version | --version | --help`;
+  ensemble version | --version | --help`.replace(/\bensemble\b/g, COMMAND);
 
-const HELP_BY_COMMAND: Record<string, string> = {
+const HELP_BY_COMMAND: Record<string, string> = Object.fromEntries(Object.entries({
   login: "Usage: ensemble login [--api URL] [--name NAME] [--mcp-only] [--no-browser]",
   logout: "Usage: ensemble logout",
   status: "Usage: ensemble status [--json]",
@@ -104,7 +105,7 @@ const HELP_BY_COMMAND: Record<string, string> = {
     "Usage: ensemble sandbox [status] | setup\nThis computer's OS sandbox (macOS Seatbelt, Linux bubblewrap or Landlock, Windows sandbox account). No Docker. On Windows, `setup` asks for permission once; the Ensemble app and the CLI share it.",
   doctor: "Usage: ensemble doctor",
   update: "Usage: ensemble update",
-};
+}).map(([key, value]) => [key, value.replace(/\bensemble\b/g, COMMAND)]));
 
 function parsed(args: string[], options: ArgsOptions = {}, allowPositionals = true): ParsedArgs {
   const result = parseArgs({
@@ -170,14 +171,14 @@ async function commandLogin(args: string[]): Promise<void> {
     console.log(`This computer is paired as "${login.name}". Tasks you assign to it from Ensemble run here.`);
     console.log("");
     console.log("Next:");
-    console.log("  ensemble folders add <path>    share a folder the agent may work in");
-    console.log("  ensemble keys set <provider>   save a model key on this computer (google, openai, anthropic, …)");
-    console.log("  ensemble runner install        start the runner now and at every login");
-    console.log("  ensemble mcp setup             connect your editors");
+    console.log(`  ${COMMAND} folders add <path>    share a folder the agent may work in`);
+    console.log(`  ${COMMAND} keys set <provider>   save a model key on this computer (google, openai, anthropic, …)`);
+    console.log(`  ${COMMAND} runner install        start the runner now and at every login`);
+    console.log(`  ${COMMAND} mcp setup             connect your editors`);
   } else {
-    if (!login.hasRunner) console.log("This install has no runner. Install the full CLI to run tasks on this computer: https://ensemblework.com/download");
+    if (!login.hasRunner) console.log(`This install has no runner. Install the full CLI to run tasks on this computer: ${DOWNLOAD_URL}`);
     console.log("");
-    console.log("Next: ensemble mcp setup    connect your editors");
+    console.log(`Next: ${COMMAND} mcp setup    connect your editors`);
   }
 }
 
@@ -423,7 +424,7 @@ async function printLogs(file: string, follow: boolean): Promise<void> {
   await new Promise(() => undefined);
 }
 
-const NO_RUNNER = "This install has no runner, so it cannot share folders or keep model keys. Install the full CLI: https://ensemblework.com/download";
+const NO_RUNNER = `This install has no runner, so it cannot share folders or keep model keys. Install the full CLI: ${DOWNLOAD_URL}`;
 
 async function commandFolders(args: string[]): Promise<void> {
   const subcommand = args[0] && !args[0].startsWith("-") ? args[0] : "list";
@@ -712,7 +713,7 @@ function formatDuration(ms: number): string {
 
 async function checkApi(apiBase: string): Promise<boolean> {
   try {
-    const response = await fetch(`${apiBase}/health`, { signal: AbortSignal.timeout(5000) });
+    const response = await fetch(`${apiBase}/health`, { signal: AbortSignal.timeout(5000), ...(TESTING ? { redirect: "error" as const } : {}) });
     return response.ok;
   } catch {
     return false;
@@ -721,7 +722,7 @@ async function checkApi(apiBase: string): Promise<boolean> {
 
 async function checkToken(apiBase: string, token: string): Promise<boolean> {
   try {
-    const response = await fetch(`${apiBase}/api/bridge/today`, { headers: bearerHeaders(token), signal: AbortSignal.timeout(5000) });
+    const response = await fetch(`${apiBase}/api/bridge/today`, { headers: bearerHeaders(token), signal: AbortSignal.timeout(5000), ...(TESTING ? { redirect: "error" as const } : {}) });
     return response.status === 200;
   } catch {
     return false;
@@ -733,7 +734,7 @@ async function commandStatus(args: string[]): Promise<void> {
   if (result.values.help) return void console.log(HELP_BY_COMMAND.status);
   const status = await statusSummary();
   if (result.values.json) {
-    console.log(JSON.stringify(status, null, 2));
+    console.log(JSON.stringify({ ...status, channel: TESTING ? "testing" : "production" }, null, 2));
     return;
   }
   for (const line of statusLines(status)) console.log(line);

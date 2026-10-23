@@ -3,6 +3,14 @@
  * The device token stays in this process; it is never written to a child environment.
  */
 import { ROUTES, type CodeAnswer, type FileAnswer, type Outcome, type ResultLink, type RunTotals, type TerminalChunk, type UploadedFile, type UploadedStep } from "./contract.js";
+import { cliApiBase } from "@ensemble/shared-types";
+
+function channelBase(base: string): string {
+  const channel = process.env.ENSEMBLE_CLI_CHANNEL;
+  if (channel !== "testing" && channel !== "production") return base;
+  try { return cliApiBase(base, channel); }
+  catch (error) { throw new RemoteError(400, error instanceof Error ? error.message : "This server belongs to another CLI channel."); }
+}
 
 export class RemoteError extends Error {
   readonly expose = true;
@@ -19,7 +27,7 @@ export class RemoteError extends Error {
 
 export function remoteApiBase(): string | null {
   const fromEnv = process.env.ENSEMBLE_REMOTE_API?.trim();
-  return fromEnv ? fromEnv.replace(/\/+$/, "") : null;
+  return fromEnv ? channelBase(fromEnv.replace(/\/+$/, "")) : null;
 }
 
 /** A base the person typed, or the ENSEMBLE_REMOTE_API override. http(s) only. */
@@ -32,7 +40,7 @@ export function checkApiBase(value: string): string {
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") throw new RemoteError(400, "The address has to start with https://.");
   if (url.username || url.password) throw new RemoteError(400, "The address cannot contain a password.");
-  return url.origin + url.pathname.replace(/\/+$/, "");
+  return channelBase(url.origin + url.pathname.replace(/\/+$/, ""));
 }
 
 export interface HostedClient {
@@ -64,6 +72,7 @@ export interface HostedClient {
 }
 
 async function send(base: string, token: string, method: string, path: string, json?: unknown, signal?: AbortSignal): Promise<{ status: number; body: unknown }> {
+  channelBase(base);
   let response: Response;
   try {
     response = await fetch(`${base}${path}`, {
@@ -71,6 +80,7 @@ async function send(base: string, token: string, method: string, path: string, j
       headers: { authorization: `Bearer ${token}`, ...(json === undefined ? {} : { "content-type": "application/json" }) },
       body: json === undefined ? undefined : JSON.stringify(json),
       signal,
+      ...(process.env.ENSEMBLE_CLI_CHANNEL === "testing" ? { redirect: "error" } : {}),
     });
   } catch (error) {
     if (signal?.aborted) throw error;
@@ -130,6 +140,7 @@ export async function fetchAccountKeys(base: string, token: string, signal?: Abo
 }
 
 export function hostedClient(base: string, token: string): HostedClient {
+  channelBase(base);
   const call = (method: string, path: string, json?: unknown, signal?: AbortSignal) => send(base, token, method, path, json, signal);
   return {
     async unpairSelf() {
@@ -236,12 +247,14 @@ export function hostedClient(base: string, token: string): HostedClient {
 
 /** Pairing. The code is the credential (§4.3); there is no device token yet. */
 export async function registerDevice(base: string, body: { code: string; name: string; platform: string; appVersion: string; capabilities: unknown }): Promise<unknown> {
+  channelBase(base);
   let response: Response;
   try {
     response = await fetch(`${base}${ROUTES.register}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
+      ...(process.env.ENSEMBLE_CLI_CHANNEL === "testing" ? { redirect: "error" } : {}),
     });
   } catch {
     throw new RemoteError(0, "Ensemble on the web is not reachable.");
@@ -256,9 +269,10 @@ export async function registerDevice(base: string, body: { code: string; name: s
 }
 
 async function readEvents(base: string, token: string, onFrame: (event: string, data: unknown) => void, signal: AbortSignal): Promise<void> {
+  channelBase(base);
   let response: Response;
   try {
-    response = await fetch(`${base}${ROUTES.events}`, { headers: { authorization: `Bearer ${token}`, accept: "text/event-stream" }, signal });
+    response = await fetch(`${base}${ROUTES.events}`, { headers: { authorization: `Bearer ${token}`, accept: "text/event-stream" }, signal, ...(process.env.ENSEMBLE_CLI_CHANNEL === "testing" ? { redirect: "error" as const } : {}) });
   } catch (error) {
     if (signal.aborted) return;
     throw new RemoteError(0, "Ensemble on the web is not reachable.");

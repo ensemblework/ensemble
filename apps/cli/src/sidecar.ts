@@ -9,6 +9,7 @@ import { migrateLegacyData } from "./migrate.js";
 import { fileExists, resolveCliPaths, type CliPaths } from "./paths.js";
 import { resolveLauncherCommand } from "./launcher.js";
 import { VERSION } from "./version.js";
+import { DOWNLOAD_URL, TESTING, TESTING_API } from "./channel.js";
 
 export type Discovery = {
   port: number;
@@ -45,7 +46,7 @@ export function defaultSidecarDir(bundleUrlOrPath: string = import.meta.url): st
 }
 
 export function resolveSidecarDir(bundleUrlOrPath: string = import.meta.url, env: NodeJS.ProcessEnv = process.env): string {
-  return env.ENSEMBLE_SIDECAR_DIR?.trim() || defaultSidecarDir(bundleUrlOrPath);
+  return (TESTING ? env.ENSEMBLE_TEST_SIDECAR_DIR : env.ENSEMBLE_SIDECAR_DIR)?.trim() || defaultSidecarDir(bundleUrlOrPath);
 }
 
 export async function sidecarAvailable(sidecarDir: string, platform: NodeJS.Platform = process.platform): Promise<boolean> {
@@ -87,6 +88,7 @@ export async function checkHealth(discovery: Discovery, fetchImpl: typeof fetch 
 export async function runningRunner(paths: CliPaths = resolveCliPaths()): Promise<Discovery | null> {
   const discovery = await readDiscovery(paths.discoveryFile);
   if (!discovery) return null;
+  if (TESTING && (discovery.owner !== "cli" || !discovery.version?.startsWith("cli-test-"))) throw new Error("The testing data folder contains a production or desktop runtime. Use a separate testing data folder.");
   return (await checkHealth(discovery)) ? discovery : null;
 }
 
@@ -154,7 +156,7 @@ function sidecarEnv(input: {
     ENSEMBLE_BACKUP_DIR: join(input.paths.dataHome, "backups"),
     ENSEMBLE_DISCOVERY_FILE: input.paths.discoveryFile,
     ENSEMBLE_REMOTE_STATE_DIR: input.paths.dataHome,
-    ENSEMBLE_APP_VERSION: `cli-${VERSION}`,
+    ENSEMBLE_APP_VERSION: `${TESTING ? "cli-test" : "cli"}-${VERSION}`,
     HUB_API_PORT: "0",
     REDIS_URL: "memory://cli",
     ENSEMBLE_DEV_AUTH_BYPASS: "false",
@@ -164,7 +166,18 @@ function sidecarEnv(input: {
     ENSEMBLE_RUNTIME_MODE: input.adminOnly ? "admin" : "runner",
     ENSEMBLE_LOG_LEVEL: process.env.ENSEMBLE_LOG_LEVEL ?? "info",
   };
-  if (input.apiBase) env.ENSEMBLE_REMOTE_API = input.apiBase;
+  if (TESTING) {
+    for (const key of ["ENSEMBLE_SECRET_KEY", "ENSEMBLE_SECRET_KEY_FILE", "ENSEMBLE_COOKIE_NAMESPACE", "ENSEMBLE_NODE_WEB_ORIGIN", "ENSEMBLE_NODE_URL", "ENSEMBLE_TOKEN", "ENSEMBLE_BRIDGE_TOKEN", "ENSEMBLE_API_URL", "ENSEMBLE_INPROCESS_RUNTIME"]) delete env[key];
+    env.ENSEMBLE_CLI_CHANNEL = "testing";
+    env.ENSEMBLE_REMOTE_API = TESTING_API;
+    env.ENSEMBLE_SECRET_KEY_FILE = join(input.paths.dataHome, "secret.key");
+    env.ENSEMBLE_WORKSPACE_ROOT = join(input.paths.dataHome, "workspace");
+    env.ENSEMBLE_MPLCONFIGDIR = join(input.paths.dataHome, "matplotlib");
+    env.DATABASE_URL = "postgresql://127.0.0.1:1/ensemble_cli_testing";
+  } else {
+    env.ENSEMBLE_CLI_CHANNEL = "production";
+  }
+  if (input.apiBase && !TESTING) env.ENSEMBLE_REMOTE_API = input.apiBase;
   if (input.adminOnly) {
     env.ENSEMBLE_REMOTE_LOOP = "off";
     env.ENSEMBLE_AGENT_QUEUE = "off";
@@ -184,7 +197,7 @@ export async function spawnSidecar(input: {
 }): Promise<SidecarSession> {
   const paths = input.paths ?? resolveCliPaths();
   if (!(await sidecarAvailable(input.sidecarDir))) {
-    throw new Error("The packaged Ensemble sidecar is not installed. Install the full Ensemble CLI from https://ensemblework.com/download.");
+    throw new Error(`The packaged Ensemble sidecar is not installed. Install the full Ensemble CLI from ${DOWNLOAD_URL}.`);
   }
   const moved = await migrateLegacyData(paths, {
     legacyRunning: async (file) => {
@@ -265,7 +278,7 @@ export async function startRunner(input: { sidecarDir: string; paths?: CliPaths;
  */
 /** A runner this CLI started (not the desktop app's, not a short admin sidecar) from another version of the CLI. */
 export function outdatedRunner(discovery: Discovery, version = VERSION): boolean {
-  return discovery.owner === "cli" && discovery.mode !== "admin" && Boolean(discovery.version) && discovery.version !== `cli-${version}`;
+  return discovery.owner === "cli" && discovery.mode !== "admin" && Boolean(discovery.version) && discovery.version !== `${TESTING ? "cli-test" : "cli"}-${version}`;
 }
 
 export class DesktopOwnsRuntimeError extends Error {

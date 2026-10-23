@@ -2,7 +2,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,10 +19,15 @@ if (!options.packageDir) {
 const packageDir = resolve(options.packageDir);
 const launcher = launcherPath(packageDir);
 const version = readFileSync(join(packageDir, "VERSION"), "utf8").trim();
+const testing = existsSync(join(packageDir, "CHANNEL")) && readFileSync(join(packageDir, "CHANNEL"), "utf8").trim() === "testing";
 const temp = mkdtempSync(join(tmpdir(), "ensemble-cli-smoke-"));
 
 try {
   smokeVersion(launcher, version, temp);
+  if (testing) {
+    const wrong = spawnSync(launcher, ["login", "--api", "https://api.ensemblework.com", "--no-browser"], { encoding: "utf8", env: smokeEnv(temp) });
+    if (wrong.status === 0 || !wrong.stderr.includes("only")) throw new Error("Testing CLI accepted the production API.");
+  }
   if (!options.skipMcp) await smokeMcp(launcher, temp);
   if (!options.skipSidecarHealth) await smokeSidecar(packageDir, temp);
   console.error(`CLI package smoke OK (${version}).`);
@@ -47,8 +52,8 @@ function parseArgs(args) {
 }
 
 function launcherPath(packageDir) {
-  if (process.platform === "win32") return join(packageDir, "bin", "ensemble.exe");
-  return join(packageDir, "bin", "ensemble");
+  if (process.platform === "win32") return join(packageDir, "bin", testing ? "ensemble-test.exe" : "ensemble.exe");
+  return join(packageDir, "bin", testing ? "ensemble-test" : "ensemble");
 }
 
 function smokeVersion(command, version, tempDir) {
@@ -81,6 +86,7 @@ async function smokeMcp(command, tempDir) {
       ENSEMBLE_BRIDGE_TOKEN: "ens_smoke",
       ENSEMBLE_API_URL: mock.url,
       HUB_API_URL: mock.url,
+      ...(testing ? { ENSEMBLE_TEST_TOKEN: "ens_smoke" } : {}),
     },
     stderr: "pipe",
   });
@@ -127,7 +133,8 @@ async function smokeSidecar(packageDir, tempDir) {
       ENSEMBLE_BACKUP_DIR: join(dataHome, "backups"),
       ENSEMBLE_DISCOVERY_FILE: discovery,
       ENSEMBLE_REMOTE_STATE_DIR: dataHome,
-      ENSEMBLE_APP_VERSION: "cli-smoke",
+      ENSEMBLE_APP_VERSION: testing ? `cli-test-${version}` : "cli-smoke",
+      ...(testing ? { ENSEMBLE_CLI_CHANNEL: "testing", ENSEMBLE_REMOTE_API: "https://api-test.ensemblework.com" } : {}),
       ENSEMBLE_REMOTE_LOOP: "off",
       ENSEMBLE_AGENT_QUEUE: "off",
       ENSEMBLE_SCHEDULER: "off",
@@ -164,6 +171,13 @@ async function smokeSidecar(packageDir, tempDir) {
     const body = JSON.parse(await waitForFile(discovery, 180_000, () => child.exitCode ?? child.signalCode));
     const response = await fetch(`http://127.0.0.1:${body.port}/health`, { signal: AbortSignal.timeout(10_000) });
     if (response.status !== 200) throw new Error(`/health returned ${response.status}`);
+    if (testing) {
+      const refused = await fetch(`http://127.0.0.1:${body.port}/api/remote/pair`, {
+        method: "POST", headers: { authorization: `Bearer ${body.token}`, "content-type": "application/json" },
+        body: JSON.stringify({ apiBase: "https://api.ensemblework.com", code: "TEST1234" }),
+      });
+      if (refused.status !== 400 || !(await refused.text()).includes("only")) throw new Error("The packaged testing runtime did not reject production pairing.");
+    }
   } catch (error) {
     throw new Error(`${error instanceof Error ? error.message : String(error)}\n--- sidecar logs ---\n${logs.slice(-4000)}`);
   } finally {
@@ -181,6 +195,8 @@ function smokeEnv(tempDir) {
     USERPROFILE: join(tempDir, "home"),
     ENSEMBLE_CONFIG_DIR: join(tempDir, "config"),
     ENSEMBLE_DATA_HOME: join(tempDir, "data"),
+    ENSEMBLE_TEST_CONFIG_DIR: join(tempDir, "test-config"),
+    ENSEMBLE_TEST_DATA_HOME: join(tempDir, "test-data"),
   };
 }
 

@@ -2,6 +2,11 @@ import { spawn } from "node:child_process";
 import { mkdir, writeFile, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { pathApi } from "./platform.js";
+import { TESTING } from "./channel.js";
+
+const LAUNCH_AGENT_LABEL = TESTING ? "com.ensemblework.cli.testing.runner" : "com.ensemblework.cli.runner";
+const SYSTEMD_UNIT = TESTING ? "ensemble-test-runner.service" : "ensemble-runner.service";
+const WINDOWS_TASK = TESTING ? "Ensemble Testing Runner" : "Ensemble Runner";
 
 function xmlEscape(value: string): string {
   return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
@@ -14,7 +19,7 @@ export function launchAgentPlist(input: { launcher: string; logPath: string }): 
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.ensemblework.cli.runner</string>
+  <string>${LAUNCH_AGENT_LABEL}</string>
   <key>ProgramArguments</key>
   <array>
 ${args.map((arg) => `    <string>${xmlEscape(arg)}</string>`).join("\n")}
@@ -37,7 +42,7 @@ ${args.map((arg) => `    <string>${xmlEscape(arg)}</string>`).join("\n")}
 
 export function systemdUserUnit(input: { launcher: string; logPath: string }): string {
   return `[Unit]
-Description=Ensemble Runner
+Description=${WINDOWS_TASK}
 
 [Service]
 Type=simple
@@ -59,7 +64,7 @@ export function windowsTaskCreateCommand(launcher: string): string[] {
   return [
     "/Create",
     "/TN",
-    "Ensemble Runner",
+    WINDOWS_TASK,
     "/SC",
     "ONLOGON",
     "/RL",
@@ -72,7 +77,6 @@ export function windowsTaskCreateCommand(launcher: string): string[] {
 
 export type ExecFile = (command: string, args: string[], options?: { quiet?: boolean }) => Promise<void>;
 
-const LAUNCH_AGENT_LABEL = "com.ensemblework.cli.runner";
 
 /** For steps that fail when there is nothing to undo, such as booting out a job that is not loaded. */
 async function tryQuietly(exec: ExecFile, command: string, args: string[]): Promise<boolean> {
@@ -99,7 +103,7 @@ export async function installRunnerService(input: {
   const path = pathApi(platform);
   const exec = input.execFile ?? execFilePromise;
   if (platform === "darwin") {
-    const plist = path.join(input.home, "Library", "LaunchAgents", "com.ensemblework.cli.runner.plist");
+    const plist = path.join(input.home, "Library", "LaunchAgents", `${LAUNCH_AGENT_LABEL}.plist`);
     await mkdir(dirname(plist), { recursive: true });
     await writeFile(plist, launchAgentPlist({ launcher: input.launcher, logPath: input.logPath }));
     // bootstrap fails while an older copy of the job is loaded.
@@ -108,19 +112,19 @@ export async function installRunnerService(input: {
     return `Installed LaunchAgent at ${plist}`;
   }
   if (platform === "linux") {
-    const unit = path.join(input.home, ".config", "systemd", "user", "ensemble-runner.service");
+    const unit = path.join(input.home, ".config", "systemd", "user", SYSTEMD_UNIT);
     await mkdir(dirname(unit), { recursive: true });
     await writeFile(unit, systemdUserUnit({ launcher: input.launcher, logPath: input.logPath }));
     await exec("systemctl", ["--user", "daemon-reload"]);
-    await exec("systemctl", ["--user", "enable", "ensemble-runner.service"]);
-    await exec("systemctl", ["--user", "restart", "ensemble-runner.service"]);
+    await exec("systemctl", ["--user", "enable", SYSTEMD_UNIT]);
+    await exec("systemctl", ["--user", "restart", SYSTEMD_UNIT]);
     return `Installed systemd user unit at ${unit}. If it should run before login, run: loginctl enable-linger ${process.env.USER ?? "$USER"}`;
   }
   if (platform === "win32") {
     await exec("schtasks.exe", windowsTaskCreateCommand(input.launcher));
-    await tryQuietly(exec, "schtasks.exe", ["/End", "/TN", "Ensemble Runner"]);
-    await exec("schtasks.exe", ["/Run", "/TN", "Ensemble Runner"]);
-    return "Installed Windows scheduled task \"Ensemble Runner\"";
+    await tryQuietly(exec, "schtasks.exe", ["/End", "/TN", WINDOWS_TASK]);
+    await exec("schtasks.exe", ["/Run", "/TN", WINDOWS_TASK]);
+    return `Installed Windows scheduled task "${WINDOWS_TASK}"`;
   }
   throw new Error(`Unsupported platform: ${platform}`);
 }
@@ -134,22 +138,22 @@ export async function uninstallRunnerService(input: {
   const path = pathApi(platform);
   const exec = input.execFile ?? execFilePromise;
   if (platform === "darwin") {
-    const plist = path.join(input.home, "Library", "LaunchAgents", "com.ensemblework.cli.runner.plist");
+    const plist = path.join(input.home, "Library", "LaunchAgents", `${LAUNCH_AGENT_LABEL}.plist`);
     await tryQuietly(exec, "launchctl", ["bootout", `${launchdDomain()}/${LAUNCH_AGENT_LABEL}`]);
     await rm(plist, { force: true });
     return `Removed LaunchAgent at ${plist}`;
   }
   if (platform === "linux") {
-    await tryQuietly(exec, "systemctl", ["--user", "disable", "--now", "ensemble-runner.service"]);
-    const unit = path.join(input.home, ".config", "systemd", "user", "ensemble-runner.service");
+    await tryQuietly(exec, "systemctl", ["--user", "disable", "--now", SYSTEMD_UNIT]);
+    const unit = path.join(input.home, ".config", "systemd", "user", SYSTEMD_UNIT);
     await rm(unit, { force: true });
     await tryQuietly(exec, "systemctl", ["--user", "daemon-reload"]);
     return `Removed systemd user unit at ${unit}`;
   }
   if (platform === "win32") {
-    await tryQuietly(exec, "schtasks.exe", ["/End", "/TN", "Ensemble Runner"]);
-    const removed = await tryQuietly(exec, "schtasks.exe", ["/Delete", "/TN", "Ensemble Runner", "/F"]);
-    return removed ? "Removed Windows scheduled task \"Ensemble Runner\"" : "No Windows scheduled task \"Ensemble Runner\" was installed.";
+    await tryQuietly(exec, "schtasks.exe", ["/End", "/TN", WINDOWS_TASK]);
+    const removed = await tryQuietly(exec, "schtasks.exe", ["/Delete", "/TN", WINDOWS_TASK, "/F"]);
+    return removed ? `Removed Windows scheduled task "${WINDOWS_TASK}"` : `No Windows scheduled task "${WINDOWS_TASK}" was installed.`;
   }
   throw new Error(`Unsupported platform: ${platform}`);
 }

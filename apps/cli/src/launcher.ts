@@ -1,6 +1,7 @@
 import { accessSync, constants as fsConstants, realpathSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { pathApi, splitPathList } from "./platform.js";
+import { COMMAND, DOWNLOAD_URL, TESTING } from "./channel.js";
 
 export type LauncherCommand = {
   command: string;
@@ -49,11 +50,12 @@ export function resolveLauncherCommand(input: {
   const platform = input.platform ?? process.platform;
   const env = input.env ?? process.env;
   const path = pathApi(platform);
-  const selected = env.ENSEMBLE_LAUNCHER?.trim() || input.argv1 || process.argv[1] || "ensemble";
+  const selected = (TESTING ? env.ENSEMBLE_TEST_LAUNCHER : env.ENSEMBLE_LAUNCHER)?.trim() || input.argv1 || process.argv[1] || COMMAND;
   const absolute = path.isAbsolute(selected) ? selected : resolve(input.cwd ?? process.cwd(), selected);
   const stable = mapStableLauncherPath(absolute, platform);
   const isNpm = /(?:^|[\\/])node_modules[\\/]/.test(stable);
   if (isNpm && !input.sidecarAvailable) {
+    if (TESTING) throw new Error(`Install the separate testing CLI from ${DOWNLOAD_URL}.`);
     const global = isExecutableOnPath("ensemble", env, platform);
     if (global) return { command: global, argsPrefix: [], source: "npm" };
     return { command: platform === "win32" ? "npx.cmd" : "npx", argsPrefix: ["-y", "ensemblework"], source: "npx" };

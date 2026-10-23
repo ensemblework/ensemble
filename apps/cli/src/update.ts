@@ -2,6 +2,15 @@ import { readJsonFile, writeJsonFile, type CliPaths } from "./paths.js";
 import { realPathOrSelf } from "./launcher.js";
 import { VERSION } from "./version.js";
 import type { FetchLike } from "./http.js";
+import { DOWNLOAD_URL, TESTING, TEST_RELEASE_BASE } from "./channel.js";
+
+async function testingVersion(fetchImpl: FetchLike = fetch): Promise<string> {
+  const response = await fetchImpl(`${TEST_RELEASE_BASE}/channel.json`, { signal: AbortSignal.timeout(5000) });
+  if (!response.ok) throw new Error("The testing CLI update channel is not available.");
+  const channel = await response.json() as { version?: unknown; apiBase?: unknown; channel?: unknown };
+  if (channel.channel !== "testing" || channel.apiBase !== "https://api-test.ensemblework.com" || typeof channel.version !== "string" || !/^\d+\.\d+\.\d+-testing\.\d+$/.test(channel.version)) throw new Error("The testing CLI update manifest is invalid.");
+  return channel.version;
+}
 
 export type InstallMethod = "homebrew" | "scoop" | "winget" | "linux-package" | "install-script" | "npm" | "unknown";
 
@@ -18,12 +27,12 @@ export function detectInstallMethod(input: {
   const real = realPathOrSelf(input.bundlePath);
   const normalized = platform === "win32" ? real.replaceAll("/", "\\").toLowerCase() : real.replaceAll("\\", "/");
   const comparable = normalized.toLowerCase();
-  if (platform !== "win32" && comparable.includes("/cellar/ensemble/")) return "homebrew";
-  if (platform === "win32" && normalized.includes("\\scoop\\apps\\ensemble\\")) return "scoop";
-  if (platform === "win32" && normalized.includes("\\winget\\packages\\")) return "winget";
-  if (platform !== "win32" && comparable.startsWith("/opt/ensemble-cli/")) return "linux-package";
-  if (platform !== "win32" && home && comparable.startsWith(`${home.replaceAll("\\", "/").toLowerCase()}/.local/share/ensemble-cli/`)) return "install-script";
-  const localPrograms = env.LOCALAPPDATA ? `${env.LOCALAPPDATA}\\Programs\\Ensemble`.toLowerCase() : "";
+  if (!TESTING && platform !== "win32" && comparable.includes("/cellar/ensemble/")) return "homebrew";
+  if (!TESTING && platform === "win32" && normalized.includes("\\scoop\\apps\\ensemble\\")) return "scoop";
+  if (!TESTING && platform === "win32" && normalized.includes("\\winget\\packages\\")) return "winget";
+  if (!TESTING && platform !== "win32" && comparable.startsWith("/opt/ensemble-cli/")) return "linux-package";
+  if (platform !== "win32" && home && comparable.startsWith(`${home.replaceAll("\\", "/").toLowerCase()}/.local/share/${TESTING ? "ensemble-test-cli" : "ensemble-cli"}/`)) return "install-script";
+  const localPrograms = env.LOCALAPPDATA ? `${env.LOCALAPPDATA}\\Programs\\${TESTING ? "Ensemble Testing" : "Ensemble"}`.toLowerCase() : "";
   if (platform === "win32" && localPrograms && normalized.startsWith(localPrograms)) return "install-script";
   if (!input.sidecarAvailable && /(?:^|[\\/])node_modules[\\/]/.test(real)) return "npm";
   return "unknown";
@@ -45,7 +54,7 @@ type UpdateCache = {
 };
 
 export function compareVersions(a: string, b: string): number {
-  const parse = (value: string) => value.replace(/^cli-v/, "").split(".").map((part) => Number(part.replace(/\D.*/, "")) || 0);
+  const parse = (value: string) => value.replace(/^cli-v/, "").replace("-testing.", ".").split(".").map((part) => Number(part.replace(/\D.*/, "")) || 0);
   const left = parse(a);
   const right = parse(b);
   for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
@@ -73,6 +82,8 @@ export async function dailyUpdateNotice(input: {
   const fetchImpl = input.fetchImpl ?? fetch;
   let latest = cached?.latest ?? null;
   try {
+    if (TESTING) latest = await testingVersion(fetchImpl);
+    else {
     const response = await fetchImpl("https://api.github.com/repos/ensemblework/ensemble/releases?per_page=30", {
       headers: { accept: "application/vnd.github+json", "user-agent": `ensemble-cli/${input.currentVersion ?? VERSION}` },
       signal: AbortSignal.timeout(input.timeoutMs ?? 2000),
@@ -84,6 +95,7 @@ export async function dailyUpdateNotice(input: {
           .filter((release) => release.tag_name?.startsWith("cli-v") && !release.draft && !release.prerelease)
           .map((release) => release.tag_name!)
           .sort((a, b) => compareVersions(b, a))[0] ?? latest;
+    }
     }
   } catch {
     // Offline, slow or rate limited: keep the last answer and try again tomorrow.
@@ -108,11 +120,14 @@ export function installCliUpdate(bundlePath: string): Promise<string> {
 async function performCliUpdate(bundlePath: string): Promise<string> {
   let latest: string;
   try {
+    if (TESTING) latest = await testingVersion();
+    else {
     const response = await fetch("https://api.github.com/repos/ensemblework/ensemble/releases?per_page=30", { headers: { accept: "application/vnd.github+json", "user-agent": `Ensemble/${VERSION}` }, signal: AbortSignal.timeout(5000) });
     if (!response.ok) throw new Error("unavailable");
     const releases = await response.json() as Release[];
     latest = releases.filter(row => !row.draft && !row.prerelease && /^cli-v\d+\.\d+\.\d+$/.test(row.tag_name ?? "")).map(row => row.tag_name!).sort((a,b) => compareVersions(b,a))[0] ?? "";
     if (!latest) throw new Error("unavailable");
+    }
   } catch { throw new Error("Could not check for updates right now. Try again in a moment."); }
   if (compareVersions(latest, VERSION) <= 0) return `Ensemble ${VERSION} is up to date.`;
   const { execFile } = await import("node:child_process");
@@ -133,12 +148,12 @@ async function performCliUpdate(bundlePath: string): Promise<string> {
   const method = detectInstallMethod({ bundlePath, home: homedir(), sidecarAvailable: await sidecarAvailable(resolveSidecarDir(import.meta.url)) });
   if (method === "unknown" || method === "winget" || method === "linux-package" || method === "npm") {
     const { openBrowser } = await import("./browser.js");
-    await openBrowser("https://ensemblework.com/download");
+    await openBrowser(DOWNLOAD_URL);
     return "Choose the current installer in Downloads. Your work and settings are kept.";
   }
   const temp = await mkdtemp(join(tmpdir(), "ensemble-update-"));
   try {
-    const options = { timeout: 300_000, maxBuffer: 2_000_000, windowsHide: true, env: { ...process.env, ENSEMBLE_VERSION: latest.replace(/^cli-v/, "") } };
+    const options = { timeout: 300_000, maxBuffer: 2_000_000, windowsHide: true, env: { ...process.env, [TESTING ? "ENSEMBLE_TEST_VERSION" : "ENSEMBLE_VERSION"]: latest.replace(/^cli-v/, "") } };
     if (method === "homebrew") await run("brew", ["upgrade", "ensemble"], options);
     else if (method === "scoop") await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "scoop update ensemble"], options);
     else {
