@@ -25,8 +25,8 @@ function fakeServer(): { sent: Sent[]; restore: () => void } {
       answer = {
         serverRunner: false,
         devices: [
-          { id: "d1", name: "Studio Mac", platform: "darwin", appVersion: "0.3.8", capabilities: { code: true, browseFiles: true }, folders: [], runBranchPush: false, lastSeenAt: null, createdAt: "2026-10-14T00:00:00Z", online: true },
-          { id: "d2", name: "Old Laptop", platform: "darwin", appVersion: "0.3.7", capabilities: { browseFiles: true }, folders: [], runBranchPush: false, lastSeenAt: null, createdAt: "2026-10-14T00:00:00Z", online: true },
+          { id: "d1", name: "Studio Mac", platform: "darwin", appVersion: "0.3.8", capabilities: { code: true, browseFiles: true }, folders: [], lastSeenAt: null, createdAt: "2026-10-14T00:00:00Z", online: true },
+          { id: "d2", name: "Old Laptop", platform: "darwin", appVersion: "0.3.7", capabilities: { browseFiles: true }, folders: [], lastSeenAt: null, createdAt: "2026-10-14T00:00:00Z", online: true },
         ],
       };
     } else if (url.endsWith("/api/devices/d1/code") && body?.path === "/api/code/reviews") {

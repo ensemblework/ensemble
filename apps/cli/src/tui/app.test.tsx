@@ -280,9 +280,8 @@ test("signed in, with a key only on the account: Chat stays Ensemble Code and /s
     for (const key of "/status") app.stdin.write(key);
     await tick();
     app.stdin.write("\r");
-    const status = await screenWith(app.lastFrame, /Pull requests/);
+    const status = await screenWith(app.lastFrame, /Model keys/);
     assert.match(status, /google \(your account\)/);
-    assert.match(status, /Pull requests\s+into testing/);
   } finally {
     app.unmount();
   }

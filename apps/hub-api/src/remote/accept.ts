@@ -3,7 +3,6 @@
  * as Assign. A spec the Mac will not run is recorded as failed, here and on
  * the hosted row, and nothing is started.
  */
-import { tmpdir } from "node:os";
 import type { FastifyInstance } from "fastify";
 import type { PrismaClient } from "@prisma/client";
 import { env } from "../config.js";
@@ -12,14 +11,12 @@ import { appendLedger } from "../lib/ledger.js";
 import { saveFile } from "../files/store.js";
 import { createTask } from "../services/tasks.js";
 import { createJob } from "../workspace/assign.js";
-import { runTrustedGit } from "../workspace/git-gate.js";
-import { GIT_GATE_CLONE, GIT_GATE_CODE, webContext } from "./origin.js";
+import { webContext } from "./origin.js";
 import { isRefusal, planLocalJob, type Refusal } from "./policy.js";
 import { authRejected, type HostedClient } from "./client.js";
 import type { JobSpec, ResultLink } from "./contract.js";
 import { loadHeld, loadSettings, type HeldJob } from "./store.js";
 
-const PRIVATE = /Authentication|could not read Username|Permission denied|Repository not found|terminal prompts disabled|Invalid username or password/i;
 
 type DownloadedAttachment = { attachment: NonNullable<JobSpec["attachments"]>[number]; bytes: Uint8Array };
 
@@ -36,18 +33,6 @@ export async function attachClaimedFiles(prisma: PrismaClient, userId: string, t
     }
   }
   return notes;
-}
-
-export async function repoVisibility(url: string, userId = env.ENSEMBLE_DEV_USER_ID): Promise<"public" | "private" | "unreachable"> {
-  await requireHostAccess(userId, "Host repository probe");
-  try {
-    const result = await runTrustedGit({ userId, cwd: tmpdir(), args: ["ls-remote", "--heads", url], timeoutMs: 20_000 });
-    if (result.exitCode === 0) return "public";
-    if (PRIVATE.test(result.output)) return "private";
-    return "unreachable";
-  } catch {
-    return "unreachable";
-  }
 }
 
 export async function acceptClaimed(app: FastifyInstance, client: HostedClient, spec: JobSpec): Promise<HeldJob> {
@@ -77,17 +62,6 @@ export async function acceptClaimed(app: FastifyInstance, client: HostedClient, 
   if (isRefusal(resolved)) {
     await refuse(app, client, userId, spec, held, resolved);
     return held;
-  }
-  if (resolved.publicCheck) {
-    const visibility = await repoVisibility(resolved.publicCheck);
-    if (visibility !== "public") {
-      const refusal: Refusal =
-        visibility === "private"
-          ? { code: GIT_GATE_CODE, message: GIT_GATE_CLONE }
-          : { code: "REPO_UNREACHABLE", message: `Could not confirm ${resolved.publicCheck} is a public repository, so it was not cloned.` };
-      await refuse(app, client, userId, spec, held, refusal);
-      return held;
-    }
   }
   try {
     let attachmentBytes = 0;

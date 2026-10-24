@@ -30,7 +30,7 @@ import { parseRuntimeBody } from "../lib/model-error.js";
 import { ModelQuotaError } from "../lib/model-quota.js";
 import { RuntimeError } from "../lib/runtime-error.js";
 import { truncateText } from "../lib/text.js";
-import { isOwnRunBranch, runBranchName, runTrustedGit } from "./git-gate.js";
+import { runBranchName, runTrustedGit } from "./git-gate.js";
 import { agentChanges, type ChangedFile } from "./changed-files.js";
 import { pinReviewSnapshots } from "../lib/code-commit.js";
 import { flagPlanted } from "./planted.js";
@@ -136,7 +136,7 @@ ${limits}`;
   }
   const delivery =
     ctx.job.delivery === "push"
-      ? `You may commit and push ${ctx.runBranch ? `branch ${ctx.runBranch}` : "the current branch"}. Never force-push, never delete branches.`
+      ? "No limits: commit, create or switch branches, push any branch, and open, review or merge pull requests with gh, whatever the task asks. git push and gh run with the person's own sign-in."
       : ctx.job.delivery === "commit"
         ? "You may commit locally. You may not push."
         : "You may not commit or push, and that includes merge, rebase, cherry-pick, revert and tag. Leave your changes uncommitted in the folder. A commit made any other way, for example by a script, is undone.";
@@ -164,8 +164,8 @@ Where you work: ${ctx.root}
 - ${ctx.sandboxed ? `Commands run in ${ctx.sandboxName ?? "the OS sandbox"}: writes outside the folder and reading keys and credentials are blocked${ctx.network ? "" : ", and so is the network"}.` : "Commands run directly on the person's computer, not in a sandbox."}
 - Network: ${ctx.network ? "on" : "off"}.
 - Mode: ${modeText}
-- Git: ${delivery}${askCommit ? " Each commit waits for the person's approval on Needs me." : ""}${ctx.job.delivery === "push" ? " A push is fast-forward only, to this run's own branch, and Ensemble performs it." : ""}${pullRequestText(ctx)}
-- Credentials: you have none. Ensemble may clone and push with the person's sign-in from outside the sandbox. You cannot read that token, and a command that prints the environment will not show it.
+- Git: ${delivery}${askCommit ? " Each commit waits for the person's approval on Needs me." : ""}${pullRequestText(ctx)}
+- Credentials: you never see them. Ensemble runs git push, git fetch and gh for you with the person's sign-in, outside the sandbox.
 
 How to work:
 - run_command takes one program and its arguments. No pipes, redirects, &&, or shell -c. Run scripts through their interpreter (python app.py, node x.js, bash run.sh).
@@ -173,9 +173,9 @@ How to work:
 - When the brief lists files the person attached, read_attachment reads a file's text and save_attachment copies the original into the folder when a program needs the file itself.
 - Verify once, then change the code if it is wrong. Do not run the same command again unless you edited a file first. \`python file.py\` only checks the test if that file calls the test under \`if __name__\`; use \`python -m pytest\` or \`python -m unittest\`.
 - A refusal from a tool is policy, not a bug. Do not try another route to the same thing. Mention it in your summary.
-- Do not touch anything outside the task. Do not change git config or remotes.
+- Do not touch anything outside the task.
 - If the task asks for an analysis or a report, save it with write_page as well.
-- A refused git command is the run's git permission: finish without that step and say so.
+- A refused git command is a limit the person chose for this run (or the sandbox): finish without that step and say so.
 - End with finish(summary): what changed (files), what you ran and the results, and anything left open.
 
 ${limits}`;
@@ -194,19 +194,20 @@ function enginePrompt(ctx: JobContext, name: string, task: string): string {
 }
 
 /** Ensemble's rules for an engine run, one line each: the folder, the internet, git and the run's mode. */
-/** What the agent is told when the run ends in a pull request: Ensemble publishes it, never the agent. */
+/** What the agent is told when the run ends in a pull request Ensemble opens. */
 function pullRequestText(ctx: JobContext): string {
   const plan = pullRequestOf(ctx.job.context);
   if (!plan) return "";
+  const base = plan.base || "the repository's default branch";
   const merge = plan.merge === "auto" ? " and merges it when its checks pass" : plan.merge === "ask" ? " and merges it if the person approves" : "";
-  return ` You are on branch ${ctx.runBranch || "this run's branch"}, made from ${plan.base}; stay on it and commit there. Do not push, open, comment on or merge pull requests yourself: when you finish, Ensemble pushes this branch, opens a pull request into ${plan.base}${merge}.`;
+  return ` You are on branch ${ctx.runBranch || "this run's branch"}, made from ${base}; commit your work there. When you finish, Ensemble pushes this branch and opens a pull request into ${base}${merge}, unless you already did it yourself.`;
 }
 
 function engineRules(ctx: JobContext): string[] {
   const mode = runModeOf(ctx.job);
   const git =
     (ctx.job.delivery === "push"
-      ? "Commit your work on the current branch. Do not push: Ensemble pushes this run's branch when you finish."
+      ? "No limits: commit, create or switch branches, push any branch, and open, review or merge pull requests with gh, whatever the task asks. git and gh use the person's own sign-in on this computer."
       : ctx.job.delivery === "commit"
         ? "Commit your work on the current branch. Do not push."
         : "Do not commit (that includes merge, rebase, cherry-pick, revert and tag). Leave your changes uncommitted.") + pullRequestText(ctx);
@@ -229,7 +230,7 @@ function engineRules(ctx: JobContext): string[] {
     `- Internet: ${ctx.network ? "on" : "off"}.`,
     `- Git: ${git}`,
     ...(ctx.network && ctx.sandboxed && ctx.job.provider === "claude-code"
-      ? ["- To get a public repository, run `git clone <https URL> [folder]` as its own command: Ensemble clones it into that folder for you (without git hooks) and tells you where. Then `cd folder && git …` (git -C is refused)."]
+      ? ["- To get a public repository, run `git clone <https URL> [folder]` as its own command: Ensemble clones it into that folder for you (without git hooks) and tells you where. Then `cd folder && git …`."]
       : []),
     `- ${modeText}`,
   ];
@@ -424,6 +425,16 @@ async function prepareFolder(app: FastifyInstance, ctx: JobContext): Promise<{ r
           : `The clone failed: ${text}`,
       );
     }
+    if (local) {
+      // A clone of a repository folder pushes, pulls and opens pull requests where that folder does: its
+      // own origin (without any user or token in the URL). The folder itself stays reachable as `local`.
+      const origin = await runTrustedGit({ userId: ctx.userId, cwd: source, args: ["config", "--get", "remote.origin.url"] });
+      const url = origin.exitCode === 0 ? origin.output.trim().replace(/^(https?:\/\/)[^@/]+@/i, "$1") : "";
+      if (url && !url.startsWith("/")) {
+        await runTrustedGit({ userId: ctx.userId, cwd: root, args: ["remote", "rename", "origin", "local"] });
+        await runTrustedGit({ userId: ctx.userId, cwd: root, args: ["remote", "add", "origin", url] });
+      }
+    }
     return { root, git: true };
   }
   const entries = await readdir(root);
@@ -449,41 +460,36 @@ async function commitUnbornHead(ctx: Parameters<typeof gitIn>[0]): Promise<void>
   if (committed.exitCode !== 0) throw new GuardError(`Could not prepare the folder: ${committed.output.trim().slice(-300)}`);
 }
 
+/**
+ * The branch the run works on, as the person asked: the current one, a new one with exactly the name
+ * they gave (else `ensemble/<job>/<task>`), or an existing one, in a fresh clone, a continued run or
+ * a folder worked in place alike.
+ */
 async function prepareBranch(ctx: JobContext): Promise<string> {
   const job = ctx.job;
-  if (job.externalRoot) {
-    if (job.branchMode !== "as-is") {
-      throw new GuardError("A folder outside the workspace stays on its current branch. Switching and stashing are refused.");
-    }
-    const current = await gitIn(ctx, ["rev-parse", "--abbrev-ref", "HEAD"]);
-    return current.exitCode === 0 ? current.output.trim() : "";
-  }
-  if (!job.continueFromJobId) {
-    const branch =
-      job.branchMode === "existing" && job.branch && isOwnRunBranch(job.branch, job.id)
-        ? job.branch
-        : runBranchName(job.id, job.branchMode === "new" && job.branch ? job.branch : ctx.taskTitle);
-    const made = await runTrustedGit({ userId: ctx.userId, cwd: ctx.root, args: ["checkout", "-B", branch] });
+  const current = async () => {
+    const head = await gitIn(ctx, ["rev-parse", "--abbrev-ref", "HEAD"]);
+    return head.exitCode === 0 ? head.output.trim() : "";
+  };
+  if (job.branchMode === "new") {
+    const branch = job.branch?.trim() || runBranchName(job.id, ctx.taskTitle);
+    let made = await gitIn(ctx, ["switch", "-c", branch]);
+    if (made.exitCode !== 0 && /already exists/i.test(made.output)) made = await gitIn(ctx, ["switch", branch]);
     if (made.exitCode !== 0) throw new GuardError(`Could not create branch ${branch}: ${made.output.trim().slice(-300)}`);
     return branch;
   }
-  if (job.branchMode === "new" && job.branch) {
-    const made = await gitIn(ctx, ["switch", "-c", job.branch]);
-    if (made.exitCode !== 0) throw new GuardError(`Could not create branch ${job.branch}: ${made.output.trim().slice(-300)}`);
-  } else if (job.branchMode === "existing" && job.branch) {
+  if (job.branchMode === "existing" && job.branch) {
     let switched = await gitIn(ctx, ["switch", job.branch]);
-    if (switched.exitCode !== 0 && ctx.network && job.useCredentials) {
-      const auth = await githubCloneAuth(ctx.prisma, ctx.userId, job.repoUrl || "https://github.com/");
-      await runTrustedGit({ userId: ctx.userId, cwd: ctx.root, args: ["fetch", "--quiet", "origin", job.branch], credentialEnv: auth.env, credentialConfig: auth.config });
-      switched = await gitIn(ctx, ["switch", job.branch]);
-    } else if (switched.exitCode !== 0 && ctx.network) {
-      await gitIn(ctx, ["fetch", "--quiet", "origin", job.branch], { network: true });
+    if (switched.exitCode !== 0 && ctx.network) {
+      const remote = (await gitIn(ctx, ["remote", "get-url", "origin"])).output.trim();
+      const auth = /github\.com/i.test(remote) ? await githubCloneAuth(ctx.prisma, ctx.userId, remote).catch(() => null) : null;
+      await runTrustedGit({ userId: ctx.userId, cwd: ctx.root, args: ["fetch", "--quiet", "origin", `+refs/heads/${job.branch}:refs/remotes/origin/${job.branch}`], credentialEnv: auth?.env, credentialConfig: auth?.config });
       switched = await gitIn(ctx, ["switch", job.branch]);
     }
     if (switched.exitCode !== 0) throw new GuardError(`Branch ${job.branch} was not found: ${switched.output.trim().slice(-300)}`);
+    return job.branch;
   }
-  const current = await gitIn(ctx, ["rev-parse", "--abbrev-ref", "HEAD"]);
-  return current.exitCode === 0 ? current.output.trim() : job.branch;
+  return current();
 }
 
 export async function executeJob(app: FastifyInstance, jobId: string, control: JobControl): Promise<void> {
@@ -775,11 +781,6 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
       });
       const undone = await undoUnapprovedCommits(ctx, watch);
       if (undone) await ctx.event("commit_undone", { note: undone });
-      // Ensemble, not the engine, pushes the run's branch: fast-forward, with the person's sign-in, through the push gate.
-      if (job.delivery === "push" && git && ctx.network) {
-        const pushed = await runTool(ctx, "run_command", { command: "git push" });
-        await ctx.event("tool", { name: "push", ok: pushed.ok, summary: pushed.summary });
-      }
       finalText = ran.text.trim() || `${engineName} finished.`;
       engineTotals = { model: ran.model ?? null, costUsd: ran.costUsd };
       if (ran.trace) await ran.trace.finish(finalText, { model: ran.model ?? job.model, tokensIn: ran.tokensIn, tokensOut: ran.tokensOut });
