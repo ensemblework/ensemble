@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Check, ChevronRight, Code2, FileText, FolderOpen, GitBranch, Lock, Monitor, Pencil, ShieldCheck, Star, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronRight, Code2, FileText, FolderOpen, GitBranch, GitPullRequest, Lock, Monitor, Pencil, ShieldCheck, Star, Trash2, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { CODE_ENGINES, ENGINE_LABELS, INCLUDED_LABEL, INCLUDED_PROVIDER, type CodeEngine, type ContextTier, type ReasoningEffort, type RunProfile } from "@ensemble/shared-types";
 import { api, type AssignInput, type Complexity, type HandoffApp } from "@/lib/api";
@@ -16,6 +16,7 @@ import { setFeature } from "@/lib/features";
 import { useHostCode, useModuleState } from "@/lib/use-module";
 import { useQuickAssign } from "./use-quick-assign";
 import { canAddProfile, defaultProfile, differs, newProfileId, profileChoices, profileSummary, quickProfile, removeProfile, upsertProfile, type ProfileFields } from "@/lib/run-profiles";
+import { MERGE_CHOICES, computerPullRequestBases, defaultPullRequestBase, pullRequestNotices, pullRequestProblem, sharedFolderKinds, type PullRequestMerge } from "@/lib/pull-request";
 import { useToast } from "../toast";
 import { Dialog, InfoTip, SettingRow, Spinner, Toggle, cx } from "../ui";
 import { RunBranchStatus } from "./run-branch-status";
@@ -94,6 +95,11 @@ function Label({ children, tip }: { children: React.ReactNode; tip?: string }) {
       {tip ? <InfoTip text={tip} /> : null}
     </div>
   );
+}
+
+/** Text with `command` spans shown as code. */
+function WithCode({ text }: { text: string }) {
+  return <>{text.split("`").map((part, index) => (index % 2 ? <code key={index}>{part}</code> : part))}</>;
 }
 
 const MODE_HELP: Record<Mode, string> = {
@@ -259,7 +265,7 @@ export function ProfileBar({
   );
 }
 
-type Blocker = { text: string; field: "task" | "run-on" | "place" | "branch" | "mode" };
+type Blocker = { text: string; field: "task" | "run-on" | "place" | "branch" | "mode" | "pull-request" };
 
 function folderProblem(folder: string, check: { ok: boolean; text: string } | null): string {
   if (check && !check.ok) return check.text;
@@ -283,6 +289,8 @@ export function assignBlocker(form: {
   needsTrust: boolean;
   mode: Mode;
   unattendedNoSandbox: boolean;
+  /** What keeps the run's pull request from going ahead (lib/pull-request), when it ends in one. */
+  pullRequest?: Blocker | null;
 }): Blocker | null {
   if (!form.taskId) return { text: "Choose a task first.", field: "task" };
   if (form.kind !== "code") return null;
@@ -298,6 +306,7 @@ export function assignBlocker(form: {
       : { text: `${form.device.name} has not shared a folder yet. Pick “Its own checkout”, or share one there first.`, field: "place" };
   }
   if (form.place === "folder" && !form.device && !form.folderCheck?.ok) return { text: folderProblem(form.folder, form.folderCheck), field: "place" };
+  if (form.pullRequest) return form.pullRequest;
   if (form.branchMode !== "as-is" && !form.branch.trim()) return { text: form.branchMode === "new" ? "Name the new branch." : "Name the branch to use.", field: "branch" };
   if (form.needsTrust) return { text: `${form.mode === "unattended" ? "Run unattended" : "Review only"} needs a folder you trust. Trust this folder, or choose Ask.`, field: "mode" };
   if (form.unattendedNoSandbox) return { text: "Run unattended needs an OS sandbox, and this computer has none yet. Choose Ask or Review only.", field: "mode" };
@@ -348,6 +357,9 @@ export function AssignDialog({
   const [branchMode, setBranchMode] = useState<"as-is" | "existing" | "new">("as-is");
   const [branch, setBranch] = useState("");
   const [delivery, setDelivery] = usePersistentState<"local" | "commit" | "push">("ensemble.assign.delivery", "local");
+  // A code run that ends in a pull request Ensemble opens: its base and what happens once it is open. Null: the git choice above.
+  const [pullRequest, setPullRequest] = useState<{ base: string; merge: PullRequestMerge } | null>(null);
+  const [prBranch, setPrBranch] = useState("");
   const [askFirst, setAskFirst] = useState(true);
   const [credentials, setCredentials] = useState(false);
   const [sandbox, setSandbox] = useState(true);
@@ -396,6 +408,20 @@ export function AssignDialog({
   const copilotWhere = selectedDevice ? computerName(selectedDevice.name) : desktopShell() ? "this computer" : "this server";
   const branchSource = place === "folder" && folderCheck?.ok && folderCheck.git ? folder : place === "fresh" && repo.startsWith("/") ? repo : "";
   const branches = useQuery({ queryKey: ["branches", branchSource], queryFn: () => api.branches(branchSource), enabled: open && Boolean(branchSource) });
+  const prBases = selectedDevice ? computerPullRequestBases(selectedDevice.capabilities) : null;
+  const folderKinds = selectedDevice ? sharedFolderKinds(selectedDevice.capabilities) : {};
+  const prOn = kind === "code" && pullRequest !== null;
+  const prNotices = prOn
+    ? pullRequestNotices({
+        computer: selectedDevice ? selectedDevice.name : null,
+        capabilities: selectedDevice?.capabilities,
+        place,
+        repo,
+        folder: selectedDevice ? folderLabel : folder,
+        base: pullRequest.base,
+        branch: prBranch,
+      })
+    : null;
 
   const orchestration = settings.data?.settings.orchestration;
   const savedProfiles = settings.data?.settings.runProfiles ?? [];
@@ -412,17 +438,18 @@ export function AssignDialog({
     effort,
     context: kind === "code" && engine === "copilot-cli" ? context : undefined,
     branchMode: branchMode === "new" ? "new" : "as-is",
-    delivery,
+    delivery: prOn ? "commit" : delivery,
     askBeforePublish: askFirst,
     mode,
     sandbox,
     useCredentials: credentials,
-    network,
+    network: prOn ? true : network,
     markDone,
     maxMinutes: maxMinutes === "" ? null : maxMinutes,
     maxToolCalls: maxToolCalls === "" ? null : maxToolCalls,
     maxTurns: maxTurns === "" ? null : maxTurns,
     instructions,
+    pullRequest: prOn ? { base: pullRequest.base.trim(), merge: pullRequest.merge } : null,
   };
 
   const applyProfile = (profile: RunProfile) => {
@@ -447,6 +474,8 @@ export function AssignDialog({
     setMaxToolCalls(profile.maxToolCalls ?? "");
     setMaxTurns(profile.maxTurns ?? "");
     setInstructions(profile.instructions);
+    setPullRequest(profile.kind === "code" && profile.pullRequest ? { base: profile.pullRequest.base, merge: profile.pullRequest.merge } : null);
+    setPrBranch("");
   };
 
   // Each time the dialog opens: the task, then the default profile once settings are in.
@@ -571,11 +600,13 @@ export function AssignDialog({
     folder,
     folderCheck,
     folderLabel,
-    branchMode,
+    // A pull request's own branch name is optional (pullRequestNotices checks it).
+    branchMode: prOn ? "as-is" : branchMode,
     branch,
     needsTrust,
     mode,
     unattendedNoSandbox,
+    pullRequest: prNotices ? pullRequestProblem(prNotices) : null,
   });
   const invalid = Boolean(blocker);
 
@@ -601,10 +632,12 @@ export function AssignDialog({
           mode,
           // A computer without a sandbox would refuse a sandboxed run; say so here instead (below), and run it directly.
           sandbox: selectedDevice ? sandbox && deviceSandbox?.osSandbox !== false : sandbox && osSandbox,
-          delivery,
+          delivery: prOn ? "commit" : delivery,
           askBeforePublish: mode === "unattended" ? false : askFirst,
-          branchMode,
-          branch: branchMode === "as-is" ? undefined : branch.trim(),
+          // A pull request's branch is new, made from its base; empty: Ensemble names it.
+          branchMode: prOn ? (prBranch.trim() ? "new" : "as-is") : branchMode,
+          branch: prOn ? prBranch.trim() || undefined : branchMode === "as-is" ? undefined : branch.trim(),
+          ...(prOn ? { pullRequest: { base: pullRequest.base.trim(), merge: pullRequest.merge }, network: true } : {}),
           ...(place === "fresh" && repo.trim() ? { repoUrl: repo.trim() } : {}),
           ...(place === "continue" ? { continueFromJobId: continueFrom } : {}),
           ...(outside ? { outsideAccess: outside } : {}),
@@ -688,8 +721,8 @@ export function AssignDialog({
   const summary = useMemo(() => {
     if (kind === "research") return "Reads the web and papers, writes into the task page. Nothing runs on your computer.";
     const where = place === "folder" ? (selectedDevice ? `${folderLabel || "a folder"} on ${selectedDevice.name}` : "your folder") : place === "continue" ? "the earlier task's folder" : "its own checkout";
-    const git = delivery === "local" ? "no commit or push" : delivery === "commit" ? "may commit" : "may commit and push";
-    const asks = delivery !== "local" && askFirst && mode !== "unattended" ? " (asks before each commit)" : "";
+    const git = prOn ? `may commit, then a pull request into ${pullRequest.base.trim() || "…"}` : delivery === "local" ? "no commit or push" : delivery === "commit" ? "may commit" : "may commit and push";
+    const asks = (prOn || delivery !== "local") && askFirst && mode !== "unattended" ? " (asks before each commit)" : "";
     const modeLabel = mode === "review" ? " · Review only" : mode === "unattended" ? " · Run unattended" : "";
     const box = selectedDevice
       ? `On ${selectedDevice.name}${deviceSandbox?.osSandbox === false ? ", no sandbox" : sandbox ? ", sandboxed" : ", unsandboxed"}`
@@ -700,7 +733,7 @@ export function AssignDialog({
           : "Unsandboxed";
     const who = engine === "ensemble" ? "" : `${ENGINE_LABELS[engine]} · `;
     return `${who}${box} · works in ${where}${modeLabel} · ${git}${asks}${credentials && !selectedDevice ? " · git sign-in stays in the app" : ""}`;
-  }, [kind, place, delivery, sandbox, askFirst, credentials, mode, osSandbox, selectedDevice, folderLabel, engine, deviceSandbox]);
+  }, [kind, place, delivery, sandbox, askFirst, credentials, mode, osSandbox, selectedDevice, folderLabel, engine, deviceSandbox, prOn, pullRequest]);
 
   const candidates = (tasks.data?.tasks ?? []).filter((row) => !["done", "dropped"].includes(row.status));
   const trustTip = selectedDevice ? undefined : "Trust this folder first. Review only and Run unattended run commands without asking.";
@@ -1044,16 +1077,17 @@ export function AssignDialog({
                   </>
                 ) : selectedDevice ? (
                   <>
-                    <select value={folderLabel} onChange={(event) => setFolderLabel(event.target.value)} className="field w-full" disabled={!selectedDevice.folders.length}>
+                    <select aria-label="Shared folder" value={folderLabel} onChange={(event) => setFolderLabel(event.target.value)} className="field w-full" disabled={!selectedDevice.folders.length}>
                       <option value="">{selectedDevice.folders.length ? `Choose a folder ${computerName(selectedDevice?.name)} has shared…` : `${computerName(selectedDevice?.name)} has not shared a folder yet`}</option>
                       {selectedDevice.folders.map((label) => (
-                        <option key={label} value={label}>{label}</option>
+                        <option key={label} value={label}>{label}{folderKinds[label] === "repo" ? " · repository" : ""}</option>
                       ))}
                     </select>
                     <div className="mt-1 text-[12px] text-muted">
                       {selectedDevice.folders.length
                         ? `Only names ${computerName(selectedDevice?.name)} already shared (\`ensemble folders add\`). A path typed here is refused.`
                         : `To work in a folder there, share it on ${computerName(selectedDevice?.name)} with \`ensemble folders add <path>\`. Or pick “Its own checkout” above.`}
+                      {prOn ? ` A pull request needs a folder shared as a repository (\`ensemble folders add <path> --repo\`): each run works in its own clone of it.` : ""}
                     </div>
                   </>
                 ) : (
@@ -1088,35 +1122,62 @@ export function AssignDialog({
 
             {appMode ? null : (
             <>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-4">
               <div {...attentionProps("branch")}>
-                <Label tip="As is: the branch checked out now. Existing: a branch that already exists. New: a branch created first.">
-                  <GitBranch size={13} /> Branch
-                </Label>
-                <Segmented
-                  value={branchMode}
-                  onChange={setBranchMode}
-                  options={[
-                    { id: "as-is", label: "As is" },
-                    { id: "existing", label: "Existing", disabled: Boolean(selectedDevice), title: selectedDevice ? `A task for ${selectedDevice.name} works on its own run branch for now.` : undefined },
-                    { id: "new", label: "New", disabled: Boolean(selectedDevice), title: selectedDevice ? `A task for ${selectedDevice.name} works on its own run branch for now.` : undefined },
-                  ]}
-                />
-                {branchMode !== "as-is" ? (
+                {prOn ? (
                   <>
-                    <input list="assign-branches" aria-label="Branch name" value={branch} onChange={(event) => setBranch(event.target.value)} placeholder={branchMode === "new" ? "ensemble/fix-tests" : "feature/x"} className="field mt-2 w-full font-mono text-[12.5px]" />
-                    <datalist id="assign-branches">
-                      {(branches.data?.branches ?? []).map((name) => (
-                        <option key={name} value={name} />
-                      ))}
-                    </datalist>
+                    <Label tip="The branch Ensemble pushes and opens the pull request from, made from the branch it goes into. Leave it empty and Ensemble names it ensemble/<job>/<task>.">
+                      <GitBranch size={13} /> Branch name
+                    </Label>
+                    <input aria-label="Branch name" value={prBranch} onChange={(event) => setPrBranch(event.target.value)} placeholder="Ensemble names it" className="field w-full font-mono text-[12.5px]" />
+                    {prNotices?.branch ? (
+                      <div className="mt-1 text-[12px] text-danger" role="alert" data-testid="pull-request-branch-notice">{prNotices.branch}</div>
+                    ) : (
+                      <div className="mt-1 text-[12px] text-muted">A new branch, made from the branch it goes into.</div>
+                    )}
                   </>
-                ) : null}
+                ) : (
+                  <>
+                    <Label tip="As is: the branch checked out now. Existing: a branch that already exists. New: a branch created first.">
+                      <GitBranch size={13} /> Branch
+                    </Label>
+                    <Segmented
+                      value={branchMode}
+                      onChange={setBranchMode}
+                      options={[
+                        { id: "as-is", label: "As is" },
+                        { id: "existing", label: "Existing", disabled: Boolean(selectedDevice), title: selectedDevice ? `A task for ${selectedDevice.name} works on its own run branch for now.` : undefined },
+                        { id: "new", label: "New", disabled: Boolean(selectedDevice), title: selectedDevice ? `A task for ${selectedDevice.name} works on its own run branch for now.` : undefined },
+                      ]}
+                    />
+                    {branchMode !== "as-is" ? (
+                      <>
+                        <input list="assign-branches" aria-label="Branch name" value={branch} onChange={(event) => setBranch(event.target.value)} placeholder={branchMode === "new" ? "ensemble/fix-tests" : "feature/x"} className="field mt-2 w-full font-mono text-[12.5px]" />
+                        <datalist id="assign-branches">
+                          {(branches.data?.branches ?? []).map((name) => (
+                            <option key={name} value={name} />
+                          ))}
+                        </datalist>
+                      </>
+                    ) : null}
+                  </>
+                )}
               </div>
               <div>
-                <Label tip="Enforced on every git call and on commits any script makes, and stated to the model. A refused git step goes back to the model as an error, so the run continues without it. The agent never force-pushes, deletes branches, or changes git config and remotes.">Git permissions</Label>
-                <Segmented value={delivery} onChange={setDelivery} options={[{ id: "local", label: "Local only" }, { id: "commit", label: "Commit" }, { id: "push", label: "Commit + push" }]} />
-                {delivery !== "local" ? (
+                <Label tip="Enforced on every git call and on commits any script makes, and stated to the model. A refused git step goes back to the model as an error, so the run continues without it. The agent never force-pushes, deletes branches, or changes git config and remotes. Pull request: the agent may commit; when it ends, Ensemble (never the agent) pushes its branch, opens the pull request and merges it as you choose.">Git permissions</Label>
+                <Segmented
+                  value={prOn ? "pr" : delivery}
+                  onChange={(value) => {
+                    if (value === "pr") {
+                      setPullRequest((current) => current ?? { base: defaultPullRequestBase(prBases), merge: "ask" });
+                      return;
+                    }
+                    setPullRequest(null);
+                    setDelivery(value);
+                  }}
+                  options={[{ id: "local", label: "Local only" }, { id: "commit", label: "Commit" }, { id: "push", label: "Commit + push" }, { id: "pr", label: "Pull request" }]}
+                />
+                {prOn || delivery !== "local" ? (
                   <label className={cx("mt-2 flex items-center gap-2 text-[12.5px]", mode === "unattended" ? "text-faint" : "text-muted")} title={mode === "unattended" ? "Nobody approves in an unattended run." : undefined}>
                     <input type="checkbox" checked={askFirst && mode !== "unattended"} disabled={mode === "unattended"} onChange={(event) => setAskFirst(event.target.checked)} />
                     Ask me on Needs me before each commit
@@ -1124,6 +1185,52 @@ export function AssignDialog({
                 ) : null}
               </div>
             </div>
+
+            {prOn ? (
+              <div className="space-y-2 rounded-lg border border-line bg-raised p-3" data-testid="assign-pull-request" {...attentionProps("pull-request")}>
+                <div className="flex items-center gap-1.5 font-medium">
+                  <GitPullRequest size={14} className="text-muted" /> Pull request
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <Label tip={selectedDevice ? `The branches ${selectedDevice.name} opens pull requests into. Only ${selectedDevice.name} changes them: \`ensemble git bases add <branch>\` there. Never main, master, production or testing-live.` : "The branch the pull request goes into. Never main, master, production or testing-live."}>
+                      Into branch
+                    </Label>
+                    {prBases?.length ? (
+                      <select aria-label="Into branch" value={prBases.includes(pullRequest.base) ? pullRequest.base : ""} onChange={(event) => setPullRequest({ ...pullRequest, base: event.target.value })} className="field w-full font-mono text-[12.5px]">
+                        {prBases.includes(pullRequest.base) ? null : <option value="" disabled>Choose a branch…</option>}
+                        {prBases.map((base) => (
+                          <option key={base} value={base}>
+                            {base}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input aria-label="Into branch" value={pullRequest.base} onChange={(event) => setPullRequest({ ...pullRequest, base: event.target.value })} placeholder="testing" className="field w-full font-mono text-[12.5px]" />
+                    )}
+                  </div>
+                  <div>
+                    <Label tip="Ask me before merging: Ensemble opens it, then asks on Needs me, and merges once its checks pass. Merge when checks pass: no question. Leave it open: you merge it on GitHub.">After opening</Label>
+                    <select aria-label="After opening" value={pullRequest.merge} onChange={(event) => setPullRequest({ ...pullRequest, merge: event.target.value as PullRequestMerge })} className="field w-full">
+                      {MERGE_CHOICES.map((choice) => (
+                        <option key={choice.id} value={choice.id}>
+                          {choice.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div className="text-[12px] text-muted">Ensemble, not the agent, pushes the branch, opens the pull request and merges it. The agent may commit; it cannot push.</div>
+                {[prNotices?.tooOld, prNotices?.place, prNotices?.base].filter((text): text is string => Boolean(text)).map((text) => (
+                  <div key={text} className="flex items-start gap-1.5 text-[12px] text-warn" role="status" data-pull-request-notice>
+                    <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                    <span className="min-w-0">
+                      <WithCode text={text} />
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
 
             <div className="space-y-2 rounded-lg border border-line bg-raised p-3" {...attentionProps("mode")}>
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1181,7 +1288,7 @@ export function AssignDialog({
                   </div>
                   <div className="flex items-center justify-between gap-3">
                     <span className="pl-[22px] font-medium">Internet access</span>
-                    <Toggle checked={network} onChange={setNetwork} label="Internet access" />
+                    <Toggle checked={prOn || network} onChange={setNetwork} disabled={prOn} label="Internet access" />
                   </div>
                   {sandbox && deviceSandbox?.osSandbox !== false && deviceAcceptsWeb ? <OutsideFolder value={outsideAccess} onChange={setOutside} /> : null}
                   <SettingRow title="Push to this task's own branch" description={`Set on ${selectedDevice.name}, for repos that computer trusts.`}>
@@ -1228,7 +1335,7 @@ export function AssignDialog({
                   </div>
                   <div className="flex items-center justify-between gap-3">
                     <span className="pl-[22px] font-medium">Internet access</span>
-                    <Toggle checked={network} onChange={setNetwork} label="Internet access" />
+                    <Toggle checked={prOn || network} onChange={setNetwork} disabled={prOn} label="Internet access" />
                   </div>
                   {sandbox && osSandbox ? <OutsideFolder value={outsideAccess} onChange={setOutside} /> : null}
                   {delivery === "push" && !credentials && place !== "folder" ? (
@@ -1320,7 +1427,7 @@ export function AssignDialog({
             {(appMode ? handoffBlocker : blocker) ? (
               <div className="mt-0.5 flex items-start gap-1 text-warn" role="status" data-assign-blocker>
                 <AlertTriangle size={12} className="mt-[2px] shrink-0" aria-hidden />
-                <span>{(appMode ? handoffBlocker : blocker)!.text}</span>
+                <span><WithCode text={(appMode ? handoffBlocker : blocker)!.text} /></span>
               </div>
             ) : (
               <div>

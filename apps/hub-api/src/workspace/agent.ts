@@ -41,6 +41,7 @@ import { EngineTrace, outputPreview, preview, TRACE_PREVIEW } from "./engines/tr
 import { runCodex } from "./engines/codex.js";
 import { runCursor } from "./engines/cursor.js";
 import { runCopilot } from "./engines/copilot.js";
+import { preparePullRequest, publishPullRequest, pullRequestOf, type PreparedPullRequest } from "./pull-request.js";
 import { cachedAgents } from "../subscriptions/detect.js";
 import { SessionGoneError } from "./engines/registry.js";
 import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
@@ -163,7 +164,7 @@ Where you work: ${ctx.root}
 - ${ctx.sandboxed ? `Commands run in ${ctx.sandboxName ?? "the OS sandbox"}: writes outside the folder and reading keys and credentials are blocked${ctx.network ? "" : ", and so is the network"}.` : "Commands run directly on the person's computer, not in a sandbox."}
 - Network: ${ctx.network ? "on" : "off"}.
 - Mode: ${modeText}
-- Git: ${delivery}${askCommit ? " Each commit waits for the person's approval on Needs me." : ""}${ctx.job.delivery === "push" ? " A push is fast-forward only, to this run's own branch, and Ensemble performs it." : ""}
+- Git: ${delivery}${askCommit ? " Each commit waits for the person's approval on Needs me." : ""}${ctx.job.delivery === "push" ? " A push is fast-forward only, to this run's own branch, and Ensemble performs it." : ""}${pullRequestText(ctx)}
 - Credentials: you have none. Ensemble may clone and push with the person's sign-in from outside the sandbox. You cannot read that token, and a command that prints the environment will not show it.
 
 How to work:
@@ -193,14 +194,22 @@ function enginePrompt(ctx: JobContext, name: string, task: string): string {
 }
 
 /** Ensemble's rules for an engine run, one line each: the folder, the internet, git and the run's mode. */
+/** What the agent is told when the run ends in a pull request: Ensemble publishes it, never the agent. */
+function pullRequestText(ctx: JobContext): string {
+  const plan = pullRequestOf(ctx.job.context);
+  if (!plan) return "";
+  const merge = plan.merge === "auto" ? " and merges it when its checks pass" : plan.merge === "ask" ? " and merges it if the person approves" : "";
+  return ` You are on branch ${ctx.runBranch || "this run's branch"}, made from ${plan.base}; stay on it and commit there. Do not push, open, comment on or merge pull requests yourself: when you finish, Ensemble pushes this branch, opens a pull request into ${plan.base}${merge}.`;
+}
+
 function engineRules(ctx: JobContext): string[] {
   const mode = runModeOf(ctx.job);
   const git =
-    ctx.job.delivery === "push"
+    (ctx.job.delivery === "push"
       ? "Commit your work on the current branch. Do not push: Ensemble pushes this run's branch when you finish."
       : ctx.job.delivery === "commit"
         ? "Commit your work on the current branch. Do not push."
-        : "Do not commit (that includes merge, rebase, cherry-pick, revert and tag). Leave your changes uncommitted.";
+        : "Do not commit (that includes merge, rebase, cherry-pick, revert and tag). Leave your changes uncommitted.") + pullRequestText(ctx);
   const modeText =
     mode === "unattended"
       ? "Nobody is watching. When you face a choice, call the ask_person tool (from the ensemble MCP server) with options and the one you recommend; it returns the recommended option at once. List every such decision at the end under \"Decisions I made\"."
@@ -589,6 +598,9 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
   let configHash: string | null = null;
   let copies: EngineCopies | null = null;
   let git = false;
+  // A code run that ends in a pull request (pull-request.ts), and its branch once made.
+  const pullPlan = job.kind === "code" && !chat ? pullRequestOf(job.context) : null;
+  let pulled: PreparedPullRequest | null = null;
   let initialHead = "";
   const counts = { turns: 0, tools: 0, tokensIn: 0, tokensOut: 0 };
   /** What an engine reported at the end: the model that answered and its own cost estimate. */
@@ -670,7 +682,10 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
       const folder = await prepareFolder(app, ctx);
       ctx.root = folder.root;
       git = folder.git;
-      const branch = git ? await prepareBranch(ctx) : "";
+      // A run that ends in a pull request: its branch is made from the base as GitHub has it now.
+      if (pullPlan && !git) throw new GuardError("A pull request needs a git repository.");
+      if (pullPlan) pulled = await preparePullRequest(ctx, pullPlan);
+      const branch = pulled ? pulled.branch : git ? await prepareBranch(ctx) : "";
       ctx.runBranch = branch;
       await ensureTrust(true);
       if (git) {
@@ -914,6 +929,16 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
       if (ctx.finished) {
         finalText = ctx.finished;
         break;
+      }
+    }
+    // The run ends in a pull request: Ensemble pushes, opens and (as the plan says) merges it.
+    if (pullPlan && pulled) {
+      try {
+        const note = await publishPullRequest(ctx, pullPlan, pulled, { title: job.task.title, summary: finalText });
+        finalText = [finalText, note].filter(Boolean).join("\n\n");
+      } catch (failure) {
+        if ((failure instanceof DOMException && failure.name === "AbortError") || control.signal.aborted) throw failure;
+        throw new LimitReached(`The work is committed on ${pulled.branch}, but the pull request step stopped: ${failure instanceof Error ? failure.message : String(failure)}`);
       }
     }
     outcome = "success";

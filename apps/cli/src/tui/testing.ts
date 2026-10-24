@@ -61,6 +61,8 @@ export function fakeApi(
     accountKeys?: string[];
     /** The coding agents the runtime's check found (`GET /api/subscriptions`). */
     localAgents?: SubscriptionAgent[];
+    /** The branches runs here may open pull requests into (`GET /api/remote`). */
+    pullRequestBases?: string[];
   } = {},
 ) {
   const calls: Array<{ what: string; body?: unknown }> = [];
@@ -119,6 +121,7 @@ export function fakeApi(
       })),
     }),
     trust: async (path: string) => ({ id: "r", path }),
+    remote: async () => ({ pullRequestBases: input.pullRequestBases ?? ["testing"] }),
   } as unknown as LocalApi;
   /** A decision arrives while the app runs (an agent asks something). */
   const ask = (decision: Decision) => {

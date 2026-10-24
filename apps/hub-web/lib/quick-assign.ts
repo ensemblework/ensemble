@@ -22,6 +22,8 @@ export function quickAssignInput(taskId: string, profile: RunProfile): AssignInp
       ...(profile.branchMode === "new" ? { branch: `ensemble/task-${taskId.slice(0, 8)}-${Date.now().toString(36)}` } : {}),
       delivery: profile.delivery, askBeforePublish: profile.askBeforePublish,
       mode: profile.mode, sandbox: profile.sandbox, useCredentials: profile.useCredentials,
+      // The server makes the rest consistent: commits allowed, the internet on, the run's own branch.
+      ...(profile.pullRequest ? { pullRequest: { base: profile.pullRequest.base, merge: profile.pullRequest.merge }, delivery: "commit" as const, network: true } : {}),
     } : {}),
   };
 }

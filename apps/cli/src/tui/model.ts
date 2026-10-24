@@ -34,7 +34,7 @@ export const COMMANDS: readonly Command[] = [
   { name: "logout", description: "Sign out and unpair this computer" },
   { name: "runner", args: "[install|uninstall]", description: "Start Ensemble at login, or stop doing that" },
   { name: "update", description: "Update Ensemble on this computer" },
-  { name: "status", description: "Account, runtime, sandbox and keys" },
+  { name: "status", description: "Account, runtime, sandbox, keys and pull request bases" },
   { name: "sidebar", description: "Show or hide the sidebar (Ctrl+B)" },
   { name: "help", description: "Keys and commands" },
   { name: "exit", aliases: ["quit", "q"], description: "Leave; Ensemble keeps running tasks in the background" },
@@ -175,7 +175,9 @@ export type AgentChoice = { model: string | null; effort?: string | null; contex
 /**
  * The Assign request `/run` sends: a code task in this folder, under the run profile, with the
  * chosen engine. `agent`, the `/model` choice for the person's own agent, replaces the profile's
- * model, thinking level and context window when it names a model.
+ * model, thinking level and context window when it names a model. A profile that ends in a pull
+ * request runs in its own clone of this folder (a git repository) instead of in the folder, on a
+ * branch Ensemble makes from the base; it commits, and Ensemble pushes and opens the pull request.
  */
 export function runRequest(input: {
   taskId: string;
@@ -200,15 +202,16 @@ export function runRequest(input: {
   const effort = (engine === "ensemble" || copilotProfile) && profile.effort && profile.effort !== "default" ? { reasoningEffort: profile.effort } : {};
   const context = copilotProfile && profile.context === "long_context" ? { contextTier: "long_context" } : {};
   const picked = engine !== "ensemble" && input.agent?.model && input.agent.model !== "default" ? agentFields(input.agent) : null;
+  const pullRequest = profile.pullRequest ?? null;
   return {
     taskId: input.taskId,
     kind: "code",
     engine,
     ...(picked ?? { ...model, ...effort, ...context }),
     instructions: [profile.instructions, input.instructions].filter(Boolean).join("\n\n"),
-    folder: input.folder,
-    branchMode: profile.branchMode,
-    delivery: profile.delivery,
+    ...(pullRequest ? { repoUrl: input.folder, pullRequest: { base: pullRequest.base, merge: pullRequest.merge } } : { folder: input.folder }),
+    branchMode: pullRequest ? "as-is" : profile.branchMode,
+    delivery: pullRequest ? "commit" : profile.delivery,
     askBeforePublish: profile.askBeforePublish,
     mode: profile.mode,
     sandbox: profile.sandbox,
@@ -245,6 +248,7 @@ function agentFields(choice: AgentChoice): Record<string, unknown> {
 /**
  * The Assign request for one message in Chat with the person's own agent: in the folder the app
  * was opened in (later messages continue the first one's folder and session), under the run profile.
+ * A chat message never ends in a pull request, whatever the profile says.
  */
 export function chatTurnRequest(input: {
   taskId: string;
@@ -264,7 +268,7 @@ export function chatTurnRequest(input: {
       taskId: input.taskId,
       folder: input.folder,
       instructions: input.message,
-      profile: { ...input.profile, instructions: first ? input.profile.instructions : "" },
+      profile: { ...input.profile, instructions: first ? input.profile.instructions : "", pullRequest: null },
       engine: input.engine,
       agent: { model: input.model, effort: input.effort, context: input.context },
     }),
@@ -343,7 +347,14 @@ export function titleFrom(text: string): string {
 
 export function profileSummary(profile: RunProfile): string {
   const mode = profile.mode === "unattended" ? "Run unattended" : profile.mode === "review" ? "Review only" : "Ask";
-  const git = profile.delivery === "local" ? "local only" : profile.delivery === "commit" ? "may commit" : "may commit and push";
+  const plan = profile.pullRequest;
+  const git = plan
+    ? `pull request into ${plan.base}${plan.merge === "auto" ? ", merged when its checks pass" : plan.merge === "ask" ? ", merged if you approve" : ", left open"}`
+    : profile.delivery === "local"
+      ? "local only"
+      : profile.delivery === "commit"
+        ? "may commit"
+        : "may commit and push";
   return `${mode} · ${git} · sandbox ${profile.sandbox ? "on" : "off"} · internet ${profile.network ? "on" : "off"}`;
 }
 

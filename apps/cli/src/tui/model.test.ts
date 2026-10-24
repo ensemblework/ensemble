@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { quickRunProfile } from "@ensemble/shared-types";
 import type { Decision, JobCard, Workspace } from "./local.js";
-import { agentChoiceLabel, buildItems, chatTurnRequest, commandAnswer, copilotNote, copilotOf, copilotProblem, decisionActions, installedAgent, matchCommands, modelEfforts, modelNote, parseCommand, runRequest, titleFrom } from "./model.js";
+import { agentChoiceLabel, buildItems, chatTurnRequest, commandAnswer, copilotNote, copilotOf, copilotProblem, decisionActions, installedAgent, matchCommands, modelEfforts, modelNote, parseCommand, profileSummary, runRequest, titleFrom } from "./model.js";
 import { copilotAgent } from "./testing.js";
 
 const job = (id: string, status: string): JobCard => ({ id, taskId: `t${id}`, title: id, status, kind: "code", folder: "/w", position: null, delivery: "commit", unattended: false, accessMode: "read-write", executionMode: "sandbox" });
@@ -52,6 +52,26 @@ test("/run asks for a code run in this folder under the run profile, with the ch
   assert.equal(body.folder, "/work");
   assert.equal(body.instructions, "Keep it small.\n\nfix the tests");
   assert.equal(titleFrom("  fix the failing\nCI step "), "fix the failing");
+});
+
+test("/run with a profile that ends in a pull request runs in a clone of this folder and sends the plan; a chat message never does", () => {
+  const profile = { ...quickRunProfile(), engine: "claude-code" as const, branchMode: "new" as const, delivery: "push" as const, pullRequest: { base: "testing", merge: "auto" as const } };
+  const run = runRequest({ taskId: "t", folder: "/work/app", instructions: "fix it", profile, engine: null });
+  assert.deepEqual(run.pullRequest, { base: "testing", merge: "auto" });
+  assert.equal(run.repoUrl, "/work/app", "its own clone of this folder");
+  assert.equal(run.folder, undefined, "never the folder in place");
+  assert.equal(run.delivery, "commit", "Ensemble pushes, not the run");
+  assert.equal(run.branchMode, "as-is", "Ensemble makes the branch from the base");
+  assert.match(profileSummary(profile), /pull request into testing, merged when its checks pass/);
+
+  const chat = chatTurnRequest({ taskId: "t", folder: "/work/app", message: "fix it", profile, engine: "claude-code", model: null, previousJobId: null });
+  assert.equal(chat.pullRequest, undefined);
+  assert.equal(chat.repoUrl, undefined);
+  assert.equal(chat.folder, "/work/app");
+  assert.equal(chat.delivery, "push", "the profile's own git setting");
+
+  const plain = runRequest({ taskId: "t", folder: "/work/app", instructions: "fix it", profile: { ...profile, pullRequest: null }, engine: null });
+  assert.deepEqual([plain.pullRequest, plain.repoUrl, plain.folder, plain.delivery, plain.branchMode], [undefined, undefined, "/work/app", "push", "new"]);
 });
 
 test("a chat message runs the agent in this folder under the profile; later ones continue the first, on the same branch", () => {

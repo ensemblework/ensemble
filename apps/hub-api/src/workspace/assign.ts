@@ -6,7 +6,7 @@
 import { stat } from "node:fs/promises";
 import { z } from "zod";
 import type { Actor, Prisma, PrismaClient } from "@prisma/client";
-import { CODE_ENGINES, ContextTier } from "@ensemble/shared-types";
+import { CODE_ENGINES, ContextTier, PullRequestPlan, pullRequestBaseRefusal, pullRequestHeadRefusal } from "@ensemble/shared-types";
 import { deviceAssignment } from "../devices/assign.js";
 import { serverRunnerEnabled } from "../devices/constants.js";
 import { publishBrowserDevice, publishDevice } from "../devices/publish.js";
@@ -60,6 +60,11 @@ export const Assign = z.object({
   engine: z.enum(["ensemble", ...CODE_ENGINES]).default("ensemble"),
   /** The model's context window where it offers more than one (GitHub Copilot's long_context). */
   contextTier: ContextTier.optional(),
+  /**
+   * End the run in a pull request into `base` (a code task in its own clone; the computer must allow
+   * the base). `branch`, when given, names the run's branch. docs/24 §5.1.
+   */
+  pullRequest: PullRequestPlan.optional(),
   /** In a sandboxed run, outside the work folder: read only, read and write, or nothing. Default: Settings. */
   outsideAccess: z.enum(["none", "read", "read-write"]).optional(),
   /**
@@ -72,9 +77,29 @@ export const Assign = z.object({
 const ENGINE_NAME = { ensemble: "Ensemble's agent", "claude-code": "Claude Code", codex: "Codex", "cursor-agent": "Cursor's agent", "copilot-cli": "GitHub Copilot" } as const;
 
 /** The job's context with the run's outside-folder choice in it (a JSON column, so no migration). */
-function contextWith(context: Prisma.InputJsonValue | undefined, outsideAccess: string, chat = false, contextTier?: string | null): Prisma.InputJsonValue {
+function contextWith(context: Prisma.InputJsonValue | undefined, outsideAccess: string, chat = false, contextTier?: string | null, pullRequest?: PullRequestPlan | null): Prisma.InputJsonValue {
   const base = typeof context === "object" && context !== null && !Array.isArray(context) ? (context as Record<string, unknown>) : {};
-  return { ...base, outsideAccess, ...(chat ? { chat: true } : {}), ...(contextTier === "long_context" ? { contextTier } : {}) } as Prisma.InputJsonValue;
+  return { ...base, outsideAccess, ...(chat ? { chat: true } : {}), ...(contextTier === "long_context" ? { contextTier } : {}), ...(pullRequest ? { pullRequest } : {}) } as Prisma.InputJsonValue;
+}
+
+/**
+ * A request that ends in a pull request, made consistent: a code task, never into main, master,
+ * production or testing-live, commits allowed, on the named branch (or the run's own).
+ */
+export function withPullRequest(body: AssignInput): AssignInput {
+  const plan = body.pullRequest;
+  if (!plan) return body;
+  if (body.kind !== "code") throw new GuardError("A pull request comes from a code task.");
+  if (body.chat) throw new GuardError("A chat message does not end in a pull request. Assign a task instead.");
+  if (body.folder) throw new GuardError("A pull request needs the run in its own clone, not a folder worked in place. Pick a repository, or a folder shared as a repository.");
+  if (body.branchMode === "existing") throw new GuardError("A pull request starts its branch from the base. Name a new branch, or leave it to Ensemble.");
+  if (body.accessMode === "review") throw new GuardError("A read-only run makes no commits, so it cannot open a pull request.");
+  const never = pullRequestBaseRefusal(plan.base, [plan.base]);
+  if (never) throw new GuardError(never);
+  const named = body.branch?.trim() ?? "";
+  const head = named ? pullRequestHeadRefusal(named, plan.base) : null;
+  if (head) throw new GuardError(head);
+  return { ...body, branchMode: named ? "new" : "as-is", branch: named || undefined, delivery: "commit", network: true };
 }
 export type AssignInput = z.infer<typeof Assign>;
 
@@ -126,6 +151,7 @@ async function createDeviceJob(
     repoUrl: body.repoUrl,
     continueFromJobId: body.continueFromJobId,
     engine: body.engine,
+    pullRequestBase: body.pullRequest?.base,
   }, { space: userId, runner });
   // Trust is checked on that computer, where the folder is; Review only and unattended wait there for it.
   const mode = requestedMode(body);
@@ -159,7 +185,7 @@ async function createDeviceJob(
       maxMinutes: body.maxMinutes ?? orchestration.maxMinutes,
       maxTurns: body.maxTurns ?? orchestration.maxTurns,
       maxToolCalls: body.maxToolCalls ?? 80,
-      context: contextWith(options.context, body.outsideAccess ?? orchestration.outsideAccess, false, body.contextTier),
+      context: contextWith(options.context, body.outsideAccess ?? orchestration.outsideAccess, false, body.contextTier, body.pullRequest),
     },
   });
   const nextStatus = ["proposed", "done", "dropped", "blocked", "waiting_approval"].includes(task.status) ? "todo" : task.status;
@@ -197,8 +223,9 @@ async function createDeviceJob(
   return { jobId: job.id };
 }
 
-export async function createJob(prisma: PrismaClient, userId: string, body: AssignInput, options: CreateJobOptions = {}): Promise<{ jobId: string } | null> {
+export async function createJob(prisma: PrismaClient, userId: string, input: AssignInput, options: CreateJobOptions = {}): Promise<{ jobId: string } | null> {
   await requireVerifiedUser(keysFor(userId));
+  const body = withPullRequest(input);
   const task = await prisma.task.findFirst({ where: { id: body.taskId, userId, deletedAt: null } });
   if (!task) return null;
   const settings = await loadSettings(prisma, userId);
@@ -320,7 +347,7 @@ export async function createJob(prisma: PrismaClient, userId: string, body: Assi
       maxMinutes: body.maxMinutes ?? settings.orchestration.maxMinutes,
       maxTurns: body.maxTurns ?? settings.orchestration.maxTurns,
       maxToolCalls: body.maxToolCalls ?? 80,
-      context: contextWith(options.context, body.outsideAccess ?? settings.orchestration.outsideAccess, body.chat === true, body.contextTier),
+      context: contextWith(options.context, body.outsideAccess ?? settings.orchestration.outsideAccess, body.chat === true, body.contextTier, body.pullRequest),
     },
   });
   if (externalRoot && body.trust === "always") {

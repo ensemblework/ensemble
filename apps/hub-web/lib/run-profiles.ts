@@ -4,6 +4,7 @@
  * (`RunProfile`, `MAX_RUN_PROFILES`); the API refuses a fourth.
  */
 import { ENGINE_LABELS, isCodeEngine, MAX_RUN_PROFILES, QUICK_PROFILE_ID, quickRunProfile, type RunProfile } from "@ensemble/shared-types";
+import { pullRequestLine } from "./pull-request";
 
 export type ProfileFields = Omit<RunProfile, "id" | "name">;
 
@@ -36,12 +37,14 @@ const KEYS: Array<keyof ProfileFields> = [
   "maxToolCalls",
   "maxTurns",
   "instructions",
+  "pullRequest",
 ];
 
 /** True when the form no longer matches the profile it started from. */
 export function differs(profile: RunProfile, fields: ProfileFields): boolean {
   // An unset context window and "default" are the same choice.
-  const value = (row: RunProfile | ProfileFields, key: keyof ProfileFields) => (key === "context" && row.context === "default" ? null : (row[key] ?? null));
+  const value = (row: RunProfile | ProfileFields, key: keyof ProfileFields) =>
+    key === "context" && row.context === "default" ? null : key === "pullRequest" ? (row.pullRequest ? `${row.pullRequest.base}:${row.pullRequest.merge}` : null) : (row[key] ?? null);
   return KEYS.some((key) => value(profile, key) !== value(fields, key));
 }
 
@@ -83,7 +86,10 @@ export function removeProfile(saved: RunProfile[] | undefined, id: string): RunP
 /** One line that says what a profile does, for its tooltip. */
 export function profileSummary(profile: RunProfile): string {
   const mode = profile.mode === "unattended" ? "Run unattended" : profile.mode === "review" ? "Review only" : "Ask";
-  const git = profile.delivery === "local" ? "local only" : profile.delivery === "commit" ? "may commit" : "may commit and push";
+  // A run that ends in a pull request may always commit; Ensemble pushes it, not the agent.
+  const delivery = profile.pullRequest ? "commit" : profile.delivery;
+  const git = delivery === "local" ? "local only" : delivery === "commit" ? "may commit" : "may commit and push";
   const engine = isCodeEngine(profile.engine) ? `${ENGINE_LABELS[profile.engine]} · ` : "";
-  return profile.kind === "research" ? "Research & writing" : `${engine}Code · ${mode} · ${git}${profile.askBeforePublish && profile.delivery !== "local" && profile.mode !== "unattended" ? " (asks before each commit)" : ""}`;
+  const pull = profile.pullRequest ? ` · ${pullRequestLine(profile.pullRequest)}` : "";
+  return profile.kind === "research" ? "Research & writing" : `${engine}Code · ${mode} · ${git}${profile.askBeforePublish && delivery !== "local" && profile.mode !== "unattended" ? " (asks before each commit)" : ""}${pull}`;
 }

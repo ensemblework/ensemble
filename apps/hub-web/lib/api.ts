@@ -629,6 +629,8 @@ export type AgentJob = {
   files?: Array<{ path: string; added: number; removed: number }>;
   /** Set when the job was claimed from Ensemble on the web. */
   origin?: "local" | "web";
+  /** The run ends in a pull request into `base` (when the API sends it). */
+  pullRequest?: { base: string; merge: "ask" | "auto" | "never" } | null;
 };
 
 /** A file a job's run changed (`GET /api/agent/jobs/:id/files`); `stored`: its text was sent when the run ended. */
@@ -700,6 +702,8 @@ export type RemoteMac = {
   webEdit?: boolean;
   /** The terminal may open from the web, after a passkey unlock there (on by default). */
   webTerminal?: boolean;
+  /** Branches runs here may open pull requests into. Set only on this computer (`ensemble git bases`). */
+  pullRequestBases?: string[];
   online: boolean;
   lastHeartbeatAt: number | null;
   disconnected: { at: string; reason: string } | null;
@@ -766,6 +770,11 @@ export type AssignInput = {
   maxTurns?: number;
   deviceId?: string;
   folderLabel?: string;
+  /**
+   * End the run in a pull request into `base` that Ensemble pushes, opens and merges as `merge` says.
+   * The server then allows commits, turns the internet on, and uses `branch` (or a name it picks).
+   */
+  pullRequest?: { base: string; merge: "ask" | "auto" | "never" };
 };
 
 export type JobEvent = { id: string; kind: string; data: Record<string, unknown>; at: string };

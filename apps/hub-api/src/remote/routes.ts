@@ -5,6 +5,7 @@
  */
 import { z } from "zod";
 import type { FastifyInstance } from "fastify";
+import { BRANCH_NAME, NEVER_PULL_REQUEST_BASES } from "@ensemble/shared-types";
 import { env } from "../config.js";
 import { appendLedger } from "../lib/ledger.js";
 import { resolveWorkFolder } from "../workspace/guard.js";
@@ -35,6 +36,7 @@ async function status(app: FastifyInstance) {
     browseFiles: settings.browseFiles,
     webEdit: settings.webEdit,
     webTerminal: settings.webTerminal,
+    pullRequestBases: settings.pullRequestBases,
     online: presence.online,
     lastHeartbeatAt: presence.lastHeartbeatAt || null,
     disconnected: settings.disconnected,
@@ -59,6 +61,11 @@ export async function remoteRoutes(app: FastifyInstance): Promise<void> {
         browseFiles: z.boolean().optional(),
         webEdit: z.boolean().optional(),
         webTerminal: z.boolean().optional(),
+        pullRequestBases: z
+          .array(z.string().trim().regex(BRANCH_NAME))
+          .max(20)
+          .refine((bases) => !bases.some((base) => (NEVER_PULL_REQUEST_BASES as readonly string[]).includes(base)), "main, master, production and testing-live are never pull request bases.")
+          .optional(),
         apiBase: z.string().max(300).nullable().optional(),
         deviceName: z.string().min(1).max(60).optional(),
       })
@@ -81,12 +88,13 @@ export async function remoteRoutes(app: FastifyInstance): Promise<void> {
       ...(body.browseFiles === undefined ? {} : { browseFiles: body.browseFiles }),
       ...(body.webEdit === undefined ? {} : { webEdit: body.webEdit }),
       ...(body.webTerminal === undefined ? {} : { webTerminal: body.webTerminal }),
+      ...(body.pullRequestBases === undefined ? {} : { pullRequestBases: [...new Set(body.pullRequestBases)] }),
       ...(body.enabled === true ? { disconnected: null, unreachable: null } : {}),
       ...(body.enabled === false
         ? { disconnected: { at: new Date().toISOString(), reason: REMOTE_NOTICE.switchedOff }, unreachable: null }
         : {}),
     });
-    if (body.enabled === false || body.runBranchPush !== undefined || body.enabled === true || body.acceptWebApprovals !== undefined || body.browseFiles !== undefined || body.webEdit !== undefined || body.webTerminal !== undefined) {
+    if (body.enabled === false || body.runBranchPush !== undefined || body.enabled === true || body.acceptWebApprovals !== undefined || body.browseFiles !== undefined || body.webEdit !== undefined || body.webTerminal !== undefined || body.pullRequestBases !== undefined) {
       const action =
         body.enabled === true
           ? "remote.enable"
@@ -100,8 +108,10 @@ export async function remoteRoutes(app: FastifyInstance): Promise<void> {
                   ? "remote.web_edit"
                   : body.webTerminal !== undefined
                     ? "remote.web_terminal"
-                    : "remote.push_setting";
-      await appendLedger({ userId, actor: "me", action, payload: { enabled: next.enabled, runBranchPush: next.runBranchPush, acceptWebApprovals: next.acceptWebApprovals, browseFiles: next.browseFiles, webEdit: next.webEdit, webTerminal: next.webTerminal } });
+                    : body.pullRequestBases !== undefined
+                      ? "remote.pull_request_bases"
+                      : "remote.push_setting";
+      await appendLedger({ userId, actor: "me", action, payload: { enabled: next.enabled, runBranchPush: next.runBranchPush, acceptWebApprovals: next.acceptWebApprovals, browseFiles: next.browseFiles, webEdit: next.webEdit, webTerminal: next.webTerminal, pullRequestBases: next.pullRequestBases } });
     }
     if (body.enabled === false) await stopRemoteWork(app, REMOTE_NOTICE.switchedOff, "cancelled");
     wakeRemote();

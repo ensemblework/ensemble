@@ -17,7 +17,7 @@ import { WorkingMark } from "./brand.js";
 import { Box, Text, useApp, useInput, useStdout, type Key } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { INCLUDED_LABEL, INCLUDED_LOCAL_ONLY, INCLUDED_PROVIDER, pickRunProfile, type ContextTier, type RunProfile, type SubscriptionAgent, type SubscriptionModel } from "@ensemble/shared-types";
-import { PROVIDERS } from "../local-commands.js";
+import { basesSummary, PROVIDERS } from "../local-commands.js";
 import type { ChatFrame, CodeSession, Decision, JobDetail, LocalApi, ModelRow, Settings, ToolCall, Workspace } from "./local.js";
 import { hit, isMouse, parseMouse, type Region } from "./mouse.js";
 import {
@@ -533,13 +533,20 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
       const started = await api.json<{ jobId: string }>("/api/agent/assign", {
         body: runRequest({ taskId: created.task.id, folder, instructions: text, profile, engine: prefs.engine, agent: copilotChosen ? agentChoice : null }),
       });
-      say(`Started ${ENGINE_LABEL[engine]} on “${titleFrom(text)}”.`, "ok");
+      say(`Started ${ENGINE_LABEL[engine]} on “${titleFrom(text)}”${profile.pullRequest ? `, in its own clone of this folder; it ends in a pull request into ${profile.pullRequest.base}` : ""}.`, "ok");
       setPrefs({ tab: "tasks" });
       setSelectedKey(`job:${started.jobId}`);
       void refresh();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      say(/trust/i.test(message) ? `${message} Type /trust to trust this folder.` : message, "error");
+      say(
+        /trust/i.test(message)
+          ? `${message} Type /trust to trust this folder.`
+          : profile.pullRequest && /not a git repository/i.test(message)
+            ? `${message} The run profile ends in a pull request, so /run works in a clone of this folder, which must be a git repository.`
+            : message,
+        "error",
+      );
     }
   };
 
@@ -766,16 +773,18 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
 
   const showStatus = async () => {
     const keys = await api.modelKeys().catch(() => ({ credentials: [] }));
+    const bases = (await api.remote().catch(() => null))?.pullRequestBases;
     const signIn = !copilotChosen ? "your sign-in" : copilot?.signedIn === false ? "not signed in · run copilot login" : `your sign-in${copilot?.account ? `: ${copilot.account}` : ""}`;
     const lines: Line[] = [
-      [{ text: "Account     ", dim: true }, { text: account.email ? `${account.email}${account.paired ? " · this computer is paired" : ""}` : "not signed in (/login)" }],
-      [{ text: "Ensemble    ", dim: true }, { text: `running on this computer · port ${api.discovery.port}` }],
-      [{ text: "Sandbox     ", dim: true }, { text: sandbox || "unknown" }],
-      [{ text: "Folder      ", dim: true }, { text: folder }],
-      [{ text: "Profile     ", dim: true }, { text: `${profile.name}: ${profileSummary(profile)}` }],
-      [{ text: "Agent       ", dim: true }, { text: agentChat ? `${ENGINE_LABEL[engine]} (${signIn}) · ${agentChoiceLabel(agentChoice, agentModels, "its default model")}` : `Ensemble agent · ${prefs.chatModel ? prefs.chatModel.replace("::", " · ") : "chat default model"}` }],
-      [{ text: "Model keys  ", dim: true }, { text: keyLine(keys.credentials) }],
-      [{ text: "Version     ", dim: true }, { text: props.version }],
+      [{ text: "Account        ", dim: true }, { text: account.email ? `${account.email}${account.paired ? " · this computer is paired" : ""}` : "not signed in (/login)" }],
+      [{ text: "Ensemble       ", dim: true }, { text: `running on this computer · port ${api.discovery.port}` }],
+      [{ text: "Sandbox        ", dim: true }, { text: sandbox || "unknown" }],
+      [{ text: "Folder         ", dim: true }, { text: folder }],
+      [{ text: "Profile        ", dim: true }, { text: `${profile.name}: ${profileSummary(profile)}` }],
+      [{ text: "Agent          ", dim: true }, { text: agentChat ? `${ENGINE_LABEL[engine]} (${signIn}) · ${agentChoiceLabel(agentChoice, agentModels, "its default model")}` : `Ensemble agent · ${prefs.chatModel ? prefs.chatModel.replace("::", " · ") : "chat default model"}` }],
+      [{ text: "Model keys     ", dim: true }, { text: keyLine(keys.credentials) }],
+      [{ text: "Pull requests  ", dim: true }, { text: bases ? basesSummary(bases) : "unknown" }],
+      [{ text: "Version        ", dim: true }, { text: props.version }],
     ];
     setOverlay({ kind: "text", title: "Status", lines });
   };

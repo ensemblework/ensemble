@@ -17,7 +17,8 @@ ensemble mcp setup [editor...] [--all] [--print] [--hosted]
 ensemble mcp remove <editor>
 ensemble mcp editors
 ensemble runner [start] [--foreground] | stop | restart | status | logs [-f] | install | uninstall
-ensemble folders [list] | add <path> [--label L] [--read-only] | remove <label>
+ensemble folders [list] | add <path> [--label L] [--read-only] [--repo] | remove <label>
+ensemble git bases [list] | add <branch> | remove <branch>
 ensemble keys [list] | set <provider> | remove <provider>
 ensemble doctor
 ensemble update

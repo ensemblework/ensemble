@@ -138,6 +138,8 @@ export class LocalApi {
   guard = () => this.json<{ root: string; sandbox: { mechanism: string; osSandbox: boolean; strength: string; reason?: string } }>("/api/workspace/guard");
   agentApps = () => this.json<{ available: boolean; agents: Array<{ id: string; name: string; app: boolean; cli: string | null }> }>("/api/agent/apps");
   modelKeys = () => this.json<{ credentials: Array<{ provider: string; source: string; hint?: string | null }> }>("/api/model-keys");
+  /** This computer's remote settings; `pullRequestBases`: the branches runs here may open pull requests into (`ensemble git bases`). */
+  remote = () => this.json<{ pullRequestBases?: string[] }>("/api/remote");
   /**
    * The coding agents this computer's runtime found, with their sign-in and models (the same check
    * the web's Settings → Models shows). `fresh` checks again instead of using the last answer.

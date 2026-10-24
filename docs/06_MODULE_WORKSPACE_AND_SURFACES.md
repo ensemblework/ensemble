@@ -17,7 +17,7 @@ The Assign dialog (`components/agent/assign-dialog.tsx`) and `workspace/assign.t
 | Model / thinking | Task tier or an available override; engine-specific models where applicable. GitHub Copilot lists the plan's models from the computer with each model's thinking levels and, where it has two, its context window (standard or long; `contextTier`) |
 | Place | Fresh run folder or clone, continuation of earlier work, or an explicitly granted folder |
 | Branch | As is, existing or new ([16 §4](16_CODE_TAB.md#4-which-branch-the-agent-works-on)); a paired computer follows its advertised support |
-| Git | Local only, Commit, or Commit + push; optional Ask before each commit |
+| Git | Local only, Commit, Commit + push, or Pull request (into a base the computer allows, then ask before merging, merge when checks pass, or leave it open; [24 §5.1](24_DESKTOP_SANDBOXING.md#51-pull-requests)); optional Ask before each commit |
 | Mode | Ask, Review only or Run unattended; trusted-folder rules apply |
 | Sandbox / network / outside access | The OS capability actually present, internet on/off, and read / read-write / none outside the work folder |
 | Completion | Move the task to Done or leave it for the person |

@@ -164,3 +164,125 @@ test("GitHub Copilot on a paired computer offers its models, thinking levels and
     globalThis.fetch = realFetch;
   }
 });
+
+test("Pull request: the computer's bases, notices for a too-old computer, a never-base and a folder worked in place; Assign sends the plan and saving keeps it", async () => {
+  const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
+  const sent: Array<{ path: string; method: string; body: Record<string, unknown> }> = [];
+  const studio = {
+    id: "device-1",
+    name: "Studio Mac",
+    platform: "macos",
+    appVersion: "cli-0.6.0",
+    capabilities: { engines: [...CODE_ENGINES], pullRequests: 1, pullRequestBases: ["testing", "staging"], folders: [{ label: "ensemble", kind: "repo", access: "read-write" }, { label: "notes", kind: "folder", access: "read-write" }] },
+    folders: ["ensemble", "notes"],
+    runBranchPush: false,
+    lastSeenAt: null,
+    createdAt: "2026-10-01T09:00:00.000Z",
+  };
+  const laptop = { ...studio, id: "device-2", name: "Old Laptop", appVersion: "cli-0.5.0", capabilities: { engines: [...CODE_ENGINES], folders: [{ label: "ensemble", kind: "repo" }] } };
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input);
+    if (init?.method && init.method !== "GET") {
+      const body = JSON.parse(String(init.body ?? "{}"));
+      sent.push({ path, method: init.method, body });
+      return path === "/api/settings" ? json({ settings: Settings.parse(body) }) : json({ jobId: "job-1" });
+    }
+    if (path === "/api/settings") return json({ settings: Settings.parse({}) });
+    if (path === "/api/tasks/task-1") return json({ task: { id: "task-1", title: "Make branch A and open a PR", status: "todo", complexity: "medium" } });
+    if (path === "/api/devices") return json({ serverRunner: true, devices: [studio, laptop] });
+    return json({ error: "not found" }, 404);
+  }) as typeof fetch;
+  window.localStorage.clear();
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { gcTime: Infinity } } });
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  const settle = async () => {
+    for (let i = 0; i < 6; i += 1) await act(async () => { await wait(15); });
+  };
+  const field = <T extends HTMLElement>(selector: string) => document.querySelector<T>(selector)!;
+  const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent?.trim() === text || node.textContent?.includes(text))!;
+  const click = async (node: HTMLElement) => {
+    await act(async () => node.click());
+    await settle();
+  };
+  const choose = async (label: string, value: string) => {
+    await act(async () => {
+      const node = field<HTMLSelectElement>(`select[aria-label="${label}"]`);
+      node.value = value;
+      node.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await settle();
+  };
+  const type = async (label: string, value: string) => {
+    await act(async () => {
+      const node = field<HTMLInputElement>(`input[aria-label="${label}"]`);
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(node, value);
+      node.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await settle();
+  };
+  const notices = () => [...document.querySelectorAll("[data-pull-request-notice]")].map((node) => node.textContent?.trim());
+  const assignButton = () => [...document.querySelectorAll<HTMLButtonElement>("button.btn-primary")].find((node) => node.textContent?.includes("Assign"))!;
+  try {
+    await act(async () => root.render(<QueryClientProvider client={client}><AssignDialog open onClose={() => {}} taskId="task-1" defaultKind="code" /></QueryClientProvider>));
+    await settle();
+    await click([...document.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent === "Pull request")!);
+    assert.ok(field('[data-testid="assign-pull-request"]'), "the pull request panel opens");
+
+    // This server: the base is typed, and a production branch is refused.
+    assert.equal(field<HTMLInputElement>('input[aria-label="Into branch"]').value, "testing");
+    await type("Into branch", "production");
+    assert.ok(notices().includes("A run never opens a pull request into production: it is production or a deploy pointer."));
+
+    await click(button("Old Laptop"));
+    assert.ok(notices().includes("Ensemble on Old Laptop is too old to open pull requests. Update it there (ensemble update), then assign."));
+
+    await click(button("Studio Mac"));
+    const bases = field<HTMLSelectElement>('select[aria-label="Into branch"]');
+    assert.deepEqual([...bases.options].map((option) => option.textContent), ["Choose a branch…", "testing", "staging"], "only the computer's bases, never production");
+    await choose("Into branch", "testing");
+    assert.deepEqual(notices(), ["A pull request needs a repository. Give its GitHub address, or pick a folder Studio Mac shares as a repository."]);
+
+    await click(button("A folder on Studio Mac"));
+    assert.deepEqual([...field<HTMLSelectElement>('select[aria-label="Shared folder"]').options].map((option) => option.textContent), ["Choose a folder Studio Mac has shared…", "ensemble · repository", "notes"]);
+    await choose("Shared folder", "notes");
+    assert.deepEqual(notices(), ["notes is worked in place. Pick a repository, or a folder Studio Mac shares as a repository."]);
+    assert.equal(assignButton().getAttribute("aria-disabled"), "true");
+    await click(assignButton());
+    assert.equal(sent.length, 0, "a blocked pull request is not sent");
+
+    await choose("Shared folder", "ensemble");
+    assert.deepEqual(notices(), []);
+    await type("Branch name", "testing");
+    assert.equal(field('[data-testid="pull-request-branch-notice"]').textContent, "The run's branch cannot be testing, the branch the pull request goes into.");
+    await type("Branch name", "main");
+    assert.equal(field('[data-testid="pull-request-branch-notice"]').textContent, "A run never pushes main.");
+    await type("Branch name", "live-test/pr-flow");
+    assert.equal(document.querySelector('[data-testid="pull-request-branch-notice"]'), null);
+    assert.deepEqual([...field<HTMLSelectElement>('select[aria-label="After opening"]').options].map((option) => option.textContent), ["Ask me before merging", "Merge when checks pass", "Leave it open"]);
+    await choose("After opening", "auto");
+
+    await click(button("Save as profile"));
+    await type("Profile name", "PR to testing");
+    await act(async () => field<HTMLInputElement>('input[aria-label="Profile name"]').form!.requestSubmit());
+    await settle();
+    const saved = sent.find((row) => row.path === "/api/settings")?.body.runProfiles as Array<Record<string, unknown>> | undefined;
+    assert.deepEqual(saved?.[0]?.pullRequest, { base: "testing", merge: "auto" });
+    assert.equal(saved?.[0]?.delivery, "commit");
+
+    assert.equal(assignButton().getAttribute("aria-disabled"), null);
+    await click(assignButton());
+    const body = sent.find((row) => row.path === "/api/agent/assign")?.body;
+    assert.deepEqual(
+      { pullRequest: body?.pullRequest, branch: body?.branch, branchMode: body?.branchMode, delivery: body?.delivery, network: body?.network, folderLabel: body?.folderLabel, deviceId: body?.deviceId, folder: body?.folder },
+      { pullRequest: { base: "testing", merge: "auto" }, branch: "live-test/pr-flow", branchMode: "new", delivery: "commit", network: true, folderLabel: "ensemble", deviceId: "device-1", folder: undefined },
+    );
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+    client.clear();
+    globalThis.fetch = realFetch;
+  }
+});

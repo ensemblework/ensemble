@@ -2,12 +2,13 @@
 
 import { ModelLogo } from "../connectors/provider-logo";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, Code2, FileText, GitBranch, Lock, Monitor, RotateCcw, ShieldAlert, ShieldCheck, Square } from "lucide-react";
+import { ChevronRight, Code2, FileText, GitBranch, GitPullRequest, Lock, Monitor, RotateCcw, ShieldAlert, ShieldCheck, Square } from "lucide-react";
 import { useRunnerName } from "@/lib/runner";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { api, type AgentJob } from "@/lib/api";
+import { api, type AgentJob, type JobEvent } from "@/lib/api";
 import { interruptedLabel, pullRequestNumber, rerunAssignInput } from "@/lib/device-copy";
+import { runPullRequest, runPullRequestLabel } from "@/lib/pull-request";
 import { plural, relative } from "@/lib/format";
 import { usePeek } from "../shell/peek";
 import { useToast } from "../toast";
@@ -218,6 +219,8 @@ const EVENT_LABEL: Record<string, string> = {
   command: "Command",
   needs_me: "Needs you",
   prepared: "Folder ready",
+  pull_request: "Pull request",
+  pull_request_branch: "Branch",
   not_sandboxed: "Not sandboxed",
   trust_revoked: "Trust removed",
 };
@@ -288,7 +291,7 @@ export function TaskAgentPanel({ taskId }: { taskId: string }) {
           <LinkifiedText text={detail.data.log.slice(-4000)} />
         </pre>
       ) : null}
-      <JobResults job={job} />
+      <JobResults job={job} events={detail.data?.events} />
       {job.status === "interrupted" && job.deviceId && !job.deviceRevoked ? <RunAgain job={job} /> : null}
       <button type="button" onClick={() => setOpen(!open)} className="mt-1.5 flex items-center gap-1 text-[12px] text-muted hover:text-ink">
         <ChevronRight size={12} className={cx("transition-transform", open && "rotate-90")} /> What it did
@@ -305,6 +308,10 @@ export function TaskAgentPanel({ taskId }: { taskId: string }) {
                   ? String(data.summary ?? data.name)
                   : event.kind === "prepared"
                     ? `${String(data.root)}${data.branch ? ` · ${String(data.branch)}` : ""}${data.sandboxed ? " · sandboxed" : " · not sandboxed"}`
+                    : event.kind === "pull_request"
+                      ? `#${String(data.number)} ${data.state === "merged" ? "merged into" : "opened into"} ${String(data.base)} · ${String(data.url)}`
+                    : event.kind === "pull_request_branch"
+                      ? `${String(data.branch)} from ${String(data.base)}`
                     : event.kind === "not_sandboxed"
                       ? String(data.reason)
                       : event.kind === "trust_revoked"
@@ -377,11 +384,18 @@ function AgentOutput({ job }: { job: AgentJob }) {
   );
 }
 
-function JobResults({ job }: { job: AgentJob }) {
-  const results = job.results ?? [];
-  if (!results.length) return null;
+/** Links to what the run made: the pull request Ensemble opened (merged or open), commits, branches. */
+function JobResults({ job, events }: { job: AgentJob; events?: JobEvent[] }) {
+  const pr = job.kind === "code" ? runPullRequest({ summary: job.summary, events }) : null;
+  const results = (job.results ?? []).filter((result) => !pr || result.url.replace(/\/$/, "") !== pr.url.replace(/\/$/, ""));
+  if (!results.length && !pr) return null;
   return (
     <div className="flex flex-wrap gap-x-3 gap-y-1">
+      {pr ? (
+        <a href={pr.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-accent hover:underline" data-testid="job-pull-request" onClick={(event) => event.stopPropagation()}>
+          <GitPullRequest size={12} aria-hidden /> {runPullRequestLabel(pr)}
+        </a>
+      ) : null}
       {results.map((result) => (
         result.url.startsWith("https://") ? (
           <a key={`${result.kind}:${result.url}`} href={result.url} target="_blank" rel="noreferrer" className="text-accent hover:underline" onClick={(event) => event.stopPropagation()}>
