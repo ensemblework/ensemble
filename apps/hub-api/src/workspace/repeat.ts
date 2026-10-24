@@ -2,6 +2,7 @@ import type { WorkspaceJob } from "@prisma/client";
 import { isCodeEngine } from "@ensemble/shared-types";
 import { Assign } from "./assign.js";
 import { contextTierOf, outsideAccessOf } from "./trust.js";
+import { pullRequestOf } from "./pull-request.js";
 
 export function repeatAssignment(old: WorkspaceJob) {
   const sameFolder = !old.deviceId && old.kind === "code" && !old.externalRoot && Boolean(old.repoPath);
@@ -12,6 +13,7 @@ export function repeatAssignment(old: WorkspaceJob) {
         model: old.model,
         engine: isCodeEngine(old.provider) ? old.provider : "ensemble",
         ...(contextTierOf(old.context) ? { contextTier: "long_context" as const } : {}),
+        ...(pullRequestOf(old.context) ? { pullRequest: pullRequestOf(old.context)! } : {}),
         outsideAccess: outsideAccessOf(old.context) ?? undefined,
         reasoningEffort: old.reasoningEffort ?? undefined,
         instructions: old.instructions,

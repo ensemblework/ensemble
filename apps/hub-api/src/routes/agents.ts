@@ -19,7 +19,8 @@ import { Assign, createJob } from "../workspace/assign.js";
 import { blockedReason, resolveWorkFolder, sandboxAvailable, ENSEMBLE_SOURCE, within, workspaceRoot } from "../workspace/guard.js";
 import { liveLog } from "../workspace/live-log.js";
 import { capabilities, prepareSandbox, setupSandbox } from "../workspace/sandbox/spawn.js";
-import { outsideAccessOf, PATH_RULE_SOURCE, PATH_RULE_TOOL } from "../workspace/trust.js";
+import { contextTierOf, outsideAccessOf, PATH_RULE_SOURCE, PATH_RULE_TOOL } from "../workspace/trust.js";
+import { pullRequestOf } from "../workspace/pull-request.js";
 import { installedTrustTools, loadSharedTrust, setSharedTrust, TRUST_TOOLS, trustChanged, type SharedTrustState } from "../workspace/trust-share.js";
 import { resume, stopEverything, stopJob } from "../workspace/worker.js";
 import { actorFor } from "../sharing/context.js";
@@ -85,6 +86,9 @@ function card(job: JobRow, position?: number, options: { paths?: boolean } = {})
     branchMode: job.branchMode,
     reasoningEffort: job.reasoningEffort,
     networkAccess: job.networkAccess,
+    // A run that ends in a pull request (docs/24 §5.1); Run again keeps it.
+    pullRequest: pullRequestOf(job.context),
+    contextTier: contextTierOf(job.context),
     maxTurns: job.maxTurns,
     folder: job.folderLabel ?? (paths ? job.externalRoot ?? job.repoPath ?? "" : ""),
     runId: job.runId,

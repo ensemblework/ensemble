@@ -4,11 +4,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Monitor, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { ConnectComputerButton } from "./connect-computer";
-import { RunBranchStatus } from "@/components/agent/run-branch-status";
+import { PullRequestBases, RunBranchStatus } from "@/components/agent/run-branch-status";
 import { useToast } from "@/components/toast";
 import { SectionCard, SettingRow, Spinner, cx } from "@/components/ui";
 import { api } from "@/lib/api";
 import { platformLabel } from "@/lib/device-copy";
+import { repositoryLabels } from "@/lib/pull-request";
 import { relative } from "@/lib/format";
 
 export function DevicesSection() {
@@ -51,6 +52,14 @@ export function DevicesSection() {
                   {device.online ? "Online" : device.lastSeenAt ? `Last seen ${relative(device.lastSeenAt)}` : "Not seen yet"}
                   {device.appVersion ? ` · ${device.appVersion}` : ""}
                   {device.runBranchPush ? " · run-branch push on" : ""}
+                </div>
+                <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                  <PullRequestBases capabilities={device.capabilities} device={device.name} />
+                  {repositoryLabels(device.capabilities).length ? (
+                    <span className="min-w-0 truncate text-[12px] text-muted" title="Shared as repositories: each run works in its own clone, and can end in a pull request.">
+                      Repositories: {repositoryLabels(device.capabilities).join(", ")}
+                    </span>
+                  ) : null}
                 </div>
               </div>
               <button type="button" className="btn-ghost py-0 text-[12px]" onClick={() => revoke.mutate(device.id)} disabled={revoke.isPending}>

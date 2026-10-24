@@ -110,3 +110,9 @@ test("pairing, clone path, and a removed computer", () => {
   assert.equal(interruptedLabel("Studio PC", true), "Interrupted · Studio PC removed");
   assert.equal(interruptedLabel("Studio PC", false), "Interrupted · Studio PC went offline");
 });
+
+test("run again keeps the run's pull request plan", () => {
+  const job = { id: "job-3", taskId: "task-1", kind: "code" as const, deviceId: "device-1", delivery: "commit" as const, folderLabel: "ensemble" };
+  assert.deepEqual(rerunAssignInput({ ...job, pullRequest: { base: "testing", merge: "auto" } }).pullRequest, { base: "testing", merge: "auto" });
+  assert.equal("pullRequest" in rerunAssignInput(job), false);
+});

@@ -111,6 +111,7 @@ export type RerunSource = {
   maxMinutes?: number;
   maxTurns?: number;
   maxToolCalls?: number;
+  pullRequest?: { base: string; merge: "ask" | "auto" | "never" } | null;
 };
 
 export function rerunAssignInput(job: RerunSource) {
@@ -140,5 +141,6 @@ export function rerunAssignInput(job: RerunSource) {
     maxMinutes: job.maxMinutes,
     maxTurns: job.maxTurns,
     maxToolCalls: job.maxToolCalls,
+    ...(job.pullRequest ? { pullRequest: { base: job.pullRequest.base, merge: job.pullRequest.merge } } : {}),
   };
 }

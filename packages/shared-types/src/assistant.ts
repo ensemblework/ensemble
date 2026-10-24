@@ -233,6 +233,39 @@ export type OrchestrationSettings = z.infer<typeof OrchestrationSettings>;
 export const RunMode = z.enum(["ask", "review", "unattended"]);
 export type RunMode = z.infer<typeof RunMode>;
 
+/** A git branch name: no leading dash, no "..", no spaces or special characters. */
+export const BRANCH_NAME = /^(?!-)(?!.*\.\.)(?!.*\/\/)(?!.*\/$)[A-Za-z0-9._/-]{1,200}$/;
+
+/** Branches a run never opens a pull request into, on any computer: production and deploy pointers. */
+export const NEVER_PULL_REQUEST_BASES = ["main", "master", "production", "testing-live"] as const;
+/** The bases a computer allows until its owner changes the list (`ensemble git bases`). */
+export const DEFAULT_PULL_REQUEST_BASES = ["testing"];
+
+/**
+ * A code run that ends in a pull request into `base` (docs/24 §5.1). Ensemble pushes the run's branch
+ * and opens it; `merge`: ask the person on Needs me, merge when its checks pass, or leave it open.
+ */
+export const PullRequestPlan = z.object({
+  base: z.string().trim().regex(BRANCH_NAME, "Give the branch the pull request goes into."),
+  merge: z.enum(["ask", "auto", "never"]).default("ask"),
+});
+export type PullRequestPlan = z.infer<typeof PullRequestPlan>;
+
+/** Why a pull request may not go into `base` on a computer that allows `allowed`, or null. */
+export function pullRequestBaseRefusal(base: string, allowed: readonly string[], computer = "this computer"): string | null {
+  if ((NEVER_PULL_REQUEST_BASES as readonly string[]).includes(base)) return `A run never opens a pull request into ${base}: it is production or a deploy pointer.`;
+  if (!allowed.includes(base)) return `${computer} does not open pull requests into ${base}. It allows: ${allowed.length ? allowed.join(", ") : "none"} (change it there with \`ensemble git bases add ${base}\`).`;
+  return null;
+}
+
+/** Why `branch` may not be the branch a run's pull request comes from, or null. */
+export function pullRequestHeadRefusal(branch: string, base: string): string | null {
+  if (!BRANCH_NAME.test(branch)) return `“${branch.slice(0, 80)}” is not a branch name git accepts.`;
+  if (branch === base) return `The run's branch cannot be ${base}, the branch the pull request goes into.`;
+  if ((NEVER_PULL_REQUEST_BASES as readonly string[]).includes(branch)) return `A run never pushes ${branch}.`;
+  return null;
+}
+
 /**
  * A saved set of Assign options, picked in one click from the Assign dialog,
  * the board or the CLI. At most three per person; one can be the default.
@@ -264,6 +297,8 @@ export const RunProfile = z.object({
   maxToolCalls: z.number().int().min(5).max(500).nullable().default(null),
   maxTurns: z.number().int().min(3).max(200).nullable().default(null),
   instructions: z.string().max(2000).default(""),
+  /** End each run in a pull request into this base (the computer must allow it), and whether to merge it. */
+  pullRequest: PullRequestPlan.nullable().default(null),
 });
 export type RunProfile = z.infer<typeof RunProfile>;
 export const MAX_RUN_PROFILES = 3;
@@ -291,6 +326,7 @@ export function quickRunProfile(orchestration?: { defaultExecution?: string; san
     maxToolCalls: null,
     maxTurns: null,
     instructions: "",
+    pullRequest: null,
   };
 }
 

@@ -111,3 +111,53 @@ test("a Copilot profile keeps its model, thinking level and context window", () 
   assert.equal(differs(profile, { ...fields, context: undefined }), true);
   assert.equal(differs({ ...profile, context: "default" }, { ...fields, context: undefined }), false, "unset and Standard are the same window");
 });
+
+import { computerPullRequestBases, pullRequestNotices, pullRequestProblem, runPullRequest, runPullRequestLabel } from "./pull-request.js";
+
+test("a profile that ends in a pull request says where it goes and what happens after, keeps it in Quick assign, and counts as a change", () => {
+  const pr = { ...quick, id: "pr", name: "PR", delivery: "local" as const, network: false, pullRequest: { base: "testing", merge: "ask" as const } };
+  assert.equal(profileSummary(pr), "Code · Ask · may commit (asks before each commit) · PR → testing (ask to merge)");
+  assert.match(profileSummary({ ...pr, pullRequest: { base: "testing", merge: "auto" } }), /PR → testing \(merge when checks pass\)$/);
+  assert.match(profileSummary({ ...pr, pullRequest: { base: "staging", merge: "never" } }), /PR → staging \(left open\)$/);
+  const input = quickAssignInput("task", pr);
+  assert.deepEqual([input.pullRequest, input.delivery, input.network], [{ base: "testing", merge: "ask" }, "commit", true]);
+  assert.equal(quickAssignInput("task", quick).pullRequest, undefined);
+  const fields = profileFields(pr);
+  assert.equal(differs(pr, { ...fields, pullRequest: { base: "testing", merge: "ask" } }), false, "the same plan in a new object is no change");
+  assert.equal(differs(pr, { ...fields, pullRequest: { base: "testing", merge: "auto" } }), true);
+  assert.equal(differs(pr, { ...fields, pullRequest: null }), true);
+});
+
+test("pull request notices: a too-old computer, never-bases, a base the computer does not allow, a folder worked in place, a bad branch", () => {
+  const capabilities = { pullRequests: 1, pullRequestBases: ["testing", "main"], folders: [{ label: "ensemble", kind: "repo" }, { label: "notes", kind: "folder" }] };
+  assert.deepEqual(computerPullRequestBases(capabilities), ["testing"], "never main, even if a computer lists it");
+  assert.equal(computerPullRequestBases({ engines: ["codex"] }), null);
+  const check = { computer: "Studio Mac", capabilities, place: "folder" as const, repo: "", folder: "ensemble", base: "testing", branch: "" };
+  assert.deepEqual(pullRequestNotices(check), { tooOld: null, place: null, base: null, branch: null });
+  assert.equal(pullRequestNotices({ ...check, capabilities: {} }).tooOld, "Ensemble on Studio Mac is too old to open pull requests. Update it there (`ensemble update`), then assign.");
+  assert.equal(pullRequestNotices({ ...check, folder: "notes" }).place, "notes is worked in place. Pick a repository, or a folder Studio Mac shares as a repository.");
+  assert.equal(pullRequestNotices({ ...check, computer: null, folder: "/work/app" }).place, "app is worked in place. Pick a repository.");
+  assert.equal(pullRequestNotices({ ...check, base: "master" }).base, "A run never opens a pull request into master: it is production or a deploy pointer.");
+  assert.equal(pullRequestNotices({ ...check, computer: null, base: "testing-live" }).base, "A run never opens a pull request into testing-live: it is production or a deploy pointer.");
+  assert.equal(pullRequestNotices({ ...check, computer: null, base: "staging" }).base, null, "this server's own list is checked when the run starts");
+  assert.match(pullRequestNotices({ ...check, base: "staging" }).base ?? "", /^Studio Mac does not open pull requests into staging\. It allows: testing \(change it there with `ensemble git bases add staging`\)\.$/);
+  assert.equal(pullRequestNotices({ ...check, branch: "production" }).branch, "A run never pushes production.");
+  assert.deepEqual(pullRequestProblem(pullRequestNotices({ ...check, folder: "notes", branch: "testing" })), { text: "notes is worked in place. Pick a repository, or a folder Studio Mac shares as a repository.", field: "place" });
+  assert.deepEqual(pullRequestProblem(pullRequestNotices({ ...check, branch: "testing" }))?.field, "branch");
+});
+
+test("a run's pull request comes from its latest event, else its summary, and only from github.com", () => {
+  const summary = "Fixed the flaky test.\nOpened and merged pull request #12 from live-test/a into testing: https://github.com/fieldnote/app/pull/12";
+  const fromSummary = runPullRequest({ summary });
+  assert.deepEqual(fromSummary, { url: "https://github.com/fieldnote/app/pull/12", number: 12, head: "live-test/a", base: "testing", state: "merged" });
+  assert.equal(runPullRequestLabel(fromSummary!), "Pull request #12 (merged into testing)");
+  const open = runPullRequest({ summary: "Opened pull request #7 from a into testing: https://github.com/fieldnote/app/pull/7\nLeft open: you did not approve the merge." });
+  assert.equal(runPullRequestLabel(open!), "Pull request #7 (open, into testing)");
+  assert.equal(runPullRequest({ summary: "Opened pull request #7 from a into testing: https://evil.example/pull/7" }), null);
+  const events = [
+    { kind: "pull_request", data: { url: "https://github.com/fieldnote/app/pull/12", number: 12, base: "testing", head: "a", state: "open" } },
+    { kind: "pull_request", data: { url: "https://github.com/fieldnote/app/pull/12", number: 12, base: "testing", head: "a", state: "merged" } },
+  ];
+  assert.equal(runPullRequest({ summary: "", events })?.state, "merged");
+  assert.equal(runPullRequest({ summary: null, events: [] }), null);
+});

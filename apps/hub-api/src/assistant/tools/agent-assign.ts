@@ -7,7 +7,7 @@
 import { z } from "zod";
 import { CODE_ENGINES, pickRunProfile, type RunProfile } from "@ensemble/shared-types";
 import { deviceOnline, serverRunnerEnabled } from "../../devices/constants.js";
-import { folderLabels } from "../../devices/labels.js";
+import { deviceEngines, devicePullRequestBases, folderLabels, repositoryLabels } from "../../devices/labels.js";
 import { isPaused } from "../../lib/activity.js";
 import { actorFor } from "../../sharing/context.js";
 import { Assign, createJob } from "../../workspace/assign.js";
@@ -17,7 +17,7 @@ import { engineName, profileLine } from "./code.js";
 const Engine = z.enum(["ensemble", ...CODE_ENGINES]);
 const PAIR_A_COMPUTER = "Pair a computer first: Settings → Connected computers (/settings?tab=connections#devices), or install the desktop app or the CLI and sign in.";
 
-type Computer = { id: string; name: string; platform: string; online: boolean; folders: string[] };
+type Computer = { id: string; name: string; platform: string; online: boolean; folders: string[]; repositories: string[]; engines: string[]; pullRequestBases: string[] };
 
 /** The person's paired computers, most recently seen first. In a shared space, their own ones. */
 async function pairedComputers(ctx: ToolContext): Promise<Computer[]> {
@@ -27,7 +27,16 @@ async function pairedComputers(ctx: ToolContext): Promise<Computer[]> {
     orderBy: [{ lastSeenAt: { sort: "desc", nulls: "last" } }, { createdAt: "asc" }],
     select: { id: true, name: true, platform: true, lastSeenAt: true, capabilities: true },
   });
-  return rows.map((row) => ({ id: row.id, name: row.name, platform: row.platform, online: deviceOnline(row.lastSeenAt), folders: folderLabels(row.capabilities) }));
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    platform: row.platform,
+    online: deviceOnline(row.lastSeenAt),
+    folders: folderLabels(row.capabilities),
+    repositories: repositoryLabels(row.capabilities),
+    engines: deviceEngines(row.capabilities),
+    pullRequestBases: devicePullRequestBases(row.capabilities) ?? [],
+  }));
 }
 
 function savedProfiles(ctx: ToolContext): { list: RunProfile[]; fallback: RunProfile } {
@@ -90,6 +99,17 @@ const AssignInput = z
     repoUrl: z.string().max(500).optional().describe("A repository to clone and work in (https URL or owner/repo), e.g. from the task's page."),
     folder: z.string().max(200).optional().describe("One of the computer's shared folder names (hub_list_agent_options). Never a path."),
     instructions: z.string().max(6000).optional().describe("What to do, how to check it, what done looks like. The profile's own instructions are added."),
+    model: z.string().max(120).optional().describe("Only when the person names a model for the agent (e.g. gpt-5.6-luna for GitHub Copilot). Leave out to follow the profile."),
+    effort: z.string().max(20).optional().describe("Only when the person names a thinking level (low, medium, high, xhigh, max). Leave out to follow the profile."),
+    context: z.enum(["default", "long_context"]).optional().describe("GitHub Copilot only: long_context when the person asks for the long context window."),
+    branch: z.string().max(200).optional().describe("Only when the person names the branch to work on (a new branch made from the pull request's base)."),
+    pullRequest: z
+      .object({
+        base: z.string().min(1).max(200).describe("The branch the pull request goes into, as the person says (e.g. testing). Never main, master, production or testing-live."),
+        merge: z.enum(["ask", "auto", "never"]).default("ask").describe("ask: open it, then ask the person on Needs me before merging; auto: merge when its checks pass (only when the person says to merge it); never: leave it open."),
+      })
+      .optional()
+      .describe("When the person wants the work as a pull request (opened, and merged if they say so). Ensemble pushes, opens and merges it; the agent never does. The run needs a repository (repoUrl, or a folder the computer shares as a repository)."),
   })
   .strict();
 type AssignInput = z.infer<typeof AssignInput>;
@@ -138,6 +158,12 @@ async function plan(ctx: ToolContext, input: AssignInput): Promise<Plan> {
     ...(where.deviceId ? { deviceId: where.deviceId } : {}),
     ...(input.repoUrl?.trim() ? { repoUrl: input.repoUrl.trim() } : {}),
     ...(input.folder?.trim() ? (where.deviceId ? { folderLabel: input.folder.trim() } : { folder: input.folder.trim() }) : {}),
+    // What the person named in this request wins over the profile.
+    ...(input.model?.trim() && engine !== "ensemble" ? { model: input.model.trim() } : {}),
+    ...(input.effort?.trim() && input.effort !== "default" ? { reasoningEffort: input.effort.trim() } : {}),
+    ...(input.context && engine === "copilot-cli" ? { contextTier: input.context } : {}),
+    ...(kind === "code" && (input.pullRequest ?? profile.pullRequest) ? { pullRequest: input.pullRequest ?? profile.pullRequest! } : {}),
+    ...(kind === "code" && input.branch?.trim() ? { branchMode: "new" as const, branch: input.branch.trim() } : {}),
   });
   return { title: task.title, profile, engine, where, body };
 }
@@ -146,7 +172,10 @@ function describePlan(found: Plan): string {
   const place = found.where.computer ? `on ${found.where.computer.name}${found.where.computer.online ? "" : " (offline now: it starts when that computer is back)"}` : "on Ensemble's server";
   const work = found.body.repoUrl ? `, in a fresh clone of ${found.body.repoUrl}` : found.body.folderLabel ? `, in its “${found.body.folderLabel}” folder` : "";
   const mode = found.body.mode && found.body.mode !== found.profile.mode ? ` (mode: ${found.body.mode === "unattended" ? "Run unattended" : found.body.mode === "review" ? "Review only" : "Ask"})` : "";
-  return `Assign “${found.title}” to ${engineName(found.engine)} ${place}${work} · profile ${profileLine(found.profile)}${mode}`;
+  const pull = found.body.pullRequest
+    ? ` · then a pull request${found.body.branch ? ` from ${found.body.branch}` : ""} into ${found.body.pullRequest.base}, ${found.body.pullRequest.merge === "auto" ? "merged when its checks pass" : found.body.pullRequest.merge === "ask" ? "merged if you approve on Needs me" : "left open"}`
+    : "";
+  return `Assign “${found.title}” to ${engineName(found.engine)} ${place}${work} · profile ${profileLine(found.profile)}${mode}${pull}`;
 }
 
 export const agentAssignTools = [
@@ -154,7 +183,7 @@ export const agentAssignTools = [
     name: "hub_list_agent_options",
     area: "tasks",
     description:
-      "Before assigning a task to an agent: the person's run profiles (which one is the default, and what each allows) and their paired computers (online or not, and the folder names each one shares). Read this when they name a profile or computer, or ask what is available.",
+      "Before assigning a task to an agent: the person's run profiles (which one is the default, and what each allows) and their paired computers (online or not, the folder names each one shares, which of those are shared as repositories, the coding agents it can run, and the branches it opens pull requests into). Read this when they name a profile or computer, or ask what is available.",
     input: z.object({}).strict(),
     isWrite: false,
     risk: "low",
@@ -171,7 +200,7 @@ export const agentAssignTools = [
       }));
       return toolOk(`${profiles.length} run profile(s), ${computers.length} paired computer(s).`, {
         profiles,
-        computers: computers.map(({ id, name, platform, online, folders }) => ({ id, name, platform, online, folders })),
+        computers: computers.map(({ id, name, platform, online, folders, repositories, engines, pullRequestBases }) => ({ id, name, platform, online, folders, repositories, engines, pullRequestBases })),
         serverRuns: serverRunnerEnabled(),
       });
     },
@@ -180,7 +209,7 @@ export const agentAssignTools = [
     name: "hub_assign_to_agent",
     area: "tasks",
     description:
-      "Assign a task to an agent so it does the work: Ensemble's agent, or the person's own Claude Code, Codex or Cursor agent on their paired computer (“do this on my machine”, “have an agent do it”, “assign it to Claude Code”). Uses their default run profile unless they name one (profile), and that profile's computer unless they name one (computer; \"any\" for “my computer/laptop/machine”). Pass repoUrl when the work is in a repository named on the task. The agent then edits, runs commands and commits only as the profile allows; its questions reach the person. Always waits for Apply.",
+      "Assign a task to an agent so it does the work: Ensemble's agent, or the person's own Claude Code, Codex, Cursor agent or GitHub Copilot on their paired computer (“do this on my machine”, “have an agent do it”, “assign it to Copilot”). Uses their default run profile unless they name one (profile), and that profile's computer unless they name one (computer; \"any\" for “my computer/laptop/machine”). Pass repoUrl when the work is in a repository named on the task, or folder when it is one the computer shares as a repository. When the person wants a pull request (“make branch A, open a PR against testing, merge it”), pass branch and pullRequest {base, merge}: Ensemble pushes the branch, opens the pull request and merges it (merge: auto when they say to merge it; ask to confirm on Needs me first; never to leave it open). The agent then edits, runs commands and commits only as the profile allows; its questions reach the person. Always waits for Apply.",
     input: AssignInput,
     isWrite: true,
     risk: "medium",

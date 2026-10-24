@@ -67,6 +67,16 @@ Clone, fetch and push run in trusted app helpers with the person's configured si
 
 Credential redaction recognizes known patterns only; command output can still contain sensitive data.
 
+### 5.1 Pull requests
+
+A code run can end in a pull request (`pullRequest: { base, merge }` on `POST /api/agent/assign`, the Assign dialog's **Pull request** git choice, a run profile, or `hub_assign_to_agent`; `workspace/pull-request.ts`, `lib/github-pulls.ts`). Ensemble, never the agent, publishes it:
+
+1. **Where.** The run works in its own clone: of a GitHub repository URL, or of a folder the computer shares as a repository (`ensemble folders add <path> --repo`), whose GitHub `origin` (https only) is read before the agent runs. A folder worked in place, a chat message, a research task and a read-only run are refused. The run needs the internet.
+2. **Which base.** Never `main`, `master`, `production` or `testing-live` (`NEVER_PULL_REQUEST_BASES`), never the repository's default branch (asked from GitHub), and only a base the computer allows: `pullRequestBases` in its `remote.json`, default `testing`, changed only on that computer (`ensemble git bases`; `PUT /api/remote` on loopback). The computer publishes `capabilities.pullRequests` and `pullRequestBases`; the web refuses other bases at assignment and the computer checks again when it claims the job.
+3. **Which branch.** The branch named at assignment (`branch`; never the base or a never-base), else the run's own `ensemble/<job-id>/<slug>`, made from the base as GitHub has it now (`git fetch <origin> +refs/heads/<base>:refs/ensemble/pr-base/<job>`, then `checkout -B`). Run again continues the earlier run's branch. The agent may commit there (delivery is Commit); it is told not to push or touch pull requests, and the git gate and `ghRefusal` refuse it if it tries.
+4. **After a successful run with commits**, with the computer's GitHub sign-in (`githubCloneAuth`, `githubApiToken`): the branch is pushed fast-forward only (`git push --porcelain <origin> HEAD:refs/heads/<branch>`; a branch that moved on GitHub is refused, never overwritten), the pull request is opened (or the open one for that branch reused) with the run's summary, and then, by `merge`: **ask** (default) puts *Merge pull request #N into <base>?* on Needs me, and on Allow merges; **auto** merges; **never** leaves it open. Before a merge Ensemble waits up to 30 minutes for every check run and commit status on the head commit; a failure leaves it open, and the merge (`merge_method: merge`) names that head commit. The run's summary says what happened, with the link; `pull_request` events record it, and the ledger gets `workspace.pull_request` and `workspace.pull_request_merged`.
+5. A step that cannot complete (GitHub refused the push, no GitHub sign-in on the computer) ends the run as blocked with the reason; the commits stay on the branch in the clone.
+
 ## 6. Commands and processes
 
 `run_command` takes a program and arguments, not a shell string: no pipes, redirects, `&&` or `sh -c`. Allowed interpreters still run code, so the OS sandbox must contain their subprocesses. Never-listed programs, sensitive paths and environment variables have extra guards.

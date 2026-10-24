@@ -99,6 +99,8 @@ A paired desktop app or CLI calls included models through `/api/devices/self/inc
 
 `runBranchPush` is **off by default** and set on the computer. It allows only the trusted run-branch push, never arbitrary or force pushes; Git credentials stay outside the agent's environment and the Git gate still decides.
 
+A task from the web that ends in a pull request is the one case where a run's branch goes to GitHub: only into a base in the computer's own `pullRequestBases` (default `testing`; never `main`, `master`, `production`, `testing-live` or the default branch), from the run's own clone, pushed by Ensemble with the computer's GitHub sign-in. The claim carries `pullRequest` (and the branch name, which the computer otherwise refuses); `planLocalJob` checks the base against its own list and refuses a folder shared to work in place. Merging waits for the person's Allow on Needs me unless the task said to merge when checks pass ([24 §5.1](24_DESKTOP_SANDBOXING.md#51-pull-requests)).
+
 A web confirmation is an authenticated session action, not a device-verified WebAuthn signature over each decision; the terminal passkey protects only the terminal.
 
 ### 5.2 Rate limits

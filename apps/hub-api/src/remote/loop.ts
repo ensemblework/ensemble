@@ -107,6 +107,9 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     agents: await agentsNow(),
     // Coding agents this runtime can run a code task with; the web refuses others for this computer.
     engines: [...CODE_ENGINES],
+    // Runs here can end in a pull request, into these bases only (docs/24 §5.1). Only this computer sets the list.
+    pullRequests: 1,
+    pullRequestBases: settings.pullRequestBases,
   };
 }
 
