@@ -104,7 +104,7 @@ Connected to an account (Settings → Account → This computer), the app lists 
 
 Code folders use the Tauri dialog plugin (`core.invoke("plugin:dialog|open", { options })`, `apps/hub-web/lib/desktop-dialog.ts`); the chosen path still passes the API's path checks. `tauri-plugin-notification` shows reminder notifications after system permission while the app runs; browser sessions use browser notifications. Shortcuts use the host platform's modifier keys.
 
-The sidecar receives `ENSEMBLE_INSTALL_PATH`, the installed executable. If that file disappears while the runtime survives, the next remote heartbeat stops remote tasks and assistant turns, revokes the device when reachable and forgets the pairing.
+The sidecar receives `ENSEMBLE_INSTALL_PATH`, the installed executable. If that file stays missing for 10 minutes while the runtime survives, the next remote heartbeat stops remote tasks and assistant turns, revokes the device when reachable and forgets the pairing. An update that replaces the file within that time keeps the pairing.
 
 The Ensemble menu's **Export diagnostics** writes a redacted report to `diagnostics/ensemble-diagnostics-<time>.txt` in the data folder.
 
