@@ -17,6 +17,7 @@ import { CLAUDE_CODE_MODELS, type SubscriptionAgent, type SubscriptionModel, typ
 import { bundledCodex } from "../workspace/handoff.js";
 import { hostExecutable } from "../workspace/policy.js";
 import { RpcConnection } from "../workspace/engines/rpc.js";
+import { copilotStatus } from "./copilot.js";
 
 /**
  * Variables that would make an agent bill an API key or another account instead of the person's
@@ -368,6 +369,23 @@ async function probeCursor(): Promise<SubscriptionAgent | null> {
 async function probeCopilot(): Promise<SubscriptionAgent | null> {
   const found = await agentBinary("copilot-cli");
   if (!found) return null;
+  // Copilot CLI 1.0 reports its account and the plan's models (context windows, thinking levels, cost) itself.
+  const reported = await copilotStatus(found.path).catch(() => null);
+  if (reported) {
+    return {
+      id: "copilot-cli",
+      via: "cli",
+      version: firstVersion(reported.version ?? "") ?? firstVersion((await quickRun(found.path, ["--version"])).stdout),
+      signedIn: reported.signedIn,
+      plan: null,
+      account: reported.account,
+      models: reported.models.length ? reported.models : [{ id: "auto", label: "Auto (Copilot picks)", isDefault: true }],
+      typedModels: true,
+      problem: reported.signedIn === false ? "Copilot CLI is not signed in on this computer. Press Sign in, or run `copilot login` there." : null,
+      checkedAt: now(),
+    };
+  }
+  // An older Copilot without the headless server: its help text lists models and thinking levels.
   const [version, config, help] = await Promise.all([quickRun(found.path, ["--version"]), quickRun(found.path, ["help", "config"]), quickRun(found.path, ["--help"])]);
   const models = parseCopilotModels(config.stdout);
   const efforts = copilotEfforts(help.stdout);
@@ -375,7 +393,6 @@ async function probeCopilot(): Promise<SubscriptionAgent | null> {
     id: "copilot-cli",
     via: "cli",
     version: firstVersion(version.stdout),
-    // Copilot CLI has no command that reports its sign-in; the first message shows it.
     signedIn: null,
     plan: null,
     models: models.length ? models : [{ id: "auto", label: "Auto (Copilot picks)", isDefault: true }],

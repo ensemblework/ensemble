@@ -1,5 +1,5 @@
 import type { IdeTheme, ThemeDirectoryExtension } from "@ensemble/ide-theme";
-import { emptyWorkspace, type IncludedUsage, type ModelMeta, type PageDocument, type PageMention, type Settings, type SubscriptionAgent, type SubscriptionProvider, type TaskPageContent } from "@ensemble/shared-types";
+import { emptyWorkspace, type CodeEngine, type ContextTier, type IncludedUsage, type ModelMeta, type PageDocument, type PageMention, type Settings, type SubscriptionAgent, type SubscriptionProvider, type TaskPageContent } from "@ensemble/shared-types";
 import type { LayoutDocument } from "@ensemble/shared-types/widgets";
 
 import { bindClient, currentExternalSignal, isRequestCancelled, RequestCancelledError, trackRequest, isPageUnloading } from "./fetch-cancel";
@@ -473,7 +473,7 @@ export type RunSummary = {
   credits: number | null;
   /** The harness's own cost estimate (agent runs). */
   costUsd?: number | null;
-  /** Ensemble agent, Claude Code, Codex or Cursor, for agent runs. */
+  /** Ensemble agent, Claude Code, Codex, Cursor or GitHub Copilot, for agent runs. */
   engineName?: string | null;
   where?: RunJob["where"] | null;
   deviceName?: string | null;
@@ -539,7 +539,7 @@ export type RunJob = {
   id: string;
   kind: "research" | "code";
   status: AgentJob["status"];
-  engine: "ensemble" | "claude-code" | "codex" | "cursor-agent";
+  engine: "ensemble" | CodeEngine;
   engineName: string;
   provider: string | null;
   model: string;
@@ -734,11 +734,13 @@ export type TrustSharing = { available: boolean; enabled: boolean; tools: Array<
 export type AssignInput = {
   taskId: string;
   kind: "research" | "code";
-  /** Ensemble's own agent, or the person's own Claude Code on their computer. */
-  engine?: "ensemble" | "claude-code" | "codex" | "cursor-agent";
+  /** Ensemble's own agent, or the person's own coding agent on their computer (Claude Code, Codex, Cursor, GitHub Copilot). */
+  engine?: "ensemble" | CodeEngine;
   provider?: string;
   model?: string;
   reasoningEffort?: string;
+  /** GitHub Copilot: the model's context window, where it offers more than one. */
+  contextTier?: ContextTier;
   instructions?: string;
   repoUrl?: string;
   folder?: string;

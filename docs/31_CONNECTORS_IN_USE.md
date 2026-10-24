@@ -41,7 +41,7 @@ The two import tools take `source`, `kind` and `id` from an `apps_search` hit. E
 Readers of attached text:
 
 - the assistant (`hub_search_context`, and on the task's page);
-- agents on the task: `brief()` in `apps/hub-api/src/workspace/agent.ts` adds up to 12,000 characters from the task and its project, marked as information (Ensemble's agent, Claude Code, Codex, Cursor);
+- agents on the task: `brief()` in `apps/hub-api/src/workspace/agent.ts` adds up to 12,000 characters from the task and its project, marked as information (Ensemble's agent, Claude Code, Codex, Cursor, GitHub Copilot);
 - runs on a paired computer: the claim (`POST /api/devices/self/claim`) appends up to 8,000 characters to the task description;
 - editors through the Context Bridge (`ensemble_brief`, `ensemble_search`).
 

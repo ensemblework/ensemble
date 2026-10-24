@@ -33,6 +33,18 @@ const SUBSCRIPTIONS = {
       agents: [
         { id: "claude-code", via: "app", version: "2.1.293", signedIn: true, plan: "max", models: [{ id: "default", label: "Your plan's default", isDefault: true }, { id: "haiku", label: "Haiku (latest)" }], typedModels: true, efforts: ["low", "medium", "high"], checkedAt: "2026-10-15T09:00:00.000Z" },
         { id: "codex", via: "app", version: "0.162.0", signedIn: false, plan: null, models: [{ id: "gpt-6-luna", label: "GPT-6 Luna", isDefault: true }], typedModels: true, checkedAt: "2026-10-15T09:00:00.000Z" },
+        {
+          id: "copilot-cli",
+          via: "cli",
+          version: "1.0.40",
+          signedIn: true,
+          account: "mira-chen",
+          models: [
+            { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", isDefault: true, efforts: ["none", "low", "medium", "high", "xhigh", "max"], defaultEffort: "medium", contexts: [{ id: "default", label: "200K (standard)", tokens: 200000 }, { id: "long_context", label: "922K (long context)", tokens: 922000 }], vision: true, cost: "low cost", description: "OpenAI" },
+            { id: "claude-haiku-4.5", label: "Claude Haiku 4.5", contexts: [{ id: "default", label: "136K", tokens: 136000 }], cost: "0.33× premium requests", description: "Anthropic" },
+          ],
+          checkedAt: "2026-10-15T09:00:00.000Z",
+        },
       ],
     },
   ],
@@ -202,6 +214,31 @@ test("Your AI subscriptions lead the Models card: what each computer has, sign-i
     await settle(3);
     assert.deepEqual(view.bodies.find((row) => row.path === "/api/subscriptions/sign-in")?.body, { deviceId: "device-1", agent: "codex" });
     assert.match(document.getElementById("models")!.textContent ?? "", /Claude \(your plan\)|Which model each tier uses/);
+  } finally {
+    await view.done();
+  }
+});
+
+test("a GitHub Copilot tier shows the account, each model's cost and size, its own thinking default and a context window choice", async () => {
+  const settings = Settings.parse({ email: "mira@fieldnote.example", timezone: "Europe/London", models: { easy: { provider: "copilot-cli", model: "gpt-5.6-luna", effort: "default" } } });
+  const view = await mount("http://localhost/settings?tab=assistant", { "/api/settings": { settings } });
+  try {
+    await until(() => Boolean(document.querySelector('[data-tier="easy"] [data-context-window]')), "the context window choice");
+    const tile = document.querySelector<HTMLElement>('[data-subscription="copilot-cli"]')!;
+    assert.match(tile.textContent ?? "", /Signed in as mira-chen/);
+    assert.match(tile.querySelector('[data-testid="subscription-model-facts"]')?.textContent ?? "", /GPT-5\.6 Luna: OpenAI · low cost · 200K or 922K context/);
+
+    const tier = document.querySelector<HTMLElement>('[data-tier="easy"]')!;
+    const radios = (group: string) => Array.from(tier.querySelectorAll(`[role="radiogroup"][aria-label="${group}"] [role="radio"]`)) as HTMLElement[];
+    assert.equal(radios("Low model thinking")[0]?.textContent, "Automatic (Medium)", "the model's own default level");
+    assert.deepEqual(radios("Low model context window").map((node) => node.textContent), ["Standard · 200K (standard)", "Long context · 922K (long context)"]);
+    assert.equal(document.querySelector('[data-tier="medium"] [data-context-window]'), null, "other providers have no context choice");
+    await act(async () => {
+      radios("Low model context window")[1]!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await settle(45);
+    const patch = view.bodies.find((row) => row.path === "/api/settings" && row.method === "PATCH");
+    assert.deepEqual(patch?.body, { models: { easy: { context: "long_context" } } });
   } finally {
     await view.done();
   }

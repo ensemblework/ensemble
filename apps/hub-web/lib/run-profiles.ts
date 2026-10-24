@@ -3,7 +3,7 @@
  * default for Quick assign. The schema and the limit live in shared-types
  * (`RunProfile`, `MAX_RUN_PROFILES`); the API refuses a fourth.
  */
-import { MAX_RUN_PROFILES, QUICK_PROFILE_ID, quickRunProfile, type RunProfile } from "@ensemble/shared-types";
+import { ENGINE_LABELS, isCodeEngine, MAX_RUN_PROFILES, QUICK_PROFILE_ID, quickRunProfile, type RunProfile } from "@ensemble/shared-types";
 
 export type ProfileFields = Omit<RunProfile, "id" | "name">;
 
@@ -23,6 +23,7 @@ const KEYS: Array<keyof ProfileFields> = [
   "engine",
   "model",
   "effort",
+  "context",
   "branchMode",
   "delivery",
   "askBeforePublish",
@@ -39,7 +40,9 @@ const KEYS: Array<keyof ProfileFields> = [
 
 /** True when the form no longer matches the profile it started from. */
 export function differs(profile: RunProfile, fields: ProfileFields): boolean {
-  return KEYS.some((key) => (profile[key] ?? null) !== (fields[key] ?? null));
+  // An unset context window and "default" are the same choice.
+  const value = (row: RunProfile | ProfileFields, key: keyof ProfileFields) => (key === "context" && row.context === "default" ? null : (row[key] ?? null));
+  return KEYS.some((key) => value(profile, key) !== value(fields, key));
 }
 
 /** The saved profiles, or the built-in Quick one when there are none. */
@@ -81,6 +84,6 @@ export function removeProfile(saved: RunProfile[] | undefined, id: string): RunP
 export function profileSummary(profile: RunProfile): string {
   const mode = profile.mode === "unattended" ? "Run unattended" : profile.mode === "review" ? "Review only" : "Ask";
   const git = profile.delivery === "local" ? "local only" : profile.delivery === "commit" ? "may commit" : "may commit and push";
-  const engine = profile.engine === "claude-code" ? "Claude Code · " : profile.engine === "codex" ? "Codex · " : profile.engine === "cursor-agent" ? "Cursor · " : "";
+  const engine = isCodeEngine(profile.engine) ? `${ENGINE_LABELS[profile.engine]} · ` : "";
   return profile.kind === "research" ? "Research & writing" : `${engine}Code · ${mode} · ${git}${profile.askBeforePublish && profile.delivery !== "local" && profile.mode !== "unattended" ? " (asks before each commit)" : ""}`;
 }

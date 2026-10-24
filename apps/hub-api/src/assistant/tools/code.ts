@@ -309,7 +309,7 @@ export const codeTools: readonly AnyHubTool[] = [
 ];
 
 export function engineName(engine: string): string {
-  return { ensemble: "Ensemble's agent", "claude-code": "Claude Code", codex: "Codex", "cursor-agent": "Cursor's agent" }[engine] ?? engine;
+  return { ensemble: "Ensemble's agent", "claude-code": "Claude Code", codex: "Codex", "cursor-agent": "Cursor's agent", "copilot-cli": "GitHub Copilot" }[engine] ?? engine;
 }
 
 /** `provider::model` as the Assign body wants it. */

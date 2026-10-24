@@ -49,7 +49,7 @@ const HELP = `Ensemble ${TESTING ? "Testing " : ""}${VERSION}: your tasks and co
                         Tasks  runs on this computer, and what needs you (answer with a click,
                                a number key, or /allow /deny /answer)
                         Chat   Ensemble Code: ask about this folder, plan, and hand work to
-                               Ensemble's agent, Claude Code, Codex or Cursor
+                               Ensemble's agent, Claude Code, Codex, Cursor or GitHub Copilot
                       Ensemble starts on this computer if it is not running, and keeps running
                       tasks after you leave.
   ensemble login      Sign in, so tasks you assign on ensemblework.com run here.

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AutonomyLevel } from "./enums.js";
+import { CODE_ENGINES, ContextTier } from "./subscriptions.js";
 
 export const AssistantToolArea = z.enum(["tasks", "projects", "context", "skills", "reminders", "runs", "apps"]);
 export type AssistantToolArea = z.infer<typeof AssistantToolArea>;
@@ -174,6 +175,8 @@ export const ModelTier = z.object({
   provider: ModelProvider.default("google"),
   model: z.string().default("gemini-3.5-flash-lite"),
   effort: ReasoningEffort.default("default"),
+  /** The context window, for models that offer more than one (Copilot's long_context). Unset: the model's default. */
+  context: ContextTier.optional(),
 });
 export type ModelTier = z.infer<typeof ModelTier>;
 
@@ -242,11 +245,13 @@ export const RunProfile = z.object({
   kind: z.enum(["research", "code"]).default("code"),
   /** A preferred paired computer. Null: this server when it runs code, else the first computer. */
   deviceId: z.string().max(100).nullable().default(null),
-  /** Who does the work: Ensemble's own agent, or the person's own Claude Code on their computer. */
-  engine: z.enum(["ensemble", "claude-code", "codex", "cursor-agent"]).default("ensemble"),
-  /** `provider::model`, or empty for the task's tier. With Claude Code: its model alias, or empty for its default. */
+  /** Who does the work: Ensemble's own agent, or the person's own coding agent on their computer (CODE_ENGINES). */
+  engine: z.enum(["ensemble", ...CODE_ENGINES]).default("ensemble"),
+  /** `provider::model`, or empty for the task's tier. With an engine: its model name, or empty for its default. */
   model: z.string().max(240).default(""),
   effort: ReasoningEffort.default("default"),
+  /** The model's context window, where it offers more than one (GitHub Copilot). Unset: the default. */
+  context: ContextTier.optional(),
   branchMode: z.enum(["as-is", "new"]).default("as-is"),
   delivery: z.enum(["local", "commit", "push"]).default("commit"),
   askBeforePublish: z.boolean().default(true),

@@ -4,6 +4,7 @@ import type { FastifyInstance } from "fastify";
 import { actorFor, keysFor } from "../sharing/context.js";
 import {
   AssistantPageContext,
+  CODE_ENGINES,
   PageMention,
   type AssistantStreamFrame,
 } from "@ensemble/shared-types";
@@ -40,7 +41,7 @@ import { hubCorsPolicy } from "../lib/hub-cors.js";
 /** Ensemble Code (the CLI's Chat tab): only the runtime on the person's own computer accepts it. */
 const CodeBody = z.object({
   folder: z.string().min(1).max(1000),
-  engine: z.enum(["ensemble", "claude-code", "codex", "cursor-agent"]).optional(),
+  engine: z.enum(["ensemble", ...CODE_ENGINES]).optional(),
   profileId: z.string().max(40).nullish(),
   runModel: z.string().max(240).nullish(),
   outsideAccess: z.enum(["none", "read", "read-write"]).optional(),

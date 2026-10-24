@@ -63,3 +63,51 @@ test("subscription engines keep their model string and omit API effort", () => {
   assert.equal(input.provider, undefined);
   assert.equal(input.reasoningEffort, undefined);
 });
+
+import type { SubscriptionAgent } from "@ensemble/shared-types";
+import { computerRuns, engineAssign, engineModel, fitEngineChoice } from "./engine-models.js";
+
+const copilot: SubscriptionAgent = {
+  id: "copilot-cli",
+  via: "cli",
+  version: "1.0.40",
+  signedIn: true,
+  account: "mira-chen",
+  checkedAt: "2026-10-20T09:00:00.000Z",
+  models: [
+    { id: "auto", label: "Auto" },
+    { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", isDefault: true, efforts: ["none", "low", "medium", "high", "xhigh", "max"], defaultEffort: "medium", contexts: [{ id: "default", label: "200K (standard)", tokens: 200000 }, { id: "long_context", label: "922K (long context)", tokens: 922000 }], vision: true, cost: "low cost", description: "OpenAI" },
+    { id: "claude-haiku-4.5", label: "Claude Haiku 4.5", contexts: [{ id: "default", label: "136K", tokens: 136000 }], cost: "0.33× premium requests", description: "Anthropic" },
+  ],
+};
+
+test("GitHub Copilot offers each model's own thinking levels and context windows, and sends only those", () => {
+  const luna = engineModel(copilot, "");
+  assert.equal(luna.model?.id, "gpt-5.6-luna", "Copilot default is the model the agent marks default");
+  assert.deepEqual(luna.efforts, ["none", "low", "medium", "high", "xhigh", "max"]);
+  assert.equal(luna.defaultEffort, "medium");
+  assert.deepEqual(luna.contexts.map((row) => row.id), ["default", "long_context"]);
+  const haiku = engineModel(copilot, "claude-haiku-4.5");
+  assert.deepEqual([haiku.efforts, haiku.contexts], [[], []], "one fixed size and no thinking setting: nothing to choose");
+  assert.deepEqual(fitEngineChoice(haiku, "high", "long_context"), { effort: "default", context: undefined }, "switching to Haiku drops what it lacks");
+  assert.deepEqual(fitEngineChoice(luna, "xhigh", "long_context"), { effort: "xhigh", context: "long_context" });
+
+  assert.deepEqual(engineAssign("copilot-cli", { model: "gpt-5.6-luna", effort: "xhigh", context: "long_context" }, engineModel(copilot, "gpt-5.6-luna")), { engine: "copilot-cli", model: "gpt-5.6-luna", reasoningEffort: "xhigh", contextTier: "long_context" });
+  assert.deepEqual(engineAssign("copilot-cli", { model: "gpt-5.6-luna", effort: "default" }, luna), { engine: "copilot-cli", model: "gpt-5.6-luna", contextTier: "default" });
+  assert.deepEqual(engineAssign("copilot-cli", { model: "claude-haiku-4.5", effort: "high", context: "long_context" }, haiku), { engine: "copilot-cli", model: "claude-haiku-4.5" });
+  assert.deepEqual(engineAssign("codex", { model: "gpt-6-luna", effort: "high", context: "long_context" }), { engine: "codex", model: "gpt-6-luna" }, "other agents take a model name only");
+
+  assert.equal(computerRuns("copilot-cli", { engines: ["claude-code", "codex", "cursor-agent", "copilot-cli"] }), true);
+  assert.equal(computerRuns("copilot-cli", {}), false, "a runtime without the engines list predates Copilot");
+  assert.equal(computerRuns("codex", {}), true);
+});
+
+test("a Copilot profile keeps its model, thinking level and context window", () => {
+  const profile = { ...quick, id: "copilot", name: "Copilot", engine: "copilot-cli" as const, model: "gpt-5.6-luna", effort: "high" as const, context: "long_context" as const };
+  const input = quickAssignInput("task", profile);
+  assert.deepEqual([input.engine, input.model, input.reasoningEffort, input.contextTier, input.provider], ["copilot-cli", "gpt-5.6-luna", "high", "long_context", undefined]);
+  assert.equal(profileSummary(profile), "GitHub Copilot · Code · Ask · may commit (asks before each commit)");
+  const fields = profileFields(profile);
+  assert.equal(differs(profile, { ...fields, context: undefined }), true);
+  assert.equal(differs({ ...profile, context: "default" }, { ...fields, context: undefined }), false, "unset and Standard are the same window");
+});

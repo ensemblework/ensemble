@@ -7,6 +7,7 @@
  */
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
+import { CODE_ENGINES } from "@ensemble/shared-types";
 import { redactText } from "../lib/redact.js";
 import type { AssignInput } from "../workspace/assign.js";
 import { OUTSIDE_TOOL } from "../workspace/tools.js";
@@ -95,9 +96,10 @@ export function planLocalJob(spec: JobSpec, settings: RemoteSettings, continueFr
     ...(spec.maxToolCalls ? { maxToolCalls: spec.maxToolCalls } : {}),
     ...(spec.model?.trim() ? { model: spec.model.trim() } : {}),
     ...(spec.provider?.trim() ? { provider: spec.provider.trim() } : {}),
-    // The person's own Claude Code, Codex or Cursor agent on this computer, with their own sign-in.
-    engine: (["claude-code", "codex", "cursor-agent"] as const).find((engine) => engine === spec.provider?.trim()) ?? "ensemble",
+    // The person's own coding agent on this computer (Claude Code, Codex, Cursor's agent, GitHub Copilot), with their own sign-in.
+    engine: CODE_ENGINES.find((engine) => engine === spec.provider?.trim()) ?? "ensemble",
     ...(spec.reasoningEffort?.trim() ? { reasoningEffort: spec.reasoningEffort.trim() } : {}),
+    ...(spec.contextTier === "long_context" ? { contextTier: "long_context" as const } : {}),
   };
   let publicCheck: string | null = null;
   const label = (spec.folderLabel ?? spec.folder ?? "").trim();

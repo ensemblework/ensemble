@@ -89,6 +89,14 @@ export function effortFor(agent: SubscriptionAgent | null, model: string | null,
   return effort;
 }
 
+/** Whether a tier set to this agent and model chose the model's long context window (Settings → Models). */
+export function tierContext(settings: Pick<Settings, "models">, agent: SubscriptionProvider, model: string | null): boolean {
+  return (["easy", "medium", "high", "max"] as const).some((name) => {
+    const tier = settings.models[name];
+    return tier.provider === agent && tier.model === (model ?? tier.model) && tier.context === "long_context";
+  });
+}
+
 export type SubscriptionTurnInput = {
   userId: string;
   settings: Pick<Settings, "models">;
@@ -117,6 +125,7 @@ export async function runSubscriptionTurn(input: SubscriptionTurnInput): Promise
     prompt: input.prompt,
     tools: input.tools,
     maxTurns: input.maxTurns ?? 16,
+    ...(tierContext(input.settings, input.agent, input.model) ? { context: "long_context" as const } : {}),
   };
   const signal = input.signal ?? new AbortController().signal;
   const onDelta = input.onDelta ?? (() => undefined);

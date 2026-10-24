@@ -78,7 +78,7 @@ The Hub assistant operates the app through typed tools. Built-in playbooks (`app
 | Capability | What works |
 | --- | --- |
 | Tasks and records | Create and update tasks, people, projects, repositories and profession records; comments, Trash, conversions, history. Clearing the board or a filtered set is one `hub_delete_tasks` call with one Undo |
-| Agent assignment | Assign to Ensemble's agent, Claude Code, Codex or Cursor's agent on a paired computer or this server, with a run profile; waits for Apply, then queues |
+| Agent assignment | Assign to Ensemble's agent, Claude Code, Codex, Cursor's agent or GitHub Copilot on a paired computer or this server, with a run profile; waits for Apply, then queues |
 | Open workspace | Reads surface IDs, selected and visible records, filters and document selection |
 | Layouts and documents | Today desks, Context panels, Board overview, widget layouts; block-level page edits after revision and schema checks |
 | Dependent actions | `hub_run_workflow`: 2–12 ordered writes, one Apply, references to earlier results, durable per-step receipts |
@@ -143,7 +143,7 @@ Details: [01 §6](01_TECH_STACK_AND_ENVIRONMENT.md#6-model-usage-policy), [30](3
 
 ## 9. Assigned agents and Code
 
-- Assignment creates a durable workspace job that the API or a paired computer claims and runs. Research writes the task page; code work runs in a chosen folder or checkout. Engines: Ensemble, Claude Code, Codex, Cursor ([30](30_ENGINES.md)).
+- Assignment creates a durable workspace job that the API or a paired computer claims and runs. Research writes the task page; code work runs in a chosen folder or checkout. Engines: Ensemble, Claude Code, Codex, Cursor, GitHub Copilot ([30](30_ENGINES.md)).
 - Run profiles hold model, mode, sandbox, network and git permissions, destination and budgets. Conflicting jobs run one at a time. Needs me holds exact pending decisions; publishing uses saved approvals.
 - A stop or restart keeps partial work and marks the interruption instead of claiming success. Runs keep Results, Files and Traces.
 - On the web, code review, editing, source control and the passkey-unlocked terminal go through a paired computer; ordinary accounts cannot reach the server's filesystem or terminal.

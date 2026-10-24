@@ -6,6 +6,7 @@
 import { stat } from "node:fs/promises";
 import { z } from "zod";
 import type { Actor, Prisma, PrismaClient } from "@prisma/client";
+import { CODE_ENGINES, ContextTier } from "@ensemble/shared-types";
 import { deviceAssignment } from "../devices/assign.js";
 import { serverRunnerEnabled } from "../devices/constants.js";
 import { publishBrowserDevice, publishDevice } from "../devices/publish.js";
@@ -54,9 +55,11 @@ export const Assign = z.object({
   folderLabel: z.string().max(200).optional(),
   /**
    * Who does the work: Ensemble's own agent (a model API with your key), or the person's own
-   * Claude Code, Codex or Cursor agent on their computer with their own sign-in.
+   * Claude Code, Codex, Cursor agent or GitHub Copilot on their computer with their own sign-in.
    */
-  engine: z.enum(["ensemble", "claude-code", "codex", "cursor-agent"]).default("ensemble"),
+  engine: z.enum(["ensemble", ...CODE_ENGINES]).default("ensemble"),
+  /** The model's context window where it offers more than one (GitHub Copilot's long_context). */
+  contextTier: ContextTier.optional(),
   /** In a sandboxed run, outside the work folder: read only, read and write, or nothing. Default: Settings. */
   outsideAccess: z.enum(["none", "read", "read-write"]).optional(),
   /**
@@ -66,12 +69,12 @@ export const Assign = z.object({
   chat: z.boolean().optional(),
 });
 
-const ENGINE_NAME = { ensemble: "Ensemble's agent", "claude-code": "Claude Code", codex: "Codex", "cursor-agent": "Cursor's agent" } as const;
+const ENGINE_NAME = { ensemble: "Ensemble's agent", "claude-code": "Claude Code", codex: "Codex", "cursor-agent": "Cursor's agent", "copilot-cli": "GitHub Copilot" } as const;
 
 /** The job's context with the run's outside-folder choice in it (a JSON column, so no migration). */
-function contextWith(context: Prisma.InputJsonValue | undefined, outsideAccess: string, chat = false): Prisma.InputJsonValue {
+function contextWith(context: Prisma.InputJsonValue | undefined, outsideAccess: string, chat = false, contextTier?: string | null): Prisma.InputJsonValue {
   const base = typeof context === "object" && context !== null && !Array.isArray(context) ? (context as Record<string, unknown>) : {};
-  return { ...base, outsideAccess, ...(chat ? { chat: true } : {}) } as Prisma.InputJsonValue;
+  return { ...base, outsideAccess, ...(chat ? { chat: true } : {}), ...(contextTier === "long_context" ? { contextTier } : {}) } as Prisma.InputJsonValue;
 }
 export type AssignInput = z.infer<typeof Assign>;
 
@@ -122,6 +125,7 @@ async function createDeviceJob(
     folderLabel: body.folderLabel,
     repoUrl: body.repoUrl,
     continueFromJobId: body.continueFromJobId,
+    engine: body.engine,
   }, { space: userId, runner });
   // Trust is checked on that computer, where the folder is; Review only and unattended wait there for it.
   const mode = requestedMode(body);
@@ -155,7 +159,7 @@ async function createDeviceJob(
       maxMinutes: body.maxMinutes ?? orchestration.maxMinutes,
       maxTurns: body.maxTurns ?? orchestration.maxTurns,
       maxToolCalls: body.maxToolCalls ?? 80,
-      context: contextWith(options.context, body.outsideAccess ?? orchestration.outsideAccess),
+      context: contextWith(options.context, body.outsideAccess ?? orchestration.outsideAccess, false, body.contextTier),
     },
   });
   const nextStatus = ["proposed", "done", "dropped", "blocked", "waiting_approval"].includes(task.status) ? "todo" : task.status;
@@ -202,7 +206,7 @@ export async function createJob(prisma: PrismaClient, userId: string, body: Assi
   const claudeCode = body.engine !== "ensemble";
   const engineName = ENGINE_NAME[body.engine];
   if (claudeCode && body.kind !== "code") throw new GuardError(`${engineName} works on code tasks. Pick Ensemble's agent for research.`);
-  if (body.chat && !claudeCode) throw new GuardError("Chat runs with Claude Code, Codex or Cursor's agent on your own sign-in. Ensemble's agent chats in Ensemble Code with a model key.");
+  if (body.chat && !claudeCode) throw new GuardError("Chat runs with Claude Code, Codex, Cursor's agent or GitHub Copilot on your own sign-in. Ensemble's agent chats in Ensemble Code with a model key.");
   // The engine is stored as the run's provider; its model is the engine's own name for one, or its default.
   // A model named here keeps its own provider (never the tier's): see lib/model-choice.ts.
   let provider: string;
@@ -316,7 +320,7 @@ export async function createJob(prisma: PrismaClient, userId: string, body: Assi
       maxMinutes: body.maxMinutes ?? settings.orchestration.maxMinutes,
       maxTurns: body.maxTurns ?? settings.orchestration.maxTurns,
       maxToolCalls: body.maxToolCalls ?? 80,
-      context: contextWith(options.context, body.outsideAccess ?? settings.orchestration.outsideAccess, body.chat === true),
+      context: contextWith(options.context, body.outsideAccess ?? settings.orchestration.outsideAccess, body.chat === true, body.contextTier),
     },
   });
   if (externalRoot && body.trust === "always") {

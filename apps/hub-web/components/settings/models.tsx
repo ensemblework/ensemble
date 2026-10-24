@@ -6,16 +6,17 @@ import { ASSISTANT_UNAVAILABLE, assistantErrorText } from "@ensemble/shared-type
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { KeyRound } from "lucide-react";
 import Link from "next/link";
-import { INCLUDED_LABEL, INCLUDED_PROVIDER, isSubscriptionProvider, SUBSCRIPTION_INFO, SUBSCRIPTION_PROVIDERS, type IncludedUsage, type ModelMeta, type ModelProvider, type Settings, type SubscriptionAgent } from "@ensemble/shared-types";
+import { INCLUDED_LABEL, INCLUDED_PROVIDER, isSubscriptionProvider, SUBSCRIPTION_INFO, SUBSCRIPTION_PROVIDERS, type IncludedUsage, type ModelContext, type ModelMeta, type ModelProvider, type Settings, type SubscriptionAgent } from "@ensemble/shared-types";
 import { api, type Complexity, type ModelCatalog } from "@/lib/api";
 import { relative } from "@/lib/format";
+import { contextChoice, contextSizes } from "@/lib/engine-models";
 import { includedBlocked, includedLocalOnly, includedNote, resetDay, useIncludedUsage, wholeCredits } from "@/lib/included";
 import { IncludedLocalOnly } from "@/components/metrics/included-credits";
 import { useQuotaMarks } from "@/lib/model-quota";
 import { FetchGlyph } from "@/components/motion/slot";
 import { ProviderLogo } from "../connectors/provider-logo";
 import { useToast } from "../toast";
-import { InfoTip, SectionCard, Tag } from "../ui";
+import { InfoTip, SectionCard, Tag, cx } from "../ui";
 import { ModelPicker, ProviderPicker, ThinkingPicker, effortFor, type ProviderChoice } from "./model-picker";
 import { KEY_PROVIDERS } from "./setup";
 import { ApiKeysDialog } from "./api-keys-dialog";
@@ -52,15 +53,26 @@ const label = (id: string) =>
       ? `${SUBSCRIPTION_INFO[id].label} (your plan)`
       : (KEY_PROVIDERS.find((row) => row.id === id)?.label ?? PROVIDERS.find((row) => row.id === id)?.label ?? id);
 
-/** A subscription's models as the tier pickers take them: ids, and each model's thinking levels. */
-export function subscriptionModels(agent: SubscriptionAgent | null): { models: string[]; meta: Record<string, ModelMeta>; cheapest: string | null } {
-  if (!agent) return { models: [], meta: {}, cheapest: null };
+/**
+ * A subscription's models as the tier pickers take them: ids, each model's thinking levels, and a
+ * line with its name, cost and context sizes where the agent reports them (GitHub Copilot).
+ */
+export function subscriptionModels(agent: SubscriptionAgent | null): { models: string[]; meta: Record<string, ModelMeta>; cheapest: string | null; hints: Record<string, string> } {
+  if (!agent) return { models: [], meta: {}, cheapest: null, hints: {} };
   const meta: Record<string, ModelMeta> = {};
+  const hints: Record<string, string> = {};
   for (const model of agent.models) {
     const efforts = model.efforts ?? agent.efforts;
     if (efforts?.length) meta[model.id] = { efforts };
+    if (model.cost || model.contexts?.length) hints[model.id] = [model.label !== model.id ? model.label : "", model.cost, contextSizes(model.contexts)].filter(Boolean).join(" · ");
   }
-  return { models: agent.models.map((model) => model.id), meta, cheapest: agent.models.find((model) => model.isDefault)?.id ?? agent.models[0]?.id ?? null };
+  return { models: agent.models.map((model) => model.id), meta, cheapest: agent.models.find((model) => model.isDefault)?.id ?? agent.models[0]?.id ?? null, hints };
+}
+
+/** The context windows a subscription model offers, when it offers a long one to choose. */
+export function contextWindows(agent: SubscriptionAgent | null, model: string): ModelContext[] {
+  const contexts = agent?.models.find((row) => row.id === model)?.contexts ?? [];
+  return contexts.length > 1 && contexts.some((row) => row.id === "long_context") ? contexts : [];
 }
 
 /** "Gemini and Claude have keys" — the one line the Models card shows instead of the whole key list. */
@@ -202,6 +214,10 @@ export function ModelsSection({ settings, patch }: Props) {
           const provider = plan ? undefined : catalog.data?.providers.find((row) => row.provider === value.provider);
           const meta = plan ? (planModels.meta[value.model] ?? null) : (provider?.meta?.[value.model] ?? null);
           const providerName = label(value.provider);
+          const contexts = plan ? contextWindows(agent, value.model) : [];
+          const context = value.context ?? "default";
+          // A long context window goes back to the standard one with a model that lacks it.
+          const keepContext = (next: string | null) => (value.context === "long_context" && !(next && contextWindows(agent, next).length) ? { context: "default" } : {});
           return (
             <div key={tier.id} data-tier={tier.id}>
               <div className="flex flex-wrap items-center gap-1.5 text-[13px] font-medium">
@@ -224,17 +240,17 @@ export function ModelsSection({ settings, patch }: Props) {
                     if (next === value.provider) return;
                     if (next === INCLUDED_PROVIDER) {
                       const entry = catalog.data?.providers.find((row) => row.provider === next);
-                      patch({ models: { [tier.id]: { provider: next, model: entry?.cheapest ?? entry?.models[0] ?? value.model, effort: "default" } } });
+                      patch({ models: { [tier.id]: { provider: next, model: entry?.cheapest ?? entry?.models[0] ?? value.model, effort: "default", ...keepContext(null) } } });
                       return;
                     }
                     if (isSubscriptionProvider(next)) {
                       const nextAgent = agents?.find((row) => row.id === next) ?? null;
-                      patch({ models: { [tier.id]: { provider: next, model: subscriptionModels(nextAgent).cheapest ?? "default", effort: "default" } } });
+                      patch({ models: { [tier.id]: { provider: next, model: subscriptionModels(nextAgent).cheapest ?? "default", effort: "default", ...keepContext(null) } } });
                       return;
                     }
                     const entry = catalog.data?.providers.find((row) => row.provider === next);
                     const model = entry?.cheapest ?? value.model;
-                    patch({ models: { [tier.id]: { provider: next, model, effort: effortFor(next, model, entry?.meta?.[model], value.effort) } } });
+                    patch({ models: { [tier.id]: { provider: next, model, effort: effortFor(next, model, entry?.meta?.[model], value.effort), ...keepContext(null) } } });
                   }}
                 />
                 <ModelPicker
@@ -246,11 +262,12 @@ export function ModelsSection({ settings, patch }: Props) {
                   cheapest={plan ? planModels.cheapest : (provider?.cheapest ?? null)}
                   meta={plan ? planModels.meta : provider?.meta}
                   notes={plan ? undefined : provider?.notes}
+                  hints={plan ? planModels.hints : undefined}
                   hasKey={plan ? Boolean(agent) : Boolean(provider?.available)}
                   onPick={(model) => {
                     if (model === value.model) return;
                     const modelMeta = plan ? planModels.meta[model] : provider?.meta?.[model];
-                    patch({ models: { [tier.id]: { model, effort: effortFor(value.provider, model, modelMeta, value.effort) } } });
+                    patch({ models: { [tier.id]: { model, effort: effortFor(value.provider, model, modelMeta, value.effort), ...keepContext(model) } } });
                   }}
                 />
               </div>
@@ -261,10 +278,22 @@ export function ModelsSection({ settings, patch }: Props) {
                   providerLabel={providerName}
                   model={value.model}
                   meta={meta}
+                  fallback={plan ? (agent?.models.find((row) => row.id === value.model)?.defaultEffort ?? null) : null}
                   value={value.effort}
                   onChange={(effort) => patch({ models: { [tier.id]: { effort } } })}
                 />
               </div>
+              {contexts.length ? (
+                <div className="mt-2" data-context-window>
+                  <div role="radiogroup" aria-label={`${tier.label} context window`} className="thinking-levels">
+                    {contexts.map((row) => (
+                      <button key={row.id} type="button" role="radio" aria-checked={context === row.id} onClick={() => patch({ models: { [tier.id]: { context: row.id } } })} className={cx("thinking-level", context === row.id && "is-on")}>
+                        {contextChoice(row)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               {(() => {
                 const mark = quotas.get(value.model);
                 if (mark && Date.parse(mark.resetsAt) > Date.now()) {

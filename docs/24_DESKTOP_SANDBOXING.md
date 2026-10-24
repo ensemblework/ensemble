@@ -63,7 +63,7 @@ No mode bypasses outside-access or Git rules. Tool-call gates apply to Ensemble 
 
 Local only, Commit, and Commit + push are distinct. Local only also refuses commit-producing `merge`, `rebase`, `cherry-pick`, `revert`, `tag`, `am`, `notes` and a non-fast-forward `pull`; a commit made another way (a script, say) is undone at the end while file changes stay. Ask before each commit parks the exact operation; Unattended cannot combine with it.
 
-Clone, fetch and push run in trusted app helpers with the person's configured sign-in. The agent never receives `ENSEMBLE_GIT_TOKEN`, an askpass that prints it, or an SSH agent socket. Git runs hardened against hooks, helpers and config execution. Push is fast-forward only and only to the run's own branch (`ensemble/<job-id>/<slug>`, or an inherited run branch for a continuation); pushes to `main`, force pushes and other branches are refused before git starts.
+Clone, fetch and push run in trusted app helpers with the person's configured sign-in. The agent never receives `ENSEMBLE_GIT_TOKEN`, an askpass that prints it, or an SSH agent socket. Git runs hardened against hooks, helpers and config execution. Push is fast-forward only and only to the run's own branch (`ensemble/<job-id>/<slug>`, or an inherited run branch for a continuation); pushes to `main`, force pushes and other branches are refused before git starts. An engine's `gh` commands may only read GitHub ([30 §1](30_ENGINES.md)).
 
 Credential redaction recognizes known patterns only; command output can still contain sensitive data.
 
