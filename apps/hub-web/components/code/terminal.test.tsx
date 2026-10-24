@@ -225,7 +225,7 @@ async function mountDevice(lock: Record<string, unknown>): Promise<{ host: HTMLD
     const body = url.includes("/api/web-terminal/status")
       ? { unlocked: false, expiresAt: null, passkeys: [], password: false, emailCode: true, ...lock }
       : url.endsWith("/api/devices")
-        ? { serverRunner: false, devices: [{ id: "d1", name: "Studio Mac", platform: "darwin", appVersion: "0.3.8", capabilities: { code: true }, folders: [], runBranchPush: false, lastSeenAt: null, createdAt: "2026-10-14T00:00:00Z", online: true }] }
+        ? { serverRunner: false, devices: [{ id: "d1", name: "Studio Mac", platform: "darwin", appVersion: "0.3.8", capabilities: { code: true }, folders: [], lastSeenAt: null, createdAt: "2026-10-14T00:00:00Z", online: true }] }
         : { error: "unexpected" };
     return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
   }) as typeof fetch;

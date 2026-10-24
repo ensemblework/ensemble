@@ -135,9 +135,6 @@ export async function agentRoutes(app: FastifyInstance): Promise<void> {
   await jobFileRoutes(app);
 
   app.post("/api/agent/assign", async (request, reply) => {
-    if (request.body && typeof request.body === "object" && "runBranchPush" in request.body) {
-      return reply.code(403).send({ error: "Run-branch push is set on your computer. This page cannot change it." });
-    }
     const body = Assign.parse(request.body);
     if (body.deviceId && (await isPaused(app.redis, request.userId))) {
       return reply.code(409).send({ error: "The agent is paused. Resume it before assigning work to a computer." });

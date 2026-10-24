@@ -5,7 +5,6 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { GIT_GATE_CLONE, GIT_GATE_CODE, GIT_GATE_PUSH } from "./origin.js";
 import type { LocalDecision } from "./policy.js";
 import type { JobSpec } from "./contract.js";
 import type { RemoteSettings } from "./store.js";
@@ -17,12 +16,10 @@ const { isRefusal, judgeAnswer, planLocalJob, riskOf } = await import("./policy.
 const settings = (folders: RemoteSettings["folders"] = [], acceptWebApprovals = true): RemoteSettings => ({
   version: 1,
   enabled: true,
-  runBranchPush: false,
   acceptWebApprovals,
   browseFiles: true,
   webEdit: true,
   webTerminal: true,
-  pullRequestBases: ["testing"],
   apiBase: "http://127.0.0.1:9",
   deviceId: "device",
   deviceName: "Test",
@@ -54,16 +51,15 @@ const question = (over: Partial<LocalDecision> = {}): LocalDecision => ({
   ...over,
 });
 
-test("a remote spec cannot name a path, a private clone, credentials, or another branch", () => {
+test("a remote spec cannot name a path or an unshared folder; its sign-in, SSH repositories and branches are the person's call", () => {
   const none = () => null;
   const creds = planLocalJob(spec({ useCredentials: true }), settings(), none);
-  assert.equal(isRefusal(creds) && creds.code, GIT_GATE_CODE);
-  assert.match(isRefusal(creds) ? creds.message : "", /desktop steps 2 and 4/);
-  assert.match(GIT_GATE_CLONE, /desktop steps 2 and 4/);
-  assert.match(GIT_GATE_PUSH, /desktop steps 2 and 4/);
+  assert.ok(!isRefusal(creds) && creds.assign.useCredentials, "the computer's sign-in clones a private repository");
+  const narrowed = planLocalJob(spec({ useCredentials: true }), settings([], false), none);
+  assert.ok(!isRefusal(narrowed) && !narrowed.assign.useCredentials, "unless this computer keeps web settings to itself");
 
   const ssh = planLocalJob(spec({ repoUrl: "git@github.com:acme/secret.git" }), settings(), none);
-  assert.equal(isRefusal(ssh) && ssh.message, GIT_GATE_CLONE);
+  assert.ok(!isRefusal(ssh) && ssh.assign.repoUrl === "git@github.com:acme/secret.git");
 
   const raw = planLocalJob(spec({ repoUrl: "/tmp/not-shared" }), settings(), none);
   assert.equal(isRefusal(raw) && raw.code, "REPO_NOT_ALLOWED");
@@ -72,7 +68,7 @@ test("a remote spec cannot name a path, a private clone, credentials, or another
   assert.equal(isRefusal(unknown) && unknown.code, "UNKNOWN_FOLDER");
 
   const branch = planLocalJob(spec({ branchMode: "existing", branch: "main" }), settings(), none);
-  assert.equal(isRefusal(branch) && branch.code, "BRANCH_NOT_ALLOWED");
+  assert.ok(!isRefusal(branch) && branch.assign.branchMode === "existing" && branch.assign.branch === "main");
 });
 
 test("a code task with no repository and no shared folder works in a new empty folder on the computer", () => {
@@ -81,10 +77,9 @@ test("a code task with no repository and no shared folder works in a new empty f
   if (isRefusal(plan)) return;
   assert.equal(plan.assign.folder, undefined);
   assert.equal(plan.assign.repoUrl, undefined);
-  assert.equal(plan.publicCheck, null);
 });
 
-test("a shared label becomes a local folder, and a public https URL is checked before clone", () => {
+test("a shared label becomes a local folder, and an https URL is cloned as given", () => {
   const shared = settings([
     { label: "notes", path: "/work/notes", kind: "folder", access: "read-write" },
     { label: "source", path: "/work/source", kind: "repo", access: "read-write" },
@@ -99,7 +94,6 @@ test("a shared label becomes a local folder, and a public https URL is checked b
     assert.equal(folder.assign.reasoningEffort, "low");
     assert.equal(folder.assign.useCredentials, false);
     assert.equal(folder.assign.trust, "none");
-    assert.equal(folder.publicCheck, null);
   }
   const repo = planLocalJob(spec({ folder: "source" }), shared, () => null);
   assert.equal(isRefusal(repo), false);
@@ -108,7 +102,7 @@ test("a shared label becomes a local folder, and a public https URL is checked b
   const pub = planLocalJob(spec({ repoUrl: "https://github.com/octocat/Hello-World.git" }), settings(), () => null);
   assert.equal(isRefusal(pub), false);
   if (!isRefusal(pub)) {
-    assert.equal(pub.publicCheck, "https://github.com/octocat/Hello-World.git");
+    assert.equal(pub.assign.repoUrl, "https://github.com/octocat/Hello-World.git");
     assert.equal(pub.assign.useCredentials, false);
   }
 });
@@ -214,7 +208,7 @@ test("the task page from the web becomes the local task's page, read once, whate
   assert.match(older.description, /morluto\/rea/, "a spec without the field still carries the page in its description");
 });
 
-test("a pull request from the web: only into a base this computer allows, from a clone, on a branch it may name", () => {
+test("a pull request from the web: into any branch, from a clone or a folder worked in place, on a branch it may name", () => {
   const none = () => null;
   const repo = settings([{ label: "ensemble", path: "/work/ensemble", kind: "repo", access: "read-write" }, { label: "notes", path: "/work/notes", kind: "folder", access: "read-write" }]);
   const ok = planLocalJob(spec({ folderLabel: "ensemble", branch: "feature-a", branchMode: "new", delivery: "push", pullRequest: { base: "testing", merge: "auto" } }), repo, none);
@@ -223,17 +217,17 @@ test("a pull request from the web: only into a base this computer allows, from a
     assert.deepEqual(ok.assign.pullRequest, { base: "testing", merge: "auto" });
     assert.equal(ok.assign.branchMode, "new");
     assert.equal(ok.assign.branch, "feature-a");
-    assert.equal(ok.assign.delivery, "commit", "Ensemble pushes; the agent only commits");
+    assert.equal(ok.assign.delivery, "push", "the agent may push too");
     assert.equal(ok.assign.repoUrl, "/work/ensemble", "a repository folder: the run works in its own clone");
   }
-  const notAllowed = planLocalJob(spec({ folderLabel: "ensemble", pullRequest: { base: "release", merge: "ask" } }), repo, none);
-  assert.match(isRefusal(notAllowed) ? notAllowed.message : "", /does not open pull requests into release/);
-  const production = planLocalJob(spec({ folderLabel: "ensemble", pullRequest: { base: "main", merge: "auto" } }), settings([], true), none);
-  assert.match(isRefusal(production) ? production.message : "", /never opens a pull request into main/);
+  for (const base of ["main", "production", "release", ""]) {
+    const any = planLocalJob(spec({ folderLabel: "ensemble", pullRequest: { base, merge: "auto" } }), repo, none);
+    assert.ok(!isRefusal(any), base);
+  }
   const inPlace = planLocalJob(spec({ folderLabel: "notes", pullRequest: { base: "testing", merge: "ask" } }), repo, none);
-  assert.match(isRefusal(inPlace) ? inPlace.message : "", /worked in place|shared to work in place/);
+  assert.ok(!isRefusal(inPlace) && inPlace.assign.folder === "/work/notes");
   const badHead = planLocalJob(spec({ folderLabel: "ensemble", branch: "testing", branchMode: "new", pullRequest: { base: "testing", merge: "ask" } }), repo, none);
-  assert.match(isRefusal(badHead) ? badHead.message : "", /cannot be testing/);
+  assert.match(isRefusal(badHead) ? badHead.message : "", /into itself/);
   const plain = planLocalJob(spec({ folderLabel: "ensemble", branch: "feature-a", branchMode: "new" }), repo, none);
-  assert.equal(isRefusal(plain) && plain.code, "BRANCH_NOT_ALLOWED", "without a pull request a remote task still works only on its run branch");
+  assert.ok(!isRefusal(plain) && plain.assign.branchMode === "new" && plain.assign.branch === "feature-a", "a branch named on the web is used as named");
 });

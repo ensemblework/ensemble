@@ -65,17 +65,17 @@ const session = cookieHeader(signup);
 
 const task = await call("/api/tasks", { method: "POST", cookie: session, body: { title: "Say hello from the computer", status: "todo" } });
 const taskId = task.body.task?.id ?? task.body.id;
-const office = await pair(session, "Office", "macos", { folders: ["Notes", "Desk"], runBranchPush: true });
-const studio = await pair(session, "Studio PC", "windows", { folders: ["Desk"], runBranchPush: false });
-const build = await pair(session, "Build box", "linux", { folders: ["Src"], runBranchPush: false });
+const office = await pair(session, "Office", "macos", { folders: ["Notes", "Desk"] });
+const studio = await pair(session, "Studio PC", "windows", { folders: ["Desk"] });
+const build = await pair(session, "Build box", "linux", { folders: ["Src"] });
 
-const flip = await call("/api/devices/self/heartbeat", {
+const asComputer = await call("/api/devices/self/heartbeat", {
   method: "POST",
   cookie: session,
   ok: false,
-  body: { runningJobIds: [], capabilities: { runBranchPush: true } },
+  body: { runningJobIds: [] },
 });
-assert.equal(flip.status, 403);
+assert.equal(asComputer.status, 403);
 const listed = await call("/api/devices", { cookie: session });
 const platforms = Object.fromEntries(listed.body.devices.map((device) => [device.name, device.platform]));
 assert.deepEqual(platforms, { Office: "macos", "Studio PC": "windows", "Build box": "linux" });
@@ -156,14 +156,8 @@ await page.getByRole("button", { name: "Pair a device" }).click();
 await page.getByText("Type this code into your computer").waitFor();
 await page.getByText("Studio PC · Windows").waitFor();
 await page.getByText("Build box · Linux").waitFor();
-const pill = page.locator("#devices [data-run-branch=on]");
-await pill.waitFor();
-assert.equal(await pill.locator("text=set on Office").count(), 1);
-assert.equal(await pill.evaluate((element) => element.closest("button, [role=switch]") !== null), false);
-assert.equal(await page.getByRole("switch", { name: "Run-branch push" }).count(), 0);
 await page.locator("#devices").scrollIntoViewIfNeeded();
 await page.screenshot({ path: `${SHOTS}/device-settings.png` });
-await pill.screenshot({ path: `${SHOTS}/run-branch-pill.png` });
 
 await page.goto(`${WEB}/workspace`, { waitUntil: "load" });
 await page.getByRole("button", { name: "Assign task" }).click();
@@ -180,8 +174,6 @@ for (const banned of ["this Mac", "your Mac", "the Mac", "on the Mac"]) {
 assert.match(windowsCopy, /A fresh clone on Studio PC/);
 assert.equal(windowsCopy.includes("ensemble-workspace"), false);
 assert.ok((windowsCopy.match(/Queued until Studio PC is back/g) ?? []).length <= 1);
-assert.match(windowsCopy, /set on Studio PC/);
-assert.equal(await dialog.locator("[data-run-branch=off]").count(), 1);
 await dialog.getByRole("button", { name: /Build box/ }).click();
 await dialog.getByText("A folder on Build box").waitFor();
 const linuxCopy = await dialog.innerText();

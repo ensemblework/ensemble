@@ -29,7 +29,7 @@ import {
   withLocalApi,
   localJson,
 } from "./sidecar.js";
-import { addFolder, basesSummary, checkBase, folderLine, folderRequest, gitBases, listFolders, listKeys, parseGitBasesArgs, removeFolder, removeKey, remoteStatus, setKey, withAdminApi } from "./local-commands.js";
+import { addFolder, folderLine, folderRequest, listFolders, listKeys, removeFolder, removeKey, remoteStatus, setKey, withAdminApi } from "./local-commands.js";
 import { chooseEditors, configuredEditors, detectEditors, parseEditorNames, removeEditor, setupEditor } from "./editors.js";
 import { commandWithSubcommand, isExecutableOnPath } from "./launcher.js";
 import { installRunnerService, uninstallRunnerService } from "./services.js";
@@ -53,8 +53,6 @@ const HELP = `Ensemble ${TESTING ? "Testing " : ""}${VERSION}: your tasks and co
                       Ensemble starts on this computer if it is not running, and keeps running
                       tasks after you leave.
   ensemble login      Sign in, so tasks you assign on ensemblework.com run here.
-  ensemble git bases  The branches runs here may open pull requests into (testing until you
-                      change it; never main, master, production or testing-live).
 
 Inside the app, type / for commands: /run, /allow, /deny, /answer, /profile, /agent, /model,
 /keys, /trust, /hooks, /login, /status, /help.
@@ -74,7 +72,6 @@ Usage:
   ensemble mcp editors
   ensemble runner [start] [--foreground] | stop | restart | status | logs [-f] | install | uninstall
   ensemble folders [list] | add <path> [--label L] [--read-only] [--repo] | remove <label>
-  ensemble git bases [list] | add <branch> | remove <branch>
   ensemble keys [list] | set <provider> | remove <provider>
   ensemble needs [list] | answer <n> <allow|deny|option number|"answer">
   ensemble trust [list] | add [path] | remove <path> | share [on|off]
@@ -94,9 +91,7 @@ const HELP_BY_COMMAND: Record<string, string> = Object.fromEntries(Object.entrie
   mcp: "Usage: ensemble mcp | ensemble mcp setup [editor...] [--all] [--print] [--hosted] | ensemble mcp remove <editor> | ensemble mcp editors",
   runner: "Usage: ensemble runner [start] [--foreground] | stop | restart | status | logs [-f] | install | uninstall",
   folders:
-    "Usage: ensemble folders [list] | add <path> [--label L] [--read-only] [--repo] | remove <label>\nFolders the web may run tasks in. A folder is worked in place. --repo shares a git repository instead: every run from the web works in its own clone of it and may end in a pull request (see `ensemble git bases`).",
-  git:
-    "Usage: ensemble git bases [list] | add <branch> | remove <branch>\nThe branches a run on this computer may open a pull request into, and merge into when you say so: testing until you change it. Never main, master, production or testing-live. With none, runs here open no pull requests. Only this computer changes the list.",
+    "Usage: ensemble folders [list] | add <path> [--label L] [--read-only] [--repo] | remove <label>\nFolders the web may run tasks in. A folder is worked in place. --repo shares a git repository instead: every run from the web works in its own clone of it and may end in a pull request.",
   keys: "Usage: ensemble keys [list] | set <provider> | remove <provider>",
   needs: "Usage: ensemble needs [list] | answer <n> <allow|deny|option number|\"answer\">\nQuestions and approvals waiting on this computer, including pushes and folder trust.",
   trust: "Usage: ensemble trust [list] | add [path] | remove <path> | share [on|off]\nTrusted folders on this computer. Review only and Run unattended need one; Ensemble's own workspace is always trusted.\n`share` shows or sets whether they are trusted in Claude Code, Codex, GitHub Copilot CLI, Cursor and Gemini CLI too (on by default).",
@@ -459,16 +454,6 @@ async function commandFolders(args: string[]): Promise<void> {
   console.log(`Removed ${result.positionals[0]}.`);
 }
 
-async function commandGit(args: string[]): Promise<void> {
-  if (!args.length || args.includes("--help") || args.includes("-h")) return void console.log(HELP_BY_COMMAND.git);
-  if (args[0] !== "bases") throw new Error(HELP_BY_COMMAND.git);
-  const plan = parseGitBasesArgs(args.slice(1));
-  if (plan.action === "add") checkBase(plan.branch);
-  const sidecarDir = resolveSidecarDir(import.meta.url);
-  if (!(await sidecarAvailable(sidecarDir))) throw new Error(NO_RUNNER);
-  console.log(await withAdminApi({ sidecarDir, run: (discovery) => gitBases(discovery, plan) }));
-}
-
 async function commandKeys(args: string[]): Promise<void> {
   const subcommand = args[0] && !args[0].startsWith("-") ? args[0] : "list";
   const rest = subcommand === "list" ? (args[0] === "list" ? args.slice(1) : args) : args.slice(1);
@@ -678,7 +663,6 @@ async function statusSummary(): Promise<Record<string, unknown>> {
     runnerStartedAt: pid?.startedAt || null,
     remoteEnabled: remote?.enabled ?? null,
     folders: remote?.folders ?? null,
-    pullRequestBases: remote?.pullRequestBases ?? null,
     modelKeys: runner ? (keys ?? []).filter((key) => key.source && key.source !== "none").map((key) => key.provider) : null,
     node: process.version,
     git: Boolean(isExecutableOnPath("git")),
@@ -691,7 +675,6 @@ type Summary = Awaited<ReturnType<typeof statusSummary>>;
 function statusLines(status: Summary): string[] {
   const account = status.account as { email?: string; name?: string } | null;
   const folders = status.folders as Array<{ label: string; path: string; kind?: string; access?: string }> | null;
-  const bases = status.pullRequestBases as string[] | null;
   const keys = status.modelKeys as string[] | null;
   const editors = status.editors as string[];
   const startedAt = typeof status.runnerStartedAt === "string" ? Date.parse(status.runnerStartedAt) : Number.NaN;
@@ -717,7 +700,6 @@ function statusLines(status: Summary): string[] {
           ? folders.map((folder) => `${folder.label} → ${folder.path}${folder.kind === "repo" ? " (repository)" : ""}${folder.access === "review" ? " (read-only)" : ""}`).join("\n" + " ".repeat(15))
           : "none (add one with `ensemble folders add <path>`)",
     ),
-    row("Pull requests", bases ? basesSummary(bases) : status.runnerRunning ? "not offered by this runner (update it)" : "start the runner to see"),
     row("Model keys", keys === null ? "start the runner to list" : keys.length ? keys.join(", ") : "none (add one on the web in Settings → Models, or `ensemble keys set <provider>`)"),
     row("Editors", editors.length ? editors.join(", ") : "none configured (run `ensemble mcp setup`)"),
   ];
@@ -832,8 +814,6 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
       return commandRunner(rest);
     case "folders":
       return commandFolders(rest);
-    case "git":
-      return commandGit(rest);
     case "keys":
       return commandKeys(rest);
     case "needs":

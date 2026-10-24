@@ -34,7 +34,7 @@ export const COMMANDS: readonly Command[] = [
   { name: "logout", description: "Sign out and unpair this computer" },
   { name: "runner", args: "[install|uninstall]", description: "Start Ensemble at login, or stop doing that" },
   { name: "update", description: "Update Ensemble on this computer" },
-  { name: "status", description: "Account, runtime, sandbox, keys and pull request bases" },
+  { name: "status", description: "Account, runtime, sandbox and keys" },
   { name: "sidebar", description: "Show or hide the sidebar (Ctrl+B)" },
   { name: "help", description: "Keys and commands" },
   { name: "exit", aliases: ["quit", "q"], description: "Leave; Ensemble keeps running tasks in the background" },
@@ -177,7 +177,8 @@ export type AgentChoice = { model: string | null; effort?: string | null; contex
  * chosen engine. `agent`, the `/model` choice for the person's own agent, replaces the profile's
  * model, thinking level and context window when it names a model. A profile that ends in a pull
  * request runs in its own clone of this folder (a git repository) instead of in the folder, on a
- * branch Ensemble makes from the base; it commits, and Ensemble pushes and opens the pull request.
+ * branch Ensemble makes from the base (empty: the repository's default branch); it commits, and
+ * Ensemble pushes and opens the pull request.
  */
 export function runRequest(input: {
   taskId: string;
@@ -211,7 +212,7 @@ export function runRequest(input: {
     instructions: [profile.instructions, input.instructions].filter(Boolean).join("\n\n"),
     ...(pullRequest ? { repoUrl: input.folder, pullRequest: { base: pullRequest.base, merge: pullRequest.merge } } : { folder: input.folder }),
     branchMode: pullRequest ? "as-is" : profile.branchMode,
-    delivery: pullRequest ? "commit" : profile.delivery,
+    delivery: pullRequest ? "push" : profile.delivery,
     askBeforePublish: profile.askBeforePublish,
     mode: profile.mode,
     sandbox: profile.sandbox,
@@ -345,16 +346,22 @@ export function titleFrom(text: string): string {
   return first.length > 80 ? `${first.slice(0, 77)}…` : first;
 }
 
+/** What a run may do with git: `local` and `commit` are limits the person picked; `push` has none. */
+export function deliveryLabel(delivery: string): string {
+  return delivery === "local" ? "local only" : delivery === "commit" ? "may commit" : "No limits (commit, push, pull requests)";
+}
+
+/** The branch a pull request goes into: the one named, or the repository's default branch. */
+export function baseLabel(base: string): string {
+  return base || "the default branch";
+}
+
 export function profileSummary(profile: RunProfile): string {
   const mode = profile.mode === "unattended" ? "Run unattended" : profile.mode === "review" ? "Review only" : "Ask";
   const plan = profile.pullRequest;
   const git = plan
-    ? `pull request into ${plan.base}${plan.merge === "auto" ? ", merged when its checks pass" : plan.merge === "ask" ? ", merged if you approve" : ", left open"}`
-    : profile.delivery === "local"
-      ? "local only"
-      : profile.delivery === "commit"
-        ? "may commit"
-        : "may commit and push";
+    ? `pull request into ${baseLabel(plan.base)}${plan.merge === "auto" ? ", merged when its checks pass" : plan.merge === "ask" ? ", merged if you approve" : ", left open"}`
+    : deliveryLabel(profile.delivery);
   return `${mode} · ${git} · sandbox ${profile.sandbox ? "on" : "off"} · internet ${profile.network ? "on" : "off"}`;
 }
 

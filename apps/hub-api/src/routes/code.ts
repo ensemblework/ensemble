@@ -42,8 +42,8 @@ import { dropWhere, readLru, remember } from "../lib/bounded.js";
 import { loadSettings } from "../lib/settings.js";
 import { resolveCodeFolder, usableCodeRoots } from "../lib/code-folders.js";
 import { expandHome, gitHardening, within } from "../workspace/guard.js";
-import { isOwnRunBranch, isRunBranch, runTrustedGit } from "../workspace/git-gate.js";
-import { pushRunBranch } from "../workspace/publish.js";
+import { runTrustedGit } from "../workspace/git-gate.js";
+import { pushWithSignIn } from "../workspace/publish.js";
 import { flagPlanted, type PlantedHit } from "../workspace/planted.js";
 
 const REVIEW_TTL_DAYS = 14;
@@ -190,7 +190,8 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
     if (source.review) {
       const job = source.review.job;
       const head = (await git(source.repo, ["rev-parse", "HEAD"]).catch(() => "")).trim();
-      const onRunBranch = isOwnRunBranch(branch, job.id) || (Boolean(job.continueFromJobId) && isRunBranch(branch));
+      // The run's own checkout (not a folder worked in place), on whatever branch the run is on.
+      const onRunBranch = !job.externalRoot;
       review = {
         id: source.review.id,
         completedAt: source.review.completedAt?.toISOString() ?? null,
@@ -274,14 +275,14 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
       return result.output.trim();
     };
     const branch = await trusted(["rev-parse", "--abbrev-ref", "HEAD"]);
-    const runBranch = isOwnRunBranch(branch, review.job.id) || (Boolean(review.job.continueFromJobId) && isRunBranch(branch));
+    const runBranch = !review.job.externalRoot;
     const paths = review.agentPaths.filter((path) => within(repo, join(repo, path)) && !path.split("/").includes(".git"));
     return { review, repo, trusted, branch, runBranch, paths };
   }
 
   /**
    * Keep what is on disk now (after any per-hunk rejects). In the run's own
-   * checkout the change is committed on the run branch, by the app, with
+   * checkout the change is committed on the run's branch, by the app, with
    * hooks off. A folder outside the workspace is left uncommitted.
    */
   app.post("/api/code/reviews/:id/accept", async (request) => {
@@ -314,7 +315,7 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
 
   /**
    * Put the folder back the way the run found it, for the files the agent
-   * changed. Commits the agent made are undone only on its own run branch.
+   * changed. Commits the agent made are undone only in the run's own checkout.
    */
   app.post("/api/code/reviews/:id/discard", async (request) => {
     const { id } = request.params as { id: string };
@@ -335,11 +336,11 @@ export async function codeRoutes(app: FastifyInstance): Promise<void> {
     return { ok: true, restored: paths.length, keptCommits };
   });
 
-  /** The person's push: fast-forward, run branch only, to the URL the run was cloned from. */
+  /** The person's push of the run's branch to its remote, with their sign-in. */
   app.post("/api/code/reviews/:id/push", async (request) => {
     const { id } = request.params as { id: string };
     const { review, repo, branch } = await agentReview(request.userId, id);
-    const pushed = await pushRunBranch({ prisma, userId: request.userId, job: review.job, root: repo, branch });
+    const pushed = await pushWithSignIn({ prisma, userId: request.userId, job: review.job, root: repo, rest: ["--porcelain", "-u", "origin", "HEAD"], sandboxed: false });
     await appendLedger({ userId: request.userId, actor: "me", action: "code.review.push", taskId: review.job.taskId, payload: { review: review.id, branch, exitCode: pushed.exitCode } });
     if (pushed.exitCode !== 0) throw new GitError(`The push was refused: ${pushed.output.trim().slice(-500)}`, 409);
     return { ok: true, branch, remote: pushed.remote };

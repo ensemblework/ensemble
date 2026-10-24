@@ -60,7 +60,7 @@ const LIVE = new Set(["queued", "claimed", "running", "stopping", "waiting_appro
 function runIsLive(run: RunDetail, job: RunJob | null): boolean {
   return !run.endedAt && (!job || LIVE.has(job.status));
 }
-const DELIVERY: Record<string, string> = { local: "Local only", commit: "May commit", push: "May push" };
+const DELIVERY: Record<string, string> = { local: "Local only", commit: "May commit", push: "No git limits" };
 
 type Tab = "trace" | "result" | "files";
 type Filter = "all" | "tools" | "thinking" | "messages";

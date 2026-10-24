@@ -60,9 +60,12 @@ test("/run with a profile that ends in a pull request runs in a clone of this fo
   assert.deepEqual(run.pullRequest, { base: "testing", merge: "auto" });
   assert.equal(run.repoUrl, "/work/app", "its own clone of this folder");
   assert.equal(run.folder, undefined, "never the folder in place");
-  assert.equal(run.delivery, "commit", "Ensemble pushes, not the run");
+  assert.equal(run.delivery, "push", "the agent may push too; Ensemble opens the pull request when it ends");
   assert.equal(run.branchMode, "as-is", "Ensemble makes the branch from the base");
   assert.match(profileSummary(profile), /pull request into testing, merged when its checks pass/);
+  const toDefault = { ...profile, pullRequest: { base: "", merge: "never" as const } };
+  assert.equal((runRequest({ taskId: "t", folder: "/work/app", instructions: "fix it", profile: toDefault, engine: null }).pullRequest as { base: string }).base, "", "empty: the repository's default branch");
+  assert.match(profileSummary(toDefault), /pull request into the default branch, left open/);
 
   const chat = chatTurnRequest({ taskId: "t", folder: "/work/app", message: "fix it", profile, engine: "claude-code", model: null, previousJobId: null });
   assert.equal(chat.pullRequest, undefined);
@@ -72,6 +75,7 @@ test("/run with a profile that ends in a pull request runs in a clone of this fo
 
   const plain = runRequest({ taskId: "t", folder: "/work/app", instructions: "fix it", profile: { ...profile, pullRequest: null }, engine: null });
   assert.deepEqual([plain.pullRequest, plain.repoUrl, plain.folder, plain.delivery, plain.branchMode], [undefined, undefined, "/work/app", "push", "new"]);
+  assert.match(profileSummary({ ...profile, pullRequest: null }), /Ask · No limits \(commit, push, pull requests\) ·/);
 });
 
 test("a chat message runs the agent in this folder under the profile; later ones continue the first, on the same branch", () => {

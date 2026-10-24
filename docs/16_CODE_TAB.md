@@ -92,7 +92,7 @@ Both are pinned as `refs/ensemble/review/<job>/{start,end}` for **14 days** (eac
 
 The review is start → end, so work you had before the run is never shown as the agent's; Source control lists it as *Your changes*, unticked. Git-ignored files have no snapshot; changed ones are listed as *Changed, can't be reviewed*. Failed and stopped runs get a review too, and their changes stay in the folder until you decide.
 
-*Accept all* (`POST /api/code/reviews/:id/accept`) keeps what is on disk; on the run's own branch in Ensemble's checkout it commits the agent's files with hooks off, while an outside folder is left uncommitted. *Discard all* (`POST /api/code/reviews/:id/discard`) puts the agent's files back as the run found them; the agent's commits are undone only on its own run branch, otherwise kept and reported, and an agent-owned task waiting for approval or done returns to Todo. *Push* on a reviewed run is fast-forward only, to the run's branch at the repository it was cloned from.
+*Accept all* (`POST /api/code/reviews/:id/accept`) keeps what is on disk; in Ensemble's checkout it commits the agent's files on the run's branch with hooks off, while an outside folder is left uncommitted. *Discard all* (`POST /api/code/reviews/:id/discard`) puts the agent's files back as the run found them; the agent's commits are undone only in Ensemble's checkout, otherwise kept and reported, and an agent-owned task waiting for approval or done returns to Todo. *Push* on a reviewed run pushes the run's branch to its `origin` without force, with the computer's sign-in (`git push -u origin HEAD`).
 
 ---
 
@@ -112,9 +112,9 @@ The rest of the panel shows staged and unstaged files (stage, unstage, discard),
 
 The Assign dialog's *Optional information* has *Which branch the agent works on*:
 
-- **Use as is (default)**: nothing is created or switched. Your own folder is used as it is; Ensemble's checkout uses the branch picked below or the default.
-- **Existing branch**: Ensemble's checkout works directly on that branch, including for a pull request (never the default branch).
-- **New branch**: created and switched to before starting; in your own folder that is `git switch -c`, carrying uncommitted work over.
+- **Use as is (default)**: nothing is created or switched. Your own folder is used as it is; Ensemble's checkout stays on the branch it was cloned on.
+- **Existing branch**: the run switches to that branch, any branch, fetching it when it is only on the remote.
+- **New branch**: `git switch -c <exact name>` before starting, in Ensemble's checkout or your own folder (uncommitted work carries over); an existing branch of that name is switched to.
 
 ---
 

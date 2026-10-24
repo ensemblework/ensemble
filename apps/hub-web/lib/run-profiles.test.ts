@@ -36,8 +36,8 @@ test("a changed field marks the form as modified", () => {
 });
 
 test("the summary names the mode and git permission", () => {
-  assert.equal(profileSummary(quick), "Code · Ask · may commit (asks before each commit)");
-  assert.equal(profileSummary({ ...quick, mode: "unattended", delivery: "push" }), "Code · Run unattended · may commit and push");
+  assert.equal(profileSummary(quick), "Code · Ask · no git limits (asks before each commit)");
+  assert.equal(profileSummary({ ...quick, mode: "unattended", delivery: "commit" }), "Code · Run unattended · may commit, no push");
 });
 
 import { quickAssignInput } from "./quick-assign.js";
@@ -106,19 +106,20 @@ test("a Copilot profile keeps its model, thinking level and context window", () 
   const profile = { ...quick, id: "copilot", name: "Copilot", engine: "copilot-cli" as const, model: "gpt-5.6-luna", effort: "high" as const, context: "long_context" as const };
   const input = quickAssignInput("task", profile);
   assert.deepEqual([input.engine, input.model, input.reasoningEffort, input.contextTier, input.provider], ["copilot-cli", "gpt-5.6-luna", "high", "long_context", undefined]);
-  assert.equal(profileSummary(profile), "GitHub Copilot · Code · Ask · may commit (asks before each commit)");
+  assert.equal(profileSummary(profile), "GitHub Copilot · Code · Ask · no git limits (asks before each commit)");
   const fields = profileFields(profile);
   assert.equal(differs(profile, { ...fields, context: undefined }), true);
   assert.equal(differs({ ...profile, context: "default" }, { ...fields, context: undefined }), false, "unset and Standard are the same window");
 });
 
-import { computerPullRequestBases, pullRequestNotices, pullRequestProblem, runPullRequest, runPullRequestLabel } from "./pull-request.js";
+import { pullRequestNotices, pullRequestProblem, runPullRequest, runPullRequestLabel } from "./pull-request.js";
 
 test("a profile that ends in a pull request says where it goes and what happens after, keeps it in Quick assign, and counts as a change", () => {
   const pr = { ...quick, id: "pr", name: "PR", delivery: "local" as const, network: false, pullRequest: { base: "testing", merge: "ask" as const } };
   assert.equal(profileSummary(pr), "Code · Ask · may commit (asks before each commit) · PR → testing (ask to merge)");
   assert.match(profileSummary({ ...pr, pullRequest: { base: "testing", merge: "auto" } }), /PR → testing \(merge when checks pass\)$/);
   assert.match(profileSummary({ ...pr, pullRequest: { base: "staging", merge: "never" } }), /PR → staging \(left open\)$/);
+  assert.match(profileSummary({ ...pr, pullRequest: { base: "", merge: "ask" } }), /PR → default branch \(ask to merge\)$/);
   const input = quickAssignInput("task", pr);
   assert.deepEqual([input.pullRequest, input.delivery, input.network], [{ base: "testing", merge: "ask" }, "commit", true]);
   assert.equal(quickAssignInput("task", quick).pullRequest, undefined);
@@ -128,22 +129,19 @@ test("a profile that ends in a pull request says where it goes and what happens 
   assert.equal(differs(pr, { ...fields, pullRequest: null }), true);
 });
 
-test("pull request notices: a too-old computer, never-bases, a base the computer does not allow, a folder worked in place, a bad branch", () => {
-  const capabilities = { pullRequests: 1, pullRequestBases: ["testing", "main"], folders: [{ label: "ensemble", kind: "repo" }, { label: "notes", kind: "folder" }] };
-  assert.deepEqual(computerPullRequestBases(capabilities), ["testing"], "never main, even if a computer lists it");
-  assert.equal(computerPullRequestBases({ engines: ["codex"] }), null);
-  const check = { computer: "Studio Mac", capabilities, place: "folder" as const, repo: "", folder: "ensemble", base: "testing", branch: "" };
-  assert.deepEqual(pullRequestNotices(check), { tooOld: null, place: null, base: null, branch: null });
+test("pull request notices: any base git accepts (empty: the default branch), a too-old computer, a repository to clone, a branch into itself", () => {
+  const capabilities = { pullRequests: 2, folders: [{ label: "notes", kind: "folder" }] };
+  const check = { computer: "Studio Mac", capabilities, place: "folder" as const, repo: "", base: "main", branch: "" };
+  assert.deepEqual(pullRequestNotices(check), { tooOld: null, place: null, base: null, branch: null }, "main, from a folder worked in place");
+  assert.equal(pullRequestNotices({ ...check, base: "" }).base, null);
+  assert.equal(pullRequestNotices({ ...check, base: "bad..name" }).base, "“bad..name” is not a branch name git accepts.");
   assert.equal(pullRequestNotices({ ...check, capabilities: {} }).tooOld, "Ensemble on Studio Mac is too old to open pull requests. Update it there (`ensemble update`), then assign.");
-  assert.equal(pullRequestNotices({ ...check, folder: "notes" }).place, "notes is worked in place. Pick a repository, or a folder Studio Mac shares as a repository.");
-  assert.equal(pullRequestNotices({ ...check, computer: null, folder: "/work/app" }).place, "app is worked in place. Pick a repository.");
-  assert.equal(pullRequestNotices({ ...check, base: "master" }).base, "A run never opens a pull request into master: it is production or a deploy pointer.");
-  assert.equal(pullRequestNotices({ ...check, computer: null, base: "testing-live" }).base, "A run never opens a pull request into testing-live: it is production or a deploy pointer.");
-  assert.equal(pullRequestNotices({ ...check, computer: null, base: "staging" }).base, null, "this server's own list is checked when the run starts");
-  assert.match(pullRequestNotices({ ...check, base: "staging" }).base ?? "", /^Studio Mac does not open pull requests into staging\. It allows: testing \(change it there with `ensemble git bases add staging`\)\.$/);
-  assert.equal(pullRequestNotices({ ...check, branch: "production" }).branch, "A run never pushes production.");
-  assert.deepEqual(pullRequestProblem(pullRequestNotices({ ...check, folder: "notes", branch: "testing" })), { text: "notes is worked in place. Pick a repository, or a folder Studio Mac shares as a repository.", field: "place" });
-  assert.deepEqual(pullRequestProblem(pullRequestNotices({ ...check, branch: "testing" }))?.field, "branch");
+  assert.ok(pullRequestNotices({ ...check, capabilities: { pullRequests: 1 } }).tooOld, "0.4.10 and 0.4.11 open pull requests only into their own list");
+  assert.equal(pullRequestNotices({ ...check, computer: null, place: "fresh" }).place, "A pull request needs a repository. Give its GitHub address.");
+  assert.equal(pullRequestNotices({ ...check, branch: "main" }).branch, "A pull request cannot come from main into itself. Name another branch for the run.");
+  assert.equal(pullRequestNotices({ ...check, base: "", branch: "main" }).branch, null);
+  assert.deepEqual(pullRequestProblem(pullRequestNotices({ ...check, place: "fresh", branch: "main" })), { text: "A pull request needs a repository. Give its GitHub address, or pick a folder Studio Mac shares.", field: "place" });
+  assert.deepEqual(pullRequestProblem(pullRequestNotices({ ...check, branch: "main" }))?.field, "branch");
 });
 
 test("a run's pull request comes from its latest event, else its summary, and only from github.com", () => {

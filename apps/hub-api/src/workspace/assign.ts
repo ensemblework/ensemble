@@ -6,7 +6,7 @@
 import { stat } from "node:fs/promises";
 import { z } from "zod";
 import type { Actor, Prisma, PrismaClient } from "@prisma/client";
-import { CODE_ENGINES, ContextTier, PullRequestPlan, pullRequestBaseRefusal, pullRequestHeadRefusal } from "@ensemble/shared-types";
+import { CODE_ENGINES, ContextTier, PullRequestPlan, pullRequestHeadRefusal } from "@ensemble/shared-types";
 import { deviceAssignment } from "../devices/assign.js";
 import { serverRunnerEnabled } from "../devices/constants.js";
 import { publishBrowserDevice, publishDevice } from "../devices/publish.js";
@@ -35,7 +35,8 @@ export const Assign = z.object({
   continueFromJobId: z.string().uuid().optional(),
   branchMode: z.enum(["as-is", "existing", "new"]).default("as-is"),
   branch: z.string().max(200).optional(),
-  delivery: z.enum(["local", "commit", "push"]).default("local"),
+  /** `push`: no limits on git (commit, push any branch, pull requests). `local` and `commit` are limits the person picks. */
+  delivery: z.enum(["local", "commit", "push"]).default("push"),
   askBeforePublish: z.boolean().default(true),
   useCredentials: z.boolean().default(false),
   sandbox: z.boolean().default(true),
@@ -61,8 +62,8 @@ export const Assign = z.object({
   /** The model's context window where it offers more than one (GitHub Copilot's long_context). */
   contextTier: ContextTier.optional(),
   /**
-   * End the run in a pull request into `base` (a code task in its own clone; the computer must allow
-   * the base). `branch`, when given, names the run's branch. docs/24 §5.1.
+   * End the run in a pull request Ensemble opens into `base`, any branch (empty: the repository's
+   * default branch). `branch`, when given, names the run's branch. docs/24 §5.1.
    */
   pullRequest: PullRequestPlan.optional(),
   /** In a sandboxed run, outside the work folder: read only, read and write, or nothing. Default: Settings. */
@@ -82,24 +83,18 @@ function contextWith(context: Prisma.InputJsonValue | undefined, outsideAccess: 
   return { ...base, outsideAccess, ...(chat ? { chat: true } : {}), ...(contextTier === "long_context" ? { contextTier } : {}), ...(pullRequest ? { pullRequest } : {}) } as Prisma.InputJsonValue;
 }
 
-/**
- * A request that ends in a pull request, made consistent: a code task, never into main, master,
- * production or testing-live, commits allowed, on the named branch (or the run's own).
- */
+/** A request that ends in a pull request, made consistent: a code task with commits, pushes and the internet. */
 export function withPullRequest(body: AssignInput): AssignInput {
   const plan = body.pullRequest;
   if (!plan) return body;
   if (body.kind !== "code") throw new GuardError("A pull request comes from a code task.");
   if (body.chat) throw new GuardError("A chat message does not end in a pull request. Assign a task instead.");
-  if (body.folder) throw new GuardError("A pull request needs the run in its own clone, not a folder worked in place. Pick a repository, or a folder shared as a repository.");
   if (body.branchMode === "existing") throw new GuardError("A pull request starts its branch from the base. Name a new branch, or leave it to Ensemble.");
   if (body.accessMode === "review") throw new GuardError("A read-only run makes no commits, so it cannot open a pull request.");
-  const never = pullRequestBaseRefusal(plan.base, [plan.base]);
-  if (never) throw new GuardError(never);
   const named = body.branch?.trim() ?? "";
   const head = named ? pullRequestHeadRefusal(named, plan.base) : null;
   if (head) throw new GuardError(head);
-  return { ...body, branchMode: named ? "new" : "as-is", branch: named || undefined, delivery: "commit", network: true };
+  return { ...body, branchMode: named ? "new" : "as-is", branch: named || undefined, delivery: "push", network: true };
 }
 export type AssignInput = z.infer<typeof Assign>;
 
@@ -151,7 +146,7 @@ async function createDeviceJob(
     repoUrl: body.repoUrl,
     continueFromJobId: body.continueFromJobId,
     engine: body.engine,
-    pullRequestBase: body.pullRequest?.base,
+    pullRequest: Boolean(body.pullRequest),
   }, { space: userId, runner });
   // Trust is checked on that computer, where the folder is; Review only and unattended wait there for it.
   const mode = requestedMode(body);

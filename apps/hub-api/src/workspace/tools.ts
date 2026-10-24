@@ -12,13 +12,13 @@ import { pageAgentText } from "../pages/agent-context.js";
 import { writeAgentBlock } from "../pages/markdown.js";
 import { PageDocument } from "@ensemble/shared-types";
 import { describeFile, diskName, fileOriginal, filesOnTask, fileText, findFile } from "../files/attached.js";
-import { githubCloneAuth } from "../lib/git-auth.js";
+import { GITHUB_AUTH_HINT, githubApiToken, githubCloneAuth } from "../lib/git-auth.js";
 import { parseClone } from "./clone.js";
 import { flagPlanted, type PlantedHit } from "./planted.js";
-import { checkGit, checkProgram, expandHome, gitHardening, GuardError, jailPath, outsideRefusal, parseCommand, relativeTo, within } from "./guard.js";
-import { pushRefused, runTrustedGit } from "./git-gate.js";
+import { checkGit, checkProgram, expandHome, gitCommand, gitHardening, GuardError, jailPath, outsideRefusal, parseCommand, relativeTo, within } from "./guard.js";
+import { ghSandboxRefusal, runTrustedGh, runTrustedGit } from "./git-gate.js";
 import { appendLive } from "./live-log.js";
-import { pushRunBranch, remotePushRefused, remotePushSkipsPrompt, webPushNeedsComputer } from "./publish.js";
+import { pushWithSignIn, remoteUrl, webPushNeedsComputer } from "./publish.js";
 import { fetchUrl, searchPapers, webSearch } from "./research.js";
 import { runCommand } from "./runner.js";
 import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
@@ -648,42 +648,19 @@ export async function runTool(ctx: JobContext, name: string, raw: Record<string,
   }
 }
 
-async function currentBranch(ctx: JobContext): Promise<string> {
-  const result = await runCommand({
-    userId: ctx.userId,
-    argv: ["git", ...gitHardening(false), "rev-parse", "--abbrev-ref", "HEAD"],
-    cwd: ctx.root,
-    root: ctx.root,
-    sandboxed: ctx.sandboxed,
-    network: false,
-    useCredentials: false,
-    who: "agent",
-    timeoutMs: 15_000,
-    signal: ctx.signal,
-    group: ctx.job.id,
-  });
-  return result.output.trim();
-}
-
 /**
- * git with the person's sign-in runs outside the sandbox. Only `fetch` and
- * `pull --ff-only` of a remote name and branch names are allowed: no options
- * such as `--upload-pack` that run a program, and no paths that leave the folder.
+ * Network git (fetch, pull, ls-remote…) runs outside the sandbox with the person's sign-in, with any
+ * arguments, except options that start a program here and, from a sandboxed run, another folder on
+ * this computer as the remote.
  */
-export function credentialGitRefusal(args: string[]): string | null {
-  const [sub, ...rest] = args;
+export function credentialGitRefusal(argv: string[], sandboxed = false): string | null {
+  const { globals, sub, rest } = gitCommand(argv);
   if (sub === "clone") return "Ensemble clones the repository when the run starts. Work in this folder.";
-  if (sub !== "fetch" && sub !== "pull") return `git ${sub} is not run with your sign-in.`;
-  const allowed = sub === "pull" ? new Set(["--ff-only", "--quiet", "-q"]) : new Set(["--quiet", "-q", "--prune", "--tags"]);
-  if (sub === "pull" && !rest.includes("--ff-only")) return "With your sign-in, pull only as git pull --ff-only.";
-  for (const arg of rest) {
-    if (arg.startsWith("-")) {
-      if (!allowed.has(arg)) return `git ${sub} ${arg} is not allowed with your sign-in.`;
-      continue;
-    }
-    if (!/^[A-Za-z0-9._/-]+(:[A-Za-z0-9._/-]+)?$/.test(arg) || arg.includes("..") || arg.startsWith("/")) return `“${arg}” is not a remote or branch name.`;
-  }
-  return null;
+  if (globals.some((arg) => arg !== "--no-pager")) return `Run git ${sub} from the folder, with no options before ${sub}: Ensemble runs it with your sign-in.`;
+  const option = rest.find((arg) => /^--(upload-pack|receive-pack|exec)(=|$)/.test(arg));
+  if (option) return `git ${sub} ${option.split("=")[0]} starts a program on this computer, so Ensemble does not run it with your sign-in.`;
+  const path = sandboxed ? rest.find((arg) => /^(\/|\.\.?\/|~|file:)/.test(arg)) : undefined;
+  return path ? `${path} is a folder on this computer: a sandboxed run fetches only from remotes. Turn the sandbox off to fetch from another folder.` : null;
 }
 
 type CloneDone = { ok: boolean; result: unknown; summary: string; message: string };
@@ -897,37 +874,42 @@ async function command(ctx: JobContext, line: string, cwdInput: string, timeoutS
   }
   let full = argv;
   let watch: Map<string, string> | null = null;
+  if (program === "gh") {
+    const refused = ctx.sandboxed ? ghSandboxRefusal(argv) : null;
+    if (refused) throw new GuardError(refused);
+    if (ctx.accessMode === "review") return { ok: false, result: { error: "Blocked. This run is read-only.", refused: true }, summary: "gh blocked" };
+    const held = await allowOrRefuse(ctx, "command", true, { toolName: "gh", title: `Run ${line.slice(0, 140)}`, command: line });
+    if (held) return held;
+    const token = await githubApiToken(ctx.prisma, ctx.userId);
+    if (!token) throw new GuardError(GITHUB_AUTH_HINT);
+    await ctx.progress(`Running: ${line.slice(0, 100)}`);
+    const ran = await runTrustedGh({ userId: ctx.userId, cwd: await jailPath(ctx.root, cwdInput, true), args: argv.slice(1), token, timeoutMs: timeoutSeconds * 1000 });
+    await ctx.event("command", { command: line, exitCode: ran.exitCode, tail: ran.output.slice(-3000), by: "app" });
+    return { ok: ran.exitCode === 0, result: { exitCode: ran.exitCode, output: ran.output }, summary: `${line.slice(0, 80)} → exit ${ran.exitCode}` };
+  }
   if (program === "git") {
     const delivery = (["local", "commit", "push"].includes(ctx.job.delivery) ? ctx.job.delivery : "local") as "local" | "commit" | "push";
-    const { sub, action } = checkGit(argv, { delivery, branch: ctx.chosenBranch, runBranch: ctx.runBranch || undefined, who: "agent" });
+    const { sub, action } = checkGit(argv, { delivery, sandboxed: ctx.sandboxed });
     if ((action === "network" || action === "push") && !ctx.network) throw new GuardError(`git ${sub} needs network access, which is off for this job.`);
     if (action === "push") {
-      const branch = await currentBranch(ctx);
-      const refused = pushRefused(branch, ctx.job.id, Boolean(ctx.job.continueFromJobId));
-      if (refused) throw new GuardError(refused);
-      const gated = await remotePushRefused(ctx.prisma, ctx.job);
-      if (gated) throw new GuardError(gated);
+      const { globals, rest } = gitCommand(argv);
+      if (globals.some((arg) => arg !== "--no-pager")) throw new GuardError("Run git push from the folder, with no options before push: Ensemble runs it with the person's sign-in.");
       const pushGate = gate(ctx, "push", true);
       const decision = pushGate === "allow" && webPushNeedsComputer(ctx.job) ? "prompt" : pushGate;
       if (decision === "block") {
         return { ok: false, result: { error: "Blocked. This run is read-only, so it does not push.", refused: true }, summary: "Push blocked" };
       }
-      const silent = decision === "allow" || (await remotePushSkipsPrompt(ctx.prisma, ctx.job, branch, ctx.trusted));
-      if (!silent) {
-        const answer = await askPerson(ctx, { event: "permission", toolName: "git push", title: `Push ${branch} (fast-forward only)`, command: line });
+      if (decision !== "allow") {
+        const answer = await askPerson(ctx, { event: "permission", toolName: "git push", title: `Run ${line.slice(0, 140)}`, command: line });
         if (answer.decision !== "allow") {
           return { ok: false, result: { error: `The person did not allow the push.${answer.answer ? ` They said: ${answer.answer}` : ""}`, refused: true }, summary: "Push not allowed" };
         }
       } else if (ctx.job.unattended) {
         await ctx.event("unattended", { action: "push", command: line });
       }
-      const pushed = await pushRunBranch({ prisma: ctx.prisma, userId: ctx.userId, job: ctx.job, root: ctx.root, branch, timeoutMs: timeoutSeconds * 1000 });
-      await ctx.event("command", { command: `git push ${pushed.remote} HEAD:refs/heads/${branch}`, cwd: ".", exitCode: pushed.exitCode, tail: pushed.output.slice(-3000), by: "app" });
-      return {
-        ok: pushed.exitCode === 0,
-        result: { exitCode: pushed.exitCode, output: pushed.output },
-        summary: `push ${branch} (fast-forward) → exit ${pushed.exitCode}`,
-      };
+      const pushed = await pushWithSignIn({ prisma: ctx.prisma, userId: ctx.userId, job: ctx.job, root: await jailPath(ctx.root, cwdInput, true), rest, sandboxed: ctx.sandboxed, timeoutMs: timeoutSeconds * 1000 });
+      await ctx.event("command", { command: line, cwd: ".", exitCode: pushed.exitCode, tail: pushed.output.slice(-3000), by: "app" });
+      return { ok: pushed.exitCode === 0, result: { exitCode: pushed.exitCode, output: pushed.output }, summary: `${line.slice(0, 80)} → exit ${pushed.exitCode}` };
     }
     if (action === "commit" && ctx.job.askBeforePublish && !ctx.job.unattended) {
       // "Ask me before each commit" means each one, trusted folder or not. No "for this run" shortcut.
@@ -942,16 +924,18 @@ async function command(ctx: JobContext, line: string, cwdInput: string, timeoutS
       const held = await allowOrRefuse(ctx, "command", true, { toolName: "git", title: `Run ${line.slice(0, 140)}`, command: line });
       if (held) return held;
     }
-    if (action === "network" && ctx.job.useCredentials) {
-      // These run outside the sandbox with the person's sign-in, so the agent picks no options and no paths.
-      const unsafe = credentialGitRefusal(argv.slice(1));
+    if (action === "network" && sub !== "clone") {
+      // Fetch, pull and the like run outside the sandbox with the person's sign-in, like a push.
+      const unsafe = credentialGitRefusal(argv, ctx.sandboxed);
       if (unsafe) throw new GuardError(unsafe);
-      const remote = argv.find((arg) => /github\.com|gitlab\.com/i.test(arg)) || ctx.job.repoUrl || "https://github.com/";
-      const auth = await githubCloneAuth(ctx.prisma, ctx.userId, remote);
+      const where = await jailPath(ctx.root, cwdInput, true);
+      const { rest } = gitCommand(argv);
+      const url = await remoteUrl(ctx.userId, where, rest.find((arg) => !arg.startsWith("-")) ?? null);
+      const auth = /github\.com/i.test(url) ? await githubCloneAuth(ctx.prisma, ctx.userId, url).catch(() => ({ env: {} as Record<string, string>, config: [] as string[] })) : { env: {} as Record<string, string>, config: [] as string[] };
       const ran = await runTrustedGit({
         userId: ctx.userId,
-        cwd: await jailPath(ctx.root, cwdInput, true),
-        args: argv.slice(1),
+        cwd: where,
+        args: [sub, ...rest],
         credentialEnv: auth.env,
         credentialConfig: auth.config,
         timeoutMs: timeoutSeconds * 1000,

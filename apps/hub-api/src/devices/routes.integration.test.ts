@@ -15,7 +15,7 @@ import "../config.js";
 import { deviceTokenRejected, readOnlyTokenRejected } from "../bridge/auth.js";
 import { INTERRUPTED_ERROR, LOG_TRUNCATED, LOG_TRUNCATED_SEQ, MAX_CHUNK_BYTES, MAX_JOB_LOG_BYTES } from "./constants.js";
 import { sweepExpiredDeviceLeases } from "./lease.js";
-import { runBranchPushEnabled } from "./labels.js";
+import { folderLabels } from "./labels.js";
 import { identify, sha256 } from "../lib/auth.js";
 import { prisma } from "../lib/prisma.js";
 import { memoryRedis } from "../lib/memory-redis.js";
@@ -123,7 +123,7 @@ test("pairing, claim, lease sweep, heartbeat, cancel, and device isolation", asy
     const registered = await app.inject({
       method: "POST",
       url: "/api/devices/register",
-      payload: { code, name: "Office Mac", platform: "macos", appVersion: "0.1.0", capabilities: { folders: ["Notes"], runBranchPush: false } },
+      payload: { code, name: "Office Mac", platform: "macos", appVersion: "0.1.0", capabilities: { folders: ["Notes"] } },
     });
     assert.equal(registered.statusCode, 201);
     const token = (registered.json() as { token: string; device: { id: string } }).token;
@@ -139,10 +139,9 @@ test("pairing, claim, lease sweep, heartbeat, cancel, and device isolation", asy
 
     const listed = await app.inject({ method: "GET", url: "/api/devices", headers: cookie(session) });
     assert.equal(listed.statusCode, 200);
-    const list = listed.json() as { devices: Array<{ id: string; online: boolean; runBranchPush: boolean }> };
+    const list = listed.json() as { devices: Array<{ id: string; online: boolean }> };
     assert.equal(list.devices[0]?.id, deviceId);
     assert.equal(list.devices[0]?.online, false);
-    assert.equal(list.devices[0]?.runBranchPush, false);
 
     const path = await app.inject({
       method: "POST",
@@ -416,7 +415,7 @@ test("the web cannot set run-branch push, and log caps hold", async (t) => {
     const windows = await app.inject({
       method: "POST",
       url: "/api/devices/register",
-      payload: { code: (paired.json() as { code: string }).code, name: "Studio PC", platform: "windows", capabilities: { folders: ["Desk"], runBranchPush: false } },
+      payload: { code: (paired.json() as { code: string }).code, name: "Studio PC", platform: "windows", capabilities: { folders: ["Desk"] } },
     });
     assert.equal(windows.statusCode, 201);
     const win = windows.json() as { token: string; device: { id: string } };
@@ -424,55 +423,37 @@ test("the web cannot set run-branch push, and log caps hold", async (t) => {
     const linux = await app.inject({
       method: "POST",
       url: "/api/devices/register",
-      payload: { code: (linuxPair.json() as { code: string }).code, name: "Build box", platform: "linux", capabilities: { runBranchPush: false } },
+      payload: { code: (linuxPair.json() as { code: string }).code, name: "Build box", platform: "linux", capabilities: {} },
     });
     assert.equal(linux.statusCode, 201);
     const listed = await app.inject({ method: "GET", url: "/api/devices", headers: cookie(session) });
     const names = (listed.json() as { devices: Array<{ name: string; platform: string }> }).devices.map((device) => `${device.name}:${device.platform}`);
     assert.deepEqual(names.sort(), ["Build box:linux", "Studio PC:windows"]);
 
+    // Only the computer publishes what it offers: a web session can neither send its heartbeat nor patch it.
     const webBeat = await app.inject({
       method: "POST",
       url: "/api/devices/self/heartbeat",
       headers: cookie(session),
-      payload: { runningJobIds: [], capabilities: { runBranchPush: true } },
+      payload: { runningJobIds: [], capabilities: { folders: ["Hijack"] } },
     });
     assert.equal(webBeat.statusCode, 403);
     const webPatch = await app.inject({
       method: "PATCH",
       url: `/api/devices/${win.device.id}`,
       headers: cookie(session),
-      payload: { runBranchPush: true },
+      payload: { capabilities: { folders: ["Hijack"] } },
     });
     assert.equal(webPatch.statusCode, 400);
-    const unchanged = await app.inject({ method: "GET", url: "/api/devices", headers: cookie(session) });
-    assert.equal(unchanged.json().devices.find((row: { id: string }) => row.id === win.device.id).runBranchPush, false);
-    const webAssign = await app.inject({
-      method: "POST",
-      url: "/api/agent/assign",
-      headers: cookie(session),
-      payload: { taskId: task.id, kind: "research", deviceId: win.device.id, runBranchPush: true },
-    });
-    assert.equal(webAssign.statusCode, 403);
-    assert.match((webAssign.json() as { error: string }).error, /cannot change it/);
-    assert.equal(runBranchPushEnabled((await prisma.device.findUniqueOrThrow({ where: { id: win.device.id } })).capabilities), false);
+    assert.deepEqual(folderLabels((await prisma.device.findUniqueOrThrow({ where: { id: win.device.id } })).capabilities), ["Desk"]);
 
     const published = await app.inject({
       method: "POST",
       url: "/api/devices/self/heartbeat",
       headers: bearer(win.token),
-      payload: { runningJobIds: [], capabilities: { folders: ["Desk"], runBranchPush: true } },
+      payload: { runningJobIds: [], capabilities: { folders: ["Desk"] } },
     });
     assert.equal(published.statusCode, 200);
-    assert.equal(runBranchPushEnabled((await prisma.device.findUniqueOrThrow({ where: { id: win.device.id } })).capabilities), true);
-    const webOff = await app.inject({
-      method: "POST",
-      url: "/api/devices/self/heartbeat",
-      headers: cookie(session),
-      payload: { runningJobIds: [], capabilities: { runBranchPush: false } },
-    });
-    assert.equal(webOff.statusCode, 403);
-    assert.equal(runBranchPushEnabled((await prisma.device.findUniqueOrThrow({ where: { id: win.device.id } })).capabilities), true);
 
     const assigned = await app.inject({
       method: "POST",

@@ -23,12 +23,6 @@ export function folderLabels(capabilities: unknown): string[] {
   return [...new Set(labels)].slice(0, 100);
 }
 
-/** Off unless the computer published `capabilities.runBranchPush === true`. The site cannot turn it on. */
-export function runBranchPushEnabled(capabilities: unknown): boolean {
-  if (!capabilities || typeof capabilities !== "object" || Array.isArray(capabilities)) return false;
-  return (capabilities as { runBranchPush?: unknown }).runBranchPush === true;
-}
-
 /** Labels of the folders a computer shares as repositories: each run there works in its own clone. */
 export function repositoryLabels(capabilities: unknown): string[] {
   if (!capabilities || typeof capabilities !== "object" || Array.isArray(capabilities)) return [];
@@ -51,12 +45,11 @@ export function deviceEngines(capabilities: unknown): string[] {
   return listed.filter((value): value is string => typeof value === "string").slice(0, 20);
 }
 
-/** The bases a computer opens pull requests into (`capabilities.pullRequestBases`); null when its runtime cannot open them. */
-export function devicePullRequestBases(capabilities: unknown): string[] | null {
-  if (!capabilities || typeof capabilities !== "object" || Array.isArray(capabilities)) return null;
-  const record = capabilities as { pullRequests?: unknown; pullRequestBases?: unknown };
-  if (typeof record.pullRequests !== "number" || record.pullRequests < 1 || !Array.isArray(record.pullRequestBases)) return null;
-  return record.pullRequestBases.filter((value): value is string => typeof value === "string").slice(0, 20);
+/** Whether a computer's runtime opens pull requests into any branch (`capabilities.pullRequests` 2 or more). */
+export function deviceOpensPullRequests(capabilities: unknown): boolean {
+  if (!capabilities || typeof capabilities !== "object" || Array.isArray(capabilities)) return false;
+  const value = (capabilities as { pullRequests?: unknown }).pullRequests;
+  return typeof value === "number" && value >= 2;
 }
 
 export function rejectPathLabels(capabilities: unknown): string | null {

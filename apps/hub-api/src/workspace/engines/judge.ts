@@ -1,7 +1,7 @@
 /**
  * Judging a tool call from another coding agent (Claude Code, and later ACP
  * agents) by the run's own rules: the mode (Ask, Review only, Run unattended),
- * folder trust, the sandbox's outside-path rule, the git permission and the
+ * folder trust, the sandbox's outside-path rule, the person's git choice and the
  * internet setting. The same rules Ensemble's own agent follows
  * (`tools.ts`, `trust.ts`); this only translates the other agent's tool names.
  *
@@ -73,41 +73,6 @@ export function setCloneRunnerForTests(runner: typeof cloneForAgent | null): voi
   cloneRunner = runner ?? cloneForAgent;
 }
 
-/** Read-only `gh` subcommands an engine may run: `<group> <command>`, or the group alone. */
-const GH_READS: Record<string, string[] | true> = {
-  pr: ["view", "list", "status", "checks", "diff"],
-  issue: ["view", "list", "status"],
-  run: ["view", "list", "watch"],
-  workflow: ["view", "list"],
-  repo: ["view"],
-  release: ["view", "list"],
-  search: true,
-  status: true,
-  auth: ["status"],
-};
-
-/**
- * Why a `gh` command may not run in an engine, or null. GitHub writes (pull requests, merges,
- * comments, releases, settings, workflow runs) and anything that prints a token are refused: they
- * would act with the person's own GitHub sign-in, outside the run's git permission.
- */
-export function ghRefusal(argv: string[]): string | null {
-  const words = argv.slice(1).filter((arg) => !arg.startsWith("-"));
-  const [group, command] = [words[0] ?? "", words[1] ?? ""];
-  if (group === "api") {
-    const method =
-      argv.find((arg, index) => argv[index - 1] === "-X" || argv[index - 1] === "--method") ??
-      argv.find((arg) => arg.startsWith("--method="))?.slice("--method=".length) ??
-      argv.find((arg) => /^-X[A-Za-z]+$/.test(arg))?.slice(2) ??
-      "GET";
-    const writes = method.toUpperCase() !== "GET" || argv.some((arg) => /^(-f|-F|--field|--raw-field|--input)(=|$)/.test(arg));
-    return writes ? "gh api may only read (GET) in a run." : null;
-  }
-  const allowed = GH_READS[group];
-  if (allowed === true || (Array.isArray(allowed) && allowed.includes(command))) return null;
-  return `gh ${[group, command].filter(Boolean).join(" ")} is not allowed in a run: GitHub writes (pull requests, merges, comments, releases, settings, workflow runs) would use the person's own sign-in. Commit your work; the person (or Ensemble's push) publishes it.`;
-}
-
 async function shell(ctx: JobContext, command: string): Promise<EngineAnswer> {
   const segments = shellSegments(command);
   // Claude Code's sandbox does not let git write .git/config or hooks anywhere in the run folder, so a
@@ -125,18 +90,17 @@ async function shell(ctx: JobContext, command: string): Promise<EngineAnswer> {
   for (const argv of segments) {
     const program = argv[0]!;
     if (isNeverProgram(program)) return { decision: "deny", message: `${program} is not allowed in Ensemble runs (privilege, persistence or remote access).` };
+    // gh and git push act with the person's own GitHub sign-in on this computer; the run's mode decides
+    // whether they ask first, like any command. Only the internet setting and the person's git choice can stop them.
     if (program === "gh" || program.endsWith("/gh") || program.endsWith("\\gh.exe")) {
-      const refusal = ghRefusal(argv);
-      if (refusal) return { decision: "deny", message: refusal };
       if (!ctx.network) return { decision: "deny", message: "The internet is off for this run." };
     }
     if (program === "git" || program.endsWith("/git")) {
       const delivery = (["local", "commit", "push"].includes(ctx.job.delivery) ? ctx.job.delivery : "local") as "local" | "commit" | "push";
       try {
-        const { action } = checkGit(argv, { delivery, branch: ctx.chosenBranch, runBranch: ctx.runBranch || undefined, who: "agent" });
-        if (action === "push") return { decision: "deny", message: "Don't push. Ensemble pushes this run's branch for you when the run finishes (Commit + push), with your sign-in." };
-        if (action === "network" && !ctx.network) return { decision: "deny", message: "The internet is off for this run." };
-        if (action === "commit" && ctx.accessMode === "review") return { decision: "deny", message: "This run is read-only: no commits." };
+        const { action } = checkGit(argv, { delivery, sandboxed: ctx.sandboxed });
+        if ((action === "network" || action === "push") && !ctx.network) return { decision: "deny", message: "The internet is off for this run." };
+        if ((action === "commit" || action === "push") && ctx.accessMode === "review") return { decision: "deny", message: "This run is read-only: no commits or pushes." };
         if (action === "commit" && ctx.job.askBeforePublish && !ctx.job.unattended) {
           const answer = await askPerson(ctx, { event: "permission", toolName: "git commit", title: `Commit in ${ctx.root.split(/[\\/]/).slice(-2).join("/")}`, command });
           if (answer.decision !== "allow") return { decision: "deny", message: `The person did not approve this commit.${answer.answer ? ` They said: ${answer.answer}` : ""} Leave the changes uncommitted.` };

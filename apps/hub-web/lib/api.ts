@@ -693,7 +693,6 @@ export type RemoteMac = {
   deviceId: string | null;
   paired: boolean;
   enabled: boolean;
-  runBranchPush: boolean;
   /** Approvals and run settings from the web and phone apply on this computer. */
   acceptWebApprovals: boolean;
   /** Ensemble on the web may show the files of tasks run here (on by default). */
@@ -702,8 +701,6 @@ export type RemoteMac = {
   webEdit?: boolean;
   /** The terminal may open from the web, after a passkey unlock there (on by default). */
   webTerminal?: boolean;
-  /** Branches runs here may open pull requests into. Set only on this computer (`ensemble git bases`). */
-  pullRequestBases?: string[];
   online: boolean;
   lastHeartbeatAt: number | null;
   disconnected: { at: string; reason: string } | null;
@@ -1424,7 +1421,6 @@ export const api = bindClient({
         appVersion: string | null;
         capabilities: unknown;
         folders: string[];
-        runBranchPush: boolean;
         lastSeenAt: string | null;
         createdAt: string;
         online: boolean;
@@ -1452,7 +1448,7 @@ export const api = bindClient({
   branches: (path: string) => get<{ branches: string[] }>(`/api/workspace/branches${qs({ path })}`),
   agentState: () => get<AgentState>("/api/agent/state"),
   remote: () => get<RemoteMac>("/api/remote"),
-  saveRemote: (body: { enabled?: boolean; runBranchPush?: boolean; acceptWebApprovals?: boolean; browseFiles?: boolean; webEdit?: boolean; webTerminal?: boolean; apiBase?: string | null; deviceName?: string }) => put<RemoteMac>("/api/remote", body),
+  saveRemote: (body: { enabled?: boolean; acceptWebApprovals?: boolean; browseFiles?: boolean; webEdit?: boolean; webTerminal?: boolean; apiBase?: string | null; deviceName?: string }) => put<RemoteMac>("/api/remote", body),
   pairRemote: (body: { apiBase: string; code: string; name?: string }) => post<RemoteMac>("/api/remote/pair", body),
   unpairRemote: () => post<RemoteMac>("/api/remote/unpair"),
   pauseAgent: () => post<{ stopped: number; cancelled: number }>("/api/agent/pause"),

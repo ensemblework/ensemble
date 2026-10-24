@@ -10,7 +10,7 @@ export type ProfileFields = Omit<RunProfile, "id" | "name">;
 
 export const QUICK_ID = QUICK_PROFILE_ID;
 
-/** The built-in profile while none is saved: code in its own checkout, commits allowed, Ask. */
+/** The built-in profile while none is saved: code in its own checkout, git without limits, Ask. */
 export const quickProfile = quickRunProfile;
 
 export function profileFields(profile: RunProfile): ProfileFields {
@@ -86,9 +86,9 @@ export function removeProfile(saved: RunProfile[] | undefined, id: string): RunP
 /** One line that says what a profile does, for its tooltip. */
 export function profileSummary(profile: RunProfile): string {
   const mode = profile.mode === "unattended" ? "Run unattended" : profile.mode === "review" ? "Review only" : "Ask";
-  // A run that ends in a pull request may always commit; Ensemble pushes it, not the agent.
+  // A run that ends in a pull request may commit; Ensemble pushes its branch when it ends.
   const delivery = profile.pullRequest ? "commit" : profile.delivery;
-  const git = delivery === "local" ? "local only" : delivery === "commit" ? "may commit" : "may commit and push";
+  const git = profile.pullRequest ? "may commit" : delivery === "local" ? "local only" : delivery === "commit" ? "may commit, no push" : "no git limits";
   const engine = isCodeEngine(profile.engine) ? `${ENGINE_LABELS[profile.engine]} · ` : "";
   const pull = profile.pullRequest ? ` · ${pullRequestLine(profile.pullRequest)}` : "";
   return profile.kind === "research" ? "Research & writing" : `${engine}Code · ${mode} · ${git}${profile.askBeforePublish && delivery !== "local" && profile.mode !== "unattended" ? " (asks before each commit)" : ""}${pull}`;
