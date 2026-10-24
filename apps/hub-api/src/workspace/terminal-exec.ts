@@ -73,7 +73,7 @@ export async function prepareRun(input: { allowed: string[]; cwd: string; line: 
   const program = checkProgram(argv, { who: "human", sandboxed, network: true });
   let full = argv;
   if (program === "git") {
-    checkGit(argv, { delivery: "push", who: "human" });
+    checkGit(argv, { delivery: "push" });
     full = ["git", ...gitHardening(true, input.commitAuthor), ...argv.slice(1)];
   }
   const warning = DESTRUCTIVE.find(([pattern]) => pattern.test(line))?.[1];

@@ -33,7 +33,7 @@ import {
   serverRunnerEnabled,
 } from "./constants.js";
 import { finishDeviceJob, type DeviceResult } from "./finish.js";
-import { folderLabels, rejectPathLabels, runBranchPushEnabled } from "./labels.js";
+import { folderLabels, rejectPathLabels } from "./labels.js";
 import { createDevicePairing } from "./pairing.js";
 import { publishBrowserDevice, publishDevice } from "./publish.js";
 import { revokePairedDevice } from "./revoke.js";
@@ -129,7 +129,6 @@ function deviceJson(device: Device, now = Date.now()) {
     appVersion: device.appVersion,
     capabilities: device.capabilities,
     folders: folderLabels(device.capabilities),
-    runBranchPush: runBranchPushEnabled(device.capabilities),
     lastSeenAt: device.lastSeenAt?.toISOString() ?? null,
     createdAt: device.createdAt.toISOString(),
     online: device.revokedAt ? false : deviceOnline(device.lastSeenAt, now),

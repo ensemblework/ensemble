@@ -280,6 +280,10 @@ export function checkProgram(argv: string[], policy: CommandPolicy): string {
   }
   if (NEVER.has(program)) throw new GuardError(`${program} is not allowed here.`);
   if (program === "git") return program;
+  if (program === "gh") {
+    if (!policy.network) throw new GuardError("gh needs network access, which is off for this job.");
+    return program;
+  }
   if (DEV_TOOLS.includes(program) || FILE_TOOLS.includes(program)) return program;
   if (NETWORK_TOOLS.includes(program)) {
     if (!policy.network) throw new GuardError(`${program} needs network access, which is off for this job.`);
@@ -294,29 +298,31 @@ export function checkProgram(argv: string[], policy: CommandPolicy): string {
 }
 
 export interface GitLimits {
+  /** The person's git choice for the run: `local` (no commits) and `commit` (no push) are limits they picked; `push` has none. */
   delivery: "local" | "commit" | "push";
-  branch?: string;
-  /** The only branch an agent push may name. Fast-forward of that branch is done by the app. */
-  runBranch?: string;
-  who: "agent" | "human";
+  /** In the OS sandbox: git config the person's own git would later run as a program is refused (it would run outside the sandbox). */
+  sandboxed?: boolean;
 }
 
 const GIT_READ = new Set([
   "status", "log", "diff", "show", "rev-parse", "ls-files", "ls-tree", "blame", "describe", "shortlog", "grep",
   "reflog", "cat-file", "merge-base", "rev-list", "whatchanged", "version", "help",
 ]);
-const GIT_LOCAL = new Set([
-  "add", "restore", "checkout", "switch", "stash", "rm", "mv", "reset", "merge", "rebase", "cherry-pick", "revert",
-  "init", "clean", "fetch", "pull", "clone", "tag", "branch", "remote", "config", "apply", "am", "notes", "worktree",
-]);
-const PROTECTED = new Set(["main", "master", "trunk", "develop", "production", "release"]);
+const GIT_NETWORK = new Set(["clone", "fetch", "pull", "ls-remote"]);
 
 export type GitAction = "read" | "local" | "commit" | "push" | "network";
 
-/** Subcommands that create, rewrite or move commits and tags. They count as commits for the run's git permission. */
+/** Subcommands that create, rewrite or move commits and tags. They count as commits for the run's git choice. */
 const MAKES_COMMITS = new Set(["merge", "cherry-pick", "revert", "am", "rebase", "pull", "tag", "notes"]);
 /** Stops an operation already in progress without creating a commit. */
 const STOPS = ["--abort", "--quit", "--show-current-patch"];
+/** Global options that take the next argument as their value. */
+const GLOBAL_WITH_VALUE = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env", "--exec-path"]);
+/**
+ * Config keys a sandboxed run may write. Other keys can name a program (hooks, fsmonitor, filters,
+ * ssh, editors, credential helpers, aliases) that git outside the sandbox would run later.
+ */
+const SANDBOX_CONFIG = /^(user\.(name|email|signingkey)|branch\.[^.]+\.(remote|merge|rebase|description|pushremote)|remote\.[^.]+\.(url|pushurl|fetch|push|tagopt|prune)|push\.(default|autosetupremote|followtags)|pull\.(rebase|ff)|fetch\.prune|init\.defaultbranch|core\.(autocrlf|eol|ignorecase|filemode|quotepath)|merge\.(ff|conflictstyle)|rebase\.(autostash|autosquash)|commit\.gpgsign|tag\.gpgsign|color\..+|log\..+|diff\.(renames|algorithm|colormoved))$/i;
 
 function makesCommits(sub: string, rest: string[]): boolean {
   if (!MAKES_COMMITS.has(sub)) return false;
@@ -329,40 +335,51 @@ function makesCommits(sub: string, rest: string[]): boolean {
   return true;
 }
 
-/** Classifies and checks a git argv. Throws with the reason when the job may not do it. */
-export function checkGit(argv: string[], limits: GitLimits): { sub: string; action: GitAction } {
+/** The subcommand and its arguments, after git's global options (`-C dir`, `-c key=value`, `--no-pager`…). */
+export function gitCommand(argv: string[]): { globals: string[]; sub: string; rest: string[] } {
   const args = argv.slice(1);
   let index = 0;
-  while (args[index]?.startsWith("-")) {
-    if (args[index] === "--no-pager") {
-      index += 1;
-      continue;
-    }
-    throw new GuardError(`git ${args[index]} is not allowed. Run git commands without global options.`);
-  }
-  const sub = args[index] ?? "";
-  const rest = args.slice(index + 1);
-  const has = (...flags: string[]) => rest.some((arg) => flags.includes(arg) || flags.some((flag) => flag.endsWith("=") && arg.startsWith(flag)));
+  while (args[index]?.startsWith("-")) index += GLOBAL_WITH_VALUE.has(args[index]!) ? 2 : 1;
+  return { globals: args.slice(0, index), sub: args[index] ?? "", rest: args.slice(index + 1) };
+}
+
+/** The key a `git config` call writes, or null when it only reads. A write to another file counts as unknown. */
+function configWrite(rest: string[]): string | null {
+  const flags = rest.filter((arg) => arg.startsWith("-"));
+  const words = rest.filter((arg) => !arg.startsWith("-"));
+  if (["get", "list"].includes(words[0] ?? "")) return null;
+  if (flags.some((flag) => ["--get", "--get-all", "--list", "-l", "--get-regexp", "--get-urlmatch"].includes(flag))) return null;
+  if (flags.some((flag) => flag === "-f" || flag.startsWith("--file") || flag.startsWith("--blob"))) return "--file";
+  if (["set", "unset", "replace-all", "rename-section", "remove-section"].includes(words[0] ?? "")) return words[1] ?? null;
+  if (flags.some((flag) => /^--(unset|unset-all|add|replace-all|rename-section|remove-section)$/.test(flag))) return words[0] ?? null;
+  return words.length >= 2 ? words[0]! : null;
+}
+
+/**
+ * Classifies a git argv for the run's mode and internet setting. It refuses only what the person chose
+ * against (commits with “Local only”, pushes with “Commit”) and, in the sandbox, config that would run a
+ * program outside it. Any branch, push, force-push, delete, rebase or history change is otherwise the
+ * person's and their agent's call.
+ */
+export function checkGit(argv: string[], limits: GitLimits): { sub: string; action: GitAction } {
+  const { globals, sub, rest } = gitCommand(argv);
   if (!sub) throw new GuardError("Which git command?");
-  if (["filter-branch", "filter-repo", "update-ref", "replace", "gc", "prune", "submodule", "daemon", "credential", "config-set"].includes(sub)) {
-    throw new GuardError(`git ${sub} is not allowed.`);
+  if (limits.sandboxed) {
+    for (let index = 0; index < globals.length; index += 1) {
+      if (globals[index] === "-c" && !SANDBOX_CONFIG.test((globals[index + 1] ?? "").split("=")[0]!)) {
+        throw new GuardError(`git -c ${(globals[index + 1] ?? "").split("=")[0]} is not run in the sandbox: that setting can start a program outside it. Turn the sandbox off for this run if you need it.`);
+      }
+    }
   }
   if (GIT_READ.has(sub)) return { sub, action: "read" };
   if (sub === "config") {
-    if (has("--get", "--get-all", "--list", "-l", "--get-regexp")) return { sub, action: "read" };
-    throw new GuardError("Changing git config is not allowed.");
-  }
-  if (sub === "remote") {
-    if (!rest.length || has("-v", "--verbose") || rest[0] === "show" || rest[0] === "get-url") return { sub, action: "read" };
-    throw new GuardError("Changing git remotes is not allowed.");
-  }
-  if (sub === "branch") {
-    if (has("-D", "--delete", "-d", "-M", "-m", "--move", "-f", "--force", "--set-upstream-to", "-u")) {
-      if (limits.who === "agent") throw new GuardError("Deleting, renaming or forcing branches is not allowed for the agent.");
+    const key = configWrite(rest);
+    if (!key) return { sub, action: "read" };
+    if (limits.sandboxed && !SANDBOX_CONFIG.test(key)) {
+      throw new GuardError(`git config ${key} is not changed in the sandbox: git outside it would run what that setting names. Turn the sandbox off for this run if you need it.`);
     }
-    return { sub, action: rest.some((arg) => !arg.startsWith("-")) ? "local" : "read" };
+    return { sub, action: "local" };
   }
-  if (sub === "worktree" && rest[0] !== "list") throw new GuardError("git worktree can place files outside the folder. Not allowed.");
   if (sub === "commit" || makesCommits(sub, rest)) {
     if (limits.delivery === "local") {
       throw new GuardError(
@@ -374,30 +391,13 @@ export function checkGit(argv: string[], limits: GitLimits): { sub: string; acti
     return { sub, action: sub === "pull" ? "network" : "commit" };
   }
   if (sub === "push") {
-    if (limits.delivery !== "push") throw new GuardError("This run may not push. Finish without pushing. It was assigned without “Commit + push”.");
-    if (has("--force", "-f", "--mirror", "--all", "--delete", "-d", "--prune")) {
-      throw new GuardError(limits.who === "human" ? "Force-push and deletes are refused. Use --force-with-lease if you must rewrite." : "Force-push, mirror and branch deletes are not allowed.");
-    }
-    if (limits.who === "agent" && has("--force-with-lease", "--force-with-lease=", "--force-if-includes")) {
-      throw new GuardError("The agent may not rewrite remote history.");
-    }
-    const refs = rest.filter((arg) => !arg.startsWith("-")).slice(1);
-    for (const ref of refs) {
-      if (ref.startsWith(":") || ref.startsWith("+")) throw new GuardError("Deleting or force-updating a remote branch is not allowed.");
-      const target = ref.includes(":") ? ref.split(":").pop()! : ref;
-      const name = target.replace(/^refs\/heads\//, "");
-      if (limits.who === "agent" && limits.runBranch && name !== limits.runBranch && name !== "HEAD") {
-        throw new GuardError(`The agent may only push ${limits.runBranch}. Push is fast-forward and is done by Ensemble, not inside the sandbox.`);
-      }
-      if (limits.who === "agent" && PROTECTED.has(name) && name !== limits.branch) {
-        throw new GuardError(`The agent may not push to ${name}. It works on ${limits.branch || "its own branch"}.`);
-      }
-    }
+    if (limits.delivery !== "push") throw new GuardError("This run may not push: it was assigned with “Local only” or “Commit”. Finish without pushing.");
     return { sub, action: "push" };
   }
-  if (["clone", "fetch", "pull"].includes(sub)) return { sub, action: "network" };
-  if (GIT_LOCAL.has(sub)) return { sub, action: "local" };
-  throw new GuardError(`git ${sub} is not on the allow-list.`);
+  if (GIT_NETWORK.has(sub) || (sub === "remote" && ["update", "prune"].includes(rest[0] ?? "")) || (sub === "submodule" && ["update", "add", "sync"].includes(rest[0] ?? ""))) return { sub, action: "network" };
+  if (sub === "remote" && (!rest.length || rest[0] === "-v" || rest[0] === "--verbose" || rest[0] === "show" || rest[0] === "get-url")) return { sub, action: "read" };
+  if (sub === "branch" && !rest.some((arg) => !arg.startsWith("-"))) return { sub, action: "read" };
+  return { sub, action: "local" };
 }
 
 /** Options Ensemble puts in front of every git call it runs. */

@@ -1,7 +1,6 @@
 /**
- * A run that ends in a pull request (docs/24 §5.1), with git and GitHub replaced: which bases and
- * branches are refused, where the branch starts, and what happens after the run for each merge
- * choice. Nothing here reaches GitHub or reads a credential.
+ * A run that ends in a pull request (docs/24 §5.1), with git and GitHub replaced: any base, where the
+ * branch starts, and what happens after the run for each merge choice. Nothing here reaches GitHub or reads a credential.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -70,34 +69,35 @@ function fakes(over: { checks?: string; defaultBranch?: string; existingPull?: b
       asked.push(input.title);
       return { decision: over.ask ?? "allow", answer: null };
     },
-    bases: () => ["testing"],
     ledger: async () => undefined,
     auth: async () => ({ env: {}, config: [] }),
   };
   return { deps, git, api, asked };
 }
 
-test("the plan is read from the job's context; only GitHub over https is a remote", () => {
+test("the plan is read from the job's context; a GitHub remote over https or SSH is one repository", () => {
   assert.deepEqual(pullRequestOf({ outsideAccess: "read", pullRequest: { base: "testing", merge: "auto" } }), { base: "testing", merge: "auto" });
   assert.equal(pullRequestOf({ outsideAccess: "read" }), null);
   assert.equal(pullRequestOf({ pullRequest: { base: "../x" } }), null);
   assert.equal(githubHttps("https://github.com/acme/widgets"), REPO);
   assert.equal(githubHttps("https://user:secret@github.com/acme/widgets.git"), null);
-  assert.equal(githubHttps("git@github.com:acme/widgets.git"), null);
+  assert.equal(githubHttps("git@github.com:acme/widgets.git"), REPO);
+  assert.equal(githubHttps("https://gitlab.com/acme/widgets.git"), null);
 });
 
-test("an assignment that ends in a pull request is made consistent, and refused where it cannot work", () => {
+test("an assignment that ends in a pull request goes into any branch, and is refused only where it cannot work", () => {
   const base = { taskId: "00000000-0000-4000-8000-000000000000", kind: "code" as const, repoUrl: "acme/widgets" };
   const named = withPullRequest(Assign.parse({ ...base, branch: "feature-a", delivery: "push", pullRequest: { base: "testing" } }));
   assert.equal(named.branchMode, "new");
   assert.equal(named.branch, "feature-a");
-  assert.equal(named.delivery, "commit", "Ensemble pushes, so the agent only commits");
+  assert.equal(named.delivery, "push", "the agent may push too");
   assert.equal(named.pullRequest?.merge, "ask", "asking before a merge is the default");
-  assert.throws(() => withPullRequest(Assign.parse({ ...base, pullRequest: { base: "main" } })), /never opens a pull request into main/);
-  assert.throws(() => withPullRequest(Assign.parse({ ...base, pullRequest: { base: "testing-live" } })), /never/);
-  assert.throws(() => withPullRequest(Assign.parse({ ...base, branch: "testing", pullRequest: { base: "testing" } })), /cannot be testing/);
-  assert.throws(() => withPullRequest(Assign.parse({ ...base, branch: "production", pullRequest: { base: "testing" } })), /never pushes production/);
-  assert.throws(() => withPullRequest(Assign.parse({ ...base, repoUrl: undefined, folder: "/work/notes", pullRequest: { base: "testing" } })), /own clone/);
+  for (const into of ["main", "master", "production", "testing-live", ""]) {
+    assert.doesNotThrow(() => withPullRequest(Assign.parse({ ...base, branch: "feature-a", pullRequest: { base: into } })), into);
+  }
+  assert.doesNotThrow(() => withPullRequest(Assign.parse({ ...base, branch: "production", pullRequest: { base: "testing" } })));
+  assert.doesNotThrow(() => withPullRequest(Assign.parse({ ...base, repoUrl: undefined, folder: "/work/notes", pullRequest: { base: "testing" } })), "a folder worked in place");
+  assert.throws(() => withPullRequest(Assign.parse({ ...base, branch: "testing", pullRequest: { base: "testing" } })), /into itself/);
   assert.throws(() => withPullRequest(Assign.parse({ ...base, kind: "research", pullRequest: { base: "testing" } })), /code task/);
   assert.throws(() => withPullRequest(Assign.parse({ ...base, chat: true, pullRequest: { base: "testing" } })), /chat/);
 });
@@ -106,7 +106,7 @@ test("before the run: the base is checked here and on GitHub, and the branch sta
   const { deps, git } = fakes();
   const run = ctx({ createBranch: true, branch: "feature-a" });
   const prepared = await preparePullRequest(run, { base: "testing", merge: "ask" }, deps);
-  assert.deepEqual(prepared, { remote: REPO, repo: { owner: "acme", repo: "widgets" }, branch: "feature-a", baseSha: "basesha" });
+  assert.deepEqual(prepared, { remote: REPO, repo: { owner: "acme", repo: "widgets" }, branch: "feature-a", base: "testing", baseSha: "basesha" });
   const fetched = git.find((call) => call.args[0] === "fetch")!;
   assert.deepEqual(fetched.args.slice(-2), [REPO, "+refs/heads/testing:refs/ensemble/pr-base/job-1"]);
   assert.deepEqual(git.find((call) => call.args[0] === "checkout")!.args, ["checkout", "--quiet", "-B", "feature-a", "refs/ensemble/pr-base/job-1"]);
@@ -117,14 +117,22 @@ test("before the run: the base is checked here and on GitHub, and the branch sta
   assert.match(fromFolder.branch, /^ensemble\/job-1\//, "no name given: the run's own branch");
   assert.deepEqual(local.git[0], { cwd: "/work/widgets", args: ["config", "--get", "remote.origin.url"] });
 
-  await assert.rejects(preparePullRequest(ctx(), { base: "release", merge: "ask" }, fakes().deps), /does not open pull requests into release/);
+  // Any base, the default branch included; empty: the default branch, read from GitHub.
+  const intoMain = await preparePullRequest(ctx({ createBranch: true, branch: "feature-a" }), { base: "main", merge: "ask" }, fakes().deps);
+  assert.equal(intoMain.base, "main");
+  const defaulted = fakes({ defaultBranch: "trunk" });
+  assert.equal((await preparePullRequest(ctx({ createBranch: true, branch: "feature-a" }), { base: "", merge: "ask" }, defaulted.deps)).base, "trunk");
+  assert.deepEqual(defaulted.git.find((call) => call.args[0] === "fetch")!.args.slice(-1), ["+refs/heads/trunk:refs/ensemble/pr-base/job-1"]);
+  // A folder worked in place: its own origin, read in that folder.
+  const inPlace = fakes();
+  const fromPlace = await preparePullRequest(ctx({ externalRoot: "/work/widgets", repoUrl: null }, { root: "/work/widgets" } as Partial<Ctx>), { base: "testing", merge: "ask" }, inPlace.deps);
+  assert.equal(fromPlace.remote, REPO);
+  assert.deepEqual(inPlace.git[0], { cwd: "/work/widgets", args: ["config", "--get", "remote.origin.url"] });
   await assert.rejects(preparePullRequest(ctx({}, { network: false } as Partial<Ctx>), { base: "testing", merge: "ask" }, fakes().deps), /needs the internet/);
-  await assert.rejects(preparePullRequest(ctx({ externalRoot: "/work/notes" }), { base: "testing", merge: "ask" }, fakes().deps), /own clone/);
   await assert.rejects(preparePullRequest(ctx({ repoUrl: "https://gitlab.com/acme/widgets.git" }), { base: "testing", merge: "ask" }, fakes().deps), /no GitHub origin/);
-  await assert.rejects(preparePullRequest(ctx(), { base: "testing", merge: "ask" }, fakes({ defaultBranch: "testing" }).deps), /default branch/);
 });
 
-const prepared = { remote: REPO, repo: { owner: "acme", repo: "widgets" }, branch: "feature-a", baseSha: "basesha" };
+const prepared = { remote: REPO, repo: { owner: "acme", repo: "widgets" }, branch: "feature-a", base: "testing", baseSha: "basesha" };
 const input = { title: "Add a greeting", summary: "Added greeting.txt." };
 
 test("after the run: push fast-forward only, open, ask on Needs me, wait for checks, merge", async () => {

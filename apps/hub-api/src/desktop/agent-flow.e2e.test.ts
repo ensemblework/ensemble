@@ -76,7 +76,7 @@ test("assign → Needs me → answer → review → accept → push, plus cancel
 
     // ── the main path ────────────────────────────────────────────────────
     const editTask = await newTask(side, "[edit] Change the greeting");
-    const assigned = await assign(side, { taskId: editTask, repoUrl: source, delivery: "commit", askBeforePublish: false });
+    const assigned = await assign(side, { taskId: editTask, repoUrl: source, branchMode: "new", branch: "feature/greeting", delivery: "commit", askBeforePublish: false });
     assert.equal(assigned.status, 201, JSON.stringify(assigned.body));
     const editId = assigned.body.jobId!;
 
@@ -89,7 +89,7 @@ test("assign → Needs me → answer → review → accept → push, plus cancel
 
     const done = await waitStatus(side, editId, ["succeeded"]);
     assert.ok(done.reviewId, "a finished code job with changes has a review");
-    assert.match(done.branch, new RegExp(`^ensemble/${editId}/`));
+    assert.equal(done.branch, "feature/greeting", "a named branch is used exactly as named");
 
     const review = await side.api<{ files: Array<{ path: string }>; review: { canPush: boolean; completedAt: string | null } }>(`/api/code/source?review=${done.reviewId}`);
     assert.equal(review.status, 200, JSON.stringify(review.body));
@@ -114,7 +114,7 @@ test("assign → Needs me → answer → review → accept → push, plus cancel
     assert.equal(pushed.status, 200, JSON.stringify(pushed.body));
     assert.equal(git(source, "rev-parse", `refs/heads/${accepted.body.branch}`), accepted.body.commit);
     assert.equal(git(source, "show", `${accepted.body.branch}:hello.txt`), "hello, world");
-    assert.equal(git(source, "show", "main:hello.txt"), "hello", "main is never pushed");
+    assert.equal(git(source, "show", "main:hello.txt"), "hello", "the push sent the run's branch, not main");
 
     // ── outside the folder, reading goes ahead by default (Read only) ──────
     const readTask = await newTask(side, "[outside] Read /etc");

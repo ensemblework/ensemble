@@ -24,11 +24,3 @@ export function hostedJobIdOf(context: unknown): string | null {
   const id = (context as { hostedJobId?: unknown }).hostedJobId;
   return typeof id === "string" ? id : null;
 }
-
-/** A remote task gets no Git credential: no private clone, no hosted push (doc 25 §5). */
-export const GIT_GATE_CODE = "GIT_GATE_REQUIRED";
-export const GIT_GATE_CLONE =
-  "This Mac does not clone private repositories for remote tasks yet. That needs the Git gate (desktop steps 2 and 4), which is not in this build. Use a public repository or a folder you shared on the Mac.";
-export const GIT_GATE_PUSH =
-  "This Mac does not push remote tasks to a hosted repository yet. That needs the Git gate (desktop steps 2 and 4), which is not in this build. The commits stay on the run branch on this Mac.";
-

@@ -53,7 +53,7 @@ Local secrets stay local. The exception runs the other way: with *Settings → M
 
 ### 4.3 Local routes
 
-`GET /api/remote`, `POST /api/remote/pair`, `/unpair`, `/folders`, and `DELETE /api/remote/folders/:label` manage the runtime locally. A hosted job cannot set Code folders, trust, web-control or run-branch push settings. [26](26_CLI.md) lists the CLI commands.
+`GET /api/remote`, `POST /api/remote/pair`, `/unpair`, `/folders`, and `DELETE /api/remote/folders/:label` manage the runtime locally. A hosted job cannot set Code folders, trust or web-control settings. [26](26_CLI.md) lists the CLI commands.
 
 ### 4.4 Web UI
 
@@ -97,9 +97,7 @@ A paired desktop app or CLI calls included models through `/api/devices/self/inc
 
 `acceptWebApprovals` (*Accept approvals from the web and phone*, `ensemble approvals`) is **on by default**. When on, the web's run settings apply and supported risky decisions can be confirmed remotely. When off, risky answers stay on the computer and web settings can only narrow local permissions. The computer checks its own pending decision and action hash; the first valid answer wins, and a timeout never allows.
 
-`runBranchPush` is **off by default** and set on the computer. It allows only the trusted run-branch push, never arbitrary or force pushes; Git credentials stay outside the agent's environment and the Git gate still decides.
-
-A task from the web that ends in a pull request is the one case where a run's branch goes to GitHub: only into a base in the computer's own `pullRequestBases` (default `testing`; never `main`, `master`, `production`, `testing-live` or the default branch), from the run's own clone, pushed by Ensemble with the computer's GitHub sign-in. The claim carries `pullRequest` (and the branch name, which the computer otherwise refuses); `planLocalJob` checks the base against its own list and refuses a folder shared to work in place. Merging waits for the person's Allow on Needs me unless the task said to merge when checks pass ([24 §5.1](24_DESKTOP_SANDBOXING.md#51-pull-requests)).
+A task from the web is limited in git only by the person's own choices: its Git choice (No limits by default), its branch (current, a new one by name, or an existing one), *Use my git sign-in* for private and SSH repositories (applied when the computer accepts web settings), and a pull request into any branch ([24 §5](24_DESKTOP_SANDBOXING.md#5-git-and-credentials)). Pushes and `gh` use the computer's own sign-in; Ensemble puts no branch, push or merge rule of its own on it. Merging a pull request Ensemble opened waits for the person's Allow on Needs me unless the task said to merge when checks pass ([24 §5.1](24_DESKTOP_SANDBOXING.md#51-pull-requests)).
 
 A web confirmation is an authenticated session action, not a device-verified WebAuthn signature over each decision; the terminal passkey protects only the terminal.
 

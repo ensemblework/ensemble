@@ -55,7 +55,7 @@ function resultLabel(kind: string, url: string, sha?: string): string {
   return RESULT_LABEL[kind] ?? kind;
 }
 
-const DELIVERY: Record<AgentJob["delivery"], string> = { local: "local only", commit: "may commit", push: "may push" };
+const DELIVERY: Record<AgentJob["delivery"], string> = { local: "local only", commit: "may commit", push: "no git limits" };
 
 /** Time since `since` while running; once it ended, the time it took (`until`), not the time since it began. */
 export function useElapsed(since: string | null, running: boolean, until?: string | null): string {
@@ -424,7 +424,7 @@ function RunAgain({ job }: { job: AgentJob }) {
   });
   return (
     <div className="space-y-1">
-      {pushed ? <div className="text-[12px] text-muted">The branch might already exist. {job.deviceName || "Your computer"} will refuse a second push if it moved.</div> : null}
+      {pushed ? <div className="text-[12px] text-muted">The branch might already exist on the remote.</div> : null}
       <button
         type="button"
         className="btn py-0.5 text-[12px]"

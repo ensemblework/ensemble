@@ -106,7 +106,7 @@ test("GitHub Copilot on a paired computer offers its models, thinking levels and
     }
     if (path === "/api/settings") return json({ settings: Settings.parse({}) });
     if (path === "/api/tasks/task-1") return json({ task: { id: "task-1", title: "Fix the flaky test", status: "todo", complexity: "medium" } });
-    if (path === "/api/devices") return json({ serverRunner: false, devices: [{ id: "device-1", name: "Studio Mac", platform: "macos", appVersion: "cli-0.5.0", capabilities: { engines: [...CODE_ENGINES] }, folders: [], runBranchPush: false, lastSeenAt: null, createdAt: "2026-10-01T09:00:00.000Z" }] });
+    if (path === "/api/devices") return json({ serverRunner: false, devices: [{ id: "device-1", name: "Studio Mac", platform: "macos", appVersion: "cli-0.5.0", capabilities: { engines: [...CODE_ENGINES] }, folders: [], lastSeenAt: null, createdAt: "2026-10-01T09:00:00.000Z" }] });
     if (path === "/api/subscriptions") return json({ preferred: null, computers: [{ id: "device-1", name: "Studio Mac", platform: "macos", local: false, online: true, lastSeenAt: null, appVersion: "cli-0.5.0", ready: true, agents: [copilot] }] });
     return json({ error: "not found" }, 404);
   }) as typeof fetch;
@@ -165,7 +165,7 @@ test("GitHub Copilot on a paired computer offers its models, thinking levels and
   }
 });
 
-test("Pull request: the computer's bases, notices for a too-old computer, a never-base and a folder worked in place; Assign sends the plan and saving keeps it", async () => {
+test("Git starts on No limits; Pull request: any base typed (empty: the default branch), a too-old computer, a folder worked in place; Assign sends the plan and saving keeps it", async () => {
   const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
   const sent: Array<{ path: string; method: string; body: Record<string, unknown> }> = [];
   const studio = {
@@ -173,9 +173,8 @@ test("Pull request: the computer's bases, notices for a too-old computer, a neve
     name: "Studio Mac",
     platform: "macos",
     appVersion: "cli-0.6.0",
-    capabilities: { engines: [...CODE_ENGINES], pullRequests: 1, pullRequestBases: ["testing", "staging"], folders: [{ label: "ensemble", kind: "repo", access: "read-write" }, { label: "notes", kind: "folder", access: "read-write" }] },
+    capabilities: { engines: [...CODE_ENGINES], pullRequests: 2, folders: [{ label: "ensemble", kind: "repo", access: "read-write" }, { label: "notes", kind: "folder", access: "read-write" }] },
     folders: ["ensemble", "notes"],
-    runBranchPush: false,
     lastSeenAt: null,
     createdAt: "2026-10-01T09:00:00.000Z",
   };
@@ -228,48 +227,43 @@ test("Pull request: the computer's bases, notices for a too-old computer, a neve
   try {
     await act(async () => root.render(<QueryClientProvider client={client}><AssignDialog open onClose={() => {}} taskId="task-1" defaultKind="code" /></QueryClientProvider>));
     await settle();
+    assert.match(document.body.textContent ?? "", /· no git limits/, "Git starts on No limits");
     await click([...document.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.textContent === "Pull request")!);
     assert.ok(field('[data-testid="assign-pull-request"]'), "the pull request panel opens");
 
-    // This server: the base is typed, and a production branch is refused.
-    assert.equal(field<HTMLInputElement>('input[aria-label="Into branch"]').value, "testing");
-    await type("Into branch", "production");
-    assert.ok(notices().includes("A run never opens a pull request into production: it is production or a deploy pointer."));
+    // The base is free text, empty for the default branch; any branch git accepts goes.
+    const base = field<HTMLInputElement>('input[aria-label="Into branch"]');
+    assert.deepEqual([base.tagName, base.value, base.placeholder], ["INPUT", "", "default branch"]);
+    assert.equal(document.querySelector("[data-pull-request-bases]"), null, "no list of bases");
+    await type("Into branch", "bad..name");
+    assert.ok(notices().includes("“bad..name” is not a branch name git accepts."));
+    await type("Into branch", "main");
+    assert.ok(!notices().some((text) => text?.includes("main")), "main is accepted");
 
     await click(button("Old Laptop"));
     assert.ok(notices().includes("Ensemble on Old Laptop is too old to open pull requests. Update it there (ensemble update), then assign."));
 
     await click(button("Studio Mac"));
-    const bases = field<HTMLSelectElement>('select[aria-label="Into branch"]');
-    assert.deepEqual([...bases.options].map((option) => option.textContent), ["Choose a branch…", "testing", "staging"], "only the computer's bases, never production");
-    await choose("Into branch", "testing");
-    assert.deepEqual(notices(), ["A pull request needs a repository. Give its GitHub address, or pick a folder Studio Mac shares as a repository."]);
+    assert.equal(document.querySelector('select[aria-label="Into branch"]'), null);
+    assert.deepEqual(notices(), ["A pull request needs a repository. Give its GitHub address, or pick a folder Studio Mac shares."]);
 
     await click(button("A folder on Studio Mac"));
     assert.deepEqual([...field<HTMLSelectElement>('select[aria-label="Shared folder"]').options].map((option) => option.textContent), ["Choose a folder Studio Mac has shared…", "ensemble · repository", "notes"]);
     await choose("Shared folder", "notes");
-    assert.deepEqual(notices(), ["notes is worked in place. Pick a repository, or a folder Studio Mac shares as a repository."]);
-    assert.equal(assignButton().getAttribute("aria-disabled"), "true");
-    await click(assignButton());
-    assert.equal(sent.length, 0, "a blocked pull request is not sent");
-
-    await choose("Shared folder", "ensemble");
-    assert.deepEqual(notices(), []);
-    await type("Branch name", "testing");
-    assert.equal(field('[data-testid="pull-request-branch-notice"]').textContent, "The run's branch cannot be testing, the branch the pull request goes into.");
+    assert.deepEqual(notices(), [], "a folder worked in place can end in a pull request");
     await type("Branch name", "main");
-    assert.equal(field('[data-testid="pull-request-branch-notice"]').textContent, "A run never pushes main.");
+    assert.equal(field('[data-testid="pull-request-branch-notice"]').textContent, "A pull request cannot come from main into itself. Name another branch for the run.");
     await type("Branch name", "live-test/pr-flow");
     assert.equal(document.querySelector('[data-testid="pull-request-branch-notice"]'), null);
     assert.deepEqual([...field<HTMLSelectElement>('select[aria-label="After opening"]').options].map((option) => option.textContent), ["Ask me before merging", "Merge when checks pass", "Leave it open"]);
     await choose("After opening", "auto");
 
     await click(button("Save as profile"));
-    await type("Profile name", "PR to testing");
+    await type("Profile name", "PR to main");
     await act(async () => field<HTMLInputElement>('input[aria-label="Profile name"]').form!.requestSubmit());
     await settle();
     const saved = sent.find((row) => row.path === "/api/settings")?.body.runProfiles as Array<Record<string, unknown>> | undefined;
-    assert.deepEqual(saved?.[0]?.pullRequest, { base: "testing", merge: "auto" });
+    assert.deepEqual(saved?.[0]?.pullRequest, { base: "main", merge: "auto" });
     assert.equal(saved?.[0]?.delivery, "commit");
 
     assert.equal(assignButton().getAttribute("aria-disabled"), null);
@@ -277,7 +271,7 @@ test("Pull request: the computer's bases, notices for a too-old computer, a neve
     const body = sent.find((row) => row.path === "/api/agent/assign")?.body;
     assert.deepEqual(
       { pullRequest: body?.pullRequest, branch: body?.branch, branchMode: body?.branchMode, delivery: body?.delivery, network: body?.network, folderLabel: body?.folderLabel, deviceId: body?.deviceId, folder: body?.folder },
-      { pullRequest: { base: "testing", merge: "auto" }, branch: "live-test/pr-flow", branchMode: "new", delivery: "commit", network: true, folderLabel: "ensemble", deviceId: "device-1", folder: undefined },
+      { pullRequest: { base: "main", merge: "auto" }, branch: "live-test/pr-flow", branchMode: "new", delivery: "commit", network: true, folderLabel: "notes", deviceId: "device-1", folder: undefined },
     );
   } finally {
     await act(async () => root.unmount());

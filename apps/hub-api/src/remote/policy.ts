@@ -7,16 +7,13 @@
  */
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
-import { CODE_ENGINES, PullRequestPlan, pullRequestBaseRefusal, pullRequestHeadRefusal } from "@ensemble/shared-types";
+import { CODE_ENGINES, PullRequestPlan, pullRequestHeadRefusal } from "@ensemble/shared-types";
 import { redactText } from "../lib/redact.js";
 import type { AssignInput } from "../workspace/assign.js";
 import { OUTSIDE_TOOL } from "../workspace/tools.js";
 import { TRUST_TOOL } from "../workspace/trust.js";
 import { withoutPageSection, type HostedAnswer, type JobSpec } from "./contract.js";
-import { GIT_GATE_CLONE, GIT_GATE_CODE } from "./origin.js";
 import type { RemoteSettings, SharedFolder } from "./store.js";
-
-export { GIT_GATE_CLONE, GIT_GATE_CODE, GIT_GATE_PUSH } from "./origin.js";
 
 export type Refusal = { code: string; message: string };
 
@@ -26,8 +23,6 @@ export type LocalPlan = {
   /** The task page as Markdown: the local task's notes, which the agent's brief reads as the page. */
   page: string;
   assign: Omit<AssignInput, "taskId">;
-  /** An https URL the Mac must confirm is public (cloned without any credential) before the job is created. */
-  publicCheck: string | null;
 };
 
 export function sharedFolder(settings: RemoteSettings, label: string): SharedFolder | null {
@@ -61,21 +56,15 @@ export function planLocalJob(spec: JobSpec, settings: RemoteSettings, continueFr
   const page = (spec.task?.page ?? "").trim();
   // A server that sends the page also puts it in the description for older computers; it is read once, as the page.
   const description = page ? withoutPageSection((spec.task?.description ?? "").trim(), page) : (spec.task?.description ?? "").trim();
-  if (spec.useCredentials) return { code: GIT_GATE_CODE, message: GIT_GATE_CLONE };
-  // A run that ends in a pull request (docs/24 §5.1): only into a base this computer allows.
+  // A run that ends in a pull request (docs/24 §5.1), into any branch the person named.
   const plan = spec.pullRequest ? PullRequestPlan.safeParse(spec.pullRequest) : null;
   if (plan && !plan.success) return { code: "PULL_REQUEST_INVALID", message: "Update Ensemble on this computer: it could not read this task's pull request." };
   const pullRequest = plan?.success ? plan.data : null;
   const named = spec.branch?.trim() ?? "";
-  if (pullRequest) {
-    const refusal = pullRequestBaseRefusal(pullRequest.base, settings.pullRequestBases, "This computer") ?? (named ? pullRequestHeadRefusal(named, pullRequest.base) : null);
-    if (refusal) return { code: "PULL_REQUEST_NOT_ALLOWED", message: refusal };
-  } else if ((spec.branchMode && spec.branchMode !== "as-is") || named) {
-    return {
-      code: "BRANCH_NOT_ALLOWED",
-      message: "A remote task works only on its own run branch (ensemble/<run-id>/…). Another branch can be chosen on the Mac.",
-    };
-  }
+  const refusal = pullRequest && named ? pullRequestHeadRefusal(named, pullRequest.base) : null;
+  if (refusal) return { code: "PULL_REQUEST_INVALID", message: refusal };
+  // The branch the person picked on the web: as it is, a new one with that name, or an existing one.
+  const branchMode = !named ? "as-is" : pullRequest ? "new" : spec.branchMode === "new" || spec.branchMode === "existing" ? spec.branchMode : "as-is";
   // Trust stays "none": a label from the web is not a trust grant. Review only and
   // unattended are checked against trust that exists here (doc 25 §6); when it is
   // missing, the run asks "Trust this folder?", which the person may answer from the web.
@@ -84,14 +73,14 @@ export function planLocalJob(spec: JobSpec, settings: RemoteSettings, continueFr
   const assign: LocalPlan["assign"] = {
     kind: spec.kind,
     instructions: (spec.instructions ?? "").slice(0, 8000),
-    branchMode: pullRequest && named ? "new" : "as-is",
-    ...(pullRequest && named ? { branch: named } : {}),
-    // A pull request needs commits; Ensemble pushes the branch itself.
-    delivery: pullRequest ? "commit" : spec.delivery,
+    branchMode,
+    ...(branchMode !== "as-is" && named ? { branch: named } : {}),
+    delivery: pullRequest ? "push" : spec.delivery,
     ...(pullRequest ? { pullRequest } : {}),
     // Without web settings, every commit asks here.
     askBeforePublish: web ? spec.askBeforePublish !== false : true,
-    useCredentials: false,
+    // Clone and fetch private repositories with this computer's sign-in, when the web's settings apply here.
+    useCredentials: web && spec.useCredentials === true,
     // The sandbox toggle from the web applies when this computer accepts web settings; otherwise the sandbox stays on.
     sandbox: web ? spec.sandbox !== false : true,
     // The web's outside-folder choice applies when this computer accepts web settings; otherwise this computer's own setting.
@@ -112,7 +101,6 @@ export function planLocalJob(spec: JobSpec, settings: RemoteSettings, continueFr
     ...(spec.reasoningEffort?.trim() ? { reasoningEffort: spec.reasoningEffort.trim() } : {}),
     ...(spec.contextTier === "long_context" ? { contextTier: "long_context" as const } : {}),
   };
-  let publicCheck: string | null = null;
   const label = (spec.folderLabel ?? spec.folder ?? "").trim();
   if (spec.kind === "code") {
     const previous = spec.continueFromJobId ? continueFrom(spec.continueFromJobId) : null;
@@ -123,22 +111,18 @@ export function planLocalJob(spec: JobSpec, settings: RemoteSettings, continueFr
       if (!shared) return { code: "UNKNOWN_FOLDER", message: `This Mac has not shared a folder called “${label.slice(0, 60)}”. Add it on the Mac first.` };
       if (shared.kind === "repo") {
         assign.repoUrl = shared.path;
-      } else if (pullRequest) {
-        return { code: "PULL_REQUEST_NOT_ALLOWED", message: `“${label.slice(0, 60)}” is shared to work in place. A pull request needs the run in its own clone: share the folder as a repository on this computer (\`ensemble folders add <path> --repo\`), or name the repository.` };
       } else {
         assign.folder = shared.path;
         assign.accessMode = shared.access === "review" || spec.accessMode === "review" ? "review" : "read-write";
       }
     } else if (spec.repoUrl?.trim()) {
       const value = spec.repoUrl.trim();
-      if (value.startsWith("git@") || value.startsWith("ssh:")) return { code: GIT_GATE_CODE, message: GIT_GATE_CLONE };
-      const url = httpsRepo(value);
-      if (!url) return { code: "REPO_NOT_ALLOWED", message: "A remote task names a public https repository or a folder shared on the Mac, not a path." };
+      const url = /^(git@[\w.-]+:|ssh:\/\/)[\w.@:/~-]+$/.test(value) ? value : httpsRepo(value);
+      if (!url) return { code: "REPO_NOT_ALLOWED", message: "A remote task names a repository URL (https or SSH) or a folder shared on this computer, not a path." };
       assign.repoUrl = url;
-      publicCheck = url;
     }
   }
-  return { title, description, page, assign, publicCheck };
+  return { title, description, page, assign };
 }
 
 export function isRefusal(value: LocalPlan | Refusal): value is Refusal {

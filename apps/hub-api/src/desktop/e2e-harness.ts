@@ -50,11 +50,8 @@ function script(title: string, turn: number, messages: ChatMessage[], fast: bool
     if (!fast) return "hang";
     return turn === 0 ? { name: "write_file", args: { path: "again.txt", content: "ran again\n" } } : { name: "finish", args: { summary: "Ran again." } };
   }
-  if (title.startsWith("[push-other]")) {
-    return turn === 0 ? { name: "run_command", args: { command: "git push origin main" } } : { name: "finish", args: { summary: "Tried to push." } };
-  }
   if (title.startsWith("[push-run]")) {
-    return turn === 0 ? { name: "run_command", args: { command: "git push" } } : { name: "finish", args: { summary: "Pushed." } };
+    return turn === 0 ? { name: "run_command", args: { command: "git push -u origin HEAD" } } : { name: "finish", args: { summary: "Pushed." } };
   }
   if (title.startsWith("[net]")) {
     return turn === 0 ? { name: "run_command", args: { command: "git fetch" } } : { name: "finish", args: { summary: "Tried the network." } };

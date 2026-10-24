@@ -4,12 +4,11 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Monitor, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { ConnectComputerButton } from "./connect-computer";
-import { PullRequestBases, RunBranchStatus } from "@/components/agent/run-branch-status";
 import { useToast } from "@/components/toast";
-import { SectionCard, SettingRow, Spinner, cx } from "@/components/ui";
+import { InfoTip, SectionCard, Spinner, cx } from "@/components/ui";
 import { api } from "@/lib/api";
 import { platformLabel } from "@/lib/device-copy";
-import { repositoryLabels } from "@/lib/pull-request";
+import { computerOpensPullRequests, repositoryLabels } from "@/lib/pull-request";
 import { relative } from "@/lib/format";
 
 export function DevicesSection() {
@@ -51,12 +50,16 @@ export function DevicesSection() {
                 <div className="truncate text-[12px] text-faint">
                   {device.online ? "Online" : device.lastSeenAt ? `Last seen ${relative(device.lastSeenAt)}` : "Not seen yet"}
                   {device.appVersion ? ` · ${device.appVersion}` : ""}
-                  {device.runBranchPush ? " · run-branch push on" : ""}
                 </div>
                 <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
-                  <PullRequestBases capabilities={device.capabilities} device={device.name} />
+                  {computerOpensPullRequests(device.capabilities) ? null : (
+                    <span className="inline-flex items-center gap-1.5 text-[12px] text-muted" data-pull-requests="unsupported">
+                      Pull requests: update Ensemble there first
+                      <InfoTip text={`Ensemble on ${device.name} is too old to open pull requests. Update it there (\`ensemble update\`).`} />
+                    </span>
+                  )}
                   {repositoryLabels(device.capabilities).length ? (
-                    <span className="min-w-0 truncate text-[12px] text-muted" title="Shared as repositories: each run works in its own clone, and can end in a pull request.">
+                    <span className="min-w-0 truncate text-[12px] text-muted" title="Shared as repositories: each run works in its own clone.">
                       Repositories: {repositoryLabels(device.capabilities).join(", ")}
                     </span>
                   ) : null}
@@ -71,17 +74,6 @@ export function DevicesSection() {
       ) : devices.isLoading || devices.error ? null : (
         <div className="text-[13px] text-muted">No computers connected yet. Choose Connect a computer to get started.</div>
       )}
-      <div className="mt-3 border-t border-line">
-        <SettingRow
-          title="Remote tasks may push to their own run branch"
-          description="Off unless a paired computer turns it on, and only for repos that computer already trusts. Every other push still asks there."
-        >
-          <RunBranchStatus
-            on={rows.some((device) => device.runBranchPush)}
-            device={rows.filter((device) => device.runBranchPush).map((device) => device.name).join(", ") || rows[0]?.name}
-          />
-        </SettingRow>
-      </div>
     </SectionCard>
   );
 }

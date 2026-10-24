@@ -40,7 +40,7 @@ function RemoteMacSettings() {
     onError: fail,
   });
   const save = useMutation({
-    mutationFn: (body: { enabled?: boolean; runBranchPush?: boolean; acceptWebApprovals?: boolean; browseFiles?: boolean; webEdit?: boolean; webTerminal?: boolean }) => api.saveRemote(body),
+    mutationFn: (body: { enabled?: boolean; acceptWebApprovals?: boolean; browseFiles?: boolean; webEdit?: boolean; webTerminal?: boolean }) => api.saveRemote(body),
     onSuccess: (_result, body) => {
       if (body.enabled === true) toast("Remote tasks are on.", { tone: "ok" });
       if (body.enabled === false) toast("Remote tasks are off.");
@@ -111,17 +111,6 @@ function RemoteMacSettings() {
       </div>
       <SettingRow title="Allow remote tasks" description="Tasks assigned on the web run on this computer, with this computer's model key and the same sandbox. Off until you turn it on.">
         <Toggle checked={Boolean(mac?.enabled)} disabled={!mac?.paired || save.isPending} label="Allow remote tasks" onChange={(enabled) => save.mutate({ enabled })} />
-      </SettingRow>
-      <SettingRow
-        title="Push to the run branch"
-        description="Remote tasks may push to their own run branch (ensemble/<run-id>/…) in repos you trust. Anything else still needs a confirmation on this computer."
-      >
-        <Toggle
-          checked={Boolean(mac?.runBranchPush)}
-          disabled={!mac?.paired || save.isPending}
-          label="Remote tasks may push to their own run branch"
-          onChange={(runBranchPush) => save.mutate({ runBranchPush })}
-        />
       </SettingRow>
       <SettingRow
         title="Accept approvals from the web and phone"

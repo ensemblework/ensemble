@@ -17,13 +17,14 @@ import { WorkingMark } from "./brand.js";
 import { Box, Text, useApp, useInput, useStdout, type Key } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { INCLUDED_LABEL, INCLUDED_LOCAL_ONLY, INCLUDED_PROVIDER, pickRunProfile, type ContextTier, type RunProfile, type SubscriptionAgent, type SubscriptionModel } from "@ensemble/shared-types";
-import { basesSummary, PROVIDERS } from "../local-commands.js";
+import { PROVIDERS } from "../local-commands.js";
 import type { ChatFrame, CodeSession, Decision, JobDetail, LocalApi, ModelRow, Settings, ToolCall, Workspace } from "./local.js";
 import { hit, isMouse, parseMouse, type Region } from "./mouse.js";
 import {
   ago,
   AGENT_MODELS,
   agentChoiceLabel,
+  baseLabel,
   buildItems,
   chatTurnRequest,
   commandAnswer,
@@ -31,6 +32,7 @@ import {
   copilotOf,
   copilotProblem,
   decisionActions,
+  deliveryLabel,
   engineOf,
   FINISHED,
   GROUP_LABEL,
@@ -533,7 +535,7 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
       const started = await api.json<{ jobId: string }>("/api/agent/assign", {
         body: runRequest({ taskId: created.task.id, folder, instructions: text, profile, engine: prefs.engine, agent: copilotChosen ? agentChoice : null }),
       });
-      say(`Started ${ENGINE_LABEL[engine]} on “${titleFrom(text)}”${profile.pullRequest ? `, in its own clone of this folder; it ends in a pull request into ${profile.pullRequest.base}` : ""}.`, "ok");
+      say(`Started ${ENGINE_LABEL[engine]} on “${titleFrom(text)}”${profile.pullRequest ? `, in its own clone of this folder; it ends in a pull request into ${baseLabel(profile.pullRequest.base)}` : ""}.`, "ok");
       setPrefs({ tab: "tasks" });
       setSelectedKey(`job:${started.jobId}`);
       void refresh();
@@ -773,7 +775,6 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
 
   const showStatus = async () => {
     const keys = await api.modelKeys().catch(() => ({ credentials: [] }));
-    const bases = (await api.remote().catch(() => null))?.pullRequestBases;
     const signIn = !copilotChosen ? "your sign-in" : copilot?.signedIn === false ? "not signed in · run copilot login" : `your sign-in${copilot?.account ? `: ${copilot.account}` : ""}`;
     const lines: Line[] = [
       [{ text: "Account        ", dim: true }, { text: account.email ? `${account.email}${account.paired ? " · this computer is paired" : ""}` : "not signed in (/login)" }],
@@ -783,7 +784,6 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
       [{ text: "Profile        ", dim: true }, { text: `${profile.name}: ${profileSummary(profile)}` }],
       [{ text: "Agent          ", dim: true }, { text: agentChat ? `${ENGINE_LABEL[engine]} (${signIn}) · ${agentChoiceLabel(agentChoice, agentModels, "its default model")}` : `Ensemble agent · ${prefs.chatModel ? prefs.chatModel.replace("::", " · ") : "chat default model"}` }],
       [{ text: "Model keys     ", dim: true }, { text: keyLine(keys.credentials) }],
-      [{ text: "Pull requests  ", dim: true }, { text: bases ? basesSummary(bases) : "unknown" }],
       [{ text: "Version        ", dim: true }, { text: props.version }],
     ];
     setOverlay({ kind: "text", title: "Status", lines });
@@ -1366,7 +1366,7 @@ function taskPane(input: { item: Item | null; detail: JobDetail | null; width: n
     const job = detail?.job.id === item.job.id ? { ...item.job, ...detail.job } : item.job;
     const glyph = STATUS_GLYPH[job.status] ?? { glyph: "•", color: MUTED };
     lines.push(...wrapLine([{ text: `${glyph.glyph} `, color: glyph.color }, { text: job.title, bold: true }], width));
-    const facts = [engineOf(job), job.unattended ? "Run unattended" : job.accessMode === "auto" ? "Review only" : "Ask", job.delivery === "local" ? "local only" : job.delivery === "commit" ? "may commit" : "may commit and push", job.executionMode === "sandbox" ? "sandbox on" : "sandbox off"];
+    const facts = [engineOf(job), job.unattended ? "Run unattended" : job.accessMode === "auto" ? "Review only" : "Ask", deliveryLabel(job.delivery), job.executionMode === "sandbox" ? "sandbox on" : "sandbox off"];
     lines.push(...wrapLine([{ text: facts.join(" · "), dim: true }], width));
     if (job.folder) lines.push([{ text: truncate(job.folder, width), dim: true }]);
     lines.push([]);

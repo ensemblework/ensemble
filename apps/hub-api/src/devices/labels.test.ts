@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { folderLabels, pathShapedLabel, rejectPathLabels, runBranchPushEnabled } from "./labels.js";
+import { deviceOpensPullRequests, folderLabels, pathShapedLabel, rejectPathLabels } from "./labels.js";
 
 test("folder labels stay names, and run-branch push stays off", () => {
   assert.equal(pathShapedLabel("Desktop/acme"), false);
@@ -9,9 +9,8 @@ test("folder labels stay names, and run-branch push stays off", () => {
   assert.equal(pathShapedLabel("C:\\src"), true);
   assert.deepEqual(folderLabels({ folders: ["Office", { label: "Desk" }, "/tmp/keys", "Office"] }), ["Office", "Desk"]);
   assert.deepEqual(folderLabels({}), []);
-  assert.equal(runBranchPushEnabled({}), false);
-  assert.equal(runBranchPushEnabled({ runBranchPush: true }), true);
-  assert.equal(runBranchPushEnabled({ runBranchPush: "yes" }), false);
+  assert.equal(deviceOpensPullRequests({ pullRequests: 1, pullRequestBases: ["testing"] }), false, "0.4.10 and 0.4.11 open pull requests only into their own list");
+  assert.equal(deviceOpensPullRequests({ pullRequests: 2 }), true);
   assert.match(rejectPathLabels({ folders: ["~/secrets"] }) ?? "", /label/);
   assert.equal(rejectPathLabels({ folders: ["Notes"] }), null);
 });

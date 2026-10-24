@@ -453,7 +453,7 @@ export function CodeIde({ source }: { source: Source }) {
         ) : null}
         {isReview && data.review?.completedAt ? <span className="text-[12px] text-muted">Reviewed</span> : null}
         {!viewOnly && isReview && data.review?.completedAt && data.review.canPush ? (
-          <button type="button" className="btn" disabled={push.isPending} onClick={() => push.mutate()} title="Fast-forward only, to this run's own branch, at the repository it was cloned from">
+          <button type="button" className="btn" disabled={push.isPending} onClick={() => push.mutate()} title="Pushes this run's branch, fast-forward only, to the repository it was cloned from">
             {push.isPending ? <Spinner size={12} /> : <Upload size={13} />} Push {data.branch}
           </button>
         ) : null}

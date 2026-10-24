@@ -179,16 +179,10 @@ test("remote tasks: pair, run, refuse a server overreach, disconnect, and do not
     assert.equal(stopped.status, 204);
     await waitJob(side, rogueTitle, "web", ["cancelled"]);
 
-    const otherTitle = "[push-other] Push main";
-    const otherHosted = host.enqueue(spec(otherTitle, { delivery: "push" }));
-    const other = await waitJob(side, otherTitle, "web", ["succeeded"]);
-    assert.equal(host.asks().some((row) => row.jobId === otherHosted), false, "a push to another branch is refused before the Mac asks");
-    assert.equal(git(source, "rev-parse", "HEAD"), main);
-    assert.throws(() => git(source, "rev-parse", "--verify", "--quiet", `refs/heads/${other.branch}`));
-
     const heldTitle = "[push-run] Needs the Mac";
-    const heldHosted = host.enqueue(spec(heldTitle, { delivery: "push" }));
+    const heldHosted = host.enqueue(spec(heldTitle, { delivery: "push", branchMode: "new", branch: "feature-held" }));
     const heldJob = await waitJob(side, heldTitle, "web", ["waiting_approval"]);
+    assert.equal(heldJob.branch, "feature-held", "a branch named on the web is used as named");
     const pushAsk = await until("the push question", async () => host.asks().find((row) => row.jobId === heldHosted));
     assert.equal(pushAsk.body.toolName, "git push");
     host.answer(pushAsk.id, { decision: "allow", scope: "once" });
@@ -200,15 +194,6 @@ test("remote tasks: pair, run, refuse a server overreach, disconnect, and do not
     assert.equal(denied.status, 200, JSON.stringify(denied.body));
     await waitJob(side, heldTitle, "web", ["succeeded"]);
     assert.throws(() => git(source, "rev-parse", "--verify", "--quiet", `refs/heads/${heldJob.branch}`));
-
-    const pushOn = await side.api<{ runBranchPush: boolean }>("/api/remote", { method: "PUT", json: { runBranchPush: true } });
-    assert.equal(pushOn.body.runBranchPush, true);
-    const allowTitle = "[push-run] Own branch";
-    const allowHosted = host.enqueue(spec(allowTitle, { delivery: "push" }));
-    const allowJob = await waitJob(side, allowTitle, "web", ["succeeded"]);
-    assert.equal(host.asks().some((row) => row.jobId === allowHosted), false, "the Mac's own run-branch setting pushes without asking");
-    assert.equal(git(source, "rev-parse", `refs/heads/${allowJob.branch}`), git(allowJob.folder, "rev-parse", "HEAD"));
-    await side.api("/api/remote", { method: "PUT", json: { runBranchPush: false } });
 
     const remoteSlow = "[slow] Remote revoke";
     const localSlow = "[slow] Local keeps going";
@@ -238,7 +223,7 @@ test("remote tasks: pair, run, refuse a server overreach, disconnect, and do not
     const repaired = await side.api<{ paired: boolean; enabled: boolean }>("/api/remote/pair", { json: { apiBase: host.origin, code: host.code } });
     assert.equal(repaired.status, 200, JSON.stringify(repaired.body));
     assert.equal(repaired.body.enabled, false);
-    const on = await side.api<{ enabled: boolean }>("/api/remote", { method: "PUT", json: { enabled: true, runBranchPush: false, acceptWebApprovals: false } });
+    const on = await side.api<{ enabled: boolean }>("/api/remote", { method: "PUT", json: { enabled: true, acceptWebApprovals: false } });
     assert.equal(on.body.enabled, true);
     const quitTitle = "[slow] Remote quit";
     const quitHosted = host.enqueue(spec(quitTitle));
@@ -291,7 +276,7 @@ test("with web approvals on, a push the computer asks about goes ahead on an all
     assert.equal(enabled.body.acceptWebApprovals, true, "approvals from the web are on by default");
 
     const title = "[push-run] Allowed from the phone";
-    const hosted = host.enqueue(spec(title, { delivery: "push" }));
+    const hosted = host.enqueue(spec(title, { delivery: "push", branchMode: "new", branch: "feature-phone" }));
     await waitJob(side, title, "web", ["waiting_approval"]);
     const ask = await until("the push question", async () => host.asks().find((row) => row.jobId === hosted));
     assert.equal(ask.body.toolName, "git push");
@@ -299,7 +284,7 @@ test("with web approvals on, a push the computer asks about goes ahead on an all
     assert.equal(ask.body.confirm, true, "the web asks the person to confirm first");
     host.answer(ask.id, { decision: "allow", scope: "once", actionHash: ask.actionHash });
     const done = await waitJob(side, title, "web", ["succeeded"]);
-    assert.equal(git(source, "rev-parse", `refs/heads/${done.branch}`), git(done.folder, "rev-parse", "HEAD"), "the phone's allow pushed the run branch");
+    assert.equal(git(source, "rev-parse", "refs/heads/feature-phone"), git(done.folder, "rev-parse", "HEAD"), "the phone's allow pushed the run's branch");
     await until("the hosted push completes", async () => host.job(hosted).complete?.outcome === "succeeded");
   } catch (error) {
     console.error(side.logs().slice(-8000));

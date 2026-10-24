@@ -92,8 +92,6 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
       return { mechanism: caps.mechanism, osSandbox: caps.osSandbox, networkOff: caps.networkOff ?? false, setupNeeded: Boolean(caps.setup?.needed), reason: caps.reason.slice(0, 300) };
     })(),
     maxConcurrent: hub?.orchestration.maxConcurrentJobs ?? null,
-    // The web shows this as a locked pill. Only this Mac can change it.
-    runBranchPush: settings.runBranchPush,
     acceptWebApprovals: settings.acceptWebApprovals,
     // The web offers the task's files only when this computer shows them (protocol 3).
     browseFiles: settings.browseFiles,
@@ -107,9 +105,8 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     agents: await agentsNow(),
     // Coding agents this runtime can run a code task with; the web refuses others for this computer.
     engines: [...CODE_ENGINES],
-    // Runs here can end in a pull request, into these bases only (docs/24 §5.1). Only this computer sets the list.
-    pullRequests: 1,
-    pullRequestBases: settings.pullRequestBases,
+    // Runs here can end in a pull request into any branch, and take any branch or git choice from the web (docs/24 §5.1).
+    pullRequests: 2,
   };
 }
 
@@ -187,7 +184,6 @@ async function disconnect(app: FastifyInstance, kind: "removed" | "rejected"): P
   await dropDeviceToken();
   updateSettings({
     enabled: false,
-    runBranchPush: loadSettings().runBranchPush,
     disconnected: { at: new Date().toISOString(), reason },
     unreachable: null,
   });

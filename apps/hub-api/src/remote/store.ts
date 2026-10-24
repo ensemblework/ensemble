@@ -6,7 +6,6 @@
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { BRANCH_NAME, DEFAULT_PULL_REQUEST_BASES, NEVER_PULL_REQUEST_BASES } from "@ensemble/shared-types";
 import { env } from "../config.js";
 import { decrypt, encrypt } from "../lib/secrets.js";
 import { prisma } from "../lib/prisma.js";
@@ -25,8 +24,6 @@ export interface RemoteSettings {
   version: 1;
   /** "Allow remote tasks". Off until the person turns it on, on this Mac. */
   enabled: boolean;
-  /** §5.1 run-branch push. Off by default, Mac only. */
-  runBranchPush: boolean;
   /**
    * The person who owns this computer may approve anything from the web or
    * phone (trusting a folder, a push, a path outside the folder) and the run
@@ -51,12 +48,6 @@ export interface RemoteSettings {
    * idle, 8 hours at most), with the same allow-list as the terminal on this computer. On by default.
    */
   webTerminal: boolean;
-  /**
-   * Branches a run here may open a pull request into, and merge into when the person says so
-   * (docs/24 §5.1). Set only on this computer (`ensemble git bases`); never main, master,
-   * production or testing-live. Default: testing.
-   */
-  pullRequestBases: string[];
   apiBase: string | null;
   deviceId: string | null;
   deviceName: string;
@@ -132,14 +123,10 @@ export function loadSettings(): RemoteSettings {
   return {
     version: 1,
     enabled: saved.enabled === true,
-    runBranchPush: saved.runBranchPush === true,
     acceptWebApprovals: saved.acceptWebApprovals !== false,
     browseFiles: saved.browseFiles !== false,
     webEdit: saved.webEdit !== false,
     webTerminal: saved.webTerminal !== false,
-    pullRequestBases: Array.isArray(saved.pullRequestBases)
-      ? [...new Set(saved.pullRequestBases.filter((base): base is string => typeof base === "string" && BRANCH_NAME.test(base) && !(NEVER_PULL_REQUEST_BASES as readonly string[]).includes(base)))].slice(0, 20)
-      : [...DEFAULT_PULL_REQUEST_BASES],
     apiBase: typeof saved.apiBase === "string" ? saved.apiBase : null,
     deviceId: typeof saved.deviceId === "string" ? saved.deviceId : null,
     deviceName: typeof saved.deviceName === "string" && saved.deviceName ? saved.deviceName : defaultDeviceName(),

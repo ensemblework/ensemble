@@ -236,33 +236,26 @@ export type RunMode = z.infer<typeof RunMode>;
 /** A git branch name: no leading dash, no "..", no spaces or special characters. */
 export const BRANCH_NAME = /^(?!-)(?!.*\.\.)(?!.*\/\/)(?!.*\/$)[A-Za-z0-9._/-]{1,200}$/;
 
-/** Branches a run never opens a pull request into, on any computer: production and deploy pointers. */
-export const NEVER_PULL_REQUEST_BASES = ["main", "master", "production", "testing-live"] as const;
-/** The bases a computer allows until its owner changes the list (`ensemble git bases`). */
-export const DEFAULT_PULL_REQUEST_BASES = ["testing"];
-
 /**
- * A code run that ends in a pull request into `base` (docs/24 §5.1). Ensemble pushes the run's branch
- * and opens it; `merge`: ask the person on Needs me, merge when its checks pass, or leave it open.
+ * A code run that ends in a pull request (docs/24 §5.1). Ensemble pushes the run's branch and opens it
+ * into `base`, any branch the person names (empty: the repository's default branch); `merge`: ask the
+ * person on Needs me, merge when its checks pass, or leave it open.
  */
 export const PullRequestPlan = z.object({
-  base: z.string().trim().regex(BRANCH_NAME, "Give the branch the pull request goes into."),
+  base: z
+    .string()
+    .trim()
+    .max(200)
+    .refine((value) => value === "" || BRANCH_NAME.test(value), "Give a branch name git accepts.")
+    .default(""),
   merge: z.enum(["ask", "auto", "never"]).default("ask"),
 });
 export type PullRequestPlan = z.infer<typeof PullRequestPlan>;
 
-/** Why a pull request may not go into `base` on a computer that allows `allowed`, or null. */
-export function pullRequestBaseRefusal(base: string, allowed: readonly string[], computer = "this computer"): string | null {
-  if ((NEVER_PULL_REQUEST_BASES as readonly string[]).includes(base)) return `A run never opens a pull request into ${base}: it is production or a deploy pointer.`;
-  if (!allowed.includes(base)) return `${computer} does not open pull requests into ${base}. It allows: ${allowed.length ? allowed.join(", ") : "none"} (change it there with \`ensemble git bases add ${base}\`).`;
-  return null;
-}
-
-/** Why `branch` may not be the branch a run's pull request comes from, or null. */
+/** Why `branch` cannot be the branch a run's pull request comes from (git's and GitHub's own rules), or null. */
 export function pullRequestHeadRefusal(branch: string, base: string): string | null {
   if (!BRANCH_NAME.test(branch)) return `“${branch.slice(0, 80)}” is not a branch name git accepts.`;
-  if (branch === base) return `The run's branch cannot be ${base}, the branch the pull request goes into.`;
-  if ((NEVER_PULL_REQUEST_BASES as readonly string[]).includes(branch)) return `A run never pushes ${branch}.`;
+  if (base && branch === base) return `A pull request cannot come from ${base} into itself. Name another branch for the run.`;
   return null;
 }
 
@@ -286,7 +279,8 @@ export const RunProfile = z.object({
   /** The model's context window, where it offers more than one (GitHub Copilot). Unset: the default. */
   context: ContextTier.optional(),
   branchMode: z.enum(["as-is", "new"]).default("as-is"),
-  delivery: z.enum(["local", "commit", "push"]).default("commit"),
+  /** Git for the run: `push` lets the agent commit, push any branch and work with pull requests; `local` and `commit` are limits the person picks. */
+  delivery: z.enum(["local", "commit", "push"]).default("push"),
   askBeforePublish: z.boolean().default(true),
   mode: RunMode.default("ask"),
   sandbox: z.boolean().default(true),
@@ -297,14 +291,14 @@ export const RunProfile = z.object({
   maxToolCalls: z.number().int().min(5).max(500).nullable().default(null),
   maxTurns: z.number().int().min(3).max(200).nullable().default(null),
   instructions: z.string().max(2000).default(""),
-  /** End each run in a pull request into this base (the computer must allow it), and whether to merge it. */
+  /** End each run in a pull request Ensemble opens into this base (empty: the default branch), and whether to merge it. */
   pullRequest: PullRequestPlan.nullable().default(null),
 });
 export type RunProfile = z.infer<typeof RunProfile>;
 export const MAX_RUN_PROFILES = 3;
 export const QUICK_PROFILE_ID = "quick";
 
-/** The built-in profile while none is saved: code in its own checkout, commits allowed, Ask. */
+/** The built-in profile while none is saved: code in its own checkout, git without limits, Ask. */
 export function quickRunProfile(orchestration?: { defaultExecution?: string; sandboxNetwork?: boolean } | null): RunProfile {
   return {
     id: QUICK_PROFILE_ID,
@@ -315,7 +309,7 @@ export function quickRunProfile(orchestration?: { defaultExecution?: string; san
     model: "",
     effort: "default",
     branchMode: "as-is",
-    delivery: "commit",
+    delivery: "push",
     askBeforePublish: true,
     mode: "ask",
     sandbox: orchestration?.defaultExecution !== "native",
