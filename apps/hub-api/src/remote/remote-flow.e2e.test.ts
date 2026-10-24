@@ -134,11 +134,12 @@ test("remote tasks: pair, run, refuse a server overreach, disconnect, and do not
     const refused = await waitJob(side, "Unknown folder", "web", ["failed"]);
     assert.equal(refused.origin, "web");
 
+    // An SSH repository is the person's call: the computer tries the clone, and git itself says why it failed.
     const privateId = host.enqueue(spec("Private clone", { folderLabel: undefined, repoUrl: "git@github.com:acme/secret.git" }));
-    await until("the private clone is refused", async () => host.job(privateId).complete);
-    assert.match(host.job(privateId).complete?.summary ?? "", /desktop steps 2 and 4/);
+    await until("the SSH clone ends", async () => host.job(privateId).complete);
+    assert.match(host.job(privateId).complete?.summary ?? "", /clone was refused|clone failed/);
     const privateJob = await waitJob(side, "Private clone", "web", ["failed"]);
-    assert.match(privateJob.error ?? "", /desktop steps 2 and 4/);
+    assert.match(privateJob.error ?? "", /clone was refused|clone failed/);
 
     const editTitle = "[edit] Change the greeting";
     const editHosted = host.enqueue(spec(editTitle));
