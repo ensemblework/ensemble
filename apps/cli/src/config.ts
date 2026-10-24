@@ -1,5 +1,6 @@
 import { DEFAULT_API_BASE, DEFAULT_APP_URL } from "./version.js";
 import { readJsonFile, removeFileIfExists, resolveCliPaths, writeJsonFile, type CliPaths } from "./paths.js";
+import { channelApi, channelApp, TESTING } from "./channel.js";
 
 export type AccountInfo = {
   email?: string | null;
@@ -21,14 +22,14 @@ export type CliCredentials = {
 
 export function normalizeApiBase(value: string | undefined | null): string {
   const trimmed = value?.trim() || DEFAULT_API_BASE;
-  return trimmed.replace(/\/+$/, "");
+  return channelApi(trimmed);
 }
 
 export async function loadConfig(paths: CliPaths = resolveCliPaths()): Promise<CliConfig> {
   const saved = await readJsonFile<Partial<CliConfig>>(paths.configFile);
   return {
-    apiBase: normalizeApiBase(process.env.ENSEMBLE_API_URL || saved?.apiBase),
-    appUrl: (saved?.appUrl || DEFAULT_APP_URL).replace(/\/+$/, ""),
+    apiBase: normalizeApiBase((TESTING ? process.env.ENSEMBLE_TEST_API_URL : process.env.ENSEMBLE_API_URL) || saved?.apiBase),
+    appUrl: channelApp((saved?.appUrl || DEFAULT_APP_URL).replace(/\/+$/, "")),
     account: saved?.account ?? null,
     tokenId: saved?.tokenId ?? null,
     deviceName: saved?.deviceName ?? null,
@@ -37,11 +38,13 @@ export async function loadConfig(paths: CliPaths = resolveCliPaths()): Promise<C
 }
 
 export async function saveConfig(config: CliConfig, paths: CliPaths = resolveCliPaths()): Promise<void> {
+  normalizeApiBase(config.apiBase);
+  channelApp(config.appUrl);
   await writeJsonFile(paths.configFile, config, 0o600);
 }
 
 export async function loadToken(paths: CliPaths = resolveCliPaths()): Promise<string | null> {
-  const envToken = process.env.ENSEMBLE_TOKEN?.trim() || process.env.ENSEMBLE_BRIDGE_TOKEN?.trim();
+  const envToken = TESTING ? process.env.ENSEMBLE_TEST_TOKEN?.trim() : process.env.ENSEMBLE_TOKEN?.trim() || process.env.ENSEMBLE_BRIDGE_TOKEN?.trim();
   if (envToken) return envToken;
   const credentials = await readJsonFile<Partial<CliCredentials>>(paths.credentialsFile);
   return typeof credentials?.token === "string" && credentials.token.trim() ? credentials.token.trim() : null;

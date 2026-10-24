@@ -20,7 +20,7 @@ This page maps what works today and its limits; each row links to the guide that
 | Hosted web | Public signup, per-account data. The API runs on a home server behind a Cloudflare Tunnel (`infra/deploy/home`); file originals and plot tables are in private Azure Blob storage (`ENSEMBLE_FILE_STORAGE=azure-blob`). Code and the terminal run on the person's paired computer | [01 §8](01_TECH_STACK_AND_ENVIRONMENT.md#8-ci-and-deploys), [32 §2](32_FILES.md#2-where-files-live) |
 | Desktop | Tauri shell, static Hub export, local Node API with embedded PGlite and in-process model adapters | [DESKTOP](DESKTOP.md) |
 | CLI | Terminal UI on the same local runtime: tasks, chat, a read-only Ensemble Node tab, pairing, profiles, runner service, updates, editor MCP setup | [26](26_CLI.md) |
-| Ensemble Node | A separate website (`ensemblework/ensemble-node`, `node.ensemblework.com`) for persistent AI teammates in direct chats, crews and group rooms with other people. Its backend is hub-api's `node` module: same account, workspace tools, included models and credits; computer work is an ordinary job on the owner's paired computer | [35](35_ENSEMBLE_NODE.md) |
+| Ensemble Node | A separate website (`ensemblework/ensemble-node`, `node.ensemblework.com`; testing `node-test.ensemblework.com`) for persistent AI teammates in direct chats, crews of the person's own nodes, and rooms with other people and their nodes. Its backend is hub-api's `node` module: same account, workspace tools, included models and credits; computer work is an ordinary job on the owner's paired computer | [35](35_ENSEMBLE_NODE.md) |
 | Context Bridge | Read-only context tools over stdio, local HTTP or hosted `/mcp` with an `ens_` key; cannot apply actions or approve runs | [CONTEXT_BRIDGE](CONTEXT_BRIDGE.md) |
 | Quick capture | Tauri tray app with a global shortcut; needs a running local API and capture authentication | [20_QUICK_CAPTURE](20_QUICK_CAPTURE.md) |
 
@@ -57,7 +57,7 @@ The scheduler runs fixed product jobs only (reminders, morning briefs, retention
 | Today | Profession desk, briefing, focus and triage, reminders; add, move and resize tiles | Profile desk and alternate widget layout are separate systems | [02 §3.1](02_MODULE_INTERACTION_HUB_UI.md#31-today-morning-briefing) |
 | Board | Collapsible Ensemble Kanban; custom page boards with named columns, drag ordering and board-scoped overview tiles | 1–20 columns per custom board; at most four overview tiles per board | [02 §3.2](02_MODULE_INTERACTION_HUB_UI.md#32-board-kanban) |
 | Tasks and pages | Structured editor, nested notes, board/column assignment, collapsed board groups in Pages, mentions, links, compact comment overlays, AI blocks, embeds, co-editing | One custom board per page; custom columns do not change task execution status; embedded resources keep their own access rules | [02 §13](02_MODULE_INTERACTION_HUB_UI.md#13-document-style-pages) |
-| Web testing | Isolated live Hub/API, open signup, fast web checks and a `testing` → `main` promotion workflow | Separate accounts/data; no testing native, CLI, landing or Ensemble Node deployment | [36](36_WEB_TESTING.md) |
+| Testing | Isolated live Hub/API and `ensemble-test` CLI, open signup, fast checks and `testing` → `main` promotion | Test CLI uses only the test backend with separate state/updates; no testing native, landing or Node website | [36](36_WEB_TESTING.md) |
 | Page history and templates | Checkpoints with author and time, preview, restore, duplicate, private templates | 30 checkpoints per page, five-minute coalescing; 50 templates per space and profile; owner-only | [02 §13](02_MODULE_INTERACTION_HUB_UI.md#13-document-style-pages) |
 | Context and projects | People and identities, projects, repositories, preferences, graph, profession records | The graph shows saved data only | [03](03_MODULE_CONTEXT_ENGINE.md), [02 §3.5](02_MODULE_INTERACTION_HUB_UI.md#35-context) |
 | Meeting notes | Manual and imported notes, source links, requested summaries and action-item tasks | Imported notes are read-only; no recording or transcription | [03 §7](03_MODULE_CONTEXT_ENGINE.md#7-meeting-context) |
@@ -78,7 +78,7 @@ The Hub assistant operates the app through typed tools. Built-in playbooks (`app
 | Capability | What works |
 | --- | --- |
 | Tasks and records | Create and update tasks, people, projects, repositories and profession records; comments, Trash, conversions, history. Clearing the board or a filtered set is one `hub_delete_tasks` call with one Undo |
-| Agent assignment | Assign to Ensemble's agent, Claude Code, Codex or Cursor's agent on a paired computer or this server, with a run profile; waits for Apply, then queues |
+| Agent assignment | Assign to Ensemble's agent, Claude Code, Codex, Cursor's agent or GitHub Copilot on a paired computer or this server, with a run profile; waits for Apply, then queues |
 | Open workspace | Reads surface IDs, selected and visible records, filters and document selection |
 | Layouts and documents | Today desks, Context panels, Board overview, widget layouts; block-level page edits after revision and schema checks |
 | Dependent actions | `hub_run_workflow`: 2–12 ordered writes, one Apply, references to earlier results, durable per-step receipts |
@@ -143,7 +143,7 @@ Details: [01 §6](01_TECH_STACK_AND_ENVIRONMENT.md#6-model-usage-policy), [30](3
 
 ## 9. Assigned agents and Code
 
-- Assignment creates a durable workspace job that the API or a paired computer claims and runs. Research writes the task page; code work runs in a chosen folder or checkout. Engines: Ensemble, Claude Code, Codex, Cursor ([30](30_ENGINES.md)).
+- Assignment creates a durable workspace job that the API or a paired computer claims and runs. Research writes the task page; code work runs in a chosen folder or checkout. Engines: Ensemble, Claude Code, Codex, Cursor, GitHub Copilot ([30](30_ENGINES.md)).
 - Run profiles hold model, mode, sandbox, network and git permissions, destination and budgets. Conflicting jobs run one at a time. Needs me holds exact pending decisions; publishing uses saved approvals.
 - A stop or restart keeps partial work and marks the interruption instead of claiming success. Runs keep Results, Files and Traces.
 - On the web, code review, editing, source control and the passkey-unlocked terminal go through a paired computer; ordinary accounts cannot reach the server's filesystem or terminal.

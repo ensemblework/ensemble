@@ -81,7 +81,7 @@ The web terminal needs a **passkey unlock** with user verification for the web's
 
 ### 4.8 Protocol and compatibility
 
-`remote/contract.ts` and the computer's receiver define the supported operations; each job records its protocol (changed-file text needs protocol 3, Code and terminal relays protocol 4). The server and UI check advertised capabilities and name the update an outdated computer needs. Existing jobs keep their own protocol and evidence.
+`remote/contract.ts` and the computer's receiver define the supported operations; each job records its protocol (changed-file text needs protocol 3, Code and terminal relays protocol 4). The server and UI check advertised capabilities and name the update an outdated computer needs: the coding agents a runtime can run are in `capabilities.engines` (`deviceEngines` in `devices/labels.ts`; a runtime without the list has Claude Code, Codex and Cursor's agent), so GitHub Copilot is refused for an older one. Existing jobs keep their own protocol and evidence.
 
 ### 4.9 Subscriptions and included models
 
@@ -98,6 +98,8 @@ A paired desktop app or CLI calls included models through `/api/devices/self/inc
 `acceptWebApprovals` (*Accept approvals from the web and phone*, `ensemble approvals`) is **on by default**. When on, the web's run settings apply and supported risky decisions can be confirmed remotely. When off, risky answers stay on the computer and web settings can only narrow local permissions. The computer checks its own pending decision and action hash; the first valid answer wins, and a timeout never allows.
 
 `runBranchPush` is **off by default** and set on the computer. It allows only the trusted run-branch push, never arbitrary or force pushes; Git credentials stay outside the agent's environment and the Git gate still decides.
+
+A task from the web that ends in a pull request is the one case where a run's branch goes to GitHub: only into a base in the computer's own `pullRequestBases` (default `testing`; never `main`, `master`, `production`, `testing-live` or the default branch), from the run's own clone, pushed by Ensemble with the computer's GitHub sign-in. The claim carries `pullRequest` (and the branch name, which the computer otherwise refuses); `planLocalJob` checks the base against its own list and refuses a folder shared to work in place. Merging waits for the person's Allow on Needs me unless the task said to merge when checks pass ([24 §5.1](24_DESKTOP_SANDBOXING.md#51-pull-requests)).
 
 A web confirmation is an authenticated session action, not a device-verified WebAuthn signature over each decision; the terminal passkey protects only the terminal.
 

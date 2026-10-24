@@ -7,7 +7,15 @@ import esbuild from "esbuild";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const { releaseVersion, checkReleaseVersion } = await import("../../../scripts/release-version.mjs");
 checkReleaseVersion();
-const outfile = join(root, "dist", "ensemble.mjs");
+const testing = process.argv.includes("--testing");
+const version = testing ? process.env.ENSEMBLE_TEST_CLI_VERSION || `${releaseVersion}-testing.0` : releaseVersion;
+if (testing && !new RegExp(`^${releaseVersion.replaceAll(".", "\\.")}-testing\\.\\d+$`).test(version)) throw new Error("Testing CLI version must match release.json with a -testing.<build> suffix.");
+const outfile = join(root, "dist", testing ? "ensemble-test.mjs" : "ensemble.mjs");
+const { testingInstallers } = await import("../../../scripts/testing-cli.mjs");
+const installers = testing ? testingInstallers() : {
+  sh: await readFile(join(root, "../landing/public/install.sh"), "utf8"),
+  ps1: await readFile(join(root, "../landing/public/install.ps1"), "utf8"),
+};
 
 /**
  * Ink loads react-devtools-core only when DEV=true; a single-file bundle would otherwise turn
@@ -38,9 +46,10 @@ await esbuild.build({
     js: "#!/usr/bin/env node\nimport { createRequire as __ensembleCreateRequire } from 'node:module';\nconst require = __ensembleCreateRequire(import.meta.url);",
   },
   define: {
-    __ENSEMBLE_VERSION__: JSON.stringify(releaseVersion),
-    __ENSEMBLE_INSTALL_SH__: JSON.stringify(await readFile(join(root, "../landing/public/install.sh"), "utf8")),
-    __ENSEMBLE_INSTALL_PS1__: JSON.stringify(await readFile(join(root, "../landing/public/install.ps1"), "utf8")),
+    __ENSEMBLE_VERSION__: JSON.stringify(version),
+    __ENSEMBLE_CLI_CHANNEL__: JSON.stringify(testing ? "testing" : "production"),
+    __ENSEMBLE_INSTALL_SH__: JSON.stringify(installers.sh),
+    __ENSEMBLE_INSTALL_PS1__: JSON.stringify(installers.ps1),
     // React's production build: smaller, and no development warnings in the terminal.
     "process.env.NODE_ENV": JSON.stringify("production"),
   },

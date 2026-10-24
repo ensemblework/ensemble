@@ -3,14 +3,14 @@ import test, { afterEach } from "node:test";
 import { render } from "ink-testing-library";
 import { App } from "./app.js";
 import type { ChatFrame, Decision, LocalApi } from "./local.js";
-import { DEFAULT_PREFS } from "./prefs.js";
+import { DEFAULT_PREFS, type Prefs } from "./prefs.js";
 import type { NodeOverview } from "./node.js";
-import { empty, fakeApi, job, ops, screenWith, tick, until } from "./testing.js";
+import { copilotAgent, empty, fakeApi, job, ops, screenWith, tick, until } from "./testing.js";
 
 const mounted: Array<{ unmount: () => void }> = [];
 
-function mount(api: LocalApi, prefs = DEFAULT_PREFS) {
-  const app = render(<App api={api} folder="/work/app" version="0.3.0" account={{ email: null, paired: false, apiBase: "https://x" }} prefs={prefs} ops={ops} />);
+function mount(api: LocalApi, prefs = DEFAULT_PREFS, appOps = ops) {
+  const app = render(<App api={api} folder="/work/app" version="0.3.0" account={{ email: null, paired: false, apiBase: "https://x" }} prefs={prefs} ops={appOps} />);
   mounted.push(app);
   return app;
 }
@@ -280,7 +280,9 @@ test("signed in, with a key only on the account: Chat stays Ensemble Code and /s
     for (const key of "/status") app.stdin.write(key);
     await tick();
     app.stdin.write("\r");
-    assert.match(await screenWith(app.lastFrame, /Model keys/), /google \(your account\)/);
+    const status = await screenWith(app.lastFrame, /Pull requests/);
+    assert.match(status, /google \(your account\)/);
+    assert.match(status, /Pull requests\s+into testing/);
   } finally {
     app.unmount();
   }
@@ -328,6 +330,89 @@ test("an included refusal is a framed notice with the command that fixes it, sho
     assert.match(frame, /GPT-5 mini \(2025-08-07\)/, "the status line names the included model with its version");
     await tick(100);
     assert.equal((app.lastFrame()!.match(/Included models need your Ensemble account/g) ?? []).length, 1);
+  } finally {
+    app.unmount();
+  }
+});
+
+/** Types a line into the app, then Enter. */
+async function enter(app: { stdin: { write: (data: string) => void } }, text: string) {
+  for (const key of text) app.stdin.write(key);
+  await tick();
+  app.stdin.write("\r");
+  await tick();
+}
+
+/** Moves a picker down `steps` rows, then picks. */
+async function pick(app: { stdin: { write: (data: string) => void } }, steps: number) {
+  for (let step = 0; step < steps; step += 1) {
+    app.stdin.write("\u001B[B");
+    await tick();
+  }
+  app.stdin.write("\r");
+  await tick();
+}
+
+test("GitHub Copilot: /agent chooses it, /model picks a model, thinking level and context window, and Chat sends them", async () => {
+  const { api, calls } = fakeApi({ localAgents: [copilotAgent()], agents: [{ id: "copilot", name: "GitHub Copilot CLI", app: false, cli: "/usr/local/bin/copilot" }], runs: { "chat-1": [{ status: "succeeded", log: "Done.", summary: "Done." }] } });
+  const saved: Prefs[] = [];
+  const app = mount(api, { ...DEFAULT_PREFS, tab: "chat", engine: "ensemble" }, { ...ops, savePrefs: (prefs) => void saved.push(prefs) });
+  try {
+    await tick(100);
+    await enter(app, "/agent");
+    const agents = await screenWith(app.lastFrame, /GitHub Copilot/);
+    assert.match(agents, /GitHub Copilot\s+your Copilot sign-in \(mira-chen\)/);
+    assert.doesNotMatch(agents, /not yet/);
+    // Follow the profile, Ensemble agent (chosen), Claude Code, Codex, Cursor agent, GitHub Copilot.
+    await pick(app, 4);
+    assert.match(await screenWith(app.lastFrame, /You're working with GitHub Copilot/), /· GitHub Copilot ·/);
+
+    await enter(app, "/model");
+    const models = await screenWith(app.lastFrame, /GPT-5\.6 Luna/);
+    assert.match(models, /Auto \(Copilot picks\)/);
+    assert.match(models, /GPT-5\.6 Luna\s+low cost · 200K \/ 922K context/);
+    await pick(app, 1);
+    assert.match(await screenWith(app.lastFrame, /thinking level/), /xhigh/);
+    // Default, none, low, medium, high.
+    await pick(app, 4);
+    assert.match(await screenWith(app.lastFrame, /context window/), /922K \(long context\)/);
+    await pick(app, 1);
+    assert.match(await screenWith(app.lastFrame, /GitHub Copilot uses GPT-5\.6 Luna · high thinking · long context\./), /GPT-5\.6 Luna · high thinking · long context · your sign-in/);
+    const last = saved.at(-1)!;
+    assert.deepEqual([last.engine, last.agentModel, last.agentEffort, last.agentContext], ["copilot-cli", "gpt-5.6-luna", "high", "long_context"], "saved in app.json");
+
+    await enter(app, "fix the login test");
+    const body = (await call(calls, "/api/agent/assign")) as Record<string, unknown>;
+    assert.deepEqual(
+      { engine: body.engine, model: body.model, reasoningEffort: body.reasoningEffort, contextTier: body.contextTier, chat: body.chat },
+      { engine: "copilot-cli", model: "gpt-5.6-luna", reasoningEffort: "high", contextTier: "long_context", chat: true },
+    );
+  } finally {
+    app.unmount();
+  }
+});
+
+test("GitHub Copilot not signed in: a Chat message or /run says to run copilot login and starts nothing; once signed in it goes", async () => {
+  const { api, calls, setLocalAgents } = fakeApi({ localAgents: [copilotAgent({ signedIn: false })], runs: { "chat-1": [{ status: "succeeded", log: "Hello.", summary: "Hello." }] } });
+  const app = mount(api, { ...DEFAULT_PREFS, tab: "chat", engine: "copilot-cli" });
+  try {
+    await until(() => calls.find((row) => row.what === "agents"));
+    await tick();
+    await enter(app, "hello");
+    const refused = await screenWith(app.lastFrame, /✗ GitHub Copilot isn't signed in/);
+    assert.match(refused, /✗ GitHub Copilot isn't signed in on this computer: run copilot/);
+    assert.match(refused, /login in a terminal, then try again\./);
+    assert.match(refused, /GitHub Copilot · Auto \(Copilot picks\) · not signed in/, "the status line says so too");
+    assert.ok(calls.some((row) => row.what === "agents check"), "a problem found earlier is checked again");
+    await enter(app, "/run fix it");
+    assert.match(await screenWith(app.lastFrame, /✗ GitHub Copilot isn't signed in/), /✗ GitHub Copilot isn't signed in/);
+    assert.equal(calls.filter((row) => row.what === "/api/tasks" || row.what === "/api/agent/assign").length, 0);
+
+    setLocalAgents([copilotAgent()]);
+    await enter(app, "hello again");
+    const body = (await call(calls, "/api/agent/assign")) as Record<string, unknown>;
+    assert.equal(body.engine, "copilot-cli");
+    assert.equal(body.model, undefined, "Copilot's own default model");
   } finally {
     app.unmount();
   }

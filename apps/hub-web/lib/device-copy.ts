@@ -1,3 +1,5 @@
+import { isCodeEngine, type CodeEngine } from "@ensemble/shared-types";
+
 /** Names for a paired computer. A missing device is "your computer", never a hardcoded Mac. */
 
 export function computerName(name?: string | null): string {
@@ -109,14 +111,13 @@ export type RerunSource = {
   maxMinutes?: number;
   maxTurns?: number;
   maxToolCalls?: number;
+  pullRequest?: { base: string; merge: "ask" | "auto" | "never" } | null;
 };
-
-const ENGINES = new Set(["claude-code", "codex", "cursor-agent"]);
 
 export function rerunAssignInput(job: RerunSource) {
   const branchMode = job.branchMode ?? "as-is";
-  // A Claude Code, Codex or Cursor run stores its engine as the provider; run again with that engine.
-  const engine = (job.provider && ENGINES.has(job.provider) ? job.provider : "ensemble") as "ensemble" | "claude-code" | "codex" | "cursor-agent";
+  // A Claude Code, Codex, Cursor or GitHub Copilot run stores its engine as the provider; run again with that engine.
+  const engine: "ensemble" | CodeEngine = isCodeEngine(job.provider) ? job.provider : "ensemble";
   return {
     taskId: job.taskId,
     kind: job.kind,
@@ -140,5 +141,6 @@ export function rerunAssignInput(job: RerunSource) {
     maxMinutes: job.maxMinutes,
     maxTurns: job.maxTurns,
     maxToolCalls: job.maxToolCalls,
+    ...(job.pullRequest ? { pullRequest: { base: job.pullRequest.base, merge: job.pullRequest.merge } } : {}),
   };
 }

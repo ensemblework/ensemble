@@ -1,15 +1,18 @@
 /**
  * The Node tab: Ensemble Node at a glance, read-only. Your nodes, your rooms with their newest
- * message, approvals waiting for you, computer runs your nodes started, and your credits.
+ * message, approvals waiting for you, requests to join rooms, computer runs your nodes started, and your credits.
  * Chatting with nodes happens on the Node website; this tab only reads `GET /api/bridge/node`.
  */
 import { ago } from "./model.js";
 import { pad, truncate, wrapLine, type Line } from "./text.js";
+import { TESTING, TESTING_NODE } from "../channel.js";
 
 export type NodeOverview = {
   nodes: Array<{ id: string; slug: string; name: string; role: string; status: string; busy: boolean }>;
   rooms: Array<{ id: string; kind: string; title: string; unread: number; lastMessageAt: string | null; last: { author: string; body: string } | null }>;
   approvals: Array<{ id: string; roomId: string; body: string }>;
+  /** Requests to join someone's room; servers before this field send none. */
+  invites?: Array<{ id: string; room: string; from: string }>;
   runs: Array<{ id: string; title: string; status: string; progress: string | null; summary: string | null; computer: string | null; createdAt: string }>;
   credits: { available: boolean; limit: number; used: number; remaining: number; resetsAt: string } | null;
 };
@@ -28,8 +31,9 @@ const RUN_GLYPH: Record<string, { glyph: string; color: string }> = {
   interrupted: { glyph: "!", color: "yellow" },
 };
 
-/** The Node website for this account's Ensemble: app.<domain> becomes node.<domain>. */
+/** The Node website for this account's Ensemble: app.<domain> becomes node.<domain>; the testing CLI always opens the testing website. */
 export function nodeWebUrl(appUrl: string | null | undefined, override = process.env.ENSEMBLE_NODE_URL): string {
+  if (TESTING) return TESTING_NODE;
   if (override?.trim()) return override.trim().replace(/\/+$/, "");
   try {
     const url = new URL(appUrl || "https://app.ensemblework.com");
@@ -65,12 +69,18 @@ export function nodePane(state: NodeState, width: number, now: number, signedIn:
     return [[{ text: state.loading ? "Loading Ensemble Node…" : "Nothing yet.", dim: true }]];
   }
   const { rooms, approvals, runs, credits } = state.data;
+  const invites = state.data.invites ?? [];
   const lines: Line[] = [];
   if (state.error) lines.push(...wrapLine([{ text: `Could not refresh: ${state.error}`, color: "yellow" }], width), []);
   if (approvals.length) {
     lines.push([{ text: `WAITING FOR YOU · ${approvals.length}`, bold: true, color: "yellow" }]);
     for (const row of approvals.slice(0, 5)) lines.push([{ text: " ◆ ", color: "yellow" }, { text: truncate(row.body.replace(/\s+/g, " "), width - 4) }]);
     lines.push(...wrapLine([{ text: ` Approve or discard on ${url}`, dim: true }], width), []);
+  }
+  if (invites.length) {
+    lines.push([{ text: `REQUESTS TO JOIN · ${invites.length}`, bold: true, color: "yellow" }]);
+    for (const row of invites.slice(0, 5)) lines.push([{ text: " ◇ ", color: "yellow" }, { text: truncate(`${row.from} asks you to join “${row.room}”`, width - 4) }]);
+    lines.push(...wrapLine([{ text: ` Accept or decline on ${url}`, dim: true }], width), []);
   }
   lines.push([{ text: "ROOMS", bold: true, color: "gray" }]);
   if (!rooms.length) lines.push(...wrapLine([{ text: ` No rooms yet. Make your first node on ${url}`, dim: true }], width));

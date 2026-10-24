@@ -1,7 +1,8 @@
 import type { PrismaClient } from "@prisma/client";
+import { pullRequestBaseRefusal } from "@ensemble/shared-types";
 import { GuardError } from "../workspace/guard.js";
 import { trustFolder } from "./constants.js";
-import { folderLabels } from "./labels.js";
+import { deviceEngines, devicePullRequestBases, folderLabels } from "./labels.js";
 import { requireVerifiedUser } from "../lib/hosted-access.js";
 
 const GITHUB = /^(https:\/\/|git@)[\w.@:/~-]+$/;
@@ -21,6 +22,10 @@ export async function deviceAssignment(
     folderLabel?: string;
     repoUrl?: string;
     continueFromJobId?: string;
+    /** A coding agent (CODE_ENGINES) or "ensemble". */
+    engine?: string;
+    /** The run ends in a pull request into this base: the computer must offer pull requests into it. */
+    pullRequestBase?: string;
   },
   where: { space: string; runner: string | null } = { space: userId, runner: null },
 ): Promise<{
@@ -34,6 +39,15 @@ export async function deviceAssignment(
   await requireVerifiedUser(userId);
   const device = await prisma.device.findFirst({ where: { id: input.deviceId, userId, revokedAt: null } });
   if (!device) throw new GuardError(where.runner ? "Pick one of your own paired computers." : "That computer is not paired.");
+  if (input.engine && input.engine !== "ensemble" && !deviceEngines(device.capabilities).includes(input.engine)) {
+    throw new GuardError(`Ensemble on ${device.name} is too old to run ${input.engine === "copilot-cli" ? "GitHub Copilot" : input.engine} there. Update it on that computer (\`ensemble update\`, or the desktop app's update), then assign again.`);
+  }
+  if (input.pullRequestBase) {
+    const offered = devicePullRequestBases(device.capabilities);
+    if (!offered) throw new GuardError(`Ensemble on ${device.name} is too old to open pull requests. Update it on that computer (\`ensemble update\`, or the desktop app's update), then assign again.`);
+    const refusal = pullRequestBaseRefusal(input.pullRequestBase, offered, device.name);
+    if (refusal) throw new GuardError(refusal);
+  }
 
   const requested = (input.folderLabel ?? input.folder ?? "").trim();
   let folderLabel: string | null = null;

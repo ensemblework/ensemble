@@ -3,9 +3,9 @@
  * stopped, done), and the answers a waiting request offers. No terminal here, so it is tested
  * directly.
  */
-import type { RunProfile } from "@ensemble/shared-types";
+import { ENGINE_LABELS, isCodeEngine, type CodeEngine, type ContextTier, type RunProfile, type SubscriptionAgent, type SubscriptionModel } from "@ensemble/shared-types";
 import type { Decision, JobCard, Workspace } from "./local.js";
-import type { Tab } from "./prefs.js";
+import type { Engine, Tab } from "./prefs.js";
 
 // ── slash commands ──────────────────────────────────────────────────────────────────────────
 
@@ -23,7 +23,7 @@ export const COMMANDS: readonly Command[] = [
   { name: "stop", description: "Stop the selected run, or the reply being written" },
   { name: "retry", description: "Run the selected task again", tab: "tasks" },
   { name: "profile", args: "[name]", description: "Run profile: mode, git, sandbox, internet" },
-  { name: "agent", args: "[name]", description: "Who you work with: Claude Code, Codex, Cursor (your sign-in) or Ensemble agent" },
+  { name: "agent", args: "[name]", description: "Who you work with: Claude Code, Codex, Cursor, GitHub Copilot (your sign-in) or Ensemble agent" },
   { name: "model", args: "[model]", description: "Your agent's model" },
   { name: "folder", description: "The folder your agent works in" },
   { name: "trust", description: "Trust this folder (Review only and Run unattended need it)" },
@@ -34,7 +34,7 @@ export const COMMANDS: readonly Command[] = [
   { name: "logout", description: "Sign out and unpair this computer" },
   { name: "runner", args: "[install|uninstall]", description: "Start Ensemble at login, or stop doing that" },
   { name: "update", description: "Update Ensemble on this computer" },
-  { name: "status", description: "Account, runtime, sandbox and keys" },
+  { name: "status", description: "Account, runtime, sandbox, keys and pull request bases" },
   { name: "sidebar", description: "Show or hide the sidebar (Ctrl+B)" },
   { name: "help", description: "Keys and commands" },
   { name: "exit", aliases: ["quit", "q"], description: "Leave; Ensemble keeps running tasks in the background" },
@@ -151,7 +151,7 @@ export const STATUS_GLYPH: Record<string, { glyph: string; color: string }> = {
 };
 
 export function engineOf(job: Pick<JobCard, "provider">): string {
-  return { "claude-code": "Claude Code", codex: "Codex", "cursor-agent": "Cursor" }[job.provider ?? ""] ?? "Ensemble";
+  return isCodeEngine(job.provider) ? ENGINE_LABELS[job.provider] : "Ensemble";
 }
 
 export function ago(iso: string | null | undefined, now = Date.now()): string {
@@ -169,34 +169,49 @@ export function sourceLabel(source: string): string {
 
 // ── starting a run from the terminal ────────────────────────────────────────────────────────
 
-/** The Assign request `/run` sends: a code task in this folder, under the run profile, with the chosen engine. */
+/** What `/model` picked for the person's own agent: a model, and for GitHub Copilot its thinking level and context window. */
+export type AgentChoice = { model: string | null; effort?: string | null; context?: ContextTier | null };
+
+/**
+ * The Assign request `/run` sends: a code task in this folder, under the run profile, with the
+ * chosen engine. `agent`, the `/model` choice for the person's own agent, replaces the profile's
+ * model, thinking level and context window when it names a model. A profile that ends in a pull
+ * request runs in its own clone of this folder (a git repository) instead of in the folder, on a
+ * branch Ensemble makes from the base; it commits, and Ensemble pushes and opens the pull request.
+ */
 export function runRequest(input: {
   taskId: string;
   folder: string;
   instructions: string;
   profile: RunProfile;
-  engine: "ensemble" | "claude-code" | "codex" | "cursor-agent" | null;
+  engine: Engine | null;
+  agent?: AgentChoice | null;
 }): Record<string, unknown> {
   const { profile } = input;
   const engine = input.engine ?? profile.engine;
+  const own = engine === profile.engine;
   const model =
-    !profile.model || engine !== profile.engine
+    !profile.model || !own
       ? {}
       : engine === "ensemble" && profile.model.includes("::")
         ? { provider: profile.model.split("::")[0], model: profile.model.split("::")[1] }
         : { model: profile.model };
-  // The profile's thinking level goes with Ensemble's own agent, as the web's Assign sends it.
-  const effort = engine === "ensemble" && profile.effort && profile.effort !== "default" ? { reasoningEffort: profile.effort } : {};
+  // The profile's thinking level goes with Ensemble's own agent, as the web's Assign sends it, and
+  // with GitHub Copilot when the profile is Copilot's, together with its context window.
+  const copilotProfile = engine === "copilot-cli" && own;
+  const effort = (engine === "ensemble" || copilotProfile) && profile.effort && profile.effort !== "default" ? { reasoningEffort: profile.effort } : {};
+  const context = copilotProfile && profile.context === "long_context" ? { contextTier: "long_context" } : {};
+  const picked = engine !== "ensemble" && input.agent?.model && input.agent.model !== "default" ? agentFields(input.agent) : null;
+  const pullRequest = profile.pullRequest ?? null;
   return {
     taskId: input.taskId,
     kind: "code",
     engine,
-    ...model,
-    ...effort,
+    ...(picked ?? { ...model, ...effort, ...context }),
     instructions: [profile.instructions, input.instructions].filter(Boolean).join("\n\n"),
-    folder: input.folder,
-    branchMode: profile.branchMode,
-    delivery: profile.delivery,
+    ...(pullRequest ? { repoUrl: input.folder, pullRequest: { base: pullRequest.base, merge: pullRequest.merge } } : { folder: input.folder }),
+    branchMode: pullRequest ? "as-is" : profile.branchMode,
+    delivery: pullRequest ? "commit" : profile.delivery,
     askBeforePublish: profile.askBeforePublish,
     mode: profile.mode,
     sandbox: profile.sandbox,
@@ -210,17 +225,30 @@ export function runRequest(input: {
 
 // ── chat with your own agent ────────────────────────────────────────────────────────────────
 
-export type AgentEngine = "claude-code" | "codex" | "cursor-agent";
+export type AgentEngine = CodeEngine;
 
 /** A run that has ended, one way or another. */
 export const FINISHED = new Set(["succeeded", "failed", "cancelled", "interrupted", "blocked"]);
 
-/** Models to offer for each agent; null means type one (the agent's names change often). */
-export const AGENT_MODELS: Record<AgentEngine, string[] | null> = { "claude-code": ["default", "sonnet", "opus", "haiku"], codex: null, "cursor-agent": null };
+/**
+ * Models to offer for each agent; null means type one (the agent's names change often). GitHub
+ * Copilot offers the models this computer's Copilot reports instead (`GET /api/subscriptions`).
+ */
+export const AGENT_MODELS: Record<AgentEngine, string[] | null> = { "claude-code": ["default", "sonnet", "opus", "haiku"], codex: null, "cursor-agent": null, "copilot-cli": null };
+
+/** The Assign fields for a `/model` choice that names a model. */
+function agentFields(choice: AgentChoice): Record<string, unknown> {
+  return {
+    model: choice.model,
+    ...(choice.effort && choice.effort !== "default" ? { reasoningEffort: choice.effort } : {}),
+    ...(choice.context === "long_context" ? { contextTier: "long_context" } : {}),
+  };
+}
 
 /**
  * The Assign request for one message in Chat with the person's own agent: in the folder the app
  * was opened in (later messages continue the first one's folder and session), under the run profile.
+ * A chat message never ends in a pull request, whatever the profile says.
  */
 export function chatTurnRequest(input: {
   taskId: string;
@@ -229,12 +257,21 @@ export function chatTurnRequest(input: {
   profile: RunProfile;
   engine: AgentEngine;
   model: string | null;
+  /** GitHub Copilot's thinking level and context window for that model. */
+  effort?: string | null;
+  context?: ContextTier | null;
   previousJobId: string | null;
 }): Record<string, unknown> {
   const first = !input.previousJobId;
   return {
-    ...runRequest({ taskId: input.taskId, folder: input.folder, instructions: input.message, profile: { ...input.profile, instructions: first ? input.profile.instructions : "" }, engine: input.engine }),
-    ...(input.model && input.model !== "default" ? { model: input.model } : {}),
+    ...runRequest({
+      taskId: input.taskId,
+      folder: input.folder,
+      instructions: input.message,
+      profile: { ...input.profile, instructions: first ? input.profile.instructions : "", pullRequest: null },
+      engine: input.engine,
+      agent: { model: input.model, effort: input.effort, context: input.context },
+    }),
     // A chat works on the folder's own branch; it does not start a branch per message.
     branchMode: "as-is",
     markDone: false,
@@ -249,7 +286,57 @@ export function installedAgent(agents: ReadonlyArray<{ id: string; app: boolean;
   if (has("claude")) return "claude-code";
   if (has("codex", true)) return "codex";
   if (has("cursor")) return "cursor-agent";
+  if (has("copilot")) return "copilot-cli";
   return null;
+}
+
+// ── GitHub Copilot on this computer ─────────────────────────────────────────────────────────
+
+const COPILOT_INSTALL = "npm install -g @github/copilot";
+
+/**
+ * Copilot as this computer's runtime found it (`GET /api/subscriptions`): its row, null when the
+ * check found no Copilot, undefined when there is no answer yet.
+ */
+export function copilotOf(agents: readonly SubscriptionAgent[] | null | undefined): SubscriptionAgent | null | undefined {
+  if (!agents) return undefined;
+  return agents.find((agent) => agent.id === "copilot-cli") ?? null;
+}
+
+/** Why a Chat message or /run cannot go to Copilot here, with the fix; null when it can, or when it is not known yet. */
+export function copilotProblem(copilot: SubscriptionAgent | null | undefined): string | null {
+  if (copilot === null) return `GitHub Copilot isn't on this computer yet: ${COPILOT_INSTALL}, then copilot login.`;
+  if (copilot?.signedIn === false) return "GitHub Copilot isn't signed in on this computer: run copilot login in a terminal, then try again.";
+  return null;
+}
+
+/** Copilot's note in /agent. `cli`: whether the `copilot` command is on the PATH, for when the check has not answered. */
+export function copilotNote(copilot: SubscriptionAgent | null | undefined, cli: boolean): string {
+  if (copilot === null || (copilot === undefined && !cli)) return `not found · ${COPILOT_INSTALL}`;
+  if (copilot?.signedIn === false) return "not signed in · run copilot login";
+  return `your Copilot sign-in${copilot?.account ? ` (${copilot.account})` : ""}`;
+}
+
+/** "200K", "1.05M". */
+function tokenSize(count: number): string {
+  return count >= 1_000_000 ? `${Number((count / 1_000_000).toFixed(2))}M` : `${Math.round(count / 1000)}K`;
+}
+
+/** The dim note beside a Copilot model in /model: what it costs and its context sizes ("low cost · 200K / 922K context"). */
+export function modelNote(model: SubscriptionModel): string {
+  const sizes = (model.contexts ?? []).map((context) => (context.tokens ? tokenSize(context.tokens) : context.label));
+  return [model.cost, sizes.length ? `${sizes.join(" / ")} context` : null].filter(Boolean).join(" · ");
+}
+
+/** The thinking levels a model takes: its own, or the ones an older Copilot lists for every model. */
+export function modelEfforts(model: SubscriptionModel, copilot: SubscriptionAgent | null | undefined): string[] {
+  return model.efforts?.length ? model.efforts : (copilot?.efforts ?? []);
+}
+
+/** The agent's model as the status line and /status show it: "GPT-5.6 Luna · high thinking · long context". */
+export function agentChoiceLabel(choice: AgentChoice, models: readonly SubscriptionModel[] = [], fallback = "default model"): string {
+  const model = choice.model ? (models.find((row) => row.id === choice.model)?.label ?? choice.model) : (models.find((row) => row.isDefault)?.label ?? fallback);
+  return [model, choice.effort ? `${choice.effort} thinking` : null, choice.context === "long_context" ? "long context" : null].filter(Boolean).join(" · ");
 }
 
 /** A short title from what the person typed. */
@@ -260,7 +347,14 @@ export function titleFrom(text: string): string {
 
 export function profileSummary(profile: RunProfile): string {
   const mode = profile.mode === "unattended" ? "Run unattended" : profile.mode === "review" ? "Review only" : "Ask";
-  const git = profile.delivery === "local" ? "local only" : profile.delivery === "commit" ? "may commit" : "may commit and push";
+  const plan = profile.pullRequest;
+  const git = plan
+    ? `pull request into ${plan.base}${plan.merge === "auto" ? ", merged when its checks pass" : plan.merge === "ask" ? ", merged if you approve" : ", left open"}`
+    : profile.delivery === "local"
+      ? "local only"
+      : profile.delivery === "commit"
+        ? "may commit"
+        : "may commit and push";
   return `${mode} · ${git} · sandbox ${profile.sandbox ? "on" : "off"} · internet ${profile.network ? "on" : "off"}`;
 }
 

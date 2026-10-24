@@ -32,7 +32,7 @@ Guides to how Ensemble works today, with the code paths that implement it. Start
 | [31 · Connected apps](31_CONNECTORS_IN_USE.md) | Connector catalog, connection methods, item actions, MCP |
 | [32 · Files](32_FILES.md) | Originals and blob storage, previews, edits, extraction, caps |
 | [33 · Included AI](33_INCLUDED_AI.md) | Operator-provided models, monthly credits, reservations |
-| [35 · Ensemble Node](35_ENSEMBLE_NODE.md) | AI teammates in DMs, crews and group rooms: shared sign-in, credits, tools and computer jobs |
+| [35 · Ensemble Node](35_ENSEMBLE_NODE.md) | AI teammates in DMs, crews and rooms with other people: requests to join, search, pins, shared sign-in, credits, tools and computer jobs |
 
 ## Clients and shared systems
 
@@ -47,7 +47,7 @@ Guides to how Ensemble works today, with the code paths that implement it. Start
 | [Context Bridge](CONTEXT_BRIDGE.md) | Read-only MCP server for editors |
 | [Brand](BRAND.md) | Shared artwork, palettes, motion, generated assets |
 | [Caching and UI performance](CACHING.md) | Caches, relay state, performance budgets |
-| [36 · Web testing](36_WEB_TESTING.md) | Isolated live testing, fast web checks, agent workflow and promotion to production |
+| [36 · Web and CLI testing](36_WEB_TESTING.md) | Isolated live Hub and testing CLI, fast checks, agent workflow and production promotion |
 | [Demo data](DEMO_DATA.md) | Explicit sample-data commands and fixtures |
 
 Operator-specific hosting, accounts and credentials are in the git-ignored `private/` folder.

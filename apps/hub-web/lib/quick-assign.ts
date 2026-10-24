@@ -1,5 +1,6 @@
 import type { RunProfile } from "@ensemble/shared-types";
 import { api, type AssignInput } from "./api";
+import { engineAssign } from "./engine-models";
 import { defaultProfile, quickProfile } from "./run-profiles";
 
 export function quickAssignInput(taskId: string, profile: RunProfile): AssignInput {
@@ -7,9 +8,10 @@ export function quickAssignInput(taskId: string, profile: RunProfile): AssignInp
   const model = profile.model?.trim();
   const [provider, modelId] = model?.includes("::") ? model.split("::", 2) : [undefined, model];
   return {
-    taskId, kind: profile.kind, engine,
-    ...(model ? engine === "ensemble" ? { ...(provider ? { provider } : {}), model: modelId } : { model } : {}),
-    ...(engine === "ensemble" && profile.effort !== "default" ? { reasoningEffort: profile.effort } : {}),
+    taskId, kind: profile.kind,
+    ...(engine === "ensemble"
+      ? { engine, ...(model ? { ...(provider ? { provider } : {}), model: modelId } : {}), ...(profile.effort !== "default" ? { reasoningEffort: profile.effort } : {}) }
+      : engineAssign(engine, { model: model ?? "", effort: profile.effort, context: profile.context })),
     instructions: profile.instructions, markDone: profile.markDone, network: profile.network,
     ...(profile.deviceId ? { deviceId: profile.deviceId } : {}),
     ...(profile.maxMinutes ? { maxMinutes: profile.maxMinutes } : {}),
@@ -20,6 +22,8 @@ export function quickAssignInput(taskId: string, profile: RunProfile): AssignInp
       ...(profile.branchMode === "new" ? { branch: `ensemble/task-${taskId.slice(0, 8)}-${Date.now().toString(36)}` } : {}),
       delivery: profile.delivery, askBeforePublish: profile.askBeforePublish,
       mode: profile.mode, sandbox: profile.sandbox, useCredentials: profile.useCredentials,
+      // The server makes the rest consistent: commits allowed, the internet on, the run's own branch.
+      ...(profile.pullRequest ? { pullRequest: { base: profile.pullRequest.base, merge: profile.pullRequest.merge }, delivery: "commit" as const, network: true } : {}),
     } : {}),
   };
 }

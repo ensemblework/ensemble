@@ -1,3 +1,5 @@
+import { TESTING } from "./channel.js";
+
 export class HttpError extends Error {
   constructor(
     readonly status: number,
@@ -31,6 +33,7 @@ export function errorMessage(body: unknown, fallback: string): string {
 export async function fetchJson<T>(url: string | URL, init: RequestInit = {}, fetchImpl: FetchLike = fetch): Promise<T> {
   const response = await fetchImpl(url, {
     ...init,
+    ...(TESTING ? { redirect: "error" } : {}),
     headers: {
       accept: "application/json",
       ...(init.body === undefined ? {} : { "content-type": "application/json" }),

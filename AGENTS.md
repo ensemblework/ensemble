@@ -86,7 +86,7 @@ Details: [`docs/17_REPOSITORY_STRUCTURE.md`](docs/17_REPOSITORY_STRUCTURE.md).
 
 ### Web testing and promotion
 
-Web feature/UI/fix iteration belongs on `testing`, or on a feature branch opened against `testing`, unless the user explicitly requests a production release. Its public test site uses isolated data and fast web/API checks; native and CLI release pipelines do not run there. Read [`docs/36_WEB_TESTING.md`](docs/36_WEB_TESTING.md) before changing deployment behavior.
+Feature/UI/fix iteration belongs on `testing`, or on a feature branch opened against `testing`, unless the user explicitly requests a production release. Its public test site and separate `ensemble-test` CLI use isolated accounts and state. Fast web/API/CLI boundary checks precede deployment; testing CLI packages follow the successful test-site publish. Production CLI and native release pipelines do not run there; no testing native app is published. Read [`docs/36_WEB_TESTING.md`](docs/36_WEB_TESTING.md) before changing deployment behavior.
 
 `main` is the production promotion target. Promote reviewed testing work with a PR to `main`; keep the full production CI and release checks intact. Never push `production` or `testing-live` by hand during ordinary development: their workflows advance them after checks. Never copy production users, sessions or connected-app credentials into testing. Keep operator values and runbooks in `private/`, not public docs.
 

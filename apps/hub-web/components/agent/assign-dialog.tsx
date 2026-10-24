@@ -1,20 +1,22 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Check, ChevronRight, Code2, FileText, FolderOpen, GitBranch, Lock, Monitor, Pencil, ShieldCheck, Star, Trash2, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronRight, Code2, FileText, FolderOpen, GitBranch, GitPullRequest, Lock, Monitor, Pencil, ShieldCheck, Star, Trash2, X } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { INCLUDED_LABEL, INCLUDED_PROVIDER, type ReasoningEffort, type RunProfile } from "@ensemble/shared-types";
+import { CODE_ENGINES, ENGINE_LABELS, INCLUDED_LABEL, INCLUDED_PROVIDER, type CodeEngine, type ContextTier, type ReasoningEffort, type RunProfile } from "@ensemble/shared-types";
 import { api, type AssignInput, type Complexity, type HandoffApp } from "@/lib/api";
 import { tierModelName } from "@/lib/included";
 import { useSpaceAccess } from "@/lib/access";
 import { pickFolderNative } from "@/lib/desktop-dialog";
 import { desktopShell } from "@/lib/desktop-param";
 import { computerName, folderPlace, freshCloneHint } from "@/lib/device-copy";
+import { computerAgent, computerRuns, contextChoice, effortName, engineAssign, engineModel, fitEngineChoice, modelFacts } from "@/lib/engine-models";
 import { usePersistentState } from "@/lib/prefs";
 import { setFeature } from "@/lib/features";
 import { useHostCode, useModuleState } from "@/lib/use-module";
 import { useQuickAssign } from "./use-quick-assign";
 import { canAddProfile, defaultProfile, differs, newProfileId, profileChoices, profileSummary, quickProfile, removeProfile, upsertProfile, type ProfileFields } from "@/lib/run-profiles";
+import { MERGE_CHOICES, computerPullRequestBases, defaultPullRequestBase, pullRequestNotices, pullRequestProblem, sharedFolderKinds, type PullRequestMerge } from "@/lib/pull-request";
 import { useToast } from "../toast";
 import { Dialog, InfoTip, SettingRow, Spinner, Toggle, cx } from "../ui";
 import { RunBranchStatus } from "./run-branch-status";
@@ -95,13 +97,23 @@ function Label({ children, tip }: { children: React.ReactNode; tip?: string }) {
   );
 }
 
+/** Text with `command` spans shown as code. */
+function WithCode({ text }: { text: string }) {
+  return <>{text.split("`").map((part, index) => (index % 2 ? <code key={index}>{part}</code> : part))}</>;
+}
+
 const MODE_HELP: Record<Mode, string> = {
   ask: "Asks before commands and file changes unless the folder is trusted. Outside the folder, a sandboxed run follows “Outside the work folder” below; anything more asks. Decision questions come to Needs me.",
   review: "Runs commands and edits inside the folder without asking. Asks only real decisions (an unclear requirement, a choice between approaches), with its recommended option marked. Outside the folder, a sandboxed run follows “Outside the work folder” below and anything more is refused.",
   unattended: "Nobody needs to be there. Runs inside the folder without asking, picks its recommended option at each decision, and lists every decision it made in the summary. Outside the folder, a sandboxed run follows “Outside the work folder” below and anything more is refused.",
 };
 
-const ENGINE_LABEL = { "claude-code": "Claude Code", codex: "Codex", "cursor-agent": "Cursor" } as const;
+const ENGINE_OPTION: Record<CodeEngine, string> = {
+  "claude-code": "Claude Code (your sign-in)",
+  codex: "Codex (your sign-in, CLI or ChatGPT app)",
+  "cursor-agent": "Cursor agent (your sign-in)",
+  "copilot-cli": "GitHub Copilot (your sign-in)",
+};
 
 const OUTSIDE_HELP = "What a sandboxed run may do in your other folders. Read only: it can read them (never keys or browser data) and asks before writing; with nobody to answer, a write is refused and the run carries on. Read and write: it can change them too. No access: it stays in the work folder. The default comes from Settings.";
 
@@ -253,7 +265,7 @@ export function ProfileBar({
   );
 }
 
-type Blocker = { text: string; field: "task" | "run-on" | "place" | "branch" | "mode" };
+type Blocker = { text: string; field: "task" | "run-on" | "place" | "branch" | "mode" | "pull-request" };
 
 function folderProblem(folder: string, check: { ok: boolean; text: string } | null): string {
   if (check && !check.ok) return check.text;
@@ -277,6 +289,8 @@ export function assignBlocker(form: {
   needsTrust: boolean;
   mode: Mode;
   unattendedNoSandbox: boolean;
+  /** What keeps the run's pull request from going ahead (lib/pull-request), when it ends in one. */
+  pullRequest?: Blocker | null;
 }): Blocker | null {
   if (!form.taskId) return { text: "Choose a task first.", field: "task" };
   if (form.kind !== "code") return null;
@@ -292,6 +306,7 @@ export function assignBlocker(form: {
       : { text: `${form.device.name} has not shared a folder yet. Pick “Its own checkout”, or share one there first.`, field: "place" };
   }
   if (form.place === "folder" && !form.device && !form.folderCheck?.ok) return { text: folderProblem(form.folder, form.folderCheck), field: "place" };
+  if (form.pullRequest) return form.pullRequest;
   if (form.branchMode !== "as-is" && !form.branch.trim()) return { text: form.branchMode === "new" ? "Name the new branch." : "Name the branch to use.", field: "branch" };
   if (form.needsTrust) return { text: `${form.mode === "unattended" ? "Run unattended" : "Review only"} needs a folder you trust. Trust this folder, or choose Ask.`, field: "mode" };
   if (form.unattendedNoSandbox) return { text: "Run unattended needs an OS sandbox, and this computer has none yet. Choose Ask or Review only.", field: "mode" };
@@ -325,8 +340,10 @@ export function AssignDialog({
   const quickAssignment = useQuickAssign(() => undefined, onClose);
   const [kind, setKind] = usePersistentState<Kind>("ensemble.assign.kind", defaultKind ?? "research");
   const [modelChoice, setModelChoice] = usePersistentState("ensemble.assign.model", "");
-  const [engine, setEngine] = usePersistentState<"ensemble" | "claude-code" | "codex" | "cursor-agent">("ensemble.assign.engine", "ensemble");
+  const [engine, setEngine] = usePersistentState<"ensemble" | CodeEngine>("ensemble.assign.engine", "ensemble");
   const [claudeModel, setClaudeModel] = useState("");
+  // GitHub Copilot's context window; unset is the model's standard one.
+  const [context, setContext] = useState<ContextTier | undefined>(undefined);
   // Opened in the agent's own app on this computer instead of run by Ensemble.
   const [inApp, setInApp] = useState(false);
   const [appTarget, setAppTarget] = usePersistentState<HandoffApp>("ensemble.assign.app", "claude");
@@ -340,6 +357,9 @@ export function AssignDialog({
   const [branchMode, setBranchMode] = useState<"as-is" | "existing" | "new">("as-is");
   const [branch, setBranch] = useState("");
   const [delivery, setDelivery] = usePersistentState<"local" | "commit" | "push">("ensemble.assign.delivery", "local");
+  // A code run that ends in a pull request Ensemble opens: its base and what happens once it is open. Null: the git choice above.
+  const [pullRequest, setPullRequest] = useState<{ base: string; merge: PullRequestMerge } | null>(null);
+  const [prBranch, setPrBranch] = useState("");
   const [askFirst, setAskFirst] = useState(true);
   const [credentials, setCredentials] = useState(false);
   const [sandbox, setSandbox] = useState(true);
@@ -379,8 +399,29 @@ export function AssignDialog({
     if (!open || !computers.data) return;
     if ((!computers.data.serverRunner || access.guest) && runOn === "server") setRunOn(computers.data.devices[0]?.id ?? "server");
   }, [open, computers.data, runOn, access.guest]);
+  // GitHub Copilot's models, thinking levels and context windows, as the chosen computer listed them.
+  const copilot = open && kind === "code" && engine === "copilot-cli" && !appMode;
+  const subscriptions = useQuery({ queryKey: ["subscriptions"], queryFn: api.subscriptions, enabled: copilot, staleTime: 30_000 });
+  const copilotAgent = copilot ? computerAgent("copilot-cli", subscriptions.data, selectedDevice?.id ?? null, selectedDevice?.capabilities) : null;
+  const copilotModel = engineModel(copilotAgent, claudeModel);
+  const copilotDefault = copilotAgent?.models.find((row) => row.isDefault) ?? null;
+  const copilotWhere = selectedDevice ? computerName(selectedDevice.name) : desktopShell() ? "this computer" : "this server";
   const branchSource = place === "folder" && folderCheck?.ok && folderCheck.git ? folder : place === "fresh" && repo.startsWith("/") ? repo : "";
   const branches = useQuery({ queryKey: ["branches", branchSource], queryFn: () => api.branches(branchSource), enabled: open && Boolean(branchSource) });
+  const prBases = selectedDevice ? computerPullRequestBases(selectedDevice.capabilities) : null;
+  const folderKinds = selectedDevice ? sharedFolderKinds(selectedDevice.capabilities) : {};
+  const prOn = kind === "code" && pullRequest !== null;
+  const prNotices = prOn
+    ? pullRequestNotices({
+        computer: selectedDevice ? selectedDevice.name : null,
+        capabilities: selectedDevice?.capabilities,
+        place,
+        repo,
+        folder: selectedDevice ? folderLabel : folder,
+        base: pullRequest.base,
+        branch: prBranch,
+      })
+    : null;
 
   const orchestration = settings.data?.settings.orchestration;
   const savedProfiles = settings.data?.settings.runProfiles ?? [];
@@ -395,18 +436,20 @@ export function AssignDialog({
     engine: kind === "code" ? engine : "ensemble",
     model: kind === "code" && engine !== "ensemble" ? claudeModel : modelChoice,
     effort,
+    context: kind === "code" && engine === "copilot-cli" ? context : undefined,
     branchMode: branchMode === "new" ? "new" : "as-is",
-    delivery,
+    delivery: prOn ? "commit" : delivery,
     askBeforePublish: askFirst,
     mode,
     sandbox,
     useCredentials: credentials,
-    network,
+    network: prOn ? true : network,
     markDone,
     maxMinutes: maxMinutes === "" ? null : maxMinutes,
     maxToolCalls: maxToolCalls === "" ? null : maxToolCalls,
     maxTurns: maxTurns === "" ? null : maxTurns,
     instructions,
+    pullRequest: prOn ? { base: pullRequest.base.trim(), merge: pullRequest.merge } : null,
   };
 
   const applyProfile = (profile: RunProfile) => {
@@ -417,6 +460,7 @@ export function AssignDialog({
     if (profile.engine && profile.engine !== "ensemble") setClaudeModel(profile.model);
     else setModelChoice(profile.model);
     setEffort(profile.effort);
+    setContext(profile.engine === "copilot-cli" && profile.context === "long_context" ? "long_context" : undefined);
     setBranchMode(profile.branchMode);
     setDelivery(profile.delivery);
     setAskFirst(profile.askBeforePublish);
@@ -430,6 +474,8 @@ export function AssignDialog({
     setMaxToolCalls(profile.maxToolCalls ?? "");
     setMaxTurns(profile.maxTurns ?? "");
     setInstructions(profile.instructions);
+    setPullRequest(profile.kind === "code" && profile.pullRequest ? { base: profile.pullRequest.base, merge: profile.pullRequest.merge } : null);
+    setPrBranch("");
   };
 
   // Each time the dialog opens: the task, then the default profile once settings are in.
@@ -554,11 +600,13 @@ export function AssignDialog({
     folder,
     folderCheck,
     folderLabel,
-    branchMode,
+    // A pull request's own branch name is optional (pullRequestNotices checks it).
+    branchMode: prOn ? "as-is" : branchMode,
     branch,
     needsTrust,
     mode,
     unattendedNoSandbox,
+    pullRequest: prNotices ? pullRequestProblem(prNotices) : null,
   });
   const invalid = Boolean(blocker);
 
@@ -571,7 +619,7 @@ export function AssignDialog({
         taskId,
         kind,
         instructions,
-        ...(claude ? { engine, ...(claudeModel ? { model: claudeModel } : {}) } : model ? { provider, model } : {}),
+        ...(claude ? engineAssign(engine, { model: claudeModel, effort, context }, copilotAgent ? copilotModel : undefined) : model ? { provider, model } : {}),
         ...(effort !== "default" && !claude ? { reasoningEffort: effort } : {}),
         markDone,
         maxMinutes: limitValue(maxMinutes, "maxMinutes"),
@@ -584,10 +632,12 @@ export function AssignDialog({
           mode,
           // A computer without a sandbox would refuse a sandboxed run; say so here instead (below), and run it directly.
           sandbox: selectedDevice ? sandbox && deviceSandbox?.osSandbox !== false : sandbox && osSandbox,
-          delivery,
+          delivery: prOn ? "commit" : delivery,
           askBeforePublish: mode === "unattended" ? false : askFirst,
-          branchMode,
-          branch: branchMode === "as-is" ? undefined : branch.trim(),
+          // A pull request's branch is new, made from its base; empty: Ensemble names it.
+          branchMode: prOn ? (prBranch.trim() ? "new" : "as-is") : branchMode,
+          branch: prOn ? prBranch.trim() || undefined : branchMode === "as-is" ? undefined : branch.trim(),
+          ...(prOn ? { pullRequest: { base: pullRequest.base.trim(), merge: pullRequest.merge }, network: true } : {}),
           ...(place === "fresh" && repo.trim() ? { repoUrl: repo.trim() } : {}),
           ...(place === "continue" ? { continueFromJobId: continueFrom } : {}),
           ...(outside ? { outsideAccess: outside } : {}),
@@ -671,8 +721,8 @@ export function AssignDialog({
   const summary = useMemo(() => {
     if (kind === "research") return "Reads the web and papers, writes into the task page. Nothing runs on your computer.";
     const where = place === "folder" ? (selectedDevice ? `${folderLabel || "a folder"} on ${selectedDevice.name}` : "your folder") : place === "continue" ? "the earlier task's folder" : "its own checkout";
-    const git = delivery === "local" ? "no commit or push" : delivery === "commit" ? "may commit" : "may commit and push";
-    const asks = delivery !== "local" && askFirst && mode !== "unattended" ? " (asks before each commit)" : "";
+    const git = prOn ? `may commit, then a pull request into ${pullRequest.base.trim() || "…"}` : delivery === "local" ? "no commit or push" : delivery === "commit" ? "may commit" : "may commit and push";
+    const asks = (prOn || delivery !== "local") && askFirst && mode !== "unattended" ? " (asks before each commit)" : "";
     const modeLabel = mode === "review" ? " · Review only" : mode === "unattended" ? " · Run unattended" : "";
     const box = selectedDevice
       ? `On ${selectedDevice.name}${deviceSandbox?.osSandbox === false ? ", no sandbox" : sandbox ? ", sandboxed" : ", unsandboxed"}`
@@ -681,9 +731,9 @@ export function AssignDialog({
         : sandbox
           ? "Sandboxed"
           : "Unsandboxed";
-    const who = engine === "ensemble" ? "" : `${ENGINE_LABEL[engine]} · `;
+    const who = engine === "ensemble" ? "" : `${ENGINE_LABELS[engine]} · `;
     return `${who}${box} · works in ${where}${modeLabel} · ${git}${asks}${credentials && !selectedDevice ? " · git sign-in stays in the app" : ""}`;
-  }, [kind, place, delivery, sandbox, askFirst, credentials, mode, osSandbox, selectedDevice, folderLabel, engine, deviceSandbox]);
+  }, [kind, place, delivery, sandbox, askFirst, credentials, mode, osSandbox, selectedDevice, folderLabel, engine, deviceSandbox, prOn, pullRequest]);
 
   const candidates = (tasks.data?.tasks ?? []).filter((row) => !["done", "dropped"].includes(row.status));
   const trustTip = selectedDevice ? undefined : "Trust this folder first. Review only and Run unattended run commands without asking.";
@@ -794,7 +844,7 @@ export function AssignDialog({
 
         {kind === "code" ? (
           <div>
-            <Label tip="Ensemble's agent calls a model with your key. Claude Code, Codex and Cursor run your own copy on the computer, signed in with your own account (Codex from the CLI or the ChatGPT app, Cursor from its `cursor-agent`); Ensemble never sees that sign-in. Either way the same mode, trust, sandbox and git rules apply, and their questions come to Needs me. In its own app opens the task in the Claude app, Codex, Cursor or VS Code for you to send.">
+            <Label tip="Ensemble's agent calls a model with your key. Claude Code, Codex, Cursor and GitHub Copilot run your own copy on the computer, signed in with your own account (Codex from the CLI or the ChatGPT app, Cursor from its `cursor-agent`, GitHub Copilot from its `copilot` CLI); Ensemble never sees that sign-in. Either way the same mode, trust, sandbox and git rules apply, and their questions come to Needs me. In its own app opens the task in the Claude app, Codex, Cursor or VS Code for you to send.">
               Who does the work
             </Label>
             <select
@@ -805,15 +855,21 @@ export function AssignDialog({
                 const value = event.target.value as typeof engine | "app";
                 setInApp(value === "app");
                 if (value === "app") return;
-                // Model names are each engine's own.
+                // Model names are each engine's own, and so are GitHub Copilot's thinking levels and context windows.
                 if (value !== engine) setClaudeModel("");
+                if (value !== engine && (value === "copilot-cli" || engine === "copilot-cli")) {
+                  setEffort("default");
+                  setContext(undefined);
+                }
                 setEngine(value);
               }}
             >
               <option value="ensemble">Ensemble agent (a model with your key)</option>
-              <option value="claude-code">Claude Code (your sign-in)</option>
-              <option value="codex">Codex (your sign-in, CLI or ChatGPT app)</option>
-              <option value="cursor-agent">Cursor agent (your sign-in)</option>
+              {CODE_ENGINES.map((id) => (
+                <option key={id} value={id}>
+                  {ENGINE_OPTION[id]}
+                </option>
+              ))}
               {!selectedDevice && apps.length ? <option value="app">In its own app or a terminal</option> : null}
             </select>
             {appMode ? (
@@ -836,10 +892,79 @@ export function AssignDialog({
           </div>
         ) : null}
 
-        {appMode ? null : kind === "code" && (engine === "codex" || engine === "cursor-agent") ? (
+        {appMode ? null : kind === "code" && engine === "copilot-cli" ? (
+          <div className="space-y-3" data-testid="assign-copilot">
+            <div>
+              <Label tip={`GitHub Copilot's models on ${copilotWhere}, as its CLI lists them. Copilot default uses the model set in Copilot.`}>Model</Label>
+              {copilotAgent?.models.length ? (
+                <select
+                  aria-label="Copilot model"
+                  value={claudeModel}
+                  onChange={(event) => {
+                    const next = event.target.value;
+                    setClaudeModel(next);
+                    const fitted = fitEngineChoice(engineModel(copilotAgent, next), effort, context);
+                    setEffort(fitted.effort);
+                    setContext(fitted.context);
+                  }}
+                  className="field w-full"
+                >
+                  <option value="">Copilot default{copilotDefault ? ` (${copilotDefault.label})` : ""}</option>
+                  {copilotAgent.models.map((row) => (
+                    <option key={row.id} value={row.id}>
+                      {row.label}
+                    </option>
+                  ))}
+                  {claudeModel && !copilotAgent.models.some((row) => row.id === claudeModel) ? <option value={claudeModel}>{claudeModel}</option> : null}
+                </select>
+              ) : (
+                <input aria-label="Copilot model" value={claudeModel} onChange={(event) => setClaudeModel(event.target.value)} placeholder="GitHub Copilot default" className="field w-full font-mono text-[12.5px]" />
+              )}
+              {modelFacts(copilotModel.model) ? <div className="mt-1 text-[12px] text-muted" data-testid="copilot-model-facts">{modelFacts(copilotModel.model)}</div> : null}
+            </div>
+            {copilotModel.efforts.length || copilotModel.contexts.length ? (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {copilotModel.efforts.length ? (
+                  <div>
+                    <Label tip="The thinking levels Copilot lists for this model. Default uses the model's own level.">Thinking</Label>
+                    <select aria-label="Copilot thinking" value={(copilotModel.efforts as string[]).includes(effort) ? effort : "default"} onChange={(event) => setEffort(event.target.value as Effort)} className="field w-full">
+                      <option value="default">Default{copilotModel.defaultEffort ? ` (${effortName(copilotModel.defaultEffort)})` : ""}</option>
+                      {copilotModel.efforts.map((level) => (
+                        <option key={level} value={level}>
+                          {effortName(level)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : null}
+                {copilotModel.contexts.length ? (
+                  <div>
+                    <Label tip="How much of the work the model can hold at once. Standard is the model's usual size.">Context window</Label>
+                    <select aria-label="Context window" value={context ?? "default"} onChange={(event) => setContext(event.target.value === "long_context" ? "long_context" : undefined)} className="field w-full">
+                      {copilotModel.contexts.map((row) => (
+                        <option key={row.id} value={row.id}>
+                          {contextChoice(row)}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+            {selectedDevice && !computerRuns("copilot-cli", selectedDevice.capabilities) ? (
+              <p className="rounded-md bg-panel px-2.5 py-2 text-[12px] leading-[18px] text-warn" role="status">
+                Ensemble on {copilotWhere} is too old to run GitHub Copilot. Update it there (<code>ensemble update</code>, or the desktop app&apos;s update), then assign.
+              </p>
+            ) : copilotAgent?.signedIn === false ? (
+              <p className="rounded-md bg-panel px-2.5 py-2 text-[12px] leading-[18px] text-warn" role="status" data-testid="copilot-signed-out">
+                Copilot CLI is not signed in on {copilotWhere}: run <code>copilot login</code> there or press Sign in under Settings → Models.
+              </p>
+            ) : null}
+          </div>
+        ) : kind === "code" && (engine === "codex" || engine === "cursor-agent") ? (
           <div>
-            <Label tip={`${ENGINE_LABEL[engine]}'s own model name, or leave empty for the default in its settings.`}>Model</Label>
-            <input value={claudeModel} onChange={(event) => setClaudeModel(event.target.value)} placeholder={`${ENGINE_LABEL[engine]} default`} className="field w-full font-mono text-[12.5px]" />
+            <Label tip={`${ENGINE_LABELS[engine]}'s own model name, or leave empty for the default in its settings.`}>Model</Label>
+            <input value={claudeModel} onChange={(event) => setClaudeModel(event.target.value)} placeholder={`${ENGINE_LABELS[engine]} default`} className="field w-full font-mono text-[12.5px]" />
           </div>
         ) : kind === "code" && engine === "claude-code" ? (
           <div>
@@ -952,16 +1077,17 @@ export function AssignDialog({
                   </>
                 ) : selectedDevice ? (
                   <>
-                    <select value={folderLabel} onChange={(event) => setFolderLabel(event.target.value)} className="field w-full" disabled={!selectedDevice.folders.length}>
+                    <select aria-label="Shared folder" value={folderLabel} onChange={(event) => setFolderLabel(event.target.value)} className="field w-full" disabled={!selectedDevice.folders.length}>
                       <option value="">{selectedDevice.folders.length ? `Choose a folder ${computerName(selectedDevice?.name)} has shared…` : `${computerName(selectedDevice?.name)} has not shared a folder yet`}</option>
                       {selectedDevice.folders.map((label) => (
-                        <option key={label} value={label}>{label}</option>
+                        <option key={label} value={label}>{label}{folderKinds[label] === "repo" ? " · repository" : ""}</option>
                       ))}
                     </select>
                     <div className="mt-1 text-[12px] text-muted">
                       {selectedDevice.folders.length
                         ? `Only names ${computerName(selectedDevice?.name)} already shared (\`ensemble folders add\`). A path typed here is refused.`
                         : `To work in a folder there, share it on ${computerName(selectedDevice?.name)} with \`ensemble folders add <path>\`. Or pick “Its own checkout” above.`}
+                      {prOn ? ` A pull request needs a folder shared as a repository (\`ensemble folders add <path> --repo\`): each run works in its own clone of it.` : ""}
                     </div>
                   </>
                 ) : (
@@ -996,35 +1122,62 @@ export function AssignDialog({
 
             {appMode ? null : (
             <>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-4">
               <div {...attentionProps("branch")}>
-                <Label tip="As is: the branch checked out now. Existing: a branch that already exists. New: a branch created first.">
-                  <GitBranch size={13} /> Branch
-                </Label>
-                <Segmented
-                  value={branchMode}
-                  onChange={setBranchMode}
-                  options={[
-                    { id: "as-is", label: "As is" },
-                    { id: "existing", label: "Existing", disabled: Boolean(selectedDevice), title: selectedDevice ? `A task for ${selectedDevice.name} works on its own run branch for now.` : undefined },
-                    { id: "new", label: "New", disabled: Boolean(selectedDevice), title: selectedDevice ? `A task for ${selectedDevice.name} works on its own run branch for now.` : undefined },
-                  ]}
-                />
-                {branchMode !== "as-is" ? (
+                {prOn ? (
                   <>
-                    <input list="assign-branches" aria-label="Branch name" value={branch} onChange={(event) => setBranch(event.target.value)} placeholder={branchMode === "new" ? "ensemble/fix-tests" : "feature/x"} className="field mt-2 w-full font-mono text-[12.5px]" />
-                    <datalist id="assign-branches">
-                      {(branches.data?.branches ?? []).map((name) => (
-                        <option key={name} value={name} />
-                      ))}
-                    </datalist>
+                    <Label tip="The branch Ensemble pushes and opens the pull request from, made from the branch it goes into. Leave it empty and Ensemble names it ensemble/<job>/<task>.">
+                      <GitBranch size={13} /> Branch name
+                    </Label>
+                    <input aria-label="Branch name" value={prBranch} onChange={(event) => setPrBranch(event.target.value)} placeholder="Ensemble names it" className="field w-full font-mono text-[12.5px]" />
+                    {prNotices?.branch ? (
+                      <div className="mt-1 text-[12px] text-danger" role="alert" data-testid="pull-request-branch-notice">{prNotices.branch}</div>
+                    ) : (
+                      <div className="mt-1 text-[12px] text-muted">A new branch, made from the branch it goes into.</div>
+                    )}
                   </>
-                ) : null}
+                ) : (
+                  <>
+                    <Label tip="As is: the branch checked out now. Existing: a branch that already exists. New: a branch created first.">
+                      <GitBranch size={13} /> Branch
+                    </Label>
+                    <Segmented
+                      value={branchMode}
+                      onChange={setBranchMode}
+                      options={[
+                        { id: "as-is", label: "As is" },
+                        { id: "existing", label: "Existing", disabled: Boolean(selectedDevice), title: selectedDevice ? `A task for ${selectedDevice.name} works on its own run branch for now.` : undefined },
+                        { id: "new", label: "New", disabled: Boolean(selectedDevice), title: selectedDevice ? `A task for ${selectedDevice.name} works on its own run branch for now.` : undefined },
+                      ]}
+                    />
+                    {branchMode !== "as-is" ? (
+                      <>
+                        <input list="assign-branches" aria-label="Branch name" value={branch} onChange={(event) => setBranch(event.target.value)} placeholder={branchMode === "new" ? "ensemble/fix-tests" : "feature/x"} className="field mt-2 w-full font-mono text-[12.5px]" />
+                        <datalist id="assign-branches">
+                          {(branches.data?.branches ?? []).map((name) => (
+                            <option key={name} value={name} />
+                          ))}
+                        </datalist>
+                      </>
+                    ) : null}
+                  </>
+                )}
               </div>
               <div>
-                <Label tip="Enforced on every git call and on commits any script makes, and stated to the model. A refused git step goes back to the model as an error, so the run continues without it. The agent never force-pushes, deletes branches, or changes git config and remotes.">Git permissions</Label>
-                <Segmented value={delivery} onChange={setDelivery} options={[{ id: "local", label: "Local only" }, { id: "commit", label: "Commit" }, { id: "push", label: "Commit + push" }]} />
-                {delivery !== "local" ? (
+                <Label tip="Enforced on every git call and on commits any script makes, and stated to the model. A refused git step goes back to the model as an error, so the run continues without it. The agent never force-pushes, deletes branches, or changes git config and remotes. Pull request: the agent may commit; when it ends, Ensemble (never the agent) pushes its branch, opens the pull request and merges it as you choose.">Git permissions</Label>
+                <Segmented
+                  value={prOn ? "pr" : delivery}
+                  onChange={(value) => {
+                    if (value === "pr") {
+                      setPullRequest((current) => current ?? { base: defaultPullRequestBase(prBases), merge: "ask" });
+                      return;
+                    }
+                    setPullRequest(null);
+                    setDelivery(value);
+                  }}
+                  options={[{ id: "local", label: "Local only" }, { id: "commit", label: "Commit" }, { id: "push", label: "Commit + push" }, { id: "pr", label: "Pull request" }]}
+                />
+                {prOn || delivery !== "local" ? (
                   <label className={cx("mt-2 flex items-center gap-2 text-[12.5px]", mode === "unattended" ? "text-faint" : "text-muted")} title={mode === "unattended" ? "Nobody approves in an unattended run." : undefined}>
                     <input type="checkbox" checked={askFirst && mode !== "unattended"} disabled={mode === "unattended"} onChange={(event) => setAskFirst(event.target.checked)} />
                     Ask me on Needs me before each commit
@@ -1032,6 +1185,52 @@ export function AssignDialog({
                 ) : null}
               </div>
             </div>
+
+            {prOn ? (
+              <div className="space-y-2 rounded-lg border border-line bg-raised p-3" data-testid="assign-pull-request" {...attentionProps("pull-request")}>
+                <div className="flex items-center gap-1.5 font-medium">
+                  <GitPullRequest size={14} className="text-muted" /> Pull request
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <Label tip={selectedDevice ? `The branches ${selectedDevice.name} opens pull requests into. Only ${selectedDevice.name} changes them: \`ensemble git bases add <branch>\` there. Never main, master, production or testing-live.` : "The branch the pull request goes into. Never main, master, production or testing-live."}>
+                      Into branch
+                    </Label>
+                    {prBases?.length ? (
+                      <select aria-label="Into branch" value={prBases.includes(pullRequest.base) ? pullRequest.base : ""} onChange={(event) => setPullRequest({ ...pullRequest, base: event.target.value })} className="field w-full font-mono text-[12.5px]">
+                        {prBases.includes(pullRequest.base) ? null : <option value="" disabled>Choose a branch…</option>}
+                        {prBases.map((base) => (
+                          <option key={base} value={base}>
+                            {base}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input aria-label="Into branch" value={pullRequest.base} onChange={(event) => setPullRequest({ ...pullRequest, base: event.target.value })} placeholder="testing" className="field w-full font-mono text-[12.5px]" />
+                    )}
+                  </div>
+                  <div>
+                    <Label tip="Ask me before merging: Ensemble opens it, then asks on Needs me, and merges once its checks pass. Merge when checks pass: no question. Leave it open: you merge it on GitHub.">After opening</Label>
+                    <select aria-label="After opening" value={pullRequest.merge} onChange={(event) => setPullRequest({ ...pullRequest, merge: event.target.value as PullRequestMerge })} className="field w-full">
+                      {MERGE_CHOICES.map((choice) => (
+                        <option key={choice.id} value={choice.id}>
+                          {choice.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div className="text-[12px] text-muted">Ensemble, not the agent, pushes the branch, opens the pull request and merges it. The agent may commit; it cannot push.</div>
+                {[prNotices?.tooOld, prNotices?.place, prNotices?.base].filter((text): text is string => Boolean(text)).map((text) => (
+                  <div key={text} className="flex items-start gap-1.5 text-[12px] text-warn" role="status" data-pull-request-notice>
+                    <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+                    <span className="min-w-0">
+                      <WithCode text={text} />
+                    </span>
+                  </div>
+                ))}
+              </div>
+            ) : null}
 
             <div className="space-y-2 rounded-lg border border-line bg-raised p-3" {...attentionProps("mode")}>
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1089,7 +1288,7 @@ export function AssignDialog({
                   </div>
                   <div className="flex items-center justify-between gap-3">
                     <span className="pl-[22px] font-medium">Internet access</span>
-                    <Toggle checked={network} onChange={setNetwork} label="Internet access" />
+                    <Toggle checked={prOn || network} onChange={setNetwork} disabled={prOn} label="Internet access" />
                   </div>
                   {sandbox && deviceSandbox?.osSandbox !== false && deviceAcceptsWeb ? <OutsideFolder value={outsideAccess} onChange={setOutside} /> : null}
                   <SettingRow title="Push to this task's own branch" description={`Set on ${selectedDevice.name}, for repos that computer trusts.`}>
@@ -1136,7 +1335,7 @@ export function AssignDialog({
                   </div>
                   <div className="flex items-center justify-between gap-3">
                     <span className="pl-[22px] font-medium">Internet access</span>
-                    <Toggle checked={network} onChange={setNetwork} label="Internet access" />
+                    <Toggle checked={prOn || network} onChange={setNetwork} disabled={prOn} label="Internet access" />
                   </div>
                   {sandbox && osSandbox ? <OutsideFolder value={outsideAccess} onChange={setOutside} /> : null}
                   {delivery === "push" && !credentials && place !== "folder" ? (
@@ -1228,7 +1427,7 @@ export function AssignDialog({
             {(appMode ? handoffBlocker : blocker) ? (
               <div className="mt-0.5 flex items-start gap-1 text-warn" role="status" data-assign-blocker>
                 <AlertTriangle size={12} className="mt-[2px] shrink-0" aria-hidden />
-                <span>{(appMode ? handoffBlocker : blocker)!.text}</span>
+                <span><WithCode text={(appMode ? handoffBlocker : blocker)!.text} /></span>
               </div>
             ) : (
               <div>

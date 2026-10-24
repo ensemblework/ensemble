@@ -26,7 +26,7 @@ import { answerCodeRequest } from "./code.js";
 import { answerFileRequest, uploadChangedFiles } from "./files.js";
 import { answerTerminalRequest, stopWebTerminal } from "./terminal.js";
 import { answerAssistantTurn, stopAllAssistantTurns, stopAssistantTurn } from "./assistant.js";
-import { ASSISTANT_TURNS_API, SUBSCRIPTION_PROVIDERS, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
+import { ASSISTANT_TURNS_API, CODE_ENGINES, SUBSCRIPTION_PROVIDERS, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
 import { cachedAgents, detectAgents } from "../subscriptions/detect.js";
 import { startSignIn } from "../subscriptions/signin.js";
 import { CODE_API, deviceOwnedEvents, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, ONLINE_WINDOW_MS, parseAnswer, parseClaim, STEP_POST_BYTES, timing, type RunTotals, type UploadedStep } from "./contract.js";
@@ -105,6 +105,11 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     // The person's own AI subscriptions here, for the assistant on the web (docs/30 §8).
     assistantTurns: ASSISTANT_TURNS_API,
     agents: await agentsNow(),
+    // Coding agents this runtime can run a code task with; the web refuses others for this computer.
+    engines: [...CODE_ENGINES],
+    // Runs here can end in a pull request, into these bases only (docs/24 §5.1). Only this computer sets the list.
+    pullRequests: 1,
+    pullRequestBases: settings.pullRequestBases,
   };
 }
 

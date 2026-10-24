@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { ApiError, api, type CliAuthRequest, type CliAuthScope } from "@/lib/api";
+import { ApiError, api, HUB_API, type CliAuthRequest, type CliAuthScope } from "@/lib/api";
+import { isTestingApi } from "@/lib/connect/configs";
 import { cx, Spinner } from "./ui";
 
 const SCOPE_LABELS: Record<CliAuthScope, string> = {
@@ -24,6 +25,7 @@ function platformName(value: string): string {
 
 /** Without `initialCode` the code comes from `?code=` in the address, read in the browser so the page can be exported statically for the desktop app. */
 export function CliLink({ initialCode }: { initialCode?: string }) {
+  const loginCommand = isTestingApi(HUB_API) ? "ensemble-test login" : "ensemble login";
   const [code, setCode] = useState(cleanCode(initialCode ?? ""));
   const [loadedCode, setLoadedCode] = useState("");
   const [request, setRequest] = useState<CliAuthRequest | null>(null);
@@ -39,7 +41,7 @@ export function CliLink({ initialCode }: { initialCode?: string }) {
   async function load(nextCode = code) {
     const userCode = cleanCode(nextCode);
     if (!userCode) {
-      setError("Enter the code shown by `ensemble login`.");
+      setError(`Enter the code shown by \`${loginCommand}\`.`);
       return;
     }
     setLoading(true);
@@ -54,7 +56,7 @@ export function CliLink({ initialCode }: { initialCode?: string }) {
       setLoadedCode(userCode);
     } catch (caught) {
       setRequest(null);
-      if (caught instanceof ApiError && caught.status === 404) setError("That code expired, was already used, or was typed incorrectly. Run `ensemble login` again.");
+      if (caught instanceof ApiError && caught.status === 404) setError(`That code expired, was already used, or was typed incorrectly. Run \`${loginCommand}\` again.`);
       else setError(caught instanceof Error ? caught.message : "Could not load that code.");
     } finally {
       setLoading(false);
@@ -98,10 +100,10 @@ export function CliLink({ initialCode }: { initialCode?: string }) {
         </Link>
         <section className="tile mt-5 rounded-2xl bg-panel p-5 shadow-lg md:p-7" aria-labelledby="cli-link-title">
           <h1 id="cli-link-title" className="display text-[30px] leading-none">
-            Link the Ensemble CLI
+            Link the Ensemble {isTestingApi(HUB_API) ? "Testing " : ""}CLI
           </h1>
           <p className="mt-3 text-[14px] leading-6 text-muted">
-            Approve a sign-in request from `ensemble login`. You can approve editor context only, or editor context plus the runner when requested.
+            Approve a sign-in request from <code>{loginCommand}</code>. You can approve editor context only, or editor context plus the runner when requested.
           </p>
 
           <form
@@ -190,7 +192,7 @@ export function CliLink({ initialCode }: { initialCode?: string }) {
                 {request.sameNetwork === false ? (
                   <p className="mt-3 rounded-lg border border-warn/40 px-3 py-2 text-[13px] leading-5 text-muted" role="note">
                     This login was started from a different network address than this browser. That is normal on a VPN, a phone hotspot or another computer of
-                    yours. If you did not just run <code>ensemble login</code> yourself, deny it.
+                    yours. If you did not just run <code>{loginCommand}</code> yourself, deny it.
                   </p>
                 ) : null}
               </div>
@@ -212,7 +214,7 @@ export function CliLink({ initialCode }: { initialCode?: string }) {
                 <label className="mt-2 flex items-start gap-2 text-ink">
                   <input type="checkbox" className="mt-1" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />
                   <span>
-                    I ran <code>ensemble login</code> myself and my terminal shows <span className="font-mono tracking-[0.12em]">{loadedCode}</span>.
+                    I ran <code>{loginCommand}</code> myself and my terminal shows <span className="font-mono tracking-[0.12em]">{loadedCode}</span>.
                   </span>
                 </label>
               </div>

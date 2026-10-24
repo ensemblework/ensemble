@@ -7,6 +7,7 @@ export * from "./personas.js";
 export * from "./mentions.js";
 export * from "./page-markdown.js";
 export * from "./page-boards.js";
+export * from "./cli-channel.js";
 export * from "./connectors.js";
 export * from "./connector-guides.js";
 export * from "./app-items.js";

@@ -3,9 +3,9 @@
  *
  *   Tasks  agent runs on this computer, and everything that needs you, answered right here
  *          (click a button, press its number, or type /allow, /deny, /answer …).
- *   Chat   your agent. Claude Code, Codex or Cursor's agent on your own sign-in, working in the
- *          folder you opened it in under your run profile (each message continues its session),
- *          or Ensemble Code (Ensemble's agent, a model with your key).
+ *   Chat   your agent. Claude Code, Codex, Cursor's agent or GitHub Copilot on your own sign-in,
+ *          working in the folder you opened it in under your run profile (each message continues
+ *          its session), or Ensemble Code (Ensemble's agent, a model with your key).
  *   Node   Ensemble Node at a glance, read-only: your nodes, rooms, approvals waiting for you
  *          and the computer runs they started. Chatting with nodes is on the Node website.
  *
@@ -16,16 +16,20 @@ import { terminalBrand } from "@ensemble/brand/cli";
 import { WorkingMark } from "./brand.js";
 import { Box, Text, useApp, useInput, useStdout, type Key } from "ink";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { INCLUDED_LABEL, INCLUDED_LOCAL_ONLY, INCLUDED_PROVIDER, pickRunProfile, type RunProfile } from "@ensemble/shared-types";
-import { PROVIDERS } from "../local-commands.js";
+import { INCLUDED_LABEL, INCLUDED_LOCAL_ONLY, INCLUDED_PROVIDER, pickRunProfile, type ContextTier, type RunProfile, type SubscriptionAgent, type SubscriptionModel } from "@ensemble/shared-types";
+import { basesSummary, PROVIDERS } from "../local-commands.js";
 import type { ChatFrame, CodeSession, Decision, JobDetail, LocalApi, ModelRow, Settings, ToolCall, Workspace } from "./local.js";
 import { hit, isMouse, parseMouse, type Region } from "./mouse.js";
 import {
   ago,
   AGENT_MODELS,
+  agentChoiceLabel,
   buildItems,
   chatTurnRequest,
   commandAnswer,
+  copilotNote,
+  copilotOf,
+  copilotProblem,
   decisionActions,
   engineOf,
   FINISHED,
@@ -33,6 +37,8 @@ import {
   installedAgent,
   keyLine,
   matchCommands,
+  modelEfforts,
+  modelNote,
   parseCommand,
   profileSummary,
   runRequest,
@@ -41,6 +47,7 @@ import {
   titleFrom,
   withKeys,
   type Action,
+  type AgentChoice,
   type AgentEngine,
   type Answer,
   type Item,
@@ -53,6 +60,11 @@ import { cellWidth, markdown, pad, plain, truncate, wrapLine, type Line, type Se
 const ACCENT = terminalBrand(process.env, Boolean(process.stdout.isTTY)).color;
 /** The picker row a local-only computer gets for the included models: picking it says how to connect. */
 const LOCAL_ONLY_PICK = "\u0000included";
+/** Picker rows for "the agent's own default" and "type a model name". */
+const DEFAULT_PICK = "\u0000default";
+const TYPE_PICK = "\u0000type";
+/** How long /agent waits for this computer's agent check before it shows what it has. */
+const AGENT_CHECK_WAIT_MS = 3000;
 const MUTED = "gray";
 
 export type Account = { email: string | null; paired: boolean; apiBase: string };
@@ -215,12 +227,38 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
     [settings, prefs.profileId],
   );
   const engine: Engine = prefs.engine ?? profile.engine;
-  // Claude Code, Codex or Cursor: Chat is that agent, on the person's own sign-in.
+  // Claude Code, Codex, Cursor or GitHub Copilot: Chat is that agent, on the person's own sign-in.
   const agentChat = engine !== "ensemble";
+  // The agents this computer's runtime found (GitHub Copilot's sign-in and models); null until asked.
+  const [detected, setDetected] = useState<SubscriptionAgent[] | null>(null);
+  const copilot = copilotOf(detected);
+  const copilotChosen = engine === "copilot-cli";
+  // The thinking level and context window are Copilot's only.
+  const agentChoice: AgentChoice = { model: prefs.agentModel, ...(copilotChosen ? { effort: prefs.agentEffort, context: prefs.agentContext } : {}) };
+  const agentModels: SubscriptionModel[] = copilotChosen ? (copilot?.models ?? []) : [];
+  const loadAgents = useCallback(
+    async (fresh = false) => {
+      const agents = await api.localAgents(fresh).catch(() => null);
+      if (agents) setDetected(agents);
+      return agents;
+    },
+    [api],
+  );
+  useEffect(() => {
+    if (copilotChosen) void loadAgents();
+  }, [copilotChosen, loadAgents]);
+  /** Why Copilot cannot take a message now, with the fix. A problem found earlier is checked again: the person may have just signed in. */
+  const copilotBlocked = useCallback(async (): Promise<string | null> => {
+    if (!copilotProblem(copilot)) return null;
+    const fresh = await loadAgents(true);
+    // No answer from the check: the run itself says what is wrong.
+    return fresh ? copilotProblem(copilotOf(fresh)) : null;
+  }, [copilot, loadAgents]);
   const tierSetting = settings?.models[settings.assistant.defaultTier ?? "medium"];
   const tierModel = tierSetting ? modelLabel(tierSetting.provider, tierSetting.model) : "";
+  const signInLabel = copilotChosen && copilot?.signedIn === false ? "not signed in · copilot login" : "your sign-in";
   const chatModelLabel = agentChat
-    ? `${prefs.agentModel ?? "default model"} · your sign-in`
+    ? `${agentChoiceLabel(agentChoice, agentModels)} · ${signInLabel}`
     : prefs.chatModel
       ? modelLabel(prefs.chatModel.split("::")[0], prefs.chatModel.split("::")[1]!)
       : tierModel
@@ -252,13 +290,17 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
       setChatScroll(0);
       setStreaming(true);
       try {
+        if (engine === "copilot-cli") {
+          const problem = await copilotBlocked();
+          if (problem) throw new Error(problem);
+        }
         let chat = chatTask.current;
         if (!chat) {
           const created = await api.json<{ task: { id: string } }>("/api/tasks", { body: { title: `Chat: ${titleFrom(message)}`, description: message, owner: "agent", status: "todo" } });
           chat = { taskId: created.task.id, lastJobId: null };
         }
         const started = await api.json<{ jobId: string }>("/api/agent/assign", {
-          body: chatTurnRequest({ taskId: chat.taskId, folder, message, profile, engine: engine as AgentEngine, model: prefs.agentModel, previousJobId: chat.lastJobId }),
+          body: chatTurnRequest({ taskId: chat.taskId, folder, message, profile, engine: engine as AgentEngine, model: agentChoice.model, effort: agentChoice.effort, context: agentChoice.context, previousJobId: chat.lastJobId }),
         });
         chatTask.current = { taskId: chat.taskId, lastJobId: started.jobId };
         setAgentTurn(started.jobId);
@@ -268,7 +310,7 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
         setStreaming(false);
       }
     },
-    [api, engine, folder, prefs.agentModel, profile],
+    [agentChoice.context, agentChoice.effort, agentChoice.model, api, copilotBlocked, engine, folder, profile],
   );
 
   // The agent's reply streams in from its run's log; its questions and permission requests come as buttons.
@@ -482,15 +524,29 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
   const startRun = async (text: string) => {
     if (!text.trim()) return say("Say what to do: /run fix the failing tests", "error");
     try {
+      if (copilotChosen) {
+        const problem = await copilotBlocked();
+        if (problem) return say(problem, "error");
+      }
       const created = await api.json<{ task: { id: string } }>("/api/tasks", { body: { title: titleFrom(text), description: text, owner: "agent", status: "todo" } });
-      const started = await api.json<{ jobId: string }>("/api/agent/assign", { body: runRequest({ taskId: created.task.id, folder, instructions: text, profile, engine: prefs.engine }) });
-      say(`Started ${ENGINE_LABEL[engine]} on “${titleFrom(text)}”.`, "ok");
+      // GitHub Copilot runs with the model, thinking level and context window picked in /model.
+      const started = await api.json<{ jobId: string }>("/api/agent/assign", {
+        body: runRequest({ taskId: created.task.id, folder, instructions: text, profile, engine: prefs.engine, agent: copilotChosen ? agentChoice : null }),
+      });
+      say(`Started ${ENGINE_LABEL[engine]} on “${titleFrom(text)}”${profile.pullRequest ? `, in its own clone of this folder; it ends in a pull request into ${profile.pullRequest.base}` : ""}.`, "ok");
       setPrefs({ tab: "tasks" });
       setSelectedKey(`job:${started.jobId}`);
       void refresh();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      say(/trust/i.test(message) ? `${message} Type /trust to trust this folder.` : message, "error");
+      say(
+        /trust/i.test(message)
+          ? `${message} Type /trust to trust this folder.`
+          : profile.pullRequest && /not a git repository/i.test(message)
+            ? `${message} The run profile ends in a pull request, so /run works in a clone of this folder, which must be a git repository.`
+            : message,
+        "error",
+      );
     }
   };
 
@@ -512,37 +568,120 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
   };
 
   const pickEngine = async () => {
-    const found = await api.agentApps().catch(() => ({ agents: [] as Array<{ id: string; app: boolean; cli: string | null }> }));
+    // Copilot's sign-in comes from this computer's agent check, which can take a while the first time.
+    const [found, agents] = await Promise.all([
+      api.agentApps().catch(() => ({ agents: [] as Array<{ id: string; app: boolean; cli: string | null }> })),
+      within(loadAgents(), AGENT_CHECK_WAIT_MS),
+    ]);
     const has = (id: string) => found.agents.find((agent) => agent.id === id);
     const engines: Array<{ id: Engine; note: string }> = [
       { id: "ensemble", note: "Ensemble Code: a model with your key (/keys)" },
       { id: "claude-code", note: has("claude")?.cli ? "your Claude Code sign-in" : "not found · curl -fsSL https://claude.ai/install.sh | bash" },
       { id: "codex", note: has("codex")?.cli || has("codex")?.app ? `your Codex sign-in${has("codex")?.cli ? "" : " (the ChatGPT app's)"}` : "not found · the ChatGPT app, or npm i -g @openai/codex" },
       { id: "cursor-agent", note: has("cursor")?.cli ? "your Cursor sign-in" : "not found · curl https://cursor.com/install -fsS | bash" },
+      { id: "copilot-cli", note: copilotNote(copilotOf(agents ?? detected), Boolean(has("copilot")?.cli)) },
     ];
     setOverlay({
       kind: "picker",
       title: "Who you work with",
-      hint: "Chat and /run go to this agent. Claude Code, Codex and Cursor work in this folder on your own sign-in, under your run profile and Ensemble's sandbox; what they ask you shows up as buttons.",
+      hint: "Chat and /run go to this agent. Claude Code, Codex, Cursor and GitHub Copilot work in this folder on your own sign-in, under your run profile and Ensemble's sandbox; what they ask you shows up as buttons.",
       items: [
         { id: "", label: `Follow the run profile (${ENGINE_LABEL[profile.engine]})`, active: prefs.engine === null },
         ...engines.map((item) => ({ id: item.id, label: ENGINE_LABEL[item.id], detail: item.note, active: prefs.engine === item.id })),
-        ...(has("copilot")?.cli ? [{ id: "copilot", label: "GitHub Copilot CLI", detail: "found · not yet: it has no per-run permission hook, so Ensemble can't hold it to your rules" }] : []),
       ],
       index: prefs.engine ? engines.findIndex((item) => item.id === prefs.engine) + 1 : 0,
       onPick: (id) => {
-        if (id === "copilot") return say("Copilot CLI can't run under Ensemble's rules yet. Open a task in it from Tasks on the web, or pick Claude Code, Codex or Cursor.", "error");
         const next = (id || null) as Engine | null;
         const chosen = next ?? profile.engine;
-        const missing = chosen !== "ensemble" && engines.find((item) => item.id === chosen)?.note.startsWith("not found");
-        setPrefs({ engine: next, ...(next !== engine ? { agentModel: null } : {}) });
+        const note = chosen === "ensemble" ? "" : (engines.find((item) => item.id === chosen)?.note ?? "");
+        setPrefs({ engine: next, ...(next !== engine ? { agentModel: null, agentEffort: null, agentContext: null } : {}) });
         chatTask.current = null;
-        say(missing ? `${ENGINE_LABEL[chosen]} isn't on this computer yet: ${engines.find((item) => item.id === chosen)!.note.replace("not found · ", "")}` : `You're working with ${ENGINE_LABEL[chosen]}.`, missing ? "error" : "ok");
+        if (note.startsWith("not found")) return say(`${ENGINE_LABEL[chosen]} isn't on this computer yet: ${note.replace("not found · ", "")}`, "error");
+        if (note.startsWith("not signed in")) return say(`You're working with ${ENGINE_LABEL[chosen]}, but it isn't signed in on this computer: run copilot login in a terminal.`, "error");
+        say(`You're working with ${ENGINE_LABEL[chosen]}.`, "ok");
+      },
+    });
+  };
+
+  /** GitHub Copilot's model, from the ones this computer's Copilot reports, then its thinking level and context window where it has them. */
+  const pickCopilotModel = async () => {
+    const label = ENGINE_LABEL["copilot-cli"];
+    if (!detected) say(`Asking ${label} for its models…`);
+    const found = copilotOf((await loadAgents()) ?? detected);
+    if (found === null) return say(copilotProblem(null)!, "error");
+    const models = found?.models ?? [];
+    const current = prefs.agentModel;
+    const save = (choice: Required<AgentChoice>) => {
+      setPrefs({ agentModel: choice.model, agentEffort: choice.effort, agentContext: choice.context });
+      say(`${label} uses ${agentChoiceLabel(choice, models, "its default model")}.`, "ok");
+    };
+    const typeOne = () =>
+      setOverlay({
+        kind: "input",
+        title: `${label}'s model`,
+        hint: `A model id ${label} knows (empty for its default). Enter saves, Esc cancels.`,
+        secret: false,
+        value: current ?? "",
+        onSubmit: (name) => save({ model: name.trim() || null, effort: null, context: null }),
+      });
+    if (!models.length) return typeOne();
+    const pickContext = (model: SubscriptionModel, id: string | null, effort: string | null) => {
+      const long = model.contexts?.find((context) => context.id === "long_context");
+      if (!long) return save({ model: id, effort, context: null });
+      const standard = model.contexts?.find((context) => context.id === "default");
+      const was: ContextTier | null = current === id ? prefs.agentContext : null;
+      setOverlay({
+        kind: "picker",
+        title: `${model.label}: context window`,
+        hint: "How much the model holds at once: the conversation, the files it read and what its tools returned.",
+        items: [
+          { id: "default", label: "Standard", detail: standard?.label ?? "", active: was !== "long_context" },
+          { id: "long_context", label: "Long", detail: long.label, active: was === "long_context" },
+        ],
+        index: was === "long_context" ? 1 : 0,
+        onPick: (tier) => save({ model: id, effort, context: tier === "long_context" ? "long_context" : null }),
+      });
+    };
+    const pickEffort = (model: SubscriptionModel, id: string | null) => {
+      const levels = modelEfforts(model, found);
+      if (!levels.length) return pickContext(model, id, null);
+      const was = current === id ? prefs.agentEffort : null;
+      const items = [
+        { id: DEFAULT_PICK, label: "Default", detail: model.defaultEffort ? `the model's own (${model.defaultEffort})` : "the model's own", active: !was },
+        ...levels.map((level) => ({ id: level, label: level, active: was === level })),
+      ];
+      setOverlay({
+        kind: "picker",
+        title: `${model.label}: thinking level`,
+        hint: "How long the model thinks before it acts. Higher levels take longer.",
+        items,
+        index: Math.max(0, items.findIndex((item) => item.active)),
+        onPick: (level) => pickContext(model, id, level === DEFAULT_PICK ? null : level),
+      });
+    };
+    const items = [
+      ...(models.some((model) => model.isDefault) ? [] : [{ id: DEFAULT_PICK, label: "Default", detail: "Copilot's own default", active: !current }]),
+      ...models.map((model) => ({ id: model.isDefault ? DEFAULT_PICK : model.id, label: model.label, detail: modelNote(model), active: model.isDefault ? !current : current === model.id })),
+      ...(found?.typedModels ? [{ id: TYPE_PICK, label: "Another model…", detail: "type its id" }] : []),
+    ];
+    setOverlay({
+      kind: "picker",
+      title: `${label}'s model`,
+      hint: found?.signedIn === false ? "GitHub Copilot isn't signed in on this computer: run copilot login in a terminal, then /model again for your plan's models." : "Chat and /run use it, on your own Copilot sign-in.",
+      items,
+      index: Math.max(0, items.findIndex((item) => item.active)),
+      onPick: (id) => {
+        if (id === TYPE_PICK) return typeOne();
+        // Copilot's default model is sent as no model at all.
+        const model = id === DEFAULT_PICK ? models.find((row) => row.isDefault) : models.find((row) => row.id === id);
+        if (!model) return save({ model: null, effort: null, context: null });
+        pickEffort(model, id === DEFAULT_PICK ? null : model.id);
       },
     });
   };
 
   const pickModel = async () => {
+    if (copilotChosen) return pickCopilotModel();
     if (agentChat) {
       const listed = AGENT_MODELS[engine as AgentEngine];
       const typeOne = () =>
@@ -562,10 +701,10 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
         kind: "picker",
         title: `${ENGINE_LABEL[engine]}'s model`,
         hint: "Chat and /run use it, on your own sign-in.",
-        items: [...listed.map((name) => ({ id: name, label: name === "default" ? "Default" : name, active: (prefs.agentModel ?? "default") === name })), { id: "\u0000type", label: "Another model…", detail: "type its name" }],
+        items: [...listed.map((name) => ({ id: name, label: name === "default" ? "Default" : name, active: (prefs.agentModel ?? "default") === name })), { id: TYPE_PICK, label: "Another model…", detail: "type its name" }],
         index: Math.max(0, listed.indexOf(prefs.agentModel ?? "default")),
         onPick: (id) => {
-          if (id === "\u0000type") return typeOne();
+          if (id === TYPE_PICK) return typeOne();
           setPrefs({ agentModel: id === "default" ? null : id });
           say(`${ENGINE_LABEL[engine]} uses ${id === "default" ? "its default model" : id}.`, "ok");
         },
@@ -578,8 +717,8 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
     if (!rows.length) {
       say(
         account.email
-          ? "No model keys yet. Add one on the web (Settings → Models, your account's keys work here too) or here with /keys; or chat with Claude Code, Codex or Cursor: /agent."
-          : "No model keys yet. Add one with /keys, or /login to use the keys and included models on your Ensemble account; or chat with Claude Code, Codex or Cursor: /agent.",
+          ? "No model keys yet. Add one on the web (Settings → Models, your account's keys work here too) or here with /keys; or chat with Claude Code, Codex, Cursor or GitHub Copilot: /agent."
+          : "No model keys yet. Add one with /keys, or /login to use the keys and included models on your Ensemble account; or chat with Claude Code, Codex, Cursor or GitHub Copilot: /agent.",
         "error",
       );
       return;
@@ -634,15 +773,18 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
 
   const showStatus = async () => {
     const keys = await api.modelKeys().catch(() => ({ credentials: [] }));
+    const bases = (await api.remote().catch(() => null))?.pullRequestBases;
+    const signIn = !copilotChosen ? "your sign-in" : copilot?.signedIn === false ? "not signed in · run copilot login" : `your sign-in${copilot?.account ? `: ${copilot.account}` : ""}`;
     const lines: Line[] = [
-      [{ text: "Account     ", dim: true }, { text: account.email ? `${account.email}${account.paired ? " · this computer is paired" : ""}` : "not signed in (/login)" }],
-      [{ text: "Ensemble    ", dim: true }, { text: `running on this computer · port ${api.discovery.port}` }],
-      [{ text: "Sandbox     ", dim: true }, { text: sandbox || "unknown" }],
-      [{ text: "Folder      ", dim: true }, { text: folder }],
-      [{ text: "Profile     ", dim: true }, { text: `${profile.name}: ${profileSummary(profile)}` }],
-      [{ text: "Agent       ", dim: true }, { text: agentChat ? `${ENGINE_LABEL[engine]} (your sign-in) · ${prefs.agentModel ?? "its default model"}` : `Ensemble agent · ${prefs.chatModel ? prefs.chatModel.replace("::", " · ") : "chat default model"}` }],
-      [{ text: "Model keys  ", dim: true }, { text: keyLine(keys.credentials) }],
-      [{ text: "Version     ", dim: true }, { text: props.version }],
+      [{ text: "Account        ", dim: true }, { text: account.email ? `${account.email}${account.paired ? " · this computer is paired" : ""}` : "not signed in (/login)" }],
+      [{ text: "Ensemble       ", dim: true }, { text: `running on this computer · port ${api.discovery.port}` }],
+      [{ text: "Sandbox        ", dim: true }, { text: sandbox || "unknown" }],
+      [{ text: "Folder         ", dim: true }, { text: folder }],
+      [{ text: "Profile        ", dim: true }, { text: `${profile.name}: ${profileSummary(profile)}` }],
+      [{ text: "Agent          ", dim: true }, { text: agentChat ? `${ENGINE_LABEL[engine]} (${signIn}) · ${agentChoiceLabel(agentChoice, agentModels, "its default model")}` : `Ensemble agent · ${prefs.chatModel ? prefs.chatModel.replace("::", " · ") : "chat default model"}` }],
+      [{ text: "Model keys     ", dim: true }, { text: keyLine(keys.credentials) }],
+      [{ text: "Pull requests  ", dim: true }, { text: bases ? basesSummary(bases) : "unknown" }],
+      [{ text: "Version        ", dim: true }, { text: props.version }],
     ];
     setOverlay({ kind: "text", title: "Status", lines });
   };
@@ -752,11 +894,18 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
         return pickProfile();
       case "agent": {
         const wanted = args.toLowerCase();
-        const match = (Object.keys(ENGINE_LABEL) as Engine[]).find((id) => id === wanted || ENGINE_LABEL[id].toLowerCase().startsWith(wanted));
+        const match = (Object.keys(ENGINE_LABEL) as Engine[]).find((id) => id === wanted || ENGINE_LABEL[id].toLowerCase().startsWith(wanted) || id.startsWith(wanted));
         if (wanted && match) {
-          setPrefs({ engine: match, ...(match !== engine ? { agentModel: null } : {}) });
+          setPrefs({ engine: match, ...(match !== engine ? { agentModel: null, agentEffort: null, agentContext: null } : {}) });
           chatTask.current = null;
-          return say(`You're working with ${ENGINE_LABEL[match]}.`, "ok");
+          say(`You're working with ${ENGINE_LABEL[match]}.`, "ok");
+          if (match === "copilot-cli") {
+            void loadAgents().then((agents) => {
+              const problem = copilotProblem(copilotOf(agents));
+              if (problem) say(problem, "error");
+            });
+          }
+          return;
         }
         return pickEngine();
       }
@@ -905,10 +1054,10 @@ export function App(props: { api: LocalApi; folder: string; version: string; upd
       left.push([{ text: " + New chat", color: ACCENT }]);
       regions.push({ x1: 0, x2: sidebarWidth - 1, y1: mainTop + 1, y2: mainTop + 1, onClick: () => void runCommand("/new") });
       left.push([]);
-      left.push([{ text: " Agent   ", dim: true }, { text: truncate(agentChat ? `${ENGINE_LABEL[engine]} · your sign-in` : ENGINE_LABEL[engine], sidebarWidth - 10) }]);
+      left.push([{ text: " Agent   ", dim: true }, { text: truncate(agentChat ? `${ENGINE_LABEL[engine]} · ${signInLabel}` : ENGINE_LABEL[engine], sidebarWidth - 10) }]);
       left.push([{ text: " Profile ", dim: true }, { text: truncate(profile.name, sidebarWidth - 10) }]);
       left.push(...wrapLine([{ text: ` ${profileSummary(profile)}`, dim: true }], sidebarWidth - 1, " "));
-      left.push([{ text: " Model   ", dim: true }, { text: truncate(agentChat ? (prefs.agentModel ?? "default") : chatModelLabel, sidebarWidth - 10) }]);
+      left.push([{ text: " Model   ", dim: true }, { text: truncate(agentChat ? agentChoiceLabel(agentChoice, agentModels, "default") : chatModelLabel, sidebarWidth - 10) }]);
       left.push([]);
       for (const [label, command] of [
         [" /run   start an agent", "/run "],
@@ -1287,7 +1436,7 @@ function chatPane(
         [
           "Ask about this folder, plan a change, or hand work to an agent. It reads files and documents here (PDF, Word, Excel, PowerPoint), knows your tasks and notes, and starts runs under your run profile; the run's questions come to the Tasks tab.",
           "",
-          "It needs a model key (/keys). No key? Chat with Claude Code, Codex or Cursor on your own sign-in instead: /agent.",
+          "It needs a model key (/keys). No key? Chat with Claude Code, Codex, Cursor or GitHub Copilot on your own sign-in instead: /agent.",
           "",
           "Try:",
           "- “What does this repo do, and where are its tests?”",
@@ -1469,6 +1618,15 @@ function shortPath(path: string, width: number): string {
 
 function chatError(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  if (/no .*key|api key|credential|not configured|model_quota|quota/i.test(message)) return `${message} Add a model key with /keys, or chat with Claude Code, Codex or Cursor on your own sign-in: /agent.`;
+  if (/no .*key|api key|credential|not configured|model_quota|quota/i.test(message)) return `${message} Add a model key with /keys, or chat with Claude Code, Codex, Cursor or GitHub Copilot on your own sign-in: /agent.`;
   return message;
+}
+
+/** The promise's value, or undefined when it takes longer than `ms`. */
+function within<T>(promise: Promise<T>, ms: number): Promise<T | undefined> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<undefined>((resolve) => {
+    timer = setTimeout(() => resolve(undefined), ms);
+  });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
 }

@@ -29,12 +29,13 @@ import {
   withLocalApi,
   localJson,
 } from "./sidecar.js";
-import { addFolder, listFolders, listKeys, removeFolder, removeKey, remoteStatus, setKey, withAdminApi } from "./local-commands.js";
+import { addFolder, basesSummary, checkBase, folderLine, folderRequest, gitBases, listFolders, listKeys, parseGitBasesArgs, removeFolder, removeKey, remoteStatus, setKey, withAdminApi } from "./local-commands.js";
 import { chooseEditors, configuredEditors, detectEditors, parseEditorNames, removeEditor, setupEditor } from "./editors.js";
 import { commandWithSubcommand, isExecutableOnPath } from "./launcher.js";
 import { installRunnerService, uninstallRunnerService } from "./services.js";
 import { runMcp } from "./mcp.js";
 import { formatSandbox, sandboxSetup, sandboxStatus } from "./sandbox.js";
+import { COMMAND, DOWNLOAD_URL, TESTING } from "./channel.js";
 
 type ArgsOptions = NonNullable<ParseArgsConfig["options"]>;
 type ParsedArgs = {
@@ -42,22 +43,24 @@ type ParsedArgs = {
   positionals: string[];
 };
 
-const HELP = `Ensemble ${VERSION}: your tasks and coding agents, in the terminal.
+const HELP = `Ensemble ${TESTING ? "Testing " : ""}${VERSION}: your tasks and coding agents, in the terminal.
 
   ensemble            Open Ensemble here. Two tabs:
                         Tasks  runs on this computer, and what needs you (answer with a click,
                                a number key, or /allow /deny /answer)
                         Chat   Ensemble Code: ask about this folder, plan, and hand work to
-                               Ensemble's agent, Claude Code, Codex or Cursor
+                               Ensemble's agent, Claude Code, Codex, Cursor or GitHub Copilot
                       Ensemble starts on this computer if it is not running, and keeps running
                       tasks after you leave.
   ensemble login      Sign in, so tasks you assign on ensemblework.com run here.
+  ensemble git bases  The branches runs here may open pull requests into (testing until you
+                      change it; never main, master, production or testing-live).
 
 Inside the app, type / for commands: /run, /allow, /deny, /answer, /profile, /agent, /model,
 /keys, /trust, /hooks, /login, /status, /help.
 
 Scripts and automation: ensemble help commands
-`;
+`.replace(/\bensemble\b/g, COMMAND).replace("ensemblework.com", TESTING ? "test.ensemblework.com" : "ensemblework.com");
 
 const COMMANDS_HELP = `Ensemble ${VERSION}: commands for scripts and automation (the app does all of this too).
 
@@ -70,7 +73,8 @@ Usage:
   ensemble mcp remove <editor>
   ensemble mcp editors
   ensemble runner [start] [--foreground] | stop | restart | status | logs [-f] | install | uninstall
-  ensemble folders [list] | add <path> [--label L] [--read-only] | remove <label>
+  ensemble folders [list] | add <path> [--label L] [--read-only] [--repo] | remove <label>
+  ensemble git bases [list] | add <branch> | remove <branch>
   ensemble keys [list] | set <provider> | remove <provider>
   ensemble needs [list] | answer <n> <allow|deny|option number|"answer">
   ensemble trust [list] | add [path] | remove <path> | share [on|off]
@@ -81,15 +85,18 @@ Usage:
   ensemble sandbox [status] | setup
   ensemble doctor
   ensemble update
-  ensemble version | --version | --help`;
+  ensemble version | --version | --help`.replace(/\bensemble\b/g, COMMAND);
 
-const HELP_BY_COMMAND: Record<string, string> = {
+const HELP_BY_COMMAND: Record<string, string> = Object.fromEntries(Object.entries({
   login: "Usage: ensemble login [--api URL] [--name NAME] [--mcp-only] [--no-browser]",
   logout: "Usage: ensemble logout",
   status: "Usage: ensemble status [--json]",
   mcp: "Usage: ensemble mcp | ensemble mcp setup [editor...] [--all] [--print] [--hosted] | ensemble mcp remove <editor> | ensemble mcp editors",
   runner: "Usage: ensemble runner [start] [--foreground] | stop | restart | status | logs [-f] | install | uninstall",
-  folders: "Usage: ensemble folders [list] | add <path> [--label L] [--read-only] | remove <label>",
+  folders:
+    "Usage: ensemble folders [list] | add <path> [--label L] [--read-only] [--repo] | remove <label>\nFolders the web may run tasks in. A folder is worked in place. --repo shares a git repository instead: every run from the web works in its own clone of it and may end in a pull request (see `ensemble git bases`).",
+  git:
+    "Usage: ensemble git bases [list] | add <branch> | remove <branch>\nThe branches a run on this computer may open a pull request into, and merge into when you say so: testing until you change it. Never main, master, production or testing-live. With none, runs here open no pull requests. Only this computer changes the list.",
   keys: "Usage: ensemble keys [list] | set <provider> | remove <provider>",
   needs: "Usage: ensemble needs [list] | answer <n> <allow|deny|option number|\"answer\">\nQuestions and approvals waiting on this computer, including pushes and folder trust.",
   trust: "Usage: ensemble trust [list] | add [path] | remove <path> | share [on|off]\nTrusted folders on this computer. Review only and Run unattended need one; Ensemble's own workspace is always trusted.\n`share` shows or sets whether they are trusted in Claude Code, Codex, GitHub Copilot CLI, Cursor and Gemini CLI too (on by default).",
@@ -104,7 +111,7 @@ const HELP_BY_COMMAND: Record<string, string> = {
     "Usage: ensemble sandbox [status] | setup\nThis computer's OS sandbox (macOS Seatbelt, Linux bubblewrap or Landlock, Windows sandbox account). No Docker. On Windows, `setup` asks for permission once; the Ensemble app and the CLI share it.",
   doctor: "Usage: ensemble doctor",
   update: "Usage: ensemble update",
-};
+}).map(([key, value]) => [key, value.replace(/\bensemble\b/g, COMMAND)]));
 
 function parsed(args: string[], options: ArgsOptions = {}, allowPositionals = true): ParsedArgs {
   const result = parseArgs({
@@ -170,14 +177,14 @@ async function commandLogin(args: string[]): Promise<void> {
     console.log(`This computer is paired as "${login.name}". Tasks you assign to it from Ensemble run here.`);
     console.log("");
     console.log("Next:");
-    console.log("  ensemble folders add <path>    share a folder the agent may work in");
-    console.log("  ensemble keys set <provider>   save a model key on this computer (google, openai, anthropic, …)");
-    console.log("  ensemble runner install        start the runner now and at every login");
-    console.log("  ensemble mcp setup             connect your editors");
+    console.log(`  ${COMMAND} folders add <path>    share a folder the agent may work in`);
+    console.log(`  ${COMMAND} keys set <provider>   save a model key on this computer (google, openai, anthropic, …)`);
+    console.log(`  ${COMMAND} runner install        start the runner now and at every login`);
+    console.log(`  ${COMMAND} mcp setup             connect your editors`);
   } else {
-    if (!login.hasRunner) console.log("This install has no runner. Install the full CLI to run tasks on this computer: https://ensemblework.com/download");
+    if (!login.hasRunner) console.log(`This install has no runner. Install the full CLI to run tasks on this computer: ${DOWNLOAD_URL}`);
     console.log("");
-    console.log("Next: ensemble mcp setup    connect your editors");
+    console.log(`Next: ${COMMAND} mcp setup    connect your editors`);
   }
 }
 
@@ -396,7 +403,7 @@ async function printRunnerStatus(paths = resolveCliPaths()): Promise<void> {
     console.log(`paired: ${status.paired ? "yes" : "no"}`);
     console.log(`enabled: ${status.enabled ? "yes" : "no"}`);
     console.log(`folders: ${(status.folders ?? []).length}`);
-    for (const folder of status.folders ?? []) console.log(`  ${folder.label}\t${folder.path}\t${folder.access ?? ""}`);
+    for (const folder of status.folders ?? []) console.log(`  ${folderLine(folder)}`);
   }
   const lines = await tailLog(paths.runnerLog, 10);
   if (lines.length) console.log(`last logs:\n${lines.map((line) => `  ${line}`).join("\n")}`);
@@ -423,7 +430,7 @@ async function printLogs(file: string, follow: boolean): Promise<void> {
   await new Promise(() => undefined);
 }
 
-const NO_RUNNER = "This install has no runner, so it cannot share folders or keep model keys. Install the full CLI: https://ensemblework.com/download";
+const NO_RUNNER = `This install has no runner, so it cannot share folders or keep model keys. Install the full CLI: ${DOWNLOAD_URL}`;
 
 async function commandFolders(args: string[]): Promise<void> {
   const subcommand = args[0] && !args[0].startsWith("-") ? args[0] : "list";
@@ -435,23 +442,31 @@ async function commandFolders(args: string[]): Promise<void> {
   if (subcommand === "list") {
     parsed(rest);
     const folders = await withAdminApi({ sidecarDir, run: listFolders });
-    for (const folder of folders ?? []) console.log(`${folder.label}\t${folder.path}\t${folder.access ?? ""}`);
+    for (const folder of folders ?? []) console.log(folderLine(folder));
     return;
   }
   if (subcommand === "add") {
-    const result = parsed(rest, { label: { type: "string" }, "read-only": { type: "boolean" } });
-    requirePositionals(result.positionals, "Usage: ensemble folders add <path> [--label L] [--read-only]");
-    const folders = await withAdminApi({
-      sidecarDir,
-      run: (discovery) => addFolder(discovery, result.positionals[0]!, { label: stringOption(result.values, "label"), readOnly: Boolean(result.values["read-only"]) }),
-    });
-    for (const folder of folders ?? []) console.log(`${folder.label}\t${folder.path}\t${folder.access ?? ""}`);
+    const result = parsed(rest, { label: { type: "string" }, "read-only": { type: "boolean" }, repo: { type: "boolean" } });
+    requirePositionals(result.positionals, "Usage: ensemble folders add <path> [--label L] [--read-only] [--repo]");
+    const request = folderRequest(result.positionals[0]!, { label: stringOption(result.values, "label"), readOnly: Boolean(result.values["read-only"]), repo: Boolean(result.values.repo) });
+    const folders = await withAdminApi({ sidecarDir, run: (discovery) => addFolder(discovery, request) });
+    for (const folder of folders ?? []) console.log(folderLine(folder));
     return;
   }
   const result = parsed(rest);
   requirePositionals(result.positionals, "Usage: ensemble folders remove <label>");
   await withAdminApi({ sidecarDir, run: (discovery) => removeFolder(discovery, result.positionals[0]!) });
   console.log(`Removed ${result.positionals[0]}.`);
+}
+
+async function commandGit(args: string[]): Promise<void> {
+  if (!args.length || args.includes("--help") || args.includes("-h")) return void console.log(HELP_BY_COMMAND.git);
+  if (args[0] !== "bases") throw new Error(HELP_BY_COMMAND.git);
+  const plan = parseGitBasesArgs(args.slice(1));
+  if (plan.action === "add") checkBase(plan.branch);
+  const sidecarDir = resolveSidecarDir(import.meta.url);
+  if (!(await sidecarAvailable(sidecarDir))) throw new Error(NO_RUNNER);
+  console.log(await withAdminApi({ sidecarDir, run: (discovery) => gitBases(discovery, plan) }));
 }
 
 async function commandKeys(args: string[]): Promise<void> {
@@ -663,6 +678,7 @@ async function statusSummary(): Promise<Record<string, unknown>> {
     runnerStartedAt: pid?.startedAt || null,
     remoteEnabled: remote?.enabled ?? null,
     folders: remote?.folders ?? null,
+    pullRequestBases: remote?.pullRequestBases ?? null,
     modelKeys: runner ? (keys ?? []).filter((key) => key.source && key.source !== "none").map((key) => key.provider) : null,
     node: process.version,
     git: Boolean(isExecutableOnPath("git")),
@@ -674,11 +690,12 @@ type Summary = Awaited<ReturnType<typeof statusSummary>>;
 
 function statusLines(status: Summary): string[] {
   const account = status.account as { email?: string; name?: string } | null;
-  const folders = status.folders as Array<{ label: string; path: string; access?: string }> | null;
+  const folders = status.folders as Array<{ label: string; path: string; kind?: string; access?: string }> | null;
+  const bases = status.pullRequestBases as string[] | null;
   const keys = status.modelKeys as string[] | null;
   const editors = status.editors as string[];
   const startedAt = typeof status.runnerStartedAt === "string" ? Date.parse(status.runnerStartedAt) : Number.NaN;
-  const row = (label: string, value: string) => `${label.padEnd(13)}${value}`;
+  const row = (label: string, value: string) => `${label.padEnd(15)}${value}`;
   const runnerOff = status.sidecarPresent ? "stopped (start with `ensemble runner start`)" : "not included in this install";
   return [
     row("Version", String(status.version)),
@@ -694,8 +711,13 @@ function statusLines(status: Summary): string[] {
     ),
     row(
       "Folders",
-      folders === null ? "start the runner to list" : folders.length ? folders.map((folder) => `${folder.label} → ${folder.path}${folder.access === "review" ? " (read-only)" : ""}`).join("\n" + " ".repeat(13)) : "none (add one with `ensemble folders add <path>`)",
+      folders === null
+        ? "start the runner to list"
+        : folders.length
+          ? folders.map((folder) => `${folder.label} → ${folder.path}${folder.kind === "repo" ? " (repository)" : ""}${folder.access === "review" ? " (read-only)" : ""}`).join("\n" + " ".repeat(15))
+          : "none (add one with `ensemble folders add <path>`)",
     ),
+    row("Pull requests", bases ? basesSummary(bases) : status.runnerRunning ? "not offered by this runner (update it)" : "start the runner to see"),
     row("Model keys", keys === null ? "start the runner to list" : keys.length ? keys.join(", ") : "none (add one on the web in Settings → Models, or `ensemble keys set <provider>`)"),
     row("Editors", editors.length ? editors.join(", ") : "none configured (run `ensemble mcp setup`)"),
   ];
@@ -712,7 +734,7 @@ function formatDuration(ms: number): string {
 
 async function checkApi(apiBase: string): Promise<boolean> {
   try {
-    const response = await fetch(`${apiBase}/health`, { signal: AbortSignal.timeout(5000) });
+    const response = await fetch(`${apiBase}/health`, { signal: AbortSignal.timeout(5000), ...(TESTING ? { redirect: "error" as const } : {}) });
     return response.ok;
   } catch {
     return false;
@@ -721,7 +743,7 @@ async function checkApi(apiBase: string): Promise<boolean> {
 
 async function checkToken(apiBase: string, token: string): Promise<boolean> {
   try {
-    const response = await fetch(`${apiBase}/api/bridge/today`, { headers: bearerHeaders(token), signal: AbortSignal.timeout(5000) });
+    const response = await fetch(`${apiBase}/api/bridge/today`, { headers: bearerHeaders(token), signal: AbortSignal.timeout(5000), ...(TESTING ? { redirect: "error" as const } : {}) });
     return response.status === 200;
   } catch {
     return false;
@@ -733,7 +755,7 @@ async function commandStatus(args: string[]): Promise<void> {
   if (result.values.help) return void console.log(HELP_BY_COMMAND.status);
   const status = await statusSummary();
   if (result.values.json) {
-    console.log(JSON.stringify(status, null, 2));
+    console.log(JSON.stringify({ ...status, channel: TESTING ? "testing" : "production" }, null, 2));
     return;
   }
   for (const line of statusLines(status)) console.log(line);
@@ -810,6 +832,8 @@ async function main(argv = process.argv.slice(2)): Promise<void> {
       return commandRunner(rest);
     case "folders":
       return commandFolders(rest);
+    case "git":
+      return commandGit(rest);
     case "keys":
       return commandKeys(rest);
     case "needs":

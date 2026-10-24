@@ -18,7 +18,7 @@ import { defineTool, toolOk, ToolBlockedError, type ToolContext } from "../types
 
 const LIVE_JOB = ["queued", "claimed", "running", "stopping", "waiting_approval"] as const;
 const LIVE_IMPORT = ["queued", "running", "cancelling"];
-const ENGINES: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex", "cursor-agent": "Cursor" };
+const ENGINES: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex", "cursor-agent": "Cursor", "copilot-cli": "GitHub Copilot" };
 
 type Live = {
   id: string;

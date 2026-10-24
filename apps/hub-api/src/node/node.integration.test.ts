@@ -1,8 +1,10 @@
 /**
  * Ensemble Node end to end against an in-memory database, with the model scripted: a DM turn
  * that uses Ensemble's own tools, computer work held for the owner and followed to its report,
- * a group room where a node speaks only through its owner and private threads stay private,
- * a manager delegating to its crew, and the CLI's read-only overview.
+ * a room where a node speaks only through its owner and private threads stay private, requests to
+ * join a room and their guardrails, unique names, a manager delegating to the crew its owner chose,
+ * search, pins, reactions, replies and deletion, file reading on a paired computer only where the
+ * owner turned it on and reads alone, and the CLI's read-only overview.
  */
 import assert from "node:assert/strict";
 import test, { after, afterEach } from "node:test";
@@ -157,19 +159,24 @@ test("work on a computer waits for the owner, then the run is followed and repor
   assert.match(seen.find((row) => row.transcript.includes("Your owner approved"))!.transcript, /“Careful” profile\. The computer run started/);
 });
 
-test("in a group, a node speaks for its owner only after approval, and private threads stay private", async () => {
+test("in a room, a node speaks for its owner only after approval, and private threads stay private", async () => {
   const mira = await person("Mira");
   const ben = await person("Ben");
   const { node: manager, room: dm } = await createNode(mira, "manager");
-  const made = await mira.inject({ method: "POST", url: "/api/node/rooms", payload: { kind: "group", title: "Launch", nodeIds: [manager.id] } });
+  const { node: bensNode } = await createNode(ben, "assistant");
+  const made = await mira.inject({ method: "POST", url: "/api/node/rooms", payload: { title: "Launch", nodeIds: [manager.id], invite: [ben.email.toUpperCase(), "nobody@example.test"] } });
   assert.equal(made.statusCode, 201, made.body);
   const group = json(made).room as { id: string };
-  assert.equal((await mira.inject({ method: "POST", url: `/api/node/rooms/${group.id}/people`, payload: { email: ben.email.toUpperCase() } })).statusCode, 201);
-  assert.equal((await mira.inject({ method: "POST", url: `/api/node/rooms/${group.id}/people`, payload: { email: "nobody@example.test" } })).statusCode, 404);
+  assert.deepEqual(json(made).invited.map((row: { ok: boolean }) => row.ok), [true, false], "an email without an account is refused");
+  const invite = json(await ben.inject({ method: "GET", url: "/api/node/invites" })).invites[0];
+  assert.equal(invite.room.id, group.id);
+  const joined = await ben.inject({ method: "POST", url: `/api/node/invites/${invite.id}/accept`, payload: { nodeIds: [bensNode.id] } });
+  assert.equal(joined.statusCode, 201, joined.body);
+  setNodeRelevanceForTests(async () => ({ nodes: ["manager"] }));
 
   const benRooms = json(await ben.inject({ method: "GET", url: "/api/node/bootstrap" })).rooms as Array<{ id: string; members: any[] }>;
-  assert.deepEqual(benRooms.map((row) => row.id), [group.id], "Ben sees the group, not Mira's DM");
-  const managerSeenByBen = benRooms[0]!.members.find((row) => row.kind === "node")!;
+  assert.ok(benRooms.some((row) => row.id === group.id) && !benRooms.some((row) => row.id === dm.id), "Ben sees the room, not Mira's DM");
+  const managerSeenByBen = benRooms.find((row) => row.id === group.id)!.members.find((row) => row.kind === "node" && row.node.id === manager.id)!;
   assert.equal(managerSeenByBen.node.charter, undefined, "another person's node shows only its public face");
   assert.equal((await ben.inject({ method: "GET", url: `/api/node/rooms/${dm.id}/messages` })).statusCode, 404);
   assert.equal((await ben.inject({ method: "POST", url: `/api/node/rooms/${dm.id}/messages`, payload: { body: "hi" } })).statusCode, 404);
@@ -210,8 +217,6 @@ test("in a group, a node speaks for its owner only after approval, and private t
   assert.ok(!shared.some((row) => row.content.includes("under a day")), "nor does its history");
 
   assert.equal((await ben.inject({ method: "POST", url: `/api/node/rooms/${group.id}/nodes`, payload: { nodeId: manager.id } })).statusCode, 404, "nobody adds someone else's node");
-  const { node: bensNode } = await createNode(ben, "assistant");
-  assert.equal((await ben.inject({ method: "POST", url: `/api/node/rooms/${group.id}/nodes`, payload: { nodeId: bensNode.id } })).statusCode, 201);
   const routed: string[] = [];
   setNodeRelevanceForTests(async ({ prompt }) => {
     routed.push(prompt);
@@ -228,7 +233,9 @@ test("in a group, a node speaks for its owner only after approval, and private t
 
 test("a manager delegates to its crew, and the crew reports back by mention", async () => {
   const kofi = await person("Kofi");
-  const made = await kofi.inject({ method: "POST", url: "/api/node/crews", payload: { templateId: "software-team" } });
+  const ids: string[] = [];
+  for (const template of ["manager", "feature-engineer", "tester", "docs-writer"]) ids.push((await createNode(kofi, template)).node.id);
+  const made = await kofi.inject({ method: "POST", url: "/api/node/crews", payload: { title: "Software team", nodeIds: ids, leadNodeId: ids[0] } });
   assert.equal(made.statusCode, 201, made.body);
   const crew = json(made).room as { id: string; members: Array<{ kind: string; handle: string }>; leadNodeIds: string[] };
   assert.deepEqual(crew.members.filter((row) => row.kind === "node").map((row) => row.handle), ["manager", "builder", "tester", "docs"]);
@@ -263,4 +270,161 @@ test("the CLI's Node tab reads a bridge overview; Node routes refuse narrow keys
   assert.equal((await dana.inject({ method: "DELETE", url: `/api/node/nodes/${node.id}` })).statusCode, 204);
   assert.equal(await h.prisma.nodeRoom.count({ where: { id: room.id } }), 0);
   assert.equal((await dana.inject({ method: "GET", url: `/api/node/rooms/${room.id}` })).statusCode, 404);
+});
+
+test("requests to join a room: accept with 1–3 nodes and one lead, declines block a new request for 30 days, and the room keeps its limits", async () => {
+  const ama = await person("Ama");
+  const ola = await person("Ola");
+  const { node: amaNode } = await createNode(ama, "manager");
+  const olaNodes: string[] = [];
+  for (const template of ["assistant", "feature-engineer", "tester", "docs-writer"]) olaNodes.push((await createNode(ola, template)).node.id);
+  const room = json(await ama.inject({ method: "POST", url: "/api/node/rooms", payload: { title: "Studio", nodeIds: [amaNode.id] } })).room as { id: string };
+  await say(ama, room.id, "before Ola joins");
+
+  const ask = () => ama.inject({ method: "POST", url: `/api/node/rooms/${room.id}/invites`, payload: { email: ola.email } });
+  assert.equal((await ask()).statusCode, 201);
+  assert.equal((await ask()).statusCode, 409, "one open request per person");
+  assert.equal((await ola.inject({ method: "POST", url: `/api/node/rooms/${room.id}/invites`, payload: { email: ama.email } })).statusCode, 404, "only people in the room reach it");
+  const first = json(await ola.inject({ method: "GET", url: "/api/node/invites" })).invites[0];
+  assert.equal((await ola.inject({ method: "POST", url: `/api/node/invites/${first.id}/decline` })).statusCode, 204);
+  const blocked = await ask();
+  assert.equal(blocked.statusCode, 409);
+  assert.match(json(blocked).error, /declined on .+ You can ask again after/);
+  const view = json(await ama.inject({ method: "GET", url: `/api/node/rooms/${room.id}` })).room;
+  assert.equal(view.invites[0].status, "declined");
+  assert.ok(view.invites[0].askAgainAfter, "the person who asked sees the decline and when they may ask again");
+  assert.ok((await read(ama, room.id)).some((row) => row.body === "Ola declined to join." && row.private));
+
+  await h.prisma.nodeRoomInvite.updateMany({ where: { roomId: room.id }, data: { respondedAt: new Date(Date.now() - 31 * 86_400_000) } });
+  assert.equal((await ask()).statusCode, 201, "after 30 days they may be asked again");
+  const second = json(await ola.inject({ method: "GET", url: "/api/node/invites" })).invites[0];
+  assert.equal((await ola.inject({ method: "POST", url: `/api/node/invites/${second.id}/accept`, payload: { nodeIds: olaNodes } })).statusCode, 400, "at most three nodes");
+  assert.equal((await ola.inject({ method: "POST", url: `/api/node/invites/${second.id}/accept`, payload: { nodeIds: [] } })).statusCode, 400, "at least one node");
+  const accepted = await ola.inject({ method: "POST", url: `/api/node/invites/${second.id}/accept`, payload: { nodeIds: olaNodes.slice(0, 2), leadNodeId: olaNodes[1] } });
+  assert.equal(accepted.statusCode, 201, accepted.body);
+  const leads = (json(accepted).room.members as any[]).filter((row) => row.kind === "node" && row.accountId === ola.id);
+  assert.deepEqual(leads.map((row) => row.lead), [false, true], "one lead per person");
+  assert.equal((await ola.inject({ method: "POST", url: `/api/node/invites/${second.id}/accept`, payload: { nodeIds: [olaNodes[0]] } })).statusCode, 409, "an answered request stays answered");
+
+  const olaReads = await read(ola, room.id);
+  assert.ok(!olaReads.some((row) => row.body === "before Ola joins"), "a person reads only what was said after they joined");
+  assert.ok(olaReads.some((row) => /Ola joined with @/.test(row.body)));
+  assert.ok(!olaReads.some((row) => row.body === "Ola declined to join."));
+
+  assert.equal((await ola.inject({ method: "POST", url: `/api/node/rooms/${room.id}/nodes`, payload: { nodeId: olaNodes[2] } })).statusCode, 201);
+  assert.equal((await ola.inject({ method: "POST", url: `/api/node/rooms/${room.id}/nodes`, payload: { nodeId: olaNodes[3] } })).statusCode, 409, "three nodes per person");
+  const mine = (json(await ola.inject({ method: "GET", url: `/api/node/rooms/${room.id}` })).room.members as any[]).filter((row) => row.kind === "node" && row.accountId === ola.id);
+  for (const member of mine.slice(1)) assert.equal((await ola.inject({ method: "DELETE", url: `/api/node/rooms/${room.id}/members/${member.id}` })).statusCode, 204);
+  assert.equal((await ola.inject({ method: "DELETE", url: `/api/node/rooms/${room.id}/members/${mine[0].id}` })).statusCode, 400, "keep at least one node, or leave");
+  const left = (json(await ola.inject({ method: "GET", url: `/api/node/rooms/${room.id}` })).room.members as any[]).filter((row) => row.kind === "node" && row.accountId === ola.id);
+  assert.deepEqual(left.map((row) => row.lead), [true], "the remaining node becomes the lead");
+
+  const others = await Promise.all(Array.from({ length: 9 }, (_, index) => person(`Guest ${index}`)));
+  const answers = [];
+  for (const guest of others) answers.push((await ama.inject({ method: "POST", url: `/api/node/rooms/${room.id}/invites`, payload: { email: guest.email } })).statusCode);
+  assert.deepEqual(answers, [201, 201, 201, 201, 201, 201, 201, 201, 409], "ten people, counting open requests");
+  assert.equal((await ama.inject({ method: "DELETE", url: `/api/node/rooms/${room.id}` })).statusCode, 204);
+  assert.equal(json(await others[0]!.inject({ method: "GET", url: "/api/node/invites" })).invites.length, 0, "deleting a room withdraws its requests");
+});
+
+test("node and crew names are unique per account; crews are made from the nodes a person picks", async () => {
+  const lea = await person("Lea");
+  const scout = await lea.inject({ method: "POST", url: "/api/node/nodes", payload: { name: "Scout" } });
+  assert.equal(scout.statusCode, 201, scout.body);
+  assert.equal((await lea.inject({ method: "POST", url: "/api/node/nodes", payload: { name: "scout" } })).statusCode, 409);
+  const first = await createNode(lea, "researcher");
+  const again = json(await lea.inject({ method: "POST", url: "/api/node/nodes", payload: { templateId: "researcher" } })).node;
+  assert.equal(again.name, "Researcher 2", "a template's name is numbered, never repeated");
+  assert.equal((await lea.inject({ method: "PATCH", url: `/api/node/nodes/${again.id}`, payload: { name: "SCOUT" } })).statusCode, 409);
+  const crew = await lea.inject({ method: "POST", url: "/api/node/crews", payload: { title: "Desk", nodeIds: [first.node.id, again.id] } });
+  assert.equal(crew.statusCode, 201, crew.body);
+  assert.equal((await lea.inject({ method: "POST", url: "/api/node/crews", payload: { title: "desk", nodeIds: [first.node.id] } })).statusCode, 409);
+  const other = json(await lea.inject({ method: "POST", url: "/api/node/crews", payload: { title: "Desk two", nodeIds: [first.node.id] } })).room;
+  assert.equal((await lea.inject({ method: "PATCH", url: `/api/node/rooms/${other.id}`, payload: { title: "DESK" } })).statusCode, 409);
+  assert.equal((await lea.inject({ method: "POST", url: `/api/node/rooms/${other.id}/nodes`, payload: { nodeId: again.id } })).statusCode, 201, "a crew grows with any of the person's nodes");
+  assert.equal((await lea.inject({ method: "PATCH", url: `/api/node/nodes/${again.id}`, payload: { model: "not-a-model" } })).statusCode, 400);
+
+  const desk = json(crew).room as { id: string; leadNodeIds: string[]; members: any[] };
+  const leadMember = desk.members.find((row) => row.kind === "node" && row.node.id === desk.leadNodeIds[0])!;
+  assert.equal((await lea.inject({ method: "DELETE", url: `/api/node/rooms/${desk.id}/members/${leadMember.id}` })).statusCode, 204);
+  const after = json(await lea.inject({ method: "GET", url: `/api/node/rooms/${desk.id}` })).room;
+  assert.deepEqual(after.leadNodeIds, after.members.filter((row: any) => row.kind === "node").map((row: any) => row.node.id), "a crew whose lead left is led by a node still in it");
+
+  script = () => ({ text: "noted" });
+  await say(lea, desk.id, "hello crew");
+  const unread = async () => json(await lea.inject({ method: "GET", url: "/api/node/rooms" })).rooms.find((row: any) => row.id === desk.id);
+  const before = await unread();
+  assert.ok(before.unread > 0, "a node's answer is unread");
+  assert.equal((await lea.inject({ method: "POST", url: `/api/node/rooms/${desk.id}/read`, payload: { seq: before.lastSeq } })).statusCode, 204);
+  assert.equal((await unread()).unread, 0, "the read marker is saved");
+  const stopped = await lea.inject({ method: "POST", url: `/api/node/rooms/${desk.id}/stop` });
+  assert.equal(stopped.statusCode, 200, stopped.body);
+});
+
+test("search, the people-only view, pins, reactions, replies and deleting stay within what each person may read", async () => {
+  const ivy = await person("Ivy");
+  const tom = await person("Tom");
+  const { node: ivyNode } = await createNode(ivy, "assistant");
+  const { node: tomNode } = await createNode(tom, "assistant");
+  const room = json(await ivy.inject({ method: "POST", url: "/api/node/rooms", payload: { title: "Plans", nodeIds: [ivyNode.id], invite: [tom.email] } })).room as { id: string };
+  const invite = json(await tom.inject({ method: "GET", url: "/api/node/invites" })).invites[0];
+  assert.equal((await tom.inject({ method: "POST", url: `/api/node/invites/${invite.id}/accept`, payload: { nodeIds: [tomNode.id] } })).statusCode, 201);
+  script = () => ({ text: "(no reply)" });
+  const open = await say(ivy, room.id, "@tom the launch checklist is ready");
+  const secret = await say(ivy, room.id, "my launch notes stay mine", { private: true });
+
+  const tomSearch = json(await tom.inject({ method: "GET", url: "/api/node/search?q=launch" })).results.map((row: any) => row.message.id);
+  assert.deepEqual(tomSearch, [open.id], "search finds only what the person may read");
+  assert.equal(json(await ivy.inject({ method: "GET", url: `/api/node/search?q=launch%20notes&roomId=${room.id}` })).results.length, 1, "every word must match");
+  assert.ok((json(await tom.inject({ method: "GET", url: `/api/node/rooms/${room.id}/messages?author=people` })).messages as any[]).every((row) => row.authorKind !== "node"));
+
+  assert.equal((await tom.inject({ method: "POST", url: `/api/node/rooms/${room.id}/pins`, payload: { messageId: secret.id, pinned: true } })).statusCode, 400);
+  assert.equal((await tom.inject({ method: "POST", url: `/api/node/rooms/${room.id}/pins`, payload: { messageId: open.id, pinned: true } })).statusCode, 200);
+  assert.deepEqual(json(await ivy.inject({ method: "GET", url: `/api/node/rooms/${room.id}/pins` })).messages.map((row: any) => row.id), [open.id]);
+
+  const liked = await tom.inject({ method: "POST", url: `/api/node/messages/${open.id}/reactions`, payload: { emoji: "👍" } });
+  assert.deepEqual(json(liked).message.data.reactions, { "👍": [tom.id] });
+  assert.equal((await tom.inject({ method: "POST", url: `/api/node/messages/${secret.id}/reactions`, payload: { emoji: "👍" } })).statusCode, 404);
+  const unliked = await tom.inject({ method: "POST", url: `/api/node/messages/${open.id}/reactions`, payload: { emoji: "👍" } });
+  assert.deepEqual(json(unliked).message.data.reactions, {});
+
+  assert.equal((await ivy.inject({ method: "POST", url: `/api/node/rooms/${room.id}/messages`, payload: { body: "quoting", replyToId: secret.id } })).statusCode, 400, "a public reply cannot quote a private message");
+  const reply = await tom.inject({ method: "POST", url: `/api/node/rooms/${room.id}/messages`, payload: { body: "thanks", replyToId: open.id } });
+  assert.equal(json(reply).message.data.replyTo.excerpt, "@tom the launch checklist is ready");
+  await settleTurns();
+
+  assert.equal((await tom.inject({ method: "DELETE", url: `/api/node/messages/${open.id}` })).statusCode, 403);
+  assert.equal((await ivy.inject({ method: "DELETE", url: `/api/node/messages/${open.id}` })).statusCode, 204);
+  const gone = (await read(tom, room.id)).find((row) => row.id === open.id)!;
+  assert.equal(gone.body, "");
+  assert.equal(gone.data.deleted, true);
+  assert.deepEqual(json(await ivy.inject({ method: "GET", url: `/api/node/rooms/${room.id}/pins` })).messages, [], "a deleted message leaves the pins");
+  const exported = await tom.inject({ method: "GET", url: `/api/node/rooms/${room.id}/export` });
+  assert.equal(exported.statusCode, 200);
+  assert.match(exported.body, /^# Plans/);
+  assert.doesNotMatch(exported.body, /stay mine/);
+});
+
+test("reading files on a paired computer is offered only when the owner turned it on, and only where the owner reads alone", async () => {
+  const zoe = await person("Zoe");
+  const max = await person("Max");
+  const { node, room: dm } = await createNode(zoe, "assistant");
+  const { node: maxNode } = await createNode(max, "assistant");
+  script = () => ({ text: "ok" });
+  await say(zoe, dm.id, "hello");
+  assert.ok(!seen.at(-1)!.tools.includes("node_computer_files"), "off unless the owner turns it on");
+  assert.equal((await zoe.inject({ method: "PATCH", url: `/api/node/nodes/${node.id}`, payload: { autonomy: { computerFiles: true } } })).statusCode, 200);
+  seen.length = 0;
+  await say(zoe, dm.id, "what's in my folders?");
+  assert.ok(seen.at(-1)!.tools.includes("node_computer_files"));
+  assert.match(seen.at(-1)!.system, /node_computer_files/);
+  const room = json(await zoe.inject({ method: "POST", url: "/api/node/rooms", payload: { title: "Shared", nodeIds: [node.id], invite: [max.email] } })).room as { id: string };
+  const invite = json(await max.inject({ method: "GET", url: "/api/node/invites" })).invites[0];
+  assert.equal((await max.inject({ method: "POST", url: `/api/node/invites/${invite.id}/accept`, payload: { nodeIds: [maxNode.id] } })).statusCode, 201);
+  seen.length = 0;
+  await say(zoe, room.id, "@assistant look at my files");
+  assert.ok(seen.length >= 1 && seen.every((turn) => !turn.tools.includes("node_computer_files")), "never in a room other people read");
+  seen.length = 0;
+  await say(zoe, room.id, "@assistant look at my files", { private: true });
+  assert.ok(seen.find((turn) => turn.slug === "assistant")!.tools.includes("node_computer_files"), "the owner's private thread may");
 });

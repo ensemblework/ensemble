@@ -7,6 +7,7 @@
  */
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
+import { CODE_ENGINES, PullRequestPlan, pullRequestBaseRefusal, pullRequestHeadRefusal } from "@ensemble/shared-types";
 import { redactText } from "../lib/redact.js";
 import type { AssignInput } from "../workspace/assign.js";
 import { OUTSIDE_TOOL } from "../workspace/tools.js";
@@ -61,7 +62,15 @@ export function planLocalJob(spec: JobSpec, settings: RemoteSettings, continueFr
   // A server that sends the page also puts it in the description for older computers; it is read once, as the page.
   const description = page ? withoutPageSection((spec.task?.description ?? "").trim(), page) : (spec.task?.description ?? "").trim();
   if (spec.useCredentials) return { code: GIT_GATE_CODE, message: GIT_GATE_CLONE };
-  if ((spec.branchMode && spec.branchMode !== "as-is") || spec.branch?.trim()) {
+  // A run that ends in a pull request (docs/24 §5.1): only into a base this computer allows.
+  const plan = spec.pullRequest ? PullRequestPlan.safeParse(spec.pullRequest) : null;
+  if (plan && !plan.success) return { code: "PULL_REQUEST_INVALID", message: "Update Ensemble on this computer: it could not read this task's pull request." };
+  const pullRequest = plan?.success ? plan.data : null;
+  const named = spec.branch?.trim() ?? "";
+  if (pullRequest) {
+    const refusal = pullRequestBaseRefusal(pullRequest.base, settings.pullRequestBases, "This computer") ?? (named ? pullRequestHeadRefusal(named, pullRequest.base) : null);
+    if (refusal) return { code: "PULL_REQUEST_NOT_ALLOWED", message: refusal };
+  } else if ((spec.branchMode && spec.branchMode !== "as-is") || named) {
     return {
       code: "BRANCH_NOT_ALLOWED",
       message: "A remote task works only on its own run branch (ensemble/<run-id>/…). Another branch can be chosen on the Mac.",
@@ -75,8 +84,11 @@ export function planLocalJob(spec: JobSpec, settings: RemoteSettings, continueFr
   const assign: LocalPlan["assign"] = {
     kind: spec.kind,
     instructions: (spec.instructions ?? "").slice(0, 8000),
-    branchMode: "as-is",
-    delivery: spec.delivery,
+    branchMode: pullRequest && named ? "new" : "as-is",
+    ...(pullRequest && named ? { branch: named } : {}),
+    // A pull request needs commits; Ensemble pushes the branch itself.
+    delivery: pullRequest ? "commit" : spec.delivery,
+    ...(pullRequest ? { pullRequest } : {}),
     // Without web settings, every commit asks here.
     askBeforePublish: web ? spec.askBeforePublish !== false : true,
     useCredentials: false,
@@ -95,9 +107,10 @@ export function planLocalJob(spec: JobSpec, settings: RemoteSettings, continueFr
     ...(spec.maxToolCalls ? { maxToolCalls: spec.maxToolCalls } : {}),
     ...(spec.model?.trim() ? { model: spec.model.trim() } : {}),
     ...(spec.provider?.trim() ? { provider: spec.provider.trim() } : {}),
-    // The person's own Claude Code, Codex or Cursor agent on this computer, with their own sign-in.
-    engine: (["claude-code", "codex", "cursor-agent"] as const).find((engine) => engine === spec.provider?.trim()) ?? "ensemble",
+    // The person's own coding agent on this computer (Claude Code, Codex, Cursor's agent, GitHub Copilot), with their own sign-in.
+    engine: CODE_ENGINES.find((engine) => engine === spec.provider?.trim()) ?? "ensemble",
     ...(spec.reasoningEffort?.trim() ? { reasoningEffort: spec.reasoningEffort.trim() } : {}),
+    ...(spec.contextTier === "long_context" ? { contextTier: "long_context" as const } : {}),
   };
   let publicCheck: string | null = null;
   const label = (spec.folderLabel ?? spec.folder ?? "").trim();
@@ -110,6 +123,8 @@ export function planLocalJob(spec: JobSpec, settings: RemoteSettings, continueFr
       if (!shared) return { code: "UNKNOWN_FOLDER", message: `This Mac has not shared a folder called “${label.slice(0, 60)}”. Add it on the Mac first.` };
       if (shared.kind === "repo") {
         assign.repoUrl = shared.path;
+      } else if (pullRequest) {
+        return { code: "PULL_REQUEST_NOT_ALLOWED", message: `“${label.slice(0, 60)}” is shared to work in place. A pull request needs the run in its own clone: share the folder as a repository on this computer (\`ensemble folders add <path> --repo\`), or name the repository.` };
       } else {
         assign.folder = shared.path;
         assign.accessMode = shared.access === "review" || spec.accessMode === "review" ? "review" : "read-write";

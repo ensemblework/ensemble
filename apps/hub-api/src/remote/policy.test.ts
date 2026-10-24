@@ -22,6 +22,7 @@ const settings = (folders: RemoteSettings["folders"] = [], acceptWebApprovals = 
   browseFiles: true,
   webEdit: true,
   webTerminal: true,
+  pullRequestBases: ["testing"],
   apiBase: "http://127.0.0.1:9",
   deviceId: "device",
   deviceName: "Test",
@@ -211,4 +212,28 @@ test("the task page from the web becomes the local task's page, read once, whate
   if (isRefusal(older)) return assert.fail("refused");
   assert.equal(older.page, "");
   assert.match(older.description, /morluto\/rea/, "a spec without the field still carries the page in its description");
+});
+
+test("a pull request from the web: only into a base this computer allows, from a clone, on a branch it may name", () => {
+  const none = () => null;
+  const repo = settings([{ label: "ensemble", path: "/work/ensemble", kind: "repo", access: "read-write" }, { label: "notes", path: "/work/notes", kind: "folder", access: "read-write" }]);
+  const ok = planLocalJob(spec({ folderLabel: "ensemble", branch: "feature-a", branchMode: "new", delivery: "push", pullRequest: { base: "testing", merge: "auto" } }), repo, none);
+  assert.ok(!isRefusal(ok), JSON.stringify(ok));
+  if (!isRefusal(ok)) {
+    assert.deepEqual(ok.assign.pullRequest, { base: "testing", merge: "auto" });
+    assert.equal(ok.assign.branchMode, "new");
+    assert.equal(ok.assign.branch, "feature-a");
+    assert.equal(ok.assign.delivery, "commit", "Ensemble pushes; the agent only commits");
+    assert.equal(ok.assign.repoUrl, "/work/ensemble", "a repository folder: the run works in its own clone");
+  }
+  const notAllowed = planLocalJob(spec({ folderLabel: "ensemble", pullRequest: { base: "release", merge: "ask" } }), repo, none);
+  assert.match(isRefusal(notAllowed) ? notAllowed.message : "", /does not open pull requests into release/);
+  const production = planLocalJob(spec({ folderLabel: "ensemble", pullRequest: { base: "main", merge: "auto" } }), settings([], true), none);
+  assert.match(isRefusal(production) ? production.message : "", /never opens a pull request into main/);
+  const inPlace = planLocalJob(spec({ folderLabel: "notes", pullRequest: { base: "testing", merge: "ask" } }), repo, none);
+  assert.match(isRefusal(inPlace) ? inPlace.message : "", /worked in place|shared to work in place/);
+  const badHead = planLocalJob(spec({ folderLabel: "ensemble", branch: "testing", branchMode: "new", pullRequest: { base: "testing", merge: "ask" } }), repo, none);
+  assert.match(isRefusal(badHead) ? badHead.message : "", /cannot be testing/);
+  const plain = planLocalJob(spec({ folderLabel: "ensemble", branch: "feature-a", branchMode: "new" }), repo, none);
+  assert.equal(isRefusal(plain) && plain.code, "BRANCH_NOT_ALLOWED", "without a pull request a remote task still works only on its run branch");
 });

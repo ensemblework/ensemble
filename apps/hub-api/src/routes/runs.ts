@@ -83,7 +83,7 @@ type JobFactsRow = {
   finishedAt: Date | null;
 };
 
-const ENGINES: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex", "cursor-agent": "Cursor" };
+const ENGINES: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex", "cursor-agent": "Cursor", "copilot-cli": "GitHub Copilot" };
 
 /**
  * The agent job behind a run, as the run page shows it: which harness ran it, the model asked for and

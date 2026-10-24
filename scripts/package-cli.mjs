@@ -13,6 +13,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const supportedTargets = new Set(["darwin-arm64", "darwin-x64", "linux-x64", "linux-arm64", "windows-x64"]);
 
 const options = parseArgs(process.argv.slice(2));
+const testing = options.channel === "testing";
 if (!options.target) usage("Missing required --target.");
 if (!supportedTargets.has(options.target)) usage(`Unsupported --target ${options.target}.`);
 
@@ -22,24 +23,25 @@ if (host !== options.target) {
 }
 
 const cliPackage = JSON.parse(readFileSync(join(root, "apps/cli/package.json"), "utf8"));
-const version = releaseVersion;
+const version = testing ? process.env.ENSEMBLE_TEST_CLI_VERSION || `${releaseVersion}-testing.0` : releaseVersion;
 if (!version || typeof version !== "string") usage("apps/cli/package.json does not contain a string version.");
 
 const outDir = resolve(root, options.out);
-const stageRoot = join(outDir, `.stage-${options.target}`);
-const ensembleDir = join(stageRoot, "ensemble");
+const stageRoot = join(outDir, `.stage-${options.channel}-${options.target}`);
+const command = testing ? "ensemble-test" : "ensemble";
+const ensembleDir = join(stageRoot, command);
 const binDir = join(ensembleDir, "bin");
 const libDir = join(ensembleDir, "lib");
 const sidecarDir = join(ensembleDir, "sidecar");
 const archiveName =
-  options.target === "windows-x64" ? `ensemble-cli-${version}-${options.target}.zip` : `ensemble-cli-${version}-${options.target}.tar.gz`;
+  options.target === "windows-x64" ? `${command}-cli-${version}-${options.target}.zip` : `${command}-cli-${version}-${options.target}.tar.gz`;
 const archivePath = join(outDir, archiveName);
 
 mkdirSync(outDir, { recursive: true });
 
-run("pnpm", ["--filter", "ensemblework", "build"], { cwd: root });
+run(process.execPath, ["apps/cli/scripts/build.mjs", ...(testing ? ["--testing"] : [])], { cwd: root });
 
-const bundle = join(root, "apps/cli/dist/ensemble.mjs");
+const bundle = join(root, `apps/cli/dist/${command}.mjs`);
 if (!existsSync(bundle)) {
   throw new Error("CLI build completed, but apps/cli/dist/ensemble.mjs does not exist.");
 }
@@ -59,12 +61,14 @@ copyFileSync(bundle, join(libDir, "ensemble.mjs"));
 writeFileSync(join(ensembleDir, "VERSION"), `${version}\n`);
 copyFileSync(join(root, "LICENSE.md"), join(ensembleDir, "LICENSE.md"));
 
-copyFileSync(join(root, "apps/cli/bin/ensemble"), join(binDir, "ensemble"));
-chmodSync(join(binDir, "ensemble"), 0o755);
+const launcher = readFileSync(join(root, "apps/cli/bin/ensemble"), "utf8");
+writeFileSync(join(binDir, command), testing ? launcher.replaceAll("ENSEMBLE_LAUNCHER", "ENSEMBLE_TEST_LAUNCHER").replaceAll("ENSEMBLE_SIDECAR_DIR", "ENSEMBLE_TEST_SIDECAR_DIR") : launcher);
+chmodSync(join(binDir, command), 0o755);
+writeFileSync(join(ensembleDir, "CHANNEL"), `${options.channel}\n`);
 
 if (options.target === "windows-x64") {
-  buildWindowsLauncher(join(binDir, "ensemble.exe"));
-  writeWindowsCmd(join(binDir, "ensemble.cmd"));
+  buildWindowsLauncher(join(binDir, `${command}.exe`));
+  writeWindowsCmd(join(binDir, `${command}.cmd`));
 }
 
 rmSync(archivePath, { force: true });
@@ -72,9 +76,9 @@ if (options.target === "windows-x64") {
   // Zip output needs bsdtar: Windows ships it in System32, macOS as tar. The tar
   // from Git for Windows, often first on PATH, is GNU tar and cannot write zip.
   const bsdtar = process.platform === "win32" ? join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe") : "tar";
-  run(bsdtar, ["-a", "-c", "-f", archivePath, "-C", stageRoot, "ensemble"], { cwd: root });
+  run(bsdtar, ["-a", "-c", "-f", archivePath, "-C", stageRoot, command], { cwd: root });
 } else {
-  run("tar", ["-czf", archivePath, "-C", stageRoot, "ensemble"], { cwd: root });
+  run("tar", ["-czf", archivePath, "-C", stageRoot, command], { cwd: root });
 }
 
 const sha256 = await sha256File(archivePath);
@@ -82,9 +86,14 @@ console.log(`${sha256}  ${archiveName}`);
 console.log(`Archive: ${archivePath}`);
 
 function parseArgs(args) {
-  const parsed = { out: "dist/cli", skipSidecar: false, target: "" };
+  const parsed = { out: "dist/cli", skipSidecar: false, target: "", channel: "production" };
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
+    if (arg === "--channel") {
+      parsed.channel = valueAfter(args, i++, arg);
+      if (!["production", "testing"].includes(parsed.channel)) usage("Channel must be production or testing.");
+      continue;
+    }
     if (arg === "--target") {
       parsed.target = valueAfter(args, i, arg);
       i += 1;
@@ -177,8 +186,8 @@ function writeWindowsCmd(file) {
       "@echo off",
       "setlocal",
       'set "SCRIPT_DIR=%~dp0"',
-      'set "ENSEMBLE_LAUNCHER=%~f0"',
-      'set "ENSEMBLE_SIDECAR_DIR=%SCRIPT_DIR%..\\sidecar"',
+      `set "${testing ? "ENSEMBLE_TEST" : "ENSEMBLE"}_LAUNCHER=%~f0"`,
+      `set "${testing ? "ENSEMBLE_TEST" : "ENSEMBLE"}_SIDECAR_DIR=%SCRIPT_DIR%..\\sidecar"`,
       '"%SCRIPT_DIR%..\\sidecar\\node.exe" "%SCRIPT_DIR%..\\lib\\ensemble.mjs" %*',
       "exit /b %ERRORLEVEL%",
       "",

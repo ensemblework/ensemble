@@ -18,3 +18,11 @@ test("the Node pane asks to sign in, says when it cannot load, and says when the
   const empty = { nodes: [], rooms: [], approvals: [], runs: [], credits: null };
   assert.match(text(nodePane({ data: empty, error: null, loading: false }, 60, Date.now(), true, "https://n")), /No rooms yet\. Make your first node on https:\/\/n/);
 });
+
+test("the Node pane lists requests to join rooms, to answer on the website", () => {
+  const data = { nodes: [], rooms: [], approvals: [], runs: [], credits: null, invites: [{ id: "i1", room: "Launch", from: "Mira" }] };
+  const text = nodePane({ data, error: null, loading: false }, 80, Date.now(), true, "https://n").map(lineText).join("\n");
+  assert.match(text, /REQUESTS TO JOIN · 1/);
+  assert.match(text, /Mira asks you to join “Launch”/);
+  assert.match(text, /Accept or decline on https:\/\/n/);
+});

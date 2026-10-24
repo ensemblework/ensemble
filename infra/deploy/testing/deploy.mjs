@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 export function validateTestingEnv(env, home) {
+  if (Buffer.from(env.ENSEMBLE_SECRET_KEY ?? "", "base64").length !== 32) throw new Error("Testing requires ENSEMBLE_SECRET_KEY to be 32 bytes, base64-encoded.");
   const db = new URL(env.DATABASE_URL);
   const redis = new URL(env.REDIS_URL);
   if (!["postgres:", "postgresql:"].includes(db.protocol) || db.hostname !== "127.0.0.1" || db.port !== "25432" || db.pathname !== "/ensemble_test" || !db.password) throw new Error("Testing requires its own loopback Postgres on 25432, database ensemble_test.");
@@ -19,6 +20,8 @@ export function validateTestingEnv(env, home) {
     ENSEMBLE_TEST_HOME: home,
   };
   for (const [key, value] of Object.entries(expected)) if (env[key] !== value) throw new Error(`Testing isolation requires ${key}=${value}.`);
+  // Unset is allowed (no Node site); otherwise only the testing Node website may use this API.
+  if (env.ENSEMBLE_NODE_WEB_ORIGIN && env.ENSEMBLE_NODE_WEB_ORIGIN !== "https://node-test.ensemblework.com") throw new Error("Testing isolation requires ENSEMBLE_NODE_WEB_ORIGIN=https://node-test.ensemblework.com (or unset).");
   for (const key of ["ENSEMBLE_WORKSPACE_ROOT", "ENSEMBLE_MPLCONFIGDIR", "ENSEMBLE_REMOTE_STATE_DIR"]) {
     if (!env[key] || !resolve(env[key]).startsWith(`${home}/state/`)) throw new Error(`${key} must stay inside the testing state directory.`);
   }

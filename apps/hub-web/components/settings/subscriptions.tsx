@@ -8,6 +8,7 @@ import { useEffect, useState } from "react";
 import { SUBSCRIPTION_INFO, SUBSCRIPTION_PROVIDERS, type Settings, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
 import { api, type SubscriptionComputer, type SubscriptionsView } from "@/lib/api";
 import { relative } from "@/lib/format";
+import { modelFacts } from "@/lib/engine-models";
 import { useToast } from "../toast";
 import { cx, Tag } from "../ui";
 import { ConnectComputerButton } from "./connect-computer";
@@ -42,7 +43,7 @@ function statusOf(agent: SubscriptionAgent | null): { tone: "green" | "orange" |
   if (!agent) return { tone: "gray", text: "Not on this computer" };
   if (agent.problem) return { tone: "orange", text: "Needs a look" };
   if (agent.signedIn === false) return { tone: "orange", text: "Not signed in" };
-  if (agent.signedIn === true) return { tone: "green", text: agent.plan ? `Signed in · ${agent.plan}` : "Signed in" };
+  if (agent.signedIn === true) return { tone: "green", text: `${agent.account ? `Signed in as ${agent.account}` : "Signed in"}${agent.plan ? ` · ${agent.plan}` : ""}` };
   return { tone: "blue", text: "Found · sign-in checked on first message" };
 }
 
@@ -80,6 +81,9 @@ function SubscriptionTile({
     if (agent && !agent.models.some((row) => row.id === model)) setModel(defaultModel(agent));
   }, [agent, model]);
   const usable = Boolean(agent && computer?.online && computer.ready && agent.signedIn !== false && !agent.problem);
+  const chosen = agent?.models.find((row) => row.id === model) ?? null;
+  // Cost and context sizes, where the agent reports them (GitHub Copilot).
+  const facts = chosen && (chosen.cost || chosen.contexts?.length) ? modelFacts(chosen) : "";
   return (
     <div className="tile flex min-w-0 flex-col gap-3 rounded-xl bg-raised p-3.5" data-subscription={id} data-state={agent ? (agent.signedIn === false ? "signed-out" : "found") : "missing"}>
       <div className="flex items-start gap-3">
@@ -99,7 +103,7 @@ function SubscriptionTile({
             <button
               key={row.id}
               type="button"
-              title={row.description ?? row.id}
+              title={modelFacts(row) || row.id}
               onClick={() => setModel(row.id)}
               aria-pressed={row.id === model}
               className={cx(
@@ -111,6 +115,7 @@ function SubscriptionTile({
             </button>
           ))}
           {agent.models.length > 6 ? <span className="px-1 py-0.5 text-[11.5px] text-faint">+{agent.models.length - 6} more in the tier pickers</span> : null}
+          {facts ? <p className="w-full px-0.5 text-[11.5px] text-faint" data-testid="subscription-model-facts">{chosen!.label}: {facts}</p> : null}
         </div>
       ) : (
         <p className="text-[12px] text-muted">Needs {info.program}.</p>
@@ -132,7 +137,7 @@ function SubscriptionTile({
               type="button"
               className={agent.signedIn === false ? "btn py-0.5 text-[12px]" : "btn-primary py-0.5 text-[12px]"}
               disabled={!usable}
-              onClick={() => patch({ models: Object.fromEntries(TIER_IDS.map((tier) => [tier, { provider: id, model, effort: "default" }])) })}
+              onClick={() => patch({ models: Object.fromEntries(TIER_IDS.map((tier) => [tier, { provider: id, model, effort: "default", ...(settings.models[tier].context === "long_context" ? { context: "default" } : {}) }])) })}
             >
               {using.length === TIER_IDS.length && TIER_IDS.every((tier) => settings.models[tier].model === model) ? <Check size={11} aria-hidden /> : null} Use for everything
             </button>

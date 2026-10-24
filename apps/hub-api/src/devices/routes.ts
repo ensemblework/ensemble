@@ -37,7 +37,8 @@ import { folderLabels, rejectPathLabels, runBranchPushEnabled } from "./labels.j
 import { createDevicePairing } from "./pairing.js";
 import { publishBrowserDevice, publishDevice } from "./publish.js";
 import { revokePairedDevice } from "./revoke.js";
-import { outsideAccessOf } from "../workspace/trust.js";
+import { contextTierOf, outsideAccessOf } from "../workspace/trust.js";
+import { pullRequestOf } from "../workspace/pull-request.js";
 import { contextForPrompt } from "../connectors/items/index.js";
 import { fileOriginal, filesOnTask, filesSection } from "../files/attached.js";
 import { diagramIds, pageAgentText } from "../pages/agent-context.js";
@@ -472,6 +473,8 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
         provider: next.provider,
         model: next.model,
         reasoningEffort: next.reasoningEffort,
+        ...(contextTierOf(next.context) ? { contextTier: contextTierOf(next.context) } : {}),
+        ...(pullRequestOf(next.context) ? { pullRequest: pullRequestOf(next.context) } : {}),
         markDone: next.markDone,
         maxMinutes: next.maxMinutes,
         maxTurns: next.maxTurns,

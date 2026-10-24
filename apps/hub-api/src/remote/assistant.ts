@@ -23,6 +23,8 @@ const Spec = z.object({
   prompt: z.string().max(400_000),
   tools: z.array(ToolSpecShape).max(300),
   maxTurns: z.number().int().min(1).max(64),
+  /** GitHub Copilot's long context window, when the tier chose it. Older servers omit it. */
+  context: z.enum(["default", "long_context"]).nullish(),
 });
 const Answer = z.object({ text: z.string(), isError: z.boolean().optional(), tools: z.array(ToolSpecShape).optional() });
 
