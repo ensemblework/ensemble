@@ -8,7 +8,6 @@
  * fallback while the stream is down.
  * Quit and sleep do not start a job again.
  */
-import { existsSync } from "node:fs";
 import type { FastifyInstance } from "fastify";
 import type { WorkspaceJob } from "@prisma/client";
 import { env } from "../config.js";
@@ -32,6 +31,7 @@ import { startSignIn } from "../subscriptions/signin.js";
 import { CODE_API, deviceOwnedEvents, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, ONLINE_WINDOW_MS, parseAnswer, parseClaim, STEP_POST_BYTES, timing, type RunTotals, type UploadedStep } from "./contract.js";
 import { actionHash, decisionOptions, judgeAnswer, publishedFolders, riskOf, scrubOutgoing, type LocalDecision } from "./policy.js";
 import { dropDeviceToken, loadHeld, loadSettings, readDeviceToken, saveHeld, updateSettings, type HeldJob, type RemoteSettings } from "./store.js";
+import { launcherRemoved } from "./installed.js";
 
 const userId = () => env.ENSEMBLE_DEV_USER_ID;
 
@@ -313,8 +313,7 @@ async function session(app: FastifyInstance, base: string, token: string, parent
 async function beat(app: FastifyInstance, client: HostedClient, signal: AbortSignal): Promise<void> {
   if (signal.aborted) return;
   const settings = loadSettings();
-  const installed = process.env.ENSEMBLE_INSTALL_PATH;
-  if (installed && !existsSync(installed)) {
+  if (launcherRemoved(process.env.ENSEMBLE_INSTALL_PATH)) {
     await stopRemoteWork(app, "Ensemble was uninstalled from this computer.", "cancelled");
     await client.unpairSelf().catch(() => undefined);
     await dropDeviceToken();
