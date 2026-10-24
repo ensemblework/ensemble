@@ -52,12 +52,44 @@ export const SUBSCRIPTION_INFO: Record<SubscriptionProvider, SubscriptionInfo> =
   },
 };
 
+/**
+ * The coding agents that can do a code task on the person's computer (docs/30 §1–§4), each with
+ * their own sign-in. Ensemble's own agent is "ensemble" and is not listed here.
+ */
+export const CODE_ENGINES = ["claude-code", "codex", "cursor-agent", "copilot-cli"] as const;
+export type CodeEngine = (typeof CODE_ENGINES)[number];
+export const ENGINE_LABELS: Record<CodeEngine, string> = { "claude-code": "Claude Code", codex: "Codex", "cursor-agent": "Cursor", "copilot-cli": "GitHub Copilot" };
+
+export function isCodeEngine(value: string | null | undefined): value is CodeEngine {
+  return (CODE_ENGINES as readonly string[]).includes(value ?? "");
+}
+
+/** A context window a model offers: Copilot's `default` and `long_context` tiers, with their size when the agent says. */
+export const ContextTier = z.enum(["default", "long_context"]);
+export type ContextTier = z.infer<typeof ContextTier>;
+
+export const ModelContext = z.object({
+  id: ContextTier,
+  label: z.string().min(1).max(60),
+  /** Prompt tokens the tier allows. */
+  tokens: z.number().int().positive().max(100_000_000).optional(),
+});
+export type ModelContext = z.infer<typeof ModelContext>;
+
 export const SubscriptionModel = z.object({
   id: z.string().min(1).max(120),
   label: z.string().min(1).max(120),
   isDefault: z.boolean().optional(),
   /** Thinking levels the agent takes for this model, when it says. */
   efforts: z.array(z.string().max(20)).max(10).optional(),
+  /** The level the model uses when none is chosen. */
+  defaultEffort: z.string().max(20).optional(),
+  /** Context windows to pick from, smallest first. One entry: the model has a single size. */
+  contexts: z.array(ModelContext).max(4).optional(),
+  /** Whether the model takes images. */
+  vision: z.boolean().optional(),
+  /** What a request costs on the plan, as the vendor puts it ("1× premium requests"). */
+  cost: z.string().max(60).optional(),
   description: z.string().max(240).optional(),
 });
 export type SubscriptionModel = z.infer<typeof SubscriptionModel>;
@@ -72,6 +104,8 @@ export const SubscriptionAgent = z.object({
   signedIn: z.boolean().nullable(),
   /** The plan the tool reports (e.g. "max", "plus"), when it reports one. */
   plan: z.string().max(60).nullable().optional(),
+  /** The account the tool is signed in with, as it reports it (Copilot's GitHub login). */
+  account: z.string().max(120).nullable().optional(),
   models: z.array(SubscriptionModel).max(120),
   /** Whether a model name not in the list may be typed. */
   typedModels: z.boolean().optional(),

@@ -10,6 +10,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { agentProblem, answerCodexTurn, answerCursorTurn, claudeArgs, copilotArgs } from "./agents.js";
 import { copilotOutput } from "./copilot-output.js";
+import { contextFor, copilotEnv, copilotModels, tokenLabel } from "./copilot.js";
 import { bridgeFor, callThroughBridge, openBridge } from "./bridge.js";
 import { claudeAppCopy, claudeEfforts, codexModels, copilotEfforts, firstVersion, newestFirst, parseClaudeStatus, parseCopilotModels, parseCursorStatus, parseModelLines } from "./detect.js";
 import { LOGIN_ARGS } from "./signin.js";
@@ -125,11 +126,65 @@ test("Copilot CLI denies its shell, writes and fetches, and Windows gets a promp
   const denied = args.flatMap((arg, index) => (arg === "--deny-tool" ? [args[index + 1]] : []));
   assert.deepEqual(denied, ["shell", "write", "url"]);
   assert.ok(args.includes("--disable-builtin-mcps"));
+  assert.ok(args.includes("--no-ask-user"), "nobody can answer Copilot's own question prompt in an assistant turn");
+  assert.ok(!args.includes("--context"), "the model's standard window unless the tier chose the long one");
   assert.equal(args[args.indexOf("--additional-mcp-config") + 1], "@/t/mcp.json");
+  const wide = copilotArgs({ prompt: "hello", mcpFile: "m", model: "gpt-5.6-luna", effort: "low", context: "long_context", platform: "linux" });
+  assert.equal(wide[wide.indexOf("--context") + 1], "long_context");
+  assert.equal(wide[wide.indexOf("--reasoning-effort") + 1], "low");
   const long = copilotArgs({ prompt: `${"x".repeat(40_000)}END`, mcpFile: "m", model: null, effort: null, platform: "win32" });
   const prompt = long[long.indexOf("-p") + 1]!;
   assert.ok(prompt.length <= 28_000);
   assert.ok(prompt.endsWith("END"), "the newest part of the conversation is kept");
+});
+
+test("Copilot's models carry their context windows, thinking levels and cost as Copilot reports them", () => {
+  const models = copilotModels([
+    { id: "auto", name: "Auto" },
+    {
+      id: "gpt-5.6-luna",
+      name: "GPT-5.6 Luna",
+      vendor: "OpenAI",
+      capabilities: { supports: { vision: true }, limits: { max_context_window_tokens: 1_050_000, max_prompt_tokens: 922_000 } },
+      supportedReasoningEfforts: ["none", "low", "medium", "high", "xhigh", "max"],
+      defaultReasoningEffort: "medium",
+      billing: { tokenPrices: { contextMax: 200_000, maxPromptTokens: 200_000, longContext: { contextMax: 922_000, maxPromptTokens: 922_000 } } },
+      modelPickerPriceCategory: "low",
+    },
+    { id: "claude-haiku-4.5", name: "Claude Haiku 4.5", capabilities: { limits: { max_context_window_tokens: 200_000, max_prompt_tokens: 136_000 } }, billing: { multiplier: 0.33 } },
+    { id: "switched-off", name: "Off", policy: { state: "disabled" } },
+  ]);
+  assert.deepEqual(models.map((model) => model.id), ["auto", "gpt-5.6-luna", "claude-haiku-4.5"], "models the plan switched off are left out");
+  const luna = models[1]!;
+  assert.deepEqual(luna.contexts, [
+    { id: "default", label: "200K (standard)", tokens: 200_000 },
+    { id: "long_context", label: "922K (long context)", tokens: 922_000 },
+  ]);
+  assert.deepEqual(luna.efforts, ["none", "low", "medium", "high", "xhigh", "max"]);
+  assert.equal(luna.defaultEffort, "medium");
+  assert.equal(luna.vision, true);
+  assert.equal(luna.cost, "low cost");
+  const haiku = models[2]!;
+  assert.deepEqual(haiku.contexts, [{ id: "default", label: "136K", tokens: 136_000 }], "one window: the prompt limit");
+  assert.equal(haiku.efforts, undefined, "no thinking levels when Copilot lists none");
+  assert.equal(haiku.cost, "0.33× premium requests");
+  assert.equal(contextFor(luna, "long_context"), "long_context");
+  assert.equal(contextFor(haiku, "long_context"), null, "a model without a long window runs on its default");
+  assert.equal(tokenLabel(1_050_000), "1.05M");
+});
+
+test("a Copilot run never inherits a token or a switch that approves every tool", () => {
+  const saved = { ...process.env };
+  try {
+    Object.assign(process.env, { COPILOT_ALLOW_ALL: "true", COPILOT_ASSISTED_APPROVAL: "1", GH_TOKEN: "t", GITHUB_TOKEN: "t", COPILOT_GITHUB_TOKEN: "t", COPILOT_PROVIDER_BASE_URL: "http://127.0.0.1:11434" });
+    const env = copilotEnv({ ENSEMBLE_RUN: "job.secret" });
+    for (const key of ["COPILOT_ALLOW_ALL", "COPILOT_ASSISTED_APPROVAL", "GH_TOKEN", "GITHUB_TOKEN", "COPILOT_GITHUB_TOKEN"]) assert.equal(env[key], undefined, key);
+    assert.equal(env.COPILOT_PROVIDER_BASE_URL, "http://127.0.0.1:11434", "a Copilot set up with its own model provider runs as set up");
+    assert.equal(env.ENSEMBLE_RUN, "job.secret");
+    assert.equal(env.COPILOT_AUTO_UPDATE, "false");
+  } finally {
+    process.env = saved;
+  }
 });
 
 test("nothing of Codex's or Cursor's own may run in an assistant turn", async () => {

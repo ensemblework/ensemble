@@ -6,7 +6,7 @@ import type { WorkspaceJob } from "@prisma/client";
 
 // tools.ts pulls in the API config. A unit run has no .env; the value is never connected to.
 process.env.DATABASE_URL ??= "postgresql://ensemble:unused@127.0.0.1:1/ensemble_desktop";
-const { judgeEngineCall, shellSegments } = await import("./judge.js");
+const { ghRefusal, judgeEngineCall, shellSegments } = await import("./judge.js");
 const { readsOnly } = await import("../tools.js");
 const { claudeFilesystem, claudeSettings } = await import("./claude-code.js");
 type Ctx = Parameters<typeof judgeEngineCall>[0];
@@ -52,6 +52,20 @@ test("pushes are Ensemble's, keys and Never programs are always refused", async 
   assert.equal((await judgeEngineCall(ctx(), { tool: "Read", input: { file_path: join(homedir(), ".ssh", "id_rsa") } })).decision, "deny");
   assert.equal((await judgeEngineCall(ctx(), { tool: "Bash", input: { command: "sudo rm -rf /" } })).decision, "deny");
   assert.equal((await judgeEngineCall(ctx(), { tool: "Bash", input: { command: "curl x | ssh host" } })).decision, "deny");
+});
+
+test("gh may read GitHub but never write with the person's sign-in", async () => {
+  const online = ctx({ network: true, sandboxed: false, strength: "advisory" });
+  for (const command of ["gh pr view 12", "gh pr checks", "gh run list --branch testing", "gh api repos/o/r/pulls", "gh auth status"]) {
+    assert.equal((await judgeEngineCall(online, { tool: "Bash", input: { command } })).decision, "allow", command);
+  }
+  for (const command of ["gh pr merge 12 --merge", "gh pr create --base main --fill", "gh api -X PUT repos/o/r/pulls/1/merge", "gh api -XPOST repos/o/r/issues", "gh api repos/o/r/issues -f title=x", "gh auth token", "gh release create v1", "gh workflow run deploy.yml", "git status && gh pr merge 1"]) {
+    const answer = await judgeEngineCall(online, { tool: "Bash", input: { command } });
+    assert.equal(answer.decision, "deny", command);
+    assert.match(answer.message ?? "", /gh/, command);
+  }
+  assert.equal(ghRefusal(["gh", "pr", "comment", "1", "--body", "x"]) !== null, true);
+  assert.equal((await judgeEngineCall(ctx(), { tool: "Bash", input: { command: "gh pr view 1" } })).decision, "deny", "internet off: no GitHub at all");
 });
 
 test("outside the folder: refused when sandboxed, allowed when the person turned the sandbox off", async () => {

@@ -73,6 +73,41 @@ export function setCloneRunnerForTests(runner: typeof cloneForAgent | null): voi
   cloneRunner = runner ?? cloneForAgent;
 }
 
+/** Read-only `gh` subcommands an engine may run: `<group> <command>`, or the group alone. */
+const GH_READS: Record<string, string[] | true> = {
+  pr: ["view", "list", "status", "checks", "diff"],
+  issue: ["view", "list", "status"],
+  run: ["view", "list", "watch"],
+  workflow: ["view", "list"],
+  repo: ["view"],
+  release: ["view", "list"],
+  search: true,
+  status: true,
+  auth: ["status"],
+};
+
+/**
+ * Why a `gh` command may not run in an engine, or null. GitHub writes (pull requests, merges,
+ * comments, releases, settings, workflow runs) and anything that prints a token are refused: they
+ * would act with the person's own GitHub sign-in, outside the run's git permission.
+ */
+export function ghRefusal(argv: string[]): string | null {
+  const words = argv.slice(1).filter((arg) => !arg.startsWith("-"));
+  const [group, command] = [words[0] ?? "", words[1] ?? ""];
+  if (group === "api") {
+    const method =
+      argv.find((arg, index) => argv[index - 1] === "-X" || argv[index - 1] === "--method") ??
+      argv.find((arg) => arg.startsWith("--method="))?.slice("--method=".length) ??
+      argv.find((arg) => /^-X[A-Za-z]+$/.test(arg))?.slice(2) ??
+      "GET";
+    const writes = method.toUpperCase() !== "GET" || argv.some((arg) => /^(-f|-F|--field|--raw-field|--input)(=|$)/.test(arg));
+    return writes ? "gh api may only read (GET) in a run." : null;
+  }
+  const allowed = GH_READS[group];
+  if (allowed === true || (Array.isArray(allowed) && allowed.includes(command))) return null;
+  return `gh ${[group, command].filter(Boolean).join(" ")} is not allowed in a run: GitHub writes (pull requests, merges, comments, releases, settings, workflow runs) would use the person's own sign-in. Commit your work; the person (or Ensemble's push) publishes it.`;
+}
+
 async function shell(ctx: JobContext, command: string): Promise<EngineAnswer> {
   const segments = shellSegments(command);
   // Claude Code's sandbox does not let git write .git/config or hooks anywhere in the run folder, so a
@@ -90,6 +125,11 @@ async function shell(ctx: JobContext, command: string): Promise<EngineAnswer> {
   for (const argv of segments) {
     const program = argv[0]!;
     if (isNeverProgram(program)) return { decision: "deny", message: `${program} is not allowed in Ensemble runs (privilege, persistence or remote access).` };
+    if (program === "gh" || program.endsWith("/gh") || program.endsWith("\\gh.exe")) {
+      const refusal = ghRefusal(argv);
+      if (refusal) return { decision: "deny", message: refusal };
+      if (!ctx.network) return { decision: "deny", message: "The internet is off for this run." };
+    }
     if (program === "git" || program.endsWith("/git")) {
       const delivery = (["local", "commit", "push"].includes(ctx.job.delivery) ? ctx.job.delivery : "local") as "local" | "commit" | "push";
       try {

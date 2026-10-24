@@ -29,6 +29,16 @@ export function runBranchPushEnabled(capabilities: unknown): boolean {
   return (capabilities as { runBranchPush?: unknown }).runBranchPush === true;
 }
 
+/**
+ * Coding agents the computer's runtime can run a code task with. Runtimes that predate the list
+ * run Claude Code, Codex and Cursor's agent.
+ */
+export function deviceEngines(capabilities: unknown): string[] {
+  const listed = capabilities && typeof capabilities === "object" && !Array.isArray(capabilities) ? (capabilities as { engines?: unknown }).engines : undefined;
+  if (!Array.isArray(listed)) return ["claude-code", "codex", "cursor-agent"];
+  return listed.filter((value): value is string => typeof value === "string").slice(0, 20);
+}
+
 export function rejectPathLabels(capabilities: unknown): string | null {
   if (!capabilities || typeof capabilities !== "object" || Array.isArray(capabilities)) return null;
   const record = capabilities as { folders?: unknown; folderLabels?: unknown };

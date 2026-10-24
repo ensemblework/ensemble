@@ -1,6 +1,7 @@
 import type { WorkspaceJob } from "@prisma/client";
+import { isCodeEngine } from "@ensemble/shared-types";
 import { Assign } from "./assign.js";
-import { outsideAccessOf } from "./trust.js";
+import { contextTierOf, outsideAccessOf } from "./trust.js";
 
 export function repeatAssignment(old: WorkspaceJob) {
   const sameFolder = !old.deviceId && old.kind === "code" && !old.externalRoot && Boolean(old.repoPath);
@@ -9,7 +10,8 @@ export function repeatAssignment(old: WorkspaceJob) {
         kind: old.kind,
         provider: old.provider ?? undefined,
         model: old.model,
-        engine: old.provider === "claude-code" || old.provider === "codex" || old.provider === "cursor-agent" ? old.provider : "ensemble",
+        engine: isCodeEngine(old.provider) ? old.provider : "ensemble",
+        ...(contextTierOf(old.context) ? { contextTier: "long_context" as const } : {}),
         outsideAccess: outsideAccessOf(old.context) ?? undefined,
         reasoningEffort: old.reasoningEffort ?? undefined,
         instructions: old.instructions,

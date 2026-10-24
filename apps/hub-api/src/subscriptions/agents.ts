@@ -22,6 +22,7 @@ import { RpcConnection } from "../workspace/engines/rpc.js";
 import { hookScriptPath, localApiUrl } from "../workspace/engines/registry.js";
 import { openBridge, type ToolAnswer, type ToolSpec } from "./bridge.js";
 import { agentBinary, agentEnv, refreshAgent } from "./detect.js";
+import { copilotEnv } from "./copilot.js";
 import { copilotOutput } from "./copilot-output.js";
 
 export type AgentTurnSpec = {
@@ -33,6 +34,8 @@ export type AgentTurnSpec = {
   prompt: string;
   tools: ToolSpec[];
   maxTurns: number;
+  /** A model's long context window where the agent offers one (GitHub Copilot's `--context long_context`). */
+  context?: "default" | "long_context" | null;
 };
 
 export type AgentTurnResult = { text: string; model: string | null; tokensIn: number | null; tokensOut: number | null; costUsd: number | null };
@@ -376,7 +379,7 @@ const runCursor: Driver = async ({ spec, io, bin, folder, mcp }) => {
 };
 
 /** The arguments for Copilot CLI (exported for tests). Windows caps a command line near 32,000 characters. */
-export function copilotArgs(input: { prompt: string; mcpFile: string; model: string | null; effort: string | null; platform?: NodeJS.Platform }): string[] {
+export function copilotArgs(input: { prompt: string; mcpFile: string; model: string | null; effort: string | null; context?: string | null; platform?: NodeJS.Platform }): string[] {
   const limit = (input.platform ?? process.platform) === "win32" ? 28_000 : 200_000;
   const prompt = input.prompt.length > limit ? input.prompt.slice(input.prompt.length - limit) : input.prompt;
   return [
@@ -395,19 +398,23 @@ export function copilotArgs(input: { prompt: string; mcpFile: string; model: str
     "--deny-tool",
     "url",
     "--disable-builtin-mcps",
+    // Nobody can answer Copilot's own question prompt here; Ensemble's tools carry the conversation.
+    "--no-ask-user",
+    "--no-auto-update",
     "--additional-mcp-config",
     `@${input.mcpFile}`,
     ...(chosen(input.model) ? ["--model", input.model!] : []),
     ...(chosen(input.effort) ? ["--reasoning-effort", input.effort!] : []),
+    ...(input.context === "long_context" ? ["--context", "long_context"] : []),
   ];
 }
 
 const runCopilot: Driver = async ({ spec, io, bin, folder, mcp }) => {
   const mcpFile = join(folder, "mcp.json");
   await writeFile(mcpFile, JSON.stringify({ mcpServers: { ensemble: { type: "local", ...mcp, tools: ["*"] } } }), "utf8");
-  const child = spawn(bin, copilotArgs({ prompt: `${spec.system}\n\n---\n\n${spec.prompt}`, mcpFile, model: spec.model, effort: spec.effort }), {
+  const child = spawn(bin, copilotArgs({ prompt: `${spec.system}\n\n---\n\n${spec.prompt}`, mcpFile, model: spec.model, effort: spec.effort, context: spec.context ?? null }), {
     cwd: folder,
-    env: agentEnv(mcp.env),
+    env: copilotEnv(mcp.env),
     stdio: ["ignore", "pipe", "pipe"],
     detached: process.platform !== "win32",
     windowsHide: true,

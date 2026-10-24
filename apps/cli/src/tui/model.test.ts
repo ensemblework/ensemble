@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { quickRunProfile } from "@ensemble/shared-types";
 import type { Decision, JobCard, Workspace } from "./local.js";
-import { buildItems, chatTurnRequest, commandAnswer, decisionActions, installedAgent, matchCommands, parseCommand, runRequest, titleFrom } from "./model.js";
+import { agentChoiceLabel, buildItems, chatTurnRequest, commandAnswer, copilotNote, copilotOf, copilotProblem, decisionActions, installedAgent, matchCommands, modelEfforts, modelNote, parseCommand, runRequest, titleFrom } from "./model.js";
+import { copilotAgent } from "./testing.js";
 
 const job = (id: string, status: string): JobCard => ({ id, taskId: `t${id}`, title: id, status, kind: "code", folder: "/w", position: null, delivery: "commit", unattended: false, accessMode: "read-write", executionMode: "sandbox" });
 const decision = (id: string, extra: Partial<Decision> = {}): Decision => ({ id, source: "ensemble", event: "permission", toolName: "Bash", title: id, detail: {}, cwd: null, status: "pending", requestedAt: "", ...extra });
@@ -75,5 +76,53 @@ test("with no model key, the agent to chat with is the first one installed (the 
   assert.equal(installedAgent([row("claude", "/u/.local/bin/claude"), row("codex", null, true)]), "claude-code");
   assert.equal(installedAgent([row("claude", null, true), row("codex", null, true)]), "codex", "the Claude app alone does not run Claude Code");
   assert.equal(installedAgent([row("cursor", "/u/.local/bin/cursor-agent")]), "cursor-agent");
-  assert.equal(installedAgent([row("copilot", "/opt/homebrew/bin/copilot")]), null);
+  assert.equal(installedAgent([row("copilot", "/opt/homebrew/bin/copilot")]), "copilot-cli");
+  assert.equal(installedAgent([row("copilot", null)]), null);
+});
+
+test("GitHub Copilot: Chat and /run send the /model choice (model, thinking level, context window); its default sends none", () => {
+  const profile = quickRunProfile();
+  const chosen = chatTurnRequest({ taskId: "t", folder: "/work", message: "go on", profile, engine: "copilot-cli", model: "gpt-5.6-luna", effort: "high", context: "long_context", previousJobId: "j1" });
+  assert.deepEqual(
+    { engine: chosen.engine, model: chosen.model, reasoningEffort: chosen.reasoningEffort, contextTier: chosen.contextTier, chat: chosen.chat, continueFromJobId: chosen.continueFromJobId },
+    { engine: "copilot-cli", model: "gpt-5.6-luna", reasoningEffort: "high", contextTier: "long_context", chat: true, continueFromJobId: "j1" },
+  );
+  const standard = chatTurnRequest({ taskId: "t", folder: "/work", message: "hi", profile, engine: "copilot-cli", model: "gpt-5.6-luna", effort: null, context: null, previousJobId: null });
+  assert.equal(standard.reasoningEffort, undefined);
+  assert.equal(standard.contextTier, undefined);
+  const plain = chatTurnRequest({ taskId: "t", folder: "/work", message: "hi", profile, engine: "copilot-cli", model: null, previousJobId: null });
+  assert.deepEqual([plain.model, plain.reasoningEffort, plain.contextTier], [undefined, undefined, undefined], "Copilot's own default model");
+
+  // A Copilot run profile brings its model, thinking level and context window; a /model choice replaces all three.
+  const copilotProfile = { ...quickRunProfile(), engine: "copilot-cli" as const, model: "claude-opus-4.7", effort: "xhigh" as const, context: "long_context" as const };
+  const fromProfile = runRequest({ taskId: "t", folder: "/work", instructions: "fix it", profile: copilotProfile, engine: null });
+  assert.deepEqual([fromProfile.engine, fromProfile.model, fromProfile.reasoningEffort, fromProfile.contextTier], ["copilot-cli", "claude-opus-4.7", "xhigh", "long_context"]);
+  const picked = runRequest({ taskId: "t", folder: "/work", instructions: "fix it", profile: copilotProfile, engine: "copilot-cli", agent: { model: "gpt-5.6-luna", effort: "low" } });
+  assert.deepEqual([picked.model, picked.reasoningEffort, picked.contextTier], ["gpt-5.6-luna", "low", undefined]);
+  // Other engines' runs are as they were: no thinking level or context window from the profile.
+  const claude = runRequest({ taskId: "t", folder: "/work", instructions: "fix it", profile: { ...copilotProfile, engine: "claude-code", model: "opus" }, engine: null });
+  assert.deepEqual([claude.model, claude.reasoningEffort, claude.contextTier], ["opus", undefined, undefined]);
+});
+
+test("Copilot's sign-in gives its /agent note and whether a message can go to it", () => {
+  assert.equal(copilotNote(copilotOf([copilotAgent()]), true), "your Copilot sign-in (mira-chen)");
+  assert.equal(copilotNote(copilotOf([copilotAgent({ signedIn: false })]), true), "not signed in · run copilot login");
+  assert.equal(copilotNote(copilotOf([]), true), "not found · npm install -g @github/copilot");
+  assert.equal(copilotNote(undefined, true), "your Copilot sign-in", "before the check answers, the copilot command counts");
+  assert.equal(copilotProblem(copilotOf([copilotAgent()])), null);
+  assert.match(copilotProblem(copilotOf([copilotAgent({ signedIn: false })]))!, /run copilot login/);
+  assert.match(copilotProblem(copilotOf([]))!, /npm install -g @github\/copilot/);
+  assert.equal(copilotProblem(copilotOf(null)), null, "no answer: the run says what is wrong");
+});
+
+test("Copilot's models: cost and context sizes as a note, each model's thinking levels, and the choice as a label", () => {
+  const copilot = copilotAgent();
+  const [auto, luna] = copilot.models;
+  assert.equal(modelNote(luna!), "low cost · 200K / 922K context");
+  assert.equal(modelNote(auto!), "");
+  assert.deepEqual(modelEfforts(luna!, copilot), ["none", "low", "medium", "high", "xhigh", "max"]);
+  assert.deepEqual(modelEfforts(auto!, copilotAgent({ efforts: ["low", "high"] })), ["low", "high"], "an older Copilot's levels are for every model");
+  assert.equal(agentChoiceLabel({ model: "gpt-5.6-luna", effort: "high", context: "long_context" }, copilot.models), "GPT-5.6 Luna · high thinking · long context");
+  assert.equal(agentChoiceLabel({ model: null }, copilot.models), "Auto (Copilot picks)");
+  assert.equal(agentChoiceLabel({ model: null }), "default model");
 });

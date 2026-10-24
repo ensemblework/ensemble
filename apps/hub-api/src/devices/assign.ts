@@ -1,7 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { GuardError } from "../workspace/guard.js";
 import { trustFolder } from "./constants.js";
-import { folderLabels } from "./labels.js";
+import { deviceEngines, folderLabels } from "./labels.js";
 import { requireVerifiedUser } from "../lib/hosted-access.js";
 
 const GITHUB = /^(https:\/\/|git@)[\w.@:/~-]+$/;
@@ -21,6 +21,8 @@ export async function deviceAssignment(
     folderLabel?: string;
     repoUrl?: string;
     continueFromJobId?: string;
+    /** A coding agent (CODE_ENGINES) or "ensemble". */
+    engine?: string;
   },
   where: { space: string; runner: string | null } = { space: userId, runner: null },
 ): Promise<{
@@ -34,6 +36,9 @@ export async function deviceAssignment(
   await requireVerifiedUser(userId);
   const device = await prisma.device.findFirst({ where: { id: input.deviceId, userId, revokedAt: null } });
   if (!device) throw new GuardError(where.runner ? "Pick one of your own paired computers." : "That computer is not paired.");
+  if (input.engine && input.engine !== "ensemble" && !deviceEngines(device.capabilities).includes(input.engine)) {
+    throw new GuardError(`Ensemble on ${device.name} is too old to run ${input.engine === "copilot-cli" ? "GitHub Copilot" : input.engine} there. Update it on that computer (\`ensemble update\`, or the desktop app's update), then assign again.`);
+  }
 
   const requested = (input.folderLabel ?? input.folder ?? "").trim();
   let folderLabel: string | null = null;

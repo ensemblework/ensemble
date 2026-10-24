@@ -1,4 +1,5 @@
 /** A stand-in for this computer's runtime, for the app's tests. */
+import type { SubscriptionAgent } from "@ensemble/shared-types";
 import type { Ops } from "./app.js";
 import type { ChatFrame, Decision, LocalApi, Workspace } from "./local.js";
 
@@ -58,10 +59,13 @@ export function fakeApi(
     keys?: string[];
     /** Keys saved on the Ensemble account, which a paired computer uses. */
     accountKeys?: string[];
+    /** The coding agents the runtime's check found (`GET /api/subscriptions`). */
+    localAgents?: SubscriptionAgent[];
   } = {},
 ) {
   const calls: Array<{ what: string; body?: unknown }> = [];
   let decisions = input.decisions ?? [];
+  let localAgents = input.localAgents ?? [];
   let started = 0;
   const steps = new Map(Object.entries(input.runs ?? {}).map(([id, list]) => [id, [...list]]));
   const api = {
@@ -102,6 +106,10 @@ export function fakeApi(
     retryJob: async () => ({ jobId: "again" }),
     models: async () => ({ providers: [], runtime: true }),
     agentApps: async () => ({ available: true, agents: input.agents ?? [] }),
+    localAgents: async (fresh = false) => {
+      calls.push({ what: fresh ? "agents check" : "agents" });
+      return localAgents;
+    },
     // As the runtime answers: every provider, with "none" where there is no key.
     modelKeys: async () => ({
       credentials: ["google", "openai", "anthropic", "mistral", "kimi", "qwen", "openrouter", "copilot", "cursor", "ollama"].map((provider) => ({
@@ -116,7 +124,41 @@ export function fakeApi(
   const ask = (decision: Decision) => {
     decisions = [...decisions, decision];
   };
-  return { api, calls, ask };
+  /** What the runtime's agent check finds from now on (say, after `copilot login`). */
+  const setLocalAgents = (agents: SubscriptionAgent[]) => {
+    localAgents = agents;
+  };
+  return { api, calls, ask, setLocalAgents };
+}
+
+/** GitHub Copilot as the runtime's check reports it, with two of a plan's models. */
+export function copilotAgent(extra: Partial<SubscriptionAgent> = {}): SubscriptionAgent {
+  return {
+    id: "copilot-cli",
+    via: "cli",
+    version: "1.0.4",
+    signedIn: true,
+    account: "mira-chen",
+    models: [
+      { id: "auto", label: "Auto (Copilot picks)", isDefault: true },
+      {
+        id: "gpt-5.6-luna",
+        label: "GPT-5.6 Luna",
+        efforts: ["none", "low", "medium", "high", "xhigh", "max"],
+        contexts: [
+          { id: "default", label: "200K (standard)", tokens: 200_000 },
+          { id: "long_context", label: "922K (long context)", tokens: 922_000 },
+        ],
+        vision: true,
+        cost: "low cost",
+        description: "OpenAI",
+      },
+    ],
+    typedModels: true,
+    problem: null,
+    checkedAt: new Date().toISOString(),
+    ...extra,
+  };
 }
 
 export const ops: Ops = {

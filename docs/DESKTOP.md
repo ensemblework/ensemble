@@ -92,7 +92,7 @@ The default workspace is `~/ensemble-workspace` (`ENSEMBLE_WORKSPACE_ROOT` overr
 
 The Python agent-runtime is not bundled. The sidecar answers model calls in-process (`apps/hub-api/src/runtime/`); `ENSEMBLE_INPROCESS_RUNTIME=0` switches to the Python HTTP runtime. Chat and agent tasks work with a key pasted in Settings → Assistant → Models. Plots export needs the computer's own `python3` with matplotlib.
 
-A GUI app gets the system's bare PATH, so at start the sidecar takes the login shell's PATH and the usual install folders (`apps/hub-api/src/desktop/user-path.ts`, [26](26_CLI.md) §4). Claude Code, Codex, Cursor's agent, git and node are found as in the person's terminal. Their subscriptions and other tools are not bundled.
+A GUI app gets the system's bare PATH, so at start the sidecar takes the login shell's PATH and the usual install folders (`apps/hub-api/src/desktop/user-path.ts`, [26](26_CLI.md) §4). Claude Code, Codex, Cursor's agent, Copilot CLI, git and node are found as in the person's terminal. Their subscriptions and other tools are not bundled.
 
 ### 3.6 Pairing and included models
 

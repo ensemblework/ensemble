@@ -111,7 +111,7 @@ export function levelRange(levels: readonly EffortLevel[]): string {
 }
 
 /** `name`: an included model's name with its version, which is shown instead of the id. */
-type ModelRow = { id: string; name: string | null; cheapest: boolean; levels: EffortLevel[]; unavailable: string | null };
+type ModelRow = { id: string; name: string | null; cheapest: boolean; levels: EffortLevel[]; unavailable: string | null; hint: string | null };
 
 /**
  * The model of a tier: the provider's list for this key, searchable, with the cheapest first and
@@ -124,6 +124,7 @@ export function ModelPicker({
   cheapest,
   meta,
   notes,
+  hints,
   hasKey,
   providerLabel,
   label,
@@ -135,6 +136,8 @@ export function ModelPicker({
   cheapest: string | null;
   meta?: Record<string, ModelMeta>;
   notes?: Record<string, { available: boolean; reason: string | null }>;
+  /** A line under a model: its name, cost and context sizes, where its agent reports them. */
+  hints?: Record<string, string>;
   hasKey: boolean;
   providerLabel: string;
   label: string;
@@ -151,11 +154,12 @@ export function ModelPicker({
       cheapest: id === cheapest,
       levels: modelEfforts(provider, id, meta?.[id]).levels,
       unavailable: notes?.[id]?.available === false ? notes[id]!.reason || "This key cannot use it." : null,
+      hint: hints?.[id] || null,
     }));
     return [...all.filter((row) => row.cheapest), ...all.filter((row) => !row.cheapest)];
-  }, [models, cheapest, provider, meta, notes]);
+  }, [models, cheapest, provider, meta, notes, hints]);
   const needle = query.trim().toLowerCase();
-  const shown = needle ? rows.filter((row) => row.id.toLowerCase().includes(needle) || Boolean(row.name?.toLowerCase().includes(needle))) : rows;
+  const shown = needle ? rows.filter((row) => row.id.toLowerCase().includes(needle) || Boolean(row.name?.toLowerCase().includes(needle)) || Boolean(row.hint?.toLowerCase().includes(needle))) : rows;
   // Included models are a fixed list: a typed name would only be refused.
   const custom = needle && !included && !rows.some((row) => row.id.toLowerCase() === needle) ? query.trim() : null;
   const count = shown.length + (custom ? 1 : 0);
@@ -234,7 +238,7 @@ export function ModelPicker({
                   {row.name ? <ModelLogo model={row.id} provider={provider} /> : null}
                   <span className="min-w-0 flex-1">
                     {row.name ? <span className="block truncate text-[12.5px]">{row.name}</span> : <span className="block truncate font-mono text-[12.5px]">{row.id}</span>}
-                    {row.unavailable ? <span className="block truncate text-[11.5px] text-warn">{row.unavailable}</span> : null}
+                    {row.unavailable ? <span className="block truncate text-[11.5px] text-warn">{row.unavailable}</span> : row.hint ? <span className="block truncate text-[11.5px] text-faint">{row.hint}</span> : null}
                   </span>
                   {row.name ? <CostBadge id={row.id} /> : row.cheapest ? <span className="picker-badge">cheapest</span> : null}
                   {row.levels.length ? <span className="shrink-0 text-[11px] text-faint">{levelRange(row.levels)}</span> : null}
@@ -279,6 +283,7 @@ export function ThinkingPicker({
   providerLabel,
   model,
   meta,
+  fallback,
   value,
   onChange,
   label,
@@ -287,11 +292,15 @@ export function ThinkingPicker({
   providerLabel: string;
   model: string;
   meta?: ModelMeta | null;
+  /** The model's own default level, where its agent reports it (GitHub Copilot). */
+  fallback?: string | null;
   value: string;
   onChange: (value: string) => void;
   label: string;
 }) {
-  const known = modelEfforts(provider, model, meta);
+  const listed = modelEfforts(provider, model, meta);
+  const reported = fallback && (listed.levels as string[]).includes(fallback) ? (fallback as EffortLevel) : null;
+  const known = listed.fallback || !reported ? listed : { ...listed, fallback: reported };
   // An included model without levels still offers Auto, its one choice.
   const included = provider === INCLUDED_PROVIDER && Boolean(includedModel(model));
   if (!known.levels.length && !included) {

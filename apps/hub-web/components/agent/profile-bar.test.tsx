@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
-import { RunProfile } from "@ensemble/shared-types";
-import { ProfileBar } from "./assign-dialog.js";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { CODE_ENGINES, RunProfile, Settings } from "@ensemble/shared-types";
+import { AssignDialog, ProfileBar } from "./assign-dialog.js";
 
 (globalThis as { React?: typeof React }).React = React;
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -88,4 +89,78 @@ test("every saved profile has a star; the default's is pressed and another's mak
   assert.deepEqual(picked, ["away"]);
   act(() => root.unmount());
   host.remove();
+});
+
+test("GitHub Copilot on a paired computer offers its models, thinking levels and context windows, and Assign sends them", async () => {
+  const luna = { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", efforts: ["none", "low", "medium", "high", "xhigh", "max"], defaultEffort: "medium", contexts: [{ id: "default", label: "200K (standard)", tokens: 200000 }, { id: "long_context", label: "922K (long context)", tokens: 922000 }], vision: true, cost: "low cost", description: "OpenAI" };
+  const haiku = { id: "claude-haiku-4.5", label: "Claude Haiku 4.5", contexts: [{ id: "default", label: "136K", tokens: 136000 }], cost: "0.33× premium requests", description: "Anthropic" };
+  const copilot = { id: "copilot-cli", via: "cli", version: "1.0.40", signedIn: false, account: null, models: [{ id: "auto", label: "Auto", isDefault: true }, luna, haiku], checkedAt: "2026-10-20T09:00:00.000Z" };
+  const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } });
+  const sent: Array<{ path: string; body: Record<string, unknown> }> = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input);
+    if (init?.method === "POST") {
+      sent.push({ path, body: JSON.parse(String(init.body)) });
+      return json({ jobId: "job-1" });
+    }
+    if (path === "/api/settings") return json({ settings: Settings.parse({}) });
+    if (path === "/api/tasks/task-1") return json({ task: { id: "task-1", title: "Fix the flaky test", status: "todo", complexity: "medium" } });
+    if (path === "/api/devices") return json({ serverRunner: false, devices: [{ id: "device-1", name: "Studio Mac", platform: "macos", appVersion: "cli-0.5.0", capabilities: { engines: [...CODE_ENGINES] }, folders: [], runBranchPush: false, lastSeenAt: null, createdAt: "2026-10-01T09:00:00.000Z" }] });
+    if (path === "/api/subscriptions") return json({ preferred: null, computers: [{ id: "device-1", name: "Studio Mac", platform: "macos", local: false, online: true, lastSeenAt: null, appVersion: "cli-0.5.0", ready: true, agents: [copilot] }] });
+    return json({ error: "not found" }, 404);
+  }) as typeof fetch;
+  window.localStorage.clear();
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { gcTime: Infinity } } });
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  const settle = async () => {
+    for (let i = 0; i < 6; i += 1) await act(async () => { await wait(15); });
+  };
+  const select = (label: string) => document.querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`)!;
+  const choose = async (label: string, value: string) => {
+    await act(async () => {
+      const node = select(label);
+      node.value = value;
+      node.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await settle();
+  };
+  const options = (label: string) => [...select(label).options].map((option) => option.textContent);
+  try {
+    await act(async () => root.render(<QueryClientProvider client={client}><AssignDialog open onClose={() => {}} taskId="task-1" defaultKind="code" /></QueryClientProvider>));
+    await settle();
+    assert.ok(options("Who does the work").includes("GitHub Copilot (your sign-in)"));
+    await choose("Who does the work", "copilot-cli");
+    assert.deepEqual(options("Copilot model"), ["Copilot default (Auto)", "Auto", "GPT-5.6 Luna", "Claude Haiku 4.5"]);
+    assert.equal(select("Copilot thinking"), null, "Auto has no thinking levels");
+    assert.match(document.querySelector('[data-testid="copilot-signed-out"]')?.textContent ?? "", /Copilot CLI is not signed in on Studio Mac: run copilot login there or press Sign in under Settings → Models\./);
+
+    await choose("Copilot model", "gpt-5.6-luna");
+    assert.deepEqual(options("Copilot thinking"), ["Default (Medium)", "Off", "Low", "Medium", "High", "Extra high", "Max"]);
+    assert.deepEqual(options("Context window"), ["Standard · 200K (standard)", "Long context · 922K (long context)"]);
+    assert.equal(document.querySelector('[data-testid="copilot-model-facts"]')?.textContent, "OpenAI · low cost · 200K or 922K context");
+    await choose("Copilot thinking", "xhigh");
+    await choose("Context window", "long_context");
+
+    await choose("Copilot model", "claude-haiku-4.5");
+    assert.equal(select("Copilot thinking"), null);
+    assert.equal(select("Context window"), null, "one fixed size: no choice");
+    await choose("Copilot model", "gpt-5.6-luna");
+    assert.equal(select("Copilot thinking").value, "default", "Haiku dropped the level it lacks");
+    await choose("Copilot thinking", "high");
+    await choose("Context window", "long_context");
+
+    const assign = [...document.querySelectorAll<HTMLButtonElement>("button.btn-primary")].find((node) => node.textContent?.includes("Assign"))!;
+    await act(async () => assign.click());
+    await settle();
+    const body = sent.find((row) => row.path === "/api/agent/assign")?.body;
+    assert.deepEqual([body?.engine, body?.model, body?.reasoningEffort, body?.contextTier, body?.deviceId, body?.provider], ["copilot-cli", "gpt-5.6-luna", "high", "long_context", "device-1", undefined]);
+  } finally {
+    await act(async () => root.unmount());
+    host.remove();
+    client.clear();
+    globalThis.fetch = realFetch;
+  }
 });

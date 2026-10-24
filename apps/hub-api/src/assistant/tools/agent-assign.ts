@@ -5,7 +5,7 @@
  * (docs/25). The assistant never runs commands itself.
  */
 import { z } from "zod";
-import { pickRunProfile, type RunProfile } from "@ensemble/shared-types";
+import { CODE_ENGINES, pickRunProfile, type RunProfile } from "@ensemble/shared-types";
 import { deviceOnline, serverRunnerEnabled } from "../../devices/constants.js";
 import { folderLabels } from "../../devices/labels.js";
 import { isPaused } from "../../lib/activity.js";
@@ -14,7 +14,7 @@ import { Assign, createJob } from "../../workspace/assign.js";
 import { defineTool, toolOk, ToolBlockedError, type ToolContext } from "../types.js";
 import { engineName, profileLine } from "./code.js";
 
-const Engine = z.enum(["ensemble", "claude-code", "codex", "cursor-agent"]);
+const Engine = z.enum(["ensemble", ...CODE_ENGINES]);
 const PAIR_A_COMPUTER = "Pair a computer first: Settings → Connected computers (/settings?tab=connections#devices), or install the desktop app or the CLI and sign in.";
 
 type Computer = { id: string; name: string; platform: string; online: boolean; folders: string[] };
@@ -85,7 +85,7 @@ const AssignInput = z
       .max(100)
       .optional()
       .describe("A paired computer's name or id when the person names one; \"any\" when they say to run it on their computer, laptop or machine without naming it. Leave out to follow the profile."),
-    agent: Engine.optional().describe("Only when the person names who should do the work: ensemble (Ensemble's agent), claude-code, codex or cursor-agent. Leave out to follow the profile."),
+    agent: Engine.optional().describe("Only when the person names who should do the work: ensemble (Ensemble's agent), claude-code, codex, cursor-agent or copilot-cli (GitHub Copilot). Leave out to follow the profile."),
     mode: z.enum(["ask", "review", "unattended"]).optional().describe("Only when the person says: ask (asks before commands), review (asks only for decisions), unattended."),
     repoUrl: z.string().max(500).optional().describe("A repository to clone and work in (https URL or owner/repo), e.g. from the task's page."),
     folder: z.string().max(200).optional().describe("One of the computer's shared folder names (hub_list_agent_options). Never a path."),
@@ -116,7 +116,8 @@ async function plan(ctx: ToolContext, input: AssignInput): Promise<Plan> {
     kind,
     engine,
     ...(model && engine === profile.engine ? (engine === "ensemble" ? { ...(provider ? { provider } : {}), model: modelId } : { model }) : {}),
-    ...(engine === "ensemble" && profile.effort !== "default" ? { reasoningEffort: profile.effort } : {}),
+    ...((engine === "ensemble" || engine === "copilot-cli") && profile.effort !== "default" && engine === profile.engine ? { reasoningEffort: profile.effort } : {}),
+    ...(engine === "copilot-cli" && engine === profile.engine && profile.context ? { contextTier: profile.context } : {}),
     instructions: [profile.instructions, input.instructions].filter((part) => part?.trim()).join("\n\n"),
     markDone: profile.markDone,
     network: profile.network,

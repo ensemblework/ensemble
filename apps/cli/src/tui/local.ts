@@ -2,7 +2,7 @@
  * The interactive app's view of this computer's Ensemble (the same runtime the desktop app
  * uses): agent runs, Needs me, settings and run profiles, models, and Ensemble Code chat.
  */
-import type { RunProfile } from "@ensemble/shared-types";
+import type { RunProfile, SubscriptionAgent } from "@ensemble/shared-types";
 import type { Discovery } from "../sidecar.js";
 
 export type JobCard = {
@@ -138,6 +138,14 @@ export class LocalApi {
   guard = () => this.json<{ root: string; sandbox: { mechanism: string; osSandbox: boolean; strength: string; reason?: string } }>("/api/workspace/guard");
   agentApps = () => this.json<{ available: boolean; agents: Array<{ id: string; name: string; app: boolean; cli: string | null }> }>("/api/agent/apps");
   modelKeys = () => this.json<{ credentials: Array<{ provider: string; source: string; hint?: string | null }> }>("/api/model-keys");
+  /**
+   * The coding agents this computer's runtime found, with their sign-in and models (the same check
+   * the web's Settings → Models shows). `fresh` checks again instead of using the last answer.
+   */
+  localAgents = (fresh = false): Promise<SubscriptionAgent[] | null> =>
+    fresh
+      ? this.json<{ agents?: SubscriptionAgent[] }>("/api/subscriptions/check", { method: "POST", body: { deviceId: "local" } }).then((body) => body.agents ?? null)
+      : this.json<{ computers?: Array<{ local?: boolean; agents?: SubscriptionAgent[] }> }>("/api/subscriptions").then((body) => body.computers?.find((computer) => computer.local)?.agents ?? null);
 
   /** One Ensemble Code turn, streamed: each frame as it comes. Resolves when the turn is done. */
   async chat(body: { conversationId?: string; message: string; model?: string; provider?: string; code: CodeSession }, onFrame: (frame: ChatFrame) => void, signal: AbortSignal): Promise<void> {

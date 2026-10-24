@@ -116,6 +116,8 @@ export const JobSpec = z
     provider: text(100).nullish(),
     model: text(200).nullish(),
     reasoningEffort: text(200).nullish(),
+    /** The model's context window where it offers more than one (GitHub Copilot's long_context). */
+    contextTier: z.enum(["default", "long_context"]).nullish(),
     unattended: z.boolean().default(false),
     /** Ask, Review only or Run unattended. Older servers send only `unattended`. */
     mode: z.enum(["ask", "review", "unattended"]).nullish(),

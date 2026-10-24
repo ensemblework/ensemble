@@ -27,7 +27,7 @@ export function includedNotice(code: string | null | undefined, message: string)
   }
   if (!isIncludedErrorCode(code)) return null;
   if (code === INCLUDED_CREDITS_USED || code === INCLUDED_PAUSED) {
-    return { title: "Ensemble credits", text: message, hint: "Your own keys still work: /keys, or chat with Claude Code, Codex or Cursor: /agent.", tone: "warn" };
+    return { title: "Ensemble credits", text: message, hint: "Your own keys still work: /keys, or chat with Claude Code, Codex, Cursor or GitHub Copilot: /agent.", tone: "warn" };
   }
   return { title: "Included with Ensemble", text: message, hint: "Add your own key with /keys, or pick another model with /model.", tone: "accent" };
 }

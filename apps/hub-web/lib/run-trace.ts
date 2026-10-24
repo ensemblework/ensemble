@@ -1,6 +1,6 @@
 /**
  * A run's steps as a trace: what the harness did, in order, with each tool call's input, output and
- * time. Steps come from four writers (Ensemble's agent, Claude Code, Codex, Cursor) and from paired
+ * time. Steps come from five writers (Ensemble's agent, Claude Code, Codex, Cursor, GitHub Copilot) and from paired
  * computers, so the shapes differ a little; everything here reads them leniently.
  */
 import type { RunStep, RunToolCall } from "./api";

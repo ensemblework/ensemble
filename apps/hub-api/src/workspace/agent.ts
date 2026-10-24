@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import type { PrismaClient } from "@prisma/client";
-import { hasModule, type Settings } from "@ensemble/shared-types";
+import { ENGINE_LABELS, hasModule, isCodeEngine, type Settings } from "@ensemble/shared-types";
 import { PageDocument } from "@ensemble/shared-types";
 import { beginActivity, endActivity, heartbeat, isCancelled, isPaused, updateActivity } from "../lib/activity.js";
 import { appendLedger } from "../lib/ledger.js";
@@ -40,12 +40,14 @@ import { runClaudeCode } from "./engines/claude-code.js";
 import { EngineTrace, outputPreview, preview, TRACE_PREVIEW } from "./engines/trace.js";
 import { runCodex } from "./engines/codex.js";
 import { runCursor } from "./engines/cursor.js";
+import { runCopilot } from "./engines/copilot.js";
+import { cachedAgents } from "../subscriptions/detect.js";
 import { SessionGoneError } from "./engines/registry.js";
 import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
 import { runCommand } from "./runner.js";
 import { interruptionMessage } from "./lifecycle.js";
 import { appendLive, dropLive } from "./live-log.js";
-import { checkModeTrust, isChatTurn, isFolderTrusted, outsideAccessOf, pathCovers, PATH_RULE_SOURCE, PATH_RULE_TOOL, REVIEW_MESSAGE, rulesForJob, runModeOf, TRUST_TOOL, UNATTENDED_MESSAGE, type SandboxStrength } from "./trust.js";
+import { checkModeTrust, contextTierOf, isChatTurn, isFolderTrusted, outsideAccessOf, pathCovers, PATH_RULE_SOURCE, PATH_RULE_TOOL, REVIEW_MESSAGE, rulesForJob, runModeOf, TRUST_TOOL, UNATTENDED_MESSAGE, type SandboxStrength } from "./trust.js";
 import { trustChanged } from "./trust-share.js";
 import { askPerson, chatSpecs, outsideReadAllowed, plantedIn, realOutside, refTips, responsesSpecs, runTool, toolSpecs, undoUnapprovedCommits, type JobContext } from "./tools.js";
 
@@ -690,9 +692,9 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
     ];
     await ctx.progress("Thinking");
 
-    // Another coding agent as the engine (the person's own Claude Code or Codex): its tool calls are judged by this run's rules.
-    const engine = job.kind === "code" && (job.provider === "claude-code" || job.provider === "codex" || job.provider === "cursor-agent");
-    const engineName = job.provider === "codex" ? "Codex" : job.provider === "cursor-agent" ? "Cursor" : "Claude Code";
+    // Another coding agent as the engine (the person's own Claude Code, Codex, Cursor or Copilot): its tool calls are judged by this run's rules.
+    const engine = job.kind === "code" && isCodeEngine(job.provider);
+    const engineName = isCodeEngine(job.provider) ? ENGINE_LABELS[job.provider] : "Claude Code";
     if (engine) {
       // Local only: a commit made any way (a script, say) is undone at the end. Commits the run may make were judged as they happened.
       const watch = job.delivery === "local" ? await refTips(ctx) : null;
@@ -714,14 +716,28 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
         enginePromptText = enginePrompt(ctx, user?.name || "the person", await brief(app, ctx, settings, files, copies));
       }
       // Held here so the steps of a run that stops or fails before the engine returns are closed too.
-      engineTrace = new EngineTrace(ctx, job.provider === "cursor-agent" ? "cursor" : job.provider!);
+      engineTrace = new EngineTrace(ctx, job.provider === "cursor-agent" ? "cursor" : job.provider === "copilot-cli" ? "copilot" : job.provider!);
       const trace = engineTrace;
+      const copilotModel = job.provider === "copilot-cli" ? (cachedAgents() ?? []).find((agent) => agent.id === "copilot-cli")?.models.find((row) => row.id === job.model) : undefined;
       const runEngine = (prompt: string, session: string | null) =>
         job.provider === "codex"
           ? runCodex(ctx, { prompt, model: job.model, stopCheck, resume: session, chat, trace })
           : job.provider === "cursor-agent"
             ? runCursor(ctx, { prompt, model: job.model, stopCheck, resume: session, chat, trace })
-            : runClaudeCode(ctx, { prompt, model: job.model, maxTurns: job.maxTurns, stopCheck, resume: session, chat, trace });
+            : job.provider === "copilot-cli"
+              ? runCopilot(ctx, {
+                  prompt,
+                  model: job.model,
+                  effort: job.reasoningEffort,
+                  context: contextTierOf(job.context),
+                  attachments: session ? [] : [...(copies?.paths.values() ?? [])],
+                  vision: copilotModel?.vision !== false,
+                  stopCheck,
+                  resume: session,
+                  chat,
+                  trace,
+                })
+              : runClaudeCode(ctx, { prompt, model: job.model, maxTurns: job.maxTurns, stopCheck, resume: session, chat, trace });
       let ran: Awaited<ReturnType<typeof runEngine>>;
       try {
         ran = await runEngine(enginePromptText, resume);
