@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { agentChanges, parseNumstat, parseRaw, parseStatus } from "./changed-files.js";
-import { folderPath, listFolder, readFolderFile, refusedPath } from "./folder-read.js";
+import { folderPath, listFolder, readChangedFile, readFolderFile, refusedPath } from "./folder-read.js";
 
 process.env.REDIS_URL ??= "memory://local";
 const { changedFileUploads, uploadChangedFiles } = await import("../remote/files.js");
@@ -241,4 +241,21 @@ test("the relay sends files.request to the device's stream and returns its answe
   } finally {
     stop();
   }
+});
+
+test("a file a run changed outside its folder is read only as the run listed it, never a key behind a link", async () => {
+  const home = realpathSync(mkdtempSync(join(tmpdir(), "ensemble-home-")));
+  const run = join(home, "ensemble-workspace", "runs", "job");
+  mkdirSync(run, { recursive: true });
+  mkdirSync(join(home, "notes", "docs"), { recursive: true });
+  mkdirSync(join(home, ".ssh"), { recursive: true });
+  writeFileSync(join(home, "notes", "docs", "plan.md"), "# Plan\n");
+  writeFileSync(join(home, "notes", "other.md"), "not changed by the run\n");
+  writeFileSync(join(home, ".ssh", "id_ed25519"), "PRIVATE");
+  symlinkSync(join(home, ".ssh", "id_ed25519"), join(home, "notes", "leak.md"));
+  const listed = ["~/notes/docs/plan.md", "~/notes/leak.md", "~/../etc/passwd"];
+  assert.equal((await readChangedFile(run, listed, "~/notes/docs/plan.md", undefined, home)).content, "# Plan\n");
+  await assert.rejects(readChangedFile(run, listed, "~/notes/other.md", undefined, home), /not one this run changed/);
+  await assert.rejects(readChangedFile(run, listed, "~/notes/leak.md", undefined, home), /keys|not shown/);
+  await assert.rejects(readChangedFile(run, listed, "~/../etc/passwd", undefined, home), /outside|not shown|off limits/);
 });

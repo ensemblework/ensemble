@@ -26,6 +26,7 @@ import { decisionRoutes } from "../routes/decisions.js";
 import "../types.js";
 import { runRoutes } from "../routes/runs.js";
 import { recoverServerJobs, tickServerQueue } from "../workspace/worker.js";
+import { saveSettings } from "../lib/settings.js";
 import { deviceRoutes } from "./routes.js";
 
 async function databaseReady(): Promise<boolean> {
@@ -1701,6 +1702,152 @@ test("resume wakes a computer that has a queued job", async (t) => {
     assert.deepEqual(queued.map((frame) => frame.data), [{ id: jobId }]);
   } finally {
     stop();
+    await app.close();
+    await cleanup(user.id);
+  }
+});
+
+test("after an outage: a run that kept going reattaches, a run lost to a restart is carried on at most twice, a freed slot wakes the computer, and a computer paired again keeps its runs", async (t) => {
+  if (!(await databaseReady())) return t.skip("Postgres is not reachable");
+  const user = await prisma.user.create({
+    data: { email: `recover-${Date.now()}-${randomBytes(3).toString("hex")}@ensemble.test`, name: "Recover" },
+  });
+  const frames: Array<{ channel: string; event: string; data: Record<string, unknown> }> = [];
+  const stop = sseHub.onFrame(({ userId, frame }) => {
+    frames.push({ channel: userId, event: frame.event, data: frame.data as Record<string, unknown> });
+  });
+  const app = Fastify();
+  app.decorate("prisma", prisma);
+  app.decorate("redis", { get: async () => null, set: async () => "OK", del: async () => 1, sadd: async () => 1 } as unknown as Redis);
+  install(app);
+  await app.register(deviceRoutes);
+  await app.register(agentRoutes);
+  const session = await sessionFor(user.id);
+  const pair = async (name: string, installId: string) => {
+    const paired = await app.inject({ method: "POST", url: "/api/devices/pair", headers: cookie(session) });
+    const registered = await app.inject({
+      method: "POST",
+      url: "/api/devices/register",
+      payload: { code: (paired.json() as { code: string }).code, name, platform: "linux", capabilities: { installId } },
+    });
+    assert.equal(registered.statusCode, 201);
+    return registered.json() as { token: string; device: { id: string } };
+  };
+  try {
+    const home = await pair("Home server", "install-1");
+    const task = await prisma.task.create({ data: { userId: user.id, title: "Outage", createdBy: "me", status: "todo" } });
+    const assign = async () => {
+      const assigned = await app.inject({ method: "POST", url: "/api/agent/assign", headers: cookie(session), payload: { taskId: task.id, kind: "code", deviceId: home.device.id, repoUrl: "octocat/Hello-World", instructions: "work" } });
+      assert.equal(assigned.statusCode, 201);
+      return (assigned.json() as { jobId: string }).jobId;
+    };
+    const claim = async () => {
+      const claimed = await app.inject({ method: "POST", url: "/api/devices/self/claim", headers: bearer(home.token) });
+      assert.equal(claimed.statusCode, 200);
+      return claimed.json() as { id: string; leaseToken: string; continueFromJobId?: string | null; resume?: { reason: string; attempt: number } };
+    };
+    const expire = async (jobId: string) => {
+      await prisma.workspaceJob.update({ where: { id: jobId }, data: { leaseUntil: new Date(Date.now() - 5_000) } });
+      assert.equal(await sweepExpiredDeviceLeases(app), 1);
+    };
+    const post = (jobId: string, route: string, payload: Record<string, unknown>) => app.inject({ method: "POST", url: `/api/devices/self/jobs/${jobId}/${route}`, headers: bearer(home.token), payload });
+
+    // The computer lost its connection while the run kept going: its next post is refused, it reattaches and finishes.
+    const kept = await assign();
+    const keptSpec = await claim();
+    await expire(kept);
+    assert.equal((await post(kept, "progress", { leaseToken: keptSpec.leaseToken, status: "running", progress: "late" })).statusCode, 409);
+    const back = await post(kept, "reattach", { leaseToken: keptSpec.leaseToken, status: "running" });
+    assert.equal(back.statusCode, 200, back.body);
+    const lease = (back.json() as { leaseToken: string }).leaseToken;
+    const revived = await prisma.workspaceJob.findUniqueOrThrow({ where: { id: kept } });
+    assert.equal(revived.status, "running");
+    assert.equal(revived.error, null);
+    assert.equal(revived.finishedAt, null);
+    assert.equal(await prisma.workspaceEvent.count({ where: { jobId: kept, kind: "reconnected" } }), 1);
+    frames.length = 0;
+    const queuedMeanwhile = await assign();
+    assert.equal((await post(kept, "complete", { leaseToken: lease, outcome: "succeeded", summary: "done offline" })).statusCode, 200);
+    assert.equal((await prisma.workspaceJob.findUniqueOrThrow({ where: { id: kept } })).status, "succeeded");
+    assert.ok(frames.some((frame) => frame.event === "job.queued" && frame.channel === `device:${home.device.id}`), "a finished run wakes the computer for queued work");
+    await prisma.workspaceJob.update({ where: { id: queuedMeanwhile }, data: { status: "cancelled", finishedAt: new Date() } });
+
+    // A run stopped on the web is not taken back.
+    const stopped = await assign();
+    const stoppedSpec = await claim();
+    await expire(stopped);
+    await prisma.workspaceJob.update({ where: { id: stopped }, data: { cancelRequestedAt: new Date() } });
+    const refusedBack = await post(stopped, "reattach", { leaseToken: stoppedSpec.leaseToken, status: "running" });
+    assert.equal(refusedBack.statusCode, 409);
+    assert.match((refusedBack.json() as { error: string }).error, /stopped on the web/);
+
+    // The computer restarted before the lease ran out: the run is carried on, in the same chain, twice at most.
+    const lost = await assign();
+    const lostSpec = await claim();
+    const first = await post(lost, "resume", { leaseToken: lostSpec.leaseToken, reason: "the computer restarted" });
+    assert.equal(first.statusCode, 201, first.body);
+    assert.equal((await prisma.workspaceJob.findUniqueOrThrow({ where: { id: lost } })).status, "interrupted");
+    const carried = await claim();
+    assert.equal(carried.id, (first.json() as { jobId: string }).jobId);
+    assert.equal(carried.continueFromJobId, lost);
+    assert.deepEqual(carried.resume, { reason: "the computer restarted", attempt: 1 });
+    await expire(carried.id);
+    const second = await post(carried.id, "resume", { leaseToken: carried.leaseToken, reason: "power cut" });
+    assert.equal(second.statusCode, 201, second.body);
+    const again = await claim();
+    assert.equal(again.resume?.attempt, 2);
+    await expire(again.id);
+    const third = await post(again.id, "resume", { leaseToken: again.leaseToken, reason: "power cut" });
+    assert.equal(third.statusCode, 409);
+    assert.match((third.json() as { error: string }).error, /cut off 3 times/);
+    assert.equal((await prisma.workspaceJob.findUniqueOrThrow({ where: { id: again.id } })).status, "interrupted");
+    assert.equal((await post(lost, "resume", { leaseToken: lostSpec.leaseToken, reason: "x" })).statusCode, 409, "an interrupted run already carried on is not carried on twice");
+
+    // Signed out and paired again: the same installation is the same computer, and its earlier runs show on it.
+    assert.equal((await app.inject({ method: "DELETE", url: `/api/devices/${home.device.id}`, headers: cookie(session) })).statusCode, 204);
+    const elsewhere = await pair("Laptop", "install-2");
+    const rehome = await pair("Home server (renamed)", "install-1");
+    const shown = await app.inject({ method: "GET", url: `/api/agent/jobs/${kept}`, headers: cookie(session) });
+    const card = (shown.json() as { job: { deviceId: string; deviceRevoked: boolean; deviceName: string } }).job;
+    assert.equal(card.deviceId, rehome.device.id);
+    assert.equal(card.deviceRevoked, false);
+    assert.notEqual(card.deviceId, elsewhere.device.id);
+  } finally {
+    stop();
+    await app.close();
+    await cleanup(user.id);
+  }
+});
+
+test("an assignment on a Settings tier's own model takes the tier's thinking level and context window; another engine takes neither", async (t) => {
+  if (!(await databaseReady())) return t.skip("Postgres is not reachable");
+  const user = await prisma.user.create({ data: { email: `tier-${Date.now()}-${randomBytes(3).toString("hex")}@ensemble.test`, name: "Tier" } });
+  const app = Fastify();
+  app.decorate("prisma", prisma);
+  app.decorate("redis", { get: async () => null, set: async () => "OK", del: async () => 1, sadd: async () => 1 } as unknown as Redis);
+  install(app);
+  await app.register(deviceRoutes);
+  await app.register(agentRoutes);
+  const session = await sessionFor(user.id);
+  try {
+    await saveSettings(prisma, user.id, { models: { high: { provider: "copilot-cli", model: "gpt-6.1-sol", effort: "xhigh", context: "long_context" } } });
+    const paired = await app.inject({ method: "POST", url: "/api/devices/pair", headers: cookie(session) });
+    const registered = await app.inject({ method: "POST", url: "/api/devices/register", payload: { code: (paired.json() as { code: string }).code, name: "Box", platform: "linux", capabilities: { engines: ["claude-code", "codex", "cursor-agent", "copilot-cli"] } } });
+    const device = (registered.json() as { device: { id: string } }).device;
+    const task = await prisma.task.create({ data: { userId: user.id, title: "Tiered", createdBy: "me", status: "todo", complexity: "high" } });
+    const onTier = await app.inject({ method: "POST", url: "/api/agent/assign", headers: cookie(session), payload: { taskId: task.id, kind: "code", deviceId: device.id, instructions: "x" } });
+    assert.equal(onTier.statusCode, 201, onTier.body);
+    const tiered = await prisma.workspaceJob.findUniqueOrThrow({ where: { id: (onTier.json() as { jobId: string }).jobId } });
+    assert.equal(tiered.provider, "copilot-cli");
+    assert.equal(tiered.model, "gpt-6.1-sol");
+    assert.equal(tiered.reasoningEffort, "xhigh");
+    assert.equal((tiered.context as { contextTier?: string }).contextTier, "long_context");
+    const other = await app.inject({ method: "POST", url: "/api/agent/assign", headers: cookie(session), payload: { taskId: task.id, kind: "code", deviceId: device.id, engine: "claude-code", instructions: "x" } });
+    assert.equal(other.statusCode, 201, other.body);
+    const claude = await prisma.workspaceJob.findUniqueOrThrow({ where: { id: (other.json() as { jobId: string }).jobId } });
+    assert.equal(claude.reasoningEffort, null, "a Copilot tier's level is not Claude Code's");
+    assert.equal((claude.context as { contextTier?: string }).contextTier, undefined);
+  } finally {
     await app.close();
     await cleanup(user.id);
   }

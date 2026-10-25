@@ -11,7 +11,7 @@
  */
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
-import { appendLive } from "../live-log.js";
+import { appendLive, touchLive } from "../live-log.js";
 import { hostExecutable } from "../policy.js";
 import { askPerson, type JobContext } from "../tools.js";
 import type { EngineResult } from "./claude-code.js";
@@ -189,7 +189,10 @@ export async function runCursor(
     })().catch(() => undefined);
   };
   const lines = createInterface({ input: child.stdout });
-  lines.on("line", (line) => void rpc.receive(line));
+  lines.on("line", (line) => {
+    touchLive(ctx.job.id);
+    void rpc.receive(line);
+  });
   child.stderr.on("data", (chunk: Buffer) => {
     stderr = (stderr + chunk.toString("utf8")).slice(-4000);
   });

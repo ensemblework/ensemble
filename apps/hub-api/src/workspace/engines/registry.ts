@@ -25,6 +25,26 @@ export class SessionGoneError extends Error {
 export function mcpEnv(credential: string, chat: boolean): Record<string, string> {
   return { ENSEMBLE_ENGINE_URL: localApiUrl(), ENSEMBLE_RUN: credential, ...(chat ? { ENSEMBLE_CHAT: "1" } : {}) };
 }
+/**
+ * The engine could not start or carry on for a reason that passes: the system keychain was locked
+ * right after a restart, the network or the provider's servers were down. The run waits and tries
+ * again (agent.ts) instead of failing with a wrong diagnosis.
+ */
+export class EngineTransientError extends Error {
+  constructor(
+    message: string,
+    /** What to tell the person if every retry fails. */
+    readonly finalMessage = message,
+  ) {
+    super(message);
+    this.name = "EngineTransientError";
+  }
+}
+
+/** What an engine says when it has no usable sign-in. A bare "auth" in an error (OAuth for an MCP server, say) is not one. */
+export const SIGNED_OUT = /authentication required|not (logged|signed) in|please (log|sign) ?in|unauthori[sz]ed|\b401\b|copilot login|no authentication available/i;
+/** The network or GitHub's servers, not the person's account. */
+export const UNREACHABLE = /ECONN(RESET|REFUSED|ABORTED)|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|fetch failed|socket hang up|network (error|is unreachable)|timed? ?out|\b(502|503|504)\b|service unavailable|rate.?limit|\b429\b/i;
 const runs = new Map<string, Run>();
 let localPort = 0;
 

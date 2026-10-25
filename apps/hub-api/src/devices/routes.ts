@@ -39,6 +39,8 @@ import { publishBrowserDevice, publishDevice } from "./publish.js";
 import { revokePairedDevice } from "./revoke.js";
 import { contextTierOf, outsideAccessOf } from "../workspace/trust.js";
 import { pullRequestOf } from "../workspace/pull-request.js";
+import { resumeOf } from "../workspace/repeat.js";
+import { reattachJob, resumeJob } from "./recover.js";
 import { contextForPrompt } from "../connectors/items/index.js";
 import { fileOriginal, filesOnTask, filesSection } from "../files/attached.js";
 import { diagramIds, pageAgentText } from "../pages/agent-context.js";
@@ -479,6 +481,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
         maxTurns: next.maxTurns,
         maxToolCalls: next.maxToolCalls,
         attempt: next.attempt + 1,
+        ...(resumeOf(next.context) ? { resume: resumeOf(next.context) } : {}),
       };
     }
     return reply.code(204).send();
@@ -672,6 +675,27 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     const ok = await finishDeviceJob(prisma, held.job, { outcome: body.outcome, summary: body.summary, results, totals: body.totals });
     if (!ok) return reply.code(409).send({ error: LEASE_REJECTED });
     return { status: body.outcome };
+  });
+
+  // After an outage (protocol 5, recover.ts): a run still going here gets a new lease; a run lost to a restart is carried on.
+  app.post("/api/devices/self/jobs/:id/reattach", async (request, reply) => {
+    const device = await ownDevice(app, request, reply);
+    if (!device) return;
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const body = z.object({ leaseToken: z.string().min(1).max(200), status: z.enum(["running", "waiting_approval", "finished"]) }).parse(request.body);
+    const result = await reattachJob(prisma, device, id, body);
+    if (!result.ok) return reply.code(result.status).send({ error: result.error });
+    return { leaseToken: result.leaseToken, leaseUntil: result.leaseUntil.toISOString() };
+  });
+
+  app.post("/api/devices/self/jobs/:id/resume", async (request, reply) => {
+    const device = await ownDevice(app, request, reply);
+    if (!device) return;
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const body = z.object({ leaseToken: z.string().min(1).max(200), reason: z.string().max(300).default("") }).parse(request.body);
+    const result = await resumeJob(prisma, app.redis, device, id, body);
+    if (!result.ok) return reply.code(result.status).send({ error: result.error });
+    return reply.code(201).send({ jobId: result.jobId });
   });
 
   // The text of the files a run changed (protocol 3), sent before complete while the lease is held.

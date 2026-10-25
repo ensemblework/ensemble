@@ -9,12 +9,12 @@
  * writes cannot reach outside its folder either.
  */
 import { lstat, mkdir, realpath } from "node:fs/promises";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { desktopDataDir } from "@ensemble/shared-types/desktop-discovery";
 import { env } from "../config.js";
-import { compileSeatbeltProfile } from "./sandbox/seatbelt.js";
+import { compileSeatbeltProfile, SECRET_HOME_PATHS } from "./sandbox/seatbelt.js";
 import { capabilities } from "./sandbox/spawn.js";
 
 export class GuardError extends Error {
@@ -120,30 +120,84 @@ export function blockedReason(real: string): string | null {
   return null;
 }
 
+/** Keys, sign-ins and browser data in the home folder: never read or written by a run. */
+export const SECRET_PATHS = [
+  ...SECRET_HOME_PATHS,
+  ".azure",
+  ".config/gcloud",
+  ".config/hub",
+  ".password-store",
+  ".pypirc",
+  ".pgpass",
+  ".vault-token",
+  ".terraform.d/credentials.tfrc.json",
+  ".mozilla",
+  ".config/google-chrome",
+  ".config/chromium",
+  ".config/BraveSoftware",
+  ".local/share/keyrings",
+  ".claude/.credentials.json",
+  ".codex/auth.json",
+  "AppData/Roaming/Microsoft/Credentials",
+  "AppData/Local/Microsoft/Credentials",
+  "AppData/Local/Google/Chrome",
+  "AppData/Roaming/Mozilla",
+];
+
+/** Files that run at sign-in or start-up: a write there runs code later, outside the run. Reading them is fine. */
+const STARTUP_PATHS = [
+  ".bashrc", ".bash_profile", ".bash_login", ".bash_logout", ".profile", ".zshrc", ".zprofile", ".zshenv", ".zlogin", ".zlogout",
+  ".config/fish", ".config/autostart", ".config/systemd", ".config/git", ".gitconfig",
+  "Library/LaunchAgents", "Library/LaunchDaemons", "AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup",
+];
+
+/** Device files every program uses (`> /dev/null`, `/dev/stdout`, Chrome's `/dev/shm`): never a path to judge. */
+export function harmlessPath(real: string): boolean {
+  return /^\/dev\/(null|zero|full|u?random|tty|stdin|stdout|stderr|fd\/\d+|shm(\/.*)?)$/.test(real) || /^\/proc\/self(\/|$)/.test(real) || /^nul$/i.test(real);
+}
+
+/** The computer's temporary folders, where tools write scratch files. */
+function inTemp(real: string): boolean {
+  return ["/tmp", "/private/tmp", "/var/tmp", "/private/var/tmp", "/var/folders", "/private/var/folders", tmpdir()].some((root) => within(root, real));
+}
+
+function underHome(home: string, real: string, names: string[]): string | undefined {
+  const rel = relative(home, real).split(/[\\/]/).join("/");
+  return names.find((name) => rel === name || rel.startsWith(`${name}/`));
+}
+
 /**
- * A path outside the work folder that a run is about to use (doc 24 §3).
- * Whatever the mode and whether or not the sandbox is on, an agent never
- * reaches Ensemble's own data or code, the dotfiles and app folders in the
- * home folder (keys, shell start-up files, browser and editor data), or
- * another account. Writes are also refused in system folders and in the home
- * folder itself.
+ * A path outside the work folder that a run is about to use (doc 24 §3). Whatever the mode and
+ * whether or not the sandbox is on, an agent never reaches Ensemble's own data, keys and sign-ins
+ * (`SECRET_PATHS`) or another account's files, and never writes start-up files, system folders,
+ * Ensemble's own code or the home folder itself. Everything else is the run's mode to decide:
+ * tool caches, other projects, temporary folders and device files like /dev/null included.
  */
 export function outsideRefusal(real: string, write: boolean, home = HOME): string | null {
+  if (harmlessPath(real)) return null;
   const appData = desktopDataDir({ platform: process.platform, home });
   if (within(appData, real)) return "Ensemble's own data is off limits.";
-  if (within(ENSEMBLE_SOURCE, real) || within(real, ENSEMBLE_SOURCE)) return "This is Ensemble's own code.";
+  if (write && (within(ENSEMBLE_SOURCE, real) || within(real, ENSEMBLE_SOURCE))) return "This is Ensemble's own code: a run does not change it.";
   if (within(home, real, false)) {
-    const top = relative(home, real).split(/[\\/]/)[0] ?? "";
-    if (top.startsWith(".") || HOME_BLOCKED.includes(top) || top === "AppData") return `~/${top} holds settings, keys or app data.`;
-  } else if (real !== home) {
+    const secret = underHome(home, real, SECRET_PATHS);
+    if (secret) return `~/${secret} holds keys, sign-ins or browser data.`;
+    const startup = write ? underHome(home, real, STARTUP_PATHS) : undefined;
+    if (startup) return `~/${startup} runs at sign-in or start-up, so a run does not change it.`;
+    return null;
+  }
+  if (real === home) return write ? "Writing the home folder itself is refused." : null;
+  if (inTemp(real)) return null;
+  if (write) {
     for (const root of [...SYSTEM_ROOTS, ...windowsSystemRoots()]) {
-      if (write && within(root, real)) return `${root} holds the operating system or installed apps.`;
-    }
-    if (dirname(real) === "/Users" || dirname(real) === "/home" || (dirname(home) !== home && within(dirname(home), real) && !within(home, real))) {
-      return "Another account's files are off limits.";
+      if (within(root, real)) return `${root} holds the operating system or installed apps.`;
     }
   }
-  if (write && (real === home || real === "/" || real === dirname(home))) return "Writing at the top of the home folder or the disk is refused.";
+  // Homebrew on Linux lives in its own account's folder; reading its programs is fine.
+  if (!write && within("/home/linuxbrew", real)) return null;
+  if (dirname(real) === "/Users" || dirname(real) === "/home" || (dirname(home) !== home && within(dirname(home), real) && !within(home, real) && !within("/Users/Shared", real))) {
+    return "Another account's files are off limits.";
+  }
+  if (write && (real === "/" || real === dirname(home))) return "Writing at the top of the disk is refused.";
   return null;
 }
 
@@ -260,10 +314,20 @@ const NEVER = new Set([
   "telnet", "docker", "env", "printenv", "export", "xargs", "eval", "exec", "source", "nohup", "screen", "tmux",
 ]);
 
-/** A program in the Never set, by name or path (sudo, osascript, ssh, docker, …). */
+/**
+ * What a coding agent's command never starts: privilege, persistence, the keychain, remote shells,
+ * the machine's power and disks, and killing programs by name (`pkill node` would stop Ensemble
+ * itself). Everyday developer tools (docker, nohup, tmux, open, kill with a process id) are the run's.
+ */
+const AGENT_NEVER = new Set([
+  "sudo", "su", "doas", "launchctl", "defaults", "security", "systemsetup", "networksetup", "scutil", "dscl", "crontab",
+  "shutdown", "reboot", "halt", "poweroff", "diskutil", "mount", "umount", "csrutil", "tccutil", "spctl", "pmset", "osascript",
+  "killall", "pkill", "ssh", "scp", "sftp", "ssh-add", "telnet", "nc", "ncat",
+]);
+
+/** A program a coding agent's command may never start, by name or path (sudo, ssh, crontab, …). */
 export function isNeverProgram(program: string): boolean {
-  const name = program.split(/[\\/]/).pop()!.replace(/\.exe$/i, "");
-  return NEVER.has(name) && !["env", "export", "source", "exec", "eval", "xargs", "kill"].includes(name);
+  return AGENT_NEVER.has(program.split(/[\\/]/).pop()!.replace(/\.exe$/i, ""));
 }
 
 export interface CommandPolicy {

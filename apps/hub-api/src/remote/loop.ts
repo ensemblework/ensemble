@@ -18,6 +18,7 @@ import { applyAnswer } from "../routes/decisions.js";
 import { capabilities } from "../workspace/sandbox/spawn.js";
 import { liveLogSince } from "../workspace/live-log.js";
 import { interruptJob, stopJob, whenQueueReady } from "../workspace/worker.js";
+import { INTERRUPTED_MESSAGE } from "../workspace/lifecycle.js";
 import { acceptClaimed, resultLinks } from "./accept.js";
 import { authRejected, deviceRemovedEvent, hostedClient, remoteApiBase, RemoteError, type HostedClient } from "./client.js";
 import { sliceBytes } from "../lib/text.js";
@@ -30,7 +31,7 @@ import { cachedAgents, detectAgents } from "../subscriptions/detect.js";
 import { startSignIn } from "../subscriptions/signin.js";
 import { CODE_API, deviceOwnedEvents, LEGACY_SUMMARY_CHARS, LOG_CHUNK_BYTES, LOG_JOB_BYTES, MAX_UPLOADED_STEPS, ONLINE_WINDOW_MS, parseAnswer, parseClaim, STEP_POST_BYTES, timing, type RunTotals, type UploadedStep } from "./contract.js";
 import { actionHash, decisionOptions, judgeAnswer, publishedFolders, riskOf, scrubOutgoing, type LocalDecision } from "./policy.js";
-import { dropDeviceToken, loadHeld, loadSettings, readDeviceToken, saveHeld, updateSettings, type HeldJob, type RemoteSettings } from "./store.js";
+import { dropDeviceToken, installId, loadHeld, loadSettings, readDeviceToken, saveHeld, updateSettings, type HeldJob, type RemoteSettings } from "./store.js";
 import { launcherRemoved } from "./installed.js";
 
 const userId = () => env.ENSEMBLE_DEV_USER_ID;
@@ -107,6 +108,10 @@ export async function deviceCapabilities(app: FastifyInstance): Promise<Record<s
     engines: [...CODE_ENGINES],
     // Runs here can end in a pull request into any branch, and take any branch or git choice from the web (docs/24 §5.1).
     pullRequests: 2,
+    // The same installation after it is paired again: the web finds this computer's earlier runs here (devices/successor.ts).
+    installId: installId(),
+    // Reconnect and carry-on after an outage (docs/25 §3): reattach a run that kept going, resume one that was cut off.
+    recovery: 1,
   };
 }
 
@@ -217,28 +222,38 @@ async function session(app: FastifyInstance, base: string, token: string, parent
     app.log.warn({ err: error }, "remote task sync failed");
   };
   onFatal = fail;
-  await reportInterrupted(app, client);
+  await reconcile(app, client);
   let claiming = false;
+  // A wake-up that arrives while a claim is under way claims again after it, so no queued job is missed.
+  let claimAgain = false;
   const claim = async () => {
-    if (claiming || signal.aborted) return;
+    if (signal.aborted) return;
+    if (claiming) {
+      claimAgain = true;
+      return;
+    }
     claiming = true;
     try {
-      for (;;) {
-        if (signal.aborted || !loadSettings().enabled) return;
-        const res = await client.claim();
-        if (res.status === 204) return;
-        if (res.status >= 400) throw new RemoteError(res.status, "The claim was refused.");
-        const spec = parseClaim(res.body);
-        if (held()[spec.id]) return;
-        held()[spec.id] = await acceptClaimed(app, client, spec);
-        persist();
-      }
+      do {
+        claimAgain = false;
+        for (;;) {
+          if (signal.aborted || !loadSettings().enabled) return;
+          const res = await client.claim();
+          if (res.status === 204) break;
+          if (res.status >= 400) throw new RemoteError(res.status, "The claim was refused.");
+          const spec = parseClaim(res.body);
+          if (held()[spec.id]) break;
+          held()[spec.id] = await acceptClaimed(app, client, spec);
+          persist();
+        }
+      } while (claimAgain && !signal.aborted);
     } finally {
       claiming = false;
     }
   };
   let streamUp = false;
-  const heartbeat = setInterval(() => void beat(app, client, signal).catch(fail), timing().heartbeatMs);
+  // Each heartbeat also claims: the server refuses a claim past the person's concurrent runs, and a slot can free without a wake-up.
+  const heartbeat = setInterval(() => void beat(app, client, signal).then(() => claim()).catch(fail), timing().heartbeatMs);
   // Log batches only. Claim is not on this timer: a 2s claim poll would burn the hosted command budget.
   // One mirror at a time: a job's last posts can take longer than the timer, and two at once would send twice.
   let mirroring: Promise<void> | null = null;
@@ -338,15 +353,64 @@ async function beat(app: FastifyInstance, client: HostedClient, signal: AbortSig
   }
 }
 
-/** After a quit, the local row is interrupted and is not started again. The hosted row becomes interrupted when its lease expires. */
-async function reportInterrupted(app: FastifyInstance, client: HostedClient): Promise<void> {
+/**
+ * When the connection opens (a start, or the end of an outage), each run held here is settled with
+ * the web (docs/25 §3): one that ended reports its result; one cut off by a restart asks to be
+ * carried on; one still running carries on, and its next post reattaches it if its lease ran out.
+ */
+async function reconcile(app: FastifyInstance, client: HostedClient): Promise<void> {
   for (const job of Object.values(held())) {
     if (job.phase === "done" || !job.localJobId) continue;
     const local = await app.prisma.workspaceJob.findUnique({ where: { id: job.localJobId } });
     if (!local || !TERMINAL.has(local.status)) continue;
-    await finish(client, job, local);
+    await finish(app, client, job, local);
   }
   persist();
+}
+
+/** The web refused this run's lease. 409: it ran out while this computer was cut off. */
+function leaseLost(error: unknown): boolean {
+  return error instanceof RemoteError && error.status === 409;
+}
+
+/**
+ * Takes a run back after its lease ran out (protocol 5): a new lease, and the questions it is waiting
+ * on asked on the web again. When the web no longer wants it (stopped, run again, ended), it stops
+ * here too. True when the run is back.
+ */
+async function reattach(app: FastifyInstance, client: HostedClient, job: HeldJob, local: WorkspaceJob): Promise<boolean> {
+  if ((job.protocol ?? 1) < 5 || !client.reattach) return false;
+  const status = TERMINAL.has(local.status) ? "finished" : local.status === "waiting_approval" ? "waiting_approval" : "running";
+  const answer = await client.reattach(job.hostedId, { leaseToken: job.leaseToken, status });
+  if ("leaseToken" in answer) {
+    job.leaseToken = answer.leaseToken;
+    job.sentStatus = null;
+    job.decisions = {};
+    job.lastOkAt = Date.now();
+    persist();
+    await appendLedger({ userId: userId(), actor: "system", action: "remote.reattach", payload: { hostedJobId: job.hostedId } }).catch(() => undefined);
+    return true;
+  }
+  if (!TERMINAL.has(local.status)) await interruptJob(app, local.id, `Stopped: Ensemble on the web no longer runs this task here. ${answer.refused}`.trim()).catch(() => undefined);
+  job.phase = "done";
+  persist();
+  return false;
+}
+
+/**
+ * A run cut off because Ensemble quit (a restart, a power cut, a crash) asks the web to carry it on
+ * (protocol 5); the new run arrives with the next claim and continues in the same folder and agent
+ * session. Any other interruption, or a refusal, leaves it for Run again.
+ */
+async function carryOn(client: HostedClient, job: HeldJob, local: WorkspaceJob): Promise<void> {
+  if ((job.protocol ?? 1) < 5 || !client.resume || local.error !== INTERRUPTED_MESSAGE) {
+    job.phase = "done";
+    return;
+  }
+  const at = (local.finishedAt ?? new Date()).toISOString().slice(0, 16).replace("T", " ");
+  const answer = await client.resume(job.hostedId, { leaseToken: job.leaseToken, reason: `this computer restarted or Ensemble quit while the run was going (around ${at} UTC)` });
+  job.phase = "done";
+  await appendLedger({ userId: userId(), actor: "system", action: "remote.resume", payload: { hostedJobId: job.hostedId, ...("jobId" in answer ? { next: answer.jobId } : { refused: answer.refused }) } }).catch(() => undefined);
 }
 
 async function mirror(app: FastifyInstance, client: HostedClient, signal: AbortSignal): Promise<void> {
@@ -355,17 +419,23 @@ async function mirror(app: FastifyInstance, client: HostedClient, signal: AbortS
     if (job.phase !== "active" || !job.localJobId || signal.aborted) continue;
     const local = await app.prisma.workspaceJob.findUnique({ where: { id: job.localJobId } });
     if (!local) continue;
-    if (TERMINAL.has(local.status)) {
-      // Send the last events, log text and steps first. A job that ends between two syncs would otherwise post
-      // none of them, and a long run's remainder can take more than one post.
-      if (local.status !== "interrupted") {
-        for (let round = 0; round < 20; round += 1) if (!(await sendProgress(app, client, job, local, true))) break;
+    try {
+      if (TERMINAL.has(local.status)) {
+        // Send the last events, log text and steps first. A job that ends between two syncs would otherwise post
+        // none of them, and a long run's remainder can take more than one post.
+        if (local.status !== "interrupted") {
+          for (let round = 0; round < 20; round += 1) if (!(await sendProgress(app, client, job, local, true))) break;
+        }
+        await finish(app, client, job, local);
+        continue;
       }
-      await finish(client, job, local);
-      continue;
+      await relayDecisions(app, client, job, local, signal);
+      await sendProgress(app, client, job, local);
+    } catch (error) {
+      // The lease ran out while this computer was cut off and the run kept going: take it back; the next sync sends.
+      if (!leaseLost(error)) throw error;
+      await reattach(app, client, job, local);
     }
-    await relayDecisions(app, client, job, local, signal);
-    await sendProgress(app, client, job, local);
   }
   persist();
 }
@@ -594,24 +664,33 @@ function scrubData(data: unknown): unknown {
   return data;
 }
 
-async function finish(client: HostedClient, job: HeldJob, local: WorkspaceJob): Promise<void> {
-  // The server sets interrupted when the lease expires. Posting that outcome is a 400.
+async function finish(app: FastifyInstance, client: HostedClient, job: HeldJob, local: WorkspaceJob): Promise<void> {
+  // Interrupted here (Ensemble quit): the web may carry it on. Posting that outcome is a 400.
   if (local.status === "interrupted") {
-    job.phase = "done";
+    await carryOn(client, job, local);
     return;
   }
   const outcome = local.status === "succeeded" ? "succeeded" : local.status === "cancelled" ? "cancelled" : local.status === "blocked" ? "blocked" : "failed";
   const current = (job.protocol ?? 1) >= 2;
   const summary = scrubOutgoing(local.summary || local.error || "").slice(0, current ? 20_000 : LEGACY_SUMMARY_CHARS);
-  try {
+  const send = async () => {
     // The changed files' text first: the lease ends with complete.
     await uploadChangedFiles(client, job, local).catch((error: unknown) => {
       if (authRejected(error)) throw error;
     });
     await client.complete(job.hostedId, job.leaseToken, { outcome, summary, results: resultLinks(local), ...(current ? { totals: await runTotals(local) } : {}) });
+  };
+  try {
+    await send();
   } catch (error) {
     if (authRejected(error)) throw error;
     if (!(error instanceof RemoteError) || (error.status !== 409 && error.status !== 410 && error.status !== 404)) throw error;
+    // Finished while this computer was cut off and the lease ran out: take the run back, then report it.
+    if (error.status === 409 && (await reattach(app, client, job, local))) {
+      await send().catch((again: unknown) => {
+        if (authRejected(again)) throw again;
+      });
+    }
   }
   job.phase = "done";
 }

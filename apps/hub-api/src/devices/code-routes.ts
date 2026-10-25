@@ -20,6 +20,7 @@ import { deviceOnline } from "./constants.js";
 import { askDeviceFor, storeAnswer } from "./file-relay.js";
 import { fileAnswers, publishFileAnswer } from "./revoke-notify.js";
 import { ownDevice } from "./routes.js";
+import { currentDevice } from "./successor.js";
 import { rememberRun, requireUnlocked, requireWebPerson, webUnlockRoutes } from "./web-unlock.js";
 
 const ASK_MS = 20_000;
@@ -64,12 +65,13 @@ export async function deviceCodeRoutes(app: FastifyInstance): Promise<void> {
   const redis = app.redis as unknown as Redisish;
   await webUnlockRoutes(app);
 
-  /** The person's own computer, paired, online and new enough; or why not. */
+  /** The person's own computer, paired, online and new enough; or why not. A computer paired again answers for its earlier pairing. */
   async function computer(request: FastifyRequest, want: "code" | "terminal"): Promise<Device> {
     requireWebPerson(request);
     const { id } = request.params as { id: string };
-    const device = await prisma.device.findFirst({ where: { id, userId: accountIdOf(request), revokedAt: null } });
-    if (!device) throw new Refused(404, "That computer is not paired with your account.");
+    const named = await prisma.device.findFirst({ where: { id, userId: accountIdOf(request) } });
+    const device = named ? await currentDevice(prisma, named) : null;
+    if (!device) throw new Refused(404, named ? `${named.name} is no longer paired. Pair it again from Settings → Computers to open its runs here.` : "That computer is not paired with your account.");
     const caps = codeCapable(device);
     if (!caps.code) throw new Refused(409, `Update Ensemble on ${device.name} to use the Code tab from here (the CLI 0.3.8 or the desktop app 0.3.5).`);
     if (!deviceOnline(device.lastSeenAt)) throw new Refused(409, `${device.name} is offline. Open Ensemble there, or start it with \`ensemble runner start\`.`);

@@ -91,6 +91,34 @@ test("unattended answers a question with the recommended option and records it",
 test("shell commands are split into programs for the checks", () => {
   assert.deepEqual(shellSegments('git add -A && git commit -m "a b" | tee log'), [["git", "add", "-A"], ["git", "commit", "-m", "a b"], ["tee", "log"]]);
   assert.deepEqual(shellSegments("FOO=1 npm test"), [["npm", "test"]]);
+  assert.deepEqual(shellSegments("node -e 'a(); b()' && ls"), [["node", "-e", "a(); b()"], ["ls"]]);
+  assert.deepEqual(shellSegments("cat > notes.md <<'EOF'\nrm -rf /etc; cat /etc/passwd\nEOF\necho done 2>&1"), [["cat"], ["echo", "done"]]);
+  assert.deepEqual(shellSegments("echo $(cat /etc/hosts)"), [["echo", "$(cat /etc/hosts)"], ["cat", "/etc/hosts"]]);
+});
+
+test("ordinary commands an agent runs are not refused: code after -e, cd before relative paths, /dev/null, docker", async () => {
+  const live = join(homedir(), "ensemble-workspace", "live-test");
+  for (const run of [ctx({ root: live, sandboxed: false, strength: "advisory", network: true }), ctx({ root: live, network: true })]) {
+    for (const command of [
+      `cd ensemble-node/apps/node-web && pnpm exec tsx -e 'import {CONNECTOR_CATALOG} from "../../../ensemble/packages/shared-types/src/connectors.ts"; console.log(CONNECTOR_CATALOG.map(({id,name,logo})=>({id,name,logo})))'`,
+      `cd ensemble-node && curl --fail --silent --output /dev/null http://127.0.0.1:3301/connections && PLAYWRIGHT_BROWSERS_PATH=${live}/ensemble-node/temp-screenshots/browsers node temp-screenshots/connector-logos.mjs`,
+      "npm test > /dev/null 2>&1 || echo failed >&2",
+      `rg -n "/api/devices" apps --glob '*.ts'`,
+      "docker compose up -d postgres",
+    ]) {
+      const answer = await judgeEngineCall(run, { tool: "Bash", input: { command } });
+      assert.equal(answer.decision, "allow", `${command}: ${answer.message}`);
+    }
+  }
+});
+
+test("keys, start-up files and other accounts stay closed however the command is written", async () => {
+  const direct = ctx({ sandboxed: false, strength: "advisory", outsideAccess: "read-write" });
+  for (const command of ["cat ~/.ssh/id_ed25519", "cd ~/.aws && cat credentials", "bash -lc 'cat ~/.ssh/id_rsa | head'", "cat < ~/.ssh/id_rsa", "cd ~ && cat .ssh/id_rsa", "cd / && cat home/someone-else/notes", "tar czf /tmp/k.tgz $HOME/.gnupg", "echo 'alias ls=rm' >> ~/.bashrc", "cp evil.sh /etc/profile.d/x.sh", "ls /home/someone-else", "pkill node"]) {
+    assert.equal((await judgeEngineCall(direct, { tool: "Bash", input: { command } })).decision, "deny", command);
+  }
+  assert.equal((await judgeEngineCall(direct, { tool: "Read", input: { file_path: join(homedir(), ".bashrc") } })).decision, "allow");
+  assert.equal((await judgeEngineCall(direct, { tool: "Write", input: { file_path: join(homedir(), ".zshrc") } })).decision, "deny");
 });
 
 test("Claude Code gets the hook on every tool, a strict sandbox, and the run's internet setting", () => {

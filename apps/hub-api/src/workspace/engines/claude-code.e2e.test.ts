@@ -48,7 +48,7 @@ const reply = require("node:child_process").execFileSync(mcp.command, mcp.args, 
 });
 const answer = reply.trim().split("\\n").map((line) => JSON.parse(line)).find((line) => line.id === 2);
 seen.push("question:" + allowed.permissionDecision + ":" + answer.result.content[0].text);
-seen.push("sandbox:" + settings.sandbox.enabled);
+seen.push("sandbox:" + settings.sandbox.enabled, "effort:" + (args.includes("--effort") ? args[args.indexOf("--effort") + 1] : "none"));
 say({ type: "result", subtype: "success", is_error: false, num_turns: 3, result: seen.join(" "), total_cost_usd: 0.01, usage: { input_tokens: 100, output_tokens: 20 } });
 `;
 
@@ -64,7 +64,7 @@ test("Claude Code as the engine: every tool call is judged by the run's rules", 
     const task = await side.api<{ task: { id: string } }>("/api/tasks", { json: { title: "Engine run" } });
     assert.equal(task.status, 201, JSON.stringify(task.body));
     const assigned = await side.api<{ jobId?: string; error?: string }>("/api/agent/assign", {
-      json: { taskId: task.body.task.id, kind: "code", engine: "claude-code", mode: "unattended", sandbox: false, delivery: "local" },
+      json: { taskId: task.body.task.id, kind: "code", engine: "claude-code", reasoningEffort: "high", mode: "unattended", sandbox: false, delivery: "local" },
     });
     assert.ok(assigned.body.jobId, JSON.stringify(assigned.body));
     let job: { status: string; summary?: string | null; error?: string | null; folder?: string | null } = { status: "queued" };
@@ -80,6 +80,7 @@ test("Claude Code as the engine: every tool call is judged by the run's rules", 
     assert.match(summary, /sudo:deny/);
     assert.match(summary, /question:allow:The person answered: Blue/, "unattended takes the recommended option through ask_person");
     assert.match(summary, /sandbox:false/);
+    assert.match(summary, /effort:high/, "the thinking level chosen for the run reaches Claude Code");
     assert.ok(job.folder && existsSync(join(job.folder, "hello.txt")));
     assert.equal(readFileSync(join(job.folder!, "hello.txt"), "utf8"), "hi");
   } finally {

@@ -29,7 +29,11 @@ const seen = [];
 const flag = (name) => args.includes(name);
 seen.push("noask:" + flag("--no-ask-user"), "sandbox:" + flag("--sandbox"), "context:" + (args[args.indexOf("--context") + 1] || "none"), "allowensemble:" + (args[args.indexOf("--allow-tool") + 1] === "ensemble"));
 seen.push("allowall:" + (process.env.COPILOT_ALLOW_ALL ? "leaked" : "none"), "ghtoken:" + (process.env.GH_TOKEN || process.env.GITHUB_TOKEN ? "leaked" : "none"));
-const config = { model: "claude-sonnet-5.5", reasoning_effort: "medium" };
+const flagValue = (name) => (args.includes(name) ? args[args.indexOf(name) + 1] : null);
+// Like Copilot CLI: --model and --reasoning-effort pick the starting model and level; switching the
+// model over ACP afterwards puts the session back on that model's standard context window.
+const config = { model: ["auto", "claude-sonnet-5.5", "gpt-5.6-luna"].includes(flagValue("--model")) ? flagValue("--model") : "claude-sonnet-5.5", reasoning_effort: flagValue("--reasoning-effort") || "medium" };
+let tier = flagValue("--context") || "default";
 const options = () => [
   { id: "model", currentValue: config.model, options: [{ value: "auto" }, { value: "claude-sonnet-5.5" }, { value: "gpt-5.6-luna" }] },
   { id: "reasoning_effort", currentValue: config.reasoning_effort, options: ["none", "low", "medium", "high"].map((value) => ({ value })) },
@@ -67,7 +71,8 @@ async function second(promptId, text) {
   });
   seen.push("mcp:" + reply.trim().split("\\n").map((line) => JSON.parse(line)).find((line) => line.id === 2).result.content[0].text);
   seen.push("model:" + config.model, "effort:" + config.reasoning_effort, "prompts:" + prompts);
-  send({ method: "session/update", params: { sessionId: "s1", update: { sessionUpdate: "usage_update", used: 1234, size: 922000 } } });
+  seen.push("window:" + tier);
+  send({ method: "session/update", params: { sessionId: "s1", update: { sessionUpdate: "usage_update", used: 1234, size: tier === "long_context" ? 922000 : 200000 } } });
   send({ method: "session/update", params: { sessionId: "s1", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: seen.join(" ") } } } });
   send({ id: promptId, result: { stopReason: "end_turn", usage: { inputTokens: 200, outputTokens: 20 } } });
 }
@@ -76,7 +81,7 @@ require("node:readline").createInterface({ input: process.stdin }).on("line", (l
   if (message.id !== undefined && !message.method) { const resolve = waiting.get(message.id); waiting.delete(message.id); resolve && resolve(message.result); return; }
   if (message.method === "initialize") send({ id: message.id, result: { protocolVersion: 1, agentCapabilities: { loadSession: true, promptCapabilities: { image: true, embeddedContext: true } }, authMethods: [] } });
   else if (message.method === "session/new") { session = message.params; seen.push("mcpservers:" + message.params.mcpServers.length); send({ id: message.id, result: { sessionId: "s1", configOptions: options() } }); }
-  else if (message.method === "session/set_config_option") { config[message.params.configId] = message.params.value; send({ id: message.id, result: { configOptions: options() } }); }
+  else if (message.method === "session/set_config_option") { if (message.params.configId === "model") { tier = "default"; seen.push("modelswitch"); } config[message.params.configId] = message.params.value; send({ id: message.id, result: { configOptions: options() } }); }
   else if (message.method === "session/prompt") {
     prompts += 1;
     const text = message.params.prompt.map((part) => part.text || "").join("");
@@ -125,6 +130,8 @@ test("GitHub Copilot as the engine: permissions, refusals, model, thinking and c
     assert.match(summary, /mcp:The person answered: Large/, "unattended: ask_person returns the recommended option");
     assert.match(summary, /model:gpt-5\.6-luna/, "the task's model");
     assert.match(summary, /effort:low/, "the task's thinking level");
+    assert.match(summary, /window:long_context/, "the long window holds: the model is chosen as Copilot starts");
+    assert.doesNotMatch(summary, /modelswitch/, "no model switch over ACP, which would drop the long window");
     assert.match(summary, /prompts:2/, "one follow-up after the refused call");
     if (job.folder) assert.equal(existsSync(join(job.folder, "hello.txt")) ? readFileSync(join(job.folder, "hello.txt"), "utf8") : "", "hi");
   } finally {

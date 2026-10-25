@@ -23,6 +23,10 @@ export const ROUTES = {
   /** Answered on this computer: closes the card on the web too. */
   closeDecision: (decisionId: string) => `/api/devices/self/decisions/${encodeURIComponent(decisionId)}/close`,
   complete: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/complete`,
+  /** A run this computer still has (running, or finished while it was cut off) after its lease ran out: a new lease (protocol 5). */
+  reattach: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/reattach`,
+  /** A run this computer lost when it restarted: carried on in a new run in the same folder and session (protocol 5). */
+  resume: (jobId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/resume`,
   events: "/api/devices/self/events",
   attachment: (jobId: string, fileId: string) => `/api/devices/self/jobs/${encodeURIComponent(jobId)}/attachments/${encodeURIComponent(fileId)}`,
   /** The account's model keys, for this computer's own model calls. */
@@ -70,9 +74,16 @@ export const LOG_CHUNK_BYTES = 64 * 1024;
  * to this computer's own `/api/code/*`) and `terminal.request` (the web terminal, after a passkey unlock
  * on the web); answers go to `ROUTES.codeAnswer`, terminal output to `ROUTES.terminalOutput`. A computer
  * says it takes them with `capabilities.code`.
+ * 5 (25 Oct 2026): after an outage a computer reattaches a run whose lease ran out while it kept
+ * going (`ROUTES.reattach`), and asks to carry on a run it lost by restarting (`ROUTES.resume`); a
+ * claim may carry `resume`, which the computer runs in the earlier run's folder and agent session.
  * A computer sends each only to a server that says so: an older one answers them with a 400 or 404.
  */
-export const PROTOCOL = 4;
+export const PROTOCOL = 5;
+/** Carry-ons after a computer restarted, per task chain; the next interruption stays for Run again. */
+export const MAX_AUTO_RESUMES = 2;
+/** A run interrupted longer ago than this is not carried on by itself. */
+export const RESUME_WINDOW_MS = 24 * 3600_000;
 /** What a protocol 1 server takes. */
 export const LEGACY_EVENT_KINDS = ["prepared", "tool", "command"] as const;
 export const LEGACY_SUMMARY_CHARS = 8000;
@@ -148,6 +159,8 @@ export const JobSpec = z
     protocol: z.number().int().min(1).max(1000).optional(),
     /** False when the server keeps no text of the files a run changed (Ensemble on the web): skip sending it. */
     keepsFileText: z.boolean().optional(),
+    /** This run carries on `continueFromJobId`, cut off when this computer restarted (protocol 5). */
+    resume: z.object({ reason: text(300), attempt: z.number().int().min(1).max(10) }).nullish(),
   })
   .passthrough();
 export type JobSpec = z.infer<typeof JobSpec>;
@@ -198,11 +211,13 @@ export function parseRegistered(body: unknown): { token: string; deviceId: strin
  * Kinds a device may post on progress. The server writes `needs_me`,
  * `interrupted`, and every other kind itself, and rejects them from a computer.
  */
-export const DEVICE_EVENT_KINDS = ["prepared", "tool", "command", "engine", "sandbox"] as const;
+export const DEVICE_EVENT_KINDS = ["prepared", "tool", "command", "engine", "sandbox", "engine_retry", "resumed"] as const;
 const DEVICE_EVENT_KIND = new Set<string>(DEVICE_EVENT_KINDS);
+/** What servers on protocols 2 to 4 take; they refuse a post with any other kind. */
+const V2_EVENT_KINDS = new Set<string>(["prepared", "tool", "command", "engine", "sandbox"]);
 
 export function deviceOwnedEvents<T extends { kind: string }>(rows: T[], protocol = PROTOCOL): T[] {
-  const kinds: ReadonlySet<string> = protocol >= 2 ? DEVICE_EVENT_KIND : new Set<string>(LEGACY_EVENT_KINDS);
+  const kinds: ReadonlySet<string> = protocol >= 5 ? DEVICE_EVENT_KIND : protocol >= 2 ? V2_EVENT_KINDS : new Set<string>(LEGACY_EVENT_KINDS);
   return rows.filter((row) => kinds.has(row.kind)).slice(0, 50);
 }
 

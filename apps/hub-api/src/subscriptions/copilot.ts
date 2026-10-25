@@ -12,7 +12,9 @@
  */
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ContextTier, ModelContext, SubscriptionModel } from "@ensemble/shared-types";
 import { hostExecutable } from "../workspace/policy.js";
 import { agentEnv } from "./detect.js";
@@ -29,6 +31,22 @@ export function copilotEnv(extra: Record<string, string> = {}): NodeJS.ProcessEn
   // Updates are the person's to take; a run always uses the copy that was checked.
   env.COPILOT_AUTO_UPDATE = "false";
   return env;
+}
+
+/**
+ * Whether Copilot has a saved sign-in on this computer: `config.json` in its home lists the accounts
+ * it signed in (host and login only; the token itself is in the system keychain). Copilot answering
+ * "Authentication required" while one is listed means the keychain could not be read (locked, or
+ * not ready right after a restart), not that the person signed out.
+ */
+export async function copilotSavedSignIn(home = homedir()): Promise<boolean> {
+  try {
+    const text = await readFile(join(process.env.COPILOT_HOME || join(home, ".copilot"), "config.json"), "utf8");
+    const parsed = JSON.parse(text.replace(/^\s*\/\/.*$/gm, "")) as { loggedInUsers?: unknown; lastLoggedInUser?: unknown };
+    return (Array.isArray(parsed.loggedInUsers) && parsed.loggedInUsers.length > 0) || Boolean(parsed.lastLoggedInUser);
+  } catch {
+    return false;
+  }
 }
 
 export async function copilotBinary(): Promise<string | null> {

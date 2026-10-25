@@ -10,9 +10,10 @@
  * between the check and the read is caught.
  */
 import { lstat, open, readdir, realpath, stat } from "node:fs/promises";
-import { join, relative, sep } from "node:path";
+import { homedir } from "node:os";
+import { basename, dirname, join, relative, sep } from "node:path";
 import { redactText } from "../lib/redact.js";
-import { GuardError, jailPath, within } from "./guard.js";
+import { GuardError, jailPath, outsideRefusal, within } from "./guard.js";
 
 export const FOLDER_ENTRIES_MAX = 1000;
 /** What one file view carries. Larger files show their first part. */
@@ -137,4 +138,33 @@ export async function readFolderFile(root: string, input: string, max = FILE_VIE
   } finally {
     await handle.close();
   }
+}
+
+/** How a run lists a file it changed outside its folder: `~/…` in the home folder, or a full path. */
+export function outsideListing(path: string): boolean {
+  return path.startsWith("~/") || path.startsWith("/");
+}
+
+/** The paths a run's evidence lists as changed. */
+export function listedChanges(evidence: unknown): string[] {
+  const files = evidence && typeof evidence === "object" && Array.isArray((evidence as { files?: unknown }).files) ? (evidence as { files: Array<{ path?: unknown }> }).files : [];
+  return files.map((file) => file.path).filter((path): path is string => typeof path === "string" && path.length > 0);
+}
+
+/**
+ * A file the run changed: inside its folder by the folder's rules, or outside it (`~/…`) only when
+ * the run's own evidence lists that exact path, the outside floor allows reading it (no keys,
+ * sign-ins or another account) and it passes the same file rules as a file in the folder.
+ */
+export async function readChangedFile(root: string, listed: string[], path: string, max = FILE_VIEW_BYTES, home = homedir()): Promise<FolderFile> {
+  if (!outsideListing(path)) return readFolderFile(root, path, max);
+  if (!listed.includes(path)) throw new GuardError("That file is outside the task's folder and is not one this run changed.");
+  if (path.split(/[\\/]/).some((part) => part === "..")) throw new GuardError("That is outside the task's folder.");
+  const full = path.startsWith("~/") ? join(home, path.slice(2)) : path;
+  const real = await realpath(full).catch(() => full);
+  const named = within(home, real, false) ? relative(home, real).split(sep).join("/") : basename(real);
+  const refused = refusedPath(named) ?? outsideRefusal(real, false, home);
+  if (refused) throw new GuardError(refused);
+  const read = await readFolderFile(dirname(real), basename(real), max);
+  return { ...read, path };
 }

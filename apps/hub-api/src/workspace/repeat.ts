@@ -37,3 +37,11 @@ export function repeatAssignment(old: WorkspaceJob) {
         maxTurns: old.maxTurns,
       });
 }
+
+/** A run that carries on an interrupted one (the computer restarted, say): why, and which carry-on this is. */
+export function resumeOf(context: unknown): { reason: string; attempt: number } | null {
+  const value = typeof context === "object" && context !== null ? (context as { resumeOf?: unknown }).resumeOf : null;
+  if (!value || typeof value !== "object") return null;
+  const { reason, attempt } = value as { reason?: unknown; attempt?: unknown };
+  return { reason: typeof reason === "string" && reason ? reason.slice(0, 300) : "the run was interrupted", attempt: typeof attempt === "number" ? attempt : 1 };
+}
