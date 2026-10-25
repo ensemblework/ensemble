@@ -60,7 +60,19 @@ Text comes from Files' extraction ([32 §7](32_FILES.md)): PDFs with a text laye
 - **Untrusted content.** File text, pictures, captions and plot data arrive marked as information, in the user turn, never in the system prompt. Tools and permissions do not change with what a file says.
 - **Logs.** Model requests carrying pictures are not logged; stored tool calls keep the file id and name only.
 
-## 5. Not built
+## 5. Design choices
+
+| Choice | Why |
+|---|---|
+| One read layer (`files/model-input.ts`, `lib/vision.ts`, `runtime/content-parts.ts`) on top of the existing attachment rules (`files/attached.ts`) rather than a separate artifact manifest service | The relationship rules (page mentions, `attrs.fileId`, source file, project page, task tags) and the space-scoped readers already existed and are shared with paired computers and the Context Bridge; a second identity scheme would have had to agree with all of them |
+| Chat attachments are file mentions | `assistant_messages.mentions` already persists `{ kind, id, label }`, replays with the conversation and is visible to the dock after a reload, so no new table or migration |
+| Page images are ordinary Files with `attrs.fileId` ([32](32_FILES.md)) | They become task attachments, shared-page reads and paired-computer downloads with no extra code |
+| Pictures only to models known to read them, with one text-only retry | A wrong "yes" fails the whole turn; a wrong "no" is visible and honest |
+| Pictures refused above 5 MB rather than resized | No image library on the server; resizing changes what the model sees without the person knowing |
+| No OCR or PDF rendering on the server | Both need native libraries and isolated workers; coding agents and pictures of pages cover the common cases meanwhile |
+| Files read as they are now (no version pinning) | Files keeps one original per file; pinning would promise old bytes that may already be replaced |
+
+## 6. Not built
 
 - OCR, rendering PDF pages or slides to pictures, and native PDF input to providers. A scanned PDF is read only by a coding agent or as a picture of its pages.
 - Pictures for subscription agents used as the Ensemble chat model.
@@ -68,7 +80,7 @@ Text comes from Files' extraction ([32 §7](32_FILES.md)): PDFs with a text laye
 - Version pinning: a file replaced between attaching and reading is read as it is now.
 - The "open in app" handoff (`routes/handoffs.ts`) passes the task's title and description, not its files.
 
-## 6. Tests
+## 7. Tests
 
 | Test | Covers |
 |---|---|
