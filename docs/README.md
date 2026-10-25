@@ -48,6 +48,7 @@ Guides to how Ensemble works today, with the code paths that implement it. Start
 | [Brand](BRAND.md) | Shared artwork, palettes, motion, generated assets |
 | [Caching and UI performance](CACHING.md) | Caches, relay state, performance budgets |
 | [36 · Web and CLI testing](36_WEB_TESTING.md) | Isolated live Hub and testing CLI, fast checks, agent workflow and production promotion |
+| [37 · Fast pipeline and paused checks](37_PAUSED_CHECKS.md) | What runs on testing, main and release tags; the slower suites paused in `full-checks.yml` and how to bring them back |
 | [Demo data](DEMO_DATA.md) | Explicit sample-data commands and fixtures |
 
 Operator-specific hosting, accounts and credentials are in the git-ignored `private/` folder.

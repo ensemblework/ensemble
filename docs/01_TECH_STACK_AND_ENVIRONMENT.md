@@ -113,16 +113,7 @@ The `ensemble` catalog offers the enabled Azure deployments; each must exist and
 
 Workflow files are authoritative for pinned action and runtime versions.
 
-**`.github/workflows/ci.yml`** runs on pull requests except those targeting `testing`, and every push to `main`:
-
-| Job | What it runs |
-|---|---|
-| Typecheck and unit tests | `pnpm db:generate`, `pnpm typecheck`, `node scripts/build-brand-logos.mjs --check` (connector logo modules match `components/connectors/brands`), `pnpm brand:check`, `scripts/check-icons.mjs`, the `brand`, `shared-types`, `block-diagrams` and `ide-theme` tests, the release/target script tests, and `hub-web` tests (with `PLOTS_PYTHON` set, because plot tests render with matplotlib) |
-| hub-api tests (Postgres + Redis) | `pgvector/pgvector:pg16` and `redis:7-alpine` services, `infra/sql/init.sql`, `pnpm db:migrate`, the Landlock helper (`scripts/build-landrun.mjs`, so agent and remote end-to-end runs are really sandboxed), the full `hub-api` suite, `pnpm bridge:verify` |
-| Sandbox escapes | `backends`, `os-escape`, `trust` and `guard-git` tests on four runners with no Docker: macOS (Seatbelt), Ubuntu 24.04 (Landlock via `landrun`, bubblewrap off), Ubuntu 22.04 (distribution bubblewrap), Windows (sandbox-runtime account, set up during the test). `ENSEMBLE_REQUIRE_OS_SANDBOX=1` turns a missing sandbox into a failure |
-| CLI tests and package smoke | `apps/cli` typecheck, tests (which build `dist/ensemble.mjs` first) and build; `scripts/package-cli.mjs --target linux-x64 --skip-sidecar`, then `scripts/smoke-cli-package.mjs` on the archive |
-| agent-runtime tests | Python 3.12, `pip install -e apps/agent-runtime pytest`, `pytest tests` |
-| Production builds | `next build` for `apps/hub-web` (placeholder `example.com` origins) and `apps/landing` |
+**`.github/workflows/ci.yml`** runs on pull requests except those targeting `testing` (a feature branch or `testing` into `main`), and every push to `main`. Its one job, *Typecheck and unit tests*, runs the fast checks shared with testing (`.github/actions/fast-checks`): `pnpm version:check`, `pnpm db:generate`, the `shared-types`, `hub-api`, `hub-web` and CLI typechecks, CLI channel isolation, focused web and in-memory API regressions, the testing deploy guard, the release-script tests and the route inventory. It is the required status check on `main` and `production`. The slower suites (the full hub-api suite against Postgres and Redis, every package's tests, sandbox escapes on four OSes, agent-runtime tests, production builds) are paused in `full-checks.yml`, run by hand ([37](37_PAUSED_CHECKS.md)).
 
 **`.github/workflows/deploy.yml`** runs after `ci` succeeds on a push to `main`, or by hand (Actions → deploy → Run workflow: `all`, `api`, `app` or `landing`). It does nothing unless the repository variable `DEPLOY_ENABLED` is `true`. One deploy runs at a time.
 
@@ -133,7 +124,7 @@ Workflow files are authoritative for pinned action and runtime versions.
 
 Repository secrets: `ENSEMBLE_API_URL`, `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID_APP`, `VERCEL_PROJECT_ID_LANDING`. The Vercel projects hold build settings (root `apps/hub-web` or `apps/landing`) and the Hub's `NEXT_PUBLIC_*` values. Server secrets stay in the server's env file and never go to GitHub or Vercel.
 
-**Testing** uses `test-web.yml` on pushes and PRs to `testing`: shared/API/web/CLI typechecks, focused UI regressions, namespaced-auth, CLI channel isolation and in-memory API smoke tests, deployment guards and route inventory. Successful pushes advance `testing-live`, wait for the isolated API's exact commit and readiness, then deploy the separate test Vercel project. After publication, reusable `test-cli.yml` packages and smoke-tests `ensemble-test` on five platform/architecture targets, then publishes the separate `cli-testing-latest` prerelease only if its source still matches both testing pointers. The web deployment does not wait for package builds. `TEST_DEPLOY_ENABLED`, `ENSEMBLE_TEST_API_URL` and `VERCEL_PROJECT_ID_TEST` control it; production CLI/native releases are unchanged. `infra/deploy/testing` owns the isolated backend and refuses production resources. Installation, purpose and promotion: [36](36_WEB_TESTING.md).
+**Testing** uses `test-web.yml` on pushes and PRs to `testing`: the same fast checks as `ci.yml` (`.github/actions/fast-checks`). Successful pushes advance `testing-live`, wait for the isolated API's exact commit and readiness, then deploy the separate test Vercel project. After publication, reusable `test-cli.yml` packages and smoke-tests `ensemble-test` on five platform/architecture targets, then publishes the separate `cli-testing-latest` prerelease only if its source still matches both testing pointers. The web deployment does not wait for package builds. `TEST_DEPLOY_ENABLED`, `ENSEMBLE_TEST_API_URL` and `VERCEL_PROJECT_ID_TEST` control it; production CLI/native releases are unchanged. `infra/deploy/testing` owns the isolated backend and refuses production resources. Installation, purpose and promotion: [36](36_WEB_TESTING.md).
 
 ### Home server (`infra/deploy/home`) — serves `api.ensemblework.com`
 
@@ -151,7 +142,8 @@ An alternative install of the same pull loop on Ubuntu 24.04 with root: `setup.s
 
 ### Other workflows
 
-- **`.github/workflows/desktop.yml`** builds desktop installers and runs macOS sandbox tests on pull requests except those targeting `testing` ([DESKTOP](DESKTOP.md)). Its *Export the desktop UI* step retries once, because the Google Fonts download sometimes fails on hosted runners.
+- **`.github/workflows/desktop.yml`** builds and publishes desktop installers on a `desktop-v*` tag, a push to the `desktop` branch, or by hand; it runs no tests and not on pull requests ([DESKTOP](DESKTOP.md), [37](37_PAUSED_CHECKS.md)).
+- **`.github/workflows/full-checks.yml`** runs the paused suites by hand (Actions → full-checks → Run workflow; [37](37_PAUSED_CHECKS.md)). Its *Export the desktop UI* step retries once, because the Google Fonts download sometimes fails on hosted runners.
 - **`.github/workflows/cli-release.yml`** runs on a `cli-v<version>` tag (matching `apps/cli/package.json`) or by hand as a dry run. It builds and smoke-tests the CLI on macOS (arm64, Intel), Linux (x64, arm64) and Windows, builds `.deb`/`.rpm`, publishes a GitHub release with `--latest=false`, and pushes the Homebrew formula and Scoop manifest. Secrets: `HOMEBREW_TAP_DEPLOY_KEY`, `SCOOP_BUCKET_DEPLOY_KEY` (write deploy keys on `ensemblework/homebrew-tap` and `ensemblework/scoop-bucket`), optional `WINGET_TOKEN` and `NPM_TOKEN`; a job whose secret is missing is skipped with a notice ([26 §7](26_CLI.md#7-releases)).
 
 ## 9. API regression tests

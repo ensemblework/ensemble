@@ -25,10 +25,10 @@ Testing copies released **code**, not production accounts, sessions, pages, conn
 ## Daily development
 
 - Start web work from `testing`. A direct push to `testing`, or a feature PR targeting it, runs `test-web.yml`.
-- The fast checks cover shared/API/web/CLI types, focused board/page/comment/motion regressions, namespaced authentication, CLI channel isolation, in-memory API isolation, deployment guards and the route inventory. The Vercel build remains a real production frontend build.
+- The fast checks (`.github/actions/fast-checks`, also production's `ci.yml`) cover versions, shared/API/web/CLI types, focused board/page/comment/motion regressions, namespaced authentication, CLI channel isolation, in-memory API isolation, deployment guards and the route inventory. The Vercel build remains a real production frontend build.
 - A successful push advances `testing-live` without force. The isolated API pulls that pointer; the workflow waits for its exact commit and readiness before publishing only the test Vercel project.
 - After the frontend publishes, `test-web.yml` calls `test-cli.yml` for macOS (Apple silicon/Intel), Linux (x64/arm64) and Windows x64 packages. It packages and smoke-tests the CLI/runner, not a native desktop UI. Publication rechecks `testing` and `testing-live` so an older build cannot replace a newer test snapshot.
-- PRs targeting `testing` run checks but do not deploy. Production CI and desktop builds skip this PR target.
+- PRs targeting `testing` run checks but do not deploy. Production CI skips this PR target.
 - Testing is shared integration work: changes can briefly interrupt the test site. Do not treat it as a backup or as a place for production customer data.
 
 ## Install the testing CLI
@@ -55,7 +55,7 @@ Testing downloads live in the GitHub `cli-testing-latest` **prerelease**, never 
 
 ## Promotion to production
 
-Open a PR from `testing` to `main` when the work is ready. That PR runs the complete `ci.yml` and desktop checks. Merging triggers full CI on `main`; `deploy.yml` advances `production` and publishes the production API, Hub and landing page only after CI succeeds. Native/CLI releases keep their versioned tag requirements.
+Open a PR from `testing` (or a feature branch) to `main` when the work is ready. That PR runs `ci.yml`, the same fast checks as testing ([37](37_PAUSED_CHECKS.md)). Merging runs them again on `main`; `deploy.yml` advances `production` and publishes the production API, Hub and landing page only after CI succeeds. Native/CLI releases keep their versioned tag requirements.
 
 Bring the released `main` back into `testing` after promotion so the next test cycle starts from the released code. A production hotfix is also merged back into `testing`. Do not merge environment secrets, databases or deployment pointer branches.
 

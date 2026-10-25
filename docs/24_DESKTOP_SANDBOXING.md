@@ -97,6 +97,6 @@ A paired computer enforces its own capability, trust and Git settings; a web rep
 
 ## 9. Tests and limits
 
-`workspace/sandbox/os-escape.test.ts` runs live escape tests; backend, argv, path, trust and Git tests sit beside their code. CI runs them on macOS (Seatbelt), Linux with bubblewrap, Linux with Landlock, and Windows; `ENSEMBLE_REQUIRE_OS_SANDBOX=1` makes a missing sandbox fail instead of skip ([01 §8](01_TECH_STACK_AND_ENVIRONMENT.md#8-ci-and-deploys)).
+`workspace/sandbox/os-escape.test.ts` runs live escape tests; backend, argv, path, trust and Git tests sit beside their code. `full-checks.yml` runs them by hand on macOS (Seatbelt), Linux with bubblewrap, Linux with Landlock, and Windows ([37](37_PAUSED_CHECKS.md)); `ENSEMBLE_REQUIRE_OS_SANDBOX=1` makes a missing sandbox fail instead of skip ([01 §8](01_TECH_STACK_AND_ENVIRONMENT.md#8-ci-and-deploys)).
 
 Tests cover the configurations they ran on. Landlock's sockets, toolchain grants, running with the sandbox off, code the person runs later, provider side effects and application compromise remain real boundaries.
