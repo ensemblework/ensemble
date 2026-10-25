@@ -10,7 +10,7 @@ import { useSpaceAccess } from "@/lib/access";
 import { pickFolderNative } from "@/lib/desktop-dialog";
 import { desktopShell } from "@/lib/desktop-param";
 import { computerName, folderPlace, freshCloneHint } from "@/lib/device-copy";
-import { computerAgent, computerRuns, contextChoice, effortName, engineAssign, engineModel, fitEngineChoice, modelFacts } from "@/lib/engine-models";
+import { claudeFallback, computerAgent, computerRuns, contextChoice, effortName, engineAssign, engineModel, fitEngineChoice, modelFacts } from "@/lib/engine-models";
 import { usePersistentState } from "@/lib/prefs";
 import { setFeature } from "@/lib/features";
 import { useHostCode, useModuleState } from "@/lib/use-module";
@@ -112,6 +112,14 @@ const ENGINE_OPTION: Record<CodeEngine, string> = {
   codex: "Codex (your sign-in, CLI or ChatGPT app)",
   "cursor-agent": "Cursor agent (your sign-in)",
   "copilot-cli": "GitHub Copilot (your sign-in)",
+};
+
+/** What each agent is called where it is signed in, and the command that signs it in. */
+const ENGINE_SIGN_IN: Record<CodeEngine, { program: string; login: string; short: string }> = {
+  "claude-code": { program: "Claude Code", login: "claude auth login", short: "Claude Code" },
+  codex: { program: "Codex", login: "codex login", short: "Codex" },
+  "cursor-agent": { program: "Cursor's agent", login: "cursor-agent login", short: "Cursor" },
+  "copilot-cli": { program: "Copilot CLI", login: "copilot login", short: "Copilot" },
 };
 
 const OUTSIDE_HELP = "What a sandboxed run may do in your other folders. Read only: it can read them (never keys or browser data) and asks before writing; with nobody to answer, a write is refused and the run carries on. Read and write: it can change them too. No access: it stays in the work folder. The default comes from Settings.";
@@ -429,13 +437,15 @@ export function AssignDialog({
     const own = taskId ? earlier.find((row) => row.taskId === taskId) : undefined;
     setContinueFrom(own?.jobId ?? "");
   }, [earlier, place, continueFrom, taskId]);
-  // GitHub Copilot's models, thinking levels and context windows, as the chosen computer listed them.
-  const copilot = open && kind === "code" && engine === "copilot-cli" && !appMode;
-  const subscriptions = useQuery({ queryKey: ["subscriptions"], queryFn: api.subscriptions, enabled: copilot, staleTime: 30_000 });
-  const copilotAgent = copilot ? computerAgent("copilot-cli", subscriptions.data, selectedDevice?.id ?? null, selectedDevice?.capabilities) : null;
-  const copilotModel = engineModel(copilotAgent, claudeModel);
-  const copilotDefault = copilotAgent?.models.find((row) => row.isDefault) ?? null;
-  const copilotWhere = selectedDevice ? computerName(selectedDevice.name) : desktopShell() ? "this computer" : "this server";
+  // The coding agent's models, each with its own thinking levels and context windows, as the chosen computer listed them.
+  const codeEngine: CodeEngine | null = open && kind === "code" && engine !== "ensemble" && !appMode ? engine : null;
+  const subscriptions = useQuery({ queryKey: ["subscriptions"], queryFn: api.subscriptions, enabled: codeEngine !== null, staleTime: 30_000 });
+  const reportedAgent = codeEngine ? computerAgent(codeEngine, subscriptions.data, selectedDevice?.id ?? null, selectedDevice?.capabilities) : null;
+  // Before a computer reports Claude Code, Ensemble's own table of its models stands in.
+  const engineAgent = reportedAgent ?? (codeEngine === "claude-code" ? claudeFallback() : null);
+  const agentModel = engineModel(engineAgent, claudeModel);
+  const agentDefault = engineAgent?.models.find((row) => row.isDefault) ?? null;
+  const agentWhere = selectedDevice ? computerName(selectedDevice.name) : desktopShell() ? "this computer" : "this server";
   const branchSource = place === "folder" && folderCheck?.ok && folderCheck.git ? folder : place === "fresh" && repo.startsWith("/") ? repo : "";
   const branches = useQuery({ queryKey: ["branches", branchSource], queryFn: () => api.branches(branchSource), enabled: open && Boolean(branchSource) });
   const folderKinds = selectedDevice ? sharedFolderKinds(selectedDevice.capabilities) : {};
@@ -464,7 +474,7 @@ export function AssignDialog({
     engine: kind === "code" ? engine : "ensemble",
     model: kind === "code" && engine !== "ensemble" ? claudeModel : modelChoice,
     effort,
-    context: kind === "code" && engine === "copilot-cli" ? context : undefined,
+    context: kind === "code" && engine !== "ensemble" ? context : undefined,
     branchMode: branchMode === "new" ? "new" : "as-is",
     delivery: prOn ? "commit" : delivery,
     askBeforePublish: askFirst,
@@ -488,7 +498,7 @@ export function AssignDialog({
     if (profile.engine && profile.engine !== "ensemble") setClaudeModel(profile.model);
     else setModelChoice(profile.model);
     setEffort(profile.effort);
-    setContext(profile.engine === "copilot-cli" && profile.context === "long_context" ? "long_context" : undefined);
+    setContext(profile.engine && profile.engine !== "ensemble" && profile.context === "long_context" ? "long_context" : undefined);
     setBranchMode(profile.branchMode);
     setDelivery(profile.delivery);
     setAskFirst(profile.askBeforePublish);
@@ -647,7 +657,7 @@ export function AssignDialog({
         taskId,
         kind,
         instructions,
-        ...(claude ? engineAssign(engine, { model: claudeModel, effort, context }, copilotAgent ? copilotModel : undefined) : model ? { provider, model } : {}),
+        ...(claude ? engineAssign(engine, { model: claudeModel, effort, context }, reportedAgent ? agentModel : undefined) : model ? { provider, model } : {}),
         ...(effort !== "default" && !claude ? { reasoningEffort: effort } : {}),
         markDone,
         maxMinutes: limitValue(maxMinutes, "maxMinutes"),
@@ -883,9 +893,9 @@ export function AssignDialog({
                 const value = event.target.value as typeof engine | "app";
                 setInApp(value === "app");
                 if (value === "app") return;
-                // Model names are each engine's own, and so are GitHub Copilot's thinking levels and context windows.
-                if (value !== engine) setClaudeModel("");
-                if (value !== engine && (value === "copilot-cli" || engine === "copilot-cli")) {
+                // Model names, thinking levels and context windows are each engine's own.
+                if (value !== engine) {
+                  setClaudeModel("");
                   setEffort("default");
                   setContext(undefined);
                 }
@@ -920,44 +930,48 @@ export function AssignDialog({
           </div>
         ) : null}
 
-        {appMode ? null : kind === "code" && engine === "copilot-cli" ? (
-          <div className="space-y-3" data-testid="assign-copilot">
+        {appMode ? null : codeEngine ? (
+          <div className="space-y-3" data-testid="assign-engine-model">
             <div>
-              <Label tip={`GitHub Copilot's models on ${copilotWhere}, as its CLI lists them. Copilot default uses the model set in Copilot.`}>Model</Label>
-              {copilotAgent?.models.length ? (
+              <Label tip={`${ENGINE_LABELS[codeEngine]}'s models on ${agentWhere}, as it lists them, each with its own thinking levels and context windows. ${ENGINE_SIGN_IN[codeEngine].short} default uses the model set in ${ENGINE_LABELS[codeEngine]} (for Claude, your plan's).`}>Model</Label>
+              {engineAgent?.models.some((row) => row.id !== "default") ? (
                 <select
-                  aria-label="Copilot model"
+                  aria-label={`${ENGINE_SIGN_IN[codeEngine].short} model`}
                   value={claudeModel}
                   onChange={(event) => {
                     const next = event.target.value;
                     setClaudeModel(next);
-                    const fitted = fitEngineChoice(engineModel(copilotAgent, next), effort, context);
+                    const fitted = fitEngineChoice(engineModel(engineAgent, next), effort, context);
                     setEffort(fitted.effort);
                     setContext(fitted.context);
                   }}
                   className="field w-full"
                 >
-                  <option value="">Copilot default{copilotDefault ? ` (${copilotDefault.label})` : ""}</option>
-                  {copilotAgent.models.map((row) => (
-                    <option key={row.id} value={row.id}>
-                      {row.label}
-                    </option>
-                  ))}
-                  {claudeModel && !copilotAgent.models.some((row) => row.id === claudeModel) ? <option value={claudeModel}>{claudeModel}</option> : null}
+                  <option value="">
+                    {ENGINE_SIGN_IN[codeEngine].short} default{agentDefault && agentDefault.id !== "default" ? ` (${agentDefault.label})` : ""}
+                  </option>
+                  {engineAgent.models
+                    .filter((row) => row.id !== "default")
+                    .map((row) => (
+                      <option key={row.id} value={row.id}>
+                        {row.label}
+                      </option>
+                    ))}
+                  {claudeModel && !engineAgent.models.some((row) => row.id === claudeModel || row.aliases?.includes(claudeModel)) ? <option value={claudeModel}>{claudeModel}</option> : null}
                 </select>
               ) : (
-                <input aria-label="Copilot model" value={claudeModel} onChange={(event) => setClaudeModel(event.target.value)} placeholder="GitHub Copilot default" className="field w-full font-mono text-[12.5px]" />
+                <input aria-label={`${ENGINE_SIGN_IN[codeEngine].short} model`} value={claudeModel} onChange={(event) => setClaudeModel(event.target.value)} placeholder={`${ENGINE_LABELS[codeEngine]} default`} className="field w-full font-mono text-[12.5px]" />
               )}
-              {modelFacts(copilotModel.model) ? <div className="mt-1 text-[12px] text-muted" data-testid="copilot-model-facts">{modelFacts(copilotModel.model)}</div> : null}
+              {modelFacts(agentModel.model) ? <div className="mt-1 text-[12px] text-muted" data-testid="engine-model-facts">{modelFacts(agentModel.model)}</div> : null}
             </div>
-            {copilotModel.efforts.length || copilotModel.contexts.length ? (
+            {agentModel.efforts.length || agentModel.contexts.length ? (
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                {copilotModel.efforts.length ? (
+                {agentModel.efforts.length ? (
                   <div>
-                    <Label tip="The thinking levels Copilot lists for this model. Default uses the model's own level.">Thinking</Label>
-                    <select aria-label="Copilot thinking" value={(copilotModel.efforts as string[]).includes(effort) ? effort : "default"} onChange={(event) => setEffort(event.target.value as Effort)} className="field w-full">
-                      <option value="default">Default{copilotModel.defaultEffort ? ` (${effortName(copilotModel.defaultEffort)})` : ""}</option>
-                      {copilotModel.efforts.map((level) => (
+                    <Label tip={`The thinking levels ${ENGINE_LABELS[codeEngine]} lists for this model. Default uses the model's own level.`}>Thinking</Label>
+                    <select aria-label={`${ENGINE_SIGN_IN[codeEngine].short} thinking`} value={(agentModel.efforts as string[]).includes(effort) ? effort : "default"} onChange={(event) => setEffort(event.target.value as Effort)} className="field w-full">
+                      <option value="default">Default{agentModel.defaultEffort ? ` (${effortName(agentModel.defaultEffort)})` : ""}</option>
+                      {agentModel.efforts.map((level) => (
                         <option key={level} value={level}>
                           {effortName(level)}
                         </option>
@@ -965,11 +979,11 @@ export function AssignDialog({
                     </select>
                   </div>
                 ) : null}
-                {copilotModel.contexts.length ? (
+                {agentModel.contexts.length ? (
                   <div>
                     <Label tip="How much of the work the model can hold at once. Standard is the model's usual size.">Context window</Label>
                     <select aria-label="Context window" value={context ?? "default"} onChange={(event) => setContext(event.target.value === "long_context" ? "long_context" : undefined)} className="field w-full">
-                      {copilotModel.contexts.map((row) => (
+                      {agentModel.contexts.map((row) => (
                         <option key={row.id} value={row.id}>
                           {contextChoice(row)}
                         </option>
@@ -979,30 +993,19 @@ export function AssignDialog({
                 ) : null}
               </div>
             ) : null}
-            {selectedDevice && !computerRuns("copilot-cli", selectedDevice.capabilities) ? (
+            {selectedDevice && !computerRuns(codeEngine, selectedDevice.capabilities) ? (
               <p className="rounded-md bg-panel px-2.5 py-2 text-[12px] leading-[18px] text-warn" role="status">
-                Ensemble on {copilotWhere} is too old to run GitHub Copilot. Update it there (<code>ensemble update</code>, or the desktop app&apos;s update), then assign.
+                Ensemble on {agentWhere} is too old to run {ENGINE_LABELS[codeEngine]}. Update it there (<code>ensemble update</code>, or the desktop app&apos;s update), then assign.
               </p>
-            ) : copilotAgent?.signedIn === false ? (
-              <p className="rounded-md bg-panel px-2.5 py-2 text-[12px] leading-[18px] text-warn" role="status" data-testid="copilot-signed-out">
-                Copilot CLI is not signed in on {copilotWhere}: run <code>copilot login</code> there or press Sign in under Settings → Models.
+            ) : reportedAgent?.signedIn === false ? (
+              <p className="rounded-md bg-panel px-2.5 py-2 text-[12px] leading-[18px] text-warn" role="status" data-testid="engine-signed-out">
+                {ENGINE_SIGN_IN[codeEngine].program} is not signed in on {agentWhere}: run <code>{ENGINE_SIGN_IN[codeEngine].login}</code> there or press Sign in under Settings → Models.
+              </p>
+            ) : reportedAgent?.problem ? (
+              <p className="text-[12px] leading-[18px] text-muted" role="status" data-testid="engine-problem">
+                {reportedAgent.problem}
               </p>
             ) : null}
-          </div>
-        ) : kind === "code" && (engine === "codex" || engine === "cursor-agent") ? (
-          <div>
-            <Label tip={`${ENGINE_LABELS[engine]}'s own model name, or leave empty for the default in its settings.`}>Model</Label>
-            <input value={claudeModel} onChange={(event) => setClaudeModel(event.target.value)} placeholder={`${ENGINE_LABELS[engine]} default`} className="field w-full font-mono text-[12.5px]" />
-          </div>
-        ) : kind === "code" && engine === "claude-code" ? (
-          <div>
-            <Label tip="Claude Code's own model names. Its default follows your Claude plan.">Model</Label>
-            <select value={claudeModel} onChange={(event) => setClaudeModel(event.target.value)} className="field w-full">
-              <option value="">Claude Code default</option>
-              <option value="sonnet">Sonnet</option>
-              <option value="opus">Opus</option>
-              <option value="haiku">Haiku</option>
-            </select>
           </div>
         ) : (
         <div className="space-y-3">

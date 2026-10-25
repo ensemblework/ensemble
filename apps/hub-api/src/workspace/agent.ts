@@ -53,7 +53,7 @@ import { interruptionMessage } from "./lifecycle.js";
 import { appendLive, dropLive } from "./live-log.js";
 import { checkModeTrust, contextTierOf, isChatTurn, isFolderTrusted, outsideAccessOf, pathCovers, PATH_RULE_SOURCE, PATH_RULE_TOOL, REVIEW_MESSAGE, rulesForJob, runModeOf, TRUST_TOOL, UNATTENDED_MESSAGE, type SandboxStrength } from "./trust.js";
 import { trustChanged } from "./trust-share.js";
-import { askPerson, chatSpecs, outsideReadAllowed, plantedIn, realOutside, refTips, responsesSpecs, runTool, toolSpecs, undoUnapprovedCommits, type JobContext } from "./tools.js";
+import { askPerson, chatSpecs, DANGEROUS_GIT_CONFIG, outsideReadAllowed, plantedIn, realOutside, refTips, responsesSpecs, runTool, toolSpecs, undoUnapprovedCommits, type JobContext } from "./tools.js";
 
 export interface JobControl {
   signal: AbortSignal;
@@ -64,9 +64,8 @@ export interface JobControl {
 class LimitReached extends Error {}
 
 /** The thinking levels each engine's own flag takes (`claude --effort`, Codex's turn `effort`). */
-const ENGINE_EFFORTS: Record<string, string[]> = { "claude-code": ["low", "medium", "high", "xhigh", "max"], codex: ["minimal", "low", "medium", "high", "xhigh"] };
+const ENGINE_EFFORTS: Record<string, string[]> = { codex: ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"] };
 
-const DANGEROUS_GIT_CONFIG = /\b(filter\.|textconv|external|fsmonitor|hookspath|sshcommand|askpass|pager|editor|gpg\.program|credential\.helper)|=\s*!/i;
 
 function outcomeTone(kind: string) {
   return kind === "research" ? "research" : "workspace";
@@ -654,6 +653,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
     });
     const rules = rulesForJob(trustRows, job.id);
     ctx.explicitTrust = rules.some((rule) => pathCovers(rule, ctx.root));
+    ctx.exactTrust = rules.some((rule) => rule.replace(/[\\/]+$/, "") === ctx.root.replace(/[\\/]+$/, ""));
     ctx.trusted = isFolderTrusted({ folder: ctx.root, workspaceRoot: base, rules });
   };
   ctx.refreshTrust = readTrust;
@@ -783,7 +783,8 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
       const trace = engineTrace;
       const copilotModel = job.provider === "copilot-cli" ? (cachedAgents() ?? []).find((agent) => agent.id === "copilot-cli")?.models.find((row) => row.id === job.model) : undefined;
       // The thinking level chosen for the run, checked against what this computer's agent lists for the model.
-      const wantsEffort = Boolean(job.reasoningEffort && job.reasoningEffort !== "default" && job.provider !== "copilot-cli");
+      // Claude Code and Copilot check it themselves, against each model's own levels.
+      const wantsEffort = Boolean(job.reasoningEffort && job.reasoningEffort !== "default" && job.provider !== "copilot-cli" && job.provider !== "claude-code");
       const engineAgent = wantsEffort ? (cachedAgents() ?? []).find((agent) => agent.id === job.provider) : undefined;
       const listed = engineAgent?.models.find((row) => row.id === job.model)?.efforts ?? engineAgent?.efforts ?? [];
       // Before this computer's agents are checked, a level the engine takes at all goes as chosen.
@@ -812,7 +813,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
                   chat,
                   trace,
                 })
-              : runClaudeCode(ctx, { prompt, model: job.model, effort, maxTurns: job.maxTurns, stopCheck, resume: session, chat, trace });
+              : runClaudeCode(ctx, { prompt, model: job.model, effort: job.reasoningEffort, context: contextTierOf(job.context), maxTurns: job.maxTurns, stopCheck, resume: session, chat, trace });
       let ran: Awaited<ReturnType<typeof runEngine>> | null = null;
       let prompt = enginePromptText;
       let session = resume;

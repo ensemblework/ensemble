@@ -57,6 +57,17 @@ export function localApiUrl(): string {
   return `http://127.0.0.1:${localPort}`;
 }
 
+/**
+ * Whether the person trusted this very folder themselves (a saved trust rule naming it, for good
+ * or for this task), so the engine treats it as trusted too: Claude Code loads the folder's
+ * `.claude/` settings and Codex its `.codex/`, as in the person's own terminal, where trust is per
+ * folder too. A folder inside a trusted one, the workspace root and fresh clones are trusted by
+ * Ensemble's rules only and stay untrusted for the engine, so a repository's own hooks never run there.
+ */
+export function engineTrust(ctx: Pick<JobContext, "exactTrust">): boolean {
+  return ctx.exactTrust === true;
+}
+
 export function registerEngineRun(ctx: JobContext): string {
   const secret = randomBytes(24).toString("hex");
   runs.set(ctx.job.id, { ctx, secret });

@@ -258,8 +258,9 @@ export async function runCopilot(
     if (update.sessionUpdate === "usage_update" && typeof update.used === "number" && typeof update.size === "number") usage.window = { used: update.used, size: update.size };
     void (async () => {
       if (update.sessionUpdate === "agent_message_chunk" && single?.type === "text" && single.text) {
-        await flushThought();
+        // Kept before any await: the turn's result may be read as soon as the last chunk arrives.
         reply += single.text;
+        await flushThought();
         appendLive(ctx.job.id, single.text);
       } else if (update.sessionUpdate === "agent_thought_chunk" && single?.type === "text" && single.text) {
         thought += single.text;

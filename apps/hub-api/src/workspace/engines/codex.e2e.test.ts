@@ -97,6 +97,22 @@ test("Codex as the engine: approvals and questions are answered by the run's rul
     assert.match(summary, /keys:none/, "Ensemble's own keys are not handed to Codex");
     assert.match(summary, /effort:high/, "the thinking level chosen for the run reaches Codex");
     if (job.folder) assert.equal(existsSync(join(job.folder, "hello.txt")) ? readFileSync(join(job.folder, "hello.txt"), "utf8") : "", "hi");
+
+    // A folder the person trusts is trusted in Codex too, so its own .codex/ runs as in their Codex.
+    const project = join(root, "project");
+    mkdirSync(project);
+    const second = await side.api<{ task: { id: string } }>("/api/tasks", { json: { title: "Codex in a trusted folder" } });
+    const trusted = await side.api<{ jobId?: string; error?: string }>("/api/agent/assign", {
+      json: { taskId: second.body.task.id, kind: "code", engine: "codex", folder: project, trust: "task", mode: "unattended", sandbox: false, delivery: "local" },
+    });
+    assert.ok(trusted.body.jobId, JSON.stringify(trusted.body));
+    let run: typeof job = { status: "queued" };
+    for (let i = 0; i < 240 && !["succeeded", "failed", "blocked", "cancelled"].includes(run.status); i += 1) {
+      await sleep(500);
+      run = (await side.api<{ job: typeof job }>(`/api/agent/jobs/${trusted.body.jobId}`)).body.job;
+    }
+    assert.equal(run.status, "succeeded", `${run.error ?? ""}\n${side.logs().slice(-3000)}`);
+    assert.match(run.summary ?? "", /trust:trusted/, `the person's trust reaches Codex\n${side.logs().slice(-2500)}`);
   } finally {
     await side.stop();
     await runtime.close();

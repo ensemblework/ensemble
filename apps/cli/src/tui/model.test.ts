@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { quickRunProfile } from "@ensemble/shared-types";
 import type { Decision, JobCard, Workspace } from "./local.js";
-import { agentChoiceLabel, buildItems, chatTurnRequest, commandAnswer, copilotNote, copilotOf, copilotProblem, decisionActions, installedAgent, matchCommands, modelEfforts, modelNote, parseCommand, profileSummary, runRequest, titleFrom } from "./model.js";
+import { agentChoiceLabel, agentOf, buildItems, chatTurnRequest, commandAnswer, copilotNote, copilotOf, copilotProblem, decisionActions, installedAgent, matchCommands, modelEfforts, modelNote, parseCommand, profileSummary, runRequest, titleFrom } from "./model.js";
 import { copilotAgent } from "./testing.js";
 
 const job = (id: string, status: string): JobCard => ({ id, taskId: `t${id}`, title: id, status, kind: "code", folder: "/w", position: null, delivery: "commit", unattended: false, accessMode: "read-write", executionMode: "sandbox" });
@@ -123,9 +123,20 @@ test("GitHub Copilot: Chat and /run send the /model choice (model, thinking leve
   assert.deepEqual([fromProfile.engine, fromProfile.model, fromProfile.reasoningEffort, fromProfile.contextTier], ["copilot-cli", "claude-opus-4.7", "xhigh", "long_context"]);
   const picked = runRequest({ taskId: "t", folder: "/work", instructions: "fix it", profile: copilotProfile, engine: "copilot-cli", agent: { model: "gpt-5.6-luna", effort: "low" } });
   assert.deepEqual([picked.model, picked.reasoningEffort, picked.contextTier], ["gpt-5.6-luna", "low", undefined]);
-  // Other engines' runs are as they were: no thinking level or context window from the profile.
-  const claude = runRequest({ taskId: "t", folder: "/work", instructions: "fix it", profile: { ...copilotProfile, engine: "claude-code", model: "opus" }, engine: null });
-  assert.deepEqual([claude.model, claude.reasoningEffort, claude.contextTier], ["opus", undefined, undefined]);
+  // Every agent's profile brings its own thinking level and context window; Claude Code checks them against the model.
+  const claude = runRequest({ taskId: "t", folder: "/work", instructions: "fix it", profile: { ...copilotProfile, engine: "claude-code", model: "claude-sonnet-4-6" }, engine: null });
+  assert.deepEqual([claude.model, claude.reasoningEffort, claude.contextTier], ["claude-sonnet-4-6", "xhigh", "long_context"]);
+  const other = runRequest({ taskId: "t", folder: "/work", instructions: "fix it", profile: { ...copilotProfile, engine: "claude-code", model: "opus" }, engine: "codex" });
+  assert.deepEqual([other.model, other.reasoningEffort, other.contextTier], [undefined, undefined, undefined], "another agent than the profile's: its own defaults");
+});
+
+test("/model lists each agent's own models: what this computer reported, else Ensemble's table of Claude Code's", () => {
+  const claude = agentOf(null, "claude-code")!;
+  const sonnet = claude.models.find((model) => model.id === "claude-sonnet-4-6")!;
+  assert.deepEqual(modelEfforts(sonnet, claude), ["low", "medium", "high", "max"]);
+  assert.equal(modelNote(sonnet), "200K / 1M context");
+  assert.equal(agentOf(null, "codex"), null, "Codex's names come from Codex itself");
+  assert.equal(agentOf([copilotAgent()], "copilot-cli")?.account, "mira-chen");
 });
 
 test("Copilot's sign-in gives its /agent note and whether a message can go to it", () => {

@@ -14,7 +14,8 @@ import { resolve } from "node:path";
 import { checkGit, expandHome, GuardError, harmlessPath, isNeverProgram, outsideRefusal, within } from "../guard.js";
 import { gitSubcommand } from "../clone.js";
 import { parseShell } from "../shell-parse.js";
-import { allowOrRefuse, askPerson, cloneForAgent, OUTSIDE_TOOL, outsideArgs, plainArgs, readsOnly, realOutside, WRITE_TOOL, type JobContext } from "../tools.js";
+import { allowOrRefuse, askPerson, cloneForAgent, OUTSIDE_TOOL, outsideArgs, plainArgs, quietArgs, readsOnly, realOutside, WRITE_TOOL, type JobContext } from "../tools.js";
+import type { ShellSegment } from "../shell-parse.js";
 
 /** `signal` aborts when the agent stops waiting for this answer (its call timed out or was cancelled): a question it asked is withdrawn. */
 export type EngineCall = { tool: string; input: Record<string, unknown>; signal?: AbortSignal };
@@ -63,13 +64,31 @@ export function shellSegments(command: string): string[][] {
   return parseShell(command, "/").map((segment) => segment.argv).filter((argv) => argv.length > 0);
 }
 
+/**
+ * A POSIX shell command whose every program only reads files in the work folder (`quietArgs`:
+ * links and globs followed), writes no file and gets no `VAR=value` in front: what the person's
+ * own Claude Code, Codex and Copilot run without asking. Read-only git also needs the sandbox.
+ */
+export async function quietCommand(root: string, parsed: ShellSegment[], sandboxed: boolean): Promise<boolean> {
+  if (!parsed.some((segment) => segment.argv.length)) return false;
+  for (const segment of parsed) {
+    if (segment.assigned || !within(root, segment.cwd)) return false;
+    if (segment.redirects.some((redirect) => redirect.write && !harmlessPath(resolve(segment.cwd, expandHome(redirect.path))))) return false;
+    if (!segment.argv.length) continue;
+    if (!sandboxed && segment.argv[0]!.split(/[\\/]/).pop()!.replace(/\.exe$/i, "") === "git") return false;
+    if (!(await quietArgs(root, segment.argv, segment.cwd))) return false;
+  }
+  return true;
+}
+
 /** Ensemble runs a clone for the engine (tools.ts `cloneForAgent`); tests replace it. */
 let cloneRunner: typeof cloneForAgent = cloneForAgent;
 export function setCloneRunnerForTests(runner: typeof cloneForAgent | null): void {
   cloneRunner = runner ?? cloneForAgent;
 }
 
-async function shell(ctx: JobContext, command: string, withdrawn?: AbortSignal): Promise<EngineAnswer> {
+/** `posix`: a POSIX shell reads the command (Bash, not PowerShell or Windows), so its parse holds. */
+async function shell(ctx: JobContext, command: string, withdrawn?: AbortSignal, posix = true): Promise<EngineAnswer> {
   const parsed = parseShell(command, ctx.root);
   const segments = parsed.map((segment) => segment.argv).filter((argv) => argv.length > 0);
   // Claude Code's sandbox does not let git write .git/config or hooks anywhere in the run folder, so a
@@ -140,6 +159,8 @@ async function shell(ctx: JobContext, command: string, withdrawn?: AbortSignal):
       if (floor) return { decision: "deny", message: `${real}: ${floor}` };
     }
   }
+  // Paths outside the folder were judged above; reading inside it asks nobody.
+  if (posix && (await quietCommand(ctx.root, parsed, ctx.sandboxed))) return ALLOW;
   const answer = refused(await allowOrRefuse(ctx, "command", true, { toolName: "Bash", title: `Run ${command.slice(0, 140)}`, command }));
   if (answer.decision === "allow") {
     for (const path of new Set(writesIn)) await ctx.changes?.note(path, { folder: parsed.some((segment) => segment.cwd === path) });
@@ -218,7 +239,7 @@ export async function judgeEngineCall(ctx: JobContext, call: EngineCall): Promis
   if (SHELLS.has(tool)) {
     const command = str(input.command);
     if (!command) return ALLOW;
-    return shell(ctx, command, call.signal);
+    return shell(ctx, command, call.signal, tool === "Bash" && process.platform !== "win32");
   }
   // MCP tools and anything new: the mode decides, like a command.
   if (ctx.accessMode === "review") return { decision: "deny", message: "This run is read-only." };

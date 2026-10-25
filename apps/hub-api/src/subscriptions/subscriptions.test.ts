@@ -12,7 +12,7 @@ import { agentProblem, answerCodexTurn, answerCursorTurn, claudeArgs, copilotArg
 import { copilotOutput } from "./copilot-output.js";
 import { contextFor, copilotEnv, copilotModels, tokenLabel } from "./copilot.js";
 import { bridgeFor, callThroughBridge, openBridge } from "./bridge.js";
-import { claudeAppCopy, claudeEfforts, codexModels, copilotEfforts, firstVersion, newestFirst, parseClaudeStatus, parseCopilotModels, parseCursorStatus, parseModelLines } from "./detect.js";
+import { claudeAppCopy, claudeEfforts, codexLimits, codexModels, copilotEfforts, firstVersion, newestFirst, parseClaudeStatus, parseCopilotModels, parseCursorStatus, parseModelLines } from "./detect.js";
 import { LOGIN_ARGS } from "./signin.js";
 import { agentConversation, effortFor, howYouRun, jsonFrom, pickComputer } from "./turn.js";
 
@@ -68,18 +68,30 @@ test("Cursor's status and model lines are read loosely", () => {
   );
 });
 
-test("Codex's model list keeps visible models with their thinking levels", () => {
+test("Codex's model list keeps visible models with their thinking levels, default level and image input", () => {
   const models = codexModels([
-    { id: "a", model: "gpt-6-luna", displayName: "GPT-6 Luna", isDefault: true, supportedReasoningEfforts: [{ reasoningEffort: "low" }, { reasoningEffort: "high" }] },
+    { id: "a", model: "gpt-6-luna", displayName: "GPT-6 Luna", isDefault: true, supportedReasoningEfforts: [{ reasoningEffort: "low" }, { reasoningEffort: "high" }, { reasoningEffort: "ultra" }], defaultReasoningEffort: "low", inputModalities: ["text", "image"] },
     { id: "b", model: "secret", displayName: "Hidden", hidden: true },
-    { id: "c", model: "gpt-5.5", displayName: "GPT-5.5" },
+    { id: "c", model: "gpt-5.5", displayName: "GPT-5.5", defaultReasoningEffort: "medium", inputModalities: ["text"] },
   ]);
   assert.deepEqual(models, [
-    { id: "gpt-6-luna", label: "GPT-6 Luna", isDefault: true, efforts: ["low", "high"] },
-    { id: "gpt-5.5", label: "GPT-5.5" },
+    { id: "gpt-6-luna", label: "GPT-6 Luna", isDefault: true, efforts: ["low", "high", "ultra"], defaultEffort: "low", vision: true },
+    { id: "gpt-5.5", label: "GPT-5.5", vision: false },
   ]);
   assert.equal(firstVersion("codex-cli 0.162.0-alpha.17.2"), "0.162.0-alpha.17.2");
   assert.equal(firstVersion("2.1.296 (Claude Code)"), "2.1.296");
+});
+
+test("Codex's usage windows: the 5-hour and weekly limits, the month on Free, and none for one model only", () => {
+  const paid = codexLimits({ rateLimits: { limitId: "codex", planType: "plus", primary: { usedPercent: 42.5, resetsAt: 1_800_000_000 }, secondary: { usedPercent: 120, windowDurationMins: 10_080 } } });
+  assert.deepEqual(paid, [
+    { id: "primary", label: "5-hour limit", usedPercent: 42.5, minutes: 300, resetsAt: "2027-01-15T08:00:00.000Z" },
+    { id: "secondary", label: "Weekly limit", usedPercent: 100, minutes: 10_080 },
+  ]);
+  assert.equal(codexLimits({ rateLimits: { planType: "free", primary: { usedPercent: 5 } } })[0]!.label, "Monthly limit");
+  assert.deepEqual(codexLimits({ rateLimits: { limitId: "gpt-6-astra", primary: { usedPercent: 5 } } }), []);
+  assert.equal(codexLimits({ rateLimits: { limitId: "other" }, rateLimitsByLimitId: { codex: { primary: { usedPercent: 7 } } } })[0]!.usedPercent, 7);
+  assert.deepEqual(codexLimits(null), []);
 });
 
 test("the Claude app's copy of Claude Code is the newest version folder that has the program", () => {
@@ -119,6 +131,8 @@ test("Claude Code runs with Ensemble's prompt and tools only, and none of the pe
   assert.equal(after("--model"), "haiku");
   assert.equal(after("--effort"), "low");
   assert.ok(!claudeArgs({ systemFile: "s", mcpFile: "m", maxTurns: 2, model: "default", effort: null }).includes("--model"), "the plan's default sends no model");
+  const long = claudeArgs({ systemFile: "s", mcpFile: "m", maxTurns: 2, model: "claude-sonnet-4-6", effort: "high", context: "long_context" });
+  assert.equal(long[long.indexOf("--model") + 1], "claude-sonnet-4-6[1m]", "a tier on the 1M window gets it");
 });
 
 test("Copilot CLI denies its shell, writes and fetches, and Windows gets a prompt that fits its command line", () => {

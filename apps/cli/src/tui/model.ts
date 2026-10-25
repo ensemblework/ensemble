@@ -3,7 +3,7 @@
  * stopped, done), and the answers a waiting request offers. No terminal here, so it is tested
  * directly.
  */
-import { ENGINE_LABELS, isCodeEngine, type CodeEngine, type ContextTier, type RunProfile, type SubscriptionAgent, type SubscriptionModel } from "@ensemble/shared-types";
+import { claudeCodeModels, ENGINE_LABELS, isCodeEngine, type CodeEngine, type ContextTier, type RunProfile, type SubscriptionAgent, type SubscriptionModel } from "@ensemble/shared-types";
 import type { Decision, JobCard, Workspace } from "./local.js";
 import type { Engine, Tab } from "./prefs.js";
 
@@ -197,11 +197,10 @@ export function runRequest(input: {
       : engine === "ensemble" && profile.model.includes("::")
         ? { provider: profile.model.split("::")[0], model: profile.model.split("::")[1] }
         : { model: profile.model };
-  // The profile's thinking level goes with Ensemble's own agent, as the web's Assign sends it, and
-  // with GitHub Copilot when the profile is Copilot's, together with its context window.
-  const copilotProfile = engine === "copilot-cli" && own;
-  const effort = (engine === "ensemble" || copilotProfile) && profile.effort && profile.effort !== "default" ? { reasoningEffort: profile.effort } : {};
-  const context = copilotProfile && profile.context === "long_context" ? { contextTier: "long_context" } : {};
+  // The profile's thinking level and context window go with the agent the profile names, as the
+  // web's Assign sends them; the runner on the computer checks them against the model's own.
+  const effort = own && profile.effort && profile.effort !== "default" ? { reasoningEffort: profile.effort } : {};
+  const context = own && engine !== "ensemble" && profile.context === "long_context" ? { contextTier: "long_context" } : {};
   const picked = engine !== "ensemble" && input.agent?.model && input.agent.model !== "default" ? agentFields(input.agent) : null;
   const pullRequest = profile.pullRequest ?? null;
   return {
@@ -232,10 +231,15 @@ export type AgentEngine = CodeEngine;
 export const FINISHED = new Set(["succeeded", "failed", "cancelled", "interrupted", "blocked"]);
 
 /**
- * Models to offer for each agent; null means type one (the agent's names change often). GitHub
- * Copilot offers the models this computer's Copilot reports instead (`GET /api/subscriptions`).
+ * An agent as this computer's runtime found it (`GET /api/subscriptions`), with the models it lists,
+ * each with its own thinking levels and context windows. Claude Code falls back to Ensemble's own
+ * table of its models before the check answers; the others then take a typed model name.
  */
-export const AGENT_MODELS: Record<AgentEngine, string[] | null> = { "claude-code": ["default", "sonnet", "opus", "haiku"], codex: null, "cursor-agent": null, "copilot-cli": null };
+export function agentOf(agents: readonly SubscriptionAgent[] | null | undefined, engine: AgentEngine): SubscriptionAgent | null {
+  const found = agents?.find((agent) => agent.id === engine) ?? null;
+  if (found || engine !== "claude-code") return found;
+  return { id: "claude-code", via: "cli", version: null, signedIn: null, models: claudeCodeModels(null), typedModels: true, checkedAt: "" };
+}
 
 /** The Assign fields for a `/model` choice that names a model. */
 function agentFields(choice: AgentChoice): Record<string, unknown> {

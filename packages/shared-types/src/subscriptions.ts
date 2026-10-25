@@ -79,6 +79,8 @@ export type ModelContext = z.infer<typeof ModelContext>;
 export const SubscriptionModel = z.object({
   id: z.string().min(1).max(120),
   label: z.string().min(1).max(120),
+  /** Other names the agent takes for the same model (Claude Code's `opus` for the newest Opus). */
+  aliases: z.array(z.string().min(1).max(60)).max(8).optional(),
   isDefault: z.boolean().optional(),
   /** Thinking levels the agent takes for this model, when it says. */
   efforts: z.array(z.string().max(20)).max(10).optional(),
@@ -93,6 +95,18 @@ export const SubscriptionModel = z.object({
   description: z.string().max(240).optional(),
 });
 export type SubscriptionModel = z.infer<typeof SubscriptionModel>;
+
+/** One of the plan's usage windows as the agent reports it (Codex's 5-hour and weekly limits). */
+export const UsageWindow = z.object({
+  id: z.string().min(1).max(40),
+  /** "5-hour limit", "Weekly limit", "Monthly limit". */
+  label: z.string().min(1).max(60),
+  usedPercent: z.number().min(0).max(100),
+  /** When the window starts over (ISO time). */
+  resetsAt: z.string().max(40).optional(),
+  minutes: z.number().int().positive().max(100_000).optional(),
+});
+export type UsageWindow = z.infer<typeof UsageWindow>;
 
 /** One agent as a paired computer found it (device capabilities `agents`). */
 export const SubscriptionAgent = z.object({
@@ -111,6 +125,8 @@ export const SubscriptionAgent = z.object({
   typedModels: z.boolean().optional(),
   /** Thinking levels the tool takes (Claude Code's --effort), when not per model. */
   efforts: z.array(z.string().max(20)).max(10).optional(),
+  /** How much of the plan's usage windows is used, when the agent reports it. */
+  limits: z.array(UsageWindow).max(6).optional(),
   /** Why the check could not finish, in words for the person. */
   problem: z.string().max(300).nullable().optional(),
   checkedAt: z.string().max(40),
@@ -125,14 +141,6 @@ export function parseSubscriptionAgents(value: unknown): SubscriptionAgent[] {
     return parsed.success ? [parsed.data] : [];
   });
 }
-
-/** Claude Code's model names: the aliases follow the newest model of each family. */
-export const CLAUDE_CODE_MODELS: SubscriptionModel[] = [
-  { id: "default", label: "Your plan's default", isDefault: true, description: "The model Claude Code picks for your plan." },
-  { id: "haiku", label: "Haiku (latest)", description: "Fastest and lightest on your plan's limits." },
-  { id: "sonnet", label: "Sonnet (latest)", description: "Strong everyday model." },
-  { id: "opus", label: "Opus (latest)", description: "Most capable. Uses your limits fastest." },
-];
 
 /** The computer-side protocol for assistant turns (capabilities `assistantTurns`). */
 export const ASSISTANT_TURNS_API = 1;

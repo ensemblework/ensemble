@@ -17,7 +17,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import { checkEffort, SUBSCRIPTION_INFO, type SubscriptionProvider } from "@ensemble/shared-types";
+import { checkEffort, claudeLaunch, SUBSCRIPTION_INFO, type SubscriptionProvider } from "@ensemble/shared-types";
 import { RpcConnection } from "../workspace/engines/rpc.js";
 import { hookScriptPath, localApiUrl } from "../workspace/engines/registry.js";
 import { openBridge, type ToolAnswer, type ToolSpec } from "./bridge.js";
@@ -94,7 +94,9 @@ function aborted(): Error {
 }
 
 /** The arguments for Claude Code (exported for tests). */
-export function claudeArgs(input: { systemFile: string; mcpFile: string; maxTurns: number; model: string | null; effort: string | null }): string[] {
+export function claudeArgs(input: { systemFile: string; mcpFile: string; maxTurns: number; model: string | null; effort: string | null; context?: "default" | "long_context" | null }): string[] {
+  // The model's own thinking levels and its 1M window (`[1m]`), as the Claude tile listed them.
+  const launch = claudeLaunch({ model: chosen(input.model) ? input.model : null, effort: chosen(input.effort) ? input.effort : null, context: input.context ?? null });
   return [
     "-p",
     "--output-format",
@@ -120,8 +122,8 @@ export function claudeArgs(input: { systemFile: string; mcpFile: string; maxTurn
     "--no-session-persistence",
     "--max-turns",
     String(input.maxTurns),
-    ...(chosen(input.model) ? ["--model", input.model!] : []),
-    ...(chosen(input.effort) ? ["--effort", input.effort!] : []),
+    ...(launch.model ? ["--model", launch.model] : []),
+    ...(launch.effort ? ["--effort", launch.effort] : []),
   ];
 }
 
@@ -130,7 +132,7 @@ const runClaude: Driver = async ({ spec, io, bin, folder, mcp }) => {
   const mcpFile = join(folder, "mcp.json");
   await writeFile(systemFile, spec.system, "utf8");
   await writeFile(mcpFile, JSON.stringify({ mcpServers: { ensemble: { type: "stdio", ...mcp } } }), "utf8");
-  const child = spawn(bin, claudeArgs({ systemFile, mcpFile, maxTurns: spec.maxTurns, model: spec.model, effort: spec.effort }), {
+  const child = spawn(bin, claudeArgs({ systemFile, mcpFile, maxTurns: spec.maxTurns, model: spec.model, effort: spec.effort, context: spec.context ?? null }), {
     cwd: folder,
     // A tool call may wait on a slow connected app; Claude Code must not give up first.
     env: agentEnv({ ...mcp.env, MCP_TOOL_TIMEOUT: "600000", ENSEMBLE_RUN: "assistant-turn" }),

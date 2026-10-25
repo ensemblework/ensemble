@@ -101,7 +101,7 @@ const AssignInput = z
     instructions: z.string().max(6000).optional().describe("What to do, how to check it, what done looks like. The profile's own instructions are added."),
     model: z.string().max(120).optional().describe("Only when the person names a model for the agent (e.g. gpt-5.6-luna for GitHub Copilot). Leave out to follow the profile."),
     effort: z.string().max(20).optional().describe("Only when the person names a thinking level (low, medium, high, xhigh, max). Leave out to follow the profile."),
-    context: z.enum(["default", "long_context"]).optional().describe("GitHub Copilot only: long_context when the person asks for the long context window."),
+    context: z.enum(["default", "long_context"]).optional().describe("long_context when the person asks for the long (1M) context window, for Claude Code or GitHub Copilot models that have one."),
     branch: z.string().max(200).optional().describe("Only when the person names the branch to work on: a new branch with exactly that name (made from the pull request's base when there is one)."),
     pullRequest: z
       .object({
@@ -136,8 +136,8 @@ async function plan(ctx: ToolContext, input: AssignInput): Promise<Plan> {
     kind,
     engine,
     ...(model && engine === profile.engine ? (engine === "ensemble" ? { ...(provider ? { provider } : {}), model: modelId } : { model }) : {}),
-    ...((engine === "ensemble" || engine === "copilot-cli") && profile.effort !== "default" && engine === profile.engine ? { reasoningEffort: profile.effort } : {}),
-    ...(engine === "copilot-cli" && engine === profile.engine && profile.context ? { contextTier: profile.context } : {}),
+    ...(profile.effort !== "default" && engine === profile.engine ? { reasoningEffort: profile.effort } : {}),
+    ...(engine !== "ensemble" && engine === profile.engine && profile.context ? { contextTier: profile.context } : {}),
     instructions: [profile.instructions, input.instructions].filter((part) => part?.trim()).join("\n\n"),
     markDone: profile.markDone,
     network: profile.network,
@@ -161,7 +161,7 @@ async function plan(ctx: ToolContext, input: AssignInput): Promise<Plan> {
     // What the person named in this request wins over the profile.
     ...(input.model?.trim() && engine !== "ensemble" ? { model: input.model.trim() } : {}),
     ...(input.effort?.trim() && input.effort !== "default" ? { reasoningEffort: input.effort.trim() } : {}),
-    ...(input.context && engine === "copilot-cli" ? { contextTier: input.context } : {}),
+    ...(input.context && engine !== "ensemble" ? { contextTier: input.context } : {}),
     ...(kind === "code" && (input.pullRequest ?? profile.pullRequest) ? { pullRequest: input.pullRequest ?? profile.pullRequest! } : {}),
     ...(kind === "code" && input.branch?.trim() ? { branchMode: "new" as const, branch: input.branch.trim() } : {}),
   });

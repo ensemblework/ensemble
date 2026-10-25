@@ -13,7 +13,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import { CLAUDE_CODE_MODELS, type SubscriptionAgent, type SubscriptionModel, type SubscriptionProvider } from "@ensemble/shared-types";
+import { claudeCodeModels, type SubscriptionAgent, type UsageWindow, type SubscriptionModel, type SubscriptionProvider } from "@ensemble/shared-types";
 import { bundledCodex } from "../workspace/handoff.js";
 import { hostExecutable } from "../workspace/policy.js";
 import { RpcConnection } from "../workspace/engines/rpc.js";
@@ -269,13 +269,15 @@ async function probeClaude(): Promise<SubscriptionAgent | null> {
   const [version, status, help] = await Promise.all([quickRun(found.path, ["--version"]), quickRun(found.path, ["auth", "status", "--json"]), quickRun(found.path, ["--help"])]);
   const { signedIn, plan } = parseClaudeStatus(status);
   const efforts = claudeEfforts(help.stdout);
+  const installed = firstVersion(version.stdout);
   return {
     id: "claude-code",
     via: found.via,
-    version: firstVersion(version.stdout),
+    version: installed,
     signedIn,
     plan,
-    models: CLAUDE_CODE_MODELS,
+    // Each model with its own thinking levels and context windows, as this version runs them.
+    models: claudeCodeModels(installed),
     typedModels: true,
     ...(efforts.length ? { efforts } : {}),
     problem: version.code === 0 ? null : "Claude Code did not start. Open the Claude app once, or reinstall Claude Code.",
@@ -283,7 +285,17 @@ async function probeClaude(): Promise<SubscriptionAgent | null> {
   };
 }
 
-type CodexModel = { id?: string; model?: string; displayName?: string; description?: string; isDefault?: boolean; hidden?: boolean; supportedReasoningEfforts?: Array<{ reasoningEffort?: string }> };
+type CodexModel = {
+  id?: string;
+  model?: string;
+  displayName?: string;
+  description?: string;
+  isDefault?: boolean;
+  hidden?: boolean;
+  supportedReasoningEfforts?: Array<{ reasoningEffort?: string }>;
+  defaultReasoningEffort?: string | null;
+  inputModalities?: string[];
+};
 
 export function codexModels(rows: CodexModel[]): SubscriptionModel[] {
   return rows
@@ -291,15 +303,46 @@ export function codexModels(rows: CodexModel[]): SubscriptionModel[] {
     .map((row) => {
       const id = String(row.model || row.id).slice(0, 120);
       const efforts = (row.supportedReasoningEfforts ?? []).map((option) => option.reasoningEffort).filter((value): value is string => typeof value === "string" && value.length <= 20);
+      const fallback = typeof row.defaultReasoningEffort === "string" && efforts.includes(row.defaultReasoningEffort) ? row.defaultReasoningEffort : null;
       return {
         id,
         label: String(row.displayName || id).slice(0, 120),
         ...(row.isDefault ? { isDefault: true } : {}),
         ...(efforts.length ? { efforts: efforts.slice(0, 10) } : {}),
+        ...(fallback ? { defaultEffort: fallback } : {}),
+        ...(Array.isArray(row.inputModalities) ? { vision: row.inputModalities.includes("image") } : {}),
         ...(row.description ? { description: row.description.slice(0, 240) } : {}),
       };
     })
     .slice(0, 120);
+}
+
+type CodexWindow = { usedPercent?: number; resetsAt?: number | null; windowDurationMins?: number | null } | null | undefined;
+type CodexLimitSnapshot = { limitId?: string | null; planType?: string | null; primary?: CodexWindow; secondary?: CodexWindow };
+
+const HOURS_5 = 5 * 60;
+const WEEK = 7 * 24 * 60;
+const MONTH = 30 * 24 * 60;
+
+/**
+ * Codex's `account/rateLimits/read`: the plan's windows with how much of each is used. The first
+ * window is the 5-hour one (the month on Free and Go), the second the week, unless Codex says how
+ * long each is. Limits for one model only are left out. After T3 Code's `codexUsageLimits.ts`
+ * (pingdotgg/t3code, MIT License, Copyright (c) 2026 T3 Tools Inc.).
+ */
+export function codexLimits(body: { rateLimits?: CodexLimitSnapshot | null; rateLimitsByLimitId?: Record<string, CodexLimitSnapshot> | null } | null | undefined): UsageWindow[] {
+  const snapshot = body?.rateLimitsByLimitId?.codex ?? body?.rateLimits;
+  if (!snapshot || (snapshot.limitId && snapshot.limitId !== "codex")) return [];
+  const monthly = snapshot.planType === "free" || snapshot.planType === "go";
+  const windows: UsageWindow[] = [];
+  for (const [id, window, fallback] of [["primary", snapshot.primary, monthly ? MONTH : HOURS_5], ["secondary", snapshot.secondary, WEEK]] as const) {
+    if (!window || typeof window.usedPercent !== "number" || !Number.isFinite(window.usedPercent)) continue;
+    const minutes = typeof window.windowDurationMins === "number" && window.windowDurationMins > 0 ? Math.round(window.windowDurationMins) : fallback;
+    const label = minutes >= MONTH ? "Monthly limit" : minutes >= WEEK ? "Weekly limit" : minutes % 60 === 0 ? `${minutes / 60}-hour limit` : `${minutes}-minute limit`;
+    const resetsAt = typeof window.resetsAt === "number" && window.resetsAt > 0 ? new Date(window.resetsAt * 1000).toISOString() : undefined;
+    windows.push({ id, label, usedPercent: Math.min(100, Math.max(0, window.usedPercent)), minutes, ...(resetsAt ? { resetsAt } : {}) });
+  }
+  return windows;
 }
 
 /** Codex answers through its app-server: whether it is signed in (`account/read`) and its models (`model/list`). */
@@ -337,6 +380,11 @@ async function probeCodex(): Promise<SubscriptionAgent | null> {
       if (!cursor) break;
     }
     base.models = codexModels(rows);
+    // How much of the plan's 5-hour and weekly windows is used; a Codex without the method lists none.
+    if (base.signedIn) {
+      const limits = codexLimits((await server.request("account/rateLimits/read", {}).catch(() => null)) as Parameters<typeof codexLimits>[0]);
+      if (limits.length) base.limits = limits;
+    }
     // A Codex set up with its own model provider may list none: it still answers with its configured model.
     if (!base.models.length) base.models = [{ id: "default", label: "Codex's default", isDefault: true }];
   } catch (error) {

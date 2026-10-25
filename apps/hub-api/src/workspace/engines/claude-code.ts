@@ -23,6 +23,7 @@ import { readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
+import { claudeLaunch } from "@ensemble/shared-types";
 import { desktopDataDir } from "@ensemble/shared-types/desktop-discovery";
 import { askpassPath, cacheDir, ENSEMBLE_SOURCE } from "../guard.js";
 import { appendLive, touchLive } from "../live-log.js";
@@ -31,7 +32,7 @@ import { LINUX_TOOLCHAIN_HOME } from "../sandbox/linux.js";
 import { SECRET_HOME_PATHS, TOOLCHAIN_HOME_READS } from "../sandbox/seatbelt.js";
 import type { JobContext } from "../tools.js";
 import type { OutsideAccess } from "../trust.js";
-import { hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
+import { engineTrust, hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
 import { EngineTrace } from "./trace.js";
 
 export type EngineResult = {
@@ -119,7 +120,18 @@ function summarize(name: string, input: Record<string, unknown>): string {
 
 export async function runClaudeCode(
   ctx: JobContext,
-  options: { prompt: string; model?: string | null; effort?: string | null; maxTurns: number; stopCheck: () => Promise<void>; resume?: string | null; chat?: boolean; trace?: EngineTrace },
+  options: {
+    prompt: string;
+    model?: string | null;
+    effort?: string | null;
+    /** The 1M window, for a model that has one (`[1m]`). */
+    context?: "long_context" | null;
+    maxTurns: number;
+    stopCheck: () => Promise<void>;
+    resume?: string | null;
+    chat?: boolean;
+    trace?: EngineTrace;
+  },
 ): Promise<EngineResult> {
   // The `claude` command, else the Claude Code the Claude app keeps for its Code tab (subscriptions/detect.ts).
   const found = await claudeBinary();
@@ -139,6 +151,9 @@ export async function runClaudeCode(
     toolchain: (process.platform === "darwin" ? TOOLCHAIN_HOME_READS : process.platform === "linux" ? LINUX_TOOLCHAIN_HOME : []).map((name) => join(home, name)),
   });
   const settings = claudeSettings({ hookCommand, sandboxed: ctx.sandboxed, network: ctx.network, filesystem });
+  // The model, its context window and thinking level as Claude Code takes them (shared-types/claude-models.ts).
+  const launch = claudeLaunch({ model: options.model, effort: options.effort, context: options.context ?? null });
+  for (const note of launch.notes) await ctx.event("engine_note", { note });
   const args = [
     "-p",
     options.prompt,
@@ -147,9 +162,10 @@ export async function runClaudeCode(
     "--verbose",
     "--permission-mode",
     "default",
-    // The person's own settings only: a repository's .claude/ hooks and servers do not run.
+    // The person's own settings; a repository's .claude/ settings and hooks too only in a folder they
+    // trusted in Ensemble, as Claude Code itself loads them once a folder is trusted (`engineTrust`).
     "--setting-sources",
-    "user",
+    engineTrust(ctx) ? "user,project,local" : "user",
     "--settings",
     JSON.stringify(settings),
     // Ensemble's ask_person tool: headless Claude Code has no question tool of its own.
@@ -157,8 +173,8 @@ export async function runClaudeCode(
     JSON.stringify({ mcpServers: { ensemble: { type: "stdio", command: process.execPath, args: [hookScriptPath("ensemble-ask-mcp.mjs")] } } }),
     "--max-turns",
     String(options.maxTurns),
-    ...(options.model && options.model !== "default" ? ["--model", options.model] : []),
-    ...(options.effort ? ["--effort", options.effort] : []),
+    ...(launch.model ? ["--model", launch.model] : []),
+    ...(launch.effort ? ["--effort", launch.effort] : []),
     // The next message in a chat: the same Claude Code session, so it remembers the conversation.
     ...(options.resume ? ["--resume", options.resume] : []),
   ];

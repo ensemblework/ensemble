@@ -1,9 +1,10 @@
 /**
  * A coding agent's models as a paired computer reported them (`GET /api/subscriptions`, or the
- * device's own `agents` capability), and what Assign sends for one. GitHub Copilot lists each
- * model's thinking levels, context windows and cost; the other agents take a model name only.
+ * device's own `agents` capability), and what Assign sends for one. Each model carries its own
+ * thinking levels and context windows where its agent says (Claude Code from its model table,
+ * Codex from `model/list`, GitHub Copilot from `models.list`); Cursor's agent lists names only.
  */
-import { EFFORT_LABEL, orderLevels, parseSubscriptionAgents, type CodeEngine, type ContextTier, type EffortLevel, type ModelContext, type ReasoningEffort, type SubscriptionAgent, type SubscriptionModel } from "@ensemble/shared-types";
+import { claudeCodeModels, EFFORT_LABEL, orderLevels, parseSubscriptionAgents, type CodeEngine, type ContextTier, type EffortLevel, type ModelContext, type ReasoningEffort, type SubscriptionAgent, type SubscriptionModel } from "@ensemble/shared-types";
 import type { AssignInput, SubscriptionsView } from "./api";
 
 const record = (value: unknown): Record<string, unknown> | null => (value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null);
@@ -15,6 +16,14 @@ export function computerAgent(engine: CodeEngine, view: SubscriptionsView | unde
   if (found) return found;
   return parseSubscriptionAgents(record(capabilities)?.agents).find((row) => row.id === engine) ?? null;
 }
+
+/** Claude Code's models from Ensemble's own table, for a computer that has not reported them yet. */
+export function claudeFallback(): SubscriptionAgent {
+  return { id: "claude-code", via: "cli", version: null, signedIn: null, models: claudeCodeModels(null), typedModels: true, checkedAt: "" };
+}
+
+/** The agents whose models have more than one context window to choose from. */
+const WINDOWED: ReadonlySet<CodeEngine> = new Set(["claude-code", "copilot-cli"]);
 
 /** Whether Ensemble on the computer runs the engine. A runtime without the `engines` list predates GitHub Copilot. */
 export function computerRuns(engine: CodeEngine, capabilities: unknown): boolean {
@@ -37,7 +46,7 @@ export type EngineModel = {
 export function engineModel(agent: SubscriptionAgent | null, chosen: string): EngineModel {
   const models = agent?.models ?? [];
   const id = chosen.trim();
-  const model = (id ? models.find((row) => row.id === id) : models.find((row) => row.isDefault)) ?? null;
+  const model = (id ? models.find((row) => row.id === id || row.aliases?.includes(id)) : models.find((row) => row.isDefault)) ?? null;
   return {
     model,
     efforts: model ? orderLevels(model.efforts ?? agent?.efforts ?? []) : [],
@@ -55,9 +64,9 @@ export function fitEngineChoice(view: EngineModel, effort: ReasoningEffort, cont
 }
 
 /**
- * What Assign sends for a coding agent. GitHub Copilot also gets a thinking level and a context
- * window. With `view` (the model as the computer listed it) only ones that model offers are sent;
- * without it (Quick assign), the saved choice is sent and Copilot's runner checks it.
+ * What Assign sends for a coding agent: the model, its thinking level and context window. With
+ * `view` (the model as the computer listed it) only ones that model offers are sent; without it
+ * (Quick assign), the saved choice is sent and the runner on the computer checks it.
  */
 export function engineAssign(
   engine: CodeEngine,
@@ -66,9 +75,16 @@ export function engineAssign(
 ): Pick<AssignInput, "engine" | "model" | "reasoningEffort" | "contextTier"> {
   const model = choice.model.trim();
   const base = { engine, ...(model ? { model } : {}) };
-  if (engine !== "copilot-cli") return base;
   const effort = choice.effort !== "default" && (!view || (view.efforts as string[]).includes(choice.effort)) ? choice.effort : null;
-  const context = view ? (view.contexts.length ? (view.contexts.some((row) => row.id === choice.context) ? choice.context! : "default") : null) : (choice.context ?? null);
+  const context = view
+    ? view.contexts.length
+      ? view.contexts.some((row) => row.id === choice.context)
+        ? choice.context!
+        : "default"
+      : null
+    : WINDOWED.has(engine)
+      ? (choice.context ?? null)
+      : null;
   return { ...base, ...(effort ? { reasoningEffort: effort } : {}), ...(context ? { contextTier: context } : {}) };
 }
 

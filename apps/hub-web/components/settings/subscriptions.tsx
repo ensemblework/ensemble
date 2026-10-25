@@ -5,9 +5,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ExternalLink, Laptop, LogIn, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
-import { SUBSCRIPTION_INFO, SUBSCRIPTION_PROVIDERS, type Settings, type SubscriptionAgent, type SubscriptionProvider } from "@ensemble/shared-types";
+import { claudeUpdateNote, SUBSCRIPTION_INFO, SUBSCRIPTION_PROVIDERS, type Settings, type SubscriptionAgent, type SubscriptionProvider, type UsageWindow } from "@ensemble/shared-types";
 import { api, type SubscriptionComputer, type SubscriptionsView } from "@/lib/api";
-import { relative } from "@/lib/format";
+import { relative, untilLabel } from "@/lib/format";
 import { modelFacts } from "@/lib/engine-models";
 import { useToast } from "../toast";
 import { cx, Tag } from "../ui";
@@ -56,6 +56,30 @@ function defaultModel(agent: SubscriptionAgent): string {
   return agent.models.find((model) => model.isDefault)?.id ?? agent.models[0]?.id ?? "default";
 }
 
+/** The plan's usage windows as the agent reported them: how much is used, and when each starts over. */
+export function UsageBars({ windows, label }: { windows: UsageWindow[]; label: string }) {
+  return (
+    <div className="space-y-1.5" aria-label={`${label} usage`} data-testid="subscription-limits">
+      {windows.map((window) => {
+        const used = Math.round(window.usedPercent);
+        return (
+          <div key={window.id}>
+            <div className="flex items-baseline justify-between gap-2 text-[11.5px]">
+              <span className="text-muted">{window.label}</span>
+              <span className={used >= 90 ? "text-warn" : "text-faint"}>
+                {used}% used{window.resetsAt ? ` · resets in ${untilLabel((Date.parse(window.resetsAt) - Date.now()) / 1000)}` : ""}
+              </span>
+            </div>
+            <div className="mt-0.5 h-1.5 overflow-hidden rounded-full bg-panel" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={used} aria-label={window.label}>
+              <div className={cx("h-full rounded-full", used >= 90 ? "bg-[var(--warn)]" : "bg-accent")} style={{ width: `${used}%` }} />
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function SubscriptionTile({
   id,
   agent,
@@ -97,6 +121,8 @@ function SubscriptionTile({
         </div>
       </div>
       {agent?.problem ? <p className="text-[12px] text-warn">{agent.problem}</p> : null}
+      {agent && id === "claude-code" && claudeUpdateNote(agent.version) ? <p className="text-[12px] text-muted" data-testid="subscription-update-note">{claudeUpdateNote(agent.version)}</p> : null}
+      {agent?.limits?.length ? <UsageBars windows={agent.limits} label={info.label} /> : null}
       {agent ? (
         <div className="flex flex-wrap gap-1" aria-label={`${info.label} models`}>
           {agent.models.slice(0, 6).map((row) => (

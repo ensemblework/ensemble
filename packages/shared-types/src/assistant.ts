@@ -168,7 +168,7 @@ export const ModelProvider = z.enum([
 export type ModelProvider = z.infer<typeof ModelProvider>;
 
 /** "default" sends no level. Which of the others a model takes is in model-efforts.ts. */
-export const ReasoningEffort = z.enum(["default", "none", "minimal", "low", "medium", "high", "xhigh", "max"]);
+export const ReasoningEffort = z.enum(["default", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
 export type ReasoningEffort = z.infer<typeof ReasoningEffort>;
 
 export const ModelTier = z.object({
