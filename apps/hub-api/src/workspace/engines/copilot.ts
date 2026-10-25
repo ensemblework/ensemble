@@ -180,10 +180,12 @@ export async function runCopilot(
   const ensembleMcp = mcpEnv(credential, options.chat === true);
   // The run's ask_person (and Chat's board tools) server. Copilot's ACP takes only http servers
   // from the client, so it comes in as additional config; the file holds the run's ask-only secret.
+  // ask_person waits for the person (a Needs me card lasts a day): Copilot's default MCP request
+  // timeout is minutes, after which the agent got "Request timed out" and gave up on the question.
   const mcpFile = join(tmpdir(), `ensemble-copilot-${ctx.job.id}-${randomBytes(6).toString("hex")}.json`);
   await writeFile(
     mcpFile,
-    JSON.stringify({ mcpServers: { ensemble: { type: "local", command: process.execPath, args: [hookScriptPath("ensemble-ask-mcp.mjs")], env: ensembleMcp, tools: ["*"] } } }),
+    JSON.stringify({ mcpServers: { ensemble: { type: "local", command: process.execPath, args: [hookScriptPath("ensemble-ask-mcp.mjs")], env: ensembleMcp, tools: ["*"], timeout: 86_400_000 } } }),
     { mode: 0o600 },
   );
   const env = copilotEnv(ensembleMcp);

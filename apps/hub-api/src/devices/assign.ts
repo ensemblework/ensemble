@@ -3,6 +3,7 @@ import { GuardError } from "../workspace/guard.js";
 import { trustFolder } from "./constants.js";
 import { deviceEngines, deviceOpensPullRequests, folderLabels } from "./labels.js";
 import { requireVerifiedUser } from "../lib/hosted-access.js";
+import { pairingsOf } from "./earlier.js";
 
 const GITHUB = /^(https:\/\/|git@)[\w.@:/~-]+$/;
 const SLUG = /^[\w.-]+\/[\w.-]+$/;
@@ -67,9 +68,14 @@ export async function deviceAssignment(
   if (input.kind === "code" && input.continueFromJobId) {
     const previous = await prisma.workspaceJob.findFirst({
       where: { id: input.continueFromJobId, userId: where.space, runnerAccountId: where.runner },
-      select: { id: true, kind: true, continueFromJobId: true, folderLabel: true },
+      select: { id: true, kind: true, continueFromJobId: true, folderLabel: true, deviceId: true, device: { select: { name: true } } },
     });
     if (!previous || previous.kind !== "code") throw new GuardError("Pick an earlier code task to continue from.");
+    // Its folder and the record that maps it are on the computer it ran on.
+    if (!previous.deviceId || !(await pairingsOf(prisma, device)).includes(previous.deviceId)) {
+      const there = previous.device ? `on ${previous.device.name}` : "on Ensemble's server";
+      throw new GuardError(`That earlier task ran ${there}, so its folder is there, not on ${device.name}. Continue it on the computer it ran on.`);
+    }
     continueFrom = previous.id;
     let rootId = previous.id;
     let parent = previous.continueFromJobId;

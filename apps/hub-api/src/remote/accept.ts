@@ -95,22 +95,18 @@ export async function acceptClaimed(app: FastifyInstance, client: HostedClient, 
 
 async function withContinue(app: FastifyInstance, spec: JobSpec, plan: Exclude<ReturnType<typeof planLocalJob>, Refusal>) {
   if (!spec.continueFromJobId || plan.assign.continueFromJobId) return plan;
-  const rows = await app.prisma.workspaceJob.findMany({
-    where: { userId: env.ENSEMBLE_DEV_USER_ID },
+  // The run this computer made for that web run, however long ago.
+  const local = await app.prisma.workspaceJob.findFirst({
+    where: { userId: env.ENSEMBLE_DEV_USER_ID, context: { path: ["hostedJobId"], equals: spec.continueFromJobId } },
     orderBy: { createdAt: "desc" },
-    take: 100,
     select: { id: true, context: true },
   });
-  const local = rows.find((row) => {
-    const context = row.context as { origin?: string; hostedJobId?: string } | null;
-    return context?.origin === "web" && context.hostedJobId === spec.continueFromJobId;
-  });
-  if (local) {
+  if (local && (local.context as { origin?: string } | null)?.origin === "web") {
     plan.assign.continueFromJobId = local.id;
     return plan;
   }
   if (plan.assign.folder || plan.assign.repoUrl) return plan;
-  return { code: "CONTINUE_UNKNOWN", message: "This Mac does not have the earlier task's folder, so it cannot continue it." } as Refusal;
+  return { code: "CONTINUE_UNKNOWN", message: "This computer does not have the earlier task's folder, so it cannot continue it." } as Refusal;
 }
 
 async function refuse(app: FastifyInstance, client: HostedClient, userId: string, spec: JobSpec, held: HeldJob, refusal: Refusal): Promise<void> {

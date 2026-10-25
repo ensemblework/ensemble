@@ -97,7 +97,7 @@ const Ask = z.object({
   recommended: z.string().max(200).optional(),
 });
 
-const Close = z.object({ decision: z.enum(["allow", "deny"]), reason: z.string().max(500).nullish() });
+const Close = z.object({ decision: z.enum(["allow", "deny", "expired"]), reason: z.string().max(500).nullish() });
 
 function httpsResult(url: string): boolean {
   try {
@@ -644,7 +644,7 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     return publicDecision(row!);
   });
 
-  /** Answered on the computer: the same answer closes the card here, so the phone does not keep a stale question. */
+  /** Answered on the computer: the same answer closes the card here, so the phone does not keep a stale question. "expired": the agent stopped waiting, so the card is withdrawn. */
   app.post("/api/devices/self/decisions/:id/close", async (request, reply) => {
     const device = await ownDevice(app, request, reply);
     if (!device) return;
@@ -653,6 +653,13 @@ export async function deviceRoutes(app: FastifyInstance): Promise<void> {
     const owned = await prisma.agentDecision.findFirst({ where: { id } });
     const detail = (owned?.detail ?? {}) as { deviceId?: string; jobId?: string };
     if (!owned || detail.deviceId !== device.id) return reply.code(404).send({ error: "Decision not found." });
+    if (body.decision === "expired") {
+      const withdrawn = await prisma.agentDecision.updateMany({ where: { id, status: "pending" }, data: { status: "expired" } });
+      if (withdrawn.count !== 1) return reply.code(409).send({ error: "Already answered." });
+      decisionBus.emit(id);
+      sseHub.publish(owned.userId, { event: "decision", data: { id, status: "expired" } });
+      return reply.code(204).send();
+    }
     const closed = await prisma.agentDecision.updateMany({
       where: { id, status: "pending" },
       data: { status: "decided", decision: body.decision, scope: "once", reason: body.reason ?? null, decidedAt: new Date() },

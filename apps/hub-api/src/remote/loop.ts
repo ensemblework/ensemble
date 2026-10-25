@@ -487,9 +487,12 @@ async function followAnswer(app: FastifyInstance, client: HostedClient, job: Hel
     if (!local || local.status !== "pending") {
       mirror.settled = true;
       persist();
-      // Answered here (the app, the CLI): close the card on the web as well.
+      // Answered here (the app, the CLI): close the card on the web as well. Withdrawn here (the agent
+      // stopped waiting) while the run goes on: withdraw it there too.
       if (local?.status === "decided" && (local.decision === "allow" || local.decision === "deny")) {
         await client.closeDecision(mirror.hostedId, { decision: local.decision, reason: local.reason ?? null }).catch(() => undefined);
+      } else if (local?.status === "expired" && !signal.aborted && job.phase === "active") {
+        await client.closeDecision(mirror.hostedId, { decision: "expired", reason: null }).catch(() => undefined);
       }
       return;
     }
