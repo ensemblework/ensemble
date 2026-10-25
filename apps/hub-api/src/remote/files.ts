@@ -12,7 +12,7 @@ import { env } from "../config.js";
 import { appendLedger } from "../lib/ledger.js";
 import { sliceBytes } from "../lib/text.js";
 import { GuardError, within, workspaceRoot } from "../workspace/guard.js";
-import { listFolder, readFolderFile, refusedPath } from "../workspace/folder-read.js";
+import { listedChanges, listFolder, outsideListing, readChangedFile, refusedPath } from "../workspace/folder-read.js";
 import type { HostedClient } from "./client.js";
 import { FileRequest, UPLOAD_FILE_BYTES, UPLOAD_FILES_MAX, UPLOAD_TOTAL_BYTES, type FileAnswer, type UploadedFile } from "./contract.js";
 import { scrubOutgoing } from "./policy.js";
@@ -55,7 +55,7 @@ async function answerFor(app: FastifyInstance, request: FileRequest): Promise<Fi
   if (!loadSettings().browseFiles) return { error: "Showing task files on the web is turned off on this computer." };
   const held = loadHeld()[request.jobId];
   const local = held?.localJobId
-    ? await app.prisma.workspaceJob.findUnique({ where: { id: held.localJobId }, select: { externalRoot: true, repoPath: true, finishedAt: true } })
+    ? await app.prisma.workspaceJob.findUnique({ where: { id: held.localJobId }, select: { externalRoot: true, repoPath: true, finishedAt: true, evidence: true } })
     : null;
   const folder = local ? folderOf(local) : null;
   if (!local || !folder) return { error: "This task has no folder on this computer." };
@@ -69,7 +69,8 @@ async function answerFor(app: FastifyInstance, request: FileRequest): Promise<Fi
       const listing = await listFolder(root, request.path);
       return { listing: { ...listing, entries: listing.entries.map((entry) => ({ ...entry, name: entry.name.slice(0, 500) })) } };
     }
-    const file = await readFolderFile(root, request.path);
+    // A file the run changed outside its folder (`~/…`) is read only because the run's own evidence lists it.
+    const file = await readChangedFile(root, listedChanges(local.evidence), request.path);
     return { file: { ...file, size: Math.min(file.size, INT32), content: file.content == null ? null : sliceBytes(scrubOutgoing(file.content), 600 * 1024) } };
   } catch (error) {
     return { error: reason(error) };
@@ -91,6 +92,7 @@ export async function changedFileUploads(root: string, evidence: unknown): Promi
     .filter((file): file is EvidenceFile & { path: string } => typeof file.path === "string" && file.path.length > 0)
     .slice(0, UPLOAD_FILES_MAX);
   const files: UploadedFile[] = [];
+  const listed = listedChanges(evidence);
   let total = 0;
   for (const file of list) {
     const status = file.status === "added" || file.status === "deleted" ? file.status : "modified";
@@ -99,7 +101,7 @@ export async function changedFileUploads(root: string, evidence: unknown): Promi
       files.push({ ...base, content: null });
       continue;
     }
-    const refused = refusedPath(file.path);
+    const refused = outsideListing(file.path) ? null : refusedPath(file.path);
     if (refused) {
       files.push({ ...base, content: null, skipped: refused });
       continue;
@@ -109,7 +111,7 @@ export async function changedFileUploads(root: string, evidence: unknown): Promi
       continue;
     }
     try {
-      const read = await readFolderFile(root, file.path, Math.min(UPLOAD_FILE_BYTES, UPLOAD_TOTAL_BYTES - total));
+      const read = await readChangedFile(root, listed, file.path, Math.min(UPLOAD_FILE_BYTES, UPLOAD_TOTAL_BYTES - total));
       const scrubbed = read.content == null ? null : scrubOutgoing(read.content);
       const content = scrubbed == null ? null : sliceBytes(scrubbed, UPLOAD_FILE_BYTES);
       total += Buffer.byteLength(content ?? "");

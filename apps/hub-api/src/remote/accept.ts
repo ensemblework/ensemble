@@ -4,7 +4,7 @@
  * the hosted row, and nothing is started.
  */
 import type { FastifyInstance } from "fastify";
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 import { env } from "../config.js";
 import { requireHostAccess } from "../lib/hosted-access.js";
 import { appendLedger } from "../lib/ledger.js";
@@ -79,7 +79,9 @@ export async function acceptClaimed(app: FastifyInstance, client: HostedClient, 
     );
     const notes = await attachClaimedFiles(app.prisma, userId, task.id, spec.id, downloads, resolved.page);
     if (notes !== resolved.page) await app.prisma.task.update({ where: { id: task.id }, data: { notes } });
-    const created = await createJob(app.prisma, userId, { ...resolved.assign, taskId: task.id }, { context: webContext(spec.id), actor: "system" });
+    // A run carrying on one this computer lost when it restarted runs in that run's folder and agent session (agent.ts).
+    const context = spec.resume ? ({ ...webContext(spec.id), resumeOf: spec.resume } as Prisma.InputJsonValue) : webContext(spec.id);
+    const created = await createJob(app.prisma, userId, { ...resolved.assign, taskId: task.id }, { context, actor: "system" });
     if (!created) throw new Error("The task could not be queued.");
     held.localJobId = created.jobId;
     await appendLedger({ userId, actor: "system", action: "remote.claim", payload: { hostedJobId: spec.id, jobId: created.jobId } });

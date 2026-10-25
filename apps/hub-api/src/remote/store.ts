@@ -4,6 +4,7 @@
  * The device token is a `model_credentials` row, encrypted with the same
  * helper as the git token, and is only ever read into this process.
  */
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { env } from "../config.js";
@@ -56,6 +57,8 @@ export interface RemoteSettings {
   disconnected: { at: string; reason: string } | null;
   /** The web could not be reached. The token stays, and the loop keeps trying. */
   unreachable: string | null;
+  /** This installation's own id, kept through unpairing: a new pairing of it is the same computer to the web. */
+  installId: string;
 }
 
 export type MirroredDecision = { hostedId: string; hash: string; risk: "ordinary" | "high"; settled: boolean };
@@ -134,7 +137,15 @@ export function loadSettings(): RemoteSettings {
     folders: Array.isArray(saved.folders) ? saved.folders.filter((row): row is SharedFolder => typeof row?.label === "string" && typeof row?.path === "string") : [],
     disconnected: saved.disconnected && typeof saved.disconnected.reason === "string" ? saved.disconnected : null,
     unreachable: typeof saved.unreachable === "string" ? saved.unreachable : null,
+    installId: typeof saved.installId === "string" ? saved.installId : "",
   };
+}
+
+/** This installation's id, made once (`RemoteSettings.installId`). */
+export function installId(): string {
+  const saved = loadSettings();
+  if (saved.installId) return saved.installId;
+  return updateSettings({ installId: randomUUID() }).installId;
 }
 
 export function saveSettings(next: RemoteSettings): RemoteSettings {

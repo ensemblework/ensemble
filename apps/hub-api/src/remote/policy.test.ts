@@ -27,6 +27,7 @@ const settings = (folders: RemoteSettings["folders"] = [], acceptWebApprovals = 
   folders,
   disconnected: null,
   unreachable: null,
+  installId: "install-test",
 });
 
 function spec(over: Partial<JobSpec> = {}): JobSpec {

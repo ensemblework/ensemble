@@ -18,13 +18,13 @@ import { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
-import { copilotBinary, copilotEnv, copilotSandboxMissing } from "../../subscriptions/copilot.js";
+import { copilotBinary, copilotEnv, copilotSandboxMissing, copilotSavedSignIn } from "../../subscriptions/copilot.js";
 import { GuardError } from "../guard.js";
-import { appendLive } from "../live-log.js";
+import { appendLive, touchLive } from "../live-log.js";
 import type { JobContext } from "../tools.js";
 import type { EngineResult } from "./claude-code.js";
 import { judgeEngineCall, type EngineAnswer, type EngineCall } from "./judge.js";
-import { hookScriptPath, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
+import { EngineTransientError, hookScriptPath, SIGNED_OUT, UNREACHABLE, mcpEnv, registerEngineRun, SessionGoneError, unregisterEngineRun } from "./registry.js";
 import { RpcConnection } from "./rpc.js";
 import { EngineTrace } from "./trace.js";
 
@@ -37,9 +37,15 @@ const record = (value: unknown): Record<string, unknown> => (value && typeof val
 
 /** At most this many follow-up messages after refusals, so a run cannot loop on a refused call. */
 export const REFUSAL_FOLLOW_UPS = 6;
+const KEYCHAIN_LOCKED =
+  "GitHub Copilot is signed in on this computer but could not read its saved sign-in: the system keychain is locked or not ready yet (common right after a restart, before anyone logs in to the desktop). Waiting, then trying again.";
+const KEYCHAIN_LOCKED_FINAL =
+  "GitHub Copilot is signed in on this computer but could not read its saved sign-in from the system keychain (locked, or not ready after a restart). Log in to this computer's desktop once to unlock the keychain, then Run again. Nothing was changed.";
 /** Images Copilot accepts inline (its vision limit per image); anything else goes as a file link. */
 const IMAGE_TYPES: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp" };
 const IMAGE_BYTES = 3 * 1024 * 1024;
+/** The levels `copilot --reasoning-effort` takes. */
+const COPILOT_EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
 /**
  * A Copilot tool call in the judge's terms, one call per path it touches. MCP tools are announced
@@ -154,6 +160,10 @@ export async function runCopilot(
     resume?: string | null;
     chat?: boolean;
     trace?: EngineTrace;
+    /** The thinking levels the model offers, as the computer's check listed them. */
+    efforts?: string[];
+    /** The model's long context window in tokens, as listed: the run notes when Copilot used less. */
+    longWindow?: number | null;
   },
 ): Promise<EngineResult> {
   const copilot = await copilotBinary();
@@ -178,6 +188,8 @@ export async function runCopilot(
   );
   const env = copilotEnv(ensembleMcp);
   const model = str(options.model) && options.model !== "default" ? options.model!.trim() : null;
+  const effort = str(options.effort) && options.effort !== "default" ? options.effort!.trim() : null;
+  const effortFlag = effort && COPILOT_EFFORTS.has(effort) && (!options.efforts?.length || options.efforts.includes(effort));
   const args = [
     "--acp",
     "--no-auto-update",
@@ -190,6 +202,10 @@ export async function runCopilot(
     // The temp folder is outside the work folder: reads there are judged like any other.
     "--disallow-temp-dir",
     ...(ctx.sandboxed ? ["--sandbox"] : []),
+    // Model, thinking level and context window are set as Copilot starts: switching the model over ACP
+    // afterwards puts the session back on that model's standard context window.
+    ...(model ? ["--model", model] : []),
+    ...(effortFlag ? ["--reasoning-effort", effort!] : []),
     ...(options.context === "long_context" ? ["--context", "long_context"] : []),
   ];
   const child: ChildProcessWithoutNullStreams = spawn(copilot, args, { cwd: ctx.root, env, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32", windowsHide: true });
@@ -261,7 +277,10 @@ export async function runCopilot(
     })().catch(() => undefined);
   };
   const lines = createInterface({ input: child.stdout });
-  lines.on("line", (line) => void rpc.receive(line));
+  lines.on("line", (line) => {
+    touchLive(ctx.job.id);
+    void rpc.receive(line);
+  });
   child.stderr.on("data", (chunk: Buffer) => {
     stderr = (stderr + chunk.toString("utf8")).slice(-4000);
   });
@@ -283,21 +302,27 @@ export async function runCopilot(
     setTimeout(kill, 3000).unref();
   };
   ctx.signal.addEventListener("abort", stop, { once: true });
-  const signedOut = (error: Error): never => {
-    throw /auth|log ?in|sign ?in|unauthori[sz]ed|401/i.test(error.message) ? new Error("GitHub Copilot CLI is not signed in on this computer. Run `copilot login` there (or press Sign in under Settings → Models), then Run again.") : error;
+  const signedOut = async (error: Error): Promise<never> => {
+    if (!SIGNED_OUT.test(error.message)) {
+      if (UNREACHABLE.test(error.message)) throw new EngineTransientError(`GitHub Copilot could not reach GitHub: ${error.message.slice(0, 200)}`);
+      throw error;
+    }
+    // Copilot answers "Authentication required" both when signed out and when the keychain holding its sign-in cannot be read.
+    if (await copilotSavedSignIn()) throw new EngineTransientError(KEYCHAIN_LOCKED, KEYCHAIN_LOCKED_FINAL);
+    throw new Error("GitHub Copilot CLI is not signed in on this computer. Run `copilot login` there (or press Sign in under Settings → Models), then Run again.");
   };
   try {
     await rpc.request("initialize", { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, clientInfo: { name: "ensemble", version: "1" } });
     let session: Record<string, unknown>;
     if (options.resume) {
-      // The next message in a chat: the same Copilot session, so it remembers the conversation.
+      // The same Copilot session (a chat's next message, or a run carrying on), so it remembers the conversation.
       replaying = true;
       session = await rpc
         .request("session/load", { sessionId: options.resume, cwd: ctx.root, mcpServers: [] })
         .then((loaded) => ({ ...loaded, sessionId: options.resume }))
-        .catch((error: Error) => {
-          if (/auth|log ?in|sign ?in|unauthori[sz]ed|401/i.test(error.message)) signedOut(error);
-          throw new SessionGoneError(`Copilot could not reopen the chat's session: ${error.message}`);
+        .catch(async (error: Error) => {
+          if (SIGNED_OUT.test(error.message) || UNREACHABLE.test(error.message)) await signedOut(error);
+          throw new SessionGoneError(`Copilot could not reopen the session: ${error.message}`);
         })
         .finally(() => {
           replaying = false;
@@ -313,13 +338,14 @@ export async function runCopilot(
       const offered = config.find((option) => option.id === "model")?.options?.some((option) => option.value === model);
       if (config.length && !offered) throw new Error(`GitHub Copilot does not offer ${model} on this plan. Pick another model.`);
       config = await setOption(rpc, sessionId, "model", model);
+      if (options.context === "long_context") await ctx.event("engine_note", { note: `GitHub Copilot did not start on ${model}; after switching to it, the run may use its standard context window.` });
     }
     result.model = model ?? current;
-    const effort = str(options.effort) && options.effort !== "default" ? options.effort! : null;
     if (effort) {
       const levels = config.find((option) => option.id === "reasoning_effort")?.options?.map((option) => option.value) ?? [];
-      if (levels.includes(effort)) await setOption(rpc, sessionId, "reasoning_effort", effort);
-      else await ctx.event("engine_note", { note: `${result.model ?? "This model"} has no ${effort} thinking level on Copilot; it runs at its default.` });
+      const now = config.find((option) => option.id === "reasoning_effort")?.currentValue ?? null;
+      if (now !== effort && levels.includes(effort)) await setOption(rpc, sessionId, "reasoning_effort", effort);
+      else if (now !== effort) await ctx.event("engine_note", { note: `${result.model ?? "This model"} has no ${effort} thinking level on Copilot; it runs at its default.` });
     }
     await ctx.event("engine", { engine: "copilot", model: result.model, effort, context: options.context === "long_context" ? "long_context" : "default", session: sessionId });
     await ctx.progress("GitHub Copilot started");
@@ -338,7 +364,13 @@ export async function runCopilot(
       reply += "\n";
       prompt = [{ type: "text", text: refusalMessage(refusals) }];
     }
-    if (usage.window) await ctx.event("engine_context", { used: usage.window.used, size: usage.window.size });
+    if (usage.window) {
+      await ctx.event("engine_context", { used: usage.window.used, size: usage.window.size });
+      // The window Copilot reports is the one it used: say so when it is not the long one chosen.
+      if (options.context === "long_context" && options.longWindow && usage.window.size < options.longWindow * 0.95) {
+        await ctx.event("engine_note", { note: `GitHub Copilot ran with a ${Math.round(usage.window.size / 1000)}K context window, not the ${Math.round(options.longWindow / 1000)}K long window chosen.` });
+      }
+    }
     await flushThought();
     // Copilot notes each refused call in its reply; the refusals are already on the run's log.
     result.text = reply.replace(/(^|\n)Info: Operation cancelled by user\.?[ \t]*(?=\n|$)/g, "$1").trim();

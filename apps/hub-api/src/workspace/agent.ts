@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import type { PrismaClient } from "@prisma/client";
-import { ENGINE_LABELS, hasModule, isCodeEngine, type Settings } from "@ensemble/shared-types";
+import { checkEffort, ENGINE_LABELS, hasModule, isCodeEngine, type Settings } from "@ensemble/shared-types";
 import { PageDocument } from "@ensemble/shared-types";
 import { beginActivity, endActivity, heartbeat, isCancelled, isPaused, updateActivity } from "../lib/activity.js";
 import { appendLedger } from "../lib/ledger.js";
@@ -31,7 +31,8 @@ import { ModelQuotaError } from "../lib/model-quota.js";
 import { RuntimeError } from "../lib/runtime-error.js";
 import { truncateText } from "../lib/text.js";
 import { runBranchName, runTrustedGit } from "./git-gate.js";
-import { agentChanges, type ChangedFile } from "./changed-files.js";
+import { agentChanges, MAX_CHANGED_FILES, type ChangedFile } from "./changed-files.js";
+import { RunChanges } from "./outside-changes.js";
 import { pinReviewSnapshots } from "../lib/code-commit.js";
 import { flagPlanted } from "./planted.js";
 import { gitHardening, GuardError, outsideRefusal, resolveWorkFolder, sandboxAvailable, sandboxRefusal, within, workspaceRoot } from "./guard.js";
@@ -43,8 +44,10 @@ import { runCursor } from "./engines/cursor.js";
 import { runCopilot } from "./engines/copilot.js";
 import { preparePullRequest, publishPullRequest, pullRequestOf, type PreparedPullRequest } from "./pull-request.js";
 import { cachedAgents } from "../subscriptions/detect.js";
-import { SessionGoneError } from "./engines/registry.js";
+import { EngineTransientError, SessionGoneError } from "./engines/registry.js";
+import { continuePrompt, delay, ENGINE_RETRIES, passingFailure, RETRY_DELAYS_MS, STALL_MS, watchEngine } from "./engine-watch.js";
 import { requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
+import { resumeOf } from "./repeat.js";
 import { runCommand } from "./runner.js";
 import { interruptionMessage } from "./lifecycle.js";
 import { appendLive, dropLive } from "./live-log.js";
@@ -59,6 +62,9 @@ export interface JobControl {
 }
 
 class LimitReached extends Error {}
+
+/** The thinking levels each engine's own flag takes (`claude --effort`, Codex's turn `effort`). */
+const ENGINE_EFFORTS: Record<string, string[]> = { "claude-code": ["low", "medium", "high", "xhigh", "max"], codex: ["minimal", "low", "medium", "high", "xhigh"] };
 
 const DANGEROUS_GIT_CONFIG = /\b(filter\.|textconv|external|fsmonitor|hookspath|sshcommand|askpass|pager|editor|gpg\.program|credential\.helper)|=\s*!/i;
 
@@ -89,9 +95,15 @@ async function gitIn(
   });
 }
 
-/** The folder as a git tree, through a throwaway index so the real staging area is untouched. */
+/**
+ * The folder as a git tree, through a throwaway index so the real staging area is untouched. The
+ * index lives in the repository's own `.git`: each sandboxed git call gets a private `/tmp` on
+ * Linux, so an index there would be gone by the next call and every snapshot would be empty.
+ */
 async function snapshot(ctx: Pick<JobContext, "userId" | "root" | "sandboxed" | "signal" | "job">): Promise<string | null> {
-  const index = join(tmpdir(), `ensemble-index-${randomUUID()}`);
+  const gitDir = join(ctx.root, ".git");
+  const inRepo = await stat(gitDir).then((info) => info.isDirectory(), () => false);
+  const index = join(inRepo ? gitDir : tmpdir(), `ensemble-index-${randomUUID()}`);
   try {
     await gitIn(ctx, ["read-tree", "HEAD"], { env: { GIT_INDEX_FILE: index } });
     const added = await gitIn(ctx, ["add", "-A"], { env: { GIT_INDEX_FILE: index } });
@@ -263,10 +275,16 @@ async function earlierSession(prisma: PrismaClient, job: { continueFromJobId: st
   const previous = await prisma.workspaceJob.findUnique({ where: { id: job.continueFromJobId }, select: { provider: true, summary: true } });
   if (!previous) return { session: null, summary: null };
   if (previous.provider !== job.provider) return { session: null, summary: previous.summary };
-  const started = await prisma.workspaceEvent.findFirst({ where: { jobId: job.continueFromJobId, kind: "engine" }, orderBy: { sequence: "desc" } });
-  const session = (started?.data as { session?: unknown } | null)?.session;
-  return { session: typeof session === "string" && session ? session : null, summary: previous.summary };
+  return { session: await engineSession(prisma, job.continueFromJobId), summary: previous.summary };
 }
+
+/** The engine session a job's run started (each engine records it on its `engine` event). */
+async function engineSession(prisma: PrismaClient, jobId: string): Promise<string | null> {
+  const started = await prisma.workspaceEvent.findFirst({ where: { jobId, kind: "engine" }, orderBy: { sequence: "desc" } });
+  const session = (started?.data as { session?: unknown } | null)?.session;
+  return typeof session === "string" && session ? session : null;
+}
+
 
 /** Originals copied for an engine (Claude Code, Codex, Cursor) to open with its own tools. */
 export interface EngineCopies {
@@ -507,6 +525,8 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
   const activityId = `job:${job.id}`;
   // Minutes count working time: time spent waiting on Needs me does not use them up.
   let waited = 0;
+  /** Questions open on Needs me right now: an engine waiting on one is not stuck. */
+  let waitingNow = 0;
   const budget = job.maxMinutes * 60_000;
   const remainingMs = () => budget - (Date.now() - started - waited);
 
@@ -588,9 +608,11 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
     },
     waitForPerson: async (work) => {
       const from = Date.now();
+      waitingNow += 1;
       try {
         return await control.waitForPerson(work);
       } finally {
+        waitingNow -= 1;
         waited += Date.now() - from;
       }
     },
@@ -700,6 +722,16 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
         startTree = await snapshot(ctx);
         configHash = await gitConfigHash(ctx.root);
       }
+      // What the run writes beyond this folder's own snapshot: other folders, nested or surrounding repositories.
+      const runGit = (repo: string) => ({ ...ctx, root: repo, signal: new AbortController().signal });
+      ctx.changes = new RunChanges(ctx.root, Boolean(git && startTree), {
+        snapshot: (repo) => snapshot(runGit(repo)),
+        head: async (repo) => {
+          const head = await gitIn(runGit(repo), ["rev-parse", "HEAD"]);
+          return head.exitCode === 0 ? head.output.trim() : "";
+        },
+        git: (args, cwd) => gitIn(runGit(cwd), args, { cwd }),
+      });
       await prisma.workspaceJob.update({ where: { id: job.id }, data: { repoPath: ctx.root, branch } });
       await ctx.event("prepared", { root: ctx.root, branch, git, sandboxed: ctx.sandboxed });
       publish();
@@ -722,6 +754,9 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
       let enginePromptText: string;
       let resume: string | null = null;
       let earlierSummary: string | null = null;
+      /** The whole brief, for a task run that starts a new engine session. */
+      let fullPrompt = "";
+      const carryOn = chat ? null : resumeOf(job.context);
       if (chat) {
         // A chat message continues the agent's own session when the same agent ran the turn before.
         const earlier = await earlierSession(prisma, job);
@@ -734,15 +769,32 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
           app.log.warn({ err: failure }, "could not copy attached files for the engine");
           return null;
         });
-        enginePromptText = enginePrompt(ctx, user?.name || "the person", await brief(app, ctx, settings, files, copies));
+        fullPrompt = enginePrompt(ctx, user?.name || "the person", await brief(app, ctx, settings, files, copies));
+        enginePromptText = fullPrompt;
+        // Carrying on an interrupted run: the same engine session when it still exists, told why it stopped.
+        if (carryOn) {
+          resume = (await earlierSession(prisma, job)).session;
+          if (resume) enginePromptText = continuePrompt(carryOn.reason);
+          await ctx.event("resumed", { reason: carryOn.reason, attempt: carryOn.attempt, session: Boolean(resume) });
+        }
       }
       // Held here so the steps of a run that stops or fails before the engine returns are closed too.
       engineTrace = new EngineTrace(ctx, job.provider === "cursor-agent" ? "cursor" : job.provider === "copilot-cli" ? "copilot" : job.provider!);
       const trace = engineTrace;
       const copilotModel = job.provider === "copilot-cli" ? (cachedAgents() ?? []).find((agent) => agent.id === "copilot-cli")?.models.find((row) => row.id === job.model) : undefined;
+      // The thinking level chosen for the run, checked against what this computer's agent lists for the model.
+      const wantsEffort = Boolean(job.reasoningEffort && job.reasoningEffort !== "default" && job.provider !== "copilot-cli");
+      const engineAgent = wantsEffort ? (cachedAgents() ?? []).find((agent) => agent.id === job.provider) : undefined;
+      const listed = engineAgent?.models.find((row) => row.id === job.model)?.efforts ?? engineAgent?.efforts ?? [];
+      // Before this computer's agents are checked, a level the engine takes at all goes as chosen.
+      const thinking = listed.length
+        ? checkEffort(job.provider!, job.model || "default", job.reasoningEffort, { efforts: listed })
+        : { ok: true as const, send: job.reasoningEffort && ENGINE_EFFORTS[job.provider ?? ""]?.includes(job.reasoningEffort) ? job.reasoningEffort : null };
+      const effort = wantsEffort && thinking.ok ? thinking.send : null;
+      if (wantsEffort && !thinking.ok) await ctx.event("engine_note", { note: `${thinking.message} It runs at the model's default.` });
       const runEngine = (prompt: string, session: string | null) =>
         job.provider === "codex"
-          ? runCodex(ctx, { prompt, model: job.model, stopCheck, resume: session, chat, trace })
+          ? runCodex(ctx, { prompt, model: job.model, effort, stopCheck, resume: session, chat, trace })
           : job.provider === "cursor-agent"
             ? runCursor(ctx, { prompt, model: job.model, stopCheck, resume: session, chat, trace })
             : job.provider === "copilot-cli"
@@ -753,21 +805,60 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
                   context: contextTierOf(job.context),
                   attachments: session ? [] : [...(copies?.paths.values() ?? [])],
                   vision: copilotModel?.vision !== false,
+                  efforts: copilotModel?.efforts,
+                  longWindow: copilotModel?.contexts?.find((row) => row.id === "long_context")?.tokens ?? null,
                   stopCheck,
                   resume: session,
                   chat,
                   trace,
                 })
-              : runClaudeCode(ctx, { prompt, model: job.model, maxTurns: job.maxTurns, stopCheck, resume: session, chat, trace });
-      let ran: Awaited<ReturnType<typeof runEngine>>;
-      try {
-        ran = await runEngine(enginePromptText, resume);
-      } catch (failure) {
-        // The earlier session is gone (deleted, or made on another computer): this message starts a new one.
-        if (!(failure instanceof SessionGoneError) || ctx.signal.aborted) throw failure;
-        await ctx.event("engine_new_session", { reason: failure.message.slice(0, 300) });
-        ran = await runEngine(chatPrompt(ctx, user?.name || "the person", job.instructions, { resumed: false, earlier: earlierSummary }), null);
+              : runClaudeCode(ctx, { prompt, model: job.model, effort, maxTurns: job.maxTurns, stopCheck, resume: session, chat, trace });
+      let ran: Awaited<ReturnType<typeof runEngine>> | null = null;
+      let prompt = enginePromptText;
+      let session = resume;
+      let sessionRestarted = false;
+      // The engine runs under a watch (engine-watch.ts): stuck, a failure that passes, or out of minutes.
+      for (let retry = 0; !ran; ) {
+        const watch = watchEngine({ jobId: job.id, parent: control.signal, openCalls: () => trace.openCalls, waiting: () => waitingNow > 0, remainingMs });
+        ctx.signal = watch.signal;
+        try {
+          ran = await runEngine(prompt, session);
+        } catch (failure) {
+          const why = watch.reason();
+          if (control.signal.aborted) throw failure;
+          if (why === "time") throw new LimitReached(`Reached the ${job.maxMinutes}-minute limit.`);
+          // The earlier session is gone (deleted, or made on another computer): start a new one, once.
+          if (failure instanceof SessionGoneError && session && !sessionRestarted) {
+            sessionRestarted = true;
+            await ctx.event("engine_new_session", { reason: failure.message.slice(0, 300) });
+            session = null;
+            prompt = chat ? chatPrompt(ctx, user?.name || "the person", job.instructions, { resumed: false, earlier: earlierSummary }) : fullPrompt;
+            continue;
+          }
+          const stalled = why === "stalled";
+          if (!stalled && !passingFailure(failure)) throw failure;
+          const said = failure instanceof EngineTransientError ? failure.message : failure instanceof Error ? failure.message.slice(0, 300) : String(failure);
+          if (retry >= ENGINE_RETRIES) {
+            if (stalled) throw new Error(`${engineName} stopped responding and did not recover after ${ENGINE_RETRIES} tries. The work so far is kept — Run again to continue.`);
+            throw failure instanceof EngineTransientError ? new Error(failure.finalMessage) : failure;
+          }
+          const reason = stalled ? `${engineName} went quiet for ${Math.round(STALL_MS / 60_000)} minutes with nothing running` : said;
+          await ctx.event("engine_retry", { reason: reason.slice(0, 300), attempt: retry + 1, of: ENGINE_RETRIES });
+          await trace.interrupted(stalled ? "The engine stopped responding; Ensemble restarted it." : "The engine stopped; Ensemble restarted it.");
+          await ctx.progress(failure instanceof EngineTransientError && !stalled ? failure.message.slice(0, 200) : `${engineName} stopped (${reason.slice(0, 120)}). Continuing it`);
+          await delay(RETRY_DELAYS_MS[retry] ?? 120_000, control.signal);
+          retry += 1;
+          if (control.signal.aborted) throw failure;
+          // Carry on the same session when the engine got far enough to start one; else start over.
+          const known = (await engineSession(prisma, job.id)) ?? session;
+          session = known;
+          prompt = known ? continuePrompt(reason) : prompt;
+        } finally {
+          watch.stop();
+          ctx.signal = control.signal;
+        }
       }
+      if (!ran) throw new Error(`${engineName} did not run.`);
       counts.turns = ran.turns;
       counts.tools = ran.toolCalls;
       counts.tokensIn = ran.tokensIn;
@@ -1047,6 +1138,41 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
       }
     } catch (failure) {
       app.log.warn({ err: failure }, "workspace snapshot failed");
+    }
+  }
+  // Files the run changed elsewhere: other folders, or repositories this folder's snapshot does not cover.
+  if (job.kind === "code" && ctx.changes) {
+    try {
+      const elsewhere = await ctx.changes.collect();
+      const known = new Set(changedFiles.map((file) => file.path));
+      const added = elsewhere.files.filter((file) => !known.has(file.path));
+      changedFiles = [...changedFiles, ...added].slice(0, MAX_CHANGED_FILES);
+      if (added.length) {
+        const lines = added.map((file) => `${file.path} | ${file.status === "deleted" ? "deleted" : `+${file.added} -${file.removed}`}`);
+        changes = [changes, `${changes ? "Outside this folder" : "Changed"}:\n${lines.join("\n")}`].filter(Boolean).join("\n\n");
+      }
+      // No review of this folder: the repository it changed most is the one to review in Code.
+      const target = reviewId ? null : [...elsewhere.repos].sort((a, b) => b.files.length - a.files.length)[0];
+      if (target) {
+        const review = await prisma.codeReview.create({
+          data: {
+            userId,
+            jobId: job.id,
+            repoPath: target.repo,
+            initialHead: target.initialHead,
+            startTree: target.startTree,
+            endTree: target.endTree,
+            agentPaths: target.files.map((file) => file.path),
+            attributed: true,
+            expiresAt: new Date(Date.now() + 14 * 86_400_000),
+          },
+        });
+        reviewId = review.id;
+        const pinned = await pinReviewSnapshots(target.repo, userId, job.id, { start: target.startTree, end: target.endTree }).catch(() => null);
+        if (pinned) await prisma.codeReview.update({ where: { id: review.id }, data: { startCommit: pinned.start, endCommit: pinned.end } });
+      }
+    } catch (failure) {
+      app.log.warn({ err: failure }, "could not list the run's changes outside its folder");
     }
   }
 

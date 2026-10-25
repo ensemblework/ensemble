@@ -56,7 +56,7 @@ require("node:readline").createInterface({ input: process.stdin }).on("line", (l
   if (message.method === "initialize") send({ id: message.id, result: { userAgent: "fake/0.162.0", codexHome: "/x", platformFamily: "unix", platformOs: "macos" } });
   else if (message.method === "account/read") send({ id: message.id, result: { account: { type: "chatgpt" }, requiresOpenaiAuth: true } });
   else if (message.method === "thread/start") { thread = message.params; send({ id: message.id, result: { thread: { id: "t1" }, model: "gpt-test" } }); }
-  else if (message.method === "turn/start") { send({ id: message.id, result: { turn: { id: "u1" } } }); work(thread.cwd).catch((error) => { console.error(error); process.exit(1); }); }
+  else if (message.method === "turn/start") { seen.push("effort:" + (message.params.effort || "none")); send({ id: message.id, result: { turn: { id: "u1" } } }); work(thread.cwd).catch((error) => { console.error(error); process.exit(1); }); }
   else if (message.id !== undefined) send({ id: message.id, result: {} });
 });
 `;
@@ -73,7 +73,7 @@ test("Codex as the engine: approvals and questions are answered by the run's rul
     const task = await side.api<{ task: { id: string } }>("/api/tasks", { json: { title: "Codex run" } });
     assert.equal(task.status, 201, JSON.stringify(task.body));
     const assigned = await side.api<{ jobId?: string; error?: string }>("/api/agent/assign", {
-      json: { taskId: task.body.task.id, kind: "code", engine: "codex", mode: "unattended", sandbox: false, delivery: "local" },
+      json: { taskId: task.body.task.id, kind: "code", engine: "codex", reasoningEffort: "high", mode: "unattended", sandbox: false, delivery: "local" },
     });
     assert.ok(assigned.body.jobId, JSON.stringify(assigned.body));
     let job: { status: string; summary?: string | null; error?: string | null; folder?: string | null } = { status: "queued" };
@@ -95,6 +95,7 @@ test("Codex as the engine: approvals and questions are answered by the run's rul
     assert.match(summary, /sandbox:danger-full-access/, "the sandbox was off for this run");
     assert.match(summary, /trust:untrusted/, "the folder's own .codex/ does not run");
     assert.match(summary, /keys:none/, "Ensemble's own keys are not handed to Codex");
+    assert.match(summary, /effort:high/, "the thinking level chosen for the run reaches Codex");
     if (job.folder) assert.equal(existsSync(join(job.folder, "hello.txt")) ? readFileSync(join(job.folder, "hello.txt"), "utf8") : "", "hi");
   } finally {
     await side.stop();

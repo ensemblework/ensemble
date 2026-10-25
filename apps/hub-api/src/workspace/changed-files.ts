@@ -65,7 +65,7 @@ export function parseStatus(text: string): Array<{ path: string; code: string }>
 const COUNT_BYTES = 1024 * 1024;
 
 /** Lines in an untracked file: a regular file only (not a link, pipe or device), its first megabyte. */
-async function lineCount(path: string): Promise<{ lines: number; binary: boolean }> {
+export async function lineCount(path: string): Promise<{ lines: number; binary: boolean }> {
   try {
     const info = await lstat(path);
     if (!info.isFile()) return { lines: 0, binary: false };
@@ -91,7 +91,7 @@ async function lineCount(path: string): Promise<{ lines: number; binary: boolean
  */
 const RUNS_PROGRAMS = /^\s*\[\s*(filter|diff|merge|include|includeif)\b|^\s*(fsmonitor|hookspath|sshcommand|askpass|helper|pager|editor|textconv|clean|smudge|process|driver|uploadpack|receivepack)\s*=/im;
 
-async function runsPrograms(repo: string): Promise<boolean> {
+export async function runsPrograms(repo: string): Promise<boolean> {
   try {
     return RUNS_PROGRAMS.test(await readFile(join(repo, ".git", "config"), "utf8"));
   } catch {

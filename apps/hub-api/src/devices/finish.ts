@@ -7,7 +7,7 @@ import { appendLedger } from "../lib/ledger.js";
 import { redactText } from "../lib/redact.js";
 import { sseHub } from "../lib/sse.js";
 import { LIVE_DEVICE_STATUSES } from "./constants.js";
-import { expireDeviceDecisions } from "./settle.js";
+import { expireDeviceDecisions, wakeQueuedDevices } from "./settle.js";
 import { requireVerifiedUser } from "../lib/hosted-access.js";
 import type { RunTotals } from "../remote/contract.js";
 
@@ -146,5 +146,6 @@ export async function finishDeviceJob(
   sseHub.publish(job.userId, { event: "workspace", data: { id: job.id } });
   sseHub.publish(job.userId, { event: "task", data: { id: job.taskId, action: "agent" } });
   sseHub.publish(job.userId, { event: "page", data: { taskId: job.taskId } });
+  await wakeQueuedDevices(prisma, job.userId).catch(() => undefined);
   return true;
 }

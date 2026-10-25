@@ -15,7 +15,9 @@ import { describeFile, diskName, fileOriginal, filesOnTask, fileText, findFile }
 import { GITHUB_AUTH_HINT, githubApiToken, githubCloneAuth } from "../lib/git-auth.js";
 import { parseClone } from "./clone.js";
 import { flagPlanted, type PlantedHit } from "./planted.js";
-import { checkGit, checkProgram, expandHome, gitCommand, gitHardening, GuardError, jailPath, outsideRefusal, parseCommand, relativeTo, within } from "./guard.js";
+import { checkGit, checkProgram, expandHome, gitCommand, gitHardening, GuardError, harmlessPath, jailPath, outsideRefusal, parseCommand, relativeTo, within } from "./guard.js";
+import { expandWord } from "./shell-parse.js";
+import type { RunChanges } from "./outside-changes.js";
 import { ghSandboxRefusal, runTrustedGh, runTrustedGit } from "./git-gate.js";
 import { appendLive } from "./live-log.js";
 import { pushWithSignIn, remoteUrl, webPushNeedsComputer } from "./publish.js";
@@ -69,6 +71,8 @@ export interface JobContext {
   plantedInClones?: PlantedHit[];
   /** Working time left before the minutes limit, so one command cannot run past it. */
   remainingMs?: () => number;
+  /** Files the run writes beyond its folder's own snapshot (outside-changes.ts). */
+  changes?: RunChanges;
 }
 
 /** Per-run answers. Kept apart from `ensemble`/`path` folder trust so a command answer can never trust a path. */
@@ -299,28 +303,75 @@ async function runRule(ctx: JobContext, toolName: string, command: string | unde
   return rule ? (rule.decision === "deny" ? "deny" : "allow") : null;
 }
 
-/** Path-looking arguments that leave the folder: absolute, `~`, `..`, and `--flag=/path`. */
+/** Programs that take code as an argument after `-e`, `-c`, `--eval`…: that code is not a path. */
+const INTERPRETERS = new Set(["node", "nodejs", "tsx", "ts-node", "bun", "bunx", "deno", "python", "python3", "py", "pypy", "pypy3", "ruby", "perl", "php", "bash", "sh", "zsh", "dash", "fish", "pwsh", "powershell", "lua", "Rscript", "julia"]);
+const CODE_FLAGS = new Set(["-e", "--eval", "-p", "--print", "-c", "--command", "-Command"]);
+/** Programs whose first argument that is not an option is a pattern or a script, not a path. */
+const PATTERN_FIRST = new Set(["grep", "egrep", "fgrep", "rg", "ag", "ack", "sed", "awk", "gawk", "mawk", "jq", "yq"]);
+/** Programs whose arguments are text, never files. */
+const TEXT_ONLY = new Set(["echo", "printf", "true", "false", "sleep"]);
+
+const baseName = (program: string) => program.split(/[\\/]/).pop()!.replace(/\.exe$/i, "");
+/** Inline code or prose, not a path: a newline, or spaces together with shell or code punctuation. */
+const looksLikeCode = (arg: string) => arg.includes("\n") || (/\s/.test(arg) && /[(){};=<>|&`$"']/.test(arg));
+
+/** Arguments that could be a relative file name: not the program, an option, code, a URL or a variable. */
+export function plainArgs(argv: string[]): string[] {
+  return argv.slice(1).filter((arg) => arg && !arg.startsWith("-") && !looksLikeCode(arg) && !/^[a-z][a-z0-9+.-]*:\/\//i.test(arg) && !arg.startsWith("$") && arg.length <= 1000);
+}
+
+/** Path-looking arguments that leave the folder: absolute, `~`, `$HOME`, `..`, and `--flag=/path`. Code, patterns, URLs and /dev/null are not paths. */
 export function outsideArgs(root: string, args: string[], cwd = root): string[] {
   const found: string[] = [];
-  for (const raw of args.slice(1)) {
+  const program = baseName(args[0] ?? "");
+  if (TEXT_ONLY.has(program)) return found;
+  const interpreted = args.some((arg) => INTERPRETERS.has(baseName(arg)));
+  let pattern = PATTERN_FIRST.has(program);
+  for (let index = 1; index < args.length; index += 1) {
+    const raw = args[index]!;
+    if (interpreted && CODE_FLAGS.has(raw)) {
+      index += 1;
+      continue;
+    }
+    if (pattern && ["-e", "--regexp", "-f", "--file"].includes(raw)) {
+      pattern = false;
+      index += 1;
+      continue;
+    }
+    if (pattern && !raw.startsWith("-")) {
+      pattern = false;
+      continue;
+    }
     const arg = raw.startsWith("-") && raw.includes("=") ? raw.slice(raw.indexOf("=") + 1) : raw;
-    if (!arg || (arg !== raw ? false : arg.startsWith("-"))) continue;
-    const pathLike = arg.startsWith("/") || arg.startsWith("~") || /^[A-Za-z]:[\\/]/.test(arg) || arg === ".." || arg.startsWith("../") || arg.startsWith("..\\") || arg.includes("/../");
+    if (!arg || (arg === raw && arg.startsWith("-"))) continue;
+    if (looksLikeCode(arg) || /^[a-z][a-z0-9+.-]*:\/\//i.test(arg)) continue;
+    const expanded = expandWord(arg);
+    const pathLike = expanded.startsWith("/") || /^[A-Za-z]:[\\/]/.test(expanded) || expanded === ".." || expanded.startsWith("../") || expanded.startsWith("..\\") || expanded.includes("/../");
     if (!pathLike) continue;
-    const full = resolve(cwd, expandHome(arg));
+    const full = resolve(cwd, expandHome(expanded));
+    if (harmlessPath(full)) continue;
     if (!within(root, full) && !found.includes(full)) found.push(full);
   }
   return found;
 }
 
 /** Programs that only read the paths they are given. */
-const READ_ONLY_PROGRAMS = new Set(["ls", "cat", "head", "tail", "wc", "grep", "rg", "find", "tree", "diff", "file", "stat", "du", "realpath", "basename", "dirname", "cut"]);
+const READ_ONLY_PROGRAMS = new Set([
+  "ls", "cat", "head", "tail", "wc", "grep", "egrep", "fgrep", "rg", "ag", "ack", "fd", "find", "tree", "diff", "cmp", "comm", "file", "stat", "du", "df",
+  "realpath", "readlink", "basename", "dirname", "cut", "uniq", "tr", "nl", "column", "tac", "rev", "fold", "paste", "join", "less", "more", "bat",
+  "jq", "yq", "xxd", "od", "hexdump", "strings", "md5", "md5sum", "sha1sum", "sha256sum", "sha512sum", "shasum", "cksum",
+  "cd", "pushd", "popd", "pwd", "echo", "printf", "true", "false", "sleep", "test", "[", "which", "type", "whereis", "date", "uname", "whoami", "id", "hostname", "ps", "lsof",
+]);
 const READ_ONLY_GIT = new Set(["status", "log", "diff", "show", "blame", "ls-files", "ls-tree", "rev-parse", "describe", "grep", "cat-file", "shortlog"]);
 
 /** True when a command only reads: a read-only tool, or a git subcommand that only reads. */
 export function readsOnly(argv: string[]): boolean {
-  const program = (argv[0] ?? "").split(/[\\/]/).pop()!.replace(/\.exe$/i, "");
-  if (READ_ONLY_PROGRAMS.has(program)) return !(program === "find" && argv.some((arg) => ["-delete", "-exec", "-execdir", "-ok", "-fprint"].includes(arg)));
+  const program = baseName(argv[0] ?? "");
+  if (program === "find") return !argv.some((arg) => ["-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprintf", "-fls"].includes(arg));
+  if (program === "sort") return !argv.some((arg) => arg === "-o" || arg.startsWith("--output"));
+  if (program === "sed") return !argv.some((arg) => /^-[a-zA-Z]*i/.test(arg) || arg.startsWith("--in-place"));
+  if (program === "curl") return !argv.some((arg) => /^-[a-zA-Z]*[oOD]/.test(arg) || /^--(output|remote-name|dump-header|cookie-jar)/.test(arg) || arg === "-c");
+  if (READ_ONLY_PROGRAMS.has(program)) return true;
   if (program === "git") return READ_ONLY_GIT.has(argv.find((arg, index) => index > 0 && !arg.startsWith("-")) ?? "");
   return false;
 }

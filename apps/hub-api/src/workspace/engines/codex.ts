@@ -20,7 +20,7 @@ import { createInterface } from "node:readline";
 import { desktopDataDir } from "@ensemble/shared-types/desktop-discovery";
 import { askpassPath, cacheDir, ENSEMBLE_SOURCE } from "../guard.js";
 import { bundledCodex } from "../handoff.js";
-import { appendLive } from "../live-log.js";
+import { appendLive, touchLive } from "../live-log.js";
 import { hostExecutable } from "../policy.js";
 import { SECRET_HOME_PATHS } from "../sandbox/seatbelt.js";
 import { askPerson, type JobContext } from "../tools.js";
@@ -151,7 +151,7 @@ export function codexApprovalPolicy(ctx: Pick<JobContext, "accessMode" | "truste
 
 export async function runCodex(
   ctx: JobContext,
-  options: { prompt: string; model?: string | null; stopCheck: () => Promise<void>; resume?: string | null; chat?: boolean; trace?: EngineTrace },
+  options: { prompt: string; model?: string | null; effort?: string | null; stopCheck: () => Promise<void>; resume?: string | null; chat?: boolean; trace?: EngineTrace },
 ): Promise<EngineResult> {
   const codex = await codexBinary();
   if (!codex) throw new Error("Codex is not on this computer. Install the ChatGPT app or the Codex CLI, sign in, and Run again.");
@@ -232,7 +232,10 @@ export async function runCodex(
   };
 
   const lines = createInterface({ input: child.stdout });
-  lines.on("line", (line) => void server.receive(line));
+  lines.on("line", (line) => {
+    touchLive(ctx.job.id);
+    void server.receive(line);
+  });
   child.stderr.on("data", (chunk: Buffer) => {
     stderr = (stderr + chunk.toString("utf8")).slice(-4000);
   });
@@ -309,6 +312,7 @@ export async function runCodex(
       sandboxPolicy: ctx.sandboxed
         ? { type: "workspaceWrite", writableRoots: writable, networkAccess: ctx.network, excludeTmpdirEnvVar: false, excludeSlashTmp: false }
         : { type: "dangerFullAccess" },
+      ...(options.effort ? { effort: options.effort } : {}),
     })) as { turn?: { id?: string } };
     turnId = turn.turn?.id ?? null;
     result.turns = 1;
