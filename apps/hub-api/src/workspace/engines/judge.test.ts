@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { homedir } from "node:os";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import type { WorkspaceJob } from "@prisma/client";
@@ -177,4 +178,67 @@ test("Ensemble's own board tools go ahead without a prompt, even in Ask in an un
     assert.equal((await judgeEngineCall(asking, { tool, input: {} })).decision, "allow", tool);
   }
   assert.equal((await judgeEngineCall(ctx({ accessMode: "review" }), { tool: "mcp__github__create_issue", input: {} })).decision, "deny");
+});
+
+test("in Ask in an untrusted folder, commands that only read files in the folder run without asking; anything else still asks", async () => {
+  const folder = mkdtempSync(join(tmpdir(), "ensemble-quiet-"));
+  const elsewhere = mkdtempSync(join(tmpdir(), "ensemble-quiet-outside-"));
+  try {
+    mkdirSync(join(folder, ".git"));
+    writeFileSync(join(folder, ".git", "config"), "[core]\n\tbare = false\n");
+    mkdirSync(join(folder, "src"));
+    writeFileSync(join(folder, "src", "a.ts"), "x");
+    writeFileSync(join(folder, "README.md"), "hi");
+    writeFileSync(join(elsewhere, "id_rsa"), "secret");
+    symlinkSync(join(elsewhere, "id_rsa"), join(folder, "notes"));
+    mkdirSync(join(folder, "evil", ".git"), { recursive: true });
+    writeFileSync(join(folder, "evil", ".git", "config"), "[core]\n\tpager = ./run.sh\n");
+    // A saved "Deny for this run" answers the question each non-quiet command would put to the person.
+    const prisma = { decisionRule: { findFirst: async () => ({ decision: "deny" }) } };
+    const asking = (over: Partial<Ctx> = {}) => ctx({ root: folder, trusted: false, explicitTrust: false, silentWorkspace: false, job: { unattended: false }, prisma, ...over } as never);
+    const quiet = ["ls -la", "cat README.md | head -20", "grep -rn foo src && wc -l src/a.ts", "rg TODO src", "find . -name '*.ts' -type f", "ls src/*.ts", "git status", "git log --oneline -5", "cat a 2>/dev/null", "sort data.txt | uniq -c"];
+    for (const command of quiet) assert.equal((await judgeEngineCall(asking(), { tool: "Bash", input: { command } })).decision, "allow", command);
+    const asks = [
+      "npm test",
+      "ls > out.txt",
+      "cat a && rm b",
+      "ls $(rm -rf x)",
+      "echo $(git rev-parse HEAD)",
+      "cat $SECRET_FILE",
+      "cat {README.md,../x}",
+      "LD_PRELOAD=./x.so ls",
+      "PAGER=./evil; git log",
+      "env GIT_EXTERNAL_DIFF=./x git diff",
+      "git --config-env=core.pager=SHELL --paginate log -1",
+      "cd evil && git log",
+      "cat notes",
+      "cat *otes",
+      "grep -R key .",
+      "diff -r src src",
+      "rg --pre ./x.sh foo",
+      "fd -x rm",
+      "sed -n 1p a.txt",
+      "sort -oPWN README.md",
+      "uniq in.txt out.txt",
+      "xxd a.bin out.txt",
+      "find . -fprint0 list.txt",
+      "git diff --output=patch.txt",
+      "bat README.md",
+      "less README.md",
+      "grep -f ../patterns README.md",
+    ];
+    for (const command of asks) {
+      const answer = await judgeEngineCall(asking(), { tool: "Bash", input: { command } });
+      assert.equal(answer.decision, "deny", command);
+      assert.match(answer.message ?? "", /denied this for the rest of the run/, command);
+    }
+    assert.equal((await judgeEngineCall(asking(), { tool: "PowerShell", input: { command: "ls" } })).decision, "deny", "PowerShell is not read as POSIX");
+    // Without the sandbox the repository's own git config could start programs, so git still asks; plain reads do not.
+    const direct = asking({ sandboxed: false, strength: "advisory" } as never);
+    assert.equal((await judgeEngineCall(direct, { tool: "Bash", input: { command: "git status" } })).decision, "deny");
+    assert.equal((await judgeEngineCall(direct, { tool: "Bash", input: { command: "ls -la src" } })).decision, "allow");
+  } finally {
+    rmSync(folder, { recursive: true, force: true });
+    rmSync(elsewhere, { recursive: true, force: true });
+  }
 });

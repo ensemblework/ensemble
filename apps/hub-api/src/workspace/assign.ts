@@ -6,7 +6,7 @@
 import { stat } from "node:fs/promises";
 import { z } from "zod";
 import type { Actor, Prisma, PrismaClient } from "@prisma/client";
-import { CODE_ENGINES, ContextTier, PullRequestPlan, pullRequestHeadRefusal } from "@ensemble/shared-types";
+import { CODE_ENGINES, ContextTier, ENGINE_LABELS, PullRequestPlan, pullRequestHeadRefusal, type CodeEngine } from "@ensemble/shared-types";
 import { deviceAssignment } from "../devices/assign.js";
 import { serverRunnerEnabled } from "../devices/constants.js";
 import { publishBrowserDevice, publishDevice } from "../devices/publish.js";
@@ -61,6 +61,8 @@ export const Assign = z.object({
   engine: z.enum(["ensemble", ...CODE_ENGINES]).default("ensemble"),
   /** The model's context window where it offers more than one (GitHub Copilot's long_context). */
   contextTier: ContextTier.optional(),
+  /** The model's fast mode (Claude Code, Codex): faster output, more of the plan's usage. */
+  fast: z.boolean().optional(),
   /**
    * End the run in a pull request Ensemble opens into `base`, any branch (empty: the repository's
    * default branch). `branch`, when given, names the run's branch. docs/24 §5.1.
@@ -75,12 +77,12 @@ export const Assign = z.object({
   chat: z.boolean().optional(),
 });
 
-const ENGINE_NAME = { ensemble: "Ensemble's agent", "claude-code": "Claude Code", codex: "Codex", "cursor-agent": "Cursor's agent", "copilot-cli": "GitHub Copilot" } as const;
+const ENGINE_NAME: Record<"ensemble" | CodeEngine, string> = { ensemble: "Ensemble's agent", ...ENGINE_LABELS, "cursor-agent": "Cursor's agent" };
 
 /** The job's context with the run's outside-folder choice in it (a JSON column, so no migration). */
-function contextWith(context: Prisma.InputJsonValue | undefined, outsideAccess: string, chat = false, contextTier?: string | null, pullRequest?: PullRequestPlan | null): Prisma.InputJsonValue {
+function contextWith(context: Prisma.InputJsonValue | undefined, outsideAccess: string, chat = false, contextTier?: string | null, pullRequest?: PullRequestPlan | null, fast = false): Prisma.InputJsonValue {
   const base = typeof context === "object" && context !== null && !Array.isArray(context) ? (context as Record<string, unknown>) : {};
-  return { ...base, outsideAccess, ...(chat ? { chat: true } : {}), ...(contextTier === "long_context" ? { contextTier } : {}), ...(pullRequest ? { pullRequest } : {}) } as Prisma.InputJsonValue;
+  return { ...base, outsideAccess, ...(chat ? { chat: true } : {}), ...(contextTier === "long_context" ? { contextTier } : {}), ...(pullRequest ? { pullRequest } : {}), ...(fast ? { fast: true } : {}) } as Prisma.InputJsonValue;
 }
 
 /** A request that ends in a pull request, made consistent: a code task with commits, pushes and the internet. */
@@ -180,7 +182,7 @@ async function createDeviceJob(
       maxMinutes: body.maxMinutes ?? orchestration.maxMinutes,
       maxTurns: body.maxTurns ?? orchestration.maxTurns,
       maxToolCalls: body.maxToolCalls ?? 80,
-      context: contextWith(options.context, body.outsideAccess ?? orchestration.outsideAccess, false, body.contextTier, body.pullRequest),
+      context: contextWith(options.context, body.outsideAccess ?? orchestration.outsideAccess, false, body.contextTier, body.pullRequest, body.fast === true),
     },
   });
   const nextStatus = ["proposed", "done", "dropped", "blocked", "waiting_approval"].includes(task.status) ? "todo" : task.status;
@@ -228,7 +230,7 @@ export async function createJob(prisma: PrismaClient, userId: string, input: Ass
   const claudeCode = body.engine !== "ensemble";
   const engineName = ENGINE_NAME[body.engine];
   if (claudeCode && body.kind !== "code") throw new GuardError(`${engineName} works on code tasks. Pick Ensemble's agent for research.`);
-  if (body.chat && !claudeCode) throw new GuardError("Chat runs with Claude Code, Codex, Cursor's agent or GitHub Copilot on your own sign-in. Ensemble's agent chats in Ensemble Code with a model key.");
+  if (body.chat && !claudeCode) throw new GuardError("Chat runs with your own coding agent (Claude Code, Codex, Cursor, GitHub Copilot, Grok Build, OpenCode, Gemini CLI or Antigravity) on your own sign-in. Ensemble's agent chats in Ensemble Code with a model key.");
   // The engine is stored as the run's provider; its model is the engine's own name for one, or its default.
   // A model named here keeps its own provider (never the tier's): see lib/model-choice.ts.
   let provider: string;
@@ -346,7 +348,7 @@ export async function createJob(prisma: PrismaClient, userId: string, input: Ass
       maxMinutes: body.maxMinutes ?? settings.orchestration.maxMinutes,
       maxTurns: body.maxTurns ?? settings.orchestration.maxTurns,
       maxToolCalls: body.maxToolCalls ?? 80,
-      context: contextWith(options.context, body.outsideAccess ?? settings.orchestration.outsideAccess, body.chat === true, body.contextTier, body.pullRequest),
+      context: contextWith(options.context, body.outsideAccess ?? settings.orchestration.outsideAccess, body.chat === true, body.contextTier, body.pullRequest, body.fast === true),
     },
   });
   if (externalRoot && body.trust === "always") {

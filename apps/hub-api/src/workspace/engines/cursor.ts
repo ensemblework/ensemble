@@ -166,8 +166,9 @@ export async function runCursor(
     const single = Array.isArray(update.content) ? undefined : update.content;
     void (async () => {
       if (update.sessionUpdate === "agent_message_chunk" && single?.type === "text" && single.text) {
-        await flushThought();
+        // Kept before any await: the turn's result may be read as soon as the last chunk arrives.
         reply += single.text;
+        await flushThought();
         appendLive(ctx.job.id, single.text);
       } else if (update.sessionUpdate === "agent_thought_chunk" && single?.type === "text" && single.text) {
         thought += single.text;

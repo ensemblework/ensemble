@@ -15,7 +15,7 @@ import { INCLUDED_PROVIDER } from "@ensemble/shared-types";
 import { deviceOnline } from "../devices/constants.js";
 import { abortAssistantTurn } from "../assistant/agent.js";
 import { ApprovalError, settleApproval } from "./approvals.js";
-import { nodeEventStream, publishTo } from "./events.js";
+import { mirrorNeedsMe, nodeEventStream, publishTo } from "./events.js";
 import { NODE_DEFAULT_MODEL, includedOptions, modelProblem, nodeModelOptions } from "./model.js";
 import { dispatchMessage, inBackground, stopTurns } from "./queue.js";
 import {
@@ -266,6 +266,7 @@ export async function nodeRoutes(app: FastifyInstance): Promise<void> {
     };
   });
 
+  mirrorNeedsMe();
   app.get("/api/node/events", async (request, reply) => nodeEventStream(request, reply, nodeAccount(request)));
 
   // ── nodes ────────────────────────────────────────────────────────────────────────────────

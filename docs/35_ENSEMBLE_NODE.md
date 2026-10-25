@@ -104,7 +104,7 @@ Node turns also have every assistant tool for the owner's modules: workspace sea
 | Route | Purpose |
 | --- | --- |
 | `GET /api/node/bootstrap` | Me, my nodes, my rooms (with unread counts and last message), my computers, credits, models, templates |
-| `GET /api/node/events` | SSE: `node.message`, `node.message.updated`, `node.status`, `node.frame` (owner only), `node.room` |
+| `GET /api/node/events` | SSE: `node.message`, `node.message.updated`, `node.status`, `node.frame` (owner only), `node.room`, `node.needs` (a Needs me card was opened or answered on the person's own channel; no content, so Node re-reads its lists; `mirrorNeedsMe` in `node/events.ts`) |
 | `GET/POST /api/node/nodes`, `PATCH/DELETE /api/node/nodes/:id` | My nodes (24 at most); deleting one removes its DM, runs and conversations |
 | `GET/POST /api/node/nodes/:id/memory`, `DELETE …/memory/:memoryId` | A node's memory |
 | `GET /api/node/models` | Every model a node can use: included, own keys, AI plans on paired computers |

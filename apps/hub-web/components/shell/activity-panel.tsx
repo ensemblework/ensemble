@@ -111,7 +111,7 @@ export function ActivityControls({ connected = true, serverError = false }: { co
       <Row
         icon={job.kind === "code" ? Code2 : FileText}
         title={job.title}
-        detail={job.status === "queued" ? `#${job.position} · ${job.model}` : job.progress ?? job.model}
+        detail={job.status === "queued" ? `#${job.position} · ${job.waitingFor ?? job.model}` : job.progress ?? job.model}
         since={job.status === "queued" ? null : job.startedAt}
         live={job.status !== "queued"}
         action={

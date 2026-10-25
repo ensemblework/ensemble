@@ -1,13 +1,16 @@
 /**
  * Runs one checked argv inside this computer's OS sandbox, and can kill it at once.
  *
- * Every child starts its own process group (macOS, Linux) or is killed as a
- * tree with taskkill (Windows), so Stop ends the whole tree — a test runner's
- * workers included — not just the parent. The process itself is started by
- * `startSandboxed`, the only agent spawn. A run that asked for the sandbox on
- * a computer without one is refused with the reason.
+ * Every child starts its own session (macOS, Linux) or is killed as a tree with taskkill
+ * (Windows), so Stop and a timeout end everything the command started: a test runner's workers,
+ * and a process that moved to a process group of its own (`timeout`, a shell with job control),
+ * which stays in the session. A command is over when its own process exits: output still in the
+ * pipes is read for a moment, and a process it left running cannot hold the result open. The
+ * process itself is started by `startSandboxed`, the only agent spawn. A run that asked for the
+ * sandbox on a computer without one is refused with the reason.
  */
 import { spawnSync, type ChildProcess } from "node:child_process";
+import { readdirSync, readFileSync } from "node:fs";
 import { mkdir, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -51,6 +54,10 @@ export interface RunResult {
 }
 
 const live = new Map<string, Set<ChildProcess>>();
+/** The sessions each group started (a child's pid is its session id), kept until the group is killed. */
+const sessions = new Map<string, Set<number>>();
+/** How long output may still arrive after the command's own process exits. */
+export const DRAIN_MS = 2_000;
 const found = new Map<string, string>();
 
 /** File names to try for a program: on Windows each PATHEXT extension (git.exe, npm.cmd), elsewhere the name. */
@@ -84,6 +91,55 @@ async function findProgram(name: string, path: string, root: string): Promise<st
   });
 }
 
+/** The `stat` line of a Linux process: its session id (the fields after the command name, which may hold spaces). */
+export function sessionOf(stat: string): number | null {
+  const fields = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+  const session = Number(fields[3]);
+  return Number.isInteger(session) ? session : null;
+}
+
+/** Every process still in a session: on Linux from /proc, elsewhere from `pgrep -s`. */
+export function sessionMembers(session: number): number[] {
+  if (process.platform === "win32" || session <= 1) return [];
+  if (process.platform === "linux") {
+    const found: number[] = [];
+    let names: string[] = [];
+    try {
+      names = readdirSync("/proc");
+    } catch {
+      return found;
+    }
+    for (const name of names) {
+      if (!/^\d+$/.test(name)) continue;
+      try {
+        if (sessionOf(readFileSync(`/proc/${name}/stat`, "utf8")) === session) found.push(Number(name));
+      } catch {
+        // gone already
+      }
+    }
+    return found;
+  }
+  const listed = spawnSync("pgrep", ["-s", String(session)], { encoding: "utf8", timeout: 5_000 });
+  return (listed.stdout ?? "").split(/\s+/).filter((pid) => /^\d+$/.test(pid)).map(Number);
+}
+
+/** Kills a session: its process group, and each process that left the group but not the session. */
+function killSession(session: number): void {
+  try {
+    process.kill(-session, "SIGKILL");
+  } catch {
+    // no such group any more
+  }
+  for (const pid of sessionMembers(session)) {
+    if (pid === process.pid) continue;
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // already gone
+    }
+  }
+}
+
 function killTree(child: ChildProcess): void {
   if (!child.pid) return;
   if (process.platform === "win32") {
@@ -91,23 +147,21 @@ function killTree(child: ChildProcess): void {
     spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore", windowsHide: true });
     return;
   }
+  killSession(child.pid);
   try {
-    process.kill(-child.pid, "SIGKILL");
+    child.kill("SIGKILL");
   } catch {
-    try {
-      child.kill("SIGKILL");
-    } catch {
-      // already gone
-    }
+    // already gone
   }
 }
 
-/** Kills every process started for this group. Returns how many were running. */
+/** Kills every process started for this group, including ones its commands left running. Returns how many commands were running. */
 export function killGroup(group: string): number {
   const set = live.get(group);
-  if (!set) return 0;
-  for (const child of set) killTree(child);
-  const count = set.size;
+  for (const child of set ?? []) killTree(child);
+  if (process.platform !== "win32") for (const session of sessions.get(group) ?? []) killSession(session);
+  sessions.delete(group);
+  const count = set?.size ?? 0;
   live.delete(group);
   return count;
 }
@@ -153,6 +207,11 @@ export async function runCommand(options: RunOptions): Promise<RunResult> {
       const set = live.get(group) ?? new Set();
       set.add(child);
       live.set(group, set);
+      if (child.pid && process.platform !== "win32") {
+        const started = sessions.get(group) ?? new Set();
+        started.add(child.pid);
+        sessions.set(group, started);
+      }
     }
     let output = "";
     let truncated = false;
@@ -181,23 +240,49 @@ export async function runCommand(options: RunOptions): Promise<RunResult> {
     };
     if (options.signal?.aborted) onAbort();
     options.signal?.addEventListener("abort", onAbort, { once: true });
-    child.on("error", (error) => {
+    let settled = false;
+    let drain: ReturnType<typeof setTimeout> | null = null;
+    const finish = (code: number | null, signal: NodeJS.Signals | null, leftRunning: number[] = []) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
-      reject(error);
-    });
-    child.on("close", (code, signal) => {
-      clearTimeout(timer);
+      if (drain) clearTimeout(drain);
       options.signal?.removeEventListener("abort", onAbort);
       if (group) live.get(group)?.delete(child);
       const sandboxDenied = options.sandboxed && /Operation not permitted|deny\(1\)|Read-only file system|Access is denied/.test(output);
+      const notes = [
+        sandboxDenied ? "[Ensemble] The sandbox blocked access outside the allowed folder." : "",
+        leftRunning.length
+          ? `[Ensemble] The command ended, but ${leftRunning.length} process${leftRunning.length === 1 ? "" : "es"} it started ${leftRunning.length === 1 ? "is" : "are"} still running (pid ${leftRunning.slice(0, 8).join(", ")}). ${group ? "They are stopped when the run ends." : ""}`.trim()
+          : "",
+      ].filter(Boolean);
       resolvePromise({
         exitCode: code ?? (signal ? 137 : 1),
-        output: sandboxDenied ? `${output}\n[Ensemble] The sandbox blocked access outside the allowed folder.` : output,
+        output: notes.length ? `${output}\n${notes.join("\n")}` : output,
         truncated,
         timedOut,
         killed,
         ms: Date.now() - started,
       });
+    };
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (drain) clearTimeout(drain);
+      reject(error);
+    });
+    child.on("close", (code, signal) => finish(code, signal));
+    // The command's own process ended: its output is read for a moment more, then it is over, even
+    // when a process it left running (a server, a stuck test worker) still holds the pipes open.
+    child.on("exit", (code, signal) => {
+      drain = setTimeout(() => {
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+        const left = child.pid && process.platform !== "win32" ? sessionMembers(child.pid) : [];
+        finish(code, signal, left);
+      }, DRAIN_MS);
+      drain.unref?.();
     });
   });
 }

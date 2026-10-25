@@ -32,6 +32,59 @@ function repositoryIdentity(value: string | null): string | null {
   }
 }
 
+type QueueJob = {
+  id: string;
+  deviceId: string | null;
+  repoUrl: string | null;
+  resourceKeys: string[];
+  continueFromJobId: string | null;
+  task: { projectId: string | null; repoId: string | null };
+};
+
+export type QueueConflict = { jobId: string; reason: "continues" | "repository" | "project" | "folder" };
+
+/**
+ * The running job a queued one must wait for, and why: it continues that job, works in the same
+ * repository (any computer), the same project, or the same folder on the same computer.
+ */
+export function queueConflict(candidate: QueueJob, active: QueueJob[]): QueueConflict | null {
+  for (const job of active) {
+    if (candidate.continueFromJobId === job.id) return { jobId: job.id, reason: "continues" };
+    if (
+      (candidate.repoUrl && repositoryIdentity(candidate.repoUrl) === repositoryIdentity(job.repoUrl)) ||
+      candidate.resourceKeys.some((key) => key.startsWith("repo:") && job.resourceKeys.includes(key)) ||
+      (candidate.task.repoId && candidate.task.repoId === job.task.repoId)
+    )
+      return { jobId: job.id, reason: "repository" };
+    if (candidate.task.projectId && candidate.task.projectId === job.task.projectId) return { jobId: job.id, reason: "project" };
+    // Paths and labels are local to a computer; repo identities above are account-wide.
+    if (candidate.deviceId === job.deviceId && candidate.resourceKeys.some((key) => job.resourceKeys.includes(key))) return { jobId: job.id, reason: "folder" };
+  }
+  return null;
+}
+
+const WAIT_WORDS: Record<QueueConflict["reason"], string> = {
+  continues: "It continues",
+  repository: "Same repository as",
+  project: "Same project as",
+  folder: "Same folder as",
+};
+
+/**
+ * Why a queued job has not started, in words for the queue: the pause, a running job it must wait
+ * for, or every slot in use. Null when it can start at the next claim.
+ */
+export function queueWaitReason(input: { candidate: QueueJob; active: Array<QueueJob & { title: string }>; limit: number; paused: boolean }): string | null {
+  if (input.paused) return "Paused: nothing starts until you resume.";
+  const conflict = queueConflict(input.candidate, input.active);
+  if (conflict) {
+    const title = input.active.find((job) => job.id === conflict.jobId)?.title ?? "a running task";
+    return `${WAIT_WORDS[conflict.reason]} “${title.slice(0, 80)}”, which is running: it starts when that one ends.`;
+  }
+  if (input.active.length >= input.limit) return `All ${input.limit} slot${input.limit === 1 ? " is" : "s are"} in use.`;
+  return null;
+}
+
 /** Claims on both the hosted and local queues serialize on the person's row. */
 export async function claimQueuedJob(
   prisma: PrismaClient,
@@ -91,23 +144,7 @@ export async function claimQueuedJob(
       );
     if (draining || !queueHasRoom(active.length, limit, Boolean(overdue)))
       return false;
-    const conflicts = active.some(
-      (job) =>
-        candidate.continueFromJobId === job.id ||
-        (candidate.repoUrl &&
-          repositoryIdentity(candidate.repoUrl) ===
-            repositoryIdentity(job.repoUrl)) ||
-        candidate.resourceKeys.some(
-          (key) => key.startsWith("repo:") && job.resourceKeys.includes(key),
-        ) ||
-        (candidate.task.projectId &&
-          candidate.task.projectId === job.task.projectId) ||
-        (candidate.task.repoId && candidate.task.repoId === job.task.repoId) ||
-        // Paths and labels are local to a computer; repo identities above are account-wide.
-        (candidate.deviceId === job.deviceId &&
-          candidate.resourceKeys.some((key) => job.resourceKeys.includes(key))),
-    );
-    if (conflicts) return false;
+    if (queueConflict(candidate, active)) return false;
     if (
       candidate.continueFromJobId &&
       (await tx.workspaceJob.findFirst({

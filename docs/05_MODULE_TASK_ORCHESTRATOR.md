@@ -40,7 +40,7 @@ Complexity picks the Low/Medium/High/Max model profile; a complexity the person 
 
 ## 4. Queue slots and limits
 
-`workspace/queue-policy.ts` serializes claims on the space's user row and takes eligible jobs in assignment order. Jobs sharing a project, repository, folder/device resource or unfinished continuation wait for each other; unrelated work can pass.
+`workspace/queue-policy.ts` serializes claims on the space's user row and takes eligible jobs in assignment order. Jobs sharing a project, repository, folder/device resource or unfinished continuation wait for each other, whatever their engine or model; unrelated work can pass (`queueConflict`). Each queued card in Up next and the activity panel says why it waits (`waitingFor` from `queueWaitReason`): the pause, "Same folder as “…”, which is running" (or repository, project, continues), or every slot in use.
 
 - `orchestration.maxConcurrentJobs`: 1–8, default **3**. Claimed, Running, Stopping and Waiting jobs use a slot.
 - When a Needs me question or publishing approval has waited **60 minutes**, one extra job may start (**N+1** total). It is not refilled until fewer than N jobs remain.
@@ -56,7 +56,7 @@ Publishing resumes from the reviewed payload and approval instead of replanning.
 
 ## 6. Stop, interruption and retry
 
-Pause stops new work and cancels active model and command activity. Stop on a task affects that task; Stop everything also cancels queued jobs. Partial files and evidence remain. An external request already accepted may still complete; stopping is not a remote rollback.
+Pause stops new work and cancels active model and command activity. Stop on a task affects that task; Stop everything also cancels queued jobs. Partial files and evidence remain. Stop always ends the run: a command is killed with everything in its session, including processes that moved to a process group of their own (`killGroup`, `sessionMembers` in `workspace/runner.ts`); a tool call still going 30 s after Stop is left behind (`untilStopped`, `STOP_GRACE_MS`); and a paired computer that keeps checking in without ending a stopped run for 3 minutes has the run ended on the web (`endUnconfirmedStops` in `devices/settle.ts`), its slot freed and its task back in To do, while the computer keeps being told to stop it. An external request already accepted may still complete; stopping is not a remote rollback.
 
 On restart, a server job left Running, Stopping or Waiting becomes interrupted and waits for an explicit retry. Remote jobs stay with their device until lease handling settles them; when the computer is back it reattaches a run that kept going or has one it lost to a restart carried on, at most twice ([25 §3](25_REMOTE_TASKS_ON_YOUR_COMPUTER.md#3-lease-heartbeat-and-interruption)). A coding engine that stalls or fails for a passing reason carries on in its own session ([30 §3.1](30_ENGINES.md#31-keeping-a-run-going)). Unknown mid-command outcomes are never replayed. A stopped checkout can stay reserved until cleanup is safe. Retry starts a new attempt; answering a saved decision resumes the old one, and the UI says which.
 

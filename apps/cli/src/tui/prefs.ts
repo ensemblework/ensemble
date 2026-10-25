@@ -46,4 +46,8 @@ export const ENGINE_LABEL: Record<Engine, string> = {
   codex: "Codex",
   "cursor-agent": "Cursor agent",
   "copilot-cli": ENGINE_LABELS["copilot-cli"],
+  "grok-cli": ENGINE_LABELS["grok-cli"],
+  opencode: ENGINE_LABELS.opencode,
+  "gemini-cli": ENGINE_LABELS["gemini-cli"],
+  antigravity: ENGINE_LABELS.antigravity,
 };

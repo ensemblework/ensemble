@@ -100,6 +100,7 @@ export function planLocalJob(spec: JobSpec, settings: RemoteSettings, continueFr
     engine: CODE_ENGINES.find((engine) => engine === spec.provider?.trim()) ?? "ensemble",
     ...(spec.reasoningEffort?.trim() ? { reasoningEffort: spec.reasoningEffort.trim() } : {}),
     ...(spec.contextTier === "long_context" ? { contextTier: "long_context" as const } : {}),
+    ...(spec.fast ? { fast: true } : {}),
   };
   const label = (spec.folderLabel ?? spec.folder ?? "").trim();
   if (spec.kind === "code") {

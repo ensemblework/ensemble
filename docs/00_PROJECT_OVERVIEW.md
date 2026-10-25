@@ -78,7 +78,7 @@ The Hub assistant operates the app through typed tools. Built-in playbooks (`app
 | Capability | What works |
 | --- | --- |
 | Tasks and records | Create and update tasks, people, projects, repositories and profession records; comments, Trash, conversions, history. Clearing the board or a filtered set is one `hub_delete_tasks` call with one Undo |
-| Agent assignment | Assign to Ensemble's agent, Claude Code, Codex, Cursor's agent or GitHub Copilot on a paired computer or this server, with a run profile; waits for Apply, then queues |
+| Agent assignment | Assign to Ensemble's agent, Claude Code, Codex, Cursor's agent, GitHub Copilot, Grok Build, OpenCode, Gemini CLI or Antigravity on a paired computer or this server, with a run profile; waits for Apply, then queues |
 | Open workspace | Reads surface IDs, selected and visible records, filters and document selection |
 | Layouts and documents | Today desks, Context panels, Board overview, widget layouts; block-level page edits after revision and schema checks |
 | Dependent actions | `hub_run_workflow`: 2–12 ordered writes, one Apply, references to earlier results, durable per-step receipts |
@@ -143,8 +143,8 @@ Details: [01 §6](01_TECH_STACK_AND_ENVIRONMENT.md#6-model-usage-policy), [30](3
 
 ## 9. Assigned agents and Code
 
-- Assignment creates a durable workspace job that the API or a paired computer claims and runs. Research writes the task page; code work runs in a chosen folder or checkout. Engines: Ensemble, Claude Code, Codex, Cursor, GitHub Copilot ([30](30_ENGINES.md)).
-- Run profiles hold model, mode, sandbox, network and git permissions, destination and budgets. Conflicting jobs run one at a time. Needs me holds exact pending decisions; publishing uses saved approvals.
+- Assignment creates a durable workspace job that the API or a paired computer claims and runs. Research writes the task page; code work runs in a chosen folder or checkout. Engines: Ensemble, Claude Code, Codex, Cursor, GitHub Copilot, Grok Build, OpenCode, Gemini CLI, Antigravity ([30](30_ENGINES.md)).
+- Run profiles hold model, thinking level, context window, mode, sandbox, network and git permissions, destination and budgets. Engines: Claude Code, Codex, Cursor, GitHub Copilot, and through one ACP runner Grok Build, OpenCode, Gemini CLI and Google Antigravity (installed by Ensemble). Each coding agent's menus list the models its computer reports, with that model's own levels, windows and fast mode (Claude's 1M window and fast mode, Codex's levels and fast tier, Copilot's long context), and Settings shows Claude's and Codex's 5-hour and weekly usage. Conflicting jobs run one at a time. Needs me holds exact pending decisions; commands that only read inside the folder never ask, and a folder the person trusts is trusted in the engine too. Publishing uses saved approvals.
 - A stop or restart keeps partial work and marks the interruption instead of claiming success; a paired computer that comes back reattaches a run that kept going and carries on one it lost to a restart, at most twice. Runs keep Results, Files (including those changed outside the run's folder) and Traces.
 - On the web, code review, editing, source control and the passkey-unlocked terminal go through a paired computer; ordinary accounts cannot reach the server's filesystem or terminal.
 - OS sandbox: Seatbelt (macOS), bubblewrap or Landlock (Linux), the sandbox-runtime account (Windows).

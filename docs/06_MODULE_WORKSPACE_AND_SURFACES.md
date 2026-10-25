@@ -13,7 +13,7 @@ The Assign dialog (`components/agent/assign-dialog.tsx`) and `workspace/assign.t
 | Run profile | Up to three saved profiles plus built-in Quick. The default is the starred profile, else the first saved, else Quick; Quick assign, the CLI and the assistant (`hub_assign_to_agent`) use it unless another is named. Settings → Assistant → Run profiles also sets the default, renames and deletes. Opening the name editor selects the name, so typing replaces it |
 | Kind | Research & writing (web/paper tools, writes the task page) or Code (works in a folder) |
 | Run on | Permitted server execution or a paired computer; an offline computer keeps the job queued |
-| Engine | Ensemble, Claude Code, Codex, Cursor or GitHub Copilot. Opening the work in the tool's own app or a terminal is a separate option that uses that tool's controls |
+| Engine | Ensemble, Claude Code, Codex, Cursor, GitHub Copilot, Grok Build, OpenCode, Gemini CLI or Antigravity ([30](30_ENGINES.md)). Opening the work in the tool's own app or a terminal is a separate option that uses that tool's controls |
 | Model / thinking | Task tier or an available override; engine-specific models where applicable. GitHub Copilot lists the plan's models from the computer with each model's thinking levels and, where it has two, its context window (standard or long; `contextTier`) |
 | Place | Fresh run folder or clone, continuation of earlier work, or an explicitly granted folder |
 | Branch | As is, existing or new, by exact name, also in a folder worked in place and from the web ([16 §4](16_CODE_TAB.md#4-which-branch-the-agent-works-on)) |

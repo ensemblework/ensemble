@@ -13,7 +13,7 @@
 
 import { INCLUDED_PROVIDER, includedModel } from "./included.js";
 
-export const EFFORT_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export const EFFORT_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] as const;
 export type EffortLevel = (typeof EFFORT_LEVELS)[number];
 
 export const EFFORT_LABEL: Record<EffortLevel, string> = {
@@ -24,6 +24,7 @@ export const EFFORT_LABEL: Record<EffortLevel, string> = {
   high: "High",
   xhigh: "Extra high",
   max: "Max",
+  ultra: "Ultra",
 };
 
 /** What a provider's model list said about one model. */

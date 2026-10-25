@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import type { PrismaClient } from "@prisma/client";
-import { checkEffort, ENGINE_LABELS, hasModule, isCodeEngine, type Settings } from "@ensemble/shared-types";
+import { checkEffort, ENGINE_LABELS, hasModule, isAcpEngine, isCodeEngine, type Settings } from "@ensemble/shared-types";
 import { PageDocument } from "@ensemble/shared-types";
 import { beginActivity, endActivity, heartbeat, isCancelled, isPaused, updateActivity } from "../lib/activity.js";
 import { appendLedger } from "../lib/ledger.js";
@@ -40,6 +40,7 @@ import { capabilities, prepareNetwork } from "./sandbox/spawn.js";
 import { runClaudeCode } from "./engines/claude-code.js";
 import { EngineTrace, outputPreview, preview, TRACE_PREVIEW } from "./engines/trace.js";
 import { runCodex } from "./engines/codex.js";
+import { ACP_AGENTS, runAcp } from "./engines/acp.js";
 import { runCursor } from "./engines/cursor.js";
 import { runCopilot } from "./engines/copilot.js";
 import { preparePullRequest, publishPullRequest, pullRequestOf, type PreparedPullRequest } from "./pull-request.js";
@@ -51,9 +52,9 @@ import { resumeOf } from "./repeat.js";
 import { runCommand } from "./runner.js";
 import { interruptionMessage } from "./lifecycle.js";
 import { appendLive, dropLive } from "./live-log.js";
-import { checkModeTrust, contextTierOf, isChatTurn, isFolderTrusted, outsideAccessOf, pathCovers, PATH_RULE_SOURCE, PATH_RULE_TOOL, REVIEW_MESSAGE, rulesForJob, runModeOf, TRUST_TOOL, UNATTENDED_MESSAGE, type SandboxStrength } from "./trust.js";
+import { checkModeTrust, contextTierOf, fastOf, isChatTurn, isFolderTrusted, outsideAccessOf, pathCovers, PATH_RULE_SOURCE, PATH_RULE_TOOL, REVIEW_MESSAGE, rulesForJob, runModeOf, TRUST_TOOL, UNATTENDED_MESSAGE, type SandboxStrength } from "./trust.js";
 import { trustChanged } from "./trust-share.js";
-import { askPerson, chatSpecs, outsideReadAllowed, plantedIn, realOutside, refTips, responsesSpecs, runTool, toolSpecs, undoUnapprovedCommits, type JobContext } from "./tools.js";
+import { askPerson, chatSpecs, DANGEROUS_GIT_CONFIG, outsideReadAllowed, plantedIn, realOutside, refTips, responsesSpecs, runTool, toolSpecs, undoUnapprovedCommits, type JobContext } from "./tools.js";
 
 export interface JobControl {
   signal: AbortSignal;
@@ -63,10 +64,34 @@ export interface JobControl {
 
 class LimitReached extends Error {}
 
-/** The thinking levels each engine's own flag takes (`claude --effort`, Codex's turn `effort`). */
-const ENGINE_EFFORTS: Record<string, string[]> = { "claude-code": ["low", "medium", "high", "xhigh", "max"], codex: ["minimal", "low", "medium", "high", "xhigh"] };
+/** After Stop, a tool call gets this long to end; then the run ends without it, so Stop always stops. */
+export const STOP_GRACE_MS = 30_000;
 
-const DANGEROUS_GIT_CONFIG = /\b(filter\.|textconv|external|fsmonitor|hookspath|sshcommand|askpass|pager|editor|gpg\.program|credential\.helper)|=\s*!/i;
+/** The tool call's result, or a stop once the run was stopped and the call did not end within the grace. */
+export async function untilStopped<T>(work: Promise<T>, signal: AbortSignal, graceMs = STOP_GRACE_MS): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let reject: (error: Error) => void = () => undefined;
+  const stopped = new Promise<never>((_, fail) => {
+    reject = fail;
+  });
+  stopped.catch(() => undefined);
+  const start = () => {
+    timer = setTimeout(() => reject(new DOMException("Stopped", "AbortError")), graceMs);
+    timer.unref?.();
+  };
+  if (signal.aborted) start();
+  else signal.addEventListener("abort", start, { once: true });
+  try {
+    return await Promise.race([work, stopped]);
+  } finally {
+    if (timer) clearTimeout(timer);
+    signal.removeEventListener("abort", start);
+  }
+}
+
+/** The thinking levels each engine's own flag takes (`claude --effort`, Codex's turn `effort`). */
+const ENGINE_EFFORTS: Record<string, string[]> = { codex: ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"] };
+
 
 function outcomeTone(kind: string) {
   return kind === "research" ? "research" : "workspace";
@@ -654,6 +679,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
     });
     const rules = rulesForJob(trustRows, job.id);
     ctx.explicitTrust = rules.some((rule) => pathCovers(rule, ctx.root));
+    ctx.exactTrust = rules.some((rule) => rule.replace(/[\\/]+$/, "") === ctx.root.replace(/[\\/]+$/, ""));
     ctx.trusted = isFolderTrusted({ folder: ctx.root, workspaceRoot: base, rules });
   };
   ctx.refreshTrust = readTrust;
@@ -779,11 +805,12 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
         }
       }
       // Held here so the steps of a run that stops or fails before the engine returns are closed too.
-      engineTrace = new EngineTrace(ctx, job.provider === "cursor-agent" ? "cursor" : job.provider === "copilot-cli" ? "copilot" : job.provider!);
+      engineTrace = new EngineTrace(ctx, job.provider === "cursor-agent" ? "cursor" : job.provider === "copilot-cli" ? "copilot" : isAcpEngine(job.provider) ? ACP_AGENTS[job.provider].trace : job.provider!);
       const trace = engineTrace;
       const copilotModel = job.provider === "copilot-cli" ? (cachedAgents() ?? []).find((agent) => agent.id === "copilot-cli")?.models.find((row) => row.id === job.model) : undefined;
       // The thinking level chosen for the run, checked against what this computer's agent lists for the model.
-      const wantsEffort = Boolean(job.reasoningEffort && job.reasoningEffort !== "default" && job.provider !== "copilot-cli");
+      // Claude Code, Copilot and the ACP agents check it themselves, against each model's own levels.
+      const wantsEffort = Boolean(job.reasoningEffort && job.reasoningEffort !== "default" && job.provider !== "copilot-cli" && job.provider !== "claude-code" && !isAcpEngine(job.provider));
       const engineAgent = wantsEffort ? (cachedAgents() ?? []).find((agent) => agent.id === job.provider) : undefined;
       const listed = engineAgent?.models.find((row) => row.id === job.model)?.efforts ?? engineAgent?.efforts ?? [];
       // Before this computer's agents are checked, a level the engine takes at all goes as chosen.
@@ -792,9 +819,16 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
         : { ok: true as const, send: job.reasoningEffort && ENGINE_EFFORTS[job.provider ?? ""]?.includes(job.reasoningEffort) ? job.reasoningEffort : null };
       const effort = wantsEffort && thinking.ok ? thinking.send : null;
       if (wantsEffort && !thinking.ok) await ctx.event("engine_note", { note: `${thinking.message} It runs at the model's default.` });
+      // Fast mode: Codex runs it as the model's service tier, as this computer's Codex listed it.
+      const fast = fastOf(job.context);
+      const codexTier = fast && job.provider === "codex" ? (cachedAgents() ?? []).find((agent) => agent.id === "codex")?.models.find((row) => (job.model ? row.id === job.model : row.isDefault))?.fast ?? null : null;
+      if (fast && job.provider === "codex" && !codexTier) await ctx.event("engine_note", { note: `${job.model || "Codex's default model"} has no fast mode in Codex; it runs at its usual speed.` });
+      if (fast && job.provider !== "codex" && job.provider !== "claude-code") await ctx.event("engine_note", { note: `${ENGINE_LABELS[job.provider as keyof typeof ENGINE_LABELS] ?? "This agent"} has no fast mode; it runs at its usual speed.` });
       const runEngine = (prompt: string, session: string | null) =>
         job.provider === "codex"
-          ? runCodex(ctx, { prompt, model: job.model, effort, stopCheck, resume: session, chat, trace })
+          ? runCodex(ctx, { prompt, model: job.model, effort, serviceTier: codexTier, stopCheck, resume: session, chat, trace })
+          : isAcpEngine(job.provider)
+            ? runAcp(ctx, job.provider, { prompt, model: job.model, effort: job.reasoningEffort, stopCheck, resume: session, chat, trace })
           : job.provider === "cursor-agent"
             ? runCursor(ctx, { prompt, model: job.model, stopCheck, resume: session, chat, trace })
             : job.provider === "copilot-cli"
@@ -812,7 +846,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
                   chat,
                   trace,
                 })
-              : runClaudeCode(ctx, { prompt, model: job.model, effort, maxTurns: job.maxTurns, stopCheck, resume: session, chat, trace });
+              : runClaudeCode(ctx, { prompt, model: job.model, effort: job.reasoningEffort, context: contextTierOf(job.context), fast, maxTurns: job.maxTurns, stopCheck, resume: session, chat, trace });
       let ran: Awaited<ReturnType<typeof runEngine>> | null = null;
       let prompt = enginePromptText;
       let session = resume;
@@ -975,7 +1009,7 @@ export async function executeJob(app: FastifyInstance, jobId: string, control: J
         }
         const startedCall = Date.now();
         const signature = `${call.name}:${JSON.stringify(args)}`;
-        const result = await runTool(ctx, call.name, args);
+        const result = await untilStopped(runTool(ctx, call.name, args), ctx.signal);
         const outcome = JSON.stringify(result.result).slice(0, 2000);
         const seen = repeats.get(signature);
         if (seen && seen.outcome === outcome) {

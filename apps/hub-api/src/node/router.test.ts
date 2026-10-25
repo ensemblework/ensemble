@@ -4,6 +4,8 @@ import { handleFrom, parseMentions, resolveMentions, uniqueHandle } from "./ment
 import { MAX_BOT_DEPTH, MAX_BOT_STREAK, botStreak, parseRelevance, whoSpeaks, type RouteMessage, type RouteNode } from "./router.js";
 import { cleanReply } from "./reply.js";
 import { CREW_TEMPLATES, NODE_TEMPLATES } from "./templates.js";
+import { mirrorNeedsMe, nodeChannel } from "./events.js";
+import { sseHub, type Frame } from "../lib/sse.js";
 
 test("mentions skip emails and code, and resolve against the room", () => {
   assert.deepEqual(
@@ -86,4 +88,20 @@ test("a posted reply drops the outcome lines that its tool chips already show, n
   assert.equal(cleanReply(reply, true), "Added it.");
   assert.equal(cleanReply(reply, false), "Added it.\n\nDone: Added 1 task(s): “Write the README” (id).");
   assert.equal(cleanReply("Done: Added 1 task(s): “A”.", true), "Done: Added 1 task(s): “A”.", "only facts: they stay");
+});
+
+test("Needs me changes on the person's channel nudge their Node stream, without the card's content", () => {
+  const seen: Array<{ userId: string; frame: Frame }> = [];
+  const stop = sseHub.onFrame((event) => seen.push(event));
+  try {
+    mirrorNeedsMe();
+    mirrorNeedsMe();
+    sseHub.publish("acct-1", { event: "decision", data: { id: "d1", title: "Run npm test?" } });
+    sseHub.publish("acct-1", { event: "task", data: { id: "t1" } });
+    sseHub.publish("acct-1", { event: "decision", data: { id: "d2" }, to: "someone-else" });
+    const nudges = seen.filter((row) => row.userId === nodeChannel("acct-1"));
+    assert.deepEqual(nudges.map((row) => row.frame), [{ event: "node.needs", data: { kind: "decision" } }], "once, for the decision only, with no title");
+  } finally {
+    stop();
+  }
 });
