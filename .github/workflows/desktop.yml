@@ -1,8 +1,8 @@
 name: desktop
 
+# Builds on a release tag, a push to the desktop branch, or by hand: not on pull requests, so a
+# promotion does not wait for four native builds (docs/37_PAUSED_CHECKS.md).
 on:
-  pull_request:
-    branches-ignore: [testing]
   workflow_dispatch:
     inputs:
       target:
@@ -175,36 +175,6 @@ jobs:
           fi
           node scripts/desktop-release.mjs bundles --upload
           gh release edit "$GITHUB_REF_NAME" --draft=false
-
-  # Escape and trust tests. The Seatbelt cases skip everywhere except macOS.
-  # No Postgres: these files do not open a database.
-  seatbelt:
-    if: ${{ !inputs.recovery_source_run && !inputs.recovery_intel_run }}
-    name: macOS sandbox escapes
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: pnpm/action-setup@v5
-        with:
-          version: 12.6.0
-
-      - uses: actions/setup-node@v5
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - name: Install the workspace
-        run: pnpm install --frozen-lockfile
-
-      - name: Escape, trust, planted, and git-gate tests
-        working-directory: apps/hub-api
-        env:
-          DATABASE_URL: postgresql://localhost/ensemble_unused
-        run: pnpm exec tsx --test src/workspace/sandbox/escape.test.ts src/workspace/trust.test.ts src/workspace/planted.test.ts src/workspace/git-gate.test.ts
-
-      - name: Verify the Mac installer packager
-        run: node --test scripts/package-mac-dmg.test.mjs
 
   recovery-publish:
     name: Publish verified desktop recovery

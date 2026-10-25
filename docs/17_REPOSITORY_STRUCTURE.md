@@ -123,7 +123,7 @@ apps/quick-capture/           src-tauri/ + ui/
 | `ensemble-hook.mjs` | Sends Claude Code, Codex, Copilot and Cursor permission prompts and questions to Needs me |
 | `ensemble-ask-mcp.mjs` | Stdio MCP server for agents Ensemble starts: `ask_person` and assistant-turn tools |
 | `build-ensemble-brand.mjs`, `check-icons.mjs` | `pnpm brand:build` / `brand:check` (icons, motion bundles, fallback pages, `design/`); ICO/ICNS validation |
-| `build-brand-logos.mjs` | Connector logo modules from `components/connectors/brands` (`--check` in CI) |
+| `build-brand-logos.mjs` | Connector logo modules from `components/connectors/brands` (`--check` in `full-checks.yml`) |
 | `build-landrun.mjs` | Builds the pinned Landlock helper for the Linux sandbox |
 | `release-version.mjs` | `pnpm version:sync` / `version:check` from `release.json` |
 | `export-desktop-web.mjs`, `assemble-desktop-sidecar.mjs` | `pnpm desktop:export` (static Hub export); `pnpm desktop:sidecar` (Node + hub-api into Tauri resources, `--dest` for the CLI) |
