@@ -1,7 +1,7 @@
 import "../ui-test-dom.js";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assignBlocker } from "./assign-dialog.js";
+import { assignBlocker, earlierRunLabel } from "./assign-dialog.js";
 
 const base = {
   taskId: "task-1",
@@ -40,4 +40,11 @@ test("every other stop says what is missing and which field to fix", () => {
   assert.equal(assignBlocker({ ...here, branchMode: "new" })!.text, "Name the new branch.");
   assert.match(assignBlocker({ ...here, needsTrust: true, mode: "review" })!.text, /Review only needs a folder you trust/);
   assert.equal(assignBlocker({ ...here, unattendedNoSandbox: true })!.field, "mode");
+});
+
+test("the Continue list names the task (marking this one), how its run ended or that the new run waits, and where", () => {
+  const row = { jobId: "j1", taskId: "task-1", title: "Use real connector logos", status: "interrupted", folder: "live-test", branch: "live-test/connector-logos", createdAt: "" };
+  assert.equal(earlierRunLabel(row, "task-1"), "Use real connector logos (this task) · interrupted · live-test/connector-logos · live-test");
+  assert.equal(earlierRunLabel({ ...row, status: "running", branch: "", folder: "" }, "task-2"), "Use real connector logos · not finished yet, waits for it");
+  assert.equal(earlierRunLabel({ ...row, status: "succeeded", folder: "/home/me/ensemble-workspace/runs/abc" }, "task-2"), "Use real connector logos · done · live-test/connector-logos · abc");
 });

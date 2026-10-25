@@ -16,7 +16,8 @@ import { gitSubcommand } from "../clone.js";
 import { parseShell } from "../shell-parse.js";
 import { allowOrRefuse, askPerson, cloneForAgent, OUTSIDE_TOOL, outsideArgs, plainArgs, readsOnly, realOutside, WRITE_TOOL, type JobContext } from "../tools.js";
 
-export type EngineCall = { tool: string; input: Record<string, unknown> };
+/** `signal` aborts when the agent stops waiting for this answer (its call timed out or was cancelled): a question it asked is withdrawn. */
+export type EngineCall = { tool: string; input: Record<string, unknown>; signal?: AbortSignal };
 export type EngineAnswer = { decision: "allow" | "deny"; message?: string; updatedInput?: Record<string, unknown> };
 
 const ALLOW: EngineAnswer = { decision: "allow" };
@@ -68,7 +69,7 @@ export function setCloneRunnerForTests(runner: typeof cloneForAgent | null): voi
   cloneRunner = runner ?? cloneForAgent;
 }
 
-async function shell(ctx: JobContext, command: string): Promise<EngineAnswer> {
+async function shell(ctx: JobContext, command: string, withdrawn?: AbortSignal): Promise<EngineAnswer> {
   const parsed = parseShell(command, ctx.root);
   const segments = parsed.map((segment) => segment.argv).filter((argv) => argv.length > 0);
   // Claude Code's sandbox does not let git write .git/config or hooks anywhere in the run folder, so a
@@ -98,7 +99,7 @@ async function shell(ctx: JobContext, command: string): Promise<EngineAnswer> {
         if ((action === "network" || action === "push") && !ctx.network) return { decision: "deny", message: "The internet is off for this run." };
         if ((action === "commit" || action === "push") && ctx.accessMode === "review") return { decision: "deny", message: "This run is read-only: no commits or pushes." };
         if (action === "commit" && ctx.job.askBeforePublish && !ctx.job.unattended) {
-          const answer = await askPerson(ctx, { event: "permission", toolName: "git commit", title: `Commit in ${ctx.root.split(/[\\/]/).slice(-2).join("/")}`, command });
+          const answer = await askPerson(ctx, { event: "permission", toolName: "git commit", title: `Commit in ${ctx.root.split(/[\\/]/).slice(-2).join("/")}`, command }, withdrawn);
           if (answer.decision !== "allow") return { decision: "deny", message: `The person did not approve this commit.${answer.answer ? ` They said: ${answer.answer}` : ""} Leave the changes uncommitted.` };
           return ALLOW;
         }
@@ -152,7 +153,7 @@ async function shell(ctx: JobContext, command: string): Promise<EngineAnswer> {
  * taken and listed on the task summary. Otherwise each question is a Needs me
  * card with the same options and a typed answer.
  */
-async function questions(ctx: JobContext, input: Record<string, unknown>): Promise<EngineAnswer> {
+async function questions(ctx: JobContext, input: Record<string, unknown>, withdrawn?: AbortSignal): Promise<EngineAnswer> {
   const list = Array.isArray(input.questions) ? (input.questions as Array<Record<string, unknown>>) : [];
   const answers: Record<string, string> = {};
   for (const item of list) {
@@ -170,7 +171,7 @@ async function questions(ctx: JobContext, input: Record<string, unknown>): Promi
       continue;
     }
     await ctx.progress(`Waiting for your answer: ${question.slice(0, 80)}`);
-    const answer = await askPerson(ctx, { event: "question", toolName: "question", title: question, options, allowCustom: true, recommended });
+    const answer = await askPerson(ctx, { event: "question", toolName: "question", title: question, options, allowCustom: true, recommended }, withdrawn);
     if (answer.decision !== "allow" || !answer.answer) return { decision: "deny", message: "The person did not answer this question. Make a sensible choice, say which in your summary, and continue." };
     answers[question] = answer.answer;
   }
@@ -179,7 +180,7 @@ async function questions(ctx: JobContext, input: Record<string, unknown>): Promi
 
 export async function judgeEngineCall(ctx: JobContext, call: EngineCall): Promise<EngineAnswer> {
   const { tool, input } = call;
-  if (tool === "AskUserQuestion") return questions(ctx, input);
+  if (tool === "AskUserQuestion") return questions(ctx, input, call.signal);
   if (HARMLESS.has(tool)) return ALLOW;
   if (READS.has(tool)) {
     for (const path of pathsOf(input)) {
@@ -217,7 +218,7 @@ export async function judgeEngineCall(ctx: JobContext, call: EngineCall): Promis
   if (SHELLS.has(tool)) {
     const command = str(input.command);
     if (!command) return ALLOW;
-    return shell(ctx, command);
+    return shell(ctx, command, call.signal);
   }
   // MCP tools and anything new: the mode decides, like a command.
   if (ctx.accessMode === "review") return { decision: "deny", message: "This run is read-only." };

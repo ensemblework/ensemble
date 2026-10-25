@@ -244,6 +244,9 @@ export type TaskStatus = "proposed" | "todo" | "in_progress" | "waiting_approval
 export type Owner = "me" | "agent" | "unassigned";
 export type Complexity = "easy" | "medium" | "high" | "max";
 
+/** An earlier code run Assign can continue: `folder` is its path here, or its shared folder's label on a computer. */
+export type EarlierRun = { jobId: string; taskId?: string; title: string; status: string; folder: string; repoUrl?: string | null; branch: string; createdAt: string };
+
 export type TaskRecord = {
   id: string;
   title: string;
@@ -1441,7 +1444,11 @@ export const api = bindClient({
   sandboxStatus: (refresh = false) => get<{ sandbox: SandboxCaps }>(`/api/sandbox${refresh ? "?refresh=1" : ""}`),
   /** Windows asks for permission once; elsewhere it re-checks. Only the computer itself can do this. */
   setupSandbox: () => post<{ ok: boolean; message: string; sandbox: SandboxCaps }>("/api/sandbox/setup", {}),
-  checkouts: () => get<{ checkouts: Array<{ jobId: string; title: string; status: string; folder: string; branch: string; createdAt: string }> }>("/api/workspace/checkouts"),
+  /** Earlier code runs on this server that a new run can continue in the same folder; the task's own first. */
+  checkouts: (taskId?: string) => get<{ checkouts: EarlierRun[] }>(`/api/workspace/checkouts${taskId ? `?taskId=${encodeURIComponent(taskId)}` : ""}`),
+  /** The same for a paired computer: runs that ran (or will run) there, under any pairing of it. */
+  earlierRuns: (deviceId: string, taskId?: string) =>
+    get<{ checkouts: EarlierRun[] }>(`/api/agent/earlier-runs?deviceId=${encodeURIComponent(deviceId)}${taskId ? `&taskId=${encodeURIComponent(taskId)}` : ""}`),
   resolveFolder: (path: string) => post<{ path: string; git: boolean; branch: string | null }>("/api/workspace/resolve-folder", { path }),
   trustedFolders: () => get<{ folders: Array<{ id: string; path: string; createdAt: string }> }>("/api/workspace/trust"),
   trustSharing: () => get<TrustSharing>("/api/workspace/trust/sharing"),
