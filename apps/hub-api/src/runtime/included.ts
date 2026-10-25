@@ -46,12 +46,31 @@ function configured(model: string): { config: IncludedConfig; entry: IncludedMod
   return { config, entry };
 }
 
+/** Input tokens reserved per picture: providers charge a few thousand at most (OpenAI's largest ≈2,500, Anthropic's ≈1,600). */
+export const IMAGE_INPUT_ALLOWANCE = 8_000;
+
 /**
  * The UTF-8 bytes of the request as sent: a byte-level BPE tokenizer never makes more tokens than
- * bytes, so a reservation is never short on input.
+ * bytes, so a reservation is never short on input. A picture's base64 is not tokenized as text, so
+ * each counts as IMAGE_INPUT_ALLOWANCE instead of its length.
  */
 export function estimateInputTokens(payload: Json): number {
-  return Buffer.byteLength(JSON.stringify(payload), "utf8");
+  let images = 0;
+  const text = JSON.stringify(payload, (_key, value: unknown) => {
+    if (typeof value === "string" && /^data:image\//i.test(value)) {
+      images += 1;
+      return "";
+    }
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const source = value as Json;
+      if (source.type === "base64" && typeof source.data === "string" && /^image\//i.test(String(source.media_type ?? ""))) {
+        images += 1;
+        return { ...source, data: "" };
+      }
+    }
+    return value;
+  });
+  return Buffer.byteLength(text, "utf8") + images * IMAGE_INPUT_ALLOWANCE;
 }
 
 function count(value: unknown): number {

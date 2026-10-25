@@ -89,3 +89,13 @@ test("a pipe in prose is not a table without the rule under it", () => {
   assert.equal(looksLikeMarkdown("this | that"), false);
   assert.equal(looksLikeMarkdown("Name | Status\n--- | ---\nA | done"), true);
 });
+
+test("an image line reads as an image: a web address or a file in Files, with its width and alignment", () => {
+  assert.deepEqual(markdownToNodes("![Site \\[north\\] photo](ensemble://file/6f1c2d3e-0000-4000-8000-000000000001){width=60% align=left natural=1200x800}"), [
+    { type: "image", attrs: { alt: "Site [north] photo", src: null, fileId: "6f1c2d3e-0000-4000-8000-000000000001", width: 60, align: "left", naturalWidth: 1200, naturalHeight: 800 } },
+  ]);
+  assert.deepEqual(markdownToNodes("![Chart](https://example.com/chart.png){width=250 align=middle}"), [{ type: "image", attrs: { alt: "Chart", src: "https://example.com/chart.png", width: 100 } }]);
+  assert.deepEqual(markdownToNodes("![Escaped \\] bracket](https://example.com/a.png)")[0]!.attrs, { alt: "Escaped ] bracket", src: "https://example.com/a.png" });
+  assert.equal(markdownToNodes("![x](javascript:alert(1))")[0]!.type, "paragraph", "only web and file addresses are images");
+  assert.equal(looksLikeMarkdown("![Photo](ensemble://file/abc)"), true);
+});

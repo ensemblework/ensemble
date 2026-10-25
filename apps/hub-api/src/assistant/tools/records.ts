@@ -1,33 +1,84 @@
 import { z } from "zod";
 import { assistantRequest } from "../request.js";
-import { defineTool, inTransaction, toolOk } from "../types.js";
-import { AddInput, KINDS } from "./desk.js";
+import { defineTool, inTransaction, toolOk, type ToolContext } from "../types.js";
+import { AddInput, KINDS, itemLabel } from "./desk.js";
 import { updateTask } from "../../services/tasks.js";
 import { recordUndoInTransaction, type UndoModel } from "../../lib/undo.js";
 import { sseHub } from "../../lib/sse.js";
 
 const Id = z.string().uuid();
 const DeskInput = AddInput.extend({ id: Id });
+
+/** “A”, “B” and 2 others: names for a preview, never ids. */
+async function names(ctx: ToolContext, kind: "person" | "repo", ids: string[]): Promise<string> {
+  if (!ids.length) return "none";
+  const rows = kind === "person"
+    ? (await ctx.prisma.person.findMany({ where: { id: { in: ids }, userId: ctx.userId, deletedAt: null }, select: { name: true } })).map((row) => row.name)
+    : (await ctx.prisma.repo.findMany({ where: { id: { in: ids }, userId: ctx.userId, deletedAt: null }, select: { fullName: true } })).map((row) => row.fullName);
+  const shown = rows.slice(0, 6).map((name) => `“${name}”`).join(", ");
+  const rest = ids.length - Math.min(rows.length, 6);
+  return `${shown}${rest > 0 ? `${shown ? " and " : ""}${rest} other${rest === 1 ? "" : "s"}` : ""}`;
+}
+
+async function projectName(ctx: ToolContext, id: string): Promise<string> {
+  const row = await ctx.prisma.project.findFirst({ where: { id, userId: ctx.userId, deletedAt: null }, select: { name: true } });
+  if (!row) throw new Error("That project is not in this space. Call hub_list_projects and use an id it returns.");
+  return row.name;
+}
+
+async function pageTitle(db: Pick<ToolContext["prisma"], "taskPage">, userId: string, id: string): Promise<string> {
+  const row = await db.taskPage.findFirst({ where: { id, userId, taskId: null, deletedAt: null }, select: { title: true } });
+  if (!row) throw new Error("Page not found. Call hub_list_pages and use an id it returns.");
+  return row.title || "Untitled";
+}
+
+/** Desk entry fields that change, by the names hub_add_desk_item uses. */
+const changedFields = (input: Record<string, unknown>) =>
+  Object.entries(input)
+    .filter(([key, value]) => value !== undefined && key !== "kind" && key !== "id")
+    .map(([key, value]) => `${key} ${String(value).slice(0, 80)}`)
+    .join(", ");
 export const recordTools = [
   defineTool({ name: "hub_update_project", area: "projects", description: "Change an existing project's name, summary, notes, active/done status, People links or repository links. personIds/repoIds replace that entire list; omit to keep it. Read project/People/repositories first.", input: z.object({ projectId: Id, name: z.string().min(1).max(200).optional(), summary: z.string().max(4000).optional(), notes: z.string().max(30000).optional(), status: z.enum(["active", "done"]).optional(), personIds: z.array(Id).max(100).optional(), repoIds: z.array(Id).max(100).optional() }), isWrite: true, risk: "low", outsideTransaction: true,
-    preview(_ctx, input) { return `Update project ${input.projectId}: ${JSON.stringify(input)}`; },
-    async run(ctx, input) { const { projectId, ...patch } = input; await assistantRequest(ctx, "PATCH", `/api/projects/${projectId}`, patch); return toolOk("Updated the project.", { id: projectId }, { href: `/projects/${projectId}`, invalidate: ["projects", "context"] }); }
+    async preview(ctx, input) {
+      const name = await projectName(ctx, input.projectId);
+      const changes = [
+        input.name !== undefined && input.name !== name ? `rename to “${input.name}”` : "",
+        input.status ? `mark ${input.status}` : "",
+        input.summary !== undefined ? "rewrite the summary" : "",
+        input.notes !== undefined ? "rewrite the notes" : "",
+        input.personIds ? `people: ${await names(ctx, "person", input.personIds)}` : "",
+        input.repoIds ? `repositories: ${await names(ctx, "repo", input.repoIds)}` : "",
+      ].filter(Boolean);
+      return `Update project “${name}”${changes.length ? `: ${changes.join("; ")}` : ""}`;
+    },
+    async run(ctx, input) { const { projectId, ...patch } = input; await assistantRequest(ctx, "PATCH", `/api/projects/${projectId}`, patch); const name = await projectName(ctx, projectId); return toolOk(`Updated project “${name}”.`, { id: projectId, name }, { href: `/projects/${projectId}`, invalidate: ["projects", "context"] }); }
   }),
   defineTool({ name: "hub_update_repo", area: "context", description: "Change a known repository's tracked status or description. Link projects with hub_link_repo.", input: z.object({ repoId: Id, tracked: z.boolean().optional(), description: z.string().max(4000).nullable().optional() }), isWrite: true, risk: "low", outsideTransaction: true,
-    preview(_ctx, input) { return `Update repository ${input.repoId}: ${JSON.stringify(input)}`; },
-    async run(ctx, input) { const { repoId, ...patch } = input; await assistantRequest(ctx, "PATCH", `/api/repos/${repoId}`, patch); return toolOk("Updated the repository.", { id: repoId }, { invalidate: ["repos", "context"] }); }
+    async preview(ctx, input) {
+      const repo = await ctx.prisma.repo.findFirst({ where: { id: input.repoId, userId: ctx.userId, deletedAt: null }, select: { fullName: true } });
+      if (!repo) throw new Error("That repository is not in this space. Call hub_list_repos and use an id it returns.");
+      const changes = [input.tracked !== undefined ? (input.tracked ? "track it" : "stop tracking it") : "", input.description !== undefined ? (input.description ? `description “${input.description.slice(0, 120)}”` : "clear the description") : ""].filter(Boolean);
+      return `Update repository “${repo.fullName}”${changes.length ? `: ${changes.join("; ")}` : ""}`;
+    },
+    async run(ctx, input) { const { repoId, ...patch } = input; await assistantRequest(ctx, "PATCH", `/api/repos/${repoId}`, patch); const repo = await ctx.prisma.repo.findFirst({ where: { id: repoId, userId: ctx.userId }, select: { fullName: true } }); return toolOk(repo ? `Updated repository “${repo.fullName}”.` : "Updated the repository.", { id: repoId, ...(repo ? { fullName: repo.fullName } : {}) }, { invalidate: ["repos", "context"] }); }
   }),
   defineTool({ name: "hub_update_desk_item", area: "context", description: "Update an existing profile-list entry without changing its ID: parts, checks, objectives, timetable, attendance, citations, grades, deploys, hearings, matters, papers and other lists. Use kind/id from hub_list_desk_items and only the changed fields, named as hub_add_desk_item.", input: DeskInput, isWrite: true, risk: "low", undoable: true,
-    preview(_ctx, input) { return `Update ${input.kind} ${input.id}: ${JSON.stringify(input)}`; },
+    async preview(ctx, input) {
+      const label = await itemLabel(ctx, input.kind, input.id);
+      if (!label) throw new Error(`No ${KINDS[input.kind].label.toLowerCase()} entry with that id. Call hub_list_desk_items with kind ${input.kind}.`);
+      const fields = changedFields(input as Record<string, unknown>);
+      return `Update “${label}” in ${KINDS[input.kind].label}${fields ? `: ${fields}` : ""}`;
+    },
     async run(ctx, input) {
-      await inTransaction(ctx, async tx => {
+      const label = await inTransaction(ctx, async tx => {
         const kind = input.kind, spec = KINDS[kind];
         if (spec.store === "task") {
           const before = await tx.task.findFirst({ where: { id: input.id, userId: ctx.userId, deletedAt: null, taskType: kind } });
           if (!before) throw new Error("That entry is not in this list.");
           if (input.score !== undefined && input.outOf !== undefined && input.score > input.outOf) throw new Error("Score cannot exceed outOf.");
-          await updateTask(tx, ctx.userId, input.id, { title: input.title, due: input.day, subject: input.subject, court: input.court, orderDate: input.orderDate, limitationRule: input.rule, wordCount: input.words, ...(input.stage !== undefined ? (kind === "matter" || kind === "hearing" ? { matterStage: input.stage } : { pipelineStage: input.stage }) : {}), ...(input.hours !== undefined ? { measure: Math.round(input.hours * 60) } : input.score !== undefined ? { measure: input.score } : {}), ...(input.outOf !== undefined ? { weight: input.outOf } : {}) }, "agent");
-          return;
+          const row = await updateTask(tx, ctx.userId, input.id, { title: input.title, due: input.day, subject: input.subject, court: input.court, orderDate: input.orderDate, limitationRule: input.rule, wordCount: input.words, ...(input.stage !== undefined ? (kind === "matter" || kind === "hearing" ? { matterStage: input.stage } : { pipelineStage: input.stage }) : {}), ...(input.hours !== undefined ? { measure: Math.round(input.hours * 60) } : input.score !== undefined ? { measure: input.score } : {}), ...(input.outOf !== undefined ? { weight: input.outOf } : {}) }, "agent");
+          return row?.title ?? before.title;
         }
         const mapping: Record<string, { model: string; schema: z.ZodTypeAny; fields: Record<string, unknown> }> = {
           part: { model: "partRow", schema: z.object({ name: z.string().min(1).max(200).optional(), qty: z.number().int().min(1).optional(), status: z.enum(["out", "ordered", "in"]).optional() }), fields: { name: input.title, qty: input.qty, status: input.status } },
@@ -51,14 +102,15 @@ export const recordTools = [
         const after = await delegate.update({ where: { id: input.id }, data });
         const op = { op: "update" as const, model: item.model as UndoModel, id: input.id, before, after };
         await recordUndoInTransaction(tx, { userId: ctx.userId, actor: "agent", label: `Updated ${kind}`, kind: "update", subject: kind, inverse: op, forward: op });
+        return itemLabel({ ...ctx, prisma: tx as ToolContext["prisma"] }, kind, input.id);
       });
-      return toolOk(`Updated ${input.kind}.`, { id: input.id }, { href: "/today", invalidate: ["desk-live", "context", "tasks"] });
+      return toolOk(label ? `Updated “${label}” in ${KINDS[input.kind].label}.` : `Updated ${input.kind}.`, { id: input.id, kind: input.kind, ...(label ? { title: label } : {}) }, { href: "/today", invalidate: ["desk-live", "context", "tasks"] });
     }
   }),
   defineTool({ name: "hub_move_page", area: "projects", description: "Move a standalone page beneath another page, or to the top level with parentId null. Keeps the page and its descendants. Cannot create a nesting cycle.", input: z.object({ pageId: Id, parentId: Id.nullable() }), isWrite: true, risk: "low", undoable: true,
-    preview(_ctx, input) { return `Move page ${input.pageId} ${input.parentId ? `under ${input.parentId}` : "to the top level"}.`; },
+    async preview(ctx, input) { return `Move “${await pageTitle(ctx.prisma, ctx.userId, input.pageId)}” ${input.parentId ? `under “${await pageTitle(ctx.prisma, ctx.userId, input.parentId)}”` : "to the top level"}.`; },
     async run(ctx, input) {
-      await inTransaction(ctx, async tx => {
+      const moved = await inTransaction(ctx, async tx => {
         await tx.$queryRaw`SELECT id FROM users WHERE id = ${ctx.userId} FOR UPDATE`;
         const before = await tx.taskPage.findFirst({ where: { id: input.pageId, userId: ctx.userId, taskId: null, deletedAt: null } });
         if (!before) throw new Error("Page not found.");
@@ -67,9 +119,10 @@ export const recordTools = [
         const after = await tx.taskPage.update({ where: { id: before.id }, data: { parentId: input.parentId } });
         const op = { op: "update" as const, model: "taskPage" as const, id: before.id, before, after };
         await recordUndoInTransaction(tx, { userId: ctx.userId, actor: "agent", label: "Moved page", kind: "update", subject: "page", inverse: op, forward: op });
+        return { title: before.title || "Untitled", parent: input.parentId ? await pageTitle(tx, ctx.userId, input.parentId) : null };
       });
       sseHub.publish(ctx.userId, { event: "page", data: { id: input.pageId, action: "save" } });
-      return toolOk("Moved the page.", { id: input.pageId }, { invalidate: ["pages"] });
+      return toolOk(`Moved “${moved.title}” ${moved.parent ? `under “${moved.parent}”` : "to the top level"}.`, { id: input.pageId, title: moved.title }, { invalidate: ["pages"] });
     }
   }),
 ];

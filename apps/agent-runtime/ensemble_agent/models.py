@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Any, Iterator, Literal
 
 import httpx
+from ensemble_agent.content_parts import anthropic_user_content, has_image_parts
 from ensemble_agent.hosted_access import HostedAccessError, HostedAccessUnavailable, can_use_host_credentials, require_host_access, require_verified_user
 
 from ensemble_agent import credentials, included, responses_api
@@ -201,6 +202,16 @@ def _copilot_endpoint(github_token: str, *, allow_host_config: bool = False) -> 
         "Editor-Version": "Ensemble/0.1",
         "Copilot-Integration-Id": integration,
     }
+
+
+def _with_vision(provider: str, headers: dict[str, str], payload: dict[str, Any]) -> dict[str, str]:
+    """Copilot reads images only in a request marked as carrying them."""
+    if provider != "copilot":
+        return headers
+    turns = payload.get("messages") or payload.get("input") or []
+    if any(isinstance(turn, dict) and has_image_parts(turn.get("content")) for turn in turns if isinstance(turns, list)):
+        return {**headers, "Copilot-Vision-Request": "true"}
+    return headers
 
 
 async def _endpoint(provider: str, user_id: str | None, ollama_url: str | None) -> tuple[str, dict[str, str], str]:
@@ -436,6 +447,7 @@ async def _openai_chat(
     if payload.get("stream"):
         return await _collect_openai_stream(provider, payload, user_id, ollama_url, timeout, retry=retry)
     base, headers, _ = await _endpoint(provider, user_id, ollama_url)
+    headers = _with_vision(provider, headers, payload)
     url = f"{base}/chat/completions"
 
     async def send(current: dict[str, Any]) -> httpx.Response:
@@ -1132,6 +1144,7 @@ async def _openai_stream_events(
     retry: bool = True,
 ):
     base, headers, _ = await _endpoint(provider, user_id, ollama_url)
+    headers = _with_vision(provider, headers, payload)
     url = f"{base}/chat/completions"
     current = dict(payload)
     current["stream"] = True
@@ -1200,6 +1213,7 @@ async def _responses_events(
 ):
     """``("delta", text)`` while a streamed reply arrives, then ``("done", turn)``."""
     base, headers, _ = await _endpoint(provider, user_id, ollama_url)
+    headers = _with_vision(provider, headers, payload)
     url = f"{base}/responses"
     model = str(payload.get("model") or "")
     if not payload.get("stream"):
@@ -1496,7 +1510,12 @@ def _to_anthropic(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, A
                 blocks.append({"type": "tool_use", "id": call.get("id"), "name": fn.get("name"), "input": arguments})
             out.append({"role": "assistant", "content": blocks or [{"type": "text", "text": ""}]})
             continue
-        out.append({"role": "user", "content": _text(message.get("content"))})
+        content = anthropic_user_content(message.get("content"))
+        # Images that follow tool results join that user turn, after its tool_result blocks.
+        if isinstance(content, list) and out and out[-1]["role"] == "user" and isinstance(out[-1]["content"], list):
+            out[-1]["content"].extend(content)
+            continue
+        out.append({"role": "user", "content": content})
     return "\n\n".join(system), out
 
 

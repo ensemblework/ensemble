@@ -12,6 +12,7 @@ import {
 } from "@ensemble/shared-types";
 import { markdownToNodes, pageSearchText } from "./markdown.js";
 import { storable } from "./content.js";
+import { assertNewPageImages } from "../files/page-image.js";
 import { lockUserTransaction } from "../lib/user-lock.js";
 import { recordUndoInTransaction, withUndoGroup } from "../lib/undo.js";
 import { createTask } from "../services/tasks.js";
@@ -124,6 +125,7 @@ export async function saveTaskPage(
       if (existing && existing.revision !== body.revision) {
         throw new TaskPageError("REVISION_CONFLICT", "This page changed in another tab.", 409);
       }
+      await assertNewPageImages(db, userId, content, existing?.content ?? null);
       if (existing) await checkpointPage(db, existing, existing.title || task.title);
       const notes = body.notes ?? task.notes;
       const mentions = collectMentions(content);
@@ -337,6 +339,7 @@ export async function saveStandalonePage(
     if (existing.revision !== body.revision) {
       throw new TaskPageError("REVISION_CONFLICT", "This page changed in another tab.", 409);
     }
+    await assertNewPageImages(db, userId, content, existing.content);
     await checkpointPage(db, existing);
     const notes = body.notes ?? existing.notesSnapshot;
     const mentions = collectMentions(content);
@@ -431,7 +434,9 @@ export interface CurrentPage {
  * Writes new content (and, for a standalone note, a new title) inside the caller's transaction,
  * keeping the mention index and search text in step and journaling one undo entry. `next` sees
  * the page as it is once locked and may throw to refuse. A task with no page gets an empty one
- * first, so undo returns it to "no content" rather than removing it.
+ * first, so undo returns it to "no content" rather than removing it. Images the write adds are
+ * held to the page-image rules (`assertNewPageImages`) unless `restoring` a saved version, whose
+ * images the page already held.
  */
 export async function writePageContent(
   db: Db,
@@ -439,6 +444,7 @@ export async function writePageContent(
   target: PageTarget,
   next: (current: CurrentPage) => { content: PageDocument; title?: string },
   actor: Actor = "me",
+  options: { restoring?: boolean } = {},
 ): Promise<{ id: string; taskId: string | null; title: string; revision: number }> {
   await lockUserTransaction(db, userId);
   const found = await editablePage(db, userId, target, true);
@@ -449,6 +455,7 @@ export async function writePageContent(
   const page = found.page ?? (task ? await db.taskPage.create({ data: { userId, taskId: task.id, notesSnapshot: task.notes, searchText: pageSearchText(task.title, null, task.notes) }, include: PAGE_INCLUDE }) : null);
   if (!page) throw new TaskPageError("PAGE_NOT_FOUND", "Page not found.", 404);
   const content = storable(restoreMentionLinks(PageDocument.parse(wanted.content)));
+  if (!options.restoring) await assertNewPageImages(db, userId, content, found.page?.content ?? null);
   const title = task ? task.title : wanted.title?.trim() || currentTitle;
   await checkpointPage(db, page, currentTitle);
   const updated = await db.taskPage.update({

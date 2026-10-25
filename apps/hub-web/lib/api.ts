@@ -1,5 +1,5 @@
 import type { IdeTheme, ThemeDirectoryExtension } from "@ensemble/ide-theme";
-import { emptyWorkspace, type CodeEngine, type ContextTier, type IncludedUsage, type ModelMeta, type PageDocument, type PageMention, type Settings, type SubscriptionAgent, type SubscriptionProvider, type TaskPageContent } from "@ensemble/shared-types";
+import { emptyWorkspace, type AssistantRef, type CodeEngine, type ContextTier, type IncludedUsage, type ModelMeta, type PageDocument, type PageMention, type Settings, type SubscriptionAgent, type SubscriptionProvider, type TaskPageContent } from "@ensemble/shared-types";
 import type { LayoutDocument } from "@ensemble/shared-types/widgets";
 
 import { bindClient, currentExternalSignal, isRequestCancelled, RequestCancelledError, trackRequest, isPageUnloading } from "./fetch-cancel";
@@ -988,13 +988,18 @@ export type AssistantToolCallRecord = {
   error?: string;
   input?: Record<string, unknown>;
   undoEntryId?: string | null;
+  /** Records the result names: ids for links, titles to show instead. */
+  refs?: AssistantRef[];
 };
 
 export type AssistantMessageRecord = {
   id: string;
   role: "user" | "assistant" | string;
   content: string;
-  /** On the person's own messages: the mentions it named, with their exact labels. Older messages have none. */
+  /**
+   * On the person's own messages: the mentions it named, with their exact labels. On replies: the
+   * records the reply names by id (`AssistantRef`s, read with `savedRefs`). Older messages have none.
+   */
   mentions?: PageMention[];
   toolCalls: AssistantToolCallRecord[];
   model: string | null;

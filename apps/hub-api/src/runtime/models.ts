@@ -5,6 +5,7 @@
  * There is no embeddings call in hub-api. Settings stores models.embedding, and
  * the schema has an embedding column, but nothing in this tree requests vectors.
  */
+import { hasImageParts } from "./content-parts.js";
 import { INCLUDED_PROVIDER } from "@ensemble/shared-types";
 import { ModelUnreachableError } from "../lib/model-reach.js";
 import { HostedAccessError, canUseHostCredentials, requireHostAccess, requireVerifiedUser } from "../lib/hosted-access.js";
@@ -115,6 +116,14 @@ export function copilotEndpoint(githubToken: string, allowHostConfig = false): {
   };
 }
 
+/** Copilot reads images only in a request marked as carrying them. */
+export function withVision<T extends { headers: Record<string, string> }>(provider: string, target: T, payload: Json): T {
+  if (provider !== "copilot") return target;
+  const turns = (Array.isArray(payload.messages) ? payload.messages : Array.isArray(payload.input) ? payload.input : []) as unknown[];
+  const images = turns.some((turn) => turn && typeof turn === "object" && hasImageParts((turn as Json).content));
+  return images ? { ...target, headers: { ...target.headers, "Copilot-Vision-Request": "true" } } : target;
+}
+
 export async function endpoint(
   provider: string,
   userId: string | null | undefined,
@@ -166,7 +175,7 @@ async function openaiChat(
 ): Promise<Json> {
   await pace(userId, provider);
   if (payload.stream) return collectOpenAiStream(provider, payload, userId, ollamaUrl, timeoutMs, options);
-  const target = await endpoint(provider, userId, ollamaUrl, options.signal);
+  const target = withVision(provider, await endpoint(provider, userId, ollamaUrl, options.signal), payload);
   const url = `${target.base}/chat/completions`;
   const response = await postWithRetry(
     (current) =>
@@ -205,7 +214,7 @@ async function* openaiStreamEvents(
   timeoutMs: number,
   options: { retry?: boolean; signal?: AbortSignal } = {},
 ): AsyncGenerator<{ kind: "delta"; text: string } | { kind: "done"; data: Json }> {
-  const target = await endpoint(provider, userId, ollamaUrl, options.signal);
+  const target = withVision(provider, await endpoint(provider, userId, ollamaUrl, options.signal), payload);
   const url = `${target.base}/chat/completions`;
   const current: Json = { ...payload, stream: true };
   let attempt = 0;
@@ -260,7 +269,7 @@ async function* responsesEvents(
   timeoutMs: number,
   options: { retry?: boolean; signal?: AbortSignal } = {},
 ): AsyncGenerator<{ kind: "delta"; text: string } | { kind: "done"; turn: Json }> {
-  const target = await endpoint(provider, userId, ollamaUrl, options.signal);
+  const target = withVision(provider, await endpoint(provider, userId, ollamaUrl, options.signal), payload);
   const url = `${target.base}/responses`;
   const model = String(payload.model ?? "");
   const where = { provider, model, url };

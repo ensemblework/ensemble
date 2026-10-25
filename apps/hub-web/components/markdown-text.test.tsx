@@ -185,3 +185,19 @@ test("with saved mentions, their @kind:Label shows as a chip; without them it st
   await act(async () => root.unmount());
   host.remove();
 });
+
+test("record links show their label and open the record in this tab", async () => {
+  const id = "3f2a9c1e-7b44-4d2a-9a51-0c8f5e6d7b10";
+  const mounted = await render(`Added [@Draft brief](ensemble://task/${id}), **[Launch](ensemble://project/${id})** and [@Mira Chen](ensemble://people/${id}). Unknown [@Thing](ensemble://widget/${id}).`);
+  const anchors = [...mounted.host.querySelectorAll("a")];
+  assert.deepEqual(anchors.map((anchor) => [anchor.textContent, anchor.getAttribute("href")]), [
+    ["Draft brief", `/tasks/${id}`],
+    ["Launch", `/projects/${id}`],
+    ["Mira Chen", "/context?tab=people&search=Mira%20Chen"],
+  ]);
+  assert.equal(mounted.host.querySelector("strong a")?.textContent, "Launch", "a link inside bold is still a link");
+  assert.equal(mounted.host.textContent?.includes(id), false, "the id is only in the link target");
+  assert.equal(mounted.host.textContent?.includes("ensemble://"), false);
+  assert.match(mounted.host.textContent ?? "", /Unknown Thing\./);
+  await unmount(mounted);
+});

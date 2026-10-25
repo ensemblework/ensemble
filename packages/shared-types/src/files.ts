@@ -250,3 +250,6 @@ export interface FileImportSource {
   /** Google Drive: the Google Picker is set up, so the person can pick files without "Search all of Drive". */
   picker?: boolean;
 }
+
+/** Files one chat message can carry, in Ensemble chat and Ensemble Node (hub-api assistant/attachments.ts). */
+export const CHAT_FILES_MAX = 8;

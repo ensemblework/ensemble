@@ -2,7 +2,7 @@
 name: files
 title: Files and items from connected apps
 when: find, read or summarise files (PDF, Word, slides, sheets) and items synced from apps; bring a file in from Drive, OneDrive, Dropbox, Box, Gmail or Outlook; attach a file to a page
-tools: hub_list_files, hub_read_file, hub_search_context, hub_read_context, hub_import_app_file, apps_search, apps_read, hub_update_page, hub_read_page, hub_delete_entity, hub_restore_entity, hub_file_edit_info, hub_edit_file, hub_file_to_page, hub_export_page_file, hub_run_workflow, hub_manage_record
+tools: hub_list_files, hub_read_file, hub_view_file, hub_search_context, hub_read_context, hub_import_app_file, apps_search, apps_read, hub_update_page, hub_read_page, hub_delete_entity, hub_restore_entity, hub_file_edit_info, hub_edit_file, hub_file_to_page, hub_export_page_file, hub_run_workflow, hub_manage_record
 appTools: true
 match: \b(files?|pdfs?|docx?|word doc(ument)?s?|pptx?|powerpoint|slides?|decks?|xlsx?|excel|spreadsheets?|csv|attachments?|uploads?|uploaded|documents?|resume|cv|contract|invoice|report)\b
 paths: /files

@@ -4,6 +4,7 @@
  * the page, so all of them come out as the same blocks.
  */
 import type { PageNode } from "./domain.js";
+import { pageImageAlign, pageImageSide, pageImageWidth } from "./page-images.js";
 
 type Mark = { type: string; attrs?: Record<string, unknown> };
 
@@ -31,6 +32,56 @@ function inline(text: string): PageNode[] {
   }
   push(text.slice(last));
   return out;
+}
+
+/**
+ * An image on a line of its own: `![alt](https://…)` or a file in Files, `![alt](ensemble://file/<id>)`,
+ * optionally followed by `{width=60% align=left natural=1200x800}` (`imageMarkdown` writes this form).
+ */
+const IMAGE_LINE = /^!\[((?:\\.|[^\]\\])*)\]\(((?:https?:\/\/|ensemble:\/\/file\/)[^\s)]+)\)(?:\{([^{}]*)\})?\s*$/;
+
+function imageNode(line: string): PageNode | null {
+  const match = IMAGE_LINE.exec(line);
+  if (!match) return null;
+  const alt = match[1]!.replace(/\\([\\[\]])/g, "$1");
+  const target = match[2]!;
+  const options = match[3] ?? "";
+  const attrs: Record<string, unknown> = { alt };
+  if (target.startsWith("ensemble://file/")) {
+    let id: string;
+    try {
+      id = decodeURIComponent(target.slice("ensemble://file/".length));
+    } catch {
+      return null;
+    }
+    if (!id) return null;
+    attrs.src = null;
+    attrs.fileId = id;
+  } else attrs.src = target;
+  const width = pageImageWidth(/(?:^|\s)width=([\d.]+%?)(?=\s|$)/.exec(options)?.[1]);
+  if (width !== null) attrs.width = width;
+  const align = /(?:^|\s)align=(left|center|right)(?=\s|$)/.exec(options)?.[1];
+  if (align) attrs.align = pageImageAlign(align);
+  const natural = /(?:^|\s)natural=(\d+)x(\d+)(?=\s|$)/.exec(options);
+  const naturalWidth = pageImageSide(natural?.[1]);
+  const naturalHeight = pageImageSide(natural?.[2]);
+  if (naturalWidth && naturalHeight) Object.assign(attrs, { naturalWidth, naturalHeight });
+  return { type: "image", attrs };
+}
+
+/** The Markdown `markdownToNodes` reads back as the same image node. Null for an image with nothing to show. */
+export function imageMarkdown(attrs: Record<string, unknown> | undefined): string | null {
+  const fileId = typeof attrs?.fileId === "string" && attrs.fileId ? attrs.fileId : null;
+  const src = typeof attrs?.src === "string" && /^https?:\/\//i.test(attrs.src) ? attrs.src : null;
+  if (!fileId && !src) return null;
+  const alt = String(attrs?.alt ?? "").replace(/\s+/g, " ").trim().replace(/[\\[\]]/g, (char) => `\\${char}`);
+  const target = fileId ? `ensemble://file/${encodeURIComponent(fileId)}` : src!.replace(/[\s)]/g, encodeURIComponent);
+  const width = pageImageWidth(attrs?.width);
+  const align = pageImageAlign(attrs?.align);
+  const naturalWidth = pageImageSide(attrs?.naturalWidth);
+  const naturalHeight = pageImageSide(attrs?.naturalHeight);
+  const options = [width !== null ? `width=${width}%` : "", align !== "center" ? `align=${align}` : "", naturalWidth && naturalHeight ? `natural=${naturalWidth}x${naturalHeight}` : ""].filter(Boolean);
+  return `![${alt}](${target})${options.length ? `{${options.join(" ")}}` : ""}`;
 }
 
 const paragraph = (text: string): PageNode => {
@@ -101,8 +152,8 @@ export function markdownToNodes(markdown: string, options: { lineBreaks?: boolea
       nodes.push({ type: "toggleBlock", attrs: { collapsed: !/^\s*<details[^>]*\bopen\b/i.test(html) }, content: [paragraph(summary), ...markdownToNodes(inner, options)] });
       continue;
     }
-    const image = /^!\[([^\]]*)\]\((https?:\/\/[^)]+)\)\s*$/.exec(line.trim());
-    if (image) { nodes.push({ type: "image", attrs: { alt: image[1], src: image[2] } }); i++; continue; }
+    const image = imageNode(line.trim());
+    if (image) { nodes.push(image); i++; continue; }
     const fence = line.match(/^```([^\s`]*)/);
     if (fence) {
       const body: string[] = [];
@@ -171,7 +222,7 @@ export function markdownToNodes(markdown: string, options: { lineBreaks?: boolea
   return nodes.length ? nodes : [{ type: "paragraph" }];
 }
 
-const BLOCK_SYNTAX = /^(#{1,6}\s+\S|\s*([-*+]|\d+[.)])\s+\S|>\s?|```|\|.*\|\s*$|(-{3,}|\*{3,}|_{3,})\s*$|!\[[^\]]*\]\(https?:\/\/)/;
+const BLOCK_SYNTAX = /^(#{1,6}\s+\S|\s*([-*+]|\d+[.)])\s+\S|>\s?|```|\|.*\|\s*$|(-{3,}|\*{3,}|_{3,})\s*$|!\[[^\]]*\]\((?:https?:\/\/|ensemble:\/\/file\/))/;
 const INLINE_SYNTAX = /\*\*[^*\s][^*]*\*\*|(?<![\p{L}\p{N}])__[^_\s][^_]*__|~~[^~\s][^~]*~~|`[^`\n]+`|\[[^\]\n]+\]\((?:https?:\/\/|\/pages\/)[^\s)]+\)|(?:^|\s)\*[^*\s][^*\n]*\*(?=\s|[.,;:!?]|$)/mu;
 
 /**

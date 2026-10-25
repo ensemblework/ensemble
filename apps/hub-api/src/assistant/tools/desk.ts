@@ -170,7 +170,7 @@ async function itemsOf(ctx: ToolContext, kind: Kind, take: number): Promise<{ it
 }
 
 /** One row's name, for previews. Null when it is not in this space. */
-async function itemLabel(ctx: ToolContext, kind: Kind, id: string): Promise<string | null> {
+export async function itemLabel(ctx: ToolContext, kind: Kind, id: string): Promise<string | null> {
   const userId = ctx.userId;
   const db = ctx.prisma;
   switch (KINDS[kind].store as Store) {

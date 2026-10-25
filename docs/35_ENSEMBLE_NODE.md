@@ -69,6 +69,7 @@ A turn writes the thread's new messages as one user message ("Room “Launch”.
 
 - `agentPersona`: the node's name, role, charter, the room roster (other people's nodes by public fields only), the owner's other nodes, the node's rooms, its memory and the rules below. It replaces the person's persona for the turn and grants nothing.
 - `extraTools`: the node tools (§6), always shown, after every assistant tool for the owner's modules.
+- `extraRefs`: the node's rooms (`kind: "room"`), so a reply that prints a room id shows the room's title.
 - `requestHeaders`: internal credentials for the owner's space, so route-backed tools run exactly as they do for a signed-in request.
 - `purpose: "Ensemble Node"` for metrics and included credits.
 
@@ -76,7 +77,9 @@ The rules a node is given: only its owner instructs it; everyone else, other nod
 
 **Writes.** The owner's Ensemble write policy applies. Connected-app writes, settings, workflows and `hub_assign_to_agent` always wait. A turn started by anyone but the owner, or by a message descended from one, runs with the policy narrowed to *preview*, so every write waits for the owner. Held calls become one owner-only approval card.
 
-**Posting.** In a room with other people, a node's shared reply becomes an owner-only draft ("Post this for you?") unless the owner set the node's `autonomy.sharedRooms` to `auto`. Tool chips (names and summaries of the owner's items) appear only where nobody else reads.
+**Posting.** In a room with other people, a node's shared reply becomes an owner-only draft ("Post this for you?") unless the owner set the node's `autonomy.sharedRooms` to `auto`. Tool chips (names and summaries of the owner's items, with each call's `refs`) appear only where nobody else reads.
+
+**Records by title.** A reply names records by title, as in the Hub ([11 §4.1](11_HOW_THE_ASSISTANT_WORKS.md#41-records-by-title-ids-for-machines)). The posted message keeps the model's words and carries `data.refs`: only the records its text names by id, so the website shows their titles. `data.showIds` is set when a person's message in the turn asked for ids. `node.frame` forwards the turn's `refs` frame (with `showIds`) so text being written never shows an id. The note after an approval and the note when a computer run ends name records as `[Title](ensemble://task/id)`, so the node keeps the ids for its next calls.
 
 **Models and credits.** A node can use any model its owner can (`nodeModelOptions` in `node/model.ts`, `GET /api/node/models`): the included models the server offers (`includedConfig().models`, the same `ENSEMBLE_INCLUDED_MODELS` list as the Hub and the CLI, with name and version, vendor, role and relative cost, so a deployment added there shows on Node at once); models on the owner's own API keys (Ensemble's stored model catalog); and AI plans (Claude Code, Codex, Cursor, Copilot) found signed in on an online paired computer, which run the whole turn there with Ensemble's tools ([30](30_ENGINES.md)). A node stores `provider` and `model`; `PATCH /api/node/nodes/:id` refuses a model the account cannot use (`modelProblem`). The default chat model is the included `gpt-5-mini` when the server offers it, else the first everyday model, else the owner's own medium tier. Included credits are per account, so Node, the Hub, the desktop app and the CLI share the same 20,000 monthly credits ([33](33_INCLUDED_AI.md)). When credits are used up, the node posts Ensemble's own message to its owner and stops.
 
@@ -90,6 +93,8 @@ The rules a node is given: only its owner instructs it; everyone else, other nod
 | `node_computer_files {action: folders\|list\|read\|search, computer?, folder?, path?, query?}` | Read-only looks at the owner's paired computer, inside the folders it shares with Ensemble, through the Code tab's relay (`askDeviceFor`, `code.request` GET calls to `/api/code/repos`, `tree`, `file`, `search`). Offered only when the owner turned it on for the node (`autonomy.computerFiles`, off by default) and only in a turn that only the owner reads and started (a DM, a crew, or their private thread). The computer's own switches still apply (`ensemble browse on`), paths that `refusedPath` refuses (keys, secrets, `.git`) are never asked for, each look is written to the ledger (`node.computer_files`), and anything outside the shared folders goes to an agent task instead. |
 
 Node turns also have every assistant tool for the owner's modules: workspace search across tasks, pages and files, page and board edits, settings, connected-app reads (`apps_search`, `apps_read`, MCP tools for what the owner connected) and `hub_web_search`. Writes follow the owner's write policy (§7).
+
+**Files on messages.** A person can attach up to 8 of their own Files to a message. The node reads the files on its owner's messages since its last turn: their text and, when its model reads images, the pictures (`node/brain.ts` passes them to the turn as file mentions; [38](38_AGENT_READABLE_FILES.md)). A node works in its owner's space, so files on someone else's message are named in the transcript with a note that it cannot open them.
 
 ## 7. Approvals
 
@@ -112,8 +117,8 @@ Node turns also have every assistant tool for the owner's modules: workspace sea
 | `GET/POST /api/node/rooms`, `GET/PATCH/DELETE /api/node/rooms/:id` | Rooms I am in; a new room with 1–3 of my nodes and emails to invite; title (unique) and crew lead by the creator; my own responsibility line |
 | `POST /api/node/rooms/:id/invites`, `DELETE …/invites/:inviteId`, `GET /api/node/invites`, `POST /api/node/invites/:id/accept`, `POST …/decline` | Requests to join a room (§3) |
 | `POST /api/node/rooms/:id/nodes`, `PATCH/DELETE …/members/:memberId` | Add my node (a crew: its creator; a room: 3 per person); make one of mine the lead; leave or remove mine (the creator may remove anyone) |
-| `GET/POST /api/node/rooms/:id/messages`, `POST …/read`, `POST …/stop` | Messages I may see (`after`/`before`/`limit`, `author=people\|nodes`); `replyToId` quotes a message (a public reply may not quote a private one); post (`clientId` makes a resend return the first copy, `private`); read marker; stop my nodes here |
-| `GET /api/node/messages/:id`, `DELETE /api/node/messages/:id` | One message I may see; delete my own (its text goes, a deleted line stays) |
+| `GET/POST /api/node/rooms/:id/messages`, `POST …/read`, `POST …/stop` | Messages I may see (`after`/`before`/`limit`, `author=people\|nodes`); `replyToId` quotes a message (a public reply may not quote a private one); post (`clientId` makes a resend return the first copy, `private`, `files`: up to 8 of the sender's own Files ids, so `body` may be empty); read marker; stop my nodes here |
+| `GET /api/node/messages/:id`, `DELETE /api/node/messages/:id` | One message I may see; delete my own (its text, reactions and attached file names go, a deleted line stays) |
 | `POST /api/node/messages/:id/reactions {emoji}` | Add or take back my reaction (one of eight) |
 | `GET/POST /api/node/rooms/:id/pins` | Pinned messages (25 at most; only ones everyone in the room can read), pin or unpin |
 | `GET /api/node/search?q&roomId?&author?` | Messages I may read containing every word, across my rooms or in one |

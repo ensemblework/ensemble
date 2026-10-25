@@ -44,7 +44,7 @@ export async function pageVersionRoutes(app: FastifyInstance) {
       const { page, task } = await editablePage(tx, request.userId, { pageId: version.pageId }, true);
       if (!page || page.revision !== body.revision || page.updatedAt.toISOString() !== body.updatedAt) throw problem("This page changed while you were viewing its history. Refresh the versions before restoring.", 409);
       await checkpointPage(tx, page, task?.title ?? page.title, true);
-      const result = await writePageContent(tx, request.userId, { pageId: page.id }, () => ({ content: PageDocument.parse(version.content ?? EMPTY_PAGE), ...(task ? {} : { title: version.title }) }));
+      const result = await writePageContent(tx, request.userId, { pageId: page.id }, () => ({ content: PageDocument.parse(version.content ?? EMPTY_PAGE), ...(task ? {} : { title: version.title }) }), "me", { restoring: true });
       await tx.taskPage.update({ where: { id: page.id }, data: { annotations: version.annotations as Prisma.InputJsonValue } });
       return result;
     });

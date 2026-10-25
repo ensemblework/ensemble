@@ -79,7 +79,8 @@ export function FileChooser({ editor, pos, onClose }: { editor: Editor; pos: num
     const chosen = Array.from(list ?? []);
     if (!chosen.length) return;
     close();
-    void uploadFiles(editor, chosen, { pos, client });
+    // /file attaches whatever is chosen as a card, images included: the way to keep an image over 2 MB.
+    void uploadFiles(editor, chosen, { pos, client, as: "file" });
   };
 
   const pick = (file: FileRecord) => {

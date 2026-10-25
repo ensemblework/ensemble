@@ -5,6 +5,7 @@ import { createTask, labelPriority, labelStatus, taskChangePreview, titlesMatch,
 import { softDelete, trashTasks } from "../../services/records.js";
 import { defineTool, inTransaction, toolOk, type ToolContext } from "../types.js";
 import { MAX_MARKDOWN, appendToTaskPage, droppedNote } from "./pages.js";
+import { titleList } from "../refs.js";
 
 const Due = z
   .string()
@@ -173,8 +174,11 @@ export const taskTools = [
         }
         return rows;
       });
-      const listed = created.map((row) => `“${row.title}” (${row.id})`).join("; ");
-      return toolOk(`Added ${created.length} task(s): ${listed}.${droppedNote(dropped)}`, { tasks: created.map((row) => ({ id: row.id, title: row.title, projectId: row.projectId })) }, {
+      // Titles for the person; the ids stay in data, for links and later calls.
+      const listed = titleList(created.map((row) => ({ title: row.title, detail: row.due ? `due ${row.due.toISOString().slice(0, 10)}` : null })));
+      const summary = created.length === 1 ? `Added ${listed}.` : `Added ${created.length} tasks: ${listed}.`;
+      const tasks = created.map((row) => ({ id: row.id, title: row.title, projectId: row.projectId, ...(row.due ? { due: row.due.toISOString().slice(0, 10) } : {}) }));
+      return toolOk(`${summary}${droppedNote(dropped)}`, { tasks }, {
         invalidate: ["tasks"],
         href: created[0] ? `/tasks/${created[0].id}` : undefined,
       });
@@ -254,7 +258,7 @@ export const taskTools = [
         const written = page?.trim() ? await appendToTaskPage(tx, ctx.userId, taskId, page) : { dropped: [] };
         return { task: row, dropped: written.dropped };
       });
-      return toolOk(`Updated “${task.title}”.${droppedNote(dropped)}`, { task: { id: task.id, title: task.title, status: task.status, owner: task.owner, priority: task.priority, due: task.due, completedAt: task.completedAt, projectId: task.projectId } }, {
+      return toolOk(`${updateSummary(matchTitle, task.title, patch, Boolean(page?.trim()))}${droppedNote(dropped)}`, { task: { id: task.id, title: task.title, status: task.status, owner: task.owner, priority: task.priority, due: task.due, completedAt: task.completedAt, projectId: task.projectId } }, {
         invalidate: ["tasks"],
         href: `/tasks/${task.id}`,
       });
@@ -342,6 +346,34 @@ export const taskTools = [
     },
   }),
 ];
+
+const FIELD_WORDS: Record<string, string> = {
+  status: "status",
+  priority: "priority",
+  owner: "owner",
+  complexity: "complexity",
+  due: "due date",
+  projectId: "project",
+  projectName: "project",
+  people: "people",
+  labels: "tags",
+  repoId: "repository",
+  deliverableId: "deliverable",
+  skillIds: "skills",
+  todayFocus: "Today focus",
+  snoozedUntil: "snooze",
+};
+
+/** `Marked “Draft brief” done.`, `Renamed “Old” to “New”.`, `Updated “Draft brief”: priority and due date.` */
+export function updateSummary(before: string, title: string, patch: Record<string, unknown>, page: boolean): string {
+  const renamed = typeof patch.title === "string" && !titlesMatch(before, title);
+  const fields = [...new Set(Object.entries(patch).filter(([key, value]) => value !== undefined && FIELD_WORDS[key]).map(([key]) => FIELD_WORDS[key]!))];
+  if (page) fields.push("page");
+  const list = fields.length > 1 ? `${fields.slice(0, -1).join(", ")} and ${fields[fields.length - 1]}` : (fields[0] ?? "");
+  if (renamed) return `Renamed “${before}” to “${title}”${list ? `; changed ${list}` : ""}.`;
+  if (patch.status === "done" && fields.length === 1) return `Marked “${title}” done.`;
+  return list ? `Updated “${title}”: ${list}.` : `Updated “${title}”.`;
+}
 
 type BulkTaskInput = { taskIds?: string[]; all?: boolean; status?: z.infer<typeof TaskStatus>; owner?: "me" | "agent" | "unassigned"; label?: string; projectId?: string; query?: string };
 

@@ -4,6 +4,7 @@
  */
 import { truncateText } from "../lib/text.js";
 import { CONNECTION_DROPPED_NOTICE, isAbortError, isNonModelNotice, isTransportDrop } from "../lib/stream-drop.js";
+import { refsNote, savedRefs } from "./refs.js";
 
 export { CONNECTION_DROPPED_NOTICE, isNonModelNotice } from "../lib/stream-drop.js";
 
@@ -80,11 +81,12 @@ export function historyEntries(
       return true;
     })
     .map((row) => {
-      const calls = Array.isArray(row.toolCalls) ? (row.toolCalls as Array<{ state?: string; summary?: string }>) : [];
+      const calls = Array.isArray(row.toolCalls) ? (row.toolCalls as Array<{ state?: string; summary?: string; isWrite?: boolean; refs?: unknown }>) : [];
+      // The summary is what the person read; the records a write made or changed keep their ids for later calls.
       const done = calls
         .filter((call) => call.state === "ok")
-        .map((call) => call.summary)
-        .filter((summary): summary is string => Boolean(summary));
+        .map((call) => [call.summary, call.isWrite ? refsNote(savedRefs(call.refs)) : ""].filter(Boolean).join(" "))
+        .filter((summary) => Boolean(summary));
       const content = done.length ? `${row.content}\n\n(You did: ${done.join("; ")})` : row.content;
       return { role: row.role, content: truncateText(content, 4000) };
     })

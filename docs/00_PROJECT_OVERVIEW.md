@@ -62,6 +62,7 @@ The scheduler runs fixed product jobs only (reminders, morning briefs, retention
 | Context and projects | People and identities, projects, repositories, preferences, graph, profession records | The graph shows saved data only | [03](03_MODULE_CONTEXT_ENGINE.md), [02 §3.5](02_MODULE_INTERACTION_HUB_UI.md#35-context) |
 | Meeting notes | Manual and imported notes, source links, requested summaries and action-item tasks | Imported notes are read-only; no recording or transcription | [03 §7](03_MODULE_CONTEXT_ENGINE.md#7-meeting-context) |
 | Files | Private originals, previews, text extraction, hash-checked text/Office/sheet edits, conversion to pages, page export into Files | Edits are format-specific | [32](32_FILES.md) |
+| Images in pages | `/image`, drop and paste (screenshots, HTML with `data:` images) with upload progress; resize handles with a keyboard slider, alignment, width presets, alt text, remove; kept as Files and shown on shared pages and public links; read by agents and kept through Markdown rewrites | 2 MB (2,097,152 bytes) per image, PNG, JPEG, GIF or WebP; no SVG; nothing is compressed; left out of Download | [32 §6](32_FILES.md#images-in-pages) |
 | Diagrams | Source language, layout, visual editing, Mermaid import, SVG export | Editing needs a 1024 × 640 CSS-pixel window; smaller windows get a read-only preview | [21](21_BLOCK_DIAGRAMS_DSL.md) |
 | Plots | Datasets, figure specs, code, exports; browser runtime on the web, server/native worker elsewhere | Uploads up to 20 MB | [20](20_PLOTS_DESIGN.md) |
 | Skills and morning brief | Versioned personal instructions, brief personalization, completed-work learning | Learning writes validated versions after a notice; no review-first flow | [04](04_MODULE_SKILL_FORGE.md) |
@@ -92,7 +93,9 @@ The Hub assistant operates the app through typed tools. Built-in playbooks (`app
 - An interrupted workflow step with an unknown outcome is not replayed. Starting an import is not finishing it.
 - There is no native email, Slack or Teams send. Calendar invitations can notify guests; some connected-item updates and vendor MCP tools write after Apply.
 - Surface context is structured app state, not screenshots or DOM access. Credentials, account deletion, sharing permissions and folder trust are human-only.
-- Connected-app content is read only when the person asks for remote content or gives an item link (`assistant/apps.ts`). The attachment button lists saved Files and searches no connector.
+- Connected-app content is read only when the person asks for remote content or gives an item link (`assistant/apps.ts`). The attachment button uploads into Files or lists saved Files and searches no connector.
+- Files attached in chat, in Ensemble Node or to a task reach the model as text, and as pictures for models that read images; plots on a task page arrive as settings and data ([38](38_AGENT_READABLE_FILES.md)).
+- Replies, receipts and previews name records by title and link to them; ids stay in tool data and link targets, and show only when the person asks ([11 §4.1](11_HOW_THE_ASSISTANT_WORKS.md#41-records-by-title-ids-for-machines)).
 
 ## 6. Connected apps and imports
 

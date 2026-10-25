@@ -274,7 +274,7 @@ export const codeTools: readonly AnyHubTool[] = [
         throw new ToolBlockedError(error instanceof Error ? error.message : String(error));
       }
       if (!created) throw new ToolBlockedError("That task does not exist.");
-      return toolOk(`Started ${engineName(engine)} on “${input.title}” (job ${created.jobId})`, { jobId: created.jobId, taskId, engine, profile: profile.name, folder: folder ?? null }, { invalidate: ["tasks", "workspace"] });
+      return toolOk(`Started ${engineName(engine)} on “${input.title}”.`, { jobId: created.jobId, taskId, task: { id: taskId, title: input.title }, engine, profile: profile.name, folder: folder ?? null }, { invalidate: ["tasks", "workspace"] });
     },
   }),
   defineTool({
